@@ -68,6 +68,8 @@ export function resolvePlatformConfigPath(
   return undefined;
 }
 
+const MAPPING_KEY_SEPARATOR = /:(?=\s|$)/;
+
 function parseTrivialYaml(input: string): unknown {
   type Node = {
     indent: number;
@@ -99,7 +101,7 @@ function parseTrivialYaml(input: string): unknown {
     if (body.startsWith('- ')) {
       const inner = body.slice(2).trim();
       const item: Node = { indent, isListItem: true, children: [] };
-      const colon = inner.indexOf(':');
+      const colon = inner.search(MAPPING_KEY_SEPARATOR);
       if (colon !== -1) {
         item.children.push({
           indent: indent + 2,

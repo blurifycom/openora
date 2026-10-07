@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { inspect } from 'node:util';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -8,13 +8,16 @@ import { ORPCError } from '@orpc/server';
 import {
   McpToolError,
   McpTransportConfigSchema,
+  type ClientMeta,
   type McpKernel,
   type McpTokenAuthentication,
   type RateLimitKey,
+  type RateLimitResult,
   type RateLimiterAdapter,
 } from '@openora/core/contracts';
 import { NO_CLIENT_META, adminCaller, makeRateLimiter, mock } from '../../../testing/mock.js';
 import type { AdminGuard } from '../../auth/admin-guard.js';
+import { sha256Hex } from '../canonical-json.js';
 import { createMcpHttpTransport, type McpHttpTransport } from '../http-transport.js';
 import type { McpAuthorizer } from '../kernel.js';
 import {
@@ -37,8 +40,14 @@ vi.mock('../../kernel/logger.js', () => ({ createLogger: () => log }));
 const MCP_URL = 'http://localhost/mcp';
 const BACKOFFICE = 'https://backoffice.example.com';
 const TOKEN = `ora_mcp_${'Tk3n_'.repeat(8)}abc`;
+const TOKEN_HASH = createHash('sha256').update(TOKEN).digest('hex');
 const PING = { jsonrpc: '2.0', id: 1, method: 'ping' };
 const SECRET_FAILURE = 'connection to db failed: password=hunter2';
+const CLIENT_META: ClientMeta = { ip: '203.0.113.7', userAgent: 'mcp-client/1.0' };
+const MAX_AUDITED_NAME_LENGTH = 128;
+const ALLOWED: RateLimitResult = { allowed: true, retryAfterMs: 0 };
+const STORE_DOWN: RateLimitResult = { allowed: false, retryAfterMs: 60_000, unavailable: true };
+const WINDOW_PREFIXES = { ip: 'mcp-ip-min:', min: 'mcp-token-min:', day: 'mcp-token-day:' };
 
 const tokenId = randomUUID();
 const adminId = randomUUID();
@@ -47,7 +56,7 @@ const playerId = randomUUID();
 type Requirement = { resource: string; action: string };
 
 type Setup = {
-  authentication?: McpTokenAuthentication;
+  authenticate?: (bearer: string) => Promise<McpTokenAuthentication>;
   handler?: SummaryHandler;
   authorize?: McpAuthorizer;
   wrapKernel?: (kernel: McpKernel) => McpKernel;
@@ -59,7 +68,7 @@ type Setup = {
 };
 
 function setup({
-  authentication = { ok: true, tokenId, adminId },
+  authenticate = async () => ({ ok: true, tokenId, adminId }),
   handler = summaryHandler,
   authorize,
   wrapKernel = (kernel) => kernel,
@@ -70,10 +79,8 @@ function setup({
   recordCall = async () => undefined,
 }: Setup = {}) {
   const { kernel, audit } = transportKernel({ handler, authorize });
-  const authenticator = {
-    authenticate: vi.fn(async (_bearer: string) => authentication),
-    recordCall: vi.fn(recordCall),
-  };
+  const invokeTool = vi.fn(kernel.invokeTool);
+  const authenticator = { authenticate: vi.fn(authenticate), recordCall: vi.fn(recordCall) };
   const guard = {
     assertUser: vi.fn(assertUser),
     filterGranted: vi.fn(async (_userId: string, requirements: readonly Requirement[]) =>
@@ -81,23 +88,38 @@ function setup({
     ),
   };
   const transport = createMcpHttpTransport({
-    kernel: wrapKernel(kernel),
+    kernel: wrapKernel({ ...kernel, invokeTool }),
     authenticator,
     adminGuard: mock<Pick<AdminGuard, 'assertUser' | 'filterGranted'>>(guard),
     rateLimiter,
-    config: McpTransportConfigSchema.parse({ enabled: true, ...config }),
+    audit,
+    config: McpTransportConfigSchema.parse({
+      enabled: true,
+      allowedHosts: ['localhost'],
+      ...config,
+    }),
   });
-  return { transport, kernel, audit, authenticator, guard };
+  return { transport, kernel, invokeTool, audit, authenticator, guard };
+}
+
+function failingWindowLimiter(window: keyof typeof WINDOW_PREFIXES, failure: RateLimitResult) {
+  const consume = vi.fn(async (key: RateLimitKey) =>
+    key.startsWith(WINDOW_PREFIXES[window]) ? failure : ALLOWED,
+  );
+  return { rateLimiter: mock<RateLimiterAdapter<RateLimitKey>>({ consume }), consume };
 }
 
 async function connect(
   transport: McpHttpTransport,
-  headers: Record<string, string> = { Authorization: `Bearer ${TOKEN}` },
+  {
+    headers = { Authorization: `Bearer ${TOKEN}` },
+    clientMeta = NO_CLIENT_META,
+  }: { headers?: Record<string, string>; clientMeta?: ClientMeta } = {},
 ) {
   const client = new Client({ name: 'transport-test', version: '1.0.0' });
   await client.connect(
     new StreamableHTTPClientTransport(new URL(MCP_URL), {
-      fetch: (url, init) => transport.handle(new Request(url, init), NO_CLIENT_META),
+      fetch: (url, init) => transport.handle(new Request(url, init), clientMeta),
       requestInit: { headers },
     }),
   );
@@ -110,7 +132,13 @@ function send(
     method = 'POST',
     headers = {},
     body = JSON.stringify(PING),
-  }: { method?: string; headers?: Record<string, string>; body?: string | null } = {},
+    clientMeta = NO_CLIENT_META,
+  }: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string | null;
+    clientMeta?: ClientMeta;
+  } = {},
 ) {
   return transport.handle(
     new Request(MCP_URL, {
@@ -123,7 +151,7 @@ function send(
       },
       body: method === 'GET' || method === 'HEAD' || method === 'OPTIONS' ? null : body,
     }),
-    NO_CLIENT_META,
+    clientMeta,
   );
 }
 
@@ -196,7 +224,7 @@ describe('MCP HTTP transport through the SDK client', () => {
 
   it('answers a call that passes the client output validation, without personal keys', async () => {
     const { transport, audit } = setup();
-    const client = await connect(transport);
+    const client = await connect(transport, { clientMeta: CLIENT_META });
 
     const result = await callSummary(client);
 
@@ -213,14 +241,42 @@ describe('MCP HTTP transport through the SDK client', () => {
         action: 'mcp.tool.invoked',
         resourceId: 'player.summary',
         correlationId,
-        after: expect.objectContaining({ actorKind: 'mcp_token', tokenId }),
+        ...CLIENT_META,
+        after: expect.objectContaining({
+          actorKind: 'mcp_token',
+          tokenId,
+          personalDropped: true,
+          outputHash: sha256Hex(result.structuredContent),
+        }),
       }),
     );
     await client.close();
   });
 
+  it('runs every call under the client address and the operator personal-field mode', async () => {
+    const dropping = setup();
+    const including = setup({ config: { personalFields: 'include' } });
+
+    for (const { transport } of [dropping, including]) {
+      const client = await connect(transport, { clientMeta: CLIENT_META });
+      await callSummary(client);
+      await client.close();
+    }
+
+    expect(dropping.invokeTool).toHaveBeenCalledWith(
+      'player.summary',
+      { playerId },
+      expect.objectContaining({ clientMeta: CLIENT_META, dropPersonal: true }),
+    );
+    expect(including.invokeTool).toHaveBeenCalledWith(
+      'player.summary',
+      { playerId },
+      expect.objectContaining({ clientMeta: CLIENT_META, dropPersonal: false }),
+    );
+  });
+
   it('lets the personal keys through when the operator includes them', async () => {
-    const { transport } = setup({ config: { personalFields: 'include' } });
+    const { transport, audit } = setup({ config: { personalFields: 'include' } });
     const client = await connect(transport);
 
     const result = await callSummary(client);
@@ -231,6 +287,9 @@ describe('MCP HTTP transport through the SDK client', () => {
       status: 'active',
       balance: '12.50',
     });
+    const after = audit.record.mock.calls[0]?.[0].after;
+    expect(after).toMatchObject({ outputHash: sha256Hex(result.structuredContent) });
+    expect(after).not.toHaveProperty('personalDropped');
     await client.close();
   });
 
@@ -258,9 +317,10 @@ describe('MCP HTTP transport through the SDK client', () => {
 
     expect(result.isError).toBeFalsy();
     expect(log.error).toHaveBeenCalledWith(
-      expect.objectContaining({ tokenId }),
+      { err: { name: 'Error' }, tokenId },
       'mcp token call was not recorded',
     );
+    expect(loggedOutput()).not.toContain('hunter2');
     await client.close();
   });
 
@@ -324,16 +384,70 @@ describe('MCP HTTP transport through the SDK client', () => {
     await client.close();
   });
 
-  it('refuses a name that is not a served model name without calling the kernel', async () => {
-    const { transport, audit } = setup();
-    const client = await connect(transport);
+  it('audits a name it does not serve and refuses it without calling the kernel', async () => {
+    const { transport, kernel, invokeTool, audit, authenticator } = setup();
+    const client = await connect(transport, { clientMeta: CLIENT_META });
+    const names = ['player_flag', 'player.summary', 'nope'];
 
-    for (const name of ['player_flag', 'player.summary', 'nope']) {
+    for (const name of names) {
       await expect(client.callTool({ name, arguments: { playerId } })).rejects.toThrow(
         /Unknown tool/,
       );
     }
-    expect(audit.record).not.toHaveBeenCalled();
+
+    expect(invokeTool).not.toHaveBeenCalled();
+    expect(authenticator.recordCall).not.toHaveBeenCalled();
+    expect(audit.record.mock.calls.map(([entry]) => entry)).toEqual(
+      names.map((name) => ({
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'mcp.tool.failed',
+        resourceType: 'mcp-tool',
+        resourceId: name,
+        correlationId: expect.any(String),
+        ...CLIENT_META,
+        after: {
+          toolId: name,
+          error: 'not_exposed',
+          actorKind: 'mcp_token',
+          tokenId,
+          runId: expect.any(String),
+          catalogVersion: kernel.catalogVersion,
+          inputHash: sha256Hex({ playerId }),
+        },
+      })),
+    );
+    await client.close();
+  });
+
+  it('records at most 128 characters of a refused name', async () => {
+    const { transport, audit } = setup();
+    const client = await connect(transport);
+    const truncated = 'x'.repeat(MAX_AUDITED_NAME_LENGTH);
+
+    await expect(client.callTool({ name: 'x'.repeat(5_000) })).rejects.toThrow(/Unknown tool/);
+
+    expect(audit.record.mock.calls[0]?.[0]).toMatchObject({
+      resourceId: truncated,
+      after: { toolId: truncated, inputHash: sha256Hex({}) },
+    });
+    await client.close();
+  });
+
+  it('answers an internal error, not a refusal, when the refusal cannot be audited', async () => {
+    const { transport, audit } = setup();
+    audit.record.mockRejectedValueOnce(new Error(SECRET_FAILURE));
+    const client = await connect(transport);
+
+    const refused = client.callTool({ name: 'nope', arguments: {} });
+
+    await expect(refused).rejects.toThrow(/Internal error/);
+    await expect(refused).rejects.not.toThrow(/Unknown tool|hunter2/);
+    expect(log.error).toHaveBeenCalledWith(
+      { err: { name: 'Error' }, tokenId },
+      'mcp refusal of an unexposed tool was not audited',
+    );
+    expect(loggedOutput()).not.toContain('hunter2');
     await client.close();
   });
 
@@ -370,7 +484,7 @@ describe('MCP HTTP transport refusals', () => {
     const { transport, authenticator } = setup();
 
     const response = await send(transport, { headers: { authorization: '' } });
-    const rejected = connect(transport, {});
+    const rejected = connect(transport, { headers: {} });
 
     expect(response.status).toBe(401);
     expect(response.headers.get('www-authenticate')).toBe('Bearer');
@@ -383,7 +497,7 @@ describe('MCP HTTP transport refusals', () => {
     { ok: false, reason: 'expired', tokenId, adminId },
     { ok: false, reason: 'revoked', tokenId, adminId },
   ] as const)('refuses a $reason token as invalid_token', async (authentication) => {
-    const { transport, guard } = setup({ authentication });
+    const { transport, guard } = setup({ authenticate: async () => authentication });
 
     const response = await send(transport);
 
@@ -481,6 +595,59 @@ describe('MCP HTTP transport refusals', () => {
     },
   );
 
+  it('limits the client address before looking up the token', async () => {
+    const { rateLimiter, consume } = failingWindowLimiter('ip', {
+      allowed: false,
+      retryAfterMs: 41_200,
+    });
+    const { transport, authenticator } = setup({ rateLimiter });
+
+    const response = await send(transport, { clientMeta: CLIENT_META });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('42');
+    expect(consume).toHaveBeenCalledWith(`mcp-ip-min:${CLIENT_META.ip}`, {
+      limit: 300,
+      windowMs: 60_000,
+      onUnavailable: 'deny',
+    });
+    expect(authenticator.authenticate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed bearer without touching the limiter', async () => {
+    const { rateLimiter, consume } = failingWindowLimiter('ip', STORE_DOWN);
+    const { transport, authenticator } = setup({ rateLimiter });
+
+    const response = await send(transport, {
+      headers: { authorization: 'Bearer two tokens' },
+      clientMeta: CLIENT_META,
+    });
+
+    expect(response.status).toBe(401);
+    expect(consume).not.toHaveBeenCalled();
+    expect(authenticator.authenticate).not.toHaveBeenCalled();
+  });
+
+  it.each(['ip', 'min', 'day'] as const)(
+    'answers 503 with a fixed Retry-After when the %s window cannot reach its store',
+    async (window) => {
+      const { rateLimiter } = failingWindowLimiter(window, STORE_DOWN);
+      const { transport, guard } = setup({ rateLimiter });
+
+      const response = await send(transport, { clientMeta: CLIENT_META });
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get('retry-after')).toBe('30');
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(await response.json()).toEqual({
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32000, message: 'Service unavailable' },
+      });
+      expect(guard.assertUser).not.toHaveBeenCalled();
+    },
+  );
+
   it('limits the token with a Retry-After, before checking the grant', async () => {
     const consume = vi.fn(async () => ({ allowed: false, retryAfterMs: 1500 }));
     const { transport, guard } = setup({
@@ -526,8 +693,32 @@ describe('MCP HTTP transport refusals', () => {
 });
 
 describe('MCP HTTP transport logging', () => {
-  it('never logs the bearer token or the Authorization header', async () => {
-    const refused = setup({ authentication: { ok: false, reason: 'revoked', tokenId, adminId } });
+  it('logs a failed request by error name and code, never its message', async () => {
+    const queryError = new Error(
+      `Failed query: select * from mcp_token where token_hash = $1\nparams: ${TOKEN_HASH}`,
+      { cause: Object.assign(new Error('terminating connection'), { code: '57P01' }) },
+    );
+    const { transport } = setup({
+      authenticate: async () => {
+        throw queryError;
+      },
+    });
+
+    const response = await send(transport);
+
+    expect(response.status).toBe(500);
+    expect(log.error).toHaveBeenCalledWith(
+      { err: { name: 'Error', code: '57P01' } },
+      'mcp request failed',
+    );
+    expect(loggedOutput()).not.toContain(TOKEN_HASH);
+    expect(loggedOutput()).not.toContain('Failed query');
+  });
+
+  it('never logs the bearer token, the Authorization header or an error message', async () => {
+    const refused = setup({
+      authenticate: async () => ({ ok: false, reason: 'revoked', tokenId, adminId }),
+    });
     const broken = setup({
       wrapKernel: (kernel) => ({
         ...kernel,
@@ -552,5 +743,6 @@ describe('MCP HTTP transport logging', () => {
     expect(log.error).toHaveBeenCalled();
     expect(loggedOutput()).not.toContain(TOKEN);
     expect(loggedOutput().toLowerCase()).not.toContain('authorization');
+    expect(loggedOutput()).not.toContain('hunter2');
   });
 });

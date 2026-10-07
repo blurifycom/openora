@@ -87,7 +87,8 @@ describe('PlatformConfig.agents', () => {
         path: '/mcp',
         personalFields: 'drop',
         tokenTtlDays: { default: 30, max: 90 },
-        rateLimit: { perMinute: 60, perDay: 2_000 },
+        rateLimit: { perMinute: 60, perDay: 2_000, perIpPerMinute: 300 },
+        tokenIssuance: { maxActivePerAdmin: 5, perHour: 10 },
         allowedOrigins: [],
         allowedHosts: [],
       },
@@ -131,6 +132,8 @@ describe('AgentsConfigSchema mcp transport', () => {
     [{ allowedOrigins: ['https://backoffice.example.com/'] }, 'mcp.allowedOrigins.0'],
     [{ allowedHosts: ['backoffice.example.com:8443'] }, 'mcp.allowedHosts.0'],
     [{ personalFields: 'mask' }, 'mcp.personalFields'],
+    [{ enabled: true }, 'mcp.allowedHosts'],
+    [{ tokenIssuance: { maxActivePerAdmin: 51 } }, 'mcp.tokenIssuance.maxActivePerAdmin'],
   ])('rejects %j at %s', (mcp, path) => {
     expect(mcpIssuePaths(mcp)).toEqual([path]);
   });

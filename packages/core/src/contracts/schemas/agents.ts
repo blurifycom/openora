@@ -82,21 +82,40 @@ export const McpTransportConfigSchema = z
       })
       .strict()
       .prefault({}),
-    /** Per token. Every authenticated request counts, a tool call or not. */
+    /**
+     * Per token, every authenticated request counting, a tool call or not; and per client
+     * address before any token is looked up.
+     */
     rateLimit: z
       .object({
         perMinute: z.number().int().min(1).max(10_000).default(60),
         perDay: z.number().int().min(1).max(1_000_000).default(2_000),
+        perIpPerMinute: z.number().int().min(1).max(100_000).default(300),
+      })
+      .strict()
+      .prefault({}),
+    /** Per admin: how many tokens may be active at once, and how many may be issued an hour. */
+    tokenIssuance: z
+      .object({
+        maxActivePerAdmin: z.number().int().min(1).max(50).default(5),
+        perHour: z.number().int().min(1).max(1_000).default(10),
       })
       .strict()
       .prefault({}),
     /** Empty refuses every request carrying an Origin header; desktop clients send none. */
     allowedOrigins: z.array(McpAllowedOriginSchema).max(20).default([]),
-    /** Exact hostnames the route answers on; empty answers on any. Bind it to the backoffice host. */
+    /** Exact hostnames the route answers on. Required while enabled, so it never reaches the player domain. */
     allowedHosts: z.array(HostAllowlistEntrySchema).max(20).default([]),
   })
   .strict()
   .superRefine((config, ctx) => {
+    if (config.enabled && config.allowedHosts.length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'list the backoffice host the transport answers on before enabling it',
+        path: ['allowedHosts'],
+      });
+    }
     if (config.tokenTtlDays.default > config.tokenTtlDays.max) {
       ctx.addIssue({
         code: 'custom',

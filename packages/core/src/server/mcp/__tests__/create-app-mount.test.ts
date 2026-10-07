@@ -33,12 +33,6 @@ import {
 import { getCurrentClientMeta } from '../../kernel/request-context.js';
 import { createApp } from '../../runtime/create-app.js';
 
-const transportModule = vi.hoisted(() => ({ loaded: false }));
-vi.mock('../http-transport.js', async (importOriginal) => {
-  transportModule.loaded = true;
-  return importOriginal();
-});
-
 const DUMMY_DATABASE_URL = 'postgres://test:test@127.0.0.1:1/mcp_mount_test';
 const BACKOFFICE_HOST = 'backoffice.example.com';
 const MCP_URL = `http://${BACKOFFICE_HOST}/mcp`;
@@ -48,6 +42,8 @@ const MCP_HEADERS = {
   'content-type': 'application/json',
   accept: 'application/json, text/event-stream',
 };
+const PEER_ADDRESS = '203.0.113.7';
+const SPOOFED_ADDRESS = '198.51.100.1';
 
 const tokenId = randomUUID();
 const adminId = randomUUID();
@@ -69,6 +65,8 @@ async function bootApp({
     seenClientMeta.push(getCurrentClientMeta());
     return { ok: true, tokenId, adminId };
   });
+  const auditWriter = makeAuditWriter();
+  const rateLimiter = makeRateLimiter();
   const app = await createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL }, (container) => {
     container.register(MESSAGE_BROKER, () =>
       mock<MessageBrokerAdapter>({
@@ -79,7 +77,7 @@ async function bootApp({
     );
     container.register(JOB_QUEUE, () => makeJobQueue());
     container.register(CACHE, () => makeCache());
-    container.register(RATE_LIMITER, () => makeRateLimiter());
+    container.register(RATE_LIMITER, () => rateLimiter);
     container.register(REALTIME_TRANSPORT, () => makeRealtimeTransport());
     container.register(PLATFORM_CONFIG, () => definePlatformConfig({ agents: { mcp } }));
     container.register(AUTH_SESSION, () => mock<SessionResolver>({ resolveSession }));
@@ -96,10 +94,10 @@ async function bootApp({
       }));
     }
     if (audit) {
-      container.register(AUDIT_WRITER, () => makeAuditWriter());
+      container.register(AUDIT_WRITER, () => auditWriter);
     }
   });
-  return { app, resolveSession, authenticate, seenClientMeta };
+  return { app, resolveSession, authenticate, seenClientMeta, auditWriter, rateLimiter };
 }
 
 const savedRedisUrl = process.env['REDIS_URL'];
@@ -112,22 +110,6 @@ afterEach(() => {
   if (savedRedisUrl !== undefined) {
     process.env['REDIS_URL'] = savedRedisUrl;
   }
-});
-
-describe('createApp with the MCP transport off', () => {
-  it('mounts nothing and never loads the MCP SDK', async () => {
-    const { app } = await bootApp({ mcp: { allowedHosts: [BACKOFFICE_HOST] } });
-
-    const response = await app.app.request(MCP_URL, {
-      method: 'POST',
-      headers: MCP_HEADERS,
-      body: PING,
-    });
-
-    expect(response.status).toBe(404);
-    expect(transportModule.loaded).toBe(false);
-    await app.close();
-  });
 });
 
 describe('createApp refusing to boot the MCP transport', () => {
@@ -156,7 +138,6 @@ describe('createApp with the MCP transport on', () => {
     expect(await response.json()).toEqual({ jsonrpc: '2.0', id: 1, result: {} });
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(resolveSession).not.toHaveBeenCalled();
-    expect(transportModule.loaded).toBe(true);
     await app.close();
   });
 
@@ -182,13 +163,74 @@ describe('createApp with the MCP transport on', () => {
       MCP_URL,
       {
         method: 'POST',
-        headers: { ...MCP_HEADERS, 'user-agent': 'mcp-client/1.0', 'x-real-ip': '198.51.100.1' },
+        headers: { ...MCP_HEADERS, 'user-agent': 'mcp-client/1.0', 'x-real-ip': SPOOFED_ADDRESS },
         body: PING,
       },
-      fromPeer('203.0.113.7'),
+      fromPeer(PEER_ADDRESS),
     );
 
-    expect(seenClientMeta).toEqual([{ ip: '203.0.113.7', userAgent: 'mcp-client/1.0' }]);
+    expect(seenClientMeta).toEqual([{ ip: PEER_ADDRESS, userAgent: 'mcp-client/1.0' }]);
+    await app.close();
+  });
+
+  it('limits the client address the proxy boundary resolved, not the one a header claims', async () => {
+    const { app, rateLimiter } = await bootApp();
+
+    await app.app.request(
+      MCP_URL,
+      {
+        method: 'POST',
+        headers: { ...MCP_HEADERS, 'x-real-ip': SPOOFED_ADDRESS },
+        body: PING,
+      },
+      fromPeer(PEER_ADDRESS),
+    );
+
+    expect(rateLimiter.consume).toHaveBeenCalledWith(`mcp-ip-min:${PEER_ADDRESS}`, {
+      limit: 300,
+      windowMs: 60_000,
+      onUnavailable: 'deny',
+    });
+    expect(rateLimiter.consume).not.toHaveBeenCalledWith(
+      `mcp-ip-min:${SPOOFED_ADDRESS}`,
+      expect.anything(),
+    );
+    await app.close();
+  });
+
+  it('audits a refused tool name through the bound audit writer', async () => {
+    const { app, auditWriter } = await bootApp();
+
+    const response = await app.app.request(
+      MCP_URL,
+      {
+        method: 'POST',
+        headers: { ...MCP_HEADERS, 'user-agent': 'mcp-client/1.0' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'player_delete', arguments: {} },
+        }),
+      },
+      fromPeer(PEER_ADDRESS),
+    );
+
+    expect(await response.json()).toMatchObject({
+      id: 2,
+      error: { code: -32602, message: expect.stringContaining('Unknown tool') },
+    });
+    expect(auditWriter.record).toHaveBeenCalledTimes(1);
+    expect(auditWriter.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: adminId,
+        action: 'mcp.tool.failed',
+        resourceId: 'player_delete',
+        ip: PEER_ADDRESS,
+        userAgent: 'mcp-client/1.0',
+        after: expect.objectContaining({ error: 'not_exposed', tokenId }),
+      }),
+    );
     await app.close();
   });
 

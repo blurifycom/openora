@@ -1,8 +1,11 @@
 import {
   RATE_LIMIT_KEYS,
   makeRateLimitKey,
+  type ClientMeta,
   type McpTransportConfig,
   type RateLimitKey,
+  type RateLimitOptions,
+  type RateLimitResult,
   type RateLimiterAdapter,
   type Uuid,
 } from '@openora/core/contracts';
@@ -12,6 +15,7 @@ const BEARER_PATTERN = /^Bearer +([\w\-.~+/]+=*)$/i;
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
+const LIMITER_UNAVAILABLE_RETRY_AFTER_SECONDS = 30;
 
 const JSON_RPC_SERVER_ERROR = -32000;
 const JSON_RPC_INVALID_REQUEST = -32600;
@@ -22,9 +26,12 @@ const NO_STORE = { 'Cache-Control': 'no-store' };
 
 export type OriginVerdict = 'none' | 'allowed' | 'refused';
 
-export type TokenRateLimitVerdict =
-  | { allowed: true }
-  | { allowed: false; retryAfterSeconds: number };
+export type RateLimitVerdict =
+  | { status: 'allowed' }
+  | { status: 'limited'; retryAfterSeconds: number }
+  | { status: 'unavailable' };
+
+export type RateLimitRefusal = Exclude<RateLimitVerdict, { status: 'allowed' }>;
 
 export function parseBearer(header: string | null) {
   if (header === null || header.length > MAX_AUTHORIZATION_HEADER_LENGTH) {
@@ -33,11 +40,8 @@ export function parseBearer(header: string | null) {
   return BEARER_PATTERN.exec(header)?.[1] ?? null;
 }
 
-/**
- * An empty allow-list serves every host; otherwise only an exact hostname match.
- */
 export function servesHost(hostname: string, allowedHosts: readonly string[]) {
-  return allowedHosts.length === 0 || allowedHosts.includes(hostname.toLowerCase());
+  return allowedHosts.includes(hostname.toLowerCase());
 }
 
 /**
@@ -57,6 +61,46 @@ export function retryAfterSeconds(retryAfterMs: number) {
   return Math.max(1, Math.ceil(retryAfterMs / 1000));
 }
 
+function rateLimitVerdict({
+  allowed,
+  retryAfterMs,
+  unavailable,
+}: RateLimitResult): RateLimitVerdict {
+  if (unavailable) {
+    return { status: 'unavailable' };
+  }
+  if (!allowed) {
+    return { status: 'limited', retryAfterSeconds: retryAfterSeconds(retryAfterMs) };
+  }
+  return { status: 'allowed' };
+}
+
+async function consumeWindow(
+  limiter: RateLimiterAdapter<RateLimitKey>,
+  key: RateLimitKey,
+  window: Pick<RateLimitOptions, 'limit' | 'windowMs'>,
+) {
+  return rateLimitVerdict(await limiter.consume(key, { ...window, onUnavailable: 'deny' }));
+}
+
+/**
+ * Consumes one request from the client address's minute window, failing closed when the
+ * limiter is unreachable. A request whose address is unknown is not limited here.
+ */
+export async function consumeAddressRateLimit(
+  limiter: RateLimiterAdapter<RateLimitKey>,
+  ip: ClientMeta['ip'],
+  perIpPerMinute: McpTransportConfig['rateLimit']['perIpPerMinute'],
+): Promise<RateLimitVerdict> {
+  if (ip === null) {
+    return { status: 'allowed' };
+  }
+  return consumeWindow(limiter, makeRateLimitKey(RATE_LIMIT_KEYS.MCP_IP_MINUTE, ip), {
+    limit: perIpPerMinute,
+    windowMs: MINUTE_MS,
+  });
+}
+
 /**
  * Consumes one request from the token's minute window, then from its day window. Both fail
  * closed when the limiter is unreachable; a request the minute window refuses does not count
@@ -65,24 +109,20 @@ export function retryAfterSeconds(retryAfterMs: number) {
 export async function consumeTokenRateLimit(
   limiter: RateLimiterAdapter<RateLimitKey>,
   tokenId: Uuid,
-  limits: McpTransportConfig['rateLimit'],
-): Promise<TokenRateLimitVerdict> {
-  const minute = await limiter.consume(
+  limits: Pick<McpTransportConfig['rateLimit'], 'perMinute' | 'perDay'>,
+) {
+  const minute = await consumeWindow(
+    limiter,
     makeRateLimitKey(RATE_LIMIT_KEYS.MCP_TOKEN_MINUTE, tokenId),
-    { limit: limits.perMinute, windowMs: MINUTE_MS, onUnavailable: 'deny' },
+    { limit: limits.perMinute, windowMs: MINUTE_MS },
   );
-  if (!minute.allowed) {
-    return { allowed: false, retryAfterSeconds: retryAfterSeconds(minute.retryAfterMs) };
+  if (minute.status !== 'allowed') {
+    return minute;
   }
-  const day = await limiter.consume(makeRateLimitKey(RATE_LIMIT_KEYS.MCP_TOKEN_DAY, tokenId), {
+  return consumeWindow(limiter, makeRateLimitKey(RATE_LIMIT_KEYS.MCP_TOKEN_DAY, tokenId), {
     limit: limits.perDay,
     windowMs: DAY_MS,
-    onUnavailable: 'deny',
   });
-  if (!day.allowed) {
-    return { allowed: false, retryAfterSeconds: retryAfterSeconds(day.retryAfterMs) };
-  }
-  return { allowed: true };
 }
 
 function jsonRpcError(
@@ -136,6 +176,20 @@ export function rateLimited(retryAfter: number) {
     { code: JSON_RPC_SERVER_ERROR, message: 'Too many requests' },
     { 'Retry-After': String(retryAfter) },
   );
+}
+
+export function limiterUnavailable() {
+  return jsonRpcError(
+    503,
+    { code: JSON_RPC_SERVER_ERROR, message: 'Service unavailable' },
+    { 'Retry-After': String(LIMITER_UNAVAILABLE_RETRY_AFTER_SECONDS) },
+  );
+}
+
+export function rateLimitRefused(refusal: RateLimitRefusal) {
+  return refusal.status === 'unavailable'
+    ? limiterUnavailable()
+    : rateLimited(refusal.retryAfterSeconds);
 }
 
 /**

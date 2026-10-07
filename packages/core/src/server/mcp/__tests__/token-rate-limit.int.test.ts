@@ -3,15 +3,21 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createClient } from 'redis';
 import { createTestRedis, type TestRedis } from '@openora/core/testing';
 import { RedisRateLimiter } from '../../kernel/redis-rate-limiter.js';
-import { consumeTokenRateLimit, type TokenRateLimitVerdict } from '../transport-gate.js';
+import {
+  consumeAddressRateLimit,
+  consumeTokenRateLimit,
+  type RateLimitVerdict,
+} from '../transport-gate.js';
 
 const DAY_SECONDS = 86_400;
+const CLIENT_IP = '203.0.113.7';
+const OTHER_CLIENT_IP = '2001:db8::7';
 
 let redis: TestRedis;
 
-function retryAfterOf(verdict: TokenRateLimitVerdict) {
-  if (verdict.allowed) {
-    throw new Error('expected the limiter to refuse');
+function retryAfterOf(verdict: RateLimitVerdict) {
+  if (verdict.status !== 'limited') {
+    throw new Error(`expected a spent window, got ${verdict.status}`);
   }
   return verdict.retryAfterSeconds;
 }
@@ -46,7 +52,7 @@ describe('consumeTokenRateLimit on the Redis limiter', () => {
     }
     const refused = await consumeTokenRateLimit(limiter, tokenId, limits);
 
-    expect(allowed).toEqual([{ allowed: true }, { allowed: true }, { allowed: true }]);
+    expect(allowed).toEqual([{ status: 'allowed' }, { status: 'allowed' }, { status: 'allowed' }]);
     expect(retryAfterOf(refused)).toBeGreaterThanOrEqual(1);
     expect(retryAfterOf(refused)).toBeLessThanOrEqual(60);
   });
@@ -84,13 +90,48 @@ describe('consumeTokenRateLimit on the Redis limiter', () => {
 
     await consumeTokenRateLimit(limiter, exhausted, limits);
 
-    expect((await consumeTokenRateLimit(limiter, exhausted, limits)).allowed).toBe(false);
-    expect(await consumeTokenRateLimit(limiter, randomUUID(), limits)).toEqual({ allowed: true });
+    expect((await consumeTokenRateLimit(limiter, exhausted, limits)).status).toBe('limited');
+    expect(await consumeTokenRateLimit(limiter, randomUUID(), limits)).toEqual({
+      status: 'allowed',
+    });
   });
 
-  it('refuses while the limiter is unreachable', async () => {
+  it('reports the limiter as unavailable while it is unreachable', async () => {
     expect(
       await consumeTokenRateLimit(offlineLimiter(), randomUUID(), { perMinute: 60, perDay: 2000 }),
-    ).toEqual({ allowed: false, retryAfterSeconds: 60 });
+    ).toEqual({ status: 'unavailable' });
+  });
+});
+
+describe('consumeAddressRateLimit on the Redis limiter', () => {
+  it('allows the per-address limit, then refuses until the minute window resets', async () => {
+    const limiter = new RedisRateLimiter(redis.client);
+    const perIpPerMinute = 2;
+
+    await consumeAddressRateLimit(limiter, CLIENT_IP, perIpPerMinute);
+    await consumeAddressRateLimit(limiter, CLIENT_IP, perIpPerMinute);
+    const refused = await consumeAddressRateLimit(limiter, CLIENT_IP, perIpPerMinute);
+
+    expect(retryAfterOf(refused)).toBeGreaterThanOrEqual(1);
+    expect(retryAfterOf(refused)).toBeLessThanOrEqual(60);
+    expect(await redis.client.get(`rl:mcp-ip-min:${CLIENT_IP}`)).toBe('3');
+  });
+
+  it('keeps every address, an IPv6 one included, on its own counter', async () => {
+    const limiter = new RedisRateLimiter(redis.client);
+
+    await consumeAddressRateLimit(limiter, CLIENT_IP, 1);
+
+    expect((await consumeAddressRateLimit(limiter, CLIENT_IP, 1)).status).toBe('limited');
+    expect(await consumeAddressRateLimit(limiter, OTHER_CLIENT_IP, 1)).toEqual({
+      status: 'allowed',
+    });
+    expect(await redis.client.get(`rl:mcp-ip-min:${OTHER_CLIENT_IP}`)).toBe('1');
+  });
+
+  it('reports the limiter as unavailable while it is unreachable', async () => {
+    expect(await consumeAddressRateLimit(offlineLimiter(), CLIENT_IP, 300)).toEqual({
+      status: 'unavailable',
+    });
   });
 });

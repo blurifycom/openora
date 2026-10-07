@@ -11,9 +11,11 @@ import {
   accessDenied,
   batchRefused,
   bearerRequired,
+  consumeAddressRateLimit,
   consumeTokenRateLimit,
   internalError,
   invalidToken,
+  limiterUnavailable,
   methodNotAllowed,
   noStore,
   originRefused,
@@ -22,21 +24,37 @@ import {
   parseError,
   payloadTooLarge,
   preflight,
+  rateLimitRefused,
   rateLimited,
   retryAfterSeconds,
   servesHost,
 } from '../transport-gate.js';
 
 const BACKOFFICE = 'https://backoffice.example.com';
+const CLIENT_IP = '203.0.113.7';
 const LIMITS = { perMinute: 60, perDay: 2000 };
+const PER_IP_PER_MINUTE = 300;
+const ALLOWED: RateLimitResult = { allowed: true, retryAfterMs: 0 };
+const STORE_DOWN: RateLimitResult = { allowed: false, retryAfterMs: 60_000, unavailable: true };
 
-function scriptedLimiter(results: Partial<Record<'min' | 'day', RateLimitResult>>) {
+type Window = 'ip' | 'min' | 'day';
+
+const WINDOW_PREFIXES: Record<Window, string> = {
+  ip: 'mcp-ip-min:',
+  min: 'mcp-token-min:',
+  day: 'mcp-token-day:',
+};
+
+function windowOf(key: RateLimitKey): Window | undefined {
+  return (['ip', 'min', 'day'] as const).find((window) => key.startsWith(WINDOW_PREFIXES[window]));
+}
+
+function scriptedLimiter(results: Partial<Record<Window, RateLimitResult>>) {
   const consume = vi.fn(
-    async (key: RateLimitKey, _options: RateLimitOptions): Promise<RateLimitResult> =>
-      (key.startsWith('mcp-token-min:') ? results.min : results.day) ?? {
-        allowed: true,
-        retryAfterMs: 0,
-      },
+    async (key: RateLimitKey, _options: RateLimitOptions): Promise<RateLimitResult> => {
+      const window = windowOf(key);
+      return (window && results[window]) ?? ALLOWED;
+    },
   );
   return { limiter: mock<RateLimiterAdapter<RateLimitKey>>({ consume }), consume };
 }
@@ -74,8 +92,8 @@ describe('parseBearer', () => {
 });
 
 describe('servesHost', () => {
-  it('serves every host when none is bound', () => {
-    expect(servesHost('player.example.com', [])).toBe(true);
+  it('serves no host when none is bound', () => {
+    expect(servesHost('player.example.com', [])).toBe(false);
   });
 
   it('serves a bound host whatever its case or port', () => {
@@ -125,13 +143,52 @@ describe('retryAfterSeconds', () => {
   });
 });
 
+describe('consumeAddressRateLimit', () => {
+  it('consumes the address minute window, failing closed', async () => {
+    const { limiter, consume } = scriptedLimiter({});
+
+    expect(await consumeAddressRateLimit(limiter, CLIENT_IP, PER_IP_PER_MINUTE)).toEqual({
+      status: 'allowed',
+    });
+    expect(consume.mock.calls).toEqual([
+      [`mcp-ip-min:${CLIENT_IP}`, { limit: 300, windowMs: 60_000, onUnavailable: 'deny' }],
+    ]);
+  });
+
+  it('does not limit a request whose address is unknown', async () => {
+    const { limiter, consume } = scriptedLimiter({ ip: STORE_DOWN });
+
+    expect(await consumeAddressRateLimit(limiter, null, PER_IP_PER_MINUTE)).toEqual({
+      status: 'allowed',
+    });
+    expect(consume).not.toHaveBeenCalled();
+  });
+
+  it('refuses a spent window with the time until it resets', async () => {
+    const { limiter } = scriptedLimiter({ ip: { allowed: false, retryAfterMs: 41_200 } });
+
+    expect(await consumeAddressRateLimit(limiter, CLIENT_IP, PER_IP_PER_MINUTE)).toEqual({
+      status: 'limited',
+      retryAfterSeconds: 42,
+    });
+  });
+
+  it('reports a store it cannot reach as unavailable', async () => {
+    const { limiter } = scriptedLimiter({ ip: STORE_DOWN });
+
+    expect(await consumeAddressRateLimit(limiter, CLIENT_IP, PER_IP_PER_MINUTE)).toEqual({
+      status: 'unavailable',
+    });
+  });
+});
+
 describe('consumeTokenRateLimit', () => {
   const tokenId = randomUUID();
 
   it('consumes the minute window, then the day window, both failing closed', async () => {
     const { limiter, consume } = scriptedLimiter({});
 
-    expect(await consumeTokenRateLimit(limiter, tokenId, LIMITS)).toEqual({ allowed: true });
+    expect(await consumeTokenRateLimit(limiter, tokenId, LIMITS)).toEqual({ status: 'allowed' });
     expect(consume.mock.calls).toEqual([
       [`mcp-token-min:${tokenId}`, { limit: 60, windowMs: 60_000, onUnavailable: 'deny' }],
       [`mcp-token-day:${tokenId}`, { limit: 2000, windowMs: 86_400_000, onUnavailable: 'deny' }],
@@ -144,7 +201,7 @@ describe('consumeTokenRateLimit', () => {
     });
 
     expect(await consumeTokenRateLimit(limiter, tokenId, LIMITS)).toEqual({
-      allowed: false,
+      status: 'limited',
       retryAfterSeconds: 13,
     });
     expect(consume).toHaveBeenCalledTimes(1);
@@ -154,8 +211,50 @@ describe('consumeTokenRateLimit', () => {
     const { limiter } = scriptedLimiter({ day: { allowed: false, retryAfterMs: 3_600_000 } });
 
     expect(await consumeTokenRateLimit(limiter, tokenId, LIMITS)).toEqual({
-      allowed: false,
+      status: 'limited',
       retryAfterSeconds: 3600,
+    });
+  });
+
+  it('reports either window losing its store as unavailable, never as a spent window', async () => {
+    const minute = scriptedLimiter({ min: STORE_DOWN });
+    const day = scriptedLimiter({ day: STORE_DOWN });
+
+    expect(await consumeTokenRateLimit(minute.limiter, tokenId, LIMITS)).toEqual({
+      status: 'unavailable',
+    });
+    expect(minute.consume).toHaveBeenCalledTimes(1);
+    expect(await consumeTokenRateLimit(day.limiter, tokenId, LIMITS)).toEqual({
+      status: 'unavailable',
+    });
+  });
+
+  it('refuses when the store is unreachable even if the limiter let the request through', async () => {
+    const { limiter } = scriptedLimiter({ min: { ...ALLOWED, unavailable: true } });
+
+    expect(await consumeTokenRateLimit(limiter, tokenId, LIMITS)).toEqual({
+      status: 'unavailable',
+    });
+  });
+});
+
+describe('rateLimitRefused', () => {
+  it('answers a spent window with 429 and its retry time', () => {
+    const response = rateLimitRefused({ status: 'limited', retryAfterSeconds: 42 });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('42');
+  });
+
+  it('answers a store it cannot reach with 503, retrying after 30 seconds', async () => {
+    const response = rateLimitRefused({ status: 'unavailable' });
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('retry-after')).toBe('30');
+    expect(await response.json()).toEqual({
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32000, message: 'Service unavailable' },
     });
   });
 });
@@ -167,6 +266,7 @@ describe('error responses', () => {
     ['bearer required', bearerRequired, 401, -32000],
     ['invalid token', invalidToken, 401, -32000],
     ['rate limited', () => rateLimited(5), 429, -32000],
+    ['limiter unavailable', limiterUnavailable, 503, -32000],
     ['access denied', accessDenied, 403, -32000],
     ['payload too large', payloadTooLarge, 413, -32000],
     ['parse error', parseError, 400, -32700],

@@ -7,7 +7,6 @@ import type {
   McpToolResult,
   RunContext,
 } from '@openora/core/contracts';
-import { projectedOutputJsonSchema } from './output-schema.js';
 
 export const CORRELATION_ID_META_KEY = 'openora/correlationId';
 
@@ -42,18 +41,28 @@ function objectJsonSchema(
   return parsed.data;
 }
 
-function exposedKeys(descriptor: McpToolDescriptor, personalFields: McpPersonalFieldMode) {
-  if (personalFields === 'include') {
-    return descriptor.redact.allow;
-  }
-  const personal = new Set<string>(descriptor.redact.personal ?? []);
-  return descriptor.redact.allow.filter((key) => !personal.has(key));
+function droppedKeys(descriptor: McpToolDescriptor, personalFields: McpPersonalFieldMode) {
+  return new Set<string>(personalFields === 'drop' ? (descriptor.redact.personal ?? []) : []);
+}
+
+function withoutKeys(schema: Tool['inputSchema'], dropped: ReadonlySet<string>) {
+  const { properties, required } = schema;
+  return {
+    ...schema,
+    ...(properties && {
+      properties: Object.fromEntries(
+        Object.entries(properties).filter(([key]) => !dropped.has(key)),
+      ),
+    }),
+    ...(required && { required: required.filter((key) => !dropped.has(key)) }),
+  };
 }
 
 /**
- * The read-class tools as MCP tool definitions, named by their model names. In 'drop' mode the
- * keys a tool marks as personal leave both the published output schema and every result.
- * Throws when a tool's input or output schema is not a JSON object schema.
+ * The read-class tools as MCP tool definitions, named by their model names. Each output schema
+ * is the kernel's, already narrowed to the allow-listed keys; in 'drop' mode the keys a tool
+ * marks as personal leave both it and every result. Throws when a tool's input or output
+ * schema is not a JSON object schema.
  */
 export function exposedTools(
   descriptors: readonly McpToolDescriptor[],
@@ -62,20 +71,19 @@ export function exposedTools(
   return descriptors
     .filter((descriptor) => descriptor.class === 'read')
     .map((descriptor) => {
-      const keys = exposedKeys(descriptor, personalFields);
+      const dropped = droppedKeys(descriptor, personalFields);
       return {
         id: descriptor.id,
         iam: descriptor.iam,
-        keys,
+        keys: descriptor.redact.allow.filter((key) => !dropped.has(key)),
         definition: {
           name: descriptor.modelName,
           title: descriptor.title,
           description: descriptor.description,
           inputSchema: objectJsonSchema(descriptor.id, 'input', descriptor.inputJsonSchema),
-          outputSchema: objectJsonSchema(
-            descriptor.id,
-            'output',
-            projectedOutputJsonSchema(descriptor.outputSchema, keys),
+          outputSchema: withoutKeys(
+            objectJsonSchema(descriptor.id, 'output', descriptor.outputJsonSchema),
+            dropped,
           ),
           annotations: READ_TOOL_ANNOTATIONS,
         },

@@ -84,12 +84,43 @@ describe('exposedTools', () => {
     ]);
   });
 
+  it('publishes the kernel output schema itself, narrowed by the personal keys in drop mode', () => {
+    const [summary] = descriptors().filter((descriptor) => descriptor.class === 'read');
+    const outputJsonSchema = {
+      type: 'object',
+      title: 'Published by the kernel',
+      properties: { playerId: { type: 'string' }, email: { type: 'string' } },
+      required: ['playerId', 'email'],
+      additionalProperties: false,
+    };
+
+    const [dropped] = exposedTools([{ ...summary, outputJsonSchema }], 'drop');
+    const [included] = exposedTools([{ ...summary, outputJsonSchema }], 'include');
+
+    expect(dropped.definition.outputSchema).toEqual({
+      type: 'object',
+      title: 'Published by the kernel',
+      properties: { playerId: { type: 'string' } },
+      required: ['playerId'],
+      additionalProperties: false,
+    });
+    expect(included.definition.outputSchema).toEqual(outputJsonSchema);
+  });
+
   it('refuses at boot a tool whose input schema is not a JSON object schema', () => {
     const [summary] = descriptors().filter((descriptor) => descriptor.class === 'read');
 
     expect(() =>
       exposedTools([{ ...summary, inputJsonSchema: { type: 'string' } }], 'drop'),
     ).toThrow(/"player\.summary": its input JSON Schema is not an object schema/);
+  });
+
+  it('refuses at boot a tool whose output schema is not a JSON object schema', () => {
+    const [summary] = descriptors().filter((descriptor) => descriptor.class === 'read');
+
+    expect(() =>
+      exposedTools([{ ...summary, outputJsonSchema: { type: 'array' } }], 'drop'),
+    ).toThrow(/"player\.summary": its output JSON Schema is not an object schema/);
   });
 });
 

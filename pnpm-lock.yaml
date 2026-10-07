@@ -120,9 +120,6 @@ importers:
       '@hono/node-server':
         specifier: 2.0.10
         version: 2.0.10(hono@4.13.5)
-      '@modelcontextprotocol/sdk':
-        specifier: 1.29.0
-        version: 1.29.0(zod@4.4.3)
       '@orpc/client':
         specifier: 1.14.5
         version: 1.14.5
@@ -181,6 +178,9 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(zod@4.4.3)
       '@tanstack/react-query':
         specifier: 5.101.4
         version: 5.101.4(react@19.2.7)

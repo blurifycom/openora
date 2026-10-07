@@ -32,6 +32,8 @@ export const RATE_LIMIT_KEYS = {
   PROMO_PUBLIC_OFFERS_IP: 'promo-public-offers-ip',
   MCP_TOKEN_MINUTE: 'mcp-token-min',
   MCP_TOKEN_DAY: 'mcp-token-day',
+  MCP_IP_MINUTE: 'mcp-ip-min',
+  MCP_TOKEN_CREATE: 'mcp-token-create',
 } as const;
 
 export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];
@@ -50,7 +52,6 @@ export type RateLimitOptions = {
    * What to do when the backing store is unreachable: 'allow' keeps availability
    * (throttling pauses during an outage); 'deny' fails closed for keys where an
    * unthrottled window is worse than a 429 (credential guessing). Default 'allow'.
-   * The in-process default is never unavailable, so it ignores this.
    */
   onUnavailable?: 'allow' | 'deny';
 };
@@ -59,6 +60,8 @@ export type RateLimitResult = {
   allowed: boolean;
   /** Milliseconds until the window resets. 0 when allowed. */
   retryAfterMs: number;
+  /** The store could not be reached: `allowed` then follows `onUnavailable`, not the count. */
+  unavailable?: boolean;
 };
 
 export type RateLimiterAdapter<Key extends string = string> = {

@@ -166,8 +166,47 @@ function requestMeta(c: Context, trustedProxies: TrustedProxies) {
 }
 
 const MCP_MAX_BODY_BYTES = 1_048_576;
+const MCP_SDK_PACKAGE = '@modelcontextprotocol/sdk';
+const MCP_SDK_VERSION = '1.29.0';
 
 type MountedMcpTransport = { path: string; transport: McpHttpTransport };
+
+function causeChain(err: unknown) {
+  const chain: Error[] = [];
+  for (
+    let current = err;
+    current instanceof Error && !chain.includes(current);
+    current = current.cause
+  ) {
+    chain.push(current);
+  }
+  return chain;
+}
+
+function isMissingMcpSdk(err: unknown) {
+  return causeChain(err).some(
+    (link) =>
+      'code' in link &&
+      link.code === 'ERR_MODULE_NOT_FOUND' &&
+      link.message.includes(MCP_SDK_PACKAGE),
+  );
+}
+
+async function importMcpHttpTransport() {
+  try {
+    return await import('../mcp/http-transport.js');
+  } catch (err) {
+    if (!isMissingMcpSdk(err)) {
+      throw err;
+    }
+    throw new Error(
+      `[create-app] agents.mcp.enabled is on, but ${MCP_SDK_PACKAGE} is not installed. ` +
+        `@openora/core declares it as an optional peer dependency: install ` +
+        `${MCP_SDK_PACKAGE}@${MCP_SDK_VERSION}, or turn agents.mcp.enabled off.`,
+      { cause: err },
+    );
+  }
+}
 
 async function loadMcpTransport(container: Container<CoreTokenCatalog>, kernel: McpKernel) {
   const config = container.get(PLATFORM_CONFIG).agents.mcp;
@@ -193,8 +232,7 @@ async function loadMcpTransport(container: Container<CoreTokenCatalog>, kernel: 
         '\nBind them, or turn agents.mcp.enabled off.',
     );
   }
-  // Imported here so a deployment that never enables MCP never loads the SDK.
-  const { createMcpHttpTransport } = await import('../mcp/http-transport.js');
+  const { createMcpHttpTransport } = await importMcpHttpTransport();
   return {
     path: config.path,
     transport: createMcpHttpTransport({
@@ -202,6 +240,7 @@ async function loadMcpTransport(container: Container<CoreTokenCatalog>, kernel: 
       authenticator: container.get(MCP_TOKEN_AUTHENTICATOR),
       adminGuard: container.get(ADMIN_GUARD),
       rateLimiter: container.get(RATE_LIMITER),
+      audit: container.get(AUDIT_WRITER),
       config,
     }),
   };

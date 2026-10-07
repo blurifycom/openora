@@ -31,9 +31,10 @@ return { count, redis.call('PTTL', KEYS[1]) }
  * past the limit. On a backend error/unreachable client it fails OPEN
  * (allows the request) by default; callers that pass `onUnavailable: 'deny'`
  * (credential-guessing surfaces, where an unthrottled window is worse than a
- * false-positive 429) fail CLOSED instead. Never logs the raw key - it can
- * embed a token or email (`pwreset:<token>`, `login:<email>`) - only the
- * prefix before the first `:` is recorded.
+ * false-positive 429) fail CLOSED instead. Either way the result is marked
+ * `unavailable`, so a caller can tell an outage from a spent window. Never
+ * logs the raw key - it can embed a token or email (`pwreset:<token>`,
+ * `login:<email>`) - only the prefix before the first `:` is recorded.
  */
 export class RedisRateLimiter implements RateLimiterAdapter {
   private readonly logger = createLogger('redis-rate-limiter');
@@ -81,8 +82,8 @@ export class RedisRateLimiter implements RateLimiterAdapter {
       'rate limiter backend unavailable',
     );
     if (opts.onUnavailable === 'deny') {
-      return { allowed: false, retryAfterMs: opts.windowMs };
+      return { allowed: false, retryAfterMs: opts.windowMs, unavailable: true };
     }
-    return { allowed: true, retryAfterMs: 0 };
+    return { allowed: true, retryAfterMs: 0, unavailable: true };
   }
 }
