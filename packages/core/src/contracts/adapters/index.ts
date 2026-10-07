@@ -275,6 +275,15 @@ export {
   GameGeoDecisionSchema,
   GameGeoDenialReasonSchema,
 } from './game-geo-check.js';
+export type {
+  GameGeoRuleCommands,
+  ReplaceGameGeoRulesInput,
+  ReplaceGameGeoRulesResult,
+} from './game-geo-rule-commands.js';
+export {
+  GAME_GEO_RULE_COMMANDS,
+  ReplaceGameGeoRulesInputSchema,
+} from './game-geo-rule-commands.js';
 
 export type { PlayerProvisioning, PlayerRegistrationRecord } from './player-provisioning.js';
 export { PLAYER_PROVISIONING } from './player-provisioning.js';

@@ -1,0 +1,1 @@
+ALTER TABLE "game_geo_rule" ADD COLUMN "source" text DEFAULT 'admin' NOT NULL;

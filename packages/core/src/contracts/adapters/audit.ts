@@ -34,6 +34,7 @@ export type DirectAuditAction =
   | 'compliance.country_rule.created'
   | 'compliance.country_rule.setting_changed'
   | 'compliance.global_kyc.set'
+  | 'compliance.game-geo-rules.synced'
   | 'wallet.withdrawal.auto_approved'
   | 'wallet.withdrawal.outcome_unknown'
   | 'wallet.auto_withdrawal_rule.set'
