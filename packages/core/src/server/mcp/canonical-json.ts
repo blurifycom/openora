@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
 
+const MAX_NESTING = 64;
+
 /**
  * JSON with object keys sorted at every depth and undefined members dropped, so equal
- * values always produce the same bytes. Total over any input: a bigint serializes as its
- * decimal string and a reference cycle as the string "[Circular]".
+ * values always produce the same bytes. Total over any JSON-shaped input: a bigint
+ * serializes as its decimal string, a reference cycle as the string "[Circular]", and an
+ * object or array nested more than 64 levels deep as the string "[TooDeep]", so values that
+ * differ only below that depth serialize alike.
  */
 export function canonicalJson(value: unknown): string {
   return serialize(value, new Set()) ?? 'null';
@@ -25,6 +29,9 @@ function serialize(value: unknown, ancestors: Set<object>): string | undefined {
   }
   if (ancestors.has(value)) {
     return JSON.stringify('[Circular]');
+  }
+  if (ancestors.size >= MAX_NESTING) {
+    return JSON.stringify('[TooDeep]');
   }
   ancestors.add(value);
   const serialized = Array.isArray(value)

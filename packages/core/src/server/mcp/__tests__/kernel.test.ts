@@ -61,6 +61,7 @@ type HoldImplementation = ActionTypeImplementation<typeof holdPayload>;
 
 const SQL_ERROR = 'SELECT email FROM players WHERE id=991';
 const PLAYER_EMAIL = 'player@example.com';
+const REQUEST_BODY_NESTING = 400_000;
 
 const adminId = randomUUID();
 const agentId = randomUUID();
@@ -83,6 +84,23 @@ const summaryHandler: SummaryHandler = async (input) => ({
   email: PLAYER_EMAIL,
   balance: '12.50',
 });
+
+function nestedArrays(levels: number): unknown {
+  let value: unknown = playerId;
+  for (let level = 0; level < levels; level += 1) {
+    value = [value];
+  }
+  return value;
+}
+
+function unreadableInput(): Record<string, unknown> {
+  return Object.defineProperty({}, 'playerId', {
+    enumerable: true,
+    get() {
+      throw new Error(SQL_ERROR);
+    },
+  });
+}
 
 function idempotentHold(): HoldImplementation {
   const applied = new Set<string>();
@@ -215,6 +233,38 @@ describe('McpKernel.invokeTool', () => {
       tokenId,
     });
     expect(audit?.record.mock.calls[0]?.[0].after).not.toHaveProperty('playerPseudonym');
+  });
+
+  it('audits a call whose input nests deeper than the call stack reaches', async () => {
+    const { kernel, audit, handler } = setup();
+    const deep = nestedArrays(REQUEST_BODY_NESTING);
+
+    const refused = await kernel.invokeTool('player.summary', deep, runContext());
+    const unknown = await kernel.invokeTool('player.delete', deep, runContext());
+
+    expect(refused).toMatchObject({ ok: false, error: 'invalid_input' });
+    expect(unknown).toEqual({ ok: false, error: 'unknown_tool' });
+    expect(handler).not.toHaveBeenCalled();
+    expect(audit?.record.mock.calls.map(([entry]) => entry.after)).toEqual([
+      expect.objectContaining({ error: 'invalid_input', inputHash: sha256(deep) }),
+      expect.objectContaining({ error: 'unknown_tool', inputHash: sha256(deep) }),
+    ]);
+  });
+
+  it('audits once and answers internal_error when the call throws outside its handler', async () => {
+    const { kernel, audit, handler } = setup();
+
+    const result = await kernel.invokeTool('player.summary', unreadableInput(), runContext());
+
+    expect(result).toEqual({ ok: false, error: 'internal_error' });
+    expect(handler).not.toHaveBeenCalled();
+    expect(audit?.record).toHaveBeenCalledTimes(1);
+    expect(audit?.record.mock.calls[0]?.[0]).toMatchObject({
+      action: 'mcp.tool.failed',
+      resourceId: 'player.summary',
+      after: { toolId: 'player.summary', error: 'internal_error' },
+    });
+    expect(JSON.stringify(audit?.record.mock.calls)).not.toContain('SELECT');
   });
 
   it('turns a thrown database error into internal_error without its message anywhere', async () => {

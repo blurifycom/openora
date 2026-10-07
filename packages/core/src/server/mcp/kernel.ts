@@ -77,7 +77,7 @@ type KernelState = {
 
 type AuditEntry = Parameters<AuditWritePort['record']>[0];
 
-type ToolOutcome = { result: McpToolResult; inputHash: string; outputHash?: string };
+type ToolOutcome = { result: McpToolResult; inputHash?: string; outputHash?: string };
 
 type ExecutionOutcome = { result: ActionExecutionResult; payloadHash: string };
 
@@ -344,18 +344,17 @@ async function invokeTool(
     return failure('invalid_run_context');
   }
   const tool = state.tools.get(call.toolId);
-  const outcome = tool
-    ? await runTool(state, tool, call.input, run.data)
-    : { result: failure('unknown_tool'), inputHash: sha256Hex(call.input ?? {}) };
+  const toolId = tool ? tool.contract.id : boundedId(call.toolId);
+  const outcome = await toolOutcome(state, { tool, toolId, input: call.input, run: run.data });
   const audited = await recordAudit(state.audit, {
     actorId: runActorAdminId(run.data.actor),
     actorType: 'admin',
     action: outcome.result.ok ? 'mcp.tool.invoked' : 'mcp.tool.failed',
     resourceType: 'mcp-tool',
-    resourceId: tool ? tool.contract.id : boundedId(call.toolId),
+    resourceId: toolId,
     correlationId: run.data.correlationId,
     after: withoutUndefined({
-      toolId: tool ? tool.contract.id : boundedId(call.toolId),
+      toolId,
       toolClass: tool?.contract.class,
       schemaVersion: tool?.contract.schemaVersion,
       runId: run.data.runId,
@@ -368,6 +367,26 @@ async function invokeTool(
     }),
   });
   return audited ? outcome.result : failure('audit_unavailable');
+}
+
+async function toolOutcome(
+  state: KernelState,
+  {
+    tool,
+    toolId,
+    input,
+    run,
+  }: { tool: ServedTool | undefined; toolId: string; input: unknown; run: RunContext },
+): Promise<ToolOutcome> {
+  try {
+    if (!tool) {
+      return { result: failure('unknown_tool'), inputHash: sha256Hex(input ?? {}) };
+    }
+    return await runTool(state, tool, input, run);
+  } catch (err) {
+    logger.error({ err, toolId, runId: run.runId }, 'mcp tool call failed outside its handler');
+    return { result: failure('internal_error') };
+  }
 }
 
 async function runTool(

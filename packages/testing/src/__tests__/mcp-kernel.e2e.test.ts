@@ -35,6 +35,8 @@ let admin: TestClient;
 let adminId: string;
 
 const SEEDED_ADMIN_EMAIL = 'admin@oss.dev';
+const REQUEST_BODY_NESTING = 400_000;
+const SQL_ERROR = 'SELECT email FROM player WHERE id = 991';
 
 const EXPECTED_TOOL_OWNERS = {
   'ggr.summary': 'analytics',
@@ -92,6 +94,23 @@ function readGeneratedAgentSurface() {
   throw new Error(
     'no generated catalog.json - run `pnpm gen:catalog` (`pnpm install` also runs it)',
   );
+}
+
+function nestedArrays(levels: number): unknown {
+  let value: unknown = randomUUID();
+  for (let level = 0; level < levels; level += 1) {
+    value = [value];
+  }
+  return value;
+}
+
+function unreadableInput(): Record<string, unknown> {
+  return Object.defineProperty({}, 'playerId', {
+    enumerable: true,
+    get() {
+      throw new Error(SQL_ERROR);
+    },
+  });
 }
 
 function byId<T extends { id: string }>(entries: readonly T[]): T[] {
@@ -437,6 +456,44 @@ describe('MCP read tools are IAM-checked, allow-listed and audited by hash', () 
     });
     const rows = await auditRowsOfCall(inverted.correlationId);
     expect(rows.map((row) => row.action)).toEqual(['mcp.tool.failed']);
+  });
+
+  it('refuses and audits an input nested deeper than the call stack reaches', async () => {
+    const run = adminRun(adminId);
+
+    const result = await kernel.invokeTool(
+      'player.summary',
+      nestedArrays(REQUEST_BODY_NESTING),
+      run,
+    );
+
+    expect(result).toMatchObject({ ok: false, error: 'invalid_input' });
+    const rows = await auditRowsOfCall(run.correlationId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      action: 'mcp.tool.failed',
+      actorId: adminId,
+      resourceType: 'mcp-tool',
+      resourceId: 'player.summary',
+    });
+    expect(rows[0]?.after).toMatchObject({
+      error: 'invalid_input',
+      inputHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+  });
+
+  it('answers internal_error and still writes the one audit row when a call throws outside its handler', async () => {
+    const run = adminRun(adminId);
+
+    const result = await kernel.invokeTool('player.summary', unreadableInput(), run);
+
+    expect(result).toEqual({ ok: false, error: 'internal_error' });
+    const rows = await auditRowsOfCall(run.correlationId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ action: 'mcp.tool.failed', resourceId: 'player.summary' });
+    expect(rows[0]?.after).toMatchObject({ error: 'internal_error' });
+    expect(rows[0]?.after).not.toHaveProperty('inputHash');
+    expect(JSON.stringify(rows[0])).not.toContain(SQL_ERROR);
   });
 });
 
