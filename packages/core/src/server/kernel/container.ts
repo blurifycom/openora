@@ -1,7 +1,8 @@
 import type { AnyToken, TokenCatalog, TokenValue } from '@openora/core/contracts';
 
 // Functional DI container. Resolution is lazy and cached; last `register` for a
-// token wins - overlays rebind adapters by registering after the default binding.
+// token wins - overlays rebind adapters by registering after the default binding -
+// until `registerSealed` binds it for good.
 //
 // Container itself is token-shape-agnostic (AnyToken, the shape Token AND
 // SealedToken both share) - it's a type-erased-at-runtime symbol map. The
@@ -15,8 +16,9 @@ export type Factory<T, C extends TokenCatalog> = (c: Container<C>) => T;
  * lazily and caches the instance for the container's lifetime; `register()`
  * for an already-resolved token clears the cached instance, so a later
  * `register()` (an overlay rebinding an adapter after the default plugin
- * loads) always wins on the next `get()`. Resolving a token whose factory
- * transitively depends on itself throws rather than recursing forever.
+ * loads) always wins on the next `get()`. A token bound with `registerSealed()`
+ * is the exception: every later registration of it throws. Resolving a token
+ * whose factory transitively depends on itself throws rather than recursing forever.
  * `dispose()` runs every `onDispose` callback in REVERSE registration order -
  * register dependencies before their dependents so teardown happens safely.
  */
@@ -24,6 +26,7 @@ export class Container<C extends TokenCatalog> {
   private readonly factories = new Map<symbol, Factory<unknown, C>>();
   private readonly instances = new Map<symbol, unknown>();
   private readonly resolving = new Set<symbol>();
+  private readonly sealed = new Set<symbol>();
   private readonly disposers: Array<() => void | Promise<void>> = [];
 
   register<T extends C[keyof C]>(
@@ -33,7 +36,20 @@ export class Container<C extends TokenCatalog> {
     this.registerUnsafe(token, factory);
   }
 
+  registerSealed<T extends C[keyof C]>(
+    token: T,
+    factory: (container: Container<C>) => TokenValue<T>,
+  ): void {
+    this.registerUnsafe(token, factory);
+    this.sealed.add(token);
+  }
+
   registerUnsafe<T>(token: AnyToken<T>, factory: Factory<T, C>): void {
+    if (this.sealed.has(token)) {
+      throw new Error(
+        `[container] Token "${token.description ?? String(token)}" is sealed: it is bound once and never rebound.`,
+      );
+    }
     this.factories.set(token, factory as Factory<unknown, C>);
     this.instances.delete(token);
   }

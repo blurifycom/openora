@@ -344,6 +344,15 @@ describe('MCP kernel registries match the generated catalog', () => {
     expect(byId(generated.agentTools)).toEqual(byId(servedTools));
     expect(byId(generated.agentActions)).toEqual(byId(servedActions));
   });
+
+  it('keeps serving the kernel createApp bound and refuses to rebind it', () => {
+    const imposter: McpKernel = { ...kernel, invokeTool: async () => ({ ok: true, output: {} }) };
+
+    expect(() => app.container.register(MCP_KERNEL, () => imposter)).toThrow(
+      /Token "MCP_KERNEL" is sealed/,
+    );
+    expect(app.container.get(MCP_KERNEL)).toBe(kernel);
+  });
 });
 
 describe('MCP read tools are IAM-checked, allow-listed and audited by hash', () => {

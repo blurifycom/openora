@@ -301,9 +301,10 @@ export async function createApp(
 
   assertDurableSeamsBound(container);
 
-  // Bound after configure() so no overlay or composition root can replace the wrapper that
-  // enforces IAM and audit, and before the routers so a router factory can resolve it.
-  container.register(MCP_KERNEL, (c) =>
+  // Sealed after configure() so neither an overlay, the composition root nor a holder of the
+  // returned container can replace the wrapper that enforces IAM and audit, and bound before
+  // the routers so a router factory can resolve it.
+  container.registerSealed(MCP_KERNEL, (c) =>
     createMcpKernel({
       tools: registry.mcp.getTools(),
       actions: registry.actions.getAll(),
