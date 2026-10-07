@@ -627,7 +627,11 @@ describe('an agent-proposed withdrawal hold, then an admin decision', () => {
       transactionId: heldWithdrawalId,
       status: 'completed',
     });
-    expect((await withdrawalRow(heldWithdrawalId)).status).toBe('completed');
+    expect(await withdrawalRow(heldWithdrawalId)).toEqual({
+      status: 'completed',
+      reviewedBy: adminId,
+      reviewReason: null,
+    });
   });
 
   it('returns the funds of a rejected held withdrawal exactly once', async () => {
