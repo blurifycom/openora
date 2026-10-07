@@ -101,7 +101,6 @@ const appFetch = (url: string | URL, init?: RequestInit): Promise<Response> =>
 
 async function connect(token: string): Promise<Client> {
   const client = new Client({ name: 'e2e', version: '1.0.0' });
-  // Library boundary: under exactOptionalPropertyTypes the SDK's client transport class does not match its own Transport type.
   const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
     fetch: appFetch,
     requestInit: { headers: { authorization: `Bearer ${token}` } },
