@@ -9,7 +9,6 @@ import {
 
 export const MCP_TEST_RATE_LIMIT = { perMinute: 20, perDay: 1_000 } as const;
 
-// Its id needs no renaming, so the transport has to refuse it by class, not by name.
 const flagPlayerTool = defineMcpTool({
   id: 'flag_player',
   title: 'Flag player',
@@ -23,11 +22,6 @@ const flagPlayerTool = defineMcpTool({
   errors: [],
 });
 
-/**
- * Test-fixture overlay: enables the MCP transport on `localhost` only, with a per-minute limit
- * a test can exhaust, and registers one propose-class tool the transport must never expose.
- * Append last in a test's `plugins` array so its `PLATFORM_CONFIG` wins.
- */
 export default {
   id: 'test-mcp-transport',
   dependsOn: ['identity'],
@@ -36,7 +30,12 @@ export default {
       definePlatformConfig({
         registration: { termsVersion: 'test-v1' },
         agents: {
-          mcp: { enabled: true, allowedHosts: ['localhost'], rateLimit: MCP_TEST_RATE_LIMIT },
+          mcp: {
+            enabled: true,
+            allowedHosts: ['localhost'],
+            rateLimit: MCP_TEST_RATE_LIMIT,
+            tokenIssuance: { maxActivePerAdmin: 50, perHour: 1_000 },
+          },
         },
       }),
     );

@@ -45,6 +45,12 @@ const TokenSchema = z.object({
 });
 const TokenPageSchema = z.object({ items: z.array(TokenSchema.loose()) });
 const IdSchema = z.object({ id: z.string() });
+const ErrorReasonSchema = z.object({ data: z.object({ reason: z.string() }) });
+const ListItemSchema = z.object({
+  id: z.string(),
+  admin: z.object({ email: z.string().nullable() }),
+});
+const NEW_MODERATOR_PASSWORD = 'N3w-moderator-Passw0rd!';
 const TextContentSchema = z.object({
   content: z.array(z.object({ type: z.literal('text'), text: z.string() })),
 });
@@ -134,6 +140,20 @@ function rawPost({
   );
 }
 
+function notExposedAuditRows(tokenId: string) {
+  return drizzle()
+    .select()
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.action, 'mcp.tool.failed'),
+        sql`${auditLog.after}->>'tokenId' = ${tokenId}`,
+        sql`${auditLog.after}->>'error' = 'not_exposed'`,
+      ),
+    )
+    .orderBy(asc(auditLog.seq));
+}
+
 function toolAuditRows(tokenId: string) {
   return drizzle()
     .select()
@@ -198,6 +218,36 @@ describe('MCP tokens', () => {
     expect(serialized).not.toContain(issued.token);
     expect(serialized).not.toContain(hash);
   });
+
+  it('refuses a lifetime above the cap with a typed reason', async () => {
+    const res = await admin.post('/iam/my-mcp-tokens', { label: 'too-long', ttlDays: 91 });
+
+    expect(res.status).toBe(400);
+    expect(ErrorReasonSchema.parse(await res.json()).data.reason).toBe('ttl_exceeds_max');
+  });
+
+  it("answers another admin's token on the owner route as not found", async () => {
+    const theirs = await issueToken(moderator, 'moderator-own');
+
+    const res = await admin.post(`/iam/my-mcp-tokens/${theirs.id}/revoke`, {});
+
+    expect(res.status).toBe(404);
+    expect(await revokeReasonOf(theirs.id)).toBeNull();
+  });
+
+  it("lets an overseer list and revoke another admin's token", async () => {
+    const theirs = await issueToken(moderator, 'moderator-overseen');
+
+    const listed = await admin.get(`/iam/mcp-tokens?adminUserId=${moderatorId}`);
+    const items = z.object({ items: z.array(ListItemSchema) }).parse(await listed.json()).items;
+    const revoked = await admin.post(`/iam/mcp-tokens/${theirs.id}/revoke`, {});
+
+    expect(listed.status).toBe(200);
+    expect(items.find((item) => item.id === theirs.id)?.admin.email).toBe('moderator@oss.dev');
+    expect(revoked.status).toBe(200);
+    expect(await revokeReasonOf(theirs.id)).toBe('manual');
+    expect((await rawPost({ token: theirs.token })).status).toBe(401);
+  });
 });
 
 describe('MCP transport, happy path through the SDK client', () => {
@@ -244,6 +294,7 @@ describe('MCP transport, happy path through the SDK client', () => {
     expect(row?.after).toMatchObject({
       actorKind: 'mcp_token',
       tokenId: id,
+      personalDropped: true,
       inputHash: expect.stringMatching(/^[0-9a-f]{64}$/),
       outputHash: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
@@ -275,8 +326,8 @@ describe('MCP transport, happy path through the SDK client', () => {
     await client.close();
   });
 
-  it('refuses a propose tool and an action type as unknown tools', async () => {
-    const { token } = await issueToken(admin);
+  it('refuses a propose tool and an action type as unknown tools, and audits both', async () => {
+    const { id, token } = await issueToken(admin);
     const client = await connect(token);
 
     await expect(client.callTool({ name: 'flag_player', arguments: { playerId } })).rejects.toThrow(
@@ -285,6 +336,9 @@ describe('MCP transport, happy path through the SDK client', () => {
     await expect(client.callTool({ name: 'hold_withdrawal', arguments: {} })).rejects.toThrow(
       /Unknown tool/,
     );
+
+    const rows = await notExposedAuditRows(id);
+    expect(rows.map((row) => row.resourceId)).toEqual(['flag_player', 'hold_withdrawal']);
     await client.close();
   });
 });
@@ -381,10 +435,27 @@ describe('MCP tokens, automatic revocation', () => {
     expect((await rawPost({ token })).status).toBe(401);
     moderator = await asAdmin(app.app, { email: 'moderator@oss.dev' });
   });
+
+  it('revokes on a password change', async () => {
+    const { id, token } = await issueToken(moderator);
+
+    const res = await moderator.post('/identity/password/change', {
+      currentPassword: 'password1234',
+      newPassword: NEW_MODERATOR_PASSWORD,
+    });
+
+    expect(res.status).toBe(200);
+    expect(await revokeReasonOf(id)).toBe('sessions_revoked');
+    expect((await rawPost({ token })).status).toBe(401);
+    moderator = await asAdmin(app.app, {
+      email: 'moderator@oss.dev',
+      password: NEW_MODERATOR_PASSWORD,
+    });
+  });
 });
 
 describe('MCP transport, grants', () => {
-  it('lists only what a narrow role grants and refuses the rest, then stops when MCP access goes', async () => {
+  it('lists only what a narrow role grants and refuses the rest, then revokes when MCP access goes', async () => {
     const role = IdSchema.parse(
       await (await admin.post('/iam/roles', { name: 'MCP analyst' })).json(),
     );
@@ -401,7 +472,7 @@ describe('MCP transport, grants', () => {
     expect(
       (await admin.post('/iam/assignments', { userId: moderatorId, roleId: role.id })).status,
     ).toBe(200);
-    const { token } = await issueToken(moderator);
+    const { id, token } = await issueToken(moderator);
     const client = await connect(token);
 
     const { tools } = await client.listTools();
@@ -417,9 +488,10 @@ describe('MCP transport, grants', () => {
     await client.close();
 
     expect((await setGrants([{ resource: 'player', level: 'read' }])).status).toBe(200);
-    await expect
-      .poll(async () => (await rawPost({ token })).status, { timeout: 20_000, interval: 500 })
-      .toBe(403);
+    expect(await revokeReasonOf(id)).toBe('admin_role_removed');
+    expect((await rawPost({ token })).status).toBe(401);
+    expect((await moderator.post('/iam/my-mcp-tokens', { label: 'no-access' })).status).toBe(403);
+    expect((await moderator.get('/iam/my-mcp-tokens')).status).toBe(403);
   });
 });
 

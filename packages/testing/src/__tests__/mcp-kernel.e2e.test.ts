@@ -707,6 +707,15 @@ describe('agent tag, note and enhanced-KYC actions are replay-safe', () => {
 });
 
 describe('MCP transport while agents.mcp is off', () => {
+  it('refuses token issuance with a typed reason', async () => {
+    const res = await admin.post('/iam/my-mcp-tokens', { label: 'off' });
+
+    expect(res.status).toBe(409);
+    expect(
+      z.object({ data: z.object({ reason: z.string() }) }).parse(await res.json()).data.reason,
+    ).toBe('mcp_disabled');
+  });
+
   it('serves no endpoint', async () => {
     const res = await app.app.request('http://localhost/mcp', {
       method: 'POST',
