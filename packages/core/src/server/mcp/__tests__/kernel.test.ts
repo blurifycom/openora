@@ -184,6 +184,33 @@ describe('McpKernel.invokeTool', () => {
     expect(handler).toHaveBeenCalledWith({ playerId, limit: 5 }, run);
   });
 
+  it('strips the keys an allowed output key does not declare, at every depth', async () => {
+    const nestedOutput = z.object({
+      player: z.object({ id: UuidSchema, wallet: z.object({ balance: MoneyAmountSchema }) }),
+    });
+    const fullRow = {
+      player: { id: playerId, email: PLAYER_EMAIL, wallet: { balance: '1.00', iban: SQL_ERROR } },
+    };
+    const { kernel } = kernelOf((registry) => {
+      registry.mcp.tool(
+        defineMcpTool({
+          ...summaryTool,
+          id: 'player.nested',
+          outputSchema: nestedOutput,
+          redact: { allow: ['player'] },
+        }),
+        () => async () => fullRow,
+      );
+    });
+
+    const result = await kernel.invokeTool('player.nested', { playerId, limit: 5 }, runContext());
+
+    expect(result).toEqual({
+      ok: true,
+      output: { player: { id: playerId, wallet: { balance: '1.00' } } },
+    });
+  });
+
   it('audits the call with hashes of the parsed input and the redacted output, never the data', async () => {
     const { kernel, audit } = setup();
     const run = runContext();

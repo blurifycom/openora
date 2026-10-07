@@ -32,6 +32,8 @@ type Rejection = { problem: string; fix: string };
 
 type InputLabel = 'inputSchema' | 'payloadSchema';
 
+type SchemaLabel = InputLabel | 'outputSchema';
+
 type McpRegistrationCandidate<Contract> = {
   contract: Contract;
   owner: string;
@@ -395,7 +397,7 @@ function isBound(value: unknown): boolean {
 
 function jsonFieldRejection(
   node: JsonSchemaNode,
-  label: InputLabel,
+  label: SchemaLabel,
   path: string,
 ): Rejection | null {
   const field = fieldLabel(label, path);
@@ -405,7 +407,7 @@ function jsonFieldRejection(
   if (node.$ref !== undefined) {
     return {
       problem: `${field} is recursive`,
-      fix: 'flatten the shape; a tool input must be a finite tree',
+      fix: 'flatten the shape; a tool schema must be a finite tree',
     };
   }
   const branches = [...(node.anyOf ?? []), ...(node.oneOf ?? []), ...(node.allOf ?? [])];
@@ -420,22 +422,9 @@ function jsonFieldRejection(
   }
   switch (node.type) {
     case 'string':
-      return node.maxLength !== undefined ||
-        (node.format !== undefined && FIXED_WIDTH_STRING_FORMATS.has(node.format))
-        ? null
-        : {
-            problem: `${field} is a string without a maximum length`,
-            fix: 'add .max(n); only an enum, a UUID or an ISO date, time or datetime may leave it out',
-          };
     case 'number':
     case 'integer':
-      return (isBound(node.minimum) || isBound(node.exclusiveMinimum)) &&
-        (isBound(node.maximum) || isBound(node.exclusiveMaximum))
-        ? null
-        : {
-            problem: `${field} is a number without both a lower and an upper bound`,
-            fix: 'add .min() and .max() so a model cannot send an unbounded value',
-          };
+      return label === 'outputSchema' ? null : unboundedRejection(node, field);
     case 'array':
       return arrayRejection(node, label, path);
     case 'object':
@@ -448,6 +437,25 @@ function jsonFieldRejection(
   }
 }
 
+function unboundedRejection(node: z.core.JSONSchema.JSONSchema, field: string): Rejection | null {
+  if (node.type === 'string') {
+    return node.maxLength !== undefined ||
+      (node.format !== undefined && FIXED_WIDTH_STRING_FORMATS.has(node.format))
+      ? null
+      : {
+          problem: `${field} is a string without a maximum length`,
+          fix: 'add .max(n); only an enum, a UUID or an ISO date, time or datetime may leave it out',
+        };
+  }
+  return (isBound(node.minimum) || isBound(node.exclusiveMinimum)) &&
+    (isBound(node.maximum) || isBound(node.exclusiveMaximum))
+    ? null
+    : {
+        problem: `${field} is a number without both a lower and an upper bound`,
+        fix: 'add .min() and .max() so a model cannot send an unbounded value',
+      };
+}
+
 function untypedRejection(field: string): Rejection {
   return {
     problem: `${field} accepts any value`,
@@ -457,22 +465,24 @@ function untypedRejection(field: string): Rejection {
 
 function arrayRejection(
   node: z.core.JSONSchema.JSONSchema,
-  label: InputLabel,
+  label: SchemaLabel,
   path: string,
 ): Rejection | null {
-  if (node.maxItems === undefined) {
+  if (label !== 'outputSchema' && node.maxItems === undefined) {
     return {
       problem: `${fieldLabel(label, path)} is an array without a maximum length`,
       fix: 'add .max(n)',
     };
   }
-  const items = node.items === undefined ? [] : [node.items].flat();
+  const items = [node.items, node.additionalItems]
+    .flat()
+    .filter((item): item is JsonSchemaNode => item !== undefined);
   return firstRejection(items, (item) => jsonFieldRejection(item, label, `${path}[]`));
 }
 
 function objectRejection(
   node: z.core.JSONSchema.JSONSchema,
-  label: InputLabel,
+  label: SchemaLabel,
   path: string,
 ): Rejection | null {
   const field = fieldLabel(label, path);
@@ -513,13 +523,18 @@ function outputSchemaRejection({ outputSchema, redact }: McpToolContract): Rejec
       fix: 'wrap the result in an object; redact.allow names its top-level keys',
     };
   }
+  let jsonSchema: z.core.JSONSchema.JSONSchema;
   try {
-    z.toJSONSchema(outputSchema, { target: 'draft-7', io: 'output' });
+    jsonSchema = z.toJSONSchema(outputSchema, { target: 'draft-7', io: 'output' });
   } catch (err) {
     return {
       problem: `outputSchema cannot be converted to JSON Schema (${errorMessage(err)})`,
       fix: 'outputs are JSON: return ISO strings for dates, decimal strings for money, and no transforms',
     };
+  }
+  const passThrough = jsonFieldRejection(jsonSchema, 'outputSchema', '');
+  if (passThrough) {
+    return passThrough;
   }
   const allow: readonly string[] = Array.isArray(redact?.allow) ? redact.allow : [];
   if (allow.length === 0) {
