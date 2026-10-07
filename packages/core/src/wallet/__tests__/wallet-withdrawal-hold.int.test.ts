@@ -343,7 +343,11 @@ describe('WalletService review of a held withdrawal (real PG)', () => {
 
     expect(result).toEqual({ transactionId: pending.id, status: 'completed' });
     expect(psp.processWithdrawal).toHaveBeenCalledTimes(1);
-    expect(await txById(pending.id)).toMatchObject({ status: 'completed', reviewedBy: approver });
+    expect(await txById(pending.id)).toMatchObject({
+      status: 'completed',
+      reviewedBy: approver,
+      reviewReason: null,
+    });
     expect(await balanceOf(w.id)).toBe(20);
     expect(events.emit.mock.calls.map(([topic]) => topic)).toEqual([
       'wallet.withdrawal.approved',

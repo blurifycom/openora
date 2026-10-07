@@ -1992,7 +1992,13 @@ export class WalletService {
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
     const tx = await this.drizzle.db.transaction((txn) =>
-      this.flipToProcessing({ txn, withdrawalId, adminId, from: QUEUED_WITHDRAWAL_STATUSES }),
+      this.flipToProcessing({
+        txn,
+        withdrawalId,
+        adminId,
+        from: QUEUED_WITHDRAWAL_STATUSES,
+        reviewReason: null,
+      }),
     );
     return this.settleApproved(tx, adminId, meta);
   }
@@ -2013,7 +2019,7 @@ export class WalletService {
     withdrawalId: WalletTransaction['id'];
     adminId: User['id'] | null;
     from: readonly WalletTransaction['status'][];
-    reviewReason?: string;
+    reviewReason?: WalletTransaction['reviewReason'];
     autoApprovalPivotAmount?: string;
   }): Promise<WalletTransaction> {
     const current = findOneOrThrow(

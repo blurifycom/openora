@@ -185,6 +185,33 @@ describe('McpKernel.invokeTool', () => {
     expect(handler).toHaveBeenCalledWith({ playerId, limit: 5 }, run);
   });
 
+  it('strips the keys an allowed output key does not declare, at every depth', async () => {
+    const nestedOutput = z.object({
+      player: z.object({ id: UuidSchema, wallet: z.object({ balance: MoneyAmountSchema }) }),
+    });
+    const fullRow = {
+      player: { id: playerId, email: PLAYER_EMAIL, wallet: { balance: '1.00', iban: SQL_ERROR } },
+    };
+    const { kernel } = kernelOf((registry) => {
+      registry.mcp.tool(
+        defineMcpTool({
+          ...summaryTool,
+          id: 'player.nested',
+          outputSchema: nestedOutput,
+          redact: { allow: ['player'] },
+        }),
+        () => async () => fullRow,
+      );
+    });
+
+    const result = await kernel.invokeTool('player.nested', { playerId, limit: 5 }, runContext());
+
+    expect(result).toEqual({
+      ok: true,
+      output: { player: { id: playerId, wallet: { balance: '1.00' } } },
+    });
+  });
+
   it('audits the call with hashes of the parsed input and the redacted output, never the data', async () => {
     const { kernel, audit } = setup();
     const run = runContext();
@@ -463,14 +490,37 @@ describe('McpKernel.invokeTool', () => {
 describe('McpKernel.checkPrecondition', () => {
   const payload = { withdrawalId, reason: 'velocity spike' };
 
-  it('passes a satisfied precondition without IAM or audit', async () => {
+  it("passes a satisfied precondition once the caller holds the action type's grant, without an audit record", async () => {
     const { kernel, authorize, audit } = setup();
 
     await expect(
       kernel.checkPrecondition('hold_withdrawal', payload, runContext()),
     ).resolves.toEqual({ ok: true });
-    expect(authorize).not.toHaveBeenCalled();
+    expect(authorize).toHaveBeenCalledWith(adminId, { resource: 'withdrawal', action: 'hold' });
     expect(audit?.record).not.toHaveBeenCalled();
+  });
+
+  it('refuses a caller without the grant before the precondition runs', async () => {
+    const { kernel, implementation, audit } = setup({ authorize: async () => 'denied' });
+
+    await expect(
+      kernel.checkPrecondition('hold_withdrawal', payload, runContext()),
+    ).resolves.toEqual({ ok: false, error: 'forbidden' });
+    expect(implementation.precondition).not.toHaveBeenCalled();
+    expect(audit?.record).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without running the precondition when authorization itself throws', async () => {
+    const { kernel, implementation } = setup({
+      authorize: async () => {
+        throw new Error('iam store unreachable');
+      },
+    });
+
+    await expect(
+      kernel.checkPrecondition('hold_withdrawal', payload, runContext()),
+    ).resolves.toEqual({ ok: false, error: 'internal_error' });
+    expect(implementation.precondition).not.toHaveBeenCalled();
   });
 
   it('returns a declared refusal code', async () => {

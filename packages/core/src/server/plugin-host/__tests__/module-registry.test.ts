@@ -266,6 +266,65 @@ describe('ModuleRegistryImpl - MCP tools and action types', () => {
       { outputSchema: z.array(z.string().max(5)).max(5) },
       /outputSchema must be a top-level z\.object, not array/,
     ],
+    [
+      'a loose top-level output',
+      { outputSchema: z.looseObject({ playerId: UuidSchema }), redact: { allow: ['playerId'] } },
+      /outputSchema accepts undeclared keys/,
+    ],
+    [
+      'a loose object under an allowed output key',
+      {
+        outputSchema: z.object({ playerId: UuidSchema, player: z.looseObject({ id: UuidSchema }) }),
+        redact: { allow: ['playerId', 'player'] },
+      },
+      /outputSchema field "player" accepts undeclared keys - drop \.loose\(\)\/\.catchall\(\) and declare every key/,
+    ],
+    [
+      'a catchall object inside an output array',
+      {
+        outputSchema: z.object({
+          rows: z.array(z.object({ id: UuidSchema }).catchall(z.string())),
+        }),
+        redact: { allow: ['rows'] },
+      },
+      /outputSchema field "rows\[\]" accepts undeclared keys/,
+    ],
+    [
+      'a loose object in the rest of an output tuple',
+      {
+        outputSchema: z.object({ pair: z.tuple([UuidSchema], z.looseObject({ id: UuidSchema })) }),
+        redact: { allow: ['pair'] },
+      },
+      /outputSchema field "pair\[\]" accepts undeclared keys/,
+    ],
+    [
+      'a loose option in an output union',
+      {
+        outputSchema: z.object({
+          subject: z.union([z.object({ id: UuidSchema }), z.looseObject({ email: z.string() })]),
+        }),
+        redact: { allow: ['subject'] },
+      },
+      /outputSchema field "subject" accepts undeclared keys/,
+    ],
+    [
+      'a z.record in the output',
+      {
+        outputSchema: z.object({ limits: z.record(z.string(), z.string()) }),
+        redact: { allow: ['limits'] },
+      },
+      /outputSchema field "limits" is a free-form map/,
+    ],
+    [
+      'an untyped output field',
+      { outputSchema: z.object({ raw: z.unknown() }), redact: { allow: ['raw'] } },
+      /outputSchema field "raw" accepts any value/,
+    ],
+    [
+      'a free-form JSON output field',
+      { outputSchema: z.object({ data: z.json() }), redact: { allow: ['data'] } },
+      /outputSchema field "data" is recursive/,
+    ],
     ['an empty allow-list', { redact: { allow: [] } }, /redact\.allow is empty/],
     [
       'an allow key the output schema does not declare',
@@ -319,6 +378,23 @@ describe('ModuleRegistryImpl - MCP tools and action types', () => {
 
     expect(() => reg.mcp.tool(toolWith(overrides), toolFactory)).toThrow(message);
     expect(reg.mcp.getTools()).toEqual([]);
+  });
+
+  it('accepts unbounded strings, numbers and arrays in an output, which no model fills in', () => {
+    const { reg } = newRegistry();
+    const tool = toolWith({
+      outputSchema: z.object({
+        note: z.string(),
+        level: z.number().int(),
+        history: z.array(z.object({ at: z.iso.datetime(), amount: MoneyAmountSchema })),
+        manager: z.object({ id: UuidSchema }).nullable(),
+      }),
+      redact: { allow: ['note', 'level', 'history', 'manager'] },
+    });
+
+    reg.mcp.tool(tool, toolFactory);
+
+    expect(reg.mcp.getTools()).toHaveLength(1);
   });
 
   it('rejects a tool registered without a factory function', () => {

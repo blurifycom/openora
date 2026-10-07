@@ -264,7 +264,10 @@ export type McpKernel = {
   listActionTypes(): readonly ActionTypeDescriptor[];
   listTriggers(): readonly TriggerDescriptor[];
   invokeTool(toolId: string, input: unknown, run: RunContext): Promise<McpToolResult>;
-  /** Evaluation only: no IAM check and no audit record. */
+  /**
+   * Checks the caller's IAM grant for the action type, as an execution does, and answers
+   * `forbidden` without running the precondition when it is missing. Writes no audit record.
+   */
   checkPrecondition(
     actionTypeId: string,
     payload: unknown,
