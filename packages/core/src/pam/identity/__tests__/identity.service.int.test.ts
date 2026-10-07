@@ -14,6 +14,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type {
   MailDispatchPort,
+  McpTokenRevocation,
   PlatformConfig,
   RateLimiterAdapter,
   SmsAdapter,
@@ -1228,6 +1229,98 @@ describe('IdentityService onPasswordReset hook (wired via createAuth)', () => {
     const row = await readUser(account.id);
     expect(row.failedLoginAttempts).toBe(0);
     expect(row.lockoutUntil).toBeNull();
+  });
+});
+
+describe('IdentityService password changes and MCP tokens', () => {
+  const ADMIN_REQUEST_HEADERS = { 'x-real-ip': '203.0.113.7', 'user-agent': 'backoffice/1.0' };
+  const NEW_PASSWORD = { currentPassword: 'password1234', newPassword: 'brand-new-secret-123' };
+
+  function sessionsRevokingTokens() {
+    const revokeAllForUser = vi.fn(async () => ({ revoked: 1 }));
+    const sessions = new SessionService({
+      drizzle: db.drizzle,
+      events: makeEventBus(),
+      identityReader: makeIdentityReader(),
+      mcpTokens: mock<McpTokenRevocation>({ revokeAllForUser }),
+    });
+    return { sessions, revokeAllForUser };
+  }
+
+  it("revokes an admin's MCP tokens when better-auth reports a password reset", async () => {
+    const admin = await seedUser({ role: 'admin' });
+    const { sessions, revokeAllForUser } = sessionsRevokingTokens();
+    buildService({ sessions });
+
+    await capturedAuthOptions.current?.onPasswordReset?.({ id: admin.id, email: EMAIL });
+
+    expect(revokeAllForUser).toHaveBeenCalledTimes(1);
+    expect(revokeAllForUser).toHaveBeenCalledWith({
+      userId: admin.id,
+      reason: 'sessions_revoked',
+      actorId: admin.id,
+      ip: null,
+      userAgent: null,
+    });
+  });
+
+  it("leaves the token port alone on a player's password reset", async () => {
+    const player = await seedUser({ role: 'player' });
+    const { sessions, revokeAllForUser } = sessionsRevokingTokens();
+    buildService({ sessions });
+
+    await capturedAuthOptions.current?.onPasswordReset?.({ id: player.id, email: EMAIL });
+
+    expect(revokeAllForUser).not.toHaveBeenCalled();
+  });
+
+  it("revokes an admin's MCP tokens after a password change, in the admin's name", async () => {
+    const admin = await seedUser({ role: 'admin' });
+    changePasswordMock.mockResolvedValue(jsonResponse({ token: null, user: betterAuthUser }, 200));
+    const { sessions, revokeAllForUser } = sessionsRevokingTokens();
+
+    await buildService({ sessions }).changePassword(
+      NEW_PASSWORD,
+      ADMIN_REQUEST_HEADERS,
+      new Headers(),
+      { userId: admin.id, sessionId: randomUUID() },
+    );
+
+    expect(revokeAllForUser).toHaveBeenCalledWith({
+      userId: admin.id,
+      reason: 'sessions_revoked',
+      actorId: admin.id,
+      ip: '203.0.113.7',
+      userAgent: 'backoffice/1.0',
+    });
+  });
+
+  it('leaves the MCP tokens alone when better-auth rejects the password change', async () => {
+    const admin = await seedUser({ role: 'admin' });
+    changePasswordMock.mockResolvedValue(jsonResponse({ message: 'INVALID_PASSWORD' }, 400));
+    const { sessions, revokeAllForUser } = sessionsRevokingTokens();
+
+    await expect(
+      buildService({ sessions }).changePassword(NEW_PASSWORD, {}, new Headers(), {
+        userId: admin.id,
+        sessionId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(revokeAllForUser).not.toHaveBeenCalled();
+  });
+
+  it("leaves the token port alone on a player's password change", async () => {
+    const player = await seedUser({ role: 'player' });
+    changePasswordMock.mockResolvedValue(jsonResponse({ token: null, user: betterAuthUser }, 200));
+    const { sessions, revokeAllForUser } = sessionsRevokingTokens();
+
+    await buildService({ sessions }).changePassword(NEW_PASSWORD, {}, new Headers(), {
+      userId: player.id,
+      sessionId: randomUUID(),
+    });
+
+    expect(revokeAllForUser).not.toHaveBeenCalled();
   });
 });
 

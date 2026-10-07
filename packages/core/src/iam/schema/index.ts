@@ -1,6 +1,8 @@
 import { invitationStatuses, MCP_TOKEN_REVOKE_REASONS } from '@openora/core/contracts';
+import { sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
   foreignKey,
   index,
   integer,
@@ -106,6 +108,11 @@ export const mcpToken = pgTable(
   (t) => [
     uniqueIndex('mcp_token_token_hash_uq').on(t.tokenHash),
     index('mcp_token_admin_user_id_idx').on(t.adminUserId),
+    index('mcp_token_revoked_at_expires_at_idx').on(t.revokedAt, t.expiresAt),
+    check(
+      'mcp_token_revocation_complete',
+      sql`(${t.revokedAt} IS NULL) = (${t.revokeReason} IS NULL)`,
+    ),
   ],
 );
 

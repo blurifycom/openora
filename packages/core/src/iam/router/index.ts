@@ -16,7 +16,9 @@ import {
 } from '../service/iam.service.js';
 import {
   McpTokenService,
+  McpTokenLimitError,
   McpTokenNotFoundError,
+  McpTokenOwnerIneligibleError,
   McpTokenTtlError,
   McpTransportDisabledError,
 } from '../service/mcp-token.service.js';
@@ -40,7 +42,8 @@ export function createIamRouter(
   const mcpTokenErrors = {
     NOT_FOUND: McpTokenNotFoundError,
     BAD_REQUEST: McpTokenTtlError,
-    CONFLICT: McpTransportDisabledError,
+    FORBIDDEN: McpTokenOwnerIneligibleError,
+    CONFLICT: [McpTransportDisabledError, McpTokenLimitError],
   };
 
   return os.router({

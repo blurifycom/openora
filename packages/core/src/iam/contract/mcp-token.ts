@@ -14,6 +14,15 @@ export const MCP_TOKEN_STATUSES = ['active', 'expired', 'revoked'] as const;
 export const McpTokenStatusSchema = z.enum(MCP_TOKEN_STATUSES);
 export type McpTokenStatus = z.infer<typeof McpTokenStatusSchema>;
 
+export const MCP_TOKEN_ERROR_REASONS = [
+  'mcp_disabled',
+  'ttl_exceeds_max',
+  'owner_ineligible',
+  'token_limit',
+] as const;
+export const McpTokenErrorReasonSchema = z.enum(MCP_TOKEN_ERROR_REASONS);
+export type McpTokenErrorReason = z.infer<typeof McpTokenErrorReasonSchema>;
+
 export const MCP_TOKEN_SORT_BY_VALUES = [
   'createdAt',
   'expiresAt',

@@ -1,21 +1,35 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
+import { ORPCError } from '@orpc/server';
+import { RedisRateLimiter } from '@openora/core/server';
 import {
   McpTransportConfigSchema,
   type AuditWritePort,
   type McpTransportConfig,
+  type RateLimiterAdapter,
+  type RateLimitKey,
 } from '@openora/core/contracts';
 import { paginated } from '@openora/core/contracts/kit';
-import { createTestDb, seedUser, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  createTestRedis,
+  seedUser,
+  waitForRowLockWaiter,
+  type TestDb,
+  type TestRedis,
+} from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { user } from '@openora/core/pam/schema/identity';
-import { makeAuditWriter } from '../../testing/mock.js';
+import { makeAuditWriter, makeEventBus, makeRateLimiter, mock } from '../../testing/mock.js';
 import { migrate as migrateIam } from '../migrate.js';
 import { mcpToken } from '../schema/index.js';
 import { IssuedMcpTokenSchema, McpTokenListItemSchema, McpTokenSchema } from '../contract/index.js';
 import {
+  McpTokenIssueError,
+  McpTokenLimitError,
   McpTokenNotFoundError,
+  McpTokenOwnerIneligibleError,
   McpTokenService,
   McpTokenTtlError,
   McpTransportDisabledError,
@@ -28,37 +42,80 @@ import {
 } from '../shared/mcp-token.js';
 
 const NOW = new Date('2026-10-06T12:00:00.000Z');
-const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 const META = { ip: '203.0.113.7', userAgent: 'mcp-client/1.0' };
 const PAGE = { page: 1, limit: 50 };
+const BACKOFFICE_HOSTS = ['backoffice.example.com'];
 const ENABLED = McpTransportConfigSchema.parse({
   enabled: true,
+  allowedHosts: BACKOFFICE_HOSTS,
   tokenTtlDays: { default: 30, max: 90 },
 });
 const DISABLED = McpTransportConfigSchema.parse({});
 
 const daysFromNow = (days: number) => new Date(NOW.getTime() + days * DAY_MS);
 
+const withIssuance = (tokenIssuance: { maxActivePerAdmin?: number; perHour?: number }) =>
+  McpTransportConfigSchema.parse({ enabled: true, allowedHosts: BACKOFFICE_HOSTS, tokenIssuance });
+
 let db: TestDb;
+let redis: TestRedis;
 
 beforeAll(async () => {
   db = await createTestDb([migrateIam, migrateIdentity]);
+  redis = await createTestRedis();
 });
 
 afterAll(async () => {
   await db.drop();
+  await redis.quit();
 });
 
 beforeEach(async () => {
   await db.drizzle.db.execute(sql`TRUNCATE ${mcpToken}, ${user} RESTART IDENTITY CASCADE`);
+  await redis.flush();
 });
 
-function makeService(config: McpTransportConfig = ENABLED) {
+function makeService({
+  config = ENABLED,
+  rateLimiter = makeRateLimiter(),
+}: { config?: McpTransportConfig; rateLimiter?: RateLimiterAdapter<RateLimitKey> } = {}) {
   const audit = makeAuditWriter();
+  const events = makeEventBus();
   return {
-    svc: new McpTokenService({ drizzle: db.drizzle, audit, config, now: () => NOW }),
+    svc: new McpTokenService({
+      drizzle: db.drizzle,
+      audit,
+      events,
+      rateLimiter,
+      config,
+      now: () => NOW,
+    }),
     audit,
+    events,
   };
+}
+
+async function rejectionOf(promise: Promise<unknown>) {
+  return promise.then(
+    () => undefined,
+    (err: unknown) => err,
+  );
+}
+
+async function waitForTokenTableLockWaiter(timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { rows } = await db.drizzle.db.execute<{ waiting: number }>(
+      sql`select count(*)::int as waiting from pg_locks
+          where locktype = 'relation' and relation = ${'mcp_token'}::regclass and not granted`,
+    );
+    if ((rows[0]?.waiting ?? 0) > 0) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 const seedAdmin = (email: string, name = 'Admin') =>
@@ -140,26 +197,30 @@ describe('McpTokenService.create (real PG)', () => {
     expect((await storedToken(longest.id)).expiresAt).toEqual(daysFromNow(90));
   });
 
-  it('refuses a lifetime above the configured maximum and stores nothing', async () => {
+  it('refuses a lifetime above the configured maximum as ttl_exceeds_max and stores nothing', async () => {
     const { svc, audit } = makeService();
     const alice = await seedAdmin('alice@ops.example');
 
-    await expect(
+    const refusal = await rejectionOf(
       svc.create({ adminUserId: alice.id, label: 'Too long', ttlDays: 91 }, META),
-    ).rejects.toBeInstanceOf(McpTokenTtlError);
+    );
 
+    expect(refusal).toBeInstanceOf(McpTokenTtlError);
+    expect(refusal).toHaveProperty('data', { reason: 'ttl_exceeds_max' });
     expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
     expect(audit.recordInTransaction).not.toHaveBeenCalled();
   });
 
-  it('refuses to issue a token while the transport is disabled', async () => {
-    const { svc, audit } = makeService(DISABLED);
+  it('refuses to issue while the transport is disabled, as mcp_disabled', async () => {
+    const { svc, audit } = makeService({ config: DISABLED });
     const alice = await seedAdmin('alice@ops.example');
 
-    await expect(
+    const refusal = await rejectionOf(
       svc.create({ adminUserId: alice.id, label: 'Claude Code' }, META),
-    ).rejects.toBeInstanceOf(McpTransportDisabledError);
+    );
 
+    expect(refusal).toBeInstanceOf(McpTransportDisabledError);
+    expect(refusal).toHaveProperty('data', { reason: 'mcp_disabled' });
     expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
     expect(audit.recordInTransaction).not.toHaveBeenCalled();
   });
@@ -192,16 +253,173 @@ describe('McpTokenService.create (real PG)', () => {
     expect(recorded).not.toContain(hashMcpToken(issued.token));
   });
 
-  it('rolls the token back when its audit record cannot be written', async () => {
+  it('rolls the token back when its audit record cannot be written, failing generically', async () => {
     const { svc, audit } = makeService();
     audit.recordInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
     const alice = await seedAdmin('alice@ops.example');
 
-    await expect(svc.create({ adminUserId: alice.id, label: 'Claude Code' }, META)).rejects.toThrow(
-      'audit store unavailable',
+    const failure = await rejectionOf(
+      svc.create({ adminUserId: alice.id, label: 'Claude Code' }, META),
+    );
+
+    expect(failure).toBeInstanceOf(McpTokenIssueError);
+    expect(failure).not.toHaveProperty('cause');
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+  });
+});
+
+describe('McpTokenService.create owner checks (real PG)', () => {
+  it.each([
+    ['an inactive admin', () => seedUser(db, { role: 'admin', isActive: false }), 'admin'],
+    ['a player', () => seedUser(db, { role: 'player' }), 'player'],
+  ])('refuses %s as owner_ineligible and records the denial', async (_case, seed, role) => {
+    const { svc, audit, events } = makeService();
+    const owner = await seed();
+
+    const refusal = await rejectionOf(svc.create({ adminUserId: owner.id, label: 'Nope' }, META));
+
+    expect(refusal).toBeInstanceOf(McpTokenOwnerIneligibleError);
+    expect(refusal).toHaveProperty('data', { reason: 'owner_ineligible' });
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith('identity.user.unauthorized_access', {
+      userId: owner.id,
+      playerId: null,
+      resource: 'mcp-access',
+      action: 'use',
+      role,
+      ...META,
+    });
+  });
+
+  it('refuses an owner with no account as owner_ineligible', async () => {
+    const { svc, events } = makeService();
+    const ghostId = randomUUID();
+
+    await expect(svc.create({ adminUserId: ghostId, label: 'Nope' }, META)).rejects.toBeInstanceOf(
+      McpTokenOwnerIneligibleError,
     );
 
     expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({ userId: ghostId, role: undefined }),
+    );
+  });
+});
+
+describe('McpTokenService.create active-token cap (real PG)', () => {
+  it('refuses a token over the cap as token_limit, counting neither expired nor revoked ones', async () => {
+    const { svc } = makeService({ config: withIssuance({ maxActivePerAdmin: 2 }) });
+    const alice = await seedAdmin('alice@ops.example');
+    const [first] = [await seedToken(alice.id), await seedToken(alice.id)];
+    await seedToken(alice.id, { expiresAt: daysFromNow(-1) });
+    await seedToken(alice.id, { revokedAt: daysFromNow(-1), revokeReason: 'manual' });
+
+    const refusal = await rejectionOf(svc.create({ adminUserId: alice.id, label: 'Third' }, META));
+
+    expect(refusal).toBeInstanceOf(McpTokenLimitError);
+    expect(refusal).toHaveProperty('data', { reason: 'token_limit' });
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(4);
+
+    await svc.revokeMine(alice.id, first.id, META);
+    await expect(
+      svc.create({ adminUserId: alice.id, label: 'Replacement' }, META),
+    ).resolves.toMatchObject({ status: 'active' });
+  });
+
+  it("counts only the owner's own tokens", async () => {
+    const { svc } = makeService({ config: withIssuance({ maxActivePerAdmin: 1 }) });
+    const alice = await seedAdmin('alice@ops.example');
+    const bob = await seedAdmin('bob@ops.example');
+    await seedToken(bob.id);
+
+    await expect(svc.create({ adminUserId: alice.id, label: 'Own' }, META)).resolves.toMatchObject({
+      adminUserId: alice.id,
+    });
+  });
+
+  it('holds a concurrent issue until the first commits, then refuses it at the cap', async () => {
+    let markCounted = () => {};
+    let releaseFirst = () => {};
+    const counted = new Promise<void>((resolve) => {
+      markCounted = resolve;
+    });
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const consume = vi.fn(async () => ({ allowed: true, retryAfterMs: 0 }));
+    consume.mockImplementationOnce(async () => {
+      markCounted();
+      await firstHeld;
+      return { allowed: true, retryAfterMs: 0 };
+    });
+    const { svc } = makeService({
+      config: withIssuance({ maxActivePerAdmin: 1 }),
+      rateLimiter: mock<RateLimiterAdapter<RateLimitKey>>({ consume, reset: vi.fn() }),
+    });
+    const alice = await seedAdmin('alice@ops.example');
+
+    const first = svc.create({ adminUserId: alice.id, label: 'First' }, META);
+    await counted;
+    const second = rejectionOf(svc.create({ adminUserId: alice.id, label: 'Second' }, META));
+    await waitForRowLockWaiter(db);
+    releaseFirst();
+
+    await expect(first).resolves.toMatchObject({ label: 'First' });
+    expect(await second).toBeInstanceOf(McpTokenLimitError);
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(1);
+  });
+});
+
+describe('McpTokenService.create issuance throttle', () => {
+  it('refuses the issue over the hourly limit with TOO_MANY_REQUESTS and its retry delay', async () => {
+    const { svc } = makeService({
+      config: withIssuance({ perHour: 2 }),
+      rateLimiter: new RedisRateLimiter(redis.client),
+    });
+    const alice = await seedAdmin('alice@ops.example');
+    const bob = await seedAdmin('bob@ops.example');
+    await svc.create({ adminUserId: alice.id, label: 'One' }, META);
+    await svc.create({ adminUserId: alice.id, label: 'Two' }, META);
+
+    const refusal = await rejectionOf(svc.create({ adminUserId: alice.id, label: 'Three' }, META));
+
+    expect(refusal).toBeInstanceOf(ORPCError);
+    expect(refusal).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(refusal).toHaveProperty(
+      'data.retryAfterMs',
+      expect.toSatisfy((ms: number) => ms > 0 && ms <= HOUR_MS),
+    );
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(2);
+    await expect(svc.create({ adminUserId: bob.id, label: 'Bob' }, META)).resolves.toMatchObject({
+      adminUserId: bob.id,
+    });
+  });
+
+  it('throttles per admin for an hour and fails closed when the limiter store is down', async () => {
+    const consume = vi.fn(async () => ({
+      allowed: false,
+      retryAfterMs: HOUR_MS,
+      unavailable: true,
+    }));
+    const { svc, audit } = makeService({
+      config: withIssuance({ perHour: 7 }),
+      rateLimiter: mock<RateLimiterAdapter<RateLimitKey>>({ consume, reset: vi.fn() }),
+    });
+    const alice = await seedAdmin('alice@ops.example');
+
+    await expect(
+      svc.create({ adminUserId: alice.id, label: 'Blocked' }, META),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS', data: { retryAfterMs: HOUR_MS } });
+
+    expect(consume).toHaveBeenCalledWith(`mcp-token-create:${alice.id}`, {
+      limit: 7,
+      windowMs: HOUR_MS,
+      onUnavailable: 'deny',
+    });
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
   });
 });
 
@@ -483,10 +701,14 @@ describe('McpTokenService.list and listMine (real PG)', () => {
     const alice = await seedAdmin('alice@ops.example');
     const active = await seedToken(alice.id);
     const expired = await seedToken(alice.id, { expiresAt: NOW });
-    const revoked = await seedToken(alice.id, { revokedAt: daysFromNow(-1) });
+    const revoked = await seedToken(alice.id, {
+      revokedAt: daysFromNow(-1),
+      revokeReason: 'manual',
+    });
     const revokedAfterExpiry = await seedToken(alice.id, {
       expiresAt: daysFromNow(-3),
       revokedAt: daysFromNow(-1),
+      revokeReason: 'manual',
     });
 
     const byStatus = async (status: 'active' | 'expired' | 'revoked') => {
@@ -565,6 +787,22 @@ describe('McpTokenService.list and listMine (real PG)', () => {
     expect(await callCounts(PAGE)).toEqual([1, 3, 5]);
   });
 
+  it('lists never-used tokens last whichever way it sorts by last use', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    await seedToken(alice.id, { label: 'Never used' });
+    await seedToken(alice.id, { label: 'Older', lastUsedAt: daysFromNow(-2), callCount: 1 });
+    await seedToken(alice.id, { label: 'Newer', lastUsedAt: daysFromNow(-1), callCount: 1 });
+
+    const labels = async (sortOrder: 'asc' | 'desc') =>
+      (await svc.list({ ...PAGE, sortBy: 'lastUsedAt', sortOrder })).items.map(
+        (item) => item.label,
+      );
+
+    expect(await labels('asc')).toEqual(['Older', 'Newer', 'Never used']);
+    expect(await labels('desc')).toEqual(['Newer', 'Older', 'Never used']);
+  });
+
   it('keeps a token whose admin account is gone, with the admin details empty', async () => {
     const { svc } = makeService();
     const goneAdminId = randomUUID();
@@ -574,5 +812,153 @@ describe('McpTokenService.list and listMine (real PG)', () => {
 
     expect(McpTokenListItemSchema.parse(item)).toEqual(item);
     expect(item?.admin).toEqual({ id: goneAdminId, email: null, name: null, isActive: null });
+  });
+});
+
+describe("McpTokenService.revokeAllForUser in the caller's transaction (real PG)", () => {
+  it('rolls back with the caller and audits on that transaction', async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const token = await seedToken(alice.id);
+    let callerTx: unknown;
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        callerTx = tx;
+        await svc.revokeAllForUser(
+          { userId: alice.id, reason: 'admin_disabled', actorId: null },
+          tx,
+        );
+        throw new Error('caller rolled back');
+      }),
+    ).rejects.toThrow('caller rolled back');
+
+    expect(await storedToken(token.id)).toMatchObject({ revokedAt: null, revokeReason: null });
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
+    expect(audit.recordInTransaction.mock.calls[0]?.[0]).toBe(callerTx);
+  });
+
+  it('commits with the caller', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const token = await seedToken(alice.id);
+
+    const result = await db.drizzle.db.transaction((tx) =>
+      svc.revokeAllForUser({ userId: alice.id, reason: 'admin_disabled', actorId: null }, tx),
+    );
+
+    expect(result).toEqual({ revoked: 1 });
+    expect(await storedToken(token.id)).toMatchObject({ revokeReason: 'admin_disabled' });
+  });
+});
+
+describe('McpTokenService.revokeAllForUsers (real PG)', () => {
+  it("revokes every listed user's active tokens and nobody else's", async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const bob = await seedAdmin('bob@ops.example');
+    const carol = await seedAdmin('carol@ops.example');
+    const [alicesToken, bobsToken, carolsToken] = [
+      await seedToken(alice.id),
+      await seedToken(bob.id),
+      await seedToken(carol.id),
+    ];
+
+    const result = await svc.revokeAllForUsers({
+      userIds: [alice.id, bob.id],
+      reason: 'admin_role_removed',
+      actorId: null,
+    });
+
+    expect(result).toEqual({ revoked: 2 });
+    expect(await storedToken(alicesToken.id)).toMatchObject({ revokeReason: 'admin_role_removed' });
+    expect(await storedToken(bobsToken.id)).toMatchObject({ revokeReason: 'admin_role_removed' });
+    expect(await storedToken(carolsToken.id)).toMatchObject({ revokedAt: null });
+  });
+
+  it('revokes nothing for an empty list', async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const token = await seedToken(alice.id);
+
+    expect(
+      await svc.revokeAllForUsers({ userIds: [], reason: 'admin_role_removed', actorId: null }),
+    ).toEqual({ revoked: 0 });
+    expect(await storedToken(token.id)).toMatchObject({ revokedAt: null });
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('McpTokenService bulk revocation racing an issue (real PG)', () => {
+  it('revokes a token whose issue commits while a bulk revoke waits for it', async () => {
+    const alice = await seedAdmin('alice@ops.example');
+    const overseer = await seedAdmin('overseer@ops.example');
+    const issuer = makeService();
+    let markInserted = () => {};
+    let releaseIssue = () => {};
+    const inserted = new Promise<void>((resolve) => {
+      markInserted = resolve;
+    });
+    const issueHeld = new Promise<void>((resolve) => {
+      releaseIssue = resolve;
+    });
+    issuer.audit.recordInTransaction.mockImplementationOnce(async () => {
+      markInserted();
+      await issueHeld;
+    });
+
+    const issuing = issuer.svc.create({ adminUserId: alice.id, label: 'In flight' }, META);
+    await inserted;
+    const revoking = makeService().svc.revokeAll(overseer.id, META);
+    await Promise.race([revoking, waitForTokenTableLockWaiter()]);
+    releaseIssue();
+    const [issued, revoked] = await Promise.all([issuing, revoking]);
+
+    expect(revoked).toEqual({ revoked: 1 });
+    expect(await storedToken(issued.id)).toMatchObject({
+      revokedBy: overseer.id,
+      revokeReason: 'revoked_all',
+    });
+  });
+});
+
+describe('mcp_token schema (real PG)', () => {
+  it('refuses a revocation time without a reason, and a reason without a time', async () => {
+    const alice = await seedAdmin('alice@ops.example');
+    const token = await seedToken(alice.id);
+    const violation = {
+      cause: expect.objectContaining({
+        code: '23514',
+        constraint: 'mcp_token_revocation_complete',
+      }),
+    };
+
+    await expect(
+      db.drizzle.db.execute(sql`UPDATE ${mcpToken} SET revoked_at = now() WHERE id = ${token.id}`),
+    ).rejects.toMatchObject(violation);
+    await expect(
+      db.drizzle.db.execute(
+        sql`UPDATE ${mcpToken} SET revoke_reason = 'manual' WHERE id = ${token.id}`,
+      ),
+    ).rejects.toMatchObject(violation);
+    expect(await storedToken(token.id)).toMatchObject({ revokedAt: null, revokeReason: null });
+  });
+
+  it('carries the revocation check and the status-filter index from its migrations', async () => {
+    const { rows: checks } = await db.drizzle.db.execute<{ def: string }>(
+      sql`select pg_get_constraintdef(oid) as def from pg_constraint
+          where conname = 'mcp_token_revocation_complete'`,
+    );
+    const { rows: indexes } = await db.drizzle.db.execute<{ def: string }>(
+      sql`select indexdef as def from pg_indexes
+          where indexname = 'mcp_token_revoked_at_expires_at_idx'`,
+    );
+
+    expect(checks).toEqual([{ def: 'CHECK (((revoked_at IS NULL) = (revoke_reason IS NULL)))' }]);
+    expect(indexes).toEqual([
+      {
+        def: 'CREATE INDEX mcp_token_revoked_at_expires_at_idx ON public.mcp_token USING btree (revoked_at, expires_at)',
+      },
+    ]);
   });
 });

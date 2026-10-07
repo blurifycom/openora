@@ -28,6 +28,8 @@ function makeMcpTokenService(c: TypedContainer<CoreTokenCatalog>) {
   return new McpTokenService({
     drizzle: c.get(DRIZZLE),
     audit: c.get(AUDIT_WRITER),
+    events: c.get(EVENT_BUS),
+    rateLimiter: c.get(RATE_LIMITER),
     config: c.get(PLATFORM_CONFIG).agents.mcp,
   });
 }
@@ -84,19 +86,21 @@ export default {
     ctx.provide(MCP_TOKEN_AUTHENTICATOR, (c) => new DrizzleMcpTokenAuthenticator(c.get(DRIZZLE)));
     ctx.provide(MCP_TOKEN_REVOCATION, (c) => makeMcpTokenService(c));
 
-    ctx.routers.add('iam', (c) =>
-      createIamRouter(
-        new IamService(
-          c.get(DRIZZLE),
-          c.get(EVENT_BUS),
-          c.get(MAIL_DISPATCH),
-          c.get(IDENTITY_READER),
-          c.get(SESSION_COMMANDS),
-          c.get(RATE_LIMITER),
-        ),
+    ctx.routers.add('iam', (c) => {
+      const mcpTokens = makeMcpTokenService(c);
+      return createIamRouter(
+        new IamService({
+          drizzle: c.get(DRIZZLE),
+          events: c.get(EVENT_BUS),
+          mailDispatch: c.get(MAIL_DISPATCH),
+          identityReader: c.get(IDENTITY_READER),
+          mcpTokens,
+          sessionCommands: c.get(SESSION_COMMANDS),
+          rateLimiter: c.get(RATE_LIMITER),
+        }),
         c.get(ADMIN_GUARD),
-        makeMcpTokenService(c),
-      ),
-    );
+        mcpTokens,
+      );
+    });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

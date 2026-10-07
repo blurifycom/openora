@@ -10,7 +10,9 @@ export type McpTokenAutomaticRevokeReason = Extract<
 
 /**
  * Revokes every active MCP token a user holds when their standing changes. Revocation is
- * persisted, so restoring the account later does not bring the old tokens back.
+ * persisted, so restoring the account later does not bring the old tokens back. Pass the
+ * transaction that changes the standing as `tx`, so both commit or roll back together; it is
+ * typed `unknown` because this contracts-zone port cannot import drizzle's transaction type.
  */
 export type McpTokenRevocation = {
   revokeAllForUser(
@@ -19,6 +21,7 @@ export type McpTokenRevocation = {
       reason: McpTokenAutomaticRevokeReason;
       actorId: User['id'] | null;
     } & Partial<ClientMeta>,
+    tx?: unknown,
   ): Promise<{ revoked: number }>;
 };
 

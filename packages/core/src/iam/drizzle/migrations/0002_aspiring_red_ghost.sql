@@ -1,0 +1,2 @@
+CREATE INDEX "mcp_token_revoked_at_expires_at_idx" ON "mcp_token" USING btree ("revoked_at","expires_at");--> statement-breakpoint
+ALTER TABLE "mcp_token" ADD CONSTRAINT "mcp_token_revocation_complete" CHECK (("mcp_token"."revoked_at" IS NULL) = ("mcp_token"."revoke_reason" IS NULL));

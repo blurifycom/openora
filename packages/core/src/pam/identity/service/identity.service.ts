@@ -585,12 +585,14 @@ export class IdentityService {
           .update(user)
           .set({ passwordMeetsPolicy: true })
           .where(eq(user.id, resetUser.id));
+        const meta = getCurrentClientMeta();
         this.events.emit('identity.password.reset', {
           userId: resetUser.id,
           playerId: await this.identityReader.getPlayerIdByUserIdSafe(resetUser.id),
-          ...getCurrentClientMeta(),
+          ...meta,
         });
         await this.clearLockout(resetUser.id);
+        await this.sessions?.revokeMcpTokens(resetUser.id, resetUser.id, meta);
       },
     });
   }
@@ -2251,6 +2253,7 @@ export class IdentityService {
       }, RACED_SESSION_SWEEP_DELAY_MS);
       timer.unref?.();
     }
+    await this.sessions?.revokeMcpTokens(userId, userId, { ip, userAgent });
     return SUCCESS;
   }
 

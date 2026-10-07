@@ -1,4 +1,6 @@
 import {
+  type DrizzleDb,
+  type DrizzleTx,
   type EventBus,
   DrizzleService,
   pageToOffset,
@@ -243,11 +245,17 @@ export class SessionService {
     return { success: true as const };
   }
 
+  /** For an account that may hold MCP tokens, revokes them in the same transaction. */
   async revokeAllSessions(userId: User['id'], actorId?: User['id'], meta?: ClientMeta) {
-    await this.drizzle.db
-      .update(session)
-      .set({ expiresAt: sql`now()`, updatedAt: session.updatedAt })
-      .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)));
+    const mcpTokens = await this.mcpTokensOf(userId);
+    if (mcpTokens) {
+      await this.drizzle.db.transaction(async (tx) => {
+        await expireActiveSessions(tx, userId);
+        await mcpTokens.revokeAllForUser(sessionsRevoked({ userId, actorId, meta }), tx);
+      });
+    } else {
+      await expireActiveSessions(this.drizzle.db, userId);
+    }
 
     this.events.emit('identity.sessions.revoked_all', {
       userId,
@@ -256,13 +264,48 @@ export class SessionService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.mcpTokens?.revokeAllForUser({
-      userId,
-      reason: 'sessions_revoked',
-      actorId: actorId ?? null,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    });
     return { success: true as const };
   }
+
+  /** For a credential change that ends the user's sessions without `revokeAllSessions`. */
+  async revokeMcpTokens(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
+    const mcpTokens = await this.mcpTokensOf(userId);
+    await mcpTokens?.revokeAllForUser(sessionsRevoked({ userId, actorId, meta }));
+  }
+
+  private async mcpTokensOf(userId: User['id']) {
+    if (!this.mcpTokens) {
+      return undefined;
+    }
+    const [account] = await this.drizzle.db
+      .select({ role: user.role })
+      .from(user)
+      .where(eq(user.id, userId));
+    return account?.role === 'player' ? undefined : this.mcpTokens;
+  }
+}
+
+function expireActiveSessions(db: DrizzleDb | DrizzleTx, userId: User['id']) {
+  return db
+    .update(session)
+    .set({ expiresAt: sql`now()`, updatedAt: session.updatedAt })
+    .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)));
+}
+
+function sessionsRevoked({
+  userId,
+  actorId,
+  meta,
+}: {
+  userId: User['id'];
+  actorId: User['id'] | undefined;
+  meta: ClientMeta | undefined;
+}) {
+  return {
+    userId,
+    reason: 'sessions_revoked' as const,
+    actorId: actorId ?? null,
+    ip: meta?.ip ?? null,
+    userAgent: meta?.userAgent ?? null,
+  };
 }

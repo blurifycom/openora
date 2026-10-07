@@ -1,22 +1,36 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { McpTokenRevocation } from '@openora/core/contracts';
+import {
+  McpTransportConfigSchema,
+  type McpTokenRevocation,
+  type User,
+} from '@openora/core/contracts';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user, session } from '@openora/core/pam/schema/identity';
-import { makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
+import { migrate as migrateIam } from '@openora/core/iam/migrate';
+import { mcpToken } from '@openora/core/iam/schema';
+import { McpTokenService } from '@openora/core/iam/server';
+import {
+  makeAuditWriter,
+  makeEventBus,
+  makeIdentityReader,
+  makeRateLimiter,
+  mock,
+} from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { SessionService, SessionNotFoundError } from '../service/session.service.js';
 
 const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000);
 const META = { ip: '203.0.113.7', userAgent: 'backoffice/1.0' };
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 let db: TestDb;
 
-const service = (mcpTokens?: McpTokenRevocation) =>
+const service = (mcpTokens?: McpTokenRevocation, events = makeEventBus()) =>
   new SessionService({
     drizzle: db.drizzle,
-    events: makeEventBus(),
+    events,
     identityReader: makeIdentityReader(),
     mcpTokens,
   });
@@ -24,6 +38,52 @@ const service = (mcpTokens?: McpTokenRevocation) =>
 function makeMcpTokenRevocation() {
   const revokeAllForUser = vi.fn(async () => ({ revoked: 0 }));
   return { port: mock<McpTokenRevocation>({ revokeAllForUser }), revokeAllForUser };
+}
+
+function makeMcpTokenService() {
+  const audit = makeAuditWriter();
+  const tokens = new McpTokenService({
+    drizzle: db.drizzle,
+    audit,
+    events: makeEventBus(),
+    rateLimiter: makeRateLimiter(),
+    config: McpTransportConfigSchema.parse({}),
+  });
+  return { tokens, audit, revokeAllForUser: vi.spyOn(tokens, 'revokeAllForUser') };
+}
+
+async function seedActiveToken(adminUserId: User['id']) {
+  const [row] = await db.drizzle.db
+    .insert(mcpToken)
+    .values({
+      adminUserId,
+      label: 'Laptop',
+      tokenHash: randomUUID(),
+      tokenPrefix: 'ora_mcp_test',
+      expiresAt: new Date(Date.now() + DAY_MS),
+    })
+    .returning({ id: mcpToken.id });
+  if (!row) {
+    throw new Error('seedActiveToken: insert returned no row');
+  }
+  return row.id;
+}
+
+async function revocationOf(tokenId: string) {
+  const [row] = await db.drizzle.db
+    .select({
+      revokedAt: mcpToken.revokedAt,
+      revokedBy: mcpToken.revokedBy,
+      revokeReason: mcpToken.revokeReason,
+    })
+    .from(mcpToken)
+    .where(eq(mcpToken.id, tokenId));
+  return row;
+}
+
+async function activeSessionCount(userId: User['id']) {
+  const { total } = await service().listSessions({ userId, activeOnly: true, page: 1, limit: 20 });
+  return total;
 }
 
 const seedSession = (userId: string, overrides: Partial<typeof session.$inferInsert> = {}) =>
@@ -40,7 +100,7 @@ const seedSession = (userId: string, overrides: Partial<typeof session.$inferIns
     .then(([row]) => row!);
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateIam]);
 });
 
 afterAll(async () => {
@@ -49,7 +109,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await db.drizzle.db.execute(sql`TRUNCATE ${user} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(sql`TRUNCATE ${mcpToken}, ${user} RESTART IDENTITY CASCADE`);
 });
 
 describe('SessionService', () => {
@@ -171,54 +231,119 @@ describe('SessionService', () => {
 });
 
 describe('SessionService.revokeAllSessions and MCP tokens', () => {
-  it("revokes the user's MCP tokens as sessions_revoked in the actor's name", async () => {
-    const { port, revokeAllForUser } = makeMcpTokenRevocation();
-    const account = await seedUser(db, { role: 'admin' });
+  it("revokes an admin's MCP tokens as sessions_revoked inside the sessions' transaction", async () => {
+    const { tokens, revokeAllForUser } = makeMcpTokenService();
+    const admin = await seedUser(db, { role: 'admin' });
+    await seedSession(admin.id);
+    const tokenId = await seedActiveToken(admin.id);
     const actorId = randomUUID();
 
-    await service(port).revokeAllSessions(account.id, actorId, META);
+    await service(tokens).revokeAllSessions(admin.id, actorId, META);
 
     expect(revokeAllForUser).toHaveBeenCalledTimes(1);
-    expect(revokeAllForUser).toHaveBeenCalledWith({
-      userId: account.id,
-      reason: 'sessions_revoked',
-      actorId,
-      ...META,
+    expect(revokeAllForUser).toHaveBeenCalledWith(
+      { userId: admin.id, reason: 'sessions_revoked', actorId, ...META },
+      expect.anything(),
+    );
+    expect(await revocationOf(tokenId)).toEqual({
+      revokedAt: expect.any(Date),
+      revokedBy: actorId,
+      revokeReason: 'sessions_revoked',
     });
+    expect(await activeSessionCount(admin.id)).toBe(0);
   });
 
   it('passes a null actor and no client details for a revoke nobody initiated', async () => {
     const { port, revokeAllForUser } = makeMcpTokenRevocation();
-    const account = await seedUser(db, { role: 'admin' });
+    const admin = await seedUser(db, { role: 'admin' });
 
-    await service(port).revokeAllSessions(account.id);
+    await service(port).revokeAllSessions(admin.id);
 
-    expect(revokeAllForUser).toHaveBeenCalledWith({
-      userId: account.id,
-      reason: 'sessions_revoked',
-      actorId: null,
-      ip: null,
-      userAgent: null,
-    });
+    expect(revokeAllForUser).toHaveBeenCalledWith(
+      {
+        userId: admin.id,
+        reason: 'sessions_revoked',
+        actorId: null,
+        ip: null,
+        userAgent: null,
+      },
+      expect.anything(),
+    );
   });
 
-  it('propagates a revocation failure with the sessions already revoked', async () => {
-    const { port, revokeAllForUser } = makeMcpTokenRevocation();
-    revokeAllForUser.mockRejectedValueOnce(new Error('token store unavailable'));
-    const account = await seedUser(db, { role: 'admin' });
-    await seedSession(account.id);
-    await seedSession(account.id);
+  it('rolls the sessions back when the token revocation fails, and a retry revokes both', async () => {
+    const { tokens, audit } = makeMcpTokenService();
+    audit.recordInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
+    const events = makeEventBus();
+    const admin = await seedUser(db, { role: 'admin' });
+    await seedSession(admin.id);
+    await seedSession(admin.id);
+    const tokenId = await seedActiveToken(admin.id);
 
-    await expect(service(port).revokeAllSessions(account.id, randomUUID())).rejects.toThrow(
-      'token store unavailable',
+    await expect(service(tokens, events).revokeAllSessions(admin.id, randomUUID())).rejects.toThrow(
+      'audit store unavailable',
     );
 
-    const active = await service().listSessions({
-      userId: account.id,
-      activeOnly: true,
-      page: 1,
-      limit: 20,
+    expect(await activeSessionCount(admin.id)).toBe(2);
+    expect(await revocationOf(tokenId)).toMatchObject({ revokedAt: null, revokeReason: null });
+    expect(events.emit).not.toHaveBeenCalled();
+
+    await service(tokens, events).revokeAllSessions(admin.id, randomUUID());
+
+    expect(await activeSessionCount(admin.id)).toBe(0);
+    expect(await revocationOf(tokenId)).toMatchObject({ revokeReason: 'sessions_revoked' });
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({ userId: admin.id }),
+    );
+  });
+
+  it("revokes a player's sessions without touching the token port", async () => {
+    const { port, revokeAllForUser } = makeMcpTokenRevocation();
+    const events = makeEventBus();
+    const player = await seedUser(db, { role: 'player' });
+    await seedSession(player.id);
+
+    await service(port, events).revokeAllSessions(player.id, randomUUID(), META);
+
+    expect(revokeAllForUser).not.toHaveBeenCalled();
+    expect(await activeSessionCount(player.id)).toBe(0);
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({ userId: player.id, ...META }),
+    );
+  });
+});
+
+describe('SessionService.revokeMcpTokens', () => {
+  it("revokes an admin's MCP tokens as sessions_revoked and leaves the sessions alone", async () => {
+    const { tokens, revokeAllForUser } = makeMcpTokenService();
+    const admin = await seedUser(db, { role: 'admin' });
+    await seedSession(admin.id);
+    const tokenId = await seedActiveToken(admin.id);
+
+    await service(tokens).revokeMcpTokens(admin.id, admin.id, META);
+
+    expect(revokeAllForUser).toHaveBeenCalledWith({
+      userId: admin.id,
+      reason: 'sessions_revoked',
+      actorId: admin.id,
+      ...META,
     });
-    expect(active.total).toBe(0);
+    expect(await revocationOf(tokenId)).toMatchObject({
+      revokedBy: admin.id,
+      revokeReason: 'sessions_revoked',
+    });
+    expect(await activeSessionCount(admin.id)).toBe(1);
+  });
+
+  it('never touches the token port for a player', async () => {
+    const { port, revokeAllForUser } = makeMcpTokenRevocation();
+    const player = await seedUser(db, { role: 'player' });
+
+    await service(port).revokeMcpTokens(player.id, player.id, META);
+
+    expect(revokeAllForUser).not.toHaveBeenCalled();
   });
 });
