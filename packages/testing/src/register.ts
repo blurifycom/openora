@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
+import * as z from 'zod';
 import { DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import type { TestApp } from './app.js';
@@ -12,19 +13,51 @@ export type RegisterPlayerInput = {
   username?: string;
 };
 
-/** POST /identity/register with a unique handle and client IP. Does not verify the email. */
-export async function submitRegistration(app: TestApp, input: RegisterPlayerInput) {
+const GENERATED_USERNAME_ATTEMPTS = 5;
+
+const RefusalReasonSchema = z.object({ data: z.object({ reason: z.string() }) });
+
+function generatedUsername() {
+  return `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+}
+
+async function refusedForLanguage(res: Response) {
+  if (res.status !== 400) {
+    return false;
+  }
+  const refusal = RefusalReasonSchema.safeParse(await res.clone().json());
+  return refusal.success && refusal.data.data.reason === 'prohibited_language';
+}
+
+function postRegistration(app: TestApp, input: RegisterPlayerInput, username: string) {
   return app.app.request('/identity/register', {
     method: 'POST',
     headers: registrationRequestHeaders(),
     body: JSON.stringify({
       email: input.email,
       password: input.password ?? 'password1234',
-      username: input.username ?? `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
+      username,
       acceptedTerms: true,
       acceptedAge: true,
     }),
   });
+}
+
+/**
+ * POST /identity/register with a unique handle and client IP. Does not verify the email. A
+ * generated handle the username filter refuses is replaced, so a random handle never fails a
+ * test; a handle the caller chose is sent once.
+ */
+export async function submitRegistration(app: TestApp, input: RegisterPlayerInput) {
+  if (input.username !== undefined) {
+    return postRegistration(app, input, input.username);
+  }
+  for (let attempt = 1; ; attempt += 1) {
+    const res = await postRegistration(app, input, generatedUsername());
+    if (attempt === GENERATED_USERNAME_ATTEMPTS || !(await refusedForLanguage(res))) {
+      return res;
+    }
+  }
 }
 
 // 20s, not the 5s this started at: mail is not sent inline. `MailService.enqueueToUser`
