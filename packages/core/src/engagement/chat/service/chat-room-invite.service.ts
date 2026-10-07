@@ -10,17 +10,17 @@ import {
   isNull,
   ne,
   notExists,
-  notInArray,
   or,
   sql,
+  type SQL,
 } from 'drizzle-orm';
 import {
   DrizzleService,
   likeContains,
   likePrefix,
-  mapConcurrent,
   serializeRow,
   withAdvisoryXactLock,
+  withAdvisoryXactLocks,
 } from '@openora/core/server';
 import type { DrizzleDb, DrizzleTx, EventBus } from '@openora/core/server';
 import type {
@@ -60,18 +60,24 @@ import {
   ChatRoomInviteeAlreadyMemberError,
   ChatRoomInviteeBannedError,
   ChatRoomInviteeNotPlayerError,
-  ChatRoomInviteeUnavailableError,
   ChatRoomInviterBlockedError,
 } from './errors/chat-room-invite.errors.js';
 import type { ChatRoomMembershipService } from './chat-room-membership.service.js';
+import { chatPlatformBanLockKey } from './chat-ban.service.js';
+import { emitAccessRefused } from './chat-access-refusal.service.js';
+import {
+  emitExpiredInvites,
+  expirePendingInvites,
+  type ExpiredInvite,
+} from './chat-room-invite-expiry.service.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const MY_INVITES_LIMIT = 100;
 
-const UNAVAILABLE_PLAYER_STATUSES = ['self_excluded', 'suspended', 'closed'] as const;
+const EXCLUDED_PLAYER_STATUSES = ['self_excluded', 'suspended', 'closed'] as const;
 
-const ELIGIBILITY_CHECK_CONCURRENCY = 8;
+const INVITE_EXPIRY_BATCH_SIZE = 500;
 
 const INVITE_AUDIT_RESOURCE = 'chat.room_invite';
 
@@ -84,11 +90,17 @@ const invitingRole = or(
   and(eq(chatRoomMember.role, 'moderator'), eq(chatRoomConfiguration.moderatorInvite, true)),
 );
 
-// An invite lapses after the expiry window or once its inviter may no longer invite.
+// An invite lapses after the expiry window, once its room closes, or once its inviter may no longer invite.
 function liveInvite(db: Db, now: Date) {
   return and(
     eq(chatRoomInvite.status, 'pending'),
     gt(chatRoomInvite.createdAt, new Date(now.getTime() - ROOM_INVITE_EXPIRY_DAYS * DAY_MS)),
+    exists(
+      db
+        .select({ id: chatRoom.id })
+        .from(chatRoom)
+        .where(aliveInvitableRoom(chatRoomInvite.roomId)),
+    ),
     exists(
       db
         .select({ id: chatRoomMember.id })
@@ -115,6 +127,10 @@ function liveInvite(db: Db, now: Date) {
         ),
     ),
   );
+}
+
+function deliverableInvite(db: Db, now: Date) {
+  return and(liveInvite(db, now), eq(chatRoomInvite.withheld, false));
 }
 
 function activeRoomBan(roomId: Uuid, now: Date) {
@@ -145,7 +161,25 @@ function activeBlock(blockerId: Uuid, blockedId: Uuid) {
   );
 }
 
-function aliveInvitableRoom(roomId: Uuid) {
+async function hasActivePlatformBan(db: Db, userId: Uuid, roomId: Uuid, now: Date) {
+  const [ban] = await db
+    .select({ id: chatPlatformBan.id })
+    .from(chatPlatformBan)
+    .where(and(eq(chatPlatformBan.userId, userId), activePlatformBan(roomId, now)))
+    .limit(1);
+  return ban !== undefined;
+}
+
+async function hasActiveBlock(db: Db, blockerId: Uuid, blockedId: Uuid) {
+  const [block] = await db
+    .select({ blockerId: chatUserBlock.blockerId })
+    .from(chatUserBlock)
+    .where(activeBlock(blockerId, blockedId))
+    .limit(1);
+  return block !== undefined;
+}
+
+function aliveInvitableRoom(roomId: Uuid | typeof chatRoomInvite.roomId) {
   return and(
     eq(chatRoom.id, roomId),
     eq(chatRoom.isPublic, false),
@@ -154,22 +188,16 @@ function aliveInvitableRoom(roomId: Uuid) {
   );
 }
 
-function memberRow(db: Db, roomId: Uuid) {
-  return db
+function inviteStatus(db: Db, roomId: Uuid, now: Date) {
+  const member = db
     .select({ id: chatRoomMember.id })
     .from(chatRoomMember)
     .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, user.id)));
-}
-
-function roomBanRow(db: Db, roomId: Uuid, now: Date) {
-  return db
+  const roomBan = db
     .select({ id: chatRoomBan.id })
     .from(chatRoomBan)
     .where(and(activeRoomBan(roomId, now), eq(chatRoomBan.userId, user.id)));
-}
-
-function liveInviteRow(db: Db, roomId: Uuid, now: Date) {
-  return db
+  const pendingInvite = db
     .select({ id: chatRoomInvite.id })
     .from(chatRoomInvite)
     .where(
@@ -179,34 +207,11 @@ function liveInviteRow(db: Db, roomId: Uuid, now: Date) {
         liveInvite(db, now),
       ),
     );
-}
-
-function inviteStatus(db: Db, roomId: Uuid, now: Date) {
   return sql<ChatRoomInviteCandidateStatus>`case
-    when ${exists(memberRow(db, roomId))} then 'member'
-    when ${exists(roomBanRow(db, roomId, now))} then 'banned'
-    when ${exists(liveInviteRow(db, roomId, now))} then 'invited'
+    when ${exists(member)} then 'member'
+    when ${exists(roomBan)} then 'banned'
+    when ${exists(pendingInvite)} then 'invited'
     else 'available' end`;
-}
-
-// Platform bans and account state only hide a player who would otherwise read as
-// available; a member, room-banned or invited player keeps that status, so nothing leaks.
-function visibleCandidate(db: Db, roomId: Uuid, now: Date) {
-  const knownToRoom = or(
-    exists(memberRow(db, roomId)),
-    exists(roomBanRow(db, roomId, now)),
-    exists(liveInviteRow(db, roomId, now)),
-  );
-  const unmasked = and(
-    notInArray(player.status, [...UNAVAILABLE_PLAYER_STATUSES]),
-    notExists(
-      db
-        .select({ id: chatPlatformBan.id })
-        .from(chatPlatformBan)
-        .where(and(activePlatformBan(roomId, now), eq(chatPlatformBan.userId, user.id))),
-    ),
-  );
-  return and(eq(user.role, 'player'), or(knownToRoom, unmasked));
 }
 
 export class ChatRoomInviteService {
@@ -243,7 +248,12 @@ export class ChatRoomInviteService {
       .where(aliveInvitableRoom(roomId))
       .limit(1);
     if (!room?.canInvite) {
-      await this.auditRefusal(db, actorId, action, meta);
+      await emitAccessRefused(db, this.events, {
+        actorId,
+        resource: INVITE_AUDIT_RESOURCE,
+        action,
+        ...meta,
+      });
       throw room ? new ChatRoomInviteForbiddenError(roomId) : new ChatRoomNotFoundError(roomId);
     }
     return {
@@ -253,39 +263,20 @@ export class ChatRoomInviteService {
     };
   }
 
-  // This check rejects before any shared guard runs, so it owes the audit log AdminGuard's signal.
-  private async auditRefusal(
-    db: Db,
-    actorId: Uuid,
-    action: InviteAction,
-    { ip, userAgent }: ClientMeta,
-  ) {
-    const [caller] = await db
-      .select({ role: user.role, playerId: player.id })
-      .from(user)
-      .leftJoin(player, eq(player.userId, user.id))
-      .where(eq(user.id, actorId))
-      .limit(1);
-    this.events.emit('identity.user.unauthorized_access', {
-      userId: actorId,
-      playerId: caller?.playerId ?? null,
-      resource: INVITE_AUDIT_RESOURCE,
-      action,
-      ...(caller?.role ? { role: caller.role } : {}),
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
+  private async isRestricted(userId: Uuid) {
+    return (await this.playEligibility?.isRestricted(userId)) ?? false;
   }
 
-  private async restrictedAmong(userIds: Uuid[]) {
-    const eligibility = this.playEligibility;
-    if (!eligibility || userIds.length === 0) {
-      return new Set<Uuid>();
+  private async isExcluded(userId: Uuid) {
+    if (await this.isRestricted(userId)) {
+      return true;
     }
-    const restricted = await mapConcurrent(userIds, ELIGIBILITY_CHECK_CONCURRENCY, (id) =>
-      eligibility.isRestricted(id),
-    );
-    return new Set(userIds.filter((_, index) => restricted[index]));
+    const [row] = await this.drizzle.db
+      .select({ status: player.status })
+      .from(player)
+      .where(eq(player.userId, userId))
+      .limit(1);
+    return EXCLUDED_PLAYER_STATUSES.some((status) => status === row?.status);
   }
 
   async inviteToRoom({
@@ -298,96 +289,92 @@ export class ChatRoomInviteService {
     if (actorId === userId) {
       throw new ChatRoomInviteSelfError();
     }
+    const restricted = await this.isRestricted(userId);
+    const banLocks = [chatPlatformBanLockKey(actorId), chatPlatformBanLockKey(userId)];
     const { invite, room, lapsed } = await this.drizzle.db.transaction((t) =>
-      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
-        const now = new Date();
-        const room = await this.assertCanInvite(t, actorId, roomId, 'create', { ip, userAgent });
-        if (room.lockRoom) {
-          throw new ChatRoomLockedError(roomId);
-        }
-        const [inviterBan] = await t
-          .select({ id: chatPlatformBan.id })
-          .from(chatPlatformBan)
-          .where(and(eq(chatPlatformBan.userId, actorId), activePlatformBan(roomId, now)))
-          .limit(1);
-        if (inviterBan) {
-          throw new ChatRoomBannedError(roomId);
-        }
-        const [target] = await t
-          .select({
-            role: user.role,
-            status: player.status,
-            inviteStatus: inviteStatus(t, roomId, now),
-            visible: sql<boolean>`coalesce(${visibleCandidate(t, roomId, now)}, false)`,
-          })
-          .from(user)
-          .leftJoin(player, eq(player.userId, user.id))
-          .where(eq(user.id, userId))
-          .limit(1);
-        if (!target || target.role !== 'player' || target.status === null) {
-          throw new ChatRoomInviteeNotPlayerError(userId);
-        }
-        if (target.inviteStatus === 'member') {
-          throw new ChatRoomInviteeAlreadyMemberError(userId);
-        }
-        if (target.inviteStatus === 'banned') {
-          throw new ChatRoomInviteeBannedError(userId);
-        }
-        if (target.inviteStatus === 'invited') {
-          throw new ChatRoomInvitePendingError(userId);
-        }
-        const [block] = await t
-          .select({ blockerId: chatUserBlock.blockerId })
-          .from(chatUserBlock)
-          .where(activeBlock(userId, actorId))
-          .limit(1);
-        if (!target.visible || block || (await this.restrictedAmong([userId])).size > 0) {
-          throw new ChatRoomInviteeUnavailableError(userId);
-        }
-        // A lapsed invite still holds the one-pending slot in the partial unique index.
-        const lapsed = await t
-          .update(chatRoomInvite)
-          .set({ status: 'expired' })
-          .where(
-            and(
-              eq(chatRoomInvite.roomId, roomId),
-              eq(chatRoomInvite.inviteeId, userId),
-              eq(chatRoomInvite.status, 'pending'),
-            ),
-          )
-          .returning({ id: chatRoomInvite.id, inviterId: chatRoomInvite.inviterId });
-        const [invite] = await t
-          .insert(chatRoomInvite)
-          .values({ roomId, inviterId: actorId, inviteeId: userId })
-          .returning();
-        if (!invite) {
-          throw new Error('chat room invite insert returned no row');
-        }
-        return { invite, room, lapsed };
-      }),
+      withAdvisoryXactLock(t, `chat-room:${roomId}`, () =>
+        withAdvisoryXactLocks(
+          t,
+          banLocks,
+          async () => {
+            const now = new Date();
+            const room = await this.assertCanInvite(t, actorId, roomId, 'create', {
+              ip,
+              userAgent,
+            });
+            if (room.lockRoom) {
+              throw new ChatRoomLockedError(roomId);
+            }
+            if (await hasActivePlatformBan(t, actorId, roomId, now)) {
+              throw new ChatRoomBannedError(roomId);
+            }
+            const [target] = await t
+              .select({
+                role: user.role,
+                status: player.status,
+                inviteStatus: inviteStatus(t, roomId, now),
+              })
+              .from(user)
+              .leftJoin(player, eq(player.userId, user.id))
+              .where(eq(user.id, userId))
+              .limit(1);
+            if (!target || target.role !== 'player' || target.status === null) {
+              throw new ChatRoomInviteeNotPlayerError(userId);
+            }
+            if (target.inviteStatus === 'member') {
+              throw new ChatRoomInviteeAlreadyMemberError(userId);
+            }
+            if (target.inviteStatus === 'banned') {
+              throw new ChatRoomInviteeBannedError(userId);
+            }
+            if (target.inviteStatus === 'invited') {
+              throw new ChatRoomInvitePendingError(userId);
+            }
+            const withheld =
+              restricted ||
+              EXCLUDED_PLAYER_STATUSES.some((status) => status === target.status) ||
+              (await hasActivePlatformBan(t, userId, roomId, now)) ||
+              (await hasActiveBlock(t, userId, actorId));
+            // A lapsed invite still holds the one-pending slot in the partial unique index.
+            const lapsed = await expirePendingInvites(
+              t,
+              and(eq(chatRoomInvite.roomId, roomId), eq(chatRoomInvite.inviteeId, userId)),
+            );
+            const [invite] = await t
+              .insert(chatRoomInvite)
+              .values({ roomId, inviterId: actorId, inviteeId: userId, withheld })
+              .returning();
+            if (!invite) {
+              throw new Error('chat room invite insert returned no row');
+            }
+            return { invite, room, lapsed };
+          },
+          'shared',
+        ),
+      ),
     );
-    for (const expired of lapsed) {
-      this.events.emit('chat.room.invite.expired', {
-        inviteId: expired.id,
-        roomId,
-        inviterId: expired.inviterId,
-        inviteeId: userId,
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-    }
-    this.events.emit('chat.room.invite.sent', {
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(actorId);
+    emitExpiredInvites(this.events, lapsed, { actorId, actorPlayerId: playerId, ip, userAgent });
+    const { withheld, ...sent } = invite;
+    const recorded = {
       inviteId: invite.id,
       roomId,
       inviterId: actorId,
       inviteeId: userId,
-      inviterUsername: room.inviterUsername,
-      roomName: room.name,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(actorId),
+      playerId,
       ip: ip ?? null,
       userAgent: userAgent ?? null,
-    });
-    return serializeRow(invite, { dateFields: ['createdAt', 'respondedAt'] });
+    };
+    if (withheld) {
+      this.events.emit('chat.room.invite.withheld', recorded);
+    } else {
+      this.events.emit('chat.room.invite.sent', {
+        ...recorded,
+        inviterUsername: room.inviterUsername,
+        roomName: room.name,
+      });
+    }
+    return serializeRow(sent, { dateFields: ['createdAt', 'respondedAt'] });
   }
 
   async searchRoomInviteCandidates({
@@ -406,7 +393,7 @@ export class ChatRoomInviteService {
     const db = this.drizzle.db;
     await this.assertCanInvite(db, actorId, roomId, 'search', { ip, userAgent });
     const now = new Date();
-    const rows = await db
+    return db
       .select({
         userId: user.id,
         username: user.username,
@@ -416,21 +403,13 @@ export class ChatRoomInviteService {
       .from(user)
       .innerJoin(player, eq(player.userId, user.id))
       .where(
-        and(
-          ne(user.id, actorId),
-          ilike(user.username, likeContains(q)),
-          visibleCandidate(db, roomId, now),
-        ),
+        and(ne(user.id, actorId), ilike(user.username, likeContains(q)), eq(user.role, 'player')),
       )
       .orderBy(
         sql`case when ${user.username} ilike ${likePrefix(q)} then 0 else 1 end`,
         asc(user.username),
       )
       .limit(limit);
-    const restricted = await this.restrictedAmong(
-      rows.filter((row) => row.inviteStatus === 'available').map((row) => row.userId),
-    );
-    return rows.filter((row) => !restricted.has(row.userId));
   }
 
   async getRoomInviteStatuses({
@@ -452,19 +431,15 @@ export class ChatRoomInviteService {
       .select({ userId: user.id, inviteStatus: inviteStatus(db, roomId, now) })
       .from(user)
       .innerJoin(player, eq(player.userId, user.id))
-      .where(and(inArray(user.id, ids), visibleCandidate(db, roomId, now)));
-    const restricted = await this.restrictedAmong(
-      rows.filter((row) => row.inviteStatus === 'available').map((row) => row.userId),
-    );
-    const statuses = new Map(
-      rows
-        .filter((row) => !restricted.has(row.userId))
-        .map((row) => [row.userId, row.inviteStatus]),
-    );
+      .where(and(inArray(user.id, ids), eq(user.role, 'player')));
+    const statuses = new Map(rows.map((row) => [row.userId, row.inviteStatus]));
     return ids.map((id) => ({ userId: id, inviteStatus: statuses.get(id) ?? 'unavailable' }));
   }
 
   async listMyRoomInvites(userId: Uuid) {
+    if (await this.isExcluded(userId)) {
+      return [];
+    }
     const db = this.drizzle.db;
     const rows = await db
       .select({
@@ -489,7 +464,7 @@ export class ChatRoomInviteService {
       .where(
         and(
           eq(chatRoomInvite.inviteeId, userId),
-          liveInvite(db, new Date()),
+          deliverableInvite(db, new Date()),
           notExists(
             db
               .select({ id: chatRoomMember.id })
@@ -518,7 +493,7 @@ export class ChatRoomInviteService {
       and(
         eq(chatRoomInvite.id, inviteId),
         eq(chatRoomInvite.inviteeId, userId),
-        liveInvite(db, now),
+        deliverableInvite(db, now),
       );
     const [invite] = await this.drizzle.db
       .select({ roomId: chatRoomInvite.roomId, inviterId: chatRoomInvite.inviterId })
@@ -532,44 +507,16 @@ export class ChatRoomInviteService {
       }
       return room;
     }
-    const room = await this.membership.joinByInvite({
-      roomId: invite.roomId,
-      userId,
+    if (await this.isExcluded(userId)) {
+      throw new ChatRoomInviteNotFoundError(inviteId);
+    }
+    const room = await this.joinByInvite(userId, inviteId, invite, addressedToCaller, {
       ip,
       userAgent,
-      inTransaction: async (t) => {
-        const now = new Date();
-        const [locked] = await t
-          .select({ id: chatRoomInvite.id })
-          .from(chatRoomInvite)
-          .where(addressedToCaller(t, now))
-          .for('update', { of: chatRoomInvite })
-          .limit(1);
-        if (!locked) {
-          throw new ChatRoomInviteNotFoundError(inviteId);
-        }
-        const [platformBan] = await t
-          .select({ id: chatPlatformBan.id })
-          .from(chatPlatformBan)
-          .where(and(eq(chatPlatformBan.userId, userId), activePlatformBan(invite.roomId, now)))
-          .limit(1);
-        if (platformBan) {
-          throw new ChatRoomBannedError(invite.roomId);
-        }
-        const [block] = await t
-          .select({ blockerId: chatUserBlock.blockerId })
-          .from(chatUserBlock)
-          .where(activeBlock(userId, invite.inviterId))
-          .limit(1);
-        if (block) {
-          throw new ChatRoomInviterBlockedError();
-        }
-        await t
-          .update(chatRoomInvite)
-          .set({ status: 'accepted', respondedAt: now })
-          .where(eq(chatRoomInvite.id, inviteId));
-      },
     });
+    if (!room.accepted) {
+      return room.room;
+    }
     this.events.emit('chat.room.invite.accepted', {
       inviteId,
       roomId: invite.roomId,
@@ -579,7 +526,56 @@ export class ChatRoomInviteService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
-    return room;
+    return room.room;
+  }
+
+  // A concurrent accept of the same invite finds it already accepted once it gets the room lock.
+  private async joinByInvite(
+    userId: Uuid,
+    inviteId: Uuid,
+    invite: { roomId: Uuid; inviterId: Uuid },
+    addressedToCaller: (db: Db, now: Date) => SQL | undefined,
+    meta: ClientMeta,
+  ) {
+    try {
+      const room = await this.membership.joinByInvite({
+        roomId: invite.roomId,
+        userId,
+        ...meta,
+        inTransaction: async (t) => {
+          const now = new Date();
+          const [locked] = await t
+            .select({ id: chatRoomInvite.id })
+            .from(chatRoomInvite)
+            .where(addressedToCaller(t, now))
+            .for('update', { of: chatRoomInvite })
+            .limit(1);
+          if (!locked) {
+            throw new ChatRoomInviteNotFoundError(inviteId);
+          }
+          if (await hasActivePlatformBan(t, userId, invite.roomId, now)) {
+            throw new ChatRoomBannedError(invite.roomId);
+          }
+          if (await hasActiveBlock(t, userId, invite.inviterId)) {
+            throw new ChatRoomInviterBlockedError();
+          }
+          await t
+            .update(chatRoomInvite)
+            .set({ status: 'accepted', respondedAt: now })
+            .where(eq(chatRoomInvite.id, inviteId));
+        },
+      });
+      return { room, accepted: true } as const;
+    } catch (err) {
+      if (!(err instanceof ChatRoomInviteNotFoundError)) {
+        throw err;
+      }
+      const room = await this.acceptedRoom(userId, inviteId);
+      if (!room) {
+        throw err;
+      }
+      return { room, accepted: false } as const;
+    }
   }
 
   // A retried accept returns the room it already joined, while the invitee is still in it.
@@ -613,7 +609,7 @@ export class ChatRoomInviteService {
         and(
           eq(chatRoomInvite.id, inviteId),
           eq(chatRoomInvite.inviteeId, userId),
-          liveInvite(db, now),
+          deliverableInvite(db, now),
         ),
       )
       .returning({ roomId: chatRoomInvite.roomId, inviterId: chatRoomInvite.inviterId });
@@ -630,5 +626,29 @@ export class ChatRoomInviteService {
       userAgent: userAgent ?? null,
     });
     return { success: true } as const;
+  }
+
+  async expireLapsedInvites() {
+    const db = this.drizzle.db;
+    let expired = 0;
+    let batch: ExpiredInvite[];
+    do {
+      batch = await expirePendingInvites(
+        db,
+        inArray(
+          chatRoomInvite.id,
+          db
+            .select({ id: chatRoomInvite.id })
+            .from(chatRoomInvite)
+            .where(
+              and(eq(chatRoomInvite.status, 'pending'), sql`not (${liveInvite(db, new Date())})`),
+            )
+            .limit(INVITE_EXPIRY_BATCH_SIZE),
+        ),
+      );
+      emitExpiredInvites(this.events, batch);
+      expired += batch.length;
+    } while (batch.length === INVITE_EXPIRY_BATCH_SIZE);
+    return expired;
   }
 }

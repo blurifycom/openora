@@ -872,6 +872,14 @@ export const domainEventSchemas = {
     roomName: z.string(),
     playerId: UuidSchema.nullable(),
   }),
+  // An invite to a player who may not receive it is stored but never delivered.
+  'chat.room.invite.withheld': authContextBase.extend({
+    inviteId: UuidSchema,
+    roomId: UuidSchema,
+    inviterId: UuidSchema,
+    inviteeId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
   'chat.room.invite.accepted': authContextBase.extend({
     inviteId: UuidSchema,
     roomId: UuidSchema,
@@ -886,12 +894,14 @@ export const domainEventSchemas = {
     inviteeId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
-  // A lapsed pending invite was retired when the same player was invited again.
+  // A pending invite lapsed or was voided; `actorId` is absent when the expiry sweep did it.
   'chat.room.invite.expired': authContextBase.extend({
     inviteId: UuidSchema,
     roomId: UuidSchema,
     inviterId: UuidSchema,
     inviteeId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    actorPlayerId: UuidSchema.nullable().optional(),
   }),
   'chat.room.member.left': authContextBase.extend({
     roomId: UuidSchema,

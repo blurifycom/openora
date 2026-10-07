@@ -76,3 +76,8 @@ export const ChatRoomLockedError = createDomainError(
   (roomId: Uuid) => `Room is locked: ${roomId}`,
   { reason: 'locked' },
 );
+export const ChatRoomInviteOnlyError = createDomainError(
+  'ChatRoomInviteOnlyError',
+  (roomId: Uuid) => `Room is invite-only: ${roomId}`,
+  { reason: 'invite_only' },
+);

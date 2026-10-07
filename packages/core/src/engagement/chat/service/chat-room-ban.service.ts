@@ -15,6 +15,7 @@ import {
   ChatRoomSelfModerationError,
 } from './errors/chat-moderation.errors.js';
 import { revokeRoomChannelBestEffort } from './channel-revoke.service.js';
+import { emitExpiredInvites, expireInvitesInvolving } from './chat-room-invite-expiry.service.js';
 
 export class ChatRoomBanService {
   constructor(
@@ -72,7 +73,7 @@ export class ChatRoomBanService {
     }
     const expiresAt =
       durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
-    const replaced = await this.drizzle.db.transaction((t) =>
+    const { replaced, expired } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         await this.assertModerator(t, roomId, moderatorId, userId);
         const now = new Date();
@@ -91,16 +92,26 @@ export class ChatRoomBanService {
         await t
           .delete(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
-        return previous
-          ? { banId: previous.id, expiresAt: previous.expiresAt?.toISOString() ?? null }
-          : null;
+        return {
+          replaced: previous
+            ? { banId: previous.id, expiresAt: previous.expiresAt?.toISOString() ?? null }
+            : null,
+          expired: await expireInvitesInvolving(t, userId, roomId),
+        };
       }),
     );
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(moderatorId);
+    emitExpiredInvites(this.events, expired, {
+      actorId: moderatorId,
+      actorPlayerId: playerId,
+      ip,
+      userAgent,
+    });
     this.events.emit('chat.room.member.banned', {
       roomId,
       userId,
       bannedBy: moderatorId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(moderatorId),
+      playerId,
       reason,
       expiresAt: expiresAt?.toISOString() ?? null,
       replaced,

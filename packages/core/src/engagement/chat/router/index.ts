@@ -49,6 +49,7 @@ import {
   ChatPlayerMutedError,
   ChatPlayerBannedError,
   ChatAdminPrivateRoomModerationError,
+  ChatRoomInviteOnlyError,
   ChatRoomLockedError,
   ChatRoomNotFoundError,
 } from '../service/chat-moderation.service.js';
@@ -62,7 +63,6 @@ import {
   ChatRoomInviteeAlreadyMemberError,
   ChatRoomInviteeBannedError,
   ChatRoomInviteeNotPlayerError,
-  ChatRoomInviteeUnavailableError,
   ChatRoomInviterBlockedError,
 } from '../service/errors/chat-room-invite.errors.js';
 import { ChatRoomBanService } from '../service/chat-room-ban.service.js';
@@ -396,7 +396,7 @@ export function createChatRouter({
       return mapErrors(
         {
           NOT_FOUND: ChatRoomJoinCodeNotFoundError,
-          FORBIDDEN: [ChatRoomBannedError, ChatRoomLockedError],
+          FORBIDDEN: [ChatRoomBannedError, ChatRoomLockedError, ChatRoomInviteOnlyError],
         },
         () =>
           membershipService.joinRoom({ userId, joinCode: input.joinCode, ...context.clientMeta }),
@@ -411,7 +411,10 @@ export function createChatRouter({
         JOIN_ROOM_RATE_LIMIT,
       );
       return mapErrors(
-        { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: [ChatRoomBannedError, ChatRoomLockedError] },
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomBannedError, ChatRoomLockedError, ChatRoomInviteOnlyError],
+        },
         () =>
           membershipService.joinPublicRoom({ roomId: input.roomId, userId, ...context.clientMeta }),
       );
@@ -449,7 +452,6 @@ export function createChatRouter({
           NOT_FOUND: ChatRoomNotFoundError,
           FORBIDDEN: [
             ChatRoomInviteForbiddenError,
-            ChatRoomInviteeUnavailableError,
             ChatRoomInviteeBannedError,
             ChatRoomLockedError,
             ChatRoomBannedError,

@@ -2,10 +2,11 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomInt, randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
-import { CHAT_REALTIME_TRANSPORT, chatChannel } from '@openora/core/contracts';
+import { CHAT_REALTIME_TRANSPORT, PLAY_ELIGIBILITY, chatChannel } from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
-import { chatRoomInvite, chatRoomMember } from '@openora/core/engagement/schema/chat';
+import { chatRoomInvite } from '@openora/core/engagement/schema/chat';
+import { notification } from '@openora/core/engagement/schema/notifications';
 import {
   CHAT_MEMBER_JOINED_SIGNAL,
   ChatRoomInviteCandidateSchema,
@@ -58,7 +59,7 @@ async function joinByCode(member: Chatter, room: ChatRoom) {
 async function configureRoom(
   owner: Chatter,
   room: ChatRoom,
-  values: { moderatorInvite?: boolean; lockRoom?: boolean },
+  values: { moderatorInvite?: boolean; lockRoom?: boolean; onlyInvitedCanJoin?: boolean },
 ) {
   const res = await owner.client.patch(`/chat/rooms/${room.id}/configuration`, values);
   expect(res.status).toBe(200);
@@ -112,6 +113,70 @@ async function inviteRow(inviteId: string) {
     .from(chatRoomInvite)
     .where(eq(chatRoomInvite.id, inviteId));
   return row;
+}
+
+async function auditRows(resourceId: string, action: string) {
+  const res = await admin.get(`/audit/logs?resourceId=${resourceId}&action=${action}`);
+  expect(res.status).toBe(200);
+  return ((await res.json()) as { items: unknown[] }).items;
+}
+
+async function inviteStatusOf(owner: Chatter, room: ChatRoom, invitee: Chatter) {
+  const res = await owner.client.post(`/chat/rooms/${room.id}/invite-statuses`, {
+    userIds: [invitee.userId],
+  });
+  expect(res.status).toBe(200);
+  return ChatRoomInviteLookupSchema.array().parse(await res.json())[0]?.inviteStatus;
+}
+
+async function expectWithheld(owner: Chatter, room: ChatRoom, invitee: Chatter) {
+  const res = await invite(owner, room, invitee.userId);
+  expect(res.status).toBe(200);
+  const body: unknown = await res.json();
+  expect(body).not.toHaveProperty('withheld');
+  const sent = ChatRoomInviteSchema.parse(body);
+  expect(sent).toMatchObject({ inviteeId: invitee.userId, status: 'pending' });
+  expect(await inviteRow(sent.id)).toMatchObject({ status: 'pending', withheld: true });
+
+  expect(await inviteStatusOf(owner, room, invitee)).toBe('invited');
+  await expectRejected(await invite(owner, room, invitee.userId), 409, 'invited');
+
+  await vi.waitFor(async () => {
+    expect(await auditRows(sent.id, 'chat.room.invite.withheld')).toMatchObject([
+      {
+        actorType: 'player',
+        actorId: owner.playerId,
+        resourceType: 'chat_room_invite',
+        result: 'success',
+      },
+    ]);
+  }, WAIT);
+  expect(await auditRows(sent.id, 'chat.room.invite.sent')).toEqual([]);
+  const notified = await app.container
+    .get(DRIZZLE)
+    .db.select({ id: notification.id })
+    .from(notification)
+    .where(
+      and(
+        eq(notification.userId, invitee.userId),
+        eq(notification.type, 'chat.room_invite.received'),
+      ),
+    );
+  expect(notified).toEqual([]);
+  return sent;
+}
+
+async function expectHiddenFrom(invitee: Chatter, sent: { id: string }) {
+  expect(await myInvites(invitee)).toEqual([]);
+  expect((await invitee.client.post(`/chat/invites/${sent.id}/accept`)).status).toBe(404);
+  expect((await invitee.client.post(`/chat/invites/${sent.id}/decline`)).status).toBe(404);
+  expect(await inviteRow(sent.id)).toMatchObject({ status: 'pending' });
+}
+
+async function waitUntilRestricted(userId: string) {
+  await vi.waitFor(async () => {
+    expect(await app.container.get(PLAY_ELIGIBILITY).isRestricted(userId)).toBe(true);
+  }, WAIT);
 }
 
 async function watchRoomSignals(roomId: string) {
@@ -270,7 +335,7 @@ describe('chat room invites: rejections', () => {
     await expectRejected(await invite(owner, room, staff.userId), 400, 'not_player');
   });
 
-  it('refuses a player who blocked the inviter, without saying why', async () => {
+  it('withholds an invite to a player who blocked the inviter, without saying why', async () => {
     const owner = await registerChatter('host');
     const blocker = await registerChatter('blocker');
     const room = await createRoom(owner);
@@ -278,10 +343,10 @@ describe('chat room invites: rejections', () => {
       200,
     );
 
-    await expectRejected(await invite(owner, room, blocker.userId), 403, 'unavailable');
+    await expectHiddenFrom(blocker, await expectWithheld(owner, room, blocker));
   });
 
-  it('refuses a player under a responsible-gambling exclusion, without saying why', async () => {
+  it('withholds an invite to a player under a responsible-gambling exclusion', async () => {
     const owner = await registerChatter('host');
     const room = await createRoom(owner);
     const coolingOff = await registerChatter('resting');
@@ -299,25 +364,20 @@ describe('chat room invites: rejections', () => {
     });
     expect(excluded.status).toBe(200);
 
-    await vi.waitFor(async () => {
-      const res = await owner.client.post(`/chat/rooms/${room.id}/invite-statuses`, {
-        userIds: [coolingOff.userId, selfExcluded.userId],
-      });
-      expect(ChatRoomInviteLookupSchema.array().parse(await res.json())).toEqual([
-        { userId: coolingOff.userId, inviteStatus: 'unavailable' },
-        { userId: selfExcluded.userId, inviteStatus: 'unavailable' },
-      ]);
-    }, WAIT);
     for (const excludedPlayer of [coolingOff, selfExcluded]) {
-      await expectRejected(await invite(owner, room, excludedPlayer.userId), 403, 'unavailable');
+      await waitUntilRestricted(excludedPlayer.userId);
+      expect(await inviteStatusOf(owner, room, excludedPlayer)).toBe('available');
       const search = await owner.client.get(
         `/chat/rooms/${room.id}/invite-candidates?q=${excludedPlayer.username}`,
       );
-      expect(ChatRoomInviteCandidateSchema.array().parse(await search.json())).toEqual([]);
+      expect(ChatRoomInviteCandidateSchema.array().parse(await search.json())).toMatchObject([
+        { userId: excludedPlayer.userId, inviteStatus: 'available' },
+      ]);
+      await expectWithheld(owner, room, excludedPlayer);
     }
   });
 
-  it('refuses a suspended player', async () => {
+  it('withholds an invite to a suspended player', async () => {
     const owner = await registerChatter('host');
     const suspended = await registerChatter('susp');
     const room = await createRoom(owner);
@@ -327,7 +387,8 @@ describe('chat room invites: rejections', () => {
       .set({ status: 'suspended' })
       .where(eq(player.userId, suspended.userId));
 
-    await expectRejected(await invite(owner, room, suspended.userId), 403, 'unavailable');
+    expect(await inviteStatusOf(owner, room, suspended)).toBe('available');
+    await expectHiddenFrom(suspended, await expectWithheld(owner, room, suspended));
   });
 
   it('refuses a player banned from the room', async () => {
@@ -344,7 +405,7 @@ describe('chat room invites: rejections', () => {
     await expectRejected(await invite(owner, room, banned.userId), 403, 'banned');
   });
 
-  it('refuses a player under a platform chat ban', async () => {
+  it('withholds an invite to a player under a platform chat ban', async () => {
     const owner = await registerChatter('host');
     const banned = await registerChatter('banned');
     const room = await createRoom(owner);
@@ -355,7 +416,7 @@ describe('chat room invites: rejections', () => {
     });
     expect(ban.status).toBe(200);
 
-    await expectRejected(await invite(owner, room, banned.userId), 403, 'unavailable');
+    await expectHiddenFrom(banned, await expectWithheld(owner, room, banned));
   });
 
   it('refuses a player who is already a member', async () => {
@@ -624,7 +685,8 @@ describe('chat room invites: accepting', () => {
     });
     expect(ban.status).toBe(200);
 
-    expect((await invitee.client.post(`/chat/invites/${sent.id}/accept`)).status).toBe(403);
+    expect((await invitee.client.post(`/chat/invites/${sent.id}/accept`)).status).toBe(404);
+    expect(await inviteRow(sent.id)).toMatchObject({ status: 'expired' });
     expect(await roomMemberIds(owner, room)).not.toContain(invitee.userId);
   });
 });
@@ -657,6 +719,7 @@ describe('chat room invites: declining and expiry', () => {
     const sent = await sendInvite(moderator, room, invitee);
     await configureRoom(owner, room, { moderatorInvite: false });
 
+    expect(await inviteRow(sent.id)).toMatchObject({ status: 'expired' });
     expect(await myInvites(invitee)).toEqual([]);
     expect((await invitee.client.post(`/chat/invites/${sent.id}/accept`)).status).toBe(404);
     expect(await roomMemberIds(owner, room)).not.toContain(invitee.userId);
@@ -694,30 +757,15 @@ describe('chat room invites: declining and expiry', () => {
       );
       expect(auditRes.status).toBe(200);
       const { items } = (await auditRes.json()) as { items: unknown[] };
-      expect(items[0]).toMatchObject({
-        actorType: 'system',
-        resourceType: 'chat_room_invite',
-        result: 'success',
-      });
+      expect(items).toMatchObject([
+        {
+          actorType: 'player',
+          actorId: owner.playerId,
+          resourceType: 'chat_room_invite',
+          result: 'success',
+        },
+      ]);
     }, WAIT);
-  });
-
-  it("voids an invite once the inviting moderator's account is closed", async () => {
-    const owner = await registerChatter('host');
-    const invitee = await registerChatter('guest');
-    const room = await createRoom(owner);
-    const moderator = await addModerator(owner, room);
-    await configureRoom(owner, room, { moderatorInvite: true });
-    const sent = await sendInvite(moderator, room, invitee);
-    await app.container
-      .get(DRIZZLE)
-      .db.update(chatRoomMember)
-      .set({ accountClosedAt: new Date() })
-      .where(and(eq(chatRoomMember.roomId, room.id), eq(chatRoomMember.userId, moderator.userId)));
-
-    expect(await myInvites(invitee)).toEqual([]);
-    expect((await invitee.client.post(`/chat/invites/${sent.id}/accept`)).status).toBe(404);
-    expect(await roomMemberIds(owner, room)).not.toContain(invitee.userId);
   });
 
   it('voids an invite once the inviter is put under a platform chat ban', async () => {
@@ -732,6 +780,7 @@ describe('chat room invites: declining and expiry', () => {
     });
     expect(ban.status).toBe(200);
 
+    expect(await inviteRow(sent.id)).toMatchObject({ status: 'expired' });
     expect(await myInvites(invitee)).toEqual([]);
     expect((await invitee.client.post(`/chat/invites/${sent.id}/accept`)).status).toBe(404);
   });
@@ -818,7 +867,7 @@ describe('chat room invites: finding players', () => {
     ]);
   });
 
-  it('reports a player under a platform chat ban as unavailable', async () => {
+  it('reports a player under a platform chat ban as available', async () => {
     const owner = await registerChatter('host');
     const room = await createRoom(owner);
     const banned = await registerChatter('banned');
@@ -833,7 +882,7 @@ describe('chat room invites: finding players', () => {
       userIds: [banned.userId],
     });
     expect(ChatRoomInviteLookupSchema.array().parse(await res.json())).toEqual([
-      { userId: banned.userId, inviteStatus: 'unavailable' },
+      { userId: banned.userId, inviteStatus: 'available' },
     ]);
   });
 

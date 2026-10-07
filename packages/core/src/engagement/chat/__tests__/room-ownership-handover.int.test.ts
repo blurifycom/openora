@@ -79,7 +79,7 @@ function makeServices(transport: RealtimeTransport = makeTransport()) {
       })),
   });
   const identityReader = makeIdentityReader();
-  const moderation = new ChatModerationService(db.drizzle, transport, audit);
+  const moderation = new ChatModerationService(db.drizzle, transport, audit, events);
   const chat = new ChatService({
     drizzle: db.drizzle,
     events,

@@ -1042,12 +1042,45 @@ describe('mapEventToRecord: chat.room.invite', () => {
 
     expect(row).toMatchObject({
       actorType: 'system',
+      actorId: null,
       action: 'chat.room.invite.expired',
       resourceType: 'chat_room_invite',
       resourceId: inviteId,
       result: 'success',
       after: { roomId, inviterId, inviteeId: userId, status: 'expired' },
     });
+  });
+
+  it('records an invite voided by a player against that player', async () => {
+    const row = await mapEventToRecord('chat.room.invite.expired', {
+      inviteId,
+      roomId,
+      inviterId,
+      inviteeId: userId,
+      actorId: inviterId,
+      actorPlayerId: playerId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      resourceType: 'chat_room_invite',
+      resourceId: inviteId,
+      after: { roomId, inviterId, inviteeId: userId, status: 'expired' },
+    });
+  });
+
+  it('records an invite voided by staff against the staff user id', async () => {
+    const row = await mapEventToRecord('chat.room.invite.expired', {
+      inviteId,
+      roomId,
+      inviterId,
+      inviteeId: userId,
+      actorId: adminId,
+      actorPlayerId: null,
+    });
+
+    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId, resourceId: inviteId });
   });
 
   it('falls back to the inviter user id when no player backs the inviter', async () => {
@@ -1062,5 +1095,25 @@ describe('mapEventToRecord: chat.room.invite', () => {
     });
 
     expect(row).toMatchObject({ actorType: 'player', actorId: inviterId, resourceId: inviteId });
+  });
+
+  it('records a withheld invite against the inviter', async () => {
+    const row = await mapEventToRecord('chat.room.invite.withheld', {
+      inviteId,
+      roomId,
+      inviterId,
+      inviteeId: userId,
+      playerId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      action: 'chat.room.invite.withheld',
+      resourceType: 'chat_room_invite',
+      resourceId: inviteId,
+      result: 'success',
+      after: { roomId, inviteeId: userId, status: 'pending', withheld: true },
+    });
   });
 });

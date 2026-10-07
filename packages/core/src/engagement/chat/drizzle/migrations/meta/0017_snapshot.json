@@ -1,5 +1,5 @@
 {
-  "id": "a4336416-e71a-4d7c-9637-1e20b8cd04c3",
+  "id": "289e00df-fe54-41f5-98f8-21425e3942be",
   "prevId": "550e8414-4ccc-4253-b985-e957c81c4511",
   "version": "7",
   "dialect": "postgresql",
@@ -967,6 +967,13 @@
           "notNull": true,
           "default": "'pending'"
         },
+        "withheld": {
+          "name": "withheld",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1021,6 +1028,22 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_room_invite_inviter_pending_idx": {
+          "name": "chat_room_invite_inviter_pending_idx",
+          "columns": [
+            {
+              "expression": "inviter_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"chat_room_invite\".\"status\" = 'pending'",
           "concurrently": false,
           "method": "btree",
           "with": {}

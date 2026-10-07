@@ -130,7 +130,7 @@ function makeService(
     record: vi.fn().mockResolvedValue(undefined),
     recordInTransaction: vi.fn().mockResolvedValue(undefined),
   });
-  const moderation = new ChatModerationService(db.drizzle, transport, audit);
+  const moderation = new ChatModerationService(db.drizzle, transport, audit, events);
   const identityReader = makeIdentityReader();
   const chatService = new ChatService({
     drizzle: db.drizzle,

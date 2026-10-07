@@ -39,7 +39,7 @@ export const CHAT_ROOM_INVITE_CANDIDATE_STATUSES = [
   'banned',
 ] as const;
 
-// `unavailable` hides why a player cannot be invited.
+// `unavailable` marks an id that is not a player.
 export const CHAT_ROOM_INVITE_LOOKUP_STATUSES = [
   ...CHAT_ROOM_INVITE_CANDIDATE_STATUSES,
   'unavailable',

@@ -61,8 +61,11 @@ import {
   chatRoomBan,
   chatRoomRule,
   chatRoomConfiguration,
+  chatRoomInvite,
   chatPlatformBan,
 } from '../schema/index.js';
+import { emitExpiredInvites, expirePendingInvites } from './chat-room-invite-expiry.service.js';
+import { emitAccessRefused } from './chat-access-refusal.service.js';
 import { ChatMessageNotFoundError, ChatRoomNotFoundError } from './chat-moderation.service.js';
 import { toMessage, toSystemMessage } from './chat-message-mapping.service.js';
 export {
@@ -1050,9 +1053,17 @@ export class ChatService {
     moderatorInvite?: boolean;
   } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
-    const config = await this.drizzle.db.transaction((tx) =>
+    const updated = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, `chat-room:${roomId}`, async () => {
         const before = await this.findRoomConfiguration(tx, roomId);
+        const moderatorInviteBefore = before?.moderatorInvite ?? false;
+        if (
+          patch.moderatorInvite !== undefined &&
+          patch.moderatorInvite !== moderatorInviteBefore &&
+          (await this.roomRole(tx, roomId, actorId)) !== 'owner'
+        ) {
+          return null;
+        }
         const [after] = await tx
           .insert(chatRoomConfiguration)
           .values({ roomId, ...patch, updatedAt: new Date() })
@@ -1076,10 +1087,59 @@ export class ChatService {
             userAgent: userAgent ?? null,
           });
         }
-        return after;
+        const expired =
+          moderatorInviteBefore && !after.moderatorInvite
+            ? await expirePendingInvites(
+                tx,
+                and(
+                  eq(chatRoomInvite.roomId, roomId),
+                  inArray(
+                    chatRoomInvite.inviterId,
+                    tx
+                      .select({ userId: chatRoomMember.userId })
+                      .from(chatRoomMember)
+                      .where(
+                        and(
+                          eq(chatRoomMember.roomId, roomId),
+                          eq(chatRoomMember.role, 'moderator'),
+                        ),
+                      ),
+                  ),
+                ),
+              )
+            : [];
+        return { config: after, expired };
       }),
     );
-    return toConfiguration(config);
+    if (!updated) {
+      await emitAccessRefused(this.drizzle.db, this.events, {
+        actorId,
+        resource: 'chat.room_configuration',
+        action: 'update',
+        ip,
+        userAgent,
+      });
+      throw new ChatRoomNotModeratorError(roomId);
+    }
+    emitExpiredInvites(this.events, updated.expired, {
+      actorId,
+      actorPlayerId:
+        updated.expired.length > 0
+          ? await this.identityReader.getPlayerIdByUserIdSafe(actorId)
+          : null,
+      ip,
+      userAgent,
+    });
+    return toConfiguration(updated.config);
+  }
+
+  private async roomRole(db: DrizzleDb | DrizzleTx, roomId: ChatRoom['id'], userId: User['id']) {
+    const [member] = await db
+      .select({ role: chatRoomMember.role })
+      .from(chatRoomMember)
+      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+      .limit(1);
+    return member?.role ?? null;
   }
 
   async listRoomUsers({
@@ -2095,18 +2155,29 @@ export class ChatService {
           .set({ deletedAt })
           .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
           .returning({ id: chatRoom.id });
-        return updated.length === 1 ? { room, members } : null;
+        if (updated.length !== 1) {
+          return null;
+        }
+        const expired = await expirePendingInvites(t, eq(chatRoomInvite.roomId, roomId));
+        return { room, members, expired };
       }),
     );
     if (!deleted) {
       throw new ChatRoomNotFoundError(roomId);
     }
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    emitExpiredInvites(this.events, deleted.expired, {
+      actorId: userId,
+      actorPlayerId: playerId,
+      ip,
+      userAgent,
+    });
     // Before the realtime cleanup: the deletion is committed, and an audit trail that depends
     // on a transport call succeeding would go missing exactly when the transport is down.
     this.events.emit('chat.private_room.deleted', {
       roomId,
       creatorId: userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
       before: {
         name: deleted.room.name,
         slug: deleted.room.slug,
@@ -2137,19 +2208,25 @@ export class ChatService {
     if (existing.slug === GLOBAL_CHAT_ROOM_ID) {
       throw new ChatRoomProtectedError();
     }
-    const deleted = findOneOrThrow(
-      await this.drizzle.db
-        .update(chatRoom)
-        .set({ deletedAt: new Date() })
-        .where(and(eq(chatRoom.id, id), isNull(chatRoom.deletedAt)))
-        .returning({
-          id: chatRoom.id,
-          name: chatRoom.name,
-          slug: chatRoom.slug,
-          category: chatRoom.category,
-        }),
-      new ChatRoomNotFoundError(id),
+    const { deleted, expired } = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room:${id}`, async () => {
+        const deleted = findOneOrThrow(
+          await t
+            .update(chatRoom)
+            .set({ deletedAt: new Date() })
+            .where(and(eq(chatRoom.id, id), isNull(chatRoom.deletedAt)))
+            .returning({
+              id: chatRoom.id,
+              name: chatRoom.name,
+              slug: chatRoom.slug,
+              category: chatRoom.category,
+            }),
+          new ChatRoomNotFoundError(id),
+        );
+        return { deleted, expired: await expirePendingInvites(t, eq(chatRoomInvite.roomId, id)) };
+      }),
     );
+    emitExpiredInvites(this.events, expired, { ...meta, actorId });
     this.events.emit('chat.room.deleted', {
       roomId: id,
       actorId,

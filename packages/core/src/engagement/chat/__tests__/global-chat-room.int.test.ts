@@ -41,7 +41,7 @@ function makeService() {
     record: vi.fn().mockResolvedValue(undefined),
     recordInTransaction: vi.fn().mockResolvedValue(undefined),
   });
-  const moderation = new ChatModerationService(db.drizzle, transport, audit);
+  const moderation = new ChatModerationService(db.drizzle, transport, audit, events);
   const directory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] });
   return new ChatService({
     drizzle: db.drizzle,

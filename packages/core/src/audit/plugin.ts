@@ -473,14 +473,19 @@ export async function mapEventToRecord(
   // actorId = the acting player's resolved playerId (inviter on sent, invitee on accepted and
   // declined), falling back to their raw user id; resource = the invite row. A decline is the
   // invitee's own choice, so it records as a success despite the topic suffix.
-  if (topic === 'chat.room.invite.sent') {
+  if (topic === 'chat.room.invite.sent' || topic === 'chat.room.invite.withheld') {
     return {
       ...base,
       actorType: 'player',
       actorId: str(p['playerId']) ?? str(p['inviterId']),
       resourceType: 'chat_room_invite',
       resourceId: str(p['inviteId']),
-      after: { roomId: str(p['roomId']), inviteeId: str(p['inviteeId']), status: 'pending' },
+      after: {
+        roomId: str(p['roomId']),
+        inviteeId: str(p['inviteeId']),
+        status: 'pending',
+        ...(topic === 'chat.room.invite.withheld' ? { withheld: true } : {}),
+      },
     };
   }
 
@@ -501,8 +506,12 @@ export async function mapEventToRecord(
   }
 
   if (topic === 'chat.room.invite.expired') {
+    const actorId = str(p['actorId']);
+    const actorPlayerId = str(p['actorPlayerId']);
     return {
       ...base,
+      actorType: actorId ? (actorPlayerId ? 'player' : 'admin') : 'system',
+      actorId: actorId ? (actorPlayerId ?? actorId) : null,
       resourceType: 'chat_room_invite',
       resourceId: str(p['inviteId']),
       after: {
@@ -1376,6 +1385,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.joined',
   'chat.room.member.left',
   'chat.room.invite.sent',
+  'chat.room.invite.withheld',
   'chat.room.invite.accepted',
   'chat.room.invite.declined',
   'chat.room.invite.expired',

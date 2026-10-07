@@ -155,6 +155,7 @@ export const chatRoomInvite = pgTable(
     inviterId: uuid().notNull(),
     inviteeId: uuid().notNull(),
     status: chatRoomInviteStatus().notNull().default('pending'),
+    withheld: boolean().notNull().default(false),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     respondedAt: timestamp({ withTimezone: true }),
   },
@@ -163,6 +164,9 @@ export const chatRoomInvite = pgTable(
       .on(t.roomId, t.inviteeId)
       .where(sql`${t.status} = 'pending'`),
     index('chat_room_invite_invitee_status_idx').on(t.inviteeId, t.status),
+    index('chat_room_invite_inviter_pending_idx')
+      .on(t.inviterId)
+      .where(sql`${t.status} = 'pending'`),
     index('chat_room_invite_room_idx').on(t.roomId),
   ],
 );

@@ -17,11 +17,6 @@ export const ChatRoomInviteeNotPlayerError = createDomainError(
   (userId: Uuid) => `Only players can be invited: ${userId}`,
   { reason: 'not_player' },
 );
-export const ChatRoomInviteeUnavailableError = createDomainError(
-  'ChatRoomInviteeUnavailableError',
-  (userId: Uuid) => `This player cannot be invited: ${userId}`,
-  { reason: 'unavailable' },
-);
 export const ChatRoomInviteeBannedError = createDomainError(
   'ChatRoomInviteeBannedError',
   (userId: Uuid) => `This player is banned from the room: ${userId}`,
