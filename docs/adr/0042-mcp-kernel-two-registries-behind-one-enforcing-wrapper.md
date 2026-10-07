@@ -120,8 +120,10 @@ Rejected alternatives:
 - The input rules constrain authors: a free-text field needs a `max`, a number needs coercion
   and bounds, and a union must be flattened.
 - Without a proposals table in core, replay safety is each executor's responsibility, keyed on
-  the state it writes. `add_note` recognises a replay by the same player, author and text, so a
-  second approved proposal carrying exactly the same note from the same approver adds nothing.
+  the state it writes. `add_note` keeps the proposal id on the note it writes, under a partial
+  unique index, so the note table carries a column of agent-proposal state: a replay of that
+  proposal adds nothing, another proposal with the same text adds its own note, and a note an
+  admin wrote never stands in for one.
 - The earlier untyped `ctx.mcp.tool(definition)` form still registers, for compatibility, but
   the kernel does not serve it.
 

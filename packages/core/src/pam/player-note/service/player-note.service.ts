@@ -3,9 +3,8 @@ import {
   makeNotFoundError,
   pageToOffset,
   serializeRow,
-  withAdvisoryXactLock,
 } from '@openora/core/server';
-import { and, asc, count, desc, eq } from 'drizzle-orm';
+import { asc, count, desc, eq, isNotNull } from 'drizzle-orm';
 import type {
   AuditWritePort,
   Player,
@@ -21,8 +20,11 @@ const DATE_FIELDS = ['createdAt', 'updatedAt'] as const;
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
 
-function toItem(row: typeof playerNote.$inferSelect): PlayerNoteItem {
-  return serializeRow(row, { dateFields: DATE_FIELDS });
+function toItem({
+  proposalId: _proposalId,
+  ...note
+}: typeof playerNote.$inferSelect): PlayerNoteItem {
+  return serializeRow(note, { dateFields: DATE_FIELDS });
 }
 
 export class PlayerNoteService {
@@ -73,10 +75,9 @@ export class PlayerNoteService {
   }
 
   /**
-   * Adds the note an approved agent proposal carries, at most once per proposal. With no
-   * proposal column to key on, a replay is recognised by the note it already wrote (same
-   * player, author and content); the lock on the proposal id stops two concurrent executions
-   * from both missing it.
+   * Adds the note an approved agent proposal carries, at most once per proposal. The note keeps
+   * the proposal id under a unique index, so a replay of the proposal, or a second execution
+   * racing the first, inserts nothing; another proposal with the same text adds its own note.
    */
   async createForProposal({
     playerId,
@@ -89,44 +90,35 @@ export class PlayerNoteService {
     actorId: User['id'];
     proposalId: Uuid;
   }) {
-    return this.drizzle.db.transaction((tx) =>
-      withAdvisoryXactLock(tx, `agent-proposal:${proposalId}`, async () => {
-        const [existing] = await tx
-          .select({ id: playerNote.id })
-          .from(playerNote)
-          .where(
-            and(
-              eq(playerNote.playerId, playerId),
-              eq(playerNote.actorId, actorId),
-              eq(playerNote.content, content),
-            ),
-          )
-          .limit(1);
-        if (existing) {
-          return { status: 'already_created' as const };
-        }
-        const [target] = await tx
-          .select({ id: player.id })
-          .from(player)
-          .where(eq(player.id, playerId))
-          .limit(1);
-        if (!target) {
-          throw new PlayerNotFoundError(playerId);
-        }
-        const [created] = await tx
-          .insert(playerNote)
-          .values({ playerId, actorId, content })
-          .returning();
-        await this.audit.recordInTransaction(tx, {
-          actorId,
-          actorType: 'admin',
-          action: 'admin.player_note.created',
-          resourceType: 'player',
-          resourceId: playerId,
-          after: { noteId: created.id, content: created.content, proposalId },
-        });
-        return { status: 'created' as const, note: toItem(created) };
-      }),
-    );
+    return this.drizzle.db.transaction(async (tx) => {
+      const [target] = await tx
+        .select({ id: player.id })
+        .from(player)
+        .where(eq(player.id, playerId))
+        .limit(1);
+      if (!target) {
+        throw new PlayerNotFoundError(playerId);
+      }
+      const [created] = await tx
+        .insert(playerNote)
+        .values({ playerId, actorId, content, proposalId })
+        .onConflictDoNothing({
+          target: playerNote.proposalId,
+          where: isNotNull(playerNote.proposalId),
+        })
+        .returning();
+      if (!created) {
+        return { status: 'already_created' as const };
+      }
+      await this.audit.recordInTransaction(tx, {
+        actorId,
+        actorType: 'admin',
+        action: 'admin.player_note.created',
+        resourceType: 'player',
+        resourceId: playerId,
+        after: { noteId: created.id, content: created.content, proposalId },
+      });
+      return { status: 'created' as const, note: toItem(created) };
+    });
   }
 }

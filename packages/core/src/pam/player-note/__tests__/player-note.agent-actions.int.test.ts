@@ -12,7 +12,12 @@ import {
   type ActionExecutionContext,
   type RunContext,
 } from '@openora/core/contracts';
-import { createMcpKernel, createTestDb, type TestDb } from '@openora/core/testing';
+import {
+  createMcpKernel,
+  createTestDb,
+  waitForRowLockWaiter,
+  type TestDb,
+} from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeAuditWriter } from '../../../testing/mock.js';
@@ -22,6 +27,7 @@ import { PlayerNoteService, PlayerNotFoundError } from '../service/player-note.s
 import playerNotePlugin from '../plugin.js';
 
 const ADMIN_ID = randomUUID();
+const REVIEWED = 'Reviewed, no issues.';
 
 let db: TestDb;
 
@@ -108,8 +114,13 @@ describe('PlayerNoteService.createForProposal (real PG)', () => {
 
     const rows = await notesOf(target.id);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ actorId: ADMIN_ID, content: proposal.content });
+    expect(rows[0]).toMatchObject({
+      actorId: ADMIN_ID,
+      content: proposal.content,
+      proposalId: proposal.proposalId,
+    });
     expect(result).toMatchObject({ status: 'created', note: { id: rows[0]!.id } });
+    expect(result).not.toHaveProperty('note.proposalId');
     expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
     expect(audit.recordInTransaction).toHaveBeenCalledWith(expect.anything(), {
       actorId: ADMIN_ID,
@@ -135,6 +146,39 @@ describe('PlayerNoteService.createForProposal (real PG)', () => {
     expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
   });
 
+  it('writes a note for each of two proposals carrying the same text from the same admin', async () => {
+    const { svc, audit } = makeService();
+    const target = await seedPlayer();
+    const first = proposalFor(target.id, REVIEWED);
+    const second = proposalFor(target.id, REVIEWED);
+
+    const results = [await svc.createForProposal(first), await svc.createForProposal(second)];
+
+    expect(results.map((r) => r.status)).toEqual(['created', 'created']);
+    const rows = await notesOf(target.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.proposalId)).toEqual(
+      expect.arrayContaining([first.proposalId, second.proposalId]),
+    );
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('adds the proposal note beside an identical note the same admin wrote by hand', async () => {
+    const { svc } = makeService();
+    const target = await seedPlayer();
+    const proposal = proposalFor(target.id, REVIEWED);
+    await svc.create({ playerId: target.id, content: REVIEWED }, ADMIN_ID);
+
+    const result = await svc.createForProposal(proposal);
+
+    expect(result).toMatchObject({ status: 'created' });
+    const rows = await notesOf(target.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.proposalId)).toEqual(
+      expect.arrayContaining([null, proposal.proposalId]),
+    );
+  });
+
   it('writes exactly one note when the same proposal executes twice concurrently', async () => {
     const { svc, audit } = makeService();
     const target = await seedPlayer();
@@ -150,6 +194,23 @@ describe('PlayerNoteService.createForProposal (real PG)', () => {
     expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
   });
 
+  it('waits out an uncommitted execution of the same proposal, then writes nothing', async () => {
+    const { svc, audit } = makeService();
+    const target = await seedPlayer();
+    const proposal = proposalFor(target.id);
+
+    const { racing } = await db.drizzle.db.transaction(async (tx) => {
+      await tx.insert(playerNote).values(proposal);
+      const pending = svc.createForProposal(proposal);
+      await waitForRowLockWaiter(db);
+      return { racing: pending };
+    });
+
+    expect(await racing).toEqual({ status: 'already_created' });
+    expect(await notesOf(target.id)).toHaveLength(1);
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+
   it('refuses an unknown player and writes neither a note nor an audit record', async () => {
     const { svc, audit } = makeService();
     const proposal = proposalFor(randomUUID());
@@ -160,16 +221,17 @@ describe('PlayerNoteService.createForProposal (real PG)', () => {
     expect(audit.recordInTransaction).not.toHaveBeenCalled();
   });
 
-  it('rolls the note back when its audit record cannot be written', async () => {
+  it('rolls the note back when its audit record cannot be written, so a retry still applies it', async () => {
     const { svc, audit } = makeService();
     audit.recordInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
     const target = await seedPlayer();
+    const proposal = proposalFor(target.id);
 
-    await expect(svc.createForProposal(proposalFor(target.id))).rejects.toThrow(
-      'audit store unavailable',
-    );
+    await expect(svc.createForProposal(proposal)).rejects.toThrow('audit store unavailable');
 
     expect(await notesOf(target.id)).toHaveLength(0);
+    expect(await svc.createForProposal(proposal)).toMatchObject({ status: 'created' });
+    expect(await notesOf(target.id)).toHaveLength(1);
   });
 });
 
@@ -226,6 +288,7 @@ describe('add_note action type (plugin wiring through the MCP kernel)', () => {
     expect(rows[0]).toMatchObject({
       actorId: ADMIN_ID,
       content: 'Player asked to close the account.',
+      proposalId: execution.proposalId,
     });
     expect(first).toEqual({ ok: true, outcome: 'applied', detail: { noteId: rows[0]!.id } });
     expect(replay).toEqual({ ok: true, outcome: 'already_applied' });

@@ -175,10 +175,10 @@ export type ActionExecutionOutcome = z.infer<typeof ActionExecutionOutcomeSchema
 
 /**
  * Runs an approved proposal. A replay while the effect still holds must perform nothing and
- * resolve 'already_applied', which makes a retry after a crash safe. Executors key on the
- * resulting state, not on a stored proposal id: after someone else changes that state, a replay
- * may apply again or answer a declared refusal, so a proposal store must not re-execute a
- * proposal it recorded as executed.
+ * resolve 'already_applied', which makes a retry after a crash safe. Core stores no proposals, so
+ * executors key on the resulting state, which may record the proposal id: after someone else
+ * changes that state, a replay may apply again or answer a declared refusal, so a proposal store
+ * must not re-execute a proposal it recorded as executed.
  */
 export type ActionExecutor<P extends z.ZodObject = z.ZodObject> = (
   payload: z.output<P>,
