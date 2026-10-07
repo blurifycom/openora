@@ -21,6 +21,8 @@ A withdrawal held by `hold_withdrawal` (`on_hold`) can now be approved or reject
 
 The wallet migration adds an index on `wallet_transaction` by wallet, status and creation time for the activity read. It is a plain `CREATE INDEX`, which blocks writes to that table, and with them every ledger movement, while it builds; on a large ledger, apply it in a quiet window.
 
+The player-note migration adds a nullable `proposal_id` to `player_note` under a partial unique index, so `add_note` writes one note per approved proposal: a replay adds nothing, while two proposals with the same text each add theirs. A note written in the Backoffice keeps it null, and the note routes do not return it.
+
 `@openora/mcp` lists the agent surface: `list-agent-tools`, counts in `catalog-overview`, and a module's tools and action types in `describe-module`.
 
 **Breaking (types):** a hand-written `ModuleRegistry` implementation, a test double for example, needs the new `actions` member, `mcp.getTools`, and the two-argument `mcp.tool` overload. A TypeScript `PlatformConfig` object literal needs `agents`; config files parse unchanged, because the section defaults. The earlier untyped `ctx.mcp.tool({ name, description, inputSchema, handler })` still registers, but the kernel does not serve it; move such a tool to the contract form. `createMcpKernel` is exported only from `@openora/core/testing`; production code resolves `MCP_KERNEL`.

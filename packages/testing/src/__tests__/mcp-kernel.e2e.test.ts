@@ -37,6 +37,8 @@ let adminId: string;
 const SEEDED_ADMIN_EMAIL = 'admin@oss.dev';
 const REQUEST_BODY_NESTING = 400_000;
 const SQL_ERROR = 'SELECT email FROM player WHERE id = 991';
+const REVIEWED = 'Reviewed, no issues.';
+const NOTE_ROUTE_KEYS = ['actorId', 'content', 'createdAt', 'id', 'playerId', 'updatedAt'];
 
 const EXPECTED_TOOL_OWNERS = {
   'ggr.summary': 'analytics',
@@ -216,11 +218,11 @@ function vipTagRows(playerId: string) {
 }
 
 // player-note exports no schema subpath, so its rows are read by table name.
-async function noteIdsOf(playerId: string): Promise<string[]> {
-  const result = await drizzle().execute<{ id: string }>(
-    sql`SELECT id FROM player_note WHERE player_id = ${playerId}`,
+async function notesOf(playerId: string) {
+  const result = await drizzle().execute<{ id: string; proposal_id: string | null }>(
+    sql`SELECT id, proposal_id FROM player_note WHERE player_id = ${playerId}`,
   );
-  return result.rows.map((row) => row.id);
+  return result.rows.map((row) => ({ id: row.id, proposalId: row.proposal_id }));
 }
 
 function advancedKycRows(userId: string) {
@@ -761,7 +763,7 @@ describe('agent tag, note and enhanced-KYC actions are replay-safe', () => {
     });
 
     const noteId = first.ok ? first.detail?.['noteId'] : undefined;
-    expect(await noteIdsOf(active.playerId)).toEqual([noteId]);
+    expect(await notesOf(active.playerId)).toEqual([{ id: noteId, proposalId }]);
     const created = await auditRowsOf('admin.player_note.created', active.playerId);
     expect(created).toHaveLength(1);
     expect(created[0]?.after).toMatchObject({ noteId, proposalId });
@@ -820,5 +822,78 @@ describe('MCP transport while agents.mcp is off', () => {
     });
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe('add_note writes one note per approved proposal', () => {
+  it('writes a note for each of two proposals carrying the same text from the same approver', async () => {
+    const target = await newPlayer('notes-two-proposals');
+    const payload = { playerId: target.playerId, content: REVIEWED };
+    const [first, second] = [randomUUID(), randomUUID()];
+
+    expect(await kernel.executeAction('add_note', payload, execution(first))).toMatchObject({
+      ok: true,
+      outcome: 'applied',
+    });
+    expect(await kernel.executeAction('add_note', payload, execution(second))).toMatchObject({
+      ok: true,
+      outcome: 'applied',
+    });
+
+    const notes = await notesOf(target.playerId);
+    expect(notes).toHaveLength(2);
+    expect(notes.map((note) => note.proposalId)).toEqual(expect.arrayContaining([first, second]));
+    expect(await auditRowsOf('admin.player_note.created', target.playerId)).toHaveLength(2);
+  });
+
+  it("adds the proposal's note beside an identical one the approver wrote, and lists neither with a proposal id", async () => {
+    const target = await newPlayer('notes-hand-written');
+    const notePath = `/player/${target.playerId}/note`;
+    const written = await admin.post(notePath, { content: REVIEWED });
+    expect(written.status).toBe(200);
+    const proposalId = randomUUID();
+
+    expect(
+      await kernel.executeAction(
+        'add_note',
+        { playerId: target.playerId, content: REVIEWED },
+        execution(proposalId),
+      ),
+    ).toMatchObject({ ok: true, outcome: 'applied' });
+
+    const notes = await notesOf(target.playerId);
+    expect(notes).toHaveLength(2);
+    expect(notes.map((note) => note.proposalId)).toEqual(
+      expect.arrayContaining([null, proposalId]),
+    );
+    const listed = await admin.get(notePath);
+    expect(listed.status).toBe(200);
+    const items = object(await listed.json())['items'];
+    if (!Array.isArray(items)) {
+      throw new Error(`expected an items array, got ${JSON.stringify(items)}`);
+    }
+    expect(items.map((item) => Object.keys(object(item)).sort())).toEqual([
+      NOTE_ROUTE_KEYS,
+      NOTE_ROUTE_KEYS,
+    ]);
+  });
+
+  it('writes exactly one note when the same proposal executes twice at once', async () => {
+    const target = await newPlayer('notes-concurrent');
+    const payload = { playerId: target.playerId, content: REVIEWED };
+    const proposalId = randomUUID();
+
+    const results = await Promise.all([
+      kernel.executeAction('add_note', payload, execution(proposalId)),
+      kernel.executeAction('add_note', payload, execution(proposalId)),
+    ]);
+
+    expect(results.map((result) => (result.ok ? result.outcome : result.error)).sort()).toEqual([
+      'already_applied',
+      'applied',
+    ]);
+    expect(await notesOf(target.playerId)).toEqual([{ id: expect.any(String), proposalId }]);
+    expect(await auditRowsOf('admin.player_note.created', target.playerId)).toHaveLength(1);
+    expect(await auditRowsOf('mcp.action.executed', proposalId)).toHaveLength(2);
   });
 });
