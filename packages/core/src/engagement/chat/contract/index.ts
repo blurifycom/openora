@@ -11,13 +11,17 @@ import {
   SystemChatMessageSchema,
   ChatAttachmentSchema,
 } from '@openora/core/contracts';
-import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
+import {
+  PageQuerySchema,
+  SortOrderSchema,
+  paginated,
+  queryArraySchema,
+} from '@openora/core/contracts/kit';
 import {
   MAX_MESSAGE_LENGTH,
   ROOM_NAME_MAX_LENGTH,
   ROOM_SLUG_MAX_LENGTH,
   ROOM_RULE_MAX_LENGTH,
-  ROOM_RULE_ORDER_MAX,
   CONNECTION_CLIENT_ID_MAX_LENGTH,
   JOIN_CODE_INPUT_MAX_LENGTH,
   CHAT_ROOM_ROLES,
@@ -49,7 +53,7 @@ export const ChatRoomSlugSchema = z
 
 export const MessageContentSchema = z.string().trim().min(1).max(MAX_MESSAGE_LENGTH);
 
-export const RoomRuleContentSchema = z.string().trim().min(1).max(ROOM_RULE_MAX_LENGTH);
+const RoomRuleContentSchema = z.string().trim().min(1).max(ROOM_RULE_MAX_LENGTH);
 
 export const ChatRoomRoleSchema = z.enum(CHAT_ROOM_ROLES);
 export type ChatRoomRole = z.infer<typeof ChatRoomRoleSchema>;
@@ -148,14 +152,6 @@ export const ChatRoomConfigurationSchema = z.object({
   updatedAt: TimestampSchema,
 });
 export type ChatRoomConfiguration = z.infer<typeof ChatRoomConfigurationSchema>;
-
-// A room that has never been configured has no stored row, so the row fields are null.
-export const AdminChatRoomConfigurationSchema = ChatRoomConfigurationSchema.extend({
-  id: UuidSchema.nullable(),
-  createdAt: TimestampSchema.nullable(),
-  updatedAt: TimestampSchema.nullable(),
-});
-export type AdminChatRoomConfiguration = z.infer<typeof AdminChatRoomConfigurationSchema>;
 
 export const ChatRoomAccessStatusSchema = z.enum(['all', 'member', 'owner']);
 export type ChatRoomAccessStatus = z.infer<typeof ChatRoomAccessStatusSchema>;
@@ -313,7 +309,7 @@ const RoomModerationInput = RoomUserInput.extend({
   durationSeconds: z.number().int().positive().max(31_536_000).nullable().default(null),
 });
 const ChatJoinCodeSchema = z.string().trim().min(1).max(JOIN_CODE_INPUT_MAX_LENGTH);
-const RoomRuleOrderSchema = z.number().int().positive().max(ROOM_RULE_ORDER_MAX);
+const RoomRuleOrderSchema = z.int32().positive();
 const RoomRuleIdInputSchema = z.object({ roomId: UuidSchema, id: UuidSchema });
 export type RoomRuleIdInput = z.infer<typeof RoomRuleIdInputSchema>;
 const CreateRoomRuleInputSchema = z.object({
@@ -337,18 +333,10 @@ const RoomPostingConfigurationInputSchema = z.object({
 });
 export type RoomPostingConfigurationInput = z.infer<typeof RoomPostingConfigurationInputSchema>;
 const MODERATION_LOOKUP_MAX_USERS = 100;
-const ModerationListInputSchema = z
-  .object({
-    userId: UuidSchema.optional(),
-    // A bare `?userIds=a` arrives as a string, a repeated `userIds[]` key as an array.
-    userIds: z
-      .union([UuidSchema, z.array(UuidSchema).min(1).max(MODERATION_LOOKUP_MAX_USERS)])
-      .transform((ids) => [...new Set([ids].flat())])
-      .optional(),
-  })
-  .refine(({ userId, userIds }) => userId === undefined || userIds === undefined, {
-    message: 'Pass either userId or userIds, not both',
-  });
+// Strict, so a caller still sending the removed `userId` gets a 400, not every player's entries.
+const ModerationListInputSchema = z.strictObject({
+  userIds: queryArraySchema(UuidSchema, MODERATION_LOOKUP_MAX_USERS).optional(),
+});
 
 function hasContentOrAttachment({
   content,
@@ -649,16 +637,6 @@ export const chatContract = {
     )
     .output(ChatRoomSchema),
 
-  adminGetRoom: oc
-    .route({ method: 'GET', path: '/backoffice/chat/rooms/{roomId}' })
-    .input(RoomIdInput)
-    .output(ChatRoomSchema),
-
-  adminListRoomRules: oc
-    .route({ method: 'GET', path: '/backoffice/chat/rooms/{roomId}/rules' })
-    .input(RoomIdInput)
-    .output(z.array(ChatRoomRuleSchema)),
-
   adminCreateRoomRule: oc
     .route({ method: 'POST', path: '/backoffice/chat/rooms/{roomId}/rules' })
     .input(CreateRoomRuleInputSchema)
@@ -673,11 +651,6 @@ export const chatContract = {
     .route({ method: 'DELETE', path: '/backoffice/chat/rooms/{roomId}/rules/{id}' })
     .input(RoomRuleIdInputSchema)
     .output(z.object({ success: z.literal(true) })),
-
-  adminGetRoomConfiguration: oc
-    .route({ method: 'GET', path: '/backoffice/chat/rooms/{roomId}/configuration' })
-    .input(RoomIdInput)
-    .output(AdminChatRoomConfigurationSchema),
 
   adminUpdateRoomConfiguration: oc
     .route({ method: 'PATCH', path: '/backoffice/chat/rooms/{roomId}/configuration' })

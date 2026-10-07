@@ -120,13 +120,6 @@
       "when": 1790853096446,
       "tag": "0016_chat_mute_active_unique",
       "breakpoints": true
-    },
-    {
-      "idx": 17,
-      "version": "7",
-      "when": 1791201162016,
-      "tag": "0017_chat_msg_visible_room_created_at",
-      "breakpoints": true
     }
   ]
 }

@@ -1,1 +1,0 @@
-CREATE INDEX "chat_msg_room_id_created_at_visible_idx" ON "chat_message" USING btree ("room_id","created_at") WHERE "chat_message"."type" = 'user' AND "chat_message"."is_deleted" = false;

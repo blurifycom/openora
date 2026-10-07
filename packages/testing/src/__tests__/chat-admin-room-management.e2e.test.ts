@@ -8,20 +8,14 @@ import { auditLog } from '@openora/core/audit/schema';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import { paginated } from '@openora/core/contracts/kit';
 import {
-  AdminChatRoomConfigurationSchema,
   AdminChatRoomSchema,
   ChatMessageSchema,
   ChatRoomSchema,
   ChatRoomRuleSchema,
   ChatRoomConfigurationSchema,
-  ROOM_RULE_ORDER_MAX,
   type ChatRoomCategory,
 } from '@openora/core/engagement/contracts/chat';
-import {
-  chatMessage,
-  chatRoomConfiguration,
-  chatRoomRule,
-} from '@openora/core/engagement/schema/chat';
+import { chatMessage, chatRoomMember } from '@openora/core/engagement/schema/chat';
 import {
   setupTestDb,
   bootTestApp,
@@ -64,6 +58,25 @@ async function createPrivateRoom(owner: TestClient) {
   return ChatRoomSchema.parse(await created.json());
 }
 
+async function createPublicRoom(
+  name = `room-${randomUUID()}`,
+  category: ChatRoomCategory = 'games-sports',
+) {
+  const created = await admin.post('/backoffice/chat/rooms', {
+    name,
+    slug: `room-${randomUUID()}`,
+    category,
+  });
+  expect(created.status).toBe(200);
+  return ChatRoomSchema.parse(await created.json());
+}
+
+async function listRules(roomId: string) {
+  const listed = await app.app.request(`/chat/rooms/${roomId}/rules`);
+  expect(listed.status).toBe(200);
+  return ChatRoomRuleSchema.array().parse(await listed.json());
+}
+
 async function auditRows(action: string, resourceId: string) {
   return app.container
     .get(DRIZZLE)
@@ -101,103 +114,13 @@ afterAll(async () => {
   await db?.dispose();
 });
 
-describe('chat admin: reading a room', () => {
-  it('lets a view-only admin who is not a member read a private room, its rules and configuration', async () => {
-    const owner = await registerChatter('host');
-    const room = await createPrivateRoom(owner.client);
-    expect(
-      (await owner.client.post(`/chat/rooms/${room.id}/rules`, { content: 'Be kind' })).status,
-    ).toBe(200);
-    const viewer = await registerChatRoomViewer();
-
-    const fetched = await viewer.client.get(`/backoffice/chat/rooms/${room.id}`);
-    const rules = await viewer.client.get(`/backoffice/chat/rooms/${room.id}/rules`);
-    const configuration = await viewer.client.get(
-      `/backoffice/chat/rooms/${room.id}/configuration`,
-    );
-
-    expect(fetched.status).toBe(200);
-    expect(room.joinCode).toEqual(expect.any(String));
-    expect(ChatRoomSchema.parse(await fetched.json())).toMatchObject({
-      id: room.id,
-      isPublic: false,
-      joinCode: null,
-    });
-    expect(rules.status).toBe(200);
-    expect(
-      ChatRoomRuleSchema.array()
-        .parse(await rules.json())
-        .map((rule) => rule.content),
-    ).toEqual(['Be kind']);
-    expect(configuration.status).toBe(200);
-    expect(ChatRoomConfigurationSchema.parse(await configuration.json()).roomId).toBe(room.id);
-  });
-
-  it('reads the defaults of a room with no stored configuration without storing one', async () => {
-    const owner = await registerChatter('host');
-    const room = await createPrivateRoom(owner.client);
-    const drizzle = app.container.get(DRIZZLE).db;
-    const storedConfiguration = () =>
-      drizzle.select().from(chatRoomConfiguration).where(eq(chatRoomConfiguration.roomId, room.id));
-    await drizzle.delete(chatRoomConfiguration).where(eq(chatRoomConfiguration.roomId, room.id));
-
-    const configuration = await admin.get(`/backoffice/chat/rooms/${room.id}/configuration`);
-
-    expect(configuration.status).toBe(200);
-    expect(AdminChatRoomConfigurationSchema.parse(await configuration.json())).toMatchObject({
-      id: null,
-      roomId: room.id,
-      readOnlyMode: false,
-      slowMode: false,
-      slowModeSeconds: 0,
-    });
-    expect(await storedConfiguration()).toEqual([]);
-  });
-
-  it('refuses a player without the chat-room permission and an anonymous caller', async () => {
-    const owner = await registerChatter('host');
-    const room = await createPrivateRoom(owner.client);
-
-    for (const path of ['', '/rules', '/configuration']) {
-      expect((await owner.client.get(`/backoffice/chat/rooms/${room.id}${path}`)).status).toBe(403);
-      expect((await app.app.request(`/backoffice/chat/rooms/${room.id}${path}`)).status).toBe(401);
-    }
-  });
-
-  it('answers not found for a deleted room', async () => {
-    const owner = await registerChatter('host');
-    const room = await createPrivateRoom(owner.client);
-    const rule = ChatRoomRuleSchema.parse(
-      await (
-        await admin.post(`/backoffice/chat/rooms/${room.id}/rules`, { content: 'Be kind' })
-      ).json(),
-    );
-    expect((await owner.client.del(`/chat/rooms/${room.id}`)).status).toBe(200);
-
-    for (const path of ['', '/rules', '/configuration']) {
-      expect((await admin.get(`/backoffice/chat/rooms/${room.id}${path}`)).status).toBe(404);
-    }
-    expect(
-      (await admin.post(`/backoffice/chat/rooms/${room.id}/rules`, { content: 'Too late' })).status,
-    ).toBe(404);
-    expect(
-      (await admin.patch(`/backoffice/chat/rooms/${room.id}/rules/${rule.id}`, { content: 'Edit' }))
-        .status,
-    ).toBe(404);
-    expect((await admin.del(`/backoffice/chat/rooms/${room.id}/rules/${rule.id}`)).status).toBe(
-      404,
-    );
-    expect(
-      (await admin.patch(`/backoffice/chat/rooms/${room.id}/configuration`, { readOnlyMode: true }))
-        .status,
-    ).toBe(404);
-  });
-});
-
 describe('chat admin: room rules', () => {
   it('creates, reorders and deletes a rule in a room the admin is not in, auditing each as admin', async () => {
-    const owner = await registerChatter('host');
-    const room = await createPrivateRoom(owner.client);
+    const room = await createPublicRoom();
+    await app.container
+      .get(DRIZZLE)
+      .db.delete(chatRoomMember)
+      .where(eq(chatRoomMember.roomId, room.id));
     const rulesPath = `/backoffice/chat/rooms/${room.id}/rules`;
 
     const created = await admin.request(rulesPath, {
@@ -218,19 +141,14 @@ describe('chat admin: room rules', () => {
       body: JSON.stringify({ orderNum: second.orderNum + 1, content: 'No spam, ever' }),
     });
     expect(reordered.status).toBe(200);
-    const listed = ChatRoomRuleSchema.array().parse(await (await admin.get(rulesPath)).json());
-    expect(listed.map((r) => r.content)).toEqual(['No links', 'No spam, ever']);
+    expect((await listRules(room.id)).map((r) => r.content)).toEqual(['No links', 'No spam, ever']);
 
     const deleted = await admin.request(`${rulesPath}/${rule.id}`, {
       method: 'DELETE',
       headers: clientHeaders,
     });
     expect(deleted.status).toBe(200);
-    expect(
-      ChatRoomRuleSchema.array()
-        .parse(await (await admin.get(rulesPath)).json())
-        .map((r) => r.id),
-    ).toEqual([second.id]);
+    expect((await listRules(room.id)).map((r) => r.id)).toEqual([second.id]);
 
     const [createdRow] = await auditRows('chat.room.rule.created', rule.id);
     const [updatedRow] = await auditRows('chat.room.rule.updated', rule.id);
@@ -248,62 +166,26 @@ describe('chat admin: room rules', () => {
     expect(updatedRow?.before).toMatchObject({ roomId: room.id, content: 'No spam' });
     expect(updatedRow?.after).toMatchObject({ roomId: room.id, content: 'No spam, ever' });
     expect(deletedRow?.before).toMatchObject({ roomId: room.id, content: 'No spam, ever' });
-    expect(
-      (await admin.post(rulesPath, { content: 'Last', orderNum: ROOM_RULE_ORDER_MAX + 1 })).status,
-    ).toBe(400);
+    expect((await admin.post(rulesPath, { content: 'Last', orderNum: 2 ** 31 })).status).toBe(400);
   });
 
-  it('keeps an auto-assigned order within the limit, listing the newer rule last', async () => {
-    const owner = await registerChatter('host');
-    const room = await createPrivateRoom(owner.client);
+  it('lists a new rule last after one set to the largest order', async () => {
+    const room = await createPublicRoom();
     const rulesPath = `/backoffice/chat/rooms/${room.id}/rules`;
-    expect(
-      (await admin.post(rulesPath, { content: 'First', orderNum: ROOM_RULE_ORDER_MAX })).status,
-    ).toBe(200);
-
-    const next = ChatRoomRuleSchema.parse(
-      await (await admin.post(rulesPath, { content: 'Second' })).json(),
-    );
-
-    expect(next.orderNum).toBe(ROOM_RULE_ORDER_MAX);
-    expect((await admin.patch(`${rulesPath}/${next.id}`, { orderNum: next.orderNum })).status).toBe(
+    expect((await admin.post(rulesPath, { content: 'First', orderNum: 2 ** 31 - 1 })).status).toBe(
       200,
     );
-    expect(
-      ChatRoomRuleSchema.array()
-        .parse(await (await admin.get(rulesPath)).json())
-        .map((r) => r.content),
-    ).toEqual(['First', 'Second']);
-  });
 
-  it('lists a new rule after one saved above the order limit before the limit existed', async () => {
-    const owner = await registerChatter('host');
-    const room = await createPrivateRoom(owner.client);
-    const rulesPath = `/backoffice/chat/rooms/${room.id}/rules`;
-    await app.container
-      .get(DRIZZLE)
-      .db.insert(chatRoomRule)
-      .values({
-        roomId: room.id,
-        createdBy: owner.userId,
-        orderNum: ROOM_RULE_ORDER_MAX * 5,
-        content: 'Legacy',
-      });
+    const next = await admin.post(rulesPath, { content: 'Second' });
 
-    const created = await admin.post(rulesPath, { content: 'Newer' });
-
-    expect(created.status).toBe(200);
-    expect(
-      ChatRoomRuleSchema.array()
-        .parse(await (await admin.get(rulesPath)).json())
-        .map((r) => r.content),
-    ).toEqual(['Legacy', 'Newer']);
+    expect(next.status).toBe(200);
+    expect(ChatRoomRuleSchema.parse(await next.json()).orderNum).toBe(2 ** 31 - 1);
+    expect((await listRules(room.id)).map((r) => r.content)).toEqual(['First', 'Second']);
   });
 
   it('answers not found for a rule that belongs to another room', async () => {
-    const owner = await registerChatter('host');
-    const room = await createPrivateRoom(owner.client);
-    const other = await createPrivateRoom(owner.client);
+    const room = await createPublicRoom();
+    const other = await createPublicRoom();
     const rule = ChatRoomRuleSchema.parse(
       await (
         await admin.post(`/backoffice/chat/rooms/${other.id}/rules`, { content: 'Elsewhere' })
@@ -317,11 +199,11 @@ describe('chat admin: room rules', () => {
 
     expect(patched.status).toBe(404);
     expect(deleted.status).toBe(404);
+    expect((await listRules(other.id)).map((r) => r.content)).toEqual(['Elsewhere']);
   });
 
   it('refuses rule writes from a view-only admin', async () => {
-    const owner = await registerChatter('host');
-    const room = await createPrivateRoom(owner.client);
+    const room = await createPublicRoom();
     const rule = ChatRoomRuleSchema.parse(
       await (
         await admin.post(`/backoffice/chat/rooms/${room.id}/rules`, { content: 'Be kind' })
@@ -335,6 +217,44 @@ describe('chat admin: room rules', () => {
       403,
     );
     expect((await viewer.client.del(`${rulesPath}/${rule.id}`)).status).toBe(403);
+  });
+
+  it('answers not found for a private room and a deleted room, writing nothing', async () => {
+    const owner = await registerChatter('host');
+    const privateRoom = await createPrivateRoom(owner.client);
+    const privateRule = ChatRoomRuleSchema.parse(
+      await (
+        await owner.client.post(`/chat/rooms/${privateRoom.id}/rules`, { content: 'Be kind' })
+      ).json(),
+    );
+    const deletedRoom = await createPublicRoom();
+    const deletedRule = ChatRoomRuleSchema.parse(
+      await (
+        await admin.post(`/backoffice/chat/rooms/${deletedRoom.id}/rules`, { content: 'Be kind' })
+      ).json(),
+    );
+    expect((await admin.del(`/backoffice/chat/rooms/${deletedRoom.id}`)).status).toBe(200);
+
+    for (const [room, rule] of [
+      [privateRoom, privateRule],
+      [deletedRoom, deletedRule],
+    ] as const) {
+      const roomPath = `/backoffice/chat/rooms/${room.id}`;
+      expect((await admin.post(`${roomPath}/rules`, { content: 'Admin' })).status).toBe(404);
+      expect((await admin.patch(`${roomPath}/rules/${rule.id}`, { content: 'Admin' })).status).toBe(
+        404,
+      );
+      expect((await admin.del(`${roomPath}/rules/${rule.id}`)).status).toBe(404);
+      expect((await admin.patch(`${roomPath}/configuration`, { readOnlyMode: true })).status).toBe(
+        404,
+      );
+    }
+    const privateRules = await owner.client.get(`/chat/rooms/${privateRoom.id}/rules`);
+    expect(ChatRoomRuleSchema.array().parse(await privateRules.json())).toEqual([
+      expect.objectContaining({ id: privateRule.id, content: 'Be kind' }),
+    ]);
+    expect(await auditRows('chat.room.rule.updated', privateRule.id)).toEqual([]);
+    expect(await auditRows('chat.room.rule.deleted', privateRule.id)).toEqual([]);
   });
 });
 
@@ -351,16 +271,10 @@ describe('chat admin: room status', () => {
 
     try {
       expect(readOnly.status).toBe(200);
-      expect(ChatRoomConfigurationSchema.parse(await readOnly.json())).toMatchObject({
-        roomId: globalRoomId,
-        readOnlyMode: true,
-      });
+      const configuration = ChatRoomConfigurationSchema.parse(await readOnly.json());
+      expect(configuration).toMatchObject({ roomId: globalRoomId, readOnlyMode: true });
       expect((await player.client.post('/chat/global', { content: 'hello' })).status).toBe(403);
-      const rows = await auditRows(
-        'chat.room.configuration.updated',
-        ChatRoomConfigurationSchema.parse(await (await admin.get(configurationPath)).json()).id,
-      );
-      expect(rows).toEqual([
+      expect(await auditRows('chat.room.configuration.updated', configuration.id)).toEqual([
         expect.objectContaining({
           actorType: 'admin',
           ip: '203.0.113.7',
@@ -376,8 +290,7 @@ describe('chat admin: room status', () => {
   });
 
   it('sets slow mode and ignores settings outside read-only and slow mode', async () => {
-    const owner = await registerChatter('host');
-    const room = await createPrivateRoom(owner.client);
+    const room = await createPublicRoom();
     const configurationPath = `/backoffice/chat/rooms/${room.id}/configuration`;
 
     const slowed = await admin.patch(configurationPath, {
@@ -398,8 +311,7 @@ describe('chat admin: room status', () => {
   });
 
   it('refuses a status change from a view-only admin', async () => {
-    const owner = await registerChatter('host');
-    const room = await createPrivateRoom(owner.client);
+    const room = await createPublicRoom();
     const viewer = await registerChatRoomViewer();
 
     const changed = await viewer.client.patch(`/backoffice/chat/rooms/${room.id}/configuration`, {
@@ -413,16 +325,6 @@ describe('chat admin: room status', () => {
 describe('chat admin: listing rooms', () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
   const MINUTE_MS = 60 * 1000;
-
-  async function createPublicRoom(name: string, category: ChatRoomCategory) {
-    const created = await admin.post('/backoffice/chat/rooms', {
-      name,
-      slug: `list-${randomUUID()}`,
-      category,
-    });
-    expect(created.status).toBe(200);
-    return ChatRoomSchema.parse(await created.json());
-  }
 
   async function listRooms(query: Record<string, string>) {
     const listed = await admin.get(`/backoffice/chat/rooms?${new URLSearchParams(query)}`);

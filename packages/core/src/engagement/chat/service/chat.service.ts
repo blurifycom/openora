@@ -48,6 +48,9 @@ import {
   ne,
   ilike,
   sql,
+  gte,
+  getTableColumns,
+  type SQL,
 } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
@@ -65,7 +68,6 @@ import {
 } from '../schema/index.js';
 import { ChatMessageNotFoundError, ChatRoomNotFoundError } from './chat-moderation.service.js';
 import { toMessage, toSystemMessage } from './chat-message-mapping.service.js';
-import { withAdminRoomStats, type AdminRoomStats } from './admin-room-stats.service.js';
 export {
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
@@ -104,7 +106,6 @@ import {
   JOIN_CODE_LENGTH,
   MAX_PRIVATE_ROOMS_PER_PLAYER,
   PRIVATE_ROOM_SLUG_PREFIX,
-  ROOM_RULE_ORDER_MAX,
 } from '../contract/constants.js';
 import { platformScopesFor, roomReach, validateAttachment } from '../moderation/index.js';
 import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
@@ -238,6 +239,14 @@ export const ChatRoomConfigurationNotFoundError = createDomainError(
 );
 
 const CHAT_MODERATOR_ROLES: readonly ChatRoomRole[] = ['moderator', 'owner'];
+const ROOM_ACTIVITY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// Global-room messages are stored with a null room id.
+function perRoomMessages(query: (roomMessages: SQL | undefined) => SQL) {
+  const visible = (room: SQL) =>
+    and(room, eq(chatMessage.type, 'user'), eq(chatMessage.isDeleted, false));
+  return sql`CASE WHEN ${eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID)} THEN ${query(visible(isNull(chatMessage.roomId)))} ELSE ${query(visible(eq(chatMessage.roomId, chatRoom.id)))} END`;
+}
 
 type AuditActorType = Parameters<AuditWritePort['recordInTransaction']>[1]['actorType'];
 type ChatRoomConfigurationSettings = ReturnType<typeof configurationSettings>;
@@ -283,21 +292,6 @@ function toRoom(record: typeof chatRoom.$inferSelect) {
   );
 }
 
-function toAdminRoom({
-  memberCount,
-  messageCount24h,
-  lastMessageAt,
-  ...record
-}: typeof chatRoom.$inferSelect & AdminRoomStats) {
-  return {
-    ...toRoom(record),
-    ...serializeRow(
-      { memberCount, messageCount24h, lastMessageAt },
-      { dateFields: ['lastMessageAt'] },
-    ),
-  };
-}
-
 function toRule(record: typeof chatRoomRule.$inferSelect) {
   return serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });
 }
@@ -305,16 +299,6 @@ function toRule(record: typeof chatRoomRule.$inferSelect) {
 function toConfiguration(record: typeof chatRoomConfiguration.$inferSelect) {
   return serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });
 }
-
-// The column defaults, for a room that has never been configured.
-const DEFAULT_ROOM_CONFIGURATION = {
-  slowMode: false,
-  slowModeSeconds: 0,
-  readOnlyMode: false,
-  onlyInvitedCanJoin: false,
-  lockRoom: false,
-  moderatorInvite: false,
-} satisfies ChatRoomConfigurationSettings;
 
 function configurationSettings(record: typeof chatRoomConfiguration.$inferSelect) {
   const {
@@ -787,9 +771,24 @@ export class ChatService {
       name ? ilike(chatRoom.name, `%${name}%`) : undefined,
       category ? eq(chatRoom.category, category) : undefined,
     );
+    const since = new Date(Date.now() - ROOM_ACTIVITY_WINDOW_MS);
     const [rows, [{ n }]] = await Promise.all([
       this.drizzle.db
-        .select()
+        .select({
+          ...getTableColumns(chatRoom),
+          memberCount:
+            sql`CASE WHEN ${eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID)} THEN NULL ELSE (SELECT count(*)::int FROM ${chatRoomMember} WHERE ${and(eq(chatRoomMember.roomId, chatRoom.id), isNull(chatRoomMember.accountClosedAt))}) END`.mapWith(
+              (value): number | null => Number(value),
+            ),
+          messageCount24h: perRoomMessages(
+            (roomMessages) =>
+              sql`(SELECT count(*)::int FROM ${chatMessage} WHERE ${and(roomMessages, gte(chatMessage.createdAt, since))})`,
+          ).mapWith(Number),
+          lastMessageAt: perRoomMessages(
+            (roomMessages) =>
+              sql`(SELECT max(${chatMessage.createdAt}) FROM ${chatMessage} WHERE ${roomMessages})`,
+          ).mapWith((value: Date | string): Date | null => new Date(value)),
+        })
         .from(chatRoom)
         .where(where)
         .orderBy(dir(col))
@@ -797,7 +796,12 @@ export class ChatService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(chatRoom).where(where),
     ]);
-    const items = (await withAdminRoomStats(this.drizzle.db, rows)).map(toAdminRoom);
+    const items = rows.map(({ memberCount, messageCount24h, lastMessageAt, ...room }) => ({
+      ...toRoom(room),
+      memberCount,
+      messageCount24h,
+      lastMessageAt: lastMessageAt?.toISOString() ?? null,
+    }));
     return { items, total: Number(n), page, limit };
   }
 
@@ -847,45 +851,21 @@ export class ChatService {
     return toRoom(room);
   }
 
-  private async findActiveRoom(roomId: ChatRoom['id']) {
-    return findOneOrThrow(
-      await this.drizzle.db
-        .select()
-        .from(chatRoom)
-        .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
-        .limit(1),
-      new ChatRoomNotFoundError(roomId),
-    );
-  }
-
-  async adminGetRoom(roomId: ChatRoom['id']) {
-    // The join code admits whoever holds it, so a viewing admin who is not a member never sees it.
-    return { ...toRoom(await this.findActiveRoom(roomId)), joinCode: null };
-  }
-
-  // FOR SHARE conflicts with the soft-delete UPDATE and the purge DELETE, so the room stays live
-  // until the transaction commits.
-  private async lockActiveRoom(tx: DrizzleTx, roomId: ChatRoom['id']) {
-    findOneOrThrow(
-      await tx
-        .select({ id: chatRoom.id })
-        .from(chatRoom)
-        .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
-        .for('share'),
-      new ChatRoomNotFoundError(roomId),
-    );
-  }
-
-  // The purge takes the room's advisory lock, then the audit lock, then deletes the row. An admin
-  // write taking the row lock before the audit lock would deadlock against it without this lock first.
-  private withActiveRoomWriteLock<T>(
-    tx: DrizzleTx,
-    roomId: ChatRoom['id'],
-    write: () => Promise<T>,
-  ) {
-    return withAdvisoryXactLock(tx, `chat-room:${roomId}`, async () => {
-      await this.lockActiveRoom(tx, roomId);
-      return write();
+  // Backoffice room writes reach live public rooms only, the ones listAdminRooms returns. FOR SHARE
+  // holds a concurrent soft delete until the write commits.
+  private adminRoomWrite<T>(roomId: ChatRoom['id'], write: (tx: DrizzleTx) => Promise<T>) {
+    return this.drizzle.db.transaction(async (tx) => {
+      findOneOrThrow(
+        await tx
+          .select({ id: chatRoom.id })
+          .from(chatRoom)
+          .where(
+            and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, true), isNull(chatRoom.deletedAt)),
+          )
+          .for('share'),
+        new ChatRoomNotFoundError(roomId),
+      );
+      return write(tx);
     });
   }
 
@@ -946,19 +926,10 @@ export class ChatService {
         throw new ChatRoomNotMemberError(room.id);
       }
     }
-    return this.rulesOf(room.id);
-  }
-
-  async adminListRoomRules(roomId: ChatRoom['id']) {
-    await this.findActiveRoom(roomId);
-    return this.rulesOf(roomId);
-  }
-
-  private async rulesOf(roomId: ChatRoom['id']) {
     const rows = await this.drizzle.db
       .select()
       .from(chatRoomRule)
-      .where(eq(chatRoomRule.roomId, roomId))
+      .where(eq(chatRoomRule.roomId, room.id))
       .orderBy(asc(chatRoomRule.orderNum), asc(chatRoomRule.createdAt));
     return rows.map(toRule);
   }
@@ -992,10 +963,8 @@ export class ChatService {
   }
 
   async adminCreateRoomRule(input: CreateRoomRuleInput & { actorId: User['id'] } & ClientMeta) {
-    const created = await this.drizzle.db.transaction((tx) =>
-      this.withActiveRoomWriteLock(tx, input.roomId, () =>
-        this.insertRoomRule(tx, { ...input, actorType: 'admin' }),
-      ),
+    const created = await this.adminRoomWrite(input.roomId, (tx) =>
+      this.insertRoomRule(tx, { ...input, actorType: 'admin' }),
     );
     return toRule(created);
   }
@@ -1023,10 +992,8 @@ export class ChatService {
         .where(eq(chatRoomRule.roomId, roomId))
         .orderBy(desc(chatRoomRule.orderNum))
         .limit(1);
-      const lastOrder = last?.orderNum ?? 0;
-      // Ties sort by creation time. At the cap, or past it on a rule saved before the cap existed,
-      // the new rule shares the last order so it still lands last.
-      nextOrder = lastOrder < ROOM_RULE_ORDER_MAX ? lastOrder + 1 : lastOrder;
+      // A rule can be set to the integer column's max; ties sort by creation time, so this still lands last.
+      nextOrder = Math.min((last?.orderNum ?? 0) + 1, 2 ** 31 - 1);
     }
     const [rule] = await tx
       .insert(chatRoomRule)
@@ -1077,10 +1044,8 @@ export class ChatService {
   }
 
   async adminUpdateRoomRule(input: UpdateRoomRuleInput & { actorId: User['id'] } & ClientMeta) {
-    const updated = await this.drizzle.db.transaction((tx) =>
-      this.withActiveRoomWriteLock(tx, input.roomId, () =>
-        this.patchRoomRule(tx, { ...input, actorType: 'admin' }),
-      ),
+    const updated = await this.adminRoomWrite(input.roomId, (tx) =>
+      this.patchRoomRule(tx, { ...input, actorType: 'admin' }),
     );
     return toRule(updated);
   }
@@ -1157,10 +1122,8 @@ export class ChatService {
   }
 
   async adminDeleteRoomRule(input: RoomRuleIdInput & { actorId: User['id'] } & ClientMeta) {
-    await this.drizzle.db.transaction((tx) =>
-      this.withActiveRoomWriteLock(tx, input.roomId, () =>
-        this.removeRoomRule(tx, { ...input, actorType: 'admin' }),
-      ),
+    await this.adminRoomWrite(input.roomId, (tx) =>
+      this.removeRoomRule(tx, { ...input, actorType: 'admin' }),
     );
     return { success: true } as const;
   }
@@ -1224,14 +1187,6 @@ export class ChatService {
     return toConfiguration(config);
   }
 
-  async adminGetRoomConfiguration(roomId: ChatRoom['id']) {
-    await this.findActiveRoom(roomId);
-    const config = await this.findRoomConfiguration(this.drizzle.db, roomId);
-    return config
-      ? toConfiguration(config)
-      : { id: null, roomId, ...DEFAULT_ROOM_CONFIGURATION, createdAt: null, updatedAt: null };
-  }
-
   async updateRoomConfiguration({
     roomId,
     actorId,
@@ -1269,17 +1224,15 @@ export class ChatService {
     userAgent,
     ...patch
   }: RoomPostingConfigurationInput & { actorId: User['id'] } & ClientMeta) {
-    const config = await this.drizzle.db.transaction((tx) =>
-      this.withActiveRoomWriteLock(tx, roomId, () =>
-        this.upsertRoomConfiguration(tx, {
-          roomId,
-          actorId,
-          actorType: 'admin',
-          patch,
-          ip,
-          userAgent,
-        }),
-      ),
+    const config = await this.adminRoomWrite(roomId, (tx) =>
+      this.upsertRoomConfiguration(tx, {
+        roomId,
+        actorId,
+        actorType: 'admin',
+        patch,
+        ip,
+        userAgent,
+      }),
     );
     return toConfiguration(config);
   }

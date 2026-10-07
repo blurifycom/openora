@@ -5,4 +5,3 @@ export {
   roomReach,
   type ModerationTarget,
 } from './moderation-target.js';
-export { moderatedUserFilter } from './user-filter.js';

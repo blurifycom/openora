@@ -194,7 +194,7 @@ describe('chat: platform bans', () => {
 
     expect(again.status).toBe(200);
     const bans = (await (
-      await admin.get(`/backoffice/chat/bans?userId=${player.userId}`)
+      await admin.get(`/backoffice/chat/bans?userIds=${player.userId}`)
     ).json()) as { reason: string; bannedUntil: string | null }[];
     expect(bans).toEqual([expect.objectContaining({ reason: 'escalated', bannedUntil: null })]);
   });
@@ -505,9 +505,9 @@ describe('chat: back-office moderation lookups by user ids', () => {
     ).toEqual([player.userId]);
   });
 
-  it('refuses userId together with userIds', async () => {
-    const player = await registerChatter('both');
-    const query = `userId=${player.userId}&${userIdsQuery([player.userId])}`;
+  it('refuses the removed userId key rather than listing every player', async () => {
+    const player = await registerChatter('legacy');
+    const query = `userId=${player.userId}`;
 
     expect((await admin.get(`/backoffice/chat/mutes?${query}`)).status).toBe(400);
     expect((await admin.get(`/backoffice/chat/bans?${query}`)).status).toBe(400);

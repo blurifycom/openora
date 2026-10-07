@@ -1,7 +1,6 @@
 import type {
   AuditWritePort,
   ChatModeration,
-  ChatModerationUserFilter,
   ClientMeta,
   RealtimeTransport,
   Uuid,
@@ -46,8 +45,8 @@ export class ChatModerationService implements ChatModeration {
     return this.mutes.unmute(input);
   }
 
-  listMutes(users?: ChatModerationUserFilter) {
-    return this.mutes.listMutes(users);
+  listMutes(userIds?: readonly Uuid[]) {
+    return this.mutes.listMutes(userIds);
   }
 
   ban(input: Parameters<ChatModeration['ban']>[0]) {
@@ -58,7 +57,7 @@ export class ChatModerationService implements ChatModeration {
     return this.bans.unban(input);
   }
 
-  listBans(users?: ChatModerationUserFilter) {
-    return this.bans.listBans(users);
+  listBans(userIds?: readonly Uuid[]) {
+    return this.bans.listBans(userIds);
   }
 }
