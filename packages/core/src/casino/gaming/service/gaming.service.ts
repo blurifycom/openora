@@ -37,6 +37,7 @@ import {
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
+  type GamingNotifyGamesChangedArgs,
   type GamingSetGameAvailabilityArgs,
   type PlayEligibilityPort,
   type RgLimitsPort,
@@ -76,7 +77,12 @@ import {
   toGame,
   type CatalogActor,
 } from '../../shared/game-catalog.js';
-import type { ListAdminGamesInput, ListGamesInput, UpdateGameInput } from '../contract/index.js';
+import {
+  GAMES_CHANGED_EVENT_BATCH,
+  type ListAdminGamesInput,
+  type ListGamesInput,
+  type UpdateGameInput,
+} from '../contract/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
@@ -874,6 +880,49 @@ export class GamingService {
       });
     }
     return { changed };
+  }
+
+  async notifyGamesChanged({
+    gameIds,
+    tagIds = [],
+    providerIds = [],
+  }: GamingNotifyGamesChangedArgs): Promise<void> {
+    const changedGameIds = await this.existingIds(game, game.id, gameIds);
+    if (changedGameIds.length === 0) {
+      return;
+    }
+    const [previousTagIds, previousProviderIds] = await Promise.all([
+      this.existingIds(gameTag, gameTag.id, tagIds),
+      this.existingIds(gameProvider, gameProvider.id, providerIds),
+    ]);
+    // The durable marker the rank sweep reads, should the event's fast-path enqueue be lost.
+    await this.drizzle.db.transaction((tx) => markCategoriesRankDirtyForGames(tx, changedGameIds));
+    const longest = Math.max(
+      changedGameIds.length,
+      previousTagIds.length,
+      previousProviderIds.length,
+    );
+    for (let start = 0; start < longest; start += GAMES_CHANGED_EVENT_BATCH) {
+      const end = start + GAMES_CHANGED_EVENT_BATCH;
+      this.events.emit('gaming.games.changed', {
+        gameIds: changedGameIds.slice(start, end),
+        tagIds: previousTagIds.slice(start, end),
+        providerIds: previousProviderIds.slice(start, end),
+      });
+    }
+  }
+
+  private async existingIds(table: PgTable, column: PgColumn, ids: readonly string[]) {
+    const uniqueIds = [...new Set(ids)];
+    const found: string[] = [];
+    for (let start = 0; start < uniqueIds.length; start += GAMES_CHANGED_EVENT_BATCH) {
+      const rows = await this.drizzle.db
+        .select({ id: column })
+        .from(table)
+        .where(inArray(column, uniqueIds.slice(start, start + GAMES_CHANGED_EVENT_BATCH)));
+      found.push(...rows.map((row) => String(row.id)));
+    }
+    return found;
   }
 
   async updateGame({

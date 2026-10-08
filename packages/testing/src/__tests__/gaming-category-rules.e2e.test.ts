@@ -459,6 +459,28 @@ describe('rule-based category membership e2e', () => {
     await waitForCategoryGames(category.id, [imported.id]);
   });
 
+  it('event-driven: a catalogue sync moving a game to another provider moves it between provider rule categories', async () => {
+    const [previous, current] = [await seedProvider(), await seedProvider()];
+    const moved = await seedGame(previous.id);
+    const byPrevious = await createCategory({
+      membershipMode: 'rule',
+      membershipRule: [providers(previous.id)],
+    });
+    const byCurrent = await createCategory({
+      membershipMode: 'rule',
+      membershipRule: [providers(current.id)],
+    });
+    expect(await categoryGameIds(byPrevious.id)).toEqual([moved.id]);
+
+    await drizzle().update(game).set({ providerId: current.id }).where(eq(game.id, moved.id));
+    await app.container
+      .get(GAMING_COMMANDS)
+      .notifyGamesChanged?.({ gameIds: [moved.id], providerIds: [previous.id] });
+
+    await waitForCategoryGames(byPrevious.id, []);
+    await waitForCategoryGames(byCurrent.id, [moved.id]);
+  });
+
   it('scheduled: the membership sweep refreshes a most-played category as rounds come in', async () => {
     const provider = await seedProvider();
     const [quiet, busy] = [await seedGame(provider.id), await seedGame(provider.id)];

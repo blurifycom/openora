@@ -540,6 +540,10 @@ export const MEMBERSHIP_EVENT_DEBOUNCE_MS = 250;
 // shared schemas cannot import a module contract, so the value is stated twice.
 export const GAMES_CREATED_EVENT_BATCH = 1000;
 
+// GAMING_COMMANDS.notifyGamesChanged's batch size; must match each array's `.max()` on
+// `gaming.games.changed`, for the same reason.
+export const GAMES_CHANGED_EVENT_BATCH = 1000;
+
 export const GAME_CATEGORY_MEMBERSHIP_QUEUE = queue('gaming.category.membership');
 
 export const GameCategoryMembershipJobSchema = z.object({

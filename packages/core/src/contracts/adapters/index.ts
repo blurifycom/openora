@@ -84,6 +84,7 @@ export type {
   GamingAccumulateExternalRoundArgs,
   GamingSetGameAvailabilityArgs,
   GamingNotifyGamesCreatedArgs,
+  GamingNotifyGamesChangedArgs,
   GamingAccumulateExternalRoundOutcome,
 } from './gaming-commands.js';
 export { GAMING_COMMANDS } from './gaming-commands.js';

@@ -604,6 +604,14 @@ export const domainEventSchemas = {
     // Matches GAMES_CREATED_EVENT_BATCH in the gaming module contract, which batches to it.
     gameIds: z.array(UuidSchema).min(1).max(1000),
   }),
+  // Existing catalogue rows an importer rewrote outside the admin update. tagIds and
+  // providerIds are what the games were linked to before, so rules naming a tag or provider
+  // the games left re-evaluate too. Each array matches GAMES_CHANGED_EVENT_BATCH.
+  'gaming.games.changed': z.object({
+    gameIds: z.array(UuidSchema).max(1000),
+    tagIds: z.array(UuidSchema).max(1000),
+    providerIds: z.array(UuidSchema).max(1000),
+  }),
   'gaming.tag.created': authContextBase
     .extend({ tagId: UuidSchema })
     .extend(GameTagSnapshotSchema.shape)

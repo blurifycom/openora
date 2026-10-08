@@ -872,6 +872,39 @@ describe('GameCategoryMembershipService: re-evaluation triggers (real PG)', () =
     });
   });
 
+  it("gaming.games.changed reaches rules naming the games' current or previous provider and tags", async () => {
+    const { jobQueue, triggers } = makeServices();
+    const [previous, current, unrelated] = [
+      await seedProvider(),
+      await seedProvider(),
+      await seedProvider(),
+    ];
+    const removedTag = await seedTag();
+    const moved = await seedGame(current.id);
+    const byPrevious = await seedRuleCategory([providers(previous.id)]);
+    const byCurrent = await seedRuleCategory([providers(current.id)]);
+    const byRemovedTag = await seedRuleCategory([tags(removedTag.id)]);
+    await seedRuleCategory([providers(unrelated.id)]);
+
+    triggers.gamesChanged({
+      gameIds: [moved.id],
+      tagIds: [removedTag.id],
+      providerIds: [previous.id],
+    });
+
+    await vi.waitFor(() => {
+      const queued = jobQueue.enqueue.mock.calls.map(([, payload]) => payload);
+      expect(queued).toHaveLength(3);
+      expect(queued).toEqual(
+        expect.arrayContaining([
+          { categoryId: byPrevious.id, trigger: 'event' },
+          { categoryId: byCurrent.id, trigger: 'event' },
+          { categoryId: byRemovedTag.id, trigger: 'event' },
+        ]),
+      );
+    });
+  });
+
   it('records an over-cap result after saving and rejects it on explicit evaluation', async () => {
     const { membership, categories, rules } = makeServices();
     const provider = await seedProvider();

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { fileURLToPath } from 'node:url';
 import {
   loadExtensions,
@@ -7,7 +8,7 @@ import {
   type Container,
   type CoreTokenCatalog,
 } from '@openora/core/server';
-import { GAME_CATALOG_READER } from '@openora/core/contracts';
+import { GAME_CATALOG_READER, GAMING_COMMANDS } from '@openora/core/contracts';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
 import {
   asAdmin,
@@ -607,6 +608,32 @@ describe('gaming provider isActive re-rank trigger e2e (PATCH /backoffice/gaming
       const detail = await categoryDetail(category.id);
       expect(detail.rankedAt).not.toBe(rankedAtBefore);
     });
+  });
+});
+
+describe('gaming catalogue sync re-rank trigger e2e (GAMING_COMMANDS.notifyGamesChanged)', () => {
+  it('re-ranks a name-sorted category after a sync renames one of its games', async () => {
+    const category = await createCategory();
+    const provider = await seedProvider();
+    const alpha = await seedGame(provider.id, { name: 'Alpha Game' });
+    const bravo = await seedGame(provider.id, { name: 'Bravo Game' });
+    await addGameToCategory(alpha.id, category.id);
+    await addGameToCategory(bravo.id, category.id);
+    const patchRes = await admin.patch(`/backoffice/gaming/categories/${category.id}`, {
+      id: category.id,
+      sortKey: 'name',
+      sortDirection: 'asc',
+    });
+    expect(patchRes.status).toBe(200);
+    await waitForCategoryOrder(app, category.id, [alpha.id, bravo.id]);
+
+    await drizzleOf(app.container)
+      .update(game)
+      .set({ name: 'Zulu Game' })
+      .where(eq(game.id, alpha.id));
+    await app.container.get(GAMING_COMMANDS).notifyGamesChanged?.({ gameIds: [alpha.id] });
+
+    await waitForCategoryOrder(app, category.id, [bravo.id, alpha.id]);
   });
 });
 

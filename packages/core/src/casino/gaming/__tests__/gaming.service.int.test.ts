@@ -1009,6 +1009,52 @@ describe('GamingService unavailable games (real PG)', () => {
   });
 });
 
+describe('GamingService.notifyGamesChanged (real PG)', () => {
+  async function rankDirtyAt(categoryId: string) {
+    const [row] = await db.drizzle.db
+      .select({ rankDirtyAt: gameCategory.rankDirtyAt })
+      .from(gameCategory)
+      .where(eq(gameCategory.id, categoryId));
+    return row?.rankDirtyAt ?? null;
+  }
+
+  it("marks the games' categories rank-dirty and announces only known ids", async () => {
+    const category = await seedCategory();
+    const changed = await seedGame({}, [category.id]);
+    const removedTag = await seedTag();
+    const events = makeEventBus();
+
+    await makeService({ events }).notifyGamesChanged({
+      gameIds: [changed.id, changed.id, randomUUID()],
+      tagIds: [removedTag.id, randomUUID()],
+      providerIds: [changed.providerId],
+    });
+
+    expect(await rankDirtyAt(category.id)).not.toBeNull();
+    expect(events.emit.mock.calls.filter(([topic]) => topic === 'gaming.games.changed')).toEqual([
+      [
+        'gaming.games.changed',
+        { gameIds: [changed.id], tagIds: [removedTag.id], providerIds: [changed.providerId] },
+      ],
+    ]);
+  });
+
+  it('does nothing when no id is a game row', async () => {
+    const category = await seedCategory();
+    await seedGame({}, [category.id]);
+    const events = makeEventBus();
+
+    await makeService({ events }).notifyGamesChanged({
+      gameIds: [randomUUID()],
+      tagIds: [(await seedTag()).id],
+    });
+    await makeService({ events }).notifyGamesChanged({ gameIds: [] });
+
+    expect(await rankDirtyAt(category.id)).toBeNull();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
 describe('GamingService.startRound bonus completion (real PG)', () => {
   it('emits bonus completion before a provider launch failure can discard the notification', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a5', name: 'Aces' });
