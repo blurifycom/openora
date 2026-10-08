@@ -47,6 +47,7 @@ import {
 // issuance locks the owner's row to check its standing.
 import { user } from '@openora/core/pam/schema/identity';
 import { mcpToken, type McpToken } from '../schema/index.js';
+import { usersWithoutMcpAccess } from '../shared/admin-grants.js';
 import {
   McpTokenErrorReasonSchema,
   type CreateMcpTokenInput,
@@ -178,9 +179,14 @@ export class McpTokenService implements McpTokenRevocation {
   }
 
   /**
-   * Refuses a disabled transport, a lifetime over the cap, an owner who is missing, inactive or
-   * a player, an owner at the active-token cap, and an owner over the hourly issuance limit (a
-   * 429 carrying `retryAfterMs`). Any other failure surfaces as `McpTokenIssueError`.
+   * Refuses a disabled transport, a lifetime over the cap, an owner who is missing, inactive, a
+   * player or without MCP access, an owner at the active-token cap, and an owner over the hourly
+   * issuance limit (a 429 carrying `retryAfterMs`). Any other failure surfaces as
+   * `McpTokenIssueError`.
+   *
+   * The owner's row is locked before the revocation lock, the order identity's deactivation
+   * takes them in, and the MCP grant is read again under the revocation lock, so a grant change
+   * that committed while this issue waited refuses it.
    */
   async create(
     { adminUserId, label, ttlDays }: CreateMcpTokenInput & { adminUserId: User['id'] },
@@ -198,12 +204,18 @@ export class McpTokenService implements McpTokenRevocation {
     const createdAt = this.now();
     const created = await this.drizzle.db
       .transaction(async (tx) => {
-        await this.assertOwnerMayIssue(tx, { ownerId: adminUserId, meta, now: createdAt });
+        const role = await this.assertOwnerMayIssue(tx, {
+          ownerId: adminUserId,
+          meta,
+          now: createdAt,
+        });
         await assertRateLimit(
           this.rateLimiter,
           makeRateLimitKey(RATE_LIMIT_KEYS.MCP_TOKEN_CREATE, adminUserId),
           { limit: this.config.tokenIssuance.perHour, windowMs: HOUR_MS, onUnavailable: 'deny' },
         );
+        await this.lockForRevocation(tx);
+        await this.assertOwnerHoldsMcpAccess(tx, { ownerId: adminUserId, role, meta });
         return this.insertToken(tx, { adminUserId, label, token, createdAt, lifetimeDays, meta });
       })
       .catch((err: unknown) => {
@@ -335,6 +347,18 @@ export class McpTokenService implements McpTokenRevocation {
     const { maxActivePerAdmin } = this.config.tokenIssuance;
     if (Number(active?.n ?? 0) >= maxActivePerAdmin) {
       throw new McpTokenLimitError(maxActivePerAdmin);
+    }
+    return owner.role;
+  }
+
+  private async assertOwnerHoldsMcpAccess(
+    tx: DrizzleTx,
+    { ownerId, role, meta }: { ownerId: User['id']; role: string; meta: ClientMeta },
+  ) {
+    const [withoutAccess] = await usersWithoutMcpAccess(tx, [ownerId]);
+    if (withoutAccess) {
+      this.emitOwnerIneligible(ownerId, role, meta);
+      throw new McpTokenOwnerIneligibleError();
     }
   }
 

@@ -16,6 +16,7 @@ import {
   createTestRedis,
   seedUser,
   waitForRowLockWaiter,
+  waitForTableLockWaiter,
   type TestDb,
   type TestRedis,
 } from '@openora/core/testing';
@@ -102,20 +103,6 @@ async function rejectionOf(promise: Promise<unknown>) {
     () => undefined,
     (err: unknown) => err,
   );
-}
-
-async function waitForTokenTableLockWaiter(timeoutMs = 3000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const { rows } = await db.drizzle.db.execute<{ waiting: number }>(
-      sql`select count(*)::int as waiting from pg_locks
-          where locktype = 'relation' and relation = ${'mcp_token'}::regclass and not granted`,
-    );
-    if ((rows[0]?.waiting ?? 0) > 0) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
 }
 
 const seedAdmin = (email: string, name = 'Admin') =>
@@ -272,6 +259,11 @@ describe('McpTokenService.create owner checks (real PG)', () => {
   it.each([
     ['an inactive admin', () => seedUser(db, { role: 'admin', isActive: false }), 'admin'],
     ['a player', () => seedUser(db, { role: 'player' }), 'player'],
+    [
+      'a staff account whose role grants no MCP access',
+      () => seedUser(db, { role: 'support' }),
+      'support',
+    ],
   ])('refuses %s as owner_ineligible and records the denial', async (_case, seed, role) => {
     const { svc, audit, events } = makeService();
     const owner = await seed();
@@ -910,7 +902,7 @@ describe('McpTokenService bulk revocation racing an issue (real PG)', () => {
     const issuing = issuer.svc.create({ adminUserId: alice.id, label: 'In flight' }, META);
     await inserted;
     const revoking = makeService().svc.revokeAll(overseer.id, META);
-    await Promise.race([revoking, waitForTokenTableLockWaiter()]);
+    await Promise.race([revoking, waitForTableLockWaiter(db, mcpToken)]);
     releaseIssue();
     const [issued, revoked] = await Promise.all([issuing, revoking]);
 

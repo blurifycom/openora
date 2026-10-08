@@ -11,15 +11,12 @@ import {
   roles,
   readActions,
   SUPPORTED_LEVELS,
-  levelToActions,
   levelRank,
   isLevelSufficient,
-  holdsGrant,
   cached,
   invalidate,
   createLogger,
   actionsToLevel,
-  type DrizzleDb,
   type DrizzleTx,
   type ResourceName,
   type RoleName,
@@ -56,6 +53,7 @@ import type {
   IamRoleSortBy,
   IamInvitationSortBy,
 } from '../contract/index.js';
+import { loadAdminGrants, usersWithoutMcpAccess } from '../shared/admin-grants.js';
 import type { McpTokenService } from './mcp-token.service.js';
 
 const logger = createLogger('iam-service');
@@ -237,86 +235,6 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
       );
     }
   }
-}
-
-function allGrants() {
-  return (Object.keys(statement) as ResourceName[]).flatMap((resource) =>
-    (statement[resource] as readonly string[]).map((action) => ({
-      resource: resource as string,
-      action,
-    })),
-  );
-}
-
-type AssignedGrantRow = {
-  isSuperAdmin: boolean;
-  resource: string | null;
-  level: PermissionLevel | null;
-};
-
-function grantsOf(rows: readonly AssignedGrantRow[]): AdminGrant[] {
-  if (rows.some((r) => r.isSuperAdmin)) {
-    return allGrants();
-  }
-  const seen = new Set<string>();
-  const grants: AdminGrant[] = [];
-  for (const { resource, level } of rows) {
-    if (!resource || !level) {
-      continue;
-    }
-    for (const action of levelToActions(resource, level)) {
-      const key = `${resource}:${action}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        grants.push({ resource, action });
-      }
-    }
-  }
-  return grants;
-}
-
-/**
- * The DB grants of each of `userIds` holding a role assignment, read through `db` - a
- * transaction included - without the grant cache. A user with no assignment is absent, which is
- * AdminGuard's cue to fall back to the static role table.
- */
-async function loadAdminGrants(db: DrizzleDb | DrizzleTx, userIds: readonly User['id'][]) {
-  const rows = await db
-    .select({
-      userId: adminRoleAssignment.userId,
-      isSuperAdmin: adminRole.isSuperAdmin,
-      resource: adminRolePermission.resource,
-      level: adminRolePermission.level,
-    })
-    .from(adminRoleAssignment)
-    .innerJoin(adminRole, eq(adminRole.id, adminRoleAssignment.roleId))
-    .leftJoin(adminRolePermission, eq(adminRolePermission.roleId, adminRole.id))
-    .where(inArray(adminRoleAssignment.userId, [...userIds]));
-
-  const rowsByUser = new Map<User['id'], AssignedGrantRow[]>();
-  for (const { userId, ...row } of rows) {
-    const userRows = rowsByUser.get(userId) ?? [];
-    userRows.push(row);
-    rowsByUser.set(userId, userRows);
-  }
-  return new Map([...rowsByUser].map(([userId, userRows]) => [userId, grantsOf(userRows)]));
-}
-
-/** Of `userIds`, those AdminGuard's grant rule refuses `mcp-access:use`, read uncached through `db`. */
-async function usersWithoutMcpAccess(db: DrizzleDb | DrizzleTx, userIds: readonly User['id'][]) {
-  const accounts = await db
-    .select({ id: user.id, role: user.role })
-    .from(user)
-    .where(inArray(user.id, [...userIds]));
-  const grants = await loadAdminGrants(db, userIds);
-  const roleOf = new Map(accounts.map((account) => [account.id, account.role]));
-  return userIds.filter((userId) => {
-    const role = roleOf.get(userId);
-    return (
-      role === undefined ||
-      !holdsGrant({ role, grants: grants.get(userId) ?? null }, 'mcp-access', 'use')
-    );
-  });
 }
 
 export type IamServiceDeps = {

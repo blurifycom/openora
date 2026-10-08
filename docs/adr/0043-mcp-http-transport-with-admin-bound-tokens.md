@@ -38,9 +38,12 @@ call count. The plaintext is returned once, when the token is created. The lifet
 30 days and is capped by configuration, at 90 days by default and never more than a year. Two
 ports in contracts keep the transport and the identity module independent of iam: one
 authenticates a bearer and records a call, the other revokes every token a user holds inside the
-caller's transaction. Only an active admin can be issued a token; the issuing transaction reads
-the owner with a share lock, so it cannot interleave with a deactivation. Each admin holds a
-configured number of active tokens at most and can issue a configured number per hour.
+caller's transaction. Only an active admin who holds the MCP permission can be issued a token.
+The issuing transaction locks the owner's row, so it cannot interleave with a deactivation, then
+takes the token-table lock that grant changes and bulk revocations hold and reads the owner's MCP
+permission again under it, uncached, so an issue that waited on a change taking the permission
+away is refused instead of leaving a token behind. Each admin holds a configured number of active
+tokens at most and can issue a configured number per hour.
 
 **Two permissions.** One IAM resource lets an admin use MCP and manage their own tokens; another
 lets an admin see every admin's tokens and revoke any of them, including an emergency revoke of
@@ -88,9 +91,11 @@ resulting state, so a failure rolls the change back and a retry finishes the job
 - the iam module revokes the tokens of every admin who loses MCP access when a role loses the permission, is deleted or is unassigned, or when a first role assignment replaces the static admin role without it; grant changes and bulk revocations take the same lock, so they apply one at a time.
 
 Players can never hold tokens, so their session revocations skip the token table. A bulk
-revocation locks the token table first, so a token issued concurrently cannot survive it. The
-per-request check stops a token at once; the persisted revocation keeps it dead after the
-account or the access is restored.
+revocation locks the token table first and issuance takes the same lock before it inserts, so a
+token issued concurrently either commits before the revocation reads the table and is revoked
+with the rest, or is checked against what the revocation committed. The per-request check stops
+a token at once; the persisted revocation keeps it dead after the account or the access is
+restored.
 
 **The kill switch is configuration plus revocation.** Turning the endpoint off removes it at the
 next start. Revoking all tokens, or removing the MCP permission from a role, stops use without a
@@ -138,6 +143,9 @@ Rejected alternatives:
   day, and every authenticated request counts towards both limits.
 - Issuing a token needs a session with the MCP permission but no fresh second factor. A step-up
   needs a cross-module port into identity and a Backoffice flow, and is left to a later change.
+- Issuance holds the token-table lock from its permission check to its commit, so issues run one
+  at a time, wait for a bulk revocation or grant change in flight, and briefly hold back the
+  call counter of tokens in use. Issuing is rare enough for that serialization.
 - The host binding reads the request's host, so the backoffice proxy has to set the `Host` header
   itself and reject absolute-form request targets.
 

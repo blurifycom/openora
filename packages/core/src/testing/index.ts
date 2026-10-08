@@ -9,6 +9,7 @@ export {
   redisUrlForWorker,
   waitForAdvisoryLockWaiter,
   waitForRowLockWaiter,
+  waitForTableLockWaiter,
   waitForConsumerGroup,
   type Migration,
   type TestDb,
