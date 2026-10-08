@@ -214,7 +214,7 @@ describe('MCP tokens when revoking them after a credential change fails', () => 
       newPassword: NEW_PASSWORD,
     });
 
-    expect(changed.status).toBe(500);
+    expect(changed.status).toBe(200);
     expect(await revocationOf(before.id)).toEqual({ revokedAt: null, revokeReason: null });
     expect((await ping(before.token)).status).toBe(401);
     expect((await ping(bystanders.token)).status).toBe(200);

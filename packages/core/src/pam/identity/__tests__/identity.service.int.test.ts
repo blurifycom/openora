@@ -1308,6 +1308,24 @@ describe('IdentityService password changes and MCP tokens', () => {
     });
   });
 
+  it('answers a password change with success when the MCP token revocation fails', async () => {
+    const admin = await seedUser({ role: 'admin' });
+    changePasswordMock.mockResolvedValue(jsonResponse({ token: null, user: betterAuthUser }, 200));
+    const { sessions, revokeAllForUser } = sessionsRevokingTokens();
+    revokeAllForUser.mockRejectedValueOnce(new Error('token store unavailable'));
+
+    await expect(
+      buildService({ sessions }).changePassword(
+        NEW_PASSWORD,
+        ADMIN_REQUEST_HEADERS,
+        new Headers(),
+        { userId: admin.id, sessionId: randomUUID() },
+      ),
+    ).resolves.toEqual({ success: true });
+
+    expect(revokeAllForUser).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves the MCP tokens alone when better-auth rejects the password change', async () => {
     const admin = await seedUser({ role: 'admin' });
     changePasswordMock.mockResolvedValue(jsonResponse({ message: 'INVALID_PASSWORD' }, 400));

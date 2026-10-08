@@ -592,19 +592,20 @@ export class IdentityService {
           ...meta,
         });
         await this.clearLockout(resetUser.id);
-        await this.revokeMcpTokensAfterReset(resetUser.id, meta);
+        await this.revokeMcpTokensAfterCredentialChange(resetUser.id, meta);
       },
     });
   }
 
-  // better-auth revokes the account's sessions only after `onPasswordReset` returns, so a
-  // throw from it would keep every session alive. The MCP authenticator already refuses each
-  // token issued before the reset, so a failed revocation is logged rather than rethrown.
-  private async revokeMcpTokensAfterReset(userId: User['id'], meta: ClientMeta) {
+  // The new password is committed before this runs, and the MCP authenticator refuses every
+  // token issued before it either way, so a failed revocation is logged rather than rethrown. On
+  // a reset a throw would also keep every session alive: better-auth revokes them only after
+  // `onPasswordReset` returns.
+  private async revokeMcpTokensAfterCredentialChange(userId: User['id'], meta: ClientMeta) {
     try {
       await this.sessions?.revokeMcpTokens(userId, userId, meta);
     } catch (err) {
-      identityLogger.error({ err, userId }, 'MCP token revocation after a password reset failed');
+      identityLogger.error({ err, userId }, 'MCP token revocation after a password change failed');
     }
   }
 
@@ -2264,7 +2265,7 @@ export class IdentityService {
       }, RACED_SESSION_SWEEP_DELAY_MS);
       timer.unref?.();
     }
-    await this.sessions?.revokeMcpTokens(userId, userId, { ip, userAgent });
+    await this.revokeMcpTokensAfterCredentialChange(userId, { ip, userAgent });
     return SUCCESS;
   }
 

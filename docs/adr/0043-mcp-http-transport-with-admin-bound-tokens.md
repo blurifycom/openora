@@ -97,8 +97,9 @@ A password change or reset cannot share a transaction with the revocation: bette
 the new password itself, and the identity module revokes the admin's tokens after it. The
 authenticator therefore also refuses every token issued at or before its admin's latest password
 change, read from the update stamp better-auth writes to the credential account with the new
-hash, so a revocation that fails leaves the old tokens refused rather than usable. After a reset,
-a failed revocation is logged instead of aborting the reset, because better-auth revokes the
+hash, so a revocation that fails leaves the old tokens refused rather than usable. A failed
+revocation is therefore logged rather than failing the change or the reset, which has already
+committed; on a reset a failure must not abort the hook either, because better-auth revokes the
 account's sessions only once its reset hook returns.
 
 Players can never hold tokens, so their session revocations skip the token table. A bulk
