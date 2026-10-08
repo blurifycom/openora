@@ -112,8 +112,12 @@ path has not been verified by the platform maintainers.
 - The platform revokes all of a user's tokens when their account is deactivated, when they stop
   being an admin, when an IAM change takes away their MCP access, when all of their sessions are
   revoked (a forced logout, a two-factor reset, an email change), and when their password is
-  reset or changed. The revocation commits together with the change that caused it, and a revoked
-  token stays revoked after the account or the access is restored.
+  reset or changed. A revoked token stays revoked after the account or the access is restored.
+- Each revocation commits together with the change that caused it, except after a password
+  change or reset, which is committed first: every token issued before it is refused from that
+  moment whether or not its revocation succeeds. If that revocation fails, the tokens are still
+  listed as active, and count towards the admin's token limit, until someone revokes them or they
+  expire.
 - Turning the endpoint off in the platform config removes it at the next start. Revoking all
   tokens, or removing MCP access from a role, takes effect immediately.
 
@@ -122,7 +126,7 @@ path has not been verified by the platform maintainers.
 | Status | Meaning                                                                                                                          |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | 400    | The body is not valid JSON, or it is a JSON-RPC batch, which the endpoint does not accept.                                       |
-| 401    | The token is missing, unknown, expired or revoked. Generate a new one.                                                           |
+| 401    | The token is missing, unknown, expired or revoked, or predates the admin's latest password change or reset. Generate a new one.  |
 | 403    | The admin lacks MCP access, the account is deactivated, a required two-factor enrolment is missing, or the origin is not listed. |
 | 404    | The endpoint is off, the path is wrong, or the host is not in the allowed-host list.                                             |
 | 405    | The client asked for a server-sent event stream. Clients fall back to plain requests on their own.                               |

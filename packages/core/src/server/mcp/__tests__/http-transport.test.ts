@@ -496,6 +496,7 @@ describe('MCP HTTP transport refusals', () => {
     { ok: false, reason: 'unknown' },
     { ok: false, reason: 'expired', tokenId, adminId },
     { ok: false, reason: 'revoked', tokenId, adminId },
+    { ok: false, reason: 'credentials_changed', tokenId, adminId },
   ] as const)('refuses a $reason token as invalid_token', async (authentication) => {
     const { transport, guard } = setup({ authenticate: async () => authentication });
 

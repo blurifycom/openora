@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { eq, sql } from 'drizzle-orm';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { and, eq, sql } from 'drizzle-orm';
+import { createTestDb, seedUser, type TestDb } from '@openora/core/testing';
+import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { account, user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIam } from '../migrate.js';
 import { mcpToken } from '../schema/index.js';
 import { DrizzleMcpTokenAuthenticator } from '../adapters/mcp-token-authenticator.js';
@@ -14,7 +16,7 @@ let db: TestDb;
 let authenticator: DrizzleMcpTokenAuthenticator;
 
 beforeAll(async () => {
-  db = await createTestDb([migrateIam]);
+  db = await createTestDb([migrateIam, migrateIdentity]);
   authenticator = new DrizzleMcpTokenAuthenticator(db.drizzle);
 });
 
@@ -23,8 +25,27 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${mcpToken} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(sql`TRUNCATE ${mcpToken}, ${user} RESTART IDENTITY CASCADE`);
 });
+
+async function seedAdminWithPassword(passwordSetAt: Date) {
+  const admin = await seedUser(db, { role: 'admin' });
+  await db.drizzle.db.insert(account).values({
+    accountId: admin.id,
+    providerId: 'credential',
+    userId: admin.id,
+    password: 'stored-hash',
+    updatedAt: passwordSetAt,
+  });
+  return admin.id;
+}
+
+async function changePasswordAt(adminUserId: string, at: Date) {
+  await db.drizzle.db
+    .update(account)
+    .set({ updatedAt: at })
+    .where(and(eq(account.userId, adminUserId), eq(account.providerId, 'credential')));
+}
 
 async function seedToken(
   over: Partial<typeof mcpToken.$inferInsert> = {},
@@ -114,6 +135,77 @@ describe('DrizzleMcpTokenAuthenticator.authenticate (real PG)', () => {
       ok: false,
       reason: 'revoked',
     });
+  });
+});
+
+describe("DrizzleMcpTokenAuthenticator against the admin's password changes (real PG)", () => {
+  it('refuses an unrevoked token issued before the latest password change', async () => {
+    const adminId = await seedAdminWithPassword(hoursFromNow(-48));
+    const { row, plaintext } = await seedToken({
+      adminUserId: adminId,
+      createdAt: hoursFromNow(-2),
+    });
+    await changePasswordAt(adminId, hoursFromNow(-1));
+
+    expect(await authenticator.authenticate(plaintext)).toEqual({
+      ok: false,
+      reason: 'credentials_changed',
+      tokenId: row.id,
+      adminId,
+    });
+    expect(await storedToken(row.id)).toMatchObject({ revokedAt: null, revokeReason: null });
+  });
+
+  it('accepts a token issued after the latest password change', async () => {
+    const adminId = await seedAdminWithPassword(hoursFromNow(-2));
+    const { row, plaintext } = await seedToken({
+      adminUserId: adminId,
+      createdAt: hoursFromNow(-1),
+    });
+
+    expect(await authenticator.authenticate(plaintext)).toEqual({
+      ok: true,
+      tokenId: row.id,
+      adminId,
+    });
+  });
+
+  it('reads the latest stamp when the admin holds more than one password account', async () => {
+    const adminId = await seedAdminWithPassword(hoursFromNow(-48));
+    await db.drizzle.db.insert(account).values({
+      accountId: `second-${adminId}`,
+      providerId: 'credential',
+      userId: adminId,
+      password: 'stored-hash',
+      updatedAt: hoursFromNow(-1),
+    });
+    const { plaintext } = await seedToken({ adminUserId: adminId, createdAt: hoursFromNow(-2) });
+
+    expect(await authenticator.authenticate(plaintext)).toMatchObject({
+      ok: false,
+      reason: 'credentials_changed',
+    });
+  });
+
+  it("ignores a later write to the admin's account at another provider", async () => {
+    const adminId = await seedAdminWithPassword(hoursFromNow(-48));
+    await db.drizzle.db.insert(account).values({
+      accountId: `oidc-${adminId}`,
+      providerId: 'oidc',
+      userId: adminId,
+      updatedAt: hoursFromNow(-1),
+    });
+    const { plaintext } = await seedToken({ adminUserId: adminId, createdAt: hoursFromNow(-2) });
+
+    expect(await authenticator.authenticate(plaintext)).toMatchObject({ ok: true });
+  });
+
+  it("ignores another admin's password change", async () => {
+    const adminId = await seedAdminWithPassword(hoursFromNow(-48));
+    await seedAdminWithPassword(hoursFromNow(-1));
+    const { plaintext } = await seedToken({ adminUserId: adminId, createdAt: hoursFromNow(-2) });
+
+    expect(await authenticator.authenticate(plaintext)).toMatchObject({ ok: true });
   });
 });
 

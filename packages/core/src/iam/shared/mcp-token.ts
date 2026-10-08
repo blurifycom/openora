@@ -33,16 +33,27 @@ export function mcpTokenStatus(token: McpTokenLifecycle, now: Date): McpTokenSta
   return token.expiresAt.getTime() <= now.getTime() ? 'expired' : 'active';
 }
 
+type AuthenticatedMcpToken = McpTokenLifecycle &
+  Pick<McpToken, 'id' | 'adminUserId' | 'createdAt'> & { credentialsChangedAt: Date | null };
+
+/**
+ * A token issued at or before its admin's latest credential change is refused as
+ * `credentials_changed`, whether or not the revocation that change asked for was recorded.
+ */
 export function mcpTokenAuthentication(
-  token: (McpTokenLifecycle & Pick<McpToken, 'id' | 'adminUserId'>) | undefined,
+  token: AuthenticatedMcpToken | undefined,
   now: Date,
 ): McpTokenAuthentication {
   if (!token) {
     return { ok: false, reason: 'unknown' };
   }
+  const subject = { tokenId: token.id, adminId: token.adminUserId };
   const status = mcpTokenStatus(token, now);
-  if (status === 'active') {
-    return { ok: true, tokenId: token.id, adminId: token.adminUserId };
+  if (status !== 'active') {
+    return { ok: false, reason: status, ...subject };
   }
-  return { ok: false, reason: status, tokenId: token.id, adminId: token.adminUserId };
+  if (token.credentialsChangedAt && token.createdAt <= token.credentialsChangedAt) {
+    return { ok: false, reason: 'credentials_changed', ...subject };
+  }
+  return { ok: true, ...subject };
 }

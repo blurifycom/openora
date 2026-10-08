@@ -592,9 +592,20 @@ export class IdentityService {
           ...meta,
         });
         await this.clearLockout(resetUser.id);
-        await this.sessions?.revokeMcpTokens(resetUser.id, resetUser.id, meta);
+        await this.revokeMcpTokensAfterReset(resetUser.id, meta);
       },
     });
+  }
+
+  // better-auth revokes the account's sessions only after `onPasswordReset` returns, so a
+  // throw from it would keep every session alive. The MCP authenticator already refuses each
+  // token issued before the reset, so a failed revocation is logged rather than rethrown.
+  private async revokeMcpTokensAfterReset(userId: User['id'], meta: ClientMeta) {
+    try {
+      await this.sessions?.revokeMcpTokens(userId, userId, meta);
+    } catch (err) {
+      identityLogger.error({ err, userId }, 'MCP token revocation after a password reset failed');
+    }
   }
 
   private async findUserByEmail(email: string): Promise<{ id: User['id'] } | undefined> {

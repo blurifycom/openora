@@ -63,8 +63,9 @@ order:
 2. The origin check. A request carrying a browser origin is refused unless that origin is
    configured; desktop clients send none.
 3. A per-client-address limit, before any token is looked up.
-4. Bearer authentication. A missing, unknown, expired or revoked token gets a 401 whose
-   challenge names no OAuth metadata, so a client does not start an OAuth discovery.
+4. Bearer authentication. A missing, unknown, expired or revoked token, or one issued before its
+   admin's latest password change or reset, gets a 401 whose challenge names no OAuth metadata,
+   so a client does not start an OAuth discovery.
 5. Per-token rate limits for a minute and a day on the shared rate limiter, failing closed: an
    unreachable limiter answers 503.
 6. `AdminGuard.assertUser` for the MCP permission, which now also refuses a deactivated account.
@@ -86,9 +87,17 @@ Automatic revocation commits in the same transaction as the change that causes i
 resulting state, so a failure rolls the change back and a retry finishes the job:
 
 - the identity module revokes all of an admin's tokens when it deactivates the account, demotes
-  it from admin, revokes all of its sessions (which also covers a forced logout, a two-factor
-  reset and an email change), or completes a password reset or change;
+  it from admin, or revokes all of its sessions (which also covers a forced logout, a two-factor
+  reset and an email change);
 - the iam module revokes the tokens of every admin who loses MCP access when a role loses the permission, is deleted or is unassigned, or when a first role assignment replaces the static admin role without it; grant changes and bulk revocations take the same lock, so they apply one at a time.
+
+A password change or reset cannot share a transaction with the revocation: better-auth commits
+the new password itself, and the identity module revokes the admin's tokens after it. The
+authenticator therefore also refuses every token issued at or before its admin's latest password
+change, read from the update stamp better-auth writes to the credential account with the new
+hash, so a revocation that fails leaves the old tokens refused rather than usable. After a reset,
+a failed revocation is logged instead of aborting the reset, because better-auth revokes the
+account's sessions only once its reset hook returns.
 
 Players can never hold tokens, so their session revocations skip the token table. A bulk
 revocation locks the token table first and issuance takes the same lock before it inserts, so a
@@ -146,6 +155,10 @@ Rejected alternatives:
 - Issuance holds the token-table lock from its permission check to its commit, so issues run one
   at a time, wait for a bulk revocation or grant change in flight, and briefly hold back the
   call counter of tokens in use. Issuing is rare enough for that serialization.
+- A token whose revocation after a password change or reset failed is refused at once but stays
+  listed as active, and counts towards its admin's active-token cap, until it is revoked by hand
+  or expires. The password-change check compares two application-clock stamps, so a token issued
+  within the clock skew between replicas of a password change can fall on either side of it.
 - The host binding reads the request's host, so the backoffice proxy has to set the `Host` header
   itself and reject absolute-form request targets.
 

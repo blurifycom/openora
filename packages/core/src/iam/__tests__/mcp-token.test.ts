@@ -15,15 +15,24 @@ const AFTER_NOW = new Date('2026-10-06T12:00:00.001Z');
 const SECRET_43 = 'A'.repeat(43);
 const SHA256_OF_ABC = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad';
 
+const ISSUED_AT = new Date('2026-10-01T09:00:00.000Z');
+const BEFORE_ISSUE = new Date('2026-10-01T08:59:59.999Z');
+const AFTER_ISSUE = new Date('2026-10-01T09:00:00.001Z');
+
 const lifecycle = (over: { expiresAt?: Date; revokedAt?: Date | null } = {}) => ({
   expiresAt: AFTER_NOW,
   revokedAt: null,
   ...over,
 });
 
-const stored = (over: { expiresAt?: Date; revokedAt?: Date | null } = {}) => ({
+const stored = ({
+  credentialsChangedAt = null,
+  ...over
+}: { expiresAt?: Date; revokedAt?: Date | null; credentialsChangedAt?: Date | null } = {}) => ({
   id: randomUUID(),
   adminUserId: randomUUID(),
+  createdAt: ISSUED_AT,
+  credentialsChangedAt,
   ...lifecycle(over),
 });
 
@@ -137,5 +146,40 @@ describe('mcpTokenAuthentication', () => {
       tokenId: token.id,
       adminId: token.adminUserId,
     });
+  });
+
+  it("refuses an unrevoked token issued before its admin's latest credential change", () => {
+    const token = stored({ credentialsChangedAt: AFTER_ISSUE });
+
+    expect(mcpTokenAuthentication(token, NOW)).toEqual({
+      ok: false,
+      reason: 'credentials_changed',
+      tokenId: token.id,
+      adminId: token.adminUserId,
+    });
+  });
+
+  it('refuses a token issued at the very instant of the credential change', () => {
+    expect(mcpTokenAuthentication(stored({ credentialsChangedAt: ISSUED_AT }), NOW)).toMatchObject({
+      ok: false,
+      reason: 'credentials_changed',
+    });
+  });
+
+  it('accepts a token issued after the latest credential change, or for an admin without one', () => {
+    expect(
+      mcpTokenAuthentication(stored({ credentialsChangedAt: BEFORE_ISSUE }), NOW),
+    ).toMatchObject({ ok: true });
+    expect(mcpTokenAuthentication(stored({ credentialsChangedAt: null }), NOW)).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it('reports a revoked or expired token as such even when it predates a credential change', () => {
+    const revoked = stored({ revokedAt: BEFORE_NOW, credentialsChangedAt: AFTER_ISSUE });
+    const expired = stored({ expiresAt: NOW, credentialsChangedAt: AFTER_ISSUE });
+
+    expect(mcpTokenAuthentication(revoked, NOW)).toMatchObject({ reason: 'revoked' });
+    expect(mcpTokenAuthentication(expired, NOW)).toMatchObject({ reason: 'expired' });
   });
 });

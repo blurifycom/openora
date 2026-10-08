@@ -1264,6 +1264,19 @@ describe('IdentityService password changes and MCP tokens', () => {
     });
   });
 
+  it('lets better-auth finish the password reset when the MCP token revocation fails', async () => {
+    const admin = await seedUser({ role: 'admin' });
+    const { sessions, revokeAllForUser } = sessionsRevokingTokens();
+    revokeAllForUser.mockRejectedValueOnce(new Error('token store unavailable'));
+    buildService({ sessions });
+
+    await expect(
+      capturedAuthOptions.current?.onPasswordReset?.({ id: admin.id, email: EMAIL }),
+    ).resolves.toBeUndefined();
+
+    expect(revokeAllForUser).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves the token port alone on a player's password reset", async () => {
     const player = await seedUser({ role: 'player' });
     const { sessions, revokeAllForUser } = sessionsRevokingTokens();
