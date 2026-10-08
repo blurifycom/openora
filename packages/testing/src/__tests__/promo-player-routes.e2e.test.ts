@@ -181,6 +181,26 @@ describe('a player reading their bonus position', () => {
     });
   });
 
+  it('reads a forfeiture as a negative movement instead of failing the response', async () => {
+    const { client, userId } = await player();
+    const grantId = await grantBonus(userId, '75');
+    const forfeit = await admin.post(`/backoffice/promo/grants/${grantId}/forfeit`, {
+      note: 'closing this bonus for the history check',
+    });
+    expect(forfeit.status).toBe(200);
+
+    const res = await client.get(`/promo/grants/${grantId}/entries`);
+
+    expect(res.status).toBe(200);
+    const body = await readJson(res);
+    expect(body.total).toBe(2);
+    expect(body.items[0]).toMatchObject({
+      type: 'forfeit',
+      bonusAmount: '-75.000000000000000000',
+      balanceAfter: '0.000000000000000000',
+    });
+  });
+
   it('will not read the movements of a grant that is not theirs', async () => {
     const owner = await player();
     const stranger = await player();
