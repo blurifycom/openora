@@ -6,7 +6,7 @@ import * as z from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { loadExtensions, DRIZZLE, EVENT_BUS } from '@openora/core/server';
+import { loadExtensions, DRIZZLE, EVENT_BUS, type DrizzleTx } from '@openora/core/server';
 import { IDENTITY_READER } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
 import { AuditService } from '@openora/core/audit/server';
@@ -156,6 +156,43 @@ function notExposedAuditRows(tokenId: string) {
       ),
     )
     .orderBy(asc(auditLog.seq));
+}
+
+function tokenIdsOf(adminUserId: string) {
+  return drizzle()
+    .select({ id: mcpToken.id })
+    .from(mcpToken)
+    .where(eq(mcpToken.adminUserId, adminUserId));
+}
+
+function mcpAccessDenialsOf(userId: string) {
+  return drizzle()
+    .select()
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.action, 'identity.user.unauthorized_access'),
+        eq(auditLog.actorId, userId),
+        eq(auditLog.resourceId, 'mcp-access:use'),
+      ),
+    );
+}
+
+function holdRowLocks(lock: (tx: DrizzleTx) => Promise<unknown>) {
+  let markHeld = () => {};
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    markHeld = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const committed = drizzle().transaction(async (tx) => {
+    await lock(tx);
+    markHeld();
+    await released;
+  });
+  return { held, release, committed };
 }
 
 function toolAuditRows(tokenId: string) {
@@ -551,13 +588,6 @@ describe('MCP tokens, issuing while a grant change takes MCP access away', () =>
   ];
   const WITHOUT_MCP = [{ resource: 'player', level: 'read' }];
 
-  function tokenIdsOf(adminUserId: string) {
-    return drizzle()
-      .select({ id: mcpToken.id })
-      .from(mcpToken)
-      .where(eq(mcpToken.adminUserId, adminUserId));
-  }
-
   async function staffWithRole(grants: { resource: string; level: string }[]) {
     const email = `mcp-race-${randomUUID()}@e2e.test`;
     const userId = await registerPlayer(app, { email });
@@ -572,31 +602,16 @@ describe('MCP tokens, issuing while a grant change takes MCP access away', () =>
     return { userId, roleId: role.id, setGrants, client: await asAdmin(app.app, { email }) };
   }
 
-  function holdPermissionRows(roleId: string) {
-    let markHeld = () => {};
-    let release = () => {};
-    const held = new Promise<void>((resolve) => {
-      markHeld = resolve;
-    });
-    const released = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const committed = drizzle().transaction(async (tx) => {
-      await tx
-        .select({ id: adminRolePermission.id })
-        .from(adminRolePermission)
-        .where(eq(adminRolePermission.roleId, roleId))
-        .for('update');
-      markHeld();
-      await released;
-    });
-    return { held, release, committed };
-  }
-
   it('refuses the issue the grant change held back, leaves no token, and issues again once access is back', async () => {
     const staff = await staffWithRole(WITH_MCP);
     const appDb = { drizzle: app.container.get(DRIZZLE) };
-    const rows = holdPermissionRows(staff.roleId);
+    const rows = holdRowLocks((tx) =>
+      tx
+        .select({ id: adminRolePermission.id })
+        .from(adminRolePermission)
+        .where(eq(adminRolePermission.roleId, staff.roleId))
+        .for('update'),
+    );
     await rows.held;
 
     const removing = staff.setGrants(WITHOUT_MCP);
@@ -612,22 +627,52 @@ describe('MCP tokens, issuing while a grant change takes MCP access away', () =>
     expect(ErrorReasonSchema.parse(await issued.json()).data.reason).toBe('owner_ineligible');
     expect(await tokenIdsOf(staff.userId)).toEqual([]);
     await vi.waitFor(async () => {
-      const denials = await drizzle()
-        .select()
-        .from(auditLog)
-        .where(
-          and(
-            eq(auditLog.action, 'identity.user.unauthorized_access'),
-            eq(auditLog.actorId, staff.userId),
-            eq(auditLog.resourceId, 'mcp-access:use'),
-          ),
-        );
-      expect(denials).toHaveLength(1);
+      expect(await mcpAccessDenialsOf(staff.userId)).toHaveLength(1);
     });
 
     expect((await staff.setGrants(WITH_MCP)).status).toBe(200);
     const { id, token } = await issueToken(staff.client, 'after the race');
     expect(await tokenIdsOf(staff.userId)).toEqual([{ id }]);
+    expect((await rawPost({ token })).status).toBe(200);
+  });
+});
+
+describe('MCP tokens, issuing while the issuing session is revoked', () => {
+  it('refuses the issue a revoke-all held back, adds no token, and issues again from a new session', async () => {
+    const email = `mcp-session-race-${randomUUID()}@e2e.test`;
+    const staffId = await registerPlayer(app, { email });
+    await drizzle().update(user).set({ role: 'admin' }).where(eq(user.id, staffId));
+    const staff = await asAdmin(app.app, { email });
+    const existing = await issueToken(staff, 'before the race');
+    const appDb = { drizzle: app.container.get(DRIZZLE) };
+    const rows = holdRowLocks((tx) =>
+      tx
+        .select({ id: mcpToken.id })
+        .from(mcpToken)
+        .where(eq(mcpToken.id, existing.id))
+        .for('update'),
+    );
+    await rows.held;
+
+    const revoking = admin.post('/identity/sessions/revoke-all', { userId: staffId });
+    await waitForRowLockWaiter(appDb);
+    const issuing = staff.post('/iam/my-mcp-tokens', { label: 'raced' });
+    await waitForTableLockWaiter(appDb, mcpToken);
+    rows.release();
+    await rows.committed;
+    const [revoked, issued] = await Promise.all([revoking, issuing]);
+
+    expect(revoked.status).toBe(200);
+    expect(issued.status).toBe(403);
+    expect(ErrorReasonSchema.parse(await issued.json()).data.reason).toBe('owner_ineligible');
+    expect(await tokenIdsOf(staffId)).toEqual([{ id: existing.id }]);
+    expect(await revokeReasonOf(existing.id)).toBe('sessions_revoked');
+    await vi.waitFor(async () => {
+      expect(await mcpAccessDenialsOf(staffId)).toHaveLength(1);
+    });
+
+    const signedInAgain = await asAdmin(app.app, { email });
+    const { token } = await issueToken(signedInAgain, 'new session');
     expect((await rawPost({ token })).status).toBe(200);
   });
 });

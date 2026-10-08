@@ -44,8 +44,8 @@ import {
   type User,
 } from '@openora/core/contracts';
 // Read-only cross-domain schema import (sanctioned): token lists show the owning admin, and
-// issuance locks the owner's row to check its standing.
-import { user } from '@openora/core/pam/schema/identity';
+// issuance locks the owner's row to check its standing and reads the session issuing it.
+import { session, user, type Session } from '@openora/core/pam/schema/identity';
 import { mcpToken, type McpToken } from '../schema/index.js';
 import { usersWithoutMcpAccess } from '../shared/admin-grants.js';
 import {
@@ -180,16 +180,22 @@ export class McpTokenService implements McpTokenRevocation {
 
   /**
    * Refuses a disabled transport, a lifetime over the cap, an owner who is missing, inactive, a
-   * player or without MCP access, an owner at the active-token cap, and an owner over the hourly
-   * issuance limit (a 429 carrying `retryAfterMs`). Any other failure surfaces as
-   * `McpTokenIssueError`.
+   * player or without MCP access, a session that has ended, an owner at the active-token cap,
+   * and an owner over the hourly issuance limit (a 429 carrying `retryAfterMs`). Any other
+   * failure surfaces as `McpTokenIssueError`.
    *
    * The owner's row is locked before the revocation lock, the order identity's deactivation
-   * takes them in, and the MCP grant is read again under the revocation lock, so a grant change
-   * that committed while this issue waited refuses it.
+   * takes them in. The MCP grant and the issuing session are read again under the revocation
+   * lock, so a grant change or a session revocation that committed while this issue waited
+   * refuses it.
    */
   async create(
-    { adminUserId, label, ttlDays }: CreateMcpTokenInput & { adminUserId: User['id'] },
+    {
+      adminUserId,
+      sessionId,
+      label,
+      ttlDays,
+    }: CreateMcpTokenInput & { adminUserId: User['id']; sessionId: Session['id'] | null },
     meta: ClientMeta,
   ) {
     if (!this.config.enabled) {
@@ -216,6 +222,7 @@ export class McpTokenService implements McpTokenRevocation {
         );
         await this.lockForRevocation(tx);
         await this.assertOwnerHoldsMcpAccess(tx, { ownerId: adminUserId, role, meta });
+        await this.assertSessionLive(tx, { ownerId: adminUserId, sessionId, role, meta });
         return this.insertToken(tx, { adminUserId, label, token, createdAt, lifetimeDays, meta });
       })
       .catch((err: unknown) => {
@@ -357,6 +364,36 @@ export class McpTokenService implements McpTokenRevocation {
   ) {
     const [withoutAccess] = await usersWithoutMcpAccess(tx, [ownerId]);
     if (withoutAccess) {
+      this.emitOwnerIneligible(ownerId, role, meta);
+      throw new McpTokenOwnerIneligibleError();
+    }
+  }
+
+  // Compared with `statement_timestamp()`: `now()` is this transaction's start, which can
+  // predate the `now()` a revocation that committed while this issue waited wrote as the expiry.
+  private async assertSessionLive(
+    tx: DrizzleTx,
+    {
+      ownerId,
+      sessionId,
+      role,
+      meta,
+    }: { ownerId: User['id']; sessionId: Session['id'] | null; role: string; meta: ClientMeta },
+  ) {
+    const [live] = sessionId
+      ? await tx
+          .select({ id: session.id })
+          .from(session)
+          .where(
+            and(
+              eq(session.id, sessionId),
+              eq(session.userId, ownerId),
+              gt(session.expiresAt, sql`statement_timestamp()`),
+            ),
+          )
+          .limit(1)
+      : [];
+    if (!live) {
       this.emitOwnerIneligible(ownerId, role, meta);
       throw new McpTokenOwnerIneligibleError();
     }

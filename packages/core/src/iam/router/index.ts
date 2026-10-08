@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { AdminGuard, mapErrors, type OssContext } from '@openora/core/server';
+import { AdminGuard, getSessionId, mapErrors, type OssContext } from '@openora/core/server';
 import { iamContract } from '../contract/index.js';
 import {
   IamService,
@@ -142,8 +142,9 @@ export function createIamRouter(
     mcpTokens: {
       create: os.mcpTokens.create.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'mcp-access', 'use');
+        const sessionId = getSessionId(context) ?? null;
         return mapErrors(mcpTokenErrors, () =>
-          mcpTokens.create({ ...input, adminUserId: caller.userId }, caller),
+          mcpTokens.create({ ...input, adminUserId: caller.userId, sessionId }, caller),
         );
       }),
 

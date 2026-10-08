@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { inspect } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { McpTransportConfigSchema } from '@openora/core/contracts';
 import { createTestDb, seedUser, type TestDb } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { session } from '@openora/core/pam/schema/identity';
 import { makeAuditWriter, makeEventBus, makeRateLimiter } from '../../testing/mock.js';
 import { migrate as migrateIam } from '../migrate.js';
 import { mcpToken } from '../schema/index.js';
@@ -16,6 +18,7 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
 }));
 
 const META = { ip: '203.0.113.7', userAgent: 'mcp-client/1.0' };
+const DAY_MS = 24 * 60 * 60 * 1000;
 const SHA256_HEX = /[0-9a-f]{64}/;
 const TOKEN_SCHEME = 'ora_mcp_';
 
@@ -46,11 +49,22 @@ describe('McpTokenService.create when the database refuses the write (real PG)',
       }),
     });
     const admin = await seedUser(db, { role: 'admin', isActive: true });
+    const [live] = await db.drizzle.db
+      .insert(session)
+      .values({
+        userId: admin.id,
+        token: randomUUID(),
+        expiresAt: new Date(Date.now() + DAY_MS),
+        updatedAt: new Date(),
+      })
+      .returning({ id: session.id });
 
-    const failure = await svc.create({ adminUserId: admin.id, label: 'unwritable' }, META).then(
-      () => undefined,
-      (err: unknown) => err,
-    );
+    const failure = await svc
+      .create({ adminUserId: admin.id, sessionId: live?.id ?? null, label: 'unwritable' }, META)
+      .then(
+        () => undefined,
+        (err: unknown) => err,
+      );
 
     expect(failure).toBeInstanceOf(McpTokenIssueError);
     expect(failure).toMatchObject({ message: 'The MCP token could not be issued' });

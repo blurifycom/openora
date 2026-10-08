@@ -21,11 +21,16 @@ import {
   type TestRedis,
 } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
-import { user } from '@openora/core/pam/schema/identity';
+import { session, user, type Session, type User } from '@openora/core/pam/schema/identity';
 import { makeAuditWriter, makeEventBus, makeRateLimiter, mock } from '../../testing/mock.js';
 import { migrate as migrateIam } from '../migrate.js';
 import { mcpToken } from '../schema/index.js';
-import { IssuedMcpTokenSchema, McpTokenListItemSchema, McpTokenSchema } from '../contract/index.js';
+import {
+  IssuedMcpTokenSchema,
+  McpTokenListItemSchema,
+  McpTokenSchema,
+  type CreateMcpTokenInput,
+} from '../contract/index.js';
 import {
   McpTokenIssueError,
   McpTokenLimitError,
@@ -105,8 +110,29 @@ async function rejectionOf(promise: Promise<unknown>) {
   );
 }
 
-const seedAdmin = (email: string, name = 'Admin') =>
-  seedUser(db, { email, name, role: 'admin', isActive: true });
+async function seedSession(userId: User['id'], expiresAt = new Date(Date.now() + DAY_MS)) {
+  const [row] = await db.drizzle.db
+    .insert(session)
+    .values({ userId, token: randomUUID(), expiresAt, updatedAt: new Date() })
+    .returning({ id: session.id });
+  if (!row) {
+    throw new Error('seedSession: insert returned no row');
+  }
+  return row.id;
+}
+
+async function withSession(owner: User) {
+  return { ...owner, sessionId: await seedSession(owner.id) };
+}
+
+const seedAdmin = async (email: string, name = 'Admin') =>
+  withSession(await seedUser(db, { email, name, role: 'admin', isActive: true }));
+
+const issueAs = (
+  svc: McpTokenService,
+  owner: { id: User['id']; sessionId: Session['id'] },
+  input: CreateMcpTokenInput,
+) => svc.create({ ...input, adminUserId: owner.id, sessionId: owner.sessionId }, META);
 
 async function seedToken(adminUserId: string, over: Partial<typeof mcpToken.$inferInsert> = {}) {
   const token = generateMcpToken();
@@ -142,7 +168,7 @@ describe('McpTokenService.create (real PG)', () => {
     const { svc } = makeService();
     const alice = await seedAdmin('alice@ops.example');
 
-    const issued = await svc.create({ adminUserId: alice.id, label: 'Claude Code' }, META);
+    const issued = await issueAs(svc, alice, { label: 'Claude Code' });
 
     expect(isMcpTokenFormat(issued.token)).toBe(true);
     const row = await storedToken(issued.id);
@@ -168,7 +194,7 @@ describe('McpTokenService.create (real PG)', () => {
     const { svc } = makeService();
     const alice = await seedAdmin('alice@ops.example');
 
-    const issued = await svc.create({ adminUserId: alice.id, label: 'Default' }, META);
+    const issued = await issueAs(svc, alice, { label: 'Default' });
 
     expect((await storedToken(issued.id)).expiresAt).toEqual(daysFromNow(30));
     expect(issued.createdAt).toBe(NOW.toISOString());
@@ -179,8 +205,8 @@ describe('McpTokenService.create (real PG)', () => {
     const { svc } = makeService();
     const alice = await seedAdmin('alice@ops.example');
 
-    const week = await svc.create({ adminUserId: alice.id, label: 'Week', ttlDays: 7 }, META);
-    const longest = await svc.create({ adminUserId: alice.id, label: 'Max', ttlDays: 90 }, META);
+    const week = await issueAs(svc, alice, { label: 'Week', ttlDays: 7 });
+    const longest = await issueAs(svc, alice, { label: 'Max', ttlDays: 90 });
 
     expect((await storedToken(week.id)).expiresAt).toEqual(daysFromNow(7));
     expect((await storedToken(longest.id)).expiresAt).toEqual(daysFromNow(90));
@@ -190,9 +216,7 @@ describe('McpTokenService.create (real PG)', () => {
     const { svc, audit } = makeService();
     const alice = await seedAdmin('alice@ops.example');
 
-    const refusal = await rejectionOf(
-      svc.create({ adminUserId: alice.id, label: 'Too long', ttlDays: 91 }, META),
-    );
+    const refusal = await rejectionOf(issueAs(svc, alice, { label: 'Too long', ttlDays: 91 }));
 
     expect(refusal).toBeInstanceOf(McpTokenTtlError);
     expect(refusal).toHaveProperty('data', { reason: 'ttl_exceeds_max' });
@@ -204,9 +228,7 @@ describe('McpTokenService.create (real PG)', () => {
     const { svc, audit } = makeService({ config: DISABLED });
     const alice = await seedAdmin('alice@ops.example');
 
-    const refusal = await rejectionOf(
-      svc.create({ adminUserId: alice.id, label: 'Claude Code' }, META),
-    );
+    const refusal = await rejectionOf(issueAs(svc, alice, { label: 'Claude Code' }));
 
     expect(refusal).toBeInstanceOf(McpTransportDisabledError);
     expect(refusal).toHaveProperty('data', { reason: 'mcp_disabled' });
@@ -218,7 +240,7 @@ describe('McpTokenService.create (real PG)', () => {
     const { svc, audit } = makeService();
     const alice = await seedAdmin('alice@ops.example');
 
-    const issued = await svc.create({ adminUserId: alice.id, label: 'Claude Code' }, META);
+    const issued = await issueAs(svc, alice, { label: 'Claude Code' });
 
     expect(audit.record).not.toHaveBeenCalled();
     expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
@@ -247,9 +269,7 @@ describe('McpTokenService.create (real PG)', () => {
     audit.recordInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
     const alice = await seedAdmin('alice@ops.example');
 
-    const failure = await rejectionOf(
-      svc.create({ adminUserId: alice.id, label: 'Claude Code' }, META),
-    );
+    const failure = await rejectionOf(issueAs(svc, alice, { label: 'Claude Code' }));
 
     expect(failure).toBeInstanceOf(McpTokenIssueError);
     expect(failure).not.toHaveProperty('cause');
@@ -259,18 +279,22 @@ describe('McpTokenService.create (real PG)', () => {
 
 describe('McpTokenService.create owner checks (real PG)', () => {
   it.each([
-    ['an inactive admin', () => seedUser(db, { role: 'admin', isActive: false }), 'admin'],
-    ['a player', () => seedUser(db, { role: 'player' }), 'player'],
+    [
+      'an inactive admin',
+      async () => withSession(await seedUser(db, { role: 'admin', isActive: false })),
+      'admin',
+    ],
+    ['a player', async () => withSession(await seedUser(db, { role: 'player' })), 'player'],
     [
       'a staff account whose role grants no MCP access',
-      () => seedUser(db, { role: 'support' }),
+      async () => withSession(await seedUser(db, { role: 'support' })),
       'support',
     ],
   ])('refuses %s as owner_ineligible and records the denial', async (_case, seed, role) => {
     const { svc, audit, events } = makeService();
     const owner = await seed();
 
-    const refusal = await rejectionOf(svc.create({ adminUserId: owner.id, label: 'Nope' }, META));
+    const refusal = await rejectionOf(issueAs(svc, owner, { label: 'Nope' }));
 
     expect(refusal).toBeInstanceOf(McpTokenOwnerIneligibleError);
     expect(refusal).toHaveProperty('data', { reason: 'owner_ineligible' });
@@ -290,15 +314,94 @@ describe('McpTokenService.create owner checks (real PG)', () => {
     const { svc, events } = makeService();
     const ghostId = randomUUID();
 
-    await expect(svc.create({ adminUserId: ghostId, label: 'Nope' }, META)).rejects.toBeInstanceOf(
-      McpTokenOwnerIneligibleError,
-    );
+    await expect(
+      svc.create({ adminUserId: ghostId, sessionId: null, label: 'Nope' }, META),
+    ).rejects.toBeInstanceOf(McpTokenOwnerIneligibleError);
 
     expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.unauthorized_access',
       expect.objectContaining({ userId: ghostId, role: undefined }),
     );
+  });
+});
+
+describe('McpTokenService.create session check (real PG)', () => {
+  const ENDED_SESSIONS: [string, (ownerId: User['id']) => Promise<Session['id'] | null>][] = [
+    ['has expired', (ownerId) => seedSession(ownerId, new Date(Date.now() - HOUR_MS))],
+    ['was deleted', async () => randomUUID()],
+    ['belongs to another admin', async () => (await seedAdmin('other@ops.example')).sessionId],
+    ['the request did not carry', async () => null],
+  ];
+
+  it.each(ENDED_SESSIONS)(
+    'refuses an issue from a session that %s, as owner_ineligible, and records the denial',
+    async (_case, sessionOf) => {
+      const { svc, audit, events } = makeService();
+      const alice = await seedAdmin('alice@ops.example');
+
+      const refusal = await rejectionOf(
+        svc.create(
+          { adminUserId: alice.id, sessionId: await sessionOf(alice.id), label: 'Stale' },
+          META,
+        ),
+      );
+
+      expect(refusal).toBeInstanceOf(McpTokenOwnerIneligibleError);
+      expect(refusal).toHaveProperty('data', { reason: 'owner_ineligible' });
+      expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+      expect(audit.recordInTransaction).not.toHaveBeenCalled();
+      expect(events.emit).toHaveBeenCalledWith('identity.user.unauthorized_access', {
+        userId: alice.id,
+        playerId: null,
+        resource: 'mcp-access',
+        action: 'use',
+        role: 'admin',
+        ...META,
+      });
+    },
+  );
+
+  it('refuses an issue whose session was revoked while it waited, though its transaction began first', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    let releaseOwner = () => {};
+    let markOwnerHeld = () => {};
+    const ownerHeld = new Promise<void>((resolve) => {
+      markOwnerHeld = resolve;
+    });
+    const holdingOwner = db.drizzle.db.transaction(async (tx) => {
+      await tx.select({ id: user.id }).from(user).where(eq(user.id, alice.id)).for('update');
+      markOwnerHeld();
+      await new Promise<void>((resolve) => {
+        releaseOwner = resolve;
+      });
+    });
+    await ownerHeld;
+
+    const issuing = rejectionOf(issueAs(svc, alice, { label: 'Waited' }));
+    await waitForRowLockWaiter(db);
+    await db.drizzle.db.transaction((tx) =>
+      tx
+        .update(session)
+        .set({ expiresAt: sql`now()` })
+        .where(eq(session.id, alice.sessionId)),
+    );
+    releaseOwner();
+    await holdingOwner;
+
+    expect(await issuing).toBeInstanceOf(McpTokenOwnerIneligibleError);
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+  });
+
+  it('issues from a live session of the owner', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+
+    await expect(issueAs(svc, alice, { label: 'Live' })).resolves.toMatchObject({
+      adminUserId: alice.id,
+      status: 'active',
+    });
   });
 });
 
@@ -310,16 +413,16 @@ describe('McpTokenService.create active-token cap (real PG)', () => {
     await seedToken(alice.id, { expiresAt: daysFromNow(-1) });
     await seedToken(alice.id, { revokedAt: daysFromNow(-1), revokeReason: 'manual' });
 
-    const refusal = await rejectionOf(svc.create({ adminUserId: alice.id, label: 'Third' }, META));
+    const refusal = await rejectionOf(issueAs(svc, alice, { label: 'Third' }));
 
     expect(refusal).toBeInstanceOf(McpTokenLimitError);
     expect(refusal).toHaveProperty('data', { reason: 'token_limit' });
     expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(4);
 
     await svc.revokeMine(alice.id, first.id, META);
-    await expect(
-      svc.create({ adminUserId: alice.id, label: 'Replacement' }, META),
-    ).resolves.toMatchObject({ status: 'active' });
+    await expect(issueAs(svc, alice, { label: 'Replacement' })).resolves.toMatchObject({
+      status: 'active',
+    });
   });
 
   it("counts only the owner's own tokens", async () => {
@@ -328,7 +431,7 @@ describe('McpTokenService.create active-token cap (real PG)', () => {
     const bob = await seedAdmin('bob@ops.example');
     await seedToken(bob.id);
 
-    await expect(svc.create({ adminUserId: alice.id, label: 'Own' }, META)).resolves.toMatchObject({
+    await expect(issueAs(svc, alice, { label: 'Own' })).resolves.toMatchObject({
       adminUserId: alice.id,
     });
   });
@@ -354,9 +457,9 @@ describe('McpTokenService.create active-token cap (real PG)', () => {
     });
     const alice = await seedAdmin('alice@ops.example');
 
-    const first = svc.create({ adminUserId: alice.id, label: 'First' }, META);
+    const first = issueAs(svc, alice, { label: 'First' });
     await counted;
-    const second = rejectionOf(svc.create({ adminUserId: alice.id, label: 'Second' }, META));
+    const second = rejectionOf(issueAs(svc, alice, { label: 'Second' }));
     await waitForRowLockWaiter(db);
     releaseFirst();
 
@@ -374,10 +477,10 @@ describe('McpTokenService.create issuance throttle', () => {
     });
     const alice = await seedAdmin('alice@ops.example');
     const bob = await seedAdmin('bob@ops.example');
-    await svc.create({ adminUserId: alice.id, label: 'One' }, META);
-    await svc.create({ adminUserId: alice.id, label: 'Two' }, META);
+    await issueAs(svc, alice, { label: 'One' });
+    await issueAs(svc, alice, { label: 'Two' });
 
-    const refusal = await rejectionOf(svc.create({ adminUserId: alice.id, label: 'Three' }, META));
+    const refusal = await rejectionOf(issueAs(svc, alice, { label: 'Three' }));
 
     expect(refusal).toBeInstanceOf(ORPCError);
     expect(refusal).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
@@ -386,7 +489,7 @@ describe('McpTokenService.create issuance throttle', () => {
       expect.toSatisfy((ms: number) => ms > 0 && ms <= HOUR_MS),
     );
     expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(2);
-    await expect(svc.create({ adminUserId: bob.id, label: 'Bob' }, META)).resolves.toMatchObject({
+    await expect(issueAs(svc, bob, { label: 'Bob' })).resolves.toMatchObject({
       adminUserId: bob.id,
     });
   });
@@ -403,9 +506,10 @@ describe('McpTokenService.create issuance throttle', () => {
     });
     const alice = await seedAdmin('alice@ops.example');
 
-    await expect(
-      svc.create({ adminUserId: alice.id, label: 'Blocked' }, META),
-    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS', data: { retryAfterMs: HOUR_MS } });
+    await expect(issueAs(svc, alice, { label: 'Blocked' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      data: { retryAfterMs: HOUR_MS },
+    });
 
     expect(consume).toHaveBeenCalledWith(`mcp-token-create:${alice.id}`, {
       limit: 7,
@@ -903,7 +1007,7 @@ describe('McpTokenService bulk revocation racing an issue (real PG)', () => {
       await issueHeld;
     });
 
-    const issuing = issuer.svc.create({ adminUserId: alice.id, label: 'In flight' }, META);
+    const issuing = issueAs(issuer.svc, alice, { label: 'In flight' });
     await inserted;
     const revoking = makeService().svc.revokeAll(overseer.id, META);
     await Promise.race([revoking, waitForTableLockWaiter(db, mcpToken)]);

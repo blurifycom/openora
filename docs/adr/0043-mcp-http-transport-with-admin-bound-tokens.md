@@ -38,12 +38,14 @@ call count. The plaintext is returned once, when the token is created. The lifet
 30 days and is capped by configuration, at 90 days by default and never more than a year. Two
 ports in contracts keep the transport and the identity module independent of iam: one
 authenticates a bearer and records a call, the other revokes every token a user holds inside the
-caller's transaction. Only an active admin who holds the MCP permission can be issued a token.
-The issuing transaction locks the owner's row, so it cannot interleave with a deactivation, then
-takes the token-table lock that grant changes and bulk revocations hold and reads the owner's MCP
-permission again under it, uncached, so an issue that waited on a change taking the permission
-away is refused instead of leaving a token behind. Each admin holds a configured number of active
-tokens at most and can issue a configured number per hour.
+caller's transaction. Only an active admin who holds the MCP permission can be issued a token,
+and only from a live session. The issuing transaction locks the owner's row, so it cannot
+interleave with a deactivation, then takes the token-table lock that grant changes and bulk
+revocations hold. Under it the transaction reads the owner's MCP permission again, uncached, and
+checks by the database clock that the session issuing the token has not ended, so an issue that
+waited on a change taking the permission away, or on a revocation of that session, is refused
+instead of leaving a token behind. Each admin holds a configured number of active tokens at most
+and can issue a configured number per hour.
 
 **Two permissions.** One IAM resource lets an admin use MCP and manage their own tokens; another
 lets an admin see every admin's tokens and revoke any of them, including an emergency revoke of
@@ -152,9 +154,12 @@ Rejected alternatives:
   day, and every authenticated request counts towards both limits.
 - Issuing a token needs a session with the MCP permission but no fresh second factor. A step-up
   needs a cross-module port into identity and a Backoffice flow, and is left to a later change.
-- Issuance holds the token-table lock from its permission check to its commit, so issues run one
-  at a time, wait for a bulk revocation or grant change in flight, and briefly hold back the
-  call counter of tokens in use. Issuing is rare enough for that serialization.
+- Issuance holds the token-table lock from its permission and session checks to its commit, so
+  issues run one at a time, wait for a bulk revocation or grant change in flight, and briefly
+  hold back the call counter of tokens in use. Issuing is rare enough for that serialization.
+- On a password reset better-auth deletes the account's sessions only after the token revocation
+  has committed, so a token issued from one of those sessions in that interval of a few
+  milliseconds survives the reset until it expires or is revoked by hand.
 - A token whose revocation after a password change or reset failed is refused at once but stays
   listed as active, and counts towards its admin's active-token cap, until it is revoked by hand
   or expires. The password-change check compares two application-clock stamps, so a token issued

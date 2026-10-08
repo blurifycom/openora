@@ -11,7 +11,7 @@ import {
 } from '@openora/core/contracts';
 import { createTestDb, seedUser, type TestDb } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
-import { user } from '@openora/core/pam/schema/identity';
+import { session, user, type Session, type User } from '@openora/core/pam/schema/identity';
 import {
   makeAdminGuard,
   makeAuditWriter,
@@ -30,7 +30,6 @@ import { McpTokenService } from '../service/mcp-token.service.js';
 const HOUR_MS = 60 * 60 * 1000;
 const BACKOFFICE_HOSTS = ['backoffice.example.com'];
 const ENABLED = McpTransportConfigSchema.parse({ enabled: true, allowedHosts: BACKOFFICE_HOSTS });
-const CTX = testContext();
 
 let db: TestDb;
 
@@ -81,36 +80,54 @@ async function transportError(promise: Promise<unknown>) {
   return err instanceof ORPCError ? { code: err.code, data: err.data } : undefined;
 }
 
+async function seedOwner(over: Partial<typeof user.$inferInsert> = {}) {
+  const owner = await seedUser(db, { role: 'admin', ...over });
+  const [live] = await db.drizzle.db
+    .insert(session)
+    .values({
+      userId: owner.id,
+      token: crypto.randomUUID(),
+      expiresAt: new Date(Date.now() + HOUR_MS),
+      updatedAt: new Date(),
+    })
+    .returning({ id: session.id });
+  return { id: owner.id, sessionId: live?.id };
+}
+
 const issue = (
   router: ReturnType<typeof buildRouter>,
+  owner: { id: User['id']; sessionId: Session['id'] | undefined },
   input: { label: string; ttlDays?: number },
-) => call(router.mcpTokens.create, input, { context: CTX });
+) =>
+  call(router.mcpTokens.create, input, {
+    context: testContext({ auth: { userId: owner.id, sessionId: owner.sessionId } }),
+  });
 
 describe('iam router mcpTokens.create errors (real PG)', () => {
   it('refuses a caller without mcp-access before anything is issued', async () => {
-    const owner = await seedUser(db, { role: 'admin' });
+    const owner = await seedOwner();
     const router = buildRouter({
       guard: makeAdminGuard({ allow: [], caller: { userId: owner.id } }),
     });
 
-    expect(await transportError(issue(router, { label: 'Denied' }))).toMatchObject({
+    expect(await transportError(issue(router, owner, { label: 'Denied' }))).toMatchObject({
       code: 'FORBIDDEN',
     });
     expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
   });
 
   it('answers an inactive owner FORBIDDEN owner_ineligible', async () => {
-    const owner = await seedUser(db, { role: 'admin', isActive: false });
+    const owner = await seedOwner({ isActive: false });
     const router = buildRouter({ guard: makeAdminGuard({ caller: { userId: owner.id } }) });
 
-    expect(await transportError(issue(router, { label: 'Stale session' }))).toEqual({
+    expect(await transportError(issue(router, owner, { label: 'Stale session' }))).toEqual({
       code: 'FORBIDDEN',
       data: { reason: 'owner_ineligible' },
     });
   });
 
   it('answers an owner at the active-token cap CONFLICT token_limit', async () => {
-    const owner = await seedUser(db, { role: 'admin' });
+    const owner = await seedOwner();
     const router = buildRouter({
       guard: makeAdminGuard({ caller: { userId: owner.id } }),
       config: McpTransportConfigSchema.parse({
@@ -119,39 +136,49 @@ describe('iam router mcpTokens.create errors (real PG)', () => {
         tokenIssuance: { maxActivePerAdmin: 1 },
       }),
     });
-    await issue(router, { label: 'First' });
+    await issue(router, owner, { label: 'First' });
 
-    expect(await transportError(issue(router, { label: 'Second' }))).toEqual({
+    expect(await transportError(issue(router, owner, { label: 'Second' }))).toEqual({
       code: 'CONFLICT',
       data: { reason: 'token_limit' },
     });
   });
 
+  it('answers a request that carries no session FORBIDDEN owner_ineligible, issuing nothing', async () => {
+    const owner = await seedOwner();
+    const router = buildRouter({ guard: makeAdminGuard({ caller: { userId: owner.id } }) });
+
+    expect(
+      await transportError(issue(router, { ...owner, sessionId: undefined }, { label: 'Bare' })),
+    ).toEqual({ code: 'FORBIDDEN', data: { reason: 'owner_ineligible' } });
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+  });
+
   it('answers a disabled transport CONFLICT mcp_disabled', async () => {
-    const owner = await seedUser(db, { role: 'admin' });
+    const owner = await seedOwner();
     const router = buildRouter({
       guard: makeAdminGuard({ caller: { userId: owner.id } }),
       config: McpTransportConfigSchema.parse({}),
     });
 
-    expect(await transportError(issue(router, { label: 'Off' }))).toEqual({
+    expect(await transportError(issue(router, owner, { label: 'Off' }))).toEqual({
       code: 'CONFLICT',
       data: { reason: 'mcp_disabled' },
     });
   });
 
   it('answers a lifetime over the cap BAD_REQUEST ttl_exceeds_max', async () => {
-    const owner = await seedUser(db, { role: 'admin' });
+    const owner = await seedOwner();
     const router = buildRouter({ guard: makeAdminGuard({ caller: { userId: owner.id } }) });
 
-    expect(await transportError(issue(router, { label: 'Long', ttlDays: 91 }))).toEqual({
+    expect(await transportError(issue(router, owner, { label: 'Long', ttlDays: 91 }))).toEqual({
       code: 'BAD_REQUEST',
       data: { reason: 'ttl_exceeds_max' },
     });
   });
 
   it('answers an owner over the hourly limit TOO_MANY_REQUESTS with the retry delay', async () => {
-    const owner = await seedUser(db, { role: 'admin' });
+    const owner = await seedOwner();
     const router = buildRouter({
       guard: makeAdminGuard({ caller: { userId: owner.id } }),
       rateLimiter: mock<RateLimiterAdapter<RateLimitKey>>({
@@ -160,7 +187,7 @@ describe('iam router mcpTokens.create errors (real PG)', () => {
       }),
     });
 
-    expect(await transportError(issue(router, { label: 'Throttled' }))).toEqual({
+    expect(await transportError(issue(router, owner, { label: 'Throttled' }))).toEqual({
       code: 'TOO_MANY_REQUESTS',
       data: { retryAfterMs: HOUR_MS },
     });
