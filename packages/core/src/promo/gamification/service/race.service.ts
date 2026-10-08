@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, isNull, lte, sql } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import type {
@@ -251,19 +251,26 @@ export class RaceService implements WagerTrackingCommands {
 
     // One capped query, ranked by wagered desc - a page size of 100 is enough for a paid/ranked
     // leaderboard; add real pagination if a race ever needs more than that (ponytail).
-    const ranked = await this.drizzle.db
-      .select({
-        userId: promoRaceWager.userId,
-        wagered: promoRaceWager.wagered,
-        username: user.username,
-        hideUsername: player.hideUsernameOnLeaderboards,
-      })
-      .from(promoRaceWager)
-      .innerJoin(user, eq(user.id, promoRaceWager.userId))
-      .leftJoin(player, eq(player.userId, promoRaceWager.userId))
-      .where(eq(promoRaceWager.raceId, raceId))
-      .orderBy(...RACE_STANDING_ORDER)
-      .limit(LEADERBOARD_CAP);
+    const [ranked, [counted]] = await Promise.all([
+      this.drizzle.db
+        .select({
+          userId: promoRaceWager.userId,
+          wagered: promoRaceWager.wagered,
+          username: user.username,
+          hideUsername: player.hideUsernameOnLeaderboards,
+        })
+        .from(promoRaceWager)
+        .innerJoin(user, eq(user.id, promoRaceWager.userId))
+        .leftJoin(player, eq(player.userId, promoRaceWager.userId))
+        .where(eq(promoRaceWager.raceId, raceId))
+        .orderBy(...RACE_STANDING_ORDER)
+        .limit(LEADERBOARD_CAP),
+      // Served by the (raceId, ...) indexes alone; one row per player per race.
+      this.drizzle.db
+        .select({ n: count() })
+        .from(promoRaceWager)
+        .where(eq(promoRaceWager.raceId, raceId)),
+    ]);
 
     const entries: RaceLeaderboardEntry[] = ranked.map((row, index) => ({
       userId: row.userId,
@@ -294,6 +301,7 @@ export class RaceService implements WagerTrackingCommands {
       podium: entries.slice(0, 3),
       leaderboard: entries.slice(3),
       own,
+      participants: Number(counted?.n ?? 0),
     };
   }
 

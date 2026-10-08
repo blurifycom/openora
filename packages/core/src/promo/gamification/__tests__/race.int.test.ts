@@ -318,6 +318,7 @@ describe('reading a race for a player', () => {
 
     const chasing = await races.getForPlayer(raceId, fourth.id);
     expect(chasing.own.position).toBe(4);
+    expect(chasing.participants).toBe(4);
     expect(moneyEquals(chasing.own.amountToNextPaidPosition ?? '0', '50')).toBe(true);
 
     const paid = await races.getForPlayer(raceId, third.id);
@@ -333,6 +334,7 @@ describe('reading a race for a player', () => {
 
     expect(view.own.position).toBeNull();
     expect(view.own.amountToNextPaidPosition).toBeNull();
+    expect(view.participants).toBe(0);
     expect(moneyEquals(view.own.wagered, '0')).toBe(true);
   });
 });
