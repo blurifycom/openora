@@ -565,6 +565,17 @@ describe('notificationEventMap', () => {
       );
     });
 
+    it('names the one-off level-up bonus reaching the rank earns', () => {
+      const input = entryFor('promo.rank.changed').buildNotification({
+        ...rankChanged({ dailyBonus: null, weeklyBonus: null, monthlyBonus: null }),
+        levelUpBonus: '50.000000000000000000',
+      });
+
+      expect(input.body).toBe(
+        'Congratulations on reaching Gold. Your rank now pays 5% rakeback, plus a one-off 50 USD level-up bonus.',
+      );
+    });
+
     it('names the rakeback alone when the rank pays no periodic bonus', () => {
       const input = entryFor('promo.rank.changed').buildNotification(
         rankChanged({ dailyBonus: null, weeklyBonus: null, monthlyBonus: null }),
