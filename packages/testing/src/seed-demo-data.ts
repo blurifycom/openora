@@ -509,6 +509,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
           throw new Error(`seed: missing provider or category for game ${name}`);
         }
         return {
+          reviewStatus: 'approved' as const,
           name,
           slug: slugify(name),
           providerId,

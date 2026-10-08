@@ -1,4 +1,4 @@
-import { type SQL, and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { type SQL, and, asc, count, eq, inArray, sql } from 'drizzle-orm';
 import type { ClientMeta, GameProviderAggregatorMapping, User } from '@openora/core/contracts';
 import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 import {
@@ -30,6 +30,31 @@ export function playableGameCondition() {
     eq(game.isUnavailable, false),
     eq(gameProvider.isActive, true),
   );
+}
+
+// Retired (unavailable) rows stay pending forever, so the queue counts leave them out.
+export function pendingReviewCondition() {
+  return and(eq(game.reviewStatus, 'pending'), eq(game.isUnavailable, false));
+}
+
+// A pending or declined game only goes live through an explicit per-game decision.
+export function isUnreviewed(status: Game['reviewStatus']): status is 'pending' | 'declined' {
+  return status === 'pending' || status === 'declined';
+}
+
+export async function pendingReviewCountsByProviderIds(
+  db: DrizzleDb | DrizzleTx,
+  providerIds: GameProvider['id'][],
+) {
+  if (providerIds.length === 0) {
+    return new Map<GameProvider['id'], number>();
+  }
+  const rows = await db
+    .select({ providerId: game.providerId, n: count() })
+    .from(game)
+    .where(and(inArray(game.providerId, providerIds), pendingReviewCondition()))
+    .groupBy(game.providerId);
+  return new Map(rows.map((row) => [row.providerId, Number(row.n)]));
 }
 
 export function countWhere(condition: SQL | undefined) {
@@ -227,6 +252,15 @@ export function toGame(row: {
     isActive: row.game.isActive,
     isUnavailable: row.game.isUnavailable,
     metadata: row.game.metadata,
+  };
+}
+
+export function toAdminGame(row: Parameters<typeof toGame>[0]) {
+  return {
+    ...toGame(row),
+    reviewStatus: row.game.reviewStatus,
+    reviewedAt: row.game.reviewedAt?.toISOString() ?? null,
+    createdAt: row.game.createdAt.toISOString(),
   };
 }
 

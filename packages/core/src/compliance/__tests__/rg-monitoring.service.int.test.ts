@@ -85,6 +85,7 @@ async function seedBet(userId: string, betAmount: string, winAmount = '0') {
   const [g] = await db.drizzle.db
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'Slot',
       slug: `slot-${randomUUID()}`,
       providerId: provider!.id,

@@ -307,6 +307,24 @@ const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promi
       ),
   },
   {
+    name: 'reviewGame',
+    invoke: (r) =>
+      call(
+        r.reviewGame,
+        { id: '00000000-0000-4000-8000-000000000000', decision: 'approve' },
+        { context: CTX },
+      ),
+  },
+  {
+    name: 'reviewGames',
+    invoke: (r) =>
+      call(
+        r.reviewGames,
+        { gameIds: ['00000000-0000-4000-8000-000000000000'], decision: 'decline' },
+        { context: CTX },
+      ),
+  },
+  {
     name: 'addGameTags',
     invoke: (r) =>
       call(
@@ -374,6 +392,7 @@ describe('gaming catalog router authz', () => {
     const [g] = await db.drizzle.db
       .insert(game)
       .values({
+        reviewStatus: 'approved',
         name: 'Aces',
         slug: `aces-${randomUUID()}`,
         providerId: provider!.id,
@@ -427,9 +446,9 @@ describe('gaming catalog router authz', () => {
     await expect(
       call(routerWith(allowingGuard()).router.getCatalogStats, undefined, { context: CTX }),
     ).resolves.toEqual({
-      providers: empty,
+      providers: { ...empty, autoApprove: 0 },
       categories: empty,
-      games: { ...empty, unavailable: 0, playable: 0 },
+      games: { ...empty, unavailable: 0, playable: 0, pendingReview: 0 },
     });
   });
 
@@ -449,6 +468,7 @@ describe('gaming catalog router authz', () => {
     ]);
     await db.drizzle.db.insert(game).values([
       {
+        reviewStatus: 'approved',
         name: 'Aces',
         slug: 'aces',
         providerId: activeProvider!.id,
@@ -457,6 +477,7 @@ describe('gaming catalog router authz', () => {
       },
       { name: 'Blaze', slug: 'blaze', providerId: activeProvider!.id, aggregator: 'direct' },
       {
+        reviewStatus: 'approved',
         name: 'Dusk',
         slug: 'dusk',
         providerId: activeProvider!.id,
@@ -465,6 +486,7 @@ describe('gaming catalog router authz', () => {
         isUnavailable: true,
       },
       {
+        reviewStatus: 'approved',
         name: 'Comet',
         slug: 'comet',
         providerId: inactiveProvider!.id,
@@ -476,9 +498,9 @@ describe('gaming catalog router authz', () => {
     await expect(
       call(routerWith(allowingGuard()).router.getCatalogStats, undefined, { context: CTX }),
     ).resolves.toEqual({
-      providers: { total: 2, active: 1, inactive: 1 },
+      providers: { total: 2, active: 1, inactive: 1, autoApprove: 0 },
       categories: { total: 3, active: 2, inactive: 1 },
-      games: { total: 4, active: 3, inactive: 1, unavailable: 1, playable: 1 },
+      games: { total: 4, active: 3, inactive: 1, unavailable: 1, playable: 1, pendingReview: 1 },
     });
   });
 
@@ -520,6 +542,7 @@ describe('gaming catalog router authz', () => {
     const [g] = await db.drizzle.db
       .insert(game)
       .values({
+        reviewStatus: 'approved',
         name: 'Roulette',
         slug: `roulette-${randomUUID()}`,
         providerId: provider.id,
@@ -555,6 +578,7 @@ describe('gaming catalog router authz', () => {
     const [down] = await db.drizzle.db
       .insert(game)
       .values({
+        reviewStatus: 'approved',
         name: 'Down',
         slug: 'down',
         providerId: provider!.id,
@@ -766,6 +790,7 @@ describe('gaming catalog router authz', () => {
     const [member] = await db.drizzle.db
       .insert(game)
       .values({
+        reviewStatus: 'approved',
         name: 'Kept',
         slug: `kept-${randomUUID()}`,
         providerId: provider!.id,
@@ -898,6 +923,7 @@ describe('gaming catalog router authz', () => {
       const [member] = await db.drizzle.db
         .insert(game)
         .values({
+          reviewStatus: 'approved',
           name: 'Swapping Game',
           slug: `swapping-game-${randomUUID()}`,
           providerId: provider!.id,
@@ -987,6 +1013,7 @@ describe('gaming catalog router authz', () => {
       const [member] = await db.drizzle.db
         .insert(game)
         .values({
+          reviewStatus: 'approved',
           name: 'Shifting Game',
           slug: `shifting-game-${randomUUID()}`,
           providerId: provider!.id,
@@ -1317,5 +1344,153 @@ describe('gaming category sort-config route', () => {
     expect(events.emit).not.toHaveBeenCalled();
     expect(jobQueue.enqueue).not.toHaveBeenCalled();
     expect((await readCategory(category!.id)).rankDirtyAt).toBeNull();
+  });
+});
+
+describe('game review queue', () => {
+  async function seedProvider(overrides: Partial<typeof gameProvider.$inferInsert> = {}) {
+    const [row] = await db.drizzle.db
+      .insert(gameProvider)
+      .values({ slug: `provider-${randomUUID()}`, name: 'Provider', ...overrides })
+      .returning();
+    return row!;
+  }
+
+  async function seedGame(providerId: string, overrides: Partial<typeof game.$inferInsert> = {}) {
+    const [row] = await db.drizzle.db
+      .insert(game)
+      .values({
+        name: 'Game',
+        slug: `game-${randomUUID()}`,
+        providerId,
+        aggregator: 'direct',
+        ...overrides,
+      })
+      .returning();
+    return row!;
+  }
+
+  it('lists games filtered by review status with their review fields', async () => {
+    const provider = await seedProvider();
+    const pending = await seedGame(provider.id);
+    const declined = await seedGame(provider.id, { reviewStatus: 'declined' });
+    await seedGame(provider.id, { reviewStatus: 'approved', isActive: true });
+
+    const { router } = routerWith(allowingGuard());
+    const page = await call(
+      router.listAdminGames,
+      { reviewStatuses: ['pending', 'declined'] },
+      { context: CTX },
+    );
+
+    expect(page.items.map((item) => item.id).sort()).toEqual([pending.id, declined.id].sort());
+    const pendingItem = page.items.find((item) => item.id === pending.id);
+    expect(pendingItem).toMatchObject({
+      reviewStatus: 'pending',
+      reviewedAt: null,
+      createdAt: expect.any(String),
+    });
+  });
+
+  it('counts pending games per provider and in the stats, leaving out unavailable ones', async () => {
+    const provider = await seedProvider({ autoApproveNewGames: true });
+    const quiet = await seedProvider();
+    await seedGame(provider.id);
+    await seedGame(provider.id);
+    await seedGame(provider.id, { isUnavailable: true });
+    await seedGame(quiet.id, { reviewStatus: 'declined' });
+
+    const { router } = routerWith(allowingGuard());
+    await expect(
+      call(router.getAdminProvider, { id: provider.id }, { context: CTX }),
+    ).resolves.toMatchObject({ autoApproveNewGames: true, pendingReviewCount: 2 });
+    const list = await call(router.listAdminProviders, {}, { context: CTX });
+    const counts = new Map(list.items.map((item) => [item.id, item.pendingReviewCount]));
+    expect(counts.get(provider.id)).toBe(2);
+    expect(counts.get(quiet.id)).toBe(0);
+
+    const stats = await call(router.getCatalogStats, undefined, { context: CTX });
+    expect(stats.providers.autoApprove).toBe(1);
+    expect(stats.games.pendingReview).toBe(2);
+  });
+
+  it('lists only the providers named in ids, with their pending counts', async () => {
+    const first = await seedProvider();
+    const second = await seedProvider();
+    await seedProvider();
+    await seedGame(first.id);
+    await seedGame(first.id);
+    await seedGame(second.id);
+
+    const { router } = routerWith(allowingGuard());
+    const list = await call(
+      router.listAdminProviders,
+      { ids: [first.id, second.id.toUpperCase()] },
+      { context: CTX },
+    );
+
+    expect(list.total).toBe(2);
+    expect(new Map(list.items.map((item) => [item.id, item.pendingReviewCount]))).toEqual(
+      new Map([
+        [first.id, 2],
+        [second.id, 1],
+      ]),
+    );
+  });
+
+  it('turns auto-approve on through the provider PATCH and records it in the event', async () => {
+    const provider = await seedProvider();
+    await seedGame(provider.id);
+    const { router, events } = routerWith(allowingGuard());
+
+    await expect(
+      call(
+        router.updateProvider,
+        { id: provider.id.toUpperCase(), autoApproveNewGames: true },
+        { context: CTX },
+      ),
+    ).resolves.toMatchObject({ autoApproveNewGames: true, pendingReviewCount: 1 });
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'gaming.provider.updated',
+      expect.objectContaining({
+        before: expect.objectContaining({ autoApproveNewGames: false }),
+        after: expect.objectContaining({ autoApproveNewGames: true }),
+      }),
+    );
+  });
+
+  it('enabling a pending game through the game PATCH approves it', async () => {
+    const provider = await seedProvider();
+    const target = await seedGame(provider.id);
+    const { router, events } = routerWith(allowingGuard());
+
+    const updated = await call(
+      router.updateGame,
+      { id: target.id.toUpperCase(), isActive: true },
+      { context: CTX },
+    );
+
+    expect(updated).toMatchObject({ isActive: true, reviewStatus: 'approved' });
+    expect(updated.reviewedAt).toEqual(expect.any(String));
+    expect(events.emit).toHaveBeenCalledWith(
+      'gaming.games.reviewed',
+      expect.objectContaining({
+        decision: 'approve',
+        previousStatus: 'pending',
+        gameIds: [target.id],
+      }),
+    );
+  });
+
+  it('editing a pending game without enabling it leaves it pending', async () => {
+    const provider = await seedProvider();
+    const target = await seedGame(provider.id);
+    const { router, events } = routerWith(allowingGuard());
+
+    await expect(
+      call(router.updateGame, { id: target.id, name: 'Renamed' }, { context: CTX }),
+    ).resolves.toMatchObject({ isActive: false, reviewStatus: 'pending', reviewedAt: null });
+    expect(events.emit).not.toHaveBeenCalledWith('gaming.games.reviewed', expect.anything());
   });
 });

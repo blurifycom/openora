@@ -108,6 +108,7 @@ async function seedGame(
       providerId,
       aggregator: 'direct',
       isActive: true,
+      reviewStatus: 'approved',
       ...overrides,
     })
     .returning();

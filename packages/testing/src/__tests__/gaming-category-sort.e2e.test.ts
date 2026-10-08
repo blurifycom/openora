@@ -54,6 +54,7 @@ async function seedGame(providerId: string, overrides: Partial<typeof game.$infe
   const [row] = await drizzleOf(app.container)
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'E2E Sort Game',
       slug: `e2e-sort-game-${randomUUID()}`,
       providerId,
@@ -805,6 +806,7 @@ async function seedGameFor(target: TestApp, providerId: string) {
   const [row] = await drizzleOf(target.container)
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'Custom Sort Game',
       slug: `e2e-custom-game-${randomUUID()}`,
       providerId,

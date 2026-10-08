@@ -53,7 +53,7 @@ import {
   GameProviderVendorIdTakenError,
   GameProviderMappingInUseError,
 } from '../service/game-provider.service.js';
-import { GameBulkService } from '../service/game-bulk.service.js';
+import { GameBulkService, GameNotPendingReviewError } from '../service/game-bulk.service.js';
 import {
   GameFavoriteService,
   GameFavoriteLimitReachedError,
@@ -453,6 +453,24 @@ export function createGamingRouter({
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
       return mapErrors({ BAD_REQUEST: GameBulkTooManyGamesError }, () =>
         bulk.setGamesActive({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
+    reviewGame: os.reviewGame.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
+      return mapErrors(
+        { NOT_FOUND: GameNotFoundError, CONFLICT: GameNotPendingReviewError },
+        async () => {
+          await bulk.reviewGame({ ...input, actorId: userId, ip, userAgent });
+          return gaming.getAdminGame(input.id);
+        },
+      );
+    }),
+
+    reviewGames: os.reviewGames.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
+      return mapErrors({ BAD_REQUEST: GameBulkTooManyGamesError }, () =>
+        bulk.reviewGames({ ...input, actorId: userId, ip, userAgent }),
       );
     }),
 

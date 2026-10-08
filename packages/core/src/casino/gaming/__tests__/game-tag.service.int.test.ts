@@ -43,6 +43,7 @@ async function seedGame() {
   const [record] = await db.drizzle.db
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'Game',
       slug: `game-${randomUUID()}`,
       providerId: provider.id,

@@ -32,6 +32,7 @@ async function seedGame(providerId: string, overrides: Partial<typeof game.$infe
     await db.drizzle.db
       .insert(game)
       .values({
+        reviewStatus: 'approved',
         name: 'Game',
         slug: `game-${randomUUID()}`,
         providerId,

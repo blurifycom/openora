@@ -88,6 +88,7 @@ async function seedGame(label: string): Promise<SeededGame> {
   const [created] = await drizzle
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: `${label} Game`,
       slug: `game-geo-e2e-${randomUUID()}`,
       providerId: provider.id,

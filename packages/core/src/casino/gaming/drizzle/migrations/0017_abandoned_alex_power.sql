@@ -1,0 +1,1 @@
+CREATE INDEX "game_review_status_idx" ON "game" USING btree ("review_status");

@@ -389,6 +389,7 @@ describe('BackofficeService.getGamePerformance (real PG)', () => {
     const [row] = await db.drizzle.db
       .insert(game)
       .values({
+        reviewStatus: 'approved',
         name: 'Aces',
         slug: `game-${randomUUID()}`,
         providerId: provider!.id,

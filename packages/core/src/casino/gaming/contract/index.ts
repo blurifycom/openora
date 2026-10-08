@@ -26,6 +26,9 @@ import {
   GameTagTypeSchema,
   GameTagVisibilitySchema,
   GameProviderSummarySchema,
+  GAME_REVIEW_STATUSES,
+  GameReviewDecisionSchema,
+  GameReviewStatusSchema,
   GameTypeSchema,
   IdInputSchema,
   JsonSchemaDocumentSchema,
@@ -40,7 +43,11 @@ import {
   queue,
 } from '@openora/core/contracts';
 
-export { GameTypeSchema } from '@openora/core/contracts';
+export {
+  GameReviewDecisionSchema,
+  GameReviewStatusSchema,
+  GameTypeSchema,
+} from '@openora/core/contracts';
 export { GameProviderSummarySchema } from '@openora/core/contracts';
 export { GameProviderAggregatorMappingSchema } from '@openora/core/contracts';
 export { GameCategorySummarySchema } from '@openora/core/contracts';
@@ -79,6 +86,13 @@ export const GameSchema = z.object({
   isUnavailable: z.boolean(),
   metadata: z.unknown().nullable(),
 });
+
+export const AdminGameSchema = GameSchema.extend({
+  reviewStatus: GameReviewStatusSchema,
+  reviewedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema,
+});
+export type AdminGame = z.infer<typeof AdminGameSchema>;
 
 export const GameRoundSchema = z.object({
   id: UuidSchema,
@@ -212,6 +226,9 @@ export const GameProviderDetailSchema = GameProviderSummarySchema.extend({
   aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
   metadata: z.unknown().nullable(),
   isActive: z.boolean(),
+  autoApproveNewGames: z.boolean(),
+  // Available games still awaiting review; retired (unavailable) rows drop out.
+  pendingReviewCount: z.number().int().nonnegative(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -243,6 +260,11 @@ const CatalogFilterSchema = CatalogQueryBaseSchema.extend({
   isActive: QueryBooleanSchema.optional(),
 });
 
+export const ListAdminProvidersInputSchema = CatalogFilterSchema.extend({
+  ids: queryArraySchema(UuidSchema, 50).optional(),
+});
+export type ListAdminProvidersInput = z.infer<typeof ListAdminProvidersInputSchema>;
+
 export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
   isActive: QueryBooleanSchema.optional(),
   isUnavailable: QueryBooleanSchema.optional(),
@@ -250,6 +272,7 @@ export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
   uncategorized: QueryBooleanSchema.optional(),
   tagIds: queryArraySchema(UuidSchema, 50).optional(),
   gameTypes: queryArraySchema(GameTypeSchema, GAME_TYPES.length).optional(),
+  reviewStatuses: queryArraySchema(GameReviewStatusSchema, GAME_REVIEW_STATUSES.length).optional(),
   geoBlocked: QueryBooleanSchema.optional(),
   geoBlockedCountries: queryArraySchema(CountryCodeSchema, 50).optional(),
   geoAvailableCountries: queryArraySchema(CountryCodeSchema, 50).optional(),
@@ -306,12 +329,15 @@ const CatalogCountsSchema = z.object({
 });
 
 export const CatalogStatsSchema = z.object({
-  providers: CatalogCountsSchema,
+  providers: CatalogCountsSchema.extend({
+    autoApprove: z.number().int().nonnegative(),
+  }),
   categories: CatalogCountsSchema,
   games: CatalogCountsSchema.extend({
     unavailable: z.number().int().nonnegative(),
     // Active, available games whose provider is active too: what a player can actually launch.
     playable: z.number().int().nonnegative(),
+    pendingReview: z.number().int().nonnegative(),
   }),
 });
 export type CatalogStats = z.infer<typeof CatalogStatsSchema>;
@@ -354,6 +380,7 @@ export type CreateProviderInput = z.infer<typeof CreateProviderInputSchema>;
 export const UpdateProviderInputSchema = ProviderWriteFieldsSchema.partial().extend({
   id: UuidSchema,
   isActive: z.boolean().optional(),
+  autoApproveNewGames: z.boolean().optional(),
 });
 export type UpdateProviderInput = z.infer<typeof UpdateProviderInputSchema>;
 
@@ -670,13 +697,32 @@ export const SetGamesActiveOutputSchema = z.object({
   providers: BulkCountSchema,
   notFound: GameBulkIdsSchema,
   unplayableGameIds: z.array(UuidSchema),
+  // Pending or declined games a provider-scope enable left off; enable them by id.
+  reviewSkippedCount: z.number().int().nonnegative(),
 });
 export type SetGamesActiveOutput = z.infer<typeof SetGamesActiveOutputSchema>;
+
+export const ReviewGameInputSchema = IdInputSchema.extend({
+  decision: GameReviewDecisionSchema,
+});
+export type ReviewGameInput = z.infer<typeof ReviewGameInputSchema>;
+
+export const ReviewGamesInputSchema = GameBulkTargetFieldsSchema.extend({
+  decision: GameReviewDecisionSchema,
+}).refine(hasGameBulkTarget, gameBulkTargetRefinement);
+export type ReviewGamesInput = z.infer<typeof ReviewGamesInputSchema>;
+
+export const ReviewGamesOutputSchema = z.object({
+  games: BulkCountSchema,
+  notFound: GameBulkIdsSchema,
+  unplayableGameIds: z.array(UuidSchema),
+});
+export type ReviewGamesOutput = z.infer<typeof ReviewGamesOutputSchema>;
 
 export const gamingAdminContract = {
   listAdminProviders: oc
     .route({ method: 'GET', path: '/backoffice/gaming/providers' })
-    .input(CatalogFilterSchema)
+    .input(ListAdminProvidersInputSchema)
     .output(paginated(GameProviderDetailSchema)),
 
   getAdminProvider: oc
@@ -742,17 +788,27 @@ export const gamingAdminContract = {
   updateGame: oc
     .route({ method: 'PATCH', path: '/backoffice/gaming/games/{id}' })
     .input(UpdateGameInputSchema)
-    .output(GameSchema),
+    .output(AdminGameSchema),
 
   listAdminGames: oc
     .route({ method: 'GET', path: '/backoffice/gaming/games' })
     .input(ListAdminGamesInputSchema)
-    .output(paginated(GameSchema)),
+    .output(paginated(AdminGameSchema)),
 
   searchAdminGames: oc
     .route({ method: 'POST', path: '/backoffice/gaming/games/search' })
     .input(SearchAdminGamesInputSchema)
     .output(paginated(GameSchema)),
+
+  reviewGame: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/games/{id}/review' })
+    .input(ReviewGameInputSchema)
+    .output(AdminGameSchema),
+
+  reviewGames: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/games/bulk/review' })
+    .input(ReviewGamesInputSchema)
+    .output(ReviewGamesOutputSchema),
 
   getCatalogStats: oc
     .route({ method: 'GET', path: '/backoffice/gaming/stats' })
