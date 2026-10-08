@@ -178,3 +178,56 @@ describe('admin game list filters e2e', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('admin game search e2e', () => {
+  async function searchIds(body: Record<string, unknown>) {
+    const res = await admin.post('/backoffice/gaming/games/search', {
+      limit: 100,
+      providerId,
+      ...body,
+    });
+    expect(res.status).toBe(200);
+    const page = await readJson(res);
+    return (page.items as { id: string }[]).map((g) => g.id).sort();
+  }
+
+  it('narrows the list by rule clauses sent as a JSON body, alongside the query filters', async () => {
+    const dbx = drizzleOf(app.container);
+    const [hot] = await dbx
+      .insert(gameTag)
+      .values({ name: `E2E Search Hot ${randomUUID()}` })
+      .returning();
+    const original = await seedGame({ gameType: 'original' });
+    const casino = await seedGame({ gameType: 'casino' });
+    await seedGame({ gameType: 'original' });
+    await dbx.insert(gameTagGame).values([
+      { gameId: original.id, tagId: hot!.id },
+      { gameId: casino.id, tagId: hot!.id },
+    ]);
+    const byTag = [{ key: 'tags', params: { tagIds: [hot!.id] } }];
+
+    expect(await searchIds({ rules: byTag })).toEqual([original.id, casino.id].sort());
+    expect(await searchIds({ rules: byTag, gameTypes: ['original'] })).toEqual([original.id]);
+    expect(
+      await searchIds({
+        rules: [...byTag, { key: 'most_played', params: { periodDays: 7, limit: 5 } }],
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejects an unknown rule key', async () => {
+    const res = await admin.post('/backoffice/gaming/games/search', {
+      rules: [{ key: 'no_such_rule', params: {} }],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses an unauthenticated caller', async () => {
+    const res = await app.app.request('/backoffice/gaming/games/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ rules: [] }),
+    });
+    expect(res.status).toBe(401);
+  });
+});

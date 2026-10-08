@@ -351,6 +351,7 @@ export type {
   AdminGameReporting,
   GameRoundCount,
   GameRoundRankingFilter,
+  GameRoundTopFilter,
   PlayerGameStats,
 } from './admin-game-reporting.js';
 export { GAME_PERFORMANCE_SORT_FIELDS, ADMIN_GAME_REPORTING } from './admin-game-reporting.js';

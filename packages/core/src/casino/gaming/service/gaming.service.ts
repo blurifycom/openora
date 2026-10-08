@@ -218,8 +218,9 @@ export class GamingService {
     geoBlocked,
     geoBlockedCountries,
     geoAvailableCountries,
+    matchingGameIds,
     ...input
-  }: ListAdminGamesInput) {
+  }: ListAdminGamesInput & { matchingGameIds?: readonly string[] }) {
     const gameGeoCheck = this.gameGeoCheck;
     if (
       !gameGeoCheck &&
@@ -312,6 +313,9 @@ export class GamingService {
             })
           : undefined,
         geoAvailableFilter,
+        matchingGameIds
+          ? sql`${game.id} = ANY(${sql.param([...matchingGameIds])}::uuid[])`
+          : undefined,
       ],
     });
   }

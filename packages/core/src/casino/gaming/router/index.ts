@@ -1,7 +1,11 @@
 import { implement } from '@orpc/server';
 import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
 import { GameSortService, GameSortConfigInvalidError } from '../service/game-sort.service.js';
-import { gamingContract, gamingAdminContract } from '../contract/index.js';
+import {
+  gamingContract,
+  gamingAdminContract,
+  type ListAdminGamesInput,
+} from '../contract/index.js';
 import {
   GamingService,
   GameNotFoundError,
@@ -33,6 +37,7 @@ import {
   GameCategoryRuleInvalidError,
   GameCategoryRuleTooBroadError,
   GameCategoryRuleUnavailableError,
+  GameSearchRuleTooBroadError,
   type GameCategoryRuleAuthorizer,
 } from '../service/game-category-rule.service.js';
 import {
@@ -84,15 +89,25 @@ export function createGamingRouter({
 }) {
   const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
 
-  // No built-in kind sets `exposesReporting`; an overlay's kind can. Checked on the exact
-  // rule a write stores or an evaluation resolves, not one read earlier - see
-  // docs/modules/gaming.md.
+  // Checked on the exact rule a write stores or an evaluation resolves, not one read
+  // earlier - see docs/modules/gaming.md.
   function ruleReportingAccess(context: OssContext): GameCategoryRuleAuthorizer {
     return async (rule) => {
       if (rules.exposesReporting(rule)) {
         await adminGuard.assert(context, 'report', 'view');
       }
     };
+  }
+
+  // Geo rules are compliance data; require the same grant compliance's own geo-rule routes do.
+  async function geoFilterAccess(context: OssContext, input: ListAdminGamesInput) {
+    if (
+      input.geoBlocked !== undefined ||
+      input.geoBlockedCountries ||
+      input.geoAvailableCountries
+    ) {
+      await adminGuard.assert(context, 'compliance', 'view');
+    }
   }
 
   return os.router({
@@ -399,16 +414,33 @@ export function createGamingRouter({
 
     listAdminGames: os.listAdminGames.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
-      // Geo rules are compliance data; require the same grant compliance's own geo-rule routes do.
-      if (
-        input.geoBlocked !== undefined ||
-        input.geoBlockedCountries ||
-        input.geoAvailableCountries
-      ) {
-        await adminGuard.assert(context, 'compliance', 'view');
-      }
+      await geoFilterAccess(context, input);
       return mapErrors({ BAD_REQUEST: GameGeoFiltersUnavailableError }, () =>
         gaming.listGamesAdmin(input),
+      );
+    }),
+
+    searchAdminGames: os.searchAdminGames.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      await geoFilterAccess(context, input);
+      const { rules: rule, ...filters } = input;
+      if (rule?.length) {
+        await ruleReportingAccess(context)(rule);
+      }
+      return mapErrors(
+        {
+          BAD_REQUEST: [
+            GameGeoFiltersUnavailableError,
+            GameCategoryRuleInvalidError,
+            GameSearchRuleTooBroadError,
+          ],
+          SERVICE_UNAVAILABLE: GameCategoryRuleUnavailableError,
+        },
+        async () =>
+          gaming.listGamesAdmin({
+            ...filters,
+            matchingGameIds: rule?.length ? await rules.resolveSearchGameIds(rule) : undefined,
+          }),
       );
     }),
 
