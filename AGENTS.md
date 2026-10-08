@@ -37,6 +37,7 @@ This is real-money regulated gambling. A defect here moves a player's money or b
 - New module, route, table, seed, schema, enum, adapter, config, hook, or integration: use the matching generator and the topical standard named by `conventions`.
 - Cross-module work: use a command port, domain event, shared contract, or read-only `/schema` subpath as defined in `docs/standards/module-structure.md`.
 - Async or cross-process work: choose the channel in `messaging-and-microservices` before implementation.
+- A bug: reproduce it before fixing it, as a failing E2E through `bootTestApp` or the flow against `pnpm dev`; the fix turns that same repro green. Can't reproduce: say what you tried and ask, never fix a guess. A login or access you don't have: ask the user.
 - Docs or generated configuration: edit canonical source only. `pnpm regen` owns generated artifacts; `pnpm gen:agents` owns agent mirrors.
 
 ## Root guardrails
