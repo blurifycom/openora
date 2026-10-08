@@ -1905,6 +1905,29 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
     expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
   });
 
+  it('opens one wallet and credits both when two first deposits for a new player land together', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
+    await seedAddress(userId, 'bc1qfirst');
+    const credit = (amount: string) =>
+      svc.creditDepositByAddress({
+        kind: 'deposit',
+        address: 'bc1qfirst',
+        amount,
+        currency: 'BTC',
+        externalId: randomUUID(),
+        txHash: randomUUID(),
+      });
+
+    await Promise.all([credit('0.5'), credit('1')]);
+
+    expect(await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId))).toHaveLength(
+      1,
+    );
+    expect(await balanceOf(userId)).toBe(1.5);
+    expect(emittedTopics(events)).toEqual(['wallet.deposit.completed', 'wallet.deposit.completed']);
+  });
+
   it('credits nobody and files an unattributed_deposit finding when the address is unknown', async () => {
     const { svc, events } = makeService();
     const externalId = randomUUID();

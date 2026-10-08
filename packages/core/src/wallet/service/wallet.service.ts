@@ -450,6 +450,21 @@ export function assertAboveMinimumDeposit(
 export const railFor: (currency: string, cryptoCurrencies?: readonly string[]) => WalletRail =
   sharedRailFor;
 
+async function openWallet(txn: DrizzleDb, userId: Wallet['userId'], currency: string) {
+  const [created] = await txn
+    .insert(wallet)
+    .values({ userId, currency })
+    .onConflictDoNothing({ target: wallet.userId })
+    .returning();
+  return (
+    created ??
+    findOneOrThrow(
+      await txn.select().from(wallet).where(eq(wallet.userId, userId)),
+      new WalletNotFoundError(userId),
+    )
+  );
+}
+
 // Currency checks elsewhere are case-insensitive, so `usd` reaches here for a `USD`
 // wallet. Every read and write of wallet_balance funnels through these three helpers,
 // so normalizing the key here is enough to keep one row per wallet+currency.
@@ -1101,10 +1116,7 @@ export class WalletService {
         [walletRecord] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
       }
       if (!walletRecord) {
-        walletRecord = findOneOrThrow(
-          await txn.insert(wallet).values({ userId, currency }).returning(),
-          new WalletNotFoundError(userId),
-        );
+        walletRecord = await openWallet(txn, userId, currency);
       }
       const holder = walletRecord;
       return withAdvisoryXactLock(txn, depositSlotKey(userId), async () => {
@@ -3122,13 +3134,7 @@ export class WalletService {
         .from(wallet)
         .where(eq(wallet.userId, depositAddress.userId));
       if (!walletRecord) {
-        walletRecord = findOneOrThrow(
-          await txn
-            .insert(wallet)
-            .values({ userId: depositAddress.userId, currency: event.currency })
-            .returning(),
-          new WalletNotFoundError(depositAddress.userId),
-        );
+        walletRecord = await openWallet(txn, depositAddress.userId, event.currency);
       }
 
       // A redelivery of a credited deposit must not depend on a rate being available now.
