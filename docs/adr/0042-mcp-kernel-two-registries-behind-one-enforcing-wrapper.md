@@ -48,17 +48,25 @@ once, when the kernel is built after every provider is bound, and returns the ha
 `{ precondition, execute }` pair. The catalog generator reads the contract literals, so
 `docs/catalog.json` and `@openora/mcp` list both registries without running anything.
 
-Consumers reach both registries only through `MCP_KERNEL`, which `createApp` binds after every
-plugin and the composition root have registered, so no overlay can replace it. The kernel
-wrapper, not the runtime, enforces:
+Consumers reach both registries only through `MCP_KERNEL`, which `createApp` binds sealed
+(`Container.registerSealed`) after every plugin and the composition root have registered, so
+neither an overlay, the composition root nor a holder of the container `createApp` returns can
+replace it: a later registration throws. The kernel wrapper, not the runtime, enforces:
 
 - **Shape at registration.** Tool inputs and action payloads are a top-level `z.object`;
   conditional rules go in `.superRefine()`. Every number is `z.coerce.number()` with both bounds,
   every string is bounded, every array has a maximum, free-form maps are refused, and schemas
-  must convert to JSON Schema. A violation fails boot with the field path and the fix.
+  must convert to JSON Schema. A player is referenced by its id (`UuidSchema`); core defines no
+  pseudonym format, because pseudonymising is the hub's job. A money amount is a decimal string,
+  as everywhere in the platform (`docs/standards/money.md`), so it needs a maximum length like
+  any string, and an action type that takes one checks its value in `.superRefine()`. A tool's
+  output schema may not let undeclared keys through at any depth - no loose or catchall object,
+  record or untyped field - so its parse strips them under every allowed key. A violation fails
+  boot with the field path and the fix.
 - **IAM per call.** The run's actor (an admin, an agent acting for an admin, or an MCP token
-  owned by an admin) resolves to one admin, whose grants are checked by `AdminGuard.assertUser` -
-  the same enforcement point as every admin route, including the denial audit event.
+  owned by an admin) resolves to one admin, whose grants are checked by `AdminGuard.assertUser`
+  before a handler, a precondition or an executor runs - the same enforcement point as every
+  admin route, including the denial audit event.
 - **Output allow-list.** The handler's output is parsed by its schema and only allow-listed keys
   leave the kernel. A schema mismatch returns `output_invalid`, never the raw output.
 - **Error codes, never messages.** A handler returns a declared code by throwing `McpToolError`;
@@ -67,16 +75,21 @@ wrapper, not the runtime, enforces:
 - **An audit record per call**, with tool id, schema version, actor, correlation id and SHA-256
   hashes of the parsed input and the redacted output. If the record cannot be written the call
   fails with `audit_unavailable` instead of returning data. An action execution retries the
-  write first, because by then the executor's effect is committed.
+  write first, because by then the executor's effect is committed. Hashing is total: anything
+  nested deeper than 64 levels hashes as a fixed marker, and a tool call that fails outside its
+  handler still writes its record, as `internal_error`.
 - **Preconditions before proposals.** Each action type declares a precondition the hub must pass
-  before a proposal is created. It is not re-run at execution, where the executor guards its
-  own state under its own locks.
+  before a proposal is created. It runs under the action type's IAM check and writes no audit
+  record. It is not re-run at execution, where the executor guards its own state under its own
+  locks.
 - **Replay-safe execution.** An executor receives `(payload, proposalId, actor)`. A replay while
   its effect still holds performs nothing and answers `already_applied`, so a retry after a crash
   is safe. Core stores no proposals, so executors key on the resulting state: after someone else
   changes that state (an admin removes the tag, resolves the held withdrawal), a replay may apply
   again or answer a declared refusal. The store that keeps proposals must not re-execute one it
-  recorded as executed.
+  recorded as executed. An executor that moves money needs the durable idempotency guard
+  `docs/standards/money.md` requires of every money mutation, keyed on the proposal id under a
+  database constraint, the way `add_note` keys its note.
 
 `RunContext` (run id, actor, optional player pseudonym, catalog version, correlation id) is one
 shared type, so the hub and the transport cannot disagree on it. `PlatformConfig.agents` holds
@@ -100,8 +113,8 @@ Rejected alternatives:
   each runtime and each transport would re-implement the same rules, and one would get them
   wrong.
 - **A rebindable kernel token.** An overlay could swap the wrapper and bypass IAM and audit.
-  `createApp` binds `MCP_KERNEL` after every plugin, and the kernel factory is exported only
-  from `@openora/core/testing`.
+  `createApp` binds `MCP_KERNEL` sealed after every plugin, so a later registration throws, and
+  the kernel factory is exported only from `@openora/core/testing`.
 - **Pseudonymisation in core.** It needs a mapping store and belongs at the model boundary, which
   only the hub knows.
 
