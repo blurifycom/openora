@@ -3,6 +3,9 @@ import {
   DrizzleService,
   findOneOrThrow,
   pageToOffset,
+  sumInPivot,
+  withAdvisoryXactLock,
+  createLogger,
 } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
 import {
@@ -20,13 +23,19 @@ import {
   type SessionCommands,
   type UserCommands,
   type PlayerActivityTracker,
+  type ExchangeRateReader,
 } from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, asc, desc, sql, inArray, isNull, lt } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
+// Read-only ledger read via the wallet's public /schema subpath: the ledger, not a counter
+// kept here, is the source of truth for what a player deposited.
+import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
 import type { PlayerSearchResult, PlayerProfileCard } from '../contract/index.js';
+
+const logger = createLogger('player-management');
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
 const BLOCKING_PLAYER_STATUSES = new Set<PlayerStatus>(['suspended', 'closed']);
@@ -44,7 +53,53 @@ export class PlayerService implements PlayerActivityTracker {
     private readonly blockWriter: ChatBlockWriter,
     private readonly sessionCommands: SessionCommands,
     private readonly userCommands: UserCommands,
+    private readonly rates?: ExchangeRateReader,
   ) {}
+
+  /**
+   * Recomputes `totalDeposits` from the player's completed wallet deposits, priced into the
+   * player's currency. A full recompute rather than an increment, so a redelivered or
+   * reordered deposit event cannot count a deposit twice; the per-player lock makes the last
+   * writer read the latest ledger. When a deposit currency has no rate the stored total is
+   * left as it was: a guessed total would read back exactly like a real one.
+   */
+  async refreshTotalDeposits(userId: User['id']) {
+    await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, `player_total_deposits:${userId}`, async () => {
+        const [current] = await tx
+          .select({ id: player.id, currency: player.currency })
+          .from(player)
+          .where(eq(player.userId, userId));
+        if (!current) {
+          return;
+        }
+        const depositsByCurrency = await tx
+          .select({
+            currency: walletTransaction.currency,
+            total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
+          })
+          .from(walletTransaction)
+          .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+          .where(
+            and(
+              eq(wallet.userId, userId),
+              eq(walletTransaction.type, 'deposit'),
+              eq(walletTransaction.status, 'completed'),
+            ),
+          )
+          .groupBy(walletTransaction.currency);
+        const totalDeposits = await sumInPivot(depositsByCurrency, current.currency, this.rates);
+        if (totalDeposits === null) {
+          logger.warn(
+            { userId },
+            'refreshTotalDeposits: could not price every deposit currency, keeping the stored total',
+          );
+          return;
+        }
+        await tx.update(player).set({ totalDeposits }).where(eq(player.id, current.id));
+      }),
+    );
+  }
 
   async list({
     page,

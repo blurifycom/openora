@@ -35,7 +35,8 @@ import {
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { kycVerification, type KycVerification } from '../schema/index.js';
 // Cross-domain reads via public /schema subpaths (ADR-0020); the wallet ledger is the
-// source of truth for lifetime deposits (player.totalDeposits is not maintained).
+// source of truth for lifetime deposits (player.totalDeposits is a display copy in the
+// player's currency, not the pivot this compares in).
 import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import type {
