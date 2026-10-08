@@ -12,13 +12,14 @@ import {
   seedMinimal,
   type TestDb,
   type TestApp,
+  uniqueUsername,
 } from '../index.js';
 
 let db: TestDb;
 let app: TestApp;
 
 async function registerPlayer(prefix: string) {
-  const username = `${prefix.slice(0, 7)}_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+  const username = uniqueUsername(prefix);
   const registered = await registerAndMaterializePlayer(app, {
     email: `${username}@e2e.test`,
     username,

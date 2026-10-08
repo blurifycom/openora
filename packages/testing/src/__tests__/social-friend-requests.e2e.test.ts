@@ -19,6 +19,7 @@ import {
   type TestDb,
   type TestApp,
   type TestClient,
+  uniqueUsername,
 } from '../index.js';
 
 /**
@@ -58,7 +59,7 @@ async function registerNamedPlayer(email: string, name: string) {
     .toLowerCase()
     .replaceAll(/[^a-z0-9_]+/g, '_')
     .slice(0, 7);
-  const username = `${usernamePrefix}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const username = uniqueUsername(usernamePrefix);
   return { ...(await registerAndMaterializePlayer(app, { email, username })), username };
 }
 
