@@ -174,6 +174,33 @@ describe('recording a wager toward an open race', () => {
 });
 
 describe('reading a race for a player', () => {
+  it('orders tied players by who reached the total first', async () => {
+    const raceId = await insertRace();
+    const { account: early } = await seedPlayerWithUser(db);
+    const { account: late } = await seedPlayerWithUser(db);
+    await wager(early.id, '40', '40');
+    await wager(late.id, '40', '40');
+
+    const view = await races.getForPlayer(raceId, early.id);
+
+    const order = [...view.podium, ...view.leaderboard].map((r) => r.userId);
+    expect(order).toEqual([early.id, late.id]);
+  });
+
+  it('masks with a fixed suffix, so the mask never tells the name length', async () => {
+    const raceId = await insertRace();
+    const { account: short } = await seedPlayerWithUser(db, { username: 'abcd' });
+    const { account: long } = await seedPlayerWithUser(db, { username: 'abcdefghijklmnop' });
+    const { account: caller } = await seedPlayerWithUser(db);
+    await wager(short.id, '20', '20');
+    await wager(long.id, '10', '10');
+
+    const view = await races.getForPlayer(raceId, caller.id);
+
+    const masked = [...view.podium, ...view.leaderboard].map((r) => r.username);
+    expect(masked).toEqual(['abc****', 'abc****']);
+  });
+
   it('masks another player using the platform masking rule, never masks the caller themselves', async () => {
     const raceId = await insertRace();
     const { account: leader } = await seedPlayerWithUser(db, { username: 'YOLOKing' });

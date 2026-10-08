@@ -29,12 +29,23 @@ const INCOGNITO = 'Incognito';
 /**
  * The server-side source of truth for a masked leaderboard username, so a client's own copy of
  * this rule (if it has one) never disagrees with what the payload already carries - a leaderboard
- * response reflects masking itself rather than leaving it to be applied client-side.
+ * response reflects masking itself rather than leaving it to be applied client-side. A fixed
+ * suffix, so the mask never tells how long the hidden part is.
  */
 function maskUsername(name: string): string {
-  const visible = Math.min(3, Math.max(1, Math.floor(name.length / 3)));
-  return `${name.slice(0, visible)}${'*'.repeat(Math.max(4, name.length - visible + 4))}`;
+  return `${name.slice(0, Math.min(3, name.length - 1))}****`;
 }
+
+/**
+ * Standings order, shared by the board and the payout so the player shown in a place is the one
+ * paid for it. Ties go to whoever's total last moved earliest - who reached it first - and then
+ * to the user id, so even an exact tie on both has one answer.
+ */
+export const RACE_STANDING_ORDER = [
+  desc(promoRaceWager.wagered),
+  asc(promoRaceWager.updatedAt),
+  asc(promoRaceWager.userId),
+];
 
 const RACE_COLUMNS = {
   id: promoRace.id,
@@ -173,7 +184,7 @@ export class RaceService implements WagerTrackingCommands {
       .innerJoin(user, eq(user.id, promoRaceWager.userId))
       .leftJoin(player, eq(player.userId, promoRaceWager.userId))
       .where(eq(promoRaceWager.raceId, raceId))
-      .orderBy(desc(promoRaceWager.wagered))
+      .orderBy(...RACE_STANDING_ORDER)
       .limit(LEADERBOARD_CAP);
 
     const entries: RaceLeaderboardEntry[] = ranked.map((row, index) => ({
