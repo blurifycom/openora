@@ -288,3 +288,22 @@ describe('self-exclusion forfeiting every active grant', () => {
     }, JOB_WAIT);
   });
 });
+
+describe('a ban forfeiting every active grant', () => {
+  it('records the deactivation as the reason and the banning admin as the actor', async () => {
+    const { client, userId } = await player();
+    const grantId = await grantBonus(userId, '40');
+    const actorId = randomUUID();
+
+    app.container.get(EVENT_BUS).emit('identity.user.deactivated', { userId, actorId });
+
+    await vi.waitFor(async () => {
+      const grant = await readJson(await client.get(`/promo/grants/${grantId}`));
+      expect(grant).toMatchObject({ status: 'forfeited', forfeitReason: 'account_deactivated' });
+      const audit = await readJson(
+        await admin.get(`/audit/logs?resourceId=${grantId}&action=promo.bonus.forfeited`),
+      );
+      expect(audit.items[0]).toMatchObject({ actorType: 'admin', actorId });
+    }, JOB_WAIT);
+  });
+});

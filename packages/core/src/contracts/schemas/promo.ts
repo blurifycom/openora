@@ -37,6 +37,8 @@ export const BONUS_FORFEIT_REASONS = [
   'self_exclusion',
   'cooling_off',
   'account_closed',
+  // The account was deactivated (banned) - an admin acted on the account, not on the bonus.
+  'account_deactivated',
   'admin',
   'player_opt_out',
   'withdrawal_while_active',
