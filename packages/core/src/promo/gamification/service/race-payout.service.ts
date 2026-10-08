@@ -116,7 +116,7 @@ export class RacePayoutService {
       if (!position) {
         continue;
       }
-      const restricted = (await this.eligibility?.isRestricted(standing.userId)) ?? true;
+      const restricted = (await this.eligibility?.isRestricted(standing.userId, tx)) ?? true;
       if (restricted) {
         await tx.insert(promoRacePayout).values({
           raceId,
@@ -137,6 +137,7 @@ export class RacePayoutService {
       // rate is available; this whole settlement rolls back and the job's next tick retries it,
       // the same "not credited yet, retried later" rule a wallet credit failure follows below.
       const priced = await priceForPayout(
+        tx,
         this.rates,
         position.prize,
         race.currency,

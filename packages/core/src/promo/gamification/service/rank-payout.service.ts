@@ -326,7 +326,7 @@ export class RankPayoutService {
         .set({ settledAt: new Date(), outcome, grantId })
         .where(eq(promoRankLevelUp.id, id));
 
-    if (await this.isBlocked(row.userId)) {
+    if (await this.isBlocked(row.userId, tx)) {
       await settle('restricted');
       return null;
     }
@@ -345,8 +345,8 @@ export class RankPayoutService {
     if (!this.grants) {
       throw new Error('BONUS_GRANTS is not bound');
     }
-    const paid = await this.inPayoutCurrency(owed, payout);
-    const maxBet = await this.capIn(terms.maxBet, owed.currency, paid.currency);
+    const paid = await this.inPayoutCurrency(tx, owed, payout);
+    const maxBet = await this.capIn(tx, terms.maxBet, owed.currency, paid.currency);
     const outcome = await this.grants.grant(tx, {
       userId: owed.userId,
       currency: paid.currency,
@@ -392,6 +392,7 @@ export class RankPayoutService {
    * fixed payout currency is the fallback, and the ladder's own is the last resort.
    */
   private async inPayoutCurrency(
+    tx: DrizzleTx,
     owed: { userId: Uuid; currency: string; amount: string },
     payout: PayoutSettings,
   ) {
@@ -404,7 +405,7 @@ export class RankPayoutService {
       if (target === owed.currency) {
         return owed;
       }
-      const amount = await this.rates.convert(owed.amount, owed.currency, target);
+      const amount = await this.rates.convert(owed.amount, owed.currency, target, tx);
       if (amount !== null) {
         return { userId: owed.userId, currency: target, amount };
       }
@@ -422,11 +423,11 @@ export class RankPayoutService {
    * the grant's own currency - so a cap copied across unconverted means 5 BTC to a player paid
    * in BTC, and five cents to one paid in a low-value coin.
    */
-  private async capIn(cap: string | null | undefined, from: string, to: string) {
+  private async capIn(tx: DrizzleTx, cap: string | null | undefined, from: string, to: string) {
     if (cap === null || cap === undefined || from === to) {
       return cap;
     }
-    const converted = await this.rates.convert(cap, from, to);
+    const converted = await this.rates.convert(cap, from, to, tx);
     if (converted === null) {
       throw new Error(`no rate to price a rank reward's stake cap in ${to}`);
     }
@@ -516,9 +517,9 @@ export class RankPayoutService {
     });
   }
 
-  private async isBlocked(userId: Uuid) {
+  private async isBlocked(userId: Uuid, tx?: DrizzleTx) {
     // termsFor already refused to run without the port, so this never pays an unchecked player.
-    return (await this.eligibility?.isRestricted(userId)) ?? true;
+    return (await this.eligibility?.isRestricted(userId, tx)) ?? true;
   }
 }
 

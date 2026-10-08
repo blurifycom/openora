@@ -95,7 +95,7 @@ export class RankChallengePayoutService {
       .from(promoRankChallengeTier)
       .where(eq(promoRankChallengeTier.id, claim.tierId));
 
-    const restricted = (await this.eligibility?.isRestricted(claim.userId)) ?? true;
+    const restricted = (await this.eligibility?.isRestricted(claim.userId, tx)) ?? true;
     if (claim.cashAmount !== null && restricted) {
       this.logger.warn(
         { userId: claim.userId, tierId: claim.tierId },
@@ -114,6 +114,7 @@ export class RankChallengePayoutService {
       // `priceForPayout` for why. Throws on no rate, rolling back this claim's settlement so the
       // payout job's next tick retries it.
       const priced = await priceForPayout(
+        tx,
         this.rates,
         claim.cashAmount,
         claim.currency,

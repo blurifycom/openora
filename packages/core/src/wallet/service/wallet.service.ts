@@ -980,7 +980,7 @@ export class WalletService {
     const quote =
       currency.toUpperCase() === referenceCurrency
         ? { rate: '1', asOf: new Date().toISOString() }
-        : await this.rates?.getRate(currency, referenceCurrency);
+        : await this.rates?.getRate(currency, referenceCurrency, tx);
     if (!quote) {
       throw new WalletReferenceRateUnavailableError(currency, referenceCurrency);
     }

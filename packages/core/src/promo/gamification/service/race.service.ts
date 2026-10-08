@@ -130,7 +130,7 @@ export class RaceService implements WagerTrackingCommands {
       const amount =
         args.currency === race.currency
           ? args.realAmount
-          : await this.rates.convert(args.realAmount, args.currency, race.currency);
+          : await this.rates.convert(args.realAmount, args.currency, race.currency, tx);
       if (amount === null) {
         // ponytail: a wager with no rate is not counted toward the race; revisit if this shows
         // up in logs the way the equivalent rank-side skip would.

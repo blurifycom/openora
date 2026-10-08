@@ -168,7 +168,7 @@ export class WalletCommandsService implements WalletCommands {
   ): Promise<WalletDebitOutcome> {
     const txn = tx as DrizzleDb;
 
-    if (type === 'bet' && (await this.playEligibility.isRestricted(userId))) {
+    if (type === 'bet' && (await this.playEligibility.isRestricted(userId, txn))) {
       throw new WalletRgRestrictedError();
     }
 

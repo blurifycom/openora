@@ -275,7 +275,7 @@ export class OfferService {
     // Re-evaluated here rather than trusted from opt-in time: this job can run after a
     // self-exclusion or ban that landed between the opt-in and this deposit settling, and the
     // forfeit sweep that reacted to that exclusion has no way to know a grant would appear later.
-    const isRestricted = await this.playEligibility.isRestricted(deposit.userId);
+    const isRestricted = await this.playEligibility.isRestricted(deposit.userId, tx);
     const at = new Date();
     // Reported rather than emitted here: the deposit and the grant commit together on the
     // caller's transaction, and a notification promising a bonus that then rolled back is worse
