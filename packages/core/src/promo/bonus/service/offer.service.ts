@@ -53,6 +53,8 @@ export const OfferClaimedError = makeConflictError(
 const DATE_FIELDS = ['validFrom', 'validUntil', 'createdAt', 'updatedAt'] as const;
 const MONEY_FIELDS = ['matchPercent', 'maxGrantAmount', 'minDeposit'] as const;
 
+const isDepositTriggered = sql`${promoOffer.rules} ->> 'periodDays' is null`;
+
 type OfferContext = { isFirstDeposit?: boolean };
 
 /** A bonus this deposit created, for the caller that owns the commit to announce afterwards. */
@@ -373,7 +375,8 @@ export class OfferService {
   /**
    * The claims this deposit could satisfy: the ones the player took, plus the offers that need no
    * taking. An offer marked `requiresOptIn: false` applies to any qualifying deposit, so the claim
-   * is opened here rather than requiring the player to ask for something already theirs.
+   * is opened here rather than requiring the player to ask for something already theirs. A
+   * period-close offer is never one of them: its job pays it off play over a window, not a deposit.
    */
   private async claimsFor(
     tx: DrizzleTx,
@@ -390,6 +393,7 @@ export class OfferService {
           eq(promoOffer.status, 'active'),
           eq(promoOffer.requiresOptIn, false),
           eq(promoOffer.currency, deposit.currency),
+          isDepositTriggered,
         ),
       );
     if (automatic.length > 0) {
@@ -405,7 +409,13 @@ export class OfferService {
       .select({ optIn: promoOptIn, offer: promoOffer })
       .from(promoOptIn)
       .innerJoin(promoOffer, eq(promoOffer.id, promoOptIn.offerId))
-      .where(and(eq(promoOptIn.userId, deposit.userId), sql`${promoOptIn.grantId} is null`))
+      .where(
+        and(
+          eq(promoOptIn.userId, deposit.userId),
+          sql`${promoOptIn.grantId} is null`,
+          isDepositTriggered,
+        ),
+      )
       .for('update', { of: promoOptIn });
   }
 
