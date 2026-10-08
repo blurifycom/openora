@@ -885,8 +885,7 @@ describe('IamService revokes MCP tokens when an admin loses MCP access (real PG)
       });
 
       expect(await revocationOf(tokenId)).toEqual(LOST);
-      expect(audit.recordInTransaction).toHaveBeenCalledWith(
-        expect.anything(),
+      expect(audit.recordManyInTransaction).toHaveBeenCalledWith(expect.anything(), [
         expect.objectContaining({
           action: 'iam.mcp_token.revoked',
           resourceId: tokenId,
@@ -895,7 +894,7 @@ describe('IamService revokes MCP tokens when an admin loses MCP access (real PG)
           ip: CALLER.ip,
           userAgent: CALLER.userAgent,
         }),
-      );
+      ]);
     });
 
     it('leaves a holder who keeps mcp-access, and an admin outside the role', async () => {
@@ -940,7 +939,7 @@ describe('IamService revokes MCP tokens when an admin loses MCP access (real PG)
 
     it('rolls the permission change back when the revocation cannot be audited', async () => {
       const { svc, audit } = makeIamServiceWithTokens();
-      audit.recordInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
+      audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
       const roleId = await seedRoleWith({ 'mcp-access': 'read_write' });
       const holder = await seedAccount();
       await seedAssignment(holder, roleId);

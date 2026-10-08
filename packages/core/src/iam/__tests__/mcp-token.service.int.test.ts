@@ -132,8 +132,10 @@ async function storedToken(id: string) {
 
 type AuditEntry = Parameters<AuditWritePort['recordInTransaction']>[1];
 
-const auditEntries = (audit: ReturnType<typeof makeAuditWriter>): AuditEntry[] =>
-  audit.recordInTransaction.mock.calls.map((call) => call[1]);
+const auditEntries = (audit: ReturnType<typeof makeAuditWriter>): AuditEntry[] => [
+  ...audit.recordInTransaction.mock.calls.map((call) => call[1]),
+  ...audit.recordManyInTransaction.mock.calls.flatMap((call) => call[1]),
+];
 
 describe('McpTokenService.create (real PG)', () => {
   it('stores only the hash and a display prefix and hands the plaintext back once', async () => {
@@ -466,7 +468,7 @@ describe('McpTokenService.revokeMine (real PG)', () => {
     );
 
     expect(await storedToken(bobsToken.id)).toMatchObject({ revokedAt: null, revokedBy: null });
-    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+    expect(auditEntries(audit)).toEqual([]);
   });
 
   it('answers an unknown token id as not found', async () => {
@@ -487,7 +489,7 @@ describe('McpTokenService.revokeMine (real PG)', () => {
     const second = await svc.revokeMine(alice.id, token.id, META);
 
     expect(second).toEqual(first);
-    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
+    expect(auditEntries(audit)).toHaveLength(1);
   });
 });
 
@@ -576,6 +578,7 @@ describe('McpTokenService.revokeAll (real PG)', () => {
       revokeReason: 'manual',
     });
     const entries = auditEntries(audit);
+    expect(audit.recordManyInTransaction).toHaveBeenCalledTimes(1);
     expect(entries.map((entry) => entry.resourceId).sort()).toEqual(
       active.map((token) => token.id).sort(),
     );
@@ -660,7 +663,7 @@ describe('McpTokenService.revokeAllForUser (real PG)', () => {
     });
 
     expect(result).toEqual({ revoked: 0 });
-    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+    expect(auditEntries(audit)).toEqual([]);
   });
 });
 
@@ -826,8 +829,9 @@ describe("McpTokenService.revokeAllForUser in the caller's transaction (real PG)
     ).rejects.toThrow('caller rolled back');
 
     expect(await storedToken(token.id)).toMatchObject({ revokedAt: null, revokeReason: null });
-    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
-    expect(audit.recordInTransaction.mock.calls[0]?.[0]).toBe(callerTx);
+    expect(auditEntries(audit)).toHaveLength(1);
+    expect(audit.recordManyInTransaction).toHaveBeenCalledTimes(1);
+    expect(audit.recordManyInTransaction.mock.calls[0]?.[0]).toBe(callerTx);
   });
 
   it('commits with the caller', async () => {
@@ -877,7 +881,7 @@ describe('McpTokenService.revokeAllForUsers (real PG)', () => {
       await svc.revokeAllForUsers({ userIds: [], reason: 'admin_role_removed', actorId: null }),
     ).toEqual({ revoked: 0 });
     expect(await storedToken(token.id)).toMatchObject({ revokedAt: null });
-    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+    expect(auditEntries(audit)).toEqual([]);
   });
 });
 

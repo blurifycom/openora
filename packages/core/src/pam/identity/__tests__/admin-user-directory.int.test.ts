@@ -255,7 +255,7 @@ describe('DrizzleAdminUserDirectory.update and MCP tokens (real PG)', () => {
 
   it('rolls the deactivation back when the revocation fails, and a retry revokes', async () => {
     const { dir, audit, emit } = makeDirectoryWithTokens();
-    audit.recordInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
+    audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
     const admin = await seedUser(db, { role: 'admin', isActive: true });
     const tokenId = await seedActiveToken(admin.id);
     const actorId = randomUUID();

@@ -273,7 +273,7 @@ describe('SessionService.revokeAllSessions and MCP tokens', () => {
 
   it('rolls the sessions back when the token revocation fails, and a retry revokes both', async () => {
     const { tokens, audit } = makeMcpTokenService();
-    audit.recordInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
+    audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
     const events = makeEventBus();
     const admin = await seedUser(db, { role: 'admin' });
     await seedSession(admin.id);

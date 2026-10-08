@@ -482,11 +482,13 @@ export class McpTokenService implements McpTokenRevocation {
       .set({ revokedAt: now, revokedBy: actor.actorId, revokeReason: reason })
       .where(and(scope, isNull(mcpToken.revokedAt)))
       .returning();
-    for (const row of revoked) {
-      await this.audit.recordInTransaction(tx, {
+    const actorType = actor.actorId ? 'admin' : 'system';
+    await this.audit.recordManyInTransaction(
+      tx,
+      revoked.map((row) => ({
         ...auditClientMeta(actor),
         actorId: actor.actorId,
-        actorType: actor.actorId ? 'admin' : 'system',
+        actorType,
         action: 'iam.mcp_token.revoked',
         resourceType: 'mcp-token',
         resourceId: row.id,
@@ -497,8 +499,8 @@ export class McpTokenService implements McpTokenRevocation {
           tokenPrefix: row.tokenPrefix,
           reason,
         },
-      });
-    }
+      })),
+    );
     return revoked;
   }
 }

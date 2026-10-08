@@ -6,8 +6,10 @@ import * as z from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { loadExtensions, DRIZZLE } from '@openora/core/server';
+import { loadExtensions, DRIZZLE, EVENT_BUS } from '@openora/core/server';
+import { IDENTITY_READER } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
+import { AuditService } from '@openora/core/audit/server';
 import { adminRolePermission, mcpToken } from '@openora/core/iam/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { waitForRowLockWaiter, waitForTableLockWaiter } from '@openora/core/testing';
@@ -498,14 +500,47 @@ describe('MCP transport, grants', () => {
 });
 
 describe('MCP tokens, oversight', () => {
-  it('revokes every active token at once', async () => {
-    const { token } = await issueToken(admin);
+  it('revokes every active token at once and audits each one in a valid chain', async () => {
+    const issued = [await issueToken(admin), await issueToken(admin), await issueToken(admin)];
 
     const res = await admin.post('/iam/mcp-tokens/revoke-all', {});
 
     expect(res.status).toBe(200);
-    expect(z.object({ revoked: z.number() }).parse(await res.json()).revoked).toBeGreaterThan(0);
-    expect((await rawPost({ token })).status).toBe(401);
+    const { revoked } = z.object({ revoked: z.number() }).parse(await res.json());
+    expect(revoked).toBeGreaterThanOrEqual(issued.length);
+    const rows = await drizzle()
+      .select()
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.action, 'iam.mcp_token.revoked'),
+          sql`${auditLog.after}->>'reason' = 'revoked_all'`,
+        ),
+      )
+      .orderBy(asc(auditLog.seq));
+    expect(rows).toHaveLength(revoked);
+    expect(new Set(rows.map((row) => row.resourceId)).size).toBe(revoked);
+    expect(rows.map((row) => row.resourceId)).toEqual(
+      expect.arrayContaining(issued.map((token) => token.id)),
+    );
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        actorId: adminId,
+        actorType: 'admin',
+        resourceType: 'mcp-token',
+        before: { revokedAt: null },
+        after: expect.objectContaining({ reason: 'revoked_all', tokenPrefix: expect.any(String) }),
+      });
+    }
+    for (const { token } of issued) {
+      expect((await rawPost({ token })).status).toBe(401);
+    }
+    const audit = new AuditService(
+      app.container.get(DRIZZLE),
+      app.container.get(EVENT_BUS),
+      app.container.get(IDENTITY_READER),
+    );
+    expect(await audit.verifyChain()).toEqual({ valid: true });
   });
 });
 
