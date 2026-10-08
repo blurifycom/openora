@@ -84,32 +84,26 @@ export type DirectAuditAction =
  */
 export type AuditAction = DomainEventName | DirectAuditAction | (string & {});
 
+type AuditEntry = {
+  actorId?: string | null;
+  actorType: 'player' | 'admin' | 'system';
+  action: AuditAction;
+  resourceType: string;
+  resourceId?: string | null;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+  correlationId?: string | null;
+} & Partial<ClientMeta>;
+
 export type AuditWritePort = {
-  record(
-    entry: {
-      actorId?: string | null;
-      actorType: 'player' | 'admin' | 'system';
-      action: AuditAction;
-      resourceType: string;
-      resourceId?: string | null;
-      before?: Record<string, unknown> | null;
-      after?: Record<string, unknown> | null;
-      correlationId?: string | null;
-    } & Partial<ClientMeta>,
-  ): Promise<void>;
-  recordInTransaction(
-    tx: unknown,
-    entry: {
-      actorId?: string | null;
-      actorType: 'player' | 'admin' | 'system';
-      action: AuditAction;
-      resourceType: string;
-      resourceId?: string | null;
-      before?: Record<string, unknown> | null;
-      after?: Record<string, unknown> | null;
-      correlationId?: string | null;
-    } & Partial<ClientMeta>,
-  ): Promise<void>;
+  record(entry: AuditEntry): Promise<void>;
+  recordInTransaction(tx: unknown, entry: AuditEntry): Promise<void>;
+  /**
+   * Appends `entries` in order inside `tx`, reading the chain head and reserving sequence numbers
+   * once for the lot rather than once per row. Each row is the one `recordInTransaction` would
+   * write for that entry, apart from its id and timestamp; an empty list writes nothing.
+   */
+  recordManyInTransaction(tx: unknown, entries: readonly AuditEntry[]): Promise<void>;
 };
 
 export const AUDIT_WRITER: SealedToken<AuditWritePort> =

@@ -320,6 +320,145 @@ describe('AuditService.verifyChain() (real PG)', () => {
   });
 });
 
+describe('AuditService.recordManyInTransaction() (real PG)', () => {
+  type Entry = Parameters<AuditService['record']>[0];
+
+  const entry = (resourceId: string, over: Partial<Entry> = {}): Entry => ({
+    actorId: 'admin-1',
+    actorType: 'admin',
+    action: 'iam.mcp_token.revoked',
+    resourceType: 'mcp-token',
+    resourceId,
+    before: { revokedAt: null },
+    after: { reason: 'revoked_all', nested: { b: 2, a: 1 } },
+    ip: '203.0.113.7',
+    userAgent: 'backoffice/1.0',
+    ...over,
+  });
+
+  const appendMany = (entries: Entry[]) =>
+    db.drizzle.db.transaction((tx) => makeService().recordManyInTransaction(tx, entries));
+
+  const appendOne = (input: Entry) =>
+    db.drizzle.db.transaction((tx) => makeService().recordInTransaction(tx, input));
+
+  const chain = () => db.drizzle.db.select().from(auditLog).orderBy(auditLog.seq);
+
+  const persistedHash = (row: typeof auditLog.$inferSelect) =>
+    computeHash({
+      id: row.id,
+      actorId: row.actorId ?? null,
+      actorType: row.actorType,
+      action: row.action,
+      resourceType: row.resourceType,
+      resourceId: row.resourceId ?? null,
+      before: row.before ?? null,
+      after: row.after ?? null,
+      result: row.result ?? null,
+      seq: row.seq,
+      createdAt: row.createdAt.toISOString(),
+      prevHash: row.prevHash ?? null,
+    });
+
+  const recordedFields = ({
+    id: _id,
+    seq: _seq,
+    prevHash: _prevHash,
+    hash: _hash,
+    createdAt: _createdAt,
+    ...fields
+  }: typeof auditLog.$inferSelect) => fields;
+
+  it('appends the entries in order on consecutive sequence numbers, each chained to the last', async () => {
+    const head = await appendOne(entry('head'));
+
+    await appendMany([entry('first'), entry('second'), entry('third')]);
+
+    const [first, ...rows] = await chain();
+    expect(first?.id).toBe(head.id);
+    expect(rows.map((row) => row.resourceId)).toEqual(['first', 'second', 'third']);
+    expect(rows.map((row) => row.seq)).toEqual([head.seq + 1, head.seq + 2, head.seq + 3]);
+    expect(rows.map((row) => row.prevHash)).toEqual([head.hash, rows[0]?.hash, rows[1]?.hash]);
+  });
+
+  it('stores each entry as a single append of it would, hashed over the stored row', async () => {
+    const entries = [entry('a'), entry('b', { actorId: null, actorType: 'system', ip: null })];
+    for (const input of entries) {
+      await appendOne(input);
+    }
+
+    await appendMany(entries);
+
+    const rows = await chain();
+    const singles = rows.slice(0, entries.length);
+    const bulk = rows.slice(entries.length);
+    expect(bulk.map(recordedFields)).toEqual(singles.map(recordedFields));
+    for (const row of rows) {
+      expect(row.hash).toBe(persistedHash(row));
+    }
+  });
+
+  it('keeps the chain verifiable with single and bulk appends interleaved', async () => {
+    await appendOne(entry('one'));
+    await appendMany([entry('two'), entry('three')]);
+    await appendOne(entry('four'));
+    await appendMany([entry('five')]);
+
+    const rows = await chain();
+    expect(rows.map((row) => row.resourceId)).toEqual(['one', 'two', 'three', 'four', 'five']);
+    expect(await makeService().verifyChain()).toEqual({ valid: true });
+  });
+
+  it('serializes with concurrent single appends, so the chain stays one line', async () => {
+    await Promise.all([
+      appendMany([entry('bulk-1'), entry('bulk-2'), entry('bulk-3')]),
+      appendOne(entry('single-1')),
+      appendMany([entry('bulk-4'), entry('bulk-5')]),
+      appendOne(entry('single-2')),
+    ]);
+
+    expect(await chain()).toHaveLength(7);
+    expect(await makeService().verifyChain()).toEqual({ valid: true });
+  });
+
+  it('appends more entries than one insert statement carries', async () => {
+    const entries = Array.from({ length: 2_001 }, (_, index) => entry(`row-${index}`));
+
+    const inserted = await appendMany(entries);
+
+    const rows = await chain();
+    expect(inserted).toHaveLength(entries.length);
+    expect(rows.map((row) => row.resourceId)).toEqual(entries.map((input) => input.resourceId));
+    expect(new Set(rows.map((row) => row.seq)).size).toBe(entries.length);
+    expect(await makeService().verifyChain()).toEqual({ valid: true });
+  });
+
+  it('writes nothing for an empty list, and the next append chains to the old head', async () => {
+    const head = await appendOne(entry('head'));
+
+    expect(await appendMany([])).toEqual([]);
+    const next = await appendOne(entry('next'));
+
+    expect(await chain()).toHaveLength(2);
+    expect(next.prevHash).toBe(head.hash);
+    expect(next.seq).toBe(head.seq + 1);
+  });
+
+  it("leaves no row behind when the caller's transaction rolls back", async () => {
+    await appendOne(entry('kept'));
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await makeService().recordManyInTransaction(tx, [entry('lost-1'), entry('lost-2')]);
+        throw new Error('caller rolled back');
+      }),
+    ).rejects.toThrow('caller rolled back');
+
+    expect((await chain()).map((row) => row.resourceId)).toEqual(['kept']);
+    expect(await makeService().verifyChain()).toEqual({ valid: true });
+  });
+});
+
 describe('AuditService.list() (real PG)', () => {
   async function seed(inputs: Parameters<AuditService['record']>[0][]) {
     const svc = makeService();
