@@ -45,7 +45,7 @@ let appUnseeded: TestApp;
 let superAdmin: TestClient;
 let paymentsManager: TestClient;
 let plainAdmin: TestClient;
-let bootstrapAdmin: TestClient;
+let unassignedAdmin: TestClient;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
@@ -186,11 +186,11 @@ beforeAll(async () => {
   await assignIamRoleByKey(appMain.container, plainAdminUserId, 'admin');
   plainAdmin = plainAdminClient;
 
-  const bootstrapAdminEmail = `bootstrap-admin-${randomUUID()}@e2e.test`;
-  const { client: bootstrapAdminClient, userId: bootstrapAdminUserId } =
-    await registerAndMaterializePlayer(appMain, { email: bootstrapAdminEmail });
-  await setStaticRole(appMain.container, bootstrapAdminUserId, 'admin');
-  bootstrapAdmin = bootstrapAdminClient;
+  const unassignedAdminEmail = `unassigned-admin-${randomUUID()}@e2e.test`;
+  const { client: unassignedAdminClient, userId: unassignedAdminUserId } =
+    await registerAndMaterializePlayer(appMain, { email: unassignedAdminEmail });
+  await setStaticRole(appMain.container, unassignedAdminUserId, 'admin');
+  unassignedAdmin = unassignedAdminClient;
 }, 60_000);
 
 afterAll(async () => {
@@ -240,16 +240,16 @@ describe('authz: auto-withdrawal-config is super-admin only (real DB-backed IAM 
     expect(setRes.status).toBe(403);
   });
 
-  it('bootstrap admin (static role fallback, no IAM assignment) succeeds on GET and PUT', async () => {
-    const getRes = await bootstrapAdmin.get('/wallet/auto-withdrawal-config');
-    expect(getRes.status).toBe(200);
+  it('admin with no IAM role assigned gets 403 on GET and PUT', async () => {
+    const getRes = await unassignedAdmin.get('/wallet/auto-withdrawal-config');
+    expect(getRes.status).toBe(403);
 
-    const setRes = await bootstrapAdmin.put('/wallet/auto-withdrawal-config', {
+    const setRes = await unassignedAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '1',
       cryptoThreshold: '1',
       excludeRiskFlags: [],
     });
-    expect(setRes.status).toBe(200);
+    expect(setRes.status).toBe(403);
   });
 
   it('anonymous (no session) gets 401, not 403', async () => {
