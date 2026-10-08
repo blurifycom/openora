@@ -6,7 +6,12 @@ import type {
   WalletCommands,
 } from '@openora/core/contracts';
 import type { DrizzleService, DrizzleTx } from '@openora/core/server';
-import { promoRace, promoRacePayout, promoRaceWager } from '../schema/index.js';
+import {
+  promoRace,
+  promoRacePayout,
+  promoRaceRoundWager,
+  promoRaceWager,
+} from '../schema/index.js';
 import { priceForPayout } from '../shared/payout-currency.js';
 import { RACE_STANDING_ORDER } from './race.service.js';
 
@@ -176,6 +181,8 @@ export class RacePayoutService {
       .update(promoRace)
       .set({ closedAt: settledAt, updatedAt: settledAt })
       .where(eq(promoRace.id, raceId));
+    // Frozen standings ignore a rollback, so what each round counted here is no longer needed.
+    await tx.delete(promoRaceRoundWager).where(eq(promoRaceRoundWager.raceId, raceId));
     return won;
   }
 }

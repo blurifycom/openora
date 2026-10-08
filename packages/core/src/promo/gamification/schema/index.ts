@@ -310,6 +310,37 @@ export const promoStreakDailyWager = pgTable(
 export type PromoStreakDailyWager = typeof promoStreakDailyWager.$inferSelect;
 
 /**
+ * What one provider round added to a day's `promoStreakDailyWager`, so a rollback of that round
+ * takes back exactly what it counted - on the day it counted, at the rate it was converted at -
+ * and never more. `stake` is what still stands in the bet's own currency, `wagered` the matching
+ * amount in the streak's currency. Pruned by the daily close once the day can no longer move.
+ */
+export const promoStreakRoundWager = pgTable(
+  'promo_streak_round_wager',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    providerName: text().notNull(),
+    currency: text().notNull(),
+    externalRoundId: text().notNull(),
+    day: date().notNull(),
+    stake: money().notNull(),
+    wagered: money().notNull(),
+  },
+  (t) => [
+    uniqueIndex('promo_streak_round_wager_round_idx').on(
+      t.userId,
+      t.providerName,
+      t.currency,
+      t.externalRoundId,
+      t.day,
+    ),
+    index('promo_streak_round_wager_day_idx').on(t.day),
+    check('promo_streak_round_wager_non_negative', sql`${t.stake} >= 0 AND ${t.wagered} >= 0`),
+  ],
+);
+
+/**
  * A milestone a player has reached and the payout job has yet to settle, one row per player per
  * milestone day. Deleted whenever `promo_player_streak.current` resets to zero - a missed day or
  * the milestone at `resetAfterDay` completing - so the same day can be earned again on the next
@@ -323,7 +354,10 @@ export const promoStreakMilestoneGrant = pgTable(
     day: integer().notNull(),
     reachedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     settledAt: timestamp({ withTimezone: true }),
-    /** `granted`, or why nothing was: `restricted` for a player under an RG block. */
+    /**
+     * `granted`, or why nothing was: `restricted` for a player under an RG block, `reversed` when
+     * a rollback took the day that reached it back under the minimum before it paid.
+     */
     outcome: text(),
   },
   (t) => [
@@ -413,6 +447,38 @@ export const promoRaceWager = pgTable(
 );
 
 export type PromoRaceWager = typeof promoRaceWager.$inferSelect;
+
+/**
+ * What one provider round added to a player's `promoRaceWager`, the race-side twin of
+ * `promoStreakRoundWager`: a rollback takes back exactly what the round counted in each race it
+ * counted in. Deleted with the race's settlement, after which standings are frozen anyway.
+ */
+export const promoRaceRoundWager = pgTable(
+  'promo_race_round_wager',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    raceId: uuid()
+      .notNull()
+      .references(() => promoRace.id, { onDelete: 'cascade' }),
+    userId: uuid().notNull(),
+    providerName: text().notNull(),
+    currency: text().notNull(),
+    externalRoundId: text().notNull(),
+    stake: money().notNull(),
+    wagered: money().notNull(),
+  },
+  (t) => [
+    uniqueIndex('promo_race_round_wager_round_idx').on(
+      t.raceId,
+      t.userId,
+      t.providerName,
+      t.currency,
+      t.externalRoundId,
+    ),
+    index('promo_race_round_wager_user_id_external_round_id_idx').on(t.userId, t.externalRoundId),
+    check('promo_race_round_wager_non_negative', sql`${t.stake} >= 0 AND ${t.wagered} >= 0`),
+  ],
+);
 
 /**
  * One prize paid to one player in one race, written once by the settle job -

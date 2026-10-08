@@ -10,6 +10,15 @@
 import { createToken, type Token } from './token.js';
 import type { WagerContext } from './wager-context.js';
 
+/**
+ * The provider round a wager belongs to, qualified the same way the bonus engine qualifies it: two
+ * providers, or two currencies, can mint the same round id independently.
+ */
+export type WagerRound = {
+  providerName: string;
+  externalRoundId: string;
+};
+
 export type WagerTrackingArgs = {
   userId: string;
   currency: string;
@@ -26,6 +35,24 @@ export type WagerTrackingArgs = {
    */
   realAmount: string;
   context: WagerContext;
+  /**
+   * What a later rollback of this round is matched against. Absent, the wager still counts but
+   * can never be taken back - the wallet only ever settles a round it was given an id for.
+   */
+  round?: WagerRound;
+};
+
+/**
+ * A provider rollback of (part of) a round's stake. `realAmount` is the part of the reversed
+ * amount that was the player's own money - the same basis `recordWager` counted on - and a
+ * consumer takes back at most what that round still has standing with it, so a rollback larger
+ * than the stake, or a second one for the same round, never takes more than was counted.
+ */
+export type WagerReversalArgs = {
+  userId: string;
+  currency: string;
+  round: WagerRound;
+  realAmount: string;
 };
 
 /**
@@ -44,6 +71,11 @@ export type WagerTrackingWalletCredit = {
 export type WagerTrackingCommands = {
   /** Empty array when nothing here moved real money - the common case. */
   recordWager(tx: unknown, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]>;
+  /**
+   * Takes a rolled-back stake back out of whatever counter it advanced. Optional: a consumer whose
+   * counter is deliberately monotonic (the rank ladder) has nothing to undo.
+   */
+  reverseWager?(tx: unknown, args: WagerReversalArgs): Promise<void>;
 };
 
 export const WAGER_TRACKING: Token<WagerTrackingCommands> = createToken('WAGER_TRACKING');
