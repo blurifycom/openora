@@ -26,6 +26,8 @@ import {
   JOIN_CODE_INPUT_MAX_LENGTH,
   CHAT_ROOM_ROLES,
   CHAT_ROOM_ASSIGNABLE_ROLES,
+  ROOM_ACTIVITY_WINDOW_HOURS_DEFAULT,
+  ROOM_ACTIVITY_WINDOW_HOURS_MAX,
 } from './constants.js';
 
 export * from './constants.js';
@@ -90,8 +92,8 @@ export type ChatRoom = z.infer<typeof ChatRoomSchema>;
 export const AdminChatRoomSchema = ChatRoomSchema.extend({
   // Null for the global room: every player reads it without joining.
   memberCount: z.number().int().nonnegative().nullable(),
-  // Player messages that are not deleted, over the last 24 hours.
-  messageCount24h: z.number().int().nonnegative(),
+  // Player messages that are not deleted, within the requested activityWindowHours.
+  recentMessageCount: z.number().int().nonnegative(),
   lastMessageAt: TimestampSchema.nullable(),
 });
 export type AdminChatRoom = z.infer<typeof AdminChatRoomSchema>;
@@ -672,6 +674,12 @@ export const chatContract = {
         category: ChatRoomCategorySchema.optional(),
         sortBy: AdminRoomSortBySchema,
         sortOrder: SortOrderSchema.default('desc'),
+        activityWindowHours: z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(ROOM_ACTIVITY_WINDOW_HOURS_MAX)
+          .default(ROOM_ACTIVITY_WINDOW_HOURS_DEFAULT),
       }),
     )
     .output(paginated(AdminChatRoomSchema)),

@@ -367,7 +367,7 @@ describe('chat admin: listing rooms', () => {
     expect((await player.client.get('/backoffice/chat/rooms')).status).toBe(403);
   });
 
-  it('counts members and the last 24 hours of visible player messages per room', async () => {
+  it('counts members and visible player messages within the activity window per room', async () => {
     const tag = `stats-${randomUUID().slice(0, 8)}`;
     const busy = await createPublicRoom(`${tag} busy`, 'games-sports');
     const quiet = await createPublicRoom(`${tag} quiet`, 'games-sports');
@@ -395,10 +395,25 @@ describe('chat admin: listing rooms', () => {
     expect(items.map((room) => room.id)).toEqual([busy.id, quiet.id]);
     expect(items[0]).toMatchObject({
       memberCount: 3,
-      messageCount24h: 2,
+      recentMessageCount: 2,
       lastMessageAt: latestVisible.createdAt,
     });
-    expect(items[1]).toMatchObject({ memberCount: 1, messageCount24h: 0, lastMessageAt: null });
+    expect(items[1]).toMatchObject({ memberCount: 1, recentMessageCount: 0, lastMessageAt: null });
+
+    const busyWithin = async (activityWindowHours: string) =>
+      (await listRooms({ name: tag, activityWindowHours })).items.find(
+        (room) => room.id === busy.id,
+      )?.recentMessageCount;
+
+    expect(await busyWithin('1')).toBe(1);
+    expect(await busyWithin('48')).toBe(3);
+  });
+
+  it('rejects an activity window outside one hour to a week', async () => {
+    for (const hours of ['0', '169', '1.5']) {
+      const listed = await admin.get(`/backoffice/chat/rooms?activityWindowHours=${hours}`);
+      expect(listed.status).toBe(400);
+    }
   });
 
   it('reports the global room without a member count, from its messages', async () => {
@@ -411,7 +426,7 @@ describe('chat admin: listing rooms', () => {
     const globalRoom = items.find((room) => room.id === globalRoomId);
 
     expect(globalRoom?.memberCount).toBeNull();
-    expect(globalRoom?.messageCount24h).toBeGreaterThanOrEqual(1);
+    expect(globalRoom?.recentMessageCount).toBeGreaterThanOrEqual(1);
     expect(Date.parse(globalRoom?.lastMessageAt ?? '')).toBeGreaterThanOrEqual(
       Date.parse(message.createdAt),
     );

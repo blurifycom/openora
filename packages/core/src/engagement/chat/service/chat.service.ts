@@ -239,7 +239,6 @@ export const ChatRoomConfigurationNotFoundError = createDomainError(
 );
 
 const CHAT_MODERATOR_ROLES: readonly ChatRoomRole[] = ['moderator', 'owner'];
-const ROOM_ACTIVITY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 // Global-room messages are stored with a null room id.
 function perRoomMessages(query: (roomMessages: SQL | undefined) => SQL) {
@@ -755,6 +754,7 @@ export class ChatService {
     category,
     sortBy,
     sortOrder,
+    activityWindowHours,
   }: {
     page: number;
     limit: number;
@@ -762,6 +762,7 @@ export class ChatService {
     category?: ChatRoomCategory;
     sortBy: AdminRoomSortBy;
     sortOrder: SortOrder;
+    activityWindowHours: number;
   }) {
     const dir = sortOrder === 'asc' ? asc : desc;
     const col = sortBy === 'name' ? chatRoom.name : chatRoom.createdAt;
@@ -771,7 +772,7 @@ export class ChatService {
       name ? ilike(chatRoom.name, `%${name}%`) : undefined,
       category ? eq(chatRoom.category, category) : undefined,
     );
-    const since = new Date(Date.now() - ROOM_ACTIVITY_WINDOW_MS);
+    const since = new Date(Date.now() - activityWindowHours * 60 * 60 * 1000);
     const [rows, [{ n }]] = await Promise.all([
       this.drizzle.db
         .select({
@@ -780,7 +781,7 @@ export class ChatService {
             sql`CASE WHEN ${eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID)} THEN NULL ELSE (SELECT count(*)::int FROM ${chatRoomMember} WHERE ${and(eq(chatRoomMember.roomId, chatRoom.id), isNull(chatRoomMember.accountClosedAt))}) END`.mapWith(
               (value): number | null => Number(value),
             ),
-          messageCount24h: perRoomMessages(
+          recentMessageCount: perRoomMessages(
             (roomMessages) =>
               sql`(SELECT count(*)::int FROM ${chatMessage} WHERE ${and(roomMessages, gte(chatMessage.createdAt, since))})`,
           ).mapWith(Number),
@@ -796,10 +797,10 @@ export class ChatService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(chatRoom).where(where),
     ]);
-    const items = rows.map(({ memberCount, messageCount24h, lastMessageAt, ...room }) => ({
+    const items = rows.map(({ memberCount, recentMessageCount, lastMessageAt, ...room }) => ({
       ...toRoom(room),
       memberCount,
-      messageCount24h,
+      recentMessageCount,
       lastMessageAt: lastMessageAt?.toISOString() ?? null,
     }));
     return { items, total: Number(n), page, limit };
