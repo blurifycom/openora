@@ -34,9 +34,9 @@ The endpoint is off by default. Enabling it takes two steps.
 
 - **Bind it to the backoffice host.** The config refuses to enable the endpoint without at least
   one allowed host. On any other host the path is a plain 404, so it never appears on the player
-  domain. The host is read from the request, so let the backoffice proxy set the `Host` header
-  itself and reject absolute-form request targets, or serve the endpoint from a deployment only
-  that proxy reaches.
+  domain. The host is read from the request, so let every proxy or load balancer in front of the
+  app set the `Host` header itself and reject absolute-form request targets, or serve the endpoint
+  from a deployment only the backoffice proxy reaches.
 - **Browser origins.** A request that carries an `Origin` header is refused unless that origin is
   listed. Desktop clients send none, so the list normally stays empty.
 - **Token issuance.** Each admin can hold a limited number of active tokens and issue a limited

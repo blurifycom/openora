@@ -73,7 +73,9 @@ order:
 6. `AdminGuard.assertUser` for the MCP permission, which now also refuses a deactivated account.
 
 Only read-class tools are listed, narrowed to the ones the admin's grants allow; propose-class
-tools and action types are never exposed. Every call still goes through the kernel, which checks
+tools and action types are never exposed. Proposing over MCP waits for the agent hub's review
+queue, which receives proposals, and for a permission to create one, which the IAM catalog does
+not have yet. Every call still goes through the kernel, which checks
 the tool's own permission and writes the audit record with the token id and the client's address
 and agent. A call naming a tool the endpoint does not expose is refused and audited too, and the
 kernel's input hashing is total, so no request can reach a tool and skip its audit record.
@@ -152,7 +154,8 @@ Rejected alternatives:
 - Claude Desktop's remote connectors accept only OAuth, so Desktop needs a local bridge that adds
   the header; Claude Code sends it directly.
 - The daily limit is a fixed 24-hour window that opens with the first request, not a calendar
-  day, and every authenticated request counts towards both limits.
+  day, and every authenticated request counts towards both limits. Both limits are per token, so
+  an admin who holds several tokens can exceed them in total.
 - Issuing a token needs a session with the MCP permission but no fresh second factor. A step-up
   needs a cross-module port into identity and a Backoffice flow, and is left to a later change.
 - Issuance holds the token-table lock from its permission and session checks to its commit, so
@@ -165,8 +168,9 @@ Rejected alternatives:
   listed as active, and counts towards its admin's active-token cap, until it is revoked by hand
   or expires. The password-change check compares two application-clock stamps, so a token issued
   within the clock skew between replicas of a password change can fall on either side of it.
-- The host binding reads the request's host, so the backoffice proxy has to set the `Host` header
-  itself and reject absolute-form request targets.
+- The host binding reads the request's host, so every proxy or load balancer that can reach the
+  app, not only the backoffice one, has to set the `Host` header itself and reject absolute-form
+  request targets.
 
 **Neutral:**
 
