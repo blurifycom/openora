@@ -1,10 +1,16 @@
+import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import type { AuditWritePort, Uuid } from '@openora/core/contracts';
-import { createDomainError, type DrizzleService, type DrizzleTx } from '@openora/core/server';
+import {
+  createDomainError,
+  withAdvisoryXactLock,
+  type DrizzleService,
+  type DrizzleTx,
+} from '@openora/core/server';
 import type {
+  RankChallengeAdminLadder,
   RankChallengeClaim,
-  RankChallengeLadder,
   SetRankChallengeLadderInput,
 } from '../contract/index.js';
 import { promoRankChallengeClaim, promoRankChallengeTier } from '../schema/index.js';
@@ -13,6 +19,15 @@ export const RankChallengeLadderCurrencyHeldError = createDomainError(
   'RankChallengeLadderCurrencyHeldError',
   () => 'the ladder currency cannot change once a player has wagered toward it',
 );
+
+export const RankChallengeLadderVersionConflictError = createDomainError(
+  'RankChallengeLadderVersionConflictError',
+  () => 'the ladder changed since it was loaded; reload it and apply the edit again',
+  // Lets a client tell this apart from the currency-held conflict on the same route.
+  { reason: 'stale_version' },
+);
+
+const LADDER_LOCK_KEY = 'promo_rank_challenge_ladder';
 
 const TIER_COLUMNS = {
   id: promoRankChallengeTier.id,
@@ -24,11 +39,21 @@ const TIER_COLUMNS = {
   physicalItem: promoRankChallengeTier.physicalItem,
 };
 
-async function toLadder(tx: DrizzleTx, currency: string): Promise<RankChallengeLadder> {
-  const tiers = await tx
-    .select(TIER_COLUMNS)
+/**
+ * The ladder has no row of its own to carry a version counter, so its version is a digest of
+ * every tier's stored config: any edit, insert or removal changes it, a claim does not.
+ */
+const ladderVersion = (rows: readonly object[]) =>
+  createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+
+async function toLadder(
+  tx: DrizzleTx,
+  fallbackCurrency: string,
+): Promise<RankChallengeAdminLadder> {
+  const rows = await tx
+    .select({ ...TIER_COLUMNS, currency: promoRankChallengeTier.currency })
     .from(promoRankChallengeTier)
-    .orderBy(asc(promoRankChallengeTier.position));
+    .orderBy(asc(promoRankChallengeTier.position), asc(promoRankChallengeTier.id));
   const claims = await tx
     .select({
       tierId: promoRankChallengeClaim.tierId,
@@ -40,8 +65,9 @@ async function toLadder(tx: DrizzleTx, currency: string): Promise<RankChallengeL
     .innerJoin(user, eq(user.id, promoRankChallengeClaim.userId));
   const byTier = new Map(claims.map((c) => [c.tierId, c]));
   return {
-    currency,
-    tiers: tiers.map((tier) => {
+    currency: rows[0]?.currency ?? fallbackCurrency,
+    version: ladderVersion(rows),
+    tiers: rows.map(({ currency: _currency, ...tier }) => {
       const claim = byTier.get(tier.id);
       return {
         ...tier,
@@ -90,45 +116,63 @@ export class RankChallengeAdminService {
     private readonly audit: AuditWritePort,
   ) {}
 
-  async getLadder(): Promise<RankChallengeLadder> {
+  async getLadder(): Promise<RankChallengeAdminLadder> {
+    return this.drizzle.db.transaction((tx) => toLadder(tx, 'USD'));
+  }
+
+  /**
+   * Replaces the whole ladder, so it refuses a save built on a ladder another admin has changed
+   * since (`input.version` no longer matches) rather than silently dropping their tiers.
+   */
+  async setLadder(
+    adminId: Uuid,
+    input: SetRankChallengeLadderInput,
+  ): Promise<RankChallengeAdminLadder> {
     return this.drizzle.db.transaction((tx) =>
-      toLadder(tx, 'USD').then(async (ladder) => {
-        const [row] = await tx
-          .select({ currency: promoRankChallengeTier.currency })
-          .from(promoRankChallengeTier)
-          .limit(1);
-        return { ...ladder, currency: row?.currency ?? ladder.currency };
-      }),
+      withAdvisoryXactLock(tx, LADDER_LOCK_KEY, () => this.replaceLadder(tx, adminId, input)),
     );
   }
 
-  async setLadder(adminId: Uuid, input: SetRankChallengeLadderInput): Promise<RankChallengeLadder> {
-    return this.drizzle.db.transaction(async (tx) => {
-      const [existing] = await tx
-        .select({ currency: promoRankChallengeTier.currency })
-        .from(promoRankChallengeTier)
-        .limit(1);
-      if (existing && existing.currency !== input.currency) {
-        const [{ count }] = await tx
-          .select({ count: sql<number>`count(*)::int` })
-          .from(promoRankChallengeClaim);
-        if ((count ?? 0) > 0) {
-          throw new RankChallengeLadderCurrencyHeldError();
-        }
+  private async replaceLadder(
+    tx: DrizzleTx,
+    adminId: Uuid,
+    input: SetRankChallengeLadderInput,
+  ): Promise<RankChallengeAdminLadder> {
+    const before = await toLadder(tx, input.currency);
+    if (before.version !== input.version) {
+      throw new RankChallengeLadderVersionConflictError();
+    }
+    if (before.tiers.length > 0 && before.currency !== input.currency) {
+      const [{ count }] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(promoRankChallengeClaim);
+      if ((count ?? 0) > 0) {
+        throw new RankChallengeLadderCurrencyHeldError();
       }
+    }
 
-      const before = await toLadder(tx, existing?.currency ?? input.currency);
+    const kept = new Set(input.tiers.flatMap((t) => (t.id === undefined ? [] : [t.id])));
+    const currentIds = before.tiers.map((t) => t.id);
+    const removed = currentIds.filter((id) => !kept.has(id));
+    if (removed.length > 0) {
+      await tx.delete(promoRankChallengeTier).where(inArray(promoRankChallengeTier.id, removed));
+    }
 
-      const kept = new Set(input.tiers.flatMap((t) => (t.id === undefined ? [] : [t.id])));
-      const currentIds = before.tiers.map((t) => t.id);
-      const removed = currentIds.filter((id) => !kept.has(id));
-      if (removed.length > 0) {
-        await tx.delete(promoRankChallengeTier).where(inArray(promoRankChallengeTier.id, removed));
-      }
-
-      for (const tier of input.tiers) {
-        if (tier.id === undefined) {
-          await tx.insert(promoRankChallengeTier).values({
+    for (const tier of input.tiers) {
+      if (tier.id === undefined) {
+        await tx.insert(promoRankChallengeTier).values({
+          key: tier.key,
+          name: tier.name,
+          position: tier.position,
+          currency: input.currency,
+          wagerThreshold: tier.wagerThreshold,
+          cashAmount: tier.cashAmount,
+          physicalItem: tier.physicalItem,
+        });
+      } else {
+        await tx
+          .update(promoRankChallengeTier)
+          .set({
             key: tier.key,
             name: tier.name,
             position: tier.position,
@@ -136,35 +180,22 @@ export class RankChallengeAdminService {
             wagerThreshold: tier.wagerThreshold,
             cashAmount: tier.cashAmount,
             physicalItem: tier.physicalItem,
-          });
-        } else {
-          await tx
-            .update(promoRankChallengeTier)
-            .set({
-              key: tier.key,
-              name: tier.name,
-              position: tier.position,
-              currency: input.currency,
-              wagerThreshold: tier.wagerThreshold,
-              cashAmount: tier.cashAmount,
-              physicalItem: tier.physicalItem,
-            })
-            .where(eq(promoRankChallengeTier.id, tier.id));
-        }
+          })
+          .where(eq(promoRankChallengeTier.id, tier.id));
       }
+    }
 
-      const after = await toLadder(tx, input.currency);
-      await this.audit.recordInTransaction(tx, {
-        actorId: adminId,
-        actorType: 'admin',
-        action: 'promo.rankChallenge.ladder.updated',
-        resourceType: 'promo_rank_challenge_tier',
-        resourceId: adminId,
-        before,
-        after,
-      });
-      return after;
+    const after = await toLadder(tx, input.currency);
+    await this.audit.recordInTransaction(tx, {
+      actorId: adminId,
+      actorType: 'admin',
+      action: 'promo.rankChallenge.ladder.updated',
+      resourceType: 'promo_rank_challenge_tier',
+      resourceId: adminId,
+      before,
+      after,
     });
+    return after;
   }
 
   async listClaims(): Promise<RankChallengeClaim[]> {

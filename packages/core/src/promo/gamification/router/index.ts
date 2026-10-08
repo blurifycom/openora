@@ -24,6 +24,7 @@ import { RankChallengeService } from '../service/rank-challenge.service.js';
 import {
   RankChallengeAdminService,
   RankChallengeLadderCurrencyHeldError,
+  RankChallengeLadderVersionConflictError,
 } from '../service/rank-challenge-admin.service.js';
 
 export function createGamificationRouter({
@@ -188,8 +189,14 @@ export function createGamificationRouter({
 
           set: os.admin.rankChallenge.config.set.handler(async ({ input, context }) => {
             const { userId } = await adminGuard.assert(context, 'bonus', 'update');
-            return mapErrors({ CONFLICT: RankChallengeLadderCurrencyHeldError }, () =>
-              rankChallengeAdmin.setLadder(userId, input),
+            return mapErrors(
+              {
+                CONFLICT: [
+                  RankChallengeLadderCurrencyHeldError,
+                  RankChallengeLadderVersionConflictError,
+                ],
+              },
+              () => rankChallengeAdmin.setLadder(userId, input),
             );
           }),
         },
