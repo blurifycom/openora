@@ -243,6 +243,18 @@ export const StreakConfigSchema = z.object({
 });
 export type StreakConfig = z.infer<typeof StreakConfigSchema>;
 
+/**
+ * A run resets once it reaches `resetAfterDay`, so a milestone past it could never be reached -
+ * an operator saving one would be promising a reward nobody can earn.
+ */
+export const SetStreakConfigInputSchema = StreakConfigSchema.refine(
+  (config) => config.milestones.every((milestone) => milestone.day <= config.resetAfterDay),
+  {
+    message: 'a milestone falls after resetAfterDay and can never be reached',
+    path: ['milestones'],
+  },
+);
+
 export const PlayerStreakSchema = z.object({
   current: z.number().int().nonnegative(),
   best: z.number().int().nonnegative(),
@@ -533,7 +545,7 @@ export const gamificationContract = {
 
         set: oc
           .route({ method: 'PUT', path: '/backoffice/promo/streaks/config' })
-          .input(StreakConfigSchema)
+          .input(SetStreakConfigInputSchema)
           .output(StreakConfigSchema),
       },
     },
