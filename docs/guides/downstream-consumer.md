@@ -195,10 +195,9 @@ on every change), `file:` (snapshot copy on install, no live source).
 
 ## Consumer load pattern
 
-Consumer `extensions.config.ts` points at the built plugin files inside `@openora/core`
-(`.../packages/core/dist/<domain>/<module>/src/plugin.js`), not source, because tsx in the
-consumer's API entry can't reliably resolve the tsconfig. Always build `@openora/core`
-before booting the consumer:
+Consumer `extensions.config.ts` loads core's modules through `corePlugins()`, which resolves the
+built plugin files inside `@openora/core`, not source, because tsx in the consumer's API entry
+can't reliably resolve the tsconfig. Always build `@openora/core` before booting the consumer:
 
 ```bash
 pnpm -F @openora/core build
@@ -210,8 +209,13 @@ For a watch loop during development:
 pnpm -F @openora/core --parallel build --watch
 ```
 
-Paths in the consumer's `extensions.config.ts` resolve relative to that config file's own
-directory.
+Every path in the consumer's `extensions.config.ts` must be absolute. The plugin host imports each
+entry from inside `@openora/core`, so a relative path or a bare package name resolves from core's
+location, not from the config file. A bare package name works only when core itself can resolve
+that package. An add-on package installed in the consumer (a premium or third-party module
+published on its own scope) therefore fails with a module-not-found error at boot. Resolve such a
+package in the consumer and pass the resulting absolute path. The consumer template's
+`extensions.config.ts` shows both cases: a local overlay and an add-on package.
 
 ## Keeping the agent files in sync
 
