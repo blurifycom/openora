@@ -6,10 +6,11 @@ import type {
   GamePerformanceTrendFilter,
   GameRoundCount,
   GameRoundRankingFilter,
+  GameRoundTopFilter,
   PlayerGameStats,
 } from '@openora/core/contracts';
 import { DrizzleService } from '@openora/core/server';
-import { and, asc, count, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
 import { game, gameRound } from './schema/index.js';
 
 // See ADR-0017/0025.
@@ -85,13 +86,25 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     }));
   }
 
-  async rankGamesByRounds({
-    dateFrom,
-    dateTo,
-    gameIds,
-    limit,
-  }: GameRoundRankingFilter): Promise<GameRoundCount[]> {
-    if (gameIds.length === 0 || limit <= 0) {
+  rankGamesByRounds({ gameIds, ...filter }: GameRoundRankingFilter): Promise<GameRoundCount[]> {
+    if (gameIds.length === 0) {
+      return Promise.resolve([]);
+    }
+    return this.rankByRounds(
+      filter,
+      sql`${gameRound.gameId} = ANY(${sql.param([...gameIds])}::uuid[])`,
+    );
+  }
+
+  rankAllGamesByRounds(filter: GameRoundTopFilter): Promise<GameRoundCount[]> {
+    return this.rankByRounds(filter);
+  }
+
+  private async rankByRounds(
+    { dateFrom, dateTo, limit }: GameRoundTopFilter,
+    gameCondition?: SQL,
+  ): Promise<GameRoundCount[]> {
+    if (limit <= 0) {
       return [];
     }
     const roundsPlayed = count(gameRound.id);
@@ -100,7 +113,7 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       .from(gameRound)
       .where(
         and(
-          sql`${gameRound.gameId} = ANY(${sql.param([...gameIds])}::uuid[])`,
+          gameCondition,
           eq(gameRound.status, 'completed'),
           gte(gameRound.startedAt, dateFrom),
           lte(gameRound.startedAt, dateTo),

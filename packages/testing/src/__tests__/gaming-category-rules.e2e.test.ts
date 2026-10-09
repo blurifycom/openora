@@ -348,7 +348,7 @@ describe('rule-based category membership e2e', () => {
     const options = (await readJson(res)) as Array<{ key: string; exposesReporting: boolean }>;
     expect(options.map((option) => option.key)).toEqual(['providers', 'tags', 'most_played']);
     expect(options.find((option) => option.key === 'most_played')).toMatchObject({
-      exposesReporting: false,
+      exposesReporting: true,
       paramsJsonSchema: { type: 'object', required: ['periodDays', 'limit'] },
     });
     expect((await player.get('/backoffice/gaming/category-rule-options')).status).toBe(403);

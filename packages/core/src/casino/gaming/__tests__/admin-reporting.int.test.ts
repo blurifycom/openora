@@ -231,6 +231,19 @@ describe('DrizzleAdminGameReporting.rankGamesByRounds (real PG)', () => {
     ]);
     expect(await reporting.rankGamesByRounds({ ...range, gameIds: [], limit: 10 })).toEqual([]);
   });
+
+  it('rankAllGamesByRounds ranks every game', async () => {
+    const [busy, quiet] = [await seedGame(), await seedGame()];
+    await seedGame();
+    await seedRound(busy.id);
+    await seedRound(busy.id);
+    await seedRound(quiet.id);
+
+    expect(await reporting.rankAllGamesByRounds({ ...range, limit: 10 })).toEqual([
+      { gameId: busy.id, roundsPlayed: 2 },
+      { gameId: quiet.id, roundsPlayed: 1 },
+    ]);
+  });
 });
 
 describe('DrizzleAdminGameReporting.getGamePerformanceTrend (real PG)', () => {
