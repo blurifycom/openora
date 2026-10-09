@@ -12,6 +12,7 @@ import {
   type TestDb,
   type TestApp,
   type TestClient,
+  uniqueUsername,
 } from '../index.js';
 
 let db: TestDb;
@@ -23,10 +24,7 @@ async function readJson(res: Response): Promise<any> {
   return res.json();
 }
 
-const uniqueHandle = (prefix: string) =>
-  `${prefix}_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
-
-async function newPlayer(label: string, username = uniqueHandle('p')) {
+async function newPlayer(label: string, username = uniqueUsername('p')) {
   const email = `profile-username-bio-${label}-${randomUUID()}@e2e.test`;
   return registerAndMaterializePlayer(app, { email, username });
 }
@@ -58,7 +56,7 @@ describe('PATCH /profile - username', () => {
   it('changes the handle, lowercased, on both the profile and identity reads, and audits it', async () => {
     const { client, playerId } = await newPlayer('rename');
     const before = await readJson(await client.get('/profile'));
-    const handle = uniqueHandle('New');
+    const handle = uniqueUsername('New');
 
     const res = await client.patch('/profile', { username: handle });
 
@@ -125,11 +123,11 @@ describe('PATCH /profile - username', () => {
   it('limits a player to five renames an hour without throttling other profile writes', async () => {
     const { client } = await newPlayer('rate');
     for (let attempt = 0; attempt < 5; attempt++) {
-      expect((await client.patch('/profile', { username: uniqueHandle('r') })).status).toBe(200);
+      expect((await client.patch('/profile', { username: uniqueUsername('r') })).status).toBe(200);
     }
     const { username: fifth } = await readJson(await client.get('/profile'));
 
-    const res = await client.patch('/profile', { username: uniqueHandle('r') });
+    const res = await client.patch('/profile', { username: uniqueUsername('r') });
 
     expect(res.status).toBe(429);
     expect(await readJson(res)).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
@@ -147,7 +145,7 @@ describe('PATCH /profile - username', () => {
 
     const statuses = await Promise.all(
       players.map(async ({ client }) => {
-        const res = await client.patch('/profile', { username: uniqueHandle('b') });
+        const res = await client.patch('/profile', { username: uniqueUsername('b') });
         return res.status;
       }),
     );
@@ -160,7 +158,7 @@ describe('PATCH /profile - username', () => {
     const { client, playerId } = await newPlayer('profane-handle');
     const before = await readJson(await client.get('/profile'));
 
-    const res = await client.patch('/profile', { username: uniqueHandle('big_ass') });
+    const res = await client.patch('/profile', { username: uniqueUsername('big_ass') });
 
     expect(res.status).toBe(400);
     expect(await readJson(res)).toMatchObject({
@@ -188,7 +186,7 @@ describe('PATCH /profile - username', () => {
   it('lets a player whose stored handle trips the filter resend it with other changes', async () => {
     const { client, userId } = await newPlayer('legacy-handle');
     // Sign-up screens handles too now, so the pre-filter handle goes in through the port.
-    const username = uniqueHandle('big_ass');
+    const username = uniqueUsername('big_ass');
     await app.container.get(USER_COMMANDS).setUsername(userId, username);
 
     const res = await client.patch('/profile', { username, bio: 'Hello' });
@@ -201,7 +199,7 @@ describe('PATCH /profile - username', () => {
     const res = await app.app.request('/profile', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: uniqueHandle('anon') }),
+      body: JSON.stringify({ username: uniqueUsername('anon') }),
     });
     expect(res.status).toBe(401);
   });
@@ -318,7 +316,7 @@ describe('PATCH /profile - bio', () => {
 });
 
 describe('POST /identity/register - username screening', () => {
-  it.each([uniqueHandle('big_ass'), 'real_admin', 'Support_1'])(
+  it.each([uniqueUsername('big_ass'), 'real_admin', 'Support_1'])(
     'refuses %s with the same error shape a rename gets',
     async (username) => {
       const res = await submitRegistration(app, {

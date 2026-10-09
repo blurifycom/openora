@@ -21,6 +21,7 @@ import {
   type TestDb,
   type TestApp,
   type TestClient,
+  uniqueUsername,
 } from '../index.js';
 
 const STREAM_PATH = '/chat/room-stream';
@@ -235,7 +236,7 @@ function postProbe(sender: TestClient, roomId?: string) {
 }
 
 async function registerChatter(prefix: string) {
-  const username = `${prefix.slice(0, 7)}_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+  const username = uniqueUsername(prefix);
   return registerAndMaterializePlayer(app, { email: `${username}@e2e.test`, username });
 }
 

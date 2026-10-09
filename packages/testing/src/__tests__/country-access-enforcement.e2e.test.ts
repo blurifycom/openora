@@ -14,6 +14,7 @@ import {
   setupTestDb,
   type TestApp,
   type TestDb,
+  uniqueUsername,
 } from '../index.js';
 import { forceEmailVerified } from '../register.js';
 
@@ -47,7 +48,7 @@ function register(ip: string, email: string) {
     body: JSON.stringify({
       email,
       password: 'password1234',
-      username: `p${randomUUID().replaceAll('-', '').slice(0, 12)}`,
+      username: uniqueUsername('p'),
       acceptedTerms: true,
       acceptedAge: true,
     }),
