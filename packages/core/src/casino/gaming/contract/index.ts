@@ -2,7 +2,8 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   CountryCodeSchema,
-  CurrencyCodeSchema,
+  CurrencyTickerInputSchema,
+  CurrencyTickerSchema,
   GAME_TYPES,
   GameBulkIdsSchema,
   GameBulkTargetFieldsSchema,
@@ -85,7 +86,7 @@ export const GameRoundSchema = z.object({
   status: GameRoundStatusSchema,
   betAmount: MoneyAmountSchema,
   winAmount: MoneyAmountSchema,
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerSchema,
   startedAt: z.string(),
   endedAt: z.string().nullable(),
 });
@@ -97,7 +98,7 @@ export const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(
 
 export const StartRoundInputSchema = z.object({
   gameId: UuidSchema,
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerInputSchema,
   betAmount: PositiveMoneyAmountSchema,
 });
 
