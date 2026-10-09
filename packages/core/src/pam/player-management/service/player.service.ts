@@ -89,7 +89,12 @@ export class PlayerService implements PlayerActivityTracker {
             ),
           )
           .groupBy(walletTransaction.currency);
-        const totalDeposits = await sumInPivot(depositsByCurrency, current.currency, this.rates);
+        const totalDeposits = await sumInPivot(
+          depositsByCurrency,
+          current.currency,
+          this.rates,
+          tx,
+        );
         if (totalDeposits === null) {
           logger.warn(
             { userId },
