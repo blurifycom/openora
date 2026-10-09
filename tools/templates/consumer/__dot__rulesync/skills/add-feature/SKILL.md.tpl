@@ -71,13 +71,13 @@ For **OSS-core** items: read `handoff.md`, write the work-order, STOP that slice
 Cheap gates first, prove it works, only then spend review on working code:
 
 1. `/check` (typecheck + lint + the existing unit tests). Don't proceed on red.
-2. Derive a verification checklist from the AC (happy path, edge cases, authz negatives, error states) and have `qa` walk it against the running stack - Playwright CLI for the walkthrough and the screenshots, `chrome-devtools` only for a live read it cannot give. `qa` returns screenshot evidence, then writes the tests that pass exercised in this branch at the tier `docs/standards/testing.md` names, running only the specs it touched. A broken flow goes back to `builder` BEFORE any review - don't review code that doesn't work.
+2. Derive a verification checklist from the AC (happy path, edge cases, authz negatives, error states) and have `qa` walk it against the running stack - Playwright CLI for the walkthrough and the screenshots, `chrome-devtools` only for a live read it cannot give. `qa` copies the AC out of the ticket, walks each one, tries to break the change, and returns the AC verdict table plus screenshot evidence, then writes the tests that pass exercised in this branch at the tier `docs/standards/testing.md` names, running only the specs it touched. A broken flow goes back to `builder` BEFORE any review - don't review code that doesn't work.
 3. **review** on the change set, passing what the manual pass proved so reviewers dig where it couldn't reach; loop `[BLOCK]`/`[WARN]` fixes back through `builder`.
 4. After fixes: re-run `/check` always; re-walk the affected screens if a fix changed behavior, and refresh the screenshots (not needed for pure convention/style fixes).
 
 ### 6. Open the MR
 
-Run **create-pr**: it commits (`feat(<scope>): ... ({{trackerKey}}-XXX)`), reports the SHA, asks for "yes push", pushes, and opens the pull request against `{{mrTarget}}` per `docs/agents/forge.md`, with the CODEOWNERS for the changed paths as reviewers. Hand it the step-5 screenshots and the "Tests" list - both belong in the description. Never bypass its push-consent gate.
+Run **create-pr**: it commits (`feat(<scope>): ... ({{trackerKey}}-XXX)`), reports the SHA, asks for "yes push", pushes, and opens the pull request against `{{mrTarget}}` per `docs/agents/forge.md`, with the CODEOWNERS for the changed paths as reviewers. Hand it the step-5 screenshots and AC verdict table and the "Tests" list - all belong in the description. Never bypass its push-consent gate.
 
 ### 7. Jira status transition (NOT comments)
 

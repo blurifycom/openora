@@ -127,6 +127,7 @@ export class RankChallengePayoutService {
         currency: priced.currency,
         type: 'cashback',
         allowNewCurrency: true,
+        allowNewWallet: true,
         providerRef: { providerName: 'promo-rank-challenge', providerRefId: sourceRef },
       });
       if (!credited.ok) {

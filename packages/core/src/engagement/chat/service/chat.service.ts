@@ -19,6 +19,9 @@ import {
 import type {
   ClientMeta,
   ChatModeration,
+  ChatCooldownEntry,
+  ChatModerationScope,
+  ChatRoomReach,
   RealtimeSignal,
   RealtimeTransport,
   CommandMetadata,
@@ -261,6 +264,36 @@ type ChatServiceDependencies = {
   allowedAttachmentHosts: readonly string[];
   socialCommands?: SocialCommands;
 };
+
+type SendThrottle = {
+  roomId: Uuid | null;
+  reach: ChatRoomReach;
+  slowMode: { roomId: Uuid; slowModeSeconds: number } | null;
+};
+
+// A cooldown counts the sender's last message anywhere its scope reaches, so switching rooms does not reset it.
+function messagesInScope(t: DrizzleTx, scope: ChatModerationScope, roomId: Uuid | null) {
+  switch (scope) {
+    case '__all':
+      return undefined;
+    case '__all_public':
+      return or(
+        isNull(chatMessage.roomId),
+        inArray(
+          chatMessage.roomId,
+          t.select({ id: chatRoom.id }).from(chatRoom).where(eq(chatRoom.isPublic, true)),
+        ),
+      );
+    case GLOBAL_CHAT_ROOM_ID:
+      return isNull(chatMessage.roomId);
+    case 'room':
+      return messagesInRoom(roomId);
+  }
+}
+
+function messagesInRoom(roomId: Uuid | null) {
+  return roomId === null ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId);
+}
 
 function gateContent(content: string): string {
   const result = moderateContent(content);
@@ -1588,61 +1621,136 @@ export class ChatService {
       : null;
   }
 
-  // Slow mode is checked under a per-sender lock so parallel sends cannot all pass.
+  private async coveringCooldowns(
+    userId: User['id'],
+    roomId: Uuid | null,
+    reach: ChatRoomReach,
+    tx?: DrizzleTx,
+  ): Promise<ChatCooldownEntry[]> {
+    const coveringScopes = platformScopesFor(reach);
+    return (await this.moderation.listCooldowns([userId], tx)).filter((cooldown) =>
+      cooldown.scope === 'room'
+        ? roomId !== null && cooldown.roomId === roomId
+        : coveringScopes.includes(cooldown.scope),
+    );
+  }
+
+  // Decides whether to take the send lock; the cooldowns that apply are re-read under it.
+  private async sendThrottle({
+    userId,
+    roomId,
+    reach,
+    slowMode,
+  }: {
+    userId: User['id'];
+    roomId: Uuid | null;
+    reach: ChatRoomReach;
+    slowMode: SendThrottle['slowMode'];
+  }): Promise<SendThrottle | null> {
+    if (slowMode) {
+      return { roomId, reach, slowMode };
+    }
+    const cooldowns = await this.coveringCooldowns(userId, roomId, reach);
+    return cooldowns.length > 0 ? { roomId, reach, slowMode } : null;
+  }
+
+  // One lock per sender, so parallel sends to different rooms cannot both pass a shared cooldown.
   private async insertUserMessage(
     values: typeof chatMessage.$inferInsert & { roomId: Uuid | null },
-    slowMode: { roomId: Uuid; slowModeSeconds: number } | null,
+    throttle: SendThrottle | null,
   ) {
-    if (!slowMode) {
+    if (!throttle) {
       const [record] = await this.drizzle.db.insert(chatMessage).values(values).returning();
       return record;
     }
     return this.drizzle.db.transaction((t) =>
-      withAdvisoryXactLock(t, `chat-send:${values.userId}:${slowMode.roomId}`, async () => {
-        await this.assertSlowModeElapsed(t, values.userId, values.roomId, slowMode);
+      withAdvisoryXactLock(t, `chat-send:${values.userId}`, async () => {
+        await this.assertSendWindowElapsed(t, values.userId, throttle);
         const [record] = await t.insert(chatMessage).values(values).returning();
         return record;
       }),
     );
   }
 
-  private async assertSlowModeElapsed(
+  private async assertSendWindowElapsed(
     t: DrizzleTx,
     userId: User['id'],
-    roomId: Uuid | null,
-    config: { roomId: Uuid; slowModeSeconds: number },
+    { roomId, reach, slowMode }: SendThrottle,
   ) {
-    const windowMs = config.slowModeSeconds * 1000;
+    const windows: { createdAt: Date; now: Date; seconds: number }[] = [];
+    for (const cooldown of await this.coveringCooldowns(userId, roomId, reach, t)) {
+      const last = await this.lastUserMessageWithin(
+        t,
+        userId,
+        messagesInScope(t, cooldown.scope, cooldown.roomId),
+        cooldown.cooldownSeconds,
+      );
+      if (last) {
+        windows.push({ ...last, seconds: cooldown.cooldownSeconds });
+      }
+    }
+    if (slowMode) {
+      const last = await this.lastUserMessageWithin(
+        t,
+        userId,
+        messagesInRoom(roomId),
+        slowMode.slowModeSeconds,
+      );
+      if (last && !(await this.isSlowModeExempt(t, userId, slowMode.roomId))) {
+        windows.push({ ...last, seconds: slowMode.slowModeSeconds });
+      }
+    }
+    const [first] = windows;
+    if (!first) {
+      return;
+    }
+    const until = Math.max(
+      ...windows.map(({ createdAt, seconds }) => createdAt.getTime() + seconds * 1000),
+    );
+    // now() is fixed for the transaction, so every window shares the same database clock.
+    const retryAfterMs = Math.max(0, until - first.now.getTime());
+    throw new ChatPlayerMutedError(new Date(until), 'slow_mode', retryAfterMs);
+  }
+
+  private async lastUserMessageWithin(
+    t: DrizzleTx,
+    userId: User['id'],
+    rooms: SQL | undefined,
+    seconds: number,
+  ) {
     const [last] = await t
-      .select({ createdAt: chatMessage.createdAt })
+      .select({
+        createdAt: chatMessage.createdAt,
+        now: sql`now()`.mapWith(chatMessage.createdAt),
+      })
       .from(chatMessage)
       .where(
         and(
           eq(chatMessage.userId, userId),
-          roomId === null ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId),
+          rooms,
           eq(chatMessage.type, 'user'),
-          gt(chatMessage.createdAt, sql`now() - make_interval(secs => ${config.slowModeSeconds})`),
+          gt(chatMessage.createdAt, sql`now() - make_interval(secs => ${seconds})`),
         ),
       )
       .orderBy(desc(chatMessage.createdAt))
       .limit(1);
-    if (!last) {
-      return;
-    }
+    return last;
+  }
+
+  // Room moderators and owners skip room slow mode only, never a cooldown.
+  private async isSlowModeExempt(t: DrizzleTx, userId: User['id'], roomId: Uuid) {
     const [moderator] = await t
       .select({ id: chatRoomMember.id })
       .from(chatRoomMember)
       .where(
         and(
-          eq(chatRoomMember.roomId, config.roomId),
+          eq(chatRoomMember.roomId, roomId),
           eq(chatRoomMember.userId, userId),
           inArray(chatRoomMember.role, ['moderator', 'owner']),
         ),
       )
       .limit(1);
-    if (!moderator) {
-      throw new ChatPlayerMutedError(new Date(last.createdAt.getTime() + windowMs), 'slow_mode');
-    }
+    return moderator !== undefined;
   }
 
   async sendRoomMessage({
@@ -1665,13 +1773,19 @@ export class ChatService {
     }
     const slowMode = await this.roomSendSettings(roomId);
     await this.moderation.assertCanSend(userId, roomId, room.isPublic);
+    const throttle = await this.sendThrottle({
+      userId,
+      roomId: room.id,
+      reach: roomReach(room),
+      slowMode,
+    });
 
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
     const resolvedUsername = await this.resolveUsername(userId, username);
     const record = await this.insertUserMessage(
       { roomId, userId, username: resolvedUsername, content: safeContent, attachment },
-      slowMode,
+      throttle,
     );
 
     this.events.emit('chat.message.sent', {
@@ -1757,12 +1871,13 @@ export class ChatService {
     // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     const slowMode = await this.roomSendSettings(null);
     await this.moderation.assertCanSend(userId, null);
+    const throttle = await this.sendThrottle({ userId, roomId: null, reach: 'global', slowMode });
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
     const resolvedUsername = await this.resolveUsername(userId, username);
     const record = await this.insertUserMessage(
       { roomId: null, userId, username: resolvedUsername, content: safeContent, attachment },
-      slowMode,
+      throttle,
     );
 
     this.events.emit('chat.message.sent', {

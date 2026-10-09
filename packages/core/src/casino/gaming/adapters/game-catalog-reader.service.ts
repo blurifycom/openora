@@ -191,7 +191,7 @@ export class GameCatalogReaderService implements GameCatalogReader {
     const isActive = eq(gameProvider.isActive, true);
     const [items, [{ n }]] = await Promise.all([
       isValidPage(page, limit)
-        ? this.drizzle.db
+        ? this.drizzle.replica
             .select(providerSummaryColumns)
             .from(gameProvider)
             .where(isActive)
@@ -199,7 +199,7 @@ export class GameCatalogReaderService implements GameCatalogReader {
             .limit(limit)
             .offset(pageToOffset(page, limit))
         : [],
-      this.drizzle.db.select({ n: count() }).from(gameProvider).where(isActive),
+      this.drizzle.replica.select({ n: count() }).from(gameProvider).where(isActive),
     ]);
     return { items, total: Number(n), page, limit };
   }

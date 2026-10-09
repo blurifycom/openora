@@ -150,6 +150,9 @@ export class RacePayoutService {
         currency: priced.currency,
         type: 'cashback',
         allowNewCurrency: true,
+        // Wallets open lazily on first deposit; a winner who never opened one is paid into a new
+        // one rather than throwing and rolling back every other winner's payout with it.
+        allowNewWallet: true,
         providerRef: { providerName: 'promo-race', providerRefId: sourceRef },
       });
       if (!credited.ok) {

@@ -158,7 +158,7 @@ export class LobbyService {
   }
 
   async getCategoryGames(slug: string) {
-    const db = this.drizzle.db;
+    const db = this.drizzle.replica;
     const category = findOneOrThrow(
       await db.select().from(lobbyCategory).where(eq(lobbyCategory.slug, slug)),
       new LobbyCategoryNotFoundError(slug),
@@ -253,7 +253,7 @@ export class LobbyService {
   }
 
   async search(query: string) {
-    const db = this.drizzle.db;
+    const db = this.drizzle.replica;
     const whereClause = and(ilike(game.name, likeContains(query)), playableGameCondition());
 
     const rows = await db

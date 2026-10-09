@@ -715,6 +715,35 @@ export function createChatRouter({
       return moderationService.listMutes(input.userIds);
     }),
 
+    adminSetCooldown: os.adminSetCooldown.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'chat-moderation',
+        'moderate',
+      );
+      return mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          BAD_REQUEST: ChatAdminPrivateRoomModerationError,
+        },
+        () => moderationService.setCooldown({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
+    adminLiftCooldown: os.adminLiftCooldown.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'chat-moderation',
+        'moderate',
+      );
+      return moderationService.liftCooldown({ ...input, actorId: userId, ip, userAgent });
+    }),
+
+    adminListCooldowns: os.adminListCooldowns.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'chat-moderation', 'view');
+      return moderationService.listCooldowns(input.userIds);
+    }),
+
     adminBan: os.adminBan.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(
         context,

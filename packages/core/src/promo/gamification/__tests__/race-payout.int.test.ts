@@ -115,6 +115,7 @@ describe('settling a closed race', () => {
       amount: '500',
       currency: 'USDT',
       type: 'cashback',
+      allowNewWallet: true,
       providerRef: { providerName: 'promo-race', providerRefId: `race-payout:${raceId}:${first}` },
     });
 

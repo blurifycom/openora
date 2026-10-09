@@ -7,7 +7,7 @@ Every skill that says "fetch the relevant ticket" reads this file.
 ## Keys and where they appear
 
 - Ticket key: `{{trackerKey}}-<n>`. `{{trackerKey}}-0` means "no ticket" (chores).
-- Branch: `<type>/{{trackerKey}}-<n>/<slug>`. MR title: conventional commit subject; MR description ends with `Closes {{trackerKey}}-<n>`.
+- Branch: `<type>/{{trackerKey}}-<n>/<slug>`. MR title: conventional commit subject; MR description ends with `Closes {{trackerKey}}-<n>` when it finishes the ticket, `Refs {{trackerKey}}-<n>` when it is one of several MRs for it. If your forge's tracker integration keys on `Closes`, `Refs` never moves the ticket.
 - Resolve the key from, in order: the argument the user gave, the MR description, the MR title, the branch name, commit subjects.
 
 ## What "read the ticket" means
