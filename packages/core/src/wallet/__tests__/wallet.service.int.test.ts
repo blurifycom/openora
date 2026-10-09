@@ -31,6 +31,7 @@ import {
   walletAsset,
   walletReconciliationFinding,
   walletWithdrawalAddress,
+  walletAutoWithdrawalConfig,
 } from '../schema/index.js';
 import {
   WalletService,
@@ -89,6 +90,23 @@ function playerIdentityReader(playerId: string = randomUUID()) {
 }
 
 const queueService = () => makeService().svc;
+
+// The velocity tag reads its count and window from the singleton config row, which
+// `beforeEach` does not truncate - upsert so each test gets exactly the settings it asks for.
+const setVelocityConfig = (velocityCount: number | null, velocityWindowHours = 24) =>
+  db.drizzle.db
+    .insert(walletAutoWithdrawalConfig)
+    .values({
+      singletonKey: 'global',
+      fiatThreshold: '0',
+      cryptoThreshold: '0',
+      velocityCount,
+      velocityWindowHours,
+    })
+    .onConflictDoUpdate({
+      target: walletAutoWithdrawalConfig.singletonKey,
+      set: { velocityCount, velocityWindowHours },
+    });
 
 // A fake pivot-rate reader: `prices` gives the USD value of one whole unit of a currency,
 // `unpriced` names currencies that answer null (no quote).
@@ -1607,6 +1625,7 @@ describe('WalletService.listWithdrawals (real PG)', () => {
   });
 
   it('tags high_frequency once the wallet has three withdrawals in the trailing 24h', async () => {
+    await setVelocityConfig(3);
     const quiet = await seedWallet();
     const busy = await seedWallet();
     await seedTx(quiet.id);
@@ -1622,7 +1641,20 @@ describe('WalletService.listWithdrawals (real PG)', () => {
     expect(quietItem?.riskTags).not.toContain('high_frequency');
   });
 
+  it('drops the high_frequency tag once the velocity check is turned off', async () => {
+    await setVelocityConfig(null);
+    const busy = await seedWallet();
+    await seedTx(busy.id);
+    await seedTx(busy.id);
+    await seedTx(busy.id);
+
+    const { items } = await queueService().listWithdrawals({ page: 1, limit: 20 });
+
+    expect(items.every((i) => !i.riskTags.includes('high_frequency'))).toBe(true);
+  });
+
   it('ignores withdrawals older than the velocity window', async () => {
+    await setVelocityConfig(3);
     const w = await seedWallet();
     const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
     await seedTx(w.id, { createdAt: old });

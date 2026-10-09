@@ -338,11 +338,18 @@ export const SetAutoWithdrawalRuleInputSchema = z.object({
 
 export const AutoWithdrawalRuleKeySchema = z.object({ userId: UuidSchema });
 
+// `null` count = velocity check off. The upper bounds only keep a typo out of the counting
+// query; a 32-bit overflow is the only thing the column itself rules out.
+const VelocityCountSchema = z.number().int().positive().max(1000);
+const VelocityWindowHoursSchema = z.number().int().positive().max(720);
+
 export const WalletAutoWithdrawalConfigSchema = z.object({
   id: UuidSchema,
   fiatThreshold: MoneyAmountSchema,
   cryptoThreshold: MoneyAmountSchema,
   excludeRiskFlags: z.array(TagKeySchema),
+  velocityCount: VelocityCountSchema.nullable(),
+  velocityWindowHours: VelocityWindowHoursSchema,
   updatedBy: UuidSchema.nullable(),
   updatedAt: TimestampSchema,
   createdAt: TimestampSchema,
@@ -362,6 +369,8 @@ export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
   fiatThreshold: WalletAutoWithdrawalThresholdSchema,
   cryptoThreshold: WalletAutoWithdrawalThresholdSchema,
   excludeRiskFlags: z.array(TagKeySchema),
+  velocityCount: VelocityCountSchema.nullable(),
+  velocityWindowHours: VelocityWindowHoursSchema,
 });
 
 // Kept only for `schema/index.ts` to type the now-unused `wallet_bonus_credit` /
