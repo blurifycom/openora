@@ -70,14 +70,14 @@ describe('ChatMuteService.listMutes expiry', () => {
     const userId = randomUUID();
     await seedMute({ userId, expiresAt: secondsFromNow(-60) });
 
-    expect(await makeModeration().listMutes(userId)).toEqual([]);
+    expect(await makeModeration().listMutes([userId])).toEqual([]);
   });
 
   it('still omits a lifted mute that has not yet expired', async () => {
     const userId = randomUUID();
     await seedMute({ userId, expiresAt: secondsFromNow(3600), liftedAt: new Date() });
 
-    expect(await makeModeration().listMutes(userId)).toEqual([]);
+    expect(await makeModeration().listMutes([userId])).toEqual([]);
   });
 
   it('agrees with assertCanSend once a timed mute has lapsed', async () => {
@@ -92,7 +92,7 @@ describe('ChatMuteService.listMutes expiry', () => {
       ...NO_CLIENT_META,
     });
 
-    expect(await moderation.listMutes(userId)).toHaveLength(1);
+    expect(await moderation.listMutes([userId])).toHaveLength(1);
 
     await db.drizzle.db
       .update(chatMute)
@@ -100,6 +100,6 @@ describe('ChatMuteService.listMutes expiry', () => {
       .where(eq(chatMute.userId, userId));
 
     await expect(moderation.assertCanSend(userId, null)).resolves.not.toThrow();
-    expect(await moderation.listMutes(userId)).toEqual([]);
+    expect(await moderation.listMutes([userId])).toEqual([]);
   });
 });

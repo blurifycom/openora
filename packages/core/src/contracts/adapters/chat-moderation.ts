@@ -54,7 +54,7 @@ export type ChatModeration = {
     ip: string | null;
     userAgent: string | null;
   }): Promise<{ success: true }>;
-  listMutes(userId?: Uuid): Promise<ChatModerationEntry[]>;
+  listMutes(userIds?: readonly Uuid[]): Promise<ChatModerationEntry[]>;
   ban(input: {
     userId: Uuid;
     roomId: ChatModerationRoomId;
@@ -71,7 +71,7 @@ export type ChatModeration = {
     ip: string | null;
     userAgent: string | null;
   }): Promise<{ success: true }>;
-  listBans(userId?: Uuid): Promise<ChatPlatformBan[]>;
+  listBans(userIds?: readonly Uuid[]): Promise<ChatPlatformBan[]>;
 };
 
 export const CHAT_MODERATION = createToken<ChatModeration>('ChatModeration');
