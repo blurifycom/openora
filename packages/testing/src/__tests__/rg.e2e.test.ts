@@ -10,6 +10,7 @@ import {
 import { JOB_QUEUE, PLAY_ELIGIBILITY, queue } from '@openora/core/contracts';
 import { rgExclusion } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
+import { assignRoleByKey } from '@openora/core/iam/seed';
 import {
   setupTestDb,
   bootTestApp,
@@ -652,7 +653,8 @@ describe('RG authz negatives', () => {
   it('a support-role caller (view only) gets 403 on mutations, 200 on reads', async () => {
     const email = `rg-support-${randomUUID()}@e2e.test`;
     const { userId } = await registerAndMaterializePlayer(app, { email: email });
-    await setRole(app.container, userId, 'support');
+    await setRole(app.container, userId, 'admin');
+    await assignRoleByKey(app.container.get(DRIZZLE).db, userId, 'customer-support-agent');
     const support = await asPlayer(app.app, { email });
     const targetUserId = randomUUID();
 

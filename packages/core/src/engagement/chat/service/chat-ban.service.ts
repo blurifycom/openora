@@ -187,7 +187,7 @@ export class ChatBanService {
     return { success: true } as const;
   }
 
-  async listBans(userId?: Uuid): Promise<ChatPlatformBan[]> {
+  async listBans(userIds?: readonly Uuid[]): Promise<ChatPlatformBan[]> {
     const rows = await this.drizzle.db
       .select({
         id: chatPlatformBan.id,
@@ -204,7 +204,7 @@ export class ChatBanService {
         and(
           isNull(chatPlatformBan.liftedAt),
           or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, new Date())),
-          userId ? eq(chatPlatformBan.userId, userId) : undefined,
+          userIds ? inArray(chatPlatformBan.userId, userIds) : undefined,
         ),
       )
       .orderBy(desc(chatPlatformBan.createdAt));

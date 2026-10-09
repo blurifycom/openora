@@ -71,7 +71,7 @@ function makeIamService(
   );
 }
 
-// Bootstrap super-admin: no DB assignment row + user.role === 'admin' passes the static fallback.
+// A staff user holds nothing without an assignment - seedSuperCaller() gives this one a real one.
 const ADMIN_CALLER = { userId: randomUUID(), role: 'admin', ...NO_CLIENT_META };
 const SUPPORT_CALLER = { userId: randomUUID(), role: 'support', ...NO_CLIENT_META };
 
@@ -97,6 +97,12 @@ async function seedRole(
 
 async function seedAssignment(userId: string, roleId: string) {
   await db.drizzle.db.insert(adminRoleAssignment).values({ userId, roleId });
+}
+
+async function seedSuperCaller() {
+  const role = await seedRole({ name: 'Root', isSuperAdmin: true, isSystem: true });
+  await seedAssignment(ADMIN_CALLER.userId, role.id);
+  return role;
 }
 
 async function seedPermission(
@@ -134,9 +140,11 @@ describe('IamService.listCatalog', () => {
 });
 
 describe('DbAdminPermissionResolver (real PG)', () => {
-  it('returns null when the user has no assignment', async () => {
+  it('returns no grants and no super admin when the user has no assignment', async () => {
     const resolver = new DbAdminPermissionResolver(db.drizzle);
-    expect(await resolver.getGrants(randomUUID())).toBeNull();
+    const userId = randomUUID();
+    expect(await resolver.getGrants(userId)).toEqual([]);
+    expect(await resolver.isSuperAdmin(userId)).toBe(false);
   });
 
   it('super-admin assignment returns ALL grants (bypass)', async () => {
@@ -185,7 +193,7 @@ describe('DbAdminPermissionResolver caching (real Redis read-through)', () => {
 
     expect(await resolver.getGrants(userId)).toHaveLength(TOTAL_GRANTS);
     await db.drizzle.db.delete(adminRoleAssignment).where(eq(adminRoleAssignment.userId, userId));
-    expect(await resolver.getGrants(userId)).toBeNull();
+    expect(await resolver.getGrants(userId)).toEqual([]);
   });
 
   it('invalidateUser purges so the next lookup reflects the revoke', async () => {
@@ -197,7 +205,7 @@ describe('DbAdminPermissionResolver caching (real Redis read-through)', () => {
     await resolver.getGrants(userId);
     await db.drizzle.db.delete(adminRoleAssignment).where(eq(adminRoleAssignment.userId, userId));
     await resolver.invalidateUser(userId);
-    expect(await resolver.getGrants(userId)).toBeNull();
+    expect(await resolver.getGrants(userId)).toEqual([]);
   });
 
   it('invalidateRole purges every current holder of the role', async () => {
@@ -228,6 +236,8 @@ describe('DbAdminPermissionResolver caching (real Redis read-through)', () => {
 });
 
 describe('IamService.setRolePermissions', () => {
+  beforeEach(seedSuperCaller);
+
   it('rejects a non-super-admin caller and audits the denial', async () => {
     const role = await seedRole();
     const events = makeEventBus();
@@ -332,6 +342,8 @@ describe('IamService.setRolePermissions', () => {
 });
 
 describe('IamService.updateRole', () => {
+  beforeEach(seedSuperCaller);
+
   it('blocks renaming the super-admin role', async () => {
     const role = await seedRole({ isSuperAdmin: true, isSystem: true });
     const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
@@ -357,6 +369,8 @@ describe('IamService.updateRole', () => {
 });
 
 describe('IamService.deleteRole', () => {
+  beforeEach(seedSuperCaller);
+
   it('blocks deleting a system role', async () => {
     const role = await seedRole({ isSystem: true });
     const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
@@ -422,11 +436,35 @@ describe('IamService.deleteRole', () => {
       expect.objectContaining({ roleId: role.id, actorId: ADMIN_CALLER.userId }),
     );
     // ON DELETE CASCADE removed the assignment rows.
-    expect(await db.drizzle.db.select().from(adminRoleAssignment)).toHaveLength(0);
+    expect(
+      await db.drizzle.db
+        .select()
+        .from(adminRoleAssignment)
+        .where(eq(adminRoleAssignment.roleId, role.id)),
+    ).toHaveLength(0);
   });
 });
 
 describe('IamService.assignRole', () => {
+  beforeEach(seedSuperCaller);
+
+  it('refuses a staff admin with no assigned role - it cannot grant itself super admin', async () => {
+    const unassigned = await seedUser(db, { name: 'U', role: 'admin' });
+    const superRole = findOneOrThrow(
+      await db.drizzle.db.select().from(adminRole).where(eq(adminRole.isSuperAdmin, true)),
+      new Error('expected the caller super role'),
+    );
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
+
+    await expect(
+      svc.assignRole({
+        userId: unassigned.id,
+        roleId: superRole.id,
+        caller: { userId: unassigned.id, role: 'admin', ...NO_CLIENT_META },
+      }),
+    ).rejects.toBeInstanceOf(NotSuperAdminError);
+  });
+
   it('dedupes an existing assignment without inserting again (unique index)', async () => {
     const role = await seedRole();
     const target = await seedUser(db, { name: 'U', role: 'admin' });
@@ -441,7 +479,10 @@ describe('IamService.assignRole', () => {
     });
     expect(events.emit).not.toHaveBeenCalledWith('iam.role.assigned', expect.anything());
     // Still exactly one assignment row, and the existing one was returned.
-    const rows = await db.drizzle.db.select().from(adminRoleAssignment);
+    const rows = await db.drizzle.db
+      .select()
+      .from(adminRoleAssignment)
+      .where(eq(adminRoleAssignment.userId, target.id));
     expect(rows).toHaveLength(1);
     expect(result.id).toBe(rows[0].id);
   });
@@ -482,14 +523,17 @@ describe('IamService.assignRole', () => {
 });
 
 describe('IamService.unassignRole', () => {
+  beforeEach(seedSuperCaller);
+
   it('rejects removing the last super-admin holder', async () => {
-    const superRole = await seedRole({ isSuperAdmin: true, isSystem: true });
-    const target = randomUUID();
-    await seedAssignment(target, superRole.id);
+    const superRole = findOneOrThrow(
+      await db.drizzle.db.select().from(adminRole).where(eq(adminRole.isSuperAdmin, true)),
+      new Error('expected the caller super role'),
+    );
     const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
 
     await expect(
-      svc.unassignRole({ userId: target, roleId: superRole.id, caller: ADMIN_CALLER }),
+      svc.unassignRole({ userId: ADMIN_CALLER.userId, roleId: superRole.id, caller: ADMIN_CALLER }),
     ).rejects.toBeInstanceOf(LastSuperAdminError);
     // The holder survives the rejected unassign.
     expect(await db.drizzle.db.select().from(adminRoleAssignment)).toHaveLength(1);
@@ -520,25 +564,35 @@ describe('IamService.unassignRole', () => {
       'iam.role.revoked',
       expect.objectContaining({ roleId: role.id, userId: target, actorId: ADMIN_CALLER.userId }),
     );
-    expect(await db.drizzle.db.select().from(adminRoleAssignment)).toHaveLength(0);
+    expect(
+      await db.drizzle.db
+        .select()
+        .from(adminRoleAssignment)
+        .where(eq(adminRoleAssignment.userId, target)),
+    ).toHaveLength(0);
   });
 
   it('under two concurrent unassigns of a two-holder super role, exactly one wins (FOR UPDATE guard)', async () => {
-    const superRole = await seedRole({ isSuperAdmin: true, isSystem: true });
-    const userA = randomUUID();
-    const userB = randomUUID();
-    await seedAssignment(userA, superRole.id);
-    await seedAssignment(userB, superRole.id);
+    const superRole = findOneOrThrow(
+      await db.drizzle.db.select().from(adminRole).where(eq(adminRole.isSuperAdmin, true)),
+      new Error('expected the caller super role'),
+    );
+    const otherHolder = randomUUID();
+    await seedAssignment(otherHolder, superRole.id);
     const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
 
     const results = await Promise.allSettled([
-      svc.unassignRole({ userId: userA, roleId: superRole.id, caller: ADMIN_CALLER }),
-      svc.unassignRole({ userId: userB, roleId: superRole.id, caller: ADMIN_CALLER }),
+      svc.unassignRole({ userId: otherHolder, roleId: superRole.id, caller: ADMIN_CALLER }),
+      svc.unassignRole({ userId: ADMIN_CALLER.userId, roleId: superRole.id, caller: ADMIN_CALLER }),
     ]);
 
     const rejected = results.filter((r) => r.status === 'rejected');
     expect(rejected).toHaveLength(1);
-    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(LastSuperAdminError);
+    // The loser either hit the last-holder guard or, had the self-unassign committed
+    // first, was no longer a super admin by the time its own check ran.
+    expect((rejected[0] as PromiseRejectedResult).reason).toSatisfy(
+      (reason) => reason instanceof LastSuperAdminError || reason instanceof NotSuperAdminError,
+    );
     // Exactly one super-admin holder survives - the guard never let both strip it.
     expect(await db.drizzle.db.select().from(adminRoleAssignment)).toHaveLength(1);
   });
@@ -567,12 +621,11 @@ describe('IamService.previewEffectivePermissions', () => {
     expect(result.permissions.every((p) => p.level === 'read_write')).toBe(true);
   });
 
-  it('falls back to static role permissions when the user has no dynamic role assignments', async () => {
-    const u = await seedUser(db, { name: 'U', role: 'support' });
+  it('gives a staff user with no assigned role no permissions, whatever its static role', async () => {
+    const u = await seedUser(db, { name: 'U', role: 'admin' });
     const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
     const result = await svc.previewEffectivePermissions({ userId: u.id });
-    expect(result.permissions).not.toHaveLength(0);
-    expect(result.permissions).toContainEqual({ resource: 'player', level: 'read' });
+    expect(result.permissions).toEqual([]);
   });
 });
 
@@ -620,6 +673,8 @@ describe('IamService.acceptInvitation', () => {
 });
 
 describe('IamService.inviteAdmin', () => {
+  beforeEach(seedSuperCaller);
+
   it('creates a pending invitation and dispatches an English invitation mail when caller is super-admin', async () => {
     const role = await seedRole();
     const mailDispatch = makeMailDispatch();
@@ -696,6 +751,8 @@ describe('IamService paginated lists', () => {
 });
 
 describe('IamService.reportAccessDenied', () => {
+  beforeEach(seedSuperCaller);
+
   it('records and audits a genuine denial (caller lacks the resource/level)', async () => {
     const events = makeEventBus();
     const svc = makeIamService(db.drizzle, events, makeMailDispatch());
@@ -758,6 +815,8 @@ describe('IamService.reportAccessDenied', () => {
 });
 
 describe('IamService.forceLogout', () => {
+  beforeEach(seedSuperCaller);
+
   it('rejects a non-super-admin caller', async () => {
     const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
     await expect(

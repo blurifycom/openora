@@ -32,6 +32,11 @@ jobs:
           turbo-cache: 'false'
       # Exits non-zero while anything is still vulnerable - the diff decides, not the exit code.
       - run: pnpm audit --fix=update || true
+      # The fix rewrites bumped specifiers as `^x.y.z`; dependencies stay pinned exact.
+      - name: Pin bumped versions
+        run: |
+          git ls-files '*package.json' | xargs sed -i -E 's/("[^"]+": )"[~^]([0-9][^"]*)"/\1"\2"/'
+          pnpm install --lockfile-only
       - name: Open or refresh the PR
         env:
           GH_TOKEN: ${{ github.token }}

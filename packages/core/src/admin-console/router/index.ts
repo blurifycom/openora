@@ -44,9 +44,9 @@ export function createBackofficeRouter(
 
     updateUser: os.updateUser.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'player', 'update');
-      // Writing `user.role` (esp. 'admin') grants super-admin via the bootstrap path
-      // (IamService.isSuperAdmin), so a role change is super-admin-only - the `admin`
-      // resource is held only by super-admins.
+      // Writing `user.role` grants staff status, and with no permission resolver bound
+      // the static 'admin' role is full access, so a role change is super-admin-only -
+      // the `admin` resource is held only by super-admins.
       if (input.role !== undefined) {
         await adminGuard.assert(context, 'admin', 'update');
       }

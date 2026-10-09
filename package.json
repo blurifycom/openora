@@ -58,7 +58,7 @@
     "@commitlint/config-conventional": "21.2.0",
     "@openora/core": "workspace:*",
     "@openora/testing": "workspace:*",
-    "@orpc/contract": "1.14.10",
+    "@orpc/contract": "1.15.4",
     "@turbo/gen": "2.10.7",
     "@types/node": "26.1.1",
     "dependency-cruiser": "18.1.0",

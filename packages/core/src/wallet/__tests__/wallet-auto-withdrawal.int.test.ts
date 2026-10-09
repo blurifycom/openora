@@ -88,6 +88,10 @@ type ServiceOptions = {
   // migration DEFAULT apply (the 5-tag starting value); pass an explicit
   // array (incl. []) to seed exactly that set instead.
   excludeRiskFlags?: readonly TagKey[];
+  // The DB row's velocity settings. Undefined = let the column DEFAULTs apply (3 in 24h,
+  // the values the rule shipped hardcoded); null count turns the check off.
+  velocityCount?: number | null;
+  velocityWindowHours?: number;
   // Leaves the singleton config row unseeded, to exercise the row-missing
   // fail-closed path.
   skipConfigSeed?: boolean;
@@ -103,6 +107,8 @@ async function makeService({
   fiatThreshold,
   cryptoThreshold,
   excludeRiskFlags,
+  velocityCount,
+  velocityWindowHours,
   skipConfigSeed = false,
   kycStatus = 'verified',
   directoryThrows = false,
@@ -115,6 +121,8 @@ async function makeService({
       fiatThreshold: fiatThreshold ?? '0',
       cryptoThreshold: cryptoThreshold ?? '0',
       ...(excludeRiskFlags !== undefined ? { excludeRiskFlags: [...excludeRiskFlags] } : {}),
+      ...(velocityCount !== undefined ? { velocityCount } : {}),
+      ...(velocityWindowHours !== undefined ? { velocityWindowHours } : {}),
     });
   }
   const events = makeEventBus();
@@ -575,6 +583,8 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       fiatThreshold: '1000',
       cryptoThreshold: '0',
       excludeRiskFlags: [],
+      velocityCount: 3,
+      velocityWindowHours: 24,
     });
     const w = await seedWallet();
 
@@ -650,6 +660,62 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
 
     expect(result.status).toBe('pending');
+  });
+
+  it('auto-approves the same withdrawal once the velocity check is turned off', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      velocityCount: null,
+    });
+    const w = await seedWallet();
+    await db.drizzle.db.insert(walletTransaction).values([
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'completed' },
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'completed' },
+    ]);
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('completed');
+  });
+
+  it('flags at the configured count and window rather than the shipped 3 in 24h', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      velocityCount: 2,
+      velocityWindowHours: 1,
+    });
+    const w = await seedWallet();
+    await db.drizzle.db.insert(walletTransaction).values({
+      walletId: w.id,
+      type: 'withdrawal',
+      amount: '1',
+      currency: 'USD',
+      status: 'completed',
+      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    });
+
+    const inside = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    const second = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(inside.status).toBe('completed');
+    expect(second.status).toBe('pending');
   });
 
   it('ignores failed and cancelled withdrawals in the velocity count', async () => {
@@ -1201,6 +1267,8 @@ describe('WalletService auto-withdrawal config methods (real PG)', () => {
       fiatThreshold: '2500',
       cryptoThreshold: '3',
       excludeRiskFlags: ['bonus_abuser'],
+      velocityCount: null,
+      velocityWindowHours: 12,
     });
 
     expect(updated.fiatThreshold).toBe('2500.000000000000000000');
@@ -1210,6 +1278,8 @@ describe('WalletService auto-withdrawal config methods (real PG)', () => {
     expect(await svc.getAutoWithdrawalConfig()).toMatchObject({
       fiatThreshold: '2500.000000000000000000',
       cryptoThreshold: '3.000000000000000000',
+      velocityCount: null,
+      velocityWindowHours: 12,
       updatedBy: adminId,
     });
   });

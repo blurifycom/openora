@@ -40,8 +40,9 @@ export type GameCategoryRuleDefinition<Params = unknown> = {
    * True when the order or content of `resolve()` reveals reporting data an admin with
    * only `game-config:view` must not infer - a revenue ranking, say. Previewing, saving
    * (in either mode), switching to, or re-evaluating a rule with such a clause also needs
-   * `report:view`. No built-in sets it: which games are most played is what the resulting
-   * category shows players anyway.
+   * `report:view`, as does filtering the admin game search with one. `most_played` sets
+   * it: its window and size are the caller's, so a short window or an earlier narrowing
+   * clause shows whether a given game was played.
    */
   exposesReporting?: boolean;
   /**

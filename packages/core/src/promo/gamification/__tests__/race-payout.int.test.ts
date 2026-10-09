@@ -199,7 +199,7 @@ describe('crediting a prize in a currency the player can actually hold', () => {
 
     const won = await service('USD').closeDue(new Date());
 
-    expect(convert).toHaveBeenCalledWith('500', 'USDT', 'USD');
+    expect(convert).toHaveBeenCalledWith('500', 'USDT', 'USD', expect.anything());
     expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '480', currency: 'USD' });
     expect(won[0]).toMatchObject({ amount: '480', currency: 'USD' });
     const payouts = await payoutsFor(raceId);

@@ -1,11 +1,17 @@
-import { DrizzleService, moneyDivide, moneyScaleBy, createLogger } from '@openora/core/server';
+import {
+  DrizzleService,
+  moneyDivide,
+  moneyScaleBy,
+  createLogger,
+  type DrizzleDb,
+} from '@openora/core/server';
 import type {
   ExchangeRateProvider,
   ExchangeRateQuote,
   ExchangeRateReader,
 } from '@openora/core/contracts';
 import { railFor } from '@openora/core/contracts';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, lte } from 'drizzle-orm';
 import { exchangeRateQuote } from '../schema/index.js';
 
 const logger = createLogger('exchange-rate-reader');
@@ -69,10 +75,12 @@ export type ExchangeRateReaderServiceDeps = {
  *     immediately, kick a single-flight background refresh that is invisible to
  *     the caller (its failure is logged, never thrown).
  *   - hard-stale (age >= hardMaxAgeMs) or no row at all: fetch synchronously
- *     through the same single-flight path; on success persist and return; on
- *     failure return `null`.
+ *     through the same single-flight path; on success return it and persist it in
+ *     the background; on failure return `null`.
  * Concurrent callers for the same (currency, pivot) leg share one in-flight
- * provider call.
+ * provider call. A caller holding a transaction reads the stored quote on it and
+ * never waits on the pool: not for the read, not for another caller's read, not for
+ * the persist.
  */
 export class ExchangeRateReaderService implements ExchangeRateReader {
   private readonly drizzle: DrizzleService;
@@ -100,7 +108,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     this.failureCooldownMs = deps.failureCooldownMs;
   }
 
-  async getRate(from: string, to: string): Promise<ExchangeRateQuote | null> {
+  async getRate(from: string, to: string, tx?: unknown): Promise<ExchangeRateQuote | null> {
     const fromCode = from.toUpperCase();
     const toCode = to.toUpperCase();
     if (fromCode === toCode) {
@@ -108,8 +116,8 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     }
 
     const [fromLeg, toLeg] = await Promise.all([
-      this.resolveLeg(fromCode),
-      this.resolveLeg(toCode),
+      this.resolveLeg(fromCode, tx),
+      this.resolveLeg(toCode, tx),
     ]);
     if (!fromLeg || !toLeg) {
       return null;
@@ -120,17 +128,22 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     return { rate, asOf };
   }
 
-  async convert(amount: string, from: string, to: string): Promise<string | null> {
-    const quote = await this.getRate(from, to);
+  async convert(amount: string, from: string, to: string, tx?: unknown): Promise<string | null> {
+    const quote = await this.getRate(from, to, tx);
     if (!quote) {
       return null;
     }
     return moneyScaleBy(amount, quote.rate);
   }
 
-  private resolveLeg(currency: string): Promise<ExchangeRateQuote | null> {
+  private resolveLeg(currency: string, tx: unknown): Promise<ExchangeRateQuote | null> {
     if (currency === this.pivot) {
       return Promise.resolve({ rate: '1.000000000000000000', asOf: new Date().toISOString() });
+    }
+    // Not shared: the shared read below runs on the pool, and a caller holding a transaction
+    // that waits on it holds one connection while waiting for another.
+    if (tx !== undefined) {
+      return this.resolveLegUncached(currency, tx as DrizzleDb);
     }
 
     const key = `${currency}:${this.pivot}`;
@@ -139,7 +152,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       return existing;
     }
 
-    const attempt = this.resolveLegUncached(currency).finally(() => {
+    const attempt = this.resolveLegUncached(currency, this.drizzle.db).finally(() => {
       if (this.legResolution.get(key) === attempt) {
         this.legResolution.delete(key);
       }
@@ -148,8 +161,11 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     return attempt;
   }
 
-  private async resolveLegUncached(currency: string): Promise<ExchangeRateQuote | null> {
-    const row = await this.readRow(currency);
+  private async resolveLegUncached(
+    currency: string,
+    db: DrizzleDb,
+  ): Promise<ExchangeRateQuote | null> {
+    const row = await this.readRow(db, currency);
     // A clock ahead of ours only ever makes a quote look newer, never older, so clamp at 0.
     const ageMs = row
       ? Math.max(0, Date.now() - row.providerAsOf.getTime())
@@ -206,8 +222,11 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     this.failedUntil.set(currency, now + this.failureCooldownMs);
   }
 
-  private async readRow(currency: string): Promise<{ rate: string; providerAsOf: Date } | null> {
-    const [row] = await this.drizzle.db
+  private async readRow(
+    db: DrizzleDb,
+    currency: string,
+  ): Promise<{ rate: string; providerAsOf: Date } | null> {
+    const [row] = await db
       .select({
         rate: exchangeRateQuote.rate,
         providerAsOf: exchangeRateQuote.providerAsOf,
@@ -259,7 +278,11 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     }
     this.assertUsableQuote(currency, quote);
 
-    await this.persist(currency, quote);
+    // Not awaited: a caller holding a transaction would otherwise wait on the pool for the write.
+    // A lost write only costs the next caller another provider fetch.
+    void this.persist(currency, quote).catch((err: unknown) => {
+      logger.warn({ err, currency, pivot: this.pivot }, 'exchange rate persist failed');
+    });
     return quote;
   }
 
@@ -295,6 +318,8 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       .onConflictDoUpdate({
         target: [exchangeRateQuote.baseCurrency, exchangeRateQuote.quoteCurrency],
         set: { rate: value.rate, providerAsOf, updatedAt: new Date() },
+        // The write is detached, so a slower, older fetch can land after a newer one.
+        setWhere: lte(exchangeRateQuote.providerAsOf, providerAsOf),
       });
   }
 }

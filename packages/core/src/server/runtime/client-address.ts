@@ -95,10 +95,10 @@ function clientFromForwardedFor(
 }
 
 // The one place a request's client address is decided. Every per-IP throttle, geo check and
-// audit row downstream reads `X-Real-IP` (and `X-Forwarded-For` behind `trustForwarded`), so
-// those headers are only honoured when the peer that sent them is a trusted proxy. Any other
-// peer gets its socket address written over `X-Real-IP` and its `X-Forwarded-For` dropped -
-// rotating either header then buys a direct caller nothing.
+// audit row downstream reads `X-Real-IP`, so the forwarding headers are only honoured when
+// the peer that sent them is a trusted proxy. Any other peer gets its socket address written
+// over `X-Real-IP` and its `X-Forwarded-For` dropped - rotating either header then buys a
+// direct caller nothing.
 //
 // Behind a trusted proxy, `X-Real-IP` always ends up holding a valid address: the client
 // derived from `X-Forwarded-For` when present, else the proxy's own `X-Real-IP` if it set a

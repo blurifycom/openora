@@ -10,6 +10,7 @@ import {
   uniqueIndex,
   boolean,
   jsonb,
+  integer,
 } from 'drizzle-orm/pg-core';
 import {
   WALLET_RAILS,
@@ -309,6 +310,11 @@ export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config
     .default(
       sql`ARRAY['high_risk','bonus_abuser','kyc_rejected','withdrawal_review','multi_account']::text[]`,
     ),
+  // Withdrawal velocity: a wallet with >= `velocityCount` withdrawals in the trailing
+  // `velocityWindowHours` goes to manual review. NULL disables the check entirely; the
+  // defaults are the values the rule shipped hardcoded.
+  velocityCount: integer().default(3),
+  velocityWindowHours: integer().notNull().default(24),
   updatedBy: uuid(),
   updatedAt: timestamp({ withTimezone: true })
     .notNull()

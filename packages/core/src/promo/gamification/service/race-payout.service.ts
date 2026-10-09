@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, lte } from 'drizzle-orm';
+import { and, eq, isNull, lte } from 'drizzle-orm';
 import type {
   ExchangeRateReader,
   PlayEligibilityPort,
@@ -6,8 +6,14 @@ import type {
   WalletCommands,
 } from '@openora/core/contracts';
 import type { DrizzleService, DrizzleTx } from '@openora/core/server';
-import { promoRace, promoRacePayout, promoRaceWager } from '../schema/index.js';
+import {
+  promoRace,
+  promoRacePayout,
+  promoRaceRoundWager,
+  promoRaceWager,
+} from '../schema/index.js';
 import { priceForPayout } from '../shared/payout-currency.js';
+import { RACE_STANDING_ORDER } from './race.service.js';
 
 /** What `plugin.ts` announces per winner, once its own settlement transaction has committed. */
 export type RaceWon = {
@@ -92,8 +98,7 @@ export class RacePayoutService {
             .select({ userId: promoRaceWager.userId, wagered: promoRaceWager.wagered })
             .from(promoRaceWager)
             .where(eq(promoRaceWager.raceId, raceId))
-            // Tie-break: whoever's accumulator last moved at that total reached it first.
-            .orderBy(desc(promoRaceWager.wagered), asc(promoRaceWager.updatedAt))
+            .orderBy(...RACE_STANDING_ORDER)
             .limit(paidPositions);
 
     const already = await tx
@@ -111,7 +116,7 @@ export class RacePayoutService {
       if (!position) {
         continue;
       }
-      const restricted = (await this.eligibility?.isRestricted(standing.userId)) ?? true;
+      const restricted = (await this.eligibility?.isRestricted(standing.userId, tx)) ?? true;
       if (restricted) {
         await tx.insert(promoRacePayout).values({
           raceId,
@@ -132,6 +137,7 @@ export class RacePayoutService {
       // rate is available; this whole settlement rolls back and the job's next tick retries it,
       // the same "not credited yet, retried later" rule a wallet credit failure follows below.
       const priced = await priceForPayout(
+        tx,
         this.rates,
         position.prize,
         race.currency,
@@ -176,6 +182,8 @@ export class RacePayoutService {
       .update(promoRace)
       .set({ closedAt: settledAt, updatedAt: settledAt })
       .where(eq(promoRace.id, raceId));
+    // Frozen standings ignore a rollback, so what each round counted here is no longer needed.
+    await tx.delete(promoRaceRoundWager).where(eq(promoRaceRoundWager.raceId, raceId));
     return won;
   }
 }

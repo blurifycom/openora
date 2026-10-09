@@ -1,4 +1,4 @@
-import { DrizzleService, sumInPivot } from '@openora/core/server';
+import { type DrizzleDb, DrizzleService, sumInPivot } from '@openora/core/server';
 import {
   type WalletReader,
   type WalletBalancesReading,
@@ -62,14 +62,20 @@ export class WalletReaderService implements WalletReader {
     this.pivotCurrency = deps.pivotCurrency;
   }
 
-  getBalances(userId: string): Promise<WalletBalancesReading> {
-    return readWalletBalances(this.drizzle.db, userId, this.defaultCurrency);
+  getBalances(userId: string, tx?: unknown): Promise<WalletBalancesReading> {
+    return readWalletBalances(this.on(tx), userId, this.defaultCurrency);
+  }
+
+  // A caller already inside a transaction passes it: taking a second pool connection while
+  // holding the first is how the pool deadlocks under a burst.
+  private on(tx?: unknown): DrizzleDb {
+    return tx === undefined ? this.drizzle.db : (tx as DrizzleDb);
   }
 
   /** Sum of a player's completed deposits, priced into pivotCurrency. Null when at least one
    * currency's amount could not be priced - never a partial or fabricated total. */
-  async getLifetimeDeposit(userId: string): Promise<string | null> {
-    const rows = await this.drizzle.db
+  async getLifetimeDeposit(userId: string, tx?: unknown): Promise<string | null> {
+    const rows = await this.on(tx)
       .select({ currency: walletTransaction.currency, total: sum(walletTransaction.amount) })
       .from(walletTransaction)
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
@@ -85,6 +91,7 @@ export class WalletReaderService implements WalletReader {
       rows.map((row) => ({ currency: row.currency, total: row.total ?? '0' })),
       this.pivotCurrency,
       this.exchangeRateReader,
+      tx,
     );
   }
 
@@ -150,8 +157,8 @@ export class WalletReaderService implements WalletReader {
     return resolveWalletBalance(this.drizzle.db, userId, this.defaultCurrency);
   }
 
-  async isFirstDeposit(userId: string, transactionId: string): Promise<boolean> {
-    const [txn] = await this.drizzle.db
+  async isFirstDeposit(userId: string, transactionId: string, tx?: unknown): Promise<boolean> {
+    const [txn] = await this.on(tx)
       .select({ createdAt: walletTransaction.createdAt })
       .from(walletTransaction)
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
@@ -166,7 +173,7 @@ export class WalletReaderService implements WalletReader {
     if (!txn) {
       return false;
     }
-    const [earlier] = await this.drizzle.db
+    const [earlier] = await this.on(tx)
       .select({ id: walletTransaction.id })
       .from(walletTransaction)
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))

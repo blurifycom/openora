@@ -15,7 +15,10 @@ export type IdentityReader = {
   getPlayerIdsByUserIdsSafe(userIds: User['id'][]): Promise<Map<User['id'], Player['id'] | null>>;
   /** Resolves the player's current KYC status from PAM, or null when no profile exists yet. */
   getPlayerKycStatusByUserId(userId: User['id']): Promise<KycStatus | null>;
-  /** Returns other player user ids that have authenticated from the same login IP. */
+  /**
+   * Returns other player user ids that have authenticated from the same login IP. Empty when
+   * `userId` is not a player: staff sharing an office IP with players is not a multi-account signal.
+   */
   getPlayerUserIdsSharingLoginIp(userId: User['id'], ipAddress: string): Promise<User['id'][]>;
   /**
    * True only while the player explicitly opted in and their delivery address remains

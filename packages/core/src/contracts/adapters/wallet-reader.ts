@@ -35,9 +35,9 @@ export type WalletReader = {
    * a player can deposit in several currencies). Null when at least one currency's amount
    * could not be priced; never a partial or fabricated total. Used for high_roller evaluation.
    */
-  getLifetimeDeposit(userId: string): Promise<string | null>;
+  getLifetimeDeposit(userId: string, tx?: unknown): Promise<string | null>;
   /** Always answers: a player with no wallet row yet gets an empty `balances` array and the platform's default wallet currency, never a throw. */
-  getBalances(userId: string): Promise<WalletBalancesReading>;
+  getBalances(userId: string, tx?: unknown): Promise<WalletBalancesReading>;
   /** Count of completed withdrawals for a player within the last windowDays days. Used for high_risk evaluation. */
   getWithdrawalCountInWindow(userId: string, windowDays: number): Promise<number>;
   /**
@@ -64,7 +64,7 @@ export type WalletReader = {
    * for the same reason as getWithdrawalCountsInWindow above - a caller without it falls back to
    * the lifetime-total comparison.
    */
-  isFirstDeposit?(userId: string, transactionId: string): Promise<boolean>;
+  isFirstDeposit?(userId: string, transactionId: string, tx?: unknown): Promise<boolean>;
 };
 
 export const WALLET_READER = createToken<WalletReader>('WALLET_READER');

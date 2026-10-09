@@ -20,6 +20,7 @@ import {
   RG_FLAG_TYPES,
   RG_FLAG_STATUSES,
   geoRuleActions,
+  GEO_RULE_ADMIN_SOURCE,
   limitTypes,
   limitPeriods,
   LIMIT_CHANGE_KINDS,
@@ -122,6 +123,7 @@ export const gameGeoRule = pgTable(
     gameId: uuid().notNull(),
     countryCode: text().notNull(),
     reason: text().notNull(),
+    source: text().notNull().default(GEO_RULE_ADMIN_SOURCE),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()

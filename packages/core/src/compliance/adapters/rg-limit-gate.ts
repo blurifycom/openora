@@ -153,7 +153,7 @@ export class RgLimitGate implements RgLimitsPort {
       const attempted =
         amountCurrency === rowCurrency
           ? amount
-          : await this.rates.convert(amount, amountCurrency, rowCurrency);
+          : await this.rates.convert(amount, amountCurrency, rowCurrency, txn);
       if (attempted === null) {
         return rateUnavailable();
       }

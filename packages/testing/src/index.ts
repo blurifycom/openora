@@ -13,6 +13,7 @@ export {
   registerPlayer,
   registerAndMaterializePlayer,
   submitRegistration,
+  uniqueUsername,
   verificationOtpFor,
   verifyEmailByOtp,
   waitForEmail,

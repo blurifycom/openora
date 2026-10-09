@@ -13,6 +13,9 @@ export const PRIVATE_ROOM_SLUG_PREFIX = 'private-';
 
 export const MAX_PRIVATE_ROOMS_PER_PLAYER = 15;
 
+export const ROOM_ACTIVITY_WINDOW_HOURS_DEFAULT = 24;
+export const ROOM_ACTIVITY_WINDOW_HOURS_MAX = 168;
+
 export const CHAT_ROOM_ROLES = ['member', 'moderator', 'owner'] as const;
 
 // Roles a room owner can grant or revoke through the member-role route. `owner` is absent

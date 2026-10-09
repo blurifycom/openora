@@ -407,6 +407,74 @@ describe('notificationEventMap', () => {
     expect(input.title).toBe('Weekly bonus credited');
   });
 
+  describe('a bonus credit', () => {
+    const granted = (source: 'deposit' | 'gift' | 'rain') => ({
+      userId: randomUUID(),
+      grantId: randomUUID(),
+      currency: 'USDT',
+      grantedAmount: '50.000000000000000000',
+      wageringRequired: '1500.000000000000000000',
+      source,
+      offerId: null,
+    });
+
+    it('mails the credit and the wagering it obliges', () => {
+      expect(entryFor('promo.bonus.granted').buildEmail(granted('deposit'), OCCURRED_AT)).toEqual({
+        key: 'bonusCredited',
+        data: {
+          grantedAmount: '50.000000000000000000',
+          wageringRequired: '1500.000000000000000000',
+          currency: 'USDT',
+        },
+      });
+    });
+
+    it('sends no mail for a bonus another player gave, which is announced where it happened', () => {
+      for (const source of ['gift', 'rain'] as const) {
+        expect(entryFor('promo.bonus.granted').buildEmail(granted(source), OCCURRED_AT)).toBeNull();
+      }
+    });
+  });
+
+  describe('a bonus that closes without converting', () => {
+    const closed = { userId: randomUUID(), grantId: randomUUID(), currency: 'USDT' };
+
+    it('tells the player a forfeited bonus is gone, why, and how much', () => {
+      const input = entryFor('promo.bonus.forfeited').buildNotification({
+        ...closed,
+        forfeitedAmount: '12.500000000000000000',
+        reason: 'terms_breach',
+        actorId: null,
+      });
+
+      expect(input).toMatchObject({
+        userId: closed.userId,
+        type: 'promo.bonus.forfeited',
+        data: { grantId: closed.grantId },
+      });
+      expect(input.body).toContain("the offer's terms were not met");
+      expect(input.body).toContain('12.5 USDT');
+    });
+
+    it('tells the player an expired bonus is gone and how much', () => {
+      const input = entryFor('promo.bonus.expired').buildNotification({
+        ...closed,
+        forfeitedAmount: '3.000000000000000000',
+      });
+
+      expect(input).toMatchObject({
+        type: 'promo.bonus.expired',
+        data: { grantId: closed.grantId },
+      });
+      expect(input.body).toContain('3 USDT');
+    });
+
+    it('stays in-app only', () => {
+      expect(entryFor('promo.bonus.forfeited').buildEmail({}, OCCURRED_AT)).toBeNull();
+      expect(entryFor('promo.bonus.expired').buildEmail({}, OCCURRED_AT)).toBeNull();
+    });
+  });
+
   it('builds a bonusUnlocked mail alongside the promo.bonus.completed in-app notification', () => {
     const entry = entryFor('promo.bonus.completed');
     const payload = {

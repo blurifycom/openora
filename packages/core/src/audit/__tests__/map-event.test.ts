@@ -1007,3 +1007,32 @@ describe('mapEventToRecord: chat.room.member.joined', () => {
     expect(row).toMatchObject({ actorType: 'player', actorId: playerId });
   });
 });
+
+describe('mapEventToRecord: compliance.game-geo-rule.*', () => {
+  const ruleId = '77777777-7777-4777-8777-777777777777';
+  const gameId = '88888888-8888-4888-8888-888888888888';
+
+  it('files an admin-written rule under the admin', async () => {
+    const row = await mapEventToRecord('compliance.game-geo-rule.upserted', {
+      ruleId,
+      gameId,
+      countryCode: 'US',
+      reason: 'licence',
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId, resourceId: ruleId });
+  });
+
+  it('files a rule a sync removed under the system', async () => {
+    const row = await mapEventToRecord('compliance.game-geo-rule.deleted', {
+      ruleId,
+      gameId,
+      countryCode: 'US',
+      reason: 'vendor lifted the restriction',
+      actorId: null,
+    });
+
+    expect(row).toMatchObject({ actorType: 'system', actorId: null, resourceId: ruleId });
+  });
+});

@@ -45,8 +45,8 @@ export class ChatModerationService implements ChatModeration {
     return this.mutes.unmute(input);
   }
 
-  listMutes(userId?: Uuid) {
-    return this.mutes.listMutes(userId);
+  listMutes(userIds?: readonly Uuid[]) {
+    return this.mutes.listMutes(userIds);
   }
 
   ban(input: Parameters<ChatModeration['ban']>[0]) {
@@ -57,7 +57,7 @@ export class ChatModerationService implements ChatModeration {
     return this.bans.unban(input);
   }
 
-  listBans(userId?: Uuid) {
-    return this.bans.listBans(userId);
+  listBans(userIds?: readonly Uuid[]) {
+    return this.bans.listBans(userIds);
   }
 }

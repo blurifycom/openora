@@ -52,7 +52,8 @@ last-wins).
 ## Template keys
 
 Auth and account: `verifyEmail`, `twoFactorOtp`, `resetPasswordOtp`, `adminResetPasswordOtp`,
-`existingAccountSignUp`, `adminInvitation`, `welcome`, `emailChangeConfirmation`, `emailChanged`.
+`existingAccountSignUp`, `adminInvitation`, `welcome`, `emailChangeConfirmation`, `emailChanged`,
+`twoFactorReset`.
 
 Responsible gambling: `rgLimitUpdated`, `rgCoolingOffActivated`, `rgCoolingOffLifted`,
 `rgSelfExclusionActivated`, `rgSelfExclusionLifted`.
@@ -67,6 +68,11 @@ Compliance and security: `kycResubmissionRequested`, `securityLoginAlert`,
 
 An overlay renderer receives every built-in template key and owns the rendered result for each key;
 there is no automatic fallback to the platform's English renderer.
+
+`welcome` goes out when the player verifies their address, before the login gates have refused
+an RG-blocked account or a blocked country. Its `promotionsEligible` is `true` only when the
+account is not RG-restricted and the verifying IP passes the country check; a renderer that
+advertises a bonus shows it only on `true` and sends the plain welcome otherwise.
 
 ## Delivery guarantee
 

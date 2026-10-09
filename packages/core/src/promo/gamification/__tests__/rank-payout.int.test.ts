@@ -300,7 +300,7 @@ describe('paying a periodic bonus', () => {
 
     const granted = await service().payPeriodic('daily', NOW);
 
-    expect(convert).toHaveBeenCalledWith('0.500000000000000000', 'USD', 'USDT');
+    expect(convert).toHaveBeenCalledWith('0.500000000000000000', 'USD', 'USDT', expect.anything());
     expect(grant).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -327,7 +327,7 @@ describe('paying a periodic bonus', () => {
 
     await service().payPeriodic('daily', NOW);
 
-    expect(convert).toHaveBeenCalledWith('0.500000000000000000', 'USD', 'BTC');
+    expect(convert).toHaveBeenCalledWith('0.500000000000000000', 'USD', 'BTC', expect.anything());
     expect(grant).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ userId, currency: 'BTC', amount: '0.000008000000000000' }),
@@ -348,7 +348,7 @@ describe('paying a periodic bonus', () => {
 
     await service().payPeriodic('daily', NOW);
 
-    expect(convert).toHaveBeenCalledWith('5', 'USD', 'BTC');
+    expect(convert).toHaveBeenCalledWith('5', 'USD', 'BTC', expect.anything());
     expect(grant).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

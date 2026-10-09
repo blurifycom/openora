@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
+import { GAME_GEO_RULE_COMMANDS } from '@openora/core/contracts';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
 import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
@@ -642,7 +643,12 @@ describe('bulk geo restrict / unrestrict', () => {
         before: {
           removedRules: [...rules]
             .sort((a, b) => a.gameId.localeCompare(b.gameId))
-            .map((rule) => ({ ruleId: rule.id, gameId: rule.gameId, reason: 'bulk restriction' })),
+            .map((rule) => ({
+              ruleId: rule.id,
+              gameId: rule.gameId,
+              reason: 'bulk restriction',
+              source: 'admin',
+            })),
         },
         after: expect.objectContaining({
           operation: 'unrestrict',
@@ -730,6 +736,121 @@ describe('bulk geo restrict / unrestrict', () => {
       });
       expect(reasonTooLong.status).toBe(400);
     }
+  });
+});
+
+describe('background sync ownership', () => {
+  const SOURCE = 'vendor-feed';
+
+  async function listRules(gameId: string) {
+    const response = await admin.get(`/compliance/game-geo-rules?gameIds[]=${gameId}`);
+    expect(response.status).toBe(200);
+    return ((await readJson(response)).items as Array<Record<string, unknown>>)
+      .map(({ id, countryCode, source }) => ({ id, countryCode, source }))
+      .sort((a, b) => String(a.countryCode).localeCompare(String(b.countryCode)));
+  }
+
+  async function syncAuditEntries(gameId: string) {
+    const response = await admin.get('/audit/logs?action=compliance.game-geo-rules.synced');
+    expect(response.status).toBe(200);
+    const entries = (await readJson(response)).items as Array<Record<string, unknown>>;
+    return entries.filter((entry) => {
+      const after = entry['after'] as { insertedRules: Array<{ gameId: string }> };
+      const before = entry['before'] as { removedRules: Array<{ gameId: string }> } | null;
+      return [...after.insertedRules, ...(before?.removedRules ?? [])].some(
+        (rule) => rule.gameId === gameId,
+      );
+    });
+  }
+
+  it('writes synced rules as the system, and an admin write takes one over', async () => {
+    const synced = await seedGame('Sync takeover');
+    const bulkTarget = await seedGame('Sync bulk takeover');
+    const commands = app.container.get(GAME_GEO_RULE_COMMANDS);
+
+    await expect(
+      commands.replaceGameGeoRules({
+        source: SOURCE,
+        reason: 'Restricted by the vendor',
+        rules: [
+          { gameId: synced.gameId, countryCodes: ['US', 'DE'] },
+          { gameId: bulkTarget.gameId.toUpperCase(), countryCodes: ['DK'] },
+        ],
+      }),
+    ).resolves.toEqual({ inserted: 3, deleted: 0, notFoundGameIds: [] });
+    const syncedRules = await listRules(synced.gameId);
+    expect(syncedRules).toEqual([
+      expect.objectContaining({ countryCode: 'DE', source: SOURCE }),
+      expect.objectContaining({ countryCode: 'US', source: SOURCE }),
+    ]);
+    expect(await syncAuditEntries(synced.gameId)).toEqual([
+      expect.objectContaining({
+        actorType: 'system',
+        actorId: null,
+        resourceType: 'game-geo-rule',
+        after: expect.objectContaining({ source: SOURCE, reason: 'Restricted by the vendor' }),
+      }),
+    ]);
+    expect(
+      await auditEntries(String(syncedRules[0]?.id), 'compliance.game-geo-rule.upserted'),
+    ).toEqual([]);
+
+    const forbidden = await player.put(`/compliance/game-geo-rules/${synced.gameId}`, {
+      countryCodes: ['US'],
+      reason: 'player must not administer geo policy',
+    });
+    expect(forbidden.status).toBe(403);
+
+    const takeover = await admin.put(`/compliance/game-geo-rules/${synced.gameId}`, {
+      countryCodes: ['US'],
+      reason: 'confirmed by compliance',
+    });
+    expect(takeover.status).toBe(200);
+    expect(await readJson(takeover)).toEqual([
+      expect.objectContaining({ countryCode: 'US', source: 'admin' }),
+    ]);
+
+    await expect(
+      commands.replaceGameGeoRules({
+        source: SOURCE,
+        reason: 'Vendor lifted the restriction',
+        rules: [{ gameId: synced.gameId, countryCodes: [] }],
+      }),
+    ).resolves.toEqual({ inserted: 0, deleted: 1, notFoundGameIds: [] });
+    expect(await listRules(synced.gameId)).toEqual([
+      expect.objectContaining({ countryCode: 'US', source: 'admin' }),
+    ]);
+
+    const bulk = await admin.post('/compliance/game-geo-rules/bulk/restrict', {
+      gameIds: [bulkTarget.gameId],
+      countryCode: 'DK',
+      reason: 'bulk takeover',
+    });
+    expect(await readJson(bulk)).toMatchObject({ changed: 1, unchanged: 0 });
+    expect(await bulkAuditEntries(bulkTarget.gameId, 'restrict')).toEqual([
+      expect.objectContaining({
+        before: {
+          takenOverRules: [
+            expect.objectContaining({
+              gameId: bulkTarget.gameId,
+              reason: 'Restricted by the vendor',
+              source: SOURCE,
+            }),
+          ],
+        },
+      }),
+    ]);
+
+    await expect(
+      commands.replaceGameGeoRules({
+        source: 'admin',
+        reason: 'impersonating the backoffice',
+        rules: [{ gameId: bulkTarget.gameId, countryCodes: [] }],
+      }),
+    ).rejects.toThrow();
+    expect(await listRules(bulkTarget.gameId)).toEqual([
+      expect.objectContaining({ countryCode: 'DK', source: 'admin' }),
+    ]);
   });
 });
 

@@ -153,6 +153,10 @@ export default {
     ctx.events.on('gaming.games.created', (payload) =>
       requireMembership().triggers.gamesCreated(payload),
     );
+    ctx.events.on('gaming.games.changed', (payload) => {
+      requireTriggers().gamesChanged(payload);
+      requireMembership().triggers.gamesChanged(payload);
+    });
     ctx.events.on('gaming.tag.deleted', (payload) =>
       requireMembership().triggers.tagDeleted(payload),
     );
@@ -223,6 +227,7 @@ export default {
       accumulateExternalRound: (tx, args) => gamingService(c).accumulateExternalRound(tx, args),
       setGameAvailability: (args) => gamingService(c).setGameAvailability(args),
       notifyGamesCreated: (args) => membershipServices(c).triggers.notifyGamesCreated(args.gameIds),
+      notifyGamesChanged: (args) => gamingService(c).notifyGamesChanged(args),
     }));
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

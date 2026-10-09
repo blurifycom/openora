@@ -21,7 +21,9 @@ import {
   GameTagSnapshotSchema,
 } from './game.js';
 import {
+  GEO_RULE_ADMIN_SOURCE,
   GeoRuleActionSchema,
+  GeoRuleSourceSchema,
   LimitTypeSchema,
   LimitPeriodSchema,
   LimitChangeKindSchema,
@@ -98,12 +100,14 @@ const gameGeoRuleEventState = z.object({
   gameId: UuidSchema,
   countryCode: CountryCodeSchema,
   reason: NonEmptyReasonSchema,
+  // v1 events predate the column, when every rule was admin-written.
+  source: GeoRuleSourceSchema.default(GEO_RULE_ADMIN_SOURCE),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
 
 const providerGeoRuleEventState = gameGeoRuleEventState
-  .omit({ gameId: true })
+  .omit({ gameId: true, source: true })
   .extend({ providerId: UuidSchema });
 
 // A category's full config snapshot, shared by gaming.category.created (spread at the
@@ -604,6 +608,14 @@ export const domainEventSchemas = {
     // Matches GAMES_CREATED_EVENT_BATCH in the gaming module contract, which batches to it.
     gameIds: z.array(UuidSchema).min(1).max(1000),
   }),
+  // Existing catalogue rows an importer rewrote outside the admin update. tagIds and
+  // providerIds are what the games were linked to before, so rules naming a tag or provider
+  // the games left re-evaluate too. Each array matches GAMES_CHANGED_EVENT_BATCH.
+  'gaming.games.changed': z.object({
+    gameIds: z.array(UuidSchema).max(1000),
+    tagIds: z.array(UuidSchema).max(1000),
+    providerIds: z.array(UuidSchema).max(1000),
+  }),
   'gaming.tag.created': authContextBase
     .extend({ tagId: UuidSchema })
     .extend(GameTagSnapshotSchema.shape)
@@ -955,7 +967,8 @@ export const domainEventSchemas = {
     reason: NonEmptyReasonSchema,
     before: gameGeoRuleEventState.nullable(),
     after: gameGeoRuleEventState,
-    actorId: UuidSchema,
+    actorId: UuidSchema.nullable(),
+    auditRecorded: z.literal(true).optional(),
   }),
 
   'compliance.game-geo-rule.deleted': authContextBase.extend({
@@ -965,7 +978,8 @@ export const domainEventSchemas = {
     reason: NonEmptyReasonSchema,
     before: gameGeoRuleEventState,
     after: z.null(),
-    actorId: UuidSchema,
+    actorId: UuidSchema.nullable(),
+    auditRecorded: z.literal(true).optional(),
   }),
 
   'compliance.game-geo-rules.bulk_updated': gameBulkEventBase.extend({
@@ -1308,6 +1322,10 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v3: sortDirectionBefore/After and sortParamsBefore/After added - a reorder also
   // resets those two fields, which v2 silently dropped from the audit trail.
   'gaming.category.games_reordered': 3,
+  // v2: actorId is nullable - null marks a rule a background sync wrote or removed, named
+  // by the state's new `source`; auditRecorded marks one whose audit row already exists.
+  'compliance.game-geo-rule.upserted': 2,
+  'compliance.game-geo-rule.deleted': 2,
 };
 
 export function getEventVersion(event: string): number {

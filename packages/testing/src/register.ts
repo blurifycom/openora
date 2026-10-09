@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
@@ -12,6 +12,14 @@ export type RegisterPlayerInput = {
   username?: string;
 };
 
+/**
+ * A unique handle within the 20-char limit. The suffix is digits only: a hex suffix
+ * spells words like `caca` often enough to trip the username profanity check.
+ */
+export function uniqueUsername(prefix: string) {
+  return `${prefix.slice(0, 7)}_${randomInt(10 ** 11, 10 ** 12)}`;
+}
+
 /** POST /identity/register with a unique handle and client IP. Does not verify the email. */
 export async function submitRegistration(app: TestApp, input: RegisterPlayerInput) {
   return app.app.request('/identity/register', {
@@ -20,7 +28,7 @@ export async function submitRegistration(app: TestApp, input: RegisterPlayerInpu
     body: JSON.stringify({
       email: input.email,
       password: input.password ?? 'password1234',
-      username: input.username ?? `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
+      username: input.username ?? uniqueUsername('player'),
       acceptedTerms: true,
       acceptedAge: true,
     }),

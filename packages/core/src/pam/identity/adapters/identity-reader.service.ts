@@ -1,6 +1,7 @@
 import { createLogger, DrizzleService } from '@openora/core/server';
 import type { IdentityReader, KycStatus, Player, User } from '@openora/core/contracts';
-import { and, eq, inArray, isNull, lt, max, ne, or, SQL } from 'drizzle-orm';
+import { and, eq, exists, inArray, isNull, lt, max, ne, or, SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { session, user } from '../schema/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 
@@ -106,12 +107,25 @@ export class IdentityReaderService implements IdentityReader {
     userId: User['id'],
     ipAddress: string,
   ): Promise<User['id'][]> {
+    const caller = alias(user, 'caller');
     const rows = await this.drizzle.db
       .select({ userId: user.id })
       .from(session)
       .innerJoin(user, eq(session.userId, user.id))
       .innerJoin(player, eq(player.userId, user.id))
-      .where(and(eq(session.ipAddress, ipAddress), ne(user.id, userId), eq(user.role, 'player')))
+      .where(
+        and(
+          eq(session.ipAddress, ipAddress),
+          ne(user.id, userId),
+          eq(user.role, 'player'),
+          exists(
+            this.drizzle.db
+              .select({ id: caller.id })
+              .from(caller)
+              .where(and(eq(caller.id, userId), eq(caller.role, 'player'))),
+          ),
+        ),
+      )
       .groupBy(user.id);
     return rows.map((r) => r.userId);
   }

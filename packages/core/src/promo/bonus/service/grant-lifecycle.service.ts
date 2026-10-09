@@ -211,6 +211,8 @@ export class GrantLifecycleService {
         // on the backoffice screen the rule is written for, as a bonus part-way to converting.
         wageringProgress: ZERO,
         ...(outcome.reason === undefined ? {} : { forfeitReason: outcome.reason }),
+        ...(outcome.actor === undefined ? {} : { forfeitedBy: outcome.actor.id }),
+        ...(outcome.note === undefined ? {} : { forfeitNote: outcome.note }),
       })
       .where(and(eq(promoGrant.id, grantId), inArray(promoGrant.status, LIVE_STATUSES)))
       .returning({

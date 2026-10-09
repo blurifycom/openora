@@ -119,7 +119,7 @@ export class StreakPayoutService {
         .set({ settledAt: new Date(), outcome })
         .where(eq(promoStreakMilestoneGrant.id, id));
 
-    if ((await this.eligibility?.isRestricted(row.userId)) ?? true) {
+    if ((await this.eligibility?.isRestricted(row.userId, tx)) ?? true) {
       await settle('restricted');
       return { granted: [], cashPaid: [] };
     }
@@ -158,7 +158,7 @@ export class StreakPayoutService {
       throw new Error('BONUS_GRANTS is not bound');
     }
     const amount = reward.kind === 'bonus' ? reward.amount : rollGiftDrop(reward.min, reward.max);
-    const currency = await this.currencyFor();
+    const currency = await this.currencyFor(tx);
     const outcome = await this.grants.grant(tx, {
       userId,
       currency,
@@ -209,11 +209,17 @@ export class StreakPayoutService {
     if (!this.wallet) {
       throw new Error('WALLET_COMMANDS is not bound');
     }
-    const currency = await this.currencyFor();
+    const currency = await this.currencyFor(tx);
     // Never the streak's own currency unconditionally - see RacePayoutService's own use of
     // `priceForPayout` for why. Throws on no rate, rolling back this milestone's settlement so
     // the payout job's next tick retries it.
-    const priced = await priceForPayout(this.rates, reward.amount, currency, this.payoutCurrency);
+    const priced = await priceForPayout(
+      tx,
+      this.rates,
+      reward.amount,
+      currency,
+      this.payoutCurrency,
+    );
     const outcome = await this.wallet.credit(tx, {
       userId,
       amount: priced.amount,
@@ -236,8 +242,8 @@ export class StreakPayoutService {
     };
   }
 
-  private async currencyFor() {
-    const [config] = await this.drizzle.db
+  private async currencyFor(tx: DrizzleTx) {
+    const [config] = await tx
       .select({ currency: promoStreakConfig.currency })
       .from(promoStreakConfig);
     return config?.currency ?? 'USD';
