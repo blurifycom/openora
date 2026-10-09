@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { AuditWritePort, RealtimeTransport } from '@openora/core/contracts';
-import { mock, NO_CLIENT_META } from '../../../testing/mock.js';
+import { makeEventBus, mock, NO_CLIENT_META } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { chatMute } from '../schema/index.js';
 import { ChatModerationService } from '../service/chat-moderation.service.js';
@@ -22,6 +22,7 @@ const makeModeration = () =>
       record: vi.fn().mockResolvedValue(undefined),
       recordInTransaction: vi.fn().mockResolvedValue(undefined),
     }),
+    makeEventBus(),
   );
 
 async function seedMute(overrides: Partial<typeof chatMute.$inferInsert> = {}) {

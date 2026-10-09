@@ -14,26 +14,31 @@ import {
   type RealtimeTransport,
   type Uuid,
 } from '@openora/core/contracts';
+import { user } from '@openora/core/pam/schema/identity';
 import {
   chatRoom,
   chatRoomBan,
   chatRoomConfiguration,
+  chatRoomInvite,
   chatRoomMember,
   chatRoomRemove,
 } from '../schema/index.js';
 import type {
+  ChatMemberJoinedSignal,
   ChatMemberRoleChangedSignal,
   ChatRoomAssignableRole,
   ChatRoomRole,
   ChatRoomScheduledForDeletionSignal,
 } from '../contract/index.js';
 import {
+  CHAT_MEMBER_JOINED_SIGNAL,
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
   CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL,
   OWNERLESS_ROOM_RETENTION_DAYS,
 } from '../contract/constants.js';
 import {
   ChatRoomBannedError,
+  ChatRoomInviteOnlyError,
   ChatRoomJoinCodeNotFoundError,
   ChatRoomLastModeratorError,
   ChatRoomLockedError,
@@ -44,8 +49,15 @@ import {
   ChatRoomSelfModerationError,
 } from './errors/chat-moderation.errors.js';
 import { revokeChannelBestEffort, revokeRoomChannelBestEffort } from './channel-revoke.service.js';
+import {
+  emitExpiredInvites,
+  expireInvitesSentBy,
+  expirePendingInvites,
+} from './chat-room-invite-expiry.service.js';
 
 const MODERATOR_ROLES = ['moderator', 'owner'] as const;
+
+const STAFF_USER_ROLES = ['admin', 'super-admin'] as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -77,13 +89,20 @@ export class ChatRoomMembershipService {
     private readonly identityReader: IdentityReader,
   ) {}
 
-  private async join(
-    roomId: Uuid,
-    userId: Uuid,
-    meta: ClientMeta & { adminId?: Uuid },
-    predicate: ReturnType<typeof and>,
-  ) {
-    const { room, inserted } = await this.drizzle.db.transaction((t) =>
+  private async join({
+    roomId,
+    userId,
+    meta,
+    predicate,
+    inTransaction,
+  }: {
+    roomId: Uuid;
+    userId: Uuid;
+    meta: ClientMeta & { adminId?: Uuid };
+    predicate: ReturnType<typeof and>;
+    inTransaction?: (t: DrizzleTx) => Promise<void>;
+  }) {
+    const { room, inserted, joinerRole } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const [room] = await t.select().from(chatRoom).where(predicate).limit(1);
         if (!room) {
@@ -91,19 +110,28 @@ export class ChatRoomMembershipService {
         }
         if (!meta.adminId) {
           const [config] = await t
-            .select({ lockRoom: chatRoomConfiguration.lockRoom })
+            .select({
+              lockRoom: chatRoomConfiguration.lockRoom,
+              onlyInvitedCanJoin: chatRoomConfiguration.onlyInvitedCanJoin,
+            })
             .from(chatRoomConfiguration)
             .where(eq(chatRoomConfiguration.roomId, roomId))
             .limit(1);
-          const [member] = config?.lockRoom
-            ? await t
-                .select({ id: chatRoomMember.id })
-                .from(chatRoomMember)
-                .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
-                .limit(1)
-            : [];
+          const inviteOnly =
+            !room.isPublic && config?.onlyInvitedCanJoin === true && !inTransaction;
+          const [member] =
+            config?.lockRoom || inviteOnly
+              ? await t
+                  .select({ id: chatRoomMember.id })
+                  .from(chatRoomMember)
+                  .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+                  .limit(1)
+              : [];
           if (config?.lockRoom && !member) {
             throw new ChatRoomLockedError(roomId);
+          }
+          if (inviteOnly && !member) {
+            throw new ChatRoomInviteOnlyError(roomId);
           }
         }
         const [ban] = await t
@@ -121,12 +149,17 @@ export class ChatRoomMembershipService {
         if (ban) {
           throw new ChatRoomBannedError(roomId);
         }
+        await inTransaction?.(t);
         const inserted = await t
           .insert(chatRoomMember)
           .values({ roomId, userId })
           .onConflictDoNothing()
           .returning();
-        return { room, inserted };
+        const [joiner] =
+          inserted.length > 0
+            ? await t.select({ role: user.role }).from(user).where(eq(user.id, userId)).limit(1)
+            : [];
+        return { room, inserted, joinerRole: joiner?.role ?? null };
       }),
     );
     if (inserted.length > 0) {
@@ -138,6 +171,10 @@ export class ChatRoomMembershipService {
         ip: meta.ip ?? null,
         userAgent: meta.userAgent ?? null,
       });
+      // The member list hides staff from ordinary viewers, so their joins are not signalled.
+      if (!room.isPublic && !STAFF_USER_ROLES.some((role) => role === joinerRole)) {
+        await this.signalMemberJoined(roomId, userId);
+      }
     }
     return toRoom(room);
   }
@@ -152,39 +189,82 @@ export class ChatRoomMembershipService {
         if (!candidate) {
           throw new ChatRoomJoinCodeNotFoundError(joinCode);
         }
-        return this.join(
-          candidate.id,
+        return this.join({
+          roomId: candidate.id,
           userId,
-          { ip, userAgent },
-          and(
+          meta: { ip, userAgent },
+          predicate: and(
             eq(chatRoom.id, candidate.id),
             eq(chatRoom.joinCode, joinCode),
             isNull(chatRoom.deletedAt),
           ),
-        );
+        });
       });
   }
 
-  joinPublicRoom({ roomId, userId, ip, userAgent }: { roomId: Uuid; userId: Uuid } & ClientMeta) {
-    return this.join(
+  // `inTransaction` runs under the room lock after the lock and ban checks, before the insert.
+  joinByInvite({
+    roomId,
+    userId,
+    ip,
+    userAgent,
+    inTransaction,
+  }: {
+    roomId: Uuid;
+    userId: Uuid;
+    inTransaction: (t: DrizzleTx) => Promise<void>;
+  } & ClientMeta) {
+    return this.join({
       roomId,
       userId,
-      { ip, userAgent },
-      and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, true), isNull(chatRoom.deletedAt)),
-    );
+      meta: { ip, userAgent },
+      predicate: and(
+        eq(chatRoom.id, roomId),
+        eq(chatRoom.isPublic, false),
+        isNull(chatRoom.deletedAt),
+        isNull(chatRoom.scheduledDeletionAt),
+      ),
+      inTransaction,
+    });
+  }
+
+  async findMemberRoom(roomId: Uuid, userId: Uuid) {
+    const [row] = await this.drizzle.db
+      .select({ room: chatRoom })
+      .from(chatRoom)
+      .innerJoin(
+        chatRoomMember,
+        and(eq(chatRoomMember.roomId, chatRoom.id), eq(chatRoomMember.userId, userId)),
+      )
+      .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
+      .limit(1);
+    return row ? toRoom(row.room) : null;
+  }
+
+  joinPublicRoom({ roomId, userId, ip, userAgent }: { roomId: Uuid; userId: Uuid } & ClientMeta) {
+    return this.join({
+      roomId,
+      userId,
+      meta: { ip, userAgent },
+      predicate: and(
+        eq(chatRoom.id, roomId),
+        eq(chatRoom.isPublic, true),
+        isNull(chatRoom.deletedAt),
+      ),
+    });
   }
 
   adminJoinRoom({ roomId, userId, ip, userAgent }: { roomId: Uuid; userId: Uuid } & ClientMeta) {
-    return this.join(
+    return this.join({
       roomId,
       userId,
-      { ip, userAgent, adminId: userId },
-      and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)),
-    );
+      meta: { ip, userAgent, adminId: userId },
+      predicate: and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)),
+    });
   }
 
   async leaveRoom({ userId, roomId, ip, userAgent }: { userId: Uuid; roomId: Uuid } & ClientMeta) {
-    const { removed, isPublic } = await this.drizzle.db.transaction((t) =>
+    const { removed, isPublic, expired } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const [room] = await t
           .select({ id: chatRoom.id, isPublic: chatRoom.isPublic })
@@ -226,14 +306,22 @@ export class ChatRoomMembershipService {
           .delete(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
           .returning();
-        return { removed: deleted, isPublic: room.isPublic };
+        const expired = await expireInvitesSentBy(t, roomId, userId);
+        return { removed: deleted, isPublic: room.isPublic, expired };
       }),
     );
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    emitExpiredInvites(this.events, expired, {
+      actorId: userId,
+      actorPlayerId: playerId,
+      ip,
+      userAgent,
+    });
     if (removed.length > 0) {
       this.events.emit('chat.room.member.left', {
         roomId,
         userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        playerId,
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
@@ -256,7 +344,7 @@ export class ChatRoomMembershipService {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
-    const removed = await this.drizzle.db.transaction((t) =>
+    const { removed, expired } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const [moderator] = await t
           .select({ role: chatRoomMember.role })
@@ -282,8 +370,9 @@ export class ChatRoomMembershipService {
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
           .returning({ id: chatRoomMember.id });
         if (removed.length === 0) {
-          return false;
+          return { removed: false, expired: [] };
         }
+        const expired = await expireInvitesSentBy(t, roomId, userId);
         const [removal] = await t
           .insert(chatRoomRemove)
           .values({ roomId, userId, removedBy: moderatorId, reason })
@@ -298,9 +387,16 @@ export class ChatRoomMembershipService {
           ip: ip ?? null,
           userAgent: userAgent ?? null,
         });
-        return true;
+        return { removed: true, expired };
       }),
     );
+    emitExpiredInvites(this.events, expired, {
+      actorId: moderatorId,
+      actorPlayerId:
+        expired.length > 0 ? await this.identityReader.getPlayerIdByUserIdSafe(moderatorId) : null,
+      ip,
+      userAgent,
+    });
     if (removed) {
       this.events.emit('chat.room.member.removed', {
         roomId,
@@ -334,7 +430,7 @@ export class ChatRoomMembershipService {
     role: ChatRoomAssignableRole;
   } & ClientMeta) {
     // Same lock leaveRoom takes, so a role write serializes against the last-moderator check.
-    const changed = await this.drizzle.db.transaction((t) =>
+    const { changed, expired } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const [room] = await t
           .select({ id: chatRoom.id })
@@ -372,16 +468,22 @@ export class ChatRoomMembershipService {
           throw new ChatRoomNotModeratorError(roomId);
         }
         if (target.role === role) {
-          return null;
+          return { changed: null, expired: [] };
         }
         const updated = await t
           .update(chatRoomMember)
           .set({ role, roleAssignedAt: role === 'member' ? null : new Date() })
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
           .returning({ id: chatRoomMember.id });
-        return updated.length === 1 ? target.role : null;
+        if (updated.length !== 1) {
+          return { changed: null, expired: [] };
+        }
+        const expired = role === 'member' ? await expireInvitesSentBy(t, roomId, userId) : [];
+        return { changed: target.role, expired };
       }),
     );
+    const playerId = changed ? await this.identityReader.getPlayerIdByUserIdSafe(actorId) : null;
+    emitExpiredInvites(this.events, expired, { actorId, actorPlayerId: playerId, ip, userAgent });
     if (changed) {
       this.events.emit('chat.room.member.role-changed', {
         roomId,
@@ -391,7 +493,7 @@ export class ChatRoomMembershipService {
         previousRole: changed,
         // Null when the acting owner has no player record (the audit mapper then falls back
         // to `changedBy`), matching how the kicked/banned events carry the actor.
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(actorId),
+        playerId,
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
@@ -402,6 +504,15 @@ export class ChatRoomMembershipService {
       await this.signalRoleChange(roomId, userId, role);
     }
     return { success: true } as const;
+  }
+
+  private async signalMemberJoined(roomId: Uuid, userId: Uuid) {
+    const payload: ChatMemberJoinedSignal = { roomId, userId };
+    try {
+      await this.transport?.signal?.(chatChannel(roomId), CHAT_MEMBER_JOINED_SIGNAL, payload);
+    } catch (err: unknown) {
+      logger.error({ err, roomId, userId }, 'chat member-joined signal failed');
+    }
   }
 
   private async signalRoleChange(roomId: Uuid, userId: Uuid, role: ChatRoomRole) {
@@ -425,9 +536,22 @@ export class ChatRoomMembershipService {
           isNull(chatRoom.deletedAt),
         ),
       );
+    const received = await expirePendingInvites(
+      this.drizzle.db,
+      eq(chatRoomInvite.inviteeId, userId),
+    );
+    const playerId =
+      rooms.length > 0 || received.length > 0
+        ? await this.identityReader.getPlayerIdByUserIdSafe(userId)
+        : null;
+    emitExpiredInvites(this.events, received, { actorId: userId, actorPlayerId: playerId });
     for (const { id: roomId } of rooms) {
       const result = await this.closeAccountInRoom(roomId, userId, closedAt);
       if (result) {
+        emitExpiredInvites(this.events, result.expired, {
+          actorId: userId,
+          actorPlayerId: playerId,
+        });
         await this.announceAccountClosed(roomId, userId, result.handover);
       }
     }
@@ -449,10 +573,12 @@ export class ChatRoomMembershipService {
           )
           .returning({ role: chatRoomMember.role });
         if (!stamped) {
-          return this.rederiveHandover(t, roomId, userId, closedAt);
+          const rederived = await this.rederiveHandover(t, roomId, userId, closedAt);
+          return rederived && { ...rederived, expired: [] };
         }
+        const expired = await expireInvitesSentBy(t, roomId, userId);
         if (stamped.role !== 'owner') {
-          return { handover: null };
+          return { handover: null, expired };
         }
         const [room] = await t
           .select({ name: chatRoom.name })
@@ -462,7 +588,7 @@ export class ChatRoomMembershipService {
           )
           .limit(1);
         if (!room) {
-          return { handover: null };
+          return { handover: null, expired };
         }
         const candidates = await t
           .select({ userId: chatRoomMember.userId })
@@ -512,6 +638,7 @@ export class ChatRoomMembershipService {
               roomName: room.name,
               newOwnerId,
             },
+            expired,
           } as const;
         }
 
@@ -527,8 +654,9 @@ export class ChatRoomMembershipService {
           .returning({ scheduledDeletionAt: chatRoom.scheduledDeletionAt });
         await demoteClosedOwner();
         if (!scheduled?.scheduledDeletionAt) {
-          return { handover: null };
+          return { handover: null, expired };
         }
+        expired.push(...(await expirePendingInvites(t, eq(chatRoomInvite.roomId, roomId))));
         const recipients = await t
           .select({ userId: chatRoomMember.userId })
           .from(chatRoomMember)
@@ -540,6 +668,7 @@ export class ChatRoomMembershipService {
             scheduledDeletionAt: scheduled.scheduledDeletionAt,
             memberIds: recipients.map((m) => m.userId),
           },
+          expired,
         } as const;
       }),
     );

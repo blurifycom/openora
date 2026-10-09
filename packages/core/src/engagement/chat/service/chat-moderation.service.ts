@@ -13,6 +13,7 @@ import { ChatMuteService } from './chat-mute.service.js';
 export * from './errors/chat-moderation.errors.js';
 export { ChatMessageNotFoundError } from './chat-message-moderation.service.js';
 import { DrizzleService } from '@openora/core/server';
+import type { EventBus } from '@openora/core/server';
 
 export class ChatModerationService implements ChatModeration {
   private readonly messages: ChatMessageModerationService;
@@ -20,10 +21,15 @@ export class ChatModerationService implements ChatModeration {
   private readonly bans: ChatBanService;
   private readonly cooldowns: ChatCooldownService;
 
-  constructor(drizzle: DrizzleService, transport: RealtimeTransport, audit: AuditWritePort) {
+  constructor(
+    drizzle: DrizzleService,
+    transport: RealtimeTransport,
+    audit: AuditWritePort,
+    events: EventBus,
+  ) {
     this.messages = new ChatMessageModerationService(drizzle, transport, audit);
     this.mutes = new ChatMuteService(drizzle, audit);
-    this.bans = new ChatBanService(drizzle, audit, transport);
+    this.bans = new ChatBanService(drizzle, audit, events, transport);
     this.cooldowns = new ChatCooldownService(drizzle, audit);
   }
 

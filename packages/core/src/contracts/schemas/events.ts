@@ -883,6 +883,48 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     adminId: UuidSchema.optional(),
   }),
+  // A room owner or moderator invited a player into a private room. `playerId` is the
+  // inviter's; the accept and decline payloads carry the invitee's.
+  'chat.room.invite.sent': authContextBase.extend({
+    inviteId: UuidSchema,
+    roomId: UuidSchema,
+    inviterId: UuidSchema,
+    inviteeId: UuidSchema,
+    inviterUsername: z.string(),
+    roomName: z.string(),
+    playerId: UuidSchema.nullable(),
+  }),
+  // An invite to a player who may not receive it is stored but never delivered.
+  'chat.room.invite.withheld': authContextBase.extend({
+    inviteId: UuidSchema,
+    roomId: UuidSchema,
+    inviterId: UuidSchema,
+    inviteeId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'chat.room.invite.accepted': authContextBase.extend({
+    inviteId: UuidSchema,
+    roomId: UuidSchema,
+    inviterId: UuidSchema,
+    inviteeId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'chat.room.invite.declined': authContextBase.extend({
+    inviteId: UuidSchema,
+    roomId: UuidSchema,
+    inviterId: UuidSchema,
+    inviteeId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  // A pending invite lapsed or was voided; `actorId` is absent when the expiry sweep did it.
+  'chat.room.invite.expired': authContextBase.extend({
+    inviteId: UuidSchema,
+    roomId: UuidSchema,
+    inviterId: UuidSchema,
+    inviteeId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    actorPlayerId: UuidSchema.nullable().optional(),
+  }),
   'chat.room.member.left': authContextBase.extend({
     roomId: UuidSchema,
     userId: UuidSchema,

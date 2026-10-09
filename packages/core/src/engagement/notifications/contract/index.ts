@@ -29,6 +29,7 @@ export const NOTIFICATION_TYPES = [
   'chat.mention',
   'chat.room.ownership_transferred',
   'chat.room.scheduled_for_deletion',
+  'chat.room_invite.received',
   // Core never emits this one: it is the seam for an operator-run VIP programme, whose overlay
   // tells the player through its own NotificationsService when it admits them.
   'vip.assigned',

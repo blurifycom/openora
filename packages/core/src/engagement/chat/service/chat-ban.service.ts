@@ -6,6 +6,7 @@ import {
   serializeRow,
   withAdvisoryXactLock,
 } from '@openora/core/server';
+import type { EventBus } from '@openora/core/server';
 import type {
   AuditWritePort,
   ChatModerationRoomId,
@@ -16,11 +17,20 @@ import type {
   Uuid,
 } from '@openora/core/contracts';
 import { chatPlatformBan, chatRoom, chatRoomMember } from '../schema/index.js';
-import { resolveModerationTarget, type ModerationTarget } from '../moderation/index.js';
+import {
+  platformScopesFor,
+  resolveModerationTarget,
+  type ModerationTarget,
+} from '../moderation/index.js';
 import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
 import { retireLapsedRows } from './chat-moderation-expiry.service.js';
+import { emitExpiredInvites, expireInvitesInvolving } from './chat-room-invite-expiry.service.js';
 
 const logger = createLogger('chat');
+
+export function chatPlatformBanLockKey(userId: Uuid) {
+  return `chat-platform-ban:${userId}`;
+}
 
 function activeBanFilter(userId: Uuid, target: ModerationTarget) {
   return and(
@@ -35,6 +45,7 @@ export class ChatBanService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly audit: AuditWritePort,
+    private readonly events: EventBus,
     private readonly transport?: RealtimeTransport,
   ) {}
 
@@ -56,8 +67,8 @@ export class ChatBanService {
     const target = await resolveModerationTarget(this.drizzle.db, roomId, { validate: true });
     const expiresAt =
       durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
-    await this.drizzle.db.transaction((t) =>
-      withAdvisoryXactLock(t, `chat-platform-ban:${userId}`, async () => {
+    const expired = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, chatPlatformBanLockKey(userId), async () => {
         const now = new Date();
         await retireLapsedRows(t, chatPlatformBan, activeBanFilter(userId, target), now);
         const [previous] = await t
@@ -103,8 +114,12 @@ export class ChatBanService {
           ip: ip ?? null,
           userAgent: userAgent ?? null,
         });
+        return platformScopesFor('private').includes(target.scope)
+          ? expireInvitesInvolving(t, userId)
+          : [];
       }),
     );
+    emitExpiredInvites(this.events, expired, { actorId, ip, userAgent });
     // The ban is committed; failing to list its channels must not turn it into a 500 and a retry.
     await this.roomsToRevoke(userId, target)
       .then((roomIds) => this.revokeChannels(userId, roomIds))
@@ -152,7 +167,7 @@ export class ChatBanService {
   }: { userId: Uuid; roomId: ChatModerationRoomId; actorId: Uuid } & ClientMeta) {
     const target = await resolveModerationTarget(this.drizzle.db, roomId, { validate: false });
     await this.drizzle.db.transaction((t) =>
-      withAdvisoryXactLock(t, `chat-platform-ban:${userId}`, async () => {
+      withAdvisoryXactLock(t, chatPlatformBanLockKey(userId), async () => {
         const liftedAt = new Date();
         const [lifted] = await t
           .update(chatPlatformBan)

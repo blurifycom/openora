@@ -33,6 +33,13 @@ import {
   JOIN_CODE_INPUT_MAX_LENGTH,
   CHAT_ROOM_ROLES,
   CHAT_ROOM_ASSIGNABLE_ROLES,
+  CHAT_ROOM_INVITE_STATUSES,
+  CHAT_ROOM_INVITE_CANDIDATE_STATUSES,
+  CHAT_ROOM_INVITE_LOOKUP_STATUSES,
+  ROOM_INVITE_STATUS_LOOKUP_MAX,
+  ROOM_INVITE_CANDIDATE_LIMIT_MAX,
+  ROOM_INVITE_SEARCH_MIN_LENGTH,
+  ROOM_INVITE_SEARCH_MAX_LENGTH,
   ROOM_ACTIVITY_WINDOW_HOURS_DEFAULT,
   ROOM_ACTIVITY_WINDOW_HOURS_MAX,
   CHAT_ROOM_RESTRICTION_TYPES,
@@ -124,6 +131,9 @@ export const ChatMemberRoleChangedSignalSchema = z.object({
   role: ChatRoomRoleSchema,
 });
 export type ChatMemberRoleChangedSignal = z.infer<typeof ChatMemberRoleChangedSignalSchema>;
+
+export const ChatMemberJoinedSignalSchema = z.object({ roomId: UuidSchema, userId: UuidSchema });
+export type ChatMemberJoinedSignal = z.infer<typeof ChatMemberJoinedSignalSchema>;
 
 export const ChatRoomScheduledForDeletionSignalSchema = z.object({
   roomId: UuidSchema,
@@ -406,6 +416,63 @@ export const SendGlobalMessageInputSchema = z
   })
   .refine(hasContentOrAttachment, { message: 'A message needs content or an attachment' });
 
+export const ChatRoomInviteStatusSchema = z.enum(CHAT_ROOM_INVITE_STATUSES);
+export type ChatRoomInviteStatus = z.infer<typeof ChatRoomInviteStatusSchema>;
+
+export const ChatRoomInviteCandidateStatusSchema = z.enum(CHAT_ROOM_INVITE_CANDIDATE_STATUSES);
+export type ChatRoomInviteCandidateStatus = z.infer<typeof ChatRoomInviteCandidateStatusSchema>;
+
+export const ChatRoomInviteLookupStatusSchema = z.enum(CHAT_ROOM_INVITE_LOOKUP_STATUSES);
+export type ChatRoomInviteLookupStatus = z.infer<typeof ChatRoomInviteLookupStatusSchema>;
+
+export const ChatRoomInviteSchema = z.object({
+  id: UuidSchema,
+  roomId: UuidSchema,
+  inviterId: UuidSchema,
+  inviteeId: UuidSchema,
+  status: ChatRoomInviteStatusSchema,
+  createdAt: TimestampSchema,
+  respondedAt: TimestampSchema.nullable(),
+});
+export type ChatRoomInvite = z.infer<typeof ChatRoomInviteSchema>;
+
+export const ChatRoomInviteCandidateSchema = z.object({
+  userId: UuidSchema,
+  username: z.string(),
+  avatarUrl: z.string().nullable(),
+  inviteStatus: ChatRoomInviteCandidateStatusSchema,
+});
+export type ChatRoomInviteCandidate = z.infer<typeof ChatRoomInviteCandidateSchema>;
+
+export const ChatRoomInviteLookupSchema = z.object({
+  userId: UuidSchema,
+  inviteStatus: ChatRoomInviteLookupStatusSchema,
+});
+export type ChatRoomInviteLookup = z.infer<typeof ChatRoomInviteLookupSchema>;
+
+export const MyChatRoomInviteSchema = z.object({
+  id: UuidSchema,
+  roomId: UuidSchema,
+  roomName: z.string(),
+  inviterId: UuidSchema,
+  inviterUsername: z.string().nullable(),
+  createdAt: TimestampSchema,
+});
+export type MyChatRoomInvite = z.infer<typeof MyChatRoomInviteSchema>;
+
+export const SearchRoomInviteCandidatesInputSchema = z.object({
+  roomId: UuidSchema,
+  q: z.string().trim().min(ROOM_INVITE_SEARCH_MIN_LENGTH).max(ROOM_INVITE_SEARCH_MAX_LENGTH),
+  limit: z.coerce.number().int().min(1).max(ROOM_INVITE_CANDIDATE_LIMIT_MAX).default(20),
+});
+
+export const GetRoomInviteStatusesInputSchema = z.object({
+  roomId: UuidSchema,
+  userIds: z.array(UuidSchema).min(1).max(ROOM_INVITE_STATUS_LOOKUP_MAX),
+});
+
+const RoomInviteIdInput = z.object({ inviteId: UuidSchema });
+
 export const chatContract = {
   listRooms: oc.route({ method: 'GET', path: '/chat/rooms' }).output(z.array(ChatRoomSchema)),
 
@@ -549,6 +616,35 @@ export const chatContract = {
   leaveRoom: oc
     .route({ method: 'POST', path: '/chat/rooms/{roomId}/leave' })
     .input(RoomIdInput)
+    .output(z.object({ success: z.literal(true) })),
+
+  inviteToRoom: oc
+    .route({ method: 'POST', path: '/chat/rooms/{roomId}/invites' })
+    .input(RoomUserInput)
+    .output(ChatRoomInviteSchema),
+
+  searchRoomInviteCandidates: oc
+    .route({ method: 'GET', path: '/chat/rooms/{roomId}/invite-candidates' })
+    .input(SearchRoomInviteCandidatesInputSchema)
+    .output(z.array(ChatRoomInviteCandidateSchema)),
+
+  getRoomInviteStatuses: oc
+    .route({ method: 'POST', path: '/chat/rooms/{roomId}/invite-statuses' })
+    .input(GetRoomInviteStatusesInputSchema)
+    .output(z.array(ChatRoomInviteLookupSchema)),
+
+  listMyRoomInvites: oc
+    .route({ method: 'GET', path: '/chat/invites' })
+    .output(z.array(MyChatRoomInviteSchema)),
+
+  acceptRoomInvite: oc
+    .route({ method: 'POST', path: '/chat/invites/{inviteId}/accept' })
+    .input(RoomInviteIdInput)
+    .output(ChatRoomSchema),
+
+  declineRoomInvite: oc
+    .route({ method: 'POST', path: '/chat/invites/{inviteId}/decline' })
+    .input(RoomInviteIdInput)
     .output(z.object({ success: z.literal(true) })),
 
   getRoom: oc

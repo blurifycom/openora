@@ -97,7 +97,7 @@ beforeEach(async () => {
 describe('ChatModerationExpiryService.sweep', () => {
   const makeSweep = () => new ChatModerationExpiryService(db.drizzle, audit);
   const makeModeration = () =>
-    new ChatModerationService(db.drizzle, mock<RealtimeTransport>({}), audit);
+    new ChatModerationService(db.drizzle, mock<RealtimeTransport>({}), audit, makeEventBus());
 
   it('records exactly one audit entry for a lapsed mute, dated from its own expiresAt', async () => {
     const expiresAt = secondsFromNow(-30);

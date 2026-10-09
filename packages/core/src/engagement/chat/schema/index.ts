@@ -15,6 +15,7 @@ import {
 import {
   CHAT_ROOM_CATEGORIES,
   CHAT_ROOM_ROLES,
+  CHAT_ROOM_INVITE_STATUSES,
   CHAT_MODERATION_SCOPE_VALUES,
   CHAT_COOLDOWN_SECONDS_MAX,
 } from '../contract/index.js';
@@ -26,6 +27,7 @@ export const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
 export const chatRoomCategory = pgEnum('chat_room_category', CHAT_ROOM_CATEGORIES);
 export const chatMessageType = pgEnum('chat_message_type', CHAT_MESSAGE_TYPES);
 export const chatModerationScope = pgEnum('chat_moderation_scope', CHAT_MODERATION_SCOPE_VALUES);
+export const chatRoomInviteStatus = pgEnum('chat_room_invite_status', CHAT_ROOM_INVITE_STATUSES);
 
 export const chatRoom = pgTable(
   'chat_room',
@@ -142,6 +144,32 @@ export const chatRoomMember = pgTable(
     uniqueIndex('chat_room_member_room_user_key').on(t.roomId, t.userId),
     index('chat_room_member_room_idx').on(t.roomId),
     index('chat_room_member_user_idx').on(t.userId),
+  ],
+);
+
+export const chatRoomInvite = pgTable(
+  'chat_room_invite',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    roomId: uuid()
+      .notNull()
+      .references(() => chatRoom.id, { onDelete: 'cascade' }),
+    inviterId: uuid().notNull(),
+    inviteeId: uuid().notNull(),
+    status: chatRoomInviteStatus().notNull().default('pending'),
+    withheld: boolean().notNull().default(false),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    respondedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('chat_room_invite_pending_room_invitee_key')
+      .on(t.roomId, t.inviteeId)
+      .where(sql`${t.status} = 'pending'`),
+    index('chat_room_invite_invitee_status_idx').on(t.inviteeId, t.status),
+    index('chat_room_invite_inviter_pending_idx')
+      .on(t.inviterId)
+      .where(sql`${t.status} = 'pending'`),
+    index('chat_room_invite_room_idx').on(t.roomId),
   ],
 );
 
@@ -367,6 +395,7 @@ export type ChatMessage = typeof chatMessage.$inferSelect;
 export type ChatUserBlock = typeof chatUserBlock.$inferSelect;
 export type ChatUserIgnore = typeof chatUserIgnore.$inferSelect;
 export type ChatRoomMember = typeof chatRoomMember.$inferSelect;
+export type ChatRoomInvite = typeof chatRoomInvite.$inferSelect;
 export type ChatRoomRule = typeof chatRoomRule.$inferSelect;
 export type ChatRoomConfiguration = typeof chatRoomConfiguration.$inferSelect;
 export type ChatRoomBan = typeof chatRoomBan.$inferSelect;

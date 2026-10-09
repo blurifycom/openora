@@ -34,6 +34,33 @@ export const CHAT_ROOM_ASSIGNABLE_ROLES = ['member', 'moderator'] as const;
 // Named alongside the transport's own ACCESS_REVOKED_SIGNAL; a client subscribes to it by name.
 export const CHAT_MEMBER_ROLE_CHANGED_SIGNAL = 'chat:member-role-changed';
 
+export const CHAT_MEMBER_JOINED_SIGNAL = 'chat:member-joined';
+
 export const CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL = 'chat:room-scheduled-for-deletion';
 
 export const OWNERLESS_ROOM_RETENTION_DAYS = 30;
+
+export const CHAT_ROOM_INVITE_STATUSES = ['pending', 'accepted', 'declined', 'expired'] as const;
+
+export const CHAT_ROOM_INVITE_CANDIDATE_STATUSES = [
+  'available',
+  'member',
+  'invited',
+  'banned',
+] as const;
+
+// `unavailable` marks an id that is not a player.
+export const CHAT_ROOM_INVITE_LOOKUP_STATUSES = [
+  ...CHAT_ROOM_INVITE_CANDIDATE_STATUSES,
+  'unavailable',
+] as const;
+
+export const ROOM_INVITE_EXPIRY_DAYS = 7;
+
+export const ROOM_INVITE_STATUS_LOOKUP_MAX = 100;
+
+export const ROOM_INVITE_CANDIDATE_LIMIT_MAX = 50;
+
+export const ROOM_INVITE_SEARCH_MIN_LENGTH = 3;
+
+export const ROOM_INVITE_SEARCH_MAX_LENGTH = 50;

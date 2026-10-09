@@ -20,6 +20,7 @@ import {
   AUDIT_WRITER,
   IDENTITY_READER,
   PLATFORM_CONFIG,
+  PLAY_ELIGIBILITY,
   CHAT_MODERATION_EXPIRY_DEFAULT_CRON,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -30,6 +31,7 @@ import {
   ChatRoomNotFoundError,
 } from './service/chat-moderation.service.js';
 import { ChatRoomMembershipService } from './service/chat-room-membership.service.js';
+import { ChatRoomInviteService } from './service/chat-room-invite.service.js';
 import { ChatRoomBanService } from './service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from './service/chat-room-mute.service.js';
 import { ChatRoomRestrictionService } from './service/chat-room-restriction.service.js';
@@ -42,11 +44,14 @@ const CHAT_ROOM_PURGE_SCAN_QUEUE = queue('chat-room-purge-scan');
 const CHAT_ROOM_PURGE_QUEUE = queue('chat-room-purge');
 const CHAT_ACCOUNT_CLOSED_QUEUE = queue('chat-account-closed');
 const CHAT_ACCOUNT_REOPENED_QUEUE = queue('chat-account-reopened');
+const CHAT_ROOM_INVITE_EXPIRY_QUEUE = queue('chat-room-invite-expiry');
 
 const CHAT_ROOM_PURGE_CRON = '15 3 * * *';
 const CHAT_ROOM_PURGE_TIMEZONE = 'UTC';
 
 const CHAT_ROOM_PURGE_BATCH = 500;
+
+const CHAT_ROOM_INVITE_EXPIRY_CRON = '0 * * * *';
 
 const RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
 
@@ -65,6 +70,7 @@ export default {
   register(ctx) {
     const logger = createLogger('chat');
     let expiryRef: ChatModerationExpiryService | undefined;
+    let inviteRef: ChatRoomInviteService | undefined;
     ctx.provide(CHAT_REALTIME_TRANSPORT, (c) => c.get(REALTIME_TRANSPORT));
     ctx.provide(CHAT_REALTIME_CLIENT_AUTHORIZER, (c) => c.get(REALTIME_CLIENT_AUTHORIZER));
     ctx.provide(
@@ -74,6 +80,7 @@ export default {
           c.get(DRIZZLE),
           c.get(CHAT_REALTIME_TRANSPORT),
           c.get(AUDIT_WRITER),
+          c.get(EVENT_BUS),
         ),
     );
     const createChatService = (
@@ -129,6 +136,21 @@ export default {
         const { mutes, bans, cooldowns } = await expiryRef.sweep();
         if (mutes > 0 || bans > 0 || cooldowns > 0) {
           logger.info({ mutes, bans, cooldowns }, 'chat moderation expiry recorded');
+        }
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: CHAT_ROOM_INVITE_EXPIRY_QUEUE,
+      schema: EmptyJobPayloadSchema,
+      handler: async () => {
+        if (!inviteRef) {
+          logger.warn('chat-room-invite-expiry sweep skipped - service not constructed');
+          return;
+        }
+        const expired = await inviteRef.expireLapsedInvites();
+        if (expired > 0) {
+          logger.info({ expired }, 'chat room invites expired');
         }
       },
     });
@@ -318,9 +340,25 @@ export default {
           { cron: CHAT_ROOM_PURGE_CRON, timezone: CHAT_ROOM_PURGE_TIMEZONE },
         )
         .catch((err: unknown) => logger.error({ err }, 'chat-room-purge schedule failed'));
+      inviteRef = new ChatRoomInviteService(
+        c.get(DRIZZLE),
+        c.get(EVENT_BUS),
+        c.get(IDENTITY_READER),
+        membershipService,
+        c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+      );
+      void jobQueueRef
+        .schedule(
+          CHAT_ROOM_INVITE_EXPIRY_QUEUE,
+          'chat-room-invite-expiry.cron',
+          {},
+          { cron: CHAT_ROOM_INVITE_EXPIRY_CRON, timezone: CHAT_ROOM_PURGE_TIMEZONE },
+        )
+        .catch((err: unknown) => logger.error({ err }, 'chat-room-invite-expiry schedule failed'));
       return createChatRouter({
         chatService,
         membershipService,
+        inviteService: inviteRef,
         roomBanService: new ChatRoomBanService(
           c.get(DRIZZLE),
           c.get(EVENT_BUS),
