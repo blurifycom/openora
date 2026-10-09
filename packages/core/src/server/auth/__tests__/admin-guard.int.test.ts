@@ -21,7 +21,7 @@ function makeGuard({
 }: {
   userId?: string;
   grants?: { resource: string; action: string }[];
-  superAdmin?: boolean | null;
+  superAdmin?: boolean;
   securityPolicy?: AdminSecurityPolicy;
 } = {}) {
   const events = makeEventBus();
@@ -31,7 +31,7 @@ function makeGuard({
   const permissionResolver = grants
     ? mock<AdminPermissionResolver>({
         getGrants: vi.fn(async () => grants),
-        isSuperAdmin: vi.fn(async () => superAdmin ?? null),
+        isSuperAdmin: vi.fn(async () => superAdmin ?? false),
       })
     : undefined;
   const guard = new AdminGuard(
@@ -104,7 +104,7 @@ describe('AdminGuard.assert - authentication (real PG)', () => {
   });
 });
 
-describe('AdminGuard.assert - static role fallback (real PG)', () => {
+describe('AdminGuard.assert - no permission resolver bound, static roles decide (real PG)', () => {
   it('returns the caller for an admin with a granted permission', async () => {
     const userId = await seedUser('admin');
     const { guard, events } = makeGuard({ userId });
@@ -198,7 +198,7 @@ describe('AdminGuard.assert - DB grants (real PG)', () => {
     ).resolves.toMatchObject({ userId });
   });
 
-  it('denies and emits when the resolver returns no matching grant', async () => {
+  it('denies and emits for an admin with no assigned role (the resolver returns no grants)', async () => {
     const userId = await seedUser('admin');
     const { guard, events } = makeGuard({ userId, grants: [] });
 
@@ -235,6 +235,15 @@ describe('AdminGuard.assertSuperAdmin (real PG)', () => {
     );
   });
 
+  it('denies an admin with no assigned role once a resolver is bound', async () => {
+    const userId = await seedUser('admin');
+    const { guard } = makeGuard({ userId, grants: [] });
+
+    await expect(guard.assertSuperAdmin(requestContext(ADMIN_HEADERS))).rejects.toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN' }),
+    );
+  });
+
   it('allows a DB-assigned super admin', async () => {
     const userId = await seedUser('admin');
     const { guard } = makeGuard({ userId, grants: [], superAdmin: true });
@@ -244,7 +253,7 @@ describe('AdminGuard.assertSuperAdmin (real PG)', () => {
     });
   });
 
-  it('falls back to the static admin role when no resolver is bound (bootstrap)', async () => {
+  it('lets the static admin role through when no resolver is bound', async () => {
     const userId = await seedUser('admin');
     const { guard } = makeGuard({ userId });
 
@@ -253,7 +262,7 @@ describe('AdminGuard.assertSuperAdmin (real PG)', () => {
     });
   });
 
-  it('denies a non-admin static role on the bootstrap path', async () => {
+  it('denies a non-admin static role when no resolver is bound', async () => {
     const userId = await seedUser('support');
     const { guard } = makeGuard({ userId });
 

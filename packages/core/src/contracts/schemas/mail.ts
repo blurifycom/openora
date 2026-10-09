@@ -29,6 +29,7 @@ export const MAIL_TEMPLATE_KEYS = [
   'raceWon',
   'rankChallengeWon',
   'bonusUnlocked',
+  'bonusCredited',
   'twoFactorReset',
 ] as const;
 
@@ -79,7 +80,10 @@ export const EmailTemplateDataSchemas = {
   adminInvitation: z.object({ token: z.string(), expiresAt: TimestampSchema }),
   securityLoginAlert: z.object({ occurredAt: TimestampSchema }),
   securityWithdrawalRequested: z.object({ ...WithdrawalDetailsShape }),
-  welcome: z.object({}),
+  // Whether the player may be shown a promotion: false when the account is RG-restricted or
+  // the address it verified from is in a blocked country. Optional only for jobs queued
+  // before it existed; a renderer reads anything but `true` as ineligible.
+  welcome: z.object({ promotionsEligible: z.boolean().optional() }),
   emailChangeConfirmation: z.object({
     otp: z.string(),
     // Masked, never the full address: this mail goes to the new inbox before it has
@@ -112,6 +116,12 @@ export const EmailTemplateDataSchemas = {
   }),
   bonusUnlocked: z.object({
     convertedAmount: MoneyAmountSchema,
+    currency: CurrencyTickerSchema,
+  }),
+  // The credit and the wagering it obliges, so the player reads the terms the moment they apply.
+  bonusCredited: z.object({
+    grantedAmount: MoneyAmountSchema,
+    wageringRequired: MoneyAmountSchema,
     currency: CurrencyTickerSchema,
   }),
 } as const satisfies Record<EmailTemplateKey, z.ZodType>;
@@ -150,6 +160,7 @@ export const MailTemplateSchema = z.discriminatedUnion('key', [
   templateVariant('raceWon'),
   templateVariant('rankChallengeWon'),
   templateVariant('bonusUnlocked'),
+  templateVariant('bonusCredited'),
   templateVariant('twoFactorReset'),
 ]);
 

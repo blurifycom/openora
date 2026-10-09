@@ -8,7 +8,6 @@ import {
   pageToOffset,
   serializeRow,
   statement,
-  roles,
   readActions,
   SUPPORTED_LEVELS,
   levelRank,
@@ -16,10 +15,8 @@ import {
   cached,
   invalidate,
   createLogger,
-  actionsToLevel,
   type DrizzleTx,
   type ResourceName,
-  type RoleName,
   type PermissionLevel,
 } from '@openora/core/server';
 import { eq, and, gt, inArray, sql, asc, desc } from 'drizzle-orm';
@@ -125,18 +122,6 @@ function validateGrants(grants: ReadonlyArray<{ resource: string; level: string 
   }
 }
 
-function staticGrantsForRole(roleName: string) {
-  const role = roles[roleName as RoleName];
-  if (!role) {
-    return [];
-  }
-  return (Object.keys(statement) as ResourceName[]).flatMap((resource) =>
-    (statement[resource] as readonly string[])
-      .filter((action) => role.authorize({ [resource]: [action] }).success)
-      .map((action) => ({ resource: resource as string, action })),
-  );
-}
-
 function grantsToLevelMap(grants: readonly AdminGrant[]) {
   const byResource = new Map<string, Set<string>>();
   for (const g of grants) {
@@ -182,7 +167,7 @@ const GRANTS_CACHE_TTL_MS = 10_000;
 const grantsCacheKey = (userId: User['id']) => `admin-grants:${userId}`;
 const superAdminCacheKey = (userId: User['id']) => `admin-super:${userId}`;
 
-/** Implements ADMIN_PERMISSION_RESOLVER; returns null when the user has no DB assignment (guard falls back to static roles for the bootstrap admin path). */
+/** Implements ADMIN_PERMISSION_RESOLVER; a user with no DB assignment holds no grants and is not a super admin. */
 export class DbAdminPermissionResolver implements AdminPermissionResolver {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -190,8 +175,6 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
   ) {}
 
   getGrants(userId: User['id']) {
-    // A cached `null` (no assignment) is a valid, cacheable answer - cached() treats
-    // only `undefined` as a miss, so repeated forbidden hits don't re-query either.
     return cached(this.cache, grantsCacheKey(userId), GRANTS_CACHE_TTL_MS, () =>
       this.loadGrants(userId),
     );
@@ -203,18 +186,18 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
     );
   }
 
-  private async loadSuperAdmin(userId: User['id']): Promise<boolean | null> {
+  private async loadSuperAdmin(userId: User['id']): Promise<boolean> {
     const rows = await this.drizzle.db
       .select({ isSuperAdmin: adminRole.isSuperAdmin })
       .from(adminRoleAssignment)
       .innerJoin(adminRole, eq(adminRole.id, adminRoleAssignment.roleId))
       .where(eq(adminRoleAssignment.userId, userId));
 
-    return rows.length === 0 ? null : rows.some((r) => r.isSuperAdmin);
+    return rows.some((r) => r.isSuperAdmin);
   }
 
-  private async loadGrants(userId: User['id']): Promise<AdminGrant[] | null> {
-    return (await loadAdminGrants(this.drizzle.db, [userId])).get(userId) ?? null;
+  private async loadGrants(userId: User['id']): Promise<AdminGrant[]> {
+    return (await loadAdminGrants(this.drizzle.db, [userId])).get(userId) ?? [];
   }
 
   /** Drop one user's cached grants - called on assign/revoke so revocation is instant. */
@@ -302,35 +285,12 @@ export class IamService {
     });
   }
 
-  private async callerGrants(caller: Caller) {
-    const resolver = new DbAdminPermissionResolver(this.drizzle);
-    const dbGrants = await resolver.getGrants(caller.userId);
-    return dbGrants ?? staticGrantsForRole(caller.role);
-  }
-
-  // True for a DB super-admin assignment OR (no DB row AND user.role === 'admin').
-  // The second clause keeps the bootstrap admin accessible before any role is seeded.
-  // `user.role` is written only by trusted provisioning (seed/IdP), so it is safe here.
-  private async isSuperAdmin(caller: Caller) {
-    const assignments = await this.drizzle.db
-      .select({ roleId: adminRoleAssignment.roleId })
-      .from(adminRoleAssignment)
-      .where(eq(adminRoleAssignment.userId, caller.userId));
-
-    if (assignments.length === 0) {
-      return caller.role === 'admin';
-    }
-
-    const roleIds = assignments.map((a) => a.roleId);
-    const superRows = await this.drizzle.db
-      .select({ id: adminRole.id })
-      .from(adminRole)
-      .where(and(inArray(adminRole.id, roleIds), eq(adminRole.isSuperAdmin, true)));
-    return superRows.length > 0;
+  private callerGrants(caller: Caller) {
+    return new DbAdminPermissionResolver(this.drizzle).getGrants(caller.userId);
   }
 
   private async assertSuperAdmin(caller: Caller) {
-    if (!(await this.isSuperAdmin(caller))) {
+    if (!(await new DbAdminPermissionResolver(this.drizzle).isSuperAdmin(caller.userId))) {
       this.emitDenied(caller, 'admin', 'update');
       throw new NotSuperAdminError();
     }
@@ -764,33 +724,6 @@ export class IamService {
       roleIds = assignments.map((a) => a.roleId);
     } else {
       roleIds = input.roleIds;
-    }
-
-    if (roleIds.length === 0 && 'userId' in input) {
-      const [u] = await this.drizzle.db
-        .select({ role: user.role })
-        .from(user)
-        .where(eq(user.id, input.userId))
-        .limit(1);
-      if (u && roles[u.role as keyof typeof roles]) {
-        const staticGrants = staticGrantsForRole(u.role);
-        const byResource = new Map<string, string[]>();
-        for (const g of staticGrants) {
-          let actions = byResource.get(g.resource);
-          if (!actions) {
-            actions = [];
-            byResource.set(g.resource, actions);
-          }
-          actions.push(g.action);
-        }
-        const permissions = [...byResource.entries()]
-          .map(([resource, actions]) => ({
-            resource,
-            level: actionsToLevel(resource, actions),
-          }))
-          .filter((p) => p.level !== 'no_access');
-        return { permissions };
-      }
     }
 
     if (roleIds.length === 0) {

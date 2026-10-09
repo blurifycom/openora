@@ -140,11 +140,15 @@ export class RaceAdminService {
     const { raceId, ...fields } = input;
     assertPositionsAffordable(fields.prizePool, fields.positions);
     return this.drizzle.db.transaction(async (tx) => {
+      // `no key update`, not `update`: every bet into this race takes a key-share lock on the row
+      // (the foreign key from its standing), often after the audit chain lock a rank change took,
+      // while this edit takes the audit chain lock after this row. `update` conflicts with
+      // key-share and the two deadlock; an edit never touches the key, so it need not block them.
       const [locked] = await tx
         .select(RACE_COLUMNS)
         .from(promoRace)
         .where(eq(promoRace.id, raceId))
-        .for('update');
+        .for('no key update');
       if (!locked) {
         throw new RaceNotFoundError(raceId);
       }

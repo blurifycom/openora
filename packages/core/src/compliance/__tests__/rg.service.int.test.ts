@@ -712,7 +712,7 @@ describe('isWeakening across currencies', () => {
 
     const row = baseRow({ amount: '100', currency: 'USD' });
     await expect(
-      isWeakening(row, { amount: '200', minutes: null, currency: 'EUR' }, rates),
+      isWeakening(row, { amount: '200', minutes: null, currency: 'EUR' }, rates, db.drizzle.db),
     ).resolves.toBe(false);
   });
 
@@ -732,8 +732,9 @@ describe('isWeakening across currencies', () => {
 
     const row = baseRow({ amount: '100', currency: 'USD' });
     await expect(
-      isWeakening(row, { amount: '140', minutes: null, currency: 'EUR' }, rates),
+      isWeakening(row, { amount: '140', minutes: null, currency: 'EUR' }, rates, db.drizzle.db),
     ).resolves.toBe(true);
+    expect(rates.convert).toHaveBeenCalledWith('140', 'EUR', 'USD', db.drizzle.db);
   });
 
   it('fails closed to weakening when no rate is available for the cross-currency comparison', async () => {
@@ -744,7 +745,7 @@ describe('isWeakening across currencies', () => {
 
     const row = baseRow({ amount: '100', currency: 'USD' });
     await expect(
-      isWeakening(row, { amount: '1', minutes: null, currency: 'EUR' }, rates),
+      isWeakening(row, { amount: '1', minutes: null, currency: 'EUR' }, rates, db.drizzle.db),
     ).resolves.toBe(true);
   });
 
@@ -758,7 +759,7 @@ describe('isWeakening across currencies', () => {
 
     const row = baseRow({ amount: '100', currency: 'USD' });
     await expect(
-      isWeakening(row, { amount: '50', minutes: null, currency: 'USD' }, rates),
+      isWeakening(row, { amount: '50', minutes: null, currency: 'USD' }, rates, db.drizzle.db),
     ).resolves.toBe(false);
     expect(rates.convert).not.toHaveBeenCalled();
   });
@@ -779,10 +780,10 @@ describe('isWeakening across currencies', () => {
       currency: 'SESSION',
     });
     await expect(
-      isWeakening(row, { amount: null, minutes: 120, currency: null }, rates),
+      isWeakening(row, { amount: null, minutes: 120, currency: null }, rates, db.drizzle.db),
     ).resolves.toBe(true);
     await expect(
-      isWeakening(row, { amount: null, minutes: 30, currency: null }, rates),
+      isWeakening(row, { amount: null, minutes: 30, currency: null }, rates, db.drizzle.db),
     ).resolves.toBe(false);
     expect(rates.convert).not.toHaveBeenCalled();
   });

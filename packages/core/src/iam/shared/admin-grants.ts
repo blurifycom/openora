@@ -51,8 +51,9 @@ function grantsOf(rows: readonly AssignedGrantRow[]): AdminGrant[] {
 
 /**
  * The DB grants of each of `userIds` holding a role assignment, read through `db` - a
- * transaction included - without the grant cache. A user with no assignment is absent, which is
- * AdminGuard's cue to fall back to the static role table.
+ * transaction included - without the grant cache. A user with no assignment is absent from the
+ * map, which the resolver reports as no grants at all (ADMIN_PERMISSION_RESOLVER: once a
+ * resolver is bound its answer is authoritative, there is no static-role fallback).
  */
 export async function loadAdminGrants(db: DrizzleDb | DrizzleTx, userIds: readonly User['id'][]) {
   const rows = await db
@@ -91,7 +92,7 @@ export async function usersWithoutMcpAccess(
     const role = roleOf.get(userId);
     return (
       role === undefined ||
-      !holdsGrant({ role, grants: grants.get(userId) ?? null }, 'mcp-access', 'use')
+      !holdsGrant({ role, grants: grants.get(userId) ?? [] }, 'mcp-access', 'use')
     );
   });
 }

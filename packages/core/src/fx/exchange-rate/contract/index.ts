@@ -1,7 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
-  CurrencyCodeSchema,
   DisplayCurrencyCodeSchema,
   MoneyAmountSchema,
   TimestampSchema,
@@ -14,8 +13,8 @@ export const ExchangeRateQuoteSchema = z.object({
 export type ExchangeRateQuoteDto = z.infer<typeof ExchangeRateQuoteSchema>;
 
 export const GetExchangeRateInputSchema = z.object({
-  from: CurrencyCodeSchema,
-  to: CurrencyCodeSchema,
+  from: DisplayCurrencyCodeSchema,
+  to: DisplayCurrencyCodeSchema,
 });
 export type GetExchangeRateInput = z.infer<typeof GetExchangeRateInputSchema>;
 

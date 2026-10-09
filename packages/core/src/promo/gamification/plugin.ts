@@ -14,6 +14,7 @@ import {
   queue,
   resolveWalletDefaultCurrency,
   type IdentityReader,
+  type WagerReversalArgs,
   type WagerTrackingArgs,
   type WagerTrackingCommands,
   type WagerTrackingWalletCredit,
@@ -77,6 +78,12 @@ class CompositeWagerTracking implements WagerTrackingCommands {
       credits.push(...(await consumer.recordWager(tx, args)));
     }
     return credits;
+  }
+
+  async reverseWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
+    for (const consumer of this.consumers) {
+      await consumer.reverseWager?.(tx, args);
+    }
   }
 }
 

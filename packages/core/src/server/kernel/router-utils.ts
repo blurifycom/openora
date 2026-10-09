@@ -75,27 +75,14 @@ export function getSessionId(context: unknown, opts?: ResolveAuthOptions): strin
   return resolveAuth(context, opts).sessionId;
 }
 
-// Extracts IP only from headers; does not trust X-Forwarded-For without a
-// validated proxy boundary. Behind `createApp` those headers are already sanitized:
-// X-Real-IP is the socket peer unless that peer is a configured trusted proxy (see
-// runtime/client-address.ts). Geo/rate-limit checks use this - a spoofed
-// X-Forwarded-For bypasses both. Use extractClientMeta({ headers, trustForwarded: true })
-// only when Node receives requests exclusively through a trusted reverse proxy
-// (Cloudflare, nginx, etc configured to strip and replace the header).
-export function extractClientMeta(
-  headers: NodeHeaders,
-  opts?: { trustForwarded?: boolean },
-): ClientMeta {
-  let ip: string | null = null;
-  if (opts?.trustForwarded) {
-    const fwd = headers['x-forwarded-for'];
-    const first = Array.isArray(fwd) ? fwd[0] : fwd;
-    ip = first?.split(',')[0]?.trim() || null;
-  }
-  if (!ip) {
-    const real = headers['x-real-ip'];
-    ip = (Array.isArray(real) ? real[0] : real) || null;
-  }
+// Reads the client address from X-Real-IP only. Behind `createApp` that header is already
+// decided: it is the socket peer unless that peer is a configured trusted proxy, in which case
+// it is the client derived from X-Forwarded-For (see runtime/client-address.ts). Geo and
+// rate-limit checks use this, so X-Forwarded-For is never read here - its leftmost entry is
+// whatever the caller chose to send.
+export function extractClientMeta(headers: NodeHeaders): ClientMeta {
+  const real = headers['x-real-ip'];
+  const ip = (Array.isArray(real) ? real[0] : real) || null;
   const ua = headers['user-agent'];
-  return { ip: ip ?? null, userAgent: (Array.isArray(ua) ? ua[0] : ua) ?? null };
+  return { ip, userAgent: (Array.isArray(ua) ? ua[0] : ua) ?? null };
 }

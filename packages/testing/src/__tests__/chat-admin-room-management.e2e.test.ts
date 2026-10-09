@@ -1,0 +1,434 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { and, eq } from 'drizzle-orm';
+import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { adminRole, adminRolePermission, adminRoleAssignment } from '@openora/core/iam/schema';
+import { user } from '@openora/core/pam/schema/identity';
+import { auditLog } from '@openora/core/audit/schema';
+import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
+import { paginated } from '@openora/core/contracts/kit';
+import {
+  AdminChatRoomSchema,
+  ChatMessageSchema,
+  ChatRoomSchema,
+  ChatRoomRuleSchema,
+  ChatRoomConfigurationSchema,
+  type ChatRoomCategory,
+} from '@openora/core/engagement/contracts/chat';
+import { chatMessage, chatRoomMember } from '@openora/core/engagement/schema/chat';
+import {
+  setupTestDb,
+  bootTestApp,
+  asAdmin,
+  registerAndMaterializePlayer,
+  seedMinimal,
+  type TestDb,
+  type TestApp,
+  type TestClient,
+} from '../index.js';
+
+let db: TestDb;
+let app: TestApp;
+let admin: TestClient;
+let globalRoomId: string;
+
+async function registerChatter(prefix: string) {
+  const username = `${prefix.slice(0, 7)}_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+  return registerAndMaterializePlayer(app, { email: `${username}@e2e.test`, username });
+}
+
+async function registerChatRoomViewer() {
+  const viewer = await registerChatter('viewer');
+  const drizzle = app.container.get(DRIZZLE).db;
+  await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, viewer.userId));
+  const [role] = await drizzle
+    .insert(adminRole)
+    .values({ name: `chat room viewer ${randomUUID()}` })
+    .returning({ id: adminRole.id });
+  await drizzle
+    .insert(adminRolePermission)
+    .values({ roleId: role!.id, resource: 'chat-room', level: 'read' });
+  await drizzle.insert(adminRoleAssignment).values({ userId: viewer.userId, roleId: role!.id });
+  return viewer;
+}
+
+async function createPrivateRoom(owner: TestClient) {
+  const created = await owner.post('/chat/rooms/private', { name: `room-${randomUUID()}` });
+  expect(created.status).toBe(200);
+  return ChatRoomSchema.parse(await created.json());
+}
+
+async function createPublicRoom(
+  name = `room-${randomUUID()}`,
+  category: ChatRoomCategory = 'games-sports',
+) {
+  const created = await admin.post('/backoffice/chat/rooms', {
+    name,
+    slug: `room-${randomUUID()}`,
+    category,
+  });
+  expect(created.status).toBe(200);
+  return ChatRoomSchema.parse(await created.json());
+}
+
+async function listRules(roomId: string) {
+  const listed = await app.app.request(`/chat/rooms/${roomId}/rules`);
+  expect(listed.status).toBe(200);
+  return ChatRoomRuleSchema.array().parse(await listed.json());
+}
+
+async function auditRows(action: string, resourceId: string) {
+  return app.container
+    .get(DRIZZLE)
+    .db.select()
+    .from(auditLog)
+    .where(and(eq(auditLog.action, action), eq(auditLog.resourceId, resourceId)));
+}
+
+const clientHeaders = {
+  'content-type': 'application/json',
+  'x-real-ip': '203.0.113.7',
+  'user-agent': 'backoffice-e2e',
+};
+
+beforeAll(async () => {
+  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
+  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
+  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
+  process.env['NODE_ENV'] ??= 'test';
+
+  db = await setupTestDb();
+  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
+  await seedMinimal(app.container, { playerCount: 0 });
+  admin = await asAdmin(app.app);
+  const rooms = ChatRoomSchema.array().parse(await (await app.app.request('/chat/rooms')).json());
+  const globalRoom = rooms.find((room) => room.slug === GLOBAL_CHAT_ROOM_ID);
+  if (!globalRoom) {
+    throw new Error('global chat room is not seeded');
+  }
+  globalRoomId = globalRoom.id;
+}, 60_000);
+
+afterAll(async () => {
+  await app?.close();
+  await db?.dispose();
+});
+
+describe('chat admin: room rules', () => {
+  it('creates, reorders and deletes a rule in a room the admin is not in, auditing each as admin', async () => {
+    const room = await createPublicRoom();
+    await app.container
+      .get(DRIZZLE)
+      .db.delete(chatRoomMember)
+      .where(eq(chatRoomMember.roomId, room.id));
+    const rulesPath = `/backoffice/chat/rooms/${room.id}/rules`;
+
+    const created = await admin.request(rulesPath, {
+      method: 'POST',
+      headers: clientHeaders,
+      body: JSON.stringify({ content: 'No spam' }),
+    });
+    expect(created.status).toBe(200);
+    const rule = ChatRoomRuleSchema.parse(await created.json());
+    const second = ChatRoomRuleSchema.parse(
+      await (await admin.post(rulesPath, { content: 'No links' })).json(),
+    );
+    expect(second.orderNum).toBe(rule.orderNum + 1);
+
+    const reordered = await admin.request(`${rulesPath}/${rule.id}`, {
+      method: 'PATCH',
+      headers: clientHeaders,
+      body: JSON.stringify({ orderNum: second.orderNum + 1, content: 'No spam, ever' }),
+    });
+    expect(reordered.status).toBe(200);
+    expect((await listRules(room.id)).map((r) => r.content)).toEqual(['No links', 'No spam, ever']);
+
+    const deleted = await admin.request(`${rulesPath}/${rule.id}`, {
+      method: 'DELETE',
+      headers: clientHeaders,
+    });
+    expect(deleted.status).toBe(200);
+    expect((await listRules(room.id)).map((r) => r.id)).toEqual([second.id]);
+
+    const [createdRow] = await auditRows('chat.room.rule.created', rule.id);
+    const [updatedRow] = await auditRows('chat.room.rule.updated', rule.id);
+    const [deletedRow] = await auditRows('chat.room.rule.deleted', rule.id);
+    for (const row of [createdRow, updatedRow, deletedRow]) {
+      expect(row).toMatchObject({
+        actorType: 'admin',
+        resourceType: 'chat_room_rule',
+        ip: '203.0.113.7',
+        userAgent: 'backoffice-e2e',
+      });
+      expect(row?.actorId).toEqual(expect.any(String));
+    }
+    expect(createdRow?.after).toMatchObject({ roomId: room.id, content: 'No spam' });
+    expect(updatedRow?.before).toMatchObject({ roomId: room.id, content: 'No spam' });
+    expect(updatedRow?.after).toMatchObject({ roomId: room.id, content: 'No spam, ever' });
+    expect(deletedRow?.before).toMatchObject({ roomId: room.id, content: 'No spam, ever' });
+    expect((await admin.post(rulesPath, { content: 'Last', orderNum: 2 ** 31 })).status).toBe(400);
+  });
+
+  it('lists a new rule last after one set to the largest order', async () => {
+    const room = await createPublicRoom();
+    const rulesPath = `/backoffice/chat/rooms/${room.id}/rules`;
+    expect((await admin.post(rulesPath, { content: 'First', orderNum: 2 ** 31 - 1 })).status).toBe(
+      200,
+    );
+
+    const next = await admin.post(rulesPath, { content: 'Second' });
+
+    expect(next.status).toBe(200);
+    expect(ChatRoomRuleSchema.parse(await next.json()).orderNum).toBe(2 ** 31 - 1);
+    expect((await listRules(room.id)).map((r) => r.content)).toEqual(['First', 'Second']);
+  });
+
+  it('answers not found for a rule that belongs to another room', async () => {
+    const room = await createPublicRoom();
+    const other = await createPublicRoom();
+    const rule = ChatRoomRuleSchema.parse(
+      await (
+        await admin.post(`/backoffice/chat/rooms/${other.id}/rules`, { content: 'Elsewhere' })
+      ).json(),
+    );
+
+    const patched = await admin.patch(`/backoffice/chat/rooms/${room.id}/rules/${rule.id}`, {
+      content: 'Hijacked',
+    });
+    const deleted = await admin.del(`/backoffice/chat/rooms/${room.id}/rules/${rule.id}`);
+
+    expect(patched.status).toBe(404);
+    expect(deleted.status).toBe(404);
+    expect((await listRules(other.id)).map((r) => r.content)).toEqual(['Elsewhere']);
+  });
+
+  it('refuses rule writes from a view-only admin', async () => {
+    const room = await createPublicRoom();
+    const rule = ChatRoomRuleSchema.parse(
+      await (
+        await admin.post(`/backoffice/chat/rooms/${room.id}/rules`, { content: 'Be kind' })
+      ).json(),
+    );
+    const viewer = await registerChatRoomViewer();
+    const rulesPath = `/backoffice/chat/rooms/${room.id}/rules`;
+
+    expect((await viewer.client.post(rulesPath, { content: 'Mine' })).status).toBe(403);
+    expect((await viewer.client.patch(`${rulesPath}/${rule.id}`, { content: 'Mine' })).status).toBe(
+      403,
+    );
+    expect((await viewer.client.del(`${rulesPath}/${rule.id}`)).status).toBe(403);
+  });
+
+  it('answers not found for a private room and a deleted room, writing nothing', async () => {
+    const owner = await registerChatter('host');
+    const privateRoom = await createPrivateRoom(owner.client);
+    const privateRule = ChatRoomRuleSchema.parse(
+      await (
+        await owner.client.post(`/chat/rooms/${privateRoom.id}/rules`, { content: 'Be kind' })
+      ).json(),
+    );
+    const deletedRoom = await createPublicRoom();
+    const deletedRule = ChatRoomRuleSchema.parse(
+      await (
+        await admin.post(`/backoffice/chat/rooms/${deletedRoom.id}/rules`, { content: 'Be kind' })
+      ).json(),
+    );
+    expect((await admin.del(`/backoffice/chat/rooms/${deletedRoom.id}`)).status).toBe(200);
+
+    for (const [room, rule] of [
+      [privateRoom, privateRule],
+      [deletedRoom, deletedRule],
+    ] as const) {
+      const roomPath = `/backoffice/chat/rooms/${room.id}`;
+      expect((await admin.post(`${roomPath}/rules`, { content: 'Admin' })).status).toBe(404);
+      expect((await admin.patch(`${roomPath}/rules/${rule.id}`, { content: 'Admin' })).status).toBe(
+        404,
+      );
+      expect((await admin.del(`${roomPath}/rules/${rule.id}`)).status).toBe(404);
+      expect((await admin.patch(`${roomPath}/configuration`, { readOnlyMode: true })).status).toBe(
+        404,
+      );
+    }
+    const privateRules = await owner.client.get(`/chat/rooms/${privateRoom.id}/rules`);
+    expect(ChatRoomRuleSchema.array().parse(await privateRules.json())).toEqual([
+      expect.objectContaining({ id: privateRule.id, content: 'Be kind' }),
+    ]);
+    expect(await auditRows('chat.room.rule.updated', privateRule.id)).toEqual([]);
+    expect(await auditRows('chat.room.rule.deleted', privateRule.id)).toEqual([]);
+  });
+});
+
+describe('chat admin: room status', () => {
+  it('puts the global room into read-only mode by its row id, blocking player posts', async () => {
+    const player = await registerChatter('global');
+    const configurationPath = `/backoffice/chat/rooms/${globalRoomId}/configuration`;
+
+    const readOnly = await admin.request(configurationPath, {
+      method: 'PATCH',
+      headers: clientHeaders,
+      body: JSON.stringify({ readOnlyMode: true }),
+    });
+
+    try {
+      expect(readOnly.status).toBe(200);
+      const configuration = ChatRoomConfigurationSchema.parse(await readOnly.json());
+      expect(configuration).toMatchObject({ roomId: globalRoomId, readOnlyMode: true });
+      expect((await player.client.post('/chat/global', { content: 'hello' })).status).toBe(403);
+      expect(await auditRows('chat.room.configuration.updated', configuration.id)).toEqual([
+        expect.objectContaining({
+          actorType: 'admin',
+          ip: '203.0.113.7',
+          userAgent: 'backoffice-e2e',
+          after: expect.objectContaining({ roomId: globalRoomId, readOnlyMode: true }),
+        }),
+      ]);
+    } finally {
+      await admin.patch(configurationPath, { readOnlyMode: false });
+    }
+
+    expect((await player.client.post('/chat/global', { content: 'hello again' })).status).toBe(200);
+  });
+
+  it('sets slow mode and ignores settings outside read-only and slow mode', async () => {
+    const room = await createPublicRoom();
+    const configurationPath = `/backoffice/chat/rooms/${room.id}/configuration`;
+
+    const slowed = await admin.patch(configurationPath, {
+      slowMode: true,
+      slowModeSeconds: 30,
+      lockRoom: true,
+    });
+    const onlyForeign = await admin.patch(configurationPath, { lockRoom: true });
+
+    expect(slowed.status).toBe(200);
+    expect(ChatRoomConfigurationSchema.parse(await slowed.json())).toMatchObject({
+      slowMode: true,
+      slowModeSeconds: 30,
+      lockRoom: false,
+    });
+    expect(onlyForeign.status).toBe(400);
+    expect((await admin.patch(configurationPath, { slowModeSeconds: 2 ** 31 })).status).toBe(400);
+  });
+
+  it('refuses a status change from a view-only admin', async () => {
+    const room = await createPublicRoom();
+    const viewer = await registerChatRoomViewer();
+
+    const changed = await viewer.client.patch(`/backoffice/chat/rooms/${room.id}/configuration`, {
+      readOnlyMode: true,
+    });
+
+    expect(changed.status).toBe(403);
+  });
+});
+
+describe('chat admin: listing rooms', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const MINUTE_MS = 60 * 1000;
+
+  async function listRooms(query: Record<string, string>) {
+    const listed = await admin.get(`/backoffice/chat/rooms?${new URLSearchParams(query)}`);
+    expect(listed.status).toBe(200);
+    return paginated(AdminChatRoomSchema).parse(await listed.json());
+  }
+
+  async function postMessage(client: TestClient, roomId: string, content: string) {
+    const posted = await client.post(`/chat/rooms/${roomId}/messages`, { content });
+    expect(posted.status).toBe(200);
+    return ChatMessageSchema.parse(await posted.json());
+  }
+
+  it('narrows public rooms to one category and keeps private rooms out', async () => {
+    const tag = `cat-${randomUUID().slice(0, 8)}`;
+    const regions = await createPublicRoom(`${tag} europe`, 'regions');
+    const moreRegions = await createPublicRoom(`${tag} asia`, 'regions');
+    await createPublicRoom(`${tag} english`, 'languages');
+    const owner = await registerChatter('host');
+    expect(
+      (await owner.client.post('/chat/rooms/private', { name: `${tag} private` })).status,
+    ).toBe(200);
+
+    const filtered = await listRooms({ name: tag, category: 'regions', sortBy: 'name' });
+    const unfiltered = await listRooms({ name: tag });
+    const privateOnly = await listRooms({ name: tag, category: 'private-channels' });
+
+    expect(filtered.total).toBe(2);
+    expect(filtered.items.map((room) => room.id).sort()).toEqual(
+      [regions.id, moreRegions.id].sort(),
+    );
+    expect(unfiltered.total).toBe(3);
+    expect(privateOnly).toMatchObject({ total: 0, items: [] });
+  });
+
+  it('rejects an unknown category and a player without the chat-room permission', async () => {
+    const player = await registerChatter('player');
+
+    expect((await admin.get('/backoffice/chat/rooms?category=casino')).status).toBe(400);
+    expect((await player.client.get('/backoffice/chat/rooms')).status).toBe(403);
+  });
+
+  it('counts members and visible player messages within the activity window per room', async () => {
+    const tag = `stats-${randomUUID().slice(0, 8)}`;
+    const busy = await createPublicRoom(`${tag} busy`, 'games-sports');
+    const quiet = await createPublicRoom(`${tag} quiet`, 'games-sports');
+    const first = await registerChatter('first');
+    const second = await registerChatter('second');
+    for (const chatter of [first, second]) {
+      expect((await chatter.client.post(`/chat/rooms/${busy.id}/join`)).status).toBe(200);
+    }
+    const latestVisible = await postMessage(first.client, busy.id, 'still here');
+    const removed = await postMessage(second.client, busy.id, 'gone soon');
+    expect((await admin.del(`/backoffice/chat/messages/${removed.id}`)).status).toBe(200);
+    const now = Date.now();
+    const seed = { roomId: busy.id, userId: first.userId, username: 'first', content: 'old' };
+    await app.container
+      .get(DRIZZLE)
+      .db.insert(chatMessage)
+      .values([
+        { ...seed, createdAt: new Date(now - DAY_MS + 5 * MINUTE_MS) },
+        { ...seed, createdAt: new Date(now - DAY_MS - 5 * MINUTE_MS) },
+        { ...seed, type: 'system', content: 'rain landed', createdAt: new Date(now) },
+      ]);
+
+    const { items } = await listRooms({ name: tag, sortBy: 'name', sortOrder: 'asc' });
+
+    expect(items.map((room) => room.id)).toEqual([busy.id, quiet.id]);
+    expect(items[0]).toMatchObject({
+      memberCount: 3,
+      recentMessageCount: 2,
+      lastMessageAt: latestVisible.createdAt,
+    });
+    expect(items[1]).toMatchObject({ memberCount: 1, recentMessageCount: 0, lastMessageAt: null });
+
+    const busyWithin = async (activityWindowHours: string) =>
+      (await listRooms({ name: tag, activityWindowHours })).items.find(
+        (room) => room.id === busy.id,
+      )?.recentMessageCount;
+
+    expect(await busyWithin('1')).toBe(1);
+    expect(await busyWithin('48')).toBe(3);
+  });
+
+  it('rejects an activity window outside one hour to a week', async () => {
+    for (const hours of ['0', '169', '1.5']) {
+      const listed = await admin.get(`/backoffice/chat/rooms?activityWindowHours=${hours}`);
+      expect(listed.status).toBe(400);
+    }
+  });
+
+  it('reports the global room without a member count, from its messages', async () => {
+    const chatter = await registerChatter('global');
+    const posted = await chatter.client.post('/chat/global', { content: 'hello everyone' });
+    expect(posted.status).toBe(200);
+    const message = ChatMessageSchema.parse(await posted.json());
+
+    const { items } = await listRooms({ name: 'Global' });
+    const globalRoom = items.find((room) => room.id === globalRoomId);
+
+    expect(globalRoom?.memberCount).toBeNull();
+    expect(globalRoom?.recentMessageCount).toBeGreaterThanOrEqual(1);
+    expect(Date.parse(globalRoom?.lastMessageAt ?? '')).toBeGreaterThanOrEqual(
+      Date.parse(message.createdAt),
+    );
+  });
+});

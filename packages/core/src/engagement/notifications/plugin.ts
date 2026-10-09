@@ -1,22 +1,27 @@
 import * as z from 'zod';
 import {
+  GEO_CHECK_COMMANDS,
   IDENTITY_READER,
   JOB_QUEUE,
   MAIL_DISPATCH,
   MailTemplateSchema,
   PLATFORM_CONFIG,
+  PLAY_ELIGIBILITY,
   REALTIME_TRANSPORT,
   TimestampSchema,
   UuidSchema,
   domainEventSchemas,
   formatMoneyAmount,
   queue,
+  type BonusForfeitReason,
   type DomainEventName,
   type DomainEventPayload,
+  type GeoCheckCommands,
   type IdentityReader,
   type JobQueueAdapter,
   type MailDispatchPort,
   type MailTemplate,
+  type PlayEligibilityPort,
   type RealtimeTransport,
 } from '@openora/core/contracts';
 import { createLogger, EVENT_BUS, DRIZZLE } from '@openora/core/server';
@@ -66,6 +71,18 @@ const describeRankBenefits = (p: {
   ].filter((part): part is string => part !== null);
   const rakeback = `${formatMoneyAmount(p.rakebackPercent)}% rakeback`;
   return bonuses.length > 0 ? `${rakeback} and a bonus worth ${bonuses.join(', ')}` : rakeback;
+};
+
+// Why a bonus was taken away, completing "Your bonus was forfeited ..." for the player.
+const FORFEIT_REASON_TEXT: Record<BonusForfeitReason, string> = {
+  self_exclusion: 'because you self-excluded',
+  cooling_off: 'because you started a cooling-off period',
+  account_closed: 'because your account was closed',
+  account_deactivated: 'because your account was deactivated',
+  admin: 'by our support team',
+  player_opt_out: 'at your request',
+  withdrawal_while_active: 'because you withdrew while it was active',
+  terms_breach: "because the offer's terms were not met",
 };
 
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
@@ -123,7 +140,7 @@ function mapEvent<K extends DomainEventName>(
   event: K,
   buildNotification: (payload: DomainEventPayload<K>) => CreateNotificationInput,
   options?: {
-    email: (payload: DomainEventPayload<K>, occurredAt: string) => MailTemplate;
+    email: (payload: DomainEventPayload<K>, occurredAt: string) => MailTemplate | null;
     securityAlert?: boolean;
   },
 ): NotificationMapEntry {
@@ -282,15 +299,33 @@ export const notificationEventMap: NotificationMapEntry[] = [
     data: { transactionId: p.transactionId },
   })),
 
-  mapEvent('promo.bonus.granted', (p) => ({
-    userId: p.userId,
-    type: 'promo.bonus.granted',
-    title: p.rankBonusKind
-      ? `${p.rankBonusKind[0].toUpperCase()}${p.rankBonusKind.slice(1)} bonus credited`
-      : 'Bonus credited',
-    body: `You received a ${formatMoneyAmount(p.grantedAmount)} ${p.currency} bonus. Wager ${formatMoneyAmount(p.wageringRequired)} ${p.currency} to unlock it.`,
-    data: { grantId: p.grantId },
-  })),
+  mapEvent(
+    'promo.bonus.granted',
+    (p) => ({
+      userId: p.userId,
+      type: 'promo.bonus.granted',
+      title: p.rankBonusKind
+        ? `${p.rankBonusKind[0].toUpperCase()}${p.rankBonusKind.slice(1)} bonus credited`
+        : 'Bonus credited',
+      body: `You received a ${formatMoneyAmount(p.grantedAmount)} ${p.currency} bonus. Wager ${formatMoneyAmount(p.wageringRequired)} ${p.currency} to unlock it.`,
+      data: { grantId: p.grantId },
+    }),
+    {
+      // A gift or rain comes from another player and is already announced where it happened;
+      // a rain fans out to a whole room, so a mail per recipient would be noise.
+      email: (p) =>
+        p.source === 'gift' || p.source === 'rain'
+          ? null
+          : {
+              key: 'bonusCredited',
+              data: {
+                grantedAmount: p.grantedAmount,
+                wageringRequired: p.wageringRequired,
+                currency: p.currency,
+              },
+            },
+    },
+  ),
 
   mapEvent(
     'promo.bonus.completed',
@@ -308,6 +343,22 @@ export const notificationEventMap: NotificationMapEntry[] = [
       }),
     },
   ),
+
+  mapEvent('promo.bonus.forfeited', (p) => ({
+    userId: p.userId,
+    type: 'promo.bonus.forfeited',
+    title: 'Bonus forfeited',
+    body: `Your bonus was forfeited ${FORFEIT_REASON_TEXT[p.reason]}. ${formatMoneyAmount(p.forfeitedAmount)} ${p.currency} of bonus funds was removed.`,
+    data: { grantId: p.grantId },
+  })),
+
+  mapEvent('promo.bonus.expired', (p) => ({
+    userId: p.userId,
+    type: 'promo.bonus.expired',
+    title: 'Bonus expired',
+    body: `Your bonus expired before its wagering requirement was met. ${formatMoneyAmount(p.forfeitedAmount)} ${p.currency} of bonus funds was removed.`,
+    data: { grantId: p.grantId },
+  })),
 
   mapEvent(
     'promo.race.won',
@@ -447,6 +498,8 @@ export default {
     let identityReaderRef: IdentityReader | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeRef: RealtimeTransport | null = null;
+    let playEligibilityRef: PlayEligibilityPort | null = null;
+    let geoCheckRef: GeoCheckCommands | null = null;
     let retentionDaysRef = DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
 
     const dispatchMail = async (
@@ -555,7 +608,29 @@ export default {
       });
     }
 
-    ctx.events.on('identity.email.verified', (payload) => {
+    // The welcome mail is the first thing a consumer may put a sign-up bonus in, and it goes
+    // out on verification - before the login gate has refused an RG-blocked account or the
+    // geo gate a blocked country. Whatever cannot be confirmed reads as ineligible.
+    const isEligibleForPromotions = async (userId: string, ip: string | null | undefined) => {
+      if (!playEligibilityRef) {
+        return false;
+      }
+      try {
+        if (await playEligibilityRef.isRestricted(userId)) {
+          return false;
+        }
+        if (!geoCheckRef) {
+          return true;
+        }
+        const geoCheck = geoCheckRef.visitorGeoCheck ?? geoCheckRef.checkAccess;
+        return (await geoCheck.call(geoCheckRef, ip ?? null)).allowed;
+      } catch (err) {
+        logger.error({ err, userId }, 'welcome mail promotion eligibility check failed');
+        return false;
+      }
+    };
+
+    ctx.events.on('identity.email.verified', async (payload) => {
       if (!mailDispatchRef) {
         return;
       }
@@ -563,11 +638,13 @@ export default {
       if (!parsed.success) {
         return;
       }
-      void mailDispatchRef
+      const { userId, ip } = parsed.data;
+      const promotionsEligible = await isEligibleForPromotions(userId, ip);
+      await mailDispatchRef
         .toUser({
-          userId: parsed.data.userId,
-          template: { key: 'welcome', data: {} },
-          idempotencyKey: `welcome-mail:${parsed.data.userId}`,
+          userId,
+          template: { key: 'welcome', data: { promotionsEligible } },
+          idempotencyKey: `welcome-mail:${userId}`,
         })
         .catch((err) => logger.error({ err }, 'welcome mail enqueue failed'));
     });
@@ -782,6 +859,8 @@ export default {
       identityReaderRef = c.get(IDENTITY_READER);
       jobQueueRef = c.get(JOB_QUEUE);
       realtimeRef = c.get(REALTIME_TRANSPORT);
+      playEligibilityRef = c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : null;
+      geoCheckRef = c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : null;
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       retentionDaysRef =
         platformConfig?.notifications?.retention?.days ?? DEFAULT_NOTIFICATIONS_RETENTION_DAYS;

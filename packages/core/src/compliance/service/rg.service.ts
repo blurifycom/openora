@@ -72,13 +72,14 @@ export async function isWeakening(
   row: ResolvedLimitRow,
   next: Pick<UpsertLimitInput, 'amount' | 'minutes' | 'currency'>,
   rates: ExchangeRateReader,
+  db: Db | Tx,
 ): Promise<boolean> {
   if (next.amount !== null && row.amount !== null) {
     const nextCurrency = toDbCurrency(row.type as LimitType, next.currency);
     if (nextCurrency === row.currency) {
       return moneyCompare(next.amount, row.amount) > 0;
     }
-    const converted = await rates.convert(next.amount, nextCurrency, row.currency);
+    const converted = await rates.convert(next.amount, nextCurrency, row.currency, db);
     if (converted === null) {
       return true;
     }
@@ -187,7 +188,7 @@ export async function assertLimitOrdering(
     const compare =
       resolved.currency === changedValue.currency
         ? own.amount
-        : await rates.convert(own.amount, resolved.currency, changedValue.currency);
+        : await rates.convert(own.amount, resolved.currency, changedValue.currency, tx);
     if (compare === null) {
       throw new LimitOrderingViolationError({
         type,
@@ -429,7 +430,7 @@ export class RgService {
           .limit(1);
         if (existing) {
           const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
-          if (await isWeakening(resolvedExisting, input, this.rates)) {
+          if (await isWeakening(resolvedExisting, input, this.rates, tx)) {
             throw new LimitRaiseNotAllowedError(existing, input);
           }
         }

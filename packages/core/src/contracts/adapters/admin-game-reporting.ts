@@ -85,6 +85,8 @@ export type GameRoundRankingFilter = {
   limit: number;
 };
 
+export type GameRoundTopFilter = Omit<GameRoundRankingFilter, 'gameIds'>;
+
 /** A game with at least one completed round in range, and how many it had. */
 export type GameRoundCount = {
   gameId: string;
@@ -108,6 +110,8 @@ export type AdminGameReporting = {
    * this port keeps compiling; without it, a caller ranks from listGamePerformance.
    */
   rankGamesByRounds?(filter: GameRoundRankingFilter): Promise<GameRoundCount[]>;
+  /** As `rankGamesByRounds`, over every game. Optional; without it, a caller lists the games to rank. */
+  rankAllGamesByRounds?(filter: GameRoundTopFilter): Promise<GameRoundCount[]>;
 };
 
 export const ADMIN_GAME_REPORTING: Token<AdminGameReporting> = createToken('ADMIN_GAME_REPORTING');

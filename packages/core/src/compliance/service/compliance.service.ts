@@ -12,7 +12,7 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { and, asc, count, eq, exists, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, eq, exists, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import {
   countryRule,
   gameGeoRule,
@@ -37,7 +37,9 @@ import type {
 } from '../contract/index.js';
 import {
   GAME_BULK_CAP,
+  GEO_RULE_ADMIN_SOURCE,
   GameBulkTooManyGamesError,
+  ReplaceGameGeoRulesInputSchema,
   normalizeCountryCode,
   type AuditWritePort,
   type CacheAdapter,
@@ -46,6 +48,8 @@ import {
   type GeoIpAdapter,
   type GeoRuleAction,
   type IgamingConfig,
+  type ReplaceGameGeoRulesInput,
+  type ReplaceGameGeoRulesResult,
   type MirrorTargetPolicy,
   type User,
 } from '@openora/core/contracts';
@@ -215,6 +219,10 @@ function gameGeoRuleCountryLockKey(countryCode: string): string {
   return `game-geo-rule-country:${countryCode}`;
 }
 
+function gameGeoRuleSourceLockKey(source: string): string {
+  return `game-geo-rule-source:${source}`;
+}
+
 function withGameGeoRuleLocks<T>(
   tx: DrizzleTx,
   gameId: UpsertGameGeoRulesInput['gameId'],
@@ -329,6 +337,38 @@ function pairGeoRuleChanges<Rule extends { countryCode: string; createdAt: Date;
 }
 
 const VISITOR_GEO_BLOCK_AUDIT_WINDOW_MS = 60 * 60 * 1000;
+
+type ReplaceGameGeoRulesBatch = ReturnType<typeof ReplaceGameGeoRulesInputSchema.parse>['rules'];
+
+const GEO_RULE_SYNC_GAMES_PER_TX = 500;
+// Postgres caps a statement at 65535 bind parameters.
+const GEO_RULE_SYNC_ROWS_PER_STATEMENT = 5000;
+
+function chunk<T>(items: readonly T[], size: number): T[][] {
+  return Array.from({ length: Math.ceil(items.length / size) }, (_, i) =>
+    items.slice(i * size, (i + 1) * size),
+  );
+}
+
+type GameCountry = Pick<typeof gameGeoRule.$inferSelect, 'gameId' | 'countryCode'>;
+
+function gameCountryKey(row: GameCountry) {
+  return `${row.gameId}:${row.countryCode}`;
+}
+
+function byGameAndCountry(a: GameCountry, b: GameCountry) {
+  return a.gameId.localeCompare(b.gameId) || a.countryCode.localeCompare(b.countryCode);
+}
+
+function geoRuleAuditEntry(rule: typeof gameGeoRule.$inferSelect) {
+  return {
+    ruleId: rule.id,
+    gameId: rule.gameId,
+    countryCode: rule.countryCode,
+    reason: rule.reason,
+    source: rule.source,
+  };
+}
 
 export class ComplianceService {
   constructor(
@@ -901,7 +941,7 @@ export class ComplianceService {
           )
           .onConflictDoUpdate({
             target: [gameGeoRule.gameId, gameGeoRule.countryCode],
-            set: { reason: input.reason, updatedAt: new Date() },
+            set: { reason: input.reason, source: GEO_RULE_ADMIN_SOURCE, updatedAt: new Date() },
           })
           .returning();
         return pairGeoRuleChanges(before, rows);
@@ -963,9 +1003,160 @@ export class ComplianceService {
     return deleted;
   }
 
+  async replaceGameGeoRules(input: ReplaceGameGeoRulesInput): Promise<ReplaceGameGeoRulesResult> {
+    const { source, reason, rules } = ReplaceGameGeoRulesInputSchema.parse(input);
+    let inserted = 0;
+    let deleted = 0;
+    const notFoundGameIds: string[] = [];
+    for (const batch of chunk(rules, GEO_RULE_SYNC_GAMES_PER_TX)) {
+      // Serializes runs of one source: a run reads what the source owns before it locks countries.
+      const outcome = await this.drizzle.db.transaction((tx) =>
+        withAdvisoryXactLock(tx, gameGeoRuleSourceLockKey(source), () =>
+          this.replaceGameGeoRuleBatch(tx, source, batch, reason),
+        ),
+      );
+      for (const row of outcome.inserted) {
+        this.events.emit('compliance.game-geo-rule.upserted', {
+          ruleId: row.id,
+          gameId: row.gameId,
+          countryCode: row.countryCode,
+          reason: row.reason,
+          before: null,
+          after: row,
+          actorId: null,
+          auditRecorded: true,
+        });
+      }
+      for (const row of outcome.deleted) {
+        this.events.emit('compliance.game-geo-rule.deleted', {
+          ruleId: row.id,
+          gameId: row.gameId,
+          countryCode: row.countryCode,
+          reason,
+          before: row,
+          after: null,
+          actorId: null,
+          auditRecorded: true,
+        });
+      }
+      inserted += outcome.inserted.length;
+      deleted += outcome.deleted.length;
+      notFoundGameIds.push(...outcome.notFoundGameIds);
+    }
+    return { inserted, deleted, notFoundGameIds: notFoundGameIds.sort() };
+  }
+
+  private async replaceGameGeoRuleBatch(
+    tx: DrizzleTx,
+    source: string,
+    batch: ReplaceGameGeoRulesBatch,
+    reason: string,
+  ) {
+    const foundGameIds = new Set(
+      (
+        await tx
+          .select({ id: game.id })
+          .from(game)
+          .where(
+            inArray(
+              game.id,
+              batch.map((rule) => rule.gameId),
+            ),
+          )
+      ).map((row) => row.id),
+    );
+    const notFoundGameIds = batch
+      .map((rule) => rule.gameId)
+      .filter((gameId) => !foundGameIds.has(gameId));
+    const wanted = batch
+      .filter((rule) => foundGameIds.has(rule.gameId))
+      .flatMap((rule) =>
+        [...new Set(rule.countryCodes)].map((countryCode) => ({
+          gameId: rule.gameId,
+          countryCode,
+        })),
+      );
+    if (foundGameIds.size === 0) {
+      return { inserted: [], deleted: [], notFoundGameIds };
+    }
+    const ownedBySource = and(
+      eq(gameGeoRule.source, source),
+      inArray(gameGeoRule.gameId, [...foundGameIds]),
+    );
+
+    // Exclusive like the bulk writers: an admin edit of any touched country waits for the batch.
+    const ownedCountries = await tx
+      .selectDistinct({ countryCode: gameGeoRule.countryCode })
+      .from(gameGeoRule)
+      .where(ownedBySource);
+    const countryCodes = [
+      ...new Set([
+        ...wanted.map((rule) => rule.countryCode),
+        ...ownedCountries.map((row) => row.countryCode),
+      ]),
+    ];
+
+    return withAdvisoryXactLocks(tx, countryCodes.map(gameGeoRuleCountryLockKey), async () => {
+      const owned = await tx
+        .select({
+          id: gameGeoRule.id,
+          gameId: gameGeoRule.gameId,
+          countryCode: gameGeoRule.countryCode,
+        })
+        .from(gameGeoRule)
+        .where(and(ownedBySource, inArray(gameGeoRule.countryCode, countryCodes)));
+      const wantedKeys = new Set(wanted.map(gameCountryKey));
+      const ownedKeys = new Set(owned.map(gameCountryKey));
+
+      const deleted: (typeof gameGeoRule.$inferSelect)[] = [];
+      const staleIds = owned
+        .filter((row) => !wantedKeys.has(gameCountryKey(row)))
+        .map((row) => row.id);
+      for (const ids of chunk(staleIds, GEO_RULE_SYNC_ROWS_PER_STATEMENT)) {
+        deleted.push(
+          ...(await tx
+            .delete(gameGeoRule)
+            .where(and(inArray(gameGeoRule.id, ids), eq(gameGeoRule.source, source)))
+            .returning()),
+        );
+      }
+
+      const inserted: (typeof gameGeoRule.$inferSelect)[] = [];
+      const missing = wanted.filter((rule) => !ownedKeys.has(gameCountryKey(rule)));
+      for (const rows of chunk(missing, GEO_RULE_SYNC_ROWS_PER_STATEMENT)) {
+        inserted.push(
+          ...(await tx
+            .insert(gameGeoRule)
+            .values(rows.map((rule) => ({ ...rule, reason, source })))
+            .onConflictDoNothing({ target: [gameGeoRule.gameId, gameGeoRule.countryCode] })
+            .returning()),
+        );
+      }
+
+      if (inserted.length > 0 || deleted.length > 0) {
+        await this.audit.recordInTransaction(tx, {
+          actorId: null,
+          actorType: 'system',
+          action: 'compliance.game-geo-rules.synced',
+          resourceType: 'game-geo-rule',
+          resourceId: null,
+          before: deleted.length > 0 ? { removedRules: deleted.map(geoRuleAuditEntry) } : null,
+          after: { source, reason, insertedRules: inserted.map(geoRuleAuditEntry) },
+        });
+      }
+
+      return {
+        inserted: inserted.map(serializeGeoRule).sort(byGameAndCountry),
+        deleted: deleted.map(serializeGeoRule).sort(byGameAndCountry),
+        notFoundGameIds,
+      };
+    });
+  }
+
   /**
-   * Idempotent: a game that already has the rule keeps it, reason included, and counts as
-   * `unchanged`. Never writes `provider_geo_rule`.
+   * Idempotent: a game that already has an admin rule keeps it, reason included, and counts
+   * as `unchanged`. A synced rule is taken over as admin and counts as `changed`. Never
+   * writes `provider_geo_rule`.
    */
   async bulkRestrictGameGeoRules(
     input: BulkGameGeoRuleInput,
@@ -979,8 +1170,21 @@ export class ComplianceService {
       meta,
       async (tx, games) => {
         if (games.length === 0) {
-          return { rules: [] };
+          return { rules: [], takenOverRules: [] };
         }
+        const takenOver = await tx
+          .select()
+          .from(gameGeoRule)
+          .where(
+            and(
+              inArray(
+                gameGeoRule.gameId,
+                games.map((row) => row.id),
+              ),
+              eq(gameGeoRule.countryCode, input.countryCode),
+              ne(gameGeoRule.source, GEO_RULE_ADMIN_SOURCE),
+            ),
+          );
         const rows = await tx
           .insert(gameGeoRule)
           .values(
@@ -990,9 +1194,16 @@ export class ComplianceService {
               reason: input.reason,
             })),
           )
-          .onConflictDoNothing({ target: [gameGeoRule.gameId, gameGeoRule.countryCode] })
+          .onConflictDoUpdate({
+            target: [gameGeoRule.gameId, gameGeoRule.countryCode],
+            set: { reason: input.reason, source: GEO_RULE_ADMIN_SOURCE, updatedAt: new Date() },
+            setWhere: ne(gameGeoRule.source, GEO_RULE_ADMIN_SOURCE),
+          })
           .returning();
-        return { rules: serializeBulkGeoRules(rows) };
+        return {
+          rules: serializeBulkGeoRules(rows),
+          takenOverRules: takenOver.map(geoRuleAuditEntry),
+        };
       },
     );
 
@@ -1065,7 +1276,10 @@ export class ComplianceService {
   }
 
   private async bulkWriteGameGeoRules<
-    T extends { rules: ReturnType<typeof serializeBulkGeoRules> },
+    T extends {
+      rules: ReturnType<typeof serializeBulkGeoRules>;
+      takenOverRules?: ReturnType<typeof geoRuleAuditEntry>[];
+    },
   >(
     operation: 'restrict' | 'unrestrict',
     input: BulkGameGeoRuleInput,
@@ -1098,13 +1312,16 @@ export class ComplianceService {
             before:
               operation === 'unrestrict'
                 ? {
-                    removedRules: result.rules.map(({ id, gameId, reason }) => ({
+                    removedRules: result.rules.map(({ id, gameId, reason, source }) => ({
                       ruleId: id,
                       gameId,
                       reason,
+                      source,
                     })),
                   }
-                : null,
+                : result.takenOverRules?.length
+                  ? { takenOverRules: result.takenOverRules }
+                  : null,
             after: {
               operation,
               countryCode: input.countryCode,

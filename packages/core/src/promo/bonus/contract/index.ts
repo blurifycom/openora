@@ -15,6 +15,7 @@ import {
   PageQuerySchema,
   paginated,
   PromoOfferStatusSchema,
+  SignedMoneyAmountSchema,
   TimestampSchema,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -106,8 +107,9 @@ export const PromoOfferRulesSchema = z.object({
    */
   freeSpins: z.number().int().positive().optional(),
   /**
-   * How many days a period-close job (e.g. a net-loss cashback sweep) looks back. Absent means
-   * the job's own default period.
+   * How many days a period-close job (e.g. a net-loss cashback sweep) looks back. Set, the offer
+   * is paid only by that job: a deposit never grants it, whatever its match and minimum say.
+   * Absent means a deposit-triggered offer.
    */
   periodDays: z.number().int().positive().optional(),
 });
@@ -241,6 +243,16 @@ export type PlayerGrant = z.infer<typeof PlayerGrantSchema>;
 
 export const AdminGrantSchema = PlayerGrantSchema.extend({
   userId: UuidSchema,
+  /**
+   * Who forfeited the grant: an admin, or the player whose own action (a self-exclusion)
+   * triggered it. Null for a system forfeit and every other status. Name and email are null
+   * only if the account row is gone.
+   */
+  forfeitedBy: z
+    .object({ id: UuidSchema, name: z.string().nullable(), email: z.string().nullable() })
+    .nullable(),
+  /** The note recorded with the forfeit, when it had one. */
+  forfeitNote: z.string().nullable(),
 });
 
 export type AdminGrant = z.infer<typeof AdminGrantSchema>;
@@ -296,14 +308,18 @@ export const BonusBalanceUpdateSchema = z.object({
 
 export type BonusBalanceUpdate = z.infer<typeof BonusBalanceUpdateSchema>;
 
-/** One movement of a player's bonus funds, as they are allowed to see it. */
+/**
+ * One movement of a player's bonus funds, as they are allowed to see it. `bonusAmount` is the
+ * ledger's signed delta - negative on a stake, a conversion and a forfeiture - and
+ * `wageringDelta` goes negative when a reversal takes progress back.
+ */
 export const PlayerGrantEntrySchema = z.object({
   id: UuidSchema,
   type: z.enum(BONUS_GRANT_ENTRY_TYPES),
   currency: CurrencyTickerSchema,
-  bonusAmount: MoneyAmountSchema,
+  bonusAmount: SignedMoneyAmountSchema,
   realAmount: MoneyAmountSchema,
-  wageringDelta: MoneyAmountSchema,
+  wageringDelta: SignedMoneyAmountSchema,
   balanceAfter: MoneyAmountSchema,
   createdAt: TimestampSchema,
 });

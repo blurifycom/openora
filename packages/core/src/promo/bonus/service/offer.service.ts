@@ -53,6 +53,8 @@ export const OfferClaimedError = makeConflictError(
 const DATE_FIELDS = ['validFrom', 'validUntil', 'createdAt', 'updatedAt'] as const;
 const MONEY_FIELDS = ['matchPercent', 'maxGrantAmount', 'minDeposit'] as const;
 
+const isDepositTriggered = sql`${promoOffer.rules} ->> 'periodDays' is null`;
+
 type OfferContext = { isFirstDeposit?: boolean };
 
 /** A bonus this deposit created, for the caller that owns the commit to announce afterwards. */
@@ -170,8 +172,8 @@ export class OfferService {
 
   // Fallback for a WalletReader implementation without isFirstDeposit; null (an unpriced
   // currency) reads as "not the first deposit", same direction as offerFacts above.
-  private async isFirstDepositByLifetimeTotal(userId: Uuid, depositAmount: string) {
-    const lifetime = await this.wallet.getLifetimeDeposit(userId);
+  private async isFirstDepositByLifetimeTotal(userId: Uuid, depositAmount: string, tx?: unknown) {
+    const lifetime = await this.wallet.getLifetimeDeposit(userId, tx);
     return lifetime !== null && moneyCompare(lifetime, depositAmount) === 0;
   }
 
@@ -268,12 +270,12 @@ export class OfferService {
     // for this one - `isFirstDeposit` instead compares this transaction's own committed
     // `created_at` against every other completed deposit, which does not move once written.
     const isFirstDeposit = this.wallet.isFirstDeposit
-      ? await this.wallet.isFirstDeposit(deposit.userId, deposit.transactionId)
-      : await this.isFirstDepositByLifetimeTotal(deposit.userId, deposit.amount);
+      ? await this.wallet.isFirstDeposit(deposit.userId, deposit.transactionId, tx)
+      : await this.isFirstDepositByLifetimeTotal(deposit.userId, deposit.amount, tx);
     // Re-evaluated here rather than trusted from opt-in time: this job can run after a
     // self-exclusion or ban that landed between the opt-in and this deposit settling, and the
     // forfeit sweep that reacted to that exclusion has no way to know a grant would appear later.
-    const isRestricted = await this.playEligibility.isRestricted(deposit.userId);
+    const isRestricted = await this.playEligibility.isRestricted(deposit.userId, tx);
     const at = new Date();
     // Reported rather than emitted here: the deposit and the grant commit together on the
     // caller's transaction, and a notification promising a bonus that then rolled back is worse
@@ -373,7 +375,8 @@ export class OfferService {
   /**
    * The claims this deposit could satisfy: the ones the player took, plus the offers that need no
    * taking. An offer marked `requiresOptIn: false` applies to any qualifying deposit, so the claim
-   * is opened here rather than requiring the player to ask for something already theirs.
+   * is opened here rather than requiring the player to ask for something already theirs. A
+   * period-close offer is never one of them: its job pays it off play over a window, not a deposit.
    */
   private async claimsFor(
     tx: DrizzleTx,
@@ -390,6 +393,7 @@ export class OfferService {
           eq(promoOffer.status, 'active'),
           eq(promoOffer.requiresOptIn, false),
           eq(promoOffer.currency, deposit.currency),
+          isDepositTriggered,
         ),
       );
     if (automatic.length > 0) {
@@ -405,7 +409,13 @@ export class OfferService {
       .select({ optIn: promoOptIn, offer: promoOffer })
       .from(promoOptIn)
       .innerJoin(promoOffer, eq(promoOffer.id, promoOptIn.offerId))
-      .where(and(eq(promoOptIn.userId, deposit.userId), sql`${promoOptIn.grantId} is null`))
+      .where(
+        and(
+          eq(promoOptIn.userId, deposit.userId),
+          sql`${promoOptIn.grantId} is null`,
+          isDepositTriggered,
+        ),
+      )
       .for('update', { of: promoOptIn });
   }
 

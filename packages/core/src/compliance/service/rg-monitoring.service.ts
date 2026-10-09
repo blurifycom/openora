@@ -273,6 +273,7 @@ export class RgMonitoringService {
   ) {
     if (type === 'deposit') {
       return this.convertedTotal(
+        db,
         await this.depositsByCurrency(db, userId, from),
         type,
         period,
@@ -281,6 +282,7 @@ export class RgMonitoringService {
     }
     if (type === 'loss') {
       return this.convertedTotal(
+        db,
         await this.netLossByCurrency(db, userId, from),
         type,
         period,
@@ -288,6 +290,7 @@ export class RgMonitoringService {
       );
     }
     return this.convertedTotal(
+      db,
       await this.betsByCurrency(db, userId, from),
       type,
       period,
@@ -296,6 +299,7 @@ export class RgMonitoringService {
   }
 
   private async convertedTotal(
+    db: DrizzleDb | DrizzleTx,
     groups: { currency: string; total: string }[],
     type: LimitType,
     period: LimitPeriod,
@@ -307,7 +311,7 @@ export class RgMonitoringService {
         total = moneyAdd(total, group.total);
         continue;
       }
-      const converted = await this.rates.convert(group.total, group.currency, limitCurrency);
+      const converted = await this.rates.convert(group.total, group.currency, limitCurrency, db);
       if (converted === null) {
         throw new RgRateUnavailableError(type, period, group.currency, limitCurrency);
       }

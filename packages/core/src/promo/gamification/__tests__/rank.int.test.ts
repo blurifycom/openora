@@ -169,7 +169,7 @@ describe('recording a wager toward the rank ladder', () => {
 
     await wager(userId, '10', 'BTC');
 
-    expect(convert).toHaveBeenCalledWith('10', 'BTC', 'USDT');
+    expect(convert).toHaveBeenCalledWith('10', 'BTC', 'USDT', expect.anything());
     expect((await rankOf(userId))?.lifetimeWagered).toBe('11.000000000000000000');
   });
 

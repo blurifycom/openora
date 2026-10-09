@@ -10,6 +10,7 @@ import {
   registerAndMaterializePlayer,
   type TestDb,
   type TestApp,
+  uniqueUsername,
 } from '../index.js';
 
 let db: TestDb;
@@ -51,7 +52,7 @@ describe('a jsonb value the current contract cannot read', () => {
   it('costs a system message its place, not the whole room history', async () => {
     const player = await registerAndMaterializePlayer(app, {
       email: `drift_${randomUUID().slice(0, 8)}@e2e.test`,
-      username: `drift_${randomUUID().replaceAll('-', '').slice(0, 10)}`,
+      username: uniqueUsername('drift'),
     });
     const drizzle = app.container.get(DRIZZLE);
     // `command: 'tip'` is no command this build knows - the shape a removed or renamed

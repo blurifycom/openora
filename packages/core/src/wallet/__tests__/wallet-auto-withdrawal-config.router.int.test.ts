@@ -173,13 +173,16 @@ describe('wallet auto-withdrawal-config routes', () => {
     ).rejects.toBeInstanceOf(ORPCError);
   });
 
+  // The velocity knobs are not what these cases are about; the shipped defaults keep them out of the way.
+  const VELOCITY = { velocityCount: 3, velocityWindowHours: 24 } as const;
+
   it('set: rejects payments-manager and writes nothing', async () => {
     const { router, audit } = routerWith(paymentsManagerDenyingGuard());
 
     await expect(
       call(
         router.autoWithdrawalConfig.set,
-        { fiatThreshold: '500', cryptoThreshold: '1', excludeRiskFlags: [] },
+        { fiatThreshold: '500', cryptoThreshold: '1', excludeRiskFlags: [], ...VELOCITY },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
@@ -193,7 +196,7 @@ describe('wallet auto-withdrawal-config routes', () => {
     await expect(
       call(
         router.autoWithdrawalConfig.set,
-        { fiatThreshold: '500', cryptoThreshold: '1', excludeRiskFlags: [] },
+        { fiatThreshold: '500', cryptoThreshold: '1', excludeRiskFlags: [], ...VELOCITY },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
@@ -207,7 +210,7 @@ describe('wallet auto-withdrawal-config routes', () => {
     await expect(
       call(
         router.autoWithdrawalConfig.set,
-        { fiatThreshold: '-1', cryptoThreshold: '1', excludeRiskFlags: [] },
+        { fiatThreshold: '-1', cryptoThreshold: '1', excludeRiskFlags: [], ...VELOCITY },
         { context: CTX },
       ),
     ).rejects.toThrow();
@@ -219,7 +222,7 @@ describe('wallet auto-withdrawal-config routes', () => {
     await expect(
       call(
         router.autoWithdrawalConfig.set,
-        { fiatThreshold: '1', cryptoThreshold: '-1', excludeRiskFlags: [] },
+        { fiatThreshold: '1', cryptoThreshold: '-1', excludeRiskFlags: [], ...VELOCITY },
         { context: CTX },
       ),
     ).rejects.toThrow();
@@ -231,10 +234,48 @@ describe('wallet auto-withdrawal-config routes', () => {
     await expect(
       call(
         router.autoWithdrawalConfig.set,
-        { fiatThreshold: '10000000000', cryptoThreshold: '1', excludeRiskFlags: [] },
+        { fiatThreshold: '10000000000', cryptoThreshold: '1', excludeRiskFlags: [], ...VELOCITY },
         { context: CTX },
       ),
     ).rejects.toThrow();
+  });
+
+  it.each([
+    ['a zero velocity count', { velocityCount: 0, velocityWindowHours: 24 }],
+    ['a fractional velocity count', { velocityCount: 2.5, velocityWindowHours: 24 }],
+    ['a zero velocity window', { velocityCount: 3, velocityWindowHours: 0 }],
+    ['a velocity window beyond 30 days', { velocityCount: 3, velocityWindowHours: 721 }],
+  ])('set: rejects %s', async (_label, velocity) => {
+    const { router } = routerWith(superAdminGuard());
+
+    await expect(
+      call(
+        router.autoWithdrawalConfig.set,
+        { fiatThreshold: '500', cryptoThreshold: '1', excludeRiskFlags: [], ...velocity },
+        { context: CTX },
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('set: a null velocity count turns the check off and GET reflects it', async () => {
+    const { router } = routerWith(superAdminGuard());
+
+    await call(
+      router.autoWithdrawalConfig.set,
+      {
+        fiatThreshold: '500',
+        cryptoThreshold: '1',
+        excludeRiskFlags: [],
+        velocityCount: null,
+        velocityWindowHours: 6,
+      },
+      { context: CTX },
+    );
+
+    expect(await call(router.autoWithdrawalConfig.get, {}, { context: CTX })).toMatchObject({
+      velocityCount: null,
+      velocityWindowHours: 6,
+    });
   });
 
   it('set: super-admin updates both thresholds and excludeRiskFlags, GET reflects immediately, and writes an admin audit entry with before/after', async () => {
@@ -242,7 +283,12 @@ describe('wallet auto-withdrawal-config routes', () => {
 
     const result = await call(
       router.autoWithdrawalConfig.set,
-      { fiatThreshold: '500', cryptoThreshold: '1', excludeRiskFlags: ['bonus_abuser'] },
+      {
+        fiatThreshold: '500',
+        cryptoThreshold: '1',
+        excludeRiskFlags: ['bonus_abuser'],
+        ...VELOCITY,
+      },
       { context: CTX },
     );
 
@@ -277,11 +323,15 @@ describe('wallet auto-withdrawal-config routes', () => {
             'withdrawal_review',
             'multi_account',
           ],
+          velocityCount: 3,
+          velocityWindowHours: 24,
         },
         after: {
           fiatThreshold: '500.000000000000000000',
           cryptoThreshold: '1.000000000000000000',
           excludeRiskFlags: ['bonus_abuser'],
+          velocityCount: 3,
+          velocityWindowHours: 24,
         },
       }),
     );
@@ -294,7 +344,7 @@ describe('wallet auto-withdrawal-config routes', () => {
 
     await call(
       router.autoWithdrawalConfig.set,
-      { fiatThreshold: '100', cryptoThreshold: '0', excludeRiskFlags: [] },
+      { fiatThreshold: '100', cryptoThreshold: '0', excludeRiskFlags: [], ...VELOCITY },
       { context: CTX },
     );
 

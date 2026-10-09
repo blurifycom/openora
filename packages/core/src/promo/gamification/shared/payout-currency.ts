@@ -17,6 +17,7 @@ import type { ExchangeRateReader } from '@openora/core/contracts';
  * retry" idiom.
  */
 export async function priceForPayout(
+  tx: unknown,
   rates: ExchangeRateReader,
   amount: string,
   currency: string,
@@ -25,7 +26,7 @@ export async function priceForPayout(
   if (currency === payoutCurrency) {
     return { amount, currency };
   }
-  const converted = await rates.convert(amount, currency, payoutCurrency);
+  const converted = await rates.convert(amount, currency, payoutCurrency, tx);
   if (converted === null) {
     throw new Error(
       `no exchange rate from ${currency} to ${payoutCurrency} - retry once available`,

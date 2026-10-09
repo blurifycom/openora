@@ -148,7 +148,7 @@ export async function mapEventToRecord(
   ) {
     return {
       ...base,
-      actorType: 'admin',
+      actorType: typeof p['actorId'] === 'string' ? 'admin' : 'system',
       actorId: str(p['actorId']),
       resourceType: 'game-geo-rule',
       resourceId: str(p['ruleId']),
@@ -1424,9 +1424,9 @@ export default {
         if (!svcRef || !isRecord(payload)) {
           return;
         }
-        // KYC exemptions append their audit record inside the state transaction, then
-        // publish this event for realtime and other consumers after commit.
-        if (topic === 'compliance.kyc.updated' && payload['auditRecorded'] === true) {
+        // KYC exemptions and game geo rule syncs append their audit record inside the state
+        // transaction, then publish this event for realtime and other consumers after commit.
+        if (payload['auditRecorded'] === true) {
           return;
         }
         const svc = svcRef;

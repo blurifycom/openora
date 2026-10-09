@@ -1,5 +1,5 @@
 {
-  "id": "218b7cde-267a-4d9e-85ac-a0f205b72380",
+  "id": "c9abf14a-0c0e-4864-9ca6-f185010c8bfe",
   "prevId": "b6e0e13c-0afa-4a67-bf5d-e95981a0d164",
   "version": "7",
   "dialect": "postgresql",
@@ -278,6 +278,20 @@
           "primaryKey": false,
           "notNull": true,
           "default": "ARRAY['high_risk','bonus_abuser','kyc_rejected','withdrawal_review','multi_account']::text[]"
+        },
+        "velocity_count": {
+          "name": "velocity_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "default": 3
+        },
+        "velocity_window_hours": {
+          "name": "velocity_window_hours",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 24
         },
         "updated_by": {
           "name": "updated_by",
@@ -1732,33 +1746,6 @@
             },
             {
               "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "wallet_transaction_wallet_id_status_created_at_idx": {
-          "name": "wallet_transaction_wallet_id_status_created_at_idx",
-          "columns": [
-            {
-              "expression": "wallet_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

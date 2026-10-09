@@ -12,6 +12,7 @@ import {
   type TestApp,
   type TestClient,
   type TestDb,
+  uniqueUsername,
 } from '../index.js';
 
 type AuditItem = {
@@ -100,8 +101,7 @@ describe('player status change audit', () => {
     expect((await client.patch(`/players/${playerId}`, { status: 'suspended' })).status).toBe(403);
     expect((await admin.patch(`/players/${playerId}`, { status: 'active' })).status).toBe(200);
     expect(
-      (await admin.patch(`/players/${playerId}`, { username: `u${randomUUID().slice(0, 8)}` }))
-        .status,
+      (await admin.patch(`/players/${playerId}`, { username: uniqueUsername('u') })).status,
     ).toBe(200);
     // Audit rows land in order, so waiting on this transition's row also covers the earlier calls.
     expect((await admin.patch(`/players/${playerId}`, { status: 'suspended' })).status).toBe(200);

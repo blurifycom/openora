@@ -289,6 +289,31 @@ describe('game geo rule event reasons', () => {
   });
 });
 
+describe('game geo rule event actor and source', () => {
+  it('accepts a null actor and reads a v1 state without source as admin', () => {
+    const gameId = randomUUID();
+    const parsed = domainEventSchemas['compliance.game-geo-rule.deleted'].parse({
+      ruleId: randomUUID(),
+      gameId,
+      countryCode: 'US',
+      reason: 'vendor lifted the restriction',
+      before: {
+        id: randomUUID(),
+        gameId,
+        countryCode: 'US',
+        reason: 'licence',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      after: null,
+      actorId: null,
+    });
+
+    expect(parsed.actorId).toBeNull();
+    expect(parsed.before.source).toBe('admin');
+  });
+});
+
 describe('provider geo rule event payloads', () => {
   const providerId = randomUUID();
   const state = {

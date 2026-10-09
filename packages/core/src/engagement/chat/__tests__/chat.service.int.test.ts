@@ -1560,6 +1560,7 @@ describe('ChatService admin rooms (real PG)', () => {
       limit: 1,
       sortBy: 'name',
       sortOrder: 'asc',
+      activityWindowHours: 24,
     });
 
     expect(result.total).toBe(2);

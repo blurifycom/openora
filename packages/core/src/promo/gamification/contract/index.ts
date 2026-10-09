@@ -243,6 +243,18 @@ export const StreakConfigSchema = z.object({
 });
 export type StreakConfig = z.infer<typeof StreakConfigSchema>;
 
+/**
+ * A run resets once it reaches `resetAfterDay`, so a milestone past it could never be reached -
+ * an operator saving one would be promising a reward nobody can earn.
+ */
+export const SetStreakConfigInputSchema = StreakConfigSchema.refine(
+  (config) => config.milestones.every((milestone) => milestone.day <= config.resetAfterDay),
+  {
+    message: 'a milestone falls after resetAfterDay and can never be reached',
+    path: ['milestones'],
+  },
+);
+
 export const PlayerStreakSchema = z.object({
   current: z.number().int().nonnegative(),
   best: z.number().int().nonnegative(),
@@ -369,6 +381,8 @@ export const RaceForPlayerSchema = z.object({
   /** Positions 4 and below, capped - see RaceService.getForPlayer. */
   leaderboard: z.array(RaceLeaderboardEntrySchema).max(MAX_RACE_POSITIONS - 3),
   own: RaceOwnEntrySchema,
+  /** Everyone with a wager in the race, uncapped - the "of N" beside the player's position. */
+  participants: z.number().int().nonnegative(),
 });
 export type RaceForPlayer = z.infer<typeof RaceForPlayerSchema>;
 
@@ -533,7 +547,7 @@ export const gamificationContract = {
 
         set: oc
           .route({ method: 'PUT', path: '/backoffice/promo/streaks/config' })
-          .input(StreakConfigSchema)
+          .input(SetStreakConfigInputSchema)
           .output(StreakConfigSchema),
       },
     },

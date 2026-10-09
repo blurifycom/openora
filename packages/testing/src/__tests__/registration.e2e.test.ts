@@ -17,6 +17,7 @@ import {
   seedMinimal,
   type TestDb,
   type TestApp,
+  uniqueUsername,
 } from '../index.js';
 
 let db: TestDb;
@@ -234,7 +235,7 @@ describe('registration email verification', () => {
   // alone would still pass with the topic missing from the subscription list.
   it('writes a rejected attempt to the audit log with its origin and outcome', async () => {
     const email = `reg-audit-${randomUUID()}@e2e.test`;
-    const username = `dup_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+    const username = uniqueUsername('dup');
     await registerPlayer(app, { email: `reg-audit-first-${randomUUID()}@e2e.test`, username });
 
     // Called directly rather than through `submitRegistration`, which picks its own
@@ -291,7 +292,7 @@ describe('registration email verification', () => {
   });
 
   it('rejects a username that is already taken, case-insensitively', async () => {
-    const username = `dup_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+    const username = uniqueUsername('dup');
     await registerPlayer(app, { email: `reg-dup-a-${randomUUID()}@e2e.test`, username });
 
     const res = await submitRegistration(app, {
@@ -302,7 +303,7 @@ describe('registration email verification', () => {
   });
 
   it('reports username availability against the case-insensitive index', async () => {
-    const username = `avail_${randomUUID().replaceAll('-', '').slice(0, 8)}`;
+    const username = uniqueUsername('avail');
     const free = await app.app.request(`/identity/username-available?username=${username}`);
     expect(await free.json()).toEqual({ available: true });
 

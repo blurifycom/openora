@@ -206,6 +206,10 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
     subject: 'Your bonus has cleared its wagering requirement',
     text: `Your ${formatMoney(data.convertedAmount, data.currency)} bonus has cleared its wagering requirement and is now part of your withdrawable balance.`,
   }),
+  bonusCredited: (data) => ({
+    subject: 'Your bonus has been credited',
+    text: `You received a ${formatMoney(data.grantedAmount, data.currency)} bonus. Wager ${formatMoney(data.wageringRequired, data.currency)} to turn it into withdrawable balance.`,
+  }),
 };
 
 const renderDefaultEmail = (

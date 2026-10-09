@@ -30,19 +30,18 @@ type GrantRequirement = { resource: string; action: string };
  * first line, never re-implementing the role check. Overload without
  * `resource`/`action` only requires a valid admin session; the 3-arg overload
  * additionally checks a specific permission. When the iam module's permission
- * resolver is bound, DB-assigned grants are authoritative; when a role has no DB
- * assignment row (the bootstrap path - seed admin), it falls back to the static
- * role table instead of denying outright. A revoked-in-DB but still
- * statically-granted role is NOT denied by this fallback - revoke the static role
- * to fully lock a bootstrap admin out. Every denial emits
- * `identity.user.unauthorized_access` for audit, before throwing.
+ * resolver is bound, DB-assigned grants are authoritative: an admin with no
+ * assigned role (never assigned, or every role revoked) holds no permissions and
+ * is not a super admin. Only when no resolver is bound does the static role table
+ * decide. Every denial emits `identity.user.unauthorized_access` for audit, before
+ * throwing.
  */
 export class AdminGuard {
   // Uses the shared SessionResolver (one better-auth init for the whole app) rather than a second createAuth over the same DB.
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly sessions: SessionResolver,
-    // When bound (iam module loaded), grants come from DB; otherwise falls back to static roles.
+    // When bound (iam module loaded), grants come from DB only; otherwise static roles decide.
     private readonly permissionResolver?: AdminPermissionResolver,
     private readonly events?: EventBus,
     // When bound (identity module loaded), resolves the PAM player.id for a
@@ -132,8 +131,9 @@ export class AdminGuard {
 
   async assertSuperAdmin(context: unknown): Promise<AdminCaller> {
     const caller = await this.assert(context);
-    const assigned = await this.permissionResolver?.isSuperAdmin(caller.userId);
-    const isSuper = assigned ?? caller.role === 'admin';
+    const isSuper = this.permissionResolver
+      ? await this.permissionResolver.isSuperAdmin(caller.userId)
+      : caller.role === 'admin';
 
     if (!isSuper) {
       this.emitUnauthorized(
@@ -231,6 +231,7 @@ export class AdminGuard {
     return row && { role: row.role, isActive: row.is_active, isAdmin: isRoleName(row.role) };
   }
 
+  // null only when no resolver is bound - an unassigned admin under a bound resolver gets [].
   private resolveGrants(userId: string): Promise<AdminGrant[] | null> {
     return this.permissionResolver
       ? this.permissionResolver.getGrants(userId)

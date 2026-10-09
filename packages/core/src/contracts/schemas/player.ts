@@ -1,6 +1,13 @@
 import * as z from 'zod';
-import { MoneyAmountSchema, TimestampSchema, TimezoneSchema, UuidSchema } from './common.js';
-import { CountryCodeSchema, CurrencyCodeSchema } from './igaming-config.js';
+import {
+  CurrencyTickerInputSchema,
+  CurrencyTickerSchema,
+  MoneyAmountSchema,
+  TimestampSchema,
+  TimezoneSchema,
+  UuidSchema,
+} from './common.js';
+import { CountryCodeSchema } from './igaming-config.js';
 import { E164PhoneSchema, UsernameSchema } from './identity.js';
 import { TagKeySchema } from './tag.js';
 import { PageQuerySchema, SortOrderSchema } from '../kit.js';
@@ -56,7 +63,7 @@ export const PlayerSchema = z.object({
   phone: z.string().nullable(),
   country: z.string().nullable(),
   bio: z.string().nullable(),
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerSchema,
   status: PlayerStatusSchema,
   kycStatus: KycStatusSchema,
   level: z.number().int(),
@@ -169,7 +176,7 @@ export const UpdatePlayerProfileInputSchema = z
       .nullable(),
     phone: E164PhoneSchema.nullable(),
     country: CountryCodeSchema.nullable(),
-    currency: CurrencyCodeSchema,
+    currency: CurrencyTickerInputSchema,
     timezone: TimezoneSchema,
     hideUsernameOnLeaderboards: z.boolean(),
     allowFriendRequests: z.boolean(),
