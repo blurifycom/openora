@@ -30,6 +30,14 @@ export type GamingNotifyGamesCreatedArgs = {
   gameIds: readonly string[];
 };
 
+export type GamingNotifyGamesChangedArgs = {
+  gameIds: readonly string[];
+  /** Tags the games were linked to before the change, so rules naming a removed tag re-evaluate. */
+  tagIds?: readonly string[];
+  /** Providers the games belonged to before the change. */
+  providerIds?: readonly string[];
+};
+
 export type GamingCommands = {
   accumulateExternalRound(
     tx: unknown,
@@ -48,6 +56,14 @@ export type GamingCommands = {
    * existed keeps type-checking; core's own binding always provides it.
    */
   notifyGamesCreated?(args: GamingNotifyGamesCreatedArgs): Promise<void>;
+  /**
+   * Reports existing game rows the caller has already rewritten and committed outside the
+   * admin update (a catalogue sync changing names, providers, tags). Marks their categories
+   * for re-ranking and emits `gaming.games.changed` so rule-mode categories re-evaluate at
+   * once; unknown ids are dropped. Report only games that really changed: each one re-ranks
+   * every category it is in. Optional for the same reason as `notifyGamesCreated`.
+   */
+  notifyGamesChanged?(args: GamingNotifyGamesChangedArgs): Promise<void>;
 };
 
 export const GAMING_COMMANDS: Token<GamingCommands> = createToken('GAMING_COMMANDS');
