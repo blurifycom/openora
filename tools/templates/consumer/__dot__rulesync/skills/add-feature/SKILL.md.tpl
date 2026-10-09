@@ -77,7 +77,7 @@ Cheap gates first, prove it works, only then spend review on working code:
 
 ### 6. Open the MR
 
-Run **create-pr**: it commits (`feat({{trackerKey}}-XXX): ...`), reports the SHA, asks for "yes push", pushes, and opens the pull request against `{{mrTarget}}` per `docs/agents/forge.md`, with the CODEOWNERS for the changed paths as reviewers. Hand it the step-5 screenshots and the "Tests" list - both belong in the description. Never bypass its push-consent gate.
+Run **create-pr**: it commits (`feat(<scope>): ... ({{trackerKey}}-XXX)`), reports the SHA, asks for "yes push", pushes, and opens the pull request against `{{mrTarget}}` per `docs/agents/forge.md`, with the CODEOWNERS for the changed paths as reviewers. Hand it the step-5 screenshots and the "Tests" list - both belong in the description. Never bypass its push-consent gate.
 
 ### 7. Jira status transition (NOT comments)
 
