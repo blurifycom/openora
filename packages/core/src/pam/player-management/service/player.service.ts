@@ -63,15 +63,16 @@ export class PlayerService implements PlayerActivityTracker {
    * writer read the latest ledger. When a deposit currency has no rate the stored total is
    * left as it was: a guessed total would read back exactly like a real one.
    */
-  async refreshTotalDeposits(userId: User['id']) {
-    await this.drizzle.db.transaction((tx) =>
+  // Resolves false when a deposit currency cannot be priced, so a retrying caller can try again.
+  async refreshTotalDeposits(userId: User['id']): Promise<boolean> {
+    return this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, `player_total_deposits:${userId}`, async () => {
         const [current] = await tx
           .select({ id: player.id, currency: player.currency })
           .from(player)
           .where(eq(player.userId, userId));
         if (!current) {
-          return;
+          return true;
         }
         const depositsByCurrency = await tx
           .select({
@@ -94,9 +95,10 @@ export class PlayerService implements PlayerActivityTracker {
             { userId },
             'refreshTotalDeposits: could not price every deposit currency, keeping the stored total',
           );
-          return;
+          return false;
         }
         await tx.update(player).set({ totalDeposits }).where(eq(player.id, current.id));
+        return true;
       }),
     );
   }

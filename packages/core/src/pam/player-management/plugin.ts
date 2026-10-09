@@ -9,9 +9,14 @@ import {
   USER_COMMANDS,
   PLAYER_ACTIVITY_TRACKER,
   EXCHANGE_RATE_READER,
+  JOB_QUEUE,
   domainEventSchemas,
+  queue,
+  UuidSchema,
 } from '@openora/core/contracts';
+import type { JobQueueAdapter } from '@openora/core/contracts';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
+import * as z from 'zod';
 import { PlayerService } from './service/player.service.js';
 import { PlayerKycStatusWriter } from './service/kyc-status-writer.js';
 import { createPlayerRouter } from './router/index.js';
@@ -31,22 +36,53 @@ function makePlayerService(c: TypedContainer<CoreTokenCatalog>) {
 
 const logger = createLogger('player-management');
 
+const TOTAL_DEPOSITS_QUEUE = queue('player-total-deposits');
+const TotalDepositsJobSchema = z.object({ userId: UuidSchema });
+
 export default {
   id: 'player-management',
   dependsOn: ['chat', 'gaming', 'audit', 'identity'],
   register(ctx) {
-    // One memoized instance backs the tracker port, the router and the deposit subscription.
+    // One memoized instance backs the tracker port, the router and the deposit job.
     let svc: PlayerService | null = null;
-    const playerService = (c: TypedContainer<CoreTokenCatalog>) => (svc ??= makePlayerService(c));
+    let jobQueue: JobQueueAdapter | null = null;
+    const playerService = (c: TypedContainer<CoreTokenCatalog>) => {
+      jobQueue ??= c.get(JOB_QUEUE);
+      return (svc ??= makePlayerService(c));
+    };
 
+    // The refresh recomputes from the ledger, so it runs as a retryable job: a failed read or
+    // an unpriced currency retries instead of leaving totalDeposits stale until the next deposit.
     ctx.events.on('wallet.deposit.completed', (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
-      if (!parsed.success || !svc) {
+      if (!parsed.success || !jobQueue) {
         return;
       }
-      svc
-        .refreshTotalDeposits(parsed.data.userId)
-        .catch((err) => logger.error({ err }, 'player total deposits refresh failed'));
+      void jobQueue
+        .enqueue(
+          TOTAL_DEPOSITS_QUEUE,
+          { userId: parsed.data.userId },
+          {
+            idempotencyKey: `player-total-deposits:${parsed.data.transactionId}`,
+            orderingKey: parsed.data.userId,
+            attempts: 10,
+            backoff: { type: 'exponential', delayMs: 1_000 },
+          },
+        )
+        .catch((err) => logger.error({ err }, 'player total deposits enqueue failed'));
+    });
+    ctx.jobs.worker({
+      queue: TOTAL_DEPOSITS_QUEUE,
+      schema: TotalDepositsJobSchema,
+      options: { serializeByOrderingKey: true },
+      handler: async ({ payload }) => {
+        if (!svc) {
+          throw new Error('player service is not initialized');
+        }
+        if (!(await svc.refreshTotalDeposits(payload.userId))) {
+          throw new Error('could not price every deposit currency');
+        }
+      },
     });
 
     ctx.provide(KYC_STATUS_WRITER, (c) => new PlayerKycStatusWriter(c.get(DRIZZLE)));
