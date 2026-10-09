@@ -6,3 +6,4 @@
 // Set LOG_LEVEL yourself to get the output back for one run:
 //   LOG_LEVEL=debug pnpm -F @openora/core test:integration
 process.env['LOG_LEVEL'] ??= 'silent';
+process.env['CORS_ORIGINS'] ??= 'http://localhost:3000';

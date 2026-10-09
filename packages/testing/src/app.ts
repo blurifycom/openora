@@ -86,6 +86,7 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
         ],
         ...(config.igaming ? { igaming: config.igaming } : {}),
         databaseUrl: config.databaseUrl,
+        cors: false,
         authSchema: { user, session, account, verification, twoFactor },
       },
       (container: Container<CoreTokenCatalog>) => {
