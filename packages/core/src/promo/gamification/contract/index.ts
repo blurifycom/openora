@@ -381,6 +381,8 @@ export const RaceForPlayerSchema = z.object({
   /** Positions 4 and below, capped - see RaceService.getForPlayer. */
   leaderboard: z.array(RaceLeaderboardEntrySchema).max(MAX_RACE_POSITIONS - 3),
   own: RaceOwnEntrySchema,
+  /** Everyone with a wager in the race, uncapped - the "of N" beside the player's position. */
+  participants: z.number().int().nonnegative(),
 });
 export type RaceForPlayer = z.infer<typeof RaceForPlayerSchema>;
 

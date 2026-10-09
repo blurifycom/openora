@@ -243,6 +243,16 @@ export type PlayerGrant = z.infer<typeof PlayerGrantSchema>;
 
 export const AdminGrantSchema = PlayerGrantSchema.extend({
   userId: UuidSchema,
+  /**
+   * Who forfeited the grant: an admin, or the player whose own action (a self-exclusion)
+   * triggered it. Null for a system forfeit and every other status. Name and email are null
+   * only if the account row is gone.
+   */
+  forfeitedBy: z
+    .object({ id: UuidSchema, name: z.string().nullable(), email: z.string().nullable() })
+    .nullable(),
+  /** The note recorded with the forfeit, when it had one. */
+  forfeitNote: z.string().nullable(),
 });
 
 export type AdminGrant = z.infer<typeof AdminGrantSchema>;

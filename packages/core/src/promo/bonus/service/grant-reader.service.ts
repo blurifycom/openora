@@ -11,6 +11,7 @@ import {
   serializeRow,
   type DrizzleService,
 } from '@openora/core/server';
+import { user } from '@openora/core/pam/schema/identity';
 import { promoGrant, promoGrantEntry, promoOffer, type PromoGrant } from '../schema/index.js';
 import type { AdminGrant, BonusBalance, PlayerGrant, PlayerGrantEntry } from '../contract/index.js';
 
@@ -65,7 +66,13 @@ const ENTRY_COLUMNS = {
 const ADMIN_COLUMNS = {
   ...COLUMNS,
   userId: promoGrant.userId,
+  forfeitNote: promoGrant.forfeitNote,
+  forfeitedById: promoGrant.forfeitedBy,
+  forfeitedByName: user.name,
+  forfeitedByEmail: user.email,
 };
+
+const withForfeitActor = eq(user.id, promoGrant.forfeitedBy);
 
 /**
  * A grant is a credit the player received, so every grant that was ever funded reads as a
@@ -178,6 +185,7 @@ export class GrantReaderService {
       .select(ADMIN_COLUMNS)
       .from(promoGrant)
       .leftJoin(promoOffer, withOffer)
+      .leftJoin(user, withForfeitActor)
       .where(eq(promoGrant.userId, userId))
       .orderBy(desc(promoGrant.createdAt), desc(promoGrant.id))
       .limit(query.limit)
@@ -190,6 +198,7 @@ export class GrantReaderService {
       .select(ADMIN_COLUMNS)
       .from(promoGrant)
       .leftJoin(promoOffer, withOffer)
+      .leftJoin(user, withForfeitActor)
       .where(eq(promoGrant.id, id));
     if (!row) {
       throw new GrantNotFoundError(id);
@@ -220,10 +229,27 @@ type PlayerGrantRow = {
   [K in keyof typeof GRANT_COLUMNS]: PromoGrant[K];
 } & OfferLabel;
 
-type AdminGrantRow = PlayerGrantRow & { userId: PromoGrant['userId'] };
+type AdminGrantRow = PlayerGrantRow & {
+  userId: PromoGrant['userId'];
+  forfeitNote: PromoGrant['forfeitNote'];
+  forfeitedById: PromoGrant['forfeitedBy'];
+  forfeitedByName: string | null;
+  forfeitedByEmail: string | null;
+};
 
-function toAdminGrant(row: AdminGrantRow): AdminGrant {
-  return serializeRow(row, SERIALIZE);
+function toAdminGrant({
+  forfeitedById,
+  forfeitedByName,
+  forfeitedByEmail,
+  ...row
+}: AdminGrantRow): AdminGrant {
+  return {
+    ...serializeRow(row, SERIALIZE),
+    forfeitedBy:
+      forfeitedById === null
+        ? null
+        : { id: forfeitedById, name: forfeitedByName, email: forfeitedByEmail },
+  };
 }
 
 function toPlayerGrant(row: PlayerGrantRow): PlayerGrant {
