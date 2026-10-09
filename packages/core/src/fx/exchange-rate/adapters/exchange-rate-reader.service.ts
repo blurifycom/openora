@@ -11,7 +11,7 @@ import type {
   ExchangeRateReader,
 } from '@openora/core/contracts';
 import { railFor } from '@openora/core/contracts';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, lte } from 'drizzle-orm';
 import { exchangeRateQuote } from '../schema/index.js';
 
 const logger = createLogger('exchange-rate-reader');
@@ -318,6 +318,8 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       .onConflictDoUpdate({
         target: [exchangeRateQuote.baseCurrency, exchangeRateQuote.quoteCurrency],
         set: { rate: value.rate, providerAsOf, updatedAt: new Date() },
+        // The write is detached, so a slower, older fetch can land after a newer one.
+        setWhere: lte(exchangeRateQuote.providerAsOf, providerAsOf),
       });
   }
 }

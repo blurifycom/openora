@@ -160,7 +160,7 @@ export class RgSelfServiceService {
 
         if (existing) {
           const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
-          if (await isWeakening(resolvedExisting, input, this.rates)) {
+          if (await isWeakening(resolvedExisting, input, this.rates, tx)) {
             // The pending amount is the effective one being validated - it's what
             // applies once the player confirms it.
             await this.assertOrdering(tx, userId, input);

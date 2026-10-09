@@ -228,6 +228,36 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
     expect(fiatProvider.getRate).not.toHaveBeenCalled();
   });
 
+  it('a late background write of an older quote never overwrites a newer stored one', async () => {
+    await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: HARD_STALE_AGE_MS });
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const olderAsOf = agedIso(30_000);
+    const fiatProvider = mock<ExchangeRateProvider>({
+      getRate: vi.fn(async (): Promise<ExchangeRateQuote> => {
+        await gate;
+        return { rate: '1.300000000000000000', asOf: olderAsOf };
+      }),
+    });
+    const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
+
+    const pending = reader.getRate('EUR', 'USD');
+    await vi.waitFor(() => expect(fiatProvider.getRate).toHaveBeenCalledTimes(1));
+    await db.drizzle.db
+      .update(exchangeRateQuote)
+      .set({ rate: '1.500000000000000000', providerAsOf: new Date() })
+      .where(
+        and(eq(exchangeRateQuote.baseCurrency, 'EUR'), eq(exchangeRateQuote.quoteCurrency, 'USD')),
+      );
+    release();
+    expect((await pending)?.rate).toBe('1.300000000000000000');
+    await wait(100);
+
+    expect((await getRow('EUR', 'USD'))?.rate).toBe('1.500000000000000000');
+  });
+
   it('hard-stale with no row at all: fetches synchronously and persists a first row', async () => {
     const fiatProvider = delayedProvider('1.400000000000000000', 5);
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
