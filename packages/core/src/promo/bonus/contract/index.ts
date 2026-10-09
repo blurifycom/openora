@@ -106,8 +106,9 @@ export const PromoOfferRulesSchema = z.object({
    */
   freeSpins: z.number().int().positive().optional(),
   /**
-   * How many days a period-close job (e.g. a net-loss cashback sweep) looks back. Absent means
-   * the job's own default period.
+   * How many days a period-close job (e.g. a net-loss cashback sweep) looks back. Set, the offer
+   * is paid only by that job: a deposit never grants it, whatever its match and minimum say.
+   * Absent means a deposit-triggered offer.
    */
   periodDays: z.number().int().positive().optional(),
 });
