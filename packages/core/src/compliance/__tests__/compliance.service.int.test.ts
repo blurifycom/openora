@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { count, eq, inArray, sql } from 'drizzle-orm';
 import {
   defineIgamingConfig,
+  domainEventSchemas,
   type GeoIpAdapter,
   type IgamingConfig,
   GameBulkTooManyGamesError,
@@ -1601,9 +1602,12 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
       expect.anything(),
       expect.objectContaining({
         before: {
-          removedRules: [...gameIds]
-            .sort()
-            .map((gameId) => ({ ruleId: expect.any(String), gameId, reason: 'restricted' })),
+          removedRules: [...gameIds].sort().map((gameId) => ({
+            ruleId: expect.any(String),
+            gameId,
+            reason: 'restricted',
+            source: 'admin',
+          })),
         },
       }),
     );
@@ -1738,5 +1742,343 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
       .where(inArray(gameGeoRule.gameId, [bulkA!, bulkB!, single!]));
     expect(rules.map((r) => r.gameId).sort()).toEqual([bulkA, bulkB, single].sort());
     expect(rules.every((r) => r.countryCode === 'DK')).toBe(true);
+  });
+});
+
+describe('ComplianceService.replaceGameGeoRules (real PG)', () => {
+  const SOURCE = 'vendor-feed';
+  const SYNC_REASON = 'Restricted by the vendor';
+
+  async function rulesOf(gameIds: string[]) {
+    const rows = await db.drizzle.db
+      .select()
+      .from(gameGeoRule)
+      .where(inArray(gameGeoRule.gameId, gameIds));
+    return rows
+      .map(({ gameId, countryCode, source, reason }) => ({ gameId, countryCode, source, reason }))
+      .sort((a, b) => `${a.gameId}:${a.countryCode}`.localeCompare(`${b.gameId}:${b.countryCode}`));
+  }
+
+  function emitted(events: ReturnType<typeof makeService>['events'], topic: string) {
+    return events.emit.mock.calls
+      .filter(([event]) => event === topic)
+      .map(([, payload]) => payload);
+  }
+
+  it('inserts the source rules as the system actor, and the play gate enforces them', async () => {
+    const providerId = await seedProvider();
+    const [first, second] = await seedManyGames(providerId, 2);
+    const { svc, events, audit } = makeService('US');
+
+    const result = await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: [
+        { gameId: first!, countryCodes: ['US', 'DE', 'US'] },
+        { gameId: second!, countryCodes: ['FR'] },
+      ],
+    });
+
+    expect(result).toEqual({ inserted: 3, deleted: 0, notFoundGameIds: [] });
+    expect(await rulesOf([first!, second!])).toEqual(
+      [
+        { gameId: first!, countryCode: 'DE', source: SOURCE, reason: SYNC_REASON },
+        { gameId: first!, countryCode: 'US', source: SOURCE, reason: SYNC_REASON },
+        { gameId: second!, countryCode: 'FR', source: SOURCE, reason: SYNC_REASON },
+      ].sort((a, b) =>
+        `${a.gameId}:${a.countryCode}`.localeCompare(`${b.gameId}:${b.countryCode}`),
+      ),
+    );
+    const upserts = emitted(events, 'compliance.game-geo-rule.upserted');
+    expect(upserts).toHaveLength(3);
+    for (const payload of upserts) {
+      const parsed = domainEventSchemas['compliance.game-geo-rule.upserted'].parse(payload);
+      expect(parsed).toMatchObject({
+        actorId: null,
+        auditRecorded: true,
+        before: null,
+        after: { source: SOURCE },
+      });
+    }
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(expect.anything(), {
+      actorId: null,
+      actorType: 'system',
+      action: 'compliance.game-geo-rules.synced',
+      resourceType: 'game-geo-rule',
+      resourceId: null,
+      before: null,
+      after: {
+        source: SOURCE,
+        reason: SYNC_REASON,
+        insertedRules: expect.arrayContaining([
+          expect.objectContaining({ gameId: first!, countryCode: 'US', source: SOURCE }),
+        ]),
+      },
+    });
+    await expect(svc.checkGame({ gameId: first!, ipAddress: '1.2.3.4' })).resolves.toEqual({
+      allowed: false,
+      countryCode: 'US',
+      reason: 'game_block',
+    });
+    await expect(svc.checkGame({ gameId: second!, ipAddress: '1.2.3.4' })).resolves.toMatchObject({
+      allowed: true,
+    });
+  });
+
+  it('removes only its own rules when a game list shrinks or empties', async () => {
+    const providerId = await seedProvider();
+    const [shrinking, emptied] = await seedManyGames(providerId, 2);
+    const { svc, events, audit } = makeService();
+    await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: [
+        { gameId: shrinking!, countryCodes: ['US', 'DE', 'FR'] },
+        { gameId: emptied!, countryCodes: ['US'] },
+      ],
+    });
+    await svc.replaceGameGeoRules({
+      source: 'other-feed',
+      reason: 'Other vendor',
+      rules: [{ gameId: emptied!, countryCodes: ['PL'] }],
+    });
+    events.emit.mockClear();
+    audit.recordInTransaction.mockClear();
+
+    const result = await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: 'Vendor lifted the restriction',
+      rules: [
+        { gameId: shrinking!, countryCodes: ['US'] },
+        { gameId: emptied!, countryCodes: [] },
+      ],
+    });
+
+    expect(result).toEqual({ inserted: 0, deleted: 3, notFoundGameIds: [] });
+    expect(
+      (await rulesOf([shrinking!, emptied!])).map((r) => [r.gameId, r.countryCode, r.source]),
+    ).toEqual(
+      [
+        [shrinking!, 'US', SOURCE],
+        [emptied!, 'PL', 'other-feed'],
+      ].sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`)),
+    );
+    const deletes = emitted(events, 'compliance.game-geo-rule.deleted');
+    expect(deletes).toHaveLength(3);
+    for (const payload of deletes) {
+      const parsed = domainEventSchemas['compliance.game-geo-rule.deleted'].parse(payload);
+      expect(parsed).toMatchObject({
+        actorId: null,
+        reason: 'Vendor lifted the restriction',
+        after: null,
+        before: { source: SOURCE },
+      });
+    }
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
+    const [[, entry]] = audit.recordInTransaction.mock.calls;
+    expect(entry).toMatchObject({ actorType: 'system', after: { insertedRules: [] } });
+    expect(entry?.before?.['removedRules']).toHaveLength(3);
+  });
+
+  it('never touches an admin rule on the same game and country', async () => {
+    const gameId = randomUUID();
+    await seedGame(gameId, 'Admin Restricted');
+    const { svc } = makeService();
+    await svc.upsertGameGeoRules(
+      { gameId, countryCodes: ['US'], reason: 'admin licence restriction' },
+      randomUUID(),
+      NO_META,
+    );
+
+    const added = await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: [{ gameId, countryCodes: ['US', 'DE'] }],
+    });
+    const cleared = await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: [{ gameId, countryCodes: [] }],
+    });
+
+    expect(added).toEqual({ inserted: 1, deleted: 0, notFoundGameIds: [] });
+    expect(cleared).toEqual({ inserted: 0, deleted: 1, notFoundGameIds: [] });
+    expect(await rulesOf([gameId])).toEqual([
+      { gameId, countryCode: 'US', source: 'admin', reason: 'admin licence restriction' },
+    ]);
+  });
+
+  it('is idempotent: re-running the same feed changes nothing and emits nothing', async () => {
+    const providerId = await seedProvider();
+    const [first, second] = await seedManyGames(providerId, 2);
+    const { svc, events, audit } = makeService();
+    const input = {
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: [
+        { gameId: first!, countryCodes: ['US', 'DE'] },
+        { gameId: second!, countryCodes: [] },
+      ],
+    };
+    await svc.replaceGameGeoRules(input);
+    const before = await rulesOf([first!, second!]);
+    events.emit.mockClear();
+    audit.recordInTransaction.mockClear();
+
+    expect(await svc.replaceGameGeoRules(input)).toEqual({
+      inserted: 0,
+      deleted: 0,
+      notFoundGameIds: [],
+    });
+    expect(await rulesOf([first!, second!])).toEqual(before);
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('matches an uppercase game id to the game and keeps its rules', async () => {
+    const gameId = randomUUID();
+    await seedGame(gameId, 'Uppercase');
+    const { svc } = makeService();
+    await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: [{ gameId, countryCodes: ['US'] }],
+    });
+
+    const result = await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: [{ gameId: gameId.toUpperCase(), countryCodes: ['US', 'DE'] }],
+    });
+
+    expect(result).toEqual({ inserted: 1, deleted: 0, notFoundGameIds: [] });
+    expect((await rulesOf([gameId])).map((r) => r.countryCode)).toEqual(['DE', 'US']);
+  });
+
+  it('skips and reports unknown games', async () => {
+    const gameId = randomUUID();
+    const unknown = randomUUID();
+    await seedGame(gameId, 'Known');
+    const { svc } = makeService();
+
+    const result = await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: [
+        { gameId, countryCodes: ['US'] },
+        { gameId: unknown, countryCodes: ['US'] },
+      ],
+    });
+
+    expect(result).toEqual({ inserted: 1, deleted: 0, notFoundGameIds: [unknown] });
+    expect(await rulesOf([unknown])).toEqual([]);
+  });
+
+  it('writes a feed larger than one transaction batch', async () => {
+    const providerId = await seedProvider();
+    const gameIds = await seedManyGames(providerId, 501);
+    const { svc } = makeService();
+
+    const result = await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: gameIds.map((gameId) => ({ gameId, countryCodes: ['US', 'DE'] })),
+    });
+
+    expect(result).toEqual({ inserted: 1002, deleted: 0, notFoundGameIds: [] });
+  });
+
+  it('refuses the admin source and a game listed twice', async () => {
+    const gameId = randomUUID();
+    await seedGame(gameId, 'Game');
+    const { svc } = makeService();
+
+    await expect(
+      svc.replaceGameGeoRules({
+        source: 'admin',
+        reason: SYNC_REASON,
+        rules: [{ gameId, countryCodes: [] }],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      svc.replaceGameGeoRules({
+        source: SOURCE,
+        reason: SYNC_REASON,
+        rules: [
+          { gameId, countryCodes: ['US'] },
+          { gameId, countryCodes: ['DE'] },
+        ],
+      }),
+    ).rejects.toThrow();
+    expect(await rulesOf([gameId])).toEqual([]);
+  });
+
+  it('lets an admin upsert take a synced rule over, so the sync cannot remove it', async () => {
+    const gameId = randomUUID();
+    await seedGame(gameId, 'Game');
+    const { svc, events } = makeService();
+    await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: [{ gameId, countryCodes: ['US'] }],
+    });
+
+    const [rule] = await svc.upsertGameGeoRules(
+      { gameId, countryCodes: ['US'], reason: 'confirmed by compliance' },
+      randomUUID(),
+      NO_META,
+    );
+    await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: [{ gameId, countryCodes: [] }],
+    });
+
+    expect(rule).toMatchObject({ source: 'admin', reason: 'confirmed by compliance' });
+    expect(emitted(events, 'compliance.game-geo-rule.upserted').at(-1)).toMatchObject({
+      before: { source: SOURCE },
+      after: { source: 'admin' },
+    });
+    expect(await rulesOf([gameId])).toEqual([
+      { gameId, countryCode: 'US', source: 'admin', reason: 'confirmed by compliance' },
+    ]);
+    expect((await svc.listGameGeoRules({ gameIds: [gameId], page: 1, limit: 10 })).items).toEqual([
+      expect.objectContaining({ countryCode: 'US', source: 'admin' }),
+    ]);
+  });
+
+  it('lets an admin bulk restrict take a synced rule over and counts it as changed', async () => {
+    const providerId = await seedProvider();
+    const [synced, plain] = await seedManyGames(providerId, 2);
+    const { svc, audit } = makeService();
+    await svc.replaceGameGeoRules({
+      source: SOURCE,
+      reason: SYNC_REASON,
+      rules: [{ gameId: synced!, countryCodes: ['DK'] }],
+    });
+
+    const result = await svc.bulkRestrictGameGeoRules(
+      { gameIds: [synced!, plain!], countryCode: 'DK', reason: 'bulk restriction' },
+      randomUUID(),
+      NO_META,
+    );
+
+    expect(result).toMatchObject({ changed: 2, unchanged: 0 });
+    expect((await rulesOf([synced!, plain!])).map((r) => [r.source, r.reason])).toEqual([
+      ['admin', 'bulk restriction'],
+      ['admin', 'bulk restriction'],
+    ]);
+    expect(audit.recordInTransaction).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'compliance.game-geo-rules.bulk_updated',
+        before: {
+          takenOverRules: [
+            expect.objectContaining({ gameId: synced!, reason: SYNC_REASON, source: SOURCE }),
+          ],
+        },
+      }),
+    );
   });
 });

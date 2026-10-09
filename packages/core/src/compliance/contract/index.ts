@@ -12,6 +12,7 @@ import {
   gameBulkTargetRefinement,
   hasGameBulkTarget,
   GeoRuleActionSchema,
+  GeoRuleSourceSchema,
   NonEmptyReasonSchema,
   PageQuerySchema,
   paginated,
@@ -216,6 +217,7 @@ export const GameGeoRuleSchema = z.object({
   gameId: UuidSchema,
   countryCode: CountryCodeSchema,
   reason: NonEmptyReasonSchema,
+  source: GeoRuleSourceSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });

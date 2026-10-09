@@ -9,6 +9,7 @@ import {
   GEO_IP_ADAPTER,
   GEO_CHECK_COMMANDS,
   GAME_GEO_CHECK,
+  GAME_GEO_RULE_COMMANDS,
   JOB_QUEUE,
   KYC_ADAPTER,
   IDENTITY_READER,
@@ -98,6 +99,7 @@ export default {
   register(ctx) {
     ctx.provide(GEO_CHECK_COMMANDS, makeComplianceService);
     ctx.provide(GAME_GEO_CHECK, makeComplianceService);
+    ctx.provide(GAME_GEO_RULE_COMMANDS, makeComplianceService);
     ctx.provide(RG_LIMITS, (c) => new RgLimitGate(monitoring(c), c.get(EXCHANGE_RATE_READER)));
     ctx.provide(
       KYC_WITHDRAWAL_POLICY,
