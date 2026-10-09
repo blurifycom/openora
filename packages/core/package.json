@@ -743,7 +743,6 @@
     "gen:drizzle": "node scripts/generate-all.mjs"
   },
   "dependencies": {
-    "@2toad/profanity": "3.3.0",
     "@hono/node-server": "2.0.10",
     "@orpc/client": "1.15.4",
     "@orpc/contract": "1.15.4",
@@ -758,6 +757,8 @@
     "drizzle-orm": "0.45.2",
     "hono": "4.13.13",
     "libphonenumber-js": "1.13.13",
+    "naughty-words": "1.2.0",
+    "obscenity": "0.4.6",
     "pg": "8.22.0",
     "pino": "10.3.1",
     "redis": "5.12.1",

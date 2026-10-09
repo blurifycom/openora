@@ -18,9 +18,53 @@ describe('hasProfanity', () => {
     expect(hasProfanity('classic match')).toBe(false); // no substring hit inside "classic"
   });
 
+  it('catches English obfuscation', () => {
+    expect(hasProfanity('sh1t')).toBe(true);
+    expect(hasProfanity('fuuuuck')).toBe(true);
+  });
+
   it('returns false for clean content', () => {
     expect(hasProfanity('good luck everyone, nice game')).toBe(false);
     expect(hasProfanity('5')).toBe(false);
+  });
+
+  it.each([
+    'no',
+    'no problem',
+    "can't stop, won't stop",
+    "don't",
+    'I bet $',
+    'won $$ today',
+    'up 55%',
+    'win in %',
+    'won 4 h ago',
+    'lol ♪',
+    'a) first',
+    'gg :)',
+    '17ч',
+    'шт',
+    'i3 cpu',
+    'assistant',
+  ])('lets ordinary chat through: %s', (message) => {
+    expect(hasProfanity(message)).toBe(false);
+  });
+
+  it.each([
+    'uma cerveja depois',
+    'vamos comer',
+    'rojo o negro',
+    'mein VIP-Abo',
+    'pros and con',
+    'nice bite',
+    'mama mia',
+    'gol!',
+    'какая разница',
+  ])('does not block an everyday word another language lists: %s', (message) => {
+    expect(hasProfanity(message)).toBe(false);
+  });
+
+  it('matches multi-word terms across any whitespace', () => {
+    expect(hasProfanity('hijo  de\tputa')).toBe(true);
   });
 
   it('can scope to a subset of languages', () => {
