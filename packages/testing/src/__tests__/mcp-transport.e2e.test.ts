@@ -495,25 +495,35 @@ describe('MCP tokens, automatic revocation', () => {
   });
 });
 
+const WITH_MCP = [
+  { resource: 'mcp-access', level: 'read_write' },
+  { resource: 'player', level: 'read' },
+];
+const WITHOUT_MCP = [{ resource: 'player', level: 'read' }];
+
+/**
+ * A fresh staff account holding exactly one new role with `grants` - the seeded admins
+ * carry a default role assignment, and grants are the union of every assignment, so a
+ * test about one narrow role needs an account that holds nothing else.
+ */
+async function staffWithRole(grants: { resource: string; level: string }[]) {
+  const email = `mcp-staff-${randomUUID()}@e2e.test`;
+  const userId = await registerPlayer(app, { email });
+  await drizzle().update(user).set({ role: 'admin' }).where(eq(user.id, userId));
+  const role = IdSchema.parse(
+    await (await admin.post('/iam/roles', { name: `MCP staff ${userId}` })).json(),
+  );
+  const setGrants = (next: { resource: string; level: string }[]) =>
+    admin.put(`/iam/roles/${role.id}/permissions`, { grants: next });
+  expect((await setGrants(grants)).status).toBe(200);
+  expect((await admin.post('/iam/assignments', { userId, roleId: role.id })).status).toBe(200);
+  return { userId, email, roleId: role.id, setGrants, client: await asAdmin(app.app, { email }) };
+}
+
 describe('MCP transport, grants', () => {
   it('lists only what a narrow role grants and refuses the rest, then revokes when MCP access goes', async () => {
-    const role = IdSchema.parse(
-      await (await admin.post('/iam/roles', { name: 'MCP analyst' })).json(),
-    );
-    const setGrants = (grants: { resource: string; level: string }[]) =>
-      admin.put(`/iam/roles/${role.id}/permissions`, { grants });
-    expect(
-      (
-        await setGrants([
-          { resource: 'mcp-access', level: 'read_write' },
-          { resource: 'player', level: 'read' },
-        ])
-      ).status,
-    ).toBe(200);
-    expect(
-      (await admin.post('/iam/assignments', { userId: moderatorId, roleId: role.id })).status,
-    ).toBe(200);
-    const { id, token } = await issueToken(moderator);
+    const staff = await staffWithRole(WITH_MCP);
+    const { id, token } = await issueToken(staff.client);
     const client = await connect(token);
 
     const { tools } = await client.listTools();
@@ -524,15 +534,17 @@ describe('MCP transport, grants', () => {
     expect(JSON.parse(TextContentSchema.parse(kyc).content[0]?.text ?? '{}')).toEqual({
       error: 'forbidden',
     });
-    expect((await moderator.get('/iam/mcp-tokens')).status).toBe(403);
-    expect((await moderator.post('/iam/mcp-tokens/revoke-all', {})).status).toBe(403);
+    expect((await staff.client.get('/iam/mcp-tokens')).status).toBe(403);
+    expect((await staff.client.post('/iam/mcp-tokens/revoke-all', {})).status).toBe(403);
     await client.close();
 
-    expect((await setGrants([{ resource: 'player', level: 'read' }])).status).toBe(200);
+    expect((await staff.setGrants(WITHOUT_MCP)).status).toBe(200);
     expect(await revokeReasonOf(id)).toBe('admin_role_removed');
     expect((await rawPost({ token })).status).toBe(401);
-    expect((await moderator.post('/iam/my-mcp-tokens', { label: 'no-access' })).status).toBe(403);
-    expect((await moderator.get('/iam/my-mcp-tokens')).status).toBe(403);
+    expect((await staff.client.post('/iam/my-mcp-tokens', { label: 'no-access' })).status).toBe(
+      403,
+    );
+    expect((await staff.client.get('/iam/my-mcp-tokens')).status).toBe(403);
   });
 });
 
@@ -582,26 +594,6 @@ describe('MCP tokens, oversight', () => {
 });
 
 describe('MCP tokens, issuing while a grant change takes MCP access away', () => {
-  const WITH_MCP = [
-    { resource: 'mcp-access', level: 'read_write' },
-    { resource: 'player', level: 'read' },
-  ];
-  const WITHOUT_MCP = [{ resource: 'player', level: 'read' }];
-
-  async function staffWithRole(grants: { resource: string; level: string }[]) {
-    const email = `mcp-race-${randomUUID()}@e2e.test`;
-    const userId = await registerPlayer(app, { email });
-    await drizzle().update(user).set({ role: 'admin' }).where(eq(user.id, userId));
-    const role = IdSchema.parse(
-      await (await admin.post('/iam/roles', { name: `MCP race ${userId}` })).json(),
-    );
-    const setGrants = (next: { resource: string; level: string }[]) =>
-      admin.put(`/iam/roles/${role.id}/permissions`, { grants: next });
-    expect((await setGrants(grants)).status).toBe(200);
-    expect((await admin.post('/iam/assignments', { userId, roleId: role.id })).status).toBe(200);
-    return { userId, roleId: role.id, setGrants, client: await asAdmin(app.app, { email }) };
-  }
-
   it('refuses the issue the grant change held back, leaves no token, and issues again once access is back', async () => {
     const staff = await staffWithRole(WITH_MCP);
     const appDb = { drizzle: app.container.get(DRIZZLE) };
@@ -639,10 +631,7 @@ describe('MCP tokens, issuing while a grant change takes MCP access away', () =>
 
 describe('MCP tokens, issuing while the issuing session is revoked', () => {
   it('refuses the issue a revoke-all held back, adds no token, and issues again from a new session', async () => {
-    const email = `mcp-session-race-${randomUUID()}@e2e.test`;
-    const staffId = await registerPlayer(app, { email });
-    await drizzle().update(user).set({ role: 'admin' }).where(eq(user.id, staffId));
-    const staff = await asAdmin(app.app, { email });
+    const { userId: staffId, client: staff, email } = await staffWithRole(WITH_MCP);
     const existing = await issueToken(staff, 'before the race');
     const appDb = { drizzle: app.container.get(DRIZZLE) };
     const rows = holdRowLocks((tx) =>

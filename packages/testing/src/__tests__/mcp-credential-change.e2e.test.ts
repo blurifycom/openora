@@ -4,7 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { and, eq } from 'drizzle-orm';
 import * as z from 'zod';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
-import { mcpToken } from '@openora/core/iam/schema';
+import {
+  adminRole,
+  adminRolePermission,
+  adminRoleAssignment,
+  mcpToken,
+} from '@openora/core/iam/schema';
 import { account, user } from '@openora/core/pam/schema/identity';
 import {
   setupTestDb,
@@ -84,7 +89,23 @@ async function newStaff() {
   const email = `mcp-credentials-${randomUUID()}@e2e.test`;
   const userId = await registerPlayer(app, { email, password: PASSWORD });
   await drizzle().update(user).set({ role: 'admin' }).where(eq(user.id, userId));
+  await grantMcpAccess(userId);
   return { email, userId, client: await asAdmin(app.app, { email, password: PASSWORD }) };
+}
+
+/** A staff account holds nothing until a role is assigned, so an MCP token owner needs one. */
+async function grantMcpAccess(userId: string) {
+  const [role] = await drizzle()
+    .insert(adminRole)
+    .values({ name: `MCP ${userId}` })
+    .returning({ id: adminRole.id });
+  if (!role) {
+    throw new Error('grantMcpAccess: role insert returned no row');
+  }
+  await drizzle()
+    .insert(adminRolePermission)
+    .values({ roleId: role.id, resource: 'mcp-access', level: 'read_write' });
+  await drizzle().insert(adminRoleAssignment).values({ userId, roleId: role.id });
 }
 
 async function issueToken(client: TestClient) {
