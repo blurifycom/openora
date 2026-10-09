@@ -131,8 +131,15 @@
     {
       "idx": 18,
       "version": "7",
-      "when": 1791568531001,
-      "tag": "0018_chat_room_invite",
+      "when": 1791375545203,
+      "tag": "0018_chat_restriction_room_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791569167248,
+      "tag": "0019_chat_room_invite",
       "breakpoints": true
     }
   ]

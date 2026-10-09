@@ -21,6 +21,10 @@ export const ROOM_ACTIVITY_WINDOW_HOURS_MAX = 168;
 
 export const CHAT_ROOM_ROLES = ['member', 'moderator', 'owner'] as const;
 
+export const CHAT_ROOM_RESTRICTION_TYPES = ['mute', 'ban', 'cooldown'] as const;
+// `admin`: set by staff through the backoffice. `room`: set by the room's owner or a moderator.
+export const CHAT_ROOM_RESTRICTION_SOURCES = ['admin', 'room'] as const;
+
 // Roles a room owner can grant or revoke through the member-role route. `owner` is absent
 // on purpose: ownership moves through its own transfer flow, never through a role write.
 export const CHAT_ROOM_ASSIGNABLE_ROLES = ['member', 'moderator'] as const;

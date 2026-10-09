@@ -5,6 +5,7 @@ import type {
   WalletReader,
   IdentityReader,
   AdminUserDirectory,
+  PlayEligibilityPort,
   TagKey,
   KycStatus,
 } from '@openora/core/contracts';
@@ -145,7 +146,7 @@ function makeServices(
   } = {},
 ) {
   const events = makeEventBus();
-  const tagService = new TagService(db.drizzle, events);
+  const tagService = new TagService(db.drizzle, events, mock<PlayEligibilityPort>({}));
   const ruleService = new TagRuleService(db.drizzle, events);
   const walletReader = mock<WalletReader>({
     getLifetimeDeposit: vi.fn().mockResolvedValue('0'),

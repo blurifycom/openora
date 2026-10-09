@@ -14,6 +14,7 @@ import {
 import { paginated } from '@openora/core/contracts/kit';
 
 export { PlayerSchema, PlayerStatusSchema, KycStatusSchema };
+export * from './agent-tools.js';
 
 /** Player row enriched with their active tags - used only by the admin list endpoint. */
 export const PlayerWithTagsSchema = PlayerSchema.extend({

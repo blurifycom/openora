@@ -1,0 +1,1 @@
+ALTER TABLE "game" ALTER COLUMN "review_status" SET DEFAULT 'pending';

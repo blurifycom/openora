@@ -7,6 +7,21 @@ export const GAME_TYPES = ['original', 'casino', 'sportsbook'] as const;
 export const GameTypeSchema = z.enum(GAME_TYPES);
 export type GameType = z.infer<typeof GameTypeSchema>;
 
+export const GAME_REVIEW_STATUSES = ['pending', 'auto_approved', 'approved', 'declined'] as const;
+export const GameReviewStatusSchema = z.enum(GAME_REVIEW_STATUSES);
+export type GameReviewStatus = z.infer<typeof GameReviewStatusSchema>;
+
+export const GAME_REVIEW_DECISIONS = ['approve', 'decline'] as const;
+export const GameReviewDecisionSchema = z.enum(GAME_REVIEW_DECISIONS);
+export type GameReviewDecision = z.infer<typeof GameReviewDecisionSchema>;
+
+/** Review columns for a game an aggregator sync inserts under a provider's auto-approve flag. */
+export function initialGameReviewState(autoApprove: boolean, now: Date) {
+  return autoApprove
+    ? { isActive: true, reviewStatus: 'auto_approved' as const, reviewedAt: now }
+    : { isActive: false, reviewStatus: 'pending' as const, reviewedAt: null };
+}
+
 export const GameProviderSummarySchema = z.object({
   id: UuidSchema,
   slug: z.string(),

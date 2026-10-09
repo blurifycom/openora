@@ -425,3 +425,42 @@ describe('gaming.game.updated customThumbnailUrl forward-compat', () => {
     }
   });
 });
+
+describe('gaming provider autoApproveNewGames forward-compat', () => {
+  const providerSnapshot = {
+    slug: 'studio',
+    name: 'Studio',
+    aggregatorMappings: [],
+    logoUrl: null,
+    metadata: null,
+    isActive: true,
+  };
+
+  it('replays a provider update emitted before auto-approve existed with the flag off', () => {
+    const result = domainEventSchemas['gaming.provider.updated'].safeParse({
+      providerId: randomUUID(),
+      actorId: randomUUID(),
+      before: providerSnapshot,
+      after: providerSnapshot,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.before.autoApproveNewGames).toBe(false);
+      expect(result.data.after.autoApproveNewGames).toBe(false);
+    }
+  });
+
+  it('replays a provider creation emitted before auto-approve existed with the flag off', () => {
+    const result = domainEventSchemas['gaming.provider.created'].safeParse({
+      providerId: randomUUID(),
+      actorId: randomUUID(),
+      ...providerSnapshot,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.autoApproveNewGames).toBe(false);
+    }
+  });
+});

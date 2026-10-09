@@ -35,6 +35,9 @@ export const adminRole = ac.newRole({
   'chat-command': ['view', 'update'],
   'chat-moderation': ['view', 'moderate'],
   'regulatory-overview': ['view', 'manage-country-rules', 'manage-global-kyc'],
+  agent: ['view', 'create', 'update', 'publish', 'run'],
+  'agent-proposal': ['view', 'approve', 'reject'],
+  'agent-config': ['view', 'update'],
 });
 
 export const supportRole = ac.newRole({

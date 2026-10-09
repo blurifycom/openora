@@ -146,6 +146,7 @@ async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}, categ
   const [row] = await db.drizzle.db
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'Game',
       slug: `game-${randomUUID()}`,
       providerId: provider.id,

@@ -42,6 +42,8 @@ import {
   ROOM_INVITE_SEARCH_MAX_LENGTH,
   ROOM_ACTIVITY_WINDOW_HOURS_DEFAULT,
   ROOM_ACTIVITY_WINDOW_HOURS_MAX,
+  CHAT_ROOM_RESTRICTION_TYPES,
+  CHAT_ROOM_RESTRICTION_SOURCES,
 } from './constants.js';
 
 export * from './constants.js';
@@ -304,6 +306,22 @@ export const ChatPlatformBanSchema = z.object({
 });
 
 const ModerationReasonSchema = z.string().trim().min(1).max(CHAT_MODERATION_REASON_MAX_LENGTH);
+export const ChatRoomRestrictionTypeSchema = z.enum(CHAT_ROOM_RESTRICTION_TYPES);
+export type ChatRoomRestrictionType = z.infer<typeof ChatRoomRestrictionTypeSchema>;
+export const ChatRoomRestrictionSourceSchema = z.enum(CHAT_ROOM_RESTRICTION_SOURCES);
+export type ChatRoomRestrictionSource = z.infer<typeof ChatRoomRestrictionSourceSchema>;
+// A room-moderator restriction reports scope `room` with its room id.
+export const ChatRoomRestrictionSchema = ChatModerationEntrySchema.extend({
+  type: ChatRoomRestrictionTypeSchema,
+  source: ChatRoomRestrictionSourceSchema,
+  username: z.string().nullable(),
+  // Null for a room-moderator ban, which records no reason.
+  reason: z.string().nullable(),
+  setByName: z.string().nullable(),
+  cooldownSeconds: z.number().int().positive().nullable(),
+});
+export type ChatRoomRestriction = z.infer<typeof ChatRoomRestrictionSchema>;
+
 const AdminModerationInput = z.object({
   userId: UuidSchema,
   reason: ModerationReasonSchema,
@@ -327,7 +345,12 @@ export const AdminLiftChatCooldownInputSchema = z.object({
 });
 
 const RoomIdInput = z.object({ roomId: UuidSchema });
-const RoomRulesInput = z.object({ roomId: UuidSchema.or(z.literal(GLOBAL_CHAT_ROOM_ID)) });
+const RoomRefInput = z.object({ roomId: UuidSchema.or(z.literal(GLOBAL_CHAT_ROOM_ID)) });
+const ListRoomRestrictionsInputSchema = RoomRefInput.extend({
+  type: ChatRoomRestrictionTypeSchema.optional(),
+  ...PageQuerySchema.shape,
+});
+export type ListRoomRestrictionsInput = z.infer<typeof ListRoomRestrictionsInputSchema>;
 const RoomUserInput = z.object({ roomId: UuidSchema, userId: UuidSchema });
 const RoomModerationInput = RoomUserInput.extend({
   reason: ModerationReasonSchema.default(''),
@@ -631,7 +654,7 @@ export const chatContract = {
 
   getRoomRules: oc
     .route({ method: 'GET', path: '/chat/rooms/{roomId}/rules' })
-    .input(RoomRulesInput)
+    .input(RoomRefInput)
     .output(z.array(ChatRoomRuleSchema)),
 
   createRoomRule: oc
@@ -752,6 +775,12 @@ export const chatContract = {
         ),
     )
     .output(ChatRoomSchema),
+
+  // Active restrictions set in the room plus the platform-wide scopes that cover its kind.
+  adminListRoomRestrictions: oc
+    .route({ method: 'GET', path: '/backoffice/chat/rooms/{roomId}/restrictions' })
+    .input(ListRoomRestrictionsInputSchema)
+    .output(paginated(ChatRoomRestrictionSchema)),
 
   adminCreateRoomRule: oc
     .route({ method: 'POST', path: '/backoffice/chat/rooms/{roomId}/rules' })

@@ -6,6 +6,7 @@ import {
   defaultResponsibleGamingConfig,
 } from './igaming-config.js';
 import { CurrencyTickerInputSchema, MoneyAmountSchema } from './common.js';
+import { AgentsConfigSchema } from './agents.js';
 import { createToken } from '../adapters/token.js';
 
 /**
@@ -468,6 +469,8 @@ export const PlatformConfigSchema = z
     gaming: GamingConfigSchema.default({ allowedThumbnailHosts: [] }),
     /** How often the rank payout jobs tick. Absent = the built-in defaults. */
     promo: PromoConfigSchema.prefault({}),
+    /** Agent run limits, retention and the model catalog. Absent = the schema defaults, no models. */
+    agents: AgentsConfigSchema.prefault({}),
   })
   .strict()
   .superRefine((cfg, ctx) => {

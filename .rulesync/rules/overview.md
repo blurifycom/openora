@@ -27,7 +27,7 @@ This is real-money regulated gambling. A defect here moves a player's money or b
 
 ## Orient before reading files
 
-- `docs/catalog.json` is the generated surface: every module, table, route, event, adapter port, config field. Read it, or call the `oss-dev` MCP tools (`catalog-overview`, `list-modules`, `describe-module`, `list-routes`, `list-adapters`, `schema-get`, `docs-search`) instead of grepping.
+- `docs/catalog.json` is the generated surface: every module, table, route, event, adapter port, config field, agent tool and action type. Read it, or call the `oss-dev` MCP tools (`catalog-overview`, `list-modules`, `describe-module`, `list-routes`, `list-adapters`, `schema-get`, `docs-search`) instead of grepping.
 - `pnpm setup` boots infra, migrates, and prints a summary. `pnpm dev` runs it. `pnpm verify` is the gate CI runs; it ends with `pnpm check:drift`.
 
 ## Load the right owner

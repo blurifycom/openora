@@ -328,6 +328,7 @@ describe('GameProviderService (real PG)', () => {
       { aggregator: 'aggregation-b', vendorId: 'vendor-b' },
     ]);
     await db.drizzle.db.insert(game).values({
+      reviewStatus: 'approved',
       name: 'Retired Game',
       slug: `game-${randomUUID()}`,
       providerId: studio.id,

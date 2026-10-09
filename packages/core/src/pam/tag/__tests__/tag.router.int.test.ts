@@ -2,9 +2,9 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
-import type { TagKey } from '@openora/core/contracts';
+import type { PlayEligibilityPort, TagKey } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { makeEventBus, makeAdminGuard, testContext } from '../../../testing/mock.js';
+import { makeEventBus, makeAdminGuard, mock, testContext } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { tag, tagRule, playerTag } from '../schema/index.js';
 import { createTagRouter } from '../router/index.js';
@@ -47,7 +47,7 @@ const allowingGuard = () => makeAdminGuard({ caller: { userId: CALLER } });
 
 function build(adminGuard: AdminGuard) {
   const events = makeEventBus();
-  const tagService = new TagService(db.drizzle, events);
+  const tagService = new TagService(db.drizzle, events, mock<PlayEligibilityPort>({}));
   const ruleService = new TagRuleService(db.drizzle, events);
   return { router: createTagRouter(tagService, ruleService, adminGuard), events };
 }

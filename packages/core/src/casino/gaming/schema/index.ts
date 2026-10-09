@@ -23,6 +23,7 @@ import {
   GAME_SORT_DIRECTIONS,
   GAME_TAG_TYPES,
   GAME_TAG_VISIBILITIES,
+  GAME_REVIEW_STATUSES,
   GAME_TYPES,
   MONEY_PRECISION,
   MONEY_SCALE,
@@ -36,6 +37,7 @@ export const gameRoundStatusEnum = pgEnum('game_round_status', GAME_ROUND_STATUS
 // because ADMIN_GAME_REPORTING (contracts/adapters, isomorphic) and admin-console's
 // contract both need the same type - see contracts/schemas/game.ts.
 export const gameTypeEnum = pgEnum('game_type', GAME_TYPES);
+export const gameReviewStatusEnum = pgEnum('game_review_status', GAME_REVIEW_STATUSES);
 export const gameTagTypeEnum = pgEnum('game_tag_type', GAME_TAG_TYPES);
 export const gameTagVisibilityEnum = pgEnum('game_tag_visibility', GAME_TAG_VISIBILITIES);
 export const gameSortDirectionEnum = pgEnum('game_sort_direction', GAME_SORT_DIRECTIONS);
@@ -56,6 +58,7 @@ export const gameProvider = pgTable(
     name: text().notNull(),
     logoUrl: text(),
     isActive: boolean().notNull().default(false),
+    autoApproveNewGames: boolean().notNull().default(false),
     metadata: jsonb(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -158,6 +161,8 @@ export const game = pgTable(
     customThumbnailUrl: text(),
     isActive: boolean().notNull().default(false),
     isUnavailable: boolean().notNull().default(false),
+    reviewStatus: gameReviewStatusEnum().notNull().default('pending'),
+    reviewedAt: timestamp({ withTimezone: true }),
     metadata: jsonb(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     // Legacy pre-0003 free-text columns. Retained (unread, unwritten by new code)
@@ -174,6 +179,15 @@ export const game = pgTable(
     index('game_aggregator_idx').on(t.aggregator),
     // The public list sorts by name; lets the planner walk in order and stop at the page.
     index('game_name_idx').on(t.name),
+    index('game_review_status_idx').on(t.reviewStatus),
+    index('game_provider_id_pending_idx')
+      .on(t.providerId)
+      .where(sql`${t.reviewStatus} = 'pending'`),
+    // The lobby filters on is_active alone, so a game nobody approved can never go live.
+    check(
+      'game_review_status_active_check',
+      sql`NOT ${t.isActive} OR ${t.reviewStatus} IN ('approved', 'auto_approved')`,
+    ),
   ],
 );
 

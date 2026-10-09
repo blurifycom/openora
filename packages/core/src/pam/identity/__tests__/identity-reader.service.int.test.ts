@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
+import { findOneOrThrow } from '@openora/core/server';
 import { createTestDb, type TestDb, seedPlayerWithUser } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -62,5 +63,24 @@ describe('IdentityReaderService.getPlayerUserIdsSharingLoginIp (real PG)', () =>
     );
 
     expect(linked).toEqual([]);
+  });
+});
+
+describe('IdentityReaderService.getUserIdByPlayerId (real PG)', () => {
+  it('resolves a player id to the user id that owns the profile', async () => {
+    const reader = new IdentityReaderService(db.drizzle);
+    const row = findOneOrThrow(
+      await db.drizzle.db.insert(player).values({ userId: randomUUID() }).returning(),
+      new Error('player insert returned no row'),
+    );
+    await db.drizzle.db.insert(player).values({ userId: randomUUID() });
+
+    expect(await reader.getUserIdByPlayerId(row.id)).toBe(row.userId);
+  });
+
+  it('resolves an unknown player id to null', async () => {
+    const reader = new IdentityReaderService(db.drizzle);
+
+    expect(await reader.getUserIdByPlayerId(randomUUID())).toBeNull();
   });
 });

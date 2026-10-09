@@ -18,8 +18,7 @@ import {
   paginated,
   MoneyAmountSchema,
 } from '@openora/core/contracts';
-
-import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from './enums.js';
+import { KycDocumentTypeSchema, KycTriggeredBySchema } from './enums.js';
 import { LimitSchema, LimitViewSchema, UpsertLimitInputSchema } from './limits.js';
 import { rgContract } from './rg.js';
 
@@ -27,9 +26,7 @@ const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0,
   message: 'Must be greater than zero',
 });
 
-export const KycDocumentTypeSchema = z.enum(KYC_DOCUMENT_TYPES);
-
-export const KycTriggeredBySchema = z.enum(KYC_TRIGGERED_BY);
+export { KycDocumentTypeSchema, KycTriggeredBySchema };
 
 export const KycDocumentSchema = z.object({
   type: KycDocumentTypeSchema,
@@ -480,3 +477,4 @@ export const complianceContract = {
 
 export * from './limits.js';
 export * from './rg.js';
+export * from './agent-tools.js';

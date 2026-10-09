@@ -18,8 +18,9 @@ shipped in the published package, or a catalog you point it at.
 | `list-adapters`     | -         | Vendor swap-seams: interface, token, wired-vs-stub.                        |
 | `list-routes`       | `module?` | oRPC route namespaces, optionally scoped to one module.                    |
 | `list-events`       | -         | Cross-module domain events to subscribe to.                                |
+| `list-agent-tools`  | `module?` | Agent tools and action types, with IAM and schema version.                 |
 | `list-slots`        | -         | Named UI slots for extending the backoffice.                               |
-| `describe-module`   | `name`    | One module's tables + routes.                                              |
+| `describe-module`   | `name`    | One module's tables, routes and agent surface.                             |
 | `schema-get`        | `name`    | Where a Zod contract schema is defined.                                    |
 | `get-config-schema` | -         | iGaming-config token, source, and fields.                                  |
 | `impact`            | `files`   | Transitive importers of files; platform files are followed into this repo. |

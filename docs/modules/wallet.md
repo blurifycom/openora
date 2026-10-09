@@ -16,6 +16,9 @@ does not repeat it.
   withdrawal. Which pairs exist is operator configuration, not code.
 - **The custody surface.** Issued deposit addresses, saved payout destinations, per-player vendor
   containers, the sweep, reconciliation findings, and the withdrawal approval path.
+- **Its agent surface.** A read tool over a player's balances, recent money movement and
+  withdrawals still awaiting a decision, and an action type that holds a player's waiting
+  withdrawal for manual review. Both are served only through the MCP kernel (ADR-0042).
 
 ## Rules that are easy to get wrong here
 
@@ -43,8 +46,13 @@ does not repeat it.
 - **The balance stream carries a signal, not an amount.** A dropped frame must not be able to leave
   a stale number on screen, so the client refetches. Every event that moves a settled balance
   publishes one, both legs of a player-to-player transfer included.
+- **A held withdrawal waits for an admin.** Holding moves no money: the funds were taken when the
+  withdrawal was requested. An admin approves or rejects a held withdrawal the same way as one
+  still waiting, and auto-approval only ever takes a withdrawal nobody has held. Only a waiting
+  withdrawal can be held, and holding one already held changes nothing, so a replayed proposal
+  holds it once.
 - **Admin actions are guarded and audited.** The guard is the first line of the handler. A manual
-  adjustment, an approval, a rejection, a catalog edit and a resolved finding each write an audit
-  entry naming the actor and the reason.
+  adjustment, an approval, a rejection, a hold, a catalog edit and a resolved finding each write an
+  audit entry naming the actor and the reason.
 - **The webhook path resolves the verifier and the adapter from the same provider entry,** and
   fails closed when either is missing.

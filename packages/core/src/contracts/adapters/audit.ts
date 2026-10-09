@@ -71,7 +71,12 @@ export type DirectAuditAction =
   | 'promo.rank_ladder.set'
   | 'promo.rank_ladder.installed'
   | 'promo.rank_config.set'
-  | 'promo.rank_config.installed';
+  | 'promo.rank_config.installed'
+  | 'mcp.tool.invoked'
+  | 'mcp.tool.failed'
+  | 'mcp.action.executed'
+  | 'mcp.action.failed'
+  | 'wallet.withdrawal.held';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain

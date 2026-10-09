@@ -908,6 +908,7 @@ export async function mapEventToRecord(
         logoUrl: p['logoUrl'] ?? null,
         metadata: p['metadata'] ?? null,
         isActive: p['isActive'] ?? null,
+        autoApproveNewGames: p['autoApproveNewGames'] ?? false,
       },
     };
   }
@@ -1103,6 +1104,33 @@ export async function mapEventToRecord(
       before,
       after: p,
       correlationId: operation === 'set_active' ? str(p['bulkOperationId']) : null,
+    };
+  }
+
+  if (topic === 'gaming.games.reviewed') {
+    const gameIds = Array.isArray(p['gameIds']) ? p['gameIds'] : [];
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game',
+      resourceId: gameIds.length === 1 ? str(gameIds[0]) : null,
+      before: { reviewStatus: p['previousStatus'] ?? null, gameIds },
+      after: { reviewStatus: p['decision'] === 'approve' ? 'approved' : 'declined', gameIds },
+      correlationId: str(p['bulkOperationId']),
+    };
+  }
+
+  if (topic === 'gaming.games.auto_approved') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'game_provider',
+      resourceId: str(p['providerId']),
+      after: {
+        reviewStatus: 'auto_approved',
+        gameIds: Array.isArray(p['gameIds']) ? p['gameIds'] : [],
+      },
     };
   }
 
@@ -1368,6 +1396,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'gaming.tag.deleted',
   'gaming.game.updated',
   'gaming.games.bulk_updated',
+  'gaming.games.reviewed',
+  'gaming.games.auto_approved',
   'gaming.category.games_reordered',
   'gaming.category.pins_updated',
   'gaming.category.membership_evaluated',

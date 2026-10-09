@@ -26,6 +26,30 @@ describe('Container', () => {
     expect(c.get(TOKEN)).toBe('second');
   });
 
+  it('refuses every later registration of a sealed token and keeps serving it', () => {
+    const TOKEN = createToken<string>('kernel');
+    const c = new Container();
+    c.registerSealed(TOKEN, () => 'enforcing');
+    expect(c.get(TOKEN)).toBe('enforcing');
+
+    expect(() => c.register(TOKEN, () => 'replacement')).toThrow(
+      '[container] Token "kernel" is sealed: it is bound once and never rebound.',
+    );
+    expect(() => c.registerUnsafe(TOKEN, () => 'replacement')).toThrow(/is sealed/);
+    expect(() => c.registerSealed(TOKEN, () => 'replacement')).toThrow(/is sealed/);
+    expect(c.get(TOKEN)).toBe('enforcing');
+  });
+
+  it('lets a sealed registration replace an earlier ordinary one', () => {
+    const TOKEN = createToken<string>('kernel');
+    const c = new Container();
+    c.register(TOKEN, () => 'overlay');
+
+    c.registerSealed(TOKEN, () => 'enforcing');
+
+    expect(c.get(TOKEN)).toBe('enforcing');
+  });
+
   it('throws for an unregistered token', () => {
     const c = new Container();
     expect(() => c.get(createToken('missing'))).toThrow(/No provider registered/);

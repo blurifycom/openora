@@ -29,13 +29,24 @@ import {
   SWAP_WEBHOOK_VERIFIER,
   AUDIT_WRITER,
   JOB_QUEUE,
+  McpToolError,
   UuidSchema,
   domainEventSchemas,
   queue,
+  runActorAdminId,
+  userIdOfPlayer,
   type RealtimeTransport,
 } from '@openora/core/contracts';
-import type { WalletBalanceChangeReason } from './contract/index.js';
-import { WalletService } from './service/wallet.service.js';
+import {
+  holdWithdrawalAction,
+  walletActivityTool,
+  type WalletBalanceChangeReason,
+} from './contract/index.js';
+import {
+  WalletService,
+  WithdrawalNotFoundError,
+  WithdrawalNotPendingError,
+} from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
 import {
   CustodySweepService,
@@ -60,6 +71,16 @@ const DEFAULT_SWEEP_CRON = '*/15 * * * *';
 
 const WALLET_RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 const WalletReconciliationJobSchema = z.object({ runId: UuidSchema.optional() });
+
+function holdRefusalCode(err: unknown) {
+  if (err instanceof WithdrawalNotFoundError) {
+    return 'withdrawal_not_found';
+  }
+  if (err instanceof WithdrawalNotPendingError) {
+    return 'withdrawal_not_pending';
+  }
+  throw err;
+}
 
 export default {
   // NOT dependsOn 'tag': that would cycle (tag hard-depends on wallet's WALLET_READER).
@@ -187,6 +208,85 @@ export default {
         platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
       }));
 
+    // One instance backs the router and the agent tools; either factory may build it first.
+    let walletSvc: WalletService | null = null;
+    const walletService = (c: TypedContainer<CoreTokenCatalog>) =>
+      (walletSvc ??= new WalletService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        payment: c.get(PAYMENT_ADAPTER),
+        paymentProviders: c.get(PAYMENT_PROVIDERS),
+        identityReader: c.get(IDENTITY_READER),
+        directory: c.get(ADMIN_USER_DIRECTORY),
+        platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+        limiter: c.get(RATE_LIMITER),
+        riskTags: c.has(PLAYER_TAGS) ? c.get(PLAYER_TAGS) : undefined,
+        tagEvaluationCommands: c.has(TAG_EVALUATION_COMMANDS)
+          ? c.get(TAG_EVALUATION_COMMANDS)
+          : undefined,
+        audit: c.get(AUDIT_WRITER),
+        rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
+        rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+        kycPolicy: c.has(KYC_WITHDRAWAL_POLICY) ? c.get(KYC_WITHDRAWAL_POLICY) : undefined,
+        grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
+      }));
+
+    ctx.mcp.tool(walletActivityTool, (c) => {
+      const identity = c.get(IDENTITY_READER);
+      if (!identity.getUserIdByPlayerId) {
+        logger.warn(
+          'the bound IDENTITY_READER has no getUserIdByPlayerId - wallet.activity and hold_withdrawal will answer internal_error',
+        );
+      }
+      const wallet = walletService(c);
+      return async ({ playerId, windowDays }) => {
+        const userId = await userIdOfPlayer(identity, playerId);
+        if (!userId) {
+          throw new McpToolError('player_not_found');
+        }
+        return { playerId, ...(await wallet.getActivity({ userId, windowDays })) };
+      };
+    });
+
+    ctx.actions.register(holdWithdrawalAction, (c) => {
+      const identity = c.get(IDENTITY_READER);
+      const wallet = walletService(c);
+      return {
+        precondition: async ({ playerId, withdrawalId }) => {
+          const userId = await userIdOfPlayer(identity, playerId);
+          if (!userId) {
+            return { ok: false, code: 'player_not_found' };
+          }
+          const status = await wallet.getPlayerWithdrawalStatus({ userId, withdrawalId });
+          if (status === null) {
+            return { ok: false, code: 'withdrawal_not_found' };
+          }
+          if (status !== 'pending') {
+            return { ok: false, code: 'withdrawal_not_pending' };
+          }
+          return { ok: true };
+        },
+        execute: async ({ playerId, withdrawalId, reason }, proposalId, actor) => {
+          const userId = await userIdOfPlayer(identity, playerId);
+          if (!userId) {
+            throw new McpToolError('player_not_found');
+          }
+          const { changed } = await wallet
+            .holdWithdrawal({
+              adminId: runActorAdminId(actor),
+              userId,
+              withdrawalId,
+              reason,
+              proposalId,
+            })
+            .catch((err: unknown) => {
+              throw new McpToolError(holdRefusalCode(err));
+            });
+          return { outcome: changed ? 'applied' : 'already_applied' };
+        },
+      };
+    });
+
     ctx.jobs.worker({
       queue: CUSTODY_SWEEP_QUEUE,
       schema: CustodySweepJobPayloadSchema,
@@ -273,30 +373,12 @@ export default {
           'wallet loaded without RG_LIMITS - deposit limits are not enforced on any route',
         );
       }
-      const walletService = new WalletService({
-        drizzle: c.get(DRIZZLE),
-        events: c.get(EVENT_BUS),
-        payment: c.get(PAYMENT_ADAPTER),
-        paymentProviders: c.get(PAYMENT_PROVIDERS),
-        identityReader: c.get(IDENTITY_READER),
-        directory: c.get(ADMIN_USER_DIRECTORY),
-        platformConfig,
-        limiter: c.get(RATE_LIMITER),
-        riskTags: c.has(PLAYER_TAGS) ? c.get(PLAYER_TAGS) : undefined,
-        tagEvaluationCommands: c.has(TAG_EVALUATION_COMMANDS)
-          ? c.get(TAG_EVALUATION_COMMANDS)
-          : undefined,
-        audit: c.get(AUDIT_WRITER),
-        rgLimits,
-        rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
-        kycPolicy: c.has(KYC_WITHDRAWAL_POLICY) ? c.get(KYC_WITHDRAWAL_POLICY) : undefined,
-        grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
-      });
+      const wallet = walletService(c);
 
       const reconciliation = new ReconciliationService({
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
-        wallet: walletService,
+        wallet,
         paymentProviders: c.get(PAYMENT_PROVIDERS),
         audit: c.get(AUDIT_WRITER),
         platformConfig,
@@ -352,7 +434,7 @@ export default {
           : undefined;
 
       return createWalletRouter({
-        wallet: walletService,
+        wallet,
         adminGuard: c.get(ADMIN_GUARD),
         audit: c.get(AUDIT_WRITER),
         paymentProviders: c.get(PAYMENT_PROVIDERS),

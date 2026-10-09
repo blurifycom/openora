@@ -1,0 +1,1 @@
+CREATE INDEX "wallet_transaction_wallet_id_status_created_at_idx" ON "wallet_transaction" USING btree ("wallet_id","status","created_at");

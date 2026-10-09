@@ -17,6 +17,7 @@ import type { CreateProviderInput, UpdateProviderInput } from '../contract/index
 import {
   mappingsByProviderIds,
   markCategoriesRankDirtyForProviders,
+  pendingReviewCountsByProviderIds,
   providerSummaryColumns,
   type CatalogActor,
 } from '../../shared/game-catalog.js';
@@ -58,12 +59,14 @@ export function providerSnapshot(
     logoUrl: record.logoUrl,
     metadata: record.metadata ?? null,
     isActive: record.isActive,
+    autoApproveNewGames: record.autoApproveNewGames,
   };
 }
 
 function toProviderDetail(
   record: typeof gameProvider.$inferSelect,
   aggregatorMappings: readonly GameProviderAggregatorMapping[],
+  pendingReviewCount: number,
 ) {
   const dates = serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });
   return {
@@ -71,6 +74,8 @@ function toProviderDetail(
     aggregatorMappings: [...aggregatorMappings],
     metadata: record.metadata ?? null,
     isActive: record.isActive,
+    autoApproveNewGames: record.autoApproveNewGames,
+    pendingReviewCount,
     createdAt: dates.createdAt,
     updatedAt: dates.updatedAt,
   };
@@ -109,17 +114,21 @@ export class GameProviderService {
     limit,
     q,
     isActive,
+    ids,
   }: {
     page: number;
     limit: number;
     q?: string;
     isActive?: boolean;
+    ids?: string[];
   }) {
     const where = and(
       q
         ? or(ilike(gameProvider.name, likeContains(q)), ilike(gameProvider.slug, likeContains(q)))
         : undefined,
       isActive === undefined ? undefined : eq(gameProvider.isActive, isActive),
+      // inArray on an empty list is `false`, so `ids: []` matches nothing.
+      ids ? inArray(gameProvider.id, ids) : undefined,
     );
     const [rows, [{ n }]] = await Promise.all([
       this.drizzle.db
@@ -131,12 +140,15 @@ export class GameProviderService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(gameProvider).where(where),
     ]);
-    const mappings = await mappingsByProviderIds(
-      this.drizzle.db,
-      rows.map((row) => row.id),
-    );
+    const providerIds = rows.map((row) => row.id);
+    const [mappings, pendingCounts] = await Promise.all([
+      mappingsByProviderIds(this.drizzle.db, providerIds),
+      pendingReviewCountsByProviderIds(this.drizzle.db, providerIds),
+    ]);
     return {
-      items: rows.map((row) => toProviderDetail(row, mappings.get(row.id) ?? [])),
+      items: rows.map((row) =>
+        toProviderDetail(row, mappings.get(row.id) ?? [], pendingCounts.get(row.id) ?? 0),
+      ),
       total: Number(n),
       page,
       limit,
@@ -148,8 +160,15 @@ export class GameProviderService {
       await this.drizzle.db.select().from(gameProvider).where(eq(gameProvider.id, id)).limit(1),
       new GameProviderNotFoundError(id),
     );
-    const mappings = await mappingsByProviderIds(this.drizzle.db, [record.id]);
-    return toProviderDetail(record, mappings.get(record.id) ?? []);
+    const [mappings, pendingCounts] = await Promise.all([
+      mappingsByProviderIds(this.drizzle.db, [record.id]),
+      pendingReviewCountsByProviderIds(this.drizzle.db, [record.id]),
+    ]);
+    return toProviderDetail(
+      record,
+      mappings.get(record.id) ?? [],
+      pendingCounts.get(record.id) ?? 0,
+    );
   }
 
   async getActiveProviderBySlug(slug: string) {
@@ -224,7 +243,7 @@ export class GameProviderService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
-    return toProviderDetail(outcome.record, outcome.mappings);
+    return toProviderDetail(outcome.record, outcome.mappings, 0);
   }
 
   async updateProvider({
@@ -247,6 +266,8 @@ export class GameProviderService {
           new GameProviderNotFoundError(id),
         );
         const existingMappings = (await mappingsByProviderIds(tx, [id])).get(existing.id) ?? [];
+        const pendingReviewCount =
+          (await pendingReviewCountsByProviderIds(tx, [existing.id])).get(existing.id) ?? 0;
         if (patchInput.slug !== undefined && patchInput.slug !== existing.slug) {
           const [clash] = await tx
             .select({ id: gameProvider.id })
@@ -266,7 +287,7 @@ export class GameProviderService {
             changed: false,
             before: snapshot,
             after: snapshot,
-            result: toProviderDetail(existing, existingMappings),
+            result: toProviderDetail(existing, existingMappings, pendingReviewCount),
           };
         }
         if (replaceMappings) {
@@ -322,7 +343,7 @@ export class GameProviderService {
           changed: true,
           before: providerSnapshot(existing, existingMappings),
           after: providerSnapshot(next, persistedMappings),
-          result: toProviderDetail(next, persistedMappings),
+          result: toProviderDetail(next, persistedMappings, pendingReviewCount),
         };
       })
       .catch((error: unknown) => {

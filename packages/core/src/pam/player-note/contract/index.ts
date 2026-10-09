@@ -2,6 +2,9 @@ import { oc } from '@orpc/contract';
 import { UuidSchema, TimestampSchema } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import z from 'zod';
+import { PLAYER_NOTE_CONTENT_MAX_LENGTH } from './player-note-content.js';
+
+export * from './agent-tools.js';
 
 export const PLAYER_NOTE_SORT_BY_VALUES = ['createdAt', 'updatedAt'] as const;
 export const PlayerNoteSortBySchema = z.enum(PLAYER_NOTE_SORT_BY_VALUES).default('createdAt');
@@ -18,7 +21,7 @@ export const PlayerNoteSchema = z.object({
 
 export const CreatePlayerNoteInputSchema = z.object({
   playerId: UuidSchema,
-  content: z.string().min(1).max(5000),
+  content: z.string().min(1).max(PLAYER_NOTE_CONTENT_MAX_LENGTH),
 });
 
 export type PlayerNoteItem = z.infer<typeof PlayerNoteSchema>;

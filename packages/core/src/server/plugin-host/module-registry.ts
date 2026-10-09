@@ -1,5 +1,7 @@
 import type { Container } from '../kernel/index.js';
 import type {
+  ActionTypeContract,
+  McpToolContract,
   SealedToken,
   Token,
   TokenCatalog,
@@ -7,21 +9,35 @@ import type {
   WorkerRegistration,
 } from '@openora/core/contracts';
 import type {
+  ActionTypeFactory,
   ModuleRegistry,
   McpToolDefinition,
+  McpToolFactory,
+  RegisteredActionType,
+  RegisteredMcpTool,
   RouterFactory,
   TypedContainer,
   EventHandler,
 } from './define-plugin.js';
+import { assertValidActionType, assertValidMcpTool } from '../mcp/contract-validation.js';
+
+const UNKNOWN_OWNER = 'unknown';
 
 export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistry<C> {
   private _routers = new Map<string, RouterFactory<C>>();
   private _events = new Map<string, EventHandler[]>();
   private _jobs: WorkerRegistration<unknown>[] = [];
   private _mcpTools: McpToolDefinition[] = [];
+  private _tools: RegisteredMcpTool<C>[] = [];
+  private _actions: RegisteredActionType<C>[] = [];
   private _sealedBound = new Set<symbol>();
+  private _owner = UNKNOWN_OWNER;
 
   constructor(private readonly container: Container<C>) {}
+
+  setOwner(pluginId: string | null): void {
+    this._owner = pluginId ?? UNKNOWN_OWNER;
+  }
 
   // Last-wins, so an overlay loaded after a module can rebind its adapter token.
   // Sealed tokens (Symbol description prefixed `sealed:`) are rejected at runtime
@@ -88,10 +104,31 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
     getAll: () => this._jobs,
   };
 
-  mcp = {
-    tool: (definition: McpToolDefinition) => {
-      this._mcpTools.push(definition);
+  mcp: ModuleRegistry<C>['mcp'] = {
+    tool: (...args: [McpToolDefinition] | [McpToolContract, McpToolFactory<C>]) => {
+      if (args.length === 1) {
+        this._mcpTools.push(args[0]);
+        return;
+      }
+      const [contract, factory] = args;
+      const registration = { contract, owner: this._owner, factory };
+      assertValidMcpTool(registration, this.registrations());
+      this._tools.push(registration);
     },
     getAll: () => this._mcpTools,
+    getTools: () => this._tools,
   };
+
+  actions: ModuleRegistry<C>['actions'] = {
+    register: (contract: ActionTypeContract, factory: ActionTypeFactory<C>) => {
+      const registration = { contract, owner: this._owner, factory };
+      assertValidActionType(registration, this.registrations());
+      this._actions.push(registration);
+    },
+    getAll: () => this._actions,
+  };
+
+  private registrations() {
+    return { tools: this._tools, actions: this._actions };
+  }
 }

@@ -1,47 +1,67 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, eq, inArray, ne, or, sql, type SQL } from 'drizzle-orm';
-import { DrizzleService, type DrizzleTx, type EventBus } from '@openora/core/server';
+import {
+  DrizzleService,
+  makeConflictError,
+  type DrizzleTx,
+  type EventBus,
+} from '@openora/core/server';
 import {
   GAME_BULK_CAP,
   GameBulkTooManyGamesError,
   type GameAddedCategoryLinks,
   type GameAddedTagLinks,
   type GameProviderAggregatorMapping,
+  type GameReviewStatus,
 } from '@openora/core/contracts';
 import { game, gameCategory, gameProvider, gameTag } from '../schema/index.js';
 import {
+  isUnreviewed,
   mappingsByProviderIds,
   markCategoriesRankDirty,
   markCategoriesRankDirtyForGames,
   markCategoriesRankDirtyForProviders,
+  pendingReviewCondition,
   type CatalogActor,
 } from '../../shared/game-catalog.js';
 import { GameCategoryNotFoundError } from './game-category.service.js';
 import { GameTagNotFoundError } from './game-tag.service.js';
 import { GameCategoryRuleManagedError } from './game-category-membership.service.js';
 import { providerSnapshot } from './game-provider.service.js';
+import { GameNotFoundError } from './gaming.service.js';
 import type {
   AddGameCategoriesInput,
   AddGameTagsInput,
+  ReviewGameInput,
+  ReviewGamesInput,
   SetGamesActiveInput,
 } from '../contract/index.js';
+
+export const GameNotPendingReviewError = makeConflictError(
+  'GameNotPendingReviewError',
+  'Only a pending game can be reviewed',
+);
 
 class ScopeChangedDuringLockError extends Error {}
 
 const MAX_SCOPE_ATTEMPTS = 5;
 
+// Postgres returns uuids lowercase; an uppercase input id would never match its row.
 function dedupe(ids: readonly string[] | undefined): string[] {
-  return ids ? [...new Set(ids)] : [];
+  return ids ? [...new Set(ids.map((id) => id.toLowerCase()))] : [];
 }
 
 function sortIds(ids: readonly string[]): string[] {
   return [...ids].sort();
 }
 
-function targetCondition(gameIds: string[], providerIds: string[]) {
+// `providerGameFilter` narrows only the provider-scope games; a game named by id always matches.
+function targetCondition(gameIds: string[], providerIds: string[], providerGameFilter?: SQL) {
   return or(
     gameIds.length > 0 ? inArray(game.id, gameIds) : undefined,
-    providerIds.length > 0 ? inArray(game.providerId, providerIds) : undefined,
+    providerIds.length > 0
+      ? and(inArray(game.providerId, providerIds), providerGameFilter)
+      : undefined,
   );
 }
 
@@ -66,16 +86,29 @@ export class GameBulkService {
 
   private async resolveGameScope(
     tx: DrizzleTx,
-    gameIds: string[],
-    providerIds: string[],
-    gameLockMode: 'update' | 'key share',
+    {
+      gameIds,
+      providerIds,
+      gameLockMode,
+      providerGameFilter,
+    }: {
+      gameIds: string[];
+      providerIds: string[];
+      gameLockMode: 'update' | 'key share';
+      providerGameFilter?: SQL;
+    },
   ) {
-    const condition = targetCondition(gameIds, providerIds);
+    const condition = targetCondition(gameIds, providerIds, providerGameFilter);
     for (let attempt = 0; attempt < MAX_SCOPE_ATTEMPTS; attempt++) {
       try {
         return await tx.transaction(async (tx2) => {
           const games = await tx2
-            .select({ id: game.id, isActive: game.isActive, providerId: game.providerId })
+            .select({
+              id: game.id,
+              isActive: game.isActive,
+              providerId: game.providerId,
+              reviewStatus: game.reviewStatus,
+            })
             .from(game)
             .where(condition)
             .orderBy(asc(game.id))
@@ -99,9 +132,12 @@ export class GameBulkService {
               .select({ id: game.id })
               .from(game)
               .where(
-                inArray(
-                  game.providerId,
-                  providerRows.map((row) => row.id),
+                and(
+                  inArray(
+                    game.providerId,
+                    providerRows.map((row) => row.id),
+                  ),
+                  providerGameFilter,
                 ),
               );
             if (currentlyUnderLockedProviders.some((row) => !lockedIds.has(row.id))) {
@@ -143,7 +179,7 @@ export class GameBulkService {
     const outcome = await this.drizzle.db.transaction(async (tx) => {
       await this.assertWithinGameCap(tx, condition);
       const { games, providerRows, notFoundGameIds, notFoundProviderIds } =
-        await this.resolveGameScope(tx, gameIds, providerIds, 'update');
+        await this.resolveGameScope(tx, { gameIds, providerIds, gameLockMode: 'update' });
       const existingProviderIds = providerRows.map((row) => row.id);
 
       const mappingsByProvider =
@@ -174,27 +210,35 @@ export class GameBulkService {
           };
         });
 
-      const toFlip = games.filter((row) => row.isActive !== isActive).map((row) => row.id);
-      let changedGameIds: string[] = [];
-      if (toFlip.length > 0) {
+      // Enabling an unreviewed game named by id approves it; a provider-scope enable
+      // leaves it off, since nobody looked at that game.
+      const namedGameIds = new Set(gameIds);
+      const toFlip = games.filter((row) => row.isActive !== isActive);
+      const unreviewed = isActive ? toFlip.filter((row) => isUnreviewed(row.reviewStatus)) : [];
+      const toApprove = unreviewed.filter((row) => namedGameIds.has(row.id));
+      const reviewSkipped = unreviewed.filter((row) => !namedGameIds.has(row.id));
+      const reviewSkippedIds = new Set(reviewSkipped.map((row) => row.id));
+      const approvedIds = new Set(toApprove.map((row) => row.id));
+      const toPlainFlip = toFlip
+        .filter((row) => !reviewSkippedIds.has(row.id) && !approvedIds.has(row.id))
+        .map((row) => row.id);
+      const changedGameIds: string[] = [];
+      if (toPlainFlip.length > 0) {
         const rows = await tx
           .update(game)
           .set({ isActive })
-          .where(inArray(game.id, toFlip))
+          .where(inArray(game.id, toPlainFlip))
           .returning({ id: game.id });
-        changedGameIds = rows.map((row) => row.id);
+        changedGameIds.push(...rows.map((row) => row.id));
       }
+      const approvedGameIds = await approveGames(
+        tx,
+        toApprove.map((row) => row.id),
+      );
+      changedGameIds.push(...approvedGameIds);
 
       const unplayableGameIds = isActive
-        ? sortIds(
-            (
-              await tx
-                .select({ id: game.id })
-                .from(game)
-                .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
-                .where(and(condition, eq(game.isActive, true), eq(gameProvider.isActive, false)))
-            ).map((row) => row.id),
-          )
+        ? await unplayableAmong(tx, and(condition, eq(game.isActive, true)))
         : [];
 
       // A flipped game or provider moves its categories' playable/unplayable split -
@@ -214,10 +258,12 @@ export class GameBulkService {
         changedProviderSnapshots,
         dirtiedCategoryIds: sortIds([...new Set([...dirtiedByGames, ...dirtiedByProviders])]),
         gamesUpdatedCount: changedGameIds.length,
-        gamesUnchangedCount: games.length - changedGameIds.length,
+        gamesUnchangedCount: games.length - changedGameIds.length - reviewSkipped.length,
         providersUpdatedCount: changedProviderIds.length,
         providersUnchangedCount: existingProviderIds.length - changedProviderIds.length,
         unplayableGameIds,
+        reviewSkippedCount: reviewSkipped.length,
+        approvedByStatus: groupIdsByStatus(toApprove, new Set(approvedGameIds)),
       };
     });
 
@@ -247,6 +293,17 @@ export class GameBulkService {
         userAgent: userAgent ?? null,
       });
     }
+    for (const [previousStatus, approvedIds] of outcome.approvedByStatus) {
+      this.events.emit('gaming.games.reviewed', {
+        actorId,
+        decision: 'approve',
+        previousStatus,
+        gameIds: approvedIds,
+        bulkOperationId,
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+    }
 
     return {
       games: {
@@ -259,7 +316,108 @@ export class GameBulkService {
       },
       notFound: { gameIds: outcome.notFoundGameIds, providerIds: outcome.notFoundProviderIds },
       unplayableGameIds: outcome.unplayableGameIds,
+      reviewSkippedCount: outcome.reviewSkippedCount,
     };
+  }
+
+  /** Moves pending games only: a named game in any other status counts as unchanged. */
+  async reviewGames({
+    decision,
+    actorId,
+    ip,
+    userAgent,
+    ...target
+  }: ReviewGamesInput & CatalogActor) {
+    const gameIds = sortIds(dedupe(target.gameIds));
+    const providerIds = sortIds(dedupe(target.providerIds));
+    const pending = pendingReviewCondition();
+    const condition = targetCondition(gameIds, providerIds, pending);
+    const bulkOperationId = randomUUID();
+
+    const outcome = await this.drizzle.db.transaction(async (tx) => {
+      await this.assertWithinGameCap(tx, condition);
+      const { games, notFoundGameIds, notFoundProviderIds } = await this.resolveGameScope(tx, {
+        gameIds,
+        providerIds,
+        gameLockMode: 'update',
+        providerGameFilter: pending,
+      });
+      const pendingIds = games.filter((row) => row.reviewStatus === 'pending').map((row) => row.id);
+      let changedGameIds: string[] = [];
+      let dirtiedCategoryIds: string[] = [];
+      let unplayableGameIds: string[] = [];
+      if (decision === 'approve') {
+        changedGameIds = await approveGames(tx, pendingIds);
+        // Approving makes the game live, the same split move an enable makes.
+        dirtiedCategoryIds = await markCategoriesRankDirtyForGames(tx, changedGameIds);
+        unplayableGameIds =
+          changedGameIds.length > 0
+            ? await unplayableAmong(tx, inArray(game.id, changedGameIds))
+            : [];
+      } else if (pendingIds.length > 0) {
+        const rows = await tx
+          .update(game)
+          .set({ reviewStatus: 'declined', reviewedAt: new Date() })
+          .where(inArray(game.id, pendingIds))
+          .returning({ id: game.id });
+        changedGameIds = rows.map((row) => row.id);
+      }
+      return {
+        notFoundGameIds,
+        notFoundProviderIds,
+        changedGameIds: sortIds(changedGameIds),
+        dirtiedCategoryIds: sortIds(dirtiedCategoryIds),
+        unchangedCount: games.length - changedGameIds.length,
+        unplayableGameIds,
+      };
+    });
+
+    const notFound = { gameIds: outcome.notFoundGameIds, providerIds: outcome.notFoundProviderIds };
+    if (outcome.changedGameIds.length > 0) {
+      if (decision === 'approve') {
+        this.events.emit('gaming.games.bulk_updated', {
+          operation: 'set_active',
+          actorId,
+          bulkOperationId,
+          target: { gameIds, providerIds },
+          isActive: true,
+          changedGameIds: outcome.changedGameIds,
+          changedProviderIds: [],
+          affectedCategoryIds: outcome.dirtiedCategoryIds,
+          notFound,
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+      }
+      this.events.emit('gaming.games.reviewed', {
+        actorId,
+        decision,
+        previousStatus: 'pending',
+        gameIds: outcome.changedGameIds,
+        bulkOperationId,
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+    }
+
+    return {
+      games: {
+        updatedCount: outcome.changedGameIds.length,
+        unchangedCount: outcome.unchangedCount,
+      },
+      notFound,
+      unplayableGameIds: outcome.unplayableGameIds,
+    };
+  }
+
+  async reviewGame({ id, ...input }: ReviewGameInput & CatalogActor) {
+    const result = await this.reviewGames({ ...input, gameIds: [id] });
+    if (result.notFound.gameIds.length > 0) {
+      throw new GameNotFoundError(id);
+    }
+    if (result.games.updatedCount === 0) {
+      throw new GameNotPendingReviewError();
+    }
   }
 
   async addGameTags({
@@ -279,12 +437,11 @@ export class GameBulkService {
 
       // The link insert's foreign-key check takes FOR KEY SHARE on each game row anyway;
       // taking it up front, in id order and before provider locks, avoids a deadlock.
-      const { games, notFoundGameIds, notFoundProviderIds } = await this.resolveGameScope(
-        tx,
+      const { games, notFoundGameIds, notFoundProviderIds } = await this.resolveGameScope(tx, {
         gameIds,
         providerIds,
-        'key share',
-      );
+        gameLockMode: 'key share',
+      });
 
       const foundTags = await tx
         .select({ id: gameTag.id })
@@ -363,12 +520,11 @@ export class GameBulkService {
 
       // The link insert's foreign-key check takes FOR KEY SHARE on each game row anyway;
       // taking it up front, in id order and before provider locks, avoids a deadlock.
-      const { games, notFoundGameIds, notFoundProviderIds } = await this.resolveGameScope(
-        tx,
+      const { games, notFoundGameIds, notFoundProviderIds } = await this.resolveGameScope(tx, {
         gameIds,
         providerIds,
-        'key share',
-      );
+        gameLockMode: 'key share',
+      });
 
       const foundCategories = await tx
         .select({ id: gameCategory.id, membershipMode: gameCategory.membershipMode })
@@ -445,6 +601,43 @@ export class GameBulkService {
       notFound: { gameIds: outcome.notFoundGameIds, providerIds: outcome.notFoundProviderIds },
     };
   }
+}
+
+async function approveGames(tx: DrizzleTx, gameIds: string[]) {
+  if (gameIds.length === 0) {
+    return [];
+  }
+  const rows = await tx
+    .update(game)
+    .set({ isActive: true, reviewStatus: 'approved', reviewedAt: new Date() })
+    .where(inArray(game.id, gameIds))
+    .returning({ id: game.id });
+  return rows.map((row) => row.id);
+}
+
+// Active games the player still cannot reach because their provider is off.
+async function unplayableAmong(tx: DrizzleTx, condition: SQL | undefined) {
+  const rows = await tx
+    .select({ id: game.id })
+    .from(game)
+    .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+    .where(and(condition, eq(gameProvider.isActive, false)));
+  return sortIds(rows.map((row) => row.id));
+}
+
+function groupIdsByStatus(
+  rows: readonly { id: string; reviewStatus: GameReviewStatus }[],
+  keep: ReadonlySet<string>,
+) {
+  const grouped = new Map<'pending' | 'declined', string[]>();
+  for (const row of rows) {
+    if (keep.has(row.id) && isUnreviewed(row.reviewStatus)) {
+      const ids = grouped.get(row.reviewStatus) ?? [];
+      ids.push(row.id);
+      grouped.set(row.reviewStatus, ids);
+    }
+  }
+  return [...grouped].map(([status, ids]) => [status, sortIds(ids)] as const);
 }
 
 function groupAddedLinks<K extends string>(

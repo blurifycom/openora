@@ -33,7 +33,7 @@ const guardAllowing = (allow: readonly string[]) =>
 function build(adminGuard: AdminGuard) {
   const audit = makeAuditWriter();
   return {
-    router: createPlayerNoteRouter(new PlayerNoteService(db.drizzle), adminGuard, audit),
+    router: createPlayerNoteRouter(new PlayerNoteService(db.drizzle, audit), adminGuard, audit),
     audit,
   };
 }

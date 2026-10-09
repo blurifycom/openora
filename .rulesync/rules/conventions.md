@@ -30,6 +30,7 @@ Use pure, composable functions and explicit typed wiring. Match local naming and
 | SQL, Drizzle, migration, seed, DB tool                  | `docs/standards/database.md`         |
 | function, service method, constructor                   | `docs/standards/functions.md`        |
 | module, DI wiring, integration, cross-module dependency | `docs/standards/module-structure.md` |
+| agent tool or action type                               | `docs/standards/module-structure.md` |
 | error class or catch                                    | `docs/standards/errors.md`           |
 | money movement or payment settlement                    | `docs/standards/money.md`            |
 | wallet module surface or ledger invariant               | `docs/modules/wallet.md`             |

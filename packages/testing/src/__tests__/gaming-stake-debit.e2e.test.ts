@@ -91,6 +91,7 @@ beforeAll(async () => {
     .get(DRIZZLE)
     .db.insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'Stake Debit E2E Game',
       slug: `stake-debit-e2e-${randomUUID()}`,
       providerId: providerRow!.id,
