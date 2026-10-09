@@ -20,6 +20,7 @@ export { RankChallengeService } from './service/rank-challenge.service.js';
 export {
   RankChallengeAdminService,
   RankChallengeLadderCurrencyHeldError,
+  RankChallengeLadderVersionConflictError,
 } from './service/rank-challenge-admin.service.js';
 export {
   RankChallengePayoutService,

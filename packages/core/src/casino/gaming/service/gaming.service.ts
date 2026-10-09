@@ -438,6 +438,7 @@ export class GamingService {
     toItem: (row: Parameters<typeof toGame>[0]) => Item;
     filters?: (SQL | undefined)[];
   }) {
+    const db = playableOnly ? this.drizzle.replica : this.drizzle.db;
     // The public route orders a category listing by the category's configured sort
     // (categoryGameOrder, shared with GAME_CATALOG_READER so the two never drift), via
     // an inner join on the membership row itself. The admin list keeps its exists-based
@@ -461,7 +462,7 @@ export class GamingService {
       isUnavailable !== undefined ? eq(game.isUnavailable, isUnavailable) : undefined,
       categoryId !== undefined && !usePublicCategoryJoin
         ? exists(
-            this.drizzle.db
+            db
               .select({ gameId: gameCategoryGame.gameId })
               .from(gameCategoryGame)
               .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
@@ -484,11 +485,11 @@ export class GamingService {
       : sort === 'admin'
         ? [asc(gameProvider.name), asc(gameProvider.slug), asc(game.name), asc(game.id)]
         : [asc(game.name)];
-    const gamesQuery = this.drizzle.db
+    const gamesQuery = db
       .select({ game, provider: gameProvider })
       .from(game)
       .innerJoin(gameProvider, eq(game.providerId, gameProvider.id));
-    const countQuery = this.drizzle.db
+    const countQuery = db
       .select({ n: count() })
       .from(game)
       .innerJoin(gameProvider, eq(game.providerId, gameProvider.id));
@@ -516,12 +517,12 @@ export class GamingService {
         ]);
     const [categories, tags] = await Promise.all([
       categoriesByGameIds(
-        this.drizzle.db,
+        db,
         rows.map((r) => r.game.id),
         playableOnly,
       ),
       tagsByGameIds(
-        this.drizzle.db,
+        db,
         rows.map((r) => r.game.id),
         {
           includeInvisible: includeInvisibleTags,

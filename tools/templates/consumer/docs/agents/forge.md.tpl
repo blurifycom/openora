@@ -32,6 +32,10 @@ Reuse an open PR for the same head -> base instead of opening a duplicate: `gh p
 - Source to review, without switching the working tree: `git fetch origin "$(gh pr view <n> --json headRefName -q .headRefName)" && git worktree add --detach .claude/worktrees/review-<n> "$(gh pr view <n> --json headRefOid -q .headRefOid)"`
 - Last review marker (`review` skill §2a): `gh api --paginate "repos/{{gitRemotePath}}/issues/<n>/comments" --jq '[.[] | select(.body | contains("<!-- review:sha=")) | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | select(.user.login != "<pr-author>")] | last | .body' | grep -o 'review:sha=[0-9a-f]*' | tail -1`, with `<pr-author>` from `gh pr view <n> --json author -q .author.login`. Both filters are load-bearing: anyone can post a comment containing the marker text for any SHA they like, so an outside contributor's marker and the PR author's own (a member can be both) are never trusted as a completed review. The marker only narrows an interactive review; `--ci` ignores it.
 
+## Attach evidence
+
+`gh` has no command to upload an image. Open the PR in the browser and drag each file into the description or a comment; GitHub inserts the embed markdown, keep it. If a file cannot be uploaded, say in the description that it is available from the author. Never paste a local path.
+
 ## Inline review comments
 
 Anchor each comment to a line of the diff on the head commit:

@@ -769,6 +769,7 @@ export const domainEventSchemas = {
     tierName: z.string().min(1).optional(),
     currency: CurrencyTickerSchema.optional(),
     rakebackPercent: ContributionPercentSchema.optional(),
+    levelUpBonus: MoneyAmountSchema.nullable().optional(),
     dailyBonus: MoneyAmountSchema.nullable().optional(),
     weeklyBonus: MoneyAmountSchema.nullable().optional(),
     monthlyBonus: MoneyAmountSchema.nullable().optional(),

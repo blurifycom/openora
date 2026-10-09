@@ -1,9 +1,11 @@
 import { eq } from 'drizzle-orm';
 import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 import {
+  CHAT_SCOPES_COVERING_REACH,
   GLOBAL_CHAT_ROOM_ID,
   type ChatModerationRoomId,
   type ChatModerationScope,
+  type ChatRoomReach,
   type Uuid,
 } from '@openora/core/contracts';
 import { chatRoom } from '../schema/index.js';
@@ -14,8 +16,6 @@ import {
 
 export type ModerationTarget = { scope: ChatModerationScope; roomId: Uuid | null };
 
-export type ChatRoomReach = 'global' | 'public' | 'private';
-
 export function roomReach(room: { slug: string; isPublic: boolean }): ChatRoomReach {
   if (room.slug === GLOBAL_CHAT_ROOM_ID) {
     return 'global';
@@ -24,14 +24,7 @@ export function roomReach(room: { slug: string; isPublic: boolean }): ChatRoomRe
 }
 
 export function platformScopesFor(reach: ChatRoomReach): ChatModerationScope[] {
-  switch (reach) {
-    case 'global':
-      return [GLOBAL_CHAT_ROOM_ID, '__all_public', '__all'];
-    case 'public':
-      return ['__all_public', '__all'];
-    case 'private':
-      return ['__all'];
-  }
+  return [...CHAT_SCOPES_COVERING_REACH[reach]];
 }
 
 // `validate` guards new restrictions only; lifting one must still reach missing, deleted or private rooms.

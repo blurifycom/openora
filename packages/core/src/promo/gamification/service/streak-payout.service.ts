@@ -226,6 +226,7 @@ export class StreakPayoutService {
       currency: priced.currency,
       type: 'cashback',
       allowNewCurrency: true,
+      allowNewWallet: true,
       providerRef: { providerName: 'promo-streak', providerRefId: sourceRef },
     });
     if (!outcome.ok) {

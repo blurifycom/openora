@@ -8,6 +8,7 @@ import type {
   ChatBlockWriter,
   SessionCommands,
   UserCommands,
+  ExchangeRateReader,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
@@ -16,6 +17,8 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { tag, playerTag } from '@openora/core/pam/schema/tag';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
+import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { mock, makeEventBus } from '../../../testing/mock.js';
 import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
 
@@ -28,6 +31,7 @@ function makeService(
     blockWriter?: ChatBlockWriter;
     sessionCommands?: SessionCommands;
     userCommands?: UserCommands;
+    rates?: ExchangeRateReader;
   } = {},
 ) {
   const events = makeEventBus();
@@ -57,6 +61,7 @@ function makeService(
       blockWriter,
       sessionCommands,
       userCommands,
+      overrides.rates,
     ),
     events,
     sessionCommands,
@@ -155,7 +160,7 @@ async function rowById(playerId: string) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrateIdentity, migrateProfile, migrateTag]);
+  db = await createTestDb([migrateIdentity, migrateProfile, migrateTag, migrateWallet]);
 });
 
 afterAll(async () => {
@@ -164,7 +169,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${playerTag}, ${tag}, ${player}, ${user} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${walletTransaction}, ${wallet}, ${playerTag}, ${tag}, ${player}, ${user} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -368,6 +373,54 @@ describe('PlayerService.list (real PG)', () => {
     });
 
     expect(items.map((i) => i.username)).toEqual(['alice', 'bob', 'charlie']);
+  });
+});
+
+async function seedLedgerRow(
+  userId: string,
+  amount: string,
+  currency: string,
+  status: 'completed' | 'pending' = 'completed',
+  type: 'deposit' | 'withdrawal' = 'deposit',
+) {
+  await db.drizzle.db.insert(wallet).values({ userId, currency }).onConflictDoNothing();
+  const [walletRow] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+  await db.drizzle.db
+    .insert(walletTransaction)
+    .values({ walletId: walletRow!.id, type, amount, currency, status });
+}
+
+// One whole BTC is worth 60000 USD; any other currency has no quote.
+const btcRates = mock<ExchangeRateReader>({
+  getRate: vi.fn(async () => null),
+  convert: vi.fn(async (amount: string, from: string) =>
+    from === 'BTC' ? String(Number(amount) * 60000) : null,
+  ),
+});
+
+describe('PlayerService.refreshTotalDeposits (real PG)', () => {
+  it('totals completed deposits in every currency into the player currency, ignoring other rows', async () => {
+    const { svc } = makeService({ rates: btcRates });
+    const { account, player: row } = await seedPlayerWithUser({}, { currency: 'USD' });
+    await seedLedgerRow(account.id, '100', 'USD');
+    await seedLedgerRow(account.id, '0.5', 'BTC');
+    await seedLedgerRow(account.id, '999', 'USD', 'pending');
+    await seedLedgerRow(account.id, '50', 'USD', 'completed', 'withdrawal');
+
+    await svc.refreshTotalDeposits(account.id);
+    await svc.refreshTotalDeposits(account.id);
+
+    expect((await rowById(row.id))?.totalDeposits).toBe('30100.00');
+  });
+
+  it('keeps the stored total when a deposit currency cannot be priced', async () => {
+    const { svc } = makeService({ rates: btcRates });
+    const { account, player: row } = await seedPlayerWithUser({}, { totalDeposits: '10.00' });
+    await seedLedgerRow(account.id, '5', 'DOGE');
+
+    await svc.refreshTotalDeposits(account.id);
+
+    expect((await rowById(row.id))?.totalDeposits).toBe('10.00');
   });
 });
 

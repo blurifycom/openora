@@ -18,6 +18,7 @@ export { createToken, createSealedToken, createClientPageToken } from './token.j
 export type {
   ChatModeration,
   ChatModerationEntry,
+  ChatCooldownEntry,
   ChatPlatformBan,
   ChatModerationRoomId,
   ChatModerationScope,

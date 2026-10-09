@@ -351,3 +351,137 @@ describe('createApp - client address at the ingress', () => {
     ).rejects.toThrow(/Invalid trusted proxy entry/);
   });
 });
+
+describe('createApp - request hardening', () => {
+  const ALLOWED_ORIGIN = 'https://app.example.test';
+  const FOREIGN_ORIGIN = 'https://evil.example.test';
+  const savedEnv = { redis: process.env['REDIS_URL'], cors: process.env['CORS_ORIGINS'] };
+
+  const restore = (key: string, value: string | undefined) => {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  };
+
+  afterEach(() => {
+    restore('REDIS_URL', savedEnv.redis);
+    restore('CORS_ORIGINS', savedEnv.cors);
+  });
+
+  const bootWith = async (config: Partial<Parameters<typeof createApp>[0]> = {}) => {
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    const created = await createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL, ...config });
+    created.app.post('/echo-size', async (c) =>
+      c.json({ bytes: (await c.req.arrayBuffer()).byteLength }),
+    );
+    return created;
+  };
+
+  it('refuses to boot without CORS origins instead of reflecting every origin', async () => {
+    delete process.env['CORS_ORIGINS'];
+    await expect(bootWith()).rejects.toThrow(/CORS_ORIGINS/);
+  });
+
+  it("refuses to boot on a leftover '*' instead of CORS-blocking every browser", async () => {
+    process.env['CORS_ORIGINS'] = '*';
+    await expect(bootWith()).rejects.toThrow(/not a CORS origin/);
+    await expect(bootWith({ cors: { origins: ['*'] } })).rejects.toThrow(/not a CORS origin/);
+  });
+
+  it('reads CORS origins from CORS_ORIGINS and allows only those', async () => {
+    process.env['CORS_ORIGINS'] = ` ${ALLOWED_ORIGIN} ,https://admin.example.test`;
+    const created = await bootWith();
+
+    const allowed = await created.app.request('/health', { headers: { origin: ALLOWED_ORIGIN } });
+    expect(allowed.headers.get('access-control-allow-origin')).toBe(ALLOWED_ORIGIN);
+    expect(allowed.headers.get('access-control-allow-credentials')).toBe('true');
+
+    const foreign = await created.app.request('/health', { headers: { origin: FOREIGN_ORIGIN } });
+    expect(foreign.headers.get('access-control-allow-origin')).toBeNull();
+
+    await created.close();
+  });
+
+  it('sends no CORS headers when cors is false', async () => {
+    delete process.env['CORS_ORIGINS'];
+    const created = await bootWith({ cors: false });
+
+    const res = await created.app.request('/health', { headers: { origin: ALLOWED_ORIGIN } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+
+    await created.close();
+  });
+
+  it('rejects a body over the limit with 413 the browser can read, and serves one under it', async () => {
+    process.env['CORS_ORIGINS'] = ALLOWED_ORIGIN;
+    const created = await bootWith({ bodyLimit: { maxBytes: 1024 } });
+
+    const under = await created.app.request('/echo-size', {
+      method: 'POST',
+      body: 'x'.repeat(1024),
+    });
+    expect(under.status).toBe(200);
+    expect(await under.json()).toEqual({ bytes: 1024 });
+
+    const over = await created.app.request('/echo-size', {
+      method: 'POST',
+      body: 'x'.repeat(1025),
+      headers: { origin: ALLOWED_ORIGIN },
+    });
+    expect(over.status).toBe(413);
+    expect(over.headers.get('access-control-allow-origin')).toBe(ALLOWED_ORIGIN);
+
+    await created.close();
+  });
+
+  it.each([Number.NaN, 0, -1, 1.5, Number.POSITIVE_INFINITY])(
+    'refuses to boot with a malformed bodyLimit.maxBytes (%s)',
+    async (maxBytes) => {
+      process.env['CORS_ORIGINS'] = ALLOWED_ORIGIN;
+      await expect(bootWith({ bodyLimit: { maxBytes } })).rejects.toThrow(/bodyLimit\.maxBytes/);
+    },
+  );
+
+  it('rejects a chunked body that streams past the limit', async () => {
+    const created = await bootWith({ bodyLimit: { maxBytes: 1024 } });
+    const chunk = new TextEncoder().encode('x'.repeat(600));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+
+    const res = await created.app.request('/echo-size', {
+      method: 'POST',
+      body,
+      duplex: 'half',
+    } as RequestInit);
+    expect(res.status).toBe(413);
+
+    await created.close();
+  });
+
+  it('applies a 4 MiB limit by default', async () => {
+    const created = await bootWith();
+    const fourMiB = 4 * 1024 * 1024;
+
+    const atLimit = await created.app.request('/echo-size', {
+      method: 'POST',
+      body: 'x'.repeat(fourMiB),
+    });
+    expect(atLimit.status).toBe(200);
+
+    const overLimit = await created.app.request('/echo-size', {
+      method: 'POST',
+      body: 'x'.repeat(fourMiB + 1),
+    });
+    expect(overLimit.status).toBe(413);
+
+    await created.close();
+  });
+});
