@@ -135,6 +135,7 @@ export class RankPayoutService {
           tierName: promoRankTier.name,
           currency: promoRankTier.currency,
           rakebackPercent: promoRankTier.rakebackPercent,
+          levelUpBonus: promoRankTier.levelUpBonus,
           dailyBonus: promoRankTier.dailyBonus,
           weeklyBonus: promoRankTier.weeklyBonus,
           monthlyBonus: promoRankTier.monthlyBonus,
@@ -326,7 +327,7 @@ export class RankPayoutService {
         .set({ settledAt: new Date(), outcome, grantId })
         .where(eq(promoRankLevelUp.id, id));
 
-    if (await this.isBlocked(row.userId)) {
+    if (await this.isBlocked(row.userId, tx)) {
       await settle('restricted');
       return null;
     }
@@ -345,8 +346,8 @@ export class RankPayoutService {
     if (!this.grants) {
       throw new Error('BONUS_GRANTS is not bound');
     }
-    const paid = await this.inPayoutCurrency(owed, payout);
-    const maxBet = await this.capIn(terms.maxBet, owed.currency, paid.currency);
+    const paid = await this.inPayoutCurrency(tx, owed, payout);
+    const maxBet = await this.capIn(tx, terms.maxBet, owed.currency, paid.currency);
     const outcome = await this.grants.grant(tx, {
       userId: owed.userId,
       currency: paid.currency,
@@ -392,10 +393,11 @@ export class RankPayoutService {
    * fixed payout currency is the fallback, and the ladder's own is the last resort.
    */
   private async inPayoutCurrency(
+    tx: DrizzleTx,
     owed: { userId: Uuid; currency: string; amount: string },
     payout: PayoutSettings,
   ) {
-    const targets = await this.payoutOrder(owed.userId, payout);
+    const targets = await this.payoutOrder(tx, owed.userId, payout);
     if (targets.length === 0) {
       // Nothing to convert into: the ladder pays in the currency it is priced in.
       return owed;
@@ -404,7 +406,7 @@ export class RankPayoutService {
       if (target === owed.currency) {
         return owed;
       }
-      const amount = await this.rates.convert(owed.amount, owed.currency, target);
+      const amount = await this.rates.convert(owed.amount, owed.currency, target, tx);
       if (amount !== null) {
         return { userId: owed.userId, currency: target, amount };
       }
@@ -422,11 +424,11 @@ export class RankPayoutService {
    * the grant's own currency - so a cap copied across unconverted means 5 BTC to a player paid
    * in BTC, and five cents to one paid in a low-value coin.
    */
-  private async capIn(cap: string | null | undefined, from: string, to: string) {
+  private async capIn(tx: DrizzleTx, cap: string | null | undefined, from: string, to: string) {
     if (cap === null || cap === undefined || from === to) {
       return cap;
     }
-    const converted = await this.rates.convert(cap, from, to);
+    const converted = await this.rates.convert(cap, from, to, tx);
     if (converted === null) {
       throw new Error(`no rate to price a rank reward's stake cap in ${to}`);
     }
@@ -434,10 +436,10 @@ export class RankPayoutService {
   }
 
   /** The currencies to try, best first. */
-  private async payoutOrder(userId: Uuid, payout: PayoutSettings) {
+  private async payoutOrder(tx: DrizzleTx, userId: Uuid, payout: PayoutSettings) {
     const player = payout.inPlayerCurrency
       ? // Answers for a player with no wallet too, with the platform's default currency.
-        (await this.wallet.getBalances(userId)).activeCurrency
+        (await this.wallet.getBalances(userId, tx)).activeCurrency
       : null;
     return [player, payout.currency].flatMap((currency) =>
       currency === null || currency === undefined ? [] : [currency],
@@ -516,9 +518,9 @@ export class RankPayoutService {
     });
   }
 
-  private async isBlocked(userId: Uuid) {
+  private async isBlocked(userId: Uuid, tx?: DrizzleTx) {
     // termsFor already refused to run without the port, so this never pays an unchecked player.
-    return (await this.eligibility?.isRestricted(userId)) ?? true;
+    return (await this.eligibility?.isRestricted(userId, tx)) ?? true;
   }
 }
 

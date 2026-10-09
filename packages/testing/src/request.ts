@@ -4,8 +4,7 @@ let registrationRequestCount = 0;
 
 /**
  * Gives each registration helper a separate client IP for rate-limit-aware tests.
- * Uses `x-real-ip` because `extractClientMeta` ignores `x-forwarded-for` without a
- * trusted proxy boundary.
+ * Uses `x-real-ip` because `extractClientMeta` never reads `x-forwarded-for`.
  */
 export function registrationRequestHeaders(): Record<string, string> {
   const count = registrationRequestCount++;

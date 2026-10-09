@@ -1,5 +1,5 @@
 {
-  "id": "289e00df-fe54-41f5-98f8-21425e3942be",
+  "id": "b1f974c6-596c-4cce-9f22-c3310eb3db59",
   "prevId": "550e8414-4ccc-4253-b985-e957c81c4511",
   "version": "7",
   "dialect": "postgresql",
@@ -515,6 +515,185 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.chat_player_cooldown": {
+      "name": "chat_player_cooldown",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "chat_moderation_scope",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cooldown_seconds": {
+          "name": "cooldown_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lifted_at": {
+          "name": "lifted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lifted_by": {
+          "name": "lifted_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expiry_recorded_at": {
+          "name": "expiry_recorded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "chat_player_cooldown_active_scope_key": {
+          "name": "chat_player_cooldown_active_scope_key",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "scope",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"chat_player_cooldown\".\"lifted_at\" IS NULL AND \"chat_player_cooldown\".\"room_id\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_player_cooldown_active_room_key": {
+          "name": "chat_player_cooldown_active_room_key",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "scope",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "room_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"chat_player_cooldown\".\"lifted_at\" IS NULL AND \"chat_player_cooldown\".\"room_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_player_cooldown_user_idx": {
+          "name": "chat_player_cooldown_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_player_cooldown_expiry_due_idx": {
+          "name": "chat_player_cooldown_expiry_due_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"chat_player_cooldown\".\"expires_at\" IS NOT NULL AND \"chat_player_cooldown\".\"expiry_recorded_at\" IS NULL AND (\"chat_player_cooldown\".\"lifted_at\" IS NULL OR \"chat_player_cooldown\".\"lifted_at\" = \"chat_player_cooldown\".\"expires_at\")",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_player_cooldown_seconds_check": {
+          "name": "chat_player_cooldown_seconds_check",
+          "value": "\"chat_player_cooldown\".\"cooldown_seconds\" > 0 AND \"chat_player_cooldown\".\"cooldown_seconds\" <= 86400"
+        },
+        "chat_player_cooldown_room_scope_check": {
+          "name": "chat_player_cooldown_room_scope_check",
+          "value": "(\"chat_player_cooldown\".\"scope\" = 'room') = (\"chat_player_cooldown\".\"room_id\" IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.chat_room": {
       "name": "chat_room",
       "schema": "",
@@ -917,157 +1096,6 @@
         "chat_room_configuration_room_id_chat_room_id_fk": {
           "name": "chat_room_configuration_room_id_chat_room_id_fk",
           "tableFrom": "chat_room_configuration",
-          "tableTo": "chat_room",
-          "columnsFrom": ["room_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.chat_room_invite": {
-      "name": "chat_room_invite",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "room_id": {
-          "name": "room_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "inviter_id": {
-          "name": "inviter_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "invitee_id": {
-          "name": "invitee_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "chat_room_invite_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "withheld": {
-          "name": "withheld",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "responded_at": {
-          "name": "responded_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "chat_room_invite_pending_room_invitee_key": {
-          "name": "chat_room_invite_pending_room_invitee_key",
-          "columns": [
-            {
-              "expression": "room_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "invitee_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"chat_room_invite\".\"status\" = 'pending'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "chat_room_invite_invitee_status_idx": {
-          "name": "chat_room_invite_invitee_status_idx",
-          "columns": [
-            {
-              "expression": "invitee_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "chat_room_invite_inviter_pending_idx": {
-          "name": "chat_room_invite_inviter_pending_idx",
-          "columns": [
-            {
-              "expression": "inviter_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"chat_room_invite\".\"status\" = 'pending'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "chat_room_invite_room_idx": {
-          "name": "chat_room_invite_room_idx",
-          "columns": [
-            {
-              "expression": "room_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "chat_room_invite_room_id_chat_room_id_fk": {
-          "name": "chat_room_invite_room_id_chat_room_id_fk",
-          "tableFrom": "chat_room_invite",
           "tableTo": "chat_room",
           "columnsFrom": ["room_id"],
           "columnsTo": ["id"],
@@ -1725,11 +1753,6 @@
       "name": "chat_room_category",
       "schema": "public",
       "values": ["games-sports", "regions", "languages", "private-channels"]
-    },
-    "public.chat_room_invite_status": {
-      "name": "chat_room_invite_status",
-      "schema": "public",
-      "values": ["pending", "accepted", "declined", "expired"]
     },
     "public.chat_room_role": {
       "name": "chat_room_role",

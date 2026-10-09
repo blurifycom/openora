@@ -38,6 +38,8 @@ import {
  *   (fail-closed when the row is missing).
  */
 
+const VELOCITY = { velocityCount: 3, velocityWindowHours: 24 } as const;
+
 let db: TestDb;
 let appMain: TestApp;
 let appUnseeded: TestApp;
@@ -45,7 +47,7 @@ let appUnseeded: TestApp;
 let superAdmin: TestClient;
 let paymentsManager: TestClient;
 let plainAdmin: TestClient;
-let bootstrapAdmin: TestClient;
+let unassignedAdmin: TestClient;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
@@ -186,11 +188,11 @@ beforeAll(async () => {
   await assignIamRoleByKey(appMain.container, plainAdminUserId, 'admin');
   plainAdmin = plainAdminClient;
 
-  const bootstrapAdminEmail = `bootstrap-admin-${randomUUID()}@e2e.test`;
-  const { client: bootstrapAdminClient, userId: bootstrapAdminUserId } =
-    await registerAndMaterializePlayer(appMain, { email: bootstrapAdminEmail });
-  await setStaticRole(appMain.container, bootstrapAdminUserId, 'admin');
-  bootstrapAdmin = bootstrapAdminClient;
+  const unassignedAdminEmail = `unassigned-admin-${randomUUID()}@e2e.test`;
+  const { client: unassignedAdminClient, userId: unassignedAdminUserId } =
+    await registerAndMaterializePlayer(appMain, { email: unassignedAdminEmail });
+  await setStaticRole(appMain.container, unassignedAdminUserId, 'admin');
+  unassignedAdmin = unassignedAdminClient;
 }, 60_000);
 
 afterAll(async () => {
@@ -212,6 +214,7 @@ describe('authz: auto-withdrawal-config is super-admin only (real DB-backed IAM 
       fiatThreshold: '1',
       cryptoThreshold: '1',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     expect(setRes.status).toBe(200);
   });
@@ -224,6 +227,7 @@ describe('authz: auto-withdrawal-config is super-admin only (real DB-backed IAM 
       fiatThreshold: '1',
       cryptoThreshold: '1',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     expect(setRes.status).toBe(403);
   });
@@ -236,20 +240,22 @@ describe('authz: auto-withdrawal-config is super-admin only (real DB-backed IAM 
       fiatThreshold: '1',
       cryptoThreshold: '1',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     expect(setRes.status).toBe(403);
   });
 
-  it('bootstrap admin (static role fallback, no IAM assignment) succeeds on GET and PUT', async () => {
-    const getRes = await bootstrapAdmin.get('/wallet/auto-withdrawal-config');
-    expect(getRes.status).toBe(200);
+  it('admin with no IAM role assigned gets 403 on GET and PUT', async () => {
+    const getRes = await unassignedAdmin.get('/wallet/auto-withdrawal-config');
+    expect(getRes.status).toBe(403);
 
-    const setRes = await bootstrapAdmin.put('/wallet/auto-withdrawal-config', {
+    const setRes = await unassignedAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '1',
       cryptoThreshold: '1',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
-    expect(setRes.status).toBe(200);
+    expect(setRes.status).toBe(403);
   });
 
   it('anonymous (no session) gets 401, not 403', async () => {
@@ -264,6 +270,7 @@ describe('validation: threshold input', () => {
       fiatThreshold: '-1',
       cryptoThreshold: '0',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
@@ -274,6 +281,7 @@ describe('validation: threshold input', () => {
       fiatThreshold: '0',
       cryptoThreshold: 'not-a-number',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
@@ -285,6 +293,7 @@ describe('validation: threshold input', () => {
       fiatThreshold: '-999',
       cryptoThreshold: '0',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     const after = await readJson(await superAdmin.get('/wallet/auto-withdrawal-config'));
     expect(after).toMatchObject({
@@ -300,6 +309,7 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
       fiatThreshold: '100',
       cryptoThreshold: '0.01',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     expect(setRes.status).toBe(200);
     const set = await readJson(setRes);
@@ -321,6 +331,7 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
       fiatThreshold: '100',
       cryptoThreshold: '0.01',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
 
     const configAuditRes = await superAdmin.get(
@@ -406,6 +417,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
       fiatThreshold: '10',
       cryptoThreshold: '0',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     const first = await readJson(
       await client.post('/wallet/withdraw', {
@@ -420,6 +432,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
       fiatThreshold: '30',
       cryptoThreshold: '0',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     const second = await readJson(
       await client.post('/wallet/withdraw', {
@@ -434,6 +447,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
       fiatThreshold: '5',
       cryptoThreshold: '0',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     const third = await readJson(
       await client.post('/wallet/withdraw', {
@@ -452,6 +466,7 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
       fiatThreshold: '10',
       cryptoThreshold: '0',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     const email = `rule-above-${randomUUID()}@e2e.test`;
     const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
@@ -489,6 +504,7 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
       fiatThreshold: '1000',
       cryptoThreshold: '0',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     const email = `rule-below-${randomUUID()}@e2e.test`;
     const { client, userId } = await registerAndMaterializePlayer(appMain, { email: email });
@@ -572,6 +588,7 @@ describe('fail-closed: the singleton config row is missing', () => {
       fiatThreshold: '100',
       cryptoThreshold: '1',
       excludeRiskFlags: [],
+      ...VELOCITY,
     });
     expect(res.status).toBe(200);
     const body = await readJson(res);

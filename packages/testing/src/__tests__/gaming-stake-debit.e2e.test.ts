@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import {
   loadExtensions,
@@ -26,6 +27,10 @@ import {
   type TestApp,
   type TestClient,
 } from '../index.js';
+
+const exchangeRatePluginPath = fileURLToPath(
+  new URL('../test-exchange-rate-provider-plugin.ts', import.meta.url),
+);
 
 let db: TestDb;
 let app: TestApp;
@@ -64,8 +69,13 @@ beforeAll(async () => {
   process.env['NODE_ENV'] ??= 'test';
 
   db = await setupTestDb();
-  const plugins = await loadExtensions();
-  app = await bootTestApp({ plugins, databaseUrl: db.url });
+  app = await bootTestApp({
+    plugins: [
+      ...(await loadExtensions()),
+      { id: 'testing-exchange-rate-provider', path: exchangeRatePluginPath },
+    ],
+    databaseUrl: db.url,
+  });
 
   const [providerRow] = await app.container
     .get(DRIZZLE)
@@ -157,6 +167,44 @@ describe('gaming stake debit e2e', () => {
       betAmount: '50',
     });
 
+    expect(res.status).toBe(400);
+
+    const rounds = await client.get('/gaming/rounds');
+    const roundsBody = (await readJson(rounds)) as unknown[];
+    expect(roundsBody).toHaveLength(0);
+  });
+
+  it('starts a round in a four-letter crypto ticker and lists it back', async () => {
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `stake-debit-crypto-${randomUUID()}@example.com`,
+    });
+    await deposit(client, '100', 'USDT');
+
+    const res = await client.post('/gaming/rounds/start', {
+      gameId,
+      currency: 'usdt',
+      betAmount: '30',
+    });
+    expect(res.status).toBe(200);
+    const { roundId } = (await readJson(res)) as { roundId: string };
+
+    const rounds = await client.get('/gaming/rounds');
+    expect(rounds.status).toBe(200);
+    const roundsBody = (await readJson(rounds)) as Array<{ id: string; currency: string }>;
+    expect(roundsBody).toEqual([expect.objectContaining({ id: roundId, currency: 'USDT' })]);
+  });
+
+  it('rejects a currency that is not a ticker and starts no round', async () => {
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `stake-debit-bad-ticker-${randomUUID()}@example.com`,
+    });
+    await deposit(client, '100');
+
+    const res = await client.post('/gaming/rounds/start', {
+      gameId,
+      currency: 'US$',
+      betAmount: '30',
+    });
     expect(res.status).toBe(400);
 
     const rounds = await client.get('/gaming/rounds');

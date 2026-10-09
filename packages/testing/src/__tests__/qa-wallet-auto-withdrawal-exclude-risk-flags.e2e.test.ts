@@ -96,7 +96,11 @@ async function setConfig(input: {
   cryptoThreshold: string;
   excludeRiskFlags: string[];
 }) {
-  const res = await superAdmin.put('/wallet/auto-withdrawal-config', input);
+  const res = await superAdmin.put('/wallet/auto-withdrawal-config', {
+    ...input,
+    velocityCount: 3,
+    velocityWindowHours: 24,
+  });
   if (res.status !== 200) {
     throw new Error(`setConfig failed (${res.status}): ${await res.text()}`);
   }

@@ -348,7 +348,7 @@ describe('rule-based category membership e2e', () => {
     const options = (await readJson(res)) as Array<{ key: string; exposesReporting: boolean }>;
     expect(options.map((option) => option.key)).toEqual(['providers', 'tags', 'most_played']);
     expect(options.find((option) => option.key === 'most_played')).toMatchObject({
-      exposesReporting: false,
+      exposesReporting: true,
       paramsJsonSchema: { type: 'object', required: ['periodDays', 'limit'] },
     });
     expect((await player.get('/backoffice/gaming/category-rule-options')).status).toBe(403);
@@ -457,6 +457,28 @@ describe('rule-based category membership e2e', () => {
     await app.container.get(GAMING_COMMANDS).notifyGamesCreated?.({ gameIds: [imported.id] });
 
     await waitForCategoryGames(category.id, [imported.id]);
+  });
+
+  it('event-driven: a catalogue sync moving a game to another provider moves it between provider rule categories', async () => {
+    const [previous, current] = [await seedProvider(), await seedProvider()];
+    const moved = await seedGame(previous.id);
+    const byPrevious = await createCategory({
+      membershipMode: 'rule',
+      membershipRule: [providers(previous.id)],
+    });
+    const byCurrent = await createCategory({
+      membershipMode: 'rule',
+      membershipRule: [providers(current.id)],
+    });
+    expect(await categoryGameIds(byPrevious.id)).toEqual([moved.id]);
+
+    await drizzle().update(game).set({ providerId: current.id }).where(eq(game.id, moved.id));
+    await app.container
+      .get(GAMING_COMMANDS)
+      .notifyGamesChanged?.({ gameIds: [moved.id], providerIds: [previous.id] });
+
+    await waitForCategoryGames(byPrevious.id, []);
+    await waitForCategoryGames(byCurrent.id, [moved.id]);
   });
 
   it('scheduled: the membership sweep refreshes a most-played category as rounds come in', async () => {

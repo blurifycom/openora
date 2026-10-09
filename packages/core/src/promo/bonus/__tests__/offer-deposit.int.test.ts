@@ -202,6 +202,23 @@ describe('a deposit applied to a claim', () => {
     expect(await grantsOf(userId)).toHaveLength(1);
   });
 
+  it('pays a period-close offer nothing on a deposit, opted in or automatic', async () => {
+    const userId = randomUUID();
+    const periodClose = { firstDepositOnly: false, periodDays: 7 };
+    const optedIn = await seedOffer({ minDeposit: '0', rules: periodClose });
+    await claim(userId, optedIn.id);
+    await seedOffer({ minDeposit: '0', requiresOptIn: false, rules: periodClose });
+    lifetimeDeposit = '2000';
+
+    await apply(userId, '2000', randomUUID());
+
+    const optIns = await optInsOf(userId);
+    expect(optIns).toHaveLength(1);
+    expect(optIns[0]?.accumulatedDeposit).toBe('0.000000000000000000');
+    expect(await db.drizzle.db.select().from(promoOptInDeposit)).toHaveLength(0);
+    expect(await grantsOf(userId)).toHaveLength(0);
+  });
+
   it('ignores a deposit in another currency', async () => {
     const userId = randomUUID();
     const offer = await seedOffer({ minDeposit: '20', currency: 'USD' });

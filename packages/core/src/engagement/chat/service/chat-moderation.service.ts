@@ -7,6 +7,7 @@ import type {
 } from '@openora/core/contracts';
 import type { ChatMessage } from '../contract/index.js';
 import { ChatBanService } from './chat-ban.service.js';
+import { ChatCooldownService } from './chat-cooldown.service.js';
 import { ChatMessageModerationService } from './chat-message-moderation.service.js';
 import { ChatMuteService } from './chat-mute.service.js';
 export * from './errors/chat-moderation.errors.js';
@@ -18,6 +19,7 @@ export class ChatModerationService implements ChatModeration {
   private readonly messages: ChatMessageModerationService;
   private readonly mutes: ChatMuteService;
   private readonly bans: ChatBanService;
+  private readonly cooldowns: ChatCooldownService;
 
   constructor(
     drizzle: DrizzleService,
@@ -28,6 +30,7 @@ export class ChatModerationService implements ChatModeration {
     this.messages = new ChatMessageModerationService(drizzle, transport, audit);
     this.mutes = new ChatMuteService(drizzle, audit);
     this.bans = new ChatBanService(drizzle, audit, events, transport);
+    this.cooldowns = new ChatCooldownService(drizzle, audit);
   }
 
   assertCanSend(userId: Uuid, roomId: Uuid | null, isPublic = true) {
@@ -51,8 +54,20 @@ export class ChatModerationService implements ChatModeration {
     return this.mutes.unmute(input);
   }
 
-  listMutes(userId?: Uuid) {
-    return this.mutes.listMutes(userId);
+  listMutes(userIds?: readonly Uuid[]) {
+    return this.mutes.listMutes(userIds);
+  }
+
+  setCooldown(input: Parameters<ChatModeration['setCooldown']>[0]) {
+    return this.cooldowns.setCooldown(input);
+  }
+
+  liftCooldown(input: Parameters<ChatModeration['liftCooldown']>[0]) {
+    return this.cooldowns.liftCooldown(input);
+  }
+
+  listCooldowns(userIds?: readonly Uuid[], tx?: unknown) {
+    return this.cooldowns.listCooldowns(userIds, tx);
   }
 
   ban(input: Parameters<ChatModeration['ban']>[0]) {
@@ -63,7 +78,7 @@ export class ChatModerationService implements ChatModeration {
     return this.bans.unban(input);
   }
 
-  listBans(userId?: Uuid) {
-    return this.bans.listBans(userId);
+  listBans(userIds?: readonly Uuid[]) {
+    return this.bans.listBans(userIds);
   }
 }

@@ -282,6 +282,60 @@ describe('GameCategoryMembershipService.evaluate: rule kinds (real PG)', () => {
     ]);
   });
 
+  it('most played over the whole catalogue: one ranking, falling back to the playable games when unplayable ones took slots', async () => {
+    const core = new DrizzleAdminGameReporting(db.drizzle);
+    const spiedRules = (rankAll: boolean) => {
+      const calls: { method: string; gameIds?: readonly string[]; limit: number }[] = [];
+      const spied: AdminGameReporting = {
+        listGamePerformance: (filter) => core.listGamePerformance(filter),
+        getGamePerformanceTrend: (filter) => core.getGamePerformanceTrend(filter),
+        getPlayerStats: (userId) => core.getPlayerStats(userId),
+        rankGamesByRounds: (filter) => {
+          calls.push({ method: 'ids', gameIds: [...filter.gameIds].sort(), limit: filter.limit });
+          return core.rankGamesByRounds(filter);
+        },
+        ...(rankAll && {
+          rankAllGamesByRounds: (filter) => {
+            calls.push({ method: 'all', limit: filter.limit });
+            return core.rankAllGamesByRounds(filter);
+          },
+        }),
+      };
+      const rules = new GameCategoryRuleService(
+        db.drizzle,
+        createGameCategoryRuleCatalog(createDefaultGameCategoryRules(db.drizzle, spied)),
+      );
+      return { rules, calls };
+    };
+    const [live, off] = [await seedProvider(), await seedProvider(false)];
+    const [hidden, inactive, most, second] = [
+      await seedGame(off.id),
+      await seedGame(live.id, { isActive: false }),
+      await seedGame(live.id),
+      await seedGame(live.id),
+    ];
+    await seedRounds(most.id, 10);
+    await seedRounds(hidden.id, 9);
+    await seedRounds(inactive.id, 8);
+    await seedRounds(second.id, 2);
+    const playable = [most.id, second.id].sort();
+
+    const top = spiedRules(true);
+    expect(await top.rules.resolveGameIds([mostPlayed(1)])).toEqual([most.id]);
+    expect(top.calls).toEqual([{ method: 'all', limit: 1 }]);
+
+    const crowded = spiedRules(true);
+    expect(await crowded.rules.resolveGameIds([mostPlayed(2)])).toEqual([most.id, second.id]);
+    expect(crowded.calls).toEqual([
+      { method: 'all', limit: 2 },
+      { method: 'ids', gameIds: playable, limit: 2 },
+    ]);
+
+    const legacy = spiedRules(false);
+    expect(await legacy.rules.resolveGameIds([mostPlayed(2)])).toEqual([most.id, second.id]);
+    expect(legacy.calls).toEqual([{ method: 'ids', gameIds: playable, limit: 2 }]);
+  });
+
   it('most played on top of a filter: ranks only the filtered games', async () => {
     const { membership } = makeServices();
     const [listed, other] = [await seedProvider(), await seedProvider()];
@@ -584,7 +638,7 @@ describe('GameCategoryMembershipService: the rule catalog seam (real PG)', () =>
     expect(options.map((option) => [option.key, option.exposesReporting])).toEqual([
       ['providers', false],
       ['tags', false],
-      ['most_played', false],
+      ['most_played', true],
       ['name_prefix', false],
     ]);
     expect(options.at(-1)?.paramsJsonSchema).toMatchObject({
@@ -869,6 +923,39 @@ describe('GameCategoryMembershipService: re-evaluation triggers (real PG)', () =
           expect.objectContaining({ attempts: 3 }),
         ],
       ]);
+    });
+  });
+
+  it("gaming.games.changed reaches rules naming the games' current or previous provider and tags", async () => {
+    const { jobQueue, triggers } = makeServices();
+    const [previous, current, unrelated] = [
+      await seedProvider(),
+      await seedProvider(),
+      await seedProvider(),
+    ];
+    const removedTag = await seedTag();
+    const moved = await seedGame(current.id);
+    const byPrevious = await seedRuleCategory([providers(previous.id)]);
+    const byCurrent = await seedRuleCategory([providers(current.id)]);
+    const byRemovedTag = await seedRuleCategory([tags(removedTag.id)]);
+    await seedRuleCategory([providers(unrelated.id)]);
+
+    triggers.gamesChanged({
+      gameIds: [moved.id],
+      tagIds: [removedTag.id],
+      providerIds: [previous.id],
+    });
+
+    await vi.waitFor(() => {
+      const queued = jobQueue.enqueue.mock.calls.map(([, payload]) => payload);
+      expect(queued).toHaveLength(3);
+      expect(queued).toEqual(
+        expect.arrayContaining([
+          { categoryId: byPrevious.id, trigger: 'event' },
+          { categoryId: byCurrent.id, trigger: 'event' },
+          { categoryId: byRemovedTag.id, trigger: 'event' },
+        ]),
+      );
     });
   });
 

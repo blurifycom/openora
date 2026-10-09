@@ -1,6 +1,13 @@
 # Database (Postgres). In dev link-mode this is typically the same local DB the
 # OSS checkout uses, so migrations run via `pnpm db:migrate` line up.
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/oss_igaming
+# Optional pool tuning: connections per process (default 10) and how long a query waits for
+# a free one before failing (default 5000 ms).
+# DATABASE_POOL_MAX=10
+# DATABASE_POOL_ACQUIRE_TIMEOUT_MS=5000
+# Optional read replicas, comma-separated. Only reads that opt into `drizzle.replica`
+# use them; everything else stays on DATABASE_URL. Each replica gets its own pool.
+# DATABASE_REPLICA_URLS=
 
 # Auth secret (min 32 chars). Generate one: openssl rand -base64 32
 AUTH_SECRET=change-me-in-production-min-32-chars

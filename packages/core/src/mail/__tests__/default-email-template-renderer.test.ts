@@ -125,6 +125,10 @@ describe('DefaultEmailTemplateRenderer', () => {
         },
       },
       { key: 'bonusUnlocked', data: { convertedAmount: '250.00', currency: 'USDT' } },
+      {
+        key: 'bonusCredited',
+        data: { grantedAmount: '50.00', wageringRequired: '1500.00', currency: 'USDT' },
+      },
     ];
 
     for (const template of samples) {

@@ -1,7 +1,11 @@
 import { implement } from '@orpc/server';
 import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
 import { GameSortService, GameSortConfigInvalidError } from '../service/game-sort.service.js';
-import { gamingContract, gamingAdminContract } from '../contract/index.js';
+import {
+  gamingContract,
+  gamingAdminContract,
+  type ListAdminGamesInput,
+} from '../contract/index.js';
 import {
   GamingService,
   GameNotFoundError,
@@ -33,6 +37,7 @@ import {
   GameCategoryRuleInvalidError,
   GameCategoryRuleTooBroadError,
   GameCategoryRuleUnavailableError,
+  GameSearchRuleTooBroadError,
   type GameCategoryRuleAuthorizer,
 } from '../service/game-category-rule.service.js';
 import {
@@ -50,6 +55,11 @@ import {
 } from '../service/game-provider.service.js';
 import { GameBulkService } from '../service/game-bulk.service.js';
 import {
+  cachedCatalog,
+  catalogCacheKeys,
+  invalidateCatalog,
+} from '../service/game-catalog-cache.service.js';
+import {
   GameFavoriteService,
   GameFavoriteLimitReachedError,
 } from '../service/game-favorite.service.js';
@@ -57,7 +67,16 @@ import {
   GameBulkTooManyGamesError,
   MaxBetExceededError,
   RgLimitExceededError,
+  type CacheAdapter,
 } from '@openora/core/contracts';
+
+// Every non-GET admin route can change what the public catalog returns. The read-only
+// rule-preview POST is included too; it only costs a cache refill.
+const CATALOG_MUTATIONS: ReadonlySet<string> = new Set(
+  Object.entries(gamingAdminContract)
+    .filter(([, procedure]) => procedure['~orpc'].route.method !== 'GET')
+    .map(([name]) => name),
+);
 
 export function createGamingRouter({
   gaming,
@@ -70,6 +89,7 @@ export function createGamingRouter({
   favorites,
   adminGuard,
   sorts,
+  cache,
 }: {
   gaming: GamingService;
   providers: GameProviderService;
@@ -81,12 +101,22 @@ export function createGamingRouter({
   favorites: GameFavoriteService;
   adminGuard: AdminGuard;
   sorts: GameSortService;
+  cache?: CacheAdapter;
 }) {
-  const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
+  const os = implement({ ...gamingContract, ...gamingAdminContract })
+    .$context<OssContext>()
+    .use(async ({ path, next }) => {
+      const result = await next();
+      if (CATALOG_MUTATIONS.has(path.slice(1).join('.'))) {
+        await invalidateCatalog(cache);
+      }
+      return result;
+    });
 
-  // No built-in kind sets `exposesReporting`; an overlay's kind can. Checked on the exact
-  // rule a write stores or an evaluation resolves, not one read earlier - see
-  // docs/modules/gaming.md.
+  const catalog = <T>(key: string, load: () => Promise<T>) => cachedCatalog(cache, key, load);
+
+  // Checked on the exact rule a write stores or an evaluation resolves, not one read
+  // earlier - see docs/modules/gaming.md.
   function ruleReportingAccess(context: OssContext): GameCategoryRuleAuthorizer {
     return async (rule) => {
       if (rules.exposesReporting(rule)) {
@@ -95,18 +125,37 @@ export function createGamingRouter({
     };
   }
 
+  // Geo rules are compliance data; require the same grant compliance's own geo-rule routes do.
+  async function geoFilterAccess(context: OssContext, input: ListAdminGamesInput) {
+    if (
+      input.geoBlocked !== undefined ||
+      input.geoBlockedCountries ||
+      input.geoAvailableCountries
+    ) {
+      await adminGuard.assert(context, 'compliance', 'view');
+    }
+  }
+
   return os.router({
-    listGames: os.listGames.handler(({ input }) => gaming.listGamesPublic(input)),
+    listGames: os.listGames.handler(({ input }) =>
+      input.q
+        ? gaming.listGamesPublic(input)
+        : catalog(catalogCacheKeys.games(input), () => gaming.listGamesPublic(input)),
+    ),
 
     getGame: os.getGame.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameNotFoundError }, () =>
-        gaming.getGame(input.id, { activeOnly: true }),
+        catalog(catalogCacheKeys.game(input.id), () =>
+          gaming.getGame(input.id, { activeOnly: true }),
+        ),
       ),
     ),
 
     getGameBySlug: os.getGameBySlug.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameNotFoundError }, () =>
-        gaming.getGameBySlug(input.slug, { activeOnly: true }),
+        catalog(catalogCacheKeys.gameBySlug(input.slug), () =>
+          gaming.getGameBySlug(input.slug, { activeOnly: true }),
+        ),
       ),
     ),
 
@@ -136,21 +185,27 @@ export function createGamingRouter({
 
     listRounds: os.listRounds.handler(({ context }) => gaming.getUserRounds(getUserId(context))),
 
-    listProviders: os.listProviders.handler(({ input }) => providers.listActiveProviders(input)),
+    listProviders: os.listProviders.handler(({ input }) =>
+      catalog(catalogCacheKeys.providers(input), () => providers.listActiveProviders(input)),
+    ),
 
     getProviderBySlug: os.getProviderBySlug.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameProviderNotFoundError }, () =>
-        providers.getActiveProviderBySlug(input.slug),
+        catalog(catalogCacheKeys.provider(input.slug), () =>
+          providers.getActiveProviderBySlug(input.slug),
+        ),
       ),
     ),
 
     listCategories: os.listCategories.handler(({ input }) =>
-      categories.listActiveCategories(input),
+      catalog(catalogCacheKeys.categories(input), () => categories.listActiveCategories(input)),
     ),
 
     getCategoryBySlug: os.getCategoryBySlug.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameCategoryNotFoundError }, () =>
-        categories.getActiveCategoryBySlug(input.slug),
+        catalog(catalogCacheKeys.category(input.slug), () =>
+          categories.getActiveCategoryBySlug(input.slug),
+        ),
       ),
     ),
 
@@ -399,16 +454,33 @@ export function createGamingRouter({
 
     listAdminGames: os.listAdminGames.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
-      // Geo rules are compliance data; require the same grant compliance's own geo-rule routes do.
-      if (
-        input.geoBlocked !== undefined ||
-        input.geoBlockedCountries ||
-        input.geoAvailableCountries
-      ) {
-        await adminGuard.assert(context, 'compliance', 'view');
-      }
+      await geoFilterAccess(context, input);
       return mapErrors({ BAD_REQUEST: GameGeoFiltersUnavailableError }, () =>
         gaming.listGamesAdmin(input),
+      );
+    }),
+
+    searchAdminGames: os.searchAdminGames.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      await geoFilterAccess(context, input);
+      const { rules: rule, ...filters } = input;
+      if (rule?.length) {
+        await ruleReportingAccess(context)(rule);
+      }
+      return mapErrors(
+        {
+          BAD_REQUEST: [
+            GameGeoFiltersUnavailableError,
+            GameCategoryRuleInvalidError,
+            GameSearchRuleTooBroadError,
+          ],
+          SERVICE_UNAVAILABLE: GameCategoryRuleUnavailableError,
+        },
+        async () =>
+          gaming.listGamesAdmin({
+            ...filters,
+            matchingGameIds: rule?.length ? await rules.resolveSearchGameIds(rule) : undefined,
+          }),
       );
     }),
 

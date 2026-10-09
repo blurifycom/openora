@@ -252,7 +252,7 @@ describe('crediting a prize in a currency the player can actually hold', () => {
 
     const won = await payoutService('USD').settlePending();
 
-    expect(convert).toHaveBeenCalledWith('50.000000000000000000', 'USDT', 'USD');
+    expect(convert).toHaveBeenCalledWith('50.000000000000000000', 'USDT', 'USD', expect.anything());
     expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '48', currency: 'USD' });
     expect(won).toEqual([expect.objectContaining({ cashAmount: '48', currency: 'USD' })]);
   });
@@ -298,6 +298,7 @@ describe('the admin ladder', () => {
 
     const ladder = await adminService.getLadder();
     await adminService.setLadder(randomUUID(), {
+      version: ladder.version,
       currency: 'USDT',
       tiers: ladder.tiers.map((t) => ({
         ...t,
@@ -318,7 +319,11 @@ describe('the admin ladder', () => {
     const ladder = await adminService.getLadder();
 
     await expect(
-      adminService.setLadder(randomUUID(), { currency: 'USD', tiers: ladder.tiers }),
+      adminService.setLadder(randomUUID(), {
+        version: ladder.version,
+        currency: 'USD',
+        tiers: ladder.tiers,
+      }),
     ).rejects.toThrow(RankChallengeLadderCurrencyHeldError);
   });
 });

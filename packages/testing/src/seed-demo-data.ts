@@ -2,6 +2,7 @@
 import { findOneOrThrow, type DrizzleDb } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
+import { assignRoleByKey } from '@openora/core/iam/seed';
 import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
 import {
@@ -441,6 +442,8 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     isActive: true,
   });
   if (adminUser) {
+    // A staff user holds nothing until a role is assigned - the seed admin is the super admin.
+    await assignRoleByKey(db, adminUser.id, 'super-admin');
     log(`Admin ready: ${admin.email} / ${admin.password}`);
   }
 
@@ -455,6 +458,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     isActive: true,
   });
   if (moderatorUser) {
+    await assignRoleByKey(db, moderatorUser.id, 'admin');
     log(`Chat moderator ready: ${moderator.email} / ${moderator.password}`);
   }
 

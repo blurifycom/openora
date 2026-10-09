@@ -208,7 +208,7 @@ export class ChatMuteService {
     return { success: true } as const;
   }
 
-  async listMutes(userId?: Uuid): Promise<ChatModerationEntry[]> {
+  async listMutes(userIds?: readonly Uuid[]): Promise<ChatModerationEntry[]> {
     const rows = await this.drizzle.db
       .select({
         id: chatMute.id,
@@ -227,7 +227,7 @@ export class ChatMuteService {
           // predicate, so a listing that omits it reports a player as muted after the
           // duration has run out - while chat itself already lets them post.
           or(isNull(chatMute.expiresAt), gt(chatMute.expiresAt, new Date())),
-          userId ? eq(chatMute.userId, userId) : undefined,
+          userIds ? inArray(chatMute.userId, userIds) : undefined,
         ),
       )
       .orderBy(desc(chatMute.createdAt));

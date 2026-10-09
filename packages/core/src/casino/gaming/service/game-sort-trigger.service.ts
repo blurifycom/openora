@@ -92,6 +92,13 @@ export class GameSortTriggerService {
     );
   }
 
+  gamesChanged(payload: unknown) {
+    const parsed = domainEventSchemas['gaming.games.changed'].safeParse(payload);
+    if (parsed.success) {
+      this.enqueueLookup(categoryIdsForGameIds(this.drizzle.db, parsed.data.gameIds));
+    }
+  }
+
   providerUpdated(payload: unknown) {
     const parsed = domainEventSchemas['gaming.provider.updated'].safeParse(payload);
     if (parsed.success && parsed.data.before.isActive !== parsed.data.after.isActive) {

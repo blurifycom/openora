@@ -37,6 +37,7 @@ import {
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
+  type GamingNotifyGamesChangedArgs,
   type GamingSetGameAvailabilityArgs,
   type PlayEligibilityPort,
   type RgLimitsPort,
@@ -76,7 +77,12 @@ import {
   toGame,
   type CatalogActor,
 } from '../../shared/game-catalog.js';
-import type { ListAdminGamesInput, ListGamesInput, UpdateGameInput } from '../contract/index.js';
+import {
+  GAMES_CHANGED_EVENT_BATCH,
+  type ListAdminGamesInput,
+  type ListGamesInput,
+  type UpdateGameInput,
+} from '../contract/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
@@ -218,8 +224,9 @@ export class GamingService {
     geoBlocked,
     geoBlockedCountries,
     geoAvailableCountries,
+    matchingGameIds,
     ...input
-  }: ListAdminGamesInput) {
+  }: ListAdminGamesInput & { matchingGameIds?: readonly string[] }) {
     const gameGeoCheck = this.gameGeoCheck;
     if (
       !gameGeoCheck &&
@@ -312,6 +319,9 @@ export class GamingService {
             })
           : undefined,
         geoAvailableFilter,
+        matchingGameIds
+          ? sql`${game.id} = ANY(${sql.param([...matchingGameIds])}::uuid[])`
+          : undefined,
       ],
     });
   }
@@ -414,6 +424,7 @@ export class GamingService {
     includeInvisibleTags: boolean;
     filters?: (SQL | undefined)[];
   }) {
+    const db = playableOnly ? this.drizzle.replica : this.drizzle.db;
     // The public route orders a category listing by the category's configured sort
     // (categoryGameOrder, shared with GAME_CATALOG_READER so the two never drift), via
     // an inner join on the membership row itself. The admin list keeps its exists-based
@@ -437,7 +448,7 @@ export class GamingService {
       isUnavailable !== undefined ? eq(game.isUnavailable, isUnavailable) : undefined,
       categoryId !== undefined && !usePublicCategoryJoin
         ? exists(
-            this.drizzle.db
+            db
               .select({ gameId: gameCategoryGame.gameId })
               .from(gameCategoryGame)
               .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
@@ -460,11 +471,11 @@ export class GamingService {
       : sort === 'admin'
         ? [asc(gameProvider.name), asc(gameProvider.slug), asc(game.name), asc(game.id)]
         : [asc(game.name)];
-    const gamesQuery = this.drizzle.db
+    const gamesQuery = db
       .select({ game, provider: gameProvider })
       .from(game)
       .innerJoin(gameProvider, eq(game.providerId, gameProvider.id));
-    const countQuery = this.drizzle.db
+    const countQuery = db
       .select({ n: count() })
       .from(game)
       .innerJoin(gameProvider, eq(game.providerId, gameProvider.id));
@@ -492,12 +503,12 @@ export class GamingService {
         ]);
     const [categories, tags] = await Promise.all([
       categoriesByGameIds(
-        this.drizzle.db,
+        db,
         rows.map((r) => r.game.id),
         playableOnly,
       ),
       tagsByGameIds(
-        this.drizzle.db,
+        db,
         rows.map((r) => r.game.id),
         {
           includeInvisible: includeInvisibleTags,
@@ -874,6 +885,49 @@ export class GamingService {
       });
     }
     return { changed };
+  }
+
+  async notifyGamesChanged({
+    gameIds,
+    tagIds = [],
+    providerIds = [],
+  }: GamingNotifyGamesChangedArgs): Promise<void> {
+    const changedGameIds = await this.existingIds(game, game.id, gameIds);
+    if (changedGameIds.length === 0) {
+      return;
+    }
+    const [previousTagIds, previousProviderIds] = await Promise.all([
+      this.existingIds(gameTag, gameTag.id, tagIds),
+      this.existingIds(gameProvider, gameProvider.id, providerIds),
+    ]);
+    // The durable marker the rank sweep reads, should the event's fast-path enqueue be lost.
+    await this.drizzle.db.transaction((tx) => markCategoriesRankDirtyForGames(tx, changedGameIds));
+    const longest = Math.max(
+      changedGameIds.length,
+      previousTagIds.length,
+      previousProviderIds.length,
+    );
+    for (let start = 0; start < longest; start += GAMES_CHANGED_EVENT_BATCH) {
+      const end = start + GAMES_CHANGED_EVENT_BATCH;
+      this.events.emit('gaming.games.changed', {
+        gameIds: changedGameIds.slice(start, end),
+        tagIds: previousTagIds.slice(start, end),
+        providerIds: previousProviderIds.slice(start, end),
+      });
+    }
+  }
+
+  private async existingIds(table: PgTable, column: PgColumn, ids: readonly string[]) {
+    const uniqueIds = [...new Set(ids)];
+    const found: string[] = [];
+    for (let start = 0; start < uniqueIds.length; start += GAMES_CHANGED_EVENT_BATCH) {
+      const rows = await this.drizzle.db
+        .select({ id: column })
+        .from(table)
+        .where(inArray(column, uniqueIds.slice(start, start + GAMES_CHANGED_EVENT_BATCH)));
+      found.push(...rows.map((row) => String(row.id)));
+    }
+    return found;
   }
 
   async updateGame({

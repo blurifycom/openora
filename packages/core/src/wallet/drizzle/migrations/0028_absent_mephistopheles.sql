@@ -1,0 +1,2 @@
+ALTER TABLE "wallet_auto_withdrawal_config" ADD COLUMN "velocity_count" integer DEFAULT 3;--> statement-breakpoint
+ALTER TABLE "wallet_auto_withdrawal_config" ADD COLUMN "velocity_window_hours" integer DEFAULT 24 NOT NULL;

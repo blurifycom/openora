@@ -7,6 +7,7 @@ import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type {
   GameAdapter,
+  GameCategoryRuleClause,
   GameSortCatalog,
   PlayEligibilityPort,
   WalletCommands,
@@ -48,7 +49,11 @@ import { DrizzleAdminGameReporting } from '../admin-reporting.js';
 import { createDefaultGameCategoryRules } from '../adapters/rules/index.js';
 import { GameBulkService } from '../service/game-bulk.service.js';
 import { GameFavoriteService } from '../service/game-favorite.service.js';
-import { UpdateGameInputSchema } from '../contract/index.js';
+import {
+  ADMIN_GAME_RULE_MATCH_MAX,
+  GAME_CATEGORY_RULE_MATCH_MAX,
+  UpdateGameInputSchema,
+} from '../contract/index.js';
 
 const CTX = testContext();
 const URL_UNDER_CAP_RAW_OVER_CAP_ESCAPED = `https://cdn.example/${'"'.repeat(200)}`;
@@ -125,6 +130,12 @@ const unavailableRule = defineGameCategoryRule({
   },
 });
 
+const unknownGamesRule = defineGameCategoryRule({
+  key: 'test_unknown_games',
+  paramsSchema: z.object({ count: z.number().int().positive() }).strict(),
+  resolve: async ({ params }) => Array.from({ length: params.count }, () => randomUUID()),
+});
+
 function makeRuleCatalog() {
   return createGameCategoryRuleCatalog([
     ...createDefaultGameCategoryRules(db.drizzle, new DrizzleAdminGameReporting(db.drizzle)),
@@ -132,6 +143,7 @@ function makeRuleCatalog() {
     shiftingRule,
     swappingRule,
     unavailableRule,
+    unknownGamesRule,
   ]);
 }
 
@@ -276,6 +288,10 @@ const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promi
   {
     name: 'listAdminGames',
     invoke: (r) => call(r.listAdminGames, {}, { context: CTX }),
+  },
+  {
+    name: 'searchAdminGames',
+    invoke: (r) => call(r.searchAdminGames, {}, { context: CTX }),
   },
   {
     name: 'getCatalogStats',
@@ -715,24 +731,29 @@ describe('gaming catalog router authz', () => {
     });
   });
 
-  it('previews a built-in rule with game-config:view alone, but a reporting kind needs report:view too', async () => {
+  it('previews a provider rule with game-config:view alone, but most_played or a reporting kind needs report:view too', async () => {
     const configOnly = routerWith(makeAdminGuard({ allow: ['game-config:view'] })).router;
+    const byProvider = [{ key: 'providers', params: { providerIds: [randomUUID()] } }];
     const mostPlayed = [{ key: 'most_played', params: { periodDays: 7, limit: 5 } }];
     const revenueRank = [{ key: 'test_revenue_rank', params: {} }];
 
     await expect(
-      call(configOnly.previewCategoryRule, { rule: mostPlayed }, { context: CTX }),
+      call(configOnly.previewCategoryRule, { rule: byProvider }, { context: CTX }),
     ).resolves.toMatchObject({ total: 0 });
-    await expect(
-      call(configOnly.previewCategoryRule, { rule: revenueRank }, { context: CTX }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    for (const rule of [mostPlayed, revenueRank]) {
+      await expect(
+        call(configOnly.previewCategoryRule, { rule }, { context: CTX }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    }
 
     const withReports = routerWith(
       makeAdminGuard({ allow: ['game-config:view', 'report:view'] }),
     ).router;
-    await expect(
-      call(withReports.previewCategoryRule, { rule: revenueRank }, { context: CTX }),
-    ).resolves.toMatchObject({ total: 0 });
+    for (const rule of [mostPlayed, revenueRank]) {
+      await expect(
+        call(withReports.previewCategoryRule, { rule }, { context: CTX }),
+      ).resolves.toMatchObject({ total: 0 });
+    }
   });
 
   it('answers 503, not 400, when a rule cannot be resolved right now, keeping the games', async () => {
@@ -1041,6 +1062,200 @@ describe('gaming catalog router authz', () => {
         .where(eq(gameCategoryGame.categoryId, category.id));
       expect(links).toEqual([{ gameId: member.id }]);
     });
+  });
+});
+
+describe('admin game search rule filters', () => {
+  async function seedCatalog() {
+    const providers = await db.drizzle.db
+      .insert(gameProvider)
+      .values([
+        { slug: `alpha-${randomUUID()}`, name: 'Alpha', isActive: true },
+        { slug: `beta-${randomUUID()}`, name: 'Beta', isActive: true },
+        { slug: `gamma-${randomUUID()}`, name: 'Gamma', isActive: true },
+      ])
+      .returning();
+    const [alpha, beta, gamma] = providers.map((provider) => provider.id) as [
+      string,
+      string,
+      string,
+    ];
+    const [hot] = await db.drizzle.db.insert(gameTag).values({ name: 'Hot' }).returning();
+    const seed = (name: string, providerId: string, isActive = true) => ({
+      name,
+      slug: `${name.toLowerCase()}-${randomUUID()}`,
+      providerId,
+      aggregator: 'direct',
+      isActive,
+    });
+    const games = await db.drizzle.db
+      .insert(game)
+      .values([
+        seed('AlphaHot', alpha),
+        seed('AlphaCold', alpha),
+        seed('BetaHot', beta, false),
+        seed('GammaHot', gamma),
+      ])
+      .returning();
+    const byName = Object.fromEntries(games.map((row) => [row.name, row.id]));
+    await db.drizzle.db.insert(gameTagGame).values(
+      ['AlphaHot', 'BetaHot', 'GammaHot'].map((name) => ({
+        gameId: byName[name]!,
+        tagId: hot!.id,
+      })),
+    );
+    return { alpha, beta, gamma, hotTagId: hot!.id, byName };
+  }
+
+  const namesOf = (page: { items: { name: string }[] }) =>
+    page.items.map((item) => item.name).sort();
+
+  it('narrows the list to what the clause pipeline matches, alongside the other filters', async () => {
+    const { router } = routerWith(makeAdminGuard({ allow: ['game-config:view'] }));
+    const { alpha, beta, hotTagId } = await seedCatalog();
+    const rules: GameCategoryRuleClause[] = [
+      { key: 'providers', params: { providerIds: [alpha, beta] } },
+      { key: 'tags', params: { tagIds: [hotTagId] } },
+    ];
+
+    await expect(
+      call(router.searchAdminGames, { rules }, { context: CTX }).then(namesOf),
+    ).resolves.toEqual(['AlphaHot', 'BetaHot']);
+    await expect(
+      call(router.searchAdminGames, { rules, isActive: true }, { context: CTX }).then(namesOf),
+    ).resolves.toEqual(['AlphaHot']);
+    await expect(
+      call(router.searchAdminGames, { rules: [] }, { context: CTX }),
+    ).resolves.toMatchObject({ total: 4 });
+  });
+
+  it('returns an empty page when a clause matches nothing', async () => {
+    const { router } = routerWith(allowingGuard());
+    await seedCatalog();
+
+    await expect(
+      call(
+        router.searchAdminGames,
+        { rules: [{ key: 'providers', params: { providerIds: [randomUUID()] } }] },
+        { context: CTX },
+      ),
+    ).resolves.toMatchObject({ items: [], total: 0 });
+  });
+
+  it('needs report:view for a reporting clause, most_played included, as the category preview does', async () => {
+    const configOnly = routerWith(makeAdminGuard({ allow: ['game-config:view'] })).router;
+    const { alpha, byName } = await seedCatalog();
+    await db.drizzle.db.insert(gameRound).values({
+      gameId: byName['AlphaHot']!,
+      userId: randomUUID(),
+      status: 'completed',
+      betAmount: '1',
+      winAmount: '0',
+      currency: 'USD',
+      startedAt: new Date(),
+    });
+    const isolatePlays: GameCategoryRuleClause[] = [
+      { key: 'providers', params: { providerIds: [alpha] } },
+      { key: 'most_played', params: { periodDays: 1, limit: 1 } },
+    ];
+    const revenueRank = [{ key: 'test_revenue_rank', params: {} }];
+
+    for (const rules of [isolatePlays, revenueRank]) {
+      await expect(
+        call(configOnly.searchAdminGames, { rules }, { context: CTX }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    }
+    await expect(
+      call(
+        configOnly.searchAdminGames,
+        { rules: [{ key: 'providers', params: { providerIds: [alpha] } }] },
+        { context: CTX },
+      ),
+    ).resolves.toMatchObject({ total: 2 });
+    await expect(
+      call(configOnly.previewCategoryRule, { rule: isolatePlays }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    const withReports = routerWith(
+      makeAdminGuard({ allow: ['game-config:view', 'report:view'] }),
+    ).router;
+    await expect(
+      call(withReports.searchAdminGames, { rules: isolatePlays }, { context: CTX }).then(namesOf),
+    ).resolves.toEqual(['AlphaHot']);
+    await expect(
+      call(withReports.previewCategoryRule, { rule: isolatePlays }, { context: CTX }),
+    ).resolves.toMatchObject({ total: 1 });
+    await expect(
+      call(withReports.searchAdminGames, { rules: revenueRank }, { context: CTX }),
+    ).resolves.toMatchObject({ total: 0 });
+  });
+
+  it('caps the match at ADMIN_GAME_RULE_MATCH_MAX, not the category cap', async () => {
+    const { router } = routerWith(allowingGuard());
+    const overCategoryCap = [
+      { key: 'test_unknown_games', params: { count: GAME_CATEGORY_RULE_MATCH_MAX + 1 } },
+    ];
+
+    await expect(
+      call(router.previewCategoryRule, { rule: overCategoryCap }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      call(router.searchAdminGames, { rules: overCategoryCap }, { context: CTX }),
+    ).resolves.toMatchObject({ total: 0 });
+    await expect(
+      call(
+        router.searchAdminGames,
+        {
+          rules: [{ key: 'test_unknown_games', params: { count: ADMIN_GAME_RULE_MATCH_MAX + 1 } }],
+        },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      data: {
+        reason: 'rule_filter_too_broad',
+        matchedCount: ADMIN_GAME_RULE_MATCH_MAX + 1,
+        max: ADMIN_GAME_RULE_MATCH_MAX,
+      },
+    });
+  });
+
+  it('answers 400 to an unknown key or bad params, 503 to a clause that throws, and refuses a sixth clause', async () => {
+    const { router } = routerWith(allowingGuard());
+    const tags = { key: 'tags', params: { tagIds: [randomUUID()] } };
+
+    await expect(
+      call(router.searchAdminGames, { rules: [{ key: 'nope', params: {} }] }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', status: 400 });
+    await expect(
+      call(
+        router.searchAdminGames,
+        { rules: [{ key: 'tags', params: { tagIds: 'x' } }] },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', status: 400 });
+    await expect(
+      call(
+        router.searchAdminGames,
+        { rules: [{ key: 'test_unavailable', params: {} }] },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE', status: 503 });
+    await expect(
+      call(
+        router.searchAdminGames,
+        { rules: Array.from({ length: 6 }, () => tags) },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('keeps the geo filters behind compliance:view', async () => {
+    const { router } = routerWith(makeAdminGuard({ allow: ['game-config:view'] }));
+
+    await expect(
+      call(router.searchAdminGames, { geoBlocked: true }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });
 

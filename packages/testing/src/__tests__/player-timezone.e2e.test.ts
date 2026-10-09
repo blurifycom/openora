@@ -13,6 +13,7 @@ import {
   type TestDb,
   type TestApp,
   type TestClient,
+  uniqueUsername,
 } from '../index.js';
 
 /**
@@ -169,7 +170,7 @@ describe('PATCH /profile - player timezone capture', () => {
 describe('POST /identity/email/verify - player timezone capture', () => {
   it('captures the zone on the route that mints the first session', async () => {
     const email = `player-timezone-verify-${randomUUID()}@e2e.test`;
-    const username = `tzver_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+    const username = uniqueUsername('tzver');
 
     const registered = await app.app.request('/identity/register', {
       method: 'POST',
@@ -203,7 +204,7 @@ describe('POST /identity/email/verify - player timezone capture', () => {
 describe('POST /identity/register - player timezone capture', () => {
   it('stores the zone the sign-up form carried, before any session exists', async () => {
     const email = `player-timezone-register-${randomUUID()}@e2e.test`;
-    const username = `tzreg_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+    const username = uniqueUsername('tzreg');
 
     const res = await app.app.request('/identity/register', {
       method: 'POST',

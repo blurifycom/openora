@@ -132,9 +132,9 @@ export default {
           logger.warn('chat-moderation-expiry sweep skipped - service not constructed');
           return;
         }
-        const { mutes, bans } = await expiryRef.sweep();
-        if (mutes > 0 || bans > 0) {
-          logger.info({ mutes, bans }, 'chat moderation expiry recorded');
+        const { mutes, bans, cooldowns } = await expiryRef.sweep();
+        if (mutes > 0 || bans > 0 || cooldowns > 0) {
+          logger.info({ mutes, bans, cooldowns }, 'chat moderation expiry recorded');
         }
       },
     });

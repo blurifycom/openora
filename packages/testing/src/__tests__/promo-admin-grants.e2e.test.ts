@@ -123,7 +123,14 @@ describe('support looking at a player', () => {
     const body = await readJson(await admin.get(`/backoffice/promo/players/${userId}/grants`));
 
     expect(body).toHaveLength(1);
-    expect(body[0]).toMatchObject({ id: grantId, userId, source: 'manual', status: 'active' });
+    expect(body[0]).toMatchObject({
+      id: grantId,
+      userId,
+      source: 'manual',
+      status: 'active',
+      forfeitedBy: null,
+      forfeitNote: null,
+    });
     expect(typeof body[0].sourceRef).toBe('string');
   });
 
@@ -156,6 +163,13 @@ describe('support forfeiting a bonus', () => {
       status: 'forfeited',
       forfeitReason: 'admin',
       bonusBalance: '0.000000000000000000',
+      forfeitedBy: { id: adminUserId, email: expect.stringContaining('@example.test') },
+      forfeitNote: 'Charge-back investigation 4821',
+    });
+    const [listed] = await readJson(await admin.get(`/backoffice/promo/players/${userId}/grants`));
+    expect(listed).toMatchObject({
+      forfeitedBy: { id: adminUserId },
+      forfeitNote: 'Charge-back investigation 4821',
     });
     const audited = await forfeitRows(grantId);
     expect(audited).toHaveLength(1);

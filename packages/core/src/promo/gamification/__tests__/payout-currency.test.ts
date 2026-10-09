@@ -5,10 +5,11 @@ import { priceForPayout } from '../shared/payout-currency.js';
 
 const convert = vi.fn<ExchangeRateReader['convert']>();
 const rates = mock<ExchangeRateReader>({ convert });
+const tx = Symbol('tx');
 
 describe('pricing a payout into the operator payout currency', () => {
   it('skips the rate lookup entirely when the source is already the payout currency', async () => {
-    const priced = await priceForPayout(rates, '50', 'USD', 'USD');
+    const priced = await priceForPayout(tx, rates, '50', 'USD', 'USD');
 
     expect(priced).toEqual({ amount: '50', currency: 'USD' });
     expect(convert).not.toHaveBeenCalled();
@@ -17,16 +18,16 @@ describe('pricing a payout into the operator payout currency', () => {
   it('converts at the current rate when the source differs from the payout currency', async () => {
     convert.mockResolvedValue('48');
 
-    const priced = await priceForPayout(rates, '50', 'USD', 'USDT');
+    const priced = await priceForPayout(tx, rates, '50', 'USD', 'USDT');
 
-    expect(convert).toHaveBeenCalledWith('50', 'USD', 'USDT');
+    expect(convert).toHaveBeenCalledWith('50', 'USD', 'USDT', tx);
     expect(priced).toEqual({ amount: '48', currency: 'USDT' });
   });
 
   it('throws rather than falling back to the source currency when no rate is available', async () => {
     convert.mockResolvedValue(null);
 
-    await expect(priceForPayout(rates, '50', 'USD', 'USDT')).rejects.toThrow(
+    await expect(priceForPayout(tx, rates, '50', 'USD', 'USDT')).rejects.toThrow(
       'no exchange rate from USD to USDT',
     );
   });

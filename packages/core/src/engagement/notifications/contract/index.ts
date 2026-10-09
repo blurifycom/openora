@@ -11,6 +11,8 @@ export const NOTIFICATION_TYPES = [
   'social.friend_request.accepted',
   'promo.bonus.granted',
   'promo.bonus.completed',
+  'promo.bonus.forfeited',
+  'promo.bonus.expired',
   'promo.race.won',
   'promo.rank-challenge.won',
   'promo.rank.changed',
@@ -28,6 +30,9 @@ export const NOTIFICATION_TYPES = [
   'chat.room.ownership_transferred',
   'chat.room.scheduled_for_deletion',
   'chat.room_invite.received',
+  // Core never emits this one: it is the seam for an operator-run VIP programme, whose overlay
+  // tells the player through its own NotificationsService when it admits them.
+  'vip.assigned',
 ] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;

@@ -103,6 +103,23 @@ export class GameCategoryMembershipTriggerService {
       });
   }
 
+  gamesChanged(payload: unknown) {
+    const parsed = domainEventSchemas['gaming.games.changed'].safeParse(payload);
+    if (!parsed.success) {
+      return;
+    }
+    const { gameIds, tagIds, providerIds } = parsed.data;
+    void this.changeForGames(gameIds)
+      .then((change) =>
+        this.enqueueAffected(
+          mergeChanges([change, { providerIds, tagIds, playabilityChanged: false }]),
+        ),
+      )
+      .catch((err: unknown) => {
+        logger.error({ err }, 'gaming.games.changed membership-trigger lookup failed');
+      });
+  }
+
   tagDeleted(payload: unknown) {
     const parsed = domainEventSchemas['gaming.tag.deleted'].safeParse(payload);
     if (parsed.success) {
@@ -209,7 +226,7 @@ export class GameCategoryMembershipTriggerService {
       .map((row) => row.id);
   }
 
-  /** What newly created `gameIds` could have moved: their providers and tags. */
+  /** What created or changed `gameIds` could have moved: their providers and tags. */
   async changeForGames(gameIds: readonly string[]): Promise<GameCategoryRuleChange> {
     if (gameIds.length === 0) {
       return { providerIds: [], tagIds: [], playabilityChanged: false };

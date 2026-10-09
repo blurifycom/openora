@@ -18,6 +18,7 @@ export { createToken, createSealedToken, createClientPageToken } from './token.j
 export type {
   ChatModeration,
   ChatModerationEntry,
+  ChatCooldownEntry,
   ChatPlatformBan,
   ChatModerationRoomId,
   ChatModerationScope,
@@ -76,6 +77,8 @@ export type {
   WagerTrackingCommands,
   WagerTrackingArgs,
   WagerTrackingWalletCredit,
+  WagerReversalArgs,
+  WagerRound,
 } from './wager-tracking.js';
 export { WAGER_TRACKING } from './wager-tracking.js';
 
@@ -84,6 +87,7 @@ export type {
   GamingAccumulateExternalRoundArgs,
   GamingSetGameAvailabilityArgs,
   GamingNotifyGamesCreatedArgs,
+  GamingNotifyGamesChangedArgs,
   GamingAccumulateExternalRoundOutcome,
 } from './gaming-commands.js';
 export { GAMING_COMMANDS } from './gaming-commands.js';
@@ -275,6 +279,15 @@ export {
   GameGeoDecisionSchema,
   GameGeoDenialReasonSchema,
 } from './game-geo-check.js';
+export type {
+  GameGeoRuleCommands,
+  ReplaceGameGeoRulesInput,
+  ReplaceGameGeoRulesResult,
+} from './game-geo-rule-commands.js';
+export {
+  GAME_GEO_RULE_COMMANDS,
+  ReplaceGameGeoRulesInputSchema,
+} from './game-geo-rule-commands.js';
 
 export type { PlayerProvisioning, PlayerRegistrationRecord } from './player-provisioning.js';
 export { PLAYER_PROVISIONING } from './player-provisioning.js';
@@ -351,6 +364,7 @@ export type {
   AdminGameReporting,
   GameRoundCount,
   GameRoundRankingFilter,
+  GameRoundTopFilter,
   PlayerGameStats,
 } from './admin-game-reporting.js';
 export { GAME_PERFORMANCE_SORT_FIELDS, ADMIN_GAME_REPORTING } from './admin-game-reporting.js';

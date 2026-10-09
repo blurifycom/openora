@@ -191,7 +191,7 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
     expect(row?.rate).toBe('1.100000000000000000');
   });
 
-  it('hard-stale: fetches synchronously, persists, and returns the fresh quote', async () => {
+  it('hard-stale: fetches synchronously, returns the fresh quote, and persists it', async () => {
     await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: HARD_STALE_AGE_MS });
     const providerAsOf = agedIso(0);
     const fiatProvider = delayedProvider('1.300000000000000000', 5, providerAsOf);
@@ -201,8 +201,61 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
 
     expect(quote).toEqual({ rate: '1.300000000000000000', asOf: providerAsOf });
     expect(fiatProvider.getRate).toHaveBeenCalledTimes(1);
-    const row = await getRow('EUR', 'USD');
-    expect(row?.rate).toBe('1.300000000000000000');
+    // Polled: the write runs in the background so a caller holding a transaction never waits on it.
+    await vi.waitFor(async () =>
+      expect((await getRow('EUR', 'USD'))?.rate).toBe('1.300000000000000000'),
+    );
+  });
+
+  it('reads the stored quote on the caller transaction, not on a second pool connection', async () => {
+    const fiatProvider = delayedProvider('9.000000000000000000', 5);
+    const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
+
+    // Written inside the open transaction and not yet committed: only a read on that same
+    // connection can see it, a read from the pool would miss it and go to the provider.
+    const quote = await db.drizzle.db.transaction(async (tx) => {
+      await tx.insert(exchangeRateQuote).values({
+        baseCurrency: 'EUR',
+        quoteCurrency: 'USD',
+        rate: '1.200000000000000000',
+        providerAsOf: new Date(),
+        updatedAt: new Date(),
+      });
+      return reader.getRate('EUR', 'USD', tx);
+    });
+
+    expect(quote?.rate).toBe('1.200000000000000000');
+    expect(fiatProvider.getRate).not.toHaveBeenCalled();
+  });
+
+  it('a late background write of an older quote never overwrites a newer stored one', async () => {
+    await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: HARD_STALE_AGE_MS });
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const olderAsOf = agedIso(30_000);
+    const fiatProvider = mock<ExchangeRateProvider>({
+      getRate: vi.fn(async (): Promise<ExchangeRateQuote> => {
+        await gate;
+        return { rate: '1.300000000000000000', asOf: olderAsOf };
+      }),
+    });
+    const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
+
+    const pending = reader.getRate('EUR', 'USD');
+    await vi.waitFor(() => expect(fiatProvider.getRate).toHaveBeenCalledTimes(1));
+    await db.drizzle.db
+      .update(exchangeRateQuote)
+      .set({ rate: '1.500000000000000000', providerAsOf: new Date() })
+      .where(
+        and(eq(exchangeRateQuote.baseCurrency, 'EUR'), eq(exchangeRateQuote.quoteCurrency, 'USD')),
+      );
+    release();
+    expect((await pending)?.rate).toBe('1.300000000000000000');
+    await wait(100);
+
+    expect((await getRow('EUR', 'USD'))?.rate).toBe('1.500000000000000000');
   });
 
   it('hard-stale with no row at all: fetches synchronously and persists a first row', async () => {
@@ -212,7 +265,9 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
     const quote = await reader.getRate('EUR', 'USD');
 
     expect(quote?.rate).toBe('1.400000000000000000');
-    expect((await getRow('EUR', 'USD'))?.rate).toBe('1.400000000000000000');
+    await vi.waitFor(async () =>
+      expect((await getRow('EUR', 'USD'))?.rate).toBe('1.400000000000000000'),
+    );
   });
 
   it('hard-stale + provider failure (throw) returns null and fails closed, without touching a stored row', async () => {
@@ -308,6 +363,11 @@ describe('ExchangeRateReaderService.getRate - single-flight', () => {
     expect(b).toEqual(a);
     expect(c).toEqual(a);
     expect(fiatProvider.getRate).toHaveBeenCalledTimes(1);
+
+    // The quote is persisted in the background; let it land before the next test truncates.
+    await vi.waitFor(async () =>
+      expect((await getRow('EUR', 'USD'))?.rate).toBe('1.200000000000000000'),
+    );
   });
 
   it('a settled in-flight call is removed from the single-flight map so a later call fetches again', async () => {
@@ -321,6 +381,11 @@ describe('ExchangeRateReaderService.getRate - single-flight', () => {
     await reader.getRate('EUR', 'USD');
 
     expect(fiatProvider.getRate).toHaveBeenCalledTimes(2);
+
+    // The quote is persisted in the background; let it land before the next test truncates.
+    await vi.waitFor(async () =>
+      expect((await getRow('EUR', 'USD'))?.rate).toBe('1.200000000000000000'),
+    );
   });
 });
 

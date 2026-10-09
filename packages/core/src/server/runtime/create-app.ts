@@ -4,6 +4,7 @@ import { implement, onError, ORPCError, type AnyRouter } from '@orpc/server';
 import { ResponseHeadersPlugin } from '@orpc/server/plugins';
 import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import { etag } from 'hono/etag';
 import { HTTPException } from 'hono/http-exception';
@@ -67,6 +68,35 @@ export const PUBLIC_HTTP_CACHE_PATHS = ['/cms/pages', '/gaming/games'] as const;
 const DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS = 30;
 const DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS = 60;
 
+const DEFAULT_MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
+
+function resolveCorsOrigins(cors: CreateAppConfig['cors']): string[] | undefined {
+  if (cors === false) {
+    return undefined;
+  }
+  const configured = cors?.origins ?? process.env['CORS_ORIGINS']?.split(',') ?? [];
+  const origins = [configured]
+    .flat()
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+  if (origins.length === 0) {
+    throw new Error(
+      '[create-app] No CORS origins configured. Set CORS_ORIGINS to the comma-separated ' +
+        'origins of the apps that call this API (eg https://app.example.com,https://admin.example.com), ' +
+        'pass `cors: { origins }`, or pass `cors: false` to send no CORS headers at all.',
+    );
+  }
+  // Hono matches an origin list literally, so a leftover '*' from the old reflect-any
+  // config would match nothing and CORS-block every browser call with no boot error.
+  if (origins.includes('*')) {
+    throw new Error(
+      "[create-app] '*' is not a CORS origin any more. List the exact origins that call this " +
+        'API, or pass `cors: false` to send no CORS headers at all.',
+    );
+  }
+  return origins;
+}
+
 // Redis Streams consumer group name for MESSAGE_BROKER. Distinct deployments/services
 // sharing one Redis MUST use distinct names so their subscribers don't compete for
 // each other's events. The name is a durable identity: renaming it strands the old
@@ -102,7 +132,9 @@ export type CreateAppConfig = {
 
   port?: number;
 
-  cors?: boolean | { origins?: string | string[] };
+  cors?: false | { origins: string | readonly string[] };
+
+  bodyLimit?: false | { maxBytes: number };
 
   databaseUrl?: string;
 
@@ -292,6 +324,10 @@ export async function createApp(
   // or cwd discovery). See platform-config-loader.ts.
   container.register(PLATFORM_CONFIG, () => loadPlatformConfig(resolvePlatformConfigPath()));
 
+  // Before loadPlugins/configure: a bad CORS config should fail the boot without
+  // first running every plugin's side effects.
+  const corsOrigins = resolveCorsOrigins(config.cors);
+
   const registry = await loadPlugins(config.plugins, container);
   await configure?.(container);
 
@@ -386,10 +422,29 @@ export async function createApp(
     return c.json({ error: 'Internal Server Error' }, 500);
   });
 
-  if (config.cors !== false) {
-    const origins =
-      config.cors === true || config.cors === undefined ? undefined : config.cors.origins;
-    app.use('/*', cors({ origin: origins ?? ((origin) => origin), credentials: true }));
+  if (corsOrigins) {
+    app.use('/*', cors({ origin: corsOrigins, credentials: true }));
+  }
+
+  if (config.bodyLimit !== false) {
+    const configuredMax = config.bodyLimit?.maxBytes;
+    // Hono compares sizes with `> maxSize`, so NaN (eg Number(undefined)) would silently disable the cap.
+    if (
+      configuredMax !== undefined &&
+      !(Number.isSafeInteger(configuredMax) && configuredMax > 0)
+    ) {
+      throw new Error(
+        `[create-app] bodyLimit.maxBytes must be a positive integer, got ${String(configuredMax)}. ` +
+          'Pass `bodyLimit: false` to disable the cap explicitly.',
+      );
+    }
+    app.use(
+      '/*',
+      bodyLimit({
+        maxSize: config.bodyLimit?.maxBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES,
+        onError: (c) => c.json({ error: 'Payload Too Large' }, 413),
+      }),
+    );
   }
 
   if (config.httpCache !== false) {

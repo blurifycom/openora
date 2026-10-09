@@ -222,6 +222,10 @@ export const promoGrant = pgTable(
       .default('0'),
     status: promoGrantStatusEnum().$type<BonusGrantStatus>().notNull().default('active'),
     forfeitReason: promoForfeitReasonEnum().$type<BonusForfeitReason>(),
+    // Who forfeited it and why, kept on the row so the admin read does not reconstruct it from
+    // the audit sink. Null for a system forfeit and for every other terminal status.
+    forfeitedBy: uuid(),
+    forfeitNote: text(),
     expiresAt: timestamp({ withTimezone: true }).notNull(),
     // Null while the grant is still `pending` and nothing has been credited.
     activatedAt: timestamp({ withTimezone: true }),

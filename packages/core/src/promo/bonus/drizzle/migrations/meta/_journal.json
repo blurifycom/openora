@@ -71,6 +71,20 @@
       "when": 1790343346597,
       "tag": "0009_bonus_offer_rules_cashback_forfeit",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791449921510,
+      "tag": "0010_spotty_ikaris",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791469614770,
+      "tag": "0011_crazy_risque",
+      "breakpoints": true
     }
   ]
 }

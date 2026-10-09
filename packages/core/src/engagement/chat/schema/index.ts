@@ -10,12 +10,14 @@ import {
   timestamp,
   uniqueIndex,
   index,
+  check,
 } from 'drizzle-orm/pg-core';
 import {
   CHAT_ROOM_CATEGORIES,
   CHAT_ROOM_ROLES,
   CHAT_ROOM_INVITE_STATUSES,
   CHAT_MODERATION_SCOPE_VALUES,
+  CHAT_COOLDOWN_SECONDS_MAX,
 } from '../contract/index.js';
 import { CHAT_MESSAGE_TYPES, ChatAttachmentSchema } from '@openora/core/contracts';
 import type { CommandMetadata } from '@openora/core/contracts';
@@ -329,6 +331,47 @@ export const chatMute = pgTable(
   ],
 );
 
+export const chatPlayerCooldown = pgTable(
+  'chat_player_cooldown',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    roomId: uuid(),
+    scope: chatModerationScope().notNull(),
+    cooldownSeconds: integer().notNull(),
+    reason: text().notNull(),
+    createdBy: uuid().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }),
+    liftedAt: timestamp({ withTimezone: true }),
+    liftedBy: uuid(),
+    expiryRecordedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('chat_player_cooldown_active_scope_key')
+      .on(t.userId, t.scope)
+      .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NULL`),
+    uniqueIndex('chat_player_cooldown_active_room_key')
+      .on(t.userId, t.scope, t.roomId)
+      .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
+    index('chat_player_cooldown_user_idx').on(t.userId),
+    // Matches the sweep's scan, so a row lifted before its expiry leaves the index.
+    index('chat_player_cooldown_expiry_due_idx')
+      .on(t.expiresAt)
+      .where(
+        sql`${t.expiresAt} IS NOT NULL AND ${t.expiryRecordedAt} IS NULL AND (${t.liftedAt} IS NULL OR ${t.liftedAt} = ${t.expiresAt})`,
+      ),
+    check(
+      'chat_player_cooldown_seconds_check',
+      sql`${t.cooldownSeconds} > 0 AND ${t.cooldownSeconds} <= ${sql.raw(String(CHAT_COOLDOWN_SECONDS_MAX))}`,
+    ),
+    check(
+      'chat_player_cooldown_room_scope_check',
+      sql`(${t.scope} = 'room') = (${t.roomId} IS NOT NULL)`,
+    ),
+  ],
+);
+
 export type ChatRoom = typeof chatRoom.$inferSelect;
 export type ChatMessage = typeof chatMessage.$inferSelect;
 export type ChatUserBlock = typeof chatUserBlock.$inferSelect;
@@ -342,3 +385,4 @@ export type ChatRoomMute = typeof chatRoomMute.$inferSelect;
 export type ChatRoomRemove = typeof chatRoomRemove.$inferSelect;
 export type ChatPlatformBan = typeof chatPlatformBan.$inferSelect;
 export type ChatMute = typeof chatMute.$inferSelect;
+export type ChatPlayerCooldown = typeof chatPlayerCooldown.$inferSelect;

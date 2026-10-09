@@ -144,6 +144,7 @@ export async function sumInPivot(
   rows: readonly { currency: string; total: string }[],
   pivotCurrency: string,
   rates: ExchangeRateReader | undefined,
+  tx?: unknown,
 ): Promise<string | null> {
   let total = '0';
   for (const row of rows) {
@@ -151,7 +152,9 @@ export async function sumInPivot(
       total = moneyAdd(total, row.total);
       continue;
     }
-    const converted = rates ? await rates.convert(row.total, row.currency, pivotCurrency) : null;
+    const converted = rates
+      ? await rates.convert(row.total, row.currency, pivotCurrency, tx)
+      : null;
     if (converted === null) {
       return null;
     }

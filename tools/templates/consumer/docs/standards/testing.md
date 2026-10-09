@@ -4,8 +4,8 @@ Read this before adding or restructuring a test.
 
 ## When a test is written
 
-A feature PR carries **no tests** - no Playwright spec, no integration test, no unit test. It
-carries the change and the manual verification pass that proves the change works.
+A feature or fix PR carries **its own tests**, written in the same branch from the manual
+verification pass that proves the change works. There is no separate test PR.
 
 Before the PR opens:
 
@@ -16,18 +16,13 @@ Before the PR opens:
 2. Capture the evidence: one screenshot per changed screen, and the before/after pair when you
    fixed something. An API-only change attaches the request/response trace instead.
 3. Attach that evidence **to the PR description**, not only to your report - a reviewer confirms a
-   change by looking at it, because there is no spec to read.
-4. End the description with a **"Tests to add"** list built from what you just exercised: one line
-   per test the change deserves, naming its tier (unit / API E2E / browser E2E) and the path it
-   would live at. Include the hostile paths and the authz negatives. Prose only - never test code.
+   change by looking at it.
+4. Write the tests that pass exercised, in this branch, at the tier the table below names. Include
+   the hostile paths and the authz negatives. A fix carries the test that fails without it.
+5. End the description with a **"Tests"** list: one line per test added, naming its tier
+   (unit / API E2E / browser E2E) and path.
 
-Every one of those tests lands afterwards, in its own **stacked test PR** branched off the feature
-branch: it targets the feature branch while that is open, and the integration branch once it has
-merged, titled `test(<TICKET>): tests for <feature>`. Write them from what the manual pass actually
-exercised.
-
-A missing test is therefore never a review blocker on a feature PR. Write tests when you are
-explicitly asked for that stacked PR - and then the tier table below says where each one goes.
+A changed behaviour with no test is a review `[WARN]`, never a `[BLOCK]`.
 
 ## Pick the tier
 
@@ -68,7 +63,7 @@ expect(await service.get(id)).toEqual(row);
 
 - Test behavior, not implementation - tests must survive a safe refactor (assert outputs, not
   private caches).
-- Cover the change in the stacked test PR, never in the feature PR; always include the authz negatives.
+- Cover the change in the same PR as the change; always include the authz negatives.
 - Drive a vendor's inbound side the way the vendor does: post the real webhook shape to the real
   route with a signature the stub's key material produces. Never call the adapter directly.
 - Deterministic and isolated: no shared mutable state, no real outbound network, seedable data.

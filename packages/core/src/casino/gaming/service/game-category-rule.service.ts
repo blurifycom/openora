@@ -13,7 +13,12 @@ import type {
   GameCategoryRuleClause,
 } from '@openora/core/contracts';
 import { game, gameProvider } from '../schema/index.js';
-import { GAME_CATEGORY_RULE_MATCH_MAX, type PreviewCategoryRuleInput } from '../contract/index.js';
+import {
+  ADMIN_GAME_RULE_MATCH_MAX,
+  GAME_CATEGORY_RULE_MATCH_MAX,
+  type GameSearchRuleTooBroadData,
+  type PreviewCategoryRuleInput,
+} from '../contract/index.js';
 import { providerSummaryColumns } from '../../shared/game-catalog.js';
 import { paramsJsonSchema } from '../../shared/catalog-options.js';
 
@@ -34,6 +39,20 @@ export const GameCategoryRuleTooBroadError = createDomainError<[matchedCount: nu
   (matchedCount) =>
     `The rule matches ${matchedCount} games, exceeding the ${GAME_CATEGORY_RULE_MATCH_MAX}-game cap`,
 );
+
+export class GameSearchRuleTooBroadError extends Error {
+  readonly data: GameSearchRuleTooBroadData;
+
+  constructor(matchedCount: number) {
+    super(
+      `The rule filter matches ${matchedCount} games, exceeding the ${ADMIN_GAME_RULE_MATCH_MAX}-game cap`,
+    );
+    this.name = 'GameSearchRuleTooBroadError';
+    this.data = { reason: 'rule_filter_too_broad', matchedCount, max: ADMIN_GAME_RULE_MATCH_MAX };
+  }
+}
+
+type MatchCap = { max: number; tooBroad: (matchedCount: number) => Error };
 
 /**
  * A caller's permission check on one rule, run by a write or an evaluation on the exact
@@ -85,7 +104,22 @@ export class GameCategoryRuleService {
    * clause before it left. A definition's result is de-duplicated, stripped of malformed
    * ids and cut down to its candidates, and the match cap applies after every clause.
    */
-  async resolveGameIds(rule: GameCategoryRule, now: Date = new Date()): Promise<string[]> {
+  resolveGameIds(rule: GameCategoryRule, now: Date = new Date()): Promise<string[]> {
+    return this.runPipeline(rule, now, {
+      max: GAME_CATEGORY_RULE_MATCH_MAX,
+      tooBroad: (matchedCount) => new GameCategoryRuleTooBroadError(matchedCount),
+    });
+  }
+
+  /** As `resolveGameIds`, for filtering the admin game list: capped at ADMIN_GAME_RULE_MATCH_MAX. */
+  resolveSearchGameIds(rule: GameCategoryRule, now: Date = new Date()): Promise<string[]> {
+    return this.runPipeline(rule, now, {
+      max: ADMIN_GAME_RULE_MATCH_MAX,
+      tooBroad: (matchedCount) => new GameSearchRuleTooBroadError(matchedCount),
+    });
+  }
+
+  private async runPipeline(rule: GameCategoryRule, now: Date, cap: MatchCap): Promise<string[]> {
     const clauses = rule.map((clause) => this.bindClause(clause));
     let candidateIds: string[] | null = null;
     for (const { definition, params } of clauses) {
@@ -115,8 +149,8 @@ export class GameCategoryRuleService {
       if (candidateIds.length === 0) {
         return [];
       }
-      if (candidateIds.length > GAME_CATEGORY_RULE_MATCH_MAX) {
-        throw new GameCategoryRuleTooBroadError(candidateIds.length);
+      if (candidateIds.length > cap.max) {
+        throw cap.tooBroad(candidateIds.length);
       }
     }
     return candidateIds ?? [];

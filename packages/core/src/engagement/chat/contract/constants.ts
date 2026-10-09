@@ -3,6 +3,9 @@ export const DEFAULT_MESSAGE_LIMIT = 50;
 export const ROOM_NAME_MAX_LENGTH = 100;
 export const ROOM_SLUG_MAX_LENGTH = 100;
 export const ROOM_RULE_MAX_LENGTH = 1000;
+export const CHAT_COOLDOWN_SECONDS_MAX = 86_400;
+export const CHAT_MODERATION_DURATION_SECONDS_MAX = 31_536_000;
+export const CHAT_MODERATION_REASON_MAX_LENGTH = 500;
 export const CONNECTION_CLIENT_ID_MAX_LENGTH = 128;
 
 export const JOIN_CODE_LENGTH = 6;
@@ -12,6 +15,9 @@ export const JOIN_CODE_INPUT_MAX_LENGTH = 20;
 export const PRIVATE_ROOM_SLUG_PREFIX = 'private-';
 
 export const MAX_PRIVATE_ROOMS_PER_PLAYER = 15;
+
+export const ROOM_ACTIVITY_WINDOW_HOURS_DEFAULT = 24;
+export const ROOM_ACTIVITY_WINDOW_HOURS_MAX = 168;
 
 export const CHAT_ROOM_ROLES = ['member', 'moderator', 'owner'] as const;
 

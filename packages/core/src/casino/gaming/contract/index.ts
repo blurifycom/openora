@@ -2,7 +2,8 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   CountryCodeSchema,
-  CurrencyCodeSchema,
+  CurrencyTickerInputSchema,
+  CurrencyTickerSchema,
   GAME_TYPES,
   GameBulkIdsSchema,
   GameBulkTargetFieldsSchema,
@@ -11,6 +12,7 @@ import {
   GameCategoryMembershipModeSchema,
   GameCategoryMembershipTriggerSchema,
   GameCategoryNameSchema,
+  GameCategoryRuleClauseSchema,
   GameCategoryRuleKeySchema,
   GameCategoryRuleSchema,
   GameCategorySummaryWithTranslationsSchema,
@@ -85,7 +87,7 @@ export const GameRoundSchema = z.object({
   status: GameRoundStatusSchema,
   betAmount: MoneyAmountSchema,
   winAmount: MoneyAmountSchema,
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerSchema,
   startedAt: z.string(),
   endedAt: z.string().nullable(),
 });
@@ -97,7 +99,7 @@ export const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(
 
 export const StartRoundInputSchema = z.object({
   gameId: UuidSchema,
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerInputSchema,
   betAmount: PositiveMoneyAmountSchema,
 });
 
@@ -275,6 +277,26 @@ export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
     },
   );
 export type ListAdminGamesInput = z.infer<typeof ListAdminGamesInputSchema>;
+
+export const ADMIN_GAME_RULE_CLAUSES_MAX = 5;
+
+// The most games a search's rule filter may match, checked after every clause. Separate
+// from GAME_CATEGORY_RULE_MATCH_MAX: a filter narrows a list, it is not materialized.
+export const ADMIN_GAME_RULE_MATCH_MAX = 20_000;
+
+// A POST body, not a query string: OpenAPI query bracket notation turns a clause's numbers
+// and booleans into strings and drops empty arrays, which a definition's paramsSchema rejects.
+export const SearchAdminGamesInputSchema = ListAdminGamesInputSchema.safeExtend({
+  rules: z.array(GameCategoryRuleClauseSchema).max(ADMIN_GAME_RULE_CLAUSES_MAX).optional(),
+});
+export type SearchAdminGamesInput = z.infer<typeof SearchAdminGamesInputSchema>;
+
+// `data` of the 400 a search answers when its rule filter matches over ADMIN_GAME_RULE_MATCH_MAX.
+export type GameSearchRuleTooBroadData = {
+  reason: 'rule_filter_too_broad';
+  matchedCount: number;
+  max: number;
+};
 
 // `active` and `inactive` count each row's own `isActive` flag, matching the admin list filters.
 const CatalogCountsSchema = z.object({
@@ -540,6 +562,10 @@ export const MEMBERSHIP_EVENT_DEBOUNCE_MS = 250;
 // shared schemas cannot import a module contract, so the value is stated twice.
 export const GAMES_CREATED_EVENT_BATCH = 1000;
 
+// GAMING_COMMANDS.notifyGamesChanged's batch size; must match each array's `.max()` on
+// `gaming.games.changed`, for the same reason.
+export const GAMES_CHANGED_EVENT_BATCH = 1000;
+
 export const GAME_CATEGORY_MEMBERSHIP_QUEUE = queue('gaming.category.membership');
 
 export const GameCategoryMembershipJobSchema = z.object({
@@ -721,6 +747,11 @@ export const gamingAdminContract = {
   listAdminGames: oc
     .route({ method: 'GET', path: '/backoffice/gaming/games' })
     .input(ListAdminGamesInputSchema)
+    .output(paginated(GameSchema)),
+
+  searchAdminGames: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/games/search' })
+    .input(SearchAdminGamesInputSchema)
     .output(paginated(GameSchema)),
 
   getCatalogStats: oc

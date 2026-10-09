@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeAuditWriter } from '../../../testing/mock.js';
 import { findOneOrThrow } from '@openora/core/server';
+import { migrate as identityMigrate } from '@openora/core/pam/migrate/identity';
 import { migrate } from '../migrate.js';
 import { promoOffer, promoWeight, promoWeightProfile } from '../schema/index.js';
 import { GrantReaderService } from '../service/grant-reader.service.js';
@@ -12,7 +13,7 @@ let db: TestDb;
 let weightProfileId: string;
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, identityMigrate]);
   weightProfileId = findOneOrThrow(
     await db.drizzle.db
       .insert(promoWeightProfile)

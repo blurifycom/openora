@@ -86,6 +86,7 @@ export class WageringService implements BonusWageringCommands {
           weightedAmount: args.stake,
           realAmount: args.stake,
           context: args.context,
+          round: { providerName: args.providerName, externalRoundId: args.externalRoundId },
         })) ?? [];
       return {
         ok: true,
@@ -177,6 +178,7 @@ export class WageringService implements BonusWageringCommands {
         weightedAmount: weighted,
         realAmount: moneySubtract(args.stake, args.fromBonus),
         context: args.context,
+        round: { providerName: args.providerName, externalRoundId: args.externalRoundId },
       })) ?? [];
 
     return {
@@ -214,7 +216,10 @@ export class WageringService implements BonusWageringCommands {
 
     if (stakes.length === 0) {
       // No grant was ever attributed to this round: a plain cash bet, nothing to reverse or
-      // settle against a grant.
+      // settle against a grant - but whatever it counted toward outside the bonus still is.
+      if (reversal) {
+        await this.reverseTracking(tx, args, args.amount);
+      }
       return { bonusShare: ZERO, realShare: args.amount };
     }
 
@@ -246,6 +251,11 @@ export class WageringService implements BonusWageringCommands {
         ? ZERO
         : moneyDivide(moneyScaleBy(applyAmount, totalBonus), totalStake);
     const realShare = moneySubtract(applyAmount, share);
+    if (reversal) {
+      // The bonus-funded share never counted toward tracking (`recordWager` takes `realAmount`),
+      // so only the real share is taken back out of it.
+      await this.reverseTracking(tx, args, realShare);
+    }
 
     let settled = ZERO;
     // What each row was actually assigned, whether or not its own attempt then succeeded. The
@@ -335,6 +345,18 @@ export class WageringService implements BonusWageringCommands {
       bonusShare: settled,
       realShare: moneyCompare(realShareOut, ZERO) < 0 ? ZERO : realShareOut,
     };
+  }
+
+  private async reverseTracking(tx: DrizzleTx, args: BonusSettleArgs, realAmount: string) {
+    if (moneyCompare(realAmount, ZERO) <= 0) {
+      return;
+    }
+    await this.wagerTracking?.reverseWager?.(tx, {
+      userId: args.userId,
+      currency: args.currency,
+      round: { providerName: args.providerName, externalRoundId: args.externalRoundId },
+      realAmount,
+    });
   }
 
   /**

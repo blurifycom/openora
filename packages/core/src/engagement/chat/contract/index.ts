@@ -7,16 +7,28 @@ import {
   GLOBAL_CHAT_ROOM_ID,
   CHAT_MODERATION_SCOPES,
   CHAT_MODERATION_SCOPE_VALUES,
+  CHAT_MODERATION_LOOKUP_MAX_USERS,
+  ChatModerationScopeSchema,
+  ChatModerationEntrySchema,
+  ChatCooldownEntrySchema,
   CommandMetadataSchema,
   SystemChatMessageSchema,
   ChatAttachmentSchema,
 } from '@openora/core/contracts';
-import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
+import {
+  PageQuerySchema,
+  SortOrderSchema,
+  paginated,
+  queryArraySchema,
+} from '@openora/core/contracts/kit';
 import {
   MAX_MESSAGE_LENGTH,
   ROOM_NAME_MAX_LENGTH,
   ROOM_SLUG_MAX_LENGTH,
   ROOM_RULE_MAX_LENGTH,
+  CHAT_COOLDOWN_SECONDS_MAX,
+  CHAT_MODERATION_DURATION_SECONDS_MAX,
+  CHAT_MODERATION_REASON_MAX_LENGTH,
   CONNECTION_CLIENT_ID_MAX_LENGTH,
   JOIN_CODE_INPUT_MAX_LENGTH,
   CHAT_ROOM_ROLES,
@@ -28,6 +40,8 @@ import {
   ROOM_INVITE_CANDIDATE_LIMIT_MAX,
   ROOM_INVITE_SEARCH_MIN_LENGTH,
   ROOM_INVITE_SEARCH_MAX_LENGTH,
+  ROOM_ACTIVITY_WINDOW_HOURS_DEFAULT,
+  ROOM_ACTIVITY_WINDOW_HOURS_MAX,
 } from './constants.js';
 
 export * from './constants.js';
@@ -88,6 +102,15 @@ export const ChatRoomSchema = z.object({
   bannedUntil: TimestampSchema.nullable(),
 });
 export type ChatRoom = z.infer<typeof ChatRoomSchema>;
+
+export const AdminChatRoomSchema = ChatRoomSchema.extend({
+  // Null for the global room: every player reads it without joining.
+  memberCount: z.number().int().nonnegative().nullable(),
+  // Player messages that are not deleted, within the requested activityWindowHours.
+  recentMessageCount: z.number().int().nonnegative(),
+  lastMessageAt: TimestampSchema.nullable(),
+});
+export type AdminChatRoom = z.infer<typeof AdminChatRoomSchema>;
 
 export const ChatRoomMemberSchema = z.object({
   userId: UuidSchema,
@@ -265,19 +288,10 @@ export const ChatConnectionGrantSchema = z
 
 export const ChatModerationResultSchema = z.object({ success: z.literal(true) });
 export { CHAT_MODERATION_SCOPES, CHAT_MODERATION_SCOPE_VALUES };
-export const ChatModerationScopeSchema = z.enum(CHAT_MODERATION_SCOPE_VALUES);
+export { ChatModerationScopeSchema, ChatModerationEntrySchema, ChatCooldownEntrySchema };
 export type ChatModerationScope = z.infer<typeof ChatModerationScopeSchema>;
 export const ChatModerationRoomIdSchema = z.union([UuidSchema, z.enum(CHAT_MODERATION_SCOPES)]);
 export type ChatModerationRoomId = z.infer<typeof ChatModerationRoomIdSchema>;
-export const ChatModerationEntrySchema = z.object({
-  id: UuidSchema,
-  userId: UuidSchema,
-  roomId: UuidSchema.nullable(),
-  scope: ChatModerationScopeSchema,
-  reason: z.string(),
-  createdAt: TimestampSchema,
-  expiresAt: TimestampSchema.nullable(),
-});
 export const ChatPlatformBanSchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
@@ -289,22 +303,70 @@ export const ChatPlatformBanSchema = z.object({
   scope: ChatModerationScopeSchema,
 });
 
+const ModerationReasonSchema = z.string().trim().min(1).max(CHAT_MODERATION_REASON_MAX_LENGTH);
 const AdminModerationInput = z.object({
   userId: UuidSchema,
-  reason: z.string().trim().min(1).max(500),
+  reason: ModerationReasonSchema,
   roomId: ChatModerationRoomIdSchema,
-  durationSeconds: z.number().int().positive().max(31_536_000).nullable().default(null),
+  durationSeconds: z
+    .number()
+    .int()
+    .positive()
+    .max(CHAT_MODERATION_DURATION_SECONDS_MAX)
+    .nullable()
+    .default(null),
 });
 const AdminMuteInput = AdminModerationInput.extend({});
+export const AdminChatCooldownInputSchema = AdminModerationInput.extend({
+  cooldownSeconds: z.number().int().min(1).max(CHAT_COOLDOWN_SECONDS_MAX),
+});
+export const AdminLiftChatCooldownInputSchema = z.object({
+  userId: UuidSchema,
+  roomId: ChatModerationRoomIdSchema,
+  reason: ModerationReasonSchema.optional(),
+});
 
 const RoomIdInput = z.object({ roomId: UuidSchema });
 const RoomRulesInput = z.object({ roomId: UuidSchema.or(z.literal(GLOBAL_CHAT_ROOM_ID)) });
 const RoomUserInput = z.object({ roomId: UuidSchema, userId: UuidSchema });
 const RoomModerationInput = RoomUserInput.extend({
-  reason: z.string().trim().min(1).max(500).default(''),
-  durationSeconds: z.number().int().positive().max(31_536_000).nullable().default(null),
+  reason: ModerationReasonSchema.default(''),
+  durationSeconds: z
+    .number()
+    .int()
+    .positive()
+    .max(CHAT_MODERATION_DURATION_SECONDS_MAX)
+    .nullable()
+    .default(null),
 });
 const ChatJoinCodeSchema = z.string().trim().min(1).max(JOIN_CODE_INPUT_MAX_LENGTH);
+const RoomRuleOrderSchema = z.int32().positive();
+const RoomRuleIdInputSchema = z.object({ roomId: UuidSchema, id: UuidSchema });
+export type RoomRuleIdInput = z.infer<typeof RoomRuleIdInputSchema>;
+const CreateRoomRuleInputSchema = z.object({
+  roomId: UuidSchema,
+  orderNum: RoomRuleOrderSchema.optional(),
+  content: RoomRuleContentSchema,
+});
+export type CreateRoomRuleInput = z.infer<typeof CreateRoomRuleInputSchema>;
+const UpdateRoomRuleInputSchema = RoomRuleIdInputSchema.extend({
+  orderNum: RoomRuleOrderSchema.optional(),
+  content: RoomRuleContentSchema.optional(),
+}).refine(({ orderNum, content }) => orderNum !== undefined || content !== undefined, {
+  message: 'At least one rule field is required',
+});
+export type UpdateRoomRuleInput = z.infer<typeof UpdateRoomRuleInputSchema>;
+const RoomPostingConfigurationInputSchema = z.object({
+  roomId: UuidSchema,
+  slowMode: z.boolean().optional(),
+  slowModeSeconds: z.int32().min(0).optional(),
+  readOnlyMode: z.boolean().optional(),
+});
+export type RoomPostingConfigurationInput = z.infer<typeof RoomPostingConfigurationInputSchema>;
+// Strict, so a caller still sending the removed `userId` gets a 400, not every player's entries.
+const ModerationListInputSchema = z.strictObject({
+  userIds: queryArraySchema(UuidSchema, CHAT_MODERATION_LOOKUP_MAX_USERS).optional(),
+});
 
 function hasContentOrAttachment({
   content,
@@ -574,29 +636,12 @@ export const chatContract = {
 
   createRoomRule: oc
     .route({ method: 'POST', path: '/chat/rooms/{roomId}/rules' })
-    .input(
-      z.object({
-        roomId: UuidSchema,
-        orderNum: z.number().int().positive().optional(),
-        content: RoomRuleContentSchema,
-      }),
-    )
+    .input(CreateRoomRuleInputSchema)
     .output(ChatRoomRuleSchema),
 
   updateRoomRule: oc
     .route({ method: 'PATCH', path: '/chat/rooms/{roomId}/rules/{id}' })
-    .input(
-      z
-        .object({
-          roomId: UuidSchema,
-          id: UuidSchema,
-          orderNum: z.number().int().positive().optional(),
-          content: RoomRuleContentSchema.optional(),
-        })
-        .refine(({ orderNum, content }) => orderNum !== undefined || content !== undefined, {
-          message: 'At least one rule field is required',
-        }),
-    )
+    .input(UpdateRoomRuleInputSchema)
     .output(ChatRoomRuleSchema),
 
   updatePrivateRoom: oc
@@ -611,7 +656,7 @@ export const chatContract = {
 
   deleteRoomRule: oc
     .route({ method: 'DELETE', path: '/chat/rooms/{roomId}/rules/{id}' })
-    .input(z.object({ roomId: UuidSchema, id: UuidSchema }))
+    .input(RoomRuleIdInputSchema)
     .output(z.object({ success: z.literal(true) })),
 
   getRoomConfiguration: oc
@@ -622,11 +667,7 @@ export const chatContract = {
   updateRoomConfiguration: oc
     .route({ method: 'PATCH', path: '/chat/rooms/{roomId}/configuration' })
     .input(
-      z.object({
-        roomId: UuidSchema,
-        slowMode: z.boolean().optional(),
-        slowModeSeconds: z.number().int().min(0).optional(),
-        readOnlyMode: z.boolean().optional(),
+      RoomPostingConfigurationInputSchema.extend({
         onlyInvitedCanJoin: z.boolean().optional(),
         lockRoom: z.boolean().optional(),
         moderatorInvite: z.boolean().optional(),
@@ -712,17 +753,50 @@ export const chatContract = {
     )
     .output(ChatRoomSchema),
 
+  adminCreateRoomRule: oc
+    .route({ method: 'POST', path: '/backoffice/chat/rooms/{roomId}/rules' })
+    .input(CreateRoomRuleInputSchema)
+    .output(ChatRoomRuleSchema),
+
+  adminUpdateRoomRule: oc
+    .route({ method: 'PATCH', path: '/backoffice/chat/rooms/{roomId}/rules/{id}' })
+    .input(UpdateRoomRuleInputSchema)
+    .output(ChatRoomRuleSchema),
+
+  adminDeleteRoomRule: oc
+    .route({ method: 'DELETE', path: '/backoffice/chat/rooms/{roomId}/rules/{id}' })
+    .input(RoomRuleIdInputSchema)
+    .output(z.object({ success: z.literal(true) })),
+
+  adminUpdateRoomConfiguration: oc
+    .route({ method: 'PATCH', path: '/backoffice/chat/rooms/{roomId}/configuration' })
+    .input(
+      RoomPostingConfigurationInputSchema.refine(
+        ({ slowMode, slowModeSeconds, readOnlyMode }) =>
+          slowMode !== undefined || slowModeSeconds !== undefined || readOnlyMode !== undefined,
+        { message: 'At least one configuration field is required' },
+      ),
+    )
+    .output(ChatRoomConfigurationSchema),
+
   listAdminRooms: oc
     .route({ method: 'GET', path: '/backoffice/chat/rooms' })
     .input(
       z.object({
         ...PageQuerySchema.shape,
         name: z.string().trim().max(ROOM_NAME_MAX_LENGTH).optional(),
+        category: ChatRoomCategorySchema.optional(),
         sortBy: AdminRoomSortBySchema,
         sortOrder: SortOrderSchema.default('desc'),
+        activityWindowHours: z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(ROOM_ACTIVITY_WINDOW_HOURS_MAX)
+          .default(ROOM_ACTIVITY_WINDOW_HOURS_DEFAULT),
       }),
     )
-    .output(paginated(ChatRoomSchema)),
+    .output(paginated(AdminChatRoomSchema)),
 
   adminListRoomMessages: oc
     .route({ method: 'GET', path: '/backoffice/chat/rooms/{roomId}/messages' })
@@ -796,8 +870,23 @@ export const chatContract = {
 
   adminListMutes: oc
     .route({ method: 'GET', path: '/backoffice/chat/mutes' })
-    .input(z.object({ userId: UuidSchema.optional() }))
+    .input(ModerationListInputSchema)
     .output(z.array(ChatModerationEntrySchema)),
+
+  adminSetCooldown: oc
+    .route({ method: 'POST', path: '/backoffice/chat/cooldowns' })
+    .input(AdminChatCooldownInputSchema)
+    .output(ChatModerationResultSchema),
+
+  adminLiftCooldown: oc
+    .route({ method: 'POST', path: '/backoffice/chat/cooldowns/lift' })
+    .input(AdminLiftChatCooldownInputSchema)
+    .output(ChatModerationResultSchema),
+
+  adminListCooldowns: oc
+    .route({ method: 'GET', path: '/backoffice/chat/cooldowns' })
+    .input(ModerationListInputSchema)
+    .output(z.array(ChatCooldownEntrySchema)),
 
   adminBan: oc
     .route({ method: 'POST', path: '/backoffice/chat/bans' })
@@ -811,6 +900,6 @@ export const chatContract = {
 
   adminListBans: oc
     .route({ method: 'GET', path: '/backoffice/chat/bans' })
-    .input(z.object({ userId: UuidSchema.optional() }))
+    .input(ModerationListInputSchema)
     .output(z.array(ChatPlatformBanSchema)),
 };

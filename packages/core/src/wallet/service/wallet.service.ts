@@ -450,6 +450,21 @@ export function assertAboveMinimumDeposit(
 export const railFor: (currency: string, cryptoCurrencies?: readonly string[]) => WalletRail =
   sharedRailFor;
 
+async function openWallet(txn: DrizzleDb, userId: Wallet['userId'], currency: string) {
+  const [created] = await txn
+    .insert(wallet)
+    .values({ userId, currency })
+    .onConflictDoNothing({ target: wallet.userId })
+    .returning();
+  return (
+    created ??
+    findOneOrThrow(
+      await txn.select().from(wallet).where(eq(wallet.userId, userId)),
+      new WalletNotFoundError(userId),
+    )
+  );
+}
+
 // Currency checks elsewhere are case-insensitive, so `usd` reaches here for a `USD`
 // wallet. Every read and write of wallet_balance funnels through these three helpers,
 // so normalizing the key here is enough to keep one row per wallet+currency.
@@ -633,9 +648,6 @@ const EVM_ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 // a display hint there. Revisit with a real risk service if/when one exists.
 const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 
-// ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
-const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
-const HIGH_FREQUENCY_MIN_COUNT = 3;
 // A withdrawal that paid nothing out is not a cash-out, so a vendor failure or a cancellation
 // must not send the player's next small withdrawal to the manual queue. An admin rejection
 // still counts: it is a human judgement on this player and leaves no risk tag behind.
@@ -740,6 +752,8 @@ function toAutoWithdrawalConfigDto(row: WalletAutoWithdrawalConfigRow): WalletAu
     fiatThreshold: row.fiatThreshold,
     cryptoThreshold: row.cryptoThreshold,
     excludeRiskFlags: row.excludeRiskFlags,
+    velocityCount: row.velocityCount,
+    velocityWindowHours: row.velocityWindowHours,
     updatedBy: row.updatedBy,
     updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
@@ -966,7 +980,7 @@ export class WalletService {
     const quote =
       currency.toUpperCase() === referenceCurrency
         ? { rate: '1', asOf: new Date().toISOString() }
-        : await this.rates?.getRate(currency, referenceCurrency);
+        : await this.rates?.getRate(currency, referenceCurrency, tx);
     if (!quote) {
       throw new WalletReferenceRateUnavailableError(currency, referenceCurrency);
     }
@@ -1101,10 +1115,7 @@ export class WalletService {
         [walletRecord] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
       }
       if (!walletRecord) {
-        walletRecord = findOneOrThrow(
-          await txn.insert(wallet).values({ userId, currency }).returning(),
-          new WalletNotFoundError(userId),
-        );
+        walletRecord = await openWallet(txn, userId, currency);
       }
       const holder = walletRecord;
       return withAdvisoryXactLock(txn, depositSlotKey(userId), async () => {
@@ -1850,8 +1861,14 @@ export class WalletService {
     const pageRows = matching.slice(start, start + limit);
 
     // One batched velocity query for the page (no N+1); shares the window + threshold + query the auto-approval evaluator uses.
+    // The tag is a display hint, so an unseeded install (no config row) just drops it rather
+    // than failing the queue - the auto-approval read path is the one that fails closed.
     const pageWalletIds = [...new Set(pageRows.map((r) => r.tx.walletId))];
-    const frequentWalletIds = await this.frequentWithdrawalWalletIds(db, pageWalletIds);
+    const frequentWalletIds = await this.frequentWithdrawalWalletIds(
+      db,
+      pageWalletIds,
+      await this.getAutoWithdrawalConfigOrNull(),
+    );
     const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
 
     const items: WithdrawalQueueItem[] = await mapConcurrent(pageRows, 5, async (r) => {
@@ -2350,7 +2367,11 @@ export class WalletService {
       return skip('risk_tag');
     }
 
-    const heuristics = await this.autoApprovalHeuristics({ walletId, amount: pivotAmount });
+    const heuristics = await this.autoApprovalHeuristics({
+      walletId,
+      amount: pivotAmount,
+      config: threshold.config,
+    });
     if (heuristics.largeAmount || heuristics.highFrequency) {
       return skip('heuristics');
     }
@@ -2427,7 +2448,15 @@ export class WalletService {
       fiatThreshold,
       cryptoThreshold,
       excludeRiskFlags,
-    }: { fiatThreshold: string; cryptoThreshold: string; excludeRiskFlags: TagKey[] },
+      velocityCount,
+      velocityWindowHours,
+    }: {
+      fiatThreshold: string;
+      cryptoThreshold: string;
+      excludeRiskFlags: TagKey[];
+      velocityCount: number | null;
+      velocityWindowHours: number;
+    },
     meta?: ClientMeta,
   ): Promise<WalletAutoWithdrawalConfig> {
     return this.drizzle.db.transaction(async (txn) => {
@@ -2442,11 +2471,20 @@ export class WalletService {
           fiatThreshold,
           cryptoThreshold,
           excludeRiskFlags,
+          velocityCount,
+          velocityWindowHours,
           updatedBy: adminId,
         })
         .onConflictDoUpdate({
           target: walletAutoWithdrawalConfig.singletonKey,
-          set: { fiatThreshold, cryptoThreshold, excludeRiskFlags, updatedBy: adminId },
+          set: {
+            fiatThreshold,
+            cryptoThreshold,
+            excludeRiskFlags,
+            velocityCount,
+            velocityWindowHours,
+            updatedBy: adminId,
+          },
         })
         .returning();
       const config = toAutoWithdrawalConfigDto(
@@ -2463,12 +2501,16 @@ export class WalletService {
               fiatThreshold: before.fiatThreshold,
               cryptoThreshold: before.cryptoThreshold,
               excludeRiskFlags: before.excludeRiskFlags,
+              velocityCount: before.velocityCount,
+              velocityWindowHours: before.velocityWindowHours,
             }
           : null,
         after: {
           fiatThreshold: config.fiatThreshold,
           cryptoThreshold: config.cryptoThreshold,
           excludeRiskFlags: config.excludeRiskFlags,
+          velocityCount: config.velocityCount,
+          velocityWindowHours: config.velocityWindowHours,
         },
         ...meta,
       });
@@ -2691,28 +2733,33 @@ export class WalletService {
   private async autoApprovalHeuristics({
     walletId,
     amount,
+    config,
   }: {
     walletId: Wallet['id'];
     amount: string;
+    config: WalletAutoWithdrawalConfig;
   }): Promise<{ largeAmount: boolean; highFrequency: boolean }> {
-    const frequent = await this.frequentWithdrawalWalletIds(this.drizzle.db, [walletId]);
+    const frequent = await this.frequentWithdrawalWalletIds(this.drizzle.db, [walletId], config);
     return {
       largeAmount: moneyCompare(amount, LARGE_WITHDRAWAL_THRESHOLD) >= 0,
       highFrequency: frequent.has(walletId),
     };
   }
 
-  // Wallets with >= HIGH_FREQUENCY_MIN_COUNT withdrawals in the trailing window, via one grouped-count query (no N+1).
-  // Single source of the velocity check, shared by the review queue tag and the auto-approval heuristic.
+  // Wallets with >= the configured count of withdrawals in the trailing window, via one
+  // grouped-count query (no N+1). Single source of the velocity check, shared by the review
+  // queue tag and the auto-approval heuristic. A null count (or no config row) means off.
   private async frequentWithdrawalWalletIds(
     db: DrizzleDb | DrizzleTx,
     walletIds: string[],
+    config: WalletAutoWithdrawalConfig | null,
   ): Promise<Set<string>> {
     const frequent = new Set<string>();
-    if (walletIds.length === 0) {
+    const minCount = config?.velocityCount;
+    if (walletIds.length === 0 || !minCount) {
       return frequent;
     }
-    const since = new Date(Date.now() - HIGH_FREQUENCY_WINDOW_MS);
+    const since = new Date(Date.now() - config.velocityWindowHours * 60 * 60 * 1000);
     const counts = await db
       .select({ walletId: walletTransaction.walletId, n: count() })
       .from(walletTransaction)
@@ -2726,7 +2773,7 @@ export class WalletService {
       )
       .groupBy(walletTransaction.walletId);
     for (const row of counts) {
-      if (Number(row.n) >= HIGH_FREQUENCY_MIN_COUNT) {
+      if (Number(row.n) >= minCount) {
         frequent.add(row.walletId);
       }
     }
@@ -3122,13 +3169,7 @@ export class WalletService {
         .from(wallet)
         .where(eq(wallet.userId, depositAddress.userId));
       if (!walletRecord) {
-        walletRecord = findOneOrThrow(
-          await txn
-            .insert(wallet)
-            .values({ userId: depositAddress.userId, currency: event.currency })
-            .returning(),
-          new WalletNotFoundError(depositAddress.userId),
-        );
+        walletRecord = await openWallet(txn, depositAddress.userId, event.currency);
       }
 
       // A redelivery of a credited deposit must not depend on a rate being available now.

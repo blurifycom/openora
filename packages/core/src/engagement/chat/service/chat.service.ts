@@ -19,6 +19,9 @@ import {
 import type {
   ClientMeta,
   ChatModeration,
+  ChatCooldownEntry,
+  ChatModerationScope,
+  ChatRoomReach,
   RealtimeSignal,
   RealtimeTransport,
   CommandMetadata,
@@ -48,6 +51,9 @@ import {
   ne,
   ilike,
   sql,
+  gte,
+  getTableColumns,
+  type SQL,
 } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
@@ -93,7 +99,12 @@ import type {
   ChatRoomStreamEvent,
   ChatRoomCategory,
   ChatRoomRole,
+  ChatRoomRule,
+  CreateRoomRuleInput,
+  RoomPostingConfigurationInput,
+  RoomRuleIdInput,
   SortOrder,
+  UpdateRoomRuleInput,
 } from '../contract/index.js';
 import {
   DEFAULT_MESSAGE_LIMIT,
@@ -235,6 +246,16 @@ export const ChatRoomConfigurationNotFoundError = createDomainError(
 
 const CHAT_MODERATOR_ROLES: readonly ChatRoomRole[] = ['moderator', 'owner'];
 
+// Global-room messages are stored with a null room id.
+function perRoomMessages(query: (roomMessages: SQL | undefined) => SQL) {
+  const visible = (room: SQL) =>
+    and(room, eq(chatMessage.type, 'user'), eq(chatMessage.isDeleted, false));
+  return sql`CASE WHEN ${eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID)} THEN ${query(visible(isNull(chatMessage.roomId)))} ELSE ${query(visible(eq(chatMessage.roomId, chatRoom.id)))} END`;
+}
+
+type AuditActorType = Parameters<AuditWritePort['recordInTransaction']>[1]['actorType'];
+type ChatRoomConfigurationSettings = ReturnType<typeof configurationSettings>;
+
 type ChatServiceDependencies = {
   drizzle: DrizzleService;
   events: EventBus;
@@ -246,6 +267,36 @@ type ChatServiceDependencies = {
   allowedAttachmentHosts: readonly string[];
   socialCommands?: SocialCommands;
 };
+
+type SendThrottle = {
+  roomId: Uuid | null;
+  reach: ChatRoomReach;
+  slowMode: { roomId: Uuid; slowModeSeconds: number } | null;
+};
+
+// A cooldown counts the sender's last message anywhere its scope reaches, so switching rooms does not reset it.
+function messagesInScope(t: DrizzleTx, scope: ChatModerationScope, roomId: Uuid | null) {
+  switch (scope) {
+    case '__all':
+      return undefined;
+    case '__all_public':
+      return or(
+        isNull(chatMessage.roomId),
+        inArray(
+          chatMessage.roomId,
+          t.select({ id: chatRoom.id }).from(chatRoom).where(eq(chatRoom.isPublic, true)),
+        ),
+      );
+    case GLOBAL_CHAT_ROOM_ID:
+      return isNull(chatMessage.roomId);
+    case 'room':
+      return messagesInRoom(roomId);
+  }
+}
+
+function messagesInRoom(roomId: Uuid | null) {
+  return roomId === null ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId);
+}
 
 function gateContent(content: string): string {
   const result = moderateContent(content);
@@ -736,14 +787,18 @@ export class ChatService {
     page,
     limit,
     name,
+    category,
     sortBy,
     sortOrder,
+    activityWindowHours,
   }: {
     page: number;
     limit: number;
     name?: string;
+    category?: ChatRoomCategory;
     sortBy: AdminRoomSortBy;
     sortOrder: SortOrder;
+    activityWindowHours: number;
   }) {
     const dir = sortOrder === 'asc' ? asc : desc;
     const col = sortBy === 'name' ? chatRoom.name : chatRoom.createdAt;
@@ -751,10 +806,26 @@ export class ChatService {
       eq(chatRoom.isPublic, true),
       isNull(chatRoom.deletedAt),
       name ? ilike(chatRoom.name, `%${name}%`) : undefined,
+      category ? eq(chatRoom.category, category) : undefined,
     );
+    const since = new Date(Date.now() - activityWindowHours * 60 * 60 * 1000);
     const [rows, [{ n }]] = await Promise.all([
       this.drizzle.db
-        .select()
+        .select({
+          ...getTableColumns(chatRoom),
+          memberCount:
+            sql`CASE WHEN ${eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID)} THEN NULL ELSE (SELECT count(*)::int FROM ${chatRoomMember} WHERE ${and(eq(chatRoomMember.roomId, chatRoom.id), isNull(chatRoomMember.accountClosedAt))}) END`.mapWith(
+              (value): number | null => Number(value),
+            ),
+          recentMessageCount: perRoomMessages(
+            (roomMessages) =>
+              sql`(SELECT count(*)::int FROM ${chatMessage} WHERE ${and(roomMessages, gte(chatMessage.createdAt, since))})`,
+          ).mapWith(Number),
+          lastMessageAt: perRoomMessages(
+            (roomMessages) =>
+              sql`(SELECT max(${chatMessage.createdAt}) FROM ${chatMessage} WHERE ${roomMessages})`,
+          ).mapWith((value: Date | string): Date | null => new Date(value)),
+        })
         .from(chatRoom)
         .where(where)
         .orderBy(dir(col))
@@ -762,7 +833,13 @@ export class ChatService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(chatRoom).where(where),
     ]);
-    return { items: rows.map(toRoom), total: Number(n), page, limit };
+    const items = rows.map(({ memberCount, recentMessageCount, lastMessageAt, ...room }) => ({
+      ...toRoom(room),
+      memberCount,
+      recentMessageCount,
+      lastMessageAt: lastMessageAt?.toISOString() ?? null,
+    }));
+    return { items, total: Number(n), page, limit };
   }
 
   async listModeratedRooms({
@@ -809,6 +886,24 @@ export class ChatService {
   async getRoom({ roomId, viewerId }: { roomId: ChatRoom['id']; viewerId?: User['id'] }) {
     const room = await this.verifyRoomAccess(roomId, viewerId);
     return toRoom(room);
+  }
+
+  // Backoffice room writes reach live public rooms only, the ones listAdminRooms returns. FOR SHARE
+  // holds a concurrent soft delete until the write commits.
+  private adminRoomWrite<T>(roomId: ChatRoom['id'], write: (tx: DrizzleTx) => Promise<T>) {
+    return this.drizzle.db.transaction(async (tx) => {
+      findOneOrThrow(
+        await tx
+          .select({ id: chatRoom.id })
+          .from(chatRoom)
+          .where(
+            and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, true), isNull(chatRoom.deletedAt)),
+          )
+          .for('share'),
+        new ChatRoomNotFoundError(roomId),
+      );
+      return write(tx);
+    });
   }
 
   private async assertRoomModerator(
@@ -890,34 +985,68 @@ export class ChatService {
     content: string;
   } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
-    const created = await this.drizzle.db.transaction(async (tx) => {
-      let nextOrder = orderNum;
-      if (nextOrder === undefined) {
-        const [last] = await tx
-          .select({ orderNum: chatRoomRule.orderNum })
-          .from(chatRoomRule)
-          .where(eq(chatRoomRule.roomId, roomId))
-          .orderBy(desc(chatRoomRule.orderNum))
-          .limit(1);
-        nextOrder = (last?.orderNum ?? 0) + 1;
-      }
-      const [rule] = await tx
-        .insert(chatRoomRule)
-        .values({ roomId, createdBy: actorId, orderNum: nextOrder, content })
-        .returning();
-      await this.audit.recordInTransaction(tx, {
+    const created = await this.drizzle.db.transaction((tx) =>
+      this.insertRoomRule(tx, {
+        roomId,
         actorId,
         actorType: 'player',
-        action: 'chat.room.rule.created',
-        resourceType: 'chat_room_rule',
-        resourceId: rule.id,
-        after: { roomId, orderNum: rule.orderNum, content: rule.content },
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-      return rule;
-    });
+        orderNum,
+        content,
+        ip,
+        userAgent,
+      }),
+    );
     return toRule(created);
+  }
+
+  async adminCreateRoomRule(input: CreateRoomRuleInput & { actorId: User['id'] } & ClientMeta) {
+    const created = await this.adminRoomWrite(input.roomId, (tx) =>
+      this.insertRoomRule(tx, { ...input, actorType: 'admin' }),
+    );
+    return toRule(created);
+  }
+
+  private async insertRoomRule(
+    tx: DrizzleTx,
+    {
+      roomId,
+      actorId,
+      actorType,
+      orderNum,
+      content,
+      ip,
+      userAgent,
+    }: CreateRoomRuleInput & {
+      actorId: User['id'];
+      actorType: AuditActorType;
+    } & ClientMeta,
+  ) {
+    let nextOrder = orderNum;
+    if (nextOrder === undefined) {
+      const [last] = await tx
+        .select({ orderNum: chatRoomRule.orderNum })
+        .from(chatRoomRule)
+        .where(eq(chatRoomRule.roomId, roomId))
+        .orderBy(desc(chatRoomRule.orderNum))
+        .limit(1);
+      // A rule can be set to the integer column's max; ties sort by creation time, so this still lands last.
+      nextOrder = Math.min((last?.orderNum ?? 0) + 1, 2 ** 31 - 1);
+    }
+    const [rule] = await tx
+      .insert(chatRoomRule)
+      .values({ roomId, createdBy: actorId, orderNum: nextOrder, content })
+      .returning();
+    await this.audit.recordInTransaction(tx, {
+      actorId,
+      actorType,
+      action: 'chat.room.rule.created',
+      resourceType: 'chat_room_rule',
+      resourceId: rule.id,
+      after: { roomId, orderNum: rule.orderNum, content: rule.content },
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
+    return rule;
   }
 
   async updateRoomRule({
@@ -930,12 +1059,50 @@ export class ChatService {
     userAgent,
   }: {
     roomId: ChatRoom['id'];
-    id: string;
+    id: ChatRoomRule['id'];
     actorId: User['id'];
     orderNum?: number;
     content?: string;
   } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
+    const updated = await this.drizzle.db.transaction((tx) =>
+      this.patchRoomRule(tx, {
+        roomId,
+        id,
+        actorId,
+        actorType: 'player',
+        orderNum,
+        content,
+        ip,
+        userAgent,
+      }),
+    );
+    return toRule(updated);
+  }
+
+  async adminUpdateRoomRule(input: UpdateRoomRuleInput & { actorId: User['id'] } & ClientMeta) {
+    const updated = await this.adminRoomWrite(input.roomId, (tx) =>
+      this.patchRoomRule(tx, { ...input, actorType: 'admin' }),
+    );
+    return toRule(updated);
+  }
+
+  private async patchRoomRule(
+    tx: DrizzleTx,
+    {
+      roomId,
+      id,
+      actorId,
+      actorType,
+      orderNum,
+      content,
+      ip,
+      userAgent,
+    }: UpdateRoomRuleInput & {
+      actorId: User['id'];
+      actorType: AuditActorType;
+    } & ClientMeta,
+  ) {
     const patch: Partial<typeof chatRoomRule.$inferInsert> = { updatedAt: new Date() };
     if (orderNum !== undefined) {
       patch.orderNum = orderNum;
@@ -943,37 +1110,34 @@ export class ChatService {
     if (content !== undefined) {
       patch.content = content;
     }
-    const updated = await this.drizzle.db.transaction(async (tx) => {
-      const before = findOneOrThrow(
-        await tx
-          .select()
-          .from(chatRoomRule)
-          .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
-          .for('update'),
-        new ChatRoomRuleNotFoundError(id),
-      );
-      const [after] = await tx
-        .update(chatRoomRule)
-        .set(patch)
-        .where(eq(chatRoomRule.id, id))
-        .returning();
-      if (after.orderNum === before.orderNum && after.content === before.content) {
-        return after;
-      }
-      await this.audit.recordInTransaction(tx, {
-        actorId,
-        actorType: 'player',
-        action: 'chat.room.rule.updated',
-        resourceType: 'chat_room_rule',
-        resourceId: id,
-        before: { roomId, orderNum: before.orderNum, content: before.content },
-        after: { roomId, orderNum: after.orderNum, content: after.content },
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
+    const before = findOneOrThrow(
+      await tx
+        .select()
+        .from(chatRoomRule)
+        .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
+        .for('update'),
+      new ChatRoomRuleNotFoundError(id),
+    );
+    const [after] = await tx
+      .update(chatRoomRule)
+      .set(patch)
+      .where(eq(chatRoomRule.id, id))
+      .returning();
+    if (after.orderNum === before.orderNum && after.content === before.content) {
       return after;
+    }
+    await this.audit.recordInTransaction(tx, {
+      actorId,
+      actorType,
+      action: 'chat.room.rule.updated',
+      resourceType: 'chat_room_rule',
+      resourceId: id,
+      before: { roomId, orderNum: before.orderNum, content: before.content },
+      after: { roomId, orderNum: after.orderNum, content: after.content },
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
     });
-    return toRule(updated);
+    return after;
   }
 
   async deleteRoomRule({
@@ -984,30 +1148,54 @@ export class ChatService {
     userAgent,
   }: {
     roomId: ChatRoom['id'];
-    id: string;
+    id: ChatRoomRule['id'];
     actorId: User['id'];
   } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
-    await this.drizzle.db.transaction(async (tx) => {
-      const deleted = findOneOrThrow(
-        await tx
-          .delete(chatRoomRule)
-          .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
-          .returning(),
-        new ChatRoomRuleNotFoundError(id),
-      );
-      await this.audit.recordInTransaction(tx, {
-        actorId,
-        actorType: 'player',
-        action: 'chat.room.rule.deleted',
-        resourceType: 'chat_room_rule',
-        resourceId: id,
-        before: { roomId, orderNum: deleted.orderNum, content: deleted.content },
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-    });
+    await this.drizzle.db.transaction((tx) =>
+      this.removeRoomRule(tx, { roomId, id, actorId, actorType: 'player', ip, userAgent }),
+    );
     return { success: true } as const;
+  }
+
+  async adminDeleteRoomRule(input: RoomRuleIdInput & { actorId: User['id'] } & ClientMeta) {
+    await this.adminRoomWrite(input.roomId, (tx) =>
+      this.removeRoomRule(tx, { ...input, actorType: 'admin' }),
+    );
+    return { success: true } as const;
+  }
+
+  private async removeRoomRule(
+    tx: DrizzleTx,
+    {
+      roomId,
+      id,
+      actorId,
+      actorType,
+      ip,
+      userAgent,
+    }: RoomRuleIdInput & {
+      actorId: User['id'];
+      actorType: AuditActorType;
+    } & ClientMeta,
+  ) {
+    const deleted = findOneOrThrow(
+      await tx
+        .delete(chatRoomRule)
+        .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
+        .returning(),
+      new ChatRoomRuleNotFoundError(id),
+    );
+    await this.audit.recordInTransaction(tx, {
+      actorId,
+      actorType,
+      action: 'chat.room.rule.deleted',
+      resourceType: 'chat_room_rule',
+      resourceId: id,
+      before: { roomId, orderNum: deleted.orderNum, content: deleted.content },
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
   }
 
   private async findRoomConfiguration(db: DrizzleDb | DrizzleTx, roomId: ChatRoom['id']) {
@@ -1064,29 +1252,14 @@ export class ChatService {
         ) {
           return null;
         }
-        const [after] = await tx
-          .insert(chatRoomConfiguration)
-          .values({ roomId, ...patch, updatedAt: new Date() })
-          .onConflictDoUpdate({
-            target: chatRoomConfiguration.roomId,
-            set: { ...patch, updatedAt: new Date() },
-          })
-          .returning();
-        const beforeSettings = before ? configurationSettings(before) : null;
-        const afterSettings = configurationSettings(after);
-        if (JSON.stringify(beforeSettings) !== JSON.stringify(afterSettings)) {
-          await this.audit.recordInTransaction(tx, {
-            actorId,
-            actorType: 'player',
-            action: 'chat.room.configuration.updated',
-            resourceType: 'chat_room_configuration',
-            resourceId: after.id,
-            before: beforeSettings ? { roomId, ...beforeSettings } : null,
-            after: { roomId, ...afterSettings },
-            ip: ip ?? null,
-            userAgent: userAgent ?? null,
-          });
-        }
+        const after = await this.upsertRoomConfiguration(tx, {
+          roomId,
+          actorId,
+          actorType: 'player',
+          patch,
+          ip,
+          userAgent,
+        });
         const expired =
           moderatorInviteBefore && !after.moderatorInvite
             ? await expirePendingInvites(
@@ -1131,6 +1304,71 @@ export class ChatService {
       userAgent,
     });
     return toConfiguration(updated.config);
+  }
+
+  async adminUpdateRoomConfiguration({
+    roomId,
+    actorId,
+    ip,
+    userAgent,
+    ...patch
+  }: RoomPostingConfigurationInput & { actorId: User['id'] } & ClientMeta) {
+    const config = await this.adminRoomWrite(roomId, (tx) =>
+      this.upsertRoomConfiguration(tx, {
+        roomId,
+        actorId,
+        actorType: 'admin',
+        patch,
+        ip,
+        userAgent,
+      }),
+    );
+    return toConfiguration(config);
+  }
+
+  private async upsertRoomConfiguration(
+    tx: DrizzleTx,
+    {
+      roomId,
+      actorId,
+      actorType,
+      patch,
+      ip,
+      userAgent,
+    }: {
+      roomId: ChatRoom['id'];
+      actorId: User['id'];
+      actorType: AuditActorType;
+      patch: Partial<ChatRoomConfigurationSettings>;
+    } & ClientMeta,
+  ) {
+    return withAdvisoryXactLock(tx, `chat-room-configuration:${roomId}`, async () => {
+      const before = await this.findRoomConfiguration(tx, roomId);
+      const [after] = await tx
+        .insert(chatRoomConfiguration)
+        .values({ roomId, ...patch, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: chatRoomConfiguration.roomId,
+          set: { ...patch, updatedAt: new Date() },
+        })
+        .returning();
+      const beforeSettings = before ? configurationSettings(before) : null;
+      const afterSettings = configurationSettings(after);
+      if (JSON.stringify(beforeSettings) !== JSON.stringify(afterSettings)) {
+        await this.audit.recordInTransaction(tx, {
+          actorId,
+          actorType,
+          action: 'chat.room.configuration.updated',
+          resourceType: 'chat_room_configuration',
+          resourceId: after.id,
+          before: beforeSettings ? { roomId, ...beforeSettings } : null,
+          after: { roomId, ...afterSettings },
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+      }
+      return after;
+    });
   }
 
   private async roomRole(db: DrizzleDb | DrizzleTx, roomId: ChatRoom['id'], userId: User['id']) {
@@ -1447,61 +1685,136 @@ export class ChatService {
       : null;
   }
 
-  // Slow mode is checked under a per-sender lock so parallel sends cannot all pass.
+  private async coveringCooldowns(
+    userId: User['id'],
+    roomId: Uuid | null,
+    reach: ChatRoomReach,
+    tx?: DrizzleTx,
+  ): Promise<ChatCooldownEntry[]> {
+    const coveringScopes = platformScopesFor(reach);
+    return (await this.moderation.listCooldowns([userId], tx)).filter((cooldown) =>
+      cooldown.scope === 'room'
+        ? roomId !== null && cooldown.roomId === roomId
+        : coveringScopes.includes(cooldown.scope),
+    );
+  }
+
+  // Decides whether to take the send lock; the cooldowns that apply are re-read under it.
+  private async sendThrottle({
+    userId,
+    roomId,
+    reach,
+    slowMode,
+  }: {
+    userId: User['id'];
+    roomId: Uuid | null;
+    reach: ChatRoomReach;
+    slowMode: SendThrottle['slowMode'];
+  }): Promise<SendThrottle | null> {
+    if (slowMode) {
+      return { roomId, reach, slowMode };
+    }
+    const cooldowns = await this.coveringCooldowns(userId, roomId, reach);
+    return cooldowns.length > 0 ? { roomId, reach, slowMode } : null;
+  }
+
+  // One lock per sender, so parallel sends to different rooms cannot both pass a shared cooldown.
   private async insertUserMessage(
     values: typeof chatMessage.$inferInsert & { roomId: Uuid | null },
-    slowMode: { roomId: Uuid; slowModeSeconds: number } | null,
+    throttle: SendThrottle | null,
   ) {
-    if (!slowMode) {
+    if (!throttle) {
       const [record] = await this.drizzle.db.insert(chatMessage).values(values).returning();
       return record;
     }
     return this.drizzle.db.transaction((t) =>
-      withAdvisoryXactLock(t, `chat-send:${values.userId}:${slowMode.roomId}`, async () => {
-        await this.assertSlowModeElapsed(t, values.userId, values.roomId, slowMode);
+      withAdvisoryXactLock(t, `chat-send:${values.userId}`, async () => {
+        await this.assertSendWindowElapsed(t, values.userId, throttle);
         const [record] = await t.insert(chatMessage).values(values).returning();
         return record;
       }),
     );
   }
 
-  private async assertSlowModeElapsed(
+  private async assertSendWindowElapsed(
     t: DrizzleTx,
     userId: User['id'],
-    roomId: Uuid | null,
-    config: { roomId: Uuid; slowModeSeconds: number },
+    { roomId, reach, slowMode }: SendThrottle,
   ) {
-    const windowMs = config.slowModeSeconds * 1000;
+    const windows: { createdAt: Date; now: Date; seconds: number }[] = [];
+    for (const cooldown of await this.coveringCooldowns(userId, roomId, reach, t)) {
+      const last = await this.lastUserMessageWithin(
+        t,
+        userId,
+        messagesInScope(t, cooldown.scope, cooldown.roomId),
+        cooldown.cooldownSeconds,
+      );
+      if (last) {
+        windows.push({ ...last, seconds: cooldown.cooldownSeconds });
+      }
+    }
+    if (slowMode) {
+      const last = await this.lastUserMessageWithin(
+        t,
+        userId,
+        messagesInRoom(roomId),
+        slowMode.slowModeSeconds,
+      );
+      if (last && !(await this.isSlowModeExempt(t, userId, slowMode.roomId))) {
+        windows.push({ ...last, seconds: slowMode.slowModeSeconds });
+      }
+    }
+    const [first] = windows;
+    if (!first) {
+      return;
+    }
+    const until = Math.max(
+      ...windows.map(({ createdAt, seconds }) => createdAt.getTime() + seconds * 1000),
+    );
+    // now() is fixed for the transaction, so every window shares the same database clock.
+    const retryAfterMs = Math.max(0, until - first.now.getTime());
+    throw new ChatPlayerMutedError(new Date(until), 'slow_mode', retryAfterMs);
+  }
+
+  private async lastUserMessageWithin(
+    t: DrizzleTx,
+    userId: User['id'],
+    rooms: SQL | undefined,
+    seconds: number,
+  ) {
     const [last] = await t
-      .select({ createdAt: chatMessage.createdAt })
+      .select({
+        createdAt: chatMessage.createdAt,
+        now: sql`now()`.mapWith(chatMessage.createdAt),
+      })
       .from(chatMessage)
       .where(
         and(
           eq(chatMessage.userId, userId),
-          roomId === null ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId),
+          rooms,
           eq(chatMessage.type, 'user'),
-          gt(chatMessage.createdAt, sql`now() - make_interval(secs => ${config.slowModeSeconds})`),
+          gt(chatMessage.createdAt, sql`now() - make_interval(secs => ${seconds})`),
         ),
       )
       .orderBy(desc(chatMessage.createdAt))
       .limit(1);
-    if (!last) {
-      return;
-    }
+    return last;
+  }
+
+  // Room moderators and owners skip room slow mode only, never a cooldown.
+  private async isSlowModeExempt(t: DrizzleTx, userId: User['id'], roomId: Uuid) {
     const [moderator] = await t
       .select({ id: chatRoomMember.id })
       .from(chatRoomMember)
       .where(
         and(
-          eq(chatRoomMember.roomId, config.roomId),
+          eq(chatRoomMember.roomId, roomId),
           eq(chatRoomMember.userId, userId),
           inArray(chatRoomMember.role, ['moderator', 'owner']),
         ),
       )
       .limit(1);
-    if (!moderator) {
-      throw new ChatPlayerMutedError(new Date(last.createdAt.getTime() + windowMs), 'slow_mode');
-    }
+    return moderator !== undefined;
   }
 
   async sendRoomMessage({
@@ -1524,13 +1837,19 @@ export class ChatService {
     }
     const slowMode = await this.roomSendSettings(roomId);
     await this.moderation.assertCanSend(userId, roomId, room.isPublic);
+    const throttle = await this.sendThrottle({
+      userId,
+      roomId: room.id,
+      reach: roomReach(room),
+      slowMode,
+    });
 
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
     const resolvedUsername = await this.resolveUsername(userId, username);
     const record = await this.insertUserMessage(
       { roomId, userId, username: resolvedUsername, content: safeContent, attachment },
-      slowMode,
+      throttle,
     );
 
     this.events.emit('chat.message.sent', {
@@ -1616,12 +1935,13 @@ export class ChatService {
     // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     const slowMode = await this.roomSendSettings(null);
     await this.moderation.assertCanSend(userId, null);
+    const throttle = await this.sendThrottle({ userId, roomId: null, reach: 'global', slowMode });
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
     const resolvedUsername = await this.resolveUsername(userId, username);
     const record = await this.insertUserMessage(
       { roomId: null, userId, username: resolvedUsername, content: safeContent, attachment },
-      slowMode,
+      throttle,
     );
 
     this.events.emit('chat.message.sent', {
