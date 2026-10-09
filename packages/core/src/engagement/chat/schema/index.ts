@@ -273,6 +273,12 @@ export const chatPlatformBan = pgTable(
       .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
     index('chat_platform_ban_user_idx').on(t.userId),
     index('chat_platform_ban_expires_at_idx').on(t.expiresAt),
+    index('chat_platform_ban_active_room_idx')
+      .on(t.roomId, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
+    index('chat_platform_ban_active_scope_idx')
+      .on(t.scope, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
   ],
 );
 
@@ -300,6 +306,12 @@ export const chatMute = pgTable(
       .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
     index('chat_mute_user_room_idx').on(t.userId, t.roomId),
     index('chat_mute_expires_at_idx').on(t.expiresAt),
+    index('chat_mute_active_room_idx')
+      .on(t.roomId, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
+    index('chat_mute_active_scope_idx')
+      .on(t.scope, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
   ],
 );
 
@@ -327,6 +339,12 @@ export const chatPlayerCooldown = pgTable(
       .on(t.userId, t.scope, t.roomId)
       .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
     index('chat_player_cooldown_user_idx').on(t.userId),
+    index('chat_player_cooldown_active_room_idx')
+      .on(t.roomId, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
+    index('chat_player_cooldown_active_scope_idx')
+      .on(t.scope, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
     // Matches the sweep's scan, so a row lifted before its expiry leaves the index.
     index('chat_player_cooldown_expiry_due_idx')
       .on(t.expiresAt)

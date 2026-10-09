@@ -1,0 +1,6 @@
+CREATE INDEX "chat_mute_active_room_idx" ON "chat_mute" USING btree ("room_id","expires_at") WHERE "chat_mute"."lifted_at" IS NULL;--> statement-breakpoint
+CREATE INDEX "chat_mute_active_scope_idx" ON "chat_mute" USING btree ("scope","expires_at") WHERE "chat_mute"."lifted_at" IS NULL;--> statement-breakpoint
+CREATE INDEX "chat_platform_ban_active_room_idx" ON "chat_platform_ban" USING btree ("room_id","expires_at") WHERE "chat_platform_ban"."lifted_at" IS NULL;--> statement-breakpoint
+CREATE INDEX "chat_platform_ban_active_scope_idx" ON "chat_platform_ban" USING btree ("scope","expires_at") WHERE "chat_platform_ban"."lifted_at" IS NULL;--> statement-breakpoint
+CREATE INDEX "chat_player_cooldown_active_room_idx" ON "chat_player_cooldown" USING btree ("room_id","expires_at") WHERE "chat_player_cooldown"."lifted_at" IS NULL;--> statement-breakpoint
+CREATE INDEX "chat_player_cooldown_active_scope_idx" ON "chat_player_cooldown" USING btree ("scope","expires_at") WHERE "chat_player_cooldown"."lifted_at" IS NULL;

@@ -32,6 +32,7 @@ import {
 import { ChatRoomMembershipService } from './service/chat-room-membership.service.js';
 import { ChatRoomBanService } from './service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from './service/chat-room-mute.service.js';
+import { ChatRoomRestrictionService } from './service/chat-room-restriction.service.js';
 import { ChatModerationExpiryService } from './service/chat-moderation-expiry.service.js';
 import { ChatRoomPurgeService } from './service/chat-room-purge.service.js';
 import { createChatRouter } from './router/index.js';
@@ -328,6 +329,10 @@ export default {
           c.get(IDENTITY_READER),
         ),
         roomMuteService: new ChatRoomMuteService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
+        restrictionService: new ChatRoomRestrictionService(
+          c.get(DRIZZLE),
+          c.get(ADMIN_USER_DIRECTORY),
+        ),
         moderationService: c.get(CHAT_MODERATION),
         authorizer: c.get(CHAT_REALTIME_CLIENT_AUTHORIZER),
         adminGuard: c.get(ADMIN_GUARD),
