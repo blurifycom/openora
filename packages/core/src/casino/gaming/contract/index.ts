@@ -798,7 +798,7 @@ export const gamingAdminContract = {
   searchAdminGames: oc
     .route({ method: 'POST', path: '/backoffice/gaming/games/search' })
     .input(SearchAdminGamesInputSchema)
-    .output(paginated(GameSchema)),
+    .output(paginated(AdminGameSchema)),
 
   reviewGame: oc
     .route({ method: 'POST', path: '/backoffice/gaming/games/{id}/review' })
