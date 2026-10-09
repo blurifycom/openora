@@ -1,0 +1,1 @@
+export const PLAYER_NOTE_CONTENT_MAX_LENGTH = 5000;

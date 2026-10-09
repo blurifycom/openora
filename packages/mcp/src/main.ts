@@ -40,6 +40,30 @@ type CatalogConfig = {
   fields: CatalogConfigField[];
 };
 
+type CatalogAgentIam = { resource: string; action: string };
+
+type CatalogAgentTool = {
+  id: string;
+  module: string;
+  file: string;
+  title: string | null;
+  description: string | null;
+  class: string | null;
+  schemaVersion: number | null;
+  iam: CatalogAgentIam | null;
+};
+
+type CatalogAgentAction = {
+  id: string;
+  module: string;
+  file: string;
+  title: string | null;
+  description: string | null;
+  schemaVersion: number | null;
+  iam: CatalogAgentIam | null;
+  reversible: boolean | null;
+};
+
 type Catalog = {
   modules: CatalogModule[];
   adapters: CatalogAdapter[];
@@ -47,7 +71,33 @@ type Catalog = {
   schemas: CatalogSchema[];
   config: CatalogConfig;
   pluginContract: string[];
+  // Absent in a catalog generated before the agent surface existed.
+  agentTools?: CatalogAgentTool[];
+  agentActions?: CatalogAgentAction[];
 };
+
+const formatIam = (iam: CatalogAgentIam | null) =>
+  iam ? `${iam.resource}:${iam.action}` : '(non-literal)';
+
+function formatAgentTool(t: CatalogAgentTool): string[] {
+  return [
+    `- ${t.id}  [${t.class ?? '?'}, v${t.schemaVersion ?? '?'}, iam ${formatIam(t.iam)}, module ${t.module}]`,
+    ...(t.title || t.description
+      ? [`    ${[t.title, t.description].filter(Boolean).join(' - ')}`]
+      : []),
+  ];
+}
+
+function formatAgentAction(a: CatalogAgentAction): string[] {
+  const reversibility =
+    a.reversible === null ? 'reversible ?' : a.reversible ? 'reversible' : 'irreversible';
+  return [
+    `- ${a.id}  [${reversibility}, v${a.schemaVersion ?? '?'}, iam ${formatIam(a.iam)}, module ${a.module}]`,
+    ...(a.title || a.description
+      ? [`    ${[a.title, a.description].filter(Boolean).join(' - ')}`]
+      : []),
+  ];
+}
 
 const NOT_FOUND_MESSAGE =
   'catalog.json not found - run `pnpm regen` in the platform repo, or set OSS_CATALOG to its path.';
@@ -121,7 +171,8 @@ server.registerTool(
     const lines: string[] = ['=== OSS igaming platform catalog ==='];
     lines.push(
       `modules: ${c.modules.length}  adapters: ${c.adapters.length}  events: ${c.events.length}  ` +
-        `schemas: ${c.schemas.length}`,
+        `schemas: ${c.schemas.length}  agent tools: ${c.agentTools?.length ?? 0}  ` +
+        `action types: ${c.agentActions?.length ?? 0}`,
     );
 
     lines.push('\n--- Adapter seams (implement an interface, bind to the token) ---');
@@ -135,7 +186,7 @@ server.registerTool(
     }
 
     lines.push(
-      '\nNext: list-adapters | list-routes | list-events | describe-module <name> | schema-get <name> | get-config-schema',
+      '\nNext: list-adapters | list-routes | list-events | list-agent-tools | describe-module <name> | schema-get <name> | get-config-schema',
     );
     return lines.join('\n');
   }),
@@ -220,6 +271,31 @@ server.registerTool(
 );
 
 server.registerTool(
+  'list-agent-tools',
+  {
+    description:
+      'List the agent surface: MCP tools (read calls a model may make during a run) and action types (state changes a model may only propose; an idempotent executor runs them after approval). Each entry shows its IAM resource:action, schema version and owning module. Modules register them in plugin.ts with ctx.mcp.tool(defineMcpTool({...}), factory) and ctx.actions.register(defineActionType({...}), factory); consumers reach them only through the MCP_KERNEL token, which validates input, checks IAM, applies the output allow-list and audits every call. Pass `module` to scope to one module.',
+    inputSchema: {
+      module: z.string().optional().describe('Module id to filter by (e.g. "wallet")'),
+    },
+  },
+  async ({ module: mod }) => {
+    const loaded = loadCatalog();
+    if (!loaded) {
+      return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
+    }
+    const c = loaded.catalog;
+    const tools = (c.agentTools ?? []).filter((t) => !mod || t.module === mod);
+    const actions = (c.agentActions ?? []).filter((a) => !mod || a.module === mod);
+    const lines: string[] = [`=== Agent tools (${tools.length}) ===`];
+    lines.push(...(tools.length > 0 ? tools.flatMap(formatAgentTool) : ['(none)']));
+    lines.push(`\n=== Agent action types (${actions.length}) ===`);
+    lines.push(...(actions.length > 0 ? actions.flatMap(formatAgentAction) : ['(none)']));
+    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+  },
+);
+
+server.registerTool(
   'describe-module',
   {
     description:
@@ -251,6 +327,14 @@ server.registerTool(
     lines.push(
       `\n--- Routes ---\n${m.routes.length > 0 ? m.routes.map((r) => `- ${r}`).join('\n') : '(none)'}`,
     );
+    const tools = (c.agentTools ?? []).filter((t) => t.module === m.id);
+    const actions = (c.agentActions ?? []).filter((a) => a.module === m.id);
+    if (tools.length > 0) {
+      lines.push(`\n--- Agent tools ---\n${tools.flatMap(formatAgentTool).join('\n')}`);
+    }
+    if (actions.length > 0) {
+      lines.push(`\n--- Agent action types ---\n${actions.flatMap(formatAgentAction).join('\n')}`);
+    }
     return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
   },
 );

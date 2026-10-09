@@ -1,7 +1,14 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { TokenCatalog } from '@openora/core/contracts';
+import { Container } from '../../kernel/index.js';
 import type { Plugin } from '../define-plugin.js';
-import { assertEntryMatchesPlugin, topoSort, type PluginEntry } from '../load-plugins.js';
+import {
+  assertEntryMatchesPlugin,
+  loadPlugins,
+  topoSort,
+  type PluginEntry,
+} from '../load-plugins.js';
 
 function plugin(id: string, dependsOn: string[] = []): Plugin<TokenCatalog> {
   return {
@@ -42,5 +49,16 @@ describe('assertEntryMatchesPlugin', () => {
     expect(() => assertEntryMatchesPlugin(entry('wallet'), plugin('tag'))).toThrow(
       /does not match the plugin's own id "tag"/,
     );
+  });
+});
+
+describe('loadPlugins', () => {
+  it('attributes each tool and action type to the plugin whose register() added it', async () => {
+    const path = fileURLToPath(new URL('./fixtures/agent-surface-plugin.ts', import.meta.url));
+
+    const registry = await loadPlugins([{ id: 'agent-surface', path }], new Container());
+
+    expect(registry.mcp.getTools().map(({ owner }) => owner)).toEqual(['agent-surface']);
+    expect(registry.actions.getAll().map(({ owner }) => owner)).toEqual(['agent-surface']);
   });
 });

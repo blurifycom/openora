@@ -32,7 +32,9 @@ import {
   OUTBOX,
   ADMIN_PERMISSION_RESOLVER,
   ADMIN_SECURITY_POLICY,
+  AUDIT_WRITER,
   IDENTITY_READER,
+  MCP_KERNEL,
   RATE_LIMITER,
   CACHE,
   REALTIME_TRANSPORT,
@@ -48,6 +50,8 @@ import {
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
+import { createMcpKernel } from '../mcp/index.js';
+import { authorizeWithAdminGuard } from '../mcp/authorize.js';
 import { assertDurableSeamsBound } from './assert-durable-seams.js';
 import { applyClientAddress, resolveTrustedProxies } from './client-address.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
@@ -333,6 +337,19 @@ export async function createApp(
 
   assertDurableSeamsBound(container);
 
+  // Sealed after configure() so neither an overlay, the composition root nor a holder of the
+  // returned container can replace the wrapper that enforces IAM and audit, and bound before
+  // the routers so a router factory can resolve it.
+  container.registerSealed(MCP_KERNEL, (c) =>
+    createMcpKernel({
+      tools: registry.mcp.getTools(),
+      actions: registry.actions.getAll(),
+      container: c,
+      authorize: (adminId, iam) => authorizeWithAdminGuard(c.get(ADMIN_GUARD), adminId, iam),
+      audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
+    }),
+  );
+
   if (container.has(ERROR_TRACKING)) {
     const tracker = container.get(ERROR_TRACKING);
     setErrorReporter((error, context) => tracker.captureException(error, context));
@@ -358,6 +375,8 @@ export async function createApp(
     }
     router[namespace] = factory(container) as AnyRouter;
   }
+  // Built now so a broken tool or action-type factory fails boot, not the first call.
+  container.get(MCP_KERNEL);
 
   for (const registration of registry.jobs.getAll()) {
     jobQueue.registerWorker(registration);

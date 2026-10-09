@@ -13,4 +13,19 @@ describe('admin permission catalog', () => {
   it('grants the built-in admin role every action in the catalog', () => {
     expect(adminRole.statements).toEqual(adminStatement);
   });
+
+  it('declares the agent resources and grants them to the built-in admin role', () => {
+    expect(adminStatement).toMatchObject({
+      agent: ['view', 'create', 'update', 'publish', 'run'],
+      'agent-proposal': ['view', 'approve', 'reject'],
+      'agent-config': ['view', 'update'],
+    });
+    expect(
+      adminRole.authorize({
+        agent: ['view', 'create', 'update', 'publish', 'run'],
+        'agent-proposal': ['view', 'approve', 'reject'],
+        'agent-config': ['view', 'update'],
+      }).success,
+    ).toBe(true);
+  });
 });

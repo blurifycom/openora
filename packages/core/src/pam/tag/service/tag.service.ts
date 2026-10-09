@@ -1,6 +1,7 @@
 import {
   DrizzleService,
   DrizzleTx,
+  type DrizzleDb,
   EventBus,
   findOneOrThrow,
   makeNotFoundError,
@@ -18,6 +19,8 @@ import {
   ReplacePlayerTagInput,
   type PlayerTags,
   type Player,
+  type PlayerStatus,
+  type PlayEligibilityPort,
   type TagKey,
   type User,
   type ClientMeta,
@@ -69,6 +72,23 @@ export const TagRemovalReasonRequiredError = makeConflictError(
   'TagRemovalReasonRequiredError',
   'A removal reason is required for sticky tags',
 );
+export const PlayerNotFoundError = makeNotFoundError('Player');
+export const PlayerNotEligibleForTagError = makeConflictError(
+  'PlayerNotEligibleForTagError',
+  'Player is not eligible for this tag',
+);
+
+// vip is marketing treatment: a self-excluded, RG-restricted, suspended or closed player never
+// gets it. Player status alone misses an RG self-exclusion, which leaves the status 'active'.
+const VIP_ELIGIBLE_STATUSES: ReadonlySet<PlayerStatus> = new Set(['active', 'dormant']);
+
+export type TagAssignmentRefusal =
+  | 'player_not_found'
+  | 'tag_not_found'
+  | 'tag_already_active'
+  | 'player_not_eligible';
+
+type AssignablePlayer = Pick<typeof player.$inferSelect, 'id' | 'userId' | 'status'>;
 
 const DEFAULT_MANUAL_REMOVAL_REASON = 'manual tag removal';
 
@@ -108,6 +128,7 @@ export class TagService implements PlayerTags {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly event: EventBus,
+    private readonly playEligibility: PlayEligibilityPort,
   ) {}
 
   // Keyed by auth `userId`, not the internal `player.id`. Users with no active tags are absent from the map.
@@ -530,6 +551,106 @@ export class TagService implements PlayerTags {
         actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
       });
       return result.row;
+    } catch (e) {
+      mapDbError(e);
+    }
+  }
+
+  private _assignablePlayer(db: DrizzleDb | DrizzleTx, playerId: Player['id']) {
+    return db
+      .select({ id: player.id, userId: player.userId, status: player.status })
+      .from(player)
+      .where(eq(player.id, playerId));
+  }
+
+  private async _hasActiveTag(db: DrizzleDb | DrizzleTx, playerId: Player['id'], tagKey: TagKey) {
+    const [active] = await db
+      .select({ id: playerTag.id })
+      .from(playerTag)
+      .innerJoin(tag, eq(tag.id, playerTag.tagId))
+      .where(
+        and(eq(playerTag.playerId, playerId), eq(tag.key, tagKey), isNull(playerTag.removedAt)),
+      )
+      .limit(1);
+    return active !== undefined;
+  }
+
+  private async _isEligibleForTag(
+    db: DrizzleDb | DrizzleTx,
+    target: AssignablePlayer,
+    tagKey: TagKey,
+  ) {
+    if (tagKey !== 'vip') {
+      return true;
+    }
+    if (!VIP_ELIGIBLE_STATUSES.has(target.status)) {
+      return false;
+    }
+    if (await this._hasActiveTag(db, target.id, 'self_excluded')) {
+      return false;
+    }
+    return !(await this.playEligibility.isRestricted(target.userId));
+  }
+
+  public async assignmentRefusal(
+    playerId: Player['id'],
+    tagKey: TagKey,
+  ): Promise<TagAssignmentRefusal | null> {
+    const db = this.drizzle.db;
+    const [target] = await this._assignablePlayer(db, playerId).limit(1);
+    if (!target) {
+      return 'player_not_found';
+    }
+    const [catalogTag] = await db
+      .select({ id: tag.id })
+      .from(tag)
+      .where(eq(tag.key, tagKey))
+      .limit(1);
+    if (!catalogTag) {
+      return 'tag_not_found';
+    }
+    if (await this._hasActiveTag(db, playerId, tagKey)) {
+      return 'tag_already_active';
+    }
+    if (!(await this._isEligibleForTag(db, target, tagKey))) {
+      return 'player_not_eligible';
+    }
+    return null;
+  }
+
+  /**
+   * Assigns tagKey for an approved agent proposal. Eligibility is re-checked because the
+   * proposal may have waited days for approval. The share lock on the player row stops a player
+   * status change from landing between that check and the insert; the responsible-gambling block
+   * and the self_excluded tag are read without a lock their writers take, so a block committed
+   * in that window is not caught - acceptable while vip drives no money movement. An active
+   * assignment - this proposal's own, on a replay - reports 'already_active' before eligibility
+   * is looked at.
+   */
+  public async assignPlayerTagForProposal(args: AssignPlayerTagArgs) {
+    try {
+      const outcome = await this.drizzle.db.transaction(async (trx) => {
+        const target = findOneOrThrow(
+          await this._assignablePlayer(trx, args.playerId).for('share'),
+          new PlayerNotFoundError(args.playerId),
+        );
+        if (await this._hasActiveTag(trx, target.id, args.tagKey)) {
+          return { status: 'already_active' as const };
+        }
+        if (!(await this._isEligibleForTag(trx, target, args.tagKey))) {
+          throw new PlayerNotEligibleForTagError();
+        }
+        return this._assignPlayerTagOnTx(trx, args);
+      });
+      if (outcome.status === 'created') {
+        void this.event.emit('tag.player.assigned', {
+          playerId: args.playerId,
+          tagKey: args.tagKey,
+          reason: args.assignReason,
+          actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
+        });
+      }
+      return outcome;
     } catch (e) {
       mapDbError(e);
     }

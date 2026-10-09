@@ -3,8 +3,10 @@ import {
   MESSAGE_BROKER,
   JOB_QUEUE,
   CACHE,
+  MCP_KERNEL,
   RATE_LIMITER,
   PLAYER_ACTIVITY_TRACKER,
+  type McpKernel,
 } from '@openora/core/contracts';
 import { redisUrlForWorker } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
@@ -48,6 +50,37 @@ describe('createApp - distributed-only durable seams (ADR-0030)', () => {
       const docs = await created.app.request('/docs');
       expect(docs.status).toBe(200);
       expect(await docs.text()).toContain('API Reference');
+
+      await created.close();
+    } finally {
+      if (saved === undefined) {
+        delete process.env['REDIS_URL'];
+      } else {
+        process.env['REDIS_URL'] = saved;
+      }
+    }
+  });
+});
+
+describe('createApp - the MCP kernel binding', () => {
+  it('serves its own kernel over a configure() binding and refuses a rebind after boot', async () => {
+    const saved = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    try {
+      const imposter = mock<McpKernel>();
+      const created = await createApp(
+        { plugins: [], databaseUrl: DUMMY_DATABASE_URL },
+        (container) => {
+          container.register(MCP_KERNEL, () => imposter);
+        },
+      );
+      const kernel = created.container.get(MCP_KERNEL);
+
+      expect(kernel).not.toBe(imposter);
+      expect(() => created.container.register(MCP_KERNEL, () => imposter)).toThrow(
+        /Token "MCP_KERNEL" is sealed/,
+      );
+      expect(created.container.get(MCP_KERNEL)).toBe(kernel);
 
       await created.close();
     } finally {

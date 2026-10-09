@@ -18,3 +18,4 @@ export * from './chat-command.js';
 export * from './chat-attachment.js';
 export * from './mail.js';
 export * from './bounded-json-params.js';
+export * from './agents.js';

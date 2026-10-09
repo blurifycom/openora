@@ -113,7 +113,8 @@ pnpm --filter @openora/mcp build   # rebuild after any source change
 
 Note: in a `create:app` consumer running in dev/link mode you don't need this - the
 generated `.mcp.json` already points at the full `oss-dev` server through the sibling
-checkout, which is a superset of `@openora/mcp`.
+checkout. The exception is the agent surface: `list-agent-tools` is served only by
+`@openora/mcp`.
 
 ## Usage pattern for agents
 

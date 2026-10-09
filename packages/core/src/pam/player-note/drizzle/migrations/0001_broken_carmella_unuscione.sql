@@ -1,0 +1,2 @@
+ALTER TABLE "player_note" ADD COLUMN "proposal_id" uuid;--> statement-breakpoint
+CREATE UNIQUE INDEX "player_note_proposal_id_idx" ON "player_note" USING btree ("proposal_id") WHERE "player_note"."proposal_id" IS NOT NULL;

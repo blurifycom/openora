@@ -896,3 +896,5 @@ export const walletContract = {
       .output(JobRunResultSchema),
   },
 };
+
+export * from './agent-tools.js';

@@ -22,6 +22,7 @@ import {
   KycTierSchema,
   LOGIN_ENFORCEMENT,
   MAIL_DISPATCH,
+  McpToolError,
   PLATFORM_CONFIG,
   RATE_LIMITER,
   REALTIME_TRANSPORT,
@@ -30,11 +31,19 @@ import {
   defaultResponsibleGamingConfig,
   domainEventSchemas,
   queue,
+  runActorAdminId,
+  userIdOfPlayer,
   type JobQueueAdapter,
   type RealtimeTransport,
 } from '@openora/core/contracts';
+import { kycStatusTool, requestEnhancedKycAction } from './contract/index.js';
 import { ComplianceService } from './service/compliance.service.js';
-import { KycVerificationService } from './service/kyc.service.js';
+import {
+  KycResubmissionAlreadyRequestedError,
+  KycVerificationInProgressError,
+  KycVerificationService,
+  PlayerNotFoundError,
+} from './service/kyc.service.js';
 import { RgService } from './service/rg.service.js';
 import { RgSelfServiceService } from './service/rg-self-service.service.js';
 import {
@@ -92,6 +101,19 @@ const KycExemptionJobSchema = z.object({
   countryCode: z.string().length(2).nullable(),
 });
 
+function enhancedKycRefusalCode(err: unknown) {
+  if (err instanceof PlayerNotFoundError) {
+    return 'player_not_found';
+  }
+  if (err instanceof KycResubmissionAlreadyRequestedError) {
+    return 'already_requested';
+  }
+  if (err instanceof KycVerificationInProgressError) {
+    return 'verification_in_progress';
+  }
+  throw err;
+}
+
 export default {
   id: 'compliance',
   dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit', 'exchange-rate'],
@@ -129,8 +151,70 @@ export default {
         directory: c.has(ADMIN_USER_DIRECTORY) ? c.get(ADMIN_USER_DIRECTORY) : null,
         rates: c.get(EXCHANGE_RATE_READER),
       }));
+    // One instance backs the router, its event/job hooks and the agent tools; either factory
+    // may build it first.
+    const kycVerification = (c: TypedContainer<CoreTokenCatalog>) =>
+      (kycRef ??= new KycVerificationService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        audit: c.get(AUDIT_WRITER),
+        kycAdapter: c.get(KYC_ADAPTER),
+        statusWriter: c.get(KYC_STATUS_WRITER),
+        identityReader: c.get(IDENTITY_READER),
+        platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+        exchangeRateReader: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+      }));
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeTransport: RealtimeTransport | null = null;
+
+    ctx.mcp.tool(kycStatusTool, (c) => {
+      const identity = c.get(IDENTITY_READER);
+      if (!identity.getUserIdByPlayerId) {
+        logger.warn(
+          'the bound IDENTITY_READER has no getUserIdByPlayerId - kyc.status and request_enhanced_kyc will answer internal_error',
+        );
+      }
+      const kyc = kycVerification(c);
+      return async ({ playerId }) => {
+        const userId = await userIdOfPlayer(identity, playerId);
+        const standing = userId ? await kyc.getKycStanding(userId) : null;
+        if (!standing) {
+          throw new McpToolError('player_not_found');
+        }
+        return { playerId, ...standing };
+      };
+    });
+
+    ctx.actions.register(requestEnhancedKycAction, (c) => {
+      const identity = c.get(IDENTITY_READER);
+      const kyc = kycVerification(c);
+      return {
+        precondition: async ({ playerId }) => {
+          const userId = await userIdOfPlayer(identity, playerId);
+          if (!userId) {
+            return { ok: false, code: 'player_not_found' };
+          }
+          try {
+            await kyc.assertEnhancedKycRequestable(userId);
+          } catch (err) {
+            return { ok: false, code: enhancedKycRefusalCode(err) };
+          }
+          return { ok: true };
+        },
+        execute: async ({ playerId, reason }, _proposalId, actor) => {
+          const userId = await userIdOfPlayer(identity, playerId);
+          if (!userId) {
+            throw new McpToolError('player_not_found');
+          }
+          const { changed } = await kyc
+            .requestEnhancedKyc({ userId, reason, actorId: runActorAdminId(actor) })
+            .catch((err: unknown) => {
+              throw new McpToolError(enhancedKycRefusalCode(err));
+            });
+          return { outcome: changed ? 'applied' : 'already_applied' };
+        },
+      };
+    });
 
     ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
       const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
@@ -302,17 +386,7 @@ export default {
         }
         logger.warn(msg);
       }
-      const kyc = new KycVerificationService({
-        drizzle: c.get(DRIZZLE),
-        events: c.get(EVENT_BUS),
-        audit: c.get(AUDIT_WRITER),
-        kycAdapter,
-        statusWriter: c.get(KYC_STATUS_WRITER),
-        identityReader: c.get(IDENTITY_READER),
-        platformConfig,
-        exchangeRateReader: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
-      });
-      kycRef = kyc;
+      const kyc = kycVerification(c);
       const compliance = makeComplianceService(c);
       complianceRef = compliance;
 
