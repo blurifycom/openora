@@ -1038,7 +1038,7 @@ describe('IamService revokes MCP tokens when an admin loses MCP access (real PG)
       expect(await revocationOf(tokenId)).toEqual(LOST);
     });
 
-    it('revokes when the last role goes, static admin role or not (BF-595)', async () => {
+    it('revokes when the last role goes, static admin role or not', async () => {
       const { svc } = makeIamServiceWithTokens();
       const playerRole = await seedRoleWith({ player: 'read' });
       const holder = await seedAccount('admin');
@@ -1075,7 +1075,7 @@ describe('IamService revokes MCP tokens when an admin loses MCP access (real PG)
   });
 
   describe('deleteRole', () => {
-    it('revokes every holder left without mcp-access, assigned or not (BF-595)', async () => {
+    it('revokes every holder left without mcp-access, assigned or not', async () => {
       const { svc } = makeIamServiceWithTokens();
       const doomed = await seedRoleWith({ 'mcp-access': 'read_write' });
       const playerRole = await seedRoleWith({ player: 'read' });

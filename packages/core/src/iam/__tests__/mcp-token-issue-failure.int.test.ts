@@ -49,7 +49,7 @@ describe('McpTokenService.create when the database refuses the write (real PG)',
       }),
     });
     const admin = await seedUser(db, { role: 'admin', isActive: true });
-    // BF-595: with the permission resolver bound, an admin holds nothing without a role
+    // With the permission resolver bound, an admin holds nothing without a role
     // assignment, so the owner needs a real role granting `mcp-access`.
     const [mcpRole] = await db.drizzle.db
       .insert(adminRole)

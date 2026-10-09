@@ -83,7 +83,7 @@ async function transportError(promise: Promise<unknown>) {
 }
 
 /**
- * BF-595: with the permission resolver bound, an admin holds nothing without a role
+ * With the permission resolver bound, an admin holds nothing without a role
  * assignment, so an MCP token owner needs a real role granting `mcp-access`.
  */
 async function grantMcpAccess(userId: string) {
