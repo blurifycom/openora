@@ -9,6 +9,7 @@ The game catalog, category ordering, and round management module. `docs/catalog.
 - **Category ordering** - every category has a configurable sort with a materialized, job-written effective order, manual drag-and-drop positioning, and pinned slots.
 - **Rule-based category membership** - a category can be populated by a rule instead of by hand: a pipeline of clauses over an operator-extensible catalog of rule kinds (built-ins: providers, tags, most played); see below.
 - **Player game favorites** - a player's hearted games, capped at 200; see below.
+- **Game review** - a newly imported game waits in a review queue, off, until an admin approves it or its provider auto-approves; see below.
 - **Read ports** - `GAME_CATALOG_READER` for cross-module access (lobby sections, promotions) and `GAMING_COMMANDS` for wallet integration (`accumulateExternalRound`, `setGameAvailability`) and catalogue imports (`notifyGamesCreated`, `notifyGamesChanged`).
 
 ## Game thumbnails
@@ -231,6 +232,27 @@ Which rules a change reaches is each clause's own `isAffectedBy`; the right-hand
 Each membership evaluation atomically increments and claims `membershipSeq` before resolving its rule. It may write membership or failure status only while that sequence and the rule configuration remain current under the category lock. A newer evaluation, a membership configuration change (including a change away and back), or an affected catalogue event invalidates the claim. Stale successes and failures are discarded and re-evaluated from current data, at most three times. Ranking and unrelated category updates do not invalidate membership claims. This uses the same claim, compute, locked version check, and retry protocol as `rankSeq`, with independent counters for independent operations.
 
 Every writer of `game_category_game` takes locks in the order **game rows, then the `game_category` row, then the link rows**. `updateGame` holds its game `FOR UPDATE` and then takes `FOR KEY SHARE` on the categories it touches; the bulk add does the same over its scope. The evaluator's link inserts would lock game rows (the foreign-key check) _after_ the category, so it instead reads the rule and the current members unlocked, locks the games it is about to insert `FOR KEY SHARE`, then locks the category `FOR UPDATE` and re-computes the diff; if the locked state disagrees with the unlocked read (rule edited, mode switched, another match appeared) it restarts, at most three times. The category `FOR UPDATE` conflicts with the `FOR KEY SHARE` the manual writers take, which is what makes the rule-mode guard race-free against a concurrent mode switch. For the same reason a mode switch evaluates _after_ its config transaction commits, not inside it, and a PATCH checks its rule (`normalizeRule`: definition code, on its own pooled connections) _before_ opening that transaction. Under the row lock it only confirms that the rule it checked is still the one in play, and restarts when a concurrent PATCH changed it - at most three times, then `409` (`GameCategoryUpdateContendedError`).
+
+## Game review
+
+Every game carries `reviewStatus`: `pending`, `auto_approved`, `approved` or `declined`, plus `reviewedAt`. A database check keeps a game off unless it is `approved` or `auto_approved`, because the lobby reads `is_active` alone: a game nobody approved can never go live, whatever path writes it. Games that existed before the review queue were backfilled to `approved`; a new row defaults to `pending`, so an importer or seed that inserts a live game must set its status.
+
+**Importing.** An importer sets a new game's columns from `initialGameReviewState(provider.autoApproveNewGames, now)` (`@openora/core/contracts`): live and `auto_approved` when the provider has `autoApproveNewGames` on, otherwise off and `pending`. After it commits it calls `notifyGamesCreated`. Only the importer knows when an `auto_approved` game goes live (at insert, or later if it holds the game off until its own setup is written), so it emits `gaming.games.auto_approved` (`{ providerId, gameIds }`, at most 1,000 ids) once at that point; that event is the game's audit record. A game the aggregator later retires keeps its review status; `isUnavailable` already hides it, and it drops out of the pending counts.
+
+**Reviewing.** Both routes need `game-config:update` and move `pending` games only:
+
+| Method | Path                                   | Purpose                                                                                                                                                                                     |
+| ------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/backoffice/gaming/games/{id}/review` | `{ decision: 'approve' \| 'decline' }` on one game. 404 for an unknown id, 409 when the game is not `pending`.                                                                              |
+| POST   | `/backoffice/gaming/games/bulk/review` | The same decision over `gameIds` and/or `providerIds`, capped at 5,000 matched games. A provider matches its available pending games; a named game in any other status counts as unchanged. |
+
+Approve sets the game live the same way an enable does: it re-ranks the game's categories, emits `gaming.games.bulk_updated` (`set_active`), and reports `unplayableGameIds` for a game whose provider is off. Decline leaves the game off.
+
+**Enabling.** Enabling a game by id - the game PATCH with `isActive: true`, or `setGamesActive` naming it in `gameIds` - is the admin's decision on that game, so it approves a `pending` or `declined` game too. A provider-scope enable does not: it leaves `pending` and `declined` games off and returns how many it skipped in `reviewSkippedCount`. Disabling never touches review status.
+
+**Reading.** The admin game list filters on `reviewStatuses` and returns `reviewStatus`, `reviewedAt` and `createdAt`. A provider's admin detail carries `autoApproveNewGames` (set through the provider PATCH) and `pendingReviewCount`; the catalog stats carry `games.pendingReview` and `providers.autoApprove`. Pending counts leave out unavailable games.
+
+**Events.** `gaming.games.reviewed` carries the admin's `actorId`, `decision`, `previousStatus` (`pending` or `declined`; one event per status) and `gameIds`. Every review-route and `setGamesActive` event carries a `bulkOperationId`, shared with the `bulk_updated` event when the write enabled games; a PATCH approval carries none. `gaming.games.auto_approved` is audited as a system action on the provider. Provider events carry `autoApproveNewGames`, defaulting to `false` when replaying an older event.
 
 ## Admin routes
 

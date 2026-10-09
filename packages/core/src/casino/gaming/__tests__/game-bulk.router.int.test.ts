@@ -118,6 +118,7 @@ async function seedGame(providerId: string, overrides: Partial<typeof game.$infe
   const [row] = await db.drizzle.db
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'Game',
       slug: `game-${randomUUID()}`,
       providerId,
@@ -137,6 +138,7 @@ async function seedManyGames(providerId: string, count: number) {
     .insert(game)
     .values(
       Array.from({ length: count }, () => ({
+        reviewStatus: 'approved' as const,
         name: 'Game',
         slug: `game-${randomUUID()}`,
         providerId,
@@ -256,6 +258,7 @@ describe('setGamesActive', () => {
       providers: { updatedCount: 1, unchangedCount: 0 },
       notFound: { gameIds: [], providerIds: [] },
       unplayableGameIds: [],
+      reviewSkippedCount: 0,
     });
 
     const rows = await db.drizzle.db
@@ -315,6 +318,7 @@ describe('setGamesActive', () => {
       providers: { updatedCount: 0, unchangedCount: 0 },
       notFound: { gameIds: [ghostGame], providerIds: [ghostProvider] },
       unplayableGameIds: [],
+      reviewSkippedCount: 0,
     });
     const [row] = await db.drizzle.db.select().from(game).where(eq(game.id, target.id));
     expect(row?.isActive).toBe(false);
@@ -355,8 +359,355 @@ describe('setGamesActive', () => {
       providers: { updatedCount: 0, unchangedCount: 0 },
       notFound: { gameIds: [], providerIds: [] },
       unplayableGameIds: [],
+      reviewSkippedCount: 0,
     });
     expect(events.emit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('setGamesActive review gate', () => {
+  it('a provider-scope enable leaves pending and declined games off and counts them', async () => {
+    const provider = await seedProvider();
+    const approved = await seedGame(provider.id, { isActive: false });
+    const pending = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+    const declined = await seedGame(provider.id, { reviewStatus: 'declined', isActive: false });
+
+    const { router, events } = routerWith(allowingGuard());
+    const result = await call(
+      router.setGamesActive,
+      { providerIds: [provider.id], isActive: true },
+      { context: CTX },
+    );
+
+    expect(result.games).toEqual({ updatedCount: 1, unchangedCount: 0 });
+    expect(result.reviewSkippedCount).toBe(2);
+    const rows = await db.drizzle.db
+      .select({ id: game.id, isActive: game.isActive, reviewStatus: game.reviewStatus })
+      .from(game)
+      .where(inArray(game.id, [approved.id, pending.id, declined.id]));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(approved.id)?.isActive).toBe(true);
+    expect(byId.get(pending.id)).toMatchObject({ isActive: false, reviewStatus: 'pending' });
+    expect(byId.get(declined.id)).toMatchObject({ isActive: false, reviewStatus: 'declined' });
+    expect(events.emit.mock.calls.some(([topic]) => topic === 'gaming.games.reviewed')).toBe(false);
+  });
+
+  it('enabling unreviewed games by id approves them and emits one reviewed event per prior status', async () => {
+    const provider = await seedProvider();
+    const pending = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+    const declined = await seedGame(provider.id, { reviewStatus: 'declined', isActive: false });
+
+    const { router, events } = routerWith(allowingGuard());
+    const result = await call(
+      router.setGamesActive,
+      { gameIds: [pending.id, declined.id], isActive: true },
+      { context: CTX },
+    );
+
+    expect(result.games).toEqual({ updatedCount: 2, unchangedCount: 0 });
+    expect(result.reviewSkippedCount).toBe(0);
+    const rows = await db.drizzle.db
+      .select()
+      .from(game)
+      .where(inArray(game.id, [pending.id, declined.id]));
+    for (const row of rows) {
+      expect(row).toMatchObject({ isActive: true, reviewStatus: 'approved' });
+      expect(row.reviewedAt).toBeInstanceOf(Date);
+    }
+    const reviewed = events.emit.mock.calls
+      .filter(([topic]) => topic === 'gaming.games.reviewed')
+      .map(([, payload]) => payload);
+    expect(reviewed).toHaveLength(2);
+    expect(reviewed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          decision: 'approve',
+          previousStatus: 'pending',
+          gameIds: [pending.id],
+        }),
+        expect.objectContaining({
+          decision: 'approve',
+          previousStatus: 'declined',
+          gameIds: [declined.id],
+        }),
+      ]),
+    );
+  });
+
+  it('disabling never touches review status', async () => {
+    const provider = await seedProvider();
+    const autoApproved = await seedGame(provider.id, { reviewStatus: 'auto_approved' });
+    const { router } = routerWith(allowingGuard());
+
+    await call(
+      router.setGamesActive,
+      { providerIds: [provider.id], isActive: false },
+      { context: CTX },
+    );
+
+    const [row] = await db.drizzle.db.select().from(game).where(eq(game.id, autoApproved.id));
+    expect(row).toMatchObject({ isActive: false, reviewStatus: 'auto_approved' });
+  });
+});
+
+describe('reviewGame', () => {
+  it('rejects a non-privileged caller and writes nothing', async () => {
+    const provider = await seedProvider();
+    const target = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+    await expect(
+      call(
+        routerWith(denyingGuard()).router.reviewGame,
+        { id: target.id, decision: 'approve' },
+        { context: CTX },
+      ),
+    ).rejects.toBeInstanceOf(ORPCError);
+    const [row] = await db.drizzle.db.select().from(game).where(eq(game.id, target.id));
+    expect(row).toMatchObject({ isActive: false, reviewStatus: 'pending' });
+  });
+
+  it('approve makes the game live, re-ranks its categories and emits the enable and the review', async () => {
+    const provider = await seedProvider();
+    const target = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+    const category = await seedCategory();
+    await db.drizzle.db
+      .insert(gameCategoryGame)
+      .values({ gameId: target.id, categoryId: category.id });
+
+    const { router, events } = routerWith(allowingGuard());
+    const result = await call(
+      router.reviewGame,
+      { id: target.id, decision: 'approve' },
+      { context: CTX },
+    );
+
+    expect(result).toMatchObject({ id: target.id, isActive: true, reviewStatus: 'approved' });
+    expect(result.reviewedAt).toEqual(expect.any(String));
+    const [categoryRow] = await db.drizzle.db
+      .select()
+      .from(gameCategory)
+      .where(eq(gameCategory.id, category.id));
+    expect(categoryRow?.rankDirtyAt).not.toBeNull();
+
+    const [bulkCall] = events.emit.mock.calls.filter(
+      ([topic]) => topic === 'gaming.games.bulk_updated',
+    );
+    const [reviewedCall] = events.emit.mock.calls.filter(
+      ([topic]) => topic === 'gaming.games.reviewed',
+    );
+    expect(bulkCall?.[1]).toMatchObject({
+      operation: 'set_active',
+      isActive: true,
+      changedGameIds: [target.id],
+      changedProviderIds: [],
+      affectedCategoryIds: [category.id],
+    });
+    expect(reviewedCall?.[1]).toMatchObject({
+      decision: 'approve',
+      previousStatus: 'pending',
+      gameIds: [target.id],
+      bulkOperationId: bulkCall?.[1].bulkOperationId,
+    });
+  });
+
+  it('decline keeps the game off and emits only the review', async () => {
+    const provider = await seedProvider();
+    const target = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+
+    const { router, events } = routerWith(allowingGuard());
+    const result = await call(
+      router.reviewGame,
+      { id: target.id, decision: 'decline' },
+      { context: CTX },
+    );
+
+    expect(result).toMatchObject({ isActive: false, reviewStatus: 'declined' });
+    expect(result.reviewedAt).toEqual(expect.any(String));
+    expect(events.emit.mock.calls.map(([topic]) => topic)).toEqual(['gaming.games.reviewed']);
+    expect(events.emit.mock.calls[0]?.[1]).toMatchObject({
+      decision: 'decline',
+      previousStatus: 'pending',
+      gameIds: [target.id],
+    });
+  });
+
+  it('rejects a game that is not pending with CONFLICT and writes nothing', async () => {
+    const provider = await seedProvider();
+    const declined = await seedGame(provider.id, { reviewStatus: 'declined', isActive: false });
+    const approved = await seedGame(provider.id);
+
+    const { router, events } = routerWith(allowingGuard());
+    await expect(
+      call(router.reviewGame, { id: declined.id, decision: 'approve' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(
+      call(router.reviewGame, { id: approved.id, decision: 'decline' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    const rows = await db.drizzle.db
+      .select({ id: game.id, isActive: game.isActive, reviewStatus: game.reviewStatus })
+      .from(game)
+      .where(inArray(game.id, [declined.id, approved.id]));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(declined.id)).toMatchObject({ isActive: false, reviewStatus: 'declined' });
+    expect(byId.get(approved.id)).toMatchObject({ isActive: true, reviewStatus: 'approved' });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown id with NOT_FOUND', async () => {
+    const { router } = routerWith(allowingGuard());
+    await expect(
+      call(router.reviewGame, { id: UNKNOWN_ID, decision: 'approve' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('approves a game named by an uppercase id', async () => {
+    const provider = await seedProvider();
+    const target = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+
+    const { router } = routerWith(allowingGuard());
+    const result = await call(
+      router.reviewGame,
+      { id: target.id.toUpperCase(), decision: 'approve' },
+      { context: CTX },
+    );
+
+    expect(result).toMatchObject({ id: target.id, isActive: true, reviewStatus: 'approved' });
+  });
+});
+
+describe('reviewGames', () => {
+  it('rejects a non-privileged caller', async () => {
+    const provider = await seedProvider();
+    await expect(
+      call(
+        routerWith(denyingGuard()).router.reviewGames,
+        { providerIds: [provider.id], decision: 'approve' },
+        { context: CTX },
+      ),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('by provider moves only pending games; a named non-pending game counts as unchanged', async () => {
+    const provider = await seedProvider();
+    const other = await seedProvider();
+    const pendingA = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+    const pendingB = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+    const approved = await seedGame(provider.id);
+    const declined = await seedGame(provider.id, { reviewStatus: 'declined', isActive: false });
+    const namedApproved = await seedGame(other.id);
+    const ghost = randomUUID();
+
+    const { router, events } = routerWith(allowingGuard());
+    const result = await call(
+      router.reviewGames,
+      {
+        providerIds: [provider.id],
+        gameIds: [namedApproved.id, ghost],
+        decision: 'decline',
+      },
+      { context: CTX },
+    );
+
+    expect(result).toEqual({
+      games: { updatedCount: 2, unchangedCount: 1 },
+      notFound: { gameIds: [ghost], providerIds: [] },
+      unplayableGameIds: [],
+    });
+    const rows = await db.drizzle.db
+      .select({ id: game.id, reviewStatus: game.reviewStatus })
+      .from(game)
+      .where(inArray(game.id, [pendingA.id, pendingB.id, approved.id, declined.id]));
+    const byId = new Map(rows.map((r) => [r.id, r.reviewStatus]));
+    expect(byId.get(pendingA.id)).toBe('declined');
+    expect(byId.get(pendingB.id)).toBe('declined');
+    expect(byId.get(approved.id)).toBe('approved');
+    expect(byId.get(declined.id)).toBe('declined');
+
+    const [reviewedCall] = events.emit.mock.calls.filter(
+      ([topic]) => topic === 'gaming.games.reviewed',
+    );
+    expect(reviewedCall?.[1]).toMatchObject({
+      decision: 'decline',
+      previousStatus: 'pending',
+      gameIds: [pendingA.id, pendingB.id].sort(),
+    });
+  });
+
+  it('by provider leaves unavailable pending games in the queue', async () => {
+    const provider = await seedProvider();
+    const available = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+    const unavailable = await seedGame(provider.id, {
+      reviewStatus: 'pending',
+      isActive: false,
+      isUnavailable: true,
+    });
+
+    const { router } = routerWith(allowingGuard());
+    const result = await call(
+      router.reviewGames,
+      { providerIds: [provider.id], decision: 'approve' },
+      { context: CTX },
+    );
+
+    expect(result.games).toEqual({ updatedCount: 1, unchangedCount: 0 });
+    const rows = await db.drizzle.db
+      .select({ id: game.id, isActive: game.isActive, reviewStatus: game.reviewStatus })
+      .from(game)
+      .where(inArray(game.id, [available.id, unavailable.id]));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(available.id)).toMatchObject({ isActive: true, reviewStatus: 'approved' });
+    expect(byId.get(unavailable.id)).toMatchObject({ isActive: false, reviewStatus: 'pending' });
+  });
+
+  it('flags an approved game under an inactive provider as unplayable', async () => {
+    const provider = await seedProvider({ isActive: false });
+    const target = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+
+    const { router } = routerWith(allowingGuard());
+    const result = await call(
+      router.reviewGames,
+      { providerIds: [provider.id], decision: 'approve' },
+      { context: CTX },
+    );
+
+    expect(result.games).toEqual({ updatedCount: 1, unchangedCount: 0 });
+    expect(result.unplayableGameIds).toEqual([target.id]);
+  });
+
+  it('a repeated call changes nothing and emits nothing', async () => {
+    const provider = await seedProvider();
+    await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+    const { router, events } = routerWith(allowingGuard());
+
+    await call(
+      router.reviewGames,
+      { providerIds: [provider.id], decision: 'approve' },
+      { context: CTX },
+    );
+    events.emit.mockClear();
+    const second = await call(
+      router.reviewGames,
+      { providerIds: [provider.id], decision: 'approve' },
+      { context: CTX },
+    );
+
+    expect(second.games).toEqual({ updatedCount: 0, unchangedCount: 0 });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+describe('game review status check', () => {
+  it('rejects an active game that nobody approved', async () => {
+    const provider = await seedProvider();
+    const violation = {
+      cause: expect.objectContaining({ constraint: 'game_review_status_active_check' }),
+    };
+    await expect(
+      seedGame(provider.id, { reviewStatus: 'pending', isActive: true }),
+    ).rejects.toMatchObject(violation);
+    await expect(
+      seedGame(provider.id, { reviewStatus: 'declined', isActive: true }),
+    ).rejects.toMatchObject(violation);
   });
 });
 
@@ -649,6 +1000,31 @@ describe('bulk route 5,000-game cap', () => {
       notFound: { gameIds: [], providerIds: [] },
     });
     expect(await gameTagIdsFor(gameIds[0]!)).toEqual([...tagIds].sort());
+  }, 30_000);
+
+  it('caps reviewGames on pending games only', async () => {
+    const provider = await seedProvider();
+    await seedManyGames(provider.id, 5001);
+    const { router } = routerWith(allowingGuard());
+
+    const result = await call(
+      router.reviewGames,
+      { providerIds: [provider.id], decision: 'approve' },
+      { context: CTX },
+    );
+    expect(result.games).toEqual({ updatedCount: 0, unchangedCount: 0 });
+
+    await db.drizzle.db
+      .update(game)
+      .set({ isActive: false, reviewStatus: 'pending' })
+      .where(eq(game.providerId, provider.id));
+    await expect(
+      call(
+        router.reviewGames,
+        { providerIds: [provider.id], decision: 'approve' },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', data: { reason: 'too_many_games' } });
   }, 30_000);
 
   it('also caps setGamesActive and addGameCategories the same way', async () => {

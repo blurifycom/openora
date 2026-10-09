@@ -54,6 +54,7 @@ async function seedProvider() {
 async function seedGame(id: string, name: string, providerId?: string) {
   await db.drizzle.db.insert(game).values({
     id,
+    reviewStatus: 'approved',
     name,
     slug: `game-${randomUUID()}`,
     providerId: providerId ?? (await seedProvider()),
@@ -67,6 +68,7 @@ async function seedManyGames(providerId: string, gameCount: number) {
     .insert(game)
     .values(
       Array.from({ length: gameCount }, () => ({
+        reviewStatus: 'approved' as const,
         name: 'Game',
         slug: `game-${randomUUID()}`,
         providerId,

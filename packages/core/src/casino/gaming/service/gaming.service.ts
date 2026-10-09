@@ -72,8 +72,11 @@ import {
   isGamePlayable,
   markCategoriesRankDirty,
   markCategoriesRankDirtyForGames,
+  isUnreviewed,
+  pendingReviewCondition,
   playableGameCondition,
   tagsByGameIds,
+  toAdminGame,
   toGame,
   type CatalogActor,
 } from '../../shared/game-catalog.js';
@@ -213,6 +216,7 @@ export class GamingService {
       playableOnly: true,
       sort: 'public',
       includeInvisibleTags: false,
+      toItem: toGame,
     });
   }
 
@@ -221,6 +225,7 @@ export class GamingService {
     uncategorized,
     tagIds,
     gameTypes,
+    reviewStatuses,
     geoBlocked,
     geoBlockedCountries,
     geoAvailableCountries,
@@ -268,6 +273,7 @@ export class GamingService {
       playableOnly: false,
       sort: 'admin',
       includeInvisibleTags: true,
+      toItem: toAdminGame,
       filters: [
         categoryIds
           ? this.linkedToAll({
@@ -293,6 +299,7 @@ export class GamingService {
             })
           : undefined,
         gameTypes ? inArray(game.gameType, gameTypes) : undefined,
+        reviewStatuses ? inArray(game.reviewStatus, reviewStatuses) : undefined,
         geoBlocked === undefined
           ? undefined
           : geoBlocked
@@ -382,7 +389,11 @@ export class GamingService {
     const db = this.drizzle.db;
     const [[providers], [categories], [games]] = await Promise.all([
       db
-        .select({ total: count(), active: countWhere(eq(gameProvider.isActive, true)) })
+        .select({
+          total: count(),
+          active: countWhere(eq(gameProvider.isActive, true)),
+          autoApprove: countWhere(eq(gameProvider.autoApproveNewGames, true)),
+        })
         .from(gameProvider),
       db
         .select({ total: count(), active: countWhere(eq(gameCategory.isActive, true)) })
@@ -393,6 +404,7 @@ export class GamingService {
           active: countWhere(eq(game.isActive, true)),
           unavailable: countWhere(eq(game.isUnavailable, true)),
           playable: countWhere(playableGameCondition()),
+          pendingReview: countWhere(pendingReviewCondition()),
         })
         .from(game)
         .innerJoin(gameProvider, eq(game.providerId, gameProvider.id)),
@@ -404,7 +416,7 @@ export class GamingService {
     };
   }
 
-  private async listGames({
+  private async listGames<Item>({
     page,
     limit,
     q,
@@ -415,6 +427,7 @@ export class GamingService {
     playableOnly,
     sort,
     includeInvisibleTags,
+    toItem,
     filters = [],
   }: ListGamesInput & {
     isActive?: boolean;
@@ -422,8 +435,10 @@ export class GamingService {
     playableOnly: boolean;
     sort: 'admin' | 'public';
     includeInvisibleTags: boolean;
+    toItem: (row: Parameters<typeof toGame>[0]) => Item;
     filters?: (SQL | undefined)[];
   }) {
+    const db = playableOnly ? this.drizzle.replica : this.drizzle.db;
     // The public route orders a category listing by the category's configured sort
     // (categoryGameOrder, shared with GAME_CATALOG_READER so the two never drift), via
     // an inner join on the membership row itself. The admin list keeps its exists-based
@@ -447,7 +462,7 @@ export class GamingService {
       isUnavailable !== undefined ? eq(game.isUnavailable, isUnavailable) : undefined,
       categoryId !== undefined && !usePublicCategoryJoin
         ? exists(
-            this.drizzle.db
+            db
               .select({ gameId: gameCategoryGame.gameId })
               .from(gameCategoryGame)
               .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
@@ -470,11 +485,11 @@ export class GamingService {
       : sort === 'admin'
         ? [asc(gameProvider.name), asc(gameProvider.slug), asc(game.name), asc(game.id)]
         : [asc(game.name)];
-    const gamesQuery = this.drizzle.db
+    const gamesQuery = db
       .select({ game, provider: gameProvider })
       .from(game)
       .innerJoin(gameProvider, eq(game.providerId, gameProvider.id));
-    const countQuery = this.drizzle.db
+    const countQuery = db
       .select({ n: count() })
       .from(game)
       .innerJoin(gameProvider, eq(game.providerId, gameProvider.id));
@@ -502,12 +517,12 @@ export class GamingService {
         ]);
     const [categories, tags] = await Promise.all([
       categoriesByGameIds(
-        this.drizzle.db,
+        db,
         rows.map((r) => r.game.id),
         playableOnly,
       ),
       tagsByGameIds(
-        this.drizzle.db,
+        db,
         rows.map((r) => r.game.id),
         {
           includeInvisible: includeInvisibleTags,
@@ -516,7 +531,7 @@ export class GamingService {
     ]);
     return {
       items: rows.map((r) =>
-        toGame({
+        toItem({
           ...r,
           categories: categories.get(r.game.id) ?? [],
           tags: tags.get(r.game.id) ?? [],
@@ -532,14 +547,18 @@ export class GamingService {
     id: Game['id'],
     opts: { activeOnly?: boolean; includeInvisibleTags?: boolean } = {},
   ) {
-    return this.findGame(eq(game.id, id), id, opts);
+    return toGame(await this.findGame(eq(game.id, id), id, opts));
   }
 
   async getGameBySlug(
     slug: Game['slug'],
     opts: { activeOnly?: boolean; includeInvisibleTags?: boolean } = {},
   ) {
-    return this.findGame(eq(game.slug, slug), slug, opts);
+    return toGame(await this.findGame(eq(game.slug, slug), slug, opts));
+  }
+
+  async getAdminGame(id: Game['id']) {
+    return toAdminGame(await this.findGame(eq(game.id, id), id, { includeInvisibleTags: true }));
   }
 
   private async findGame(
@@ -566,11 +585,11 @@ export class GamingService {
         includeInvisible: opts.includeInvisibleTags,
       }),
     ]);
-    return toGame({
+    return {
       ...row,
       categories: categories.get(row.game.id) ?? [],
       tags: tags.get(row.game.id) ?? [],
-    });
+    };
   }
 
   async startRound(
@@ -930,7 +949,7 @@ export class GamingService {
   }
 
   async updateGame({
-    id,
+    id: requestedId,
     categoryIds,
     tagIds,
     actorId,
@@ -938,6 +957,8 @@ export class GamingService {
     userAgent,
     ...patchInput
   }: UpdateGameInput & CatalogActor) {
+    // Events and audit records carry the id as Postgres returns it.
+    const id = requestedId.toLowerCase();
     // The only writer of `custom_thumbnail_url`; any new write path must repeat this host check.
     if (patchInput.customThumbnailUrl !== undefined && patchInput.customThumbnailUrl !== null) {
       const host = new URL(patchInput.customThumbnailUrl).hostname;
@@ -950,7 +971,7 @@ export class GamingService {
     const patch: Partial<typeof game.$inferInsert> = { ...patchInput };
     const hasScalarChanges = Object.values(patch).some((value) => value !== undefined);
     if (!hasScalarChanges && uniqueCategoryIds === undefined && uniqueTagIds === undefined) {
-      return this.getGame(id, { includeInvisibleTags: true });
+      return this.getAdminGame(id);
     }
     const transition = await this.drizzle.db
       .transaction(async (tx) => {
@@ -961,6 +982,11 @@ export class GamingService {
           new GameNotFoundError(id),
         );
         const before = await gameAuditSnapshot(tx, beforeRow);
+        // Enabling one game by id is the admin's review decision for it.
+        const approvedFrom =
+          patch.isActive === true && isUnreviewed(beforeRow.reviewStatus)
+            ? beforeRow.reviewStatus
+            : null;
         if (patchInput.providerId !== undefined || patchInput.aggregator !== undefined) {
           const nextProviderId = patchInput.providerId ?? beforeRow.providerId;
           const nextAggregator = patchInput.aggregator ?? beforeRow.aggregator;
@@ -1071,7 +1097,12 @@ export class GamingService {
           ),
         );
         if (hasScalarChanges) {
-          await tx.update(game).set(patch).where(eq(game.id, id));
+          await tx
+            .update(game)
+            .set(
+              approvedFrom ? { ...patch, reviewStatus: 'approved', reviewedAt: new Date() } : patch,
+            )
+            .where(eq(game.id, id));
         }
         // Only the links that moved are written: a kept link - a rule-mode category's
         // above all - keeps its row, and with it its source, position and pin.
@@ -1103,7 +1134,7 @@ export class GamingService {
           new GameNotFoundError(id),
         );
         const after = await gameAuditSnapshot(tx, afterRow);
-        return { before, after };
+        return { before, after, approvedFrom };
       })
       .catch((error: unknown) => {
         // The transaction also writes category and tag links: only a slug collision maps
@@ -1121,6 +1152,16 @@ export class GamingService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
-    return this.getGame(id, { includeInvisibleTags: true });
+    if (transition.approvedFrom) {
+      this.events.emit('gaming.games.reviewed', {
+        actorId,
+        decision: 'approve',
+        previousStatus: transition.approvedFrom,
+        gameIds: [id],
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+    }
+    return this.getAdminGame(id);
   }
 }

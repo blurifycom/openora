@@ -73,7 +73,6 @@ async function bootstrap() {
     authSchema: { user, session, account, verification, twoFactor },
     igaming,
     port: Number(process.env['PORT'] ?? 3001),
-    cors: { origins: process.env['CORS_ORIGINS']?.split(',') ?? '*' },
   });
 
   await listen();

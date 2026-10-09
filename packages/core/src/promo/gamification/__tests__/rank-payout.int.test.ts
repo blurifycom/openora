@@ -624,6 +624,7 @@ describe('announcing a promotion', () => {
         tierName: 'Silver',
         currency: 'USD',
         rakebackPercent: '3.00',
+        levelUpBonus: null,
         dailyBonus: '0.500000000000000000',
         weeklyBonus: null,
         monthlyBonus: null,

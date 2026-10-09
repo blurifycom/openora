@@ -298,6 +298,7 @@ describe('the admin ladder', () => {
 
     const ladder = await adminService.getLadder();
     await adminService.setLadder(randomUUID(), {
+      version: ladder.version,
       currency: 'USDT',
       tiers: ladder.tiers.map((t) => ({
         ...t,
@@ -318,7 +319,11 @@ describe('the admin ladder', () => {
     const ladder = await adminService.getLadder();
 
     await expect(
-      adminService.setLadder(randomUUID(), { currency: 'USD', tiers: ladder.tiers }),
+      adminService.setLadder(randomUUID(), {
+        version: ladder.version,
+        currency: 'USD',
+        tiers: ladder.tiers,
+      }),
     ).rejects.toThrow(RankChallengeLadderCurrencyHeldError);
   });
 });

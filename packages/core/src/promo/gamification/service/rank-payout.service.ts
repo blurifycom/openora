@@ -135,6 +135,7 @@ export class RankPayoutService {
           tierName: promoRankTier.name,
           currency: promoRankTier.currency,
           rakebackPercent: promoRankTier.rakebackPercent,
+          levelUpBonus: promoRankTier.levelUpBonus,
           dailyBonus: promoRankTier.dailyBonus,
           weeklyBonus: promoRankTier.weeklyBonus,
           monthlyBonus: promoRankTier.monthlyBonus,

@@ -59,6 +59,7 @@ async function seedGame(providerId: string, overrides: Partial<typeof game.$infe
   const [row] = await drizzle()
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'E2E Rule Game',
       slug: `e2e-rule-game-${randomUUID()}`,
       providerId,

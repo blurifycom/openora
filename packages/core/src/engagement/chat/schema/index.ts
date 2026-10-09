@@ -10,11 +10,13 @@ import {
   timestamp,
   uniqueIndex,
   index,
+  check,
 } from 'drizzle-orm/pg-core';
 import {
   CHAT_ROOM_CATEGORIES,
   CHAT_ROOM_ROLES,
   CHAT_MODERATION_SCOPE_VALUES,
+  CHAT_COOLDOWN_SECONDS_MAX,
 } from '../contract/index.js';
 import { CHAT_MESSAGE_TYPES, ChatAttachmentSchema } from '@openora/core/contracts';
 import type { CommandMetadata } from '@openora/core/contracts';
@@ -271,6 +273,12 @@ export const chatPlatformBan = pgTable(
       .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
     index('chat_platform_ban_user_idx').on(t.userId),
     index('chat_platform_ban_expires_at_idx').on(t.expiresAt),
+    index('chat_platform_ban_active_room_idx')
+      .on(t.roomId, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
+    index('chat_platform_ban_active_scope_idx')
+      .on(t.scope, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
   ],
 );
 
@@ -298,6 +306,59 @@ export const chatMute = pgTable(
       .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
     index('chat_mute_user_room_idx').on(t.userId, t.roomId),
     index('chat_mute_expires_at_idx').on(t.expiresAt),
+    index('chat_mute_active_room_idx')
+      .on(t.roomId, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
+    index('chat_mute_active_scope_idx')
+      .on(t.scope, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
+  ],
+);
+
+export const chatPlayerCooldown = pgTable(
+  'chat_player_cooldown',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    roomId: uuid(),
+    scope: chatModerationScope().notNull(),
+    cooldownSeconds: integer().notNull(),
+    reason: text().notNull(),
+    createdBy: uuid().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }),
+    liftedAt: timestamp({ withTimezone: true }),
+    liftedBy: uuid(),
+    expiryRecordedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('chat_player_cooldown_active_scope_key')
+      .on(t.userId, t.scope)
+      .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NULL`),
+    uniqueIndex('chat_player_cooldown_active_room_key')
+      .on(t.userId, t.scope, t.roomId)
+      .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
+    index('chat_player_cooldown_user_idx').on(t.userId),
+    index('chat_player_cooldown_active_room_idx')
+      .on(t.roomId, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
+    index('chat_player_cooldown_active_scope_idx')
+      .on(t.scope, t.expiresAt)
+      .where(sql`${t.liftedAt} IS NULL`),
+    // Matches the sweep's scan, so a row lifted before its expiry leaves the index.
+    index('chat_player_cooldown_expiry_due_idx')
+      .on(t.expiresAt)
+      .where(
+        sql`${t.expiresAt} IS NOT NULL AND ${t.expiryRecordedAt} IS NULL AND (${t.liftedAt} IS NULL OR ${t.liftedAt} = ${t.expiresAt})`,
+      ),
+    check(
+      'chat_player_cooldown_seconds_check',
+      sql`${t.cooldownSeconds} > 0 AND ${t.cooldownSeconds} <= ${sql.raw(String(CHAT_COOLDOWN_SECONDS_MAX))}`,
+    ),
+    check(
+      'chat_player_cooldown_room_scope_check',
+      sql`(${t.scope} = 'room') = (${t.roomId} IS NOT NULL)`,
+    ),
   ],
 );
 
@@ -313,3 +374,4 @@ export type ChatRoomMute = typeof chatRoomMute.$inferSelect;
 export type ChatRoomRemove = typeof chatRoomRemove.$inferSelect;
 export type ChatPlatformBan = typeof chatPlatformBan.$inferSelect;
 export type ChatMute = typeof chatMute.$inferSelect;
+export type ChatPlayerCooldown = typeof chatPlayerCooldown.$inferSelect;

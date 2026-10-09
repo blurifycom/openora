@@ -43,6 +43,7 @@ async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
   const [row] = await drizzleOf(app.container)
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'E2E Filter Game',
       slug: `e2e-filter-game-${randomUUID()}`,
       providerId,
@@ -170,6 +171,31 @@ describe('admin game list filters e2e', () => {
     const res = await admin.get(
       `/backoffice/gaming/games?uncategorized=true&categoryIds[]=${randomUUID()}`,
     );
+    expect(res.status).toBe(400);
+  });
+
+  it('filters by review status and counts available pending games on the provider and stats', async () => {
+    const pending = await seedGame({ reviewStatus: 'pending', isActive: false });
+    const declined = await seedGame({ reviewStatus: 'declined', isActive: false });
+    const autoApproved = await seedGame({ reviewStatus: 'auto_approved' });
+    await seedGame({ reviewStatus: 'pending', isActive: false, isUnavailable: true });
+
+    expect(await listIds('reviewStatuses[]=declined&reviewStatuses[]=auto_approved')).toEqual(
+      [declined.id, autoApproved.id].sort(),
+    );
+    expect(await listIds('reviewStatuses=pending&isUnavailable=false')).toEqual([pending.id]);
+
+    const providerRes = await admin.get(`/backoffice/gaming/providers/${providerId}`);
+    expect(providerRes.status).toBe(200);
+    expect(await readJson(providerRes)).toMatchObject({ pendingReviewCount: 1 });
+
+    const statsRes = await admin.get('/backoffice/gaming/stats');
+    expect(statsRes.status).toBe(200);
+    expect((await readJson(statsRes)).games.pendingReview).toBeGreaterThanOrEqual(1);
+  });
+
+  it('rejects an unknown review status', async () => {
+    const res = await admin.get('/backoffice/gaming/games?reviewStatuses[]=exempt');
     expect(res.status).toBe(400);
   });
 

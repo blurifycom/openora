@@ -340,6 +340,22 @@ describe('WalletCommandsService.credit (real PG)', () => {
     expect(rows).toEqual([]);
   });
 
+  it('opens the wallet and the balance for a player who has none when allowNewWallet is set', async () => {
+    const userId = randomUUID();
+
+    const res = await svc.credit(db.drizzle.db, {
+      userId,
+      amount: '20',
+      currency: 'USDT',
+      type: 'cashback',
+      allowNewCurrency: true,
+      allowNewWallet: true,
+    });
+
+    expect(res).toMatchObject({ ok: true, moved: true });
+    expect(await balanceOf(userId)).toBe(20);
+  });
+
   it('rejects a non-positive credit', async () => {
     const w = await seedWallet({ balance: '100' });
 

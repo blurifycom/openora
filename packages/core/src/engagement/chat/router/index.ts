@@ -55,6 +55,7 @@ import {
 import { ChatRoomMembershipService } from '../service/chat-room-membership.service.js';
 import { ChatRoomBanService } from '../service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from '../service/chat-room-mute.service.js';
+import { ChatRoomRestrictionService } from '../service/chat-room-restriction.service.js';
 
 const chat = populateContractRouterPaths({ chat: chatContract }).chat;
 const JOIN_ROOM_RATE_LIMIT = {
@@ -102,6 +103,7 @@ export function createChatRouter({
   membershipService,
   roomBanService,
   roomMuteService,
+  restrictionService,
   moderationService,
   authorizer,
   adminGuard,
@@ -111,6 +113,7 @@ export function createChatRouter({
   membershipService: ChatRoomMembershipService;
   roomBanService: ChatRoomBanService;
   roomMuteService: ChatRoomMuteService;
+  restrictionService: ChatRoomRestrictionService;
   moderationService: ChatModeration;
   authorizer: RealtimeClientAuthorizer;
   adminGuard: AdminGuard;
@@ -639,6 +642,13 @@ export function createChatRouter({
       return chatService.listAdminRooms(input);
     }),
 
+    adminListRoomRestrictions: os.adminListRoomRestrictions.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'chat-moderation', 'view');
+      return mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
+        restrictionService.listRoomRestrictions(input),
+      );
+    }),
+
     adminCreateRoomRule: os.adminCreateRoomRule.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'chat-room', 'update');
       return mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
@@ -713,6 +723,35 @@ export function createChatRouter({
     adminListMutes: os.adminListMutes.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'chat-moderation', 'view');
       return moderationService.listMutes(input.userIds);
+    }),
+
+    adminSetCooldown: os.adminSetCooldown.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'chat-moderation',
+        'moderate',
+      );
+      return mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          BAD_REQUEST: ChatAdminPrivateRoomModerationError,
+        },
+        () => moderationService.setCooldown({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
+    adminLiftCooldown: os.adminLiftCooldown.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'chat-moderation',
+        'moderate',
+      );
+      return moderationService.liftCooldown({ ...input, actorId: userId, ip, userAgent });
+    }),
+
+    adminListCooldowns: os.adminListCooldowns.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'chat-moderation', 'view');
+      return moderationService.listCooldowns(input.userIds);
     }),
 
     adminBan: os.adminBan.handler(async ({ input, context }) => {

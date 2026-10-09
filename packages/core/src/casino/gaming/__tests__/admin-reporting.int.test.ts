@@ -23,6 +23,7 @@ async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'Aces',
       slug: `game-${randomUUID()}`,
       providerId: provider!.id,

@@ -427,6 +427,14 @@ export const RankChallengeLadderSchema = z.object({
 });
 export type RankChallengeLadder = z.infer<typeof RankChallengeLadderSchema>;
 
+/** Opaque token that changes on every ladder edit; echo it back on save. */
+const RankChallengeLadderVersionSchema = z.string().min(1).max(128);
+
+export const RankChallengeAdminLadderSchema = RankChallengeLadderSchema.extend({
+  version: RankChallengeLadderVersionSchema,
+});
+export type RankChallengeAdminLadder = z.infer<typeof RankChallengeAdminLadderSchema>;
+
 export const RankChallengeLeaderboardEntrySchema = z.object({
   userId: UuidSchema,
   username: z.string(),
@@ -455,6 +463,8 @@ const SubmittedRankChallengeTierSchema = RankChallengeTierSchema.omit({ id: true
 export type SubmittedRankChallengeTier = z.infer<typeof SubmittedRankChallengeTierSchema>;
 
 export const SetRankChallengeLadderInputSchema = z.object({
+  /** The `version` the edit was made against; a stale one is refused with CONFLICT. */
+  version: RankChallengeLadderVersionSchema,
   currency: CurrencyTickerSchema,
   tiers: z
     .array(SubmittedRankChallengeTierSchema)
@@ -597,12 +607,12 @@ export const gamificationContract = {
       config: {
         get: oc
           .route({ method: 'GET', path: '/backoffice/promo/rank-challenge' })
-          .output(RankChallengeLadderSchema),
+          .output(RankChallengeAdminLadderSchema),
 
         set: oc
           .route({ method: 'PUT', path: '/backoffice/promo/rank-challenge' })
           .input(SetRankChallengeLadderInputSchema)
-          .output(RankChallengeLadderSchema),
+          .output(RankChallengeAdminLadderSchema),
       },
 
       claims: {

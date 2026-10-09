@@ -61,4 +61,19 @@ describe('holdsGrant', () => {
     expect(holdsGrant({ role: 'player', grants }, 'mcp-access', 'use')).toBe(false);
     expect(holdsGrant({ role: 'constructor', grants: null }, 'mcp-access', 'use')).toBe(false);
   });
+
+  it('declares the agent resources and grants them to the built-in admin role', () => {
+    expect(adminStatement).toMatchObject({
+      agent: ['view', 'create', 'update', 'publish', 'run'],
+      'agent-proposal': ['view', 'approve', 'reject'],
+      'agent-config': ['view', 'update'],
+    });
+    expect(
+      adminRole.authorize({
+        agent: ['view', 'create', 'update', 'publish', 'run'],
+        'agent-proposal': ['view', 'approve', 'reject'],
+        'agent-config': ['view', 'update'],
+      }).success,
+    ).toBe(true);
+  });
 });

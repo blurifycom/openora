@@ -15,6 +15,8 @@ import {
   GameCategoryRuleSchema,
   GameCategoryTranslationsSchema,
   GameProviderAggregatorMappingSchema,
+  GameReviewDecisionSchema,
+  GameReviewStatusSchema,
   GameSortDirectionSchema,
   GameSortKeySchema,
   GameSortParamsSchema,
@@ -94,6 +96,17 @@ const permissionLevelEntries = z.array(
 const gameBulkEventBase = z
   .object({ actorId: UuidSchema, target: GameBulkIdsSchema, notFound: GameBulkIdsSchema })
   .extend(authContextBase.shape);
+
+const gameProviderSnapshotSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+  logoUrl: z.string().nullable(),
+  metadata: z.unknown().nullable(),
+  isActive: z.boolean(),
+  // Older provider events predate auto-approve; replay them as off.
+  autoApproveNewGames: z.boolean().default(false),
+});
 
 const gameGeoRuleEventState = z.object({
   id: UuidSchema,
@@ -509,36 +522,16 @@ export const domainEventSchemas = {
     after: lobbyLayoutAuditSnapshotSchema,
   }),
   // Backoffice game-catalog management (actorId = acting admin UUID).
-  'gaming.provider.created': authContextBase.extend({
+  'gaming.provider.created': authContextBase.extend(gameProviderSnapshotSchema.shape).extend({
     providerId: UuidSchema,
-    slug: z.string(),
-    name: z.string(),
-    aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
-    logoUrl: z.string().nullable(),
-    metadata: z.unknown().nullable(),
-    isActive: z.boolean(),
     actorId: UuidSchema,
   }),
   'gaming.provider.updated': authContextBase.extend({
     providerId: UuidSchema,
     actorId: UuidSchema,
     bulkOperationId: UuidSchema.optional(),
-    before: z.object({
-      slug: z.string(),
-      name: z.string(),
-      aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
-      logoUrl: z.string().nullable(),
-      metadata: z.unknown().nullable(),
-      isActive: z.boolean(),
-    }),
-    after: z.object({
-      slug: z.string(),
-      name: z.string(),
-      aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
-      logoUrl: z.string().nullable(),
-      metadata: z.unknown().nullable(),
-      isActive: z.boolean(),
-    }),
+    before: gameProviderSnapshotSchema,
+    after: gameProviderSnapshotSchema,
   }),
   'gaming.category.created': authContextBase.extend(gameCategorySnapshotSchema.shape).extend({
     categoryId: UuidSchema,
@@ -691,6 +684,22 @@ export const domainEventSchemas = {
       addedLinks: GameAddedCategoryLinksSchema,
     }),
   ]),
+  // An admin's review decision on pending games. An enable by id that approves a pending or
+  // declined game emits it too; bulkOperationId then matches that write's bulk_updated event.
+  'gaming.games.reviewed': authContextBase.extend({
+    actorId: UuidSchema,
+    decision: GameReviewDecisionSchema,
+    // Every game in one event left the same status; an enable can approve both kinds at once.
+    previousStatus: GameReviewStatusSchema.extract(['pending', 'declined']),
+    gameIds: z.array(UuidSchema).min(1),
+    bulkOperationId: UuidSchema.optional(),
+  }),
+  // Emitted by an importer, once, when it puts games live under their provider's
+  // auto-approve flag.
+  'gaming.games.auto_approved': z.object({
+    providerId: UuidSchema,
+    gameIds: z.array(UuidSchema).min(1).max(1000),
+  }),
   'gaming.game.availability_changed': z.object({
     gameId: UuidSchema,
     before: z.object({ isUnavailable: z.boolean() }),
@@ -760,6 +769,7 @@ export const domainEventSchemas = {
     tierName: z.string().min(1).optional(),
     currency: CurrencyTickerSchema.optional(),
     rakebackPercent: ContributionPercentSchema.optional(),
+    levelUpBonus: MoneyAmountSchema.nullable().optional(),
     dailyBonus: MoneyAmountSchema.nullable().optional(),
     weeklyBonus: MoneyAmountSchema.nullable().optional(),
     monthlyBonus: MoneyAmountSchema.nullable().optional(),

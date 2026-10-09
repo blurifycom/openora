@@ -16,7 +16,7 @@ pnpm create:app ../my-igaming --name my-igaming
 cd ../my-igaming
 pnpm install
 pnpm setup:mcp          # trust the MCP server + install the /start onboarding flow
-cp .env.example .env     # set DATABASE_URL + AUTH_SECRET
+cp .env.example .env     # set DATABASE_URL + AUTH_SECRET + CORS_ORIGINS
 pnpm db:migrate          # apply the OSS schema
 pnpm dev                 # api :3001
 ```
@@ -67,6 +67,8 @@ await listen();
 ```
 
 `createApp` serves a live API reference at `/docs` and its matching OpenAPI document at `/openapi.json`.
+
+`createApp` refuses to boot without CORS origins: it takes `cors.origins`, else the comma-separated `CORS_ORIGINS` env var. Pass `cors: false` for an API served same-origin only. Request bodies are capped at 4 MiB (413 above it); raise or lower the cap with `bodyLimit: { maxBytes }`, or turn it off with `bodyLimit: false` when a proxy in front already enforces one.
 
 Downstream consumers create their own thin entrypoint that calls `createApp` and bring
 their own `extensions.config.ts`. See `tools/templates/consumer/apps/api/src/main.ts.tpl` for the reference.

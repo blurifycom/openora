@@ -64,6 +64,7 @@ describe('LobbyService featured cache (real PG + real Redis)', () => {
     const [g] = await db.drizzle.db
       .insert(game)
       .values({
+        reviewStatus: 'approved',
         name: 'Aces',
         slug: 'aces',
         providerId: provider!.id,
@@ -134,6 +135,7 @@ describe('LobbyService public game gates (real PG)', () => {
     const [row] = await db.drizzle.db
       .insert(game)
       .values({
+        reviewStatus: 'approved',
         name,
         slug: `game-${tag}`,
         providerId: provider!.id,
