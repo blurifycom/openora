@@ -1114,6 +1114,7 @@ describe('admin game search rule filters', () => {
       providerId,
       aggregator: 'direct',
       isActive,
+      reviewStatus: 'approved' as const,
     });
     const games = await db.drizzle.db
       .insert(game)
