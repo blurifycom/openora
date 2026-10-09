@@ -23,8 +23,9 @@ description: Commit, push, and open a pull request on this repo's forge, targeti
 
 - State the user-facing change and its reason briefly.
 - Add short, reproducible local test steps for the changed behavior (for example, `pnpm dev` then the relevant URLs or user flow).
+- Close the ticket by key at the end: `Closes <KEY>-n` if this PR finishes it, else `Refs <KEY>-n` (see `docs/agents/issue-tracker.md`).
 - Do not include a generic verification-command list: CI already reports those checks.
-- **Attach the manual-verification evidence.** The screenshots are what a reviewer reads as proof of a user-visible change: one per changed screen, the before/after pair on a fix. Upload each image to the forge and embed the markdown it returns - `docs/agents/forge.md` has the command. A local path under `apps/e2e/test-results/` shows a reviewer nothing; never put one in a description. An API-only change attaches the request/response trace instead. Skip this only when nothing user-visible changed.
+- **Attach the manual-verification evidence.** The screenshots are what a reviewer reads as proof of a user-visible change: one per changed screen, the before/after pair on a fix. Upload each image to the forge and embed the markdown it returns - `docs/agents/forge.md` says how (its "Attach evidence" section). A local path under `apps/e2e/test-results/` shows a reviewer nothing; never put one in a description. An API-only change attaches the request/response trace instead. Paste the `qa` pass's AC verdict table next to it. Skip this only when nothing user-visible changed.
 - **End with a "Tests" list** - one line per test this PR adds, drawn from what the manual pass exercised (happy path, the hostile paths, the authz negatives), naming its tier (unit / API E2E / browser E2E) and path. A change that needs none says why in one line.
 - A paired change links neither way: the shared branch name pairs the two requests. The OSS repo is public, so its PR never names this repo or the operator; this request may be read by people outside the team, so it never names or links the OSS repo.
 
