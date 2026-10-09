@@ -431,6 +431,14 @@ describe('createApp - request hardening', () => {
     await created.close();
   });
 
+  it.each([Number.NaN, 0, -1, 1.5, Number.POSITIVE_INFINITY])(
+    'refuses to boot with a malformed bodyLimit.maxBytes (%s)',
+    async (maxBytes) => {
+      process.env['CORS_ORIGINS'] = ALLOWED_ORIGIN;
+      await expect(bootWith({ bodyLimit: { maxBytes } })).rejects.toThrow(/bodyLimit\.maxBytes/);
+    },
+  );
+
   it('rejects a chunked body that streams past the limit', async () => {
     const created = await bootWith({ bodyLimit: { maxBytes: 1024 } });
     const chunk = new TextEncoder().encode('x'.repeat(600));

@@ -416,6 +416,17 @@ export async function createApp(
   }
 
   if (config.bodyLimit !== false) {
+    const configuredMax = config.bodyLimit?.maxBytes;
+    // Hono compares sizes with `> maxSize`, so NaN (eg Number(undefined)) would silently disable the cap.
+    if (
+      configuredMax !== undefined &&
+      !(Number.isSafeInteger(configuredMax) && configuredMax > 0)
+    ) {
+      throw new Error(
+        `[create-app] bodyLimit.maxBytes must be a positive integer, got ${String(configuredMax)}. ` +
+          'Pass `bodyLimit: false` to disable the cap explicitly.',
+      );
+    }
     app.use(
       '/*',
       bodyLimit({
