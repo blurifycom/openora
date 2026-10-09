@@ -396,7 +396,7 @@ export class RankPayoutService {
     owed: { userId: Uuid; currency: string; amount: string },
     payout: PayoutSettings,
   ) {
-    const targets = await this.payoutOrder(owed.userId, payout);
+    const targets = await this.payoutOrder(tx, owed.userId, payout);
     if (targets.length === 0) {
       // Nothing to convert into: the ladder pays in the currency it is priced in.
       return owed;
@@ -435,10 +435,10 @@ export class RankPayoutService {
   }
 
   /** The currencies to try, best first. */
-  private async payoutOrder(userId: Uuid, payout: PayoutSettings) {
+  private async payoutOrder(tx: DrizzleTx, userId: Uuid, payout: PayoutSettings) {
     const player = payout.inPlayerCurrency
       ? // Answers for a player with no wallet too, with the platform's default currency.
-        (await this.wallet.getBalances(userId)).activeCurrency
+        (await this.wallet.getBalances(userId, tx)).activeCurrency
       : null;
     return [player, payout.currency].flatMap((currency) =>
       currency === null || currency === undefined ? [] : [currency],
