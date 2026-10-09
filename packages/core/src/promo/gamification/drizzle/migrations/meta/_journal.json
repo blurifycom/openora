@@ -113,6 +113,13 @@
       "when": 1790598239989,
       "tag": "0015_massive_wallow",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791447127292,
+      "tag": "0016_skinny_darkhawk",
+      "breakpoints": true
     }
   ]
 }

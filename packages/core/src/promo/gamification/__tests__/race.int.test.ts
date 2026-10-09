@@ -53,6 +53,7 @@ const wager = (
   realAmount: string,
   currency = 'USDT',
   context: WagerContext = CASINO,
+  externalRoundId?: string,
 ) =>
   db.drizzle.db.transaction((tx) =>
     races.recordWager(tx, {
@@ -62,6 +63,17 @@ const wager = (
       weightedAmount: amount,
       realAmount,
       context,
+      ...(externalRoundId ? { round: { providerName: 'aggregator', externalRoundId } } : {}),
+    }),
+  );
+
+const rollback = (userId: string, externalRoundId: string, realAmount: string) =>
+  db.drizzle.db.transaction((tx) =>
+    races.reverseWager(tx, {
+      userId,
+      currency: 'USDT',
+      round: { providerName: 'aggregator', externalRoundId },
+      realAmount,
     }),
   );
 
@@ -173,7 +185,88 @@ describe('recording a wager toward an open race', () => {
   });
 });
 
+describe('rolling back a wager', () => {
+  it('takes the rolled-back stake back out of the race volume', async () => {
+    const raceId = await insertRace();
+    const userId = randomUUID();
+
+    await wager(userId, '30', '30', 'USDT', CASINO, 'round-1');
+    await wager(userId, '20', '20', 'USDT', CASINO, 'round-2');
+    await rollback(userId, 'round-2', '20');
+
+    expect(moneyEquals((await wageredOf(raceId, userId)) ?? '0', '30')).toBe(true);
+  });
+
+  it('never takes back more than the round counted', async () => {
+    const raceId = await insertRace();
+    const userId = randomUUID();
+
+    await wager(userId, '30', '30', 'USDT', CASINO, 'round-1');
+    await wager(userId, '20', '20', 'USDT', CASINO, 'round-2');
+    await rollback(userId, 'round-2', '500');
+    await rollback(userId, 'round-2', '500');
+
+    expect(moneyEquals((await wageredOf(raceId, userId)) ?? '0', '30')).toBe(true);
+  });
+
+  it('takes back a converted round in proportion to the stake reversed', async () => {
+    const raceId = await insertRace({ currency: 'USDT' });
+    const userId = randomUUID();
+    convert.mockResolvedValue('50');
+
+    await wager(userId, '100', '100', 'EUR', CASINO, 'round-1');
+    await db.drizzle.db.transaction((tx) =>
+      races.reverseWager(tx, {
+        userId,
+        currency: 'EUR',
+        round: { providerName: 'aggregator', externalRoundId: 'round-1' },
+        realAmount: '40',
+      }),
+    );
+
+    expect(moneyEquals((await wageredOf(raceId, userId)) ?? '0', '30')).toBe(true);
+  });
+
+  it('leaves a closed race alone', async () => {
+    const raceId = await insertRace();
+    const userId = randomUUID();
+
+    await wager(userId, '30', '30', 'USDT', CASINO, 'round-1');
+    await db.drizzle.db.update(promoRace).set({ closedAt: now() }).where(eq(promoRace.id, raceId));
+    await rollback(userId, 'round-1', '30');
+
+    expect(moneyEquals((await wageredOf(raceId, userId)) ?? '0', '30')).toBe(true);
+  });
+});
+
 describe('reading a race for a player', () => {
+  it('orders tied players by who reached the total first', async () => {
+    const raceId = await insertRace();
+    const { account: early } = await seedPlayerWithUser(db);
+    const { account: late } = await seedPlayerWithUser(db);
+    await wager(early.id, '40', '40');
+    await wager(late.id, '40', '40');
+
+    const view = await races.getForPlayer(raceId, early.id);
+
+    const order = [...view.podium, ...view.leaderboard].map((r) => r.userId);
+    expect(order).toEqual([early.id, late.id]);
+  });
+
+  it('masks with a fixed suffix, so the mask never tells the name length', async () => {
+    const raceId = await insertRace();
+    const { account: short } = await seedPlayerWithUser(db, { username: 'abcd' });
+    const { account: long } = await seedPlayerWithUser(db, { username: 'abcdefghijklmnop' });
+    const { account: caller } = await seedPlayerWithUser(db);
+    await wager(short.id, '20', '20');
+    await wager(long.id, '10', '10');
+
+    const view = await races.getForPlayer(raceId, caller.id);
+
+    const masked = [...view.podium, ...view.leaderboard].map((r) => r.username);
+    expect(masked).toEqual(['abc****', 'abc****']);
+  });
+
   it('masks another player using the platform masking rule, never masks the caller themselves', async () => {
     const raceId = await insertRace();
     const { account: leader } = await seedPlayerWithUser(db, { username: 'YOLOKing' });

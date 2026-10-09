@@ -43,6 +43,45 @@ describe('wager() with no attributed bonus grant', () => {
     );
   });
 
+  it('takes a rolled-back cash round back out of wager tracking', async () => {
+    const wagerTracking: WagerTrackingCommands = {
+      recordWager: vi.fn(async () => []),
+      reverseWager: vi.fn(async () => {}),
+    };
+    const wagering = new WageringService(wagerTracking);
+    const userId = randomUUID();
+    const round = { providerName: 'dice', externalRoundId: randomUUID() };
+
+    await db.drizzle.db.transaction(async (tx) => {
+      await wagering.wager(tx, {
+        userId,
+        currency: 'USD',
+        stake: '25',
+        fromBonus: '0',
+        context: CASINO,
+        ...round,
+      });
+      await wagering.settle(tx, {
+        userId,
+        currency: 'USD',
+        amount: '25',
+        kind: 'bet_reversal',
+        ...round,
+      });
+    });
+
+    expect(wagerTracking.recordWager).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ round }),
+    );
+    expect(wagerTracking.reverseWager).toHaveBeenCalledWith(expect.anything(), {
+      userId,
+      currency: 'USD',
+      round,
+      realAmount: '25',
+    });
+  });
+
   it('does not report a bet requesting bonus funds it has no grant for', async () => {
     const wagerTracking: WagerTrackingCommands = { recordWager: vi.fn(async () => []) };
     const wagering = new WageringService(wagerTracking);

@@ -4,6 +4,7 @@ import { user } from '@openora/core/pam/schema/identity';
 import type {
   ExchangeRateReader,
   Uuid,
+  WagerReversalArgs,
   WagerTrackingArgs,
   WagerTrackingCommands,
   WagerTrackingWalletCredit,
@@ -16,7 +17,8 @@ import {
   type DrizzleTx,
 } from '@openora/core/server';
 import type { Race, RaceForPlayer, RaceLeaderboardEntry } from '../contract/index.js';
-import { promoRace, promoRaceWager } from '../schema/index.js';
+import { promoRace, promoRaceRoundWager, promoRaceWager } from '../schema/index.js';
+import { roundReversal } from '../shared/round-reversal.js';
 
 export const RaceNotFoundError = makeNotFoundError('Race');
 
@@ -29,12 +31,23 @@ const INCOGNITO = 'Incognito';
 /**
  * The server-side source of truth for a masked leaderboard username, so a client's own copy of
  * this rule (if it has one) never disagrees with what the payload already carries - a leaderboard
- * response reflects masking itself rather than leaving it to be applied client-side.
+ * response reflects masking itself rather than leaving it to be applied client-side. A fixed
+ * suffix, so the mask never tells how long the hidden part is.
  */
 function maskUsername(name: string): string {
-  const visible = Math.min(3, Math.max(1, Math.floor(name.length / 3)));
-  return `${name.slice(0, visible)}${'*'.repeat(Math.max(4, name.length - visible + 4))}`;
+  return `${name.slice(0, Math.min(3, name.length - 1))}****`;
 }
+
+/**
+ * Standings order, shared by the board and the payout so the player shown in a place is the one
+ * paid for it. Ties go to whoever's total last moved earliest - who reached it first - and then
+ * to the user id, so even an exact tie on both has one answer.
+ */
+export const RACE_STANDING_ORDER = [
+  desc(promoRaceWager.wagered),
+  asc(promoRaceWager.updatedAt),
+  asc(promoRaceWager.userId),
+];
 
 const RACE_COLUMNS = {
   id: promoRace.id,
@@ -137,8 +150,84 @@ export class RaceService implements WagerTrackingCommands {
             updatedAt: sql`now()`,
           },
         });
+      if (args.round) {
+        await tx
+          .insert(promoRaceRoundWager)
+          .values({
+            raceId: race.id,
+            userId: args.userId,
+            providerName: args.round.providerName,
+            currency: args.currency,
+            externalRoundId: args.round.externalRoundId,
+            stake: args.realAmount,
+            wagered: amount,
+          })
+          .onConflictDoUpdate({
+            target: [
+              promoRaceRoundWager.raceId,
+              promoRaceRoundWager.userId,
+              promoRaceRoundWager.providerName,
+              promoRaceRoundWager.currency,
+              promoRaceRoundWager.externalRoundId,
+            ],
+            set: {
+              stake: sql`${promoRaceRoundWager.stake} + ${args.realAmount}::numeric`,
+              wagered: sql`${promoRaceRoundWager.wagered} + ${amount}::numeric`,
+            },
+          });
+      }
     }
     return [];
+  }
+
+  /**
+   * Takes a rolled-back stake back out of every race the round counted in and that has not closed
+   * yet - a closed race's standings are frozen and already paid. Each race takes back its own
+   * share of the reversed stake, independently: one round counts in full in every race it was
+   * eligible for, so it is reversed in full in each of them too.
+   */
+  async reverseWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
+    const rounds = await tx
+      .select({
+        id: promoRaceRoundWager.id,
+        raceId: promoRaceRoundWager.raceId,
+        stake: promoRaceRoundWager.stake,
+        wagered: promoRaceRoundWager.wagered,
+      })
+      .from(promoRaceRoundWager)
+      .innerJoin(promoRace, eq(promoRace.id, promoRaceRoundWager.raceId))
+      .where(
+        and(
+          eq(promoRaceRoundWager.userId, args.userId),
+          eq(promoRaceRoundWager.providerName, args.round.providerName),
+          eq(promoRaceRoundWager.currency, args.currency),
+          eq(promoRaceRoundWager.externalRoundId, args.round.externalRoundId),
+          gt(promoRaceRoundWager.stake, '0'),
+          isNull(promoRace.closedAt),
+        ),
+      )
+      .orderBy(asc(promoRaceRoundWager.raceId))
+      .for('update', { of: promoRaceRoundWager });
+
+    for (const round of rounds) {
+      const reversed = roundReversal(round, args.realAmount);
+      await tx
+        .update(promoRaceRoundWager)
+        .set({
+          stake: sql`${promoRaceRoundWager.stake} - ${reversed.stake}::numeric`,
+          wagered: sql`${promoRaceRoundWager.wagered} - ${reversed.wagered}::numeric`,
+        })
+        .where(eq(promoRaceRoundWager.id, round.id));
+      await tx
+        .update(promoRaceWager)
+        .set({
+          wagered: sql`GREATEST(0, ${promoRaceWager.wagered} - ${reversed.wagered}::numeric)`,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(eq(promoRaceWager.raceId, round.raceId), eq(promoRaceWager.userId, args.userId)),
+        );
+    }
   }
 
   async listActive(now: Date): Promise<Race[]> {
@@ -173,7 +262,7 @@ export class RaceService implements WagerTrackingCommands {
       .innerJoin(user, eq(user.id, promoRaceWager.userId))
       .leftJoin(player, eq(player.userId, promoRaceWager.userId))
       .where(eq(promoRaceWager.raceId, raceId))
-      .orderBy(desc(promoRaceWager.wagered))
+      .orderBy(...RACE_STANDING_ORDER)
       .limit(LEADERBOARD_CAP);
 
     const entries: RaceLeaderboardEntry[] = ranked.map((row, index) => ({
