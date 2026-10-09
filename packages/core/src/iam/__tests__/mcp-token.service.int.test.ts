@@ -24,7 +24,7 @@ import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { session, user, type Session, type User } from '@openora/core/pam/schema/identity';
 import { makeAuditWriter, makeEventBus, makeRateLimiter, mock } from '../../testing/mock.js';
 import { migrate as migrateIam } from '../migrate.js';
-import { mcpToken } from '../schema/index.js';
+import { adminRole, adminRolePermission, adminRoleAssignment, mcpToken } from '../schema/index.js';
 import {
   IssuedMcpTokenSchema,
   McpTokenListItemSchema,
@@ -79,7 +79,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${mcpToken}, ${user} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${mcpToken}, ${adminRole}, ${adminRolePermission}, ${adminRoleAssignment}, ${user} RESTART IDENTITY CASCADE`,
+  );
   await redis.flush();
 });
 
@@ -125,8 +127,29 @@ async function withSession(owner: User) {
   return { ...owner, sessionId: await seedSession(owner.id) };
 }
 
-const seedAdmin = async (email: string, name = 'Admin') =>
-  withSession(await seedUser(db, { email, name, role: 'admin', isActive: true }));
+/**
+ * BF-595: with the permission resolver bound, an admin holds nothing without a role
+ * assignment, so an MCP token owner needs a real role granting `mcp-access`.
+ */
+async function grantMcpAccess(userId: User['id']) {
+  const [role] = await db.drizzle.db
+    .insert(adminRole)
+    .values({ name: `MCP ${randomUUID()}` })
+    .returning({ id: adminRole.id });
+  if (!role) {
+    throw new Error('grantMcpAccess: role insert returned no row');
+  }
+  await db.drizzle.db
+    .insert(adminRolePermission)
+    .values({ roleId: role.id, resource: 'mcp-access', level: 'read_write' });
+  await db.drizzle.db.insert(adminRoleAssignment).values({ userId, roleId: role.id });
+}
+
+const seedAdmin = async (email: string, name = 'Admin') => {
+  const owner = await seedUser(db, { email, name, role: 'admin', isActive: true });
+  await grantMcpAccess(owner.id);
+  return withSession(owner);
+};
 
 const issueAs = (
   svc: McpTokenService,

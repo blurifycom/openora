@@ -22,7 +22,7 @@ import {
   testContext,
 } from '../../testing/mock.js';
 import { migrate as migrateIam } from '../migrate.js';
-import { mcpToken } from '../schema/index.js';
+import { adminRole, adminRolePermission, adminRoleAssignment, mcpToken } from '../schema/index.js';
 import { createIamRouter } from '../router/index.js';
 import { IamService } from '../service/iam.service.js';
 import { McpTokenService } from '../service/mcp-token.service.js';
@@ -42,7 +42,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${mcpToken}, ${user} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${mcpToken}, ${adminRole}, ${adminRolePermission}, ${adminRoleAssignment}, ${user} RESTART IDENTITY CASCADE`,
+  );
 });
 
 function buildRouter({
@@ -80,8 +82,27 @@ async function transportError(promise: Promise<unknown>) {
   return err instanceof ORPCError ? { code: err.code, data: err.data } : undefined;
 }
 
+/**
+ * BF-595: with the permission resolver bound, an admin holds nothing without a role
+ * assignment, so an MCP token owner needs a real role granting `mcp-access`.
+ */
+async function grantMcpAccess(userId: string) {
+  const [role] = await db.drizzle.db
+    .insert(adminRole)
+    .values({ name: `MCP ${crypto.randomUUID()}` })
+    .returning({ id: adminRole.id });
+  if (!role) {
+    throw new Error('grantMcpAccess: role insert returned no row');
+  }
+  await db.drizzle.db
+    .insert(adminRolePermission)
+    .values({ roleId: role.id, resource: 'mcp-access', level: 'read_write' });
+  await db.drizzle.db.insert(adminRoleAssignment).values({ userId, roleId: role.id });
+}
+
 async function seedOwner(over: Partial<typeof user.$inferInsert> = {}) {
   const owner = await seedUser(db, { role: 'admin', ...over });
+  await grantMcpAccess(owner.id);
   const [live] = await db.drizzle.db
     .insert(session)
     .values({

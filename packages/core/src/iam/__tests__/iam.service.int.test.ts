@@ -876,12 +876,16 @@ describe('IamService.forceLogout', () => {
 });
 
 describe('IamService revokes MCP tokens when an admin loses MCP access (real PG)', () => {
+  // Reuses ADMIN_CALLER so seedSuperCaller() gives it the assignment these
+  // super-admin-only calls now need (a resolver-bound caller holds nothing without one).
   const CALLER = {
-    userId: randomUUID(),
+    userId: ADMIN_CALLER.userId,
     role: 'admin',
     ip: '203.0.113.7',
     userAgent: 'backoffice/1.0',
   };
+
+  beforeEach(seedSuperCaller);
 
   const seedAccount = async (role = 'admin') => (await seedUser(db, { name: 'A', role })).id;
 
@@ -1034,7 +1038,7 @@ describe('IamService revokes MCP tokens when an admin loses MCP access (real PG)
       expect(await revocationOf(tokenId)).toEqual(LOST);
     });
 
-    it('leaves the tokens when the last role goes and the static admin role takes over', async () => {
+    it('revokes when the last role goes, static admin role or not (BF-595)', async () => {
       const { svc } = makeIamServiceWithTokens();
       const playerRole = await seedRoleWith({ player: 'read' });
       const holder = await seedAccount('admin');
@@ -1043,7 +1047,7 @@ describe('IamService revokes MCP tokens when an admin loses MCP access (real PG)
 
       await svc.unassignRole({ userId: holder, roleId: playerRole, caller: CALLER });
 
-      expect(await revocationOf(tokenId)).toEqual(KEPT);
+      expect(await revocationOf(tokenId)).toEqual(LOST);
     });
 
     it('revokes when the last role goes and the static support role, without MCP, takes over', async () => {
@@ -1071,7 +1075,7 @@ describe('IamService revokes MCP tokens when an admin loses MCP access (real PG)
   });
 
   describe('deleteRole', () => {
-    it('revokes the holders left without mcp-access and spares the static admin fallback', async () => {
+    it('revokes every holder left without mcp-access, assigned or not (BF-595)', async () => {
       const { svc } = makeIamServiceWithTokens();
       const doomed = await seedRoleWith({ 'mcp-access': 'read_write' });
       const playerRole = await seedRoleWith({ player: 'read' });
@@ -1081,12 +1085,12 @@ describe('IamService revokes MCP tokens when an admin loses MCP access (real PG)
       await seedAssignment(stillAssigned, playerRole);
       await seedAssignment(backToStatic, doomed);
       const stillAssignedToken = await seedActiveToken(stillAssigned);
-      const backToStaticToken = await seedActiveToken(backToStatic);
+      const unassignedToken = await seedActiveToken(backToStatic);
 
       await svc.deleteRole({ roleId: doomed, caller: CALLER });
 
       expect(await revocationOf(stillAssignedToken)).toEqual(LOST);
-      expect(await revocationOf(backToStaticToken)).toEqual(KEPT);
+      expect(await revocationOf(unassignedToken)).toEqual(LOST);
     });
   });
 

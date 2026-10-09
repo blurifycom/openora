@@ -8,7 +8,7 @@ import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { session } from '@openora/core/pam/schema/identity';
 import { makeAuditWriter, makeEventBus, makeRateLimiter } from '../../testing/mock.js';
 import { migrate as migrateIam } from '../migrate.js';
-import { mcpToken } from '../schema/index.js';
+import { adminRole, adminRolePermission, adminRoleAssignment, mcpToken } from '../schema/index.js';
 import { McpTokenIssueError, McpTokenService } from '../service/mcp-token.service.js';
 
 const log = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }));
@@ -49,6 +49,21 @@ describe('McpTokenService.create when the database refuses the write (real PG)',
       }),
     });
     const admin = await seedUser(db, { role: 'admin', isActive: true });
+    // BF-595: with the permission resolver bound, an admin holds nothing without a role
+    // assignment, so the owner needs a real role granting `mcp-access`.
+    const [mcpRole] = await db.drizzle.db
+      .insert(adminRole)
+      .values({ name: 'MCP' })
+      .returning({ id: adminRole.id });
+    if (!mcpRole) {
+      throw new Error('role insert returned no row');
+    }
+    await db.drizzle.db
+      .insert(adminRolePermission)
+      .values({ roleId: mcpRole.id, resource: 'mcp-access', level: 'read_write' });
+    await db.drizzle.db
+      .insert(adminRoleAssignment)
+      .values({ userId: admin.id, roleId: mcpRole.id });
     const [live] = await db.drizzle.db
       .insert(session)
       .values({
