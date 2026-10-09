@@ -170,7 +170,7 @@ describe('recording a wager toward an open race', () => {
 
     await wager(userId, '100', '100', 'EUR');
 
-    expect(convert).toHaveBeenCalledWith('100', 'EUR', 'USDT');
+    expect(convert).toHaveBeenCalledWith('100', 'EUR', 'USDT', expect.anything());
     expect(moneyEquals((await wageredOf(raceId, userId)) ?? '0', '50')).toBe(true);
   });
 

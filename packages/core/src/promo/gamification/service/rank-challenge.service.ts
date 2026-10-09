@@ -78,7 +78,7 @@ export class RankChallengeService implements WagerTrackingCommands {
     const amount =
       args.currency === ladderCurrency
         ? args.realAmount
-        : await this.rates.convert(args.realAmount, args.currency, ladderCurrency);
+        : await this.rates.convert(args.realAmount, args.currency, ladderCurrency, tx);
     if (amount === null) {
       // ponytail: a wager with no rate is not counted toward the challenge; revisit if this
       // shows up in logs the way the equivalent race-side skip would.

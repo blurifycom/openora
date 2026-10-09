@@ -1,6 +1,7 @@
 import { createToken, type Token } from '@openora/core/contracts';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { createPool } from './drizzle.js';
 import { createLogger } from '../kernel/logger.js';
 
 export const DRIZZLE: Token<DrizzleService> = createToken('DRIZZLE');
@@ -15,7 +16,7 @@ export class DrizzleService {
     if (!url) {
       throw new Error('DATABASE_URL is required');
     }
-    this.pool = new Pool({ connectionString: url });
+    this.pool = createPool(url);
     // A pg Pool emits 'error' when an idle backend connection dies (DB restart,
     // failover, network drop). With no listener Node escalates it to an
     // uncaughtException and crashes the process, so log it - which reports it via

@@ -8,9 +8,12 @@ import { createToken, type Token } from './token.js';
  *
  * A cooling-off whose `rgBlockedUntil` has elapsed reports `false` without waiting for
  * the expiry sweep, matching the login gate's lazy-expiry behaviour.
+ *
+ * A caller already inside a transaction passes it as `tx`: a second pool connection taken
+ * while the first is held deadlocks once every connection is held by such a caller.
  */
 export type PlayEligibilityPort = {
-  isRestricted(userId: string): Promise<boolean>;
+  isRestricted(userId: string, tx?: unknown): Promise<boolean>;
 };
 
 export const PLAY_ELIGIBILITY: Token<PlayEligibilityPort> =

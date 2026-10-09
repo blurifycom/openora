@@ -88,7 +88,7 @@ export class StreakService implements WagerTrackingCommands {
     const amount =
       args.currency === config.currency
         ? args.realAmount
-        : await this.rates.convert(args.realAmount, args.currency, config.currency);
+        : await this.rates.convert(args.realAmount, args.currency, config.currency, tx);
     if (amount === null) {
       // ponytail: a wager with no rate does not count toward the streak; revisit if this shows
       // up in logs the way the equivalent rank-side skip would.
