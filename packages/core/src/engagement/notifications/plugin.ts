@@ -54,6 +54,7 @@ const describeRankChallengePrize = (p: {
 const describeRankBenefits = (p: {
   currency: string;
   rakebackPercent: string;
+  levelUpBonus?: string | null;
   dailyBonus?: string | null;
   weeklyBonus?: string | null;
   monthlyBonus?: string | null;
@@ -70,7 +71,11 @@ const describeRankBenefits = (p: {
       : null,
   ].filter((part): part is string => part !== null);
   const rakeback = `${formatMoneyAmount(p.rakebackPercent)}% rakeback`;
-  return bonuses.length > 0 ? `${rakeback} and a bonus worth ${bonuses.join(', ')}` : rakeback;
+  const recurring =
+    bonuses.length > 0 ? `${rakeback} and a bonus worth ${bonuses.join(', ')}` : rakeback;
+  return p.levelUpBonus !== null && p.levelUpBonus !== undefined
+    ? `${recurring}, plus a one-off ${formatMoneyAmount(p.levelUpBonus)} ${p.currency} level-up bonus`
+    : recurring;
 };
 
 // Why a bonus was taken away, completing "Your bonus was forfeited ..." for the player.
@@ -413,6 +418,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
         ? `Congratulations on reaching ${p.tierName}. Your rank now pays ${describeRankBenefits({
             currency: p.currency,
             rakebackPercent: p.rakebackPercent,
+            levelUpBonus: p.levelUpBonus,
             dailyBonus: p.dailyBonus,
             weeklyBonus: p.weeklyBonus,
             monthlyBonus: p.monthlyBonus,
