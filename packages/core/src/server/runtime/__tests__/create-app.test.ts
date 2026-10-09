@@ -384,6 +384,12 @@ describe('createApp - request hardening', () => {
     await expect(bootWith()).rejects.toThrow(/CORS_ORIGINS/);
   });
 
+  it("refuses to boot on a leftover '*' instead of CORS-blocking every browser", async () => {
+    process.env['CORS_ORIGINS'] = '*';
+    await expect(bootWith()).rejects.toThrow(/not a CORS origin/);
+    await expect(bootWith({ cors: { origins: ['*'] } })).rejects.toThrow(/not a CORS origin/);
+  });
+
   it('reads CORS origins from CORS_ORIGINS and allows only those', async () => {
     process.env['CORS_ORIGINS'] = ` ${ALLOWED_ORIGIN} ,https://admin.example.test`;
     const created = await bootWith();
