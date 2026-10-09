@@ -1391,6 +1391,9 @@ describe('game review queue', () => {
       reviewedAt: null,
       createdAt: expect.any(String),
     });
+    await expect(
+      call(router.searchAdminGames, { reviewStatuses: ['pending', 'declined'] }, { context: CTX }),
+    ).resolves.toEqual(page);
   });
 
   it('counts pending games per provider and in the stats, leaving out unavailable ones', async () => {
