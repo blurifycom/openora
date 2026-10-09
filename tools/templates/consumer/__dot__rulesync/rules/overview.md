@@ -63,7 +63,7 @@ Once requirements are confirmed, **delegate the rest to the agents** via the Tas
 
 1. `expert` - formalizes the requirements into acceptance criteria, flags compliance/gaps.
 2. `builder` - implements (`pnpm gen ...`, code, wiring).
-3. `qa` - walks the acceptance criteria against the running stack by hand, returns screenshot evidence and the "Tests to add" list; writes tests only for the stacked test PR.
+3. `qa` - walks the acceptance criteria against the running stack by hand, returns screenshot evidence, then writes the tests that pass exercised in the same branch.
 
 Only return to the user to resolve genuine decisions they alone can make.
 

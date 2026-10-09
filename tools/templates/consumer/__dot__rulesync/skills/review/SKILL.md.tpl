@@ -67,7 +67,7 @@ Distill everything here into ONE context block of at most ~40 lines; it is the o
 - **Ticket - read it whole, per `docs/agents/issue-tracker.md`.** Resolve the `{{trackerKey}}-n` key from the MR description (`Closes {{trackerKey}}-n`), MR title, branch, or commit subjects. Read: description + AC, every comment, every attached image viewed as pixels, parent epic, linked issues, and every wiki page the ticket links (their images and comments too). Use a reader that returns image bytes (for Jira + Confluence: the `atlassian-read` skill - `read.py issue {{trackerKey}}-n`, then `page <id>` per linked page - or REST); the Atlassian MCP returns none, so it is never enough on its own. A chat thread is optional: read it (via `slack-reader` when available) only when the ticket or MR points at one ("shared in chat", a Slack link) and the AC depend on it.
 - **Distill:** goal in one line; AC quoted verbatim as bullets (a `CRITERION:` line needs the exact bullet); decisions and open questions from comments (who, when); design references (which screenshot shows what); out-of-scope lines.
 - **Pull-request discussion.** If reviewing one: read its description and every thread, resolved ones included, per `docs/agents/forge.md`. Distill to stated intent, open reviewer asks, and the decisions resolved threads settled (quote who asked for what and what was agreed), so the review doesn't repeat or contradict them. No pull request: use branch commit subjects as intent.
-- **Reviewers have no forge access.** You own the description checks: the manual-verification evidence and the "Tests to add" list (§3c). Report them yourself; never hand them to a reviewer.
+- **Reviewers have no forge access.** You own the description checks: the manual-verification evidence and the "Tests" list (§3c). Report them yourself; never hand them to a reviewer.
 - **No key** -> write `no ticket` in the report and judge against the MR description only. **Fetch failed** -> write `no access`. Never skip silently, never invent AC.
 - A UI change whose ticket carries design screenshots is judged against them: compare the rendered UI (`playwright-cli` screenshot when the stack is up) with the reference; when you cannot, the CRITERION is `not verifiable`, never `met`.
 - The MR description is the author's claim, not the spec. Where it contradicts the ticket or the diff, that contradiction is a finding.
@@ -143,7 +143,7 @@ Applies to every change that crosses a layer: an oRPC route, a service, a Drizzl
 
 **Prove with tests.** The orchestrator may run the tests of a touched module, never the full gate: `pnpm vitest related <path>` for each caller in the blast radius, plus any existing `apps/e2e` spec that already drives the changed route. A failing test is a `[BLOCK]` with the test name as evidence; a caller with no test is `[INFO]`, not a request to write one. Tests that could not run are reported as `TESTS: not run - <reason>`, never skipped silently, and forbid APPROVED on `high` or `critical` risk.
 
-**A feature PR ships no tests, at any tier** (`docs/standards/testing.md`) - a missing test is `[INFO]` at most, NEVER a `[BLOCK]`, and never a request to write one. What you check instead: the description carries the manual-verification evidence (a screenshot per changed screen, before/after on a fix, or the request/response trace for an API-only change) and a "Tests to add" list whose entries match the behaviour the diff actually changed. Missing evidence on a user-visible change is a `[WARN]`; a "Tests to add" list that contradicts the diff is a finding.
+**A feature or fix PR ships its own tests** (`docs/standards/testing.md`) - a changed behaviour with no test at the right tier is a `[WARN]`, NEVER a `[BLOCK]`. Check too that the description carries the manual-verification evidence (a screenshot per changed screen, before/after on a fix, or the request/response trace for an API-only change) and a "Tests" list that matches the tests in the diff. Missing evidence on a user-visible change is a `[WARN]`; a "Tests" list that contradicts the diff is a finding.
 
 **Report the trace.** One `TRACE:` line per entry point (format in §7). A missing hop, an unfiltered query, a write outside the transaction, or a caller that no longer holds is a `[BLOCK]`. A hop that could not be traced is a finding, not a silent pass.
 
@@ -159,7 +159,7 @@ Every review covers every dimension below, whatever the diff touches. Relevance 
 | `security`    | `security-reviewer` (focus `risk`)        | authz, secrets and PII, input validation, URLs                                          |
 | `compliance`  | `security-reviewer` (focus `risk`)        | responsible gambling, KYC/age/geo gates, ledger and money paths, audit trail            |
 | `rollout`     | orchestrator                              | §3c migrations, destructive seeds, event and payload compatibility, new env/config      |
-| `spec`        | orchestrator                              | AC (§2b), ticket scope, manual-verification evidence and "Tests to add" (§3c)           |
+| `spec`        | orchestrator                              | AC (§2b), ticket scope, manual-verification evidence and "Tests" (§3c)           |
 
 `expert` is not a reviewer; ask it only when an AC is ambiguous enough to block a `CRITERION:` line.
 
