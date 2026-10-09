@@ -15,6 +15,7 @@ import {
   PageQuerySchema,
   paginated,
   PromoOfferStatusSchema,
+  SignedMoneyAmountSchema,
   TimestampSchema,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -297,14 +298,18 @@ export const BonusBalanceUpdateSchema = z.object({
 
 export type BonusBalanceUpdate = z.infer<typeof BonusBalanceUpdateSchema>;
 
-/** One movement of a player's bonus funds, as they are allowed to see it. */
+/**
+ * One movement of a player's bonus funds, as they are allowed to see it. `bonusAmount` is the
+ * ledger's signed delta - negative on a stake, a conversion and a forfeiture - and
+ * `wageringDelta` goes negative when a reversal takes progress back.
+ */
 export const PlayerGrantEntrySchema = z.object({
   id: UuidSchema,
   type: z.enum(BONUS_GRANT_ENTRY_TYPES),
   currency: CurrencyTickerSchema,
-  bonusAmount: MoneyAmountSchema,
+  bonusAmount: SignedMoneyAmountSchema,
   realAmount: MoneyAmountSchema,
-  wageringDelta: MoneyAmountSchema,
+  wageringDelta: SignedMoneyAmountSchema,
   balanceAfter: MoneyAmountSchema,
   createdAt: TimestampSchema,
 });

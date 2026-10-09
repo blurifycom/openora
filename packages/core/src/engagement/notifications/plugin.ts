@@ -13,6 +13,7 @@ import {
   domainEventSchemas,
   formatMoneyAmount,
   queue,
+  type BonusForfeitReason,
   type DomainEventName,
   type DomainEventPayload,
   type GeoCheckCommands,
@@ -72,6 +73,18 @@ const describeRankBenefits = (p: {
   return bonuses.length > 0 ? `${rakeback} and a bonus worth ${bonuses.join(', ')}` : rakeback;
 };
 
+// Why a bonus was taken away, completing "Your bonus was forfeited ..." for the player.
+const FORFEIT_REASON_TEXT: Record<BonusForfeitReason, string> = {
+  self_exclusion: 'because you self-excluded',
+  cooling_off: 'because you started a cooling-off period',
+  account_closed: 'because your account was closed',
+  account_deactivated: 'because your account was deactivated',
+  admin: 'by our support team',
+  player_opt_out: 'at your request',
+  withdrawal_while_active: 'because you withdrew while it was active',
+  terms_breach: "because the offer's terms were not met",
+};
+
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
 const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
@@ -127,7 +140,7 @@ function mapEvent<K extends DomainEventName>(
   event: K,
   buildNotification: (payload: DomainEventPayload<K>) => CreateNotificationInput,
   options?: {
-    email: (payload: DomainEventPayload<K>, occurredAt: string) => MailTemplate;
+    email: (payload: DomainEventPayload<K>, occurredAt: string) => MailTemplate | null;
     securityAlert?: boolean;
   },
 ): NotificationMapEntry {
@@ -286,15 +299,33 @@ export const notificationEventMap: NotificationMapEntry[] = [
     data: { transactionId: p.transactionId },
   })),
 
-  mapEvent('promo.bonus.granted', (p) => ({
-    userId: p.userId,
-    type: 'promo.bonus.granted',
-    title: p.rankBonusKind
-      ? `${p.rankBonusKind[0].toUpperCase()}${p.rankBonusKind.slice(1)} bonus credited`
-      : 'Bonus credited',
-    body: `You received a ${formatMoneyAmount(p.grantedAmount)} ${p.currency} bonus. Wager ${formatMoneyAmount(p.wageringRequired)} ${p.currency} to unlock it.`,
-    data: { grantId: p.grantId },
-  })),
+  mapEvent(
+    'promo.bonus.granted',
+    (p) => ({
+      userId: p.userId,
+      type: 'promo.bonus.granted',
+      title: p.rankBonusKind
+        ? `${p.rankBonusKind[0].toUpperCase()}${p.rankBonusKind.slice(1)} bonus credited`
+        : 'Bonus credited',
+      body: `You received a ${formatMoneyAmount(p.grantedAmount)} ${p.currency} bonus. Wager ${formatMoneyAmount(p.wageringRequired)} ${p.currency} to unlock it.`,
+      data: { grantId: p.grantId },
+    }),
+    {
+      // A gift or rain comes from another player and is already announced where it happened;
+      // a rain fans out to a whole room, so a mail per recipient would be noise.
+      email: (p) =>
+        p.source === 'gift' || p.source === 'rain'
+          ? null
+          : {
+              key: 'bonusCredited',
+              data: {
+                grantedAmount: p.grantedAmount,
+                wageringRequired: p.wageringRequired,
+                currency: p.currency,
+              },
+            },
+    },
+  ),
 
   mapEvent(
     'promo.bonus.completed',
@@ -312,6 +343,22 @@ export const notificationEventMap: NotificationMapEntry[] = [
       }),
     },
   ),
+
+  mapEvent('promo.bonus.forfeited', (p) => ({
+    userId: p.userId,
+    type: 'promo.bonus.forfeited',
+    title: 'Bonus forfeited',
+    body: `Your bonus was forfeited ${FORFEIT_REASON_TEXT[p.reason]}. ${formatMoneyAmount(p.forfeitedAmount)} ${p.currency} of bonus funds was removed.`,
+    data: { grantId: p.grantId },
+  })),
+
+  mapEvent('promo.bonus.expired', (p) => ({
+    userId: p.userId,
+    type: 'promo.bonus.expired',
+    title: 'Bonus expired',
+    body: `Your bonus expired before its wagering requirement was met. ${formatMoneyAmount(p.forfeitedAmount)} ${p.currency} of bonus funds was removed.`,
+    data: { grantId: p.grantId },
+  })),
 
   mapEvent(
     'promo.race.won',

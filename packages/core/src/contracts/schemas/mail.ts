@@ -29,6 +29,7 @@ export const MAIL_TEMPLATE_KEYS = [
   'raceWon',
   'rankChallengeWon',
   'bonusUnlocked',
+  'bonusCredited',
   'twoFactorReset',
 ] as const;
 
@@ -117,6 +118,12 @@ export const EmailTemplateDataSchemas = {
     convertedAmount: MoneyAmountSchema,
     currency: CurrencyTickerSchema,
   }),
+  // The credit and the wagering it obliges, so the player reads the terms the moment they apply.
+  bonusCredited: z.object({
+    grantedAmount: MoneyAmountSchema,
+    wageringRequired: MoneyAmountSchema,
+    currency: CurrencyTickerSchema,
+  }),
 } as const satisfies Record<EmailTemplateKey, z.ZodType>;
 
 export type EmailTemplateData = {
@@ -153,6 +160,7 @@ export const MailTemplateSchema = z.discriminatedUnion('key', [
   templateVariant('raceWon'),
   templateVariant('rankChallengeWon'),
   templateVariant('bonusUnlocked'),
+  templateVariant('bonusCredited'),
   templateVariant('twoFactorReset'),
 ]);
 

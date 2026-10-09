@@ -219,7 +219,7 @@ export default {
           | 'identity.user.deactivated',
       >(
         topic: K,
-        reason: 'self_exclusion' | 'cooling_off' | 'account_closed' | 'admin',
+        reason: 'self_exclusion' | 'cooling_off' | 'account_closed' | 'account_deactivated',
       ) =>
       (payload: unknown) => {
         const parsed = domainEventSchemas[topic].safeParse(payload);
@@ -280,7 +280,7 @@ export default {
     // false, same event chat's own membership service already reacts to for room removal.
     ctx.events.on(
       'identity.user.deactivated',
-      forfeitEverything('identity.user.deactivated', 'admin'),
+      forfeitEverything('identity.user.deactivated', 'account_deactivated'),
     );
 
     ctx.jobs.worker({
