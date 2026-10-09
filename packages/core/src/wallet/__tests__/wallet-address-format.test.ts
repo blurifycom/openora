@@ -8,7 +8,7 @@ import {
 const VALID_BY_NETWORK: Record<string, string> = {
   SEGWIT: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
   BITCOIN_CASH: 'qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a',
-  LITECOIN: 'ltc1qw508d6qejxtdg4y5r3zarvary0c5xw7k7grplx',
+  LITECOIN: 'ltc1qw508d6qejxtdg4y5r3zarvary0c5xw7kgmn4n9',
   DOGECOIN: 'DBXu2kgc3xtvCUWFcxFE3r9hEYgmuaaCyD',
   XRP_LEDGER: 'rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh',
   ERC20: '0x1111111111111111111111111111111111111111',
@@ -49,6 +49,50 @@ describe('isWalletAddressValidForNetwork', () => {
   it('accepts any well-formed string for a network with no entry in the table - an operator can add a chain core has never heard of', () => {
     expect(isWalletAddressValidForNetwork('some-brand-new-chain-address', 'RIPPLENET')).toBe(true);
     expect(isWalletAddressValidForNetwork('short', 'RIPPLENET')).toBe(false);
+  });
+
+  it('rejects a bech32 address whose checksum does not match, the shape pattern alone cannot', () => {
+    expect(
+      isWalletAddressValidForNetwork('tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4', 'SEGWIT'),
+    ).toBe(false);
+    expect(
+      isWalletAddressValidForNetwork('bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5', 'SEGWIT'),
+    ).toBe(false);
+    expect(
+      isWalletAddressValidForNetwork('ltc1qw508d6qejxtdg4y5r3zarvary0c5xw7k7grplx', 'LITECOIN'),
+    ).toBe(false);
+  });
+
+  it.each([
+    ['bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', 'P2WPKH mainnet'],
+    ['tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx', 'P2WPKH testnet'],
+    ['tb1qqltm70wyz734t9k8d9w70uuhyxnemyh56d5ra8rtw082ytd7ywmsqudq5e', 'P2WSH testnet'],
+    ['bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080', 'P2WPKH regtest'],
+    ['tltc1qw508d6qejxtdg4y5r3zarvary0c5xw7klfsuq0', 'P2WPKH litecoin testnet'],
+  ])('accepts %s (%s)', (address) => {
+    const network = address.startsWith('ltc') || address.startsWith('tltc') ? 'LITECOIN' : 'SEGWIT';
+    expect(isWalletAddressValidForNetwork(address, network)).toBe(true);
+  });
+
+  it('accepts a taproot address, which is bech32m rather than bech32', () => {
+    expect(
+      isWalletAddressValidForNetwork(
+        'bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0',
+        'SEGWIT',
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects a version 0 address whose witness program is neither 20 nor 32 bytes', () => {
+    expect(isWalletAddressValidForNetwork('bc1qw508d6qejxtdg4y5r3zarvary0ur4le6', 'SEGWIT')).toBe(
+      false,
+    );
+  });
+
+  it('leaves a base58 address on a bech32 chain to the pattern - it carries no bech32 checksum', () => {
+    expect(isWalletAddressValidForNetwork('1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2', 'SEGWIT')).toBe(
+      true,
+    );
   });
 
   it('does not trim or change case - callers own that', () => {

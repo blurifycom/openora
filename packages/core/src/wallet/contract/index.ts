@@ -64,17 +64,86 @@ const ADDRESS_PATTERN_BY_NETWORK: Record<string, RegExp> = {
   SOLANA: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,
 };
 
+// Human-readable parts whose bech32 branch in the table above carries a BIP-173/350
+// checksum. The same chains also accept a base58 address, which does not, so the form is
+// told apart by prefix rather than by network.
+const BECH32_HRPS_BY_NETWORK: Record<string, readonly string[]> = {
+  SEGWIT: ['bc', 'tb', 'bcrt'],
+  LITECOIN: ['ltc', 'tltc'],
+};
+
+const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+const BECH32_GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3] as const;
+const BECH32_CHECKSUM = 1;
+const BECH32M_CHECKSUM = 0x2bc830a3;
+const BECH32_CHECKSUM_CHARS = 6;
+const MAX_WITNESS_VERSION = 16;
+const V0_PROGRAM_CHARS = [32, 52];
+
+function bech32Polymod(values: readonly number[]): number {
+  let checksum = 1;
+  for (const value of values) {
+    const top = checksum >> 25;
+    checksum = ((checksum & 0x1ffffff) << 5) ^ value;
+    for (const [bit, generator] of BECH32_GENERATOR.entries()) {
+      if (((top >> bit) & 1) !== 0) {
+        checksum ^= generator;
+      }
+    }
+  }
+  return checksum;
+}
+
+/**
+ * BIP-173/350 checksum, the one thing a character-shape pattern cannot see. Bech32 carries
+ * it precisely so a mistyped or truncated payout address is caught before it is used, and
+ * the custodian rejects an address that fails it - late, as an opaque vendor error, after
+ * the player was told the address looked fine.
+ *
+ * Witness version 0 is encoded with bech32 and every later version with bech32m; the two
+ * differ only in the constant the polymod must land on, so an address accepted under the
+ * wrong one is a different address than the player meant, not a typo. Version 0 is also the
+ * only one with a fixed program size - 20 bytes (P2WPKH) or 32 (P2WSH), 32 or 52 data
+ * characters - which the length bound in the pattern is far too wide to pin down.
+ */
+function hasValidBech32Checksum(address: string, hrp: string): boolean {
+  const data = Array.from(address.slice(hrp.length + 1), (char) => BECH32_CHARSET.indexOf(char));
+  if (data.includes(-1) || data.length <= BECH32_CHECKSUM_CHARS) {
+    return false;
+  }
+  const witnessVersion = data[0] ?? -1;
+  if (witnessVersion < 0 || witnessVersion > MAX_WITNESS_VERSION) {
+    return false;
+  }
+  const programChars = data.length - 1 - BECH32_CHECKSUM_CHARS;
+  if (witnessVersion === 0 && !V0_PROGRAM_CHARS.includes(programChars)) {
+    return false;
+  }
+  const expanded = [
+    ...Array.from(hrp, (char) => char.charCodeAt(0) >> 5),
+    0,
+    ...Array.from(hrp, (char) => char.charCodeAt(0) & 31),
+    ...data,
+  ];
+  return bech32Polymod(expanded) === (witnessVersion === 0 ? BECH32_CHECKSUM : BECH32M_CHECKSUM);
+}
+
 /**
  * Format check for a payout destination, per chain, looked up by `network.toUpperCase()`.
  * A network with no entry in the table is ACCEPTED, falling back to the shared length
  * bound (8-128 chars trimmed) instead of being rejected.
  */
 export function isWalletAddressValidForNetwork(address: string, network: string): boolean {
-  const pattern = ADDRESS_PATTERN_BY_NETWORK[network.toUpperCase()];
+  const key = network.toUpperCase();
+  const pattern = ADDRESS_PATTERN_BY_NETWORK[key];
   if (!pattern) {
     return address.length >= 8 && address.length <= 128;
   }
-  return pattern.test(address);
+  if (!pattern.test(address)) {
+    return false;
+  }
+  const hrp = BECH32_HRPS_BY_NETWORK[key]?.find((prefix) => address.startsWith(`${prefix}1`));
+  return hrp === undefined || hasValidBech32Checksum(address, hrp);
 }
 
 export const WalletBalanceSchema = z.object({
