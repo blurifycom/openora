@@ -54,6 +54,7 @@ beforeAll(async () => {
   const [created] = await drizzleOf(app.container)
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'E2E Tagged Game',
       slug: `e2e-tagged-game-${randomUUID()}`,
       providerId: provider!.id,

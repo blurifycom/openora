@@ -43,6 +43,7 @@ beforeAll(async () => {
   const [created] = await drizzle
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'Trend E2E Game',
       slug: `trend-e2e-${randomUUID()}`,
       providerId: provider!.id,

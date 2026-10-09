@@ -95,6 +95,7 @@ async function seed() {
     [oldGameId, newGameId].map((id) => ({
       id,
       slug: id,
+      reviewStatus: 'approved' as const,
       name: id,
       providerId,
       aggregator: 'direct',

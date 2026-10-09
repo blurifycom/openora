@@ -53,6 +53,7 @@ async function seedGame(providerId: string, overrides: Partial<typeof game.$infe
   const [row] = await drizzleOf(app.container)
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'E2E Bulk Game',
       slug: `e2e-bulk-game-${randomUUID()}`,
       providerId,
@@ -222,6 +223,7 @@ describe('gaming bulk catalog actions e2e', () => {
         providers: { updatedCount: 1, unchangedCount: 0 },
         notFound: { gameIds: [ghostGameId], providerIds: [] },
         unplayableGameIds: [gB1.id],
+        reviewSkippedCount: 0,
       });
 
       expect((await gameRow(gA1.id))?.isActive).toBe(true);
@@ -280,6 +282,7 @@ describe('gaming bulk catalog actions e2e', () => {
         providers: { updatedCount: 0, unchangedCount: 0 },
         notFound: { gameIds: [], providerIds: [] },
         unplayableGameIds: [],
+        reviewSkippedCount: 0,
       });
 
       await waitForLaterBulkAuditRow(providerA.id);
@@ -397,6 +400,7 @@ describe('gaming bulk catalog actions e2e', () => {
       .insert(game)
       .values(
         Array.from({ length: 5001 }, () => ({
+          reviewStatus: 'approved' as const,
           name: 'E2E Bulk Cap Game',
           slug: `e2e-bulk-cap-game-${randomUUID()}`,
           providerId: provider.id,
@@ -476,5 +480,108 @@ describe('gaming bulk catalog actions e2e', () => {
       (c: { id: string }) => c.id,
     );
     expect(categoryIdsAfter.sort()).toEqual([existingCategory.id, newCategory.id].sort());
+  });
+
+  it('approving a pending game makes it public, audits the review, and a second review is a 409', async () => {
+    const provider = await seedProvider();
+    const target = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+
+    expect((await app.app.request(`/gaming/games/${target.id}`)).status).toBe(404);
+
+    const forbidden = await player.post(`/backoffice/gaming/games/${target.id}/review`, {
+      decision: 'approve',
+    });
+    expect(forbidden.status).toBe(403);
+    expect((await gameRow(target.id))?.reviewStatus).toBe('pending');
+
+    const approveRes = await admin.post(`/backoffice/gaming/games/${target.id}/review`, {
+      decision: 'approve',
+    });
+    expect(approveRes.status).toBe(200);
+    expect(await readJson(approveRes)).toMatchObject({
+      id: target.id,
+      isActive: true,
+      reviewStatus: 'approved',
+    });
+    expect((await app.app.request(`/gaming/games/${target.id}`)).status).toBe(200);
+
+    await vi.waitFor(async () => {
+      const res = await admin.get(
+        `/audit/logs?action=${encodeURIComponent('gaming.games.reviewed')}&resourceType=game&resourceId=${target.id}&limit=10`,
+      );
+      expect(res.status).toBe(200);
+      const [entry] = (await readJson(res)).items;
+      expect(entry).toMatchObject({
+        actorType: 'admin',
+        before: { reviewStatus: 'pending' },
+        after: { reviewStatus: 'approved' },
+      });
+    });
+
+    const again = await admin.post(`/backoffice/gaming/games/${target.id}/review`, {
+      decision: 'decline',
+    });
+    expect(again.status).toBe(409);
+    expect((await gameRow(target.id))?.reviewStatus).toBe('approved');
+  });
+
+  it('bulk review declines only the pending games of a provider, and denies a player', async () => {
+    const provider = await seedProvider();
+    const pending = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+    const live = await seedGame(provider.id);
+
+    const forbidden = await player.post('/backoffice/gaming/games/bulk/review', {
+      providerIds: [provider.id],
+      decision: 'decline',
+    });
+    expect(forbidden.status).toBe(403);
+
+    const res = await admin.post('/backoffice/gaming/games/bulk/review', {
+      providerIds: [provider.id],
+      decision: 'decline',
+    });
+    expect(res.status).toBe(200);
+    expect(await readJson(res)).toEqual({
+      games: { updatedCount: 1, unchangedCount: 0 },
+      notFound: { gameIds: [], providerIds: [] },
+      unplayableGameIds: [],
+    });
+    expect(await gameRow(pending.id)).toMatchObject({ isActive: false, reviewStatus: 'declined' });
+    expect(await gameRow(live.id)).toMatchObject({ isActive: true, reviewStatus: 'approved' });
+  });
+
+  it('auto-approve toggle, PATCH enable and provider-scope enable follow the review rules, and deny a player', async () => {
+    const provider = await seedProvider();
+    const named = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+    const unnamed = await seedGame(provider.id, { reviewStatus: 'pending', isActive: false });
+
+    expect(
+      (
+        await player.patch(`/backoffice/gaming/providers/${provider.id}`, {
+          autoApproveNewGames: true,
+        })
+      ).status,
+    ).toBe(403);
+    const toggle = await admin.patch(`/backoffice/gaming/providers/${provider.id}`, {
+      autoApproveNewGames: true,
+    });
+    expect(toggle.status).toBe(200);
+    expect(await readJson(toggle)).toMatchObject({ autoApproveNewGames: true });
+    expect(await gameRow(unnamed.id)).toMatchObject({ isActive: false, reviewStatus: 'pending' });
+
+    expect(
+      (await player.patch(`/backoffice/gaming/games/${named.id}`, { isActive: true })).status,
+    ).toBe(403);
+    const enable = await admin.patch(`/backoffice/gaming/games/${named.id}`, { isActive: true });
+    expect(enable.status).toBe(200);
+    expect(await readJson(enable)).toMatchObject({ isActive: true, reviewStatus: 'approved' });
+
+    const bulk = await admin.post('/backoffice/gaming/games/bulk/active', {
+      providerIds: [provider.id],
+      isActive: true,
+    });
+    expect(bulk.status).toBe(200);
+    expect(await readJson(bulk)).toMatchObject({ reviewSkippedCount: 1 });
+    expect(await gameRow(unnamed.id)).toMatchObject({ isActive: false, reviewStatus: 'pending' });
   });
 });

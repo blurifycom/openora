@@ -1036,3 +1036,59 @@ describe('mapEventToRecord: compliance.game-geo-rule.*', () => {
     expect(row).toMatchObject({ actorType: 'system', actorId: null, resourceId: ruleId });
   });
 });
+
+describe('mapEventToRecord: game review', () => {
+  const gameId = '99999999-9999-4999-8999-999999999999';
+  const otherGameId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const providerId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+  it('audits a single-game review against that game with both statuses', async () => {
+    const row = await mapEventToRecord('gaming.games.reviewed', {
+      actorId: adminId,
+      decision: 'decline',
+      previousStatus: 'pending',
+      gameIds: [gameId],
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game',
+      resourceId: gameId,
+      before: { reviewStatus: 'pending', gameIds: [gameId] },
+      after: { reviewStatus: 'declined', gameIds: [gameId] },
+    });
+  });
+
+  it('audits a bulk approval with no single resourceId, correlated to its bulk operation', async () => {
+    const bulkOperationId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const row = await mapEventToRecord('gaming.games.reviewed', {
+      actorId: adminId,
+      decision: 'approve',
+      previousStatus: 'declined',
+      gameIds: [gameId, otherGameId],
+      bulkOperationId,
+    });
+
+    expect(row).toMatchObject({
+      resourceId: null,
+      before: { reviewStatus: 'declined' },
+      after: { reviewStatus: 'approved', gameIds: [gameId, otherGameId] },
+      correlationId: bulkOperationId,
+    });
+  });
+
+  it('audits an auto-approval as a system action on the provider', async () => {
+    const row = await mapEventToRecord('gaming.games.auto_approved', {
+      providerId,
+      gameIds: [gameId],
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      resourceType: 'game_provider',
+      resourceId: providerId,
+      after: { reviewStatus: 'auto_approved', gameIds: [gameId] },
+    });
+  });
+});

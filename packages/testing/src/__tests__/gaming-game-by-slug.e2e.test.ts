@@ -52,6 +52,7 @@ beforeAll(async () => {
     .insert(game)
     .values([
       {
+        reviewStatus: 'approved',
         name: 'E2E By Slug Game',
         slug: playableSlug,
         providerId: provider.id,
@@ -59,6 +60,7 @@ beforeAll(async () => {
         isActive: true,
       },
       {
+        reviewStatus: 'approved',
         name: 'E2E By Slug Inactive',
         slug: inactiveSlug,
         providerId: provider.id,

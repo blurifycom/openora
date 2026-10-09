@@ -44,6 +44,7 @@ describe('category membership and sorting materialization (real PG)', () => {
       [retainedId, departingId, arrivingId].map((id) => ({
         id,
         slug: id,
+        reviewStatus: 'approved' as const,
         name: id,
         providerId,
         aggregator: 'direct',

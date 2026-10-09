@@ -54,6 +54,7 @@ async function seedGame(providerId: string) {
   const [row] = await drizzleOf(app.container)
     .insert(game)
     .values({
+      reviewStatus: 'approved',
       name: 'E2E Custom Thumbnail Game',
       slug: `e2e-custom-thumb-game-${randomUUID()}`,
       providerId,
