@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { UuidSchema } from '../schemas/common.js';
+import { ClientMetaSchema, UuidSchema } from '../schemas/common.js';
 import type { AdminActionOf, AdminResource } from '../schemas/iam.js';
 import {
   DOMAIN_EVENT_CATALOG,
@@ -94,6 +94,10 @@ export const RunContextSchema = z.object({
   playerPseudonym: z.string().min(1).max(128).optional(),
   catalogVersion: z.string().min(1).max(128),
   correlationId: z.string().min(1).max(128),
+  /** The calling client's address and agent, recorded on the call's audit record. */
+  clientMeta: ClientMetaSchema.optional(),
+  /** Drops the output keys a tool marks as personal before the result is hashed and returned. */
+  dropPersonal: z.boolean().optional(),
 });
 export type RunContext = z.infer<typeof RunContextSchema>;
 

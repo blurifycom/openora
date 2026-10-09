@@ -1,10 +1,9 @@
 /**
  * Rate-limiter seam. Abuse-prone routes (auth flows, money mutations) consume
- * from this adapter so the throttling backend is swappable: the default binding
- * is an in-process fixed-window limiter (zero deps - good for `pnpm dev`, seed
- * and tests), process-local so it does NOT coordinate across replicas. Set
- * REDIS_URL to bind the shipped Redis reference adapter (distributed fixed-window)
- * with zero consumer code; rebind RATE_LIMITER via an overlay for any other backend.
+ * from this adapter so the throttling backend is swappable. It is a required
+ * durable seam with no in-process fallback: REDIS_URL binds the shipped Redis
+ * adapter (distributed fixed-window), an overlay can rebind RATE_LIMITER to any
+ * other backend, and boot refuses to start when neither binds it.
  */
 import { createToken, type Token } from './token.js';
 
@@ -33,6 +32,10 @@ export const RATE_LIMIT_KEYS = {
   REPORT_ACCESS_DENIED: 'report-access-denied',
   GEO_CHECK_IP: 'geo-check-ip',
   PROMO_PUBLIC_OFFERS_IP: 'promo-public-offers-ip',
+  MCP_TOKEN_MINUTE: 'mcp-token-min',
+  MCP_TOKEN_DAY: 'mcp-token-day',
+  MCP_IP_MINUTE: 'mcp-ip-min',
+  MCP_TOKEN_CREATE: 'mcp-token-create',
 } as const;
 
 export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];
@@ -51,7 +54,6 @@ export type RateLimitOptions = {
    * What to do when the backing store is unreachable: 'allow' keeps availability
    * (throttling pauses during an outage); 'deny' fails closed for keys where an
    * unthrottled window is worse than a 429 (credential guessing). Default 'allow'.
-   * The in-process default is never unavailable, so it ignores this.
    */
   onUnavailable?: 'allow' | 'deny';
 };
@@ -60,6 +62,8 @@ export type RateLimitResult = {
   allowed: boolean;
   /** Milliseconds until the window resets. 0 when allowed. */
   retryAfterMs: number;
+  /** The store could not be reached: `allowed` then follows `onUnavailable`, not the count. */
+  unavailable?: boolean;
 };
 
 export type RateLimiterAdapter<Key extends string = string> = {

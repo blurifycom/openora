@@ -4,6 +4,8 @@ import type {
   ClientMeta,
   KycStatus,
   MailRecipientDirectory,
+  McpTokenAutomaticRevokeReason,
+  McpTokenRevocation,
   PlayerIdSearchOptions,
 } from '@openora/core/contracts';
 import { KycStatusSchema, normalizeKycStatus, UuidSchema } from '@openora/core/contracts';
@@ -47,10 +49,29 @@ function toRow(r: typeof user.$inferSelect) {
   };
 }
 
+type AdminUserPatch = { isActive?: boolean; role?: string };
+
+/**
+ * The revocation a patch calls for, keyed on the state it writes rather than on the change it
+ * makes: repeating a deactivation or a demotion revokes again.
+ */
+export function automaticMcpRevokeReason(
+  patch: AdminUserPatch,
+): McpTokenAutomaticRevokeReason | null {
+  if (patch.isActive === false) {
+    return 'admin_disabled';
+  }
+  if (patch.role !== undefined && patch.role !== 'admin') {
+    return 'admin_role_removed';
+  }
+  return null;
+}
+
 export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly mcpTokens?: McpTokenRevocation,
   ) {}
 
   async count() {
@@ -112,16 +133,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return rows.map(toRow);
   }
 
-  async update(
-    id: string,
-    patch: { isActive?: boolean; role?: string },
-    actorId: string,
-    meta?: ClientMeta,
-  ) {
-    const [existing] = await this.drizzle.db.select().from(user).where(eq(user.id, id));
-    if (!existing) {
-      return null;
-    }
+  async update(id: string, patch: AdminUserPatch, actorId: string, meta?: ClientMeta) {
     const set: Partial<typeof user.$inferInsert> = {};
     if (patch.isActive !== undefined) {
       set.isActive = patch.isActive;
@@ -129,23 +141,45 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     if (patch.role !== undefined) {
       set.role = patch.role;
     }
-    const [r] = await this.drizzle.db.update(user).set(set).where(eq(user.id, id)).returning();
-    if (!r) {
+    const ip = meta?.ip ?? null;
+    const userAgent = meta?.userAgent ?? null;
+    const mcpRevokeReason = automaticMcpRevokeReason(patch);
+
+    const written = await this.drizzle.db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select({ isActive: user.isActive })
+        .from(user)
+        .where(eq(user.id, id))
+        .for('update');
+      if (!existing) {
+        return null;
+      }
+      const [updated] = await tx.update(user).set(set).where(eq(user.id, id)).returning();
+      if (!updated) {
+        return null;
+      }
+      if (mcpRevokeReason) {
+        await this.mcpTokens?.revokeAllForUser(
+          { userId: id, reason: mcpRevokeReason, actorId, ip, userAgent },
+          tx,
+        );
+      }
+      return { wasActive: existing.isActive, updated };
+    });
+    if (!written) {
       return null;
     }
 
     // Emit only on an actual active-status flip, after the commit. Literal topics
     // (not a ternary) so the catalog generator's emit-scanner picks them up.
-    if (patch.isActive !== undefined && patch.isActive !== existing.isActive) {
-      const ip = meta?.ip ?? null;
-      const userAgent = meta?.userAgent ?? null;
+    if (patch.isActive !== undefined && patch.isActive !== written.wasActive) {
       if (patch.isActive) {
         this.events.emit('identity.user.reactivated', { userId: id, actorId, ip, userAgent });
       } else {
         this.events.emit('identity.user.deactivated', { userId: id, actorId, ip, userAgent });
       }
     }
-    return toRow(r);
+    return toRow(written.updated);
   }
 
   async lookupPlayers(userIds: readonly string[]) {

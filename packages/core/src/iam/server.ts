@@ -12,5 +12,14 @@ export {
   AdminUserNotFoundError,
   NotAnAdminUserError,
 } from './service/iam.service.js';
+export {
+  McpTokenService,
+  McpTokenIssueError,
+  McpTokenLimitError,
+  McpTokenNotFoundError,
+  McpTokenOwnerIneligibleError,
+  McpTokenTtlError,
+  McpTransportDisabledError,
+} from './service/mcp-token.service.js';
 export { createIamRouter } from './router/index.js';
 export { default } from './plugin.js';

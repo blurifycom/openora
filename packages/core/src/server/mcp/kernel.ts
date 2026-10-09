@@ -34,6 +34,8 @@ import type {
 import { createLogger } from '../kernel/logger.js';
 import { sha256Hex } from './canonical-json.js';
 import { mcpToolModelName } from './contract-validation.js';
+import { projectedOutputJsonSchema } from './output-schema.js';
+import { loggableError } from './loggable-error.js';
 
 const logger = createLogger('mcp-kernel');
 
@@ -134,7 +136,7 @@ function serveTool<C extends TokenCatalog>(
       owner,
       modelName: mcpToolModelName(contract.id),
       inputJsonSchema: z.toJSONSchema(contract.inputSchema, { target: 'draft-7', io: 'input' }),
-      outputJsonSchema: z.toJSONSchema(contract.outputSchema, { target: 'draft-7', io: 'output' }),
+      outputJsonSchema: projectedOutputJsonSchema(contract.outputSchema, contract.redact.allow),
     },
   };
 }
@@ -233,7 +235,10 @@ function parseInput(
       ? { success: true, data: parsed.data }
       : { success: false, failure: invalidInput(parsed.error) };
   } catch (err) {
-    logger.error({ err, ...logContext }, 'mcp input schema threw while parsing');
+    logger.error(
+      { err: loggableError(err), ...logContext },
+      'mcp input schema threw while parsing',
+    );
     return { success: false, failure: failure('internal_error') };
   }
 }
@@ -265,7 +270,10 @@ async function authorizeActor(
   try {
     return await authorize(runActorAdminId(actor), iam);
   } catch (err) {
-    logger.error({ err, resource: iam.resource, action: iam.action }, 'mcp authorization failed');
+    logger.error(
+      { err: loggableError(err), resource: iam.resource, action: iam.action },
+      'mcp authorization failed',
+    );
     return 'failed';
   }
 }
@@ -285,7 +293,7 @@ function declaredCode(
   if (err instanceof McpToolError && declared.includes(err.code)) {
     return err.code;
   }
-  logger.error({ err, ...context }, 'mcp call failed with an undeclared error');
+  logger.error({ err: loggableError(err), ...context }, 'mcp call failed with an undeclared error');
   return 'internal_error';
 }
 
@@ -294,6 +302,13 @@ function pickAllowed(
   allow: readonly string[],
 ): Record<string, unknown> {
   return withoutUndefined(Object.fromEntries(allow.map((key) => [key, output[key]])));
+}
+
+function releasedKeys(
+  { allow, personal = [] }: McpToolContract['redact'],
+  dropPersonal: RunContext['dropPersonal'],
+): readonly string[] {
+  return dropPersonal ? allow.filter((key) => !personal.includes(key)) : allow;
 }
 
 async function recordAudit(audit: AuditWritePort | null, entry: AuditEntry): Promise<boolean> {
@@ -305,7 +320,7 @@ async function recordAudit(audit: AuditWritePort | null, entry: AuditEntry): Pro
     return true;
   } catch (err) {
     logger.error(
-      { err, action: entry.action, resourceId: entry.resourceId },
+      { err: loggableError(err), action: entry.action, resourceId: entry.resourceId },
       'mcp audit write failed',
     );
     return false;
@@ -353,6 +368,7 @@ async function invokeTool(
     resourceType: 'mcp-tool',
     resourceId: toolId,
     correlationId: run.data.correlationId,
+    ...run.data.clientMeta,
     after: withoutUndefined({
       toolId,
       toolClass: tool?.contract.class,
@@ -361,6 +377,7 @@ async function invokeTool(
       ...actorAuditFields(run.data.actor),
       playerPseudonym: run.data.playerPseudonym,
       catalogVersion: run.data.catalogVersion,
+      personalDropped: run.data.dropPersonal ? true : undefined,
       inputHash: outcome.inputHash,
       outputHash: outcome.outputHash,
       error: outcome.result.ok ? undefined : outcome.result.error,
@@ -384,7 +401,10 @@ async function toolOutcome(
     }
     return await runTool(state, tool, input, run);
   } catch (err) {
-    logger.error({ err, toolId, runId: run.runId }, 'mcp tool call failed outside its handler');
+    logger.error(
+      { err: loggableError(err), toolId, runId: run.runId },
+      'mcp tool call failed outside its handler',
+    );
     return { result: failure('internal_error') };
   }
 }
@@ -417,7 +437,7 @@ async function runTool(
       );
       return { result: failure('output_invalid'), inputHash };
     }
-    const redacted = pickAllowed(output.data, tool.contract.redact.allow);
+    const redacted = pickAllowed(output.data, releasedKeys(tool.contract.redact, run.dropPersonal));
     return { result: { ok: true, output: redacted }, inputHash, outputHash: sha256Hex(redacted) };
   } catch (err) {
     return { result: failure(declaredCode(err, tool.contract.errors, logContext)), inputHash };

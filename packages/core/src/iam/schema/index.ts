@@ -1,8 +1,11 @@
-import { invitationStatuses } from '@openora/core/contracts';
+import { invitationStatuses, MCP_TOKEN_REVOKE_REASONS } from '@openora/core/contracts';
+import { sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
   foreignKey,
   index,
+  integer,
   pgEnum,
   pgTable,
   text,
@@ -12,6 +15,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 export const invitationStatusEnum = pgEnum('invitation_status', invitationStatuses);
+export const mcpTokenRevokeReasonEnum = pgEnum('mcp_token_revoke_reason', MCP_TOKEN_REVOKE_REASONS);
 
 export const adminRole = pgTable(
   'admin_role',
@@ -85,7 +89,35 @@ export const adminInvitation = pgTable(
   ],
 );
 
+export const mcpToken = pgTable(
+  'mcp_token',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    adminUserId: uuid().notNull(),
+    label: text().notNull(),
+    tokenHash: text().notNull(),
+    tokenPrefix: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    revokedAt: timestamp({ withTimezone: true }),
+    revokedBy: uuid(),
+    revokeReason: mcpTokenRevokeReasonEnum(),
+    lastUsedAt: timestamp({ withTimezone: true }),
+    callCount: integer().notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex('mcp_token_token_hash_uq').on(t.tokenHash),
+    index('mcp_token_admin_user_id_idx').on(t.adminUserId),
+    index('mcp_token_revoked_at_expires_at_idx').on(t.revokedAt, t.expiresAt),
+    check(
+      'mcp_token_revocation_complete',
+      sql`(${t.revokedAt} IS NULL) = (${t.revokeReason} IS NULL)`,
+    ),
+  ],
+);
+
 export type AdminRole = typeof adminRole.$inferSelect;
 export type AdminRolePermission = typeof adminRolePermission.$inferSelect;
 export type AdminRoleAssignment = typeof adminRoleAssignment.$inferSelect;
 export type AdminInvitation = typeof adminInvitation.$inferSelect;
+export type McpToken = typeof mcpToken.$inferSelect;

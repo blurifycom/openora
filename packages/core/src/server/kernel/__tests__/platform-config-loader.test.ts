@@ -91,6 +91,23 @@ describe('loadPlatformConfig yaml parsing', () => {
     expect(cfg.supportedLanguages).toEqual(['en', 'uk']);
   });
 
+  it('parses a list item that is a URL as one string', () => {
+    const cfg = loadYaml(
+      'agents:\n  mcp:\n    allowedOrigins:\n      - https://backoffice.example.com\n      - "https://ops.example.com"\n',
+    );
+
+    expect(cfg.agents.mcp.allowedOrigins).toEqual([
+      'https://backoffice.example.com',
+      'https://ops.example.com',
+    ]);
+  });
+
+  it('keeps a list item whose colon is not followed by a space as one string', () => {
+    const cfg = loadYaml('reservedUsernames:\n  - ops:admin\n  - support\n');
+
+    expect(cfg.reservedUsernames).toEqual(['ops:admin', 'support']);
+  });
+
   it('parses a list of objects', () => {
     const cfg = loadYaml(
       'brands:\n  - id: main\n    name: Main\n  - id: vip\n    name: VIP\nactiveBrand: vip\n',

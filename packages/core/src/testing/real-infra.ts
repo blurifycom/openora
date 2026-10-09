@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { sql } from 'drizzle-orm';
+import { getTableName, sql, type SQL } from 'drizzle-orm';
+import type { PgTable } from 'drizzle-orm/pg-core';
 import { createClient } from 'redis';
 import { DrizzleService } from '@openora/core/server';
 
@@ -58,18 +59,16 @@ export async function waitForConsumerGroup(
   }
 }
 
+type LockWaiterDb = Pick<TestDb, 'drizzle'>;
+
 /** Resolves once a session is blocked on a lock; times out quietly so the test fails on its own assertion. */
-async function waitForLockWaiter(
-  db: TestDb,
-  locktype: 'advisory' | 'transactionid',
-  timeoutMs: number,
-): Promise<void> {
+async function waitForLockWaiter(db: LockWaiterDb, lock: SQL, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const { rows } = await db.drizzle.db.execute<{ waiting: number }>(
       sql`select count(*)::int as waiting from pg_locks l
           join pg_stat_activity a on a.pid = l.pid
-          where l.locktype = ${locktype} and not l.granted
+          where ${lock} and not l.granted
             and a.datname = current_database()`,
     );
     if ((rows[0]?.waiting ?? 0) > 0) {
@@ -79,12 +78,24 @@ async function waitForLockWaiter(
   }
 }
 
-export function waitForAdvisoryLockWaiter(db: TestDb, timeoutMs = 3000): Promise<void> {
-  return waitForLockWaiter(db, 'advisory', timeoutMs);
+export function waitForAdvisoryLockWaiter(db: LockWaiterDb, timeoutMs = 3000): Promise<void> {
+  return waitForLockWaiter(db, sql`l.locktype = 'advisory'`, timeoutMs);
 }
 
-export function waitForRowLockWaiter(db: TestDb, timeoutMs = 3000): Promise<void> {
-  return waitForLockWaiter(db, 'transactionid', timeoutMs);
+export function waitForRowLockWaiter(db: LockWaiterDb, timeoutMs = 3000): Promise<void> {
+  return waitForLockWaiter(db, sql`l.locktype = 'transactionid'`, timeoutMs);
+}
+
+export function waitForTableLockWaiter(
+  db: LockWaiterDb,
+  table: PgTable,
+  timeoutMs = 3000,
+): Promise<void> {
+  return waitForLockWaiter(
+    db,
+    sql`l.locktype = 'relation' and l.relation = ${getTableName(table)}::regclass`,
+    timeoutMs,
+  );
 }
 
 function isConnectionError(err: unknown): boolean {

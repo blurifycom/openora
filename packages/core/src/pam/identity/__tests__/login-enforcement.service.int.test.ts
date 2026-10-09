@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
+import type { McpTokenRevocation } from '@openora/core/contracts';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
+import { makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { user, session } from '../schema/index.js';
 import { LoginEnforcementService } from '../service/login-enforcement.service.js';
@@ -15,12 +16,14 @@ let db: TestDb;
 
 function makeService() {
   const events = makeEventBus();
+  const revokeAllForUser = vi.fn(async () => ({ revoked: 0 }));
   const sessions = new SessionService({
     drizzle: db.drizzle,
     events,
     identityReader: makeIdentityReader(),
+    mcpTokens: mock<McpTokenRevocation>({ revokeAllForUser }),
   });
-  return { svc: new LoginEnforcementService(db.drizzle, sessions), events };
+  return { svc: new LoginEnforcementService(db.drizzle, sessions), events, revokeAllForUser };
 }
 
 async function seedActiveSession(userId: string) {
@@ -76,6 +79,17 @@ describe('LoginEnforcementService (real PG)', () => {
       'identity.sessions.revoked_all',
       expect.objectContaining({ userId: account.id }),
     );
+  });
+
+  it("expires a player's sessions on a block without touching the MCP token port", async () => {
+    const { svc, revokeAllForUser } = makeService();
+    const player = await seedUser(db, { role: 'player' });
+    await seedActiveSession(player.id);
+
+    await svc.block(player.id, { until: null });
+
+    expect(await activeSessionCount(player.id)).toBe(0);
+    expect(revokeAllForUser).not.toHaveBeenCalled();
   });
 
   it('stores a null expiry for an indefinite block', async () => {

@@ -10,12 +10,12 @@ import {
   statement,
   readActions,
   SUPPORTED_LEVELS,
-  levelToActions,
   levelRank,
   isLevelSufficient,
   cached,
   invalidate,
   createLogger,
+  type DrizzleTx,
   type ResourceName,
   type PermissionLevel,
 } from '@openora/core/server';
@@ -50,6 +50,8 @@ import type {
   IamRoleSortBy,
   IamInvitationSortBy,
 } from '../contract/index.js';
+import { loadAdminGrants, usersWithoutMcpAccess } from '../shared/admin-grants.js';
+import type { McpTokenService } from './mcp-token.service.js';
 
 const logger = createLogger('iam-service');
 
@@ -195,40 +197,7 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
   }
 
   private async loadGrants(userId: User['id']): Promise<AdminGrant[]> {
-    // One indexed join (on admin_role_assignment_user_id_idx) replaces the old
-    // 2 + N-per-role fan-out. leftJoin keeps super-admin roles (no permission rows)
-    // and empty roles in the result.
-    const rows = await this.drizzle.db
-      .select({
-        isSuperAdmin: adminRole.isSuperAdmin,
-        resource: adminRolePermission.resource,
-        level: adminRolePermission.level,
-      })
-      .from(adminRoleAssignment)
-      .innerJoin(adminRole, eq(adminRole.id, adminRoleAssignment.roleId))
-      .leftJoin(adminRolePermission, eq(adminRolePermission.roleId, adminRole.id))
-      .where(eq(adminRoleAssignment.userId, userId));
-
-    if (rows.some((r) => r.isSuperAdmin)) {
-      return allGrants();
-    }
-
-    const seen = new Set<string>();
-    const grants: AdminGrant[] = [];
-    for (const r of rows) {
-      if (!r.resource || !r.level) {
-        continue;
-      } // leftJoin null: role with no permission rows
-      for (const action of levelToActions(r.resource, r.level as PermissionLevel)) {
-        const key = `${r.resource}:${action}`;
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        grants.push({ resource: r.resource, action });
-      }
-    }
-    return grants;
+    return (await loadAdminGrants(this.drizzle.db, [userId])).get(userId) ?? [];
   }
 
   /** Drop one user's cached grants - called on assign/revoke so revocation is instant. */
@@ -251,24 +220,70 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
   }
 }
 
-function allGrants() {
-  return (Object.keys(statement) as ResourceName[]).flatMap((resource) =>
-    (statement[resource] as readonly string[]).map((action) => ({
-      resource: resource as string,
-      action,
-    })),
-  );
-}
+export type IamServiceDeps = {
+  drizzle: DrizzleService;
+  events: EventBus;
+  mailDispatch: MailDispatchPort;
+  identityReader: IdentityReader;
+  mcpTokens: McpTokenService;
+  sessionCommands?: SessionCommands | undefined;
+  rateLimiter?: RateLimiterAdapter<RateLimitKey> | undefined;
+};
 
 export class IamService {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly events: EventBus,
-    private readonly mailDispatch: MailDispatchPort,
-    private readonly identityReader: IdentityReader,
-    private readonly sessionCommands?: SessionCommands,
-    private readonly rateLimiter?: RateLimiterAdapter<RateLimitKey>,
-  ) {}
+  private readonly drizzle: DrizzleService;
+  private readonly events: EventBus;
+  private readonly mailDispatch: MailDispatchPort;
+  private readonly identityReader: IdentityReader;
+  private readonly mcpTokens: McpTokenService;
+  private readonly sessionCommands: SessionCommands | undefined;
+  private readonly rateLimiter: RateLimiterAdapter<RateLimitKey> | undefined;
+
+  constructor({
+    drizzle,
+    events,
+    mailDispatch,
+    identityReader,
+    mcpTokens,
+    sessionCommands,
+    rateLimiter,
+  }: IamServiceDeps) {
+    this.drizzle = drizzle;
+    this.events = events;
+    this.mailDispatch = mailDispatch;
+    this.identityReader = identityReader;
+    this.mcpTokens = mcpTokens;
+    this.sessionCommands = sessionCommands;
+    this.rateLimiter = rateLimiter;
+  }
+
+  /**
+   * Runs a grant change in one transaction and, in it, revokes the MCP tokens of whichever of the
+   * users it names no longer hold `mcp-access:use`. The revocation lock is taken first, so grant
+   * changes run one at a time and each reads the grants every earlier one committed.
+   */
+  private changeGrants<T>(
+    caller: Caller,
+    change: (tx: DrizzleTx) => Promise<{ result: T; affectedUserIds: readonly User['id'][] }>,
+  ) {
+    return this.drizzle.db.transaction(async (tx) => {
+      await this.mcpTokens.lockForRevocation(tx);
+      const { result, affectedUserIds } = await change(tx);
+      if (affectedUserIds.length > 0) {
+        await this.mcpTokens.revokeAllForUsers(
+          {
+            userIds: await usersWithoutMcpAccess(tx, affectedUserIds),
+            reason: 'admin_role_removed',
+            actorId: caller.userId,
+            ip: caller.ip,
+            userAgent: caller.userAgent,
+          },
+          tx,
+        );
+      }
+      return result;
+    });
+  }
 
   private callerGrants(caller: Caller) {
     return new DbAdminPermissionResolver(this.drizzle).getGrants(caller.userId);
@@ -437,7 +452,7 @@ export class IamService {
     // The three child FKs are ON DELETE CASCADE, so deleting the role removes permission,
     // assignment, and invitation rows automatically. Holder rows are read FOR UPDATE inside
     // the tx so a concurrent assign cannot slip a row past the audit.
-    const affectedUserIds = await this.drizzle.db.transaction(async (txn) => {
+    const affectedUserIds = await this.changeGrants(input.caller, async (txn) => {
       const holders = await txn
         .select({ userId: adminRoleAssignment.userId })
         .from(adminRoleAssignment)
@@ -446,7 +461,8 @@ export class IamService {
 
       await txn.delete(adminRole).where(eq(adminRole.id, input.roleId));
 
-      return holders.map((h) => h.userId);
+      const holderIds = holders.map((h) => h.userId);
+      return { result: holderIds, affectedUserIds: holderIds };
     });
 
     // One revoke per affected admin so each lost-role is individually attributable in the audit log.
@@ -501,7 +517,7 @@ export class IamService {
 
     // Replace in one transaction - a crash or concurrent call must not leave the role at no_access.
     const persist = input.grants.filter((g) => g.level !== 'no_access');
-    const { before, after } = await this.drizzle.db.transaction(async (txn) => {
+    const { before, after } = await this.changeGrants(input.caller, async (txn) => {
       const beforeRows = await txn
         .select({ resource: adminRolePermission.resource, level: adminRolePermission.level })
         .from(adminRolePermission)
@@ -520,9 +536,17 @@ export class IamService {
         .from(adminRolePermission)
         .where(eq(adminRolePermission.roleId, input.roleId));
 
+      const holders = await txn
+        .select({ userId: adminRoleAssignment.userId })
+        .from(adminRoleAssignment)
+        .where(eq(adminRoleAssignment.roleId, input.roleId));
+
       const toLevels = (rows: { resource: string; level: string }[]) =>
         rows.map((r) => ({ resource: r.resource, level: r.level as PermissionLevel }));
-      return { before: toLevels(beforeRows), after: toLevels(afterRows) };
+      return {
+        result: { before: toLevels(beforeRows), after: toLevels(afterRows) },
+        affectedUserIds: holders.map((h) => h.userId),
+      };
     });
 
     this.events.emit('iam.role.permissions.changed', {
@@ -568,13 +592,17 @@ export class IamService {
       return toAssignmentDto(existing);
     }
 
-    const row = findOneOrThrow(
-      await this.drizzle.db
-        .insert(adminRoleAssignment)
-        .values({ userId: input.userId, roleId: input.roleId })
-        .returning(),
-      new RoleNotFoundError(input.roleId),
-    );
+    // A first assignment replaces the static role table's grants with the role's own.
+    const row = await this.changeGrants(input.caller, async (txn) => ({
+      result: findOneOrThrow(
+        await txn
+          .insert(adminRoleAssignment)
+          .values({ userId: input.userId, roleId: input.roleId })
+          .returning(),
+        new RoleNotFoundError(input.roleId),
+      ),
+      affectedUserIds: [input.userId],
+    }));
     const dto = toAssignmentDto(row);
     this.events.emit('iam.role.assigned', {
       roleId: input.roleId,
@@ -599,7 +627,7 @@ export class IamService {
 
     // Count-then-delete must be atomic (TOCTOU). Lock super-admin holder rows FOR UPDATE
     // so a concurrent unassign blocks until after the first commits.
-    const deleted = await this.drizzle.db.transaction(async (txn) => {
+    const deleted = await this.changeGrants(input.caller, async (txn) => {
       if (role.isSuperAdmin) {
         const superRoleRows = await txn
           .select({ id: adminRole.id })
@@ -628,7 +656,8 @@ export class IamService {
           ),
         )
         .returning({ id: adminRoleAssignment.id });
-      return removed.length > 0;
+      const wasAssigned = removed.length > 0;
+      return { result: wasAssigned, affectedUserIds: wasAssigned ? [input.userId] : [] };
     });
 
     // No-op unassign returns success but emits nothing - no ghost revocation in the audit log.

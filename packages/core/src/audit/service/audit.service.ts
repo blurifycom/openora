@@ -175,6 +175,58 @@ export type RecordInput = Parameters<AuditWritePort['record']>[0] & {
   result?: string | null;
 };
 
+// Postgres takes at most 65,535 bind parameters per statement; at 16 columns a row, this many
+// rows stay well under it.
+const MAX_ROWS_PER_INSERT = 1_000;
+
+function latestChainHash(txn: DrizzleTx) {
+  return txn
+    .select({ hash: auditLog.hash })
+    .from(auditLog)
+    .orderBy(desc(auditLog.seq))
+    .limit(1)
+    .then(([latest]) => latest?.hash ?? null);
+}
+
+/** The row `input` appends at `seq` after `prevHash`, hashed over what is persisted. */
+function chainedRow(
+  input: RecordInput,
+  { seq, prevHash }: { seq: number; prevHash: string | null },
+) {
+  const id = randomUUID();
+  const createdAt = new Date();
+  const hash = computeHash({
+    id,
+    actorId: input.actorId ?? null,
+    actorType: input.actorType,
+    action: input.action,
+    resourceType: input.resourceType,
+    resourceId: input.resourceId ?? null,
+    before: input.before ?? null,
+    after: input.after ?? null,
+    result: input.result ?? null,
+    seq,
+    createdAt: createdAt.toISOString(),
+    prevHash,
+  });
+  return { ...input, id, seq, prevHash, createdAt, hash };
+}
+
+function chainedRows(
+  inputs: readonly RecordInput[],
+  { seqs, headHash }: { seqs: readonly number[]; headHash: string | null },
+) {
+  const rows: ReturnType<typeof chainedRow>[] = [];
+  for (const [index, input] of inputs.entries()) {
+    const seq = seqs[index];
+    if (seq === undefined) {
+      throw new Error('audit_log: fewer sequence values were reserved than rows to append');
+    }
+    rows.push(chainedRow(input, { seq, prevHash: rows.at(-1)?.hash ?? headHash }));
+  }
+  return rows;
+}
+
 /**
  * Appends one row to the hash chain inside the caller's transaction. Exported for a writer that
  * runs outside the container - a deploy step - so it keeps the same chain protocol as
@@ -188,44 +240,55 @@ export async function recordAuditInTransaction(
   input: RecordInput,
 ): Promise<AuditLog> {
   const row = await withAdvisoryXactLock(txn, 'audit_log', async () => {
-    const [latest] = await txn
-      .select({ hash: auditLog.hash })
-      .from(auditLog)
-      .orderBy(desc(auditLog.seq))
-      .limit(1);
-    const prevHash = latest?.hash ?? null;
+    const prevHash = await latestChainHash(txn);
 
     const seqResult = await txn.execute<{ seq: string | number }>(
       sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
     );
     const seq = +(seqResult.rows.at(0)?.seq ?? 0);
 
-    const id = randomUUID();
-    const createdAt = new Date();
-
-    const hash = computeHash({
-      id,
-      actorId: input.actorId ?? null,
-      actorType: input.actorType,
-      action: input.action,
-      resourceType: input.resourceType,
-      resourceId: input.resourceId ?? null,
-      before: input.before ?? null,
-      after: input.after ?? null,
-      result: input.result ?? null,
-      seq,
-      createdAt: createdAt.toISOString(),
-      prevHash,
-    });
-
     const [inserted] = await txn
       .insert(auditLog)
-      .values({ ...input, id, seq, prevHash, createdAt, hash })
+      .values(chainedRow(input, { seq, prevHash }))
       .returning();
 
     return inserted;
   });
   return row;
+}
+
+/**
+ * Appends `inputs` to the hash chain in order, inside the caller's transaction and under the
+ * lock `recordAuditInTransaction` takes, with one read of the chain head and one sequence
+ * reservation for the lot. The rows are those that many `recordAuditInTransaction` calls in the
+ * same order would append, apart from the id and timestamp each row is given. An empty list
+ * writes nothing.
+ */
+async function recordManyAuditInTransaction(
+  txn: DrizzleTx,
+  inputs: readonly RecordInput[],
+): Promise<AuditLog[]> {
+  if (inputs.length === 0) {
+    return [];
+  }
+  return withAdvisoryXactLock(txn, 'audit_log', async () => {
+    const headHash = await latestChainHash(txn);
+    const { rows: reserved } = await txn.execute<{ seq: string | number }>(
+      sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq
+          FROM generate_series(1, ${inputs.length}) ORDER BY seq`,
+    );
+    const rows = chainedRows(inputs, { seqs: reserved.map((row) => Number(row.seq)), headHash });
+    const inserted: AuditLog[] = [];
+    for (let start = 0; start < rows.length; start += MAX_ROWS_PER_INSERT) {
+      inserted.push(
+        ...(await txn
+          .insert(auditLog)
+          .values(rows.slice(start, start + MAX_ROWS_PER_INSERT))
+          .returning()),
+      );
+    }
+    return inserted;
+  });
 }
 
 export class AuditService {
@@ -245,6 +308,10 @@ export class AuditService {
 
   recordInTransaction(tx: unknown, input: RecordInput): Promise<AuditLog> {
     return recordAuditInTransaction(tx as DrizzleTx, input);
+  }
+
+  recordManyInTransaction(tx: unknown, inputs: readonly RecordInput[]): Promise<AuditLog[]> {
+    return recordManyAuditInTransaction(tx as DrizzleTx, inputs);
   }
 
   async list(filters: AuditListFilters) {

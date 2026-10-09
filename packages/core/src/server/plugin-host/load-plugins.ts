@@ -5,6 +5,10 @@ import { ModuleRegistryImpl } from './module-registry.js';
 
 export type PluginEntry = {
   id: string;
+  /**
+   * An absolute path. The plugin host `import()`s it from inside @openora/core, so a relative
+   * path or a bare package name resolves from core's location, not from the file that lists it.
+   */
   path: string;
   // 'module' (default) = a domain module, selectable by a service manifest.
   // 'infra' = a broker/queue driver overlay that always loads, even for a

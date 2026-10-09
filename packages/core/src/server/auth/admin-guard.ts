@@ -12,7 +12,7 @@ import {
 import { DrizzleService } from '../db/index.js';
 import { sql } from 'drizzle-orm';
 import { SessionResolver } from './session-resolver.js';
-import { roles, type ResourceName, type ActionOf } from './permissions.js';
+import { holdsGrant, isRoleName, type ResourceName, type ActionOf } from './permissions.js';
 import type { OssContext, EventBus } from '../kernel/index.js';
 import { createLogger } from '../kernel/logger.js';
 import { extractClientMeta } from '../kernel/router-utils.js';
@@ -22,6 +22,8 @@ export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 const logger = createLogger('admin-guard');
 
 export type AdminCaller = { userId: string; role: string } & ClientMeta;
+
+type GrantRequirement = { resource: string; action: string };
 
 /**
  * The single admin-enforcement point - every admin route calls `assert()` as its
@@ -99,7 +101,8 @@ export class AdminGuard {
   /**
    * `assert` for a caller that is not an HTTP request (an agent run, an MCP token): the same
    * user, role, grant and 2FA-enrolment checks and the same denial event, without a session -
-   * so no session-integrity check, and `ip`/`userAgent` are null.
+   * so no session-integrity check, and `ip`/`userAgent` are null. A deactivated account is
+   * refused too: with no session to revoke, nothing else stops a credential it issued.
    */
   async assertUser<R extends ResourceName>(
     userId: string,
@@ -110,7 +113,20 @@ export class AdminGuard {
       userId,
       clientMeta: { ip: null, userAgent: null },
       permission: { resource, action },
+      requireActive: true,
     });
+  }
+
+  /**
+   * The requirements `userId` holds, decided as `assertUser` decides but with no denial event
+   * and no 2FA check: it narrows what a caller is shown and never authorizes anything.
+   */
+  async filterGranted<T extends GrantRequirement>(
+    userId: string,
+    requirements: readonly T[],
+  ): Promise<T[]> {
+    const { account, granted } = await this.resolveAccess(userId, requirements);
+    return account?.isActive && account.isAdmin ? granted : [];
   }
 
   async assertSuperAdmin(context: unknown): Promise<AdminCaller> {
@@ -141,51 +157,37 @@ export class AdminGuard {
     clientMeta: { ip, userAgent },
     permission,
     session,
+    requireActive = false,
   }: {
     userId: string;
     clientMeta: ClientMeta;
     permission: { resource: R; action: ActionOf<R> } | undefined;
     session?: { sessionId: string | null };
+    requireActive?: boolean;
   }): Promise<AdminCaller> {
     const deniedResource = permission?.resource ?? 'admin';
     const deniedAction = permission?.action ?? 'access';
 
-    const result = await this.drizzle.db.execute(
-      sql`SELECT id, role FROM "user" WHERE id = ${userId} LIMIT 1`,
-    );
-    const userRecord = result.rows[0] as { id: string; role: string } | undefined;
-    if (!userRecord) {
-      this.emitUnauthorized(userId, undefined, deniedResource, deniedAction, ip, userAgent);
+    const { account, granted } = await this.resolveAccess(userId, permission ? [permission] : []);
+    if (!account || (requireActive && !account.isActive) || !account.isAdmin) {
+      this.emitUnauthorized(userId, account?.role, deniedResource, deniedAction, ip, userAgent);
       throw new ORPCError('FORBIDDEN', {
         message: 'Admin access required',
         data: { reason: AuthGuardReasonSchema.enum.admin_required },
       });
     }
 
-    const userRole = roles[userRecord.role as keyof typeof roles];
-    if (!userRole) {
-      this.emitUnauthorized(userId, userRecord.role, deniedResource, deniedAction, ip, userAgent);
-      throw new ORPCError('FORBIDDEN', {
-        message: 'Admin access required',
-        data: { reason: AuthGuardReasonSchema.enum.admin_required },
-      });
-    }
-
-    if (permission) {
+    if (permission && granted.length === 0) {
       const { resource, action } = permission;
-      const grants = await this.resolveGrants(userId);
-      const allowed = this.checkGrant(grants, userRole, resource, action);
-      if (!allowed) {
-        this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
-        throw new ORPCError('FORBIDDEN', {
-          message: `Missing permission: ${String(resource)}:${String(action)}`,
-          data: {
-            reason: AuthGuardReasonSchema.enum.permission_denied,
-            resource: String(resource),
-            action: String(action),
-          },
-        });
-      }
+      this.emitUnauthorized(userId, account.role, resource, action, ip, userAgent);
+      throw new ORPCError('FORBIDDEN', {
+        message: `Missing permission: ${String(resource)}:${String(action)}`,
+        data: {
+          reason: AuthGuardReasonSchema.enum.permission_denied,
+          resource: String(resource),
+          action: String(action),
+        },
+      });
     }
 
     if (this.securityPolicy) {
@@ -196,7 +198,37 @@ export class AdminGuard {
       }
     }
 
-    return { userId, role: userRecord.role, ip, userAgent };
+    return { userId, role: account.role, ip, userAgent };
+  }
+
+  /**
+   * The account behind `userId` and which of `requirements` it holds under `holdsGrant`. Grants
+   * are read only for an account whose role the static table knows, and only when there is
+   * something to check.
+   */
+  private async resolveAccess<T extends GrantRequirement>(
+    userId: string,
+    requirements: readonly T[],
+  ) {
+    const account = await this.findAccount(userId);
+    if (!account?.isAdmin || requirements.length === 0) {
+      return { account, granted: [] };
+    }
+    const grants = await this.resolveGrants(userId);
+    return {
+      account,
+      granted: requirements.filter(({ resource, action }) =>
+        holdsGrant({ role: account.role, grants }, resource, action),
+      ),
+    };
+  }
+
+  private async findAccount(userId: string) {
+    const result = await this.drizzle.db.execute<{ role: string; is_active: boolean }>(
+      sql`SELECT role, is_active FROM "user" WHERE id = ${userId} LIMIT 1`,
+    );
+    const row = result.rows[0];
+    return row && { role: row.role, isActive: row.is_active, isAdmin: isRoleName(row.role) };
   }
 
   // null only when no resolver is bound - an unassigned admin under a bound resolver gets [].
@@ -204,18 +236,6 @@ export class AdminGuard {
     return this.permissionResolver
       ? this.permissionResolver.getGrants(userId)
       : Promise.resolve(null);
-  }
-
-  private checkGrant(
-    grants: AdminGrant[] | null,
-    userRole: (typeof roles)[keyof typeof roles] | undefined,
-    resource: string,
-    action: string,
-  ): boolean {
-    if (grants !== null) {
-      return grants.some((g) => g.resource === resource && g.action === action);
-    }
-    return userRole?.authorize({ [resource]: [action] }).success ?? false;
   }
 
   private emitUnauthorized(

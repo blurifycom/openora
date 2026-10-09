@@ -68,12 +68,39 @@ describe('RedisRateLimiter', () => {
     expect(await offlineLimiter().consume('login:a', WINDOW)).toEqual({
       allowed: true,
       retryAfterMs: 0,
+      unavailable: true,
     });
   });
 
   it('fails closed with windowMs when not ready and the key opts into deny', async () => {
     expect(await offlineLimiter().consume('login:a', { ...WINDOW, onUnavailable: 'deny' })).toEqual(
-      { allowed: false, retryAfterMs: WINDOW.windowMs },
+      { allowed: false, retryAfterMs: WINDOW.windowMs, unavailable: true },
     );
+  });
+
+  it('marks a result unavailable when the store rejects the script, in both modes', async () => {
+    const limiter = new RedisRateLimiter(redis.client);
+    await redis.client.lPush('rl:login:list', 'not-a-counter');
+
+    expect(await limiter.consume('login:list', WINDOW)).toEqual({
+      allowed: true,
+      retryAfterMs: 0,
+      unavailable: true,
+    });
+    expect(await limiter.consume('login:list', { ...WINDOW, onUnavailable: 'deny' })).toEqual({
+      allowed: false,
+      retryAfterMs: WINDOW.windowMs,
+      unavailable: true,
+    });
+  });
+
+  it('leaves a result from a reachable store unmarked', async () => {
+    const limiter = new RedisRateLimiter(redis.client);
+
+    for (let i = 0; i < WINDOW.limit; i++) {
+      await limiter.consume('login:a', WINDOW);
+    }
+
+    expect(await limiter.consume('login:a', WINDOW)).not.toHaveProperty('unavailable');
   });
 });

@@ -1502,6 +1502,8 @@ export default {
         record: (entry) => svc.record(entry).then(() => undefined),
         recordInTransaction: (tx, entry) =>
           svc.recordInTransaction(tx, entry).then(() => undefined),
+        recordManyInTransaction: (tx, entries) =>
+          svc.recordManyInTransaction(tx, entries).then(() => undefined),
       };
     });
 

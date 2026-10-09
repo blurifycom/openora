@@ -45,9 +45,11 @@ function makeGuard({
   return { guard, events };
 }
 
-async function seedUser(role: string) {
+async function seedUser(role: string, { isActive = true }: { isActive?: boolean } = {}) {
   const id = randomUUID();
-  await db.drizzle.db.execute(sql`INSERT INTO "user" (id, role) VALUES (${id}, ${role})`);
+  await db.drizzle.db.execute(
+    sql`INSERT INTO "user" (id, role, is_active) VALUES (${id}, ${role}, ${isActive})`,
+  );
   return id;
 }
 
@@ -57,7 +59,9 @@ beforeAll(async () => {
       process.env['DATABASE_URL'] = databaseUrl;
     },
   ]);
-  await db.drizzle.db.execute(sql`CREATE TABLE "user" (id uuid PRIMARY KEY, role text NOT NULL)`);
+  await db.drizzle.db.execute(
+    sql`CREATE TABLE "user" (id uuid PRIMARY KEY, role text NOT NULL, is_active boolean NOT NULL DEFAULT true)`,
+  );
 });
 
 afterAll(async () => {
@@ -323,6 +327,138 @@ describe('AdminGuard.assertSuperAdmin (real PG)', () => {
         expect.objectContaining(expected),
       );
     });
+  });
+});
+
+describe('AdminGuard.assertUser (real PG)', () => {
+  it('returns the caller for an admin holding the grant, with no client metadata', async () => {
+    const userId = await seedUser('admin');
+    const { guard, events } = makeGuard();
+
+    await expect(guard.assertUser(userId, 'agent-proposal', 'approve')).resolves.toEqual({
+      userId,
+      role: 'admin',
+      ip: null,
+      userAgent: null,
+    });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('denies a user without the grant and emits the same denial event as assert', async () => {
+    const userId = await seedUser('admin');
+    const { guard, events } = makeGuard({ grants: [{ resource: 'player', action: 'view' }] });
+
+    await expect(guard.assertUser(userId, 'agent-proposal', 'approve')).rejects.toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN' }),
+    );
+    expect(events.emit).toHaveBeenCalledWith('identity.user.unauthorized_access', {
+      userId,
+      playerId: null,
+      resource: 'agent-proposal',
+      action: 'approve',
+      ip: null,
+      userAgent: null,
+      role: 'admin',
+    });
+  });
+
+  it('denies an id with no user row', async () => {
+    const userId = randomUUID();
+    const { guard, events } = makeGuard();
+
+    await expect(guard.assertUser(userId, 'agent', 'run')).rejects.toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN' }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({ userId, resource: 'agent', action: 'run', role: undefined }),
+    );
+  });
+
+  it('enforces 2FA enrolment but runs no session-integrity check, having no session', async () => {
+    const userId = await seedUser('admin');
+    const securityPolicy = mock<AdminSecurityPolicy>({
+      assertEnrolled: vi.fn(async () => undefined),
+      assertSessionIntact: vi.fn(async () => undefined),
+    });
+    const { guard } = makeGuard({ securityPolicy });
+
+    await guard.assertUser(userId, 'agent-proposal', 'view');
+
+    expect(securityPolicy.assertEnrolled).toHaveBeenCalledWith({
+      userId,
+      sessionId: null,
+      ip: null,
+      userAgent: null,
+    });
+    expect(securityPolicy.assertSessionIntact).not.toHaveBeenCalled();
+  });
+
+  it('propagates a refused enrolment check', async () => {
+    const userId = await seedUser('admin');
+    const securityPolicy = mock<AdminSecurityPolicy>({
+      assertEnrolled: vi.fn(async () => {
+        throw new Error('two-factor enrolment required');
+      }),
+      assertSessionIntact: vi.fn(async () => undefined),
+    });
+    const { guard } = makeGuard({ securityPolicy });
+
+    await expect(guard.assertUser(userId, 'agent-proposal', 'view')).rejects.toThrow(
+      /two-factor enrolment required/,
+    );
+  });
+
+  it('denies a deactivated admin who still holds the grant, and emits the denial event', async () => {
+    const userId = await seedUser('admin', { isActive: false });
+    const { guard, events } = makeGuard();
+
+    await expect(guard.assertUser(userId, 'mcp-access', 'use')).rejects.toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN' }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({ userId, resource: 'mcp-access', action: 'use', role: 'admin' }),
+    );
+  });
+});
+
+describe('AdminGuard.filterGranted (real PG)', () => {
+  const requirements = [
+    { resource: 'player', action: 'view' },
+    { resource: 'withdrawal', action: 'approve' },
+    { resource: 'mcp-access', action: 'use' },
+  ] as const;
+
+  it('keeps what the static role grants', async () => {
+    const userId = await seedUser('support');
+    const { guard, events } = makeGuard();
+
+    await expect(guard.filterGranted(userId, requirements)).resolves.toEqual([
+      { resource: 'player', action: 'view' },
+    ]);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('keeps what the DB grants, over the static role', async () => {
+    const userId = await seedUser('admin');
+    const { guard } = makeGuard({ grants: [{ resource: 'mcp-access', action: 'use' }] });
+
+    await expect(guard.filterGranted(userId, requirements)).resolves.toEqual([
+      { resource: 'mcp-access', action: 'use' },
+    ]);
+  });
+
+  it.each([
+    ['a deactivated admin', () => seedUser('admin', { isActive: false })],
+    ['a role with no static entry', () => seedUser('player')],
+    ['an id with no user row', async () => randomUUID()],
+  ])('keeps nothing for %s and emits nothing', async (_label, seed) => {
+    const userId = await seed();
+    const { guard, events } = makeGuard();
+
+    await expect(guard.filterGranted(userId, requirements)).resolves.toEqual([]);
+    expect(events.emit).not.toHaveBeenCalled();
   });
 });
 

@@ -61,6 +61,7 @@ type HoldImplementation = ActionTypeImplementation<typeof holdPayload>;
 
 const SQL_ERROR = 'SELECT email FROM players WHERE id=991';
 const PLAYER_EMAIL = 'player@example.com';
+const CLIENT_META = { ip: '203.0.113.7', userAgent: 'mcp-client/1.0' };
 const REQUEST_BODY_NESTING = 400_000;
 
 const adminId = randomUUID();
@@ -260,6 +261,34 @@ describe('McpKernel.invokeTool', () => {
       tokenId,
     });
     expect(audit?.record.mock.calls[0]?.[0].after).not.toHaveProperty('playerPseudonym');
+  });
+
+  it('records the client address and agent the run carries', async () => {
+    const { kernel, audit } = setup();
+
+    await kernel.invokeTool(
+      'player.summary',
+      { playerId, limit: 5 },
+      runContext({ clientMeta: CLIENT_META }),
+    );
+
+    expect(audit?.record.mock.calls[0]?.[0]).toMatchObject(CLIENT_META);
+  });
+
+  it('drops the keys the tool marks as personal when the run asks, hashing only what it returns', async () => {
+    const { kernel, audit } = setup();
+
+    const result = await kernel.invokeTool(
+      'player.summary',
+      { playerId, limit: 5 },
+      runContext({ dropPersonal: true }),
+    );
+
+    expect(result).toEqual({ ok: true, output: { balance: '12.50' } });
+    expect(audit?.record.mock.calls[0]?.[0].after).toMatchObject({
+      personalDropped: true,
+      outputHash: sha256({ balance: '12.50' }),
+    });
   });
 
   it('audits a call whose input nests deeper than the call stack reaches', async () => {
@@ -679,9 +708,13 @@ describe('McpKernel catalog', () => {
           type: 'object',
           properties: expect.objectContaining({ limit: expect.objectContaining({ maximum: 50 }) }),
         }),
-        outputJsonSchema: expect.objectContaining({ type: 'object' }),
+        outputJsonSchema: expect.objectContaining({
+          type: 'object',
+          required: ['playerId', 'balance'],
+        }),
       }),
     ]);
+    expect(kernel.listTools()[0]?.outputJsonSchema).not.toHaveProperty('properties.email');
     expect(kernel.listActionTypes()).toEqual([
       expect.objectContaining({
         id: 'hold_withdrawal',

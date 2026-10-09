@@ -9,6 +9,7 @@ import {
   PLAY_ELIGIBILITY,
   MAIL_DISPATCH,
   MAIL_RECIPIENT_DIRECTORY,
+  MCP_TOKEN_REVOCATION,
   GEO_CHECK_COMMANDS,
   PLAYER_PROVISIONING,
   IDENTITY_OPTIONS,
@@ -61,6 +62,19 @@ function adminSecurityConfig(c: IdentityContainer) {
   return platformConfig?.adminSecurity ?? AdminSecurityConfigSchema.parse({});
 }
 
+function mcpTokenRevocation(c: IdentityContainer) {
+  return c.has(MCP_TOKEN_REVOCATION) ? c.get(MCP_TOKEN_REVOCATION) : undefined;
+}
+
+function makeSessionService(c: IdentityContainer) {
+  return new SessionService({
+    drizzle: c.get(DRIZZLE),
+    events: c.get(EVENT_BUS),
+    identityReader: c.get(IDENTITY_READER),
+    mcpTokens: mcpTokenRevocation(c),
+  });
+}
+
 function makeTrustedDevices(c: IdentityContainer) {
   return new TrustedDeviceService({
     drizzle: c.get(DRIZZLE),
@@ -85,11 +99,7 @@ function makeAdminSecurity(c: IdentityContainer) {
     drizzle: c.get(DRIZZLE),
     auth: c.get(AUTH_SESSION).auth,
     events: c.get(EVENT_BUS),
-    sessions: new SessionService({
-      drizzle: c.get(DRIZZLE),
-      events: c.get(EVENT_BUS),
-      identityReader,
-    }),
+    sessions: makeSessionService(c),
     trustedDevices: makeTrustedDevices(c),
     identityReader,
     config: adminSecurityConfig(c),
@@ -164,7 +174,7 @@ export default {
     // The back-office depends on this port, not on the identity schema directly.
     ctx.provide(
       ADMIN_USER_DIRECTORY,
-      (c) => new DrizzleAdminUserDirectory(c.get(DRIZZLE), c.get(EVENT_BUS)),
+      (c) => new DrizzleAdminUserDirectory(c.get(DRIZZLE), c.get(EVENT_BUS), mcpTokenRevocation(c)),
     );
     ctx.provide(MAIL_RECIPIENT_DIRECTORY, (c) => new DrizzleMailRecipientDirectory(c.get(DRIZZLE)));
     // Read-only session queries for cross-module consumers (eg tag inactive evaluation).
@@ -172,15 +182,7 @@ export default {
     // RG login-block writer. compliance drives it through the port, never the schema.
     ctx.provide(
       LOGIN_ENFORCEMENT,
-      (c) =>
-        new LoginEnforcementService(
-          c.get(DRIZZLE),
-          new SessionService({
-            drizzle: c.get(DRIZZLE),
-            events: c.get(EVENT_BUS),
-            identityReader: c.get(IDENTITY_READER),
-          }),
-        ),
+      (c) => new LoginEnforcementService(c.get(DRIZZLE), makeSessionService(c)),
     );
     // Per-player "auto-logout when inactive". The request middleware resolves this on
     // every authenticated request; leaving it unbound turns the idle check off entirely.
@@ -203,22 +205,14 @@ export default {
     ctx.provide(ADMIN_SECURITY_POLICY, (c) => resolveAdminSecurity(c));
     ctx.provide(USER_COMMANDS, (c) => new DrizzleUserCommands(c.get(DRIZZLE)));
     ctx.provide(SESSION_COMMANDS, (c) => {
-      const sessionSvc = new SessionService({
-        drizzle: c.get(DRIZZLE),
-        events: c.get(EVENT_BUS),
-        identityReader: c.get(IDENTITY_READER),
-      });
+      const sessionSvc = makeSessionService(c);
       return {
         revokeAll: (userId, actorId) => sessionSvc.revokeAllSessions(userId, actorId),
       };
     });
     ctx.routers.add('identity', (c) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
-      const sessions = new SessionService({
-        drizzle: c.get(DRIZZLE),
-        events: c.get(EVENT_BUS),
-        identityReader: c.get(IDENTITY_READER),
-      });
+      const sessions = makeSessionService(c);
       return createIdentityRouter(
         new IdentityService({
           drizzle: c.get(DRIZZLE),

@@ -50,7 +50,19 @@ export const adminStatement = {
   agent: ['view', 'create', 'update', 'publish', 'run'] as const,
   'agent-proposal': ['view', 'approve', 'reject'] as const,
   'agent-config': ['view', 'update'] as const,
+  'mcp-access': ['use'] as const,
+  'mcp-token': ['view', 'revoke'] as const,
 } as const;
 
 export type AdminResource = keyof typeof adminStatement;
 export type AdminActionOf<R extends AdminResource> = (typeof adminStatement)[R][number];
+
+export const MCP_TOKEN_REVOKE_REASONS = [
+  'manual',
+  'admin_disabled',
+  'admin_role_removed',
+  'sessions_revoked',
+  'revoked_all',
+] as const;
+export const McpTokenRevokeReasonSchema = z.enum(MCP_TOKEN_REVOKE_REASONS);
+export type McpTokenRevokeReason = z.infer<typeof McpTokenRevokeReasonSchema>;

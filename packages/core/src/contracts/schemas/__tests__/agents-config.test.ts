@@ -82,6 +82,16 @@ describe('PlatformConfig.agents', () => {
       retention: { runDays: 30, proposalDays: 365 },
       modelGateways: ['openrouter'],
       models: [],
+      mcp: {
+        enabled: false,
+        path: '/mcp',
+        personalFields: 'drop',
+        tokenTtlDays: { default: 30, max: 90 },
+        rateLimit: { perMinute: 60, perDay: 2_000, perIpPerMinute: 300 },
+        tokenIssuance: { maxActivePerAdmin: 5, perHour: 10 },
+        allowedOrigins: [],
+        allowedHosts: [],
+      },
     });
   });
 
@@ -91,5 +101,40 @@ describe('PlatformConfig.agents', () => {
         agents: { models: [{ id: 'anthropic/claude', stepTimeoutMs: 30_000, capabilities }] },
       }),
     ).toThrow(/agents\.models\.0\.id: must be a <gateway>\/<vendor>\/<model> id/);
+  });
+});
+
+describe('AgentsConfigSchema mcp transport', () => {
+  const mcpIssuePaths = (mcp: unknown) => issuePaths({ mcp });
+
+  it('accepts a bound transport', () => {
+    expect(
+      mcpIssuePaths({
+        enabled: true,
+        path: '/agents/mcp',
+        allowedHosts: ['backoffice.example.com'],
+        allowedOrigins: ['https://backoffice.example.com'],
+      }),
+    ).toEqual([]);
+  });
+
+  it('lowercases an allowed host', () => {
+    const parsed = AgentsConfigSchema.parse({ mcp: { allowedHosts: ['BackOffice.Example.com'] } });
+    expect(parsed.mcp.allowedHosts).toEqual(['backoffice.example.com']);
+  });
+
+  it.each([
+    [{ tokenTtlDays: { default: 91 } }, 'mcp.tokenTtlDays.default'],
+    [{ tokenTtlDays: { max: 366 } }, 'mcp.tokenTtlDays.max'],
+    [{ rateLimit: { perMinute: 3_000 } }, 'mcp.rateLimit.perMinute'],
+    [{ path: 'mcp' }, 'mcp.path'],
+    [{ path: '/MCP' }, 'mcp.path'],
+    [{ allowedOrigins: ['https://backoffice.example.com/'] }, 'mcp.allowedOrigins.0'],
+    [{ allowedHosts: ['backoffice.example.com:8443'] }, 'mcp.allowedHosts.0'],
+    [{ personalFields: 'mask' }, 'mcp.personalFields'],
+    [{ enabled: true }, 'mcp.allowedHosts'],
+    [{ tokenIssuance: { maxActivePerAdmin: 51 } }, 'mcp.tokenIssuance.maxActivePerAdmin'],
+  ])('rejects %j at %s', (mcp, path) => {
+    expect(mcpIssuePaths(mcp)).toEqual([path]);
   });
 });

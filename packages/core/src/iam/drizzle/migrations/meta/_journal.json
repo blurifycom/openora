@@ -8,6 +8,20 @@
       "when": 1783555225068,
       "tag": "0000_peaceful_thor",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791286759105,
+      "tag": "0001_lethal_hiroim",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791365938800,
+      "tag": "0002_aspiring_red_ghost",
+      "breakpoints": true
     }
   ]
 }

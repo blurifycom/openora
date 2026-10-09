@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql, eq } from 'drizzle-orm';
-import { makeIdentityReader, mock, NO_CLIENT_META, makeEventBus } from '../../testing/mock.js';
+import {
+  makeAuditWriter,
+  makeIdentityReader,
+  makeRateLimiter,
+  mock,
+  NO_CLIENT_META,
+  makeEventBus,
+} from '../../testing/mock.js';
 import {
   statement,
   findOneOrThrow,
@@ -9,11 +16,13 @@ import {
   RedisRateLimiter,
   type ResourceName,
 } from '@openora/core/server';
-import type {
-  MailDispatchPort,
-  RateLimiterAdapter,
-  RateLimitKey,
-  SessionCommands,
+import {
+  McpTransportConfigSchema,
+  type MailDispatchPort,
+  type RateLimiterAdapter,
+  type RateLimitKey,
+  type SessionCommands,
+  type User,
 } from '@openora/core/contracts';
 import {
   createTestDb,
@@ -30,6 +39,7 @@ import {
   adminRolePermission,
   adminRoleAssignment,
   adminInvitation,
+  mcpToken,
 } from '../schema/index.js';
 import {
   IamService,
@@ -43,6 +53,8 @@ import {
   AdminUserNotFoundError,
   NotAnAdminUserError,
 } from '../service/iam.service.js';
+import { McpTokenService } from '../service/mcp-token.service.js';
+import { seedRoles } from '../seed/seed-default-roles.js';
 
 let db: TestDb;
 let redis: TestRedis;
@@ -53,6 +65,19 @@ const makeMailDispatch = () =>
     toAddress: vi.fn().mockResolvedValue(undefined),
   });
 const identityReader = makeIdentityReader();
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function makeMcpTokens() {
+  const audit = makeAuditWriter();
+  const mcpTokens = new McpTokenService({
+    drizzle: db.drizzle,
+    audit,
+    events: makeEventBus(),
+    rateLimiter: makeRateLimiter(),
+    config: McpTransportConfigSchema.parse({}),
+  });
+  return { mcpTokens, audit };
+}
 
 function makeIamService(
   drizzle: typeof db.drizzle,
@@ -61,14 +86,27 @@ function makeIamService(
   sessionCommands?: SessionCommands,
   rateLimiter?: RateLimiterAdapter<RateLimitKey>,
 ) {
-  return new IamService(
+  return new IamService({
     drizzle,
     events,
     mailDispatch,
     identityReader,
+    mcpTokens: makeMcpTokens().mcpTokens,
     sessionCommands,
     rateLimiter,
-  );
+  });
+}
+
+function makeIamServiceWithTokens() {
+  const { mcpTokens, audit } = makeMcpTokens();
+  const svc = new IamService({
+    drizzle: db.drizzle,
+    events: makeEventBus(),
+    mailDispatch: makeMailDispatch(),
+    identityReader,
+    mcpTokens,
+  });
+  return { svc, audit };
 }
 
 // A staff user holds nothing without an assignment - seedSuperCaller() gives this one a real one.
@@ -125,7 +163,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${adminRole}, ${adminRolePermission}, ${adminRoleAssignment}, ${adminInvitation}, ${user} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${adminRole}, ${adminRolePermission}, ${adminRoleAssignment}, ${adminInvitation}, ${mcpToken}, ${user} RESTART IDENTITY CASCADE`,
   );
   await redis.flush();
 });
@@ -834,5 +872,271 @@ describe('IamService.forceLogout', () => {
     const result = await svc.forceLogout({ userId: targetUserId, caller: ADMIN_CALLER });
     expect(result).toEqual({ success: true });
     expect(sessionCommands.revokeAll).toHaveBeenCalledWith(targetUserId, ADMIN_CALLER.userId);
+  });
+});
+
+describe('IamService revokes MCP tokens when an admin loses MCP access (real PG)', () => {
+  // Reuses ADMIN_CALLER so seedSuperCaller() gives it the assignment these
+  // super-admin-only calls now need (a resolver-bound caller holds nothing without one).
+  const CALLER = {
+    userId: ADMIN_CALLER.userId,
+    role: 'admin',
+    ip: '203.0.113.7',
+    userAgent: 'backoffice/1.0',
+  };
+
+  beforeEach(seedSuperCaller);
+
+  const seedAccount = async (role = 'admin') => (await seedUser(db, { name: 'A', role })).id;
+
+  async function seedRoleWith(grants: Partial<Record<ResourceName, 'read' | 'read_write'>>) {
+    const role = await seedRole();
+    for (const [resource, level] of Object.entries(grants)) {
+      await seedPermission(role.id, resource, level);
+    }
+    return role.id;
+  }
+
+  async function seedActiveToken(adminUserId: User['id']) {
+    const [row] = await db.drizzle.db
+      .insert(mcpToken)
+      .values({
+        adminUserId,
+        label: 'Laptop',
+        tokenHash: randomUUID(),
+        tokenPrefix: 'ora_mcp_test',
+        expiresAt: new Date(Date.now() + DAY_MS),
+      })
+      .returning({ id: mcpToken.id });
+    if (!row) {
+      throw new Error('seedActiveToken: insert returned no row');
+    }
+    return row.id;
+  }
+
+  async function revocationOf(tokenId: string) {
+    const [row] = await db.drizzle.db
+      .select({
+        revokedAt: mcpToken.revokedAt,
+        revokedBy: mcpToken.revokedBy,
+        revokeReason: mcpToken.revokeReason,
+      })
+      .from(mcpToken)
+      .where(eq(mcpToken.id, tokenId));
+    return row;
+  }
+
+  const LOST = {
+    revokedAt: expect.any(Date),
+    revokedBy: CALLER.userId,
+    revokeReason: 'admin_role_removed',
+  };
+  const KEPT = { revokedAt: null, revokedBy: null, revokeReason: null };
+
+  describe('setRolePermissions', () => {
+    it("revokes, in the caller's name, a holder whose only role loses mcp-access", async () => {
+      const { svc, audit } = makeIamServiceWithTokens();
+      const roleId = await seedRoleWith({ 'mcp-access': 'read_write', player: 'read' });
+      const holder = await seedAccount();
+      await seedAssignment(holder, roleId);
+      const tokenId = await seedActiveToken(holder);
+
+      await svc.setRolePermissions({
+        roleId,
+        grants: [{ resource: 'player', level: 'read' }],
+        caller: CALLER,
+      });
+
+      expect(await revocationOf(tokenId)).toEqual(LOST);
+      expect(audit.recordManyInTransaction).toHaveBeenCalledWith(expect.anything(), [
+        expect.objectContaining({
+          action: 'iam.mcp_token.revoked',
+          resourceId: tokenId,
+          actorId: CALLER.userId,
+          actorType: 'admin',
+          ip: CALLER.ip,
+          userAgent: CALLER.userAgent,
+        }),
+      ]);
+    });
+
+    it('leaves a holder who keeps mcp-access, and an admin outside the role', async () => {
+      const { svc } = makeIamServiceWithTokens();
+      const roleId = await seedRoleWith({ 'mcp-access': 'read_write' });
+      const holder = await seedAccount();
+      const outsider = await seedAccount();
+      await seedAssignment(holder, roleId);
+      const holdersToken = await seedActiveToken(holder);
+      const outsidersToken = await seedActiveToken(outsider);
+
+      await svc.setRolePermissions({
+        roleId,
+        grants: [
+          { resource: 'mcp-access', level: 'read_write' },
+          { resource: 'player', level: 'read' },
+        ],
+        caller: CALLER,
+      });
+
+      expect(await revocationOf(holdersToken)).toEqual(KEPT);
+      expect(await revocationOf(outsidersToken)).toEqual(KEPT);
+    });
+
+    it('leaves a holder who also holds a super-admin role', async () => {
+      const { svc } = makeIamServiceWithTokens();
+      const roleId = await seedRoleWith({ 'mcp-access': 'read_write' });
+      const superRole = await seedRole({ isSuperAdmin: true, isSystem: true });
+      const holder = await seedAccount();
+      await seedAssignment(holder, roleId);
+      await seedAssignment(holder, superRole.id);
+      const tokenId = await seedActiveToken(holder);
+
+      await svc.setRolePermissions({
+        roleId,
+        grants: [{ resource: 'player', level: 'read' }],
+        caller: CALLER,
+      });
+
+      expect(await revocationOf(tokenId)).toEqual(KEPT);
+    });
+
+    it('rolls the permission change back when the revocation cannot be audited', async () => {
+      const { svc, audit } = makeIamServiceWithTokens();
+      audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
+      const roleId = await seedRoleWith({ 'mcp-access': 'read_write' });
+      const holder = await seedAccount();
+      await seedAssignment(holder, roleId);
+      const tokenId = await seedActiveToken(holder);
+
+      await expect(
+        svc.setRolePermissions({
+          roleId,
+          grants: [{ resource: 'player', level: 'read' }],
+          caller: CALLER,
+        }),
+      ).rejects.toThrow('audit store unavailable');
+
+      expect(await revocationOf(tokenId)).toEqual(KEPT);
+      expect((await svc.getRole(roleId)).permissions).toEqual([
+        { resource: 'mcp-access', level: 'read_write' },
+      ]);
+    });
+  });
+
+  describe('unassignRole', () => {
+    it('revokes when the roles left behind lack mcp-access', async () => {
+      const { svc } = makeIamServiceWithTokens();
+      const mcpRole = await seedRoleWith({ 'mcp-access': 'read_write' });
+      const playerRole = await seedRoleWith({ player: 'read' });
+      const holder = await seedAccount();
+      await seedAssignment(holder, mcpRole);
+      await seedAssignment(holder, playerRole);
+      const tokenId = await seedActiveToken(holder);
+
+      await svc.unassignRole({ userId: holder, roleId: mcpRole, caller: CALLER });
+
+      expect(await revocationOf(tokenId)).toEqual(LOST);
+    });
+
+    it('revokes when the last role goes, static admin role or not', async () => {
+      const { svc } = makeIamServiceWithTokens();
+      const playerRole = await seedRoleWith({ player: 'read' });
+      const holder = await seedAccount('admin');
+      await seedAssignment(holder, playerRole);
+      const tokenId = await seedActiveToken(holder);
+
+      await svc.unassignRole({ userId: holder, roleId: playerRole, caller: CALLER });
+
+      expect(await revocationOf(tokenId)).toEqual(LOST);
+    });
+
+    it('revokes when the last role goes and the static support role, without MCP, takes over', async () => {
+      const { svc } = makeIamServiceWithTokens();
+      const mcpRole = await seedRoleWith({ 'mcp-access': 'read_write' });
+      const holder = await seedAccount('support');
+      await seedAssignment(holder, mcpRole);
+      const tokenId = await seedActiveToken(holder);
+
+      await svc.unassignRole({ userId: holder, roleId: mcpRole, caller: CALLER });
+
+      expect(await revocationOf(tokenId)).toEqual(LOST);
+    });
+
+    it('revokes nothing when there was nothing to unassign', async () => {
+      const { svc } = makeIamServiceWithTokens();
+      const mcpRole = await seedRoleWith({ 'mcp-access': 'read_write' });
+      const holder = await seedAccount('support');
+      const tokenId = await seedActiveToken(holder);
+
+      await svc.unassignRole({ userId: holder, roleId: mcpRole, caller: CALLER });
+
+      expect(await revocationOf(tokenId)).toEqual(KEPT);
+    });
+  });
+
+  describe('deleteRole', () => {
+    it('revokes every holder left without mcp-access, assigned or not', async () => {
+      const { svc } = makeIamServiceWithTokens();
+      const doomed = await seedRoleWith({ 'mcp-access': 'read_write' });
+      const playerRole = await seedRoleWith({ player: 'read' });
+      const stillAssigned = await seedAccount();
+      const backToStatic = await seedAccount('admin');
+      await seedAssignment(stillAssigned, doomed);
+      await seedAssignment(stillAssigned, playerRole);
+      await seedAssignment(backToStatic, doomed);
+      const stillAssignedToken = await seedActiveToken(stillAssigned);
+      const unassignedToken = await seedActiveToken(backToStatic);
+
+      await svc.deleteRole({ roleId: doomed, caller: CALLER });
+
+      expect(await revocationOf(stillAssignedToken)).toEqual(LOST);
+      expect(await revocationOf(unassignedToken)).toEqual(LOST);
+    });
+  });
+
+  describe('assignRole', () => {
+    it("revokes when a first role without mcp-access replaces the static admin role's grants", async () => {
+      const { svc } = makeIamServiceWithTokens();
+      const playerRole = await seedRoleWith({ player: 'read' });
+      const admin = await seedAccount('admin');
+      const tokenId = await seedActiveToken(admin);
+
+      await svc.assignRole({ userId: admin, roleId: playerRole, caller: CALLER });
+
+      expect(await revocationOf(tokenId)).toEqual(LOST);
+    });
+
+    it('leaves the tokens when the assigned role grants mcp-access', async () => {
+      const { svc } = makeIamServiceWithTokens();
+      const mcpRole = await seedRoleWith({ 'mcp-access': 'read_write' });
+      const admin = await seedAccount('admin');
+      const tokenId = await seedActiveToken(admin);
+
+      await svc.assignRole({ userId: admin, roleId: mcpRole, caller: CALLER });
+
+      expect(await revocationOf(tokenId)).toEqual(KEPT);
+    });
+  });
+});
+
+describe('seeded admin roles (real PG)', () => {
+  it('lets a holder of the predefined admin role use MCP and oversee every token', async () => {
+    await seedRoles(db.drizzle.db);
+    const [adminRoleRow] = await db.drizzle.db
+      .select({ id: adminRole.id })
+      .from(adminRole)
+      .where(eq(adminRole.key, 'admin'));
+    const holder = randomUUID();
+    await seedAssignment(holder, adminRoleRow?.id ?? randomUUID());
+
+    const grants = await new DbAdminPermissionResolver(db.drizzle).getGrants(holder);
+
+    expect(grants).toEqual(
+      expect.arrayContaining([
+        { resource: 'mcp-access', action: 'use' },
+        { resource: 'mcp-token', action: 'view' },
+        { resource: 'mcp-token', action: 'revoke' },
+      ]),
+    );
   });
 });

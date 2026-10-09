@@ -4,6 +4,10 @@ The `oss-dev` MCP server gives any AI agent read-only inspection of the platform
 schemas, modules, events, and Drizzle tables - plus write tools to scaffold and verify. It
 works with any MCP-compatible editor.
 
+This page is about that development server, for coding agents working on this repository. To
+query a running platform's data from an admin's MCP client, see
+[Connect an MCP client to the platform](./mcp-transport.md).
+
 ## Zero-config setup: `pnpm setup:mcp`
 
 The fastest way to wire MCP for Claude Code. Run it right after `pnpm install`:

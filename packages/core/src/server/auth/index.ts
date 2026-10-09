@@ -4,7 +4,7 @@ export { AdminGuard, ADMIN_GUARD } from './admin-guard.js';
 export type { AdminCaller } from './admin-guard.js';
 export { SessionResolver, AUTH_SESSION } from './session-resolver.js';
 export { signSessionCookie, type SessionCookieConfig } from './sign-session-cookie.js';
-export { ac, roles, statement } from './permissions.js';
+export { ac, roles, statement, isRoleName, holdsGrant } from './permissions.js';
 export type { RoleName, ResourceName, ActionOf } from './permissions.js';
 export {
   PERMISSION_LEVELS,
