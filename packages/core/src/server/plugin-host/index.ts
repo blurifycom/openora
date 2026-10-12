@@ -9,6 +9,7 @@ export type {
   RegisteredMcpTool,
   RegisteredActionType,
   EventHandler,
+  RegisteredEventHandler,
   TypedContainer,
 } from './define-plugin.js';
 export { ModuleRegistryImpl } from './module-registry.js';

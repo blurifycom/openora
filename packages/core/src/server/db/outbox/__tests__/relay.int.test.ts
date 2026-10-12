@@ -5,7 +5,8 @@ import type { MessageBrokerAdapter, EventEnvelope } from '@openora/core/contract
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate } from '@openora/core/server/migrate';
 import { OutboxRelay } from '../relay.js';
-import { eventOutbox } from '../schema.js';
+import { eventOutbox, processedEvents } from '../schema.js';
+import { EVENT_RETENTION_MS } from '../../../kernel/event-bus.js';
 
 let db: TestDb;
 
@@ -47,7 +48,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${eventOutbox} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${eventOutbox}, ${processedEvents} RESTART IDENTITY CASCADE`,
+  );
 });
 
 describe('OutboxRelay.drainOnce (real PG)', () => {
@@ -86,7 +89,7 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
     expect(broker.publish).not.toHaveBeenCalled();
   });
 
-  it('leaves the row pending when broker.publish throws', async () => {
+  it('leaves the row pending and its lease released when broker.publish throws', async () => {
     const row = await seedRow();
     const broker: MessageBrokerAdapter = {
       publish: vi.fn(async () => {
@@ -95,18 +98,22 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
       subscribe: () => () => {},
       close: async () => {},
     };
-    const relay = new OutboxRelay(db.drizzle.db, broker);
+    const errors: unknown[] = [];
+    const relay = new OutboxRelay(db.drizzle.db, broker, { onError: (err) => errors.push(err) });
 
-    await expect(relay.drainOnce()).rejects.toThrow('broker unreachable');
+    await expect(relay.drainOnce()).resolves.toBe(0);
 
     const [after] = await db.drizzle.db
       .select()
       .from(eventOutbox)
       .where(eq(eventOutbox.eventId, row.eventId));
     expect(after?.publishedAt).toBeNull();
+    expect(after?.claimedAt).toBeNull();
+    expect(after?.attempts).toBe(1);
+    expect(errors[0]).toMatchObject({ message: 'broker unreachable' });
   });
 
-  it('keeps rows published before a mid-batch publish failure, retrying only the failing row', async () => {
+  it('does not let a failing row block the rest of the batch', async () => {
     const a = await seedRow({ occurredAt: new Date('2026-01-01T00:00:00.000Z') });
     const b = await seedRow({ occurredAt: new Date('2026-01-01T00:00:01.000Z') });
     const c = await seedRow({ occurredAt: new Date('2026-01-01T00:00:02.000Z') });
@@ -115,25 +122,85 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
         throw new Error('broker unreachable');
       }
     });
-    const relay = new OutboxRelay(db.drizzle.db, broker);
+    const relay = new OutboxRelay(db.drizzle.db, broker, { onError: () => undefined });
 
-    await expect(relay.drainOnce()).rejects.toThrow('broker unreachable');
+    await expect(relay.drainOnce()).resolves.toBe(2);
 
     const afterFailure = await rowsById();
     expect(afterFailure.get(a.eventId)?.publishedAt).not.toBeNull();
     expect(afterFailure.get(b.eventId)?.publishedAt).toBeNull();
-    expect(afterFailure.get(c.eventId)?.publishedAt).toBeNull();
+    expect(afterFailure.get(c.eventId)?.publishedAt).not.toBeNull();
 
     const publishSpy = broker.publish as ReturnType<typeof vi.fn>;
     publishSpy.mockClear();
     publishSpy.mockImplementation(async () => undefined);
     const n = await relay.drainOnce();
 
-    expect(n).toBe(2);
-    expect(publishSpy).toHaveBeenCalledTimes(2);
-    expect(publishSpy.mock.calls.map((call) => call[0].eventId)).toEqual([b.eventId, c.eventId]);
+    expect(n).toBe(1);
+    expect(publishSpy.mock.calls.map((call) => call[0].eventId)).toEqual([b.eventId]);
     const afterRetry = await rowsById();
     expect([...afterRetry.values()].every((r) => r.publishedAt !== null)).toBe(true);
+  });
+
+  it('skips a row claimed by another relay until its lease expires', async () => {
+    const fresh = await seedRow({ claimedAt: new Date() });
+    const stale = await seedRow({ claimedAt: new Date(Date.now() - 60_000) });
+    const broker = brokerThat();
+    const relay = new OutboxRelay(db.drizzle.db, broker);
+
+    const n = await relay.drainOnce();
+
+    expect(n).toBe(1);
+    expect((broker.publish as ReturnType<typeof vi.fn>).mock.calls[0][0].eventId).toBe(
+      stale.eventId,
+    );
+    expect((await rowsById()).get(fresh.eventId)?.publishedAt).toBeNull();
+  });
+
+  it('publishes each row exactly once across two concurrent relays', async () => {
+    const seeded = await Promise.all(Array.from({ length: 50 }, () => seedRow()));
+    const published: string[] = [];
+    // A slow publish holds each relay's claim open so the two drains overlap.
+    const slowBroker: MessageBrokerAdapter = {
+      publish: async (envelope) => {
+        await new Promise((r) => setTimeout(r, 2));
+        published.push(envelope.eventId);
+      },
+      subscribe: () => () => {},
+      close: async () => {},
+    };
+    const relayA = new OutboxRelay(db.drizzle.db, slowBroker, { batchSize: 30 });
+    const relayB = new OutboxRelay(db.drizzle.db, slowBroker, { batchSize: 30 });
+
+    const counts: number[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      counts.push(...(await Promise.all([relayA.drainOnce(), relayB.drainOnce()])));
+    }
+
+    expect(counts.reduce((sum, n) => sum + n, 0)).toBe(seeded.length);
+    expect(new Set(published).size).toBe(published.length);
+    expect(new Set(published)).toEqual(new Set(seeded.map((r) => r.eventId)));
+  });
+
+  it('prunes published rows and processed_events past retention, keeping the rest', async () => {
+    const longAgo = new Date(Date.now() - EVENT_RETENTION_MS - 60_000);
+    const oldPublished = await seedRow({ publishedAt: longAgo });
+    const recentPublished = await seedRow({ publishedAt: new Date() });
+    const oldPending = await seedRow({ occurredAt: longAgo });
+    await db.drizzle.db.insert(processedEvents).values([
+      { eventId: randomUUID(), consumer: 'old', processedAt: longAgo },
+      { eventId: randomUUID(), consumer: 'recent' },
+    ]);
+    const relay = new OutboxRelay(db.drizzle.db, brokerThat());
+
+    await relay.drainOnce();
+
+    const remaining = await rowsById();
+    expect(remaining.has(oldPublished.eventId)).toBe(false);
+    expect(remaining.has(recentPublished.eventId)).toBe(true);
+    expect(remaining.get(oldPending.eventId)?.publishedAt).not.toBeNull();
+    const consumers = await db.drizzle.db.select().from(processedEvents);
+    expect(consumers.map((r) => r.consumer)).toEqual(['recent']);
   });
 });
 

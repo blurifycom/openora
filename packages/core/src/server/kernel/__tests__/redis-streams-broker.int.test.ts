@@ -1,14 +1,23 @@
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { RedisStreamsBroker } from '../redis-streams-broker.js';
+import { MAX_DELIVERIES, RedisStreamsBroker } from '../redis-streams-broker.js';
 import { createTestRedis, waitForConsumerGroup, type TestRedis } from '@openora/core/testing';
 import type { EventEnvelope } from '@openora/core/contracts';
 
 let redis: TestRedis;
 const brokers: RedisStreamsBroker[] = [];
 
-function makeBroker(serviceName: string): RedisStreamsBroker {
-  const broker = new RedisStreamsBroker(redis.client, { serviceName });
+// Reclaim fast so redelivery tests don't wait out the production idle window.
+const FAST_RECLAIM = { intervalMs: 20, minIdleMs: 10 };
+
+function makeBroker(
+  serviceName: string,
+  reclaim?: { intervalMs: number; minIdleMs: number },
+): RedisStreamsBroker {
+  const broker = new RedisStreamsBroker(redis.client, {
+    serviceName,
+    ...(reclaim ? { reclaim } : {}),
+  });
   brokers.push(broker);
   return broker;
 }
@@ -227,5 +236,68 @@ describe('RedisStreamsBroker', () => {
     await broker.publish(envelope);
 
     await vi.waitFor(() => expect(seen).toEqual([envelope]), { timeout: 5000 });
+  });
+
+  it('leaves a failed entry pending and redelivers it until the handler succeeds', async () => {
+    const broker = makeBroker('svc', FAST_RECLAIM);
+    const topic = uniqueTopic();
+    let attempts = 0;
+    broker.subscribe(topic, () => {
+      attempts += 1;
+      if (attempts < 3) {
+        throw new Error('transient');
+      }
+    });
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
+
+    await broker.publish(makeEnvelope(topic));
+
+    await vi.waitFor(() => expect(attempts).toBe(3), { timeout: 5000 });
+    await vi.waitFor(async () => {
+      const pending = await redis.client.xPending(streamOf(topic), 'svc');
+      expect(pending.pending).toBe(0);
+    });
+    expect(await redis.client.exists(`oss:dlq:${topic}`)).toBe(0);
+  });
+
+  it(`dead-letters an entry still failing after ${MAX_DELIVERIES} deliveries and ACKs it`, async () => {
+    const broker = makeBroker('svc', FAST_RECLAIM);
+    const topic = uniqueTopic();
+    let attempts = 0;
+    broker.subscribe(topic, () => {
+      attempts += 1;
+      throw new Error('poison');
+    });
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
+
+    const envelope = makeEnvelope(topic);
+    await broker.publish(envelope);
+
+    await vi.waitFor(async () => expect(await redis.client.xLen(`oss:dlq:${topic}`)).toBe(1), {
+      timeout: 5000,
+    });
+    expect(attempts).toBe(MAX_DELIVERIES);
+    const [dead] = await redis.client.xRange(`oss:dlq:${topic}`, '-', '+');
+    expect(JSON.parse(dead!.message['data']!)).toEqual(envelope);
+    expect(dead!.message).toMatchObject({
+      group: 'svc',
+      deliveries: String(MAX_DELIVERIES),
+      error: 'poison',
+    });
+    const pending = await redis.client.xPending(streamOf(topic), 'svc');
+    expect(pending.pending).toBe(0);
+  });
+
+  it('dead-letters an entry that is not valid JSON without calling handlers', async () => {
+    const broker = makeBroker('svc');
+    const topic = uniqueTopic();
+    const handler = vi.fn();
+    broker.subscribe(topic, handler);
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
+
+    await redis.client.xAdd(streamOf(topic), '*', { data: '{not json' });
+
+    await vi.waitFor(async () => expect(await redis.client.xLen(`oss:dlq:${topic}`)).toBe(1));
+    expect(handler).not.toHaveBeenCalled();
   });
 });

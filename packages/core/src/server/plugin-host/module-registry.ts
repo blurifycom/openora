@@ -18,6 +18,7 @@ import type {
   RouterFactory,
   TypedContainer,
   EventHandler,
+  RegisteredEventHandler,
 } from './define-plugin.js';
 import { assertValidActionType, assertValidMcpTool } from '../mcp/contract-validation.js';
 
@@ -25,7 +26,8 @@ const UNKNOWN_OWNER = 'unknown';
 
 export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistry<C> {
   private _routers = new Map<string, RouterFactory<C>>();
-  private _events = new Map<string, EventHandler[]>();
+  private _events = new Map<string, RegisteredEventHandler[]>();
+  private _consumerOrdinals = new Map<string, number>();
   private _jobs: WorkerRegistration<unknown>[] = [];
   private _mcpTools: McpToolDefinition[] = [];
   private _tools: RegisteredMcpTool<C>[] = [];
@@ -91,7 +93,10 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
   events = {
     on: (event: string, handler: EventHandler) => {
       const handlers = this._events.get(event) ?? [];
-      handlers.push(handler);
+      const consumer = `${this._owner}/${event}`;
+      const ordinal = this._consumerOrdinals.get(consumer) ?? 0;
+      this._consumerOrdinals.set(consumer, ordinal + 1);
+      handlers.push({ handler, consumer: ordinal === 0 ? consumer : `${consumer}#${ordinal}` });
       this._events.set(event, handlers);
     },
     getAll: () => this._events,

@@ -7,8 +7,14 @@ export {
   withRequestContext,
 } from './request-context.js';
 
-export type { EventBus, EventHandler } from './event-bus.js';
-export { EVENT_BUS, createEventBus } from './event-bus.js';
+export type {
+  EventBus,
+  EventBusDeps,
+  EventHandler,
+  ProcessedEventLog,
+  SubscribeHandlerOptions,
+} from './event-bus.js';
+export { EVENT_BUS, EVENT_RETENTION_MS, createEventBus } from './event-bus.js';
 
 export { BullMqJobQueue } from './bullmq-job-queue.js';
 export { makeRateLimitError, assertRateLimit } from './rate-limiter.js';
