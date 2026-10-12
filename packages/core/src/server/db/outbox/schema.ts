@@ -1,4 +1,15 @@
-import { pgTable, text, jsonb, integer, timestamp, index } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import {
+  pgTable,
+  text,
+  jsonb,
+  integer,
+  timestamp,
+  index,
+  boolean,
+  uuid,
+  check,
+} from 'drizzle-orm/pg-core';
 
 // Transactional outbox table. A money/critical service writes the event envelope
 // here INSIDE the same db.transaction as its state change (via the OUTBOX port),
@@ -24,3 +35,15 @@ export const eventOutbox = pgTable(
 );
 
 export type EventOutboxRow = typeof eventOutbox.$inferSelect;
+
+// One row per deployment: the anonymous id the usage telemetry reports under. The check pins the
+// table to a single row, so replicas racing on first boot converge on one id.
+export const openoraInstance = pgTable(
+  'openora_instance',
+  {
+    singleton: boolean().primaryKey().default(true),
+    instanceId: uuid().notNull().defaultRandom(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('openora_instance_singleton', sql`${t.singleton}`)],
+);

@@ -26,7 +26,7 @@ export {
 } from './query-helpers.js';
 
 // Transactional outbox - writer binds atomically with the state change; relay publishes to MESSAGE_BROKER. See ADR-0016.
-export { eventOutbox, type EventOutboxRow } from './outbox/schema.js';
+export { eventOutbox, openoraInstance, type EventOutboxRow } from './outbox/schema.js';
 export { DrizzleOutboxWriter } from './outbox/writer.js';
 export { OutboxRelay, type OutboxRelayOptions } from './outbox/relay.js';
 

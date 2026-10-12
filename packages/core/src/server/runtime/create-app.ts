@@ -57,6 +57,7 @@ import { authorizeWithAdminGuard } from '../mcp/authorize.js';
 import type { McpHttpTransport } from '../mcp/http-transport.js';
 import { payloadTooLarge } from '../mcp/transport-gate.js';
 import { assertDurableSeamsBound } from './assert-durable-seams.js';
+import { startTelemetry } from './telemetry.js';
 import {
   applyClientAddress,
   resolveTrustedProxies,
@@ -158,6 +159,10 @@ export type CreateAppConfig = {
   httpCache?: { paths?: string[]; additionalPaths?: string[]; maxAgeSeconds?: number } | false;
 
   disableHealthModule?: boolean;
+
+  // `false` turns off the anonymous usage telemetry, as OPENORA_TELEMETRY_DISABLED=1 or
+  // DO_NOT_TRACK=1 do. See docs/platform/telemetry.md for what it sends.
+  telemetry?: false;
 
   // Peers (IP or CIDR) allowed to set `X-Real-IP` / `X-Forwarded-For` - the reverse proxy in
   // front of the API. Any other peer's forwarding headers are replaced with its socket
@@ -530,6 +535,8 @@ export async function createApp(
     relay.start();
     container.onDispose(() => relay.stop());
   }
+
+  startTelemetry(container, config.telemetry);
 
   if (!config.disableHealthModule) {
     const os = implement(healthContract).$context<OssContext>();
