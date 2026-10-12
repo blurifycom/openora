@@ -11,7 +11,7 @@
     "check:types": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@openora/core": "workspace:*",
     "pg": "8.22.0",
     "zod": "4.4.3"
