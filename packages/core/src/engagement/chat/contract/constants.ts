@@ -13,6 +13,10 @@ export const JOIN_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const JOIN_CODE_INPUT_MAX_LENGTH = 20;
 
 export const PRIVATE_ROOM_SLUG_PREFIX = 'private-';
+export const CONTEXT_ROOM_SLUG_PREFIX = 'context-';
+
+// `context` rooms belong to server code through CHAT_CONTEXT_ROOMS and never appear in a player's room list.
+export const CHAT_ROOM_KINDS = ['standard', 'context'] as const;
 
 export const MAX_PRIVATE_ROOMS_PER_PLAYER = 15;
 
@@ -20,6 +24,8 @@ export const ROOM_ACTIVITY_WINDOW_HOURS_DEFAULT = 24;
 export const ROOM_ACTIVITY_WINDOW_HOURS_MAX = 168;
 
 export const CHAT_ROOM_ROLES = ['member', 'moderator', 'owner'] as const;
+
+export const STAFF_USER_ROLES = ['admin', 'super-admin'] as const;
 
 export const CHAT_ROOM_RESTRICTION_TYPES = ['mute', 'ban', 'cooldown'] as const;
 // `admin`: set by staff through the backoffice. `room`: set by the room's owner or a moderator.
@@ -37,6 +43,8 @@ export const CHAT_MEMBER_ROLE_CHANGED_SIGNAL = 'chat:member-role-changed';
 export const CHAT_MEMBER_JOINED_SIGNAL = 'chat:member-joined';
 
 export const CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL = 'chat:room-scheduled-for-deletion';
+
+export const CHAT_ROOM_CLOSED_SIGNAL = 'chat:room-closed';
 
 export const OWNERLESS_ROOM_RETENTION_DAYS = 30;
 

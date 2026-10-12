@@ -11,6 +11,7 @@ import {
   RATE_LIMITER,
   CHAT_SYSTEM_WRITER,
   CHAT_BLOCK_WRITER,
+  CHAT_CONTEXT_ROOMS,
   CHAT_MODERATION,
   CHAT_ROOM_ACCESS,
   ADMIN_USER_DIRECTORY,
@@ -31,6 +32,7 @@ import {
   ChatRoomNotFoundError,
 } from './service/chat-moderation.service.js';
 import { ChatRoomMembershipService } from './service/chat-room-membership.service.js';
+import { ChatContextRoomService } from './service/chat-context-room.service.js';
 import { ChatRoomInviteService } from './service/chat-room-invite.service.js';
 import { ChatRoomBanService } from './service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from './service/chat-room-mute.service.js';
@@ -111,6 +113,18 @@ export default {
       );
     ctx.provide(CHAT_SYSTEM_WRITER, createChatService);
     ctx.provide(CHAT_BLOCK_WRITER, createChatService);
+    ctx.provide(
+      CHAT_CONTEXT_ROOMS,
+      (c) =>
+        new ChatContextRoomService({
+          drizzle: c.get(DRIZZLE),
+          audit: c.get(AUDIT_WRITER),
+          events: c.get(EVENT_BUS),
+          identityReader: c.get(IDENTITY_READER),
+          transport: c.get(CHAT_REALTIME_TRANSPORT),
+          systemWriter: c.get(CHAT_SYSTEM_WRITER),
+        }),
+    );
     ctx.provide(CHAT_ROOM_ACCESS, (c) => ({
       verifyRoomAccess: async (roomId, viewerId) => {
         await mapErrors(

@@ -141,6 +141,13 @@
       "when": 1791569167248,
       "tag": "0019_chat_room_invite",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791815171918,
+      "tag": "0020_chat_context_room",
+      "breakpoints": true
     }
   ]
 }
