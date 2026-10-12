@@ -56,3 +56,11 @@ minimumReleaseAgeExclude:
   - '@orpc/standard-server@1.15.5'
   - '@orpc/tanstack-query@1.15.5'
   - '@orpc/zod@1.15.5'
+  - braces@3.0.4
+  - sprintf-js@1.1.4
+  - smol-toml@1.8.1
+  - source-map-js@1.2.2
+  - proxy-addr@2.0.8
+  - tinypool@2.1.1
+  - tinypool@2.1.2
+  - '@modelcontextprotocol/sdk@1.31.0'
