@@ -696,9 +696,11 @@ describe('bulk geo restrict / unrestrict', () => {
       }),
     ]);
     expect(await bulkAuditEntries(alreadyRestricted.gameId, 'restrict')).toEqual([]);
-    expect(
-      await auditEntries(preExistingRule.id, 'compliance.game-geo-rule.upserted'),
-    ).toHaveLength(1);
+    await vi.waitFor(async () => {
+      expect(
+        await auditEntries(preExistingRule.id, 'compliance.game-geo-rule.upserted'),
+      ).toHaveLength(1);
+    });
   });
 
   it('rejects a bulk call with no gameIds/providerIds, more than 500 gameIds, a malformed country code, or a reason over 500 characters', async () => {

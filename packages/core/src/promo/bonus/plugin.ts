@@ -6,7 +6,6 @@ import {
   BONUS_LIFECYCLE,
   BONUS_WAGERING,
   BonusForfeitReasonSchema,
-  type BonusForfeitReason,
   type BonusLifecycleCommands,
   CurrencyTickerSchema,
   GEO_CHECK_COMMANDS,
@@ -112,8 +111,7 @@ export default {
       BONUS_LIFECYCLE,
       (c): BonusLifecycleCommands =>
         createBonusLifecyclePort(
-          new GrantLifecycleService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
-          c.get(EVENT_BUS),
+          new GrantLifecycleService(c.get(DRIZZLE), c.get(AUDIT_WRITER), c.get(EVENT_BUS)),
         ),
     );
 
@@ -157,22 +155,6 @@ export default {
       });
     }
 
-    const announce = (
-      topic: 'promo.bonus.expired' | 'promo.bonus.forfeited',
-      closed: Awaited<ReturnType<GrantLifecycleService['expireDue']>>,
-      reason?: BonusForfeitReason,
-    ) => {
-      for (const grant of closed) {
-        events?.emit(topic, {
-          userId: grant.userId,
-          grantId: grant.grantId,
-          currency: grant.currency,
-          forfeitedAmount: grant.forfeitedAmount,
-          ...(reason === undefined ? {} : { reason, actorId: grant.actorId }),
-        });
-      }
-    };
-
     ctx.jobs.worker({
       queue: EXPIRY_QUEUE,
       schema: EmptyJobPayloadSchema,
@@ -182,7 +164,6 @@ export default {
           return;
         }
         const closed = await lifecycle.expireDue();
-        announce('promo.bonus.expired', closed);
         if (closed.length > 0) {
           logger.info({ grants: closed.length }, 'promo bonus grants expired');
         }
@@ -196,14 +177,13 @@ export default {
         if (!lifecycle) {
           throw new Error('promo-bonus-forfeit: service not constructed');
         }
-        const closed = await lifecycle.forfeitAllFor(
+        await lifecycle.forfeitAllFor(
           payload.userId,
           payload.reason,
           payload.actorId === null
             ? undefined
             : { id: payload.actorId, isAdmin: payload.actorIsAdmin },
         );
-        announce('promo.bonus.forfeited', closed, payload.reason);
       },
     });
 
@@ -291,13 +271,17 @@ export default {
           throw new Error('promo-offer-deposit: service not constructed');
         }
         const service = offers;
-        const granted = await drizzle.db.transaction((tx) => service.applyDeposit(tx, payload));
-        // After the commit: the criterion is that a player is told about the credit and what it
-        // obliges them to wager, and an announcement ahead of the commit could promise a bonus
-        // the transaction then rolled back.
-        for (const bonus of granted) {
-          events?.emit('promo.bonus.granted', { ...bonus, source: 'deposit' });
-        }
+        const bus = events;
+        // Through the outbox in the grant's own transaction: the player is told about the
+        // credit and what it obliges them to wager if and only if the grant committed.
+        await drizzle.db.transaction(async (tx) => {
+          for (const bonus of await service.applyDeposit(tx, payload)) {
+            await bus?.emitInTransaction(tx, 'promo.bonus.granted', {
+              ...bonus,
+              source: 'deposit',
+            });
+          }
+        });
       },
     });
 
@@ -328,7 +312,7 @@ export default {
     });
 
     ctx.routers.add('promo-bonus', (c) => {
-      lifecycle = new GrantLifecycleService(c.get(DRIZZLE), c.get(AUDIT_WRITER));
+      lifecycle = new GrantLifecycleService(c.get(DRIZZLE), c.get(AUDIT_WRITER), c.get(EVENT_BUS));
       drizzle = c.get(DRIZZLE);
       offers = new OfferService(
         c.get(DRIZZLE),
@@ -350,7 +334,6 @@ export default {
         realtime: c.get(REALTIME_TRANSPORT),
         weights: new WeightService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         lifecycle,
-        events,
         adminGuard: c.get(ADMIN_GUARD),
         limiter: c.get(RATE_LIMITER),
         geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,

@@ -1083,12 +1083,16 @@ describe('GamingService.startRound bonus completion (real PG)', () => {
       'provider unavailable',
     );
 
-    expect(events.emit).toHaveBeenCalledWith('promo.bonus.completed', {
-      userId,
-      grantId: '00000000-0000-0000-0000-0000000000c5',
-      currency: 'USD',
-      convertedAmount: '25',
-    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'promo.bonus.completed',
+      {
+        userId,
+        grantId: '00000000-0000-0000-0000-0000000000c5',
+        currency: 'USD',
+        convertedAmount: '25',
+      },
+    );
     expect(launchGame).toHaveBeenCalledOnce();
   });
 
@@ -1115,7 +1119,11 @@ describe('GamingService.startRound bonus completion (real PG)', () => {
 
     await startRound(svc, '00000000-0000-0000-0000-000000000406', created.id, 'USD', '25');
 
-    expect(events.emit).not.toHaveBeenCalledWith('promo.bonus.completed', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'promo.bonus.completed',
+      expect.anything(),
+    );
   });
 });
 
@@ -1145,15 +1153,19 @@ describe('GamingService.startRound wallet.balance.changed event (real PG)', () =
 
     await startRound(svc, userId, created.id, 'USD', '10');
 
-    expect(events.emit).toHaveBeenCalledWith('wallet.balance.changed', {
-      userId,
-      playerId: null,
-      amount: '10',
-      currency: 'USD',
-      transactionId: '00000000-0000-0000-0000-0000000000d1',
-      type: 'bet',
-      direction: 'debit',
-    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'wallet.balance.changed',
+      {
+        userId,
+        playerId: null,
+        amount: '10',
+        currency: 'USD',
+        transactionId: '00000000-0000-0000-0000-0000000000d1',
+        type: 'bet',
+        direction: 'debit',
+      },
+    );
   });
 
   it('never emits it when the debit outcome reports nothing moved', async () => {
@@ -1183,7 +1195,11 @@ describe('GamingService.startRound wallet.balance.changed event (real PG)', () =
 
     await startRound(svc, userId, created.id, 'USD', '10');
 
-    expect(events.emit).not.toHaveBeenCalledWith('wallet.balance.changed', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'wallet.balance.changed',
+      expect.anything(),
+    );
   });
 
   it('also emits it for a WAGER_TRACKING credit (rank rakeback) alongside the bet debit', async () => {
@@ -1218,15 +1234,19 @@ describe('GamingService.startRound wallet.balance.changed event (real PG)', () =
 
     await startRound(svc, userId, created.id, 'USD', '10');
 
-    expect(events.emit).toHaveBeenCalledWith('wallet.balance.changed', {
-      userId,
-      playerId: null,
-      amount: '0.10',
-      currency: 'USD',
-      transactionId: '00000000-0000-0000-0000-0000000000d3',
-      type: 'cashback',
-      direction: 'credit',
-    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'wallet.balance.changed',
+      {
+        userId,
+        playerId: null,
+        amount: '0.10',
+        currency: 'USD',
+        transactionId: '00000000-0000-0000-0000-0000000000d3',
+        type: 'cashback',
+        direction: 'credit',
+      },
+    );
   });
 });
 
@@ -1700,15 +1720,19 @@ describe('GamingService.endRound wallet.balance.changed event (real PG)', () => 
 
     await svc.endRound(userId, round.id);
 
-    expect(events.emit).toHaveBeenCalledWith('wallet.balance.changed', {
-      userId,
-      playerId: null,
-      amount: '42.50',
-      currency: 'USD',
-      transactionId: '00000000-0000-0000-0000-0000000000e1',
-      type: 'win',
-      direction: 'credit',
-    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'wallet.balance.changed',
+      {
+        userId,
+        playerId: null,
+        amount: '42.50',
+        currency: 'USD',
+        transactionId: '00000000-0000-0000-0000-0000000000e1',
+        type: 'win',
+        direction: 'credit',
+      },
+    );
   });
 
   it('never emits it when the provider reports no win', async () => {
@@ -1733,7 +1757,11 @@ describe('GamingService.endRound wallet.balance.changed event (real PG)', () => 
     await svc.endRound(userId, round.id);
 
     expect(walletCommands.credit).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalledWith('wallet.balance.changed', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'wallet.balance.changed',
+      expect.anything(),
+    );
   });
 
   it('never emits it when the credit outcome reports nothing moved', async () => {
@@ -1755,7 +1783,11 @@ describe('GamingService.endRound wallet.balance.changed event (real PG)', () => 
 
     await svc.endRound(userId, round.id);
 
-    expect(events.emit).not.toHaveBeenCalledWith('wallet.balance.changed', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'wallet.balance.changed',
+      expect.anything(),
+    );
   });
 });
 

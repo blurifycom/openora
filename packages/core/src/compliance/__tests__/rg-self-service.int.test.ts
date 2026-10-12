@@ -163,7 +163,8 @@ describe('RgSelfServiceService.upsertLimit (real PG)', () => {
     expect(view.amount).toBe('100.000000000000000000');
     expect(view.pendingAmount).toBe('500.000000000000000000');
     expect(view.pendingStatus).toBe('waiting');
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.limit.change_requested',
       expect.objectContaining({
         kind: 'increase',
@@ -197,7 +198,8 @@ describe('RgSelfServiceService.upsertLimit (real PG)', () => {
 
     expect(view.amount).toBe('20.000000000000000000');
     expect(view.pendingStatus).toBeNull();
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.limit.change_cancelled',
       expect.objectContaining({ requestedAmount: '500.000000000000000000' }),
     );
@@ -452,11 +454,13 @@ describe('RgSelfServiceService.confirmPendingChange (real PG)', () => {
 
     expect(view?.amount).toBe('500.000000000000000000');
     expect(view?.pendingStatus).toBeNull();
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.limit.change_confirmed',
       expect.objectContaining({ kind: 'increase', initiatedBy: 'player' }),
     );
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.limit.set',
       expect.objectContaining({ amount: '500.000000000000000000', initiatedBy: 'player' }),
     );
@@ -489,7 +493,8 @@ describe('RgSelfServiceService.confirmPendingChange (real PG)', () => {
     const after = await limitRow(userId);
     expect(after.amount).toBe('100.000000000000000000');
     expect(after.pendingKind).toBeNull();
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.limit.change_expired',
       expect.objectContaining({ requestedAmount: '500.000000000000000000' }),
     );
@@ -567,11 +572,11 @@ describe('RgSelfServiceService.cancelPendingChange (real PG)', () => {
     const userId = randomUUID();
     await svc.upsertLimit(userId, deposit100);
     const row = await limitRow(userId);
-    events.emit.mockClear();
+    events.emitInTransaction.mockClear();
 
     await svc.cancelPendingChange(row.id, userId);
 
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
   });
 });
 
@@ -624,8 +629,8 @@ describe('RgSelfServiceService concurrency (real PG)', () => {
       svc.cancelPendingChange(row.id, userId),
     ]);
 
-    const confirmed = events.emit.mock.calls.filter(
-      (c: unknown[]) => c[0] === 'rg.limit.change_confirmed',
+    const confirmed = events.emitInTransaction.mock.calls.filter(
+      (c: unknown[]) => c[1] === 'rg.limit.change_confirmed',
     );
     expect(confirmed.length).toBeLessThanOrEqual(1);
     expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
@@ -646,7 +651,9 @@ describe('RgSelfServiceService concurrency (real PG)', () => {
 
     expect((await limitRow(userId)).amount).toBe('500.000000000000000000');
     expect(
-      events.emit.mock.calls.filter((c: unknown[]) => c[0] === 'rg.limit.change_confirmed'),
+      events.emitInTransaction.mock.calls.filter(
+        (c: unknown[]) => c[1] === 'rg.limit.change_confirmed',
+      ),
     ).toHaveLength(1);
   });
 
@@ -717,7 +724,8 @@ describe('RgSelfServiceService exclusions (real PG)', () => {
       confirm: true,
     });
 
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.self_exclusion.activated',
       expect.objectContaining({ initiatedBy: 'player', durationMonths: 6 }),
     );

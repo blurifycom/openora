@@ -498,7 +498,8 @@ export class ReconciliationService {
           { runId, openFindings, threshold: cfg.alertThreshold },
           'wallet reconciliation: open findings exceed threshold',
         );
-        this.events.emit('wallet.reconciliation.alert', {
+        // No surrounding transaction to join: the outbox write alone makes the alert durable.
+        await this.events.emitInTransaction(this.drizzle.db, 'wallet.reconciliation.alert', {
           runId,
           openFindings,
           threshold: cfg.alertThreshold,

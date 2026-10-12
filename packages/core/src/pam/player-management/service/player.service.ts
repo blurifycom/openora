@@ -7,7 +7,7 @@ import {
   withAdvisoryXactLock,
   createLogger,
 } from '@openora/core/server';
-import type { EventBus } from '@openora/core/server';
+import type { DrizzleTx, EventBus } from '@openora/core/server';
 import {
   normalizeKycStatus,
   type PlayerStatus,
@@ -291,21 +291,28 @@ export class PlayerService implements PlayerActivityTracker {
       if (Object.keys(patch).length > 0) {
         await trx.update(player).set(patch).where(eq(player.id, playerId));
       }
+      // Audited and, for a closure, what forfeits the player's bonuses - so committed with
+      // the change through the outbox.
+      if (data.level !== undefined && data.level !== locked.level) {
+        await this.events.emitInTransaction(trx, 'player.level.changed', {
+          userId: locked.userId,
+          playerId,
+          previousLevel: locked.level,
+          newLevel: data.level,
+          actorId,
+        });
+      }
+      if (data.status !== undefined && data.status !== locked.status) {
+        await this.emitStatusTransition(trx, {
+          playerId,
+          userId: locked.userId,
+          actorId,
+          previousStatus: locked.status,
+          newStatus: data.status,
+        });
+      }
       return locked;
     });
-
-    // Emitted AFTER commit (not inside the transaction callback, unlike the
-    // KYC_STATUS_WRITER emit above) - a level change is a best-effort fan-out, not a
-    // regulated single-writer seam, so it follows the standard post-commit event idiom.
-    if (data.level !== undefined && data.level !== before.level) {
-      this.events.emit('player.level.changed', {
-        userId: before.userId,
-        playerId,
-        previousLevel: before.level,
-        newLevel: data.level,
-        actorId,
-      });
-    }
 
     // A transition into a blocking status must kill every active session immediately -
     // AC: "Blocking a player immediately prevents login and all platform activity."
@@ -320,33 +327,35 @@ export class PlayerService implements PlayerActivityTracker {
       await this.sessionCommands.revokeAll(before.userId, actorId);
     }
 
-    if (data.status === 'closed' && before.status !== 'closed') {
-      this.events.emit('player.account.closed', {
-        playerId,
-        userId: before.userId,
-        actorId,
-      });
-    }
-
-    if (data.status !== undefined && data.status !== 'closed' && before.status === 'closed') {
-      this.events.emit('player.account.reopened', {
-        playerId,
-        userId: before.userId,
-        actorId,
-      });
-    }
-
-    if (data.status !== undefined && data.status !== before.status) {
-      this.events.emit('player.status.changed', {
-        playerId,
-        userId: before.userId,
-        actorId,
-        previousStatus: before.status,
-        newStatus: data.status,
-      });
-    }
-
     return this.fetchOneWithTags(playerId);
+  }
+
+  private async emitStatusTransition(
+    trx: DrizzleTx,
+    transition: {
+      playerId: Player['id'];
+      userId: User['id'];
+      actorId: User['id'];
+      previousStatus: PlayerStatus;
+      newStatus: PlayerStatus;
+    },
+  ): Promise<void> {
+    const { playerId, userId, actorId, previousStatus, newStatus } = transition;
+    if (newStatus === 'closed') {
+      await this.events.emitInTransaction(trx, 'player.account.closed', {
+        playerId,
+        userId,
+        actorId,
+      });
+    }
+    if (previousStatus === 'closed') {
+      await this.events.emitInTransaction(trx, 'player.account.reopened', {
+        playerId,
+        userId,
+        actorId,
+      });
+    }
+    await this.events.emitInTransaction(trx, 'player.status.changed', transition);
   }
 
   async touchLastSeen(userId: Player['userId']): Promise<void> {
@@ -368,23 +377,18 @@ export class PlayerService implements PlayerActivityTracker {
         new PlayerNotFoundError(playerId),
       );
       await trx.update(player).set({ status: 'closed' }).where(eq(player.id, playerId));
+      if (locked.status !== 'closed') {
+        await this.emitStatusTransition(trx, {
+          playerId,
+          userId: locked.userId,
+          actorId,
+          previousStatus: locked.status,
+          newStatus: 'closed',
+        });
+      }
       return locked;
     });
     await this.sessionCommands.revokeAll(before.userId, actorId);
-    if (before.status !== 'closed') {
-      this.events.emit('player.account.closed', {
-        playerId,
-        userId: before.userId,
-        actorId,
-      });
-      this.events.emit('player.status.changed', {
-        playerId,
-        userId: before.userId,
-        actorId,
-        previousStatus: before.status,
-        newStatus: 'closed',
-      });
-    }
     return { success: true };
   }
 
