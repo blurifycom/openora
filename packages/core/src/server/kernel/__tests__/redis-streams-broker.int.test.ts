@@ -68,6 +68,38 @@ describe('RedisStreamsBroker', () => {
     expect(JSON.parse(entries[0]!.message['data']!)).toEqual(envelope);
   });
 
+  it('trims entries older than the retention window on publish', async () => {
+    const broker = makeBroker('svc');
+    const topic = uniqueTopic();
+    const ancientEntryCount = 300;
+    const seed = redis.client.multi();
+    for (let i = 1; i <= ancientEntryCount; i++) {
+      seed.xAdd(streamOf(topic), `${i}-0`, { data: 'ancient' });
+    }
+    await seed.exec();
+
+    await broker.publish(makeEnvelope(topic));
+
+    const remaining = await redis.client.xRange(streamOf(topic), '-', '+');
+    expect(remaining.length).toBeLessThan(ancientEntryCount);
+    expect(remaining.at(-1)!.message['data']).not.toBe('ancient');
+  });
+
+  it('keeps recent entries past the old 10,000-entry cap', async () => {
+    const broker = makeBroker('svc');
+    const topic = uniqueTopic();
+    const recentEntryCount = 10_200;
+    const seed = redis.client.multi();
+    for (let i = 0; i < recentEntryCount; i++) {
+      seed.xAdd(streamOf(topic), '*', { data: 'recent' });
+    }
+    await seed.exec();
+
+    await broker.publish(makeEnvelope(topic));
+
+    expect(await redis.client.xLen(streamOf(topic))).toBe(recentEntryCount + 1);
+  });
+
   it('coalesces two subscribers on one topic: both receive, the entry is ACKed', async () => {
     const broker = makeBroker('wallet-svc');
     const topic = uniqueTopic();
