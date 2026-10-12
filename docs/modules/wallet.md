@@ -38,6 +38,10 @@ does not repeat it.
 - **Whether a withdrawal needs KYC is compliance's decision, asked through `KYC_WITHDRAWAL_POLICY`.**
   `kyc.gateWithdrawals` switches the request-time check on; auto-approval always asks. Without a
   bound policy, every gated withdrawal needs an approved KYC status.
+- **A player carrying the `withdrawal_lock` tag cannot take money out.** The request is refused
+  before any debit, and neither an admin nor auto-approval can approve a withdrawal that was
+  already waiting when the lock landed; it stays queued and can still be rejected. The tag is
+  read through `PLAYER_TAGS`; with no tag module bound, no player can be locked.
 - **Cross-module money moves through the wallet's command port, inside the caller's transaction.**
   Another module never reads or writes wallet tables directly, and a transfer is never settled over
   an event.

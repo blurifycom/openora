@@ -46,6 +46,7 @@ import {
   type AuditWritePort,
   type TagEvaluationCommands,
   type TagKey,
+  WITHDRAWAL_LOCK_TAG,
   type User,
   type IdentityReader,
   type ClientMeta,
@@ -155,6 +156,14 @@ export const WithdrawalNotPendingError = makeConflictError(
 export const KycRequiredError = makeConflictError(
   'KycRequiredError',
   'KYC verification required before withdrawal',
+);
+
+// An operator hold on the player's payouts (the `withdrawal_lock` tag), e.g. during an
+// investigation. The player can still log in; only money leaving the platform is refused.
+export const WithdrawalLockedError = makeConflictError(
+  'WithdrawalLockedError',
+  'Withdrawals are on hold for this account. Please contact support',
+  { reason: 'withdrawal_locked' },
 );
 
 export const WithdrawalAmountNotAboveFeeError = createDomainError<
@@ -1050,6 +1059,40 @@ export class WalletService {
       : Promise.resolve(true);
   }
 
+  // Runs before any debit and again before any approval, so a lock placed while a withdrawal
+  // waits in the queue still stops the payout. No tag module bound = no lock can exist.
+  private async assertWithdrawalsNotLocked(userId: User['id']) {
+    if (await this.isWithdrawalLocked(userId)) {
+      throw new WithdrawalLockedError();
+    }
+  }
+
+  private async isWithdrawalLocked(userId: User['id']): Promise<boolean> {
+    return (await this.withdrawalLockedUserIds([userId])).has(userId);
+  }
+
+  private async withdrawalLockedUserIds(userIds: readonly User['id'][]): Promise<Set<string>> {
+    if (!this.riskTags || userIds.length === 0) {
+      return new Set();
+    }
+    const byUser = await this.riskTags.getActiveTagKeys(userIds);
+    return new Set(
+      [...byUser].filter(([, keys]) => keys.includes(WITHDRAWAL_LOCK_TAG)).map(([id]) => id),
+    );
+  }
+
+  private async withdrawalOwnerId(withdrawalId: WalletTransaction['id']): Promise<User['id']> {
+    const [row] = await this.drizzle.db
+      .select({ userId: wallet.userId })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(eq(walletTransaction.id, withdrawalId));
+    if (!row) {
+      throw new WithdrawalNotFoundError(withdrawalId);
+    }
+    return row.userId;
+  }
+
   getBalance(userId: User['id']) {
     return resolveWalletBalance(
       this.drizzle.db,
@@ -1620,6 +1663,7 @@ export class WalletService {
     destinationTag?: string;
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
+    await this.assertWithdrawalsNotLocked(userId);
     await this.assertKycForWithdrawal(userId, amount, currency);
     if (this.resolveRail(currency) === 'crypto' && !destinationAddress) {
       throw new DestinationAddressRequiredError();
@@ -1959,6 +2003,9 @@ export class WalletService {
       await this.getAutoWithdrawalConfigOrNull(),
     );
     const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
+    const lockedUserIds = await this.withdrawalLockedUserIds([
+      ...new Set(pageRows.map((r) => r.userId)),
+    ]);
 
     const items: WithdrawalQueueItem[] = await mapConcurrent(pageRows, 5, async (r) => {
       const summary = byUserId.get(r.userId);
@@ -1986,6 +2033,7 @@ export class WalletService {
         status: r.tx.status,
         kycStatus: summary?.kycStatus ?? null,
         riskTags,
+        withdrawalLocked: lockedUserIds.has(r.userId),
         requestedAt: r.tx.createdAt.toISOString(),
         destinationAddress: r.tx.destinationAddress,
         destinationTag: r.tx.destinationTag,
@@ -2006,6 +2054,7 @@ export class WalletService {
     withdrawalId: WalletTransaction['id'],
     meta?: ClientMeta,
   ): Promise<TransactionResult> {
+    await this.assertWithdrawalsNotLocked(await this.withdrawalOwnerId(withdrawalId));
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
     const tx = await this.drizzle.db.transaction((txn) =>
@@ -2461,6 +2510,11 @@ export class WalletService {
     if (riskTags === null) {
       return skip('risk_tags_unavailable');
     }
+    // Not a configurable exclusion: a hold placed after the request passed its own check
+    // still keeps the payout for a human.
+    if (riskTags.includes(WITHDRAWAL_LOCK_TAG)) {
+      return skip('withdrawal_lock');
+    }
     if (riskTags.some((t) => effectiveExcludeTags.includes(t))) {
       return skip('risk_tag');
     }
@@ -2813,16 +2867,15 @@ export class WalletService {
     return summary?.kycStatus ?? null;
   }
 
-  // Active tag keys; [] when no exclusions configured or none carried; null when configured but the port is unbound (fail closed).
+  // Active tag keys, read even with no exclusions configured so the withdrawal lock is always
+  // seen; [] when the port is unbound and nothing is excluded, null when exclusions are
+  // configured but the port is unbound (fail closed).
   private async autoApprovalRiskTags(
     userId: User['id'],
     excludeRiskFlags: readonly TagKey[],
   ): Promise<TagKey[] | null> {
-    if (excludeRiskFlags.length === 0) {
-      return [];
-    }
     if (!this.riskTags) {
-      return null;
+      return excludeRiskFlags.length === 0 ? [] : null;
     }
     const byUser = await this.riskTags.getActiveTagKeys([userId]);
     return byUser.get(userId) ?? [];

@@ -98,6 +98,8 @@ type ServiceOptions = {
   kycStatus?: KycStatus | null;
   directoryThrows?: boolean;
   riskTags?: TagKey[] | 'unbound';
+  // Replaces the fixed `riskTags` stub, for a test that changes the tags between reads.
+  playerTags?: PlayerTags;
   kycPolicy?: KycWithdrawalPolicy;
 };
 
@@ -113,6 +115,7 @@ async function makeService({
   kycStatus = 'verified',
   directoryThrows = false,
   riskTags = [],
+  playerTags,
   kycPolicy,
 }: ServiceOptions = {}) {
   if (autoWithdrawal && !skipConfigSeed) {
@@ -160,11 +163,13 @@ async function makeService({
     ...(riskTags === 'unbound'
       ? {}
       : {
-          riskTags: mock<PlayerTags>({
-            getActiveTagKeys: vi.fn(
-              async (ids: readonly string[]) => new Map(ids.map((id) => [id, riskTags])),
-            ),
-          }),
+          riskTags:
+            playerTags ??
+            mock<PlayerTags>({
+              getActiveTagKeys: vi.fn(
+                async (ids: readonly string[]) => new Map(ids.map((id) => [id, riskTags])),
+              ),
+            }),
         }),
   });
   return { svc, events, psp, audit };
@@ -457,6 +462,33 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(result.status).toBe('pending');
   });
 
+  it('never auto-approves for a player locked after the request passed its own check, even with no exclusions configured', async () => {
+    const w = await seedWallet();
+    // Unlocked when the request is checked, locked by the time auto-approval reads the tags.
+    const playerTags = mock<PlayerTags>({
+      getActiveTagKeys: vi
+        .fn<PlayerTags['getActiveTagKeys']>()
+        .mockResolvedValueOnce(new Map())
+        .mockResolvedValue(new Map([[w.userId, ['withdrawal_lock']]])),
+    });
+    const { svc, psp } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      excludeRiskFlags: [],
+      playerTags,
+    });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+  });
+
   it('awaits the synchronous tag evaluation (TAG_EVALUATION_COMMANDS) before reading risk tags, so a withdrawal_review assignment it makes is honored by auto-approval instead of raced by the async event handler', async () => {
     const callOrder: string[] = [];
     // Stands in for TagEvaluationService.evaluateWithdrawalRequested committing a
@@ -522,7 +554,12 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
 
     // Ordering proof: the synchronous command-port call happened, and completed, before
     // auto-approval's risk-tag read - never the reverse, and never concurrent/unawaited.
-    expect(callOrder).toEqual(['evaluateWithdrawalRequested', 'getActiveTagKeys']);
+    // The first read is the request's own withdrawal-lock check, before any debit.
+    expect(callOrder).toEqual([
+      'getActiveTagKeys',
+      'evaluateWithdrawalRequested',
+      'getActiveTagKeys',
+    ]);
     expect(tagEvaluationCommands.evaluateWithdrawalRequested).toHaveBeenCalledWith(
       expect.anything(),
       { userId: w.userId, amount: '40' },
