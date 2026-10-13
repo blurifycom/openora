@@ -2054,10 +2054,11 @@ export class WalletService {
     withdrawalId: WalletTransaction['id'],
     meta?: ClientMeta,
   ): Promise<TransactionResult> {
-    await this.assertWithdrawalsNotLocked(await this.withdrawalOwnerId(withdrawalId));
+    const ownerId = await this.withdrawalOwnerId(withdrawalId);
+    await this.assertWithdrawalsNotLocked(ownerId);
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
-    const tx = await this.drizzle.db.transaction((txn) =>
+    const { queued, flipped } = await this.drizzle.db.transaction((txn) =>
       this.flipToProcessing({
         txn,
         withdrawalId,
@@ -2066,7 +2067,10 @@ export class WalletService {
         reviewReason: null,
       }),
     );
-    return this.settleApproved(tx, adminId, meta);
+    if (await this.revertFlipIfLocked(ownerId, queued)) {
+      throw new WithdrawalLockedError();
+    }
+    return this.settleApproved(flipped, adminId, meta);
   }
 
   // Phase one: the flip to processing under a FOR UPDATE lock. Extracted so the auto path can run it
@@ -2087,7 +2091,7 @@ export class WalletService {
     from: readonly WalletTransaction['status'][];
     reviewReason?: WalletTransaction['reviewReason'];
     autoApprovalPivotAmount?: string;
-  }): Promise<WalletTransaction> {
+  }): Promise<{ queued: WalletTransaction; flipped: WalletTransaction }> {
     const current = findOneOrThrow(
       await txn
         .select()
@@ -2098,7 +2102,7 @@ export class WalletService {
     );
     // Only a withdrawal still awaiting a decision can be approved, so a concurrent or repeated approve can't double-send to the PSP.
     assertWithdrawalIn(current, from);
-    return findOneOrThrow(
+    const flipped = findOneOrThrow(
       await txn
         .update(walletTransaction)
         .set({
@@ -2112,6 +2116,27 @@ export class WalletService {
         .returning(),
       new WithdrawalNotFoundError(withdrawalId),
     );
+    return { queued: current, flipped };
+  }
+
+  // The lock is read before the flip's transaction, so one placed in between would otherwise
+  // reach the PSP. Re-read it once the flip has committed and, if it landed, put the row back
+  // exactly as it was queued. Only the gap between this read and the vendor call remains.
+  private async revertFlipIfLocked(userId: User['id'], queued: WalletTransaction) {
+    if (!(await this.isWithdrawalLocked(userId))) {
+      return false;
+    }
+    await this.drizzle.db
+      .update(walletTransaction)
+      .set({
+        status: queued.status,
+        reviewedBy: queued.reviewedBy,
+        reviewedAt: queued.reviewedAt,
+        reviewReason: queued.reviewReason,
+        autoApprovalPivotAmount: queued.autoApprovalPivotAmount,
+      })
+      .where(and(eq(walletTransaction.id, queued.id), eq(walletTransaction.status, 'processing')));
+    return true;
   }
 
   // Phase two: settle a `processing` withdrawal via the vendor (see approveWithdrawal for the outcomes).
@@ -2386,7 +2411,7 @@ export class WalletService {
             );
             return null;
           }
-          const tx = await this.flipToProcessing({
+          const { queued, flipped } = await this.flipToProcessing({
             txn,
             withdrawalId: args.transactionId,
             adminId: null,
@@ -2394,10 +2419,17 @@ export class WalletService {
             reviewReason: AUTO_APPROVED_REASON,
             autoApprovalPivotAmount: gates.pivotAmount,
           });
-          return { tx, caps };
+          return { tx: flipped, queued, caps };
         }),
       );
       if (!decided) {
+        return undefined;
+      }
+      if (await this.revertFlipIfLocked(args.userId, decided.queued)) {
+        logger.info(
+          { userId: args.userId, walletId: args.walletId, gate: 'withdrawal_lock' },
+          'auto-withdrawal skipped',
+        );
         return undefined;
       }
 

@@ -489,6 +489,44 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(psp.processWithdrawal).not.toHaveBeenCalled();
   });
 
+  it('reverts an auto-approval flip to pending when the lock lands after the gates passed, without paying out or auditing an approval', async () => {
+    const w = await seedWallet();
+    // Unlocked for the request check and the gates, locked once the flip has committed.
+    const playerTags = mock<PlayerTags>({
+      getActiveTagKeys: vi
+        .fn<PlayerTags['getActiveTagKeys']>()
+        .mockResolvedValueOnce(new Map())
+        .mockResolvedValueOnce(new Map())
+        .mockResolvedValue(new Map([[w.userId, ['withdrawal_lock']]])),
+    });
+    const { svc, psp, audit } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      excludeRiskFlags: [],
+      playerTags,
+    });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+    expect(await txById(result.transactionId)).toMatchObject({
+      status: 'pending',
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewReason: null,
+      autoApprovalPivotAmount: null,
+    });
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'wallet.withdrawal.auto_approved' }),
+    );
+  });
+
   it('awaits the synchronous tag evaluation (TAG_EVALUATION_COMMANDS) before reading risk tags, so a withdrawal_review assignment it makes is honored by auto-approval instead of raced by the async event handler', async () => {
     const callOrder: string[] = [];
     // Stands in for TagEvaluationService.evaluateWithdrawalRequested committing a

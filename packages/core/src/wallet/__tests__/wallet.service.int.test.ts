@@ -2364,6 +2364,39 @@ describe('WalletService withdrawal lock (real PG)', () => {
     expect(approved.status).toBe('completed');
   });
 
+  it('puts a withdrawal back exactly as queued when the lock lands after the pre-check, before any PSP call', async () => {
+    const w = await seedWallet();
+    const reviewedAt = new Date('2026-01-01T00:00:00.000Z');
+    const queued = await seedTx(w.id, {
+      status: 'on_hold',
+      reviewedBy: randomUUID(),
+      reviewedAt,
+      reviewReason: 'held for source of funds',
+    });
+    // Unlocked for the pre-check, locked by the time the flip has committed.
+    const getActiveTagKeys = vi
+      .fn<PlayerTags['getActiveTagKeys']>()
+      .mockResolvedValueOnce(new Map())
+      .mockResolvedValue(new Map([[w.userId, ['withdrawal_lock']]]));
+    const { svc, psp } = makeService({ riskTags: mock<PlayerTags>({ getActiveTagKeys }) });
+
+    await expect(svc.approveWithdrawal(randomUUID(), queued.id)).rejects.toBeInstanceOf(
+      WithdrawalLockedError,
+    );
+
+    const [row] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, queued.id));
+    expect(row).toMatchObject({
+      status: 'on_hold',
+      reviewedBy: queued.reviewedBy,
+      reviewedAt,
+      reviewReason: 'held for source of funds',
+    });
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+  });
+
   it("still lets an admin reject a locked player's queued withdrawal, refunding it", async () => {
     const w = await seedWallet({ balance: '100' });
     const { svc } = lockedService();
