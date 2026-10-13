@@ -117,20 +117,37 @@ export default {
         tagEvaluationService(c).evaluateWithdrawalRequested(tx, args),
     }));
 
-    ctx.events.on('wallet.deposit.completed', (p) => evalSvc?.onDepositCompleted(p));
-    ctx.events.on('wallet.withdrawal.completed', (p) => evalSvc?.onWithdrawalCompleted(p));
-    ctx.events.on('wallet.withdrawal.requested', (p) => evalSvc?.onWithdrawalRequested(p));
-    ctx.events.on('identity.user.login', (p) => evalSvc?.onUserLogin(p));
-    ctx.events.on('identity.user.phone_login', (p) => evalSvc?.onUserPhoneLogin(p));
-    ctx.events.on('compliance.kyc.submitted', (p) => evalSvc?.onKycSubmitted(p));
-    ctx.events.on('compliance.kyc.updated', (p) => evalSvc?.onKycStatusUpdated(p));
-    ctx.events.on('compliance.kyc.reverify_required', (p) => evalSvc?.onKycReverifyRequired(p));
-    ctx.events.on('compliance.kyc.high_risk_signal_detected', (p) =>
-      evalSvc?.onKycHighRiskSignalDetected(p),
+    // Throws rather than no-ops before construction, so the event is redelivered instead of
+    // being recorded as handled (ADR-0044).
+    const requireEvaluation = (): TagEvaluationService => {
+      if (!evalSvc) {
+        throw new Error('tag evaluation service not constructed');
+      }
+      return evalSvc;
+    };
+
+    ctx.events.on('wallet.deposit.completed', (p) => requireEvaluation().onDepositCompleted(p));
+    ctx.events.on('wallet.withdrawal.completed', (p) =>
+      requireEvaluation().onWithdrawalCompleted(p),
     );
-    ctx.events.on('rg.self_exclusion.activated', (p) => evalSvc?.onSelfExclusionActivated(p));
-    ctx.events.on('rg.self_exclusion.lifted', (p) => evalSvc?.onSelfExclusionLifted(p));
-    ctx.events.on('player.level.changed', (p) => evalSvc?.onPlayerLevelChanged(p));
+    ctx.events.on('wallet.withdrawal.requested', (p) =>
+      requireEvaluation().onWithdrawalRequested(p),
+    );
+    ctx.events.on('identity.user.login', (p) => requireEvaluation().onUserLogin(p));
+    ctx.events.on('identity.user.phone_login', (p) => requireEvaluation().onUserPhoneLogin(p));
+    ctx.events.on('compliance.kyc.submitted', (p) => requireEvaluation().onKycSubmitted(p));
+    ctx.events.on('compliance.kyc.updated', (p) => requireEvaluation().onKycStatusUpdated(p));
+    ctx.events.on('compliance.kyc.reverify_required', (p) =>
+      requireEvaluation().onKycReverifyRequired(p),
+    );
+    ctx.events.on('compliance.kyc.high_risk_signal_detected', (p) =>
+      requireEvaluation().onKycHighRiskSignalDetected(p),
+    );
+    ctx.events.on('rg.self_exclusion.activated', (p) =>
+      requireEvaluation().onSelfExclusionActivated(p),
+    );
+    ctx.events.on('rg.self_exclusion.lifted', (p) => requireEvaluation().onSelfExclusionLifted(p));
+    ctx.events.on('player.level.changed', (p) => requireEvaluation().onPlayerLevelChanged(p));
 
     // Daily inactive-player sweep. schedule() is called in the router factory (container access).
     ctx.jobs.worker({

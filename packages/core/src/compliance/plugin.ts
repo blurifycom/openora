@@ -58,13 +58,6 @@ import { KycWithdrawalGate } from './adapters/kyc-withdrawal-gate.js';
 
 const logger = createLogger('compliance');
 
-const KYC_EXEMPTION_ENQUEUE_ATTEMPTS = 3;
-const KYC_EXEMPTION_ENQUEUE_RETRY_DELAY_MS = 250;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
   new ComplianceService(
     c.get(DRIZZLE),
@@ -230,86 +223,72 @@ export default {
       });
     });
 
-    ctx.events.on('wallet.deposit.completed', (payload) => {
-      const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
-      if (!parsed.success || !kycRef) {
-        return;
-      }
-      kycRef
-        .handleDeposit(parsed.data.userId)
-        .catch((err) => logger.error({ err }, 're-KYC deposit hook failed'));
-    });
-
-    // Country-level KYC exemption is durable work: a registration event can be delivered
-    // at least once and a resolver/database outage must retry rather than strand a player
-    // at pending. The job's database guard makes repeated delivery harmless. The event
-    // dispatcher itself only logs a thrown handler error and still acks the message (no
-    // redelivery), so a transient enqueue failure needs its own bounded retry here -
-    // otherwise it is silently dropped after a single attempt.
-    ctx.events.on('identity.user.registered', async (payload) => {
-      const parsed = domainEventSchemas['identity.user.registered'].safeParse(payload);
-      if (!parsed.success || !jobQueueRef) {
-        return;
-      }
-      const jobQueue = jobQueueRef;
-      const countryCode = parsed.data.countryCode ?? null;
-      for (let attempt = 1; attempt <= KYC_EXEMPTION_ENQUEUE_ATTEMPTS; attempt += 1) {
-        try {
-          await jobQueue.enqueue(
-            KYC_EXEMPTION_QUEUE,
-            { userId: parsed.data.userId, countryCode },
-            {
-              idempotencyKey: `kyc-exemption:${parsed.data.userId}`,
-              orderingKey: parsed.data.userId,
-              attempts: 10,
-              backoff: { type: 'exponential', delayMs: 1_000 },
-            },
-          );
-          return;
-        } catch (err) {
-          if (attempt === KYC_EXEMPTION_ENQUEUE_ATTEMPTS) {
-            logger.error(
-              { err, userId: parsed.data.userId, countryCode, attempts: attempt },
-              'kyc-exemption enqueue failed after retries; player left without an exemption evaluation',
-            );
-            return;
-          }
-          await delay(KYC_EXEMPTION_ENQUEUE_RETRY_DELAY_MS * attempt);
-        }
-      }
-    });
-
-    const enqueueEval = (userId: string, trigger: RgEvalTrigger) => {
+    // Handlers await their work and throw when a dependency is missing: a failure leaves the
+    // event pending, so the broker redelivers it rather than marking it handled (ADR-0044).
+    const requireJobQueue = (): JobQueueAdapter => {
       if (!jobQueueRef) {
-        return;
+        throw new Error('compliance job queue not bound yet');
       }
-      void jobQueueRef
-        .enqueue(RG_EVAL_QUEUE, { userId, trigger }, { orderingKey: userId })
-        .catch((err) => logger.error({ err }, 'rg-eval enqueue failed'));
+      return jobQueueRef;
     };
 
-    ctx.events.on('wallet.deposit.completed', (payload) => {
+    ctx.events.on('wallet.deposit.completed', async (payload) => {
+      const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
+      if (!parsed.success) {
+        return;
+      }
+      if (!kycRef) {
+        throw new Error('re-KYC deposit hook - kyc service not constructed');
+      }
+      await kycRef.handleDeposit(parsed.data.userId);
+    });
+
+    // Country-level KYC exemption is durable work: a resolver/database outage must retry
+    // rather than strand a player at pending. A failed enqueue throws, so the broker
+    // redelivers the registration; the idempotency key and the job's database guard make
+    // repeated delivery harmless.
+    ctx.events.on('identity.user.registered', async (payload) => {
+      const parsed = domainEventSchemas['identity.user.registered'].safeParse(payload);
+      if (!parsed.success) {
+        return;
+      }
+      await requireJobQueue().enqueue(
+        KYC_EXEMPTION_QUEUE,
+        { userId: parsed.data.userId, countryCode: parsed.data.countryCode ?? null },
+        {
+          idempotencyKey: `kyc-exemption:${parsed.data.userId}`,
+          orderingKey: parsed.data.userId,
+          attempts: 10,
+          backoff: { type: 'exponential', delayMs: 1_000 },
+        },
+      );
+    });
+
+    const enqueueEval = (userId: string, trigger: RgEvalTrigger) =>
+      requireJobQueue().enqueue(RG_EVAL_QUEUE, { userId, trigger }, { orderingKey: userId });
+
+    ctx.events.on('wallet.deposit.completed', async (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
       if (parsed.success) {
-        enqueueEval(parsed.data.userId, 'wallet.deposit.completed');
+        await enqueueEval(parsed.data.userId, 'wallet.deposit.completed');
       }
     });
-    ctx.events.on('gaming.round.ended', (payload) => {
+    ctx.events.on('gaming.round.ended', async (payload) => {
       const parsed = domainEventSchemas['gaming.round.ended'].safeParse(payload);
       if (parsed.success) {
-        enqueueEval(parsed.data.userId, 'gaming.round.ended');
+        await enqueueEval(parsed.data.userId, 'gaming.round.ended');
       }
     });
-    ctx.events.on('rg.exclusion.login_blocked', (payload) => {
+    ctx.events.on('rg.exclusion.login_blocked', async (payload) => {
       const parsed = domainEventSchemas['rg.exclusion.login_blocked'].safeParse(payload);
       if (parsed.success) {
-        enqueueEval(parsed.data.userId, 'rg.exclusion.login_blocked');
+        await enqueueEval(parsed.data.userId, 'rg.exclusion.login_blocked');
       }
     });
-    ctx.events.on('rg.limit.set', (payload) => {
+    ctx.events.on('rg.limit.set', async (payload) => {
       const parsed = domainEventSchemas['rg.limit.set'].safeParse(payload);
       if (parsed.success) {
-        enqueueEval(parsed.data.userId, 'rg.limit.set');
+        await enqueueEval(parsed.data.userId, 'rg.limit.set');
       }
     });
 

@@ -133,9 +133,7 @@ export default {
       currency: string,
       reason: BonusBalanceChangeReason,
       eventId: string,
-    ) => {
-      void realtime?.publish(bonusBalanceChannel(userId), { eventId, currency, reason });
-    };
+    ) => realtime?.publish(bonusBalanceChannel(userId), { eventId, currency, reason });
 
     // Subscribed centrally rather than published beside each emit: the four topics already have
     // one producer each, and a fifth producer added later gets the signal for free instead of
@@ -151,7 +149,7 @@ export default {
         if (!parsed.success || !envelope) {
           return;
         }
-        signalBalance(parsed.data.userId, parsed.data.currency, reason, envelope.eventId);
+        return signalBalance(parsed.data.userId, parsed.data.currency, reason, envelope.eventId);
       });
     }
 
@@ -201,15 +199,14 @@ export default {
         topic: K,
         reason: 'self_exclusion' | 'cooling_off' | 'account_closed' | 'account_deactivated',
       ) =>
-      (payload: unknown) => {
+      async (payload: unknown) => {
         const parsed = domainEventSchemas[topic].safeParse(payload);
         if (!parsed.success) {
           logger.error({ topic }, 'promo bonus forfeit skipped - event payload failed validation');
           return;
         }
         if (!jobs) {
-          logger.error({ topic }, 'promo bonus forfeit dropped - job queue not bound yet');
-          return;
+          throw new Error(`promo bonus forfeit for '${topic}' - job queue not bound yet`);
         }
         const { userId, actorId } = parsed.data;
         // Account closure and a ban (identity.user.deactivated) are always an admin action. A
@@ -228,20 +225,16 @@ export default {
         // bonus and excludes themselves again produces the same key - which BullMQ drops
         // silently, leaving the second bonus active. The durable guard is the `status = 'active'`
         // claim inside `forfeitAllFor`, which already makes a redelivery write nothing twice.
-        void jobs
-          .enqueue(
-            FORFEIT_QUEUE,
-            {
-              userId,
-              reason,
-              actorId: initiatedBy === 'system' ? null : actorId,
-              actorIsAdmin: initiatedBy === 'admin',
-            },
-            MONEY_JOB_RETRY,
-          )
-          .catch((err: unknown) =>
-            logger.error({ err, userId }, 'promo bonus forfeit enqueue failed'),
-          );
+        await jobs.enqueue(
+          FORFEIT_QUEUE,
+          {
+            userId,
+            reason,
+            actorId: initiatedBy === 'system' ? null : actorId,
+            actorIsAdmin: initiatedBy === 'admin',
+          },
+          MONEY_JOB_RETRY,
+        );
       };
 
     ctx.events.on(
@@ -286,29 +279,21 @@ export default {
     });
 
     // A confirmed deposit is what turns an opt-in into a bonus.
-    ctx.events.on('wallet.deposit.completed', (payload: unknown) => {
+    ctx.events.on('wallet.deposit.completed', async (payload: unknown) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
       if (!parsed.success) {
         logger.error('promo offer deposit skipped - event payload failed validation');
         return;
       }
       if (!jobs) {
-        logger.error(
-          { userId: parsed.data.userId },
-          'promo offer deposit dropped - job queue not bound yet',
-        );
-        return;
+        throw new Error('promo offer deposit - job queue not bound yet');
       }
       const { userId, amount, currency, transactionId } = parsed.data;
-      void jobs
-        .enqueue(
-          DEPOSIT_QUEUE,
-          { userId, amount, currency, transactionId },
-          { idempotencyKey: `promo-offer-deposit:${transactionId}`, ...MONEY_JOB_RETRY },
-        )
-        .catch((err: unknown) =>
-          logger.error({ err, userId }, 'promo offer deposit enqueue failed'),
-        );
+      await jobs.enqueue(
+        DEPOSIT_QUEUE,
+        { userId, amount, currency, transactionId },
+        { idempotencyKey: `promo-offer-deposit:${transactionId}`, ...MONEY_JOB_RETRY },
+      );
     });
 
     ctx.routers.add('promo-bonus', (c) => {
