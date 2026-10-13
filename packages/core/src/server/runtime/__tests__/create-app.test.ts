@@ -222,8 +222,8 @@ describe('createApp - service name for the Redis Streams consumer group', () => 
   });
 });
 
-describe('createApp - SERVICE_MANIFEST on the plugin list it is given', () => {
-  const keys = ['REDIS_URL', 'SERVICE_MANIFEST', 'SERVICE_NAME'] as const;
+describe('createApp - SERVICE_MANIFEST and JOB_WORKERS on the plugin list it is given', () => {
+  const keys = ['REDIS_URL', 'SERVICE_MANIFEST', 'SERVICE_NAME', 'JOB_WORKERS'] as const;
   const saved = keys.map((key) => [key, process.env[key]] as const);
 
   afterEach(() => {
@@ -245,11 +245,19 @@ describe('createApp - SERVICE_MANIFEST on the plugin list it is given', () => {
     { id: 'fixture-leaf', path: fixture('leaf') },
   ];
 
-  /** Boots the fixtures under a manifest and returns the queues whose workers were registered. */
-  async function bootQueues(manifest: string) {
+  /** Boots the fixtures under `env` and returns the queues whose workers were registered. */
+  async function bootQueues(env: { SERVICE_MANIFEST?: string; JOB_WORKERS?: string }) {
     process.env['REDIS_URL'] = redisUrlForWorker();
-    process.env['SERVICE_MANIFEST'] = manifest;
-    process.env['SERVICE_NAME'] = 'fixture';
+    for (const key of ['SERVICE_MANIFEST', 'SERVICE_NAME', 'JOB_WORKERS'] as const) {
+      delete process.env[key];
+    }
+    if (env.SERVICE_MANIFEST) {
+      process.env['SERVICE_MANIFEST'] = env.SERVICE_MANIFEST;
+      process.env['SERVICE_NAME'] = 'fixture';
+    }
+    if (env.JOB_WORKERS) {
+      process.env['JOB_WORKERS'] = env.JOB_WORKERS;
+    }
     const jobs = makeJobQueue();
     const created = await createApp({ plugins, databaseUrl: DUMMY_DATABASE_URL }, (container) => {
       container.register(JOB_QUEUE, () => jobs);
@@ -259,12 +267,38 @@ describe('createApp - SERVICE_MANIFEST on the plugin list it is given', () => {
   }
 
   it('boots only the modules the manifest selects', async () => {
-    expect(await bootQueues('fixture-base')).toEqual(['fixture-base.daily', 'fixture-base.weekly']);
+    expect(await bootQueues({ SERVICE_MANIFEST: 'fixture-base' })).toEqual([
+      'fixture-base.daily',
+      'fixture-base.weekly',
+    ]);
   });
 
   it('names every module the manifest leaves out in one boot error', async () => {
-    await expect(bootQueues('fixture-leaf')).rejects.toThrow(
+    await expect(bootQueues({ SERVICE_MANIFEST: 'fixture-leaf' })).rejects.toThrow(
       /fixture-feature \(required by fixture-leaf\)[\s\S]*fixture-base \(required by fixture-feature\)[\s\S]*SERVICE_MANIFEST=fixture-leaf,fixture-feature,fixture-base/,
+    );
+  });
+
+  it('registers only the workers JOB_WORKERS selects', async () => {
+    expect(await bootQueues({ JOB_WORKERS: 'fixture-base.*,!fixture-base.weekly' })).toEqual([
+      'fixture-base.daily',
+    ]);
+    expect(await bootQueues({ JOB_WORKERS: '!fixture-base.*' })).toEqual(['fixture-feature.sync']);
+  });
+
+  it('boots with an exclusion that matches no queue', async () => {
+    expect(await bootQueues({ JOB_WORKERS: '!absent.*' })).toHaveLength(3);
+  });
+
+  it('fails the boot on an inclusion that matches no queue', async () => {
+    await expect(bootQueues({ JOB_WORKERS: 'fixture-bsae.*' })).rejects.toThrow(
+      /does not register: fixture-bsae\.\*/,
+    );
+  });
+
+  it('fails the boot on a malformed JOB_WORKERS', async () => {
+    await expect(bootQueues({ JOB_WORKERS: 'none,fixture-base.daily' })).rejects.toThrow(
+      /"none" stands alone/,
     );
   });
 });

@@ -66,6 +66,7 @@ import {
 } from './client-address.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
 import type { CoreTokenCatalog } from './core-token-catalog.js';
+import { parseJobWorkers, selectJobWorkers } from './job-workers.js';
 
 // Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
 // only (public CMS content and the game catalogue). NOTHING
@@ -345,7 +346,8 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
 /**
  * The single composition root: wires the DI container, boots the plugins in
  * `config.plugins` that `SERVICE_MANIFEST` selects (every one when it is unset), and
- * mounts the resulting oRPC router on a Hono app.
+ * mounts the resulting oRPC router on a Hono app. `JOB_WORKERS` picks the job queues
+ * this process consumes (every one when it is unset).
  * Production is distributed-only (ADR-0030, superseding ADR-0010/0014/0016/0028):
  * `REDIS_URL` auto-binds `JOB_QUEUE`/`RATE_LIMITER`/`CACHE`/`MESSAGE_BROKER`/
  * `REALTIME_TRANSPORT` to their Redis-backed drivers - the broker being the
@@ -370,6 +372,7 @@ export async function createApp(
     config.trustedProxies,
     process.env['TRUSTED_PROXIES'],
   );
+  const jobWorkerSelection = parseJobWorkers(process.env['JOB_WORKERS']);
 
   if (config.databaseUrl) {
     process.env['DATABASE_URL'] = config.databaseUrl;
@@ -468,6 +471,19 @@ export async function createApp(
   }
 
   const registry = await loadPlugins(plugins, container);
+  // Before any router factory runs, so a mistyped queue fails the boot before a schedule is set.
+  const workers = selectJobWorkers(registry.jobs.getAll(), jobWorkerSelection);
+  if (jobWorkerSelection !== null) {
+    const queuesOf = (list: typeof workers.consumed) => [...new Set(list.map((w) => w.queue))];
+    bootLogger.info(
+      {
+        consumed: queuesOf(workers.consumed),
+        skipped: queuesOf(workers.skipped),
+        idleExclusions: workers.idleExclusions,
+      },
+      'JOB_WORKERS active',
+    );
+  }
   await configure?.(container);
 
   assertDurableSeamsBound(container);
@@ -513,7 +529,7 @@ export async function createApp(
   // Built now so a broken tool or action-type factory fails boot, not the first call.
   const mcpTransport = await loadMcpTransport(container, container.get(MCP_KERNEL));
 
-  for (const registration of registry.jobs.getAll()) {
+  for (const registration of workers.consumed) {
     jobQueue.registerWorker(registration);
   }
 
