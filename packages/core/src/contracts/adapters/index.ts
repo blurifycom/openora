@@ -86,6 +86,7 @@ export type {
   GamingCommands,
   GamingAccumulateExternalRoundArgs,
   GamingSetGameAvailabilityArgs,
+  GamingSetGameAvailabilityOutcome,
   GamingNotifyGamesCreatedArgs,
   GamingNotifyGamesChangedArgs,
   GamingAccumulateExternalRoundOutcome,
