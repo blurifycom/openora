@@ -8,11 +8,15 @@
  *
  * Usage:
  *   pnpm create:service <name> <module,module,...>
- *   pnpm create:service wallet identity,wallet
+ *   pnpm create:service accounts identity,mail
+ *
+ * The manifest lists every module its modules depend on and every module that binds a port
+ * they require; the boot names whatever is missing. The host bakes the service name as its
+ * SERVICE_NAME - its own Redis Streams consumer group.
  *
  * After scaffolding: `pnpm install`, build deps, then
  *   pnpm -F @openora/<name>-service dev          # uses the baked-in manifest
- *   SERVICE_MANIFEST=identity,wallet,chat pnpm -F @openora/<name>-service dev   # override
+ *   SERVICE_MANIFEST=identity,mail,audit pnpm -F @openora/<name>-service dev   # override
  */
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -23,7 +27,7 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const [, , rawName, rawManifest] = process.argv;
 if (!rawName || !rawManifest) {
   console.error('Usage: pnpm create:service <name> <module,module,...>');
-  console.error('Example: pnpm create:service wallet identity,wallet');
+  console.error('Example: pnpm create:service accounts identity,mail');
   process.exit(1);
 }
 
@@ -65,17 +69,13 @@ const files: Record<string, string> = {
           build: 'tsc',
           dev: 'node --import tsx --watch src/main.ts',
           start: 'node dist/main.js',
-          typecheck: 'tsc --noEmit',
+          'check:types': 'tsc --noEmit',
         },
         dependencies: {
-          '@orpc/server': '1.14.3',
           '@openora/core': 'workspace:*',
-          amqplib: '^2.0.1',
-          bullmq: '^5.77.6',
-          zod: '4.4.3',
         },
         devDependencies: {
-          tsx: '4.22.2',
+          tsx: '4.23.1',
           typescript: '6.0.3',
         },
       },
@@ -95,16 +95,22 @@ const files: Record<string, string> = {
     ) + '\n',
 
   'src/main.ts': `import { createApp, loadExtensions } from '@openora/core/server';
+import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
 
 // ${name} service: boots only the modules it owns. The module code is shared with
-// the monolith (root extensions.config.ts) - this host just narrows it via the
-// SERVICE_MANIFEST seam. Override the default at runtime with SERVICE_MANIFEST.
+// the monolith (root extensions.config.ts) - createApp narrows it via the
+// SERVICE_MANIFEST seam. Override the defaults at runtime with SERVICE_MANIFEST and
+// SERVICE_NAME; the name is this service's own consumer group.
 process.env['SERVICE_MANIFEST'] ??= '${manifest.join(',')}';
+process.env['SERVICE_NAME'] ??= '${name}';
 
 async function bootstrap() {
   const plugins = await loadExtensions();
   // Routes come from the loaded plugins; createApp exposes runtime API docs.
-  const { listen } = await createApp({ plugins });
+  const { listen } = await createApp({
+    plugins,
+    authSchema: { user, session, account, verification, twoFactor },
+  });
   await listen();
 }
 
@@ -122,7 +128,9 @@ for (const [rel, content] of Object.entries(files)) {
 console.log(`Created apps/${name} (${pkgName}) booting modules: ${manifest.join(', ')}`);
 console.log('Next:');
 console.log('  pnpm install');
-console.log(`  pnpm -F ${pkgName} dev        # boots the baked-in manifest`);
+console.log(
+  `  DATABASE_URL=... REDIS_URL=... CORS_ORIGINS=... pnpm -F ${pkgName} dev   # boots the baked-in manifest`,
+);
 console.log(`  SERVICE_MANIFEST=... pnpm -F ${pkgName} dev   # override at runtime`);
 console.log('To exclude these modules from the monolith, drop them from extensions.config.ts');
 console.log(
