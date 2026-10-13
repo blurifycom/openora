@@ -297,6 +297,29 @@ describe('BullMqJobQueue', () => {
     printed.mockRestore();
   });
 
+  it('logs each distinct redis error once per window and counts the muted repeats', () => {
+    const q = new BullMqJobQueue('redis://127.0.0.1:1');
+    instances.push(q);
+    const logged = vi.spyOn(q['logger'], 'error').mockImplementation(() => undefined);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    const fail = (message: string) => q['logRedisError']('q', new Error(message));
+
+    fail('OOM');
+    fail('OOM');
+    fail('OOM');
+    fail('ECONNREFUSED');
+    now.mockReturnValue(60_000);
+    fail('OOM');
+    now.mockRestore();
+
+    expect(logged).toHaveBeenCalledTimes(3);
+    expect(logged.mock.calls.map(([logFields]) => logFields)).toEqual([
+      { queue: 'q', message: 'OOM', suppressed: 0 },
+      { queue: 'q', message: 'ECONNREFUSED', suppressed: 0 },
+      { queue: 'q', message: 'OOM', suppressed: 2 },
+    ]);
+  });
+
   it('close drains an in-flight job before resolving', async () => {
     const q = makeQueue();
     let started = false;
