@@ -7,7 +7,13 @@ export default {
     ctx.provide(PLATFORM_CONFIG, () =>
       definePlatformConfig({
         registration: { termsVersion: 'test-v1' },
-        identity: { allowedAvatarHosts: ['avatars.example.test'] },
+        identity: {
+          allowedAvatarHosts: ['avatars.example.test'],
+          allowedAvatarUrlPrefixes: [
+            'https://play.example.test/avatars/',
+            'http://localhost:3000/avatars/',
+          ],
+        },
       }),
     );
   },

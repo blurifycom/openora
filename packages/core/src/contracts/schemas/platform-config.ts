@@ -7,7 +7,7 @@ import {
 } from './igaming-config.js';
 import { CurrencyTickerInputSchema, MoneyAmountSchema } from './common.js';
 import { AgentsConfigSchema } from './agents.js';
-import { HostAllowlistEntrySchema } from './host-allowlist.js';
+import { HostAllowlistEntrySchema, UrlPrefixAllowlistEntrySchema } from './host-allowlist.js';
 import { createToken } from '../adapters/token.js';
 
 /**
@@ -382,10 +382,13 @@ export type GamingConfig = z.infer<typeof GamingConfigSchema>;
 export const IdentityConfigSchema = z
   .object({
     /**
-     * Hostnames a player avatar URL may be served from. Empty = no avatars allowed. Subdomains
+     * Hostnames a player avatar URL may be served from, on the default https port. Subdomains
      * match too, so name the exact bucket or CDN host, never a parent domain other tenants share.
+     * With both lists empty, only `null` (no avatar) is accepted.
      */
     allowedAvatarHosts: z.array(HostAllowlistEntrySchema).default([]),
+    /** URL prefixes a player avatar may start with: exact origin (no subdomains), then a path ending in "/". */
+    allowedAvatarUrlPrefixes: z.array(UrlPrefixAllowlistEntrySchema).default([]),
   })
   .strict();
 export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
@@ -450,8 +453,11 @@ export const PlatformConfigSchema = z
     cms: CmsConfigSchema.default({ allowedBannerImageHosts: [] }),
     /** Game custom thumbnail host allow-list. Absent = built-in default (empty = disabled). */
     gaming: GamingConfigSchema.default({ allowedThumbnailHosts: [] }),
-    /** Player avatar host allow-list. Absent = built-in default (empty = disabled). */
-    identity: IdentityConfigSchema.default({ allowedAvatarHosts: [] }),
+    /** Player avatar host and URL-prefix allow-lists. Absent = built-in default (empty = disabled). */
+    identity: IdentityConfigSchema.default({
+      allowedAvatarHosts: [],
+      allowedAvatarUrlPrefixes: [],
+    }),
     /** How often the rank payout jobs tick. Absent = the built-in defaults. */
     promo: PromoConfigSchema.prefault({}),
     /** Agent run limits, retention and the model catalog. Absent = the schema defaults, no models. */

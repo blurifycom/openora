@@ -68,7 +68,12 @@ import type {
   SetLoginWithdrawalAlertsInput,
   SetRequireTwoFactorOnLoginInput,
 } from '@openora/core/contracts';
-import { RATE_LIMIT_KEYS, isAllowedHttpsUrl, makeRateLimitKey } from '@openora/core/contracts';
+import {
+  RATE_LIMIT_KEYS,
+  isAllowedHttpsUrl,
+  isAllowedUrlPrefix,
+  makeRateLimitKey,
+} from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
 import { assertAccountNotBlocked, assertCountryAllowed } from './rg-guard.service.js';
 import { assertUsernameAllowed, isUsernameAllowed } from '../../shared/username.js';
@@ -292,9 +297,19 @@ export const UserNotFoundError = makeNotFoundError('User');
 export const UsernameConflictError = makeConflictError('Username', 'Username is already in use');
 export const AvatarHostNotAllowedError = createDomainError<[]>(
   'AvatarHostNotAllowedError',
-  () => 'Avatar URL must be https and served from an allowed host',
+  () => 'Avatar URL is not on an allowed host or URL prefix',
   { reason: 'avatar_host_not_allowed' },
 );
+
+function isAllowedAvatarUrl(
+  image: string,
+  config: PlatformConfig['identity'] | undefined,
+): boolean {
+  return (
+    isAllowedHttpsUrl(image, config?.allowedAvatarHosts ?? []) ||
+    isAllowedUrlPrefix(image, config?.allowedAvatarUrlPrefixes ?? [])
+  );
+}
 
 const BetterAuthErrorBodySchema = z.object({
   message: z.string().optional(),
@@ -2823,7 +2838,7 @@ export class IdentityService {
     }
     if (
       typeof input.image === 'string' &&
-      !isAllowedHttpsUrl(input.image, this.platformConfig?.identity.allowedAvatarHosts ?? [])
+      !isAllowedAvatarUrl(input.image, this.platformConfig?.identity)
     ) {
       throw new AvatarHostNotAllowedError();
     }
