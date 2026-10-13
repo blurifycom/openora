@@ -69,9 +69,10 @@ export class BullMqJobQueue implements JobQueueAdapter {
   private readonly queues = new Map<string, Queue<JobEnvelope>>();
   private readonly workers: Worker<JobEnvelope>[] = [];
   private readonly orderingWarned = new Set<string>();
-  // ponytail: one entry per distinct queue+message, never pruned; fine while Redis error
-  // messages stay stable, add an LRU cap if one ever embeds a job id or timestamp.
-  private readonly redisErrorLog = new Map<string, { loggedAt: number; suppressed: number }>();
+  // One window per process, not per queue or message: every queue shares one Redis, so an
+  // outage logs once a minute per instance, and messages carrying job ids stay bounded.
+  private redisErrorLoggedAt = Number.NEGATIVE_INFINITY;
+  private mutedRedisErrors = 0;
 
   constructor(redisUrl: string) {
     // BullMQ requires maxRetriesPerRequest: null on the (blocking) worker connection.
@@ -190,18 +191,17 @@ export class BullMqJobQueue implements JobQueueAdapter {
   }
 
   private logRedisError(queue: string, error: Error): void {
-    const key = `${queue}:${error.message}`;
     const now = Date.now();
-    const previous = this.redisErrorLog.get(key);
-    if (previous && now - previous.loggedAt < ERROR_LOG_INTERVAL_MS) {
-      previous.suppressed += 1;
+    if (now - this.redisErrorLoggedAt < ERROR_LOG_INTERVAL_MS) {
+      this.mutedRedisErrors += 1;
       return;
     }
-    this.redisErrorLog.set(key, { loggedAt: now, suppressed: 0 });
     this.logger.error(
-      { queue, message: error.message, suppressed: previous?.suppressed ?? 0 },
-      '[bullmq-job-queue] redis error; repeats of this error on this queue muted for 60s',
+      { queue, message: error.message, suppressed: this.mutedRedisErrors },
+      '[bullmq-job-queue] redis error; further redis errors muted for 60s',
     );
+    this.redisErrorLoggedAt = now;
+    this.mutedRedisErrors = 0;
   }
 
   private async deadLetter(worker: AnyWorker, job: Job<JobEnvelope>, error: Error): Promise<void> {

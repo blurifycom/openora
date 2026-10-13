@@ -297,26 +297,25 @@ describe('BullMqJobQueue', () => {
     printed.mockRestore();
   });
 
-  it('logs each distinct redis error once per window and counts the muted repeats', () => {
+  it('logs one redis error per window across all queues and counts the muted ones', () => {
     const q = new BullMqJobQueue('redis://127.0.0.1:1');
     instances.push(q);
     const logged = vi.spyOn(q['logger'], 'error').mockImplementation(() => undefined);
     const now = vi.spyOn(Date, 'now').mockReturnValue(0);
-    const fail = (message: string) => q['logRedisError']('q', new Error(message));
+    const fail = (queueName: string, message: string) =>
+      q['logRedisError'](queueName, new Error(message));
 
-    fail('OOM');
-    fail('OOM');
-    fail('OOM');
-    fail('ECONNREFUSED');
+    fail('a', 'OOM');
+    fail('a', 'OOM');
+    fail('b', 'OOM');
+    fail('b', 'Missing lock for job repeat:tick:1791884700000');
     now.mockReturnValue(60_000);
-    fail('OOM');
+    fail('b', 'OOM');
     now.mockRestore();
 
-    expect(logged).toHaveBeenCalledTimes(3);
     expect(logged.mock.calls.map(([logFields]) => logFields)).toEqual([
-      { queue: 'q', message: 'OOM', suppressed: 0 },
-      { queue: 'q', message: 'ECONNREFUSED', suppressed: 0 },
-      { queue: 'q', message: 'OOM', suppressed: 2 },
+      { queue: 'a', message: 'OOM', suppressed: 0 },
+      { queue: 'b', message: 'OOM', suppressed: 3 },
     ]);
   });
 
