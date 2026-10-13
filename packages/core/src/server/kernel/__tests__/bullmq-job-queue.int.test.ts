@@ -264,6 +264,10 @@ describe('BullMqJobQueue', () => {
     const daily = scheduled.find((s) => s.key === 'daily');
     expect(daily?.pattern).toBe('0 0 * * *');
     expect(daily?.tz).toBe('UTC');
+    expect(daily?.template?.opts).toMatchObject({
+      removeOnComplete: { age: 86_400, count: 10_000 },
+      removeOnFail: { age: 604_800, count: 10_000 },
+    });
 
     await q.unschedule(queue('sched'), 'daily');
     expect(await raw.getJobSchedulers()).toHaveLength(0);
@@ -276,6 +280,21 @@ describe('BullMqJobQueue', () => {
     const raw = rawQueue('tick');
     const interval = (await raw.getJobSchedulers()).find((s) => s.key === 'interval');
     expect(interval?.every).toBe(60000);
+  });
+
+  it('logs redis errors once per window instead of letting BullMQ print every stack', async () => {
+    const q = new BullMqJobQueue('redis://127.0.0.1:1');
+    instances.push(q);
+    const logged = vi.spyOn(q['logger'], 'error');
+    const printed = vi.spyOn(console, 'error');
+    q.registerWorker({ queue: queue('down'), schema: Payload, handler: () => undefined });
+
+    await vi.waitFor(() => expect(logged).toHaveBeenCalled(), POLL);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(printed).not.toHaveBeenCalled();
+    printed.mockRestore();
   });
 
   it('close drains an in-flight job before resolving', async () => {

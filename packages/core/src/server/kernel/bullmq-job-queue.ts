@@ -32,6 +32,11 @@ type AnyWorker = WorkerRegistration<unknown>;
 // dedup key from becoming permanently poisoned.
 const RETAIN_COMPLETED = { age: 24 * 60 * 60, count: 10_000 };
 const RETAIN_FAILED = { age: 7 * 24 * 60 * 60, count: 10_000 };
+const RETENTION = { removeOnComplete: RETAIN_COMPLETED, removeOnFail: RETAIN_FAILED };
+
+// Without an 'error' listener BullMQ falls back to console.error with a full stack on
+// every 100ms retry of its worker loop - millions of lines while Redis is down or OOM.
+const ERROR_LOG_INTERVAL_MS = 60_000;
 
 // The wire shape stored on every BullMQ job: the caller payload plus carried meta.
 // The worker validates `payload` against the registration schema before the handler
@@ -64,6 +69,7 @@ export class BullMqJobQueue implements JobQueueAdapter {
   private readonly queues = new Map<string, Queue<JobEnvelope>>();
   private readonly workers: Worker<JobEnvelope>[] = [];
   private readonly orderingWarned = new Set<string>();
+  private readonly errorLoggedAt = new Map<string, number>();
 
   constructor(redisUrl: string) {
     // BullMQ requires maxRetriesPerRequest: null on the (blocking) worker connection.
@@ -94,8 +100,7 @@ export class BullMqJobQueue implements JobQueueAdapter {
       backoff: opts.backoff ? { type: opts.backoff.type, delay: opts.backoff.delayMs } : undefined,
       priority: opts.priority,
       // ttlMs has no native BullMQ equivalent - ignored (the port allows driver variance).
-      removeOnComplete: RETAIN_COMPLETED,
-      removeOnFail: RETAIN_FAILED,
+      ...RETENTION,
     };
 
     return this.getQueue(queue)
@@ -126,6 +131,7 @@ export class BullMqJobQueue implements JobQueueAdapter {
 
     // 'failed' fires per attempt; act only once retries are exhausted (attemptsMade has
     // reached the job's own attempts, default 1) - mirrors the in-process dead-letter.
+    worker.on('error', (error) => this.logRedisError(queueName, error));
     worker.on('failed', (job, error) => {
       if (!job) {
         return;
@@ -151,7 +157,8 @@ export class BullMqJobQueue implements JobQueueAdapter {
       .upsertJobScheduler(
         scheduleId,
         { pattern: repeat.cron, every: repeat.everyMs, tz: repeat.timezone },
-        { name: queue, data: envelope },
+        // Without opts every cron run stays in Redis forever (~1 KB per run).
+        { name: queue, data: envelope, opts: RETENTION },
       )
       .then(() => undefined);
   }
@@ -175,8 +182,21 @@ export class BullMqJobQueue implements JobQueueAdapter {
       return existing;
     }
     const created = new Queue<JobEnvelope>(queue, { connection: this.connection });
+    created.on('error', (error) => this.logRedisError(queue, error));
     this.queues.set(queue, created);
     return created;
+  }
+
+  private logRedisError(queue: string, error: Error): void {
+    const now = Date.now();
+    if (now - (this.errorLoggedAt.get(queue) ?? 0) < ERROR_LOG_INTERVAL_MS) {
+      return;
+    }
+    this.errorLoggedAt.set(queue, now);
+    this.logger.error(
+      { queue, message: error.message },
+      '[bullmq-job-queue] redis error; repeats for this queue muted for 60s',
+    );
   }
 
   private async deadLetter(worker: AnyWorker, job: Job<JobEnvelope>, error: Error): Promise<void> {
