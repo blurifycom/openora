@@ -63,7 +63,7 @@ describe('wallet plugin wallet.balance.changed wiring', () => {
 
     const userId = randomUUID();
     const eventId = randomUUID();
-    await handlers[0]?.(
+    await handlers[0]?.handler(
       {
         userId,
         playerId: null,
@@ -93,7 +93,7 @@ describe('wallet plugin wallet.balance.changed wiring', () => {
     const { registry, realtime } = boot();
     const handlers = registry.events.getAll().get('wallet.balance.changed') ?? [];
 
-    await handlers[0]?.(
+    await handlers[0]?.handler(
       { userId: 'not-a-uuid' },
       {
         eventId: randomUUID(),

@@ -1,4 +1,4 @@
-import { createLogger, DrizzleService } from '@openora/core/server';
+import { createLogger, DrizzleService, type DrizzleTx } from '@openora/core/server';
 import type { IdentityReader, KycStatus, Player, User } from '@openora/core/contracts';
 import { and, eq, exists, inArray, isNull, lt, max, ne, or, SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
@@ -46,8 +46,9 @@ export class IdentityReaderService implements IdentityReader {
     return rows.map((r) => r.userId);
   }
 
-  async getPlayerIdByUserId(userId: User['id']): Promise<Player['id'] | null> {
-    const [row] = await this.drizzle.db
+  async getPlayerIdByUserId(userId: User['id'], tx?: unknown): Promise<Player['id'] | null> {
+    const db = tx === undefined ? this.drizzle.db : (tx as DrizzleTx);
+    const [row] = await db
       .select({ id: player.id })
       .from(player)
       .where(eq(player.userId, userId))

@@ -415,7 +415,8 @@ export class RgService {
     initiatedBy: RgInitiator,
     meta?: ClientMeta,
   ): Promise<Limit> {
-    const { prior, row } = await this.drizzle.db.transaction((tx) =>
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    const row = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
         const [existing] = await tx
           .select()
@@ -446,44 +447,44 @@ export class RgService {
             this.rates,
           );
         }
-        return { prior: existing, row: await writeLimitRow(tx, userId, existing, input) };
+        const written = await writeLimitRow(tx, userId, existing, input);
+        if (existing?.pendingKind) {
+          await this.events.emitInTransaction(tx, 'rg.limit.change_cancelled', {
+            userId,
+            playerId,
+            actorId,
+            limitId: written.id,
+            type: input.type,
+            period: input.period,
+            kind: existing.pendingKind,
+            previousAmount: existing.amount,
+            previousMinutes: existing.minutes,
+            requestedAmount: existing.pendingAmount,
+            requestedMinutes: existing.pendingMinutes,
+            initiatedBy,
+            ip: meta?.ip ?? null,
+            userAgent: meta?.userAgent ?? null,
+          });
+        }
+        await this.events.emitInTransaction(tx, 'rg.limit.set', {
+          userId,
+          playerId,
+          actorId,
+          limitId: written.id,
+          type: input.type,
+          period: input.period,
+          amount: input.amount,
+          minutes: input.minutes,
+          previousAmount: existing?.amount ?? null,
+          previousMinutes: existing?.minutes ?? null,
+          initiatedBy,
+          reason: input.reason,
+          ip: meta?.ip ?? null,
+          userAgent: meta?.userAgent ?? null,
+        });
+        return written;
       }),
     );
-    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
-    if (prior?.pendingKind) {
-      this.events.emit('rg.limit.change_cancelled', {
-        userId,
-        playerId,
-        actorId,
-        limitId: row.id,
-        type: input.type,
-        period: input.period,
-        kind: prior.pendingKind,
-        previousAmount: prior.amount,
-        previousMinutes: prior.minutes,
-        requestedAmount: prior.pendingAmount,
-        requestedMinutes: prior.pendingMinutes,
-        initiatedBy,
-        ip: meta?.ip ?? null,
-        userAgent: meta?.userAgent ?? null,
-      });
-    }
-    this.events.emit('rg.limit.set', {
-      userId,
-      playerId,
-      actorId,
-      limitId: row.id,
-      type: input.type,
-      period: input.period,
-      amount: input.amount,
-      minutes: input.minutes,
-      previousAmount: prior?.amount ?? null,
-      previousMinutes: prior?.minutes ?? null,
-      initiatedBy,
-      reason: input.reason,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    });
     await this.notifyLimitUpdated(userId, row, initiatedBy);
     return toLimitDto(row);
   }
@@ -520,7 +521,8 @@ export class RgService {
     await this.assertNoActiveExclusion(userId, 'cooling_off');
     const now = new Date();
     const expiresAt = new Date(now.getTime() + input.durationHours * HOUR_MS);
-    const { row, lapsed } = await this.drizzle.db.transaction(async (tx) => {
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    const row = await this.drizzle.db.transaction(async (tx) => {
       const lapsedRows = await this.expireLapsedCoolingOff(userId, tx, now);
       const r = findOneOrThrow(
         await tx
@@ -539,27 +541,26 @@ export class RgService {
         new ExclusionNotFoundError(userId),
       );
       await this.syncEnforcement(userId, tx);
-      return { row: r, lapsed: lapsedRows };
-    });
-    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
-    for (const lapsedRow of lapsed) {
-      this.events.emit('rg.cooling_off.expired', {
+      for (const lapsedRow of lapsedRows) {
+        await this.events.emitInTransaction(tx, 'rg.cooling_off.expired', {
+          userId,
+          playerId,
+          exclusionId: lapsedRow.id,
+          expiresAt: (lapsedRow.expiresAt ?? now).toISOString(),
+        });
+      }
+      await this.events.emitInTransaction(tx, 'rg.cooling_off.activated', {
         userId,
         playerId,
-        exclusionId: lapsedRow.id,
-        expiresAt: (lapsedRow.expiresAt ?? now).toISOString(),
+        actorId,
+        exclusionId: r.id,
+        expiresAt: expiresAt.toISOString(),
+        reason: input.reason,
+        initiatedBy,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
       });
-    }
-    this.events.emit('rg.cooling_off.activated', {
-      userId,
-      playerId,
-      actorId,
-      exclusionId: row.id,
-      expiresAt: expiresAt.toISOString(),
-      reason: input.reason,
-      initiatedBy,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
+      return r;
     });
     await this.notify(
       userId,
@@ -591,6 +592,7 @@ export class RgService {
       input.isPermanent || input.durationMonths === undefined
         ? null
         : addMonths(now, input.durationMonths);
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const row = await this.drizzle.db.transaction(async (tx) => {
       const r = findOneOrThrow(
         await tx
@@ -609,20 +611,20 @@ export class RgService {
         new ExclusionNotFoundError(userId),
       );
       await this.syncEnforcement(userId, tx);
+      await this.events.emitInTransaction(tx, 'rg.self_exclusion.activated', {
+        userId,
+        playerId,
+        actorId,
+        exclusionId: r.id,
+        isPermanent: input.isPermanent,
+        durationMonths: input.isPermanent ? null : (input.durationMonths ?? null),
+        expiresAt: expiresAt ? expiresAt.toISOString() : null,
+        reason: input.reason,
+        initiatedBy,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
       return r;
-    });
-    this.events.emit('rg.self_exclusion.activated', {
-      userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      actorId,
-      exclusionId: row.id,
-      isPermanent: input.isPermanent,
-      durationMonths: input.isPermanent ? null : (input.durationMonths ?? null),
-      expiresAt: expiresAt ? expiresAt.toISOString() : null,
-      reason: input.reason,
-      initiatedBy,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
     });
     await this.notify(
       userId,
@@ -674,6 +676,7 @@ export class RgService {
     }
 
     const now = new Date();
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const row = await this.drizzle.db.transaction(async (tx) => {
       const r = findOneOrThrow(
         await tx
@@ -686,17 +689,17 @@ export class RgService {
       // Recompute from what remains - a still-active cooling-off keeps its own block
       // rather than being cleared by this lift.
       await this.syncEnforcement(userId, tx);
+      await this.events.emitInTransaction(tx, 'rg.self_exclusion.lifted', {
+        userId,
+        playerId,
+        actorId,
+        exclusionId: r.id,
+        kind: 'self_exclusion',
+        reason: input.reason,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
       return r;
-    });
-    this.events.emit('rg.self_exclusion.lifted', {
-      userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      actorId,
-      exclusionId: row.id,
-      kind: 'self_exclusion',
-      reason: input.reason,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
     });
     await this.notify(
       userId,
@@ -734,6 +737,7 @@ export class RgService {
     }
 
     const now = new Date();
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const row = await this.drizzle.db.transaction(async (tx) => {
       const r = findOneOrThrow(
         await tx
@@ -744,16 +748,16 @@ export class RgService {
         new ExclusionNotFoundError(existing.id),
       );
       await this.syncEnforcement(userId, tx);
+      await this.events.emitInTransaction(tx, 'rg.cooling_off.lifted', {
+        userId,
+        playerId,
+        actorId,
+        exclusionId: r.id,
+        reason: input.reason,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
       return r;
-    });
-    this.events.emit('rg.cooling_off.lifted', {
-      userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      actorId,
-      exclusionId: row.id,
-      reason: input.reason,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
     });
     await this.notify(
       userId,
@@ -789,34 +793,42 @@ export class RgService {
   // recompute enforcement for the affected players. Called by the rg-monitor sweep.
   async expireLapsedCoolingOffs(): Promise<void> {
     const now = new Date();
-    const lapsed = await this.drizzle.db
-      .update(rgExclusion)
-      .set({ status: 'expired' })
-      .where(
-        and(
-          eq(rgExclusion.kind, 'cooling_off'),
-          eq(rgExclusion.status, 'active'),
-          lte(rgExclusion.expiresAt, now),
-        ),
-      )
-      .returning({
-        id: rgExclusion.id,
-        userId: rgExclusion.userId,
-        expiresAt: rgExclusion.expiresAt,
-      });
+    const lapsedFilter = and(
+      eq(rgExclusion.kind, 'cooling_off'),
+      eq(rgExclusion.status, 'active'),
+      lte(rgExclusion.expiresAt, now),
+    );
+    // Enrichment is resolved before the tx so the batched lookup never holds the tx open on a
+    // second pool connection; a row that lapses in between just goes out with a null playerId.
+    const candidates = await this.drizzle.db
+      .selectDistinct({ userId: rgExclusion.userId })
+      .from(rgExclusion)
+      .where(lapsedFilter);
+    const playerIds = await this.identityReader.getPlayerIdsByUserIdsSafe(
+      candidates.map((r) => r.userId),
+    );
+    const lapsed = await this.drizzle.db.transaction(async (tx) => {
+      const expired = await tx
+        .update(rgExclusion)
+        .set({ status: 'expired' })
+        .where(lapsedFilter)
+        .returning({
+          id: rgExclusion.id,
+          userId: rgExclusion.userId,
+          expiresAt: rgExclusion.expiresAt,
+        });
+      for (const row of expired) {
+        await this.events.emitInTransaction(tx, 'rg.cooling_off.expired', {
+          userId: row.userId,
+          playerId: playerIds.get(row.userId) ?? null,
+          exclusionId: row.id,
+          expiresAt: (row.expiresAt ?? now).toISOString(),
+        });
+      }
+      return expired;
+    });
     const lapsedUserIds = [...new Set(lapsed.map((r) => r.userId))];
     await mapConcurrent(lapsedUserIds, SWEEP_CONCURRENCY, (userId) => this.syncEnforcement(userId));
-    const playerIds = await this.identityReader.getPlayerIdsByUserIdsSafe(
-      lapsed.map((r) => r.userId),
-    );
-    for (const row of lapsed) {
-      this.events.emit('rg.cooling_off.expired', {
-        userId: row.userId,
-        playerId: playerIds.get(row.userId) ?? null,
-        exclusionId: row.id,
-        expiresAt: (row.expiresAt ?? now).toISOString(),
-      });
-    }
 
     await mapConcurrent(lapsed, SWEEP_CONCURRENCY, (row) =>
       this.notify(

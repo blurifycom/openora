@@ -7,14 +7,17 @@ import type {
 } from '@openora/core/contracts';
 import type { RedisClient } from './redis-client.js';
 import { createLogger } from './logger.js';
+import { EVENT_RETENTION_MS } from './event-bus.js';
 
 const STREAM_PREFIX = 'oss:evt:';
-const STREAM_MAXLEN = 10_000;
+const DLQ_PREFIX = 'oss:dlq:';
 const READ_COUNT = 10;
 const BLOCK_MS = 5_000;
 const CLAIM_INTERVAL_MS = 30_000;
 const CLAIM_MIN_IDLE_MS = 60_000;
 const RETRY_DELAY_MS = 2_000;
+// Deliveries (first read + reclaims) after which a still-failing entry is dead-lettered.
+export const MAX_DELIVERIES = 5;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -40,8 +43,12 @@ type RedisStreamsBrokerOptions = {
   // that already exists comes back BUSYGROUP and keeps its own cursor, so this never
   // rewinds a running deployment). '$' - the default - takes only events published
   // after creation; '0' replays everything still retained in the stream (up to
-  // STREAM_MAXLEN). See the class docstring for which to pick.
+  // EVENT_RETENTION_MS). See the class docstring for which to pick.
   startId?: '$' | '0';
+
+  // How often idle-pending entries are reclaimed for retry, and how long an entry must
+  // sit unacknowledged first. Tests shorten these; production keeps the defaults.
+  reclaim?: { intervalMs: number; minIdleMs: number };
 };
 
 type ConsumerLoop = {
@@ -52,6 +59,14 @@ type ConsumerLoop = {
 
 function streamKey(topic: string): string {
   return STREAM_PREFIX + topic;
+}
+
+function dlqKey(streamKeyName: string): string {
+  return DLQ_PREFIX + streamKeyName.slice(STREAM_PREFIX.length);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function isBusyGroupError(err: unknown): boolean {
@@ -79,10 +94,20 @@ function isBusyGroupError(err: unknown): boolean {
  * so a blocked read never stalls the cache/rate-limiter commands sharing it.
  * `publish` awaits the XADD and lets errors propagate (the `OutboxRelay` marks a
  * row published only after this resolves - it must be reliable, not a silent
- * no-op). Handler errors are guarded + logged, then the entry is XACKed regardless
- * (matches `EventBus.on` - no per-handler retry; must-not-lose events use the
- * outbox). A crash before XACK leaves the entry pending; `XAUTOCLAIM` periodically
- * reclaims idle-pending entries so at-least-once delivery survives a replica crash.
+ * no-op). Every local handler runs even when a sibling throws; the entry is XACKed
+ * only when all of them succeeded. A failure (or a crash before XACK) leaves it
+ * pending, and `XAUTOCLAIM` reclaims idle-pending entries every `CLAIM_INTERVAL_MS`
+ * and redelivers them - to every local handler again, so `EventBus.on` skips the
+ * ones that already succeeded via `processed_events`. An entry still failing on its
+ * `MAX_DELIVERIES`th delivery (or one that is not valid JSON) is copied to the
+ * `oss:dlq:<topic>` stream with its group, stream id, delivery count and last
+ * error, then XACKed. The DLQ is never trimmed; an operator drains it.
+ *
+ * ponytail: retention is time-based (`MINID ~ now - EVENT_RETENTION_MS` on every
+ * XADD), so a group that falls more than 7 days behind loses the entries it never
+ * read, and stream memory is bounded by traffic x 7 days, not by a count. Alert on
+ * consumer-group lag; move to a broker overlay with disk-backed retention if either
+ * ceiling bites.
  *
  * At-least-once holds from group creation onward, NOT before it. A group is created
  * at `startId` (default `$`) on first subscribe and persists in Redis from then on,
@@ -90,11 +115,8 @@ function isBusyGroupError(err: unknown): boolean {
  * entries wait in the stream, and pending ones are reclaimed. The one uncovered
  * window is a group's FIRST-EVER creation - a service extracted after events were
  * already flowing starts from `$` and never sees the backlog. `startId: '0'` closes
- * that window by replaying everything still retained (up to STREAM_MAXLEN), at the
- * cost of re-running every handler for those events: safe on a fresh deploy (empty
- * streams), a duplicate-side-effect hazard for a late-added service, since core has
- * no dedup layer - `EventBus.on` invokes handlers directly, and `eventId` is a key
- * consumers must dedup on themselves.
+ * that window by replaying everything still retained (up to EVENT_RETENTION_MS), at
+ * the cost of running every handler of the new service for that backlog.
  *
  * `orderingKey` is NOT honoured - Redis Streams have no partitioning, so per-key
  * ordering across concurrent consumers isn't guaranteed (same footnote as
@@ -106,6 +128,8 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
   private readonly startId: '$' | '0';
   private readonly consumerId = randomUUID();
   private readonly loops = new Map<string, ConsumerLoop>();
+  private readonly claimIntervalMs: number;
+  private readonly claimMinIdleMs: number;
 
   constructor(
     private readonly client: RedisClient,
@@ -113,6 +137,8 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
   ) {
     this.serviceName = opts.serviceName;
     this.startId = opts.startId ?? '$';
+    this.claimIntervalMs = opts.reclaim?.intervalMs ?? CLAIM_INTERVAL_MS;
+    this.claimMinIdleMs = opts.reclaim?.minIdleMs ?? CLAIM_MIN_IDLE_MS;
   }
 
   async publish(envelope: EventEnvelope): Promise<void> {
@@ -120,7 +146,13 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
       streamKey(envelope.topic),
       '*',
       { data: JSON.stringify(envelope) },
-      { TRIM: { strategy: 'MAXLEN', strategyModifier: '~', threshold: STREAM_MAXLEN } },
+      {
+        TRIM: {
+          strategy: 'MINID',
+          strategyModifier: '~',
+          threshold: Date.now() - EVENT_RETENTION_MS,
+        },
+      },
     );
   }
 
@@ -166,6 +198,7 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
 
     let stopped = false;
     let lastClaimAt = 0;
+    let claimCursor = '0-0';
 
     const stop = (): void => {
       stopped = true;
@@ -194,22 +227,22 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
             }
             ready = true;
           }
-          if (Date.now() - lastClaimAt > CLAIM_INTERVAL_MS) {
+          if (Date.now() - lastClaimAt > this.claimIntervalMs) {
             lastClaimAt = Date.now();
-            await this.reclaimPending(reader, key, group, handlers);
+            claimCursor = await this.reclaimPending(reader, key, group, handlers, claimCursor);
           }
           const reply = (await reader.xReadGroup(
             group,
             this.consumerId,
             { key, id: '>' },
-            { COUNT: READ_COUNT, BLOCK: BLOCK_MS },
+            { COUNT: READ_COUNT, BLOCK: Math.min(BLOCK_MS, this.claimIntervalMs) },
           )) as StreamReadReply;
           if (!reply) {
             continue;
           }
           for (const stream of reply) {
             for (const message of stream.messages) {
-              await this.dispatch(reader, key, group, message, handlers);
+              await this.dispatch(reader, key, group, message, handlers, 1);
             }
           }
         } catch (err) {
@@ -226,29 +259,75 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     return { handlers, stop, done };
   }
 
+  // Walks the whole pending list each interval (XAUTOCLAIM pages until cursor 0-0), so a
+  // backlog drains at read speed rather than one page per interval. Returns the cursor to
+  // resume from if a page fails.
   private async reclaimPending(
     reader: RedisClient,
     key: string,
     group: string,
     handlers: Set<BrokerHandler>,
-  ): Promise<void> {
+    cursor: string,
+  ): Promise<string> {
+    let next = cursor;
     try {
-      const claimed = (await reader.xAutoClaim(
-        key,
-        group,
-        this.consumerId,
-        CLAIM_MIN_IDLE_MS,
-        '0-0',
-        { COUNT: READ_COUNT },
-      )) as StreamClaimReply;
-      for (const message of claimed.messages) {
-        if (message) {
-          await this.dispatch(reader, key, group, message, handlers);
+      do {
+        const claimed = (await reader.xAutoClaim(
+          key,
+          group,
+          this.consumerId,
+          this.claimMinIdleMs,
+          next,
+          { COUNT: READ_COUNT },
+        )) as StreamClaimReply;
+        if (claimed.deletedMessages.length > 0) {
+          this.logger.error(
+            { key, group, ids: claimed.deletedMessages },
+            'pending stream entries were trimmed before they were processed',
+          );
         }
-      }
+        for (const message of claimed.messages) {
+          if (message) {
+            const deliveries = await this.deliveryCount(reader, key, group, message.id);
+            await this.dispatch(reader, key, group, message, handlers, deliveries);
+          }
+        }
+        next = claimed.nextId;
+      } while (next !== '0-0');
+      return next;
     } catch (err) {
       this.logger.error({ err, key, group }, 'stream reclaim failed');
+      return next;
     }
+  }
+
+  private async deliveryCount(
+    reader: RedisClient,
+    key: string,
+    group: string,
+    id: string,
+  ): Promise<number> {
+    const [entry] = await reader.xPendingRange(key, group, id, id, 1);
+    return entry?.deliveriesCounter ?? 1;
+  }
+
+  private async deadLetter(
+    reader: RedisClient,
+    key: string,
+    group: string,
+    message: StreamMessage,
+    deliveries: number,
+    err: unknown,
+  ): Promise<void> {
+    await reader.xAdd(dlqKey(key), '*', {
+      data: message.message['data'] ?? '',
+      group,
+      streamId: message.id,
+      deliveries: String(deliveries),
+      error: errorMessage(err),
+    });
+    await reader.xAck(key, group, message.id);
+    this.logger.error({ err, key, group, id: message.id, deliveries }, 'event dead-lettered');
   }
 
   private async dispatch(
@@ -257,6 +336,7 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     group: string,
     message: StreamMessage,
     handlers: Set<BrokerHandler>,
+    deliveries: number,
   ): Promise<void> {
     const raw = message.message['data'];
     if (raw === undefined) {
@@ -267,17 +347,25 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     try {
       envelope = JSON.parse(raw);
     } catch (err) {
-      this.logger.error({ err, key, group, id: message.id }, 'stream envelope parse failed');
-      await reader.xAck(key, group, message.id);
+      await this.deadLetter(reader, key, group, message, deliveries, err);
       return;
     }
+    let failure: { err: unknown } | undefined;
     for (const fn of handlers) {
       try {
         await fn(envelope);
       } catch (err) {
-        this.logger.error({ err, topic: envelope.topic }, 'message broker handler threw');
+        failure = { err };
+        this.logger.error(
+          { err, topic: envelope.topic, deliveries },
+          'message broker handler threw',
+        );
       }
     }
-    await reader.xAck(key, group, message.id);
+    if (!failure) {
+      await reader.xAck(key, group, message.id);
+    } else if (deliveries >= MAX_DELIVERIES) {
+      await this.deadLetter(reader, key, group, message, deliveries, failure.err);
+    }
   }
 }

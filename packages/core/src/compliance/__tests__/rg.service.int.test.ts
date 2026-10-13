@@ -132,7 +132,8 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     );
 
     expect(Number(dto.amount)).toBe(100);
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.limit.set',
       expect.objectContaining({
         userId,
@@ -183,7 +184,8 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     expect(rows).toHaveLength(1);
     expect(Number(rows[0]?.amount)).toBe(50);
-    expect(events.emit).toHaveBeenLastCalledWith(
+    expect(events.emitInTransaction).toHaveBeenLastCalledWith(
+      expect.anything(),
       'rg.limit.set',
       expect.objectContaining({
         previousAmount: '100.000000000000000000',
@@ -914,7 +916,8 @@ describe('RgService.activateCoolingOff (real PG)', () => {
     expect(row).toMatchObject({ kind: 'cooling_off', status: 'active', isPermanent: false });
     expect(enforcement.block).toHaveBeenCalledWith(userId, { until: expect.any(Date) });
     expect(enforcement.unblock).not.toHaveBeenCalled();
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.cooling_off.activated',
       expect.objectContaining({ userId }),
     );
@@ -957,7 +960,8 @@ describe('RgService.activateCoolingOff (real PG)', () => {
     expect(rows).toHaveLength(2);
     expect(rows.find((r) => r.id === lapsed.id)?.status).toBe('expired');
     expect(rows.filter((r) => r.status === 'active')).toHaveLength(1);
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.cooling_off.expired',
       expect.objectContaining({
         userId,
@@ -998,7 +1002,8 @@ describe('RgService.activateSelfExclusion (real PG)', () => {
     const [row] = await exclusionsOf(userId);
     expect(row).toMatchObject({ kind: 'self_exclusion', isPermanent: true, expiresAt: null });
     expect(enforcement.block).toHaveBeenCalledWith(userId, { until: null });
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.self_exclusion.activated',
       expect.objectContaining({ isPermanent: true, durationMonths: null, expiresAt: null }),
     );
@@ -1019,7 +1024,8 @@ describe('RgService.activateSelfExclusion (real PG)', () => {
     const [row] = await exclusionsOf(userId);
     expect(row?.expiresAt).toBeInstanceOf(Date);
     expect(enforcement.block).toHaveBeenCalledWith(userId, { until: null });
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.self_exclusion.activated',
       expect.objectContaining({
         userId,
@@ -1098,7 +1104,8 @@ describe('RgService.liftSelfExclusion (real PG)', () => {
     });
     expect(row?.liftedAt).toBeInstanceOf(Date);
     expect(enforcement.unblock).toHaveBeenCalledWith(userId);
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.self_exclusion.lifted',
       expect.objectContaining({ userId, actorId }),
     );
@@ -1161,7 +1168,8 @@ describe('RgService.liftCoolingOff (real PG)', () => {
       liftedBy: actorId,
     });
     expect(enforcement.unblock).toHaveBeenCalledWith(userId);
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.cooling_off.lifted',
       expect.objectContaining({ userId, actorId, reason: 'support ticket 42' }),
     );
@@ -1233,7 +1241,8 @@ describe('RgService.expireLapsedCoolingOffs (real PG)', () => {
     expect(running?.status).toBe('active');
     expect(enforcement.unblock).toHaveBeenCalledWith(lapsedUser);
     expect(enforcement.unblock).not.toHaveBeenCalledWith(runningUser);
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.cooling_off.expired',
       expect.objectContaining({
         userId: lapsedUser,
@@ -1241,7 +1250,8 @@ describe('RgService.expireLapsedCoolingOffs (real PG)', () => {
         expiresAt: lapsedExpiresAt.toISOString(),
       }),
     );
-    expect(events.emit).not.toHaveBeenCalledWith(
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
       'rg.cooling_off.expired',
       expect.objectContaining({ userId: runningUser }),
     );
@@ -1254,7 +1264,11 @@ describe('RgService.expireLapsedCoolingOffs (real PG)', () => {
 
     await svc.expireLapsedCoolingOffs();
 
-    expect(events.emit).not.toHaveBeenCalledWith('rg.cooling_off.expired', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'rg.cooling_off.expired',
+      expect.anything(),
+    );
   });
 
   it('keeps the indefinite block when the player is also self-excluded', async () => {

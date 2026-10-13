@@ -175,8 +175,10 @@ for the full direction; the shape:
   process boundary, a service emits it inside its transaction with
   `events.emitInTransaction(tx, ...)`: the envelope is written to `event_outbox`
   atomically with the state change, and the `OutboxRelay` publishes it after commit
-  (at-least-once; consumers dedup on `eventId`). Opt-in via `OUTBOX_ENABLED` / a
-  durable broker; off in the in-process monolith.
+  (at-least-once). Always on; required for money and compliance events, `emit()`
+  stays for informational ones. A failing handler is redelivered and dead-lettered
+  after 5 attempts; handlers are deduped per consumer via `processed_events`
+  (ADR-0044).
 - **Client push is separate.** WebSockets/SSE are client-facing only (chat,
   balance/bonus toasts), never the transport between modules.
 - **Modular monolith now, microservices later.** The no-cross-module-imports rule,

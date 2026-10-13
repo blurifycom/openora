@@ -5,7 +5,6 @@ import {
   getUserId,
   mapErrors,
   type AdminGuard,
-  type EventBus,
   type OssContext,
 } from '@openora/core/server';
 import {
@@ -50,7 +49,6 @@ export function createBonusRouter({
   offers,
   weights,
   lifecycle,
-  events,
   realtime,
   adminGuard,
   limiter,
@@ -60,7 +58,6 @@ export function createBonusRouter({
   offers: OfferService;
   weights: WeightService;
   lifecycle: GrantLifecycleService;
-  events: EventBus;
   realtime: RealtimeTransport;
   adminGuard: AdminGuard;
   limiter: RateLimiterAdapter<RateLimitKey>;
@@ -119,20 +116,7 @@ export function createBonusRouter({
               NOT_FOUND: [GrantNotForfeitableNotFoundError, GrantNotFoundError],
             },
             async () => {
-              const closed = await lifecycle.forfeit(
-                input.id,
-                'admin',
-                { id: userId, isAdmin: true },
-                input.note,
-              );
-              events.emit('promo.bonus.forfeited', {
-                userId: closed.userId,
-                grantId: closed.grantId,
-                currency: closed.currency,
-                forfeitedAmount: closed.forfeitedAmount,
-                reason: 'admin',
-                actorId: closed.actorId,
-              });
+              await lifecycle.forfeit(input.id, 'admin', { id: userId, isAdmin: true }, input.note);
               return grants.getForAdmin(input.id);
             },
           );

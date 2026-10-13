@@ -49,7 +49,13 @@ import {
   SESSION_IDLE_POLICY,
   TWO_FACTOR_SETUP_POLICY,
 } from '@openora/core/contracts';
-import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
+import {
+  DrizzleService,
+  DRIZZLE,
+  DrizzleOutboxWriter,
+  DrizzleProcessedEventLog,
+  OutboxRelay,
+} from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
 import { createMcpKernel } from '../mcp/index.js';
@@ -351,8 +357,8 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
  * or a test's `configure` callback. `assertDurableSeamsBound` runs right after plugins
  * + `configure` and throws a clear, actionable error listing every always-needed seam
  * that still has no binding - none of the five has an in-process fallback.
- * `OUTBOX_ENABLED` (or `AMQP_URL`/`RABBITMQ_URL`) enables the transactional outbox
- * relay.
+ * The transactional outbox is always on: `OUTBOX` is bound and the `OutboxRelay`
+ * runs in every process (ADR-0044).
  * `container.dispose()` (via `close()`) runs disposers in REVERSE registration
  * order, so DRIZZLE is registered before JOB_QUEUE to guarantee workers drain
  * before the DB closes. A router namespace registered by more than one plugin
@@ -378,30 +384,22 @@ export async function createApp(
     container.onDispose(() => svc.dispose());
     return svc;
   });
-  // A distributed deployment wants events that survive a crash between commit and
-  // publish. Off by default: emit() keeps its best-effort fan-out and
-  // emitInTransaction() throws a guiding error until this is enabled.
-  // AMQP_URL/RABBITMQ_URL only signal the INTENT to run a RabbitMQ broker overlay -
-  // core binds no AMQP driver, so they enable the outbox and nothing else. The relay
-  // publishes to whatever MESSAGE_BROKER resolves to (the Redis Streams driver below,
-  // unless an overlay replaced it); set OUTBOX_ENABLED directly when that is the aim.
-  const outboxEnabled =
-    !!process.env['OUTBOX_ENABLED'] || !!process.env['AMQP_URL'] || !!process.env['RABBITMQ_URL'];
-  if (outboxEnabled) {
-    container.register(OUTBOX, () => new DrizzleOutboxWriter());
-  }
+  // Postgres is always present, so the outbox is too: emitInTransaction() commits the
+  // event with its state change and the relay below publishes it (ADR-0044).
+  container.register(OUTBOX, () => new DrizzleOutboxWriter());
   container.register(EVENT_BUS, (c) =>
-    createEventBus(
-      c.get(MESSAGE_BROKER),
-      createLogger('event-bus'),
-      outboxEnabled ? c.get(OUTBOX) : undefined,
-    ),
+    createEventBus({
+      broker: c.get(MESSAGE_BROKER),
+      outbox: c.get(OUTBOX),
+      processedEvents: new DrizzleProcessedEventLog(c.get(DRIZZLE).db),
+      logger: createLogger('event-bus'),
+    }),
   );
+  // Resolved eagerly: a misconfigured service name is a boot error, not a surprise on
+  // whichever code path resolves the broker first. It also namespaces handler dedup.
+  const serviceName = resolveServiceName();
   const redisUrl = process.env['REDIS_URL'];
   if (redisUrl) {
-    // Resolved eagerly, before any client is opened: a misconfigured service name is
-    // a boot error, not a surprise on whichever code path resolves the broker first.
-    const serviceName = resolveServiceName();
     container.register(JOB_QUEUE, () => {
       const q = new BullMqJobQueue(redisUrl);
       container.onDispose(() => q.close());
@@ -479,8 +477,10 @@ export async function createApp(
 
   const bus = container.get(EVENT_BUS);
   for (const [event, handlers] of registry.events.getAll()) {
-    for (const handler of handlers) {
-      bus.on(event, handler);
+    for (const { handler, consumer } of handlers) {
+      // Prefixed with the service: an infra overlay loads in every split service, and
+      // each service's copy of the handler must run.
+      bus.on(event, handler, { consumer: `${serviceName}/${consumer}` });
     }
   }
 
@@ -503,13 +503,11 @@ export async function createApp(
     jobQueue.registerWorker(registration);
   }
 
-  if (outboxEnabled) {
-    const relay = new OutboxRelay(drizzle.db, container.get(MESSAGE_BROKER), {
-      onError: (err) => createLogger('outbox-relay').error({ err }, 'outbox drain failed'),
-    });
-    relay.start();
-    container.onDispose(() => relay.stop());
-  }
+  const relay = new OutboxRelay(drizzle.db, container.get(MESSAGE_BROKER), {
+    onError: (err) => createLogger('outbox-relay').error({ err }, 'outbox drain failed'),
+  });
+  relay.start();
+  container.onDispose(() => relay.stop());
 
   if (!config.disableHealthModule) {
     const os = implement(healthContract).$context<OssContext>();

@@ -441,8 +441,10 @@ export class ReconciliationService {
       unreconciledHours: 0,
     };
 
+    const cfg = this.platformConfig?.wallet?.reconciliation;
+    const status = cfg ? 'completed' : 'skipped';
+    let openFindings: number;
     try {
-      const cfg = this.platformConfig?.wallet?.reconciliation;
       if (cfg) {
         const until = new Date();
         const { since, unreconciledHours } = await this.resolveWindow(until, cfg.lookbackHours);
@@ -482,30 +484,8 @@ export class ReconciliationService {
         );
       }
 
-      const openFindings = await this.countOpenFindings();
-      const status = cfg ? 'completed' : 'skipped';
+      openFindings = await this.countOpenFindings();
       await this.finishRun(jobRunId, status, { ...counts, openFindings });
-      await this.audit.record({
-        actorType: 'system',
-        action: cfg ? 'wallet.reconciliation_run.completed' : 'wallet.reconciliation_run.skipped',
-        resourceType: 'wallet_job_run',
-        resourceId: runId,
-        after: { runId, ...counts, openFindings },
-      });
-
-      if (cfg && openFindings > cfg.alertThreshold) {
-        logger.error(
-          { runId, openFindings, threshold: cfg.alertThreshold },
-          'wallet reconciliation: open findings exceed threshold',
-        );
-        this.events.emit('wallet.reconciliation.alert', {
-          runId,
-          openFindings,
-          threshold: cfg.alertThreshold,
-        });
-      }
-
-      return { runId };
     } catch (err) {
       await this.finishRun(jobRunId, 'failed', {
         ...counts,
@@ -520,6 +500,31 @@ export class ReconciliationService {
       });
       throw err;
     }
+
+    // Past the try: the run is already recorded finished, so a failing audit or alert write
+    // surfaces as an error without rewriting a completed run as failed.
+    await this.audit.record({
+      actorType: 'system',
+      action: cfg ? 'wallet.reconciliation_run.completed' : 'wallet.reconciliation_run.skipped',
+      resourceType: 'wallet_job_run',
+      resourceId: runId,
+      after: { runId, ...counts, openFindings },
+    });
+
+    if (cfg && openFindings > cfg.alertThreshold) {
+      logger.error(
+        { runId, openFindings, threshold: cfg.alertThreshold },
+        'wallet reconciliation: open findings exceed threshold',
+      );
+      // No surrounding transaction to join: the outbox write alone makes the alert durable.
+      await this.events.emitInTransaction(this.drizzle.db, 'wallet.reconciliation.alert', {
+        runId,
+        openFindings,
+        threshold: cfg.alertThreshold,
+      });
+    }
+
+    return { runId };
   }
 
   private async reconcileProvider(

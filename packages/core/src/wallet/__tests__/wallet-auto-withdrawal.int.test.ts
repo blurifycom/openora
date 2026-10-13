@@ -233,7 +233,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       providerName: DEFAULT_PAYMENT_PROVIDER,
       autoApprovalPivotAmount: '40.000000000000000000',
     });
-    expect(events.emit.mock.calls.map(([topic]) => topic)).toEqual([
+    expect(events.emitInTransaction.mock.calls.map(([, topic]) => topic)).toEqual([
       'wallet.withdrawal.requested',
       'wallet.withdrawal.completed',
     ]);

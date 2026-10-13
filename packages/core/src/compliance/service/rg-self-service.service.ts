@@ -144,6 +144,7 @@ export class RgSelfServiceService {
     input: UpsertLimitInput,
     meta?: ClientMeta,
   ): Promise<LimitView> {
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const outcome = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
         const [existing] = await tx
@@ -164,46 +165,43 @@ export class RgSelfServiceService {
             // The pending amount is the effective one being validated - it's what
             // applies once the player confirms it.
             await this.assertOrdering(tx, userId, input);
-            return {
-              applied: false as const,
-              existing,
-              row: await this.park(tx, existing, 'increase', input),
-            };
+            const parked = await this.park(tx, existing, 'increase', input);
+            await this.emitRequested(tx, userId, playerId, existing, parked, meta);
+            return { applied: false as const, row: parked };
           }
         }
         await this.assertOrdering(tx, userId, input);
         const row = await writeLimitRow(tx, userId, existing, input);
-        return { applied: true as const, existing: existing ?? null, row };
+        if (existing?.pendingKind) {
+          await this.events.emitInTransaction(
+            tx,
+            'rg.limit.change_cancelled',
+            this.actedPayload(userId, playerId, existing, meta),
+          );
+        }
+        await this.events.emitInTransaction(tx, 'rg.limit.set', {
+          userId,
+          playerId,
+          actorId: userId,
+          limitId: row.id,
+          type: row.type,
+          period: row.period,
+          amount: row.amount,
+          minutes: row.minutes,
+          previousAmount: existing?.amount ?? null,
+          previousMinutes: existing?.minutes ?? null,
+          initiatedBy: 'player',
+          reason: null,
+          ip: meta?.ip ?? null,
+          userAgent: meta?.userAgent ?? null,
+        });
+        return { applied: true as const, row };
       }),
     );
 
-    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     if (!outcome.applied) {
-      this.emitRequested(userId, playerId, outcome.existing, outcome.row, meta);
       return this.toView(userId, outcome.row);
     }
-    if (outcome.existing?.pendingKind) {
-      this.events.emit(
-        'rg.limit.change_cancelled',
-        this.actedPayload(userId, playerId, outcome.existing, meta),
-      );
-    }
-    this.events.emit('rg.limit.set', {
-      userId,
-      playerId,
-      actorId: userId,
-      limitId: outcome.row.id,
-      type: outcome.row.type,
-      period: outcome.row.period,
-      amount: outcome.row.amount,
-      minutes: outcome.row.minutes,
-      previousAmount: outcome.existing?.amount ?? null,
-      previousMinutes: outcome.existing?.minutes ?? null,
-      initiatedBy: 'player',
-      reason: null,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    });
     await this.rg.notifyLimitUpdated(userId, outcome.row, 'player');
     return this.toView(userId, outcome.row);
   }
@@ -215,25 +213,18 @@ export class RgSelfServiceService {
     meta?: ClientMeta,
   ): Promise<LimitView> {
     const target = await this.ownedLimit(limitId, userId);
-    const { existing, row } = await this.drizzle.db.transaction((tx) =>
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    const row = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
         const current = await this.reread(tx, limitId, userId);
-        return {
-          existing: current,
-          row: await this.park(tx, current, 'removal', {
-            amount: null,
-            minutes: null,
-            currency: null,
-          }),
-        };
+        const parked = await this.park(tx, current, 'removal', {
+          amount: null,
+          minutes: null,
+          currency: null,
+        });
+        await this.emitRequested(tx, userId, playerId, current, parked, meta);
+        return parked;
       }),
-    );
-    this.emitRequested(
-      userId,
-      await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      existing,
-      row,
-      meta,
     );
     return this.toView(userId, row);
   }
@@ -248,6 +239,7 @@ export class RgSelfServiceService {
     meta?: ClientMeta,
   ): Promise<LimitView | null> {
     const target = await this.ownedLimit(limitId, userId);
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
     const outcome = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
@@ -268,8 +260,19 @@ export class RgSelfServiceService {
             .set(NO_PENDING_CHANGE)
             .where(this.pinnedTo(current))
             .returning({ id: userLimit.id });
+          await this.events.emitInTransaction(
+            tx,
+            'rg.limit.change_expired',
+            this.lapsedPayload(userId, playerId, current),
+          );
           return { kind: 'expired' as const, existing: current };
         }
+
+        await this.events.emitInTransaction(
+          tx,
+          'rg.limit.change_confirmed',
+          this.actedPayload(userId, playerId, current, meta),
+        );
 
         if (current.pendingKind === 'removal') {
           const deleted = await tx
@@ -295,24 +298,29 @@ export class RgSelfServiceService {
             .returning(),
           new NoPendingLimitChangeError(limitId),
         );
+        await this.events.emitInTransaction(tx, 'rg.limit.set', {
+          userId,
+          playerId,
+          actorId: userId,
+          limitId: row.id,
+          type: row.type,
+          period: row.period,
+          amount: row.amount,
+          minutes: row.minutes,
+          previousAmount: current.amount,
+          previousMinutes: current.minutes,
+          initiatedBy: 'player',
+          reason: null,
+          ip: meta?.ip ?? null,
+          userAgent: meta?.userAgent ?? null,
+        });
         return { kind: 'raised' as const, existing: current, row };
       }),
     );
 
-    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
-
     if (outcome.kind === 'expired') {
-      this.events.emit(
-        'rg.limit.change_expired',
-        this.lapsedPayload(userId, playerId, outcome.existing),
-      );
       throw new LimitChangeExpiredError();
     }
-
-    this.events.emit(
-      'rg.limit.change_confirmed',
-      this.actedPayload(userId, playerId, outcome.existing, meta),
-    );
 
     if (outcome.kind === 'removed') {
       await this.monitoring.clearLimitThresholdFlag(userId, outcome.existing.type);
@@ -320,22 +328,6 @@ export class RgSelfServiceService {
       return null;
     }
 
-    this.events.emit('rg.limit.set', {
-      userId,
-      playerId,
-      actorId: userId,
-      limitId: outcome.row.id,
-      type: outcome.row.type,
-      period: outcome.row.period,
-      amount: outcome.row.amount,
-      minutes: outcome.row.minutes,
-      previousAmount: outcome.existing.amount,
-      previousMinutes: outcome.existing.minutes,
-      initiatedBy: 'player',
-      reason: null,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    });
     await this.rg.notifyLimitUpdated(userId, outcome.row, 'player');
     return this.toView(userId, outcome.row);
   }
@@ -346,32 +338,30 @@ export class RgSelfServiceService {
     meta?: ClientMeta,
   ): Promise<LimitView> {
     const target = await this.ownedLimit(limitId, userId);
-    const outcome = await this.drizzle.db.transaction((tx) =>
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    const row = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
         const current = await this.reread(tx, limitId, userId);
         if (current.pendingKind === null) {
-          return { cleared: false as const, row: current };
+          return current;
         }
-        const rows = await tx
+        const [cleared] = await tx
           .update(userLimit)
           .set(NO_PENDING_CHANGE)
           .where(this.pinnedTo(current))
           .returning();
-        return { cleared: rows.length > 0, existing: current, row: rows[0] ?? current };
+        if (!cleared) {
+          return current;
+        }
+        await this.events.emitInTransaction(
+          tx,
+          'rg.limit.change_cancelled',
+          this.actedPayload(userId, playerId, current, meta),
+        );
+        return cleared;
       }),
     );
-    if (outcome.cleared && outcome.existing) {
-      this.events.emit(
-        'rg.limit.change_cancelled',
-        this.actedPayload(
-          userId,
-          await this.identityReader.getPlayerIdByUserIdSafe(userId),
-          outcome.existing,
-          meta,
-        ),
-      );
-    }
-    return this.toView(userId, outcome.row);
+    return this.toView(userId, row);
   }
 
   requestCoolingOff(
@@ -423,42 +413,44 @@ export class RgSelfServiceService {
     if (candidates.length === 0) {
       return;
     }
-    const cleared = await this.drizzle.db
-      .update(userLimit)
-      .set(NO_PENDING_CHANGE)
-      .where(
-        and(
-          inArray(
-            userLimit.id,
-            candidates.map((c) => c.id),
-          ),
-          isNotNull(userLimit.pendingKind),
-          lte(userLimit.pendingExpiresAt, now),
-        ),
-      )
-      .returning({ id: userLimit.id });
-    const clearedIds = new Set(cleared.map((r) => r.id));
     const playerIds = await this.identityReader.getPlayerIdsByUserIdsSafe(
       candidates.map((c) => c.userId),
     );
-    for (const row of candidates) {
-      if (!clearedIds.has(row.id)) {
-        continue;
+    await this.drizzle.db.transaction(async (tx) => {
+      const cleared = await tx
+        .update(userLimit)
+        .set(NO_PENDING_CHANGE)
+        .where(
+          and(
+            inArray(
+              userLimit.id,
+              candidates.map((c) => c.id),
+            ),
+            isNotNull(userLimit.pendingKind),
+            lte(userLimit.pendingExpiresAt, now),
+          ),
+        )
+        .returning({ id: userLimit.id });
+      const clearedIds = new Set(cleared.map((r) => r.id));
+      for (const row of candidates) {
+        if (!clearedIds.has(row.id)) {
+          continue;
+        }
+        await this.events.emitInTransaction(tx, 'rg.limit.change_expired', {
+          userId: row.userId,
+          playerId: playerIds.get(row.userId) ?? null,
+          limitId: row.id,
+          type: row.type,
+          period: row.period,
+          kind: row.pendingKind as 'increase' | 'removal',
+          previousAmount: row.amount,
+          previousMinutes: row.minutes,
+          requestedAmount: row.pendingAmount,
+          requestedMinutes: row.pendingMinutes,
+          expiresAt: (row.pendingExpiresAt ?? now).toISOString(),
+        });
       }
-      this.events.emit('rg.limit.change_expired', {
-        userId: row.userId,
-        playerId: playerIds.get(row.userId) ?? null,
-        limitId: row.id,
-        type: row.type,
-        period: row.period,
-        kind: row.pendingKind as 'increase' | 'removal',
-        previousAmount: row.amount,
-        previousMinutes: row.minutes,
-        requestedAmount: row.pendingAmount,
-        requestedMinutes: row.pendingMinutes,
-        expiresAt: (row.pendingExpiresAt ?? now).toISOString(),
-      });
-    }
+    });
   }
 
   private async assertOrdering(
@@ -536,13 +528,14 @@ export class RgSelfServiceService {
   }
 
   private emitRequested(
+    tx: DrizzleTx,
     userId: User['id'],
     playerId: string | null,
     previous: LimitRow,
     row: LimitRow,
     meta?: ClientMeta,
-  ): void {
-    this.events.emit('rg.limit.change_requested', {
+  ): Promise<void> {
+    return this.events.emitInTransaction(tx, 'rg.limit.change_requested', {
       userId,
       playerId,
       actorId: userId,

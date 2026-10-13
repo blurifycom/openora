@@ -509,13 +509,17 @@ describe('PlayerService.update player.level.changed emission (real PG)', () => {
 
     await svc.update(seeded.id, { level: 5 }, account.id);
 
-    expect(events.emit).toHaveBeenCalledWith('player.level.changed', {
-      userId: account.id,
-      playerId: seeded.id,
-      previousLevel: 1,
-      newLevel: 5,
-      actorId: account.id,
-    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'player.level.changed',
+      {
+        userId: account.id,
+        playerId: seeded.id,
+        previousLevel: 1,
+        newLevel: 5,
+        actorId: account.id,
+      },
+    );
   });
 
   it('does not emit when level is omitted from the patch', async () => {
@@ -524,7 +528,11 @@ describe('PlayerService.update player.level.changed emission (real PG)', () => {
 
     await svc.update(seeded.id, { username: 'new_name' }, account.id);
 
-    expect(events.emit).not.toHaveBeenCalledWith('player.level.changed', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'player.level.changed',
+      expect.anything(),
+    );
   });
 
   it('does not emit when level is unchanged', async () => {
@@ -533,7 +541,11 @@ describe('PlayerService.update player.level.changed emission (real PG)', () => {
 
     await svc.update(seeded.id, { level: 3 }, account.id);
 
-    expect(events.emit).not.toHaveBeenCalledWith('player.level.changed', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'player.level.changed',
+      expect.anything(),
+    );
   });
 });
 
@@ -544,11 +556,15 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
 
     await svc.update(seeded.id, { status: 'closed' }, ACTOR_ID);
 
-    expect(events.emit).toHaveBeenCalledWith('player.account.closed', {
-      playerId: seeded.id,
-      userId: account.id,
-      actorId: ACTOR_ID,
-    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'player.account.closed',
+      {
+        playerId: seeded.id,
+        userId: account.id,
+        actorId: ACTOR_ID,
+      },
+    );
   });
 
   it('emits the same payload from remove as from update', async () => {
@@ -557,11 +573,15 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
 
     await svc.remove(seeded.id, ACTOR_ID);
 
-    expect(events.emit).toHaveBeenCalledWith('player.account.closed', {
-      playerId: seeded.id,
-      userId: account.id,
-      actorId: ACTOR_ID,
-    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'player.account.closed',
+      {
+        playerId: seeded.id,
+        userId: account.id,
+        actorId: ACTOR_ID,
+      },
+    );
   });
 
   it('emits one status transition when two updates race to the same status', async () => {
@@ -573,7 +593,9 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
       svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID),
     ]);
 
-    const changes = events.emit.mock.calls.filter(([topic]) => topic === 'player.status.changed');
+    const changes = events.emitInTransaction.mock.calls.filter(
+      ([, topic]) => topic === 'player.status.changed',
+    );
     expect(changes).toHaveLength(1);
   });
 
@@ -583,7 +605,11 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
 
     await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
 
-    expect(events.emit).not.toHaveBeenCalledWith('player.account.closed', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'player.account.closed',
+      expect.anything(),
+    );
   });
 
   it('does not re-emit when the player was already closed (no transition)', async () => {
@@ -592,7 +618,11 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
 
     await svc.update(seeded.id, { status: 'closed' }, ACTOR_ID);
 
-    expect(events.emit).not.toHaveBeenCalledWith('player.account.closed', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'player.account.closed',
+      expect.anything(),
+    );
   });
 
   it('does not re-emit from remove when the player was already closed', async () => {
@@ -601,7 +631,11 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
 
     await svc.remove(seeded.id, ACTOR_ID);
 
-    expect(events.emit).not.toHaveBeenCalledWith('player.account.closed', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'player.account.closed',
+      expect.anything(),
+    );
   });
 
   it('emits player.account.reopened when update moves the status out of closed', async () => {
@@ -610,11 +644,15 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
 
     await svc.update(seeded.id, { status: 'active' }, ACTOR_ID);
 
-    expect(events.emit).toHaveBeenCalledWith('player.account.reopened', {
-      playerId: seeded.id,
-      userId: account.id,
-      actorId: ACTOR_ID,
-    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'player.account.reopened',
+      {
+        playerId: seeded.id,
+        userId: account.id,
+        actorId: ACTOR_ID,
+      },
+    );
   });
 
   it('does not emit reopened for a status change between two non-closed statuses', async () => {
@@ -623,7 +661,11 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
 
     await svc.update(seeded.id, { status: 'active' }, ACTOR_ID);
 
-    expect(events.emit).not.toHaveBeenCalledWith('player.account.reopened', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'player.account.reopened',
+      expect.anything(),
+    );
   });
 });
 
@@ -634,13 +676,17 @@ describe('PlayerService player.status.changed emission (real PG)', () => {
 
     await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
 
-    expect(events.emit).toHaveBeenCalledWith('player.status.changed', {
-      playerId: seeded.id,
-      userId: account.id,
-      actorId: ACTOR_ID,
-      previousStatus: 'active',
-      newStatus: 'suspended',
-    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'player.status.changed',
+      {
+        playerId: seeded.id,
+        userId: account.id,
+        actorId: ACTOR_ID,
+        previousStatus: 'active',
+        newStatus: 'suspended',
+      },
+    );
   });
 
   it('does not emit when the status is omitted or unchanged', async () => {
@@ -650,7 +696,11 @@ describe('PlayerService player.status.changed emission (real PG)', () => {
     await svc.update(seeded.id, { level: 3 }, ACTOR_ID);
     await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
 
-    expect(events.emit).not.toHaveBeenCalledWith('player.status.changed', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'player.status.changed',
+      expect.anything(),
+    );
   });
 
   it('emits the transition to closed from remove', async () => {
@@ -659,13 +709,17 @@ describe('PlayerService player.status.changed emission (real PG)', () => {
 
     await svc.remove(seeded.id, ACTOR_ID);
 
-    expect(events.emit).toHaveBeenCalledWith('player.status.changed', {
-      playerId: seeded.id,
-      userId: account.id,
-      actorId: ACTOR_ID,
-      previousStatus: 'dormant',
-      newStatus: 'closed',
-    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'player.status.changed',
+      {
+        playerId: seeded.id,
+        userId: account.id,
+        actorId: ACTOR_ID,
+        previousStatus: 'dormant',
+        newStatus: 'closed',
+      },
+    );
   });
 
   it('does not emit from remove when the player was already closed', async () => {
@@ -674,7 +728,11 @@ describe('PlayerService player.status.changed emission (real PG)', () => {
 
     await svc.remove(seeded.id, ACTOR_ID);
 
-    expect(events.emit).not.toHaveBeenCalledWith('player.status.changed', expect.anything());
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'player.status.changed',
+      expect.anything(),
+    );
   });
 });
 

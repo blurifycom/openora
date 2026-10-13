@@ -6,6 +6,7 @@ import {
   moneyCompare,
   type DrizzleService,
   type DrizzleTx,
+  type EventBus,
 } from '@openora/core/server';
 import { promoGrant, promoGrantEntry, type PromoGrant } from '../schema/index.js';
 
@@ -44,6 +45,7 @@ export class GrantLifecycleService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly audit: AuditWritePort,
+    private readonly events: EventBus,
   ) {}
 
   /**
@@ -266,7 +268,7 @@ export class GrantLifecycleService {
       },
     });
 
-    return {
+    const closed: ClosedGrant = {
       grantId,
       userId: claimed.userId,
       currency: claimed.currency,
@@ -275,5 +277,18 @@ export class GrantLifecycleService {
       // id here would tell downstream consumers an admin forfeited their own self-exclusion.
       actorId: outcome.actor?.isAdmin ? outcome.actor.id : null,
     };
+    const { actorId, ...announced } = closed;
+    // The single producer of both topics, committed with the close itself. Every forfeit
+    // carries a reason; only an expiry has none.
+    if (outcome.reason === undefined) {
+      await this.events.emitInTransaction(tx, 'promo.bonus.expired', announced);
+    } else {
+      await this.events.emitInTransaction(tx, 'promo.bonus.forfeited', {
+        ...announced,
+        reason: outcome.reason,
+        actorId,
+      });
+    }
+    return closed;
   }
 }
