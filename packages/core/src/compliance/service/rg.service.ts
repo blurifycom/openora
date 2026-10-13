@@ -793,25 +793,30 @@ export class RgService {
   // recompute enforcement for the affected players. Called by the rg-monitor sweep.
   async expireLapsedCoolingOffs(): Promise<void> {
     const now = new Date();
+    const lapsedFilter = and(
+      eq(rgExclusion.kind, 'cooling_off'),
+      eq(rgExclusion.status, 'active'),
+      lte(rgExclusion.expiresAt, now),
+    );
+    // Enrichment is resolved before the tx so the batched lookup never holds the tx open on a
+    // second pool connection; a row that lapses in between just goes out with a null playerId.
+    const candidates = await this.drizzle.db
+      .selectDistinct({ userId: rgExclusion.userId })
+      .from(rgExclusion)
+      .where(lapsedFilter);
+    const playerIds = await this.identityReader.getPlayerIdsByUserIdsSafe(
+      candidates.map((r) => r.userId),
+    );
     const lapsed = await this.drizzle.db.transaction(async (tx) => {
       const expired = await tx
         .update(rgExclusion)
         .set({ status: 'expired' })
-        .where(
-          and(
-            eq(rgExclusion.kind, 'cooling_off'),
-            eq(rgExclusion.status, 'active'),
-            lte(rgExclusion.expiresAt, now),
-          ),
-        )
+        .where(lapsedFilter)
         .returning({
           id: rgExclusion.id,
           userId: rgExclusion.userId,
           expiresAt: rgExclusion.expiresAt,
         });
-      const playerIds = await this.identityReader.getPlayerIdsByUserIdsSafe(
-        expired.map((r) => r.userId),
-      );
       for (const row of expired) {
         await this.events.emitInTransaction(tx, 'rg.cooling_off.expired', {
           userId: row.userId,

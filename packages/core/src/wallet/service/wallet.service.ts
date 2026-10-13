@@ -2016,7 +2016,7 @@ export class WalletService {
       const userId = await this.userIdForWallet(flipped.walletId, txn);
       await this.events.emitInTransaction(txn, 'wallet.withdrawal.approved', {
         userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        playerId: await this.identityReader.getPlayerIdByUserId(userId, txn),
         amount: flipped.amount,
         currency: flipped.currency,
         transactionId: flipped.id,
@@ -3004,7 +3004,7 @@ export class WalletService {
       const userId = await this.userIdForWallet(updated.walletId, txn);
       await this.events.emitInTransaction(txn, 'wallet.withdrawal.rejected', {
         userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        playerId: await this.identityReader.getPlayerIdByUserId(userId, txn),
         amount: updated.amount,
         currency: updated.currency,
         transactionId: updated.id,

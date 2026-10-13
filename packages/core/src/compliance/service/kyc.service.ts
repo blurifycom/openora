@@ -269,7 +269,7 @@ export class KycVerificationService {
       playerId:
         params.playerTransition?.playerId ??
         params.playerId ??
-        (await this.identityReader.getPlayerIdByUserIdSafe(params.userId)),
+        (await this.identityReader.getPlayerIdByUserId(params.userId, trx)),
       actorId: params.actorId,
       status: params.status,
       previousStatus:
@@ -385,7 +385,7 @@ export class KycVerificationService {
           userId,
           playerId:
             playerTransition?.playerId ??
-            (await this.identityReader.getPlayerIdByUserIdSafe(userId)),
+            (await this.identityReader.getPlayerIdByUserId(userId, trx)),
           referenceId: result.referenceId,
           provider: this.provider,
           tier: input.tier,
@@ -567,7 +567,7 @@ export class KycVerificationService {
       ) {
         await this.events.emitInTransaction(trx, 'compliance.kyc.high_risk_signal_detected', {
           userId: primaryOutcome.row.userId,
-          playerId: await this.identityReader.getPlayerIdByUserIdSafe(primaryOutcome.row.userId),
+          playerId: await this.identityReader.getPlayerIdByUserId(primaryOutcome.row.userId, trx),
           referenceId,
           tier: primaryOutcome.row.tier,
           vpnOrTorDetected: opts.riskSignals.vpnOrTorDetected,
