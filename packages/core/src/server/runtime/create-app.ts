@@ -51,7 +51,9 @@ import {
 } from '@openora/core/contracts';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
-import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
+import { loadPlugins, parseServiceManifest, type PluginEntry } from '../plugin-host/index.js';
+import { importPlugin } from '../plugin-host/load-plugins.js';
+import { selectServiceEntries } from '../plugin-host/service-manifest.js';
 import { createMcpKernel } from '../mcp/index.js';
 import { authorizeWithAdminGuard } from '../mcp/authorize.js';
 import type { McpHttpTransport } from '../mcp/http-transport.js';
@@ -121,7 +123,7 @@ function resolveServiceName(): string {
   if (serviceName) {
     return serviceName;
   }
-  if (process.env['SERVICE_MANIFEST']) {
+  if (parseServiceManifest(process.env['SERVICE_MANIFEST']) !== null) {
     throw new Error(
       '[create-app] SERVICE_MANIFEST is set but SERVICE_NAME is not. A split service needs a stable ' +
         'name of its own: it becomes the MESSAGE_BROKER consumer group, and every service sharing a ' +
@@ -341,8 +343,9 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
 }
 
 /**
- * The single composition root: wires the DI container, boots every plugin in
- * `config.plugins`, and mounts the resulting oRPC router on a Hono app.
+ * The single composition root: wires the DI container, boots the plugins in
+ * `config.plugins` that `SERVICE_MANIFEST` selects (every one when it is unset), and
+ * mounts the resulting oRPC router on a Hono app.
  * Production is distributed-only (ADR-0030, superseding ADR-0010/0014/0016/0028):
  * `REDIS_URL` auto-binds `JOB_QUEUE`/`RATE_LIMITER`/`CACHE`/`MESSAGE_BROKER`/
  * `REALTIME_TRANSPORT` to their Redis-backed drivers - the broker being the
@@ -453,7 +456,18 @@ export async function createApp(
   // first running every plugin's side effects.
   const corsOrigins = resolveCorsOrigins(config.cors);
 
-  const registry = await loadPlugins(config.plugins, container);
+  const bootLogger = createLogger('create-app');
+  const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
+  const plugins = await selectServiceEntries(
+    config.plugins,
+    manifest,
+    async (entry) => (await importPlugin(entry)).dependsOn ?? [],
+  );
+  if (manifest !== null) {
+    bootLogger.info({ modules: plugins.map((e) => e.id) }, 'SERVICE_MANIFEST active');
+  }
+
+  const registry = await loadPlugins(plugins, container);
   await configure?.(container);
 
   assertDurableSeamsBound(container);

@@ -1,4 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   MESSAGE_BROKER,
   JOB_QUEUE,
@@ -9,8 +10,9 @@ import {
   type McpKernel,
 } from '@openora/core/contracts';
 import { redisUrlForWorker } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { makeJobQueue, mock } from '../../../testing/mock.js';
 import { AUTH_SESSION, type SessionResolver } from '../../auth/index.js';
+import type { PluginEntry } from '../../plugin-host/index.js';
 import { createApp } from '../create-app.js';
 import { getCurrentClientMeta } from '../../kernel/request-context.js';
 
@@ -216,6 +218,53 @@ describe('createApp - service name for the Redis Streams consumer group', () => 
 
     await expect(createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL })).rejects.toThrow(
       /SERVICE_MANIFEST is set but SERVICE_NAME is not/,
+    );
+  });
+});
+
+describe('createApp - SERVICE_MANIFEST on the plugin list it is given', () => {
+  const keys = ['REDIS_URL', 'SERVICE_MANIFEST', 'SERVICE_NAME'] as const;
+  const saved = keys.map((key) => [key, process.env[key]] as const);
+
+  afterEach(() => {
+    for (const [key, value] of saved) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  const fixture = (name: string) =>
+    fileURLToPath(new URL(`./fixtures/${name}-plugin.ts`, import.meta.url));
+  // A static list, as a consumer that never calls loadExtensions() passes it.
+  const plugins: PluginEntry[] = [
+    { id: 'fixture-base', path: fixture('base') },
+    { id: 'fixture-feature', path: fixture('feature') },
+    { id: 'fixture-leaf', path: fixture('leaf') },
+  ];
+
+  /** Boots the fixtures under a manifest and returns the queues whose workers were registered. */
+  async function bootQueues(manifest: string) {
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    process.env['SERVICE_MANIFEST'] = manifest;
+    process.env['SERVICE_NAME'] = 'fixture';
+    const jobs = makeJobQueue();
+    const created = await createApp({ plugins, databaseUrl: DUMMY_DATABASE_URL }, (container) => {
+      container.register(JOB_QUEUE, () => jobs);
+    });
+    await created.close();
+    return vi.mocked(jobs.registerWorker).mock.calls.map(([registration]) => registration.queue);
+  }
+
+  it('boots only the modules the manifest selects', async () => {
+    expect(await bootQueues('fixture-base')).toEqual(['fixture-base.daily', 'fixture-base.weekly']);
+  });
+
+  it('names every module the manifest leaves out in one boot error', async () => {
+    await expect(bootQueues('fixture-leaf')).rejects.toThrow(
+      /fixture-feature \(required by fixture-leaf\)[\s\S]*fixture-base \(required by fixture-feature\)[\s\S]*SERVICE_MANIFEST=fixture-leaf,fixture-feature,fixture-base/,
     );
   });
 });

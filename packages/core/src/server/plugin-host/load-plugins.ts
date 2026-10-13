@@ -17,7 +17,7 @@ export type PluginEntry = {
   kind?: 'module' | 'infra';
 };
 
-function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
+export function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
   if (!Array.isArray(entries)) {
     throw new Error(
       `extensions.config.ts must export \`extensions\` as an array of { id, path }. Got ${typeof entries}.`,
@@ -90,6 +90,17 @@ export function topoSort<C extends TokenCatalog>(plugins: Plugin<C>[]): Plugin<C
   return sorted;
 }
 
+/** Imports the plugin an entry names, checking it is one and carries the entry's id. */
+export async function importPlugin<C extends TokenCatalog>(entry: PluginEntry): Promise<Plugin<C>> {
+  const mod = (await import(entry.path)) as { default?: Plugin<C> };
+  const plugin = mod.default;
+  if (!plugin || typeof plugin.register !== 'function') {
+    throw new Error(`Plugin at "${entry.path}" does not default-export a valid plugin`);
+  }
+  assertEntryMatchesPlugin(entry, plugin);
+  return plugin;
+}
+
 export async function loadPlugins<C extends TokenCatalog>(
   entries: PluginEntry[],
   container: Container<C>,
@@ -98,13 +109,7 @@ export async function loadPlugins<C extends TokenCatalog>(
   const plugins: Plugin<C>[] = [];
 
   for (const entry of entries) {
-    const mod = (await import(entry.path)) as { default?: Plugin<C> };
-    const plugin = mod.default;
-    if (!plugin || typeof plugin.register !== 'function') {
-      throw new Error(`Plugin at "${entry.path}" does not default-export a valid plugin`);
-    }
-    assertEntryMatchesPlugin(entry, plugin);
-    plugins.push(plugin);
+    plugins.push(await importPlugin<C>(entry));
   }
 
   const ordered = topoSort(plugins);
@@ -146,8 +151,9 @@ export function assertRequiredPorts<C extends TokenCatalog>(
     throw new Error(
       `[plugin-host] Required ports are unbound at boot:\n${unbound.join('\n')}\n` +
         `A domain reaches another domain only through a port the other domain binds. ` +
-        `Install the package that provides each port (eg @openora/wallet binds WALLET_COMMANDS) ` +
-        `or remove the plugin that requires it. See ADR-0024.`,
+        `Load the module that binds each port (eg wallet binds WALLET_COMMANDS) - with ` +
+        `SERVICE_MANIFEST set, add it to the manifest - or remove the plugin that requires it. ` +
+        `See ADR-0024.`,
     );
   }
 }
