@@ -1094,6 +1094,9 @@ describe('GamingService.startRound bonus completion (real PG)', () => {
       },
     );
     expect(launchGame).toHaveBeenCalledOnce();
+    expect(
+      events.emitInTransaction.mock.calls.filter(([, topic]) => topic === 'gaming.round.started'),
+    ).toEqual([]);
   });
 
   it('emits nothing when the bet completed no bonus', async () => {

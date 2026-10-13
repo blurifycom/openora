@@ -689,17 +689,19 @@ export class GamingService {
           });
         }
       }
-      await this.events.emitInTransaction(tx, 'gaming.round.started', {
-        roundId: insertedRound.id,
-        gameId,
-        userId,
-        playerId,
-        currency,
-      });
       return insertedRound;
     });
 
     const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);
+
+    // Only a round the provider actually launched is announced; a failed launch never reaches here.
+    await this.events.emitInTransaction(this.drizzle.db, 'gaming.round.started', {
+      roundId: round.id,
+      gameId,
+      userId,
+      playerId,
+      currency,
+    });
 
     return { roundId: round.id, launchUrl, token };
   }
