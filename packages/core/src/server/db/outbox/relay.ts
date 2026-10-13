@@ -7,6 +7,9 @@ import type { DrizzleDb } from '../drizzle.js';
 // A claimed row whose relay died mid-publish becomes claimable again after this.
 const CLAIM_LEASE_MS = 30_000;
 const PRUNE_INTERVAL_MS = 60 * 60_000;
+// Dedupe records outlive the stream entries they guard: MINID trimming is approximate, so an
+// entry can still be pending (and redeliverable) a while past EVENT_RETENTION_MS.
+const PROCESSED_EVENTS_RETENTION_MS = EVENT_RETENTION_MS + 24 * 60 * 60_000;
 
 export type OutboxRelayOptions = {
   intervalMs?: number; // poll cadence; default 200
@@ -40,8 +43,8 @@ function toEnvelope(row: EventOutboxRow): EventEnvelope {
  * the lease expires, then another relay republishes them - at-least-once delivery,
  * deduped downstream by `processed_events`.
  *
- * The same loop prunes published outbox rows and `processed_events` rows older
- * than `EVENT_RETENTION_MS`, at most once an hour per replica.
+ * The same loop prunes published outbox rows older than `EVENT_RETENTION_MS` (and
+ * `processed_events` a day later), at most once an hour per replica.
  *
  * ponytail: polls every 200ms per replica (an indexed, usually-empty claim). Swap
  * the poll for LISTEN/NOTIFY if the idle query load or the publish latency matters.
@@ -61,7 +64,7 @@ export class OutboxRelay {
     if (this.timer) {
       return;
     }
-    this.timer = setInterval(() => void this.drainOnce(), this.opts.intervalMs ?? 200);
+    this.timer = setInterval(() => void this.drainUntilIdle(), this.opts.intervalMs ?? 200);
     this.timer.unref?.();
   }
 
@@ -75,6 +78,16 @@ export class OutboxRelay {
     }
   }
 
+  // Keeps draining while batches come back full, so a backlog clears at publish speed
+  // instead of one batch per tick. A no-op while another drain is in flight.
+  private async drainUntilIdle(): Promise<void> {
+    const batchSize = this.opts.batchSize ?? 100;
+    let published: number;
+    do {
+      published = await this.drainOnce();
+    } while (this.timer && published === batchSize);
+  }
+
   // Publish one claimed batch. Returns how many rows were published. Reentrant-safe:
   // a second call while a drain is in flight is a no-op. Never throws - every failure
   // goes to `onError`.
@@ -86,13 +99,19 @@ export class OutboxRelay {
     try {
       await this.pruneIfDue();
       const batch = await this.claimBatch();
-      let published = 0;
+      const published: EventOutboxRow['eventId'][] = [];
       for (const row of batch) {
         if (await this.publishRow(row)) {
-          published += 1;
+          published.push(row.eventId);
         }
       }
-      return published;
+      if (published.length > 0) {
+        await this.db
+          .update(eventOutbox)
+          .set({ publishedAt: sql`now()` })
+          .where(inArray(eventOutbox.eventId, published));
+      }
+      return published.length;
     } catch (err) {
       this.opts.onError?.(err);
       return 0;
@@ -102,7 +121,9 @@ export class OutboxRelay {
   }
 
   private async claimBatch(): Promise<EventOutboxRow[]> {
-    const leaseExpiredBefore = new Date(Date.now() - CLAIM_LEASE_MS);
+    // DB clock on both sides of the lease (claimed_at is stamped with now()), so replica
+    // clock skew cannot steal or strand a live claim.
+    const leaseExpiredBefore = sql`now() - ${CLAIM_LEASE_MS} * interval '1 millisecond'`;
     const claimable = this.db
       .select({ eventId: eventOutbox.eventId })
       .from(eventOutbox)
@@ -126,10 +147,6 @@ export class OutboxRelay {
   private async publishRow(row: EventOutboxRow): Promise<boolean> {
     try {
       await this.broker.publish(toEnvelope(row));
-      await this.db
-        .update(eventOutbox)
-        .set({ publishedAt: new Date() })
-        .where(eq(eventOutbox.eventId, row.eventId));
       return true;
     } catch (err) {
       this.opts.onError?.(err);
@@ -147,10 +164,15 @@ export class OutboxRelay {
       return;
     }
     this.lastPruneAt = Date.now();
-    const cutoff = new Date(Date.now() - EVENT_RETENTION_MS);
     try {
-      await this.db.delete(eventOutbox).where(lt(eventOutbox.publishedAt, cutoff));
-      await this.db.delete(processedEvents).where(lt(processedEvents.processedAt, cutoff));
+      await this.db
+        .delete(eventOutbox)
+        .where(lt(eventOutbox.publishedAt, new Date(Date.now() - EVENT_RETENTION_MS)));
+      await this.db
+        .delete(processedEvents)
+        .where(
+          lt(processedEvents.processedAt, new Date(Date.now() - PROCESSED_EVENTS_RETENTION_MS)),
+        );
     } catch (err) {
       this.opts.onError?.(err);
     }

@@ -259,8 +259,9 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     return { handlers, stop, done };
   }
 
-  // Returns the XAUTOCLAIM cursor to resume from, so a backlog of pending entries is
-  // walked across intervals instead of re-scanning the first page every time.
+  // Walks the whole pending list each interval (XAUTOCLAIM pages until cursor 0-0), so a
+  // backlog drains at read speed rather than one page per interval. Returns the cursor to
+  // resume from if a page fails.
   private async reclaimPending(
     reader: RedisClient,
     key: string,
@@ -268,31 +269,35 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     handlers: Set<BrokerHandler>,
     cursor: string,
   ): Promise<string> {
+    let next = cursor;
     try {
-      const claimed = (await reader.xAutoClaim(
-        key,
-        group,
-        this.consumerId,
-        this.claimMinIdleMs,
-        cursor,
-        { COUNT: READ_COUNT },
-      )) as StreamClaimReply;
-      if (claimed.deletedMessages.length > 0) {
-        this.logger.error(
-          { key, group, ids: claimed.deletedMessages },
-          'pending stream entries were trimmed before they were processed',
-        );
-      }
-      for (const message of claimed.messages) {
-        if (message) {
-          const deliveries = await this.deliveryCount(reader, key, group, message.id);
-          await this.dispatch(reader, key, group, message, handlers, deliveries);
+      do {
+        const claimed = (await reader.xAutoClaim(
+          key,
+          group,
+          this.consumerId,
+          this.claimMinIdleMs,
+          next,
+          { COUNT: READ_COUNT },
+        )) as StreamClaimReply;
+        if (claimed.deletedMessages.length > 0) {
+          this.logger.error(
+            { key, group, ids: claimed.deletedMessages },
+            'pending stream entries were trimmed before they were processed',
+          );
         }
-      }
-      return claimed.nextId;
+        for (const message of claimed.messages) {
+          if (message) {
+            const deliveries = await this.deliveryCount(reader, key, group, message.id);
+            await this.dispatch(reader, key, group, message, handlers, deliveries);
+          }
+        }
+        next = claimed.nextId;
+      } while (next !== '0-0');
+      return next;
     } catch (err) {
       this.logger.error({ err, key, group }, 'stream reclaim failed');
-      return cursor;
+      return next;
     }
   }
 

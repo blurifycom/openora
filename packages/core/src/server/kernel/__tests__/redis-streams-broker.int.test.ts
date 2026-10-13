@@ -292,6 +292,28 @@ describe('RedisStreamsBroker', () => {
     expect(await redis.client.exists(`oss:dlq:${topic}`)).toBe(0);
   });
 
+  it('reclaims the whole pending backlog in one pass, not one page', async () => {
+    const broker = makeBroker('svc', { intervalMs: 1000, minIdleMs: 10 });
+    const topic = uniqueTopic();
+    const seen = new Set<string>();
+    let handled = 0;
+    broker.subscribe(topic, (envelope) => {
+      if (!seen.has(envelope.eventId)) {
+        seen.add(envelope.eventId);
+        throw new Error('transient');
+      }
+      handled += 1;
+    });
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
+
+    // 25 entries span three XAUTOCLAIM pages (COUNT 10); the next pass would be ~1s later.
+    for (let i = 0; i < 25; i += 1) {
+      await broker.publish(makeEnvelope(topic));
+    }
+
+    await vi.waitFor(() => expect(handled).toBe(25), { timeout: 1800 });
+  });
+
   it(`dead-letters an entry still failing after ${MAX_DELIVERIES} deliveries and ACKs it`, async () => {
     const broker = makeBroker('svc', FAST_RECLAIM);
     const topic = uniqueTopic();

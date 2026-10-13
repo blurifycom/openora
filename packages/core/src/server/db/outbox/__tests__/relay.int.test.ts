@@ -188,7 +188,13 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
     const recentPublished = await seedRow({ publishedAt: new Date() });
     const oldPending = await seedRow({ occurredAt: longAgo });
     await db.drizzle.db.insert(processedEvents).values([
-      { eventId: randomUUID(), consumer: 'old', processedAt: longAgo },
+      {
+        eventId: randomUUID(),
+        consumer: 'old',
+        processedAt: new Date(Date.now() - EVENT_RETENTION_MS - 25 * 60 * 60_000),
+      },
+      // Kept a day past the stream retention: its entry may still be pending and redelivered.
+      { eventId: randomUUID(), consumer: 'just-past-retention', processedAt: longAgo },
       { eventId: randomUUID(), consumer: 'recent' },
     ]);
     const relay = new OutboxRelay(db.drizzle.db, brokerThat());
@@ -200,7 +206,7 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
     expect(remaining.has(recentPublished.eventId)).toBe(true);
     expect(remaining.get(oldPending.eventId)?.publishedAt).not.toBeNull();
     const consumers = await db.drizzle.db.select().from(processedEvents);
-    expect(consumers.map((r) => r.consumer)).toEqual(['recent']);
+    expect(consumers.map((r) => r.consumer).sort()).toEqual(['just-past-retention', 'recent']);
   });
 });
 
@@ -222,6 +228,25 @@ describe('OutboxRelay poll loop (real PG)', () => {
       await vi.waitFor(async () => {
         expect((await rowsById()).get(row.eventId)?.publishedAt).not.toBeNull();
       });
+    } finally {
+      await relay.stop();
+    }
+  });
+
+  it('drains a backlog larger than one batch within a single tick', async () => {
+    const rows = await Promise.all(Array.from({ length: 5 }, () => seedRow()));
+    const relay = new OutboxRelay(db.drizzle.db, brokerThat(), { intervalMs: 1000, batchSize: 2 });
+
+    relay.start();
+    try {
+      // One tick fires at ~1s; the next would be ~2s. One batch per tick would leave rows pending.
+      await vi.waitFor(
+        async () => {
+          const byId = await rowsById();
+          expect(rows.every((r) => byId.get(r.eventId)?.publishedAt)).toBe(true);
+        },
+        { timeout: 1800 },
+      );
     } finally {
       await relay.stop();
     }
