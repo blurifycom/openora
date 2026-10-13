@@ -11,6 +11,7 @@ import {
   findOneOrThrow,
   makeConflictError,
   makeNotFoundError,
+  createDomainError,
   createLogger,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
@@ -67,7 +68,7 @@ import type {
   SetLoginWithdrawalAlertsInput,
   SetRequireTwoFactorOnLoginInput,
 } from '@openora/core/contracts';
-import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
+import { RATE_LIMIT_KEYS, isAllowedHttpsUrl, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
 import { assertAccountNotBlocked, assertCountryAllowed } from './rg-guard.service.js';
 import { assertUsernameAllowed, isUsernameAllowed } from '../../shared/username.js';
@@ -289,6 +290,11 @@ const SUCCESS = { success: true as const };
 
 export const UserNotFoundError = makeNotFoundError('User');
 export const UsernameConflictError = makeConflictError('Username', 'Username is already in use');
+export const AvatarHostNotAllowedError = createDomainError<[]>(
+  'AvatarHostNotAllowedError',
+  () => 'Avatar URL must be https and served from an allowed host',
+  { reason: 'avatar_host_not_allowed' },
+);
 
 const BetterAuthErrorBodySchema = z.object({
   message: z.string().optional(),
@@ -2814,6 +2820,12 @@ export class IdentityService {
   async updateProfile(input: UpdateProfileInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     if (input.language !== undefined) {
       assertSupportedLanguage(input.language, this.platformConfig);
+    }
+    if (
+      typeof input.image === 'string' &&
+      !isAllowedHttpsUrl(input.image, this.platformConfig?.identity.allowedAvatarHosts ?? [])
+    ) {
+      throw new AvatarHostNotAllowedError();
     }
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);

@@ -14,6 +14,7 @@ import { PhoneLoginService } from '../service/phone-login.service.js';
 import { PhoneVerificationService } from '../service/phone-verification.service.js';
 import type { WithdrawalPinService } from '../service/withdrawal-pin.service.js';
 import {
+  AvatarHostNotAllowedError,
   IdentityService,
   UsernameConflictError,
   UserNotFoundError,
@@ -319,7 +320,7 @@ export function createIdentityRouter(
     ),
 
     updateProfile: os.updateProfile.handler(({ input, context }) =>
-      mapErrors({ BAD_REQUEST: UnsupportedLanguageError }, () =>
+      mapErrors({ BAD_REQUEST: [UnsupportedLanguageError, AvatarHostNotAllowedError] }, () =>
         identity.updateProfile(input, context.request.headers, context.resHeaders ?? new Headers()),
       ),
     ),

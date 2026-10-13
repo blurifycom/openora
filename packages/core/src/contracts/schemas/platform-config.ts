@@ -379,6 +379,17 @@ export const GamingConfigSchema = z
   .strict();
 export type GamingConfig = z.infer<typeof GamingConfigSchema>;
 
+export const IdentityConfigSchema = z
+  .object({
+    /**
+     * Hostnames a player avatar URL may be served from. Empty = no avatars allowed. Subdomains
+     * match too, so name the exact bucket or CDN host, never a parent domain other tenants share.
+     */
+    allowedAvatarHosts: z.array(HostAllowlistEntrySchema).default([]),
+  })
+  .strict();
+export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -439,6 +450,8 @@ export const PlatformConfigSchema = z
     cms: CmsConfigSchema.default({ allowedBannerImageHosts: [] }),
     /** Game custom thumbnail host allow-list. Absent = built-in default (empty = disabled). */
     gaming: GamingConfigSchema.default({ allowedThumbnailHosts: [] }),
+    /** Player avatar host allow-list. Absent = built-in default (empty = disabled). */
+    identity: IdentityConfigSchema.default({ allowedAvatarHosts: [] }),
     /** How often the rank payout jobs tick. Absent = the built-in defaults. */
     promo: PromoConfigSchema.prefault({}),
     /** Agent run limits, retention and the model catalog. Absent = the schema defaults, no models. */

@@ -28,3 +28,8 @@ export const HostAllowlistEntrySchema = z
 export function isAllowedHost(hostname: string, allowedHosts: readonly string[]): boolean {
   return allowedHosts.some((allowed) => hostname === allowed || hostname.endsWith(`.${allowed}`));
 }
+
+export function isAllowedHttpsUrl(url: string, allowedHosts: readonly string[]): boolean {
+  const parsed = URL.parse(url);
+  return parsed?.protocol === 'https:' && isAllowedHost(parsed.hostname, allowedHosts);
+}
