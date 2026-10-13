@@ -52,6 +52,7 @@ import {
   ChatRoomInviteOnlyError,
   ChatRoomLockedError,
   ChatRoomNotFoundError,
+  ChatSystemMessageProtectedError,
 } from '../service/chat-moderation.service.js';
 import { ChatRoomMembershipService } from '../service/chat-room-membership.service.js';
 import { ChatRoomInviteService } from '../service/chat-room-invite.service.js';
@@ -222,6 +223,7 @@ export function createChatRouter({
             roomId: input.roomId,
             content: input.content,
             attachment: input.attachment ?? null,
+            ...context.clientMeta,
           }),
       );
     }),
@@ -231,7 +233,11 @@ export function createChatRouter({
       return mapErrors(
         {
           NOT_FOUND: [ChatMessageNotFoundError, ChatRoomNotFoundError],
-          FORBIDDEN: [ChatRoomNotMemberError, ChatRoomNotModeratorError],
+          FORBIDDEN: [
+            ChatRoomNotMemberError,
+            ChatRoomNotModeratorError,
+            ChatSystemMessageProtectedError,
+          ],
         },
         () => chatService.deleteMessage(input.id, userId, context.clientMeta),
       );

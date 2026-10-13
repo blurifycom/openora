@@ -877,11 +877,13 @@ export const domainEventSchemas = {
     before: z.object({ name: z.string(), slug: z.string(), category: z.string().nullable() }),
     after: z.object({ deletedAt: z.string() }),
   }),
+  // `auditRecorded` marks a context room join whose audit row the membership write appended.
   'chat.room.member.joined': authContextBase.extend({
     roomId: UuidSchema,
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     adminId: UuidSchema.optional(),
+    auditRecorded: z.literal(true).optional(),
   }),
   // A room owner or moderator invited a player into a private room. `playerId` is the
   // inviter's; the accept and decline payloads carry the invitee's.

@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { UuidSchema, MoneyAmountSchema } from './common.js';
+import { fitsJsonBytes } from './bounded-json-params.js';
 
 export const ProfileCommandMetadataSchema = z.object({
   command: z.literal('profile'),
@@ -82,3 +83,27 @@ export const DonateCommandMetadataSchema = z.object({
   currency: z.string(),
 });
 export type DonateCommandMetadata = z.infer<typeof DonateCommandMetadataSchema>;
+
+export const SYSTEM_EVENT_CODE_MAX_LENGTH = 64;
+export const SYSTEM_EVENT_PARAM_VALUE_MAX_LENGTH = 500;
+export const SYSTEM_EVENT_PARAMS_MAX_BYTES = 4096;
+
+// A server-authored event a client renders from `code` and `params`; money params are decimal strings.
+export const SystemEventMetadataSchema = z.object({
+  command: z.literal('system_event'),
+  code: z.string().min(1).max(SYSTEM_EVENT_CODE_MAX_LENGTH),
+  params: z
+    .record(
+      z.string().min(1).max(SYSTEM_EVENT_CODE_MAX_LENGTH),
+      z.union([
+        z.string().max(SYSTEM_EVENT_PARAM_VALUE_MAX_LENGTH),
+        z.number(),
+        z.boolean(),
+        z.null(),
+      ]),
+    )
+    .refine((params) => fitsJsonBytes(params, SYSTEM_EVENT_PARAMS_MAX_BYTES), {
+      message: `System event params must serialize to at most ${SYSTEM_EVENT_PARAMS_MAX_BYTES} bytes`,
+    }),
+});
+export type SystemEventMetadata = z.infer<typeof SystemEventMetadataSchema>;
