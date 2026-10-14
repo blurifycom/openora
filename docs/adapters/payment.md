@@ -44,6 +44,10 @@ rather than failing.
 - **Say which pairs you serve.** The asset catalog asks the binding whether it can handle a
   currency and network before an operator saves the pair, so an unsupported pair fails in an
   admin form rather than on a player's deposit screen.
+- **Say how precisely you pay out.** A vendor that cannot send more fractional digits than an
+  asset carries implements `withdrawalDecimals(currency, network)`. The wallet then refuses a
+  withdrawal whose amount or fee is finer at request time, before the debit, instead of the
+  payout failing after approval.
 - **Do not hold a transaction open across a vendor call.** Network calls belong outside the
   database transaction; persist a recoverable state first.
 

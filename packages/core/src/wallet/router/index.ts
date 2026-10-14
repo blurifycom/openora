@@ -54,12 +54,16 @@ import {
   WithdrawalDisabledError,
   BelowMinimumWithdrawalError,
   WithdrawalAmountNotAboveFeeError,
+  WithdrawalPrecisionError,
   DepositDisabledError,
   BelowMinimumDepositError,
   PlayerNotFoundError,
   WithdrawalAddressAlreadyExistsError,
   WithdrawalAddressLimitReachedError,
   WalletReferenceRateUnavailableError,
+  HeldDepositNotFoundError,
+  DepositStillHeldError,
+  DepositAlreadyOnLedgerError,
 } from '../service/wallet.service.js';
 import {
   SwapService,
@@ -71,6 +75,10 @@ import {
   ReconciliationFindingNotFoundError,
   ReconciliationCreditTransactionNotFoundError,
   ReconciliationCreditMismatchError,
+  ReconciliationOutcomeNotAllowedError,
+  ReconciliationRefundAmountError,
+  ReconciliationAttributionError,
+  DepositAlreadyRefundedError,
 } from '../service/reconciliation.service.js';
 
 // Unauthenticated route: it costs a signature verification (and, for a custody vendor,
@@ -240,6 +248,7 @@ export function createWalletRouter({
             UnsupportedNetworkError,
             BelowMinimumWithdrawalError,
             WithdrawalAmountNotAboveFeeError,
+            WithdrawalPrecisionError,
           ],
           CONFLICT: [
             WithdrawalLockedError,
@@ -596,13 +605,28 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'wallet-reconciliation', 'resolve');
+        // `credited` on a deposit finding and `released` put custody money on a player's
+        // balance, so they need what any other hand credit (`manualAdjustment`) needs.
+        if (input.resolution.outcome === 'credited' || input.resolution.outcome === 'released') {
+          await adminGuard.assertSuperAdmin(context);
+        }
         return mapErrors(
           {
             NOT_FOUND: [
               ReconciliationFindingNotFoundError,
               ReconciliationCreditTransactionNotFoundError,
+              PlayerNotFoundError,
             ],
-            CONFLICT: ReconciliationCreditMismatchError,
+            CONFLICT: [
+              ReconciliationCreditMismatchError,
+              ReconciliationOutcomeNotAllowedError,
+              ReconciliationRefundAmountError,
+              ReconciliationAttributionError,
+              HeldDepositNotFoundError,
+              DepositStillHeldError,
+              DepositAlreadyOnLedgerError,
+              DepositAlreadyRefundedError,
+            ],
           },
           () =>
             reconciliation.resolveFinding(adminId, input.id, input.resolution, { ip, userAgent }),
