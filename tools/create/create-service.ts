@@ -16,7 +16,7 @@
  *
  * After scaffolding: `pnpm install`, build deps, then
  *   pnpm -F @openora/<name>-service dev          # uses the baked-in manifest
- *   SERVICE_MANIFEST=identity,mail,audit pnpm -F @openora/<name>-service dev   # override
+ *   SERVICE_MANIFEST=<module,...> pnpm -F @openora/<name>-service dev   # override
  */
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -135,4 +135,17 @@ console.log(`  SERVICE_MANIFEST=... pnpm -F ${pkgName} dev   # override at runti
 console.log('To exclude these modules from the monolith, drop them from extensions.config.ts');
 console.log(
   'and run them only via this host (set REDIS_URL or bind MESSAGE_BROKER in an overlay; AMQP_URL only enables the outbox).',
+);
+console.warn('Before you deploy it:');
+console.warn(
+  '  - A module this service and another process both load handles each event in both, under each',
+);
+console.warn(
+  '    SERVICE_NAME - audit writes every row twice. Until ADR-0045 lands, split modules no other process loads.',
+);
+console.warn(
+  '  - The boot logs each optional port the manifest leaves unbound and what its module skips',
+);
+console.warn(
+  '    without it (eg identity without compliance skips the country check). Read those lines.',
 );
