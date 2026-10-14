@@ -63,6 +63,7 @@ import {
   WalletReferenceRateUnavailableError,
   HeldDepositNotFoundError,
   DepositStillHeldError,
+  DepositAlreadyOnLedgerError,
 } from '../service/wallet.service.js';
 import {
   SwapService,
@@ -75,6 +76,8 @@ import {
   ReconciliationCreditTransactionNotFoundError,
   ReconciliationCreditMismatchError,
   ReconciliationOutcomeNotAllowedError,
+  ReconciliationRefundAmountError,
+  ReconciliationAttributionError,
 } from '../service/reconciliation.service.js';
 
 // Unauthenticated route: it costs a signature verification (and, for a custody vendor,
@@ -606,12 +609,16 @@ export function createWalletRouter({
             NOT_FOUND: [
               ReconciliationFindingNotFoundError,
               ReconciliationCreditTransactionNotFoundError,
+              PlayerNotFoundError,
             ],
             CONFLICT: [
               ReconciliationCreditMismatchError,
               ReconciliationOutcomeNotAllowedError,
+              ReconciliationRefundAmountError,
+              ReconciliationAttributionError,
               HeldDepositNotFoundError,
               DepositStillHeldError,
+              DepositAlreadyOnLedgerError,
             ],
           },
           () =>

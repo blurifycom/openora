@@ -508,6 +508,9 @@ export const walletReconciliationFinding = pgTable(
     address: text(),
     tag: text(),
     txHash: text(),
+    // The deposit's sender, when the vendor reported one: what a refund destination is
+    // compared against.
+    sourceAddress: text(),
     externalId: text(),
     transactionId: uuid(),
     detail: text(),

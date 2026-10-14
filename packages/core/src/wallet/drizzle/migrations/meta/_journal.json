@@ -225,6 +225,13 @@
       "when": 1792013238683,
       "tag": "0031_eminent_star_brand",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792015897068,
+      "tag": "0032_clumsy_ink",
+      "breakpoints": true
     }
   ]
 }

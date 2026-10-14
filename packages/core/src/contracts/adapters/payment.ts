@@ -28,6 +28,11 @@ export type PaymentWebhookEvent =
       currency: string;
       txHash: string;
       externalId: string;
+      /**
+       * The sender's address, when the vendor reports a single one. A refund sent anywhere
+       * else is flagged in the audit trail, so it is worth passing whenever it is known.
+       */
+      sourceAddress?: string;
     }
   | {
       kind: 'withdrawal';

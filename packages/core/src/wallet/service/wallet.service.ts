@@ -201,6 +201,13 @@ export const DepositStillHeldError = createDomainError<[reason: string]>(
   (reason) => `The deposit policy still holds this deposit: ${reason}`,
 );
 
+// The ledger already carries this vendor deposit (the webhook landed after all), so crediting
+// or refunding it by hand now would move the same money twice.
+export const DepositAlreadyOnLedgerError = makeConflictError(
+  'DepositAlreadyOnLedgerError',
+  'This deposit is already on the ledger and cannot be credited or refunded by hand',
+);
+
 export const DepositAddressUnsupportedError = makeConflictError(
   'DepositAddressUnsupportedError',
   'The bound payment adapter does not support address-based deposits',
@@ -645,6 +652,23 @@ export function providerRefCondition(
     eq(walletTransaction.providerRefId, providerRefId),
   );
 }
+
+type DepositEvent = Extract<PaymentWebhookEvent, { kind: 'deposit' }>;
+
+/** An on-chain deposit an admin settles by hand from a reconciliation finding. */
+export type HandDeposit = {
+  userId: User['id'];
+  adminId: User['id'];
+  amount: string;
+  currency: string;
+  network: string | null;
+  providerName: string;
+  /** The vendor's deposit id, or null when another ledger row already carries it. */
+  providerRefId: string | null;
+  address: string | null;
+  tag: string | null;
+  txHash: string | null;
+};
 
 /** Serialises one player's PSP deposits, so an RG reservation cannot be spent twice. */
 const depositSlotKey = (userId: User['id']) => `wallet-deposit:${userId}`;
@@ -3436,6 +3460,7 @@ export class WalletService {
           address: event.address,
           tag: event.tag ?? null,
           txHash: event.txHash,
+          sourceAddress: event.sourceAddress ?? null,
           externalId: event.externalId,
           detail: 'no wallet_deposit_address matched this address/network/tag',
         },
@@ -3469,6 +3494,7 @@ export class WalletService {
           address: event.address,
           tag: event.tag ?? null,
           txHash: event.txHash,
+          sourceAddress: event.sourceAddress ?? null,
           externalId: event.externalId,
           detail: `currency mismatch: event reported ${event.currency}, address issued for ${depositAddress.currency}`,
         },
@@ -3493,7 +3519,12 @@ export class WalletService {
         event.externalId,
       );
       if (credited) {
-        return { transactionId: credited.id, replayed: true, holdReason: heldReason(credited) };
+        return {
+          transactionId: credited.id,
+          replayed: true,
+          holdReason: heldReason(credited),
+          refunded: credited.status === 'refunded',
+        };
       }
       // Throws when no fresh rate exists. The funds are on chain, so the deposit is not
       // dropped: nothing commits, the webhook answers an error and the vendor redelivers it,
@@ -3544,6 +3575,7 @@ export class WalletService {
               address: event.address,
               tag: event.tag ?? null,
               txHash: event.txHash,
+              sourceAddress: event.sourceAddress ?? null,
               externalId: event.externalId,
               transactionId: inserted.id,
               detail: `held, not credited: ${holdReason}`,
@@ -3551,7 +3583,7 @@ export class WalletService {
             this.audit,
           );
         }
-        return { transactionId: inserted.id, replayed: false, holdReason };
+        return { transactionId: inserted.id, replayed: false, holdReason, refunded: false };
       }
 
       const [winner] = await this.findDepositByProviderRef(
@@ -3564,9 +3596,24 @@ export class WalletService {
           `payment webhook: idempotency conflict but no row found (externalId=${event.externalId})`,
         );
       }
-      return { transactionId: winner.id, replayed: true, holdReason: heldReason(winner) };
+      return {
+        transactionId: winner.id,
+        replayed: true,
+        holdReason: heldReason(winner),
+        refunded: winner.status === 'refunded',
+      };
     });
-    const { transactionId, replayed, holdReason } = credit;
+    const { transactionId, replayed, holdReason, refunded } = credit;
+
+    // An admin refunded this deposit on chain from its finding; the redelivery is not money
+    // the player still has coming, and not a credit the deposit limit should be asked about.
+    if (refunded) {
+      logger.warn(
+        { userId: depositAddress.userId, transactionId, externalId: event.externalId },
+        'payment webhook: redelivered deposit was already refunded, not credited',
+      );
+      return;
+    }
 
     if (holdReason !== null) {
       logger.warn(
@@ -3676,10 +3723,106 @@ export class WalletService {
     }
     await txn
       .update(walletTransaction)
-      .set({ status: 'completed', reviewedBy: adminId, reviewedAt: new Date() })
+      // The database clock, the one the deposit window's upper bound reads: an app clock
+      // running ahead would keep the released deposit out of the player's spend.
+      .set({ status: 'completed', reviewedBy: adminId, reviewedAt: sql`now()` })
       .where(eq(walletTransaction.id, depositId));
     await creditWalletBalance(txn, held.walletId, held.currency, held.amount);
     return { userId: held.userId, amount: held.amount, currency: held.currency };
+  }
+
+  /**
+   * Credits an on-chain deposit an admin attributed from a reconciliation finding, in the
+   * caller's transaction. The deposit policy is asked BEFORE anything is written, so a player
+   * it would hold gets nothing and the caller's transaction rolls back clean. The row is a
+   * `deposit`, not a `manual_credit`: the player's deposit-limit window counts it, and when
+   * it is keyed on the vendor id a later webhook redelivery replays it instead of crediting.
+   * The caller announces it with `announceDepositCompleted` once the transaction commits.
+   */
+  async creditDepositByHand(
+    txn: DrizzleTx,
+    deposit: HandDeposit,
+  ): Promise<{
+    transactionId: WalletTransaction['id'];
+    userId: User['id'];
+    amount: string;
+    currency: string;
+  }> {
+    if (!(await this.identityReader.getPlayerIdByUserId(deposit.userId))) {
+      throw new PlayerNotFoundError(deposit.userId);
+    }
+    const reason = await this.depositHoldReason(txn, deposit.userId, deposit);
+    if (reason !== null) {
+      throw new DepositStillHeldError(reason);
+    }
+    const reference = await this.referenceSnapshot(
+      txn,
+      deposit.userId,
+      deposit.amount,
+      deposit.currency,
+    );
+    const row = await this.insertHandDeposit(txn, deposit, { ...reference, status: 'completed' });
+    await creditWalletBalance(txn, row.walletId, deposit.currency, deposit.amount);
+    return {
+      transactionId: row.id,
+      userId: deposit.userId,
+      amount: deposit.amount,
+      currency: deposit.currency,
+    };
+  }
+
+  /**
+   * Records a deposit an admin refunded on chain as a terminal `refunded` deposit row keyed on
+   * the vendor id, so a webhook redelivery of it replays instead of crediting. Moves no balance.
+   */
+  async recordRefundedDeposit(
+    txn: DrizzleTx,
+    deposit: HandDeposit & { providerRefId: string },
+  ): Promise<WalletTransaction['id']> {
+    const row = await this.insertHandDeposit(txn, deposit, { status: 'refunded' });
+    return row.id;
+  }
+
+  /** The player a deposit address was issued to, or undefined when it is nobody's. */
+  async depositAddressOwner(
+    target: Pick<DepositEvent, 'address' | 'network' | 'tag'>,
+  ): Promise<User['id'] | undefined> {
+    return (await this.findDepositAddressByAddress(target))?.userId;
+  }
+
+  private async insertHandDeposit(
+    txn: DrizzleTx,
+    deposit: HandDeposit,
+    values: Partial<typeof walletTransaction.$inferInsert> & {
+      status: 'completed' | 'refunded';
+    },
+  ): Promise<WalletTransaction> {
+    const walletRecord = await openWallet(txn, deposit.userId, deposit.currency);
+    const [row] = await txn
+      .insert(walletTransaction)
+      .values({
+        ...values,
+        walletId: walletRecord.id,
+        type: 'deposit',
+        amount: deposit.amount,
+        currency: deposit.currency,
+        direction: 'credit',
+        rail: this.resolveRail(deposit.currency),
+        network: deposit.network,
+        providerName: deposit.providerName,
+        providerRefId: deposit.providerRefId,
+        destinationAddress: deposit.address,
+        destinationTag: deposit.tag,
+        txHash: deposit.txHash,
+        reviewedBy: deposit.adminId,
+        reviewedAt: sql`now()`,
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (!row) {
+      throw new DepositAlreadyOnLedgerError();
+    }
+    return row;
   }
 
   async announceDepositCompleted(deposit: {
@@ -3781,7 +3924,7 @@ export class WalletService {
     address,
     network,
     tag,
-  }: Extract<PaymentWebhookEvent, { kind: 'deposit' }>) {
+  }: Pick<DepositEvent, 'address' | 'network' | 'tag'>) {
     const rows = await this.drizzle.db
       .select()
       .from(walletDepositAddress)

@@ -33,6 +33,7 @@ export type ReconciliationFindingInput = {
   address?: string | null;
   tag?: string | null;
   txHash?: string | null;
+  sourceAddress?: string | null;
   /**
    * The dedup key: a partial unique index on (kind, providerName, externalId) makes a duplicate
    * insert for the same underlying vendor event or job re-run a silent no-op. Pass a
@@ -78,7 +79,13 @@ function findingRecordedAudit(
   findingId: WalletReconciliationFindingRow['id'],
   input: ReconciliationFindingInput,
 ) {
-  const { address: _address, tag: _tag, txHash: _txHash, ...auditable } = input;
+  const {
+    address: _address,
+    tag: _tag,
+    txHash: _txHash,
+    sourceAddress: _sourceAddress,
+    ...auditable
+  } = input;
   return {
     actorType: 'system' as const,
     action: 'wallet.reconciliation_finding.recorded',
@@ -101,6 +108,7 @@ async function insertFinding(db: DrizzleDb | DrizzleTx, input: ReconciliationFin
       address: input.address ?? null,
       tag: input.tag ?? null,
       txHash: input.txHash ?? null,
+      sourceAddress: input.sourceAddress ?? null,
       externalId: input.externalId ?? null,
       transactionId: input.transactionId ?? null,
       detail: input.detail ?? null,

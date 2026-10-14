@@ -129,6 +129,7 @@ describe('wallet custody and reconciliation routes', () => {
       address: null,
       tag: null,
       txHash: null,
+      sourceAddress: null,
       externalId: 'vendor-ext-1',
       transactionId: null,
       detail: null,
