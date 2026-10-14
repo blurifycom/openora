@@ -110,10 +110,19 @@ export type ModuleRegistry<C extends TokenCatalog> = {
 
 export type PluginContext<C extends TokenCatalog> = ModuleRegistry<C>;
 
+/** A port a plugin resolves with `c.has()`: it runs without one, minus what the port backs. */
+export type OptionalPort<C extends TokenCatalog> = {
+  port: C[keyof C];
+  /** What the plugin skips while the port is unbound, as the boot log states it. */
+  without: string;
+};
+
 export type Plugin<C extends TokenCatalog> = {
   id: string;
   dependsOn?: readonly string[];
   // Verified once after all plugins register - a missing port fails fast. See ADR-0024.
   requiresPorts?: readonly (C[keyof C] & Token<unknown>)[];
+  // Checked at the same point; an unbound one is logged, not fatal.
+  optionalPorts?: readonly OptionalPort<C>[];
   register(ctx: PluginContext<C>): void | Promise<void>;
 };

@@ -111,6 +111,14 @@ function makeAdminSecurity(c: IdentityContainer) {
 export default {
   id: 'identity',
   requiresPorts: [MAIL_DISPATCH],
+  optionalPorts: [
+    { port: GEO_CHECK_COMMANDS, without: 'registration and sign-in skip the country check' },
+    { port: PLAYER_PROVISIONING, without: 'registration is refused' },
+    {
+      port: MCP_TOKEN_REVOCATION,
+      without: "ending an admin's sessions leaves their MCP tokens valid",
+    },
+  ],
   register(ctx) {
     // Built once and shared by ADMIN_SECURITY_POLICY and the router below - two
     // separate `makeAdminSecurity(c)` calls would construct two independent

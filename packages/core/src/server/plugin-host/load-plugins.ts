@@ -1,7 +1,10 @@
 import type { Container } from '../kernel/index.js';
+import { createLogger } from '../kernel/logger.js';
 import type { TokenCatalog } from '@openora/core/contracts';
 import type { Plugin } from './define-plugin.js';
 import { ModuleRegistryImpl } from './module-registry.js';
+
+const logger = createLogger('plugin-host');
 
 export type PluginEntry = {
   id: string;
@@ -122,8 +125,31 @@ export async function loadPlugins<C extends TokenCatalog>(
   }
 
   assertRequiredPorts(ordered, container);
+  for (const { plugin, port, without } of unboundOptionalPorts(ordered, container)) {
+    logger.warn({ plugin, port }, `${plugin} runs without ${port}: ${without}`);
+  }
 
   return registry;
+}
+
+/**
+ * The optional ports no plugin bound. A plugin boots without one but skips what it backs - a
+ * check, an audit record - so the boot logs each, typically when a SERVICE_MANIFEST leaves out
+ * the module that binds it.
+ */
+export function unboundOptionalPorts<C extends TokenCatalog>(
+  plugins: Plugin<C>[],
+  container: Container<C>,
+): { plugin: string; port: string; without: string }[] {
+  return plugins.flatMap((plugin) =>
+    (plugin.optionalPorts ?? [])
+      .filter(({ port }) => !container.has(port))
+      .map(({ port, without }) => ({
+        plugin: plugin.id,
+        port: String(port.description ?? port),
+        without,
+      })),
+  );
 }
 
 /**

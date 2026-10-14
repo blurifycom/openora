@@ -1,5 +1,6 @@
 export type {
   Plugin,
+  OptionalPort,
   ModuleRegistry,
   PluginContext,
   RouterFactory,

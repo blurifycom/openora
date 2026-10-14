@@ -80,8 +80,10 @@ and each job reaches one of them.
 
 - **Fewer modules in a process.** `SERVICE_MANIFEST` lists the module ids a process boots, and
   `createApp` applies it to the `plugins` you pass. List every module your modules depend on and
-  every module that binds a port they require; the boot names whatever is missing. A process
-  with a manifest needs a `SERVICE_NAME` of its own.
+  every module that binds a port they require; the boot names whatever is missing. A module
+  still boots without an optional port, so the boot log also lists each one the manifest leaves
+  unbound and what its module skips without it (eg identity's country check). A process with a
+  manifest needs a `SERVICE_NAME` of its own.
 - **Fewer queues in a process.** `JOB_WORKERS` picks the job queues a process consumes: names,
   `prefix*` patterns, `!` to exclude. To keep a long-running queue off the API replicas, run one
   more instance with the same plugins and `SERVICE_NAME` and `JOB_WORKERS=<queues>`, and give the
