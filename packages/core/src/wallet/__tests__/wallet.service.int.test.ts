@@ -9,7 +9,9 @@ import {
   type ExchangeRateReader,
   type PaymentAdapter,
   type AdminPlayerSummary,
+  type PlayerTags,
   type TagEvaluationCommands,
+  type TagKey,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -50,6 +52,7 @@ import {
   DepositDisabledError,
   WalletAssetUnknownProviderError,
   DestinationAddressNotWhitelistedError,
+  WithdrawalLockedError,
 } from '../service/wallet.service.js';
 import { WithdrawalQueueItemSchema } from '../contract/index.js';
 
@@ -2285,5 +2288,156 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
         txHash: '0xcollide',
       }),
     ).rejects.toBeInstanceOf(AmbiguousDepositAddressError);
+  });
+});
+
+describe('WalletService withdrawal lock (real PG)', () => {
+  // Mutable per test: the admin places or releases the hold between calls.
+  let activeTags: Map<string, TagKey[]>;
+  const lockedService = () =>
+    makeService({
+      riskTags: mock<PlayerTags>({
+        getActiveTagKeys: vi.fn(async (ids: readonly string[]) => {
+          return new Map(
+            ids.flatMap((id) => (activeTags.has(id) ? [[id, activeTags.get(id) ?? []]] : [])),
+          );
+        }),
+      }),
+    });
+
+  beforeEach(() => {
+    activeTags = new Map();
+  });
+
+  it('refuses a withdrawal request from a locked player before any debit', async () => {
+    const w = await seedWallet({ balance: '100' });
+    activeTags.set(w.userId, ['withdrawal_lock']);
+    const { svc, events } = lockedService();
+
+    await expect(
+      svc.withdraw({ userId: w.userId, amount: '40', currency: 'USD', ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(WithdrawalLockedError);
+
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await db.drizzle.db.select().from(walletTransaction)).toEqual([]);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('still lets a player with only unrelated tags withdraw', async () => {
+    const w = await seedWallet({ balance: '100' });
+    activeTags.set(w.userId, ['vip', 'high_risk']);
+    const { svc } = lockedService();
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('keeps a withdrawal queued before the lock unapprovable until the lock is released', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const { svc, psp } = lockedService();
+    const { transactionId } = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    activeTags.set(w.userId, ['withdrawal_lock']);
+
+    await expect(svc.approveWithdrawal(randomUUID(), transactionId)).rejects.toBeInstanceOf(
+      WithdrawalLockedError,
+    );
+    const [held] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, transactionId));
+    expect(held?.status).toBe('pending');
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+
+    activeTags.delete(w.userId);
+    const approved = await svc.approveWithdrawal(randomUUID(), transactionId);
+    expect(approved.status).toBe('completed');
+  });
+
+  it('puts a withdrawal back exactly as queued when the lock lands after the pre-check, before any PSP call', async () => {
+    const w = await seedWallet();
+    const reviewedAt = new Date('2026-01-01T00:00:00.000Z');
+    const queued = await seedTx(w.id, {
+      status: 'on_hold',
+      reviewedBy: randomUUID(),
+      reviewedAt,
+      reviewReason: 'held for source of funds',
+    });
+    // Unlocked for the pre-check, locked by the time the flip has committed.
+    const getActiveTagKeys = vi
+      .fn<PlayerTags['getActiveTagKeys']>()
+      .mockResolvedValueOnce(new Map())
+      .mockResolvedValue(new Map([[w.userId, ['withdrawal_lock']]]));
+    const { svc, psp } = makeService({ riskTags: mock<PlayerTags>({ getActiveTagKeys }) });
+
+    await expect(svc.approveWithdrawal(randomUUID(), queued.id)).rejects.toBeInstanceOf(
+      WithdrawalLockedError,
+    );
+
+    const [row] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, queued.id));
+    expect(row).toMatchObject({
+      status: 'on_hold',
+      reviewedBy: queued.reviewedBy,
+      reviewedAt,
+      reviewReason: 'held for source of funds',
+    });
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+  });
+
+  it("still lets an admin reject a locked player's queued withdrawal, refunding it", async () => {
+    const w = await seedWallet({ balance: '100' });
+    const { svc } = lockedService();
+    const { transactionId } = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    activeTags.set(w.userId, ['withdrawal_lock']);
+
+    const rejected = await svc.rejectWithdrawal(randomUUID(), transactionId, 'under investigation');
+
+    expect(rejected.status).toBe('rejected');
+    expect(await balanceOf(w.userId)).toBe(100);
+  });
+
+  it("flags a locked player's rows in the withdrawal queue", async () => {
+    const locked = await seedWallet();
+    const free = await seedWallet();
+    await seedTx(locked.id);
+    await seedTx(free.id);
+    activeTags.set(locked.userId, ['withdrawal_lock']);
+    const { svc } = lockedService();
+
+    const { items } = await svc.listWithdrawals({ page: 1, limit: 20 });
+
+    expect(Object.fromEntries(items.map((i) => [i.userId, i.withdrawalLocked]))).toEqual({
+      [locked.userId]: true,
+      [free.userId]: false,
+    });
+    expect(() => WithdrawalQueueItemSchema.parse(items[0])).not.toThrow();
+  });
+
+  it('reads no player as locked when the tag module is not bound', async () => {
+    const w = await seedWallet();
+    await seedTx(w.id);
+    const { svc } = makeService();
+
+    const { items } = await svc.listWithdrawals({ page: 1, limit: 20 });
+
+    expect(items[0]?.withdrawalLocked).toBe(false);
   });
 });

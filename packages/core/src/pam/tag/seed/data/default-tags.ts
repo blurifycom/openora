@@ -17,4 +17,5 @@ export const DEFAULT_TAGS: CreateTagInput[] = [
   { key: 'withdrawal_review', isSticky: true },
   { key: 'multi_account', isSticky: true },
   { key: 'level', isSticky: false },
+  { key: 'withdrawal_lock', isSticky: true },
 ];
