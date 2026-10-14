@@ -3703,7 +3703,7 @@ export class WalletService {
   /**
    * Credits a held on-chain deposit to the player, in the caller's transaction, after asking
    * the deposit policy again: the player must no longer be restricted and the deposit must fit
-   * their limit window now. The row itself turns `completed`, so the deposit window counts it
+   * their limit window now, and with no policy bound it is not released at all. The row itself turns `completed`, so the deposit window counts it
    * from `reviewedAt` (the moment it reached the balance), not from when it landed on chain.
    * The caller announces it with `announceDepositCompleted` once the transaction commits.
    */
@@ -3731,6 +3731,11 @@ export class WalletService {
       .for('update', { of: walletTransaction });
     if (!held) {
       throw new HeldDepositNotFoundError();
+    }
+    // Fails closed: with the policy that held it unbound, nothing can say the reason lifted.
+    // The deposit stays refundable.
+    if (!this.depositHold) {
+      throw new DepositStillHeldError('no deposit hold policy is bound to re-check it');
     }
     const reason = await this.depositHoldReason(txn, held.userId, held);
     if (reason !== null) {

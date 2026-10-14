@@ -1439,6 +1439,19 @@ describe('ReconciliationService.resolveFinding', () => {
     expect((await findingRows())[0]?.status).toBe('open');
   });
 
+  it('refuses to release a held deposit when no hold policy is bound to re-check it', async () => {
+    const w = await seedWallet('BTC', '0');
+    const { held, finding } = await seedHeldDeposit(w.id);
+    const { reconciliation } = makeServices(listTransactionsReturning([]));
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), finding.id, { outcome: 'released' }),
+    ).rejects.toBeInstanceOf(DepositStillHeldError);
+    expect(await statusOf(held.id)).toBe('on_hold');
+    expect(await balanceOf(w.id)).toBe('0.000000000000000000');
+    expect((await findingRows())[0]?.status).toBe('open');
+  });
+
   it('stamps a released deposit with the database clock, the one the limit window reads', async () => {
     const w = await seedWallet('BTC', '0');
     const { held, finding } = await seedHeldDeposit(w.id);
