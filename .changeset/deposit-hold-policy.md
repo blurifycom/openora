@@ -25,7 +25,7 @@ New optional `sourceAddress` on the `deposit` `PaymentWebhookEvent`; reconciliat
 
 `PLAY_ELIGIBILITY.isRestricted(userId, tx)` now reads the player row `FOR SHARE` when given a transaction, so a self-exclusion or cooling-off landing mid-way waits for the wager, payout or credit it gates to commit instead of slipping in between the check and the money movement.
 
-New optional `PaymentAdapter.withdrawalDecimals(currency, network)`. When a binding implements it, `withdraw` refuses an amount or fee with more fractional digits than the network pays out with `WithdrawalPrecisionError` (`BAD_REQUEST`), before any debit.
+New optional `PaymentAdapter.withdrawalDecimals(currency, network)`. When a binding implements it, `withdraw` refuses an amount or fee with more fractional digits than the network pays out with `WithdrawalPrecisionError` (`BAD_REQUEST`), before any debit. `UnsupportedNetworkError` is now exported from `@openora/core/wallet/server` so a binding can refuse a pair it cannot pay out with the same `BAD_REQUEST`.
 
 **Breaking:** resolving a deposit finding as `credited` with a `transactionId` is now refused with `ReconciliationOutcomeNotAllowedError`; send no `transactionId` and the resolve credits the deposit itself. Resolving any finding as `credited` or `released` now requires a super admin (`FORBIDDEN` otherwise), as `manualAdjustment` does; `dismissed` and `refunded` keep the `wallet-reconciliation` `resolve` permission. A refund for less than the finding amount, or to an address other than the sender without a note, is now refused. Kept at `minor` per the pre-1.0 convention that breaking changes ship in a minor with a callout.
 
