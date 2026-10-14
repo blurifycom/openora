@@ -217,17 +217,63 @@ export type ActionTypeDescriptor = ActionTypeContract & {
   payloadJsonSchema: Record<string, unknown>;
 };
 
+/** The payload field that names the player an event is about. */
+export type TriggerSubjectField = 'playerId' | 'userId';
+
 export type TriggerDescriptor = {
   kind: 'event';
   topic: DomainEventName;
   version: number;
   domain: string;
   payloadJsonSchema: Record<string, unknown>;
+  /**
+   * `playerId` holds a player id, `userId` a user id that may also be a staff account's; null
+   * when the event is about no single player. The field can still be null on a given event,
+   * eg `playerId` on an identity event about a staff account.
+   */
+  subjectField: TriggerSubjectField | null;
 };
+
+/**
+ * Topics where the payload's `playerId` or `userId` is not the player the event is about.
+ * Every other topic takes `playerId` when its payload has one, else `userId`, else none.
+ */
+export const TRIGGER_SUBJECT_OVERRIDES: Partial<
+  Record<DomainEventName, TriggerSubjectField | null>
+> = {
+  // playerId is the moderator or room owner who acted; userId is the member it happened to.
+  'chat.room.member.kicked': 'userId',
+  'chat.room.member.banned': 'userId',
+  'chat.room.member.role-changed': 'userId',
+  // playerId is the inviter; the invited player is `inviteeId`.
+  'chat.room.invite.sent': null,
+  'chat.room.invite.withheld': null,
+  // About admin accounts.
+  'iam.role.assigned': null,
+  'iam.role.revoked': null,
+  'identity.2fa.enrollment_blocked': null,
+};
+
+function subjectFieldOf(topic: DomainEventName): TriggerSubjectField | null {
+  if (topic in TRIGGER_SUBJECT_OVERRIDES) {
+    return TRIGGER_SUBJECT_OVERRIDES[topic] ?? null;
+  }
+  const schema: z.ZodType = domainEventSchemas[topic];
+  if (!(schema instanceof z.ZodObject)) {
+    return null;
+  }
+  if ('playerId' in schema.shape) {
+    return 'playerId';
+  }
+  return 'userId' in schema.shape ? 'userId' : null;
+}
 
 let eventTriggers: readonly TriggerDescriptor[] | undefined;
 
-/** Every domain event as a trigger, derived from `domainEventSchemas` once and memoised. */
+/**
+ * Every domain event as a trigger, derived from `domainEventSchemas` once and memoised. What
+ * may start a run is the kernel's `listTriggers()`: the operator's allow-list of these.
+ */
 export function triggerCatalog(): readonly TriggerDescriptor[] {
   eventTriggers ??= DOMAIN_EVENT_CATALOG.map((topic) => {
     const [domain = topic] = topic.split('.');
@@ -241,6 +287,7 @@ export function triggerCatalog(): readonly TriggerDescriptor[] {
         io: 'output',
         unrepresentable: 'any',
       }),
+      subjectField: subjectFieldOf(topic),
     };
   });
   return eventTriggers;
@@ -262,6 +309,7 @@ export type McpKernel = {
   readonly catalogVersion: string;
   listTools(): readonly McpToolDescriptor[];
   listActionTypes(): readonly ActionTypeDescriptor[];
+  /** The domain events the operator allow-listed in `PlatformConfig.agents.triggers.topics`. */
   listTriggers(): readonly TriggerDescriptor[];
   invokeTool(toolId: string, input: unknown, run: RunContext): Promise<McpToolResult>;
   /**

@@ -67,6 +67,21 @@ describe('ModuleRegistryImpl', () => {
     reg.events.on('wallet.deposit.completed', h2);
     expect(reg.events.getAll().get('wallet.deposit.completed')).toEqual([h1, h2]);
   });
+
+  it('triggers.listen() keeps each listener with the plugin that registered it', () => {
+    const { reg } = newRegistry();
+    const first = () => {};
+    const second = () => {};
+    reg.setOwner('agents');
+    reg.triggers.listen(first);
+    reg.setOwner(null);
+    reg.triggers.listen(second);
+
+    expect(reg.triggers.getAll()).toEqual([
+      { owner: 'agents', listener: first },
+      { owner: 'unknown', listener: second },
+    ]);
+  });
 });
 
 const validTool = defineMcpTool({

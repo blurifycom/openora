@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AgentsConfigSchema } from '../agents.js';
+import { DOMAIN_EVENT_CATALOG } from '../events.js';
 import { definePlatformConfig } from '../platform-config.js';
 
 const SONNET = 'openrouter/anthropic/claude-sonnet-4.5';
@@ -82,6 +83,7 @@ describe('PlatformConfig.agents', () => {
       retention: { runDays: 30, proposalDays: 365 },
       modelGateways: ['openrouter'],
       models: [],
+      triggers: { topics: [] },
       mcp: {
         enabled: false,
         path: '/mcp',
@@ -136,5 +138,25 @@ describe('AgentsConfigSchema mcp transport', () => {
     [{ tokenIssuance: { maxActivePerAdmin: 51 } }, 'mcp.tokenIssuance.maxActivePerAdmin'],
   ])('rejects %j at %s', (mcp, path) => {
     expect(mcpIssuePaths(mcp)).toEqual([path]);
+  });
+});
+
+describe('AgentsConfigSchema trigger topics', () => {
+  const triggerIssuePaths = (topics: unknown) => issuePaths({ triggers: { topics } });
+
+  it('accepts catalogued domain events', () => {
+    expect(triggerIssuePaths(['wallet.deposit.completed', 'promo.bonus.granted'])).toEqual([]);
+  });
+
+  it.each([
+    ['an unknown topic', 'triggers.topics.0', ['wallet.deposit.done']],
+    [
+      'a topic listed twice',
+      'triggers.topics.1',
+      ['wallet.deposit.completed', 'wallet.deposit.completed'],
+    ],
+    ['more than 100 topics', 'triggers.topics', DOMAIN_EVENT_CATALOG.slice(0, 101)],
+  ])('rejects %s at %s', (_case, path, topics) => {
+    expect(triggerIssuePaths(topics)).toEqual([path]);
   });
 });

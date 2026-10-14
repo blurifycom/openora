@@ -446,6 +446,7 @@ export type {
   McpToolDescriptor,
   ActionTypeDescriptor,
   TriggerDescriptor,
+  TriggerSubjectField,
   McpInputIssue,
   McpFailure,
   McpToolResult,
@@ -476,6 +477,7 @@ export {
   ACTION_EXECUTION_OUTCOMES,
   ActionExecutionOutcomeSchema,
   defineActionType,
+  TRIGGER_SUBJECT_OVERRIDES,
   triggerCatalog,
   MCP_KERNEL,
 } from './mcp.js';

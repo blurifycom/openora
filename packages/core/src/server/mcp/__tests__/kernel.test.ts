@@ -722,7 +722,27 @@ describe('McpKernel catalog', () => {
         payloadJsonSchema: expect.objectContaining({ required: ['withdrawalId', 'reason'] }),
       }),
     ]);
-    expect(kernel.listTriggers()).toBe(triggerCatalog());
+    expect(kernel.listTriggers()).toEqual([]);
+  });
+
+  it('lists the allow-listed trigger topics in catalog order', () => {
+    const kernel = createMcpKernel({
+      tools: [],
+      actions: [],
+      container: new Container(),
+      authorize: async () => 'allowed',
+      audit: null,
+      triggerTopics: ['promo.bonus.granted', 'wallet.deposit.completed'],
+    });
+    const catalog = triggerCatalog();
+
+    expect(kernel.listTriggers()).toEqual(
+      catalog.filter((trigger) =>
+        ['promo.bonus.granted', 'wallet.deposit.completed'].includes(trigger.topic),
+      ),
+    );
+    expect(kernel.listTriggers()).toHaveLength(2);
+    expect(kernel.listTriggers()).toBe(kernel.listTriggers());
   });
 
   it('runs each factory once, when the kernel is built', async () => {

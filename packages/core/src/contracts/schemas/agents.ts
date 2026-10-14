@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { DOMAIN_EVENT_CATALOG } from './events.js';
 import { HostAllowlistEntrySchema } from './host-allowlist.js';
 
 /**
@@ -40,6 +41,18 @@ export const AgentModelSchema = z
     fallbacks: z.array(AgentModelIdSchema).max(5).default([]),
     capabilities: AgentModelCapabilitiesSchema,
     deprecatedOn: z.iso.date().optional(),
+  })
+  .strict();
+
+export const MAX_AGENT_TRIGGER_TOPICS = 100;
+
+/**
+ * The domain events that may start an agent run. Each listed topic costs every process that
+ * listens for triggers one more subscription, so nothing is listed by default.
+ */
+export const AgentTriggersConfigSchema = z
+  .object({
+    topics: z.array(z.enum(DOMAIN_EVENT_CATALOG)).max(MAX_AGENT_TRIGGER_TOPICS).default([]),
   })
   .strict();
 
@@ -159,10 +172,22 @@ export const AgentsConfigSchema = z
       .max(10)
       .default([...DEFAULT_AGENT_MODEL_GATEWAYS]),
     models: z.array(AgentModelSchema).max(50).default([]),
+    triggers: AgentTriggersConfigSchema.prefault({}),
     mcp: McpTransportConfigSchema.prefault({}),
   })
   .strict()
   .superRefine((config, ctx) => {
+    const seenTopics = new Set<string>();
+    config.triggers.topics.forEach((topic, topicIndex) => {
+      if (seenTopics.has(topic)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `trigger topic "${topic}" is listed more than once`,
+          path: ['triggers', 'topics', topicIndex],
+        });
+      }
+      seenTopics.add(topic);
+    });
     const gateways = new Set(config.modelGateways);
     const configuredIds = new Set(config.models.map((model) => model.id));
     const seenIds = new Set<string>();

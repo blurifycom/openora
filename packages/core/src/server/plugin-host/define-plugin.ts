@@ -9,6 +9,7 @@ import type {
   Token,
   TokenCatalog,
   TokenValue,
+  TriggerDescriptor,
   WorkerRegistration,
 } from '@openora/core/contracts';
 
@@ -35,6 +36,23 @@ export type TypedContainer<C extends TokenCatalog> = {
 export type RouterFactory<C extends TokenCatalog> = (c: TypedContainer<C>) => unknown;
 
 export type EventHandler = (payload: unknown, envelope?: EventEnvelope) => void | Promise<void>;
+
+/**
+ * Receives every event on the topics the operator allow-listed as agent triggers
+ * (`MCP_KERNEL.listTriggers()`), with the trigger it arrived as. It runs in line with the
+ * topic's other handlers, and a throw is logged and the event acked without a retry: enqueue
+ * a job and return.
+ */
+export type TriggerListener = (
+  trigger: TriggerDescriptor,
+  payload: unknown,
+  envelope?: EventEnvelope,
+) => void | Promise<void>;
+
+export type RegisteredTriggerListener = {
+  owner: string;
+  listener: TriggerListener;
+};
 
 // Tool and action-type factories run once, when MCP_KERNEL is built after every provider is
 // bound - never at registration.
@@ -83,6 +101,11 @@ export type ModuleRegistry<C extends TokenCatalog> = {
   events: {
     on(event: string, handler: EventHandler): void;
     getAll(): Map<string, EventHandler[]>;
+  };
+  // Subscribed at boot to the allow-listed trigger topics, which register() cannot read.
+  triggers: {
+    listen(listener: TriggerListener): void;
+    getAll(): readonly RegisteredTriggerListener[];
   };
   // Started at boot against the resolved JOB_QUEUE (after all providers, so an overlay's durable driver is in effect). See ADR-0014.
   jobs: {

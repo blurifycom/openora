@@ -4,6 +4,7 @@ import { DOMAIN_EVENT_CATALOG, getEventVersion } from '../../schemas/events.js';
 import {
   McpToolError,
   RunContextSchema,
+  TRIGGER_SUBJECT_OVERRIDES,
   runActorAdminId,
   triggerCatalog,
   type RunActor,
@@ -98,5 +99,31 @@ describe('triggerCatalog', () => {
 
   it('builds the catalog once and serves it afterwards', () => {
     expect(triggerCatalog()).toBe(triggerCatalog());
+  });
+});
+
+describe('triggerCatalog subjectField', () => {
+  const subjectOf = (topic: string) =>
+    triggerCatalog().find((trigger) => trigger.topic === topic)?.subjectField;
+
+  it.each([
+    ['wallet.deposit.completed', 'playerId'],
+    ['identity.user.login', 'playerId'],
+    ['promo.bonus.granted', 'userId'],
+    ['social.friend_request.sent', null],
+    ['gaming.games.bulk_updated', null],
+  ])('reads %s as about %s', (topic, subject) => {
+    expect(subjectOf(topic)).toBe(subject);
+  });
+
+  it('takes the member, not the moderator, for a chat moderation event', () => {
+    expect(subjectOf('chat.room.member.kicked')).toBe('userId');
+  });
+
+  it('lists only catalogued topics among its exceptions, and applies each', () => {
+    for (const [topic, subject] of Object.entries(TRIGGER_SUBJECT_OVERRIDES)) {
+      expect(DOMAIN_EVENT_CATALOG).toContain(topic);
+      expect(subjectOf(topic)).toBe(subject);
+    }
   });
 });

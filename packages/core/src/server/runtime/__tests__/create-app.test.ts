@@ -1,11 +1,16 @@
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   MESSAGE_BROKER,
   JOB_QUEUE,
   CACHE,
   MCP_KERNEL,
+  PLATFORM_CONFIG,
   RATE_LIMITER,
   PLAYER_ACTIVITY_TRACKER,
+  definePlatformConfig,
+  type DomainEventName,
+  type EventEnvelope,
   type McpKernel,
 } from '@openora/core/contracts';
 import { redisUrlForWorker } from '@openora/core/testing';
@@ -13,6 +18,8 @@ import { mock } from '../../../testing/mock.js';
 import { AUTH_SESSION, type SessionResolver } from '../../auth/index.js';
 import { createApp } from '../create-app.js';
 import { getCurrentClientMeta } from '../../kernel/request-context.js';
+import { EVENT_BUS, type EventBus } from '../../kernel/index.js';
+import { heardTriggers } from './fixtures/trigger-listener-plugin.js';
 
 // A syntactically valid but unreachable DB url - fine here because nothing in this
 // suite ever runs a query: DrizzleService's pg.Pool connects lazily, and neither
@@ -90,6 +97,74 @@ describe('createApp - the MCP kernel binding', () => {
         process.env['REDIS_URL'] = saved;
       }
     }
+  });
+});
+
+describe('createApp - agent trigger listeners', () => {
+  const saved = process.env['REDIS_URL'];
+
+  afterEach(() => {
+    heardTriggers().length = 0;
+    if (saved === undefined) {
+      delete process.env['REDIS_URL'];
+    } else {
+      process.env['REDIS_URL'] = saved;
+    }
+  });
+
+  async function bootWith(topics: DomainEventName[]) {
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    const subscribed = new Map<
+      string,
+      ((payload: unknown, envelope?: EventEnvelope) => unknown)[]
+    >();
+    const bus = mock<EventBus>({
+      on: (topic: string, handler: (payload: unknown, envelope?: EventEnvelope) => unknown) => {
+        subscribed.set(topic, [...(subscribed.get(topic) ?? []), handler]);
+        return () => undefined;
+      },
+    });
+    const path = fileURLToPath(new URL('./fixtures/trigger-listener-plugin.ts', import.meta.url));
+    const created = await createApp(
+      { plugins: [{ id: 'trigger-listener', path }], databaseUrl: DUMMY_DATABASE_URL },
+      (container) => {
+        container.register(EVENT_BUS, () => bus);
+        container.register(PLATFORM_CONFIG, () =>
+          definePlatformConfig({ agents: { triggers: { topics } } }),
+        );
+      },
+    );
+    return { created, subscribed };
+  }
+
+  it('subscribes a listener to the allow-listed topics only, and hands it the trigger', async () => {
+    const { created, subscribed } = await bootWith(['promo.bonus.granted']);
+    const envelope = mock<EventEnvelope>({ eventId: 'event-1' });
+
+    expect([...subscribed.keys()]).toEqual(['promo.bonus.granted']);
+    for (const handler of subscribed.get('promo.bonus.granted') ?? []) {
+      await handler({ userId: 'user-1' }, envelope);
+    }
+    expect(heardTriggers()).toEqual([
+      {
+        trigger: expect.objectContaining({ topic: 'promo.bonus.granted', subjectField: 'userId' }),
+        payload: { userId: 'user-1' },
+        envelope,
+      },
+    ]);
+    expect(created.container.get(MCP_KERNEL).listTriggers()).toEqual([
+      expect.objectContaining({ topic: 'promo.bonus.granted' }),
+    ]);
+
+    await created.close();
+  });
+
+  it('subscribes nothing for a listener while no topic is allow-listed', async () => {
+    const { created, subscribed } = await bootWith([]);
+
+    expect(subscribed.size).toBe(0);
+
+    await created.close();
   });
 });
 
