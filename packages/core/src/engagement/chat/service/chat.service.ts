@@ -13,6 +13,7 @@ import {
   moderateContent,
   pageToOffset,
   withAdvisoryXactLock,
+  withAdvisoryXactLocks,
   type DrizzleDb,
   type DrizzleTx,
 } from '@openora/core/server';
@@ -35,7 +36,13 @@ import type {
   Uuid,
   ChatAttachment,
 } from '@openora/core/contracts';
-import { chatBlockLockKey, chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
+import {
+  CHAT_SYSTEM_AUTHOR_ID,
+  CHAT_SYSTEM_AUTHOR_USERNAME,
+  chatBlockLockKey,
+  chatChannel,
+  GLOBAL_CHAT_ROOM_ID,
+} from '@openora/core/contracts';
 import {
   eq,
   and,
@@ -89,6 +96,7 @@ import {
   ChatRoomNotModeratorError,
   ChatPlayerBannedError,
   ChatPlayerMutedError,
+  ChatSystemMessageProtectedError,
 } from './errors/chat-moderation.errors.js';
 import type {
   AdminRoomSortBy,
@@ -232,7 +240,7 @@ export const ChatRoomLimitReachedError = makeConflictError(
 
 export const ChatRoomProtectedError = makeConflictError(
   'ChatRoomProtectedError',
-  'The global chat room cannot be deleted',
+  'This chat room is protected',
 );
 
 export const ChatRoomRuleNotFoundError = createDomainError(
@@ -320,7 +328,7 @@ function assertAttachmentAllowed(
 }
 
 function toRoom(record: typeof chatRoom.$inferSelect) {
-  const { deletedAt: _deletedAt, ...room } = record;
+  const { deletedAt: _deletedAt, kind: _kind, contextRef: _contextRef, ...room } = record;
   return serializeRow(
     { ...room, isBanned: false, bannedUntil: null },
     { dateFields: ['createdAt', 'bannedUntil', 'scheduledDeletionAt'] },
@@ -695,7 +703,9 @@ export class ChatService {
     const publicRooms = await this.drizzle.db
       .select()
       .from(chatRoom)
-      .where(and(eq(chatRoom.isPublic, true), isNull(chatRoom.deletedAt)))
+      .where(
+        and(eq(chatRoom.isPublic, true), eq(chatRoom.kind, 'standard'), isNull(chatRoom.deletedAt)),
+      )
       .orderBy(asc(chatRoom.createdAt));
 
     if (!viewerId) {
@@ -740,6 +750,7 @@ export class ChatService {
       .where(
         and(
           eq(chatRoom.isPublic, false),
+          eq(chatRoom.kind, 'standard'),
           isNull(chatRoom.deletedAt),
           inArray(
             chatRoom.id,
@@ -756,6 +767,7 @@ export class ChatService {
           .where(
             and(
               eq(chatRoom.isPublic, false),
+              eq(chatRoom.kind, 'standard'),
               isNull(chatRoom.deletedAt),
               inArray(chatRoom.id, bannedPrivateIds),
             ),
@@ -1722,17 +1734,59 @@ export class ChatService {
   private async insertUserMessage(
     values: typeof chatMessage.$inferInsert & { roomId: Uuid | null },
     throttle: SendThrottle | null,
+    room: Pick<ChatRoom, 'id' | 'isPublic'> | null = null,
   ) {
-    if (!throttle) {
+    if (!throttle && !room) {
       const [record] = await this.drizzle.db.insert(chatMessage).values(values).returning();
       return record;
     }
-    return this.drizzle.db.transaction((t) =>
-      withAdvisoryXactLock(t, `chat-send:${values.userId}`, async () => {
+    return this.drizzle.db.transaction(async (t) => {
+      if (room) {
+        await this.assertRoomStillAcceptsSender(t, room, values.userId);
+      }
+      if (!throttle) {
+        const [record] = await t.insert(chatMessage).values(values).returning();
+        return record;
+      }
+      return withAdvisoryXactLock(t, `chat-send:${values.userId}`, async () => {
         await this.assertSendWindowElapsed(t, values.userId, throttle);
         const [record] = await t.insert(chatMessage).values(values).returning();
         return record;
-      }),
+      });
+    });
+  }
+
+  // Shared, so sends only queue behind a write holding the room lock, such as a close or a removal.
+  private assertRoomStillAcceptsSender(
+    t: DrizzleTx,
+    room: Pick<ChatRoom, 'id' | 'isPublic'>,
+    userId: User['id'],
+  ) {
+    return withAdvisoryXactLocks(
+      t,
+      [`chat-room:${room.id}`],
+      async () => {
+        const [config] = await t
+          .select({ readOnlyMode: chatRoomConfiguration.readOnlyMode })
+          .from(chatRoomConfiguration)
+          .where(eq(chatRoomConfiguration.roomId, room.id))
+          .limit(1);
+        if (config?.readOnlyMode) {
+          throw new ChatPlayerMutedError(null, 'read_only');
+        }
+        if (room.isPublic) {
+          return;
+        }
+        const [member] = await t
+          .select({ id: chatRoomMember.id })
+          .from(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, room.id), eq(chatRoomMember.userId, userId)))
+          .limit(1);
+        if (!member) {
+          throw new ChatRoomNotMemberError(room.id);
+        }
+      },
+      'shared',
     );
   }
 
@@ -1823,13 +1877,15 @@ export class ChatService {
     roomId,
     content,
     attachment = null,
+    ip,
+    userAgent,
   }: {
     userId: User['id'];
     username: string;
     roomId: ChatRoom['id'];
     content: string;
     attachment?: ChatAttachment | null;
-  }) {
+  } & Partial<ClientMeta>) {
     // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     const room = await this.verifyRoomAccess(roomId, userId);
     if (isGlobalRoom(room)) {
@@ -1850,7 +1906,19 @@ export class ChatService {
     const record = await this.insertUserMessage(
       { roomId, userId, username: resolvedUsername, content: safeContent, attachment },
       throttle,
-    );
+      room,
+    ).catch(async (err: unknown) => {
+      if (err instanceof ChatRoomNotMemberError) {
+        await emitAccessRefused(this.drizzle.db, this.events, {
+          actorId: userId,
+          resource: 'chat.message',
+          action: 'send',
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+      }
+      throw err;
+    });
 
     this.events.emit('chat.message.sent', {
       messageId: record.id,
@@ -1891,6 +1959,16 @@ export class ChatService {
       roomId = globalRoom.id;
     }
     await this.assertRoomModerator(roomId, userId);
+    if (message.type === 'system') {
+      await emitAccessRefused(this.drizzle.db, this.events, {
+        actorId: userId,
+        resource: 'chat.message',
+        action: 'delete',
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+      throw new ChatSystemMessageProtectedError();
+    }
     return this.moderation.deleteMessage(id, userId, meta, 'player');
   }
 
@@ -2519,13 +2597,13 @@ export class ChatService {
   async deleteRoom(id: ChatRoom['id'], actorId?: User['id'], meta?: ClientMeta) {
     const existing = findOneOrThrow(
       await this.drizzle.db
-        .select({ slug: chatRoom.slug })
+        .select({ slug: chatRoom.slug, kind: chatRoom.kind })
         .from(chatRoom)
         .where(and(eq(chatRoom.id, id), isNull(chatRoom.deletedAt)))
         .limit(1),
       new ChatRoomNotFoundError(id),
     );
-    if (existing.slug === GLOBAL_CHAT_ROOM_ID) {
+    if (existing.slug === GLOBAL_CHAT_ROOM_ID || existing.kind === 'context') {
       throw new ChatRoomProtectedError();
     }
     const { deleted, expired } = await this.drizzle.db.transaction((t) =>
@@ -2627,8 +2705,8 @@ export class ChatService {
 
   async postSystemMessage(args: {
     roomId: ChatRoom['id'] | null;
-    actorId: User['id'];
-    username: User['name'];
+    actorId?: User['id'];
+    username?: User['name'];
     metadata: CommandMetadata;
     tx?: unknown;
   }): Promise<ChatSystemMessage> {
@@ -2638,8 +2716,8 @@ export class ChatService {
       .insert(chatMessage)
       .values({
         roomId,
-        userId: args.actorId,
-        username: args.username,
+        userId: args.actorId ?? CHAT_SYSTEM_AUTHOR_ID,
+        username: args.username ?? CHAT_SYSTEM_AUTHOR_USERNAME,
         content: '',
         type: 'system',
         metadata: args.metadata,

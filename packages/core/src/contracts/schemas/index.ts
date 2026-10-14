@@ -16,6 +16,7 @@ export * from './events.js';
 export * from './reporting.js';
 export * from './chat-command-metadata.js';
 export * from './chat-command.js';
+export * from './chat-context-room.js';
 export * from './chat-attachment.js';
 export * from './mail.js';
 export * from './bounded-json-params.js';

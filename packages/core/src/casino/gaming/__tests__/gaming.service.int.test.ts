@@ -1010,6 +1010,95 @@ describe('GamingService unavailable games (real PG)', () => {
   });
 });
 
+describe('GamingService.setGameAvailabilityInTransaction (real PG)', () => {
+  async function rankDirtyAt(categoryId: string) {
+    const [row] = await db.drizzle.db
+      .select({ rankDirtyAt: gameCategory.rankDirtyAt })
+      .from(gameCategory)
+      .where(eq(gameCategory.id, categoryId));
+    return row?.rankDirtyAt ?? null;
+  }
+
+  async function isUnavailable(gameId: string) {
+    const [row] = await db.drizzle.db
+      .select({ isUnavailable: game.isUnavailable })
+      .from(game)
+      .where(eq(game.id, gameId));
+    return row?.isUnavailable;
+  }
+
+  it('flips the flag and marks its categories dirty on the caller tx, returning the event instead of emitting it', async () => {
+    const category = await seedCategory();
+    const created = await seedGame({}, [category.id]);
+    const events = makeEventBus();
+    const svc = makeService({ events });
+
+    const outcome = await db.drizzle.db.transaction((tx) =>
+      svc.setGameAvailabilityInTransaction(tx, { gameId: created.id, isUnavailable: true }),
+    );
+
+    expect(outcome).toEqual({
+      changed: true,
+      event: {
+        gameId: created.id,
+        before: { isUnavailable: false },
+        after: { isUnavailable: true },
+      },
+    });
+    expect(await isUnavailable(created.id)).toBe(true);
+    expect(await rankDirtyAt(category.id)).not.toBeNull();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('reports no change and marks nothing dirty when the game is already in that state', async () => {
+    const category = await seedCategory();
+    const created = await seedGame({ isUnavailable: true }, [category.id]);
+    const events = makeEventBus();
+    const svc = makeService({ events });
+
+    const outcome = await db.drizzle.db.transaction((tx) =>
+      svc.setGameAvailabilityInTransaction(tx, { gameId: created.id, isUnavailable: true }),
+    );
+
+    expect(outcome).toEqual({ changed: false });
+    expect(await isUnavailable(created.id)).toBe(true);
+    expect(await rankDirtyAt(category.id)).toBeNull();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('leaves the flag and dirty marks untouched when the caller transaction rolls back', async () => {
+    const category = await seedCategory();
+    const created = await seedGame({}, [category.id]);
+    const events = makeEventBus();
+    const svc = makeService({ events });
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await svc.setGameAvailabilityInTransaction(tx, {
+          gameId: created.id,
+          isUnavailable: true,
+        });
+        throw new Error('caller rolled back');
+      }),
+    ).rejects.toThrow('caller rolled back');
+
+    expect(await isUnavailable(created.id)).toBe(false);
+    expect(await rankDirtyAt(category.id)).toBeNull();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown game', async () => {
+    await expect(
+      db.drizzle.db.transaction((tx) =>
+        makeService().setGameAvailabilityInTransaction(tx, {
+          gameId: randomUUID(),
+          isUnavailable: true,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(GameNotFoundError);
+  });
+});
+
 describe('GamingService.notifyGamesChanged (real PG)', () => {
   async function rankDirtyAt(categoryId: string) {
     const [row] = await db.drizzle.db

@@ -50,4 +50,36 @@ describe('definePlatformConfig', () => {
       }),
     ).toThrow(/gaming\.allowedThumbnailHosts\.0/);
   });
+
+  it('defaults both avatar allowlists to empty lists (deny every avatar URL)', () => {
+    expect(definePlatformConfig({}).identity).toEqual({
+      allowedAvatarHosts: [],
+      allowedAvatarUrlPrefixes: [],
+    });
+  });
+
+  it('canonicalizes avatar URL prefixes and rejects one without a trailing slash', () => {
+    expect(
+      definePlatformConfig({
+        identity: { allowedAvatarUrlPrefixes: ['HTTPS://Play.Example.com/avatars/'] },
+      }).identity.allowedAvatarUrlPrefixes,
+    ).toEqual(['https://play.example.com/avatars/']);
+    expect(() =>
+      definePlatformConfig({
+        identity: { allowedAvatarUrlPrefixes: ['https://play.example.com/avatars'] },
+      }),
+    ).toThrow(/identity\.allowedAvatarUrlPrefixes\.0/);
+  });
+
+  it('canonicalizes avatar hosts and rejects ones that include URL components', () => {
+    expect(
+      definePlatformConfig({ identity: { allowedAvatarHosts: ['AVATARS.EXAMPLE.COM'] } }).identity
+        .allowedAvatarHosts,
+    ).toEqual(['avatars.example.com']);
+    expect(() =>
+      definePlatformConfig({
+        identity: { allowedAvatarHosts: ['https://avatars.example.com/path'] },
+      }),
+    ).toThrow(/identity\.allowedAvatarHosts\.0/);
+  });
 });
