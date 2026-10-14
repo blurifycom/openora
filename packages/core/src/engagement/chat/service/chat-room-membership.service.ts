@@ -35,6 +35,7 @@ import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
   CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL,
   OWNERLESS_ROOM_RETENTION_DAYS,
+  STAFF_USER_ROLES,
 } from '../contract/constants.js';
 import {
   ChatRoomBannedError,
@@ -57,8 +58,6 @@ import {
 
 const MODERATOR_ROLES = ['moderator', 'owner'] as const;
 
-const STAFF_USER_ROLES = ['admin', 'super-admin'] as const;
-
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const logger = createLogger('chat');
@@ -73,7 +72,7 @@ type OwnershipHandover =
     };
 
 function toRoom(record: typeof chatRoom.$inferSelect) {
-  const { deletedAt: _deletedAt, ...room } = record;
+  const { deletedAt: _deletedAt, kind: _kind, contextRef: _contextRef, ...room } = record;
   return serializeRow(
     { ...room, isBanned: false, bannedUntil: null },
     { dateFields: ['createdAt', 'bannedUntil', 'scheduledDeletionAt'] },
@@ -269,7 +268,9 @@ export class ChatRoomMembershipService {
         const [room] = await t
           .select({ id: chatRoom.id, isPublic: chatRoom.isPublic })
           .from(chatRoom)
-          .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
+          .where(
+            and(eq(chatRoom.id, roomId), eq(chatRoom.kind, 'standard'), isNull(chatRoom.deletedAt)),
+          )
           .limit(1);
         if (!room) {
           throw new ChatRoomNotFoundError(roomId);

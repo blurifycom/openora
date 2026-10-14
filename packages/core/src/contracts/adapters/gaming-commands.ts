@@ -3,6 +3,7 @@
  * caller's own `tx`, atomic with whatever wallet move the caller makes in the same
  * transaction. Mirrors the WALLET_COMMANDS command-port idiom (ADR-0017).
  */
+import type { DomainEventPayload } from '../schemas/events.js';
 import { createToken, type Token } from './token.js';
 
 export type GamingAccumulateExternalRoundArgs = {
@@ -26,6 +27,10 @@ export type GamingSetGameAvailabilityArgs = {
   isUnavailable: boolean;
 };
 
+export type GamingSetGameAvailabilityOutcome =
+  | { changed: true; event: DomainEventPayload<'gaming.game.availability_changed'> }
+  | { changed: false };
+
 export type GamingNotifyGamesCreatedArgs = {
   gameIds: readonly string[];
 };
@@ -44,10 +49,24 @@ export type GamingCommands = {
     args: GamingAccumulateExternalRoundArgs,
   ): Promise<GamingAccumulateExternalRoundOutcome>;
   /**
-   * The only writer of a game's vendor-unavailable flag; an unavailable game is unplayable.
+   * With `setGameAvailabilityInTransaction`, the only writer of a game's vendor-unavailable
+   * flag; an unavailable game is unplayable. Runs in its own transaction and emits after it.
    * `changed` is false when the game was already in that state. Throws when the game is unknown.
    */
   setGameAvailability(args: GamingSetGameAvailabilityArgs): Promise<{ changed: boolean }>;
+  /**
+   * `setGameAvailability` on the caller's own `tx`, so the flag flips atomically with the
+   * caller's writes. It never emits: on `changed: true` the caller emits
+   * `gaming.game.availability_changed` with `event` once its transaction commits; the event
+   * queues the re-rank and is the core audit record of the flip.
+   * The game row stays locked until the caller commits, so flip one game per transaction and
+   * keep it short. Throws when the game is unknown. Optional on the type for the same reason
+   * as `notifyGamesCreated`, but a caller must fail when it is absent rather than skip the flip.
+   */
+  setGameAvailabilityInTransaction?(
+    tx: unknown,
+    args: GamingSetGameAvailabilityArgs,
+  ): Promise<GamingSetGameAvailabilityOutcome>;
   /**
    * Reports game rows the caller has already inserted and committed (a catalogue sync, a
    * seed). Emits `gaming.games.created` so rule-mode categories re-evaluate at once;

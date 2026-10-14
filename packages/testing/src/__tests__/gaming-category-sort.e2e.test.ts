@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { fileURLToPath } from 'node:url';
 import {
   loadExtensions,
@@ -8,7 +8,8 @@ import {
   type Container,
   type CoreTokenCatalog,
 } from '@openora/core/server';
-import { GAME_CATALOG_READER, GAMING_COMMANDS } from '@openora/core/contracts';
+import { AUDIT_WRITER, GAME_CATALOG_READER, GAMING_COMMANDS } from '@openora/core/contracts';
+import { auditLog } from '@openora/core/audit/schema';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
 import {
   asAdmin,
@@ -635,6 +636,80 @@ describe('gaming catalogue sync re-rank trigger e2e (GAMING_COMMANDS.notifyGames
     await app.container.get(GAMING_COMMANDS).notifyGamesChanged?.({ gameIds: [alpha.id] });
 
     await waitForCategoryOrder(app, category.id, [bravo.id, alpha.id]);
+  });
+});
+
+describe('gaming catalogue sync availability e2e (GAMING_COMMANDS.setGameAvailabilityInTransaction)', () => {
+  const SYNC_ACTION = 'gaming.game.availability_changed';
+
+  async function flipWithSyncAudit(tx: unknown, gameId: string, correlationId: string) {
+    const flip = app.container.get(GAMING_COMMANDS).setGameAvailabilityInTransaction;
+    if (!flip) {
+      throw new Error('core binding must provide setGameAvailabilityInTransaction');
+    }
+    const outcome = await flip(tx, { gameId, isUnavailable: true });
+    await app.container.get(AUDIT_WRITER).recordInTransaction(tx, {
+      actorType: 'system',
+      action: SYNC_ACTION,
+      resourceType: 'game',
+      resourceId: gameId,
+      after: { isUnavailable: true },
+      correlationId,
+    });
+    return outcome;
+  }
+
+  async function syncAuditRows(correlationId: string) {
+    return drizzleOf(app.container)
+      .select({ id: auditLog.id })
+      .from(auditLog)
+      .where(and(eq(auditLog.action, SYNC_ACTION), eq(auditLog.correlationId, correlationId)));
+  }
+
+  async function storedAvailability(gameId: string) {
+    const [row] = await drizzleOf(app.container)
+      .select({ isUnavailable: game.isUnavailable })
+      .from(game)
+      .where(eq(game.id, gameId));
+    return row?.isUnavailable;
+  }
+
+  it('commits the flip together with the caller audit row and hides the game from players', async () => {
+    const provider = await seedProvider();
+    const seeded = await seedGame(provider.id);
+    const correlationId = randomUUID();
+
+    const outcome = await drizzleOf(app.container).transaction((tx) =>
+      flipWithSyncAudit(tx, seeded.id, correlationId),
+    );
+    expect(outcome).toEqual({
+      changed: true,
+      event: {
+        gameId: seeded.id,
+        before: { isUnavailable: false },
+        after: { isUnavailable: true },
+      },
+    });
+    expect(await storedAvailability(seeded.id)).toBe(true);
+    expect(await syncAuditRows(correlationId)).toHaveLength(1);
+    const res = await player.get(`/gaming/games/${seeded.id}`);
+    expect(res.status).toBe(404);
+  });
+
+  it('leaves both the flag and the caller audit row unwritten when the caller transaction rolls back', async () => {
+    const provider = await seedProvider();
+    const seeded = await seedGame(provider.id);
+    const correlationId = randomUUID();
+
+    await expect(
+      drizzleOf(app.container).transaction(async (tx) => {
+        await flipWithSyncAudit(tx, seeded.id, correlationId);
+        throw new Error('caller rolled back');
+      }),
+    ).rejects.toThrow('caller rolled back');
+
+    expect(await storedAvailability(seeded.id)).toBe(false);
+    expect(await syncAuditRows(correlationId)).toHaveLength(0);
   });
 });
 

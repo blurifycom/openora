@@ -234,6 +234,8 @@ export default {
     ctx.provide(GAMING_COMMANDS, (c) => ({
       accumulateExternalRound: (tx, args) => gamingService(c).accumulateExternalRound(tx, args),
       setGameAvailability: (args) => gamingService(c).setGameAvailability(args),
+      setGameAvailabilityInTransaction: (tx, args) =>
+        gamingService(c).setGameAvailabilityInTransaction(tx, args),
       notifyGamesCreated: (args) => membershipServices(c).triggers.notifyGamesCreated(args.gameIds),
       notifyGamesChanged: (args) => gamingService(c).notifyGamesChanged(args),
     }));

@@ -9,11 +9,14 @@ export type { SystemChatMessage as ChatSystemMessage };
 export type { CommandChatMessage };
 
 export type ChatSystemWriter = {
-  /** The returned `roomId` is canonical (null for the global room); publish to it, not to `args.roomId`. */
+  /**
+   * The returned `roomId` is canonical (null for the global room); publish to it, not to `args.roomId`.
+   * Omit `actorId` and `username` for a message no player wrote; it is attributed to `CHAT_SYSTEM_AUTHOR_ID`.
+   */
   postSystemMessage(args: {
     roomId: string | null;
-    actorId: string;
-    username: string;
+    actorId?: string;
+    username?: string;
     metadata: CommandMetadata;
     tx?: unknown;
   }): Promise<SystemChatMessage>;

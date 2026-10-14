@@ -3,6 +3,7 @@ import type { Uuid } from '@openora/core/contracts';
 
 export const ChatRoomNotFoundError = makeNotFoundError('ChatRoom');
 export const ChatMessageNotFoundError = makeNotFoundError('ChatMessage');
+export const ChatContextRoomNotFoundError = makeNotFoundError('ChatContextRoom');
 export type ChatRestrictionData = { until: string | null };
 export type ChatMuteReason = 'muted' | 'slow_mode' | 'read_only';
 
@@ -57,6 +58,10 @@ export const ChatRoomNotMemberError = createDomainError(
 export const ChatRoomNotModeratorError = createDomainError(
   'ChatRoomNotModeratorError',
   (roomId: Uuid) => `You are not a moderator of room: ${roomId}`,
+);
+export const ChatSystemMessageProtectedError = createDomainError(
+  'ChatSystemMessageProtectedError',
+  () => 'System messages can only be deleted by staff',
 );
 export const ChatRoomSelfModerationError = createDomainError(
   'ChatRoomSelfModerationError',
