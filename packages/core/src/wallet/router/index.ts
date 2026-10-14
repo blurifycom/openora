@@ -605,6 +605,11 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'wallet-reconciliation', 'resolve');
+        // `credited` on a deposit finding and `released` put custody money on a player's
+        // balance, so they need what any other hand credit (`manualAdjustment`) needs.
+        if (input.resolution.outcome === 'credited' || input.resolution.outcome === 'released') {
+          await adminGuard.assertSuperAdmin(context);
+        }
         return mapErrors(
           {
             NOT_FOUND: [

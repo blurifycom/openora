@@ -157,6 +157,36 @@ describe('wallet custody and reconciliation routes', () => {
       );
     });
 
+    it('403s a plain admin resolving with an outcome that credits a balance, moving nothing', async () => {
+      const resolveFinding = vi.fn(async () => resolved);
+      const router = routerWith(
+        makeAdminGuard({ caller: { userId: CALLER_ID, role: 'admin' }, superAdmin: false }),
+        { reconciliation: mock<ReconciliationService>({ resolveFinding }) },
+      );
+
+      for (const resolution of [
+        { outcome: 'credited' as const },
+        { outcome: 'credited' as const, userId: CALLER_ID },
+        { outcome: 'released' as const },
+      ]) {
+        await expect(
+          call(router.reconciliation.resolve, { id: input.id, resolution }, { context: CTX }),
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      }
+      expect(resolveFinding).not.toHaveBeenCalled();
+    });
+
+    it('lets a plain admin dismiss a finding', async () => {
+      const resolveFinding = vi.fn(async () => resolved);
+      const router = routerWith(
+        makeAdminGuard({ caller: { userId: CALLER_ID, role: 'admin' }, superAdmin: false }),
+        { reconciliation: mock<ReconciliationService>({ resolveFinding }) },
+      );
+
+      await call(router.reconciliation.resolve, input, { context: CTX });
+      expect(resolveFinding).toHaveBeenCalled();
+    });
+
     it('403s for a caller missing wallet-reconciliation:resolve', async () => {
       const router = routerWith(deniedGuard(['wallet-reconciliation:resolve']));
 

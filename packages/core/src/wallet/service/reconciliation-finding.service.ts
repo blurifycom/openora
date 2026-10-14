@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { createLogger, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
 import type {
   AuditWritePort,
@@ -123,6 +123,20 @@ export async function isRefundedDeposit(
       ),
     );
   return row !== undefined;
+}
+
+/**
+ * Serializes every move of one vendor deposit's money (a webhook credit, an admin credit,
+ * release or refund) for the rest of the transaction. Without it a refund and a credit of the
+ * same deposit, each checking the other's absence first, could both commit and pay it twice.
+ */
+export async function lockVendorDeposit(
+  txn: DrizzleTx,
+  providerName: WalletRefundedDeposit['providerName'],
+  externalId: WalletRefundedDeposit['externalId'],
+): Promise<void> {
+  const key = `wallet-vendor-deposit:${providerName}:${externalId}`;
+  await txn.execute(sql`select pg_advisory_xact_lock(hashtext(${key}))`);
 }
 
 async function insertFinding(db: DrizzleDb | DrizzleTx, input: ReconciliationFindingInput) {

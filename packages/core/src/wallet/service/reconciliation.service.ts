@@ -51,6 +51,7 @@ import {
   DEPOSIT_FINDING_KINDS,
   OUT_OF_CYCLE_RUN_ID,
   isRefundedDeposit,
+  lockVendorDeposit,
   recordReconciliationFinding,
   rgDecisionForLandedCredit,
 } from './reconciliation-finding.service.js';
@@ -78,7 +79,7 @@ export const ReconciliationRefundAmountError = createDomainError<
 >(
   'ReconciliationRefundAmountError',
   (refunded, deposited) =>
-    `A refund of ${refunded} exceeds the ${deposited ?? 'unknown'} this finding is about`,
+    `A refund of ${refunded} does not match the ${deposited ?? 'unknown'} this finding is about`,
 );
 
 export const ReconciliationAttributionError = createDomainError<[reason: string]>(
@@ -298,6 +299,9 @@ export class ReconciliationService {
         return { dto: toFindingDto(finding), credited: undefined };
       }
       assertOutcomeAllowed(finding.kind, resolution.outcome);
+      if (DEPOSIT_FINDING_KINDS.has(finding.kind) && finding.externalId) {
+        await lockVendorDeposit(txn, finding.providerName, finding.externalId);
+      }
 
       let transactionId: string | undefined;
       let resolutionNote: string | null = null;
@@ -356,8 +360,20 @@ export class ReconciliationService {
         const deposit = await this.wallet.releaseHeldDeposit(txn, finding.transactionId, adminId);
         releasedDeposit = { ...deposit, transactionId: finding.transactionId };
       } else if (resolution.outcome === 'refunded') {
-        if (finding.amount === null || moneyCompare(resolution.amount, finding.amount) > 0) {
+        // The gross that reached custody leaves it again: the chain fee comes out of it, so a
+        // partial refund would leave the remainder on no balance and no finding.
+        if (finding.amount === null || !moneyEquals(resolution.amount, finding.amount)) {
           throw new ReconciliationRefundAmountError(resolution.amount, finding.amount);
+        }
+        if (
+          finding.sourceAddress !== null &&
+          !sameAddress(finding.sourceAddress, resolution.destinationAddress) &&
+          !resolution.note
+        ) {
+          throw new ReconciliationOutcomeNotAllowedError(
+            finding.kind,
+            'refunded to an address other than its sender without a note',
+          );
         }
         await this.recordRefund(txn, finding);
         resolutionNote = [

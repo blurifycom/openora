@@ -95,6 +95,7 @@ import {
 import {
   OUT_OF_CYCLE_RUN_ID,
   isRefundedDeposit,
+  lockVendorDeposit,
   recordReconciliationFinding,
   recordReconciliationFindingInTransaction,
   rgDecisionForLandedCredit,
@@ -3504,15 +3505,13 @@ export class WalletService {
       return;
     }
 
-    // Refunded from a finding before this delivery: settled, never a credit.
-    if (await isRefundedDeposit(this.drizzle.db, depositAddress.providerName, event.externalId)) {
-      logger.warn(
-        { userId: depositAddress.userId, externalId: event.externalId },
-        'payment webhook: deposit was already refunded on chain, not credited',
-      );
-      return;
-    }
     const credit = await this.drizzle.db.transaction(async (txn) => {
+      await lockVendorDeposit(txn, depositAddress.providerName, event.externalId);
+      // Refunded from a finding before this delivery: settled, never a credit. Read under the
+      // lock, so a refund committing concurrently is either seen here or waits for this credit.
+      if (await isRefundedDeposit(txn, depositAddress.providerName, event.externalId)) {
+        return null;
+      }
       let [walletRecord] = await txn
         .select()
         .from(wallet)
@@ -3612,6 +3611,13 @@ export class WalletService {
         refunded: winner.status === 'refunded',
       };
     });
+    if (credit === null) {
+      logger.warn(
+        { userId: depositAddress.userId, externalId: event.externalId },
+        'payment webhook: deposit was already refunded on chain, not credited',
+      );
+      return;
+    }
     const { transactionId, replayed, holdReason, refunded } = credit;
 
     // An admin refunded this deposit on chain from its finding; the redelivery is not money

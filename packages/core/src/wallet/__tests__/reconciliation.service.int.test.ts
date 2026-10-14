@@ -23,6 +23,7 @@ import {
 import { migrate } from '../migrate.js';
 import {
   OUT_OF_CYCLE_RUN_ID,
+  lockVendorDeposit,
   recordReconciliationFinding,
 } from '../service/reconciliation-finding.service.js';
 import {
@@ -745,7 +746,7 @@ describe('ReconciliationService.resolveFinding', () => {
       network: 'bitcoin',
       address: depositAddress,
       txHash: '0xdeposit',
-      sourceAddress: 'bc1qsender',
+      sourceAddress: 'bc1qplayer',
     });
     const redelivery = {
       kind: 'deposit' as const,
@@ -780,11 +781,12 @@ describe('ReconciliationService.resolveFinding', () => {
     return row;
   }
 
-  const refund = (amount = '1', destinationAddress = 'bc1qplayer') => ({
+  const refund = (amount = '1', destinationAddress = 'bc1qplayer', note?: string) => ({
     outcome: 'refunded' as const,
     amount,
     txHash: '0xrefund',
     destinationAddress,
+    ...(note ? { note } : {}),
   });
 
   it('rejects a credited resolution whose transaction amount does not match the finding', async () => {
@@ -987,13 +989,81 @@ describe('ReconciliationService.resolveFinding', () => {
     }
   });
 
-  it('refuses a refund larger than the deposit', async () => {
+  it('refuses a refund of anything but the whole deposit', async () => {
     const finding = await seedFinding('unattributed_deposit');
     const { reconciliation } = makeServices(listTransactionsReturning([]));
 
+    for (const amount of ['1.5', '0.9']) {
+      await expect(
+        reconciliation.resolveFinding(randomUUID(), finding.id, refund(amount)),
+      ).rejects.toBeInstanceOf(ReconciliationRefundAmountError);
+    }
+    expect((await findingById(finding.id))?.status).toBe('open');
+  });
+
+  it('refuses a refund to an address other than the sender unless a note says why', async () => {
+    const finding = await seedFinding('unattributed_deposit', { sourceAddress: 'bc1qsender' });
+    const { reconciliation } = makeServices(listTransactionsReturning([]));
+
     await expect(
-      reconciliation.resolveFinding(randomUUID(), finding.id, refund('1.5')),
-    ).rejects.toBeInstanceOf(ReconciliationRefundAmountError);
+      reconciliation.resolveFinding(randomUUID(), finding.id, refund('1', 'bc1qelsewhere')),
+    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    expect((await findingById(finding.id))?.status).toBe('open');
+
+    const resolved = await reconciliation.resolveFinding(
+      randomUUID(),
+      finding.id,
+      refund('1', 'bc1qelsewhere', 'sender is an exchange; player asked for their own wallet'),
+    );
+    expect(resolved.status).toBe('resolved');
+  });
+
+  /** Runs `move` while another transaction holds the vendor deposit lock; reports whether it waited. */
+  async function waitsForVendorLock(externalId: string, move: () => Promise<unknown>) {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let lockTaken = () => {};
+    const taken = new Promise<void>((resolve) => {
+      lockTaken = resolve;
+    });
+    const blocker = db.drizzle.db.transaction(async (txn) => {
+      await lockVendorDeposit(txn, 'default', externalId);
+      lockTaken();
+      await held;
+    });
+    await taken;
+    let settled = false;
+    const moving = move().finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const waited = !settled;
+    release();
+    await blocker;
+    await moving;
+    return waited;
+  }
+
+  it('serializes an admin resolve and a webhook credit of the same vendor deposit', async () => {
+    const { w, redelivery } = await seedMissingDeposit();
+    const { wallet: walletSvc, reconciliation } = makeServices(listTransactionsReturning([]), {
+      identityReader: playerReader(),
+    });
+
+    expect(
+      await waitsForVendorLock(redelivery.externalId, () =>
+        walletSvc.creditDepositByAddress(redelivery),
+      ),
+    ).toBe(true);
+    const unattributed = await seedFinding('unattributed_deposit', { externalId: randomUUID() });
+    expect(
+      await waitsForVendorLock(unattributed.externalId ?? '', () =>
+        reconciliation.resolveFinding(randomUUID(), unattributed.id, refund()),
+      ),
+    ).toBe(true);
+    expect(await balanceOf(w.id)).toBe('1.000000000000000000');
   });
 
   it('records a refunded missing deposit so a vendor redelivery does not credit it', async () => {
@@ -1007,7 +1077,7 @@ describe('ReconciliationService.resolveFinding', () => {
       rgLimits,
     });
 
-    await reconciliation.resolveFinding(randomUUID(), finding.id, refund('0.9'));
+    await reconciliation.resolveFinding(randomUUID(), finding.id, refund());
     const [refunded] = await depositRows(w.id);
     expect(refunded).toMatchObject({
       status: 'refunded',
@@ -1124,16 +1194,16 @@ describe('ReconciliationService.resolveFinding', () => {
       const resolved = await reconciliation.resolveFinding(
         randomUUID(),
         finding.id,
-        refund('0.99', destination),
+        refund('1', destination, 'returned to the address the player gave'),
       );
       expect(resolved.resolutionNote).toBe(
-        `refunded 0.99 BTC on chain in 0xrefund to ${destination}`,
+        `refunded 1 BTC on chain in 0xrefund to ${destination}: returned to the address the player gave`,
       );
       expect(audit.recordInTransaction).toHaveBeenLastCalledWith(
         expect.anything(),
         expect.objectContaining({
           after: expect.objectContaining({
-            refundAmount: '0.99',
+            refundAmount: '1',
             refundCurrency: 'BTC',
             refundDestinationDiffersFromSource: differs,
           }),
