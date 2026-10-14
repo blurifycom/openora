@@ -15,6 +15,7 @@ import {
   makeRateLimitKey,
   RATE_LIMIT_KEYS,
   chatChannel,
+  ChatContextSendDeniedError,
   type ChatModeration,
   type RateLimiterAdapter,
   type RealtimeClientAuthorizer,
@@ -213,7 +214,12 @@ export function createChatRouter({
       return mapErrors(
         {
           NOT_FOUND: ChatRoomNotFoundError,
-          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerMutedError, ChatPlayerBannedError],
+          FORBIDDEN: [
+            ChatRoomNotMemberError,
+            ChatPlayerMutedError,
+            ChatPlayerBannedError,
+            ChatContextSendDeniedError,
+          ],
           BAD_REQUEST: [ChatMessageBlockedError, ChatAttachmentRejectedError],
         },
         () =>

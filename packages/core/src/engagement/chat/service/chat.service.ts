@@ -35,9 +35,12 @@ import type {
   SocialCommands,
   Uuid,
   ChatAttachment,
+  ChatContextSendPolicy,
 } from '@openora/core/contracts';
 import {
   CHAT_SYSTEM_AUTHOR_ID,
+  ChatContextSendDecisionSchema,
+  ChatContextSendDeniedError,
   CHAT_SYSTEM_AUTHOR_USERNAME,
   chatBlockLockKey,
   chatChannel,
@@ -274,7 +277,10 @@ type ChatServiceDependencies = {
   identityReader: IdentityReader;
   allowedAttachmentHosts: readonly string[];
   socialCommands?: SocialCommands;
+  contextSendPolicy: ChatContextSendPolicy;
 };
+
+type SendRoom = Pick<typeof chatRoom.$inferSelect, 'id' | 'isPublic' | 'kind' | 'contextRef'>;
 
 type SendThrottle = {
   roomId: Uuid | null;
@@ -434,6 +440,7 @@ export class ChatService {
   private readonly identityReader: IdentityReader;
   private readonly allowedAttachmentHosts: readonly string[];
   private readonly socialCommands?: SocialCommands;
+  private readonly contextSendPolicy: ChatContextSendPolicy;
 
   constructor({
     drizzle,
@@ -445,6 +452,7 @@ export class ChatService {
     identityReader,
     allowedAttachmentHosts,
     socialCommands,
+    contextSendPolicy,
   }: ChatServiceDependencies) {
     this.drizzle = drizzle;
     this.events = events;
@@ -455,6 +463,7 @@ export class ChatService {
     this.identityReader = identityReader;
     this.allowedAttachmentHosts = allowedAttachmentHosts;
     this.socialCommands = socialCommands;
+    this.contextSendPolicy = contextSendPolicy;
   }
 
   subscribeMessages(
@@ -1734,7 +1743,7 @@ export class ChatService {
   private async insertUserMessage(
     values: typeof chatMessage.$inferInsert & { roomId: Uuid | null },
     throttle: SendThrottle | null,
-    room: Pick<ChatRoom, 'id' | 'isPublic'> | null = null,
+    room: SendRoom | null = null,
   ) {
     if (!throttle && !room) {
       const [record] = await this.drizzle.db.insert(chatMessage).values(values).returning();
@@ -1743,6 +1752,7 @@ export class ChatService {
     return this.drizzle.db.transaction(async (t) => {
       if (room) {
         await this.assertRoomStillAcceptsSender(t, room, values.userId);
+        await this.assertContextSendAllowed(t, room, values.userId);
       }
       if (!throttle) {
         const [record] = await t.insert(chatMessage).values(values).returning();
@@ -1757,11 +1767,7 @@ export class ChatService {
   }
 
   // Shared, so sends only queue behind a write holding the room lock, such as a close or a removal.
-  private assertRoomStillAcceptsSender(
-    t: DrizzleTx,
-    room: Pick<ChatRoom, 'id' | 'isPublic'>,
-    userId: User['id'],
-  ) {
+  private assertRoomStillAcceptsSender(t: DrizzleTx, room: SendRoom, userId: User['id']) {
     return withAdvisoryXactLocks(
       t,
       [`chat-room:${room.id}`],
@@ -1788,6 +1794,23 @@ export class ChatService {
       },
       'shared',
     );
+  }
+
+  private async assertContextSendAllowed(t: DrizzleTx, room: SendRoom, userId: User['id']) {
+    if (room.kind !== 'context' || room.contextRef === null) {
+      return;
+    }
+    const decision = ChatContextSendDecisionSchema.parse(
+      await this.contextSendPolicy.check({
+        userId,
+        roomId: room.id,
+        contextRef: room.contextRef,
+        tx: t,
+      }),
+    );
+    if (!decision.allowed) {
+      throw new ChatContextSendDeniedError(decision.reason);
+    }
   }
 
   private async assertSendWindowElapsed(

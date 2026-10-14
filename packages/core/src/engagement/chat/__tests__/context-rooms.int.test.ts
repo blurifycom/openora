@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
+import * as z from 'zod';
 import {
   createTestDb,
   createTestRedis,
@@ -17,12 +18,15 @@ import {
   chatChannel,
   SYSTEM_EVENT_PARAM_VALUE_MAX_LENGTH,
   SYSTEM_EVENT_PARAMS_MAX_BYTES,
+  ChatContextSendDeniedError,
   type AdminUserDirectory,
+  type ChatContextSendPolicy,
   type RealtimeSignal,
 } from '@openora/core/contracts';
 import {
   NO_CLIENT_META,
   makeAuditWriter,
+  makeChatContextSendPolicy,
   makeEventBus,
   makeIdentityReader,
   mock,
@@ -48,7 +52,7 @@ let db: TestDb;
 let redis: TestRedis;
 const transports: RedisPubSubRealtimeTransport[] = [];
 
-function makeServices() {
+function makeServices(contextSendPolicy = makeChatContextSendPolicy()) {
   const serviceName = `chat-context-test-${randomUUID()}`;
   const transport = new RedisPubSubRealtimeTransport(redis.client, serviceName);
   transports.push(transport);
@@ -65,6 +69,7 @@ function makeServices() {
     moderation,
     identityReader,
     allowedAttachmentHosts: [],
+    contextSendPolicy,
   });
   const membership = new ChatRoomMembershipService(
     db.drizzle,
@@ -81,7 +86,17 @@ function makeServices() {
     transport,
     systemWriter: chat,
   });
-  return { chat, moderation, membership, context, transport, audit, events, serviceName };
+  return {
+    chat,
+    moderation,
+    membership,
+    context,
+    transport,
+    audit,
+    events,
+    serviceName,
+    contextSendPolicy,
+  };
 }
 
 type Services = ReturnType<typeof makeServices>;
@@ -530,6 +545,170 @@ describe('ChatContextRoomService.close (real PG)', () => {
     expect(
       await db.drizzle.db.select().from(chatMessage).where(eq(chatMessage.roomId, room.id)),
     ).toEqual([]);
+  });
+});
+
+describe('Context room send policy (real PG)', () => {
+  const denyAll: ChatContextSendPolicy['check'] = async () => ({
+    allowed: false,
+    reason: 'recipient_privacy',
+  });
+
+  async function roomMessages(roomId: string) {
+    return db.drizzle.db.select().from(chatMessage).where(eq(chatMessage.roomId, roomId));
+  }
+
+  it('never consults the policy for a standard room', async () => {
+    const services = makeServices(makeChatContextSendPolicy(denyAll));
+    const ownerId = randomUUID();
+    const room = await services.chat.createPrivateRoom({
+      userId: ownerId,
+      name: 'Standard',
+      ...NO_CLIENT_META,
+    });
+
+    await send(services, room.id, ownerId, 'standard');
+
+    expect(services.contextSendPolicy.check).not.toHaveBeenCalled();
+    expect((await roomMessages(room.id)).map((m) => m.content)).toEqual(['standard']);
+  });
+
+  it('asks the policy inside the send and posts when it allows', async () => {
+    const services = makeServices();
+    const memberId = randomUUID();
+    const ref = 'ctx:policy-allows';
+    const { room } = await services.context.ensureRoom({
+      ref,
+      name: 'Context',
+      memberIds: [memberId],
+    });
+
+    await send(services, room.id, memberId, 'allowed');
+
+    expect(services.contextSendPolicy.check).toHaveBeenCalledExactlyOnceWith({
+      userId: memberId,
+      roomId: room.id,
+      contextRef: ref,
+      tx: expect.anything(),
+    });
+    expect((await roomMessages(room.id)).map((m) => m.content)).toEqual(['allowed']);
+  });
+
+  it('asks the policy while the send holds the room lock', async () => {
+    const lockFreeDuringCheck: boolean[] = [];
+    const services = makeServices(
+      makeChatContextSendPolicy(async ({ roomId }) => {
+        const { rows } = await db.drizzle.db.execute<{ free: boolean }>(
+          sql`select pg_try_advisory_xact_lock(hashtext(${`chat-room:${roomId}`})) as free`,
+        );
+        lockFreeDuringCheck.push(...rows.map((row) => row.free));
+        return { allowed: true };
+      }),
+    );
+    const memberId = randomUUID();
+    const { room } = await services.context.ensureRoom({
+      ref: 'ctx:policy-locked',
+      name: 'Context',
+      memberIds: [memberId],
+    });
+
+    await send(services, room.id, memberId);
+
+    expect(lockFreeDuringCheck).toEqual([false]);
+  });
+
+  it('refuses a denied send with the policy reason and persists nothing', async () => {
+    const services = makeServices(makeChatContextSendPolicy(denyAll));
+    const memberId = randomUUID();
+    const { room } = await services.context.ensureRoom({
+      ref: 'ctx:policy-denies',
+      name: 'Context',
+      memberIds: [memberId],
+    });
+
+    const error = await send(services, room.id, memberId, 'denied').catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(ChatContextSendDeniedError);
+    expect(error).toMatchObject({
+      data: { reason: 'context_send_denied', policyReason: 'recipient_privacy' },
+    });
+    expect(await roomMessages(room.id)).toEqual([]);
+  });
+
+  it('leaves the slow-mode window untouched after a denial', async () => {
+    let allowed = false;
+    const services = makeServices(
+      makeChatContextSendPolicy(async () =>
+        allowed ? { allowed: true } : { allowed: false, reason: 'not_seated' },
+      ),
+    );
+    const memberId = randomUUID();
+    const { room } = await services.context.ensureRoom({
+      ref: 'ctx:policy-slow-mode',
+      name: 'Context',
+      memberIds: [memberId],
+    });
+    await db.drizzle.db
+      .update(chatRoomConfiguration)
+      .set({ slowMode: true, slowModeSeconds: 60 })
+      .where(eq(chatRoomConfiguration.roomId, room.id));
+
+    await expect(send(services, room.id, memberId, 'denied')).rejects.toBeInstanceOf(
+      ChatContextSendDeniedError,
+    );
+    allowed = true;
+
+    await expect(send(services, room.id, memberId, 'allowed')).resolves.toMatchObject({
+      content: 'allowed',
+    });
+    await expect(send(services, room.id, memberId, 'too soon')).rejects.toMatchObject({
+      data: { reason: 'slow_mode' },
+    });
+  });
+
+  it('refuses the send when the policy throws or answers a malformed reason', async () => {
+    const memberId = randomUUID();
+    const throwing = makeServices(
+      makeChatContextSendPolicy(async () => {
+        throw new Error('privacy lookup failed');
+      }),
+    );
+    const malformed = makeServices(
+      makeChatContextSendPolicy(async () => ({ allowed: false, reason: 'Not A Code' })),
+    );
+    const { room } = await throwing.context.ensureRoom({
+      ref: 'ctx:policy-fails-closed',
+      name: 'Context',
+      memberIds: [memberId],
+    });
+
+    await expect(send(throwing, room.id, memberId)).rejects.toThrow('privacy lookup failed');
+    await expect(send(malformed, room.id, memberId)).rejects.toBeInstanceOf(z.ZodError);
+    expect(await roomMessages(room.id)).toEqual([]);
+  });
+
+  it('leaves command messages and system events to their writers', async () => {
+    const services = makeServices(makeChatContextSendPolicy(denyAll));
+    const memberId = randomUUID();
+    const ref = 'ctx:policy-command';
+    const { room } = await services.context.ensureRoom({
+      ref,
+      name: 'Context',
+      memberIds: [memberId],
+    });
+
+    await services.chat.postSystemMessage({
+      roomId: room.id,
+      actorId: memberId,
+      username: 'player',
+      metadata: { command: 'block', targetUserId: randomUUID(), displayName: 'someone' },
+    });
+    await services.context.postSystemEvent({ ref, code: 'match.started' });
+
+    expect(services.contextSendPolicy.check).not.toHaveBeenCalled();
+    expect((await roomMessages(room.id)).map((m) => m.userId).sort()).toEqual(
+      [memberId, CHAT_SYSTEM_AUTHOR_ID].sort(),
+    );
   });
 });
 

@@ -12,6 +12,7 @@ export type ChatSystemWriter = {
   /**
    * The returned `roomId` is canonical (null for the global room); publish to it, not to `args.roomId`.
    * Omit `actorId` and `username` for a message no player wrote; it is attributed to `CHAT_SYSTEM_AUTHOR_ID`.
+   * Never asks `CHAT_CONTEXT_SEND_POLICY`; a player's command posting into a context room asks it first.
    */
   postSystemMessage(args: {
     roomId: string | null;

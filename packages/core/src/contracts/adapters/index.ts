@@ -410,6 +410,11 @@ export type { ChatRoomAccess } from './chat-room-access.js';
 export { CHAT_ROOM_ACCESS } from './chat-room-access.js';
 export type { ChatContextRooms, ChatContextRoomWrite } from './chat-context-rooms.js';
 export { CHAT_CONTEXT_ROOMS } from './chat-context-rooms.js';
+export type { ChatContextSendPolicy } from './chat-context-send-policy.js';
+export {
+  CHAT_CONTEXT_SEND_POLICY,
+  ChatContextSendDeniedError,
+} from './chat-context-send-policy.js';
 
 export type { PlayerActivityTracker } from './player-activity.js';
 export { PLAYER_ACTIVITY_TRACKER } from './player-activity.js';
