@@ -332,6 +332,13 @@ export type { PlayerTags } from './player-tags.js';
 export { PLAYER_TAGS } from './player-tags.js';
 
 export type {
+  PlayerSegmentPage,
+  PlayerSegmentQuery,
+  PlayerSegmentReader,
+} from './player-segment-reader.js';
+export { MAX_PLAYER_SEGMENT_PAGE, PLAYER_SEGMENT_READER } from './player-segment-reader.js';
+
+export type {
   AdminUserRow,
   AdminUserListOptions,
   AdminUserDirectory,
