@@ -246,7 +246,10 @@ describe('createApp - SERVICE_MANIFEST and JOB_WORKERS on the plugin list it is 
   ];
 
   /** Boots the fixtures under `env` and returns the queues whose workers were registered. */
-  async function bootQueues(env: { SERVICE_MANIFEST?: string; JOB_WORKERS?: string }) {
+  async function bootQueues(
+    env: { SERVICE_MANIFEST?: string; JOB_WORKERS?: string },
+    list: PluginEntry[] = plugins,
+  ) {
     process.env['REDIS_URL'] = redisUrlForWorker();
     for (const key of ['SERVICE_MANIFEST', 'SERVICE_NAME', 'JOB_WORKERS'] as const) {
       delete process.env[key];
@@ -259,8 +262,8 @@ describe('createApp - SERVICE_MANIFEST and JOB_WORKERS on the plugin list it is 
       process.env['JOB_WORKERS'] = env.JOB_WORKERS;
     }
     const jobs = makeJobQueue();
-    const created = await createApp({ plugins, databaseUrl: DUMMY_DATABASE_URL }, (container) => {
-      container.register(JOB_QUEUE, () => jobs);
+    const created = await createApp({ plugins: list, databaseUrl: DUMMY_DATABASE_URL }, (c) => {
+      c.register(JOB_QUEUE, () => jobs);
     });
     await created.close();
     return vi.mocked(jobs.registerWorker).mock.calls.map(([registration]) => registration.queue);
@@ -300,6 +303,15 @@ describe('createApp - SERVICE_MANIFEST and JOB_WORKERS on the plugin list it is 
     await expect(bootQueues({ JOB_WORKERS: 'none,fixture-base.daily' })).rejects.toThrow(
       /"none" stands alone/,
     );
+  });
+
+  it('starts a worker a router factory registers', async () => {
+    const late = [{ id: 'fixture-late-worker', path: fixture('late-worker') }];
+
+    expect(await bootQueues({}, late)).toEqual(['fixture-late-worker.run']);
+    expect(await bootQueues({ JOB_WORKERS: 'fixture-late-worker.*' }, late)).toEqual([
+      'fixture-late-worker.run',
+    ]);
   });
 });
 

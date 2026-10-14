@@ -471,19 +471,6 @@ export async function createApp(
   }
 
   const registry = await loadPlugins(plugins, container);
-  // Before any router factory runs, so a mistyped queue fails the boot before a schedule is set.
-  const workers = selectJobWorkers(registry.jobs.getAll(), jobWorkerSelection);
-  if (jobWorkerSelection !== null) {
-    const queuesOf = (list: typeof workers.consumed) => [...new Set(list.map((w) => w.queue))];
-    bootLogger.info(
-      {
-        consumed: queuesOf(workers.consumed),
-        skipped: queuesOf(workers.skipped),
-        idleExclusions: workers.idleExclusions,
-      },
-      'JOB_WORKERS active',
-    );
-  }
   await configure?.(container);
 
   assertDurableSeamsBound(container);
@@ -529,6 +516,19 @@ export async function createApp(
   // Built now so a broken tool or action-type factory fails boot, not the first call.
   const mcpTransport = await loadMcpTransport(container, container.get(MCP_KERNEL));
 
+  // After the router factories: a factory may register a worker too.
+  const workers = selectJobWorkers(registry.jobs.getAll(), jobWorkerSelection);
+  if (jobWorkerSelection !== null) {
+    const queuesOf = (list: typeof workers.consumed) => [...new Set(list.map((w) => w.queue))];
+    bootLogger.info(
+      {
+        consumed: queuesOf(workers.consumed),
+        skipped: queuesOf(workers.skipped),
+        idleExclusions: workers.idleExclusions,
+      },
+      'JOB_WORKERS active',
+    );
+  }
   for (const registration of workers.consumed) {
     jobQueue.registerWorker(registration);
   }
