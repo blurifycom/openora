@@ -537,6 +537,28 @@ export const walletReconciliationFinding = pgTable(
   ],
 );
 
+// One row per vendor deposit an admin refunded on chain, whichever finding it was refunded
+// from. It outlives the finding: a redelivery or a later poll of the same vendor transaction
+// files no new deposit finding and credits nothing, and a second refund of it is refused.
+export const walletRefundedDeposit = pgTable(
+  'wallet_refunded_deposit',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    providerName: text().notNull(),
+    externalId: text().notNull(),
+    findingId: uuid()
+      .notNull()
+      .references(() => walletReconciliationFinding.id),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('wallet_refunded_deposit_provider_external_id_idx').on(
+      t.providerName,
+      t.externalId,
+    ),
+  ],
+);
+
 export type Wallet = typeof wallet.$inferSelect;
 export type WalletTransaction = typeof walletTransaction.$inferSelect;
 export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;
@@ -549,3 +571,4 @@ export type WalletAssetRow = typeof walletAsset.$inferSelect;
 export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
 export type WalletJobRun = typeof walletJobRun.$inferSelect;
 export type WalletReconciliationFinding = typeof walletReconciliationFinding.$inferSelect;
+export type WalletRefundedDeposit = typeof walletRefundedDeposit.$inferSelect;

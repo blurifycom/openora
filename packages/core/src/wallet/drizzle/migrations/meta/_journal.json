@@ -232,6 +232,13 @@
       "when": 1792015897068,
       "tag": "0032_clumsy_ink",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792016620482,
+      "tag": "0033_lucky_silver_samurai",
+      "breakpoints": true
     }
   ]
 }

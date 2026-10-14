@@ -31,6 +31,7 @@ import {
   walletCustodySweep,
   walletJobRun,
   walletReconciliationFinding,
+  walletRefundedDeposit,
   walletTransaction,
   type WalletJobRun,
   type WalletReconciliationFinding as WalletReconciliationFindingRow,
@@ -41,9 +42,15 @@ import type {
   ReconciliationResolution,
   WalletReconciliationFinding as WalletReconciliationFindingDto,
 } from '../contract/index.js';
-import { HeldDepositNotFoundError, type WalletService } from './wallet.service.js';
 import {
+  DepositAlreadyOnLedgerError,
+  HeldDepositNotFoundError,
+  type WalletService,
+} from './wallet.service.js';
+import {
+  DEPOSIT_FINDING_KINDS,
   OUT_OF_CYCLE_RUN_ID,
+  isRefundedDeposit,
   recordReconciliationFinding,
   rgDecisionForLandedCredit,
 } from './reconciliation-finding.service.js';
@@ -59,6 +66,11 @@ export const ReconciliationCreditTransactionNotFoundError = makeNotFoundError(
 export const ReconciliationCreditMismatchError = makeConflictError(
   'ReconciliationCreditMismatchError',
   "The referenced transaction is not a manual credit matching this finding's currency and amount",
+);
+
+export const DepositAlreadyRefundedError = makeConflictError(
+  'DepositAlreadyRefundedError',
+  'This deposit was already refunded on chain and cannot be refunded or credited again',
 );
 
 export const ReconciliationRefundAmountError = createDomainError<
@@ -80,15 +92,6 @@ export const ReconciliationOutcomeNotAllowedError = createDomainError<
   'ReconciliationOutcomeNotAllowedError',
   (kind, outcome) => `A ${kind} finding cannot be resolved as ${outcome}`,
 );
-
-/** Findings about on-chain money that reached custody for a player (or should have). */
-const DEPOSIT_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
-  'missing_deposit',
-  'unattributed_deposit',
-  'amount_mismatch',
-  'currency_mismatch',
-  'held_deposit',
-]);
 
 /**
  * Deposits whose money is in custody and on no player's balance, so sending it back on chain
@@ -356,6 +359,7 @@ export class ReconciliationService {
         if (finding.amount === null || moneyCompare(resolution.amount, finding.amount) > 0) {
           throw new ReconciliationRefundAmountError(resolution.amount, finding.amount);
         }
+        await this.recordRefund(txn, finding);
         resolutionNote = [
           `refunded ${resolution.amount} ${finding.currency ?? ''} on chain in ${resolution.txHash} to ${resolution.destinationAddress}`,
           resolution.note,
@@ -469,6 +473,12 @@ export class ReconciliationService {
     if (finding.currency === null || finding.amount === null) {
       throw new ReconciliationCreditMismatchError();
     }
+    if (
+      finding.externalId &&
+      (await isRefundedDeposit(txn, finding.providerName, finding.externalId))
+    ) {
+      throw new DepositAlreadyRefundedError();
+    }
     let owner: User['id'] | undefined;
     let amount = finding.amount;
     let providerRefId = finding.externalId;
@@ -527,6 +537,51 @@ export class ReconciliationService {
       tag: finding.tag,
       txHash: finding.txHash,
     });
+  }
+
+  /**
+   * Marks the vendor deposit refunded, durably and whatever the finding kind, so no later
+   * finding about the same vendor transaction can be refunded or credited again. A deposit
+   * already on the ledger was credited (a held one is the exception: its row is the hold), so
+   * refunding it would pay the same money twice.
+   */
+  private async recordRefund(
+    txn: DrizzleTx,
+    finding: WalletReconciliationFindingRow,
+  ): Promise<void> {
+    if (!finding.externalId) {
+      throw new ReconciliationOutcomeNotAllowedError(
+        finding.kind,
+        'refunded without a vendor transaction id',
+      );
+    }
+    if (finding.kind !== 'held_deposit') {
+      const [onLedger] = await txn
+        .select({ id: walletTransaction.id })
+        .from(walletTransaction)
+        .where(
+          and(
+            eq(walletTransaction.providerName, finding.providerName),
+            eq(walletTransaction.providerRefId, finding.externalId),
+            eq(walletTransaction.type, 'deposit'),
+          ),
+        );
+      if (onLedger) {
+        throw new DepositAlreadyOnLedgerError();
+      }
+    }
+    const [marked] = await txn
+      .insert(walletRefundedDeposit)
+      .values({
+        providerName: finding.providerName,
+        externalId: finding.externalId,
+        findingId: finding.id,
+      })
+      .onConflictDoNothing()
+      .returning({ id: walletRefundedDeposit.id });
+    if (!marked) {
+      throw new DepositAlreadyRefundedError();
+    }
   }
 
   /**

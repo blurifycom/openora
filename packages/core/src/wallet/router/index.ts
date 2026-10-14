@@ -78,6 +78,7 @@ import {
   ReconciliationOutcomeNotAllowedError,
   ReconciliationRefundAmountError,
   ReconciliationAttributionError,
+  DepositAlreadyRefundedError,
 } from '../service/reconciliation.service.js';
 
 // Unauthenticated route: it costs a signature verification (and, for a custody vendor,
@@ -619,6 +620,7 @@ export function createWalletRouter({
               HeldDepositNotFoundError,
               DepositStillHeldError,
               DepositAlreadyOnLedgerError,
+              DepositAlreadyRefundedError,
             ],
           },
           () =>

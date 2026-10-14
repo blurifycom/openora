@@ -22,6 +22,10 @@ import {
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
+  OUT_OF_CYCLE_RUN_ID,
+  recordReconciliationFinding,
+} from '../service/reconciliation-finding.service.js';
+import {
   wallet,
   walletBalance,
   walletTransaction,
@@ -37,6 +41,7 @@ import {
 } from '../service/wallet.service.js';
 import {
   ReconciliationService,
+  DepositAlreadyRefundedError,
   ReconciliationAttributionError,
   ReconciliationCreditMismatchError,
   ReconciliationFindingNotFoundError,
@@ -1015,6 +1020,82 @@ describe('ReconciliationService.resolveFinding', () => {
     expect(await balanceOf(w.id)).toBe('0.000000000000000000');
     expect(await depositRows(w.id)).toHaveLength(1);
     expect(rgLimits.checkDeposit).not.toHaveBeenCalled();
+  });
+
+  it('refunds an unattributed deposit once: a redelivery or re-poll files nothing and credits nothing', async () => {
+    const externalId = randomUUID();
+    const finding = await seedFinding('unattributed_deposit', {
+      externalId,
+      address: 'bc1qnobody',
+      network: 'bitcoin',
+    });
+    const { wallet: walletSvc, reconciliation } = makeServices(listTransactionsReturning([]));
+    await reconciliation.resolveFinding(randomUUID(), finding.id, refund());
+
+    await walletSvc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qnobody',
+      network: 'bitcoin',
+      amount: '1',
+      currency: 'BTC',
+      txHash: '0xdeposit',
+      externalId,
+    });
+    await recordReconciliationFinding(db.drizzle.db, {
+      runId: OUT_OF_CYCLE_RUN_ID,
+      providerName: 'default',
+      kind: 'missing_deposit',
+      currency: 'BTC',
+      amount: '1',
+      externalId,
+    });
+
+    const findings = await db.drizzle.db
+      .select()
+      .from(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.externalId, externalId));
+    expect(findings).toEqual([expect.objectContaining({ id: finding.id, status: 'resolved' })]);
+    const credits = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.providerRefId, externalId));
+    expect(credits).toHaveLength(0);
+  });
+
+  it('refuses a second refund, or a credit, of a vendor deposit refunded from another finding', async () => {
+    const { w, finding: missing, redelivery } = await seedMissingDeposit();
+    const unattributed = await seedFinding('unattributed_deposit', {
+      externalId: redelivery.externalId,
+    });
+    const { reconciliation } = makeServices(listTransactionsReturning([]), {
+      identityReader: playerReader(),
+    });
+    await reconciliation.resolveFinding(randomUUID(), unattributed.id, refund());
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), missing.id, refund()),
+    ).rejects.toBeInstanceOf(DepositAlreadyRefundedError);
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), missing.id, { outcome: 'credited' }),
+    ).rejects.toBeInstanceOf(DepositAlreadyRefundedError);
+    expect(await balanceOf(w.id)).toBe('0.000000000000000000');
+    expect((await findingById(missing.id))?.status).toBe('open');
+  });
+
+  it('refuses to refund an unattributed deposit the ledger already credited', async () => {
+    const { w, finding: missing, redelivery } = await seedMissingDeposit();
+    const unattributed = await seedFinding('unattributed_deposit', {
+      externalId: redelivery.externalId,
+    });
+    const { reconciliation } = makeServices(listTransactionsReturning([]), {
+      identityReader: playerReader(),
+    });
+    await reconciliation.resolveFinding(randomUUID(), missing.id, { outcome: 'credited' });
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), unattributed.id, refund()),
+    ).rejects.toBeInstanceOf(DepositAlreadyOnLedgerError);
+    expect(await balanceOf(w.id)).toBe('1.000000000000000000');
   });
 
   it('refuses to refund a missing deposit the webhook has credited in the meantime', async () => {

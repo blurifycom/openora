@@ -1,3 +1,4 @@
+import { and, eq } from 'drizzle-orm';
 import { createLogger, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
 import type {
   AuditWritePort,
@@ -8,7 +9,9 @@ import type {
 } from '@openora/core/contracts';
 import {
   walletReconciliationFinding,
+  walletRefundedDeposit,
   type WalletReconciliationFinding as WalletReconciliationFindingRow,
+  type WalletRefundedDeposit,
 } from '../schema/index.js';
 
 const logger = createLogger('wallet-finding');
@@ -95,7 +98,47 @@ function findingRecordedAudit(
   };
 }
 
+/** Findings about on-chain money that reached custody for a player (or should have). */
+export const DEPOSIT_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
+  'missing_deposit',
+  'unattributed_deposit',
+  'amount_mismatch',
+  'currency_mismatch',
+  'held_deposit',
+]);
+
+/** Whether an admin already refunded this vendor deposit on chain, from any finding. */
+export async function isRefundedDeposit(
+  db: DrizzleDb | DrizzleTx,
+  providerName: WalletRefundedDeposit['providerName'],
+  externalId: WalletRefundedDeposit['externalId'],
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: walletRefundedDeposit.id })
+    .from(walletRefundedDeposit)
+    .where(
+      and(
+        eq(walletRefundedDeposit.providerName, providerName),
+        eq(walletRefundedDeposit.externalId, externalId),
+      ),
+    );
+  return row !== undefined;
+}
+
 async function insertFinding(db: DrizzleDb | DrizzleTx, input: ReconciliationFindingInput) {
+  // A refunded deposit is settled: a redelivery or re-poll of it must not reopen it as a
+  // finding of another kind an admin could refund or credit a second time.
+  if (
+    DEPOSIT_FINDING_KINDS.has(input.kind) &&
+    input.externalId &&
+    (await isRefundedDeposit(db, input.providerName, input.externalId))
+  ) {
+    logger.warn(
+      { kind: input.kind, providerName: input.providerName, externalId: input.externalId },
+      'reconciliation finding not filed: the deposit was already refunded on chain',
+    );
+    return undefined;
+  }
   const [row] = await db
     .insert(walletReconciliationFinding)
     .values({

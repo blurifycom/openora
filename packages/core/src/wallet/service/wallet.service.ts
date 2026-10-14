@@ -94,6 +94,7 @@ import {
 } from '../schema/index.js';
 import {
   OUT_OF_CYCLE_RUN_ID,
+  isRefundedDeposit,
   recordReconciliationFinding,
   recordReconciliationFindingInTransaction,
   rgDecisionForLandedCredit,
@@ -3503,6 +3504,14 @@ export class WalletService {
       return;
     }
 
+    // Refunded from a finding before this delivery: settled, never a credit.
+    if (await isRefundedDeposit(this.drizzle.db, depositAddress.providerName, event.externalId)) {
+      logger.warn(
+        { userId: depositAddress.userId, externalId: event.externalId },
+        'payment webhook: deposit was already refunded on chain, not credited',
+      );
+      return;
+    }
     const credit = await this.drizzle.db.transaction(async (txn) => {
       let [walletRecord] = await txn
         .select()
