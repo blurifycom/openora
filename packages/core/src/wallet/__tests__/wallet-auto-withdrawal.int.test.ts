@@ -40,6 +40,7 @@ import {
   WalletService,
   WalletReferenceRateUnavailableError,
   WithdrawalAmountNotAboveFeeError,
+  WithdrawalPrecisionError,
 } from '../service/wallet.service.js';
 
 let db: TestDb;
@@ -92,6 +93,7 @@ type ServiceOptions = {
   // the values the rule shipped hardcoded); null count turns the check off.
   velocityCount?: number | null;
   velocityWindowHours?: number;
+  withdrawalDecimals?: number;
   // Leaves the singleton config row unseeded, to exercise the row-missing
   // fail-closed path.
   skipConfigSeed?: boolean;
@@ -117,6 +119,7 @@ async function makeService({
   riskTags = [],
   playerTags,
   kycPolicy,
+  withdrawalDecimals,
 }: ServiceOptions = {}) {
   if (autoWithdrawal && !skipConfigSeed) {
     await db.drizzle.db.insert(walletAutoWithdrawalConfig).values({
@@ -134,6 +137,9 @@ async function makeService({
       externalId: randomUUID(),
       status: 'completed' as const,
     })),
+    ...(withdrawalDecimals === undefined
+      ? {}
+      : { withdrawalDecimals: vi.fn(() => withdrawalDecimals) }),
   };
   const audit = makeAuditWriter();
   const directory = mock<AdminUserDirectory>({
@@ -1405,6 +1411,22 @@ describe('WalletService.withdraw network fee (real PG)', () => {
       .from(walletBalance)
       .where(eq(walletBalance.walletId, w.id));
     expect(balance?.amount).toBe('60.000000000000000000');
+  });
+
+  it('refuses an amount finer than the vendor pays out for the network, before any debit', async () => {
+    await seedUsdAsset('2.5');
+    const { svc, psp } = await makeService({ withdrawalDecimals: 2 });
+    const w = await seedWallet({ balance: '100' });
+
+    await expect(
+      svc.withdraw({ userId: w.userId, amount: '40.125', currency: 'USD', ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(WithdrawalPrecisionError);
+    expect(psp.withdrawalDecimals).toHaveBeenCalledWith('USD', 'SEPA');
+    const rows = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.walletId, w.id));
+    expect(rows).toHaveLength(0);
   });
 
   it('refuses a withdrawal that does not exceed the fee, before any debit', async () => {

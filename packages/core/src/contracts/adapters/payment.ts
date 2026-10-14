@@ -119,6 +119,13 @@ export type PaymentAdapter = {
   ): Promise<{ externalId: string; status: string }>;
 
   /**
+   * Fractional digits the vendor can pay out for this (currency, network), or null when it
+   * does not constrain them. The wallet refuses a withdrawal whose amount or fee carries
+   * more at request time, before the debit, so it never fails at send time after approval.
+   */
+  withdrawalDecimals?(currency: string, network: string): number | null;
+
+  /**
    * Issue (or return) a deposit address for this user/asset. Only implemented by
    * address-based deposit vendors (eg a custody/MPC crypto rail) - a synchronous PSP
    * or `MockPaymentAdapter` omits it. The wallet module persists the returned address

@@ -211,6 +211,20 @@
       "when": 1791567596966,
       "tag": "0029_mute_prism",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792011268772,
+      "tag": "0030_brainy_black_panther",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792013238683,
+      "tag": "0031_eminent_star_brand",
+      "breakpoints": true
     }
   ]
 }

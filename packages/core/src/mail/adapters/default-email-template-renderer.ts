@@ -105,6 +105,12 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       `Your deposit of ${formatMoney(data.amount, data.currency)} has been completed and is now available in your balance.\n\n` +
       `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}`,
   }),
+  depositHeld: (data, locale) => ({
+    subject: 'Your deposit is on hold',
+    text:
+      `Your deposit of ${formatMoney(data.amount, data.currency)} has arrived but is on hold and has not been added to your balance. Our support team will review it and contact you.\n\n` +
+      `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}`,
+  }),
   withdrawalApproved: (data, locale) => ({
     subject: 'Your withdrawal was approved',
     text:

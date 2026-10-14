@@ -22,6 +22,7 @@ import {
   TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   RG_LIMITS,
+  DEPOSIT_HOLD_POLICY,
   KYC_WITHDRAWAL_POLICY,
   EXCHANGE_RATE_READER,
   resolveExchangeRatePivot,
@@ -228,6 +229,7 @@ export default {
         rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
         rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
         kycPolicy: c.has(KYC_WITHDRAWAL_POLICY) ? c.get(KYC_WITHDRAWAL_POLICY) : undefined,
+        depositHold: c.has(DEPOSIT_HOLD_POLICY) ? c.get(DEPOSIT_HOLD_POLICY) : undefined,
         grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
       }));
 

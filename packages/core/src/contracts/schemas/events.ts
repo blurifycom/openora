@@ -448,6 +448,9 @@ export const domainEventSchemas = {
   }),
 
   'wallet.deposit.completed': walletTxnBase.extend({ playerId: UuidSchema.nullable() }),
+  // An on-chain deposit landed but the deposit hold policy kept it off the balance; the funds
+  // wait for an operator to release or refund them.
+  'wallet.deposit.held': walletTxnBase.extend({ playerId: UuidSchema.nullable() }),
   'wallet.withdrawal.completed': walletTxnBase.extend({ playerId: UuidSchema.nullable() }),
   // A player requested a withdrawal; funds are held (balance debited) and the
   // request enters the back-office approval queue as `pending`.

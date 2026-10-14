@@ -42,6 +42,7 @@ import {
   type PlayerTags,
   type RgLimitsPort,
   type KycWithdrawalPolicy,
+  type DepositHoldPolicy,
   type ExchangeRateReader,
   type AuditWritePort,
   type TagEvaluationCommands,
@@ -94,6 +95,7 @@ import {
 import {
   OUT_OF_CYCLE_RUN_ID,
   recordReconciliationFinding,
+  recordReconciliationFindingInTransaction,
   rgDecisionForLandedCredit,
 } from './reconciliation-finding.service.js';
 import type {
@@ -174,9 +176,29 @@ export const WithdrawalAmountNotAboveFeeError = createDomainError<
     `Withdrawal of ${amount} ${currency} does not exceed the ${fee} ${currency} network fee`,
 );
 
+export const WithdrawalPrecisionError = createDomainError<
+  [amount: string, currency: string, network: string, decimals: number]
+>(
+  'WithdrawalPrecisionError',
+  (amount, currency, network, decimals) =>
+    `${amount} ${currency} has more than ${decimals} decimal places, the most ${network} can pay out`,
+);
+
 export const IdempotencyKeyReuseError = makeConflictError(
   'IdempotencyKeyReuseError',
   'Idempotency key was already used with a different amount',
+);
+
+export const HeldDepositNotFoundError = makeConflictError(
+  'HeldDepositNotFoundError',
+  'The deposit is not on hold and cannot be released or refunded',
+);
+
+// The policy that held the deposit still holds it: the player is restricted, or crediting it
+// would breach their deposit limit. It can be refunded, or released once the reason lifts.
+export const DepositStillHeldError = createDomainError<[reason: string]>(
+  'DepositStillHeldError',
+  (reason) => `The deposit policy still holds this deposit: ${reason}`,
 );
 
 export const DepositAddressUnsupportedError = makeConflictError(
@@ -400,6 +422,28 @@ export function withdrawalFeeFor(
   return fee;
 }
 
+/**
+ * Refuses a withdrawal the vendor could not pay out exactly: the payout is `amount - fee`, so
+ * both must fit the asset's on-chain precision. Rounding either would pay a different amount
+ * than the ledger debits.
+ */
+export function assertPayablePrecision(
+  decimals: number | null,
+  amounts: readonly (string | null)[],
+  currency: string,
+  network: string,
+): void {
+  if (decimals === null) {
+    return;
+  }
+  for (const amount of amounts) {
+    const fraction = amount?.split('.')[1]?.replace(/0+$/, '') ?? '';
+    if (amount !== null && fraction.length > decimals) {
+      throw new WithdrawalPrecisionError(amount, currency, network, decimals);
+    }
+  }
+}
+
 type DepositAsset = {
   network: string;
   minDeposit: string;
@@ -604,6 +648,9 @@ export function providerRefCondition(
 
 /** Serialises one player's PSP deposits, so an RG reservation cannot be spent twice. */
 const depositSlotKey = (userId: User['id']) => `wallet-deposit:${userId}`;
+
+const heldReason = (deposit: Pick<WalletTransaction, 'status' | 'reviewReason'>) =>
+  deposit.status === 'on_hold' ? (deposit.reviewReason ?? 'held for review') : null;
 
 const MANUAL_ADJUSTMENT_TYPES: ReadonlySet<string> = new Set(['manual_credit', 'manual_debit']);
 
@@ -836,6 +883,8 @@ export type WalletServiceDeps = {
   rates?: ExchangeRateReader;
   // Optional: bound by compliance. Absent = every gated withdrawal requires KYC (fail closed).
   kycPolicy?: KycWithdrawalPolicy;
+  // Optional: bound by an operator. Absent = every attributed on-chain deposit is credited.
+  depositHold?: DepositHoldPolicy;
   // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
   grantLedger?: BonusGrantLedgerReader;
 };
@@ -863,6 +912,7 @@ export class WalletService {
   private readonly rgLimits?: RgLimitsPort;
   private readonly rates?: ExchangeRateReader;
   private readonly kycPolicy?: KycWithdrawalPolicy;
+  private readonly depositHold?: DepositHoldPolicy;
 
   private readonly grantLedger?: BonusGrantLedgerReader;
 
@@ -881,6 +931,7 @@ export class WalletService {
     rgLimits,
     rates,
     kycPolicy,
+    depositHold,
     grantLedger,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
@@ -897,6 +948,7 @@ export class WalletService {
     this.rgLimits = rgLimits;
     this.rates = rates;
     this.kycPolicy = kycPolicy;
+    this.depositHold = depositHold;
     this.grantLedger = grantLedger;
   }
 
@@ -1672,6 +1724,14 @@ export class WalletService {
     const settlementNetwork = resolveWithdrawalNetwork(assets, currency, network);
     assertAboveMinimumWithdrawal(assets, amount, currency, settlementNetwork);
     const fee = withdrawalFeeFor(assets, amount, currency, settlementNetwork);
+    if (settlementNetwork !== null) {
+      assertPayablePrecision(
+        this.payment.withdrawalDecimals?.(currency, settlementNetwork) ?? null,
+        [amount, fee],
+        currency,
+        settlementNetwork,
+      );
+    }
     const destinationWalletId = await this.requireWhitelistedWalletId(
       userId,
       currency,
@@ -3417,7 +3477,7 @@ export class WalletService {
       return;
     }
 
-    const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {
+    const credit = await this.drizzle.db.transaction(async (txn) => {
       let [walletRecord] = await txn
         .select()
         .from(wallet)
@@ -3433,7 +3493,7 @@ export class WalletService {
         event.externalId,
       );
       if (credited) {
-        return { transactionId: credited.id, replayed: true };
+        return { transactionId: credited.id, replayed: true, holdReason: heldReason(credited) };
       }
       // Throws when no fresh rate exists. The funds are on chain, so the deposit is not
       // dropped: nothing commits, the webhook answers an error and the vendor redelivers it,
@@ -3444,6 +3504,7 @@ export class WalletService {
         event.amount,
         event.currency,
       );
+      const holdReason = await this.depositHoldReason(txn, depositAddress.userId, event);
       const [inserted] = await txn
         .insert(walletTransaction)
         .values({
@@ -3452,7 +3513,8 @@ export class WalletService {
           type: 'deposit',
           amount: event.amount,
           currency: event.currency,
-          status: 'completed',
+          status: holdReason === null ? 'completed' : 'on_hold',
+          reviewReason: holdReason,
           direction: 'credit',
           rail: this.resolveRail(event.currency),
           // Prefer the chain the vendor reported; fall back to the one the address was
@@ -3467,8 +3529,29 @@ export class WalletService {
         .returning();
 
       if (inserted) {
-        await creditWalletBalance(txn, walletRecord.id, event.currency, event.amount);
-        return { transactionId: inserted.id, replayed: false };
+        if (holdReason === null) {
+          await creditWalletBalance(txn, walletRecord.id, event.currency, event.amount);
+        } else {
+          await recordReconciliationFindingInTransaction(
+            txn,
+            {
+              runId: OUT_OF_CYCLE_RUN_ID,
+              providerName: depositAddress.providerName,
+              kind: 'held_deposit',
+              currency: event.currency,
+              network: event.network ?? depositAddress.network,
+              amount: event.amount,
+              address: event.address,
+              tag: event.tag ?? null,
+              txHash: event.txHash,
+              externalId: event.externalId,
+              transactionId: inserted.id,
+              detail: `held, not credited: ${holdReason}`,
+            },
+            this.audit,
+          );
+        }
+        return { transactionId: inserted.id, replayed: false, holdReason };
       }
 
       const [winner] = await this.findDepositByProviderRef(
@@ -3481,8 +3564,26 @@ export class WalletService {
           `payment webhook: idempotency conflict but no row found (externalId=${event.externalId})`,
         );
       }
-      return { transactionId: winner.id, replayed: true };
+      return { transactionId: winner.id, replayed: true, holdReason: heldReason(winner) };
     });
+    const { transactionId, replayed, holdReason } = credit;
+
+    if (holdReason !== null) {
+      logger.warn(
+        { userId: depositAddress.userId, transactionId, externalId: event.externalId },
+        'payment webhook: on-chain deposit held for review, not credited',
+      );
+      if (!replayed) {
+        this.events.emit('wallet.deposit.held', {
+          userId: depositAddress.userId,
+          playerId: await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId),
+          amount: event.amount,
+          currency: event.currency,
+          transactionId,
+        });
+      }
+      return;
+    }
 
     if (!replayed) {
       this.events.emit('wallet.deposit.completed', {
@@ -3537,13 +3638,92 @@ export class WalletService {
     }
   }
 
+  /**
+   * Credits a held on-chain deposit to the player, in the caller's transaction, after asking
+   * the deposit policy again: the player must no longer be restricted and the deposit must fit
+   * their limit window now. The row itself turns `completed`, so the deposit window counts it
+   * from `reviewedAt` (the moment it reached the balance), not from when it landed on chain.
+   * The caller announces it with `announceDepositCompleted` once the transaction commits.
+   */
+  async releaseHeldDeposit(
+    txn: DrizzleTx,
+    depositId: WalletTransaction['id'],
+    adminId: User['id'],
+  ): Promise<{ userId: User['id']; amount: string; currency: string }> {
+    const [held] = await txn
+      .select({
+        walletId: walletTransaction.walletId,
+        amount: walletTransaction.amount,
+        currency: walletTransaction.currency,
+        userId: wallet.userId,
+      })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(
+        and(
+          eq(walletTransaction.id, depositId),
+          eq(walletTransaction.type, 'deposit'),
+          eq(walletTransaction.status, 'on_hold'),
+        ),
+      )
+      .for('update', { of: walletTransaction });
+    if (!held) {
+      throw new HeldDepositNotFoundError();
+    }
+    const reason = await this.depositHoldReason(txn, held.userId, held);
+    if (reason !== null) {
+      throw new DepositStillHeldError(reason);
+    }
+    await txn
+      .update(walletTransaction)
+      .set({ status: 'completed', reviewedBy: adminId, reviewedAt: new Date() })
+      .where(eq(walletTransaction.id, depositId));
+    await creditWalletBalance(txn, held.walletId, held.currency, held.amount);
+    return { userId: held.userId, amount: held.amount, currency: held.currency };
+  }
+
+  async announceDepositCompleted(deposit: {
+    userId: User['id'];
+    amount: string;
+    currency: string;
+    transactionId: WalletTransaction['id'];
+  }): Promise<void> {
+    this.events.emit('wallet.deposit.completed', {
+      ...deposit,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(deposit.userId),
+    });
+  }
+
+  /**
+   * Why the deposit policy would hold a deposit of `deposit` for this player right now, or
+   * null. Taken under the player's deposit slot lock, so a concurrent deposit cannot spend
+   * the same limit headroom between the check and the caller's write.
+   */
+  async depositHoldReason(
+    txn: DrizzleTx,
+    userId: User['id'],
+    deposit: { amount: string; currency: string },
+  ): Promise<string | null> {
+    const policy = this.depositHold;
+    if (!policy) {
+      return null;
+    }
+    return withAdvisoryXactLock(txn, depositSlotKey(userId), () =>
+      policy.holdReason(txn, { userId, amount: deposit.amount, currency: deposit.currency }),
+    );
+  }
+
   private findDepositByProviderRef(
     txn: DrizzleTx,
     providerName: string,
     externalId: NonNullable<WalletTransaction['providerRefId']>,
   ) {
     return txn
-      .select({ id: walletTransaction.id })
+      .select({
+        id: walletTransaction.id,
+        status: walletTransaction.status,
+        reviewReason: walletTransaction.reviewReason,
+      })
       .from(walletTransaction)
       .where(
         and(

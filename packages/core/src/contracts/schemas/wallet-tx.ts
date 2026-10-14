@@ -36,6 +36,8 @@ export const WALLET_TRANSACTION_STATUSES = [
   // reviewedBy/reviewReason columns); `cancelled` is a player/ops-reversed withdrawal.
   'on_hold',
   'cancelled',
+  // An on-chain deposit that was held and never credited, sent back to the player on chain.
+  'refunded',
 ] as const;
 
 // Settlement category, not a vendor: the concrete provider (a custody/MPC vendor, a
@@ -74,6 +76,7 @@ export const WALLET_RECONCILIATION_FINDING_KINDS = [
   'stuck_sweep',
   'rg_limit_breach',
   'stuck_swap',
+  'held_deposit',
 ] as const;
 
 export const WALLET_RECONCILIATION_FINDING_STATUSES = ['open', 'resolved'] as const;

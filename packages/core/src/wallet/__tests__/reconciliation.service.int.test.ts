@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
 import type {
+  DepositHoldPolicy,
   IdentityReader,
   PaymentAdapter,
   PaymentWebhookEvent,
@@ -27,11 +28,12 @@ import {
   walletJobRun,
   walletReconciliationFinding,
 } from '../schema/index.js';
-import { WalletService } from '../service/wallet.service.js';
+import { DepositStillHeldError, WalletService } from '../service/wallet.service.js';
 import {
   ReconciliationService,
   ReconciliationCreditMismatchError,
   ReconciliationFindingNotFoundError,
+  ReconciliationOutcomeNotAllowedError,
 } from '../service/reconciliation.service.js';
 
 let db: TestDb;
@@ -65,6 +67,7 @@ function makeServices(
     platformConfig?: Partial<PlatformConfig['wallet']>;
     identityReader?: ReturnType<typeof makeIdentityReader>;
     rgLimits?: RgLimitsPort;
+    depositHold?: DepositHoldPolicy;
   } = {},
 ) {
   const paymentProviders = makePaymentProviderRegistry({ adapter: payment });
@@ -82,6 +85,7 @@ function makeServices(
     identityReader: overrides.identityReader ?? makeIdentityReader(),
     platformConfig,
     rates: makeExchangeRateReader(),
+    depositHold: overrides.depositHold,
   });
   const reconciliation = new ReconciliationService({
     drizzle: db.drizzle,
@@ -879,6 +883,205 @@ describe('ReconciliationService.resolveFinding', () => {
 
     expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
     expect(second.resolutionNote).toBe('confirmed non-issue');
+  });
+
+  async function seedHeldDeposit(walletId: string) {
+    const [deposit] = await db.drizzle.db
+      .insert(walletTransaction)
+      .values({
+        walletId,
+        type: 'deposit',
+        amount: '1',
+        currency: 'BTC',
+        status: 'on_hold',
+        direction: 'credit',
+        reviewReason: 'self_excluded',
+      })
+      .returning();
+    const held = findOneOrThrow([deposit], new Error('seedHeldDeposit: insert returned no row'));
+    const runId = randomUUID();
+    await db.drizzle.db.insert(walletJobRun).values({ jobName: 'wallet-reconciliation', runId });
+    const [row] = await db.drizzle.db
+      .insert(walletReconciliationFinding)
+      .values({
+        runId,
+        providerName: 'default',
+        kind: 'held_deposit',
+        currency: 'BTC',
+        amount: '1',
+        externalId: randomUUID(),
+        transactionId: held.id,
+      })
+      .returning();
+    return { held, finding: findOneOrThrow([row], new Error('seedHeldDeposit: no finding')) };
+  }
+
+  async function statusOf(transactionId: string) {
+    const [row] = await db.drizzle.db
+      .select({ status: walletTransaction.status })
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, transactionId));
+    return row?.status;
+  }
+
+  const holdingPolicy = (reason: string | null): DepositHoldPolicy => ({
+    holdReason: vi.fn(async () => reason),
+  });
+
+  async function reviewOf(transactionId: string) {
+    const [row] = await db.drizzle.db
+      .select({
+        reviewedBy: walletTransaction.reviewedBy,
+        reviewedAt: walletTransaction.reviewedAt,
+      })
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, transactionId));
+    return row;
+  }
+
+  it('closes a held deposit refunded on chain with the refund tx hash and address as evidence', async () => {
+    const w = await seedWallet('BTC', '0');
+    const { held, finding } = await seedHeldDeposit(w.id);
+    const adminId = randomUUID();
+    const { reconciliation, audit } = makeServices(listTransactionsReturning([]));
+
+    const resolved = await reconciliation.resolveFinding(adminId, finding.id, {
+      outcome: 'refunded',
+      txHash: '0xrefund',
+      destinationAddress: 'bc1qplayer',
+    });
+
+    expect(resolved.status).toBe('resolved');
+    expect(resolved.resolutionNote).toBe('refunded on chain in 0xrefund to bc1qplayer');
+    expect(await statusOf(held.id)).toBe('refunded');
+    expect((await reviewOf(held.id))?.reviewedBy).toBe(adminId);
+    expect(await balanceOf(w.id)).toBe('0.000000000000000000');
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.reconciliation_finding.resolved',
+        after: expect.objectContaining({
+          outcome: 'refunded',
+          refundedDepositId: held.id,
+          refundTxHash: '0xrefund',
+          refundDestinationAddress: 'bc1qplayer',
+        }),
+      }),
+    );
+  });
+
+  it('refuses to dismiss a held deposit, since the money is still in custody', async () => {
+    const w = await seedWallet('BTC', '0');
+    const { held, finding } = await seedHeldDeposit(w.id);
+    const { reconciliation } = makeServices(listTransactionsReturning([]));
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), finding.id, {
+        outcome: 'dismissed',
+        note: 'refunded on chain',
+      }),
+    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    expect(await statusOf(held.id)).toBe('on_hold');
+  });
+
+  it('refuses to close a held deposit with a manual credit that bypasses the hold policy', async () => {
+    const w = await seedWallet('BTC', '0');
+    const { finding } = await seedHeldDeposit(w.id);
+    const { reconciliation } = makeServices(listTransactionsReturning([]));
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), finding.id, {
+        outcome: 'credited',
+        transactionId: randomUUID(),
+      }),
+    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+  });
+
+  it('releases a held deposit to the balance once the hold policy lets it in', async () => {
+    const w = await seedWallet('BTC', '0');
+    const { held, finding } = await seedHeldDeposit(w.id);
+    const adminId = randomUUID();
+    const policy = holdingPolicy(null);
+    const { reconciliation } = makeServices(listTransactionsReturning([]), { depositHold: policy });
+
+    const resolved = await reconciliation.resolveFinding(adminId, finding.id, {
+      outcome: 'released',
+    });
+
+    expect(resolved.status).toBe('resolved');
+    expect(await statusOf(held.id)).toBe('completed');
+    expect(await reviewOf(held.id)).toMatchObject({
+      reviewedBy: adminId,
+      reviewedAt: expect.any(Date),
+    });
+    expect(await balanceOf(w.id)).toBe('1.000000000000000000');
+    expect(policy.holdReason).toHaveBeenCalledWith(expect.anything(), {
+      userId: w.userId,
+      amount: '1.000000000000000000',
+      currency: 'BTC',
+    });
+  });
+
+  it('refuses to release a held deposit while the player is still restricted', async () => {
+    const w = await seedWallet('BTC', '0');
+    const { held, finding } = await seedHeldDeposit(w.id);
+    const { reconciliation } = makeServices(listTransactionsReturning([]), {
+      depositHold: holdingPolicy('rg_restricted'),
+    });
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), finding.id, { outcome: 'released' }),
+    ).rejects.toBeInstanceOf(DepositStillHeldError);
+    expect(await statusOf(held.id)).toBe('on_hold');
+    expect(await balanceOf(w.id)).toBe('0.000000000000000000');
+    expect((await findingRows())[0]?.status).toBe('open');
+  });
+
+  it('refuses to resolve an unattributed deposit as credited while the hold policy holds the player', async () => {
+    const w = await seedWallet('BTC', '0');
+    const runId = randomUUID();
+    await db.drizzle.db.insert(walletJobRun).values({ jobName: 'wallet-reconciliation', runId });
+    const [finding] = await db.drizzle.db
+      .insert(walletReconciliationFinding)
+      .values({
+        runId,
+        providerName: 'default',
+        kind: 'unattributed_deposit',
+        currency: 'BTC',
+        amount: '1',
+        externalId: randomUUID(),
+      })
+      .returning();
+    const { wallet: walletSvc, reconciliation } = makeServices(listTransactionsReturning([]), {
+      depositHold: holdingPolicy('rg_restricted'),
+      identityReader: mock<IdentityReader>({
+        ...makeIdentityReader(),
+        getPlayerIdByUserId: vi.fn().mockResolvedValue(randomUUID()),
+      }),
+    });
+    const creditTx = await walletSvc.manualAdjust({
+      adminId: randomUUID(),
+      userId: w.userId,
+      direction: 'credit',
+      amount: '1',
+      currency: 'BTC',
+      reason: 'attributed by hand',
+      idempotencyKey: randomUUID(),
+      ip: null,
+      userAgent: null,
+    });
+
+    await expect(
+      reconciliation.resolveFinding(
+        randomUUID(),
+        findOneOrThrow([finding], new Error('no finding')).id,
+        {
+          outcome: 'credited',
+          transactionId: creditTx.transactionId,
+        },
+      ),
+    ).rejects.toBeInstanceOf(DepositStillHeldError);
+    expect((await findingRows())[0]?.status).toBe('open');
   });
 
   it('404s resolving a finding that does not exist', async () => {

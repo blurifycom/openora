@@ -633,11 +633,19 @@ export const ListReconciliationFindingsInputSchema = PageQuerySchema.extend({
 });
 export type ListReconciliationFindingsInput = z.infer<typeof ListReconciliationFindingsInputSchema>;
 
-// There is no third way to close a finding: crediting the player (a manual ledger entry
-// made elsewhere, referenced here by its transactionId) or dismissing it as a non-issue
-// (a mandatory note explaining why). Never a bare status flip with no evidence either way.
+// Every way to close a finding carries its evidence: a manual ledger entry made elsewhere
+// (credited), the held deposit itself credited after a fresh policy check (released), the
+// on-chain transaction that sent the money back (refunded), or a mandatory note explaining
+// why it is a non-issue (dismissed). Never a bare status flip with no evidence.
 export const ReconciliationResolutionSchema = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('credited'), transactionId: UuidSchema }),
+  z.object({ outcome: z.literal('released') }),
+  z.object({
+    outcome: z.literal('refunded'),
+    txHash: z.string().trim().min(1).max(200),
+    destinationAddress: z.string().trim().min(1).max(200),
+    note: z.string().trim().min(1).optional(),
+  }),
   z.object({ outcome: z.literal('dismissed'), note: z.string().trim().min(1) }),
 ]);
 export type ReconciliationResolution = z.infer<typeof ReconciliationResolutionSchema>;

@@ -394,6 +394,8 @@ export type { PlayEligibilityPort } from './play-eligibility.js';
 export { PLAY_ELIGIBILITY } from './play-eligibility.js';
 export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
 export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
+export type { DepositHoldPolicy } from './deposit-hold.js';
+export { DEPOSIT_HOLD_POLICY } from './deposit-hold.js';
 
 export type {
   ChatSystemMessage,

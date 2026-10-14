@@ -6,7 +6,10 @@ import type {
   User,
   WalletReconciliationFindingKind,
 } from '@openora/core/contracts';
-import { walletReconciliationFinding } from '../schema/index.js';
+import {
+  walletReconciliationFinding,
+  type WalletReconciliationFinding as WalletReconciliationFindingRow,
+} from '../schema/index.js';
 
 const logger = createLogger('wallet-finding');
 
@@ -53,6 +56,39 @@ export async function recordReconciliationFinding(
   input: ReconciliationFindingInput,
   audit?: AuditWritePort,
 ): Promise<void> {
+  const row = await insertFinding(db, input);
+  if (row && audit) {
+    await audit.record(findingRecordedAudit(row.id, input));
+  }
+}
+
+/** As `recordReconciliationFinding`, with the audit row committed in the caller's transaction. */
+export async function recordReconciliationFindingInTransaction(
+  txn: DrizzleTx,
+  input: ReconciliationFindingInput,
+  audit: AuditWritePort,
+): Promise<void> {
+  const row = await insertFinding(txn, input);
+  if (row) {
+    await audit.recordInTransaction(txn, findingRecordedAudit(row.id, input));
+  }
+}
+
+function findingRecordedAudit(
+  findingId: WalletReconciliationFindingRow['id'],
+  input: ReconciliationFindingInput,
+) {
+  const { address: _address, tag: _tag, txHash: _txHash, ...auditable } = input;
+  return {
+    actorType: 'system' as const,
+    action: 'wallet.reconciliation_finding.recorded',
+    resourceType: 'wallet_reconciliation_finding',
+    resourceId: findingId,
+    after: auditable,
+  };
+}
+
+async function insertFinding(db: DrizzleDb | DrizzleTx, input: ReconciliationFindingInput) {
   const [row] = await db
     .insert(walletReconciliationFinding)
     .values({
@@ -71,17 +107,7 @@ export async function recordReconciliationFinding(
     })
     .onConflictDoNothing()
     .returning();
-
-  if (row && audit) {
-    const { address: _address, tag: _tag, txHash: _txHash, ...auditable } = input;
-    await audit.record({
-      actorType: 'system',
-      action: 'wallet.reconciliation_finding.recorded',
-      resourceType: 'wallet_reconciliation_finding',
-      resourceId: row.id,
-      after: auditable,
-    });
-  }
+  return row;
 }
 
 /**

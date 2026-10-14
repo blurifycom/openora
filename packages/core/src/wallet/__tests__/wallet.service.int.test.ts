@@ -2205,6 +2205,119 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
     expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
   });
 
+  function holdPolicy(reason: string | null) {
+    return { holdReason: vi.fn(async () => reason) };
+  }
+
+  it('records a deposit the hold policy holds as on_hold, credits nothing, files a held_deposit finding and tells the player', async () => {
+    const depositHold = holdPolicy('self_excluded');
+    const { svc, events, audit } = makeService({ depositHold });
+    const w = await seedWallet({ currency: 'BTC', balance: '1' });
+    await seedAddress(w.userId, 'bc1qheld');
+    const externalId = randomUUID();
+
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qheld',
+      amount: '0.5',
+      currency: 'BTC',
+      externalId,
+      txHash: '0xheld',
+    });
+
+    expect(await balanceOf(w.userId)).toBe(1);
+    expect(emittedTopics(events)).toEqual(['wallet.deposit.held']);
+    expect(depositHold.holdReason).toHaveBeenCalledWith(expect.anything(), {
+      userId: w.userId,
+      amount: '0.5',
+      currency: 'BTC',
+    });
+    const [held] = await txRows(w.id);
+    expect(held).toMatchObject({
+      type: 'deposit',
+      status: 'on_hold',
+      reviewReason: 'self_excluded',
+    });
+    const findings = await findingsFor(externalId);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      kind: 'held_deposit',
+      status: 'open',
+      transactionId: held?.id,
+    });
+    expect(findings[0]?.detail).toContain('self_excluded');
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'wallet.reconciliation_finding.recorded' }),
+    );
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('never credits a held deposit on redelivery, even once the policy would let it through', async () => {
+    const depositHold = holdPolicy('deposit_limit_exceeded');
+    const { svc, events } = makeService({ depositHold });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qheldreplay');
+    const event = {
+      kind: 'deposit' as const,
+      address: 'bc1qheldreplay',
+      amount: '2',
+      currency: 'BTC',
+      externalId: randomUUID(),
+      txHash: '0xheldreplay',
+    };
+
+    await svc.creditDepositByAddress(event);
+    depositHold.holdReason.mockResolvedValue(null);
+    await svc.creditDepositByAddress(event);
+
+    expect(await balanceOf(w.userId)).toBe(0);
+    expect(await txRows(w.id)).toHaveLength(1);
+    expect(await findingsFor(event.externalId)).toHaveLength(1);
+    expect(emittedTopics(events)).toEqual(['wallet.deposit.held']);
+  });
+
+  it('credits normally when the hold policy returns no reason', async () => {
+    const { svc, events } = makeService({ depositHold: holdPolicy(null) });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qnohold');
+    const externalId = randomUUID();
+
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qnohold',
+      amount: '1',
+      currency: 'BTC',
+      externalId,
+      txHash: '0xnohold',
+    });
+
+    expect(await balanceOf(w.userId)).toBe(1);
+    expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
+    expect(await findingsFor(externalId)).toHaveLength(0);
+  });
+
+  it('writes nothing when the hold policy throws, so the redelivery is decided afresh', async () => {
+    const depositHold = { holdReason: vi.fn(async () => Promise.reject(new Error('gate down'))) };
+    const { svc } = makeService({ depositHold });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qholdfails');
+
+    await expect(
+      svc.creditDepositByAddress({
+        kind: 'deposit',
+        address: 'bc1qholdfails',
+        amount: '1',
+        currency: 'BTC',
+        externalId: randomUUID(),
+        txHash: '0xholdfails',
+      }),
+    ).rejects.toThrow('gate down');
+
+    expect(await balanceOf(w.userId)).toBe(0);
+    expect(await txRows(w.id)).toHaveLength(0);
+  });
+
   it('credits nobody and files a currency_mismatch finding on a currency mismatch', async () => {
     const { svc, events } = makeService();
     const w = await seedWallet({ currency: 'BTC' });

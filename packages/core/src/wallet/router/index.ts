@@ -54,12 +54,15 @@ import {
   WithdrawalDisabledError,
   BelowMinimumWithdrawalError,
   WithdrawalAmountNotAboveFeeError,
+  WithdrawalPrecisionError,
   DepositDisabledError,
   BelowMinimumDepositError,
   PlayerNotFoundError,
   WithdrawalAddressAlreadyExistsError,
   WithdrawalAddressLimitReachedError,
   WalletReferenceRateUnavailableError,
+  HeldDepositNotFoundError,
+  DepositStillHeldError,
 } from '../service/wallet.service.js';
 import {
   SwapService,
@@ -71,6 +74,7 @@ import {
   ReconciliationFindingNotFoundError,
   ReconciliationCreditTransactionNotFoundError,
   ReconciliationCreditMismatchError,
+  ReconciliationOutcomeNotAllowedError,
 } from '../service/reconciliation.service.js';
 
 // Unauthenticated route: it costs a signature verification (and, for a custody vendor,
@@ -240,6 +244,7 @@ export function createWalletRouter({
             UnsupportedNetworkError,
             BelowMinimumWithdrawalError,
             WithdrawalAmountNotAboveFeeError,
+            WithdrawalPrecisionError,
           ],
           CONFLICT: [
             WithdrawalLockedError,
@@ -602,7 +607,12 @@ export function createWalletRouter({
               ReconciliationFindingNotFoundError,
               ReconciliationCreditTransactionNotFoundError,
             ],
-            CONFLICT: ReconciliationCreditMismatchError,
+            CONFLICT: [
+              ReconciliationCreditMismatchError,
+              ReconciliationOutcomeNotAllowedError,
+              HeldDepositNotFoundError,
+              DepositStillHeldError,
+            ],
           },
           () =>
             reconciliation.resolveFinding(adminId, input.id, input.resolution, { ip, userAgent }),
