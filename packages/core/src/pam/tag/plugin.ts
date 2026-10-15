@@ -14,6 +14,7 @@ import {
   ADMIN_USER_DIRECTORY,
   JOB_QUEUE,
   PLAY_ELIGIBILITY,
+  AUDIT_WRITER,
   McpToolError,
   queue,
   runActorAdminId,
@@ -81,12 +82,17 @@ async function assignForProposal(
 
 export default {
   id: 'tag',
-  dependsOn: ['wallet', 'identity'],
+  dependsOn: ['wallet', 'identity', 'audit'],
   register(ctx) {
     // One memoized instance backs the PLAYER_TAGS port and the router closure.
     let svc: TagService | null = null;
     const tagService = (c: TypedContainer<CoreTokenCatalog>) =>
-      (svc ??= new TagService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(PLAY_ELIGIBILITY)));
+      (svc ??= new TagService(
+        c.get(DRIZZLE),
+        c.get(EVENT_BUS),
+        c.get(PLAY_ELIGIBILITY),
+        c.get(AUDIT_WRITER),
+      ));
 
     // One memoized instance backs the router closure and the TAG_EVALUATION_COMMANDS port.
     let ruleSvc: TagRuleService | null = null;

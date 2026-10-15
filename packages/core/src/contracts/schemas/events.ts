@@ -86,8 +86,13 @@ const cmsBannerScheduleUpdatedEvent = cmsBannerScheduleEventBase.extend({
   before: z.object({ endsAt: TimestampSchema }),
 });
 const actorReasonBase = z.object({ actorId: UuidSchema, reason: z.string() });
+// `auditRecorded` marks a change whose audit row the tag write appended in its own transaction.
 const tagPlayerEventBase = actorReasonBase
-  .extend({ playerId: UuidSchema, tagKey: TagKeySchema })
+  .extend({
+    playerId: UuidSchema,
+    tagKey: TagKeySchema,
+    auditRecorded: z.literal(true).optional(),
+  })
   .extend(authContextBase.shape);
 const permissionLevelEntries = z.array(
   z.object({ resource: z.string(), level: PermissionLevelSchema }),
