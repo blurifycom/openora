@@ -163,6 +163,8 @@ export const walletTransaction = pgTable(
     // Client-supplied dedup key for deposit/withdraw. A wallet is 1:1 with its user, so
     // scoping the unique index on walletId is equivalent to scoping on userId.
     idempotencyKey: uuid(),
+    // Written by a correction debit, so its replay never matches the stake debit it re-collects.
+    correction: boolean().notNull().default(false),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -188,6 +190,10 @@ export const walletTransaction = pgTable(
       .on(t.providerName, t.providerRefId)
       .where(sql`${t.providerRefId} IS NOT NULL`),
     index('wallet_transaction_external_round_id_idx').on(t.externalRoundId),
+    // RG netting reads one player's legs of a round; a round id can be shared across players.
+    index('wallet_transaction_wallet_id_external_round_id_idx')
+      .on(t.walletId, t.externalRoundId)
+      .where(sql`${t.externalRoundId} IS NOT NULL`),
     uniqueIndex('wallet_transaction_wallet_id_idempotency_key_idx')
       .on(t.walletId, t.idempotencyKey)
       .where(sql`${t.idempotencyKey} IS NOT NULL`),
@@ -206,6 +212,25 @@ export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
     .notNull()
     .$onUpdateFn(() => new Date()),
 });
+
+// A module-owned block on every withdrawal, one row per (player, source). The owning module
+// places and releases it in its own transaction; a source never releases another's hold.
+export const walletWithdrawalHold = pgTable(
+  'wallet_withdrawal_hold',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Cross-module (identity), bare uuid.
+    userId: uuid().notNull(),
+    source: text().notNull(),
+    reason: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [uniqueIndex('wallet_withdrawal_hold_user_id_source_idx').on(t.userId, t.source)],
+);
 
 export const walletDepositAddress = pgTable(
   'wallet_deposit_address',

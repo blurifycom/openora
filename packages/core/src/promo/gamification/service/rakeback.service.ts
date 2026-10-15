@@ -16,9 +16,6 @@ import { promoPlayerRank, promoRankConfig, promoRankTier } from '../schema/index
 
 const ZERO = '0';
 
-// An empty list counts every bet, the same rule RankService applies to what counts toward the
-// ladder - rakeback rides on the same eligibility, not a second setting an operator has to keep
-// in sync with it.
 const countsToward = (eligibleProducts: readonly string[], product: string) =>
   eligibleProducts.length === 0 || eligibleProducts.includes(product);
 
@@ -53,9 +50,16 @@ export class RakebackService implements WagerTrackingCommands {
       return [];
     }
     const [config] = await tx
-      .select({ eligibleProducts: promoRankConfig.eligibleProducts })
+      .select({
+        eligibleProducts: promoRankConfig.eligibleProducts,
+        rakebackEligibleProducts: promoRankConfig.rakebackEligibleProducts,
+      })
       .from(promoRankConfig);
-    if (!config || !countsToward(config.eligibleProducts, args.context.product)) {
+    if (
+      !config ||
+      !countsToward(config.eligibleProducts, args.context.product) ||
+      !countsToward(config.rakebackEligibleProducts, args.context.product)
+    ) {
       return [];
     }
     const [rank] = await tx

@@ -30,12 +30,21 @@ const CASINO_ONLY = {
   payoutCurrency: 'USDT',
   payInPlayerCurrency: true,
   periodicRequiresActivity: false,
+  periodicMinimumWager: '25.000000000000000000',
   payoutAnchors: { dailyHour: 6, weeklyDay: 5, monthlyDay: 15 },
   eligibleProducts: ['casino'],
+  rakebackEligibleProducts: ['casino'],
+  rankChallengeEligibleProducts: ['casino', 'sportsbook'],
   rewards: {
     levelUp: { wageringMultiplier: '5', expiryDays: 14 },
     daily: { wageringMultiplier: '1', expiryDays: 1 },
   },
+};
+
+const SEEDED = {
+  ...EXAMPLE_RANK_LADDER.config,
+  payoutCurrency: null,
+  periodicMinimumWager: null,
 };
 
 async function adminWithRole(roleKey: string) {
@@ -90,10 +99,7 @@ describe('an operator configuring what a rank counts and pays', () => {
     const res = await admin.get(CONFIG_PATH);
 
     expect(res.status).toBe(200);
-    expect(await readJson(res)).toEqual({
-      ...EXAMPLE_RANK_LADDER.config,
-      payoutCurrency: null,
-    });
+    expect(await readJson(res)).toEqual(SEEDED);
   });
 
   it('saves new settings, audits them, and stops counting products left out', async () => {
@@ -116,6 +122,53 @@ describe('an operator configuring what a rank counts and pays', () => {
     expect(audited.at(-1)).toMatchObject({ actorType: 'admin', after: CASINO_ONLY });
   });
 
+  it('keeps the stored product lists and minimum wager when a save leaves them out', async () => {
+    const {
+      rakebackEligibleProducts: _r,
+      rankChallengeEligibleProducts: _c,
+      periodicMinimumWager: _m,
+      ...older
+    } = CASINO_ONLY;
+    await admin.put(CONFIG_PATH, CASINO_ONLY);
+
+    const res = await admin.put(CONFIG_PATH, { ...older, eligibleProducts: ['casino', 'pvp'] });
+
+    expect(res.status).toBe(200);
+    const kept = {
+      eligibleProducts: ['casino', 'pvp'],
+      rakebackEligibleProducts: CASINO_ONLY.rakebackEligibleProducts,
+      rankChallengeEligibleProducts: CASINO_ONLY.rankChallengeEligibleProducts,
+      periodicMinimumWager: CASINO_ONLY.periodicMinimumWager,
+    };
+    expect(await readJson(res)).toMatchObject(kept);
+    expect(await readJson(await admin.get(CONFIG_PATH))).toMatchObject(kept);
+    expect((await auditRows()).at(-1)).toMatchObject({ after: kept });
+  });
+
+  it('clears the minimum wager only on an explicit null', async () => {
+    await admin.put(CONFIG_PATH, CASINO_ONLY);
+
+    const res = await admin.put(CONFIG_PATH, { ...CASINO_ONLY, periodicMinimumWager: null });
+
+    expect(res.status).toBe(200);
+    expect(await readJson(await admin.get(CONFIG_PATH))).toMatchObject({
+      periodicMinimumWager: null,
+    });
+  });
+
+  it('refuses a product list naming a product the platform does not have, changing nothing', async () => {
+    const auditedBefore = (await auditRows()).length;
+
+    const res = await admin.put(CONFIG_PATH, {
+      ...CASINO_ONLY,
+      rakebackEligibleProducts: ['casino', 'poker'],
+    });
+
+    expect(res.status).toBe(400);
+    expect(await readJson(await admin.get(CONFIG_PATH))).toEqual(SEEDED);
+    expect(await auditRows()).toHaveLength(auditedBefore);
+  });
+
   it('refuses a wagering multiplier the bonus engine would reject, changing nothing', async () => {
     const auditedBefore = (await auditRows()).length;
 
@@ -126,10 +179,7 @@ describe('an operator configuring what a rank counts and pays', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(await readJson(await admin.get(CONFIG_PATH))).toEqual({
-      ...EXAMPLE_RANK_LADDER.config,
-      payoutCurrency: null,
-    });
+    expect(await readJson(await admin.get(CONFIG_PATH))).toEqual(SEEDED);
     expect(await auditRows()).toHaveLength(auditedBefore);
   });
 

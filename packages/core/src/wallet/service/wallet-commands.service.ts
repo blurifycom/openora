@@ -1,6 +1,11 @@
 import {
   MaxBetExceededError,
   RgLimitExceededError,
+  WALLET_CORRECTION_DEBIT_TYPES,
+  WalletCorrectionRefConflictError,
+  WalletCorrectionRoundError,
+  WalletCorrectionTypeError,
+  WalletHoldWithoutWalletError,
   type AuditWritePort,
   type PlayEligibilityPort,
   type RgLimitsPort,
@@ -11,7 +16,10 @@ import {
   type WalletDebitOutcome,
   type WalletCreditArgs,
   type WalletCreditOutcome,
+  type WalletCorrectionDebitArgs,
+  type WalletCorrectionDebitOutcome,
   type WalletProviderRef,
+  type WalletWithdrawalHoldArgs,
   type WalletTransactionType,
   type BonusGrantCommands,
   type BonusWageringCommands,
@@ -24,12 +32,19 @@ import {
   moneySubtract,
   type DrizzleDb,
 } from '@openora/core/server';
-import { eq } from 'drizzle-orm';
-import { wallet, walletTransaction, type Wallet, type WalletTransaction } from '../schema/index.js';
+import { and, eq } from 'drizzle-orm';
+import {
+  wallet,
+  walletTransaction,
+  walletWithdrawalHold,
+  type Wallet,
+  type WalletTransaction,
+} from '../schema/index.js';
 import type { ManualAdjustmentDirection } from '../contract/index.js';
 import {
   creditWalletBalance,
   balanceKey,
+  collectWalletBalance,
   debitWalletBalance,
   providerRefCondition,
   railFor,
@@ -111,6 +126,7 @@ export class WalletCommandsService implements WalletCommands {
     amount: string,
     direction: ManualAdjustmentDirection,
     providerRef?: WalletProviderRef,
+    { correction = false }: { correction?: boolean } = {},
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const insertQuery = txn.insert(walletTransaction).values({
       walletId: row.id,
@@ -123,6 +139,7 @@ export class WalletCommandsService implements WalletCommands {
       providerName: providerRef?.providerName,
       providerRefId: providerRef?.providerRefId,
       externalRoundId: providerRef?.externalRoundId,
+      correction,
       metadata:
         providerRef?.responseSnapshot !== undefined
           ? JSON.stringify(providerRef.responseSnapshot)
@@ -168,6 +185,9 @@ export class WalletCommandsService implements WalletCommands {
   ): Promise<WalletDebitOutcome> {
     const txn = tx as DrizzleDb;
 
+    if (type === 'win_reversal') {
+      throw new WalletCorrectionTypeError(type);
+    }
     if (type === 'bet' && (await this.playEligibility.isRestricted(userId, txn))) {
       throw new WalletRgRestrictedError();
     }
@@ -346,9 +366,12 @@ export class WalletCommandsService implements WalletCommands {
       throw new WalletCommandAmountError('credit', amount);
     }
 
+    // A gift or rain only writes a bonus grant, so it leaves the wallet row unlocked: a rain debits its
+    // sender and credits many recipients in one transaction.
+    const bonusSource = type === 'gift' || type === 'rain';
     const row = allowNewWallet
-      ? await this.resolveOrOpenWallet(txn, userId, currency)
-      : (await txn.select().from(wallet).where(eq(wallet.userId, userId)))[0];
+      ? await this.resolveOrOpenWallet(txn, userId, currency, !bonusSource)
+      : await this.selectWallet(txn, userId, !bonusSource);
     if (!row) {
       return { ok: false, reason: 'wallet not found' };
     }
@@ -374,7 +397,7 @@ export class WalletCommandsService implements WalletCommands {
     // row - that ledger is the real-money ledger, and a gift never moves real money. The grant's
     // own `(user_id, source, source_ref)` unique index is the idempotency guard, so it needs a
     // reference the caller can reproduce on a retry, never one this method invents for itself.
-    if (type === 'gift' || type === 'rain') {
+    if (bonusSource) {
       if (!this.ports.bonusGrants) {
         throw new WalletBonusEngineUnavailableError(type);
       }
@@ -400,8 +423,8 @@ export class WalletCommandsService implements WalletCommands {
       };
     }
 
-    // Unlike debit(), credit() takes no row lock, so the ledger row is inserted (and its
-    // conflict resolved) before the balance mutation rather than after.
+    // The wallet row lock above orders a credit before a correction or hold in the same
+    // transaction, and its NO KEY UPDATE strength still lets another transaction insert a ledger row.
     const { row: ledgerRow, replayed } = await this.writeLedgerRow(
       txn,
       creditRow,
@@ -446,12 +469,149 @@ export class WalletCommandsService implements WalletCommands {
     return { ok: true, moved: true, transactionId: ledgerRow.id, newBalance: credited.amount };
   }
 
+  async correctionDebit(
+    tx: unknown,
+    { userId, amount, currency, type, providerRef }: WalletCorrectionDebitArgs,
+  ): Promise<WalletCorrectionDebitOutcome> {
+    const txn = tx as DrizzleDb;
+
+    if (!WALLET_CORRECTION_DEBIT_TYPES.includes(type)) {
+      throw new WalletCorrectionTypeError(type);
+    }
+    if (moneyCompare(amount, '0') <= 0) {
+      throw new WalletCommandAmountError('correction debit', amount);
+    }
+    if (!providerRef.externalRoundId) {
+      throw new WalletCorrectionRoundError(providerRef.providerName, providerRef.providerRefId);
+    }
+
+    const key = balanceKey(currency);
+    const row = await this.selectWallet(txn, userId, true);
+    if (!row) {
+      return { moved: false, collected: '0', shortfall: amount, newBalance: '0' };
+    }
+
+    const replayed = await this.findByProviderRef(txn, providerRef);
+    if (replayed) {
+      if (
+        !replayed.correction ||
+        replayed.walletId !== row.id ||
+        replayed.type !== type ||
+        replayed.direction !== 'debit' ||
+        replayed.currency !== key ||
+        moneyCompare(amount, replayed.amount) < 0
+      ) {
+        throw new WalletCorrectionRefConflictError(
+          providerRef.providerName,
+          providerRef.providerRefId,
+        );
+      }
+      return {
+        moved: false,
+        collected: replayed.amount,
+        shortfall: moneySubtract(amount, replayed.amount),
+        newBalance: await readWalletBalance(txn, row.id, key),
+      };
+    }
+
+    // A savepoint, so a reference another wallet takes meanwhile puts the collected balance back
+    // even when the caller catches the conflict and commits.
+    return txn.transaction(async (sp) => {
+      const taken = await collectWalletBalance(sp, row.id, key, amount);
+      if (!taken) {
+        return {
+          moved: false,
+          collected: '0',
+          shortfall: amount,
+          newBalance: await readWalletBalance(sp, row.id, key),
+        };
+      }
+
+      // Only what was collected reaches the ledger; the shortfall is the caller's debt, not money that moved.
+      const { row: ledgerRow, replayed: raced } = await this.writeLedgerRow(
+        sp,
+        { id: row.id, currency: key },
+        type,
+        taken.collected,
+        'debit',
+        providerRef,
+        { correction: true },
+      );
+      if (raced) {
+        throw new WalletCorrectionRefConflictError(
+          providerRef.providerName,
+          providerRef.providerRefId,
+        );
+      }
+
+      return {
+        moved: true,
+        transactionId: ledgerRow.id,
+        collected: taken.collected,
+        shortfall: moneySubtract(amount, taken.collected),
+        newBalance: taken.balance,
+      };
+    });
+  }
+
+  // Takes a wallet row lock that conflicts with the ones withdraw and approval read holds under,
+  // so a payout either commits before the hold or sees it.
+  async placeWithdrawalHold(
+    tx: unknown,
+    { userId, source, reason }: WalletWithdrawalHoldArgs,
+  ): Promise<{ placed: boolean }> {
+    const txn = tx as DrizzleDb;
+    // With no wallet row there is nothing to lock, and a wallet opened meanwhile could pay out
+    // before this hold commits.
+    if (!(await this.selectWallet(txn, userId, true))) {
+      throw new WalletHoldWithoutWalletError(userId);
+    }
+    const [inserted] = await txn
+      .insert(walletWithdrawalHold)
+      .values({ userId, source, reason })
+      .onConflictDoNothing()
+      .returning({ id: walletWithdrawalHold.id });
+    if (inserted) {
+      return { placed: true };
+    }
+    await txn
+      .update(walletWithdrawalHold)
+      .set({ reason })
+      .where(and(eq(walletWithdrawalHold.userId, userId), eq(walletWithdrawalHold.source, source)));
+    return { placed: false };
+  }
+
+  async releaseWithdrawalHold(
+    tx: unknown,
+    { userId, source }: Omit<WalletWithdrawalHoldArgs, 'reason'>,
+  ): Promise<{ released: boolean }> {
+    const txn = tx as DrizzleDb;
+    await this.selectWallet(txn, userId, true);
+    const deleted = await txn
+      .delete(walletWithdrawalHold)
+      .where(and(eq(walletWithdrawalHold.userId, userId), eq(walletWithdrawalHold.source, source)))
+      .returning({ id: walletWithdrawalHold.id });
+    return { released: deleted.length > 0 };
+  }
+
+  // NO KEY UPDATE leaves another transaction's ledger insert (a KEY SHARE on this row) unblocked.
+  private async selectWallet(
+    txn: DrizzleDb,
+    userId: Uuid,
+    lock: boolean,
+  ): Promise<Wallet | undefined> {
+    const query = txn.select().from(wallet).where(eq(wallet.userId, userId));
+    const [row] = lock ? await query.for('no key update') : await query;
+    return row;
+  }
+
   private async resolveOrOpenWallet(
     txn: DrizzleDb,
     userId: Uuid,
     currency: string,
+    lock: boolean,
   ): Promise<Wallet | undefined> {
-    const [existing] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+    const existing = await this.selectWallet(txn, userId, lock);
     if (existing) {
       return existing;
     }
@@ -463,7 +623,6 @@ export class WalletCommandsService implements WalletCommands {
     if (created) {
       return created;
     }
-    const [raced] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
-    return raced;
+    return this.selectWallet(txn, userId, lock);
   }
 }
