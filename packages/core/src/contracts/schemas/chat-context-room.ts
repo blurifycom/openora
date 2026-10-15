@@ -26,3 +26,24 @@ export const ChatContextRoomSchema = z.object({
   createdAt: TimestampSchema,
 });
 export type ChatContextRoom = z.infer<typeof ChatContextRoomSchema>;
+
+export const CHAT_CONTEXT_SEND_POLICY_REASON_MAX_LENGTH = 64;
+
+export const ChatContextSendPolicyReasonSchema = z
+  .string()
+  .max(CHAT_CONTEXT_SEND_POLICY_REASON_MAX_LENGTH)
+  .regex(/^[a-z][a-z0-9_]*$/, { message: 'Reason must be a snake_case code' });
+
+export const ChatContextSendDecisionSchema = z.discriminatedUnion('allowed', [
+  z.object({ allowed: z.literal(true) }),
+  z.object({ allowed: z.literal(false), reason: ChatContextSendPolicyReasonSchema }),
+]);
+export type ChatContextSendDecision = z.infer<typeof ChatContextSendDecisionSchema>;
+
+export const CHAT_CONTEXT_SEND_DENIED_REASON = 'context_send_denied';
+
+export const ChatContextSendDeniedDataSchema = z.object({
+  reason: z.literal(CHAT_CONTEXT_SEND_DENIED_REASON),
+  policyReason: ChatContextSendPolicyReasonSchema,
+});
+export type ChatContextSendDeniedData = z.infer<typeof ChatContextSendDeniedDataSchema>;

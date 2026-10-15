@@ -12,6 +12,7 @@ import {
   CHAT_SYSTEM_WRITER,
   CHAT_BLOCK_WRITER,
   CHAT_CONTEXT_ROOMS,
+  CHAT_CONTEXT_SEND_POLICY,
   CHAT_MODERATION,
   CHAT_ROOM_ACCESS,
   ADMIN_USER_DIRECTORY,
@@ -75,6 +76,7 @@ export default {
     let inviteRef: ChatRoomInviteService | undefined;
     ctx.provide(CHAT_REALTIME_TRANSPORT, (c) => c.get(REALTIME_TRANSPORT));
     ctx.provide(CHAT_REALTIME_CLIENT_AUTHORIZER, (c) => c.get(REALTIME_CLIENT_AUTHORIZER));
+    ctx.provide(CHAT_CONTEXT_SEND_POLICY, () => ({ check: async () => ({ allowed: true }) }));
     ctx.provide(
       CHAT_MODERATION,
       (c) =>
@@ -100,6 +102,7 @@ export default {
           ? c.get(PLATFORM_CONFIG).chat.allowedAttachmentHosts
           : [],
         socialCommands: c.has(SOCIAL_COMMANDS) ? c.get(SOCIAL_COMMANDS) : undefined,
+        contextSendPolicy: c.get(CHAT_CONTEXT_SEND_POLICY),
       });
     const createMembershipService = (
       c: Parameters<typeof ctx.routers.add>[1] extends (c: infer C) => unknown ? C : never,
