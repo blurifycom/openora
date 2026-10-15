@@ -6,6 +6,10 @@
 
 <!-- Why this was introduced: the problem, limitation, or previous behaviour. -->
 
+## Diagram
+
+<!-- Mermaid flowchart or sequenceDiagram of the flow or architecture this changes. Delete if the change has no flow. -->
+
 ## Alternatives considered
 
 <!-- Viable options considered and why they were not chosen. Delete if none. -->

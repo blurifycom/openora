@@ -14,3 +14,7 @@ Read this before a commit, PR, or branch operation.
   per-action "yes push".
 - PR description carries intent: what / why / acceptance criteria / ticket link. No secrets,
   internal hostnames, or PII - it is the public record.
+- A PR that adds or changes a flow across components (request path, state machine, async job or
+  webhook, a new module, overlay or vendor binding) carries a Mermaid `flowchart` or
+  `sequenceDiagram` of it: nodes named as in the code, under ~15 nodes, refusal and failure
+  branches included. No flow, no diagram.
