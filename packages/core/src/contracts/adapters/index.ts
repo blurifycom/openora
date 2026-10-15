@@ -264,6 +264,20 @@ export {
   SwapLimitExceededError,
 } from './swap.js';
 
+export type {
+  OnRampStatus,
+  OnRampFiatOption,
+  OnRampOptions,
+  OnRampQuote,
+  OnRampCheckout,
+  OnRampWebhookEvent,
+  OnRampAdapter,
+  OnRampWebhookVerifier,
+  OnRampRefusalReason,
+  OnRampRefusedData,
+} from './on-ramp.js';
+export { ON_RAMP_ADAPTER, ON_RAMP_WEBHOOK_VERIFIER, OnRampRefusedError } from './on-ramp.js';
+
 export type { GeoIpAdapter } from './geo-ip.js';
 export { GEO_IP_ADAPTER, normalizeCountryCode } from './geo-ip.js';
 export type { GeoCheckCommands } from './geo-check-commands.js';

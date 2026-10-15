@@ -502,6 +502,60 @@ export const SwapResultSchema = z.object({
   toAmount: MoneyAmountSchema.nullable(),
 });
 
+// The vendor's own ids, bounded and never parsed.
+const OnRampGatewayIdSchema = z.string().trim().min(1).max(128);
+const OnRampPaymentMethodSchema = z.string().trim().min(1).max(64);
+
+export const OnRampOptionsSchema = z.object({
+  fiats: z.array(
+    z.object({
+      code: CurrencyTickerSchema,
+      minAmount: MoneyAmountSchema,
+      maxAmount: MoneyAmountSchema.optional(),
+      paymentMethods: z.array(z.string()),
+    }),
+  ),
+  // Only the vendor's assets the platform takes deposits in.
+  assets: z.array(z.object({ currency: WalletCurrencyCodeSchema, network: WalletNetworkSchema })),
+});
+
+export const OnRampQuoteInputSchema = z.object({
+  fiatCurrency: CurrencyTickerInputSchema,
+  fiatAmount: PositiveMoneyAmountSchema,
+  currency: WalletCurrencyInputSchema,
+  network: WalletNetworkInputSchema,
+  paymentMethod: OnRampPaymentMethodSchema.optional(),
+});
+
+// `cryptoAmount` is what reaches the deposit address, net of `fee`, and is the only binding
+// number - `rate` is informational.
+export const OnRampQuoteSchema = z.object({
+  gatewayId: OnRampGatewayIdSchema,
+  gatewayName: z.string(),
+  fiatCurrency: CurrencyTickerSchema,
+  fiatAmount: MoneyAmountSchema,
+  currency: WalletCurrencyCodeSchema,
+  network: WalletNetworkSchema,
+  cryptoAmount: MoneyAmountSchema,
+  fee: MoneyAmountSchema,
+  feeCurrency: CurrencyTickerSchema,
+  rate: MoneyAmountSchema,
+  paymentMethod: z.string().optional(),
+  expiresAt: TimestampSchema,
+});
+
+// No delivery address: the server always sends the vendor one it issued to this player.
+export const OnRampCheckoutInputSchema = OnRampQuoteInputSchema.extend({
+  gatewayId: OnRampGatewayIdSchema,
+  idempotencyKey: UuidSchema,
+});
+
+export const OnRampCheckoutSchema = z.object({
+  externalId: z.string().min(1),
+  // The client navigates to it, so nothing but https gets through.
+  checkoutUrl: z.url({ protocol: /^https$/ }),
+});
+
 export const PaymentWebhookInputSchema = z.record(z.string(), z.unknown());
 export const PaymentWebhookOutputSchema = z.object({ ok: z.literal(true) });
 
@@ -861,6 +915,38 @@ export const walletContract = {
     // - a swap desk signs with a different key than the PSP.
     webhook: oc
       .route({ method: 'POST', path: '/wallet/swap/webhook' })
+      .input(PaymentWebhookInputSchema)
+      .output(PaymentWebhookOutputSchema),
+  },
+
+  // Buying crypto with fiat from a third-party vendor; the coins land on the player's own
+  // deposit address and are credited by the ordinary deposit path, never by these routes.
+  onRamp: {
+    options: oc
+      .route({
+        method: 'GET',
+        path: '/wallet/on-ramp/options',
+        summary: 'List on-ramp fiats and assets',
+      })
+      .output(OnRampOptionsSchema),
+
+    quote: oc
+      .route({ method: 'POST', path: '/wallet/on-ramp/quote', summary: 'Price a crypto purchase' })
+      .input(OnRampQuoteInputSchema)
+      .output(z.array(OnRampQuoteSchema)),
+
+    checkout: oc
+      .route({
+        method: 'POST',
+        path: '/wallet/on-ramp/checkout',
+        summary: 'Open a crypto purchase',
+      })
+      .input(OnRampCheckoutInputSchema)
+      .output(OnRampCheckoutSchema),
+
+    // Unauthenticated, verified by its own ON_RAMP_WEBHOOK_VERIFIER.
+    webhook: oc
+      .route({ method: 'POST', path: '/wallet/on-ramp/webhook' })
       .input(PaymentWebhookInputSchema)
       .output(PaymentWebhookOutputSchema),
   },
