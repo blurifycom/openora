@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { Client } from 'pg';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate } from '../migrate.js';
@@ -41,5 +42,24 @@ describe('PlayEligibilityService inside a caller transaction (real PG)', () => {
     ).rejects.toMatchObject({
       cause: { message: expect.stringMatching(/timeout exceeded when trying to connect/) },
     });
+  });
+
+  it('holds a concurrent restriction back until the caller transaction ends', async () => {
+    const player = await seedUser(db);
+    const svc = new PlayEligibilityService(db.drizzle);
+    const other = new Client({ connectionString: db.url });
+    await other.connect();
+
+    try {
+      await other.query(`SET lock_timeout = '200ms'`);
+      await db.drizzle.db.transaction(async (tx) => {
+        await svc.isRestricted(player.id, tx);
+        await expect(
+          other.query('UPDATE "user" SET rg_blocked = true WHERE id = $1', [player.id]),
+        ).rejects.toMatchObject({ code: '55P03' });
+      });
+    } finally {
+      await other.end();
+    }
   });
 });

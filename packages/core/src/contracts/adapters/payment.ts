@@ -28,6 +28,11 @@ export type PaymentWebhookEvent =
       currency: string;
       txHash: string;
       externalId: string;
+      /**
+       * The sender's address, when the vendor reports a single one. A refund sent anywhere
+       * else is flagged in the audit trail, so it is worth passing whenever it is known.
+       */
+      sourceAddress?: string;
     }
   | {
       kind: 'withdrawal';
@@ -117,6 +122,13 @@ export type PaymentAdapter = {
     currency: string,
     metadata: Record<string, unknown>,
   ): Promise<{ externalId: string; status: string }>;
+
+  /**
+   * Fractional digits the vendor can pay out for this (currency, network), or null when it
+   * does not constrain them. The wallet refuses a withdrawal whose amount or fee carries
+   * more at request time, before the debit, so it never fails at send time after approval.
+   */
+  withdrawalDecimals?(currency: string, network: string): number | null;
 
   /**
    * Issue (or return) a deposit address for this user/asset. Only implemented by

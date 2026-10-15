@@ -8,6 +8,8 @@ import {
   BelowMinimumWithdrawalError,
   withdrawalFeeFor,
   WithdrawalAmountNotAboveFeeError,
+  assertPayablePrecision,
+  WithdrawalPrecisionError,
 } from '../service/wallet.service.js';
 
 const asset = (network: string, minWithdrawal = '0', withdrawalEnabled = true) => ({
@@ -114,5 +116,31 @@ describe('withdrawalFeeFor', () => {
     expect(() => withdrawalFeeFor(assets, '0.5', 'USDT', 'TRC20')).toThrow(
       WithdrawalAmountNotAboveFeeError,
     );
+  });
+});
+
+describe('assertPayablePrecision', () => {
+  it('refuses an amount with more fractional digits than the asset pays out', () => {
+    expect(() => assertPayablePrecision(6, ['1.1234567', null], 'USDT', 'TRC20')).toThrow(
+      WithdrawalPrecisionError,
+    );
+  });
+
+  it('refuses a fee the asset cannot pay out, since the payout is net of it', () => {
+    expect(() => assertPayablePrecision(6, ['10', '0.0000001'], 'USDT', 'TRC20')).toThrow(
+      WithdrawalPrecisionError,
+    );
+  });
+
+  it('ignores trailing zeros from the ledger scale', () => {
+    expect(() =>
+      assertPayablePrecision(6, ['1.123456000000000000', '1'], 'USDT', 'TRC20'),
+    ).not.toThrow();
+  });
+
+  it('accepts any precision when the vendor names no limit', () => {
+    expect(() =>
+      assertPayablePrecision(null, ['1.123456789012345678', null], 'ETH', 'ERC20'),
+    ).not.toThrow();
   });
 });

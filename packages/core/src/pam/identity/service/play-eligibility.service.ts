@@ -9,11 +9,12 @@ export class PlayEligibilityService implements PlayEligibilityPort {
 
   async isRestricted(userId: User['id'], tx?: unknown): Promise<boolean> {
     const db = (tx as DrizzleDb | undefined) ?? this.drizzle.db;
-    const [row] = await db
+    const query = db
       .select({ rgBlocked: user.rgBlocked, rgBlockedUntil: user.rgBlockedUntil })
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+    const [row] = tx ? await query.for('share') : await query;
     if (!row) {
       return true;
     }
