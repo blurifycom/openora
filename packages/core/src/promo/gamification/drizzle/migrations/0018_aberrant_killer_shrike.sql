@@ -1,0 +1,2 @@
+ALTER TABLE "promo_rank_config" ADD COLUMN "rakeback_eligible_products" text[] DEFAULT '{"casino","live-casino","pvp"}' NOT NULL;--> statement-breakpoint
+ALTER TABLE "promo_rank_config" ADD COLUMN "rank_challenge_eligible_products" text[] DEFAULT '{"casino","live-casino","pvp"}' NOT NULL;

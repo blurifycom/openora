@@ -344,6 +344,8 @@ export const WithdrawalQueueItemSchema = z.object({
   riskTags: z.array(z.string()),
   /** The player carries the `withdrawal_lock` hold: this withdrawal cannot be approved until it is released. */
   withdrawalLocked: z.boolean(),
+  /** A module holds the player's withdrawals (e.g. an unpaid debt): approval is refused until it releases the hold. */
+  withdrawalHeld: z.boolean(),
   requestedAt: TimestampSchema,
   destinationAddress: z.string().nullable(),
   // An approver on a tag chain is releasing funds to an address shared by many accounts, so

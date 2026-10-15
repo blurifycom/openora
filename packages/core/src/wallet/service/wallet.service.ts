@@ -90,6 +90,7 @@ import {
   walletWithdrawalAddress,
   walletAsset,
   walletOnRampOrder,
+  walletWithdrawalHold,
   type Wallet,
   type WalletDepositAddress,
   type WalletTransaction,
@@ -179,6 +180,13 @@ export const WithdrawalLockedError = makeConflictError(
   'WithdrawalLockedError',
   'Withdrawals are on hold for this account. Please contact support',
   { reason: 'withdrawal_locked' },
+);
+
+// A module-owned hold (`wallet_withdrawal_hold`), e.g. while the player owes the platform money.
+export const WithdrawalHeldError = makeConflictError(
+  'WithdrawalHeldError',
+  'Withdrawals are on hold for this account. Please contact support',
+  { reason: 'withdrawal_held' },
 );
 
 export const WithdrawalAmountNotAboveFeeError = createDomainError<
@@ -583,6 +591,32 @@ export function debitWalletBalance(
     .returning({ amount: walletBalance.amount });
 }
 
+/**
+ * Takes min(balance, amount) in one statement and never overdraws. The CTE's row lock makes a
+ * concurrent collection wait and then read the balance the first one left.
+ */
+export async function collectWalletBalance(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+  amount: string,
+): Promise<{ balance: string; collected: string } | undefined> {
+  const key = balanceKey(currency);
+  const result = await txn.execute<{ balance: string; collected: string }>(sql`
+    with held as (
+      select amount from ${walletBalance}
+      where ${walletBalance.walletId} = ${walletId} and ${walletBalance.currency} = ${key}
+      for update
+    )
+    update ${walletBalance} wb
+    set amount = wb.amount - least(held.amount, ${amount}::numeric), updated_at = now()
+    from held
+    where wb.wallet_id = ${walletId} and wb.currency = ${key} and held.amount > 0
+    returning wb.amount::text as balance, least(held.amount, ${amount}::numeric)::text as collected
+  `);
+  return result.rows[0];
+}
+
 export async function readWalletBalance(
   txn: DrizzleDb,
   walletId: Wallet['id'],
@@ -769,7 +803,7 @@ export const IN_FLIGHT_TRANSACTION_STATUSES = [
   'processing',
 ] as const satisfies readonly WalletTransactionStatus[];
 
-const ACTIVITY_TRANSACTION_TYPES = ['deposit', 'withdrawal', 'bet', 'win'] as const;
+const ACTIVITY_TRANSACTION_TYPES = ['deposit', 'withdrawal', 'bet', 'win', 'win_reversal'] as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -1264,6 +1298,32 @@ export class WalletService {
     }
   }
 
+  // Every hold, whatever its source, blocks every withdrawal; the unique index's leading column serves it.
+  private async isWithdrawalHeld(db: DrizzleDb, userId: User['id']): Promise<boolean> {
+    return (await this.withdrawalHeldUserIds([userId], db)).has(userId);
+  }
+
+  private async withdrawalHeldUserIds(
+    userIds: readonly User['id'][],
+    db: DrizzleDb = this.drizzle.db,
+  ): Promise<Set<string>> {
+    if (userIds.length === 0) {
+      return new Set();
+    }
+    const rows = await db
+      .selectDistinct({ userId: walletWithdrawalHold.userId })
+      .from(walletWithdrawalHold)
+      .where(inArray(walletWithdrawalHold.userId, [...userIds]));
+    return new Set(rows.map((r) => r.userId));
+  }
+
+  private async assertWithdrawalsNotBlocked(userId: User['id']) {
+    await this.assertWithdrawalsNotLocked(userId);
+    if (await this.isWithdrawalHeld(this.drizzle.db, userId)) {
+      throw new WithdrawalHeldError();
+    }
+  }
+
   private async isWithdrawalLocked(userId: User['id']): Promise<boolean> {
     return (await this.withdrawalLockedUserIds([userId])).has(userId);
   }
@@ -1330,7 +1390,8 @@ export class WalletService {
         withdrawals: sumOf('withdrawal'),
         withdrawalCount: countOf('withdrawal'),
         bets: sumOf('bet'),
-        wins: sumOf('win'),
+        // A reversal can land in a later window than the win it takes back, so the net is floored.
+        wins: sql<string>`greatest(${sumOf('win')} - ${sumOf('win_reversal')}, 0)`,
       })
       .from(walletTransaction)
       .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
@@ -1905,6 +1966,10 @@ export class WalletService {
             };
           }
         }
+        // Read after the wallet row lock, which `placeWithdrawalHold` also takes.
+        if (await this.isWithdrawalHeld(txn, userId)) {
+          throw new WithdrawalHeldError();
+        }
 
         const { row, replayed } = await this.insertIdempotentTransaction(txn, {
           namespace: WITHDRAW_IDEMPOTENCY_NAMESPACE,
@@ -2215,8 +2280,10 @@ export class WalletService {
       await this.getAutoWithdrawalConfigOrNull(),
     );
     const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
-    const lockedUserIds = await this.withdrawalLockedUserIds([
-      ...new Set(pageRows.map((r) => r.userId)),
+    const pageUserIds = [...new Set(pageRows.map((r) => r.userId))];
+    const [lockedUserIds, heldUserIds] = await Promise.all([
+      this.withdrawalLockedUserIds(pageUserIds),
+      this.withdrawalHeldUserIds(pageUserIds),
     ]);
 
     const items: WithdrawalQueueItem[] = await mapConcurrent(pageRows, 5, async (r) => {
@@ -2246,6 +2313,7 @@ export class WalletService {
         kycStatus: summary?.kycStatus ?? null,
         riskTags,
         withdrawalLocked: lockedUserIds.has(r.userId),
+        withdrawalHeld: heldUserIds.has(r.userId),
         requestedAt: r.tx.createdAt.toISOString(),
         destinationAddress: r.tx.destinationAddress,
         destinationTag: r.tx.destinationTag,
@@ -2267,12 +2335,15 @@ export class WalletService {
     meta?: ClientMeta,
   ): Promise<TransactionResult> {
     const ownerId = await this.withdrawalOwnerId(withdrawalId);
-    await this.assertWithdrawalsNotLocked(ownerId);
+    await this.assertWithdrawalsNotBlocked(ownerId);
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
     // `approved` is admin-attributed and committed with the flip; the system auto path skips
     // it - its trail is the AUDIT_WRITER entry plus the shared `completed` event.
     const { queued, flipped } = await this.drizzle.db.transaction(async (txn) => {
+      if (await this.isWithdrawalHeldLocked(txn, ownerId)) {
+        throw new WithdrawalHeldError();
+      }
       const decided = await this.flipToProcessing({
         txn,
         withdrawalId,
@@ -2342,6 +2413,13 @@ export class WalletService {
       new WithdrawalNotFoundError(withdrawalId),
     );
     return { queued: current, flipped };
+  }
+
+  // A hold is placed under a wallet row lock that conflicts with this share lock, so a hold that
+  // has not committed yet is waited for and then seen, never paid through.
+  private async isWithdrawalHeldLocked(txn: DrizzleTx, userId: User['id']): Promise<boolean> {
+    await txn.select({ id: wallet.id }).from(wallet).where(eq(wallet.userId, userId)).for('share');
+    return this.isWithdrawalHeld(txn, userId);
   }
 
   // The lock is read before the flip's transaction, so one placed in between would otherwise
@@ -2620,6 +2698,13 @@ export class WalletService {
           if (caps.exceeded) {
             logger.info(
               { userId: args.userId, walletId: args.walletId, gate: 'daily_cap' },
+              'auto-withdrawal skipped',
+            );
+            return null;
+          }
+          if (await this.isWithdrawalHeldLocked(txn, args.userId)) {
+            logger.info(
+              { userId: args.userId, walletId: args.walletId, gate: 'withdrawal_hold' },
               'auto-withdrawal skipped',
             );
             return null;

@@ -43,8 +43,19 @@ export type {
   WalletCreditArgs,
   WalletCreditOutcome,
   WalletProviderRef,
+  WalletCorrectionDebitArgs,
+  WalletCorrectionDebitOutcome,
+  WalletCorrectionDebitType,
+  WalletWithdrawalHoldArgs,
 } from './wallet-commands.js';
-export { WALLET_COMMANDS } from './wallet-commands.js';
+export {
+  WALLET_COMMANDS,
+  WALLET_CORRECTION_DEBIT_TYPES,
+  WalletCorrectionRefConflictError,
+  WalletCorrectionRoundError,
+  WalletCorrectionTypeError,
+  WalletHoldWithoutWalletError,
+} from './wallet-commands.js';
 
 export type { WagerContext, WagerProduct } from './wager-context.js';
 export { WAGER_PRODUCTS, WagerProductSchema, isWagerProduct } from './wager-context.js';
