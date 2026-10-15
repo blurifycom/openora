@@ -1,5 +1,10 @@
 import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm';
-import { type AuditWritePort, type BonusForfeitReason, type Uuid } from '@openora/core/contracts';
+import {
+  type AuditWritePort,
+  type BonusForfeitReason,
+  type ClientMeta,
+  type Uuid,
+} from '@openora/core/contracts';
 import {
   makeConflictError,
   makeNotFoundError,
@@ -111,13 +116,14 @@ export class GrantLifecycleService {
     reason: BonusForfeitReason,
     actor: { id: Uuid; isAdmin: boolean } | undefined,
     note: string,
+    meta?: ClientMeta,
   ): Promise<ClosedGrant> {
     const [exists] = await this.drizzle.db
-      .select({ status: promoGrant.status })
+      .select({ status: promoGrant.status, userId: promoGrant.userId })
       .from(promoGrant)
       .where(eq(promoGrant.id, grantId));
     if (!exists) {
-      await this.recordRefusal(grantId, actor, note, 'not_found');
+      await this.recordRefusal({ grantId, userId: null, actor, note, status: 'not_found', meta });
       throw new GrantNotFoundError(grantId);
     }
 
@@ -128,6 +134,7 @@ export class GrantLifecycleService {
         reason,
         ...(actor === undefined ? {} : { actor }),
         note,
+        ...(meta === undefined ? {} : { meta }),
       }),
     );
     if (!closed) {
@@ -138,7 +145,14 @@ export class GrantLifecycleService {
         .select({ status: promoGrant.status })
         .from(promoGrant)
         .where(eq(promoGrant.id, grantId));
-      await this.recordRefusal(grantId, actor, note, current?.status ?? exists.status);
+      await this.recordRefusal({
+        grantId,
+        userId: exists.userId,
+        actor,
+        note,
+        status: current?.status ?? exists.status,
+        meta,
+      });
       throw new GrantNotForfeitableError();
     }
     return closed;
@@ -148,12 +162,21 @@ export class GrantLifecycleService {
    * An attempt that took nothing is still an attempt on a money resource, and the record has to
    * tell a probe apart from a forfeit that landed.
    */
-  private async recordRefusal(
-    grantId: PromoGrant['id'],
-    actor: { id: Uuid; isAdmin: boolean } | undefined,
-    note: string,
-    status: string,
-  ): Promise<void> {
+  private async recordRefusal({
+    grantId,
+    userId,
+    actor,
+    note,
+    status,
+    meta,
+  }: {
+    grantId: PromoGrant['id'];
+    userId: Uuid | null;
+    actor: { id: Uuid; isAdmin: boolean } | undefined;
+    note: string;
+    status: string;
+    meta: ClientMeta | undefined;
+  }): Promise<void> {
     await this.audit.record({
       ...(actor === undefined
         ? { actorType: 'system' as const }
@@ -165,9 +188,10 @@ export class GrantLifecycleService {
       // forfeitures - or reading a grant's history in a dispute - would otherwise mix probes at
       // ids that do not exist in with the movements that destroyed real money.
       action: 'promo.bonus.forfeit_refused',
-      resourceType: 'promo_grant',
-      resourceId: grantId,
-      after: { status, note },
+      resourceType: 'user',
+      resourceId: userId,
+      after: { grantId, status, note },
+      ...meta,
     });
   }
 
@@ -184,6 +208,7 @@ export class GrantLifecycleService {
       reason?: BonusForfeitReason;
       actor?: { id: Uuid; isAdmin: boolean };
       note?: string;
+      meta?: ClientMeta;
     },
   ): Promise<ClosedGrant | null> {
     // The balance under the lock the update is about to take, so the amount recorded as
@@ -247,8 +272,8 @@ export class GrantLifecycleService {
             actorId: outcome.actor.id,
           }),
       action: outcome.action,
-      resourceType: 'promo_grant',
-      resourceId: grantId,
+      resourceType: 'user',
+      resourceId: claimed.userId,
       // From the locked read, not the update's RETURNING: Postgres returns the new row there, so
       // the audit row would have said the grant was already forfeited before it was forfeited.
       before: {
@@ -257,6 +282,7 @@ export class GrantLifecycleService {
         wageringProgress: locked.wageringProgress,
       },
       after: {
+        grantId,
         status: outcome.status,
         bonusBalance: ZERO,
         forfeitedAmount,
@@ -264,6 +290,7 @@ export class GrantLifecycleService {
         ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
         ...(outcome.note === undefined ? {} : { note: outcome.note }),
       },
+      ...outcome.meta,
     });
 
     return {
