@@ -310,6 +310,52 @@ describe('forfeiting a single grant by id', () => {
     );
   });
 
+  it('files the audit row under the player, with the grant id and the admin client meta', async () => {
+    const userId = randomUUID();
+    const grantId = await grant({ userId, amount: '40' });
+    const meta = { ip: '203.0.113.7', userAgent: 'backoffice-test' };
+
+    await lifecycle.forfeit(
+      grantId,
+      'admin',
+      { id: randomUUID(), isAdmin: true },
+      'manual takedown',
+      meta,
+    );
+
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'promo.bonus.forfeited',
+        resourceType: 'user',
+        resourceId: userId,
+        after: expect.objectContaining({ grantId, forfeitedAmount: '40.000000000000000000' }),
+        ...meta,
+      }),
+    );
+  });
+
+  it('files a refused forfeit of a closed grant under the player as well', async () => {
+    const userId = randomUUID();
+    const grantId = await grant({ userId });
+    await lifecycle.forfeit(grantId, 'admin', undefined, 'first takedown');
+    const meta = { ip: '203.0.113.7', userAgent: 'backoffice-test' };
+
+    await expect(
+      lifecycle.forfeit(grantId, 'admin', { id: randomUUID(), isAdmin: true }, 'again', meta),
+    ).rejects.toThrow();
+
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'promo.bonus.forfeit_refused',
+        resourceType: 'user',
+        resourceId: userId,
+        after: expect.objectContaining({ grantId, status: 'forfeited' }),
+        ...meta,
+      }),
+    );
+  });
+
   it('throws when the grant does not exist, recording the refusal with no actor', async () => {
     await expect(
       lifecycle.forfeit(randomUUID(), 'terms_breach', undefined, 'missed a required wagering day'),
