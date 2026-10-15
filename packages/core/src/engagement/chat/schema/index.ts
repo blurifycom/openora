@@ -81,7 +81,9 @@ export const chatMessage = pgTable(
     attachment: zodJsonb(ChatAttachmentSchema, 'chat_message.attachment')(),
     isDeleted: boolean().notNull().default(false),
     deletedAt: timestamp({ withTimezone: true }),
-    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp({ withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
   },
   (t) => [
     index('chat_msg_room_id_created_at_idx').on(t.roomId, t.createdAt),
