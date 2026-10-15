@@ -480,6 +480,41 @@ describe('OnRampService.checkout gates (real PG)', () => {
     expect(await db.drizzle.db.select().from(walletOnRampOrder)).toEqual([]);
   });
 
+  it('counts the open orders as used in a deposit limit refusal', async () => {
+    const checkDeposit = vi.fn(async () => ({
+      allowed: false as const,
+      limitType: 'deposit' as const,
+      period: 'day' as const,
+      limit: '100',
+      used: '10',
+      currency: 'EUR',
+    }));
+    const { service } = makeService({ rgLimits: mock<RgLimitsPort>({ checkDeposit }) });
+    const userId = randomUUID();
+    await db.drizzle.db.insert(walletOnRampOrder).values({
+      userId,
+      idempotencyKey: randomUUID(),
+      fiatAmount: '80',
+      fiatCurrency: 'EUR',
+      currency: 'USDT',
+      network: 'TRC20',
+      walletAddress: `T-${userId}`,
+      status: 'pending',
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    });
+
+    const refusal = service.checkout({
+      ...PURCHASE,
+      fiatAmount: '50',
+      userId,
+      idempotencyKey: randomUUID(),
+    });
+
+    await expect(refusal).rejects.toMatchObject({
+      data: { limit: '100', used: expect.stringMatching(/^90(\.0+)?$/), currency: 'EUR' },
+    });
+  });
+
   it('records the order against a server-issued address before the vendor opens it', async () => {
     const { service, adapter, audit } = makeService({
       geoCheck: geoAt(true, 'DE'),

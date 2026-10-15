@@ -653,7 +653,8 @@ export class OnRampService {
           ),
         ),
       );
-    const attempted = moneyAdd(fiatAmount, open?.total ?? '0');
+    const openTotal = open?.total ?? '0';
+    const attempted = moneyAdd(fiatAmount, openTotal);
     const decision = await this.rgLimits.checkDeposit(
       this.drizzle.db,
       userId,
@@ -661,7 +662,10 @@ export class OnRampService {
       fiatCurrency,
     );
     if (!decision.allowed) {
-      throw new RgLimitExceededError('deposit_limit_exceeded', decision);
+      throw new RgLimitExceededError('deposit_limit_exceeded', {
+        ...decision,
+        used: moneyAdd(decision.used, openTotal),
+      });
     }
   }
 }
