@@ -357,11 +357,17 @@ describe('forfeiting a single grant by id', () => {
   });
 
   it('throws when the grant does not exist, recording the refusal with no actor', async () => {
+    const grantId = randomUUID();
     await expect(
-      lifecycle.forfeit(randomUUID(), 'terms_breach', undefined, 'missed a required wagering day'),
+      lifecycle.forfeit(grantId, 'terms_breach', undefined, 'missed a required wagering day'),
     ).rejects.toThrow();
     expect(audit.record).toHaveBeenCalledWith(
-      expect.objectContaining({ actorType: 'system', action: 'promo.bonus.forfeit_refused' }),
+      expect.objectContaining({
+        actorType: 'system',
+        action: 'promo.bonus.forfeit_refused',
+        resourceType: 'promo_grant',
+        resourceId: grantId,
+      }),
     );
   });
 });

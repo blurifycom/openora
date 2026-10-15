@@ -188,8 +188,9 @@ export class GrantLifecycleService {
       // forfeitures - or reading a grant's history in a dispute - would otherwise mix probes at
       // ids that do not exist in with the movements that destroyed real money.
       action: 'promo.bonus.forfeit_refused',
-      resourceType: 'user',
-      resourceId: userId,
+      ...(userId === null
+        ? { resourceType: 'promo_grant', resourceId: grantId }
+        : { resourceType: 'user', resourceId: userId }),
       after: { grantId, status, note },
       ...meta,
     });
