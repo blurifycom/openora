@@ -162,7 +162,7 @@ export class OnRampService {
       walletAddress: address.address,
       walletTag: address.tag,
       country,
-      idempotencyKey,
+      idempotencyKey: `${userId}:${idempotencyKey}`,
     });
 
     await this.audit.record({

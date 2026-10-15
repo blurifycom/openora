@@ -90,7 +90,7 @@ export type OnRampAdapter = {
 
   /**
    * The vendor must dedupe a retry on `idempotencyKey` and return the original checkout rather
-   * than opening a second order. `walletAddress` is always one the platform issued to `userId`.
+   * than opening a second order. The key is already scoped to the player. `walletAddress` is always one the platform issued to `userId`.
    * Only the player's id goes to the vendor - never an email or a name.
    */
   createCheckout(input: {

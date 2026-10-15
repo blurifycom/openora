@@ -295,7 +295,7 @@ describe('OnRampService.checkout gates (real PG)', () => {
     expect(adapter.createCheckout).not.toHaveBeenCalled();
   });
 
-  it('opens the checkout to a server-issued address, passing the idempotency key through', async () => {
+  it('opens the checkout to a server-issued address, scoping the idempotency key to the player', async () => {
     const { service, adapter, audit } = makeService({ geoCheck: geoAt(true, 'DE') });
     const userId = randomUUID();
     const idempotencyKey = randomUUID();
@@ -317,7 +317,7 @@ describe('OnRampService.checkout gates (real PG)', () => {
         gatewayId: GATEWAY_ID,
         walletAddress: `T-${userId}`,
         country: 'DE',
-        idempotencyKey,
+        idempotencyKey: `${userId}:${idempotencyKey}`,
       }),
     );
     expect(audit.record).toHaveBeenCalledWith(
