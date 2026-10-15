@@ -1931,7 +1931,7 @@ export class ChatService {
       throttle,
       room,
     ).catch(async (err: unknown) => {
-      if (err instanceof ChatRoomNotMemberError) {
+      if (err instanceof ChatRoomNotMemberError || err instanceof ChatContextSendDeniedError) {
         await emitAccessRefused(this.drizzle.db, this.events, {
           actorId: userId,
           resource: 'chat.message',

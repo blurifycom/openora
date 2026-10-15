@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as z from 'zod';
-import { loadExtensions } from '@openora/core/server';
+import { and, eq } from 'drizzle-orm';
+import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { auditLog } from '@openora/core/audit/schema';
 import { CHAT_CONTEXT_ROOMS, ChatContextSendDeniedDataSchema } from '@openora/core/contracts';
 import { ChatMessageSchema } from '@openora/core/engagement/contracts/chat';
 import {
@@ -79,5 +81,37 @@ describe('chat: context room send policy', () => {
       data: { reason: 'context_send_denied', policyReason: 'recipient_privacy' },
     });
     expect(ChatMessageSchema.array().parse(await history.json())).toEqual([]);
+  });
+
+  it('audits a denied send as a refused access', async () => {
+    const member = await registerChatter('audited');
+    const room = await contextRoom(`${DENIED_CONTEXT_REF_PREFIX}${randomUUID()}`, member.userId);
+
+    const refused = await member.client.post(`/chat/rooms/${room.id}/messages`, { content: 'hi' });
+
+    expect(refused.status).toBe(403);
+    await vi.waitFor(
+      async () => {
+        const rows = await app.container
+          .get(DRIZZLE)
+          .db.select()
+          .from(auditLog)
+          .where(
+            and(
+              eq(auditLog.action, 'identity.user.unauthorized_access'),
+              eq(auditLog.actorId, member.playerId),
+            ),
+          );
+        expect(rows).toEqual([
+          expect.objectContaining({
+            actorType: 'player',
+            resourceType: 'chat.message',
+            resourceId: 'chat.message:send',
+            result: 'failure',
+          }),
+        ]);
+      },
+      { timeout: 10_000, interval: 100 },
+    );
   });
 });
