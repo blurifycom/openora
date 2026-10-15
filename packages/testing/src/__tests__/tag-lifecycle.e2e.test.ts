@@ -259,7 +259,8 @@ describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => 
     });
     expect(assignRes.status).toBe(200);
     expect(await activeTagKeys(admin, playerId)).toContain('multi_account');
-    await auditHasEntry(admin, playerId, 'tag.player.assigned');
+    // Written in the assignment's own transaction, so it is there once the request returns.
+    expect(await auditEntries(admin, playerId, 'tag.player.assigned')).toHaveLength(1);
 
     const removeRes = await admin.request(`/player/${playerId}/player-tag/multi_account`, {
       method: 'DELETE',
@@ -271,7 +272,9 @@ describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => 
     });
     expect(removeRes.status).toBe(200);
     expect(await activeTagKeys(admin, playerId)).not.toContain('multi_account');
-    await auditHasEntry(admin, playerId, 'tag.player.removed');
+    expect(await auditEntries(admin, playerId, 'tag.player.removed')).toHaveLength(1);
+    // The post-commit event carries auditRecorded, so the audit subscriber adds no second row.
+    expect(await auditEntries(admin, playerId, 'tag.player.assigned')).toHaveLength(1);
   });
 
   it('assigning multi_account twice returns 409 CONFLICT (TagAlreadyInUseError)', async () => {
