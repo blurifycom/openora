@@ -1222,6 +1222,7 @@ describe('ReconciliationService.resolveFinding', () => {
         period: 'daily' as const,
         limit: '0.5',
         used: '1.4',
+        currency: 'BTC',
       })),
     });
     const { reconciliation } = makeServices(listTransactionsReturning([]), {

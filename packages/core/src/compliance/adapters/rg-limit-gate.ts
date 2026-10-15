@@ -117,6 +117,7 @@ export class RgLimitGate implements RgLimitsPort {
           period,
           limit: row.amount,
           used: row.amount,
+          currency: null,
         };
       }
       if (!resolved || resolved.amount === null) {
@@ -131,6 +132,7 @@ export class RgLimitGate implements RgLimitsPort {
         period,
         limit,
         used: limit,
+        currency: rowCurrency,
       });
 
       let used: string;
@@ -165,6 +167,7 @@ export class RgLimitGate implements RgLimitsPort {
           period,
           limit,
           used: moneyCompare(used, '0') < 0 ? '0' : used,
+          currency: rowCurrency,
         };
       }
     }
