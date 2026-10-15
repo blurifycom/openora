@@ -650,6 +650,27 @@ describe('announcing a promotion', () => {
     ).toEqual({ [wagered]: '50.000000000000000000', [setByHand]: null });
   });
 
+  it('does not name a level-up bonus that was forfeited or that a move down lands back on', async () => {
+    const forfeited = await promoted('bronze', 'silver');
+    const forfeitedId = await owe(forfeited, 'silver', '50');
+    await db.drizzle.db
+      .update(promoRankLevelUp)
+      .set({ settledAt: NOW, outcome: 'restricted' })
+      .where(eq(promoRankLevelUp.id, forfeitedId));
+    const movedDown = await promoted('silver', 'bronze');
+    await owe(movedDown, 'bronze', '5');
+    await db.drizzle.db
+      .update(promoRankTier)
+      .set({ wagerThreshold: '1' })
+      .where(eq(promoRankTier.key, 'bronze'));
+
+    const announced = await service().announceRankChanges();
+
+    expect(
+      Object.fromEntries(announced.map((change) => [change.userId, change.levelUpBonus])),
+    ).toEqual({ [forfeited]: null, [movedDown]: null });
+  });
+
   // One bet can cross several thresholds; the player hears about the rank they landed on.
   it('announces a jump past several ranks once, naming the one landed on', async () => {
     const userId = await promoted(null, 'silver');
