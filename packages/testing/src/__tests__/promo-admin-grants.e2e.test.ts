@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { BONUS_GRANTS } from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
@@ -53,19 +53,15 @@ async function grantBonus(userId: string, amount: string) {
   return outcome.grantId;
 }
 
-const forfeitRows = (grantId: string) =>
+const auditRowsFor = (action: string, grantId: string) =>
   drizzle()
     .select()
     .from(auditLog)
-    .where(and(eq(auditLog.action, 'promo.bonus.forfeited'), eq(auditLog.resourceId, grantId)));
+    .where(and(eq(auditLog.action, action), sql`${auditLog.after}->>'grantId' = ${grantId}`));
 
-const refusalRows = (grantId: string) =>
-  drizzle()
-    .select()
-    .from(auditLog)
-    .where(
-      and(eq(auditLog.action, 'promo.bonus.forfeit_refused'), eq(auditLog.resourceId, grantId)),
-    );
+const forfeitRows = (grantId: string) => auditRowsFor('promo.bonus.forfeited', grantId);
+
+const refusalRows = (grantId: string) => auditRowsFor('promo.bonus.forfeit_refused', grantId);
 
 beforeAll(async () => {
   process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
@@ -153,8 +149,14 @@ describe('support forfeiting a bonus', () => {
     const grantId = await grantBonus(userId, '120');
 
     const body = await readJson(
-      await admin.post(`/backoffice/promo/grants/${grantId}/forfeit`, {
-        note: 'Charge-back investigation 4821',
+      await admin.request(`/backoffice/promo/grants/${grantId}/forfeit`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'user-agent': 'forfeit-e2e-agent',
+          'x-real-ip': '203.0.113.9',
+        },
+        body: JSON.stringify({ note: 'Charge-back investigation 4821' }),
       }),
     );
 
@@ -173,7 +175,13 @@ describe('support forfeiting a bonus', () => {
     });
     const audited = await forfeitRows(grantId);
     expect(audited).toHaveLength(1);
-    expect(audited[0]?.actorType).toBe('admin');
+    expect(audited[0]).toMatchObject({
+      actorType: 'admin',
+      resourceType: 'user',
+      resourceId: userId,
+      ip: '203.0.113.9',
+      userAgent: 'forfeit-e2e-agent',
+    });
     expect(JSON.stringify(audited[0]?.after)).toContain('Charge-back investigation 4821');
   });
 
@@ -222,7 +230,9 @@ describe('support forfeiting a bonus', () => {
 
     // A denial must not be filed as a forfeiture: counting forfeitures, or reading a grant's
     // history in a dispute, would otherwise mix probes in with movements that destroyed money.
-    expect(await refusalRows(missing)).toHaveLength(1);
+    const refusals = await refusalRows(missing);
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toMatchObject({ resourceType: 'promo_grant', resourceId: missing });
     expect(await forfeitRows(missing)).toHaveLength(0);
   });
 

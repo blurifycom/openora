@@ -279,10 +279,11 @@ describe('self-exclusion forfeiting every active grant', () => {
 
     await vi.waitFor(async () => {
       const grantRes = await admin.get(
-        `/audit/logs?resourceId=${grantId}&action=promo.bonus.forfeited`,
+        `/audit/logs?resourceId=${userId}&action=promo.bonus.forfeited`,
       );
       const grantBody = await readJson(grantRes);
       expect(grantBody.items).toHaveLength(1);
+      expect(grantBody.items[0].after).toMatchObject({ grantId });
       expect(grantBody.items[0].actorType).toBe('system');
       expect(grantBody.items[0].actorId).toBeNull();
     }, JOB_WAIT);
@@ -301,9 +302,9 @@ describe('a ban forfeiting every active grant', () => {
       const grant = await readJson(await client.get(`/promo/grants/${grantId}`));
       expect(grant).toMatchObject({ status: 'forfeited', forfeitReason: 'account_deactivated' });
       const audit = await readJson(
-        await admin.get(`/audit/logs?resourceId=${grantId}&action=promo.bonus.forfeited`),
+        await admin.get(`/audit/logs?resourceId=${userId}&action=promo.bonus.forfeited`),
       );
-      expect(audit.items[0]).toMatchObject({ actorType: 'admin', actorId });
+      expect(audit.items[0]).toMatchObject({ actorType: 'admin', actorId, after: { grantId } });
     }, JOB_WAIT);
   });
 });
