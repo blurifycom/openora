@@ -115,6 +115,8 @@ export class RankPayoutService {
    *
    * A promotion onto the rank every player starts on, and one for a player under a
    * responsible-gambling block that cannot be checked, is caught up without being announced.
+   * The level-up bonus is named only when one was recorded for the player on that rank, so a rank
+   * set by any other path than wagering does not promise one.
    */
   async announceRankChanges(): Promise<RankChanged[]> {
     if (!this.eligibility) {
@@ -135,13 +137,20 @@ export class RankPayoutService {
           tierName: promoRankTier.name,
           currency: promoRankTier.currency,
           rakebackPercent: promoRankTier.rakebackPercent,
-          levelUpBonus: promoRankTier.levelUpBonus,
+          levelUpBonus: promoRankLevelUp.amount,
           dailyBonus: promoRankTier.dailyBonus,
           weeklyBonus: promoRankTier.weeklyBonus,
           monthlyBonus: promoRankTier.monthlyBonus,
         })
         .from(promoPlayerRank)
         .innerJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
+        .leftJoin(
+          promoRankLevelUp,
+          and(
+            eq(promoRankLevelUp.userId, promoPlayerRank.userId),
+            eq(promoRankLevelUp.tierId, promoPlayerRank.tierId),
+          ),
+        )
         .where(
           and(
             gt(promoPlayerRank.userId, after),

@@ -634,6 +634,22 @@ describe('announcing a promotion', () => {
     expect(await service().announceRankChanges()).toEqual([]);
   });
 
+  it('names the level-up bonus only for a player it was recorded for on that rank', async () => {
+    await db.drizzle.db
+      .update(promoRankTier)
+      .set({ levelUpBonus: '50' })
+      .where(eq(promoRankTier.key, 'silver'));
+    const wagered = await promoted('bronze', 'silver');
+    await owe(wagered, 'silver', '50');
+    const setByHand = await promoted('bronze', 'silver');
+
+    const announced = await service().announceRankChanges();
+
+    expect(
+      Object.fromEntries(announced.map((change) => [change.userId, change.levelUpBonus])),
+    ).toEqual({ [wagered]: '50.000000000000000000', [setByHand]: null });
+  });
+
   // One bet can cross several thresholds; the player hears about the rank they landed on.
   it('announces a jump past several ranks once, naming the one landed on', async () => {
     const userId = await promoted(null, 'silver');
