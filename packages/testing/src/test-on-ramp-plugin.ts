@@ -3,12 +3,14 @@ import { moneyScaleBy, type CoreTokenCatalog, type Plugin } from '@openora/core/
 import {
   ON_RAMP_ADAPTER,
   ON_RAMP_WEBHOOK_VERIFIER,
-  OnRampStatusSchema,
+  OnRampWebhookEventSchema,
   type OnRampAdapter,
   type OnRampCheckout,
   type OnRampStatus,
 } from '@openora/core/contracts';
-import * as z from 'zod';
+
+/** How long a fake checkout takes payment. */
+export const TEST_ON_RAMP_CHECKOUT_TTL_MS = 30 * 60 * 1000;
 
 /** Units of crypto the fake vendor estimates per unit of fiat, whatever the pair. */
 export const TEST_ON_RAMP_RATE = '0.5';
@@ -33,19 +35,6 @@ const statuses = (holder[STATUS_STORE] ??= new Map<string, OnRampStatus>());
 export const setTestOnRampStatus = (externalId: string, status: OnRampStatus) => {
   statuses.set(externalId, status);
 };
-
-// The fake vendor's webhook body is the event itself.
-const WebhookBodySchema = z.object({
-  purchaseId: z.string().exactOptional(),
-  externalId: z.string().min(1),
-  status: OnRampStatusSchema,
-  walletAddress: z.string().min(1).exactOptional(),
-  walletTag: z.string().exactOptional(),
-  externalCustomerId: z.string().exactOptional(),
-  cryptoAmount: z.string().exactOptional(),
-  txHash: z.string().exactOptional(),
-  gatewayId: z.string().exactOptional(),
-});
 
 const parseJson = (rawBody: string): unknown => {
   try {
@@ -102,6 +91,7 @@ export default {
             const checkout = {
               externalId,
               checkoutUrl: `https://checkout.example.test/${externalId}`,
+              expiresAt: new Date(Date.now() + TEST_ON_RAMP_CHECKOUT_TTL_MS).toISOString(),
             };
             checkouts.set(idempotencyKey, checkout);
             return checkout;
@@ -109,8 +99,9 @@ export default {
           async getStatus(externalId) {
             return statuses.get(externalId) ?? 'pending';
           },
+          // The fake vendor's webhook body is the event itself.
           parseWebhook(rawBody) {
-            const parsed = WebhookBodySchema.safeParse(parseJson(rawBody));
+            const parsed = OnRampWebhookEventSchema.safeParse(parseJson(rawBody));
             return parsed.success ? parsed.data : null;
           },
         }) satisfies OnRampAdapter,

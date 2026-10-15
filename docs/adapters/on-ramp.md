@@ -23,11 +23,19 @@ route refuses and nothing else changes.
   block a checkout.
 - **Echo the purchase id.** `createCheckout` carries core's `purchaseId`. Send it back on every
   status update; core falls back to the vendor's `externalId` when it is missing.
+- **Return an https checkout URL and its expiry.** `createCheckout` answers the vendor's order id,
+  an https `checkoutUrl` and `expiresAt`, the ISO timestamp after which the vendor stops taking
+  payment on it. Core validates the answer; anything else, a plain-http URL included, fails the
+  order and the player gets the vendor-unavailable refusal.
 - **Dedupe on the idempotency key.** The checkout call carries one per purchase attempt, already
   scoped to the player. A retry with the same key returns the original order rather than opening a
   second one.
 - **Answer `getStatus` for an order you opened,** and `null` for one you do not know. Core asks
-  while an order is still open and the player is looking at it.
+  while an order is still open and the player is looking at it, at most once per order every ten
+  seconds when a cache is bound. An answer outside the status set is ignored.
+- **Parse a webhook into the event shape, or `null`.** Core validates the parsed event against
+  `OnRampWebhookEventSchema` and acknowledges, but ignores, one that fails it, so a malformed event
+  is never redelivered forever.
 - **Map assets both ways.** Core speaks the asset catalog's currency and network; the adapter
   translates them to the vendor's codes on the way out and back on the way in.
 - **Send the vendor nothing about the player but their id.** No email, no name. The vendor runs its
@@ -52,15 +60,22 @@ route refuses and nothing else changes.
    an asset the platform does not take deposits in, an estimate under the network's deposit
    minimum, and a purchase that would exceed the player's deposit limit. The limit is checked on
    the fiat amount plus the player's still-open orders in that fiat: processing orders of any age
-   and pending ones under 30 minutes old. Every on-ramp route has its own per-player throttle,
-   separate from wallet mutations.
+   and pending ones until their checkout expires. An order the vendor still reports pending past
+   its expiry, and a completed one whose coins are not credited yet, are not counted; the
+   `rg_limit_breach` finding filed when the deposit is credited covers them. The RG and geo gates
+   run before a retried key is replayed, and the limit, a database read, before the billed
+   estimate. Options, quote and checkout share one per-player throttle, separate from wallet
+   mutations; reading an order has its own.
 4. Core records a pending order against a deposit address issued to this player, then asks the
-   vendor for a checkout with that order's id. A failure marks the order failed. A retry under the
-   same idempotency key returns the original checkout.
+   vendor for a checkout with that order's id. A failure marks the order failed and is audited
+   with the error's class only. A retry under the same idempotency key returns the original
+   checkout.
 5. The player pays on the vendor's page. The order's status is readable by its owner only, and is
    refreshed from the vendor while it is still open.
-6. The vendor sends status updates; each change is applied to the order and audited. A
-   redelivery writes nothing.
+6. The vendor sends status updates; each change is applied to the order and audited. Status only
+   moves forward - pending to processing or a terminal status, processing to a terminal status or
+   refunded, completed to refunded - and anything else is logged and ignored. A redelivery writes
+   nothing, and a verifier that throws is answered like a bad signature.
 7. The coins land on-chain and the deposit path credits them.
 
 ## Binding a vendor

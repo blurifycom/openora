@@ -278,6 +278,8 @@ export type {
 export {
   ON_RAMP_ADAPTER,
   ON_RAMP_WEBHOOK_VERIFIER,
+  OnRampCheckoutResultSchema,
+  OnRampWebhookEventSchema,
   OnRampRefusedError,
   OnRampVendorUnavailableError,
 } from './on-ramp.js';

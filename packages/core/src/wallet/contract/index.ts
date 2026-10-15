@@ -561,6 +561,7 @@ export const OnRampOrderSchema = z.object({
   currency: WalletCurrencyCodeSchema,
   network: WalletNetworkSchema,
 });
+export type OnRampOrder = z.infer<typeof OnRampOrderSchema>;
 
 export const PaymentWebhookInputSchema = z.record(z.string(), z.unknown());
 export const PaymentWebhookOutputSchema = z.object({ ok: z.literal(true) });

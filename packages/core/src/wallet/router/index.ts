@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import {
   createEventStreamGenerator,
+  createLogger,
   getUserId,
   mapErrors,
   assertRateLimit,
@@ -152,6 +153,8 @@ export function createWalletBalanceStream(
  * own dependencies here, which as positional parameters git merges into a signature that
  * declares one twice without ever reporting a conflict.
  */
+const logger = createLogger('wallet-router');
+
 export type WalletRouterDeps = {
   wallet: WalletService;
   adminGuard: AdminGuard;
@@ -638,14 +641,19 @@ export function createWalletRouter({
 
       webhook: os.onRamp.webhook.handler(async ({ context }) => {
         await throttleWebhook(context);
-        // Uniform with the swap webhook: never confirm which vendor, if any, is bound.
+        // Uniform with the swap webhook: never confirm which vendor, if any, is bound. A verifier
+        // that throws has not verified anything, so it gets the same answer.
         const rawBody = context.rawBody;
-        if (
-          !onRamp ||
-          !onRampWebhook ||
-          rawBody === undefined ||
-          !(await onRampWebhook.verify(rawBody, context.request.headers))
-        ) {
+        const verified =
+          onRampWebhook !== undefined &&
+          rawBody !== undefined &&
+          (await Promise.resolve()
+            .then(() => onRampWebhook.verify(rawBody, context.request.headers))
+            .catch((err: unknown) => {
+              logger.warn({ err }, 'on-ramp webhook verifier threw - rejected');
+              return false;
+            }));
+        if (!onRamp || !onRampWebhook || !verified) {
           throw new ORPCError('UNAUTHORIZED', { message: 'Invalid on-ramp webhook signature' });
         }
         const event = onRampWebhook.parse(rawBody, context.request.headers);

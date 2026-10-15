@@ -7,7 +7,9 @@
  * `currency` and `network` are the platform's wallet asset ids (the asset catalog's pair); the
  * adapter maps them to the vendor's own codes. See docs/adapters/on-ramp.md for the binding guide.
  */
-import type { OnRampStatus } from '../schemas/wallet-tx.js';
+import * as z from 'zod';
+import { MoneyAmountSchema } from '../schemas/common.js';
+import { OnRampStatusSchema, type OnRampStatus } from '../schemas/wallet-tx.js';
 import { createToken, type Token } from './token.js';
 
 /** Amounts are decimal strings in `code`. `maxAmount` is absent when the vendor sets no ceiling. */
@@ -42,28 +44,37 @@ export type OnRampQuote = {
   expiresAt: string;
 };
 
-export type OnRampCheckout = {
-  externalId: string;
-  checkoutUrl: string;
-};
+/**
+ * `checkoutUrl` must be https: the client navigates to it. `expiresAt` is the ISO timestamp
+ * after which the vendor no longer takes payment on it; until then the order counts toward the
+ * player's deposit limit. Core validates the result and fails the order on anything else.
+ */
+export const OnRampCheckoutResultSchema = z.object({
+  externalId: z.string().min(1),
+  checkoutUrl: z.url({ protocol: /^https$/ }),
+  expiresAt: z.iso.datetime({ offset: true }),
+});
+export type OnRampCheckout = z.infer<typeof OnRampCheckoutResultSchema>;
 
 /**
  * `purchaseId` is the id core passed to `createCheckout`, echoed back by the vendor; core falls
  * back to `externalId` when it is absent. `walletAddress` (with `walletTag` on a memo chain) is
  * the address the order delivers to, and `externalCustomerId` the `userId` passed at checkout,
- * when the vendor echoes them. `gatewayId` is the payment provider the player chose.
+ * when the vendor echoes them. `gatewayId` is the payment provider the player chose. Core
+ * validates a parsed event against this schema and ignores one that fails it.
  */
-export type OnRampWebhookEvent = {
-  purchaseId?: string;
-  externalId: string;
-  status: OnRampStatus;
-  walletAddress?: string;
-  walletTag?: string;
-  externalCustomerId?: string;
-  cryptoAmount?: string;
-  txHash?: string;
-  gatewayId?: string;
-};
+export const OnRampWebhookEventSchema = z.object({
+  purchaseId: z.string().exactOptional(),
+  externalId: z.string().min(1),
+  status: OnRampStatusSchema,
+  walletAddress: z.string().min(1).exactOptional(),
+  walletTag: z.string().exactOptional(),
+  externalCustomerId: z.string().exactOptional(),
+  cryptoAmount: MoneyAmountSchema.exactOptional(),
+  txHash: z.string().exactOptional(),
+  gatewayId: z.string().exactOptional(),
+});
+export type OnRampWebhookEvent = z.infer<typeof OnRampWebhookEventSchema>;
 
 export type OnRampAdapter = {
   /** `country` is ISO 3166-1 alpha-2, or `null` when the platform could not resolve one. */
