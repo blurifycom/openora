@@ -780,6 +780,34 @@ describe('Context room system events (real PG)', () => {
     await vi.waitFor(() => expect(live.map((m) => m.id)).toEqual([write.message.id]));
   });
 
+  it('keeps post order in history for events written in one transaction', async () => {
+    const services = makeServices();
+    const memberId = randomUUID();
+    const ref = 'ctx:same-tx-order';
+    const { room } = await services.context.ensureRoom({
+      ref,
+      name: 'Context',
+      memberIds: [memberId],
+    });
+
+    const ids = await db.drizzle.db.transaction(async (tx) => {
+      const posted: string[] = [];
+      for (let step = 0; step < 20; step++) {
+        const { message } = await services.context.postSystemEvent({
+          ref,
+          code: 'item.step',
+          params: { step },
+          tx,
+        });
+        posted.push(message.id);
+      }
+      return posted;
+    });
+
+    const history = await services.chat.getRoomMessages({ roomId: room.id, viewerId: memberId });
+    expect(history.map((m) => m.id)).toEqual([...ids].reverse());
+  });
+
   it('rejects a malformed event code', async () => {
     const services = makeServices();
     const ref = 'ctx:bad-code';
