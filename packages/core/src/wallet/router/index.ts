@@ -16,6 +16,7 @@ import {
   SwapLimitExceededError,
   SwapRefusedError,
   OnRampRefusedError,
+  OnRampVendorUnavailableError,
   makeRateLimitKey,
   type AuditWritePort,
   type JobQueueAdapter,
@@ -75,6 +76,7 @@ import {
 import {
   type OnRampService,
   OnRampGeoBlockedError,
+  OnRampOrderNotFoundError,
   OnRampRestrictedError,
   OnRampUnavailableError,
 } from '../service/on-ramp.service.js';
@@ -236,7 +238,13 @@ export function createWalletRouter({
   // Every refusal a purchase can meet before the vendor opens an order.
   const onRampRefusals = {
     FORBIDDEN: [OnRampRestrictedError, OnRampGeoBlockedError],
-    CONFLICT: [OnRampUnavailableError, RgLimitExceededError, DepositAddressUnsupportedError],
+    CONFLICT: [
+      OnRampUnavailableError,
+      OnRampVendorUnavailableError,
+      RgLimitExceededError,
+      DepositAddressUnsupportedError,
+      IdempotencyKeyReuseError,
+    ],
     BAD_REQUEST: [OnRampRefusedError, UnsupportedNetworkError, DepositDisabledError],
   };
 
@@ -613,8 +621,18 @@ export function createWalletRouter({
           requireOnRamp().checkout({
             userId: getUserId(context),
             meta: context.clientMeta,
-            ...input,
+            fiatCurrency: input.fiatCurrency,
+            fiatAmount: input.fiatAmount,
+            currency: input.currency,
+            network: input.network,
+            idempotencyKey: input.idempotencyKey,
           }),
+        ),
+      ),
+
+      order: os.onRamp.order.handler(({ input, context }) =>
+        mapErrors({ NOT_FOUND: OnRampOrderNotFoundError, CONFLICT: OnRampUnavailableError }, () =>
+          requireOnRamp().getOrder(getUserId(context), input.purchaseId),
         ),
       ),
 

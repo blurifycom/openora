@@ -265,7 +265,6 @@ export {
 } from './swap.js';
 
 export type {
-  OnRampStatus,
   OnRampFiatOption,
   OnRampOptions,
   OnRampQuote,
@@ -276,7 +275,12 @@ export type {
   OnRampRefusalReason,
   OnRampRefusedData,
 } from './on-ramp.js';
-export { ON_RAMP_ADAPTER, ON_RAMP_WEBHOOK_VERIFIER, OnRampRefusedError } from './on-ramp.js';
+export {
+  ON_RAMP_ADAPTER,
+  ON_RAMP_WEBHOOK_VERIFIER,
+  OnRampRefusedError,
+  OnRampVendorUnavailableError,
+} from './on-ramp.js';
 
 export type { GeoIpAdapter } from './geo-ip.js';
 export { GEO_IP_ADAPTER, normalizeCountryCode } from './geo-ip.js';

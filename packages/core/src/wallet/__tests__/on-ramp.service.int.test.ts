@@ -2,22 +2,29 @@ import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
+import type * as z from 'zod';
+import { RedisRateLimiter } from '@openora/core/server';
 import {
+  makeRateLimitKey,
   queue,
-  OnRampRefusedError,
+  OnRampVendorUnavailableError,
+  RATE_LIMIT_KEYS,
   RgLimitExceededError,
   type GeoCheckCommands,
   type OnRampAdapter,
   type OnRampWebhookEvent,
   type PaymentAdapter,
   type PlayEligibilityPort,
+  type RateLimitKey,
+  type RateLimiterAdapter,
   type RgLimitsPort,
 } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import {
   mock,
   makeAdminGuard,
   makeAuditWriter,
+  makeCache,
   makeEventBus,
   makeIdentityReader,
   makeJobQueue,
@@ -26,6 +33,7 @@ import {
   NO_CLIENT_META,
   testContext,
 } from '../../testing/mock.js';
+import type { OnRampCheckoutInputSchema } from '../contract/index.js';
 import { createWalletRouter, type OnRampWebhookPort } from '../router/index.js';
 import type { ReconciliationService } from '../service/reconciliation.service.js';
 import { migrate } from '../migrate.js';
@@ -33,10 +41,12 @@ import {
   walletAsset,
   walletBalance,
   walletDepositAddress,
+  walletOnRampOrder,
   walletTransaction,
 } from '../schema/index.js';
 import {
   DepositDisabledError,
+  IdempotencyKeyReuseError,
   UnsupportedNetworkError,
   WalletService,
 } from '../service/wallet.service.js';
@@ -47,12 +57,12 @@ import {
 } from '../service/on-ramp.service.js';
 
 let db: TestDb;
+let redis: TestRedis;
 
-const GATEWAY_ID = 'gw-1';
 const SIGNATURE = 'good-signature';
 
 const OPTIONS = {
-  fiats: [{ code: 'EUR', minAmount: '20', maxAmount: '5000', paymentMethods: ['card'] }],
+  fiats: [{ code: 'EUR', minAmount: '20', maxAmount: '5000' }],
   assets: [
     { currency: 'USDT', network: 'TRC20' },
     { currency: 'USDC', network: 'ERC20' },
@@ -61,7 +71,7 @@ const OPTIONS = {
 };
 
 const QUOTE = {
-  gatewayId: GATEWAY_ID,
+  gatewayId: 'gw-1',
   gatewayName: 'Gateway One',
   fiatCurrency: 'EUR',
   fiatAmount: '100',
@@ -80,17 +90,17 @@ const PURCHASE = {
   fiatAmount: '100',
   currency: 'USDT',
   network: 'TRC20',
-  gatewayId: GATEWAY_ID,
 };
 
 function makeAdapter() {
   return {
     getOptions: vi.fn(async () => OPTIONS),
     getQuotes: vi.fn(async () => [QUOTE]),
-    createCheckout: vi.fn(async () => ({
-      externalId: 'order-1',
-      checkoutUrl: 'https://checkout.example.test/order-1',
-    })),
+    createCheckout: vi.fn(async () => {
+      const externalId = `order-${randomUUID()}`;
+      return { externalId, checkoutUrl: `https://checkout.example.test/${externalId}` };
+    }),
+    getStatus: vi.fn(async (): Promise<OnRampWebhookEvent['status'] | null> => 'pending'),
     parseWebhook: vi.fn(() => null),
   };
 }
@@ -101,12 +111,16 @@ function makeService({
   restricted = false,
   geoCheck,
   rgLimits,
+  limiter,
+  cache,
 }: {
   adapter?: ReturnType<typeof makeAdapter>;
   audit?: ReturnType<typeof makeAuditWriter>;
   restricted?: boolean;
   geoCheck?: GeoCheckCommands;
   rgLimits?: RgLimitsPort;
+  limiter?: RateLimiterAdapter<RateLimitKey>;
+  cache?: ReturnType<typeof makeCache>;
 } = {}) {
   const issueDepositAddress = vi.fn(async (userId: string) => ({ address: `T-${userId}` }));
   const wallet = new WalletService({
@@ -125,6 +139,8 @@ function makeService({
     playEligibility: mock<PlayEligibilityPort>({ isRestricted: vi.fn(async () => restricted) }),
     geoCheck,
     rgLimits,
+    limiter,
+    cache,
   });
   return { service, wallet, adapter, audit };
 }
@@ -132,6 +148,9 @@ function makeService({
 const geoAt = (allowed: boolean, countryCode: string | null): GeoCheckCommands => ({
   checkAccess: vi.fn(async () => ({ allowed, countryCode, redirectUrl: null })),
 });
+
+const allowAll = () =>
+  mock<RgLimitsPort>({ checkDeposit: vi.fn(async () => ({ allowed: true as const })) });
 
 function routerWith(
   { service, wallet }: { service?: OnRampService; wallet: WalletService },
@@ -151,6 +170,10 @@ function routerWith(
   });
 }
 
+type OnRampCheckoutInput = z.input<typeof OnRampCheckoutInputSchema>;
+
+const playerContext = (userId: string) => testContext({ auth: { userId } });
+
 // The fake vendor's wire format is the event itself, signed with a fixed header.
 const webhookPort: OnRampWebhookPort = {
   verify: (_rawBody, headers) => headers['x-signature'] === SIGNATURE,
@@ -163,17 +186,40 @@ const webhookContext = (event: OnRampWebhookEvent, signature?: string) =>
     rawBody: JSON.stringify(event),
   });
 
+async function orderRow(purchaseId: string) {
+  const [row] = await db.drizzle.db
+    .select()
+    .from(walletOnRampOrder)
+    .where(eq(walletOnRampOrder.id, purchaseId));
+  if (!row) {
+    throw new Error(`no on-ramp order ${purchaseId}`);
+  }
+  return row;
+}
+
+async function openOrder(service: OnRampService, userId = randomUUID()) {
+  const { purchaseId } = await service.checkout({
+    ...PURCHASE,
+    userId,
+    idempotencyKey: randomUUID(),
+  });
+  return orderRow(purchaseId);
+}
+
 beforeAll(async () => {
   db = await createTestDb([migrate]);
+  redis = await createTestRedis();
 });
 
 afterAll(async () => {
   await db.drop();
+  await redis.quit();
 });
 
 beforeEach(async () => {
+  await redis.flush();
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${walletDepositAddress}, ${walletAsset}, ${walletTransaction}, ${walletBalance} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${walletOnRampOrder}, ${walletDepositAddress}, ${walletAsset}, ${walletTransaction}, ${walletBalance} RESTART IDENTITY CASCADE`,
   );
   await db.drizzle.db.insert(walletAsset).values([
     {
@@ -202,15 +248,16 @@ describe('OnRampService.checkout gates (real PG)', () => {
     await expect(
       service.checkout({ ...PURCHASE, userId: randomUUID(), idempotencyKey: randomUUID() }),
     ).rejects.toBeInstanceOf(OnRampRestrictedError);
-    expect(adapter.getQuotes).not.toHaveBeenCalled();
+    expect(adapter.getOptions).not.toHaveBeenCalled();
     expect(adapter.createCheckout).not.toHaveBeenCalled();
   });
 
-  it('refuses a geo-blocked caller', async () => {
+  it('refuses a geo-blocked caller before the vendor is asked anything', async () => {
     const { service, adapter } = makeService({ geoCheck: geoAt(false, 'XX') });
     await expect(
       service.checkout({ ...PURCHASE, userId: randomUUID(), idempotencyKey: randomUUID() }),
     ).rejects.toBeInstanceOf(OnRampGeoBlockedError);
+    expect(adapter.getOptions).not.toHaveBeenCalled();
     expect(adapter.createCheckout).not.toHaveBeenCalled();
   });
 
@@ -231,7 +278,7 @@ describe('OnRampService.checkout gates (real PG)', () => {
   });
 
   it('refuses a fiat the vendor does not offer', async () => {
-    const { service } = makeService();
+    const { service, adapter } = makeService();
     await expect(
       service.checkout({
         ...PURCHASE,
@@ -240,6 +287,7 @@ describe('OnRampService.checkout gates (real PG)', () => {
         idempotencyKey: randomUUID(),
       }),
     ).rejects.toMatchObject({ data: { reason: 'fiat_unsupported' } });
+    expect(adapter.createCheckout).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -263,29 +311,13 @@ describe('OnRampService.checkout gates (real PG)', () => {
     },
   );
 
-  it('refuses a gateway the server-side re-quote does not return', async () => {
-    const { service, adapter } = makeService();
-    const refusal = service.checkout({
-      ...PURCHASE,
-      gatewayId: 'gw-unknown',
-      userId: randomUUID(),
-      idempotencyKey: randomUUID(),
-    });
-    await expect(refusal).rejects.toBeInstanceOf(OnRampRefusedError);
-    await expect(refusal).rejects.toMatchObject({ data: { reason: 'no_quote' } });
-    expect(adapter.createCheckout).not.toHaveBeenCalled();
-  });
-
-  it('refuses a quote that would deliver less than the network deposit minimum', async () => {
+  it('refuses an estimate that would deliver less than the network deposit minimum', async () => {
     const adapter = makeAdapter();
     adapter.getQuotes.mockResolvedValue([{ ...QUOTE, cryptoAmount: '0.5' }]);
     const { service } = makeService({ adapter });
-    const refusal = service.checkout({
-      ...PURCHASE,
-      userId: randomUUID(),
-      idempotencyKey: randomUUID(),
-    });
-    await expect(refusal).rejects.toMatchObject({
+    await expect(
+      service.checkout({ ...PURCHASE, userId: randomUUID(), idempotencyKey: randomUUID() }),
+    ).rejects.toMatchObject({
       data: {
         reason: 'below_deposit_minimum',
         currency: 'USDT',
@@ -296,67 +328,292 @@ describe('OnRampService.checkout gates (real PG)', () => {
     expect(adapter.createCheckout).not.toHaveBeenCalled();
   });
 
-  it('refuses a purchase over the deposit limit, checked on the quoted crypto amount', async () => {
+  it('still opens a checkout when the vendor has no estimate', async () => {
+    const adapter = makeAdapter();
+    adapter.getQuotes.mockResolvedValue([]);
+    const { service } = makeService({ adapter });
+    await expect(
+      service.checkout({ ...PURCHASE, userId: randomUUID(), idempotencyKey: randomUUID() }),
+    ).resolves.toMatchObject({ checkoutUrl: expect.stringMatching(/^https:\/\//) });
+    expect(adapter.createCheckout).toHaveBeenCalledOnce();
+  });
+
+  it('checks the deposit limit on the fiat amount plus the open orders in that fiat', async () => {
+    const rgLimits = allowAll();
+    const { service } = makeService({ rgLimits });
+    const userId = randomUUID();
+    const order = {
+      userId,
+      fiatCurrency: 'EUR',
+      currency: 'USDT',
+      network: 'TRC20',
+      walletAddress: `T-${userId}`,
+    };
+    const stale = new Date(Date.now() - 31 * 60 * 1000);
+    await db.drizzle.db.insert(walletOnRampOrder).values([
+      // Counted: processing at any age, pending inside the window.
+      {
+        ...order,
+        idempotencyKey: randomUUID(),
+        fiatAmount: '30',
+        status: 'processing',
+        createdAt: stale,
+      },
+      { ...order, idempotencyKey: randomUUID(), fiatAmount: '20', status: 'pending' },
+      // Not counted: an abandoned checkout, a finished order, another fiat, another player.
+      {
+        ...order,
+        idempotencyKey: randomUUID(),
+        fiatAmount: '1000',
+        status: 'pending',
+        createdAt: stale,
+      },
+      { ...order, idempotencyKey: randomUUID(), fiatAmount: '500', status: 'completed' },
+      {
+        ...order,
+        idempotencyKey: randomUUID(),
+        fiatAmount: '700',
+        fiatCurrency: 'GBP',
+        status: 'processing',
+      },
+      {
+        ...order,
+        userId: randomUUID(),
+        idempotencyKey: randomUUID(),
+        fiatAmount: '900',
+        status: 'processing',
+      },
+    ]);
+
+    await service.checkout({ ...PURCHASE, userId, idempotencyKey: randomUUID() });
+
+    expect(rgLimits.checkDeposit).toHaveBeenCalledWith(
+      expect.anything(),
+      userId,
+      expect.anything(),
+      'EUR',
+    );
+    const attempted = vi.mocked(rgLimits.checkDeposit).mock.calls[0]?.[2];
+    expect(Number(attempted)).toBe(150);
+  });
+
+  it('refuses a purchase over the deposit limit with the limit currency in the data', async () => {
     const checkDeposit = vi.fn(async () => ({
       allowed: false as const,
       limitType: 'deposit' as const,
       period: 'day' as const,
       limit: '50',
       used: '0',
+      currency: 'EUR',
     }));
-    const { service, adapter } = makeService({
-      rgLimits: mock<RgLimitsPort>({ checkDeposit }),
+    const { service, adapter } = makeService({ rgLimits: mock<RgLimitsPort>({ checkDeposit }) });
+    const refusal = service.checkout({
+      ...PURCHASE,
+      userId: randomUUID(),
+      idempotencyKey: randomUUID(),
     });
-    const userId = randomUUID();
-    await expect(
-      service.checkout({ ...PURCHASE, userId, idempotencyKey: randomUUID() }),
-    ).rejects.toBeInstanceOf(RgLimitExceededError);
-    expect(checkDeposit).toHaveBeenCalledWith(expect.anything(), userId, '98.5', 'USDT');
+    await expect(refusal).rejects.toBeInstanceOf(RgLimitExceededError);
+    await expect(refusal).rejects.toMatchObject({ data: { limit: '50', currency: 'EUR' } });
     expect(adapter.createCheckout).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(walletOnRampOrder)).toEqual([]);
   });
 
-  it('opens the checkout to a server-issued address, scoping the idempotency key to the player', async () => {
-    const { service, adapter, audit } = makeService({ geoCheck: geoAt(true, 'DE') });
+  it('records the order against a server-issued address before the vendor opens it', async () => {
+    const { service, adapter, audit } = makeService({
+      geoCheck: geoAt(true, 'DE'),
+      rgLimits: allowAll(),
+    });
     const userId = randomUUID();
     const idempotencyKey = randomUUID();
 
     const checkout = await service.checkout({ ...PURCHASE, userId, idempotencyKey });
 
-    expect(checkout).toEqual({
-      externalId: 'order-1',
-      checkoutUrl: 'https://checkout.example.test/order-1',
+    const row = await orderRow(checkout.purchaseId);
+    expect(row).toMatchObject({
+      userId,
+      status: 'pending',
+      walletAddress: `T-${userId}`,
+      fiatCurrency: 'EUR',
+      currency: 'USDT',
+      network: 'TRC20',
+      checkoutUrl: checkout.checkoutUrl,
     });
+    expect(row.externalId).toMatch(/^order-/);
     const [issued] = await db.drizzle.db
       .select()
       .from(walletDepositAddress)
       .where(eq(walletDepositAddress.userId, userId));
     expect(issued?.address).toBe(`T-${userId}`);
-    expect(adapter.createCheckout).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId,
-        gatewayId: GATEWAY_ID,
-        walletAddress: `T-${userId}`,
-        country: 'DE',
-        idempotencyKey: `${userId}:${idempotencyKey}`,
-      }),
-    );
+    expect(adapter.createCheckout).toHaveBeenCalledWith({
+      userId,
+      purchaseId: row.id,
+      fiatCurrency: 'EUR',
+      fiatAmount: '100',
+      currency: 'USDT',
+      network: 'TRC20',
+      walletAddress: `T-${userId}`,
+      walletTag: undefined,
+      country: 'DE',
+      idempotencyKey: `${userId}:${idempotencyKey}`,
+    });
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
         actorType: 'player',
         actorId: userId,
         action: 'wallet.on_ramp.checkout_created',
-        resourceId: 'order-1',
-        after: expect.objectContaining({ gatewayId: GATEWAY_ID, fiatAmount: '100', country: 'DE' }),
+        resourceId: row.id,
+        after: {
+          purchaseId: row.id,
+          externalId: row.externalId,
+          fiatAmount: '100',
+          fiatCurrency: 'EUR',
+          currency: 'USDT',
+          network: 'TRC20',
+          walletAddress: `T-${userId}`,
+          country: 'DE',
+          acknowledged: true,
+          idempotencyKey,
+        },
       }),
     );
   });
+
+  it('replays the original checkout for a retried key and refuses the key for another purchase', async () => {
+    const { service, adapter } = makeService();
+    const userId = randomUUID();
+    const idempotencyKey = randomUUID();
+
+    const first = await service.checkout({ ...PURCHASE, userId, idempotencyKey });
+    const retry = await service.checkout({ ...PURCHASE, userId, idempotencyKey });
+
+    expect(retry).toEqual(first);
+    expect(adapter.createCheckout).toHaveBeenCalledOnce();
+    await expect(
+      service.checkout({ ...PURCHASE, fiatAmount: '200', userId, idempotencyKey }),
+    ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
+  });
+
+  it('marks the order failed when the vendor cannot open it', async () => {
+    const adapter = makeAdapter();
+    adapter.createCheckout.mockRejectedValue(new OnRampVendorUnavailableError());
+    const { service, audit } = makeService({ adapter });
+    const userId = randomUUID();
+
+    await expect(
+      service.checkout({ ...PURCHASE, userId, idempotencyKey: randomUUID() }),
+    ).rejects.toBeInstanceOf(OnRampVendorUnavailableError);
+
+    const rows = await db.drizzle.db.select().from(walletOnRampOrder);
+    expect(rows).toMatchObject([{ userId, status: 'failed', externalId: null }]);
+    expect(audit.record).not.toHaveBeenCalled();
+  });
 });
 
-describe('OnRampService.options (real PG)', () => {
+describe('OnRampService.options and quote (real PG)', () => {
   it('offers only the vendor assets the platform takes deposits in', async () => {
     const { service } = makeService();
     const options = await service.options(randomUUID(), NO_CLIENT_META);
-    expect(options.assets).toEqual([{ currency: 'USDT', network: 'TRC20' }]);
+    expect(options).toEqual({
+      fiats: OPTIONS.fiats,
+      assets: [{ currency: 'USDT', network: 'TRC20' }],
+    });
+  });
+
+  it('asks the vendor for its options once per country while cached', async () => {
+    const { service, adapter } = makeService({ cache: makeCache() });
+    await service.options(randomUUID(), NO_CLIENT_META);
+    await service.options(randomUUID(), NO_CLIENT_META);
+    expect(adapter.getOptions).toHaveBeenCalledOnce();
+  });
+
+  it('answers an empty list when the vendor has no estimate', async () => {
+    const adapter = makeAdapter();
+    adapter.getQuotes.mockResolvedValue([]);
+    const { service } = makeService({ adapter });
+    await expect(service.quote({ ...PURCHASE, userId: randomUUID() })).resolves.toEqual([]);
+  });
+
+  it('throttles on its own key, apart from wallet mutations', async () => {
+    const limiter = new RedisRateLimiter(redis.client);
+    const { service } = makeService({ limiter });
+    const userId = randomUUID();
+    const mutationKey = makeRateLimitKey(RATE_LIMIT_KEYS.WALLET_MUTATION, userId);
+    for (let i = 0; i < 30; i++) {
+      await limiter.consume(mutationKey, { limit: 30, windowMs: 60_000 });
+    }
+    expect((await limiter.consume(mutationKey, { limit: 30, windowMs: 60_000 })).allowed).toBe(
+      false,
+    );
+
+    // An exhausted wallet-mutation budget does not block buying crypto, and vice versa.
+    for (let i = 0; i < 30; i++) {
+      await service.options(userId, NO_CLIENT_META);
+    }
+    await expect(service.options(userId, NO_CLIENT_META)).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    await expect(service.quote({ ...PURCHASE, userId })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(
+      (
+        await limiter.consume(makeRateLimitKey(RATE_LIMIT_KEYS.ON_RAMP, randomUUID()), {
+          limit: 30,
+          windowMs: 60_000,
+        })
+      ).allowed,
+    ).toBe(true);
+  });
+});
+
+describe('OnRampService.getOrder (real PG)', () => {
+  it('refreshes an open order from the vendor and audits the move', async () => {
+    const { service, adapter, audit } = makeService();
+    const row = await openOrder(service);
+    adapter.getStatus.mockResolvedValue('processing');
+
+    await expect(service.getOrder(row.userId, row.id)).resolves.toEqual({
+      purchaseId: row.id,
+      status: 'processing',
+      fiatAmount: row.fiatAmount,
+      fiatCurrency: 'EUR',
+      currency: 'USDT',
+      network: 'TRC20',
+    });
+    expect(adapter.getStatus).toHaveBeenCalledWith(row.externalId);
+    expect((await orderRow(row.id)).status).toBe('processing');
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.on_ramp.status_changed',
+        resourceId: row.id,
+        after: expect.objectContaining({ userId: row.userId, from: 'pending', to: 'processing' }),
+      }),
+    );
+  });
+
+  it('does not ask the vendor again once the order is terminal', async () => {
+    const { service, adapter } = makeService();
+    const row = await openOrder(service);
+    adapter.getStatus.mockResolvedValue('completed');
+    await service.getOrder(row.userId, row.id);
+    adapter.getStatus.mockClear();
+
+    await expect(service.getOrder(row.userId, row.id)).resolves.toMatchObject({
+      status: 'completed',
+    });
+    expect(adapter.getStatus).not.toHaveBeenCalled();
+  });
+
+  it('answers the stored status when the vendor is down', async () => {
+    const { service, adapter, audit } = makeService();
+    const row = await openOrder(service);
+    adapter.getStatus.mockRejectedValue(new OnRampVendorUnavailableError());
+
+    await expect(service.getOrder(row.userId, row.id)).resolves.toMatchObject({
+      status: 'pending',
+    });
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
   });
 });
 
@@ -366,8 +623,8 @@ describe('wallet.onRamp routes', () => {
     const router = routerWith({ service, wallet });
     const refusal = call(
       router.onRamp.checkout,
-      { ...PURCHASE, idempotencyKey: randomUUID() },
-      { context: testContext({ auth: { userId: randomUUID() } }) },
+      { ...PURCHASE, idempotencyKey: randomUUID(), acknowledged: true },
+      { context: playerContext(randomUUID()) },
     );
     await expect(refusal).rejects.toBeInstanceOf(ORPCError);
     await expect(refusal).rejects.toMatchObject({
@@ -376,40 +633,99 @@ describe('wallet.onRamp routes', () => {
     });
   });
 
+  it.each([
+    ['missing', {}],
+    ['false', { acknowledged: false }],
+  ])('rejects a checkout with acknowledged %s before the service runs', async (_label, ack) => {
+    const { service, wallet, adapter } = makeService();
+    const router = routerWith({ service, wallet });
+    await expect(
+      call(
+        router.onRamp.checkout,
+        mock<OnRampCheckoutInput>({ ...PURCHASE, idempotencyKey: randomUUID(), ...ack }),
+        { context: playerContext(randomUUID()) },
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(adapter.getOptions).not.toHaveBeenCalled();
+  });
+
   it('answers CONFLICT when no on-ramp vendor is bound', async () => {
     const { wallet } = makeService();
     const router = routerWith({ wallet });
     await expect(
-      call(router.onRamp.options, undefined, {
-        context: testContext({ auth: { userId: randomUUID() } }),
-      }),
-    ).rejects.toMatchObject({ code: 'CONFLICT' });
+      call(router.onRamp.options, undefined, { context: playerContext(randomUUID()) }),
+    ).rejects.toMatchObject({ code: 'CONFLICT', message: 'buying crypto is unavailable' });
+  });
+
+  it('answers a vendor outage like an unbound vendor, without the vendor message', async () => {
+    const adapter = makeAdapter();
+    adapter.getQuotes.mockRejectedValue(
+      new OnRampVendorUnavailableError({ cause: new Error('upstream 503: internal detail') }),
+    );
+    const { service, wallet } = makeService({ adapter });
+    const router = routerWith({ service, wallet });
+    await expect(
+      call(router.onRamp.quote, PURCHASE, { context: playerContext(randomUUID()) }),
+    ).rejects.toMatchObject({ code: 'CONFLICT', message: 'buying crypto is unavailable' });
+  });
+
+  it("answers another player's order NOT_FOUND, like an unknown one", async () => {
+    const { service, wallet, adapter } = makeService();
+    const row = await openOrder(service);
+    const router = routerWith({ service, wallet });
+
+    await expect(
+      call(router.onRamp.order, { purchaseId: row.id }, { context: playerContext(row.userId) }),
+    ).resolves.toMatchObject({ purchaseId: row.id, status: 'pending' });
+    adapter.getStatus.mockClear();
+    await expect(
+      call(router.onRamp.order, { purchaseId: row.id }, { context: playerContext(randomUUID()) }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      call(
+        router.onRamp.order,
+        { purchaseId: randomUUID() },
+        { context: playerContext(row.userId) },
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(adapter.getStatus).not.toHaveBeenCalled();
   });
 });
 
 describe('POST /wallet/on-ramp/webhook', () => {
-  const event = (over: Partial<OnRampWebhookEvent> = {}): OnRampWebhookEvent => ({
-    externalId: 'order-1',
+  const eventFor = (
+    row: Awaited<ReturnType<typeof orderRow>>,
+    over: Partial<OnRampWebhookEvent> = {},
+  ): OnRampWebhookEvent => ({
+    purchaseId: row.id,
+    externalId: row.externalId ?? '',
     status: 'completed',
-    walletAddress: 'T-unknown',
+    walletAddress: row.walletAddress,
+    externalCustomerId: row.userId,
     cryptoAmount: '98.5',
+    txHash: '0xabc',
+    gatewayId: 'gw-1',
     ...over,
   });
 
-  async function issuedAddressFor(wallet: WalletService, userId: string) {
-    const { address } = await wallet.getOrCreateDepositAddress(userId, 'USDT', 'TRC20');
-    return address;
-  }
+  const deliver = (
+    router: ReturnType<typeof routerWith>,
+    event: OnRampWebhookEvent,
+    signature: string | undefined = SIGNATURE,
+  ) => call(router.onRamp.webhook, {}, { context: webhookContext(event, signature) });
 
   it.each([
     ['a missing signature', undefined],
     ['a bad signature', 'forged'],
   ])('rejects %s with UNAUTHORIZED', async (_label, signature) => {
     const { service, wallet, audit } = makeService();
+    const row = await openOrder(service);
+    audit.record.mockClear();
     const router = routerWith({ service, wallet }, webhookPort);
     await expect(
-      call(router.onRamp.webhook, {}, { context: webhookContext(event(), signature) }),
+      call(router.onRamp.webhook, {}, { context: webhookContext(eventFor(row), signature) }),
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect((await orderRow(row.id)).status).toBe('pending');
     expect(audit.record).not.toHaveBeenCalled();
   });
 
@@ -417,53 +733,101 @@ describe('POST /wallet/on-ramp/webhook', () => {
     const { wallet } = makeService();
     const router = routerWith({ wallet });
     await expect(
-      call(router.onRamp.webhook, {}, { context: webhookContext(event(), SIGNATURE) }),
+      deliver(router, { externalId: 'order-x', status: 'completed' }),
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
-  it('acknowledges but ignores an address the platform never issued', async () => {
+  it('moves the order and audits the transition, crediting nothing', async () => {
     const { service, wallet, audit } = makeService();
-    const router = routerWith({ service, wallet }, webhookPort);
-    await expect(
-      call(router.onRamp.webhook, {}, { context: webhookContext(event(), SIGNATURE) }),
-    ).resolves.toEqual({ ok: true });
-    expect(audit.record).not.toHaveBeenCalled();
-  });
-
-  it('ignores an event whose customer is not the address owner', async () => {
-    const { service, wallet, audit } = makeService();
-    const walletAddress = await issuedAddressFor(wallet, randomUUID());
-    const router = routerWith({ service, wallet }, webhookPort);
-    await call(
-      router.onRamp.webhook,
-      {},
-      { context: webhookContext(event({ walletAddress, customerId: randomUUID() }), SIGNATURE) },
-    );
-    expect(audit.record).not.toHaveBeenCalled();
-  });
-
-  it('records a completed order for its owner and moves no balance', async () => {
-    const { service, wallet, audit } = makeService();
-    const userId = randomUUID();
-    const walletAddress = await issuedAddressFor(wallet, userId);
+    const row = await openOrder(service);
     const router = routerWith({ service, wallet }, webhookPort);
 
-    await expect(
-      call(
-        router.onRamp.webhook,
-        {},
-        { context: webhookContext(event({ walletAddress, customerId: userId }), SIGNATURE) },
-      ),
-    ).resolves.toEqual({ ok: true });
+    await expect(deliver(router, eventFor(row))).resolves.toEqual({ ok: true });
 
-    expect(audit.record).toHaveBeenCalledWith(
+    expect(await orderRow(row.id)).toMatchObject({
+      status: 'completed',
+      txHash: '0xabc',
+      gatewayId: 'gw-1',
+      cryptoAmount: '98.500000000000000000',
+    });
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
         action: 'wallet.on_ramp.status_changed',
-        resourceId: 'order-1',
-        after: expect.objectContaining({ userId, status: 'completed' }),
+        resourceId: row.id,
+        after: {
+          userId: row.userId,
+          from: 'pending',
+          to: 'completed',
+          txHash: '0xabc',
+          gatewayId: 'gw-1',
+        },
       }),
     );
     expect(await db.drizzle.db.select().from(walletTransaction)).toEqual([]);
     expect(await db.drizzle.db.select().from(walletBalance)).toEqual([]);
+  });
+
+  it('finds the order by its external id when the vendor does not echo the purchase id', async () => {
+    const { service, wallet } = makeService();
+    const row = await openOrder(service);
+    const router = routerWith({ service, wallet }, webhookPort);
+
+    await deliver(router, eventFor(row, { purchaseId: undefined, status: 'processing' }));
+
+    expect((await orderRow(row.id)).status).toBe('processing');
+  });
+
+  it('writes nothing on a redelivery or an out-of-order open status', async () => {
+    const { service, wallet, audit } = makeService();
+    const row = await openOrder(service);
+    const router = routerWith({ service, wallet }, webhookPort);
+
+    await deliver(router, eventFor(row));
+    await deliver(router, eventFor(row));
+    await deliver(router, eventFor(row, { status: 'processing' }));
+
+    expect(audit.recordInTransaction).toHaveBeenCalledOnce();
+    expect((await orderRow(row.id)).status).toBe('completed');
+  });
+
+  it.each([
+    ['wallet', { walletAddress: 'T-somebody-else' }],
+    ['wallet', { walletTag: 'memo-1' }],
+    ['customer', { externalCustomerId: randomUUID() }],
+  ])('ignores an event whose %s disagrees with the order', async (mismatch, over) => {
+    const { service, wallet, audit } = makeService();
+    const row = await openOrder(service);
+    const router = routerWith({ service, wallet }, webhookPort);
+
+    await expect(deliver(router, eventFor(row, over))).resolves.toEqual({ ok: true });
+
+    expect((await orderRow(row.id)).status).toBe('pending');
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'wallet.on_ramp.webhook_mismatch',
+        resourceId: row.id,
+        after: expect.objectContaining({ mismatch }),
+      }),
+    );
+  });
+
+  it('acknowledges but ignores an event for an order the platform never opened', async () => {
+    const { service, wallet, audit } = makeService();
+    const router = routerWith({ service, wallet }, webhookPort);
+
+    await expect(
+      deliver(router, {
+        purchaseId: randomUUID(),
+        externalId: 'order-unknown',
+        status: 'completed',
+        walletAddress: 'T-unknown',
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(walletOnRampOrder)).toEqual([]);
   });
 });

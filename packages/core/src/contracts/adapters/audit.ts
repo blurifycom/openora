@@ -58,6 +58,7 @@ export type DirectAuditAction =
   | 'wallet.swap.fill_rejected'
   | 'wallet.on_ramp.checkout_created'
   | 'wallet.on_ramp.status_changed'
+  | 'wallet.on_ramp.webhook_mismatch'
   | 'wallet.wallet_asset.created'
   | 'wallet.wallet_asset.updated'
   | 'wallet.wallet_asset.deleted'

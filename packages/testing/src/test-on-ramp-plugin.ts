@@ -3,17 +3,19 @@ import { moneyScaleBy, type CoreTokenCatalog, type Plugin } from '@openora/core/
 import {
   ON_RAMP_ADAPTER,
   ON_RAMP_WEBHOOK_VERIFIER,
+  OnRampStatusSchema,
   type OnRampAdapter,
   type OnRampCheckout,
+  type OnRampStatus,
 } from '@openora/core/contracts';
 import * as z from 'zod';
 
-/** Units of crypto the fake vendor delivers per unit of fiat, whatever the pair. */
+/** Units of crypto the fake vendor estimates per unit of fiat, whatever the pair. */
 export const TEST_ON_RAMP_RATE = '0.5';
 
 export const TEST_ON_RAMP_GATEWAY_ID = 'test-gateway';
 
-export const TEST_ON_RAMP_WEBHOOK_SECRET = 'test-on-ramp-webhook-secret';
+export const TEST_ON_RAMP_WEBHOOK_SECRET = '[redacted]';
 
 export const TEST_ON_RAMP_SIGNATURE_HEADER = 'x-test-on-ramp-signature';
 
@@ -21,21 +23,28 @@ export const TEST_ON_RAMP_SIGNATURE_HEADER = 'x-test-on-ramp-signature';
 export const signTestOnRampWebhook = (rawBody: string) =>
   createHmac('sha256', TEST_ON_RAMP_WEBHOOK_SECRET).update(rawBody).digest('hex');
 
-// The fake vendor's webhook body is the event itself, every field always sent.
+// On the process, not the module: the app loads this file as a separate module instance from
+// the test that steers it.
+const STATUS_STORE = Symbol.for('openora.testing.on-ramp-statuses');
+const holder = globalThis as typeof globalThis & { [STATUS_STORE]?: Map<string, OnRampStatus> };
+const statuses = (holder[STATUS_STORE] ??= new Map<string, OnRampStatus>());
+
+/** What the fake vendor answers `getStatus(externalId)` with from now on. Default `pending`. */
+export const setTestOnRampStatus = (externalId: string, status: OnRampStatus) => {
+  statuses.set(externalId, status);
+};
+
+// The fake vendor's webhook body is the event itself.
 const WebhookBodySchema = z.object({
+  purchaseId: z.string().exactOptional(),
   externalId: z.string().min(1),
-  status: z.enum([
-    'pending',
-    'processing',
-    'completed',
-    'failed',
-    'cancelled',
-    'expired',
-    'refunded',
-  ]),
-  walletAddress: z.string().min(1),
-  cryptoAmount: z.string(),
-  customerId: z.string(),
+  status: OnRampStatusSchema,
+  walletAddress: z.string().min(1).exactOptional(),
+  walletTag: z.string().exactOptional(),
+  externalCustomerId: z.string().exactOptional(),
+  cryptoAmount: z.string().exactOptional(),
+  txHash: z.string().exactOptional(),
+  gatewayId: z.string().exactOptional(),
 });
 
 const parseJson = (rawBody: string): unknown => {
@@ -47,9 +56,10 @@ const parseJson = (rawBody: string): unknown => {
 };
 
 /**
- * Binds a fake on-ramp vendor: EUR 20-5000 by card into USDT on TRC20, one gateway pricing at
- * `TEST_ON_RAMP_RATE`, a checkout deduped on its idempotency key, and an HMAC webhook signed
- * with `TEST_ON_RAMP_WEBHOOK_SECRET`. Opt-in only - pass it in `config.plugins`.
+ * Binds a fake hosted-checkout on-ramp vendor: EUR 20-5000 into USDT on TRC20, one gateway
+ * estimating at `TEST_ON_RAMP_RATE`, a checkout deduped on its idempotency key, a status set by
+ * `setTestOnRampStatus`, and an HMAC webhook signed with `TEST_ON_RAMP_WEBHOOK_SECRET`. Opt-in
+ * only - pass it in `config.plugins`.
  */
 export default {
   id: 'testing-on-ramp',
@@ -62,9 +72,7 @@ export default {
         ({
           async getOptions() {
             return {
-              fiats: [
-                { code: 'EUR', minAmount: '20', maxAmount: '5000', paymentMethods: ['card'] },
-              ],
+              fiats: [{ code: 'EUR', minAmount: '20', maxAmount: '5000' }],
               assets: [{ currency: 'USDT', network: 'TRC20' }],
             };
           },
@@ -97,6 +105,9 @@ export default {
             };
             checkouts.set(idempotencyKey, checkout);
             return checkout;
+          },
+          async getStatus(externalId) {
+            return statuses.get(externalId) ?? 'pending';
           },
           parseWebhook(rawBody) {
             const parsed = WebhookBodySchema.safeParse(parseJson(rawBody));

@@ -1,29 +1,20 @@
 /**
  * Bind a concrete `OnRampAdapter` to `ON_RAMP_ADAPTER` in an overlay; core never binds one. The
- * vendor sells crypto for fiat and delivers it on-chain to the player's own deposit address, so
- * nothing here moves a balance: the existing deposit path credits the coins when they land.
+ * vendor sells crypto for fiat on its own hosted checkout - the player picks the payment gateway
+ * and method there - and delivers on-chain to the player's own deposit address, so nothing here
+ * moves a balance: the existing deposit path credits the coins when they land.
  *
  * `currency` and `network` are the platform's wallet asset ids (the asset catalog's pair); the
  * adapter maps them to the vendor's own codes. See docs/adapters/on-ramp.md for the binding guide.
  */
+import type { OnRampStatus } from '../schemas/wallet-tx.js';
 import { createToken, type Token } from './token.js';
-
-/** `pending` and `processing` cover every non-terminal vendor status. */
-export type OnRampStatus =
-  | 'pending'
-  | 'processing'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | 'expired'
-  | 'refunded';
 
 /** Amounts are decimal strings in `code`. `maxAmount` is absent when the vendor sets no ceiling. */
 export type OnRampFiatOption = {
   code: string;
   minAmount: string;
   maxAmount?: string;
-  paymentMethods: string[];
 };
 
 export type OnRampOptions = {
@@ -32,9 +23,10 @@ export type OnRampOptions = {
 };
 
 /**
- * `cryptoAmount` is what reaches the deposit address, net of `fee`, and is the only binding
- * number - `rate` is never multiplied to reach it. Amounts are decimal strings. `expiresAt` is a
- * vendor timestamp. `gatewayId` names the payment provider behind the vendor that priced it.
+ * An estimate only: the price is fixed on the vendor's checkout page, not here. `cryptoAmount`
+ * is what would reach the deposit address, net of `fee`. Amounts are decimal strings.
+ * `expiresAt` is a vendor timestamp. `gatewayId` names the payment provider behind the vendor
+ * that priced it.
  */
 export type OnRampQuote = {
   gatewayId: string;
@@ -47,7 +39,6 @@ export type OnRampQuote = {
   fee: string;
   feeCurrency: string;
   rate: string;
-  paymentMethod?: string;
   expiresAt: string;
 };
 
@@ -57,55 +48,59 @@ export type OnRampCheckout = {
 };
 
 /**
- * `walletAddress` (with `walletTag` on a memo chain) is the deposit address the order delivers
- * to. `customerId`, when the vendor echoes it, is the `userId` passed at checkout.
+ * `purchaseId` is the id core passed to `createCheckout`, echoed back by the vendor; core falls
+ * back to `externalId` when it is absent. `walletAddress` (with `walletTag` on a memo chain) is
+ * the address the order delivers to, and `externalCustomerId` the `userId` passed at checkout,
+ * when the vendor echoes them. `gatewayId` is the payment provider the player chose.
  */
 export type OnRampWebhookEvent = {
+  purchaseId?: string;
   externalId: string;
   status: OnRampStatus;
-  walletAddress: string;
+  walletAddress?: string;
   walletTag?: string;
-  currency?: string;
-  network?: string;
-  fiatCurrency?: string;
-  fiatAmount?: string;
+  externalCustomerId?: string;
   cryptoAmount?: string;
-  customerId?: string;
+  txHash?: string;
+  gatewayId?: string;
 };
 
 export type OnRampAdapter = {
   /** `country` is ISO 3166-1 alpha-2, or `null` when the platform could not resolve one. */
   getOptions(input: { country: string | null }): Promise<OnRampOptions>;
 
-  /** Ranked best first. An empty list means no gateway will sell this pair for this amount. */
+  /** Estimates, ranked best first. May be empty: the checkout page still prices the order. */
   getQuotes(input: {
     userId: string;
     fiatCurrency: string;
     fiatAmount: string;
     currency: string;
     network: string;
-    paymentMethod?: string;
     country: string | null;
   }): Promise<OnRampQuote[]>;
 
   /**
+   * Opens a hosted checkout. `purchaseId` is core's order id; the vendor echoes it on webhooks.
    * The vendor must dedupe a retry on `idempotencyKey` and return the original checkout rather
-   * than opening a second order. The key is already scoped to the player. `walletAddress` is always one the platform issued to `userId`.
-   * Only the player's id goes to the vendor - never an email or a name.
+   * than opening a second order; the key is already scoped to the player. `walletAddress` is
+   * always one the platform issued to `userId`. Only the player's id goes to the vendor - never
+   * an email or a name.
    */
   createCheckout(input: {
     userId: string;
-    gatewayId: string;
+    purchaseId: string;
     fiatCurrency: string;
     fiatAmount: string;
     currency: string;
     network: string;
-    paymentMethod?: string;
     walletAddress: string;
     walletTag?: string;
     country: string | null;
     idempotencyKey: string;
   }): Promise<OnRampCheckout>;
+
+  /** The order's current status, or `null` when the vendor does not know `externalId`. */
+  getStatus(externalId: string): Promise<OnRampStatus | null>;
 
   /** Returns `null` when the body is not an order status update. Runs only after verification. */
   parseWebhook(
@@ -120,26 +115,37 @@ export type OnRampRefusalReason =
   | 'fiat_unsupported'
   | 'below_minimum'
   | 'above_maximum'
-  | 'below_deposit_minimum'
-  | 'no_quote';
+  | 'below_deposit_minimum';
 
 export type OnRampRefusedData =
   | { reason: 'below_minimum'; fiatCurrency: string; minAmount: string }
   | { reason: 'above_maximum'; fiatCurrency: string; maxAmount: string }
   | { reason: 'below_deposit_minimum'; currency: string; network: string; minDeposit: string }
-  | { reason: 'fiat_unsupported' | 'no_quote' };
+  | { reason: 'fiat_unsupported' };
 
 /**
- * A purchase the vendor will not take as asked. The router answers BAD_REQUEST with `data`;
- * an adapter may throw it too, eg from `createCheckout` when the gateway withdrew its quote.
+ * A purchase the vendor will not take as asked. The router answers BAD_REQUEST with `data`.
+ * The message is built from `data` alone, so nothing a vendor said reaches a client.
  */
 export class OnRampRefusedError extends Error {
   readonly data: OnRampRefusedData;
 
-  constructor(data: OnRampRefusedData, message: string) {
-    super(message);
+  constructor(data: OnRampRefusedData) {
+    super(`on-ramp purchase refused: ${data.reason}`);
     this.name = 'OnRampRefusedError';
     this.data = data;
+  }
+}
+
+/**
+ * Thrown by an adapter when the vendor times out, rate-limits or answers 5xx. The router answers
+ * the same CONFLICT as an unbound vendor, with a fixed message; pass the vendor's error as
+ * `cause` for the logs, never as the message.
+ */
+export class OnRampVendorUnavailableError extends Error {
+  constructor(options?: ErrorOptions) {
+    super('buying crypto is unavailable', options);
+    this.name = 'OnRampVendorUnavailableError';
   }
 }
 

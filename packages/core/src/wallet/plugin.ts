@@ -31,6 +31,7 @@ import {
   ON_RAMP_ADAPTER,
   ON_RAMP_WEBHOOK_VERIFIER,
   GEO_CHECK_COMMANDS,
+  CACHE,
   AUDIT_WRITER,
   JOB_QUEUE,
   McpToolError,
@@ -454,6 +455,7 @@ export default {
             geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,
             rgLimits,
             limiter: c.get(RATE_LIMITER),
+            cache: c.has(CACHE) ? c.get(CACHE) : undefined,
           })
         : undefined;
       const onRampWebhook =
