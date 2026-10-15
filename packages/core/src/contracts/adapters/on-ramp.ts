@@ -8,41 +8,52 @@
  * adapter maps them to the vendor's own codes. See docs/adapters/on-ramp.md for the binding guide.
  */
 import * as z from 'zod';
-import { MoneyAmountSchema } from '../schemas/common.js';
-import { OnRampStatusSchema, type OnRampStatus } from '../schemas/wallet-tx.js';
+import { CurrencyTickerSchema, MoneyAmountSchema, TimestampSchema } from '../schemas/common.js';
+import {
+  OnRampStatusSchema,
+  WalletNetworkSchema,
+  type OnRampStatus,
+} from '../schemas/wallet-tx.js';
 import { createToken, type Token } from './token.js';
 
 /** Amounts are decimal strings in `code`. `maxAmount` is absent when the vendor sets no ceiling. */
-export type OnRampFiatOption = {
-  code: string;
-  minAmount: string;
-  maxAmount?: string;
-};
+export const OnRampFiatOptionSchema = z.object({
+  code: CurrencyTickerSchema,
+  minAmount: MoneyAmountSchema,
+  maxAmount: MoneyAmountSchema.optional(),
+});
+export type OnRampFiatOption = z.infer<typeof OnRampFiatOptionSchema>;
 
-export type OnRampOptions = {
-  fiats: OnRampFiatOption[];
-  assets: { currency: string; network: string }[];
-};
+/**
+ * Core validates the vendor's answer against this schema and refuses as unavailable on anything
+ * else. The route answers only those `assets` the platform takes deposits in.
+ */
+export const OnRampOptionsSchema = z.object({
+  fiats: z.array(OnRampFiatOptionSchema),
+  assets: z.array(z.object({ currency: CurrencyTickerSchema, network: WalletNetworkSchema })),
+});
+export type OnRampOptions = z.infer<typeof OnRampOptionsSchema>;
 
 /**
  * An estimate only: the price is fixed on the vendor's checkout page, not here. `cryptoAmount`
  * is what would reach the deposit address, net of `fee`. Amounts are decimal strings.
- * `expiresAt` is a vendor timestamp. `gatewayId` names the payment provider behind the vendor
- * that priced it.
+ * `expiresAt` is a UTC ISO timestamp. `gatewayId` names the payment provider behind the vendor
+ * that priced it. Core validates the vendor's answer against this schema.
  */
-export type OnRampQuote = {
-  gatewayId: string;
-  gatewayName: string;
-  fiatCurrency: string;
-  fiatAmount: string;
-  currency: string;
-  network: string;
-  cryptoAmount: string;
-  fee: string;
-  feeCurrency: string;
-  rate: string;
-  expiresAt: string;
-};
+export const OnRampQuoteSchema = z.object({
+  gatewayId: z.string(),
+  gatewayName: z.string(),
+  fiatCurrency: CurrencyTickerSchema,
+  fiatAmount: MoneyAmountSchema,
+  currency: CurrencyTickerSchema,
+  network: WalletNetworkSchema,
+  cryptoAmount: MoneyAmountSchema,
+  fee: MoneyAmountSchema,
+  feeCurrency: CurrencyTickerSchema,
+  rate: MoneyAmountSchema,
+  expiresAt: TimestampSchema,
+});
+export type OnRampQuote = z.infer<typeof OnRampQuoteSchema>;
 
 /**
  * `checkoutUrl` must be https: the client navigates to it. `expiresAt` is the ISO timestamp

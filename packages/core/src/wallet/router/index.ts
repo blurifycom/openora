@@ -238,7 +238,6 @@ export function createWalletRouter({
     return onRamp;
   };
 
-  // Every refusal a purchase can meet before the vendor opens an order.
   const onRampRefusals = {
     FORBIDDEN: [OnRampRestrictedError, OnRampGeoBlockedError],
     CONFLICT: [

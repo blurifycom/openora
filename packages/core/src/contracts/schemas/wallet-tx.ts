@@ -104,6 +104,11 @@ export const WalletReconciliationFindingStatusSchema = z.enum(
 );
 export const OnRampStatusSchema = z.enum(ON_RAMP_STATUSES);
 
+// A currency does not identify a chain: USDT settles on ERC20, TRC20 and BEP20 with
+// different addresses, fees and minimums. Free-form rather than an enum because each
+// vendor spells chains its own way (ERC20 vs ETHEREUM vs eth-mainnet).
+export const WalletNetworkSchema = z.string().trim().min(1).max(32);
+
 export type WalletTransactionType = z.infer<typeof WalletTransactionTypeSchema>;
 export type WalletTransactionStatus = z.infer<typeof WalletTransactionStatusSchema>;
 export type WalletRail = z.infer<typeof WalletRailSchema>;

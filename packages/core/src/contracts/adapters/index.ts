@@ -278,6 +278,9 @@ export type {
 export {
   ON_RAMP_ADAPTER,
   ON_RAMP_WEBHOOK_VERIFIER,
+  OnRampFiatOptionSchema,
+  OnRampOptionsSchema,
+  OnRampQuoteSchema,
   OnRampCheckoutResultSchema,
   OnRampWebhookEventSchema,
   OnRampRefusedError,

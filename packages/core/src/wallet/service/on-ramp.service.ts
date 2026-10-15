@@ -7,11 +7,15 @@ import {
   makeNotFoundError,
   moneyAdd,
   moneyCompare,
+  withAdvisoryXactLock,
   type DrizzleService,
+  type DrizzleTx,
 } from '@openora/core/server';
 import {
   makeRateLimitKey,
   OnRampCheckoutResultSchema,
+  OnRampOptionsSchema,
+  OnRampQuoteSchema,
   OnRampRefusedError,
   OnRampStatusSchema,
   OnRampVendorUnavailableError,
@@ -35,8 +39,8 @@ import {
   type RgLimitsPort,
   type User,
 } from '@openora/core/contracts';
-import { and, eq, gt, or, sql } from 'drizzle-orm';
-import type { OnRampOrder } from '../contract/index.js';
+import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
+import type { OnRampCheckoutResponse, OnRampOrder } from '../contract/index.js';
 import { walletOnRampOrder, type WalletOnRampOrder } from '../schema/index.js';
 import {
   assertDepositAllowed,
@@ -47,19 +51,16 @@ import {
 
 const logger = createLogger('wallet-on-ramp');
 
-// Options, quote and checkout are billed vendor calls. Their own bucket, so browsing prices
-// never eats into the throttle a withdrawal answers to. Status polling has a bucket of its own,
-// so a client watching an order cannot lock its player out of buying.
 const ON_RAMP_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 const ON_RAMP_STATUS_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 
 const OPTIONS_TTL_MS = 60 * 1000;
+const UNOPENED_CHECKOUT_HOLD = '15 minutes';
 // However fast the client polls, the vendor is asked about an order at most this often.
 const STATUS_TTL_MS = 10 * 1000;
 
 const OPEN_STATUSES: readonly OnRampStatus[] = ['pending', 'processing'];
 
-// Forward only. Anything else the vendor reports is an out-of-order delivery and is ignored.
 const NEXT_STATUSES: Record<OnRampStatus, readonly OnRampStatus[]> = {
   pending: ['processing', 'completed', 'failed', 'cancelled', 'expired'],
   processing: ['completed', 'failed', 'cancelled', 'expired', 'refunded'],
@@ -70,7 +71,6 @@ const NEXT_STATUSES: Record<OnRampStatus, readonly OnRampStatus[]> = {
   refunded: [],
 };
 
-// Same message as a vendor outage: the client cannot tell an unbound vendor from a down one.
 export const OnRampUnavailableError = makeConflictError(
   'OnRampUnavailableError',
   'buying crypto is unavailable',
@@ -78,7 +78,6 @@ export const OnRampUnavailableError = makeConflictError(
 
 export const OnRampOrderNotFoundError = makeNotFoundError('OnRampOrder');
 
-// Same refusal vocabulary the login gate answers with, so a client handles both alike.
 export const OnRampRestrictedError = createDomainError<[]>(
   'OnRampRestrictedError',
   () => 'player is restricted from depositing',
@@ -171,13 +170,14 @@ export class OnRampService {
   /**
    * Every gate runs before the vendor opens an order, and the player gates run before a replay,
    * so a player restricted since the first attempt cannot fetch its checkout again. The deposit
-   * limit, a database read, runs before the billed estimate. The delivery address is always one
-   * the platform issued to this player, and the order row exists before the vendor is called, so
-   * a webhook can always find it. A replayed key returns the original checkout.
+   * limit is checked and the order row inserted under one per-player lock, so concurrent
+   * checkouts are counted against each other. The delivery address is always one the platform
+   * issued to this player, and the order row exists before the vendor is called, so a webhook
+   * can always find it. A replayed key returns the original checkout.
    */
   async checkout(
     purchase: OnRampPurchase & { idempotencyKey: string },
-  ): Promise<{ purchaseId: string; checkoutUrl: string }> {
+  ): Promise<OnRampCheckoutResponse> {
     const { userId, idempotencyKey } = purchase;
     const country = await this.admit(userId, purchase.meta);
     const replayed = await this.replay(purchase);
@@ -185,7 +185,6 @@ export class OnRampService {
       return replayed;
     }
     const assets = await this.assertPurchasable(purchase, country);
-    await this.assertWithinDepositLimit(purchase);
     await this.assertAboveDepositMinimum(purchase, assets, country);
 
     const address = await this.wallet.getOrCreateDepositAddress(
@@ -193,73 +192,79 @@ export class OnRampService {
       purchase.currency,
       purchase.network,
     );
-    const [order] = await this.drizzle.db
-      .insert(walletOnRampOrder)
-      .values({
+    const purchaseId = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, checkoutLockKey(userId), async () => {
+        await this.assertWithinDepositLimit(tx, purchase);
+        const [order] = await tx
+          .insert(walletOnRampOrder)
+          .values({
+            userId,
+            idempotencyKey,
+            fiatAmount: purchase.fiatAmount,
+            fiatCurrency: purchase.fiatCurrency,
+            currency: purchase.currency,
+            network: purchase.network,
+            walletAddress: address.address,
+            walletTag: address.tag || null,
+          })
+          .onConflictDoNothing()
+          .returning({ id: walletOnRampOrder.id });
+        if (!order) {
+          throw new IdempotencyKeyReuseError();
+        }
+        return order.id;
+      }),
+    );
+
+    try {
+      const checkout = await this.openCheckout({
         userId,
-        idempotencyKey,
-        fiatAmount: purchase.fiatAmount,
+        purchaseId,
         fiatCurrency: purchase.fiatCurrency,
+        fiatAmount: purchase.fiatAmount,
         currency: purchase.currency,
         network: purchase.network,
         walletAddress: address.address,
-        walletTag: address.tag ?? null,
-      })
-      .onConflictDoNothing()
-      .returning({ id: walletOnRampOrder.id });
-    if (!order) {
-      // A concurrent request with the same key won the insert.
-      throw new IdempotencyKeyReuseError();
-    }
-
-    const checkout = await this.openCheckout({
-      userId,
-      purchaseId: order.id,
-      fiatCurrency: purchase.fiatCurrency,
-      fiatAmount: purchase.fiatAmount,
-      currency: purchase.currency,
-      network: purchase.network,
-      walletAddress: address.address,
-      walletTag: address.tag,
-      country,
-      idempotencyKey: `${userId}:${idempotencyKey}`,
-    }).catch(async (err: unknown) => {
-      await this.failCheckout(purchase, order.id, err);
-      throw err;
-    });
-
-    await this.drizzle.db.transaction(async (tx) => {
-      await tx
-        .update(walletOnRampOrder)
-        .set({
-          externalId: checkout.externalId,
-          checkoutUrl: checkout.checkoutUrl,
-          expiresAt: new Date(checkout.expiresAt),
-        })
-        .where(eq(walletOnRampOrder.id, order.id));
-      await this.audit.recordInTransaction(tx, {
-        actorType: 'player',
-        actorId: userId,
-        action: 'wallet.on_ramp.checkout_created',
-        resourceType: 'on_ramp_order',
-        resourceId: order.id,
-        after: {
-          purchaseId: order.id,
-          externalId: checkout.externalId,
-          fiatAmount: purchase.fiatAmount,
-          fiatCurrency: purchase.fiatCurrency,
-          currency: purchase.currency,
-          network: purchase.network,
-          walletAddress: address.address,
-          country,
-          expiresAt: checkout.expiresAt,
-          acknowledged: true,
-          idempotencyKey,
-        },
-        ...purchase.meta,
+        walletTag: address.tag || undefined,
+        country,
+        idempotencyKey: `${userId}:${idempotencyKey}`,
       });
-    });
-    return { purchaseId: order.id, checkoutUrl: checkout.checkoutUrl };
+      await this.drizzle.db.transaction(async (tx) => {
+        await tx
+          .update(walletOnRampOrder)
+          .set({
+            externalId: checkout.externalId,
+            checkoutUrl: checkout.checkoutUrl,
+            expiresAt: new Date(checkout.expiresAt),
+          })
+          .where(eq(walletOnRampOrder.id, purchaseId));
+        await this.audit.recordInTransaction(tx, {
+          actorType: 'player',
+          actorId: userId,
+          action: 'wallet.on_ramp.checkout_created',
+          resourceType: 'on_ramp_order',
+          resourceId: purchaseId,
+          after: {
+            purchaseId,
+            externalId: checkout.externalId,
+            fiatAmount: purchase.fiatAmount,
+            fiatCurrency: purchase.fiatCurrency,
+            currency: purchase.currency,
+            network: purchase.network,
+            walletAddress: address.address,
+            country,
+            expiresAt: checkout.expiresAt,
+            acknowledged: true,
+            idempotencyKey,
+          },
+          ...purchase.meta,
+        });
+      });
+      return { purchaseId, checkoutUrl: checkout.checkoutUrl };
+    } catch (err) {
+      await this.failCheckout(purchase, purchaseId, err);
+      throw err;
+    }
   }
 
   /**
@@ -284,8 +289,8 @@ export class OnRampService {
     if (OPEN_STATUSES.includes(status) && order.externalId !== null) {
       try {
         const reported = await this.vendorStatus(order.id, order.externalId);
-        if (reported !== null && (await this.transition(order, { status: reported }))) {
-          status = reported;
+        if (reported !== null) {
+          status = await this.transition(order.id, { status: reported });
         }
       } catch (err) {
         logger.warn({ err, purchaseId }, 'on-ramp status refresh failed - answering stored status');
@@ -338,7 +343,7 @@ export class OnRampService {
       });
       return;
     }
-    await this.transition(order, {
+    await this.transition(order.id, {
       status: event.status,
       txHash: event.txHash,
       gatewayId: event.gatewayId,
@@ -347,58 +352,75 @@ export class OnRampService {
   }
 
   /**
-   * Moves the order to `next.status` and audits it, in one transaction. Only forward along
-   * `NEXT_STATUSES`; anything else is an out-of-order delivery and writes nothing. Conditional on
-   * the status read, so a redelivery or a racing refresh writes nothing either.
+   * Applies a vendor report to the order under a row lock and audits it, in one transaction. The
+   * status only moves forward along `NEXT_STATUSES`; a report of the current status still records
+   * the delivery details it adds. Anything else is out of order and writes nothing. Returns the
+   * order's status afterwards.
    */
   private async transition(
-    order: WalletOnRampOrder,
+    purchaseId: WalletOnRampOrder['id'],
     next: Pick<OnRampWebhookEvent, 'status' | 'txHash' | 'gatewayId' | 'cryptoAmount'>,
-  ): Promise<boolean> {
-    if (next.status === order.status) {
-      return false;
-    }
-    if (!NEXT_STATUSES[order.status].includes(next.status)) {
-      logger.warn(
-        { purchaseId: order.id, from: order.status, to: next.status },
-        'on-ramp status change out of order - ignored',
-      );
-      return false;
-    }
-    const moved = await this.drizzle.db.transaction(async (tx) => {
-      const [moved] = await tx
+  ): Promise<OnRampStatus> {
+    const result = await this.drizzle.db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(walletOnRampOrder)
+        .where(eq(walletOnRampOrder.id, purchaseId))
+        .for('update');
+      if (!locked) {
+        throw new OnRampOrderNotFoundError(purchaseId);
+      }
+      const moves = NEXT_STATUSES[locked.status].includes(next.status);
+      if (!moves && next.status !== locked.status) {
+        logger.warn(
+          { purchaseId, from: locked.status, to: next.status },
+          'on-ramp status change out of order - ignored',
+        );
+        return { status: locked.status, written: false };
+      }
+      if (!moves && !addsDeliveryDetails(locked, next)) {
+        logger.info({ purchaseId, status: locked.status }, 'on-ramp status redelivered - ignored');
+        return { status: locked.status, written: false };
+      }
+      const [updated] = await tx
         .update(walletOnRampOrder)
         .set({
           status: next.status,
-          txHash: next.txHash ?? order.txHash,
-          gatewayId: next.gatewayId ?? order.gatewayId,
-          cryptoAmount: next.cryptoAmount ?? order.cryptoAmount,
+          txHash: next.txHash ?? locked.txHash,
+          gatewayId: next.gatewayId ?? locked.gatewayId,
+          cryptoAmount: next.cryptoAmount ?? locked.cryptoAmount,
         })
-        .where(and(eq(walletOnRampOrder.id, order.id), eq(walletOnRampOrder.status, order.status)))
+        .where(eq(walletOnRampOrder.id, purchaseId))
         .returning();
-      if (!moved) {
-        return false;
+      if (!updated) {
+        throw new OnRampOrderNotFoundError(purchaseId);
       }
       await this.audit.recordInTransaction(tx, {
         actorType: 'system',
-        action: 'wallet.on_ramp.status_changed',
+        action: moves ? 'wallet.on_ramp.status_changed' : 'wallet.on_ramp.order_updated',
         resourceType: 'on_ramp_order',
-        resourceId: order.id,
-        before: { status: order.status },
+        resourceId: purchaseId,
+        before: {
+          status: locked.status,
+          txHash: locked.txHash,
+          gatewayId: locked.gatewayId,
+          cryptoAmount: locked.cryptoAmount,
+        },
         after: {
-          userId: order.userId,
-          from: order.status,
-          to: moved.status,
-          txHash: moved.txHash,
-          gatewayId: moved.gatewayId,
+          userId: updated.userId,
+          from: locked.status,
+          to: updated.status,
+          txHash: updated.txHash,
+          gatewayId: updated.gatewayId,
+          cryptoAmount: updated.cryptoAmount,
         },
       });
-      return true;
+      return { status: updated.status, written: true };
     });
-    if (moved) {
-      await this.cache?.delete(statusCacheKey(order.id));
+    if (result.written) {
+      await this.cache?.delete(statusCacheKey(purchaseId));
     }
-    return moved;
+    return result.status;
   }
 
   /**
@@ -491,7 +513,7 @@ export class OnRampService {
   // An earlier attempt under the same key: its checkout again, never a second order.
   private async replay(
     purchase: OnRampPurchase & { idempotencyKey: string },
-  ): Promise<{ purchaseId: string; checkoutUrl: string } | null> {
+  ): Promise<OnRampCheckoutResponse | null> {
     const [order] = await this.drizzle.db
       .select()
       .from(walletOnRampOrder)
@@ -537,16 +559,18 @@ export class OnRampService {
     return access.countryCode;
   }
 
-  // The vendor's offer changes rarely and every route reads it, so it is cached per country.
   private async vendorOptions(country: string | null): Promise<OnRampOptions> {
     const key = `wallet:on-ramp:options:${country ?? '-'}`;
     const cached = await this.cache?.get<OnRampOptions>(key);
     if (cached) {
       return cached;
     }
-    const options = await this.adapter.getOptions({ country });
-    await this.cache?.set(key, options, { ttlMs: OPTIONS_TTL_MS });
-    return options;
+    const parsed = OnRampOptionsSchema.safeParse(await this.adapter.getOptions({ country }));
+    if (!parsed.success) {
+      throw new OnRampVendorUnavailableError({ cause: parsed.error });
+    }
+    await this.cache?.set(key, parsed.data, { ttlMs: OPTIONS_TTL_MS });
+    return parsed.data;
   }
 
   private async assertPurchasable(purchase: OnRampPurchase, country: string | null) {
@@ -582,14 +606,22 @@ export class OnRampService {
     return currencyAssets;
   }
 
-  // A delivery under the network's deposit minimum lands on chain but is never credited.
-  // Best effort: the estimate is not the final price, and no estimate at all lets it through.
+  /**
+   * A delivery under the network's deposit minimum lands on chain but is never credited. Judged on
+   * the best estimate; with no estimate, or none the vendor could give, the checkout goes ahead.
+   */
   private async assertAboveDepositMinimum(
     purchase: OnRampPurchase,
     assets: readonly { network: string; minDeposit: string }[],
     country: string | null,
   ) {
-    const [best] = await this.fetchQuotes(purchase, country);
+    const [best] = await this.fetchQuotes(purchase, country).catch((err: unknown) => {
+      logger.warn(
+        { err, userId: purchase.userId, currency: purchase.currency, network: purchase.network },
+        'on-ramp estimate failed - checking out without one',
+      );
+      return [];
+    });
     const asset = assets.find(
       (candidate) => candidate.network.toUpperCase() === purchase.network.toUpperCase(),
     );
@@ -608,34 +640,37 @@ export class OnRampService {
     { userId, fiatCurrency, fiatAmount, currency, network }: OnRampPurchase,
     country: string | null,
   ): Promise<OnRampQuote[]> {
-    const quotes = await this.adapter.getQuotes({
-      userId,
-      fiatCurrency,
-      fiatAmount,
-      currency,
-      network,
-      country,
-    });
-    return quotes.filter((quote) => isPositiveMoney(quote.cryptoAmount));
+    const parsed = OnRampQuoteSchema.array().safeParse(
+      await this.adapter.getQuotes({
+        userId,
+        fiatCurrency,
+        fiatAmount,
+        currency,
+        network,
+        country,
+      }),
+    );
+    if (!parsed.success) {
+      throw new OnRampVendorUnavailableError({ cause: parsed.error });
+    }
+    return parsed.data.filter((quote) => isPositiveMoney(quote.cryptoAmount));
   }
 
   /**
    * Checked on the fiat amount plus this player's still-open orders in the same fiat: processing
-   * ones of any age, pending ones until their checkout expires. The gate converts to the limit's
-   * currency.
+   * ones of any age, pending ones until their checkout expires, and pending ones the vendor has
+   * not opened yet for `UNOPENED_CHECKOUT_HOLD` after they were recorded. Open orders in other
+   * fiats are not counted. The gate converts to the limit's currency. Runs under the caller's
+   * per-player lock.
    */
-  private async assertWithinDepositLimit({ userId, fiatAmount, fiatCurrency }: OnRampPurchase) {
+  private async assertWithinDepositLimit(
+    tx: DrizzleTx,
+    { userId, fiatAmount, fiatCurrency }: OnRampPurchase,
+  ) {
     if (!this.rgLimits) {
       return;
     }
-    // ponytail: open orders in other fiats are ignored; convert and sum them when a player
-    // is seen splitting purchases across fiats.
-    // ponytail: unlocked read, so two concurrent checkouts can both pass; take a per-player
-    // advisory lock around the sum and the insert if that is ever exploited.
-    // ponytail: an order the vendor still reports pending after its checkout expired, and a
-    // completed order whose coins are not credited yet, are not counted. The rg_limit_breach
-    // finding filed when the deposit is credited covers both.
-    const [open] = await this.drizzle.db
+    const [open] = await tx
       .select({
         total: sql<string>`coalesce(sum(${walletOnRampOrder.fiatAmount}), 0)::text`,
       })
@@ -648,25 +683,33 @@ export class OnRampService {
             eq(walletOnRampOrder.status, 'processing'),
             and(
               eq(walletOnRampOrder.status, 'pending'),
-              gt(walletOnRampOrder.expiresAt, sql`now()`),
+              or(
+                gt(walletOnRampOrder.expiresAt, sql`now()`),
+                and(
+                  isNull(walletOnRampOrder.expiresAt),
+                  gt(walletOnRampOrder.createdAt, sql`now() - ${UNOPENED_CHECKOUT_HOLD}::interval`),
+                ),
+              ),
             ),
           ),
         ),
       );
     const openTotal = open?.total ?? '0';
-    const attempted = moneyAdd(fiatAmount, openTotal);
     const decision = await this.rgLimits.checkDeposit(
-      this.drizzle.db,
+      tx,
       userId,
-      attempted,
+      moneyAdd(fiatAmount, openTotal),
       fiatCurrency,
     );
-    if (!decision.allowed) {
-      throw new RgLimitExceededError('deposit_limit_exceeded', {
-        ...decision,
-        used: moneyAdd(decision.used, openTotal),
-      });
+    if (decision.allowed) {
+      return;
     }
+    const usedIsSpend =
+      decision.currency === fiatCurrency && moneyCompare(decision.used, decision.limit) !== 0;
+    throw new RgLimitExceededError(
+      'deposit_limit_exceeded',
+      usedIsSpend ? { ...decision, used: moneyAdd(decision.used, openTotal) } : decision,
+    );
   }
 }
 
@@ -681,12 +724,26 @@ function webhookMismatch(
   }
   if (
     (event.walletAddress !== undefined && event.walletAddress !== order.walletAddress) ||
-    (event.walletTag !== undefined && event.walletTag !== order.walletTag)
+    (event.walletTag !== undefined && (event.walletTag || null) !== (order.walletTag || null))
   ) {
     return 'wallet';
   }
   return null;
 }
+
+function addsDeliveryDetails(
+  order: WalletOnRampOrder,
+  next: Pick<OnRampWebhookEvent, 'txHash' | 'gatewayId' | 'cryptoAmount'>,
+): boolean {
+  return (
+    (next.txHash !== undefined && next.txHash !== order.txHash) ||
+    (next.gatewayId !== undefined && next.gatewayId !== order.gatewayId) ||
+    (next.cryptoAmount !== undefined &&
+      (order.cryptoAmount === null || moneyCompare(next.cryptoAmount, order.cryptoAmount) !== 0))
+  );
+}
+
+const checkoutLockKey = (userId: User['id']) => `wallet:on-ramp:checkout:${userId}`;
 
 const statusCacheKey = (purchaseId: WalletOnRampOrder['id']) =>
   `wallet:on-ramp:status:${purchaseId}`;

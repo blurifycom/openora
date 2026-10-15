@@ -5,12 +5,15 @@ import {
   CurrencyTickerSchema,
   KycStatusSchema,
   MoneyAmountSchema,
+  OnRampOptionsSchema,
+  OnRampQuoteSchema,
   OnRampStatusSchema,
   MONEY_PRECISION,
   MONEY_SCALE,
   TagKeySchema,
   TimestampSchema,
   UuidSchema,
+  WalletNetworkSchema,
   WalletRailSchema,
   WalletTransactionStatusSchema,
   WalletTransactionTypeSchema,
@@ -22,6 +25,8 @@ import {
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
 export {
+  OnRampOptionsSchema,
+  OnRampQuoteSchema,
   WalletRailSchema,
   WalletTransactionStatusSchema,
   WalletTransactionTypeSchema,
@@ -37,11 +42,6 @@ const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0,
 const WalletCurrencyCodeSchema = CurrencyTickerSchema;
 
 const WalletCurrencyInputSchema = CurrencyTickerInputSchema;
-
-// A currency does not identify a chain: USDT settles on ERC20, TRC20 and BEP20 with
-// different addresses, fees and minimums. Free-form rather than an enum because each
-// vendor spells chains its own way (ERC20 vs ETHEREUM vs eth-mainnet).
-const WalletNetworkSchema = z.string().trim().min(1).max(32);
 
 const WalletNetworkInputSchema = WalletNetworkSchema.transform((n) => n.toUpperCase());
 
@@ -503,39 +503,11 @@ export const SwapResultSchema = z.object({
   toAmount: MoneyAmountSchema.nullable(),
 });
 
-export const OnRampOptionsSchema = z.object({
-  fiats: z.array(
-    z.object({
-      code: CurrencyTickerSchema,
-      minAmount: MoneyAmountSchema,
-      maxAmount: MoneyAmountSchema.optional(),
-    }),
-  ),
-  // Only the vendor's assets the platform takes deposits in.
-  assets: z.array(z.object({ currency: WalletCurrencyCodeSchema, network: WalletNetworkSchema })),
-});
-
 export const OnRampQuoteInputSchema = z.object({
   fiatCurrency: CurrencyTickerInputSchema,
   fiatAmount: PositiveMoneyAmountSchema,
   currency: WalletCurrencyInputSchema,
   network: WalletNetworkInputSchema,
-});
-
-// An estimate only - the vendor's checkout page sets the final price. `cryptoAmount` is what
-// would reach the deposit address, net of `fee`.
-export const OnRampQuoteSchema = z.object({
-  gatewayId: z.string(),
-  gatewayName: z.string(),
-  fiatCurrency: CurrencyTickerSchema,
-  fiatAmount: MoneyAmountSchema,
-  currency: WalletCurrencyCodeSchema,
-  network: WalletNetworkSchema,
-  cryptoAmount: MoneyAmountSchema,
-  fee: MoneyAmountSchema,
-  feeCurrency: CurrencyTickerSchema,
-  rate: MoneyAmountSchema,
-  expiresAt: TimestampSchema,
 });
 
 // No delivery address: the server always sends the vendor one it issued to this player.
@@ -550,6 +522,7 @@ export const OnRampCheckoutSchema = z.object({
   // The client navigates to it, so nothing but https gets through.
   checkoutUrl: z.url({ protocol: /^https$/ }),
 });
+export type OnRampCheckoutResponse = z.infer<typeof OnRampCheckoutSchema>;
 
 export const OnRampOrderInputSchema = z.object({ purchaseId: UuidSchema });
 

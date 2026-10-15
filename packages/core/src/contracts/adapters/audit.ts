@@ -60,6 +60,7 @@ export type DirectAuditAction =
   | 'wallet.on_ramp.checkout_failed'
   | 'wallet.on_ramp.status_changed'
   | 'wallet.on_ramp.webhook_mismatch'
+  | 'wallet.on_ramp.order_updated'
   | 'wallet.wallet_asset.created'
   | 'wallet.wallet_asset.updated'
   | 'wallet.wallet_asset.deleted'
