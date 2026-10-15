@@ -45,6 +45,12 @@ import {
 // Anonymous and read-only, so throttled per address like the anonymous geo-check.
 const PUBLIC_OFFERS_RATE_LIMIT = { limit: 60, windowMs: 60 * 1000 };
 
+// Forfeiting is also a player-account action, so support staff who manage players may do it.
+const FORFEIT_PERMISSIONS = [
+  { resource: 'bonus', action: 'cancel' },
+  { resource: 'player', action: 'update' },
+] as const;
+
 export function createBonusRouter({
   grants,
   offers,
@@ -108,7 +114,11 @@ export function createBonusRouter({
         }),
 
         forfeit: os.admin.grants.forfeit.handler(async ({ input, context }) => {
-          const { userId } = await adminGuard.assert(context, 'bonus', 'cancel');
+          const { userId } = await adminGuard.assert(context, 'bonus', 'view');
+          const granted = await adminGuard.filterGranted(userId, FORFEIT_PERMISSIONS);
+          if (granted.length === 0) {
+            await adminGuard.assert(context, 'bonus', 'cancel');
+          }
           return mapErrors(
             {
               CONFLICT: GrantNotForfeitableError,
