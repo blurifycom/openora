@@ -1,5 +1,5 @@
 {
-  "id": "aec4afbf-8384-464b-bfc4-c303f0792189",
+  "id": "1532c9f5-49ce-4bcb-8b61-2694c2ffbb27",
   "prevId": "c98bfb41-3e33-4f3b-ab42-12afe7e35e3c",
   "version": "7",
   "dialect": "postgresql",
@@ -1121,6 +1121,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "fiat_amount": {
           "name": "fiat_amount",
           "type": "numeric(38, 18)",
@@ -1159,7 +1165,8 @@
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "wallet_on_ramp_order_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'pending'"
@@ -1261,12 +1268,7 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "wallet_on_ramp_order_status_check": {
-          "name": "wallet_on_ramp_order_status_check",
-          "value": "status IN ('pending', 'processing', 'completed', 'failed', 'cancelled', 'expired', 'refunded')"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.wallet_provider_vault": {
@@ -2283,6 +2285,11 @@
       "name": "wallet_job_run_status",
       "schema": "public",
       "values": ["running", "completed", "skipped", "failed", "abandoned"]
+    },
+    "public.wallet_on_ramp_order_status": {
+      "name": "wallet_on_ramp_order_status",
+      "schema": "public",
+      "values": ["pending", "processing", "completed", "failed", "cancelled", "expired", "refunded"]
     },
     "public.wallet_rail": {
       "name": "wallet_rail",
