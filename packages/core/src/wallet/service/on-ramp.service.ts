@@ -137,13 +137,14 @@ export class OnRampService {
   ): Promise<OnRampCheckout> {
     const { userId, gatewayId, idempotencyKey } = purchase;
     const country = await this.admit(userId, purchase.meta);
-    await this.assertPurchasable(purchase, country);
+    const assets = await this.assertPurchasable(purchase, country);
 
     const quotes = await this.fetchQuotes(purchase, country);
     const quote = quotes.find((candidate) => candidate.gatewayId === gatewayId);
     if (!quote) {
       throw new OnRampRefusedError({ reason: 'no_quote' }, `gateway ${gatewayId} has no quote`);
     }
+    this.assertAboveDepositMinimum(assets, quote);
     await this.assertWithinDepositLimit(userId, quote.cryptoAmount, purchase.currency);
 
     const address = await this.wallet.getOrCreateDepositAddress(
@@ -261,11 +262,30 @@ export class OnRampService {
         `${fiatAmount} ${fiatCurrency} is above the vendor maximum`,
       );
     }
-    assertDepositAllowed(
-      assets.filter((asset) => asset.currency === currency),
-      currency,
-      network,
+    const currencyAssets = assets.filter((asset) => asset.currency === currency);
+    assertDepositAllowed(currencyAssets, currency, network);
+    return currencyAssets;
+  }
+
+  // A delivery under the network's deposit minimum lands on chain but is never credited.
+  private assertAboveDepositMinimum(
+    assets: readonly { network: string; minDeposit: string }[],
+    quote: OnRampQuote,
+  ) {
+    const asset = assets.find(
+      (candidate) => candidate.network.toUpperCase() === quote.network.toUpperCase(),
     );
+    if (asset && moneyCompare(quote.cryptoAmount, asset.minDeposit) < 0) {
+      throw new OnRampRefusedError(
+        {
+          reason: 'below_deposit_minimum',
+          currency: quote.currency,
+          network: asset.network,
+          minDeposit: asset.minDeposit,
+        },
+        `${quote.cryptoAmount} ${quote.currency} is below the ${asset.minDeposit} deposit minimum`,
+      );
+    }
   }
 
   // A quote that would deliver nothing is not a quote.

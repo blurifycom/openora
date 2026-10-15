@@ -120,11 +120,13 @@ export type OnRampRefusalReason =
   | 'fiat_unsupported'
   | 'below_minimum'
   | 'above_maximum'
+  | 'below_deposit_minimum'
   | 'no_quote';
 
 export type OnRampRefusedData =
   | { reason: 'below_minimum'; fiatCurrency: string; minAmount: string }
   | { reason: 'above_maximum'; fiatCurrency: string; maxAmount: string }
+  | { reason: 'below_deposit_minimum'; currency: string; network: string; minDeposit: string }
   | { reason: 'fiat_unsupported' | 'no_quote' };
 
 /**

@@ -276,6 +276,26 @@ describe('OnRampService.checkout gates (real PG)', () => {
     expect(adapter.createCheckout).not.toHaveBeenCalled();
   });
 
+  it('refuses a quote that would deliver less than the network deposit minimum', async () => {
+    const adapter = makeAdapter();
+    adapter.getQuotes.mockResolvedValue([{ ...QUOTE, cryptoAmount: '0.5' }]);
+    const { service } = makeService({ adapter });
+    const refusal = service.checkout({
+      ...PURCHASE,
+      userId: randomUUID(),
+      idempotencyKey: randomUUID(),
+    });
+    await expect(refusal).rejects.toMatchObject({
+      data: {
+        reason: 'below_deposit_minimum',
+        currency: 'USDT',
+        network: 'TRC20',
+        minDeposit: '1.000000000000000000',
+      },
+    });
+    expect(adapter.createCheckout).not.toHaveBeenCalled();
+  });
+
   it('refuses a purchase over the deposit limit, checked on the quoted crypto amount', async () => {
     const checkDeposit = vi.fn(async () => ({
       allowed: false as const,
