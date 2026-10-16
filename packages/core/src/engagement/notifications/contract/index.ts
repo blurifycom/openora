@@ -118,14 +118,30 @@ export const NotificationSchema = z.object({
 });
 export type Notification = z.infer<typeof NotificationSchema>;
 
-// Internal-only - fed by domain-event handlers in plugin.ts, not a wire route.
-export const CreateNotificationInputSchema = z.object({
-  userId: UuidSchema,
-  type: NotificationTypeSchema,
-  params: NotificationParamsSchema.nullable().optional(),
-  data: NotificationDataSchema.nullable().optional(),
-  eventId: UuidSchema.nullable().optional(),
-});
+// Internal-only - fed by domain-event handlers in plugin.ts and by overlays, not a wire route.
+// `params` present must match its type's NOTIFICATION_PARAM_KEYS; absent stays valid, since a
+// dispatch job queued before params existed carries none.
+export const CreateNotificationInputSchema = z
+  .object({
+    userId: UuidSchema,
+    type: NotificationTypeSchema,
+    params: NotificationParamsSchema.nullable().optional(),
+    data: NotificationDataSchema.nullable().optional(),
+    eventId: UuidSchema.nullable().optional(),
+  })
+  .superRefine(({ type, params }, ctx) => {
+    if (!params) {
+      return;
+    }
+    const { required, optional } = NOTIFICATION_PARAM_KEYS[type];
+    const allowed: readonly string[] = [...required, ...optional];
+    for (const key of required.filter((k) => params[k] === undefined)) {
+      ctx.addIssue({ code: 'custom', path: ['params', key], message: `required for ${type}` });
+    }
+    for (const key of Object.keys(params).filter((k) => !allowed.includes(k))) {
+      ctx.addIssue({ code: 'custom', path: ['params', key], message: `not declared for ${type}` });
+    }
+  });
 export type CreateNotificationInput = z.infer<typeof CreateNotificationInputSchema>;
 
 export const NOTIFICATION_SORT_BY_VALUES = ['createdAt'] as const;

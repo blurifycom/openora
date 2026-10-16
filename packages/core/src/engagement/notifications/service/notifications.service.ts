@@ -11,7 +11,11 @@ import {
 import { eq, and, isNull, asc, desc, count, lt } from 'drizzle-orm';
 import type { PaginationOptions, User } from '@openora/core/contracts';
 import { notification, type Notification } from '../schema/index.js';
-import type { CreateNotificationInput, NotificationSortBy } from '../contract/index.js';
+import {
+  CreateNotificationInputSchema,
+  type CreateNotificationInput,
+  type NotificationSortBy,
+} from '../contract/index.js';
 
 export const NotificationNotFoundError = makeNotFoundError('Notification');
 
@@ -43,7 +47,9 @@ export class NotificationsService {
     return record ?? null;
   }
 
-  async create(input: CreateNotificationInput): Promise<Notification | null> {
+  // Parsed here, not only on the dispatch job: an overlay calls this directly.
+  async create(raw: CreateNotificationInput): Promise<Notification | null> {
+    const input = CreateNotificationInputSchema.parse(raw);
     const [record] = await this.drizzle.db
       .insert(notification)
       .values({

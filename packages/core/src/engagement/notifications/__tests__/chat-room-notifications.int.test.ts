@@ -220,8 +220,9 @@ describe('notifications plugin - chat room ownership (real PG)', () => {
     const { fire, enqueued } = bootPlugin();
     const previousOwnerId = randomUUID();
     const previousReleaseJob = z.object({
-      input: CreateNotificationInputSchema.extend({ title: z.string(), body: z.string() }),
+      input: z.object({ title: z.string(), body: z.string() }),
     });
+    const currentJob = z.object({ input: CreateNotificationInputSchema });
 
     await fire('chat.room.ownership.transferred', {
       roomId: randomUUID(),
@@ -241,6 +242,7 @@ describe('notifications plugin - chat room ownership (real PG)', () => {
     expect(enqueued).toHaveLength(2);
     for (const { payload } of enqueued) {
       expect(previousReleaseJob.safeParse(payload).success).toBe(true);
+      expect(currentJob.safeParse(payload).success).toBe(true);
     }
   });
 });

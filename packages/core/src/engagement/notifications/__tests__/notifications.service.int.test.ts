@@ -44,6 +44,34 @@ beforeEach(async () => {
 });
 
 describe('NotificationsService.create (real PG)', () => {
+  it('refuses params that miss a required key of the type, writing nothing', async () => {
+    const { svc, events } = makeService();
+
+    await expect(
+      svc.create({
+        userId: randomUUID(),
+        type: 'chat.tip.received',
+        params: { amount: '5', currency: 'USDT' },
+      }),
+    ).rejects.toThrow('senderUsername');
+    expect(await db.drizzle.db.select().from(notification)).toHaveLength(0);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('does not persist pre-rendered text an overlay still passes alongside params', async () => {
+    const { svc } = makeService();
+    const legacyInput = {
+      userId: randomUUID(),
+      type: 'vip.assigned' as const,
+      title: 'Welcome to VIP',
+      body: 'You are now a VIP.',
+    };
+
+    const created = await svc.create(legacyInput);
+
+    expect(created).toMatchObject({ title: '', body: '', params: null });
+  });
+
   it('persists an unread notification and emits created', async () => {
     const { svc, events } = makeService();
     const userId = randomUUID();
