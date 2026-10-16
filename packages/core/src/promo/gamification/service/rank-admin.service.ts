@@ -9,18 +9,9 @@ import {
   type DrizzleService,
   type DrizzleTx,
 } from '@openora/core/server';
-import {
-  promoPlayerRank,
-  promoRankConfig,
-  promoRankTier,
-  type PromoRankTier,
-} from '../schema/index.js';
-import type {
-  RankConfig,
-  RankLadder,
-  SetRankLadderInput,
-  SubmittedRankTier,
-} from '../contract/index.js';
+import { promoPlayerRank, promoRankConfig, promoRankTier } from '../schema/index.js';
+import type { RankConfig, SetRankLadderInput, SubmittedRankTier } from '../contract/index.js';
+import { TIER_COLUMNS, toLadder } from '../shared/rank-ladder.js';
 import { RankLadderNotConfiguredError } from './rank.service.js';
 
 export const RankLadderMismatchError = createDomainError<[detail: string]>(
@@ -58,21 +49,6 @@ export const RankTierKeyTakenError = makeConflictError(
   'RankTierKeyTakenError',
   'another tier already goes by that key',
 );
-
-const TIER_COLUMNS = {
-  id: promoRankTier.id,
-  key: promoRankTier.key,
-  name: promoRankTier.name,
-  position: promoRankTier.position,
-  wagerThreshold: promoRankTier.wagerThreshold,
-  rakebackPercent: promoRankTier.rakebackPercent,
-  dailyBonus: promoRankTier.dailyBonus,
-  weeklyBonus: promoRankTier.weeklyBonus,
-  monthlyBonus: promoRankTier.monthlyBonus,
-  levelUpBonus: promoRankTier.levelUpBonus,
-};
-
-type LadderRow = Pick<PromoRankTier, keyof typeof TIER_COLUMNS | 'currency'>;
 
 function assertKnownTiers(known: ReadonlySet<string>, tiers: readonly SubmittedRankTier[]) {
   const unknown = tiers.flatMap((tier) =>
@@ -280,8 +256,3 @@ async function writeTiers(tx: DrizzleTx, input: SetRankLadderInput) {
     throw new RankTierKeyTakenError();
   }
 }
-
-const toLadder = (currency: string, tiers: readonly LadderRow[]): RankLadder => ({
-  currency,
-  tiers: tiers.map(({ currency: _currency, ...tier }) => tier),
-});
