@@ -1,11 +1,5 @@
-* @zaxovaiko @klaudia-blazyczek-blurify @marek-chmielowski-blurify @jakubfilinger-b @mp-blurify @okapitula @agniev-a-hub @damianrzepka
+* @zaxovaiko @klaudia-blazyczek-blurify @marek-chmielowski-blurify @jakubfilinger-b @mp-blurify @okapitula @damianrzepka
 
-/packages/core/src/pam/ @zaxovaiko @agniev-a-hub
-/packages/core/src/engagement/ @zaxovaiko @agniev-a-hub
-/packages/core/src/contracts/ @zaxovaiko @agniev-a-hub
 /packages/core/src/casino/ @zaxovaiko @okapitula
 /packages/core/src/audit/ @zaxovaiko @okapitula
 /packages/testing/ @zaxovaiko @okapitula
-/.github/ @zaxovaiko @agniev-a-hub
-/tools/ @zaxovaiko @agniev-a-hub
-/.rulesync/ @zaxovaiko @agniev-a-hub
