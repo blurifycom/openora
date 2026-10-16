@@ -155,6 +155,18 @@ describe('claiming a streak reward', () => {
     await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
   });
 
+  it('refuses a milestone the config no longer pays and leaves it waiting', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 5);
+
+    await expect(service().claim(userId, id)).rejects.toBeInstanceOf(
+      StreakMilestoneNotClaimableError,
+    );
+
+    expect(credit).not.toHaveBeenCalled();
+    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null, outcome: null });
+  });
+
   it('gives nothing to a player under a responsible-gambling restriction', async () => {
     isRestricted.mockResolvedValue(true);
     const userId = randomUUID();
@@ -263,11 +275,40 @@ describe('announcing a reward waiting to be claimed', () => {
     expect((await milestoneGrant(id))?.announcedAt).toBeInstanceOf(Date);
   });
 
+  it('does not invite a restricted player to claim, and settles the reward as restricted', async () => {
+    isRestricted.mockResolvedValue(true);
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+
+    await expect(service().announceReached()).resolves.toEqual([]);
+
+    await expect(milestoneGrant(id)).resolves.toMatchObject({
+      outcome: 'restricted',
+      announcedAt: null,
+    });
+  });
+
   it('does not announce a milestone already claimed', async () => {
     const userId = randomUUID();
     const id = await owe(userId, 3);
     await service().claim(userId, id);
 
     await expect(service().announceReached()).resolves.toEqual([]);
+  });
+});
+
+describe('a responsible-gambling block starting', () => {
+  it("settles the player's unclaimed rewards as restricted and leaves claimed ones alone", async () => {
+    const userId = randomUUID();
+    const claimed = await owe(userId, 3);
+    await service().claim(userId, claimed);
+    const waiting = await owe(userId, 7);
+    const otherPlayers = await owe(randomUUID(), 3);
+
+    await expect(service().forfeitUnclaimed(userId)).resolves.toBe(1);
+
+    await expect(milestoneGrant(claimed)).resolves.toMatchObject({ outcome: 'granted' });
+    await expect(milestoneGrant(waiting)).resolves.toMatchObject({ outcome: 'restricted' });
+    await expect(milestoneGrant(otherPlayers)).resolves.toMatchObject({ settledAt: null });
   });
 });

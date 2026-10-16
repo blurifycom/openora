@@ -32,8 +32,8 @@ type Logger = {
 /**
  * Settles a claim `RankChallengeService.recordWager` already inserted: credits the cash portion
  * (if any) once, marks the claim settled, and reports the win for `plugin.ts` to announce -
- * mirroring `RankPayoutService.settleLevelUps`/`StreakPayoutService.settlePending`'s own
- * "read unsettled rows, credit, mark settled, return what to announce" shape, guarded by the
+ * mirroring `RankPayoutService.settleLevelUps`'s own "read unsettled rows, credit, mark
+ * settled, return what to announce" shape, guarded by the
  * same `settledAt is null` idiom `promoRankLevelUp`/`promoStreakMilestoneGrant` use.
  *
  * A player under a responsible-gambling block still gets the claim settled (so a physical prize
