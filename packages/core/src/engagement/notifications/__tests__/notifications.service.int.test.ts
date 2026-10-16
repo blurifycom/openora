@@ -57,8 +57,9 @@ describe('NotificationsService.create (real PG)', () => {
     expect(created).toMatchObject({
       userId,
       params: { amount: '10.00', currency: 'USD' },
-      title: null,
-      body: null,
+      // Not written, but defaulted to '' so the previous release can still read the row.
+      title: '',
+      body: '',
       readAt: null,
     });
     expect(await db.drizzle.db.select().from(notification)).toHaveLength(1);

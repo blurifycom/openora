@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import * as z from 'zod';
 import { asc, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { DRIZZLE, EVENT_BUS } from '@openora/core/server';
@@ -18,6 +19,7 @@ import {
 import { makeEventBus, makeRealtimeTransport, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { notification } from '../schema/index.js';
+import { CreateNotificationInputSchema } from '../contract/index.js';
 import notificationsPlugin from '../plugin.js';
 
 let db: TestDb;
@@ -25,14 +27,14 @@ let db: TestDb;
 function bootPlugin() {
   const handlers = new Map<string, EventHandler[]>();
   const workers = new Map<string, WorkerRegistration<unknown>>();
-  const enqueued: { queue: string; key: string | undefined }[] = [];
+  const enqueued: { queue: string; key: string | undefined; payload: unknown }[] = [];
   const seenKeys = new Set<string>();
   let routerFactory: ((c: unknown) => unknown) | null = null;
 
   const pending: Promise<unknown>[] = [];
   const jobQueue = mock<JobQueueAdapter>({
     enqueue: (name: QueueName, payload: unknown, opts?: EnqueueOptions) => {
-      enqueued.push({ queue: name, key: opts?.idempotencyKey });
+      enqueued.push({ queue: name, key: opts?.idempotencyKey, payload });
       const duplicate = Boolean(opts?.idempotencyKey && seenKeys.has(opts.idempotencyKey));
       if (opts?.idempotencyKey) {
         seenKeys.add(opts.idempotencyKey);
@@ -212,5 +214,33 @@ describe('notifications plugin - chat room ownership (real PG)', () => {
 
     const rows = await readNotifications();
     expect(rows).toHaveLength(memberIds.length);
+  });
+
+  it('queues dispatch jobs the previous release, which requires title and body, can still run', async () => {
+    const { fire, enqueued } = bootPlugin();
+    const previousOwnerId = randomUUID();
+    const previousReleaseJob = z.object({
+      input: CreateNotificationInputSchema.extend({ title: z.string(), body: z.string() }),
+    });
+
+    await fire('chat.room.ownership.transferred', {
+      roomId: randomUUID(),
+      roomName: 'Wheel Spin',
+      previousOwnerId,
+      newOwnerId: randomUUID(),
+      reason: 'account-closed',
+    });
+    await fire('chat.room.scheduled_for_deletion', {
+      roomId: randomUUID(),
+      roomName: 'Wheel Spin',
+      previousOwnerId,
+      memberIds: [randomUUID()],
+      scheduledDeletionAt: new Date('2026-09-30T10:00:00.000Z').toISOString(),
+    });
+
+    expect(enqueued).toHaveLength(2);
+    for (const { payload } of enqueued) {
+      expect(previousReleaseJob.safeParse(payload).success).toBe(true);
+    }
   });
 });

@@ -808,15 +808,26 @@ describe('notificationEventMap', () => {
       expect(Object.keys(NOTIFICATION_PARAM_KEYS).sort()).toEqual([...NOTIFICATION_TYPES].sort());
     });
 
+    // The rg fixture is a money limit, so the session-limit keys are legitimately absent.
+    const absentFromFixture: Record<string, readonly string[]> = {
+      'rg.limit.admin_updated': ['minutes', 'previousMinutes'],
+    };
+
+    it.each(notificationEventMap.map((entry) => [entry.event, entry] as const))(
+      'uses a %s fixture the real event schema accepts',
+      (event, entry) => {
+        expect(entry.parse(payloads[event])).not.toBeNull();
+      },
+    );
+
     it.each(coreCreated.map((input) => [input.type, input] as const))(
-      'gives a core-created %s notification every required key and no undeclared one',
+      'gives a core-created %s notification, from a fully filled payload, exactly its declared keys',
       (type, input) => {
         const { required, optional } = NOTIFICATION_PARAM_KEYS[type];
-        const allowed: readonly string[] = [...required, ...optional];
-        const keys = Object.keys(input.params ?? {});
+        const absent = absentFromFixture[type] ?? [];
+        const expected = [...required, ...optional].filter((key) => !absent.includes(key));
 
-        expect(keys).toEqual(expect.arrayContaining([...required]));
-        expect(keys.filter((key) => !allowed.includes(key))).toEqual([]);
+        expect(Object.keys(input.params ?? {}).sort()).toEqual(expected.sort());
       },
     );
   });

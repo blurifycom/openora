@@ -6,9 +6,10 @@ export const notification = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid().notNull(),
     type: text().notNull(),
-    // Nullable and no longer written: the client renders `type` with `params`. Dropped in a later release.
-    title: text(),
-    body: text(),
+    // No longer written: the client renders `type` with `params`. Dropped in a later release; until
+    // then the '' default keeps a rolled-back release, which reads them as non-null, serving new rows.
+    title: text().default(''),
+    body: text().default(''),
     params: jsonb().$type<Record<string, string>>(),
     data: jsonb().$type<Record<string, string>>(),
     readAt: timestamp({ withTimezone: true }),

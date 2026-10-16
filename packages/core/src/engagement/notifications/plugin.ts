@@ -75,7 +75,7 @@ type NotificationMapEntry = {
   securityAlert: boolean;
 };
 
-// Drops null/undefined entity refs (eg a nullable roomId) so `data` only ever carries
+// Drops null/undefined values (eg a nullable roomId) so `data` and `params` only ever carry
 // fields the source event actually had a value for; an all-null payload becomes `null`.
 function compactData(
   fields: Record<string, string | null | undefined>,
@@ -89,12 +89,18 @@ function compactData(
 type ParamKeys<T extends NotificationType> = (typeof NOTIFICATION_PARAM_KEYS)[T];
 
 // Every required key of the type and any of its optional ones - a key outside the type's set is a
-// compile error, so the map below cannot drift from NOTIFICATION_PARAM_KEYS.
-type NotificationParamsOf<T extends NotificationType> = Record<
-  ParamKeys<T>['required'][number],
-  string
-> &
-  Partial<Record<ParamKeys<T>['optional'][number], string | null>>;
+// compile error, so the map below cannot drift from NOTIFICATION_PARAM_KEYS. A type with no keys
+// takes `Record<string, never>`: an empty `{}` target would skip the excess-key check.
+type NotificationParamsOf<T extends NotificationType> = [
+  ParamKeys<T>['required'][number] | ParamKeys<T>['optional'][number],
+] extends [never]
+  ? Record<string, never>
+  : Record<ParamKeys<T>['required'][number], string> &
+      Partial<Record<ParamKeys<T>['optional'][number], string | null>>;
+
+// The previous release's dispatch worker still requires these strings on a queued job; they are
+// stripped on read here. ponytail: remove together with the title/body columns.
+const LEGACY_DISPATCH_TEXT = { title: '', body: '' } as const;
 
 function notification<T extends NotificationType>(input: {
   userId: string;
@@ -645,7 +651,11 @@ export default {
             NOTIFICATIONS_DISPATCH_QUEUE,
             {
               event: entry.event,
-              input: { ...entry.buildNotification(data), eventId: envelope.eventId },
+              input: {
+                ...entry.buildNotification(data),
+                ...LEGACY_DISPATCH_TEXT,
+                eventId: envelope.eventId,
+              },
               email: entry.buildEmail(data, envelope.occurredAt),
               // An opted-in entry's email is preference-gated; every other entry always mails.
               securityAlert: entry.securityAlert,
@@ -763,11 +773,14 @@ export default {
             NOTIFICATIONS_DISPATCH_QUEUE,
             {
               event: 'chat.room.scheduled_for_deletion',
-              input: buildChatRoomScheduledForDeletionNotification({
-                userId,
-                roomId: p.roomId,
-                roomName: p.roomName,
-              }),
+              input: {
+                ...LEGACY_DISPATCH_TEXT,
+                ...buildChatRoomScheduledForDeletionNotification({
+                  userId,
+                  roomId: p.roomId,
+                  roomName: p.roomName,
+                }),
+              },
               // In-app only: `email` is nullish on NotificationDispatchJobSchema, so
               // omitting it is the current equivalent of the old `sendEmail: false`.
             },
