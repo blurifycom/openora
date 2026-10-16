@@ -1,6 +1,6 @@
 import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import { DrizzleService, withAdvisoryXactLock } from '@openora/core/server';
-import type { DrizzleDb, DrizzleTx, EventBus } from '@openora/core/server';
+import type { EventBus } from '@openora/core/server';
 import type {
   AuditWritePort,
   ClientMeta,
@@ -11,9 +11,10 @@ import type {
 import { chatRoomBan, chatRoomMember } from '../schema/index.js';
 import { retireLapsedRows } from './chat-moderation-expiry.service.js';
 import {
-  ChatRoomNotModeratorError,
-  ChatRoomSelfModerationError,
-} from './errors/chat-moderation.errors.js';
+  assertNotSelfModeration,
+  assertRoomModerator,
+  expiryFrom,
+} from './chat-room-moderation.service.js';
 import { revokeRoomChannelBestEffort } from './channel-revoke.service.js';
 import { emitExpiredInvites, expireInvitesInvolving } from './chat-room-invite-expiry.service.js';
 
@@ -25,33 +26,6 @@ export class ChatRoomBanService {
     private readonly transport: RealtimeTransport,
     private readonly identityReader: IdentityReader,
   ) {}
-
-  private async assertModerator(
-    db: DrizzleDb | DrizzleTx,
-    roomId: Uuid,
-    actorId: Uuid,
-    targetId?: Uuid,
-  ) {
-    const [actor] = await db
-      .select({ role: chatRoomMember.role })
-      .from(chatRoomMember)
-      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, actorId)))
-      .limit(1);
-    if (!actor || (actor.role !== 'moderator' && actor.role !== 'owner')) {
-      throw new ChatRoomNotModeratorError(roomId);
-    }
-    if (targetId) {
-      const [target] = await db
-        .select({ role: chatRoomMember.role })
-        .from(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, targetId)))
-        .limit(1);
-      if (actor.role !== 'owner' && target && target.role !== 'member') {
-        throw new ChatRoomNotModeratorError(roomId);
-      }
-    }
-    return actor.role;
-  }
 
   async banMember({
     moderatorId,
@@ -68,14 +42,11 @@ export class ChatRoomBanService {
     durationSeconds?: number | null;
     reason?: string;
   } & ClientMeta) {
-    if (moderatorId === userId) {
-      throw new ChatRoomSelfModerationError();
-    }
-    const expiresAt =
-      durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
+    assertNotSelfModeration(moderatorId, userId);
+    const expiresAt = expiryFrom(durationSeconds);
     const { replaced, expired } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
-        await this.assertModerator(t, roomId, moderatorId, userId);
+        await assertRoomModerator(t, roomId, moderatorId, userId);
         const now = new Date();
         const targetBans = and(
           eq(chatRoomBan.roomId, roomId),
@@ -135,7 +106,7 @@ export class ChatRoomBanService {
   } & ClientMeta) {
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
-        await this.assertModerator(t, roomId, moderatorId);
+        await assertRoomModerator(t, roomId, moderatorId);
         const [lifted] = await t
           .update(chatRoomBan)
           .set({ liftedAt: new Date(), liftedBy: moderatorId })

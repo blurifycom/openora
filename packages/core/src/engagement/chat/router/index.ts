@@ -71,6 +71,11 @@ import { ChatRoomBanService } from '../service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from '../service/chat-room-mute.service.js';
 import { ChatRoomRestrictionService } from '../service/chat-room-restriction.service.js';
 
+const MODERATION_TARGET_ERRORS = {
+  NOT_FOUND: ChatRoomNotFoundError,
+  BAD_REQUEST: ChatAdminPrivateRoomModerationError,
+};
+
 const chat = populateContractRouterPaths({ chat: chatContract }).chat;
 const JOIN_ROOM_RATE_LIMIT = {
   limit: 5,
@@ -175,6 +180,16 @@ export function createChatRouter({
         },
       },
     );
+  };
+
+  // Shaped to spread straight into a moderation command as its actor and request metadata.
+  const assertChatModerator = async (context: OssContext) => {
+    const { userId, ip, userAgent } = await adminGuard.assert(
+      context,
+      'chat-moderation',
+      'moderate',
+    );
+    return { actorId: userId, ip, userAgent };
   };
 
   return os.router({
@@ -831,28 +846,15 @@ export function createChatRouter({
     }),
 
     adminMute: os.adminMute.handler(async ({ input, context }) => {
-      const { userId, ip, userAgent } = await adminGuard.assert(
-        context,
-        'chat-moderation',
-        'moderate',
-      );
-      return mapErrors(
-        {
-          NOT_FOUND: ChatRoomNotFoundError,
-          BAD_REQUEST: ChatAdminPrivateRoomModerationError,
-        },
-        () => moderationService.mute({ ...input, actorId: userId, ip, userAgent }),
+      const actor = await assertChatModerator(context);
+      return mapErrors(MODERATION_TARGET_ERRORS, () =>
+        moderationService.mute({ ...input, ...actor }),
       );
     }),
 
-    adminUnmute: os.adminUnmute.handler(async ({ input, context }) => {
-      const { userId, ip, userAgent } = await adminGuard.assert(
-        context,
-        'chat-moderation',
-        'moderate',
-      );
-      return moderationService.unmute({ ...input, actorId: userId, ip, userAgent });
-    }),
+    adminUnmute: os.adminUnmute.handler(async ({ input, context }) =>
+      moderationService.unmute({ ...input, ...(await assertChatModerator(context)) }),
+    ),
 
     adminListMutes: os.adminListMutes.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'chat-moderation', 'view');
@@ -860,28 +862,15 @@ export function createChatRouter({
     }),
 
     adminSetCooldown: os.adminSetCooldown.handler(async ({ input, context }) => {
-      const { userId, ip, userAgent } = await adminGuard.assert(
-        context,
-        'chat-moderation',
-        'moderate',
-      );
-      return mapErrors(
-        {
-          NOT_FOUND: ChatRoomNotFoundError,
-          BAD_REQUEST: ChatAdminPrivateRoomModerationError,
-        },
-        () => moderationService.setCooldown({ ...input, actorId: userId, ip, userAgent }),
+      const actor = await assertChatModerator(context);
+      return mapErrors(MODERATION_TARGET_ERRORS, () =>
+        moderationService.setCooldown({ ...input, ...actor }),
       );
     }),
 
-    adminLiftCooldown: os.adminLiftCooldown.handler(async ({ input, context }) => {
-      const { userId, ip, userAgent } = await adminGuard.assert(
-        context,
-        'chat-moderation',
-        'moderate',
-      );
-      return moderationService.liftCooldown({ ...input, actorId: userId, ip, userAgent });
-    }),
+    adminLiftCooldown: os.adminLiftCooldown.handler(async ({ input, context }) =>
+      moderationService.liftCooldown({ ...input, ...(await assertChatModerator(context)) }),
+    ),
 
     adminListCooldowns: os.adminListCooldowns.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'chat-moderation', 'view');
@@ -889,28 +878,15 @@ export function createChatRouter({
     }),
 
     adminBan: os.adminBan.handler(async ({ input, context }) => {
-      const { userId, ip, userAgent } = await adminGuard.assert(
-        context,
-        'chat-moderation',
-        'moderate',
-      );
-      return mapErrors(
-        {
-          NOT_FOUND: ChatRoomNotFoundError,
-          BAD_REQUEST: ChatAdminPrivateRoomModerationError,
-        },
-        () => moderationService.ban({ ...input, actorId: userId, ip, userAgent }),
+      const actor = await assertChatModerator(context);
+      return mapErrors(MODERATION_TARGET_ERRORS, () =>
+        moderationService.ban({ ...input, ...actor }),
       );
     }),
 
-    adminUnban: os.adminUnban.handler(async ({ input, context }) => {
-      const { userId, ip, userAgent } = await adminGuard.assert(
-        context,
-        'chat-moderation',
-        'moderate',
-      );
-      return moderationService.unban({ ...input, actorId: userId, ip, userAgent });
-    }),
+    adminUnban: os.adminUnban.handler(async ({ input, context }) =>
+      moderationService.unban({ ...input, ...(await assertChatModerator(context)) }),
+    ),
 
     adminListBans: os.adminListBans.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'chat-moderation', 'view');
