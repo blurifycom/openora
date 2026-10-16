@@ -160,6 +160,33 @@ describe('recordWager', () => {
     await record(userId, '10');
     expect(await milestoneOf(userId)).toMatchObject({ day: 3, settledAt: null });
   });
+
+  it('lists a reached milestone as claimable for its player only', async () => {
+    const userId = randomUUID();
+    await seedStreak(userId, 2, daysAgo(1));
+    await record(userId, '10');
+    const milestone = await milestoneOf(userId);
+
+    expect((await streaks.getForPlayer(userId)).claimable).toEqual([{ id: milestone?.id, day: 3 }]);
+    expect((await streaks.getForPlayer(randomUUID())).claimable).toEqual([]);
+  });
+
+  it('does not list a reward on a day the config no longer pays', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db.insert(promoStreakMilestoneGrant).values({ userId, day: 5 });
+
+    expect((await streaks.getForPlayer(userId)).claimable).toEqual([]);
+  });
+
+  it('keeps the day-30 reward waiting to be claimed after the run resets', async () => {
+    const userId = randomUUID();
+    await seedStreak(userId, 29, daysAgo(1));
+    await record(userId, '10');
+
+    const state = await streaks.getForPlayer(userId);
+    expect(state.current).toBe(0);
+    expect(state.claimable).toEqual([expect.objectContaining({ day: 30 })]);
+  });
 });
 
 describe('a qualifying bet after a missed day', () => {
@@ -229,6 +256,20 @@ describe('reverseWager', () => {
     // The run is intact, so qualifying again today reaches day 3 and reactivates the milestone.
     await record(userId, '10', CASINO, '10', 'round-2');
     expect((await streaks.getForPlayer(userId)).current).toBe(3);
+    expect(await milestoneOf(userId)).toMatchObject({ day: 3, settledAt: null, outcome: null });
+  });
+
+  it("leaves a reward from an earlier run waiting when today's advance to the same day is undone", async () => {
+    const userId = randomUUID();
+    await db.drizzle.db
+      .insert(promoStreakMilestoneGrant)
+      .values({ userId, day: 3, reachedAt: new Date(Date.now() - 10 * 86_400_000) });
+    await seedStreak(userId, 2, daysAgo(1));
+    await record(userId, '10', CASINO, '10', 'round-1');
+
+    await rollback(userId, 'round-1', '10');
+
+    expect((await streaks.getForPlayer(userId)).current).toBe(2);
     expect(await milestoneOf(userId)).toMatchObject({ day: 3, settledAt: null, outcome: null });
   });
 
@@ -314,6 +355,18 @@ describe('closeDay', () => {
     expect(reset).toBe(1);
     const state = await streaks.getForPlayer(userId);
     expect(state).toMatchObject({ current: 0, best: 5 });
+  });
+
+  it('keeps a reward waiting to be claimed when the run resets', async () => {
+    const userId = randomUUID();
+    await seedStreak(userId, 5, '2020-01-01');
+    await db.drizzle.db.insert(promoStreakMilestoneGrant).values({ userId, day: 3 });
+
+    await streaks.closeDay(new Date('2020-01-05T00:05:00Z'));
+
+    expect((await streaks.getForPlayer(userId)).claimable).toEqual([
+      expect.objectContaining({ day: 3 }),
+    ]);
   });
 
   it('leaves a player who qualified yesterday untouched', async () => {

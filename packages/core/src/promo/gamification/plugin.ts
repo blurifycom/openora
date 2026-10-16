@@ -11,6 +11,7 @@ import {
   WALLET_READER,
   PromoConfigSchema,
   WAGER_TRACKING,
+  domainEventSchemas,
   queue,
   resolveWalletDefaultCurrency,
   type IdentityReader,
@@ -50,6 +51,7 @@ const logger = createLogger('promo-gamification');
 
 const RANK_PAYOUT_QUEUE = queue('promo-rank-payout');
 const STREAK_PAYOUT_QUEUE = queue('promo-streak-payout');
+const STREAK_ANNOUNCE_QUEUE = queue('promo-streak-announce');
 const STREAK_CLOSE_QUEUE = queue('promo-streak-close');
 const RACE_PAYOUT_QUEUE = queue('promo-race-payout');
 const RANK_CHALLENGE_PAYOUT_QUEUE = queue('promo-rank-challenge-payout');
@@ -62,6 +64,7 @@ const RACE_PAYOUT_CRON = '*/1 * * * *';
 // so settling it - the cash credit and the win announcement - runs on the same short tick.
 const RANK_CHALLENGE_PAYOUT_CRON = '*/1 * * * *';
 const RANK_ANNOUNCE_CRON = '*/1 * * * *';
+const STREAK_ANNOUNCE_CRON = '*/1 * * * *';
 const RANK_PERIOD_PRUNE_CRON = '30 3 * * *';
 
 // The cron tick carries only which payout to run; what is owed is read from the database.
@@ -196,22 +199,41 @@ export default {
     });
 
     ctx.jobs.worker({
-      queue: STREAK_PAYOUT_QUEUE,
+      queue: STREAK_ANNOUNCE_QUEUE,
       schema: EmptyJobSchema,
       handler: async () => {
         if (!streakPayouts) {
-          logger.warn({}, 'streak payout skipped - service not constructed');
+          logger.warn({}, 'streak announcement skipped - service not constructed');
           return;
         }
-        const { granted, cashPaid } = await streakPayouts.settlePending();
-        for (const grant of granted) {
-          events?.emit('promo.bonus.granted', grant);
-        }
-        for (const paid of cashPaid) {
-          await emitCashCredit(paid);
+        for (const reached of await streakPayouts.announceReached()) {
+          events?.emit('promo.streak.milestone.reached', reached);
         }
       },
     });
+
+    const forfeitUnclaimedStreakRewards =
+      (topic: 'rg.self_exclusion.activated' | 'rg.cooling_off.activated') =>
+      async (payload: unknown) => {
+        const parsed = domainEventSchemas[topic].safeParse(payload);
+        if (!parsed.success || !streakPayouts) {
+          logger.error({ topic }, 'streak reward forfeit skipped');
+          return;
+        }
+        try {
+          await streakPayouts.forfeitUnclaimed(parsed.data.userId);
+        } catch (err) {
+          logger.error({ err, topic }, 'streak reward forfeit failed');
+        }
+      };
+    ctx.events.on(
+      'rg.self_exclusion.activated',
+      forfeitUnclaimedStreakRewards('rg.self_exclusion.activated'),
+    );
+    ctx.events.on(
+      'rg.cooling_off.activated',
+      forfeitUnclaimedStreakRewards('rg.cooling_off.activated'),
+    );
 
     ctx.jobs.worker({
       queue: STREAK_CLOSE_QUEUE,
@@ -291,8 +313,8 @@ export default {
         c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
         c.get(EXCHANGE_RATE_READER),
+        c.get(WALLET_READER),
         payoutCurrency,
-        logger,
         c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
       );
       racePayouts = new RacePayoutService(
@@ -331,14 +353,18 @@ export default {
           .schedule(RANK_PAYOUT_QUEUE, `promo-rank-payout.${kind}.cron`, { kind }, { cron })
           .catch((err: unknown) => logger.error({ err, kind }, 'rank payout schedule failed'));
       }
+      // Milestone rewards are claimed by the player now; drop the schedule that used to pay them.
+      void jobs
+        .unschedule(STREAK_PAYOUT_QUEUE, 'promo-streak-payout.cron')
+        .catch((err: unknown) => logger.error({ err }, 'streak payout unschedule failed'));
       void jobs
         .schedule(
-          STREAK_PAYOUT_QUEUE,
-          'promo-streak-payout.cron',
+          STREAK_ANNOUNCE_QUEUE,
+          'promo-streak-announce.cron',
           {},
-          { cron: schedule.streaks.payoutCron },
+          { cron: STREAK_ANNOUNCE_CRON },
         )
-        .catch((err: unknown) => logger.error({ err }, 'streak payout schedule failed'));
+        .catch((err: unknown) => logger.error({ err }, 'streak announcement schedule failed'));
       void jobs
         .schedule(
           STREAK_CLOSE_QUEUE,
@@ -374,6 +400,19 @@ export default {
         ranks: rankService(c),
         admin: new RankAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         streaks,
+        streakPayouts,
+        onStreakClaimed: async ({ granted, cashPaid }) => {
+          try {
+            for (const grant of granted) {
+              events?.emit('promo.bonus.granted', grant);
+            }
+            for (const paid of cashPaid) {
+              await emitCashCredit(paid);
+            }
+          } catch (err) {
+            logger.error({ err }, 'streak claim announcement failed after the claim committed');
+          }
+        },
         streakAdmin: new StreakAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         races: raceService(c),
         raceAdmin: new RaceAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),

@@ -449,6 +449,14 @@ export const notificationEventMap: NotificationMapEntry[] = [
     data: { tierId: p.tierId },
   })),
 
+  mapEvent('promo.streak.milestone.reached', (p) => ({
+    userId: p.userId,
+    type: 'promo.streak.milestone.reached',
+    title: 'Streak reward waiting',
+    body: `You reached day ${p.day} of your daily streak. Your reward is waiting to be claimed.`,
+    data: { day: String(p.day) },
+  })),
+
   mapEvent('chat.user.mentioned', (p) => ({
     userId: p.mentionedUserId,
     type: 'chat.mention',
