@@ -26,7 +26,9 @@ export async function bootE2e(options: BootE2eOptions = {}): Promise<E2e> {
     }
     return { db, app };
   } catch (err) {
-    await closeE2e({ app, db });
+    await closeE2e({ app, db }).catch((cleanupErr: unknown) => {
+      console.error('closeE2e failed while cleaning up a failed boot', cleanupErr);
+    });
     throw err;
   }
 }
@@ -39,6 +41,9 @@ export async function closeE2e({
   app?: TestApp | undefined;
   db?: TestDb | undefined;
 }): Promise<void> {
-  await app?.close();
-  await db?.dispose();
+  try {
+    await app?.close();
+  } finally {
+    await db?.dispose();
+  }
 }
