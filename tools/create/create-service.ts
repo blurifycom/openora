@@ -8,12 +8,13 @@
  *
  * Usage:
  *   pnpm create:service <name> <module,module,...>
- *   pnpm create:service accounts identity,mail
  *
- * The manifest lists every module its modules depend on, every module that binds a port they
- * require, and every module behind a control they would otherwise skip (`controlPorts`, admin
- * routes); the boot names whatever is missing. The host bakes the service name as its
- * SERVICE_NAME - its own Redis Streams consumer group.
+ * Run without arguments, it prints an example that boots (service-example.json, which an E2E
+ * boots too). The manifest lists every module its modules depend on, every module that binds a
+ * port they require, and every module behind a control they would otherwise skip
+ * (`controlPorts`, AdminGuard's); a boot that misses any prints one manifest line adding all of
+ * them. The host bakes the service name as its SERVICE_NAME - its own Redis Streams consumer
+ * group.
  *
  * After scaffolding: `pnpm install`, build deps, then
  *   pnpm -F @openora/<name>-service dev          # uses the baked-in manifest
@@ -24,11 +25,14 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
+const example = JSON.parse(
+  readFileSync(join(repoRoot, 'tools/create/service-example.json'), 'utf8'),
+) as { name: string; manifest: string[] };
 
 const [, , rawName, rawManifest] = process.argv;
 if (!rawName || !rawManifest) {
   console.error('Usage: pnpm create:service <name> <module,module,...>');
-  console.error('Example: pnpm create:service accounts identity,mail');
+  console.error(`Example: pnpm create:service ${example.name} ${example.manifest.join(',')}`);
   process.exit(1);
 }
 
@@ -148,9 +152,14 @@ console.warn(
   '  - A manifest that leaves out a module behind a control (RG limits, country checks, audit',
 );
 console.warn(
-  '    records, admin grants) refuses to boot and prints the modules to add: a service that',
+  '    records, admin grants) refuses to boot and prints one manifest line with every module to',
 );
-console.warn('    loads identity also loads compliance and iam.');
+console.warn(
+  '    add. Every split loads iam and identity for AdminGuard, and identity brings compliance,',
+);
+console.warn(
+  '    which depends on wallet, gaming, player-management and exchange-rate: about ten modules.',
+);
 console.warn(
   '  - The boot logs each other optional port the manifest leaves unbound and what its module',
 );
