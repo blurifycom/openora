@@ -1,1 +1,11 @@
 * @zaxovaiko @klaudia-blazyczek-blurify @marek-chmielowski-blurify @jakubfilinger-b @okapitula
+
+# AI paths: a matching line replaces `*`, so each one repeats the full team plus mp-blurify
+/packages/mcp/ @zaxovaiko @klaudia-blazyczek-blurify @marek-chmielowski-blurify @jakubfilinger-b @okapitula @mp-blurify
+/apps/mcp-server-dev/ @zaxovaiko @klaudia-blazyczek-blurify @marek-chmielowski-blurify @jakubfilinger-b @okapitula @mp-blurify
+/packages/core/src/server/mcp/ @zaxovaiko @klaudia-blazyczek-blurify @marek-chmielowski-blurify @jakubfilinger-b @okapitula @mp-blurify
+/packages/core/src/contracts/schemas/agents.ts @zaxovaiko @klaudia-blazyczek-blurify @marek-chmielowski-blurify @jakubfilinger-b @okapitula @mp-blurify
+/packages/core/src/**/agent-tools.ts @zaxovaiko @klaudia-blazyczek-blurify @marek-chmielowski-blurify @jakubfilinger-b @okapitula @mp-blurify
+/packages/core/src/**/*.agent-actions.* @zaxovaiko @klaudia-blazyczek-blurify @marek-chmielowski-blurify @jakubfilinger-b @okapitula @mp-blurify
+/docs/guides/mcp-*.md @zaxovaiko @klaudia-blazyczek-blurify @marek-chmielowski-blurify @jakubfilinger-b @okapitula @mp-blurify
+/docs/guides/agent*.md @zaxovaiko @klaudia-blazyczek-blurify @marek-chmielowski-blurify @jakubfilinger-b @okapitula @mp-blurify
