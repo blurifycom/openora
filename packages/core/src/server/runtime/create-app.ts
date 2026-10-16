@@ -51,9 +51,18 @@ import {
 } from '@openora/core/contracts';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
-import { loadPlugins, parseServiceManifest, type PluginEntry } from '../plugin-host/index.js';
-import { importPlugin } from '../plugin-host/load-plugins.js';
-import { selectServiceEntries } from '../plugin-host/service-manifest.js';
+import {
+  loadPlugins,
+  parseServiceManifest,
+  type ControlPort,
+  type PluginEntry,
+} from '../plugin-host/index.js';
+import { importPlugin, unboundControlPorts, unboundControls } from '../plugin-host/load-plugins.js';
+import {
+  assertControlsBound,
+  assertModuleControlsBound,
+  selectServiceEntries,
+} from '../plugin-host/service-manifest.js';
 import { createMcpKernel } from '../mcp/index.js';
 import { authorizeWithAdminGuard } from '../mcp/authorize.js';
 import type { McpHttpTransport } from '../mcp/http-transport.js';
@@ -197,6 +206,29 @@ function requestMeta(c: Context, trustedProxies: TrustedProxies) {
     clientMeta: extractClientMeta(headers),
     traceId: headers['x-trace-id'] ?? randomUUID(),
   };
+}
+
+// The ports AdminGuard reads with has(). An install without iam or identity runs without them
+// everywhere; a split service whose install has them must not, or an admin whose role was
+// revoked in the database, or who never enrolled 2FA, still acts through it.
+const ADMIN_GUARD_CONTROLS = [
+  {
+    port: ADMIN_PERMISSION_RESOLVER,
+    boundBy: 'iam',
+    without:
+      'grants come from the static role table, so an admin whose role was revoked still acts',
+  },
+  {
+    port: ADMIN_SECURITY_POLICY,
+    boundBy: 'identity',
+    without: 'admins skip the 2FA enrolment and session-integrity checks',
+  },
+] as const satisfies readonly ControlPort<CoreTokenCatalog>[];
+
+/** What a module needs beside it in a split service: its dependencies and its controls' modules. */
+async function needsInSplit(entry: PluginEntry) {
+  const plugin = await importPlugin<CoreTokenCatalog>(entry);
+  return [...(plugin.dependsOn ?? []), ...(plugin.controlPorts ?? []).map((p) => p.boundBy)];
 }
 
 const MCP_MAX_BODY_BYTES = 1_048_576;
@@ -346,8 +378,10 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
 /**
  * The single composition root: wires the DI container, boots the plugins in
  * `config.plugins` that `SERVICE_MANIFEST` selects (every one when it is unset), and
- * mounts the resulting oRPC router on a Hono app. `JOB_WORKERS` picks the job queues
- * this process consumes (every one when it is unset).
+ * mounts the resulting oRPC router on a Hono app. Under a manifest, a control port - a
+ * selected module's `controlPorts`, or AdminGuard's once admin routes resolve it - left
+ * unbound while the plugin list has the module that binds it fails the boot.
+ * `JOB_WORKERS` picks the job queues this process consumes (every one when it is unset).
  * Production is distributed-only (ADR-0030, superseding ADR-0010/0014/0016/0028):
  * `REDIS_URL` auto-binds `JOB_QUEUE`/`RATE_LIMITER`/`CACHE`/`MESSAGE_BROKER`/
  * `REALTIME_TRANSPORT` to their Redis-backed drivers - the broker being the
@@ -373,6 +407,7 @@ export async function createApp(
     process.env['TRUSTED_PROXIES'],
   );
   const jobWorkerSelection = parseJobWorkers(process.env['JOB_WORKERS']);
+  const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
 
   if (config.databaseUrl) {
     process.env['DATABASE_URL'] = config.databaseUrl;
@@ -432,20 +467,28 @@ export async function createApp(
   // no second createAuth() over the same DB. authSchema is injected (not imported) because
   // the engine is domain-agnostic (ADR-0019/0025).
   container.register(AUTH_SESSION, (c) => new SessionResolver(c.get(DRIZZLE), config.authSchema));
-  container.register(
-    ADMIN_GUARD,
-    (c) =>
-      new AdminGuard(
-        c.get(DRIZZLE),
-        c.get(AUTH_SESSION),
-        // has() avoids throwing on an unbound token so boot works without the iam module.
-        c.has(ADMIN_PERMISSION_RESOLVER) ? c.get(ADMIN_PERMISSION_RESOLVER) : undefined,
-        c.get(EVENT_BUS),
-        // has() avoids throwing on an unbound token so boot works without the identity module.
-        c.has(IDENTITY_READER) ? c.get(IDENTITY_READER) : undefined,
-        c.has(ADMIN_SECURITY_POLICY) ? c.get(ADMIN_SECURITY_POLICY) : undefined,
-      ),
-  );
+  container.register(ADMIN_GUARD, (c) => {
+    // Router factories resolve the guard at boot, so a split service that serves admin routes
+    // without the guard's controls fails to boot here; one resolved later refuses the same way.
+    if (manifest !== null) {
+      assertControlsBound(
+        config.plugins,
+        manifest,
+        'serves admin routes without the ports AdminGuard checks them with',
+        unboundControls('AdminGuard', ADMIN_GUARD_CONTROLS, c),
+      );
+    }
+    return new AdminGuard(
+      c.get(DRIZZLE),
+      c.get(AUTH_SESSION),
+      // has() avoids throwing on an unbound token so boot works without the iam module.
+      c.has(ADMIN_PERMISSION_RESOLVER) ? c.get(ADMIN_PERMISSION_RESOLVER) : undefined,
+      c.get(EVENT_BUS),
+      // has() avoids throwing on an unbound token so boot works without the identity module.
+      c.has(IDENTITY_READER) ? c.get(IDENTITY_READER) : undefined,
+      c.has(ADMIN_SECURITY_POLICY) ? c.get(ADMIN_SECURITY_POLICY) : undefined,
+    );
+  });
   if (config.igaming) {
     const igaming = config.igaming;
     container.register(IGAMING_CONFIG, () => igaming);
@@ -460,7 +503,6 @@ export async function createApp(
   const corsOrigins = resolveCorsOrigins(config.cors);
 
   const bootLogger = createLogger('create-app');
-  const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
   const plugins = await selectServiceEntries(
     config.plugins,
     manifest,
@@ -474,6 +516,16 @@ export async function createApp(
   await configure?.(container);
 
   assertDurableSeamsBound(container);
+  // After configure(), so a port the composition root binds counts.
+  if (manifest !== null) {
+    const loaded = await Promise.all(plugins.map((e) => importPlugin<CoreTokenCatalog>(e)));
+    await assertModuleControlsBound(
+      config.plugins,
+      manifest,
+      unboundControlPorts(loaded, container),
+      needsInSplit,
+    );
+  }
 
   // Sealed after configure() so neither an overlay, the composition root nor a holder of the
   // returned container can replace the wrapper that enforces IAM and audit, and bound before

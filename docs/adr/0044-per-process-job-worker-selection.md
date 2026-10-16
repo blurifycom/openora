@@ -17,7 +17,9 @@ receives its own copy of every event, and a module pulled into it for its depend
 handlers a second time across the cluster. A job whose handler needs the full container cannot
 live in a narrow service anyway: the MCP kernel (ADR-0042) is built in process from the tools and
 action types of the modules that process loaded, so an agent run needs every module that
-contributes them.
+contributes them. Nor does a manifest service stay narrow once it touches money: it fails closed
+on the controls the rest of the install enforces (below), so one that loads identity also loads
+compliance and iam.
 
 ## Decision
 
@@ -54,6 +56,22 @@ and `JOB_WORKERS=reports.*`; give the replicas `JOB_WORKERS=!reports.*`. Sharing
 `SERVICE_NAME` makes the worker compete with the replicas for events instead of receiving a copy,
 and keeps it in the same realtime and presence namespace. It serves HTTP like any instance but
 needs no ingress.
+
+**A manifest fails closed on controls.** Some ports back a money, compliance, authorization or
+audit control and are read with `c.has()`. An install without the module that binds one has
+nothing to enforce, so a full boot runs without it, as before. A split service is different: the
+module runs in another process of the same install, and a split that skipped the control would
+let through what that process refuses. A plugin declares such a port in `controlPorts`, with the
+module that binds it, and a `SERVICE_MANIFEST` boot refuses to start while one is unbound and the
+plugin list has that module. The error names the port and what its module skips, and prints the
+manifest with the modules to add and what they need in turn. `AdminGuard` holds its own ports to
+the same rule when admin routes resolve it: without `ADMIN_PERMISSION_RESOLVER` (iam) it decides
+on the static role table, so an admin whose role was revoked still acts, and without
+`ADMIN_SECURITY_POLICY` (identity) it skips the 2FA enrolment and session checks. Declared today:
+`RG_LIMITS` (wallet, gaming), `GAME_GEO_CHECK` (gaming), `GEO_CHECK_COMMANDS` (identity, bonus,
+notifications), `MCP_TOKEN_REVOCATION` (identity) and `AUDIT_WRITER` (mail). A port whose absence
+already fails closed - no KYC policy means every gated withdrawal needs KYC, no risk tags send
+auto-approval to a human - is not a control port.
 
 ### Alternatives considered
 

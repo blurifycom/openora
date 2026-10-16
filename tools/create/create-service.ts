@@ -10,8 +10,9 @@
  *   pnpm create:service <name> <module,module,...>
  *   pnpm create:service accounts identity,mail
  *
- * The manifest lists every module its modules depend on and every module that binds a port
- * they require; the boot names whatever is missing. The host bakes the service name as its
+ * The manifest lists every module its modules depend on, every module that binds a port they
+ * require, and every module behind a control they would otherwise skip (`controlPorts`, admin
+ * routes); the boot names whatever is missing. The host bakes the service name as its
  * SERVICE_NAME - its own Redis Streams consumer group.
  *
  * After scaffolding: `pnpm install`, build deps, then
@@ -144,8 +145,13 @@ console.warn(
   '    SERVICE_NAME - audit writes every row twice. Until ADR-0045 lands, split modules no other process loads.',
 );
 console.warn(
-  '  - The boot logs each optional port the manifest leaves unbound and what its module skips',
+  '  - A manifest that leaves out a module behind a control (RG limits, country checks, audit',
 );
 console.warn(
-  '    without it (eg identity without compliance skips the country check). Read those lines.',
+  '    records, admin grants) refuses to boot and prints the modules to add: a service that',
 );
+console.warn('    loads identity also loads compliance and iam.');
+console.warn(
+  '  - The boot logs each other optional port the manifest leaves unbound and what its module',
+);
+console.warn('    skips without it. Read those lines.');

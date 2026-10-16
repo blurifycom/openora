@@ -96,6 +96,13 @@ export default {
   id: 'bonus',
   dependsOn: ['audit'],
   requiresPorts: [PLAY_ELIGIBILITY],
+  controlPorts: [
+    {
+      port: GEO_CHECK_COMMANDS,
+      without: 'public offers are listed to visitors from refused countries',
+      boundBy: 'compliance',
+    },
+  ],
   register(ctx) {
     ctx.provide(BONUS_GRANTS, (c) => new GrantService(c.get(AUDIT_WRITER)));
     ctx.provide(BONUS_GRANT_LEDGER, () => bonusGrantLedger);

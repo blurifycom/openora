@@ -1,7 +1,7 @@
 import type { Container } from '../kernel/index.js';
 import { createLogger } from '../kernel/logger.js';
 import type { TokenCatalog } from '@openora/core/contracts';
-import type { Plugin } from './define-plugin.js';
+import type { ControlPort, Plugin } from './define-plugin.js';
 import { ModuleRegistryImpl } from './module-registry.js';
 
 const logger = createLogger('plugin-host');
@@ -132,23 +132,47 @@ export async function loadPlugins<C extends TokenCatalog>(
   return registry;
 }
 
+function portName(port: symbol) {
+  return String(port.description ?? port);
+}
+
 /**
- * The optional ports no plugin bound. A plugin boots without one but skips what it backs - a
- * check, an audit record - so the boot logs each, typically when a SERVICE_MANIFEST leaves out
- * the module that binds it.
+ * The optional and control ports no plugin bound. A plugin boots without one but skips what it
+ * backs - a check, an audit record - so the boot logs each, typically when a SERVICE_MANIFEST
+ * leaves out the module that binds it.
  */
 export function unboundOptionalPorts<C extends TokenCatalog>(
   plugins: Plugin<C>[],
   container: Container<C>,
 ): { plugin: string; port: string; without: string }[] {
   return plugins.flatMap((plugin) =>
-    (plugin.optionalPorts ?? [])
+    [...(plugin.optionalPorts ?? []), ...(plugin.controlPorts ?? [])]
       .filter(({ port }) => !container.has(port))
-      .map(({ port, without }) => ({
-        plugin: plugin.id,
-        port: String(port.description ?? port),
-        without,
-      })),
+      .map(({ port, without }) => ({ plugin: plugin.id, port: portName(port), without })),
+  );
+}
+
+/** A control port nothing bound, with what its owner skips and the module that binds it. */
+export type UnboundControl = { owner: string; port: string; without: string; boundBy: string };
+
+/** The ports among `controls` that `container` has no binding for, named for `owner`. */
+export function unboundControls<C extends TokenCatalog>(
+  owner: string,
+  controls: readonly ControlPort<C>[],
+  container: Container<C>,
+): UnboundControl[] {
+  return controls
+    .filter(({ port }) => !container.has(port))
+    .map(({ port, without, boundBy }) => ({ owner, port: portName(port), without, boundBy }));
+}
+
+/** The `controlPorts` of `plugins` that nothing bound. */
+export function unboundControlPorts<C extends TokenCatalog>(
+  plugins: Plugin<C>[],
+  container: Container<C>,
+): UnboundControl[] {
+  return plugins.flatMap((plugin) =>
+    unboundControls(plugin.id, plugin.controlPorts ?? [], container),
   );
 }
 

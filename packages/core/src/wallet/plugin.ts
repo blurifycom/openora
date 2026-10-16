@@ -89,6 +89,9 @@ export default {
   // registered - so both ports are bound by then regardless of load order.
   id: 'wallet',
   dependsOn: ['identity', 'audit'],
+  controlPorts: [
+    { port: RG_LIMITS, without: 'deposit and wager limits go unenforced', boundBy: 'compliance' },
+  ],
   register(ctx) {
     // Set inside the router factory (container access); the job worker's handler
     // closes over this ref, same shape as pam/tag's evalSvc - subscriptions/workers

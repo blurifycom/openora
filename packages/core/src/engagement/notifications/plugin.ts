@@ -502,6 +502,13 @@ export function buildChatRoomScheduledForDeletionNotification(payload: {
 
 export default {
   id: 'notifications',
+  controlPorts: [
+    {
+      port: GEO_CHECK_COMMANDS,
+      without: 'welcome mails offer promotions without the country check',
+      boundBy: 'compliance',
+    },
+  ],
   register(ctx) {
     const logger = createLogger('notifications');
 

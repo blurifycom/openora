@@ -117,6 +117,16 @@ export type OptionalPort<C extends TokenCatalog> = {
   without: string;
 };
 
+/**
+ * An optional port behind a money, compliance, authorization or audit control. An install
+ * without the module that binds it has nothing to enforce, so a full boot runs without it. A
+ * split service runs beside a process that has that module, so it may not.
+ */
+export type ControlPort<C extends TokenCatalog> = OptionalPort<C> & {
+  /** The module that binds the port, named when a SERVICE_MANIFEST leaves the port unbound. */
+  boundBy: string;
+};
+
 export type Plugin<C extends TokenCatalog> = {
   id: string;
   dependsOn?: readonly string[];
@@ -124,5 +134,7 @@ export type Plugin<C extends TokenCatalog> = {
   requiresPorts?: readonly (C[keyof C] & Token<unknown>)[];
   // Checked at the same point; an unbound one is logged, not fatal.
   optionalPorts?: readonly OptionalPort<C>[];
+  // Logged like optionalPorts, but an unbound one fails a SERVICE_MANIFEST boot.
+  controlPorts?: readonly ControlPort<C>[];
   register(ctx: PluginContext<C>): void | Promise<void>;
 };

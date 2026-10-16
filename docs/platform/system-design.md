@@ -285,7 +285,9 @@ flowchart TB
 
 A manifest lists every module its modules depend on and every module that binds a port they
 require; `createApp` applies it to any plugin list and names what is missing. It also logs each
-optional port a manifest leaves unbound, with what the module skips without it. A split service
+optional port a manifest leaves unbound, with what the module skips without it, and refuses to
+boot over a control port - an RG limit, a geo check, an audit record, AdminGuard's database
+grants - whose module the plugin list has but the manifest leaves out. A split service
 needs a `SERVICE_NAME` of its own - its consumer group - while an instance that only takes a
 share of the queues keeps the replicas' `SERVICE_NAME`, so it competes for events rather than
 receiving a copy. `JOB_WORKERS` picks the queues a process consumes

@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { Container } from '../../kernel/index.js';
 import { createToken, type TokenCatalog } from '@openora/core/contracts';
-import { assertRequiredPorts, unboundOptionalPorts } from '../load-plugins.js';
+import { assertRequiredPorts, unboundControlPorts, unboundOptionalPorts } from '../load-plugins.js';
 import type { Plugin } from '../define-plugin.js';
 
 const WALLET_COMMANDS = createToken<{ debit: () => void }>('WALLET_COMMANDS');
 const GEO_CHECK = createToken<{ check: () => void }>('GEO_CHECK');
-const catalog = { WALLET_COMMANDS, GEO_CHECK } satisfies TokenCatalog;
+const RG_LIMITS = createToken<{ checkDeposit: () => void }>('RG_LIMITS');
+const catalog = { WALLET_COMMANDS, GEO_CHECK, RG_LIMITS } satisfies TokenCatalog;
 
 const consumer: Plugin<typeof catalog> = {
   id: 'gaming',
@@ -53,5 +54,45 @@ describe('unboundOptionalPorts', () => {
     container.register(GEO_CHECK, () => ({ check: () => {} }));
 
     expect(unboundOptionalPorts([identity], container)).toEqual([]);
+  });
+});
+
+describe('unboundControlPorts', () => {
+  const wallet: Plugin<typeof catalog> = {
+    id: 'wallet',
+    optionalPorts: [{ port: GEO_CHECK, without: 'nothing that matters here' }],
+    controlPorts: [
+      { port: RG_LIMITS, without: 'deposit limits go unenforced', boundBy: 'compliance' },
+    ],
+    register: () => {},
+  };
+
+  it('names the plugin, the port, what it skips and the module that binds the port', () => {
+    const container = new Container<typeof catalog>();
+
+    expect(unboundControlPorts([wallet], container)).toEqual([
+      {
+        owner: 'wallet',
+        port: 'RG_LIMITS',
+        without: 'deposit limits go unenforced',
+        boundBy: 'compliance',
+      },
+    ]);
+  });
+
+  it('is empty once the port is bound', () => {
+    const container = new Container<typeof catalog>();
+    container.register(RG_LIMITS, () => ({ checkDeposit: () => {} }));
+
+    expect(unboundControlPorts([wallet], container)).toEqual([]);
+  });
+
+  it('are logged with the optional ports', () => {
+    const container = new Container<typeof catalog>();
+
+    expect(unboundOptionalPorts([wallet], container).map(({ port }) => port)).toEqual([
+      'GEO_CHECK',
+      'RG_LIMITS',
+    ]);
   });
 });
