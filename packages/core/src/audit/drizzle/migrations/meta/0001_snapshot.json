@@ -227,11 +227,7 @@
     "public.audit_actor_type": {
       "name": "audit_actor_type",
       "schema": "public",
-      "values": [
-        "player",
-        "admin",
-        "system"
-      ]
+      "values": ["player", "admin", "system"]
     }
   },
   "schemas": {},
