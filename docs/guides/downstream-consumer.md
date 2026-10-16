@@ -73,6 +73,35 @@ await listen();
 Downstream consumers create their own thin entrypoint that calls `createApp` and bring
 their own `extensions.config.ts`. See `tools/templates/consumer/apps/api/src/main.ts.tpl` for the reference.
 
+### Running more than one process
+
+Replicas of one API share a `SERVICE_NAME` (unset means `monolith`) and split the work: each event
+and each job reaches one of them.
+
+- **Fewer modules in a process.** `SERVICE_MANIFEST` lists the module ids a process boots, and
+  `createApp` applies it to the `plugins` you pass. List every module your modules depend on and
+  every module that binds a port they require. A module still boots without an optional port, so
+  the boot log also lists each one the manifest leaves unbound and what its module skips without
+  it. A control - an RG limit, a country check, an audit record, the database grants and 2FA
+  checks behind admin routes - is different: while your plugin list has the module that enforces
+  it, a manifest that leaves it out refuses to boot. Whatever is missing, the boot fails once,
+  naming all of it, with one manifest line that adds every module needed and what those need in
+  turn. A process with a manifest needs a `SERVICE_NAME` of its own.
+
+  With the shipped modules a split ends up close to the monolith. Every manifest boot checks
+  AdminGuard's ports, so every split loads iam and identity, and with them audit and mail.
+  Identity's controls pull in compliance, and compliance depends on wallet, gaming,
+  player-management and exchange-rate; player-management depends on chat. A split is those ten
+  modules plus the ones you meant to move, and until
+  [ADR-0045](../adr/0045-dependency-only-modules-provide-but-do-not-consume.md) lands each of the
+  ten handles every event once in the split and once in the rest of the install.
+
+- **Fewer queues in a process.** `JOB_WORKERS` picks the job queues a process consumes: names,
+  `prefix*` patterns, `!` to exclude. To keep a long-running queue off the API replicas, run one
+  more instance with the same plugins and `SERVICE_NAME` and `JOB_WORKERS=<queues>`, and give the
+  replicas `JOB_WORKERS=!<queues>`. Every queue needs a consumer somewhere. See
+  [ADR-0044](../adr/0044-per-process-job-worker-selection.md).
+
 ## Seeding reference data (production)
 
 Migrations carry **structure only** (DDL: tables, indexes, constraints) - never data.

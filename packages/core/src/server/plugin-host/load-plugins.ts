@@ -1,7 +1,10 @@
 import type { Container } from '../kernel/index.js';
+import { createLogger } from '../kernel/logger.js';
 import type { TokenCatalog } from '@openora/core/contracts';
 import type { Plugin } from './define-plugin.js';
 import { ModuleRegistryImpl } from './module-registry.js';
+
+const logger = createLogger('plugin-host');
 
 export type PluginEntry = {
   id: string;
@@ -17,7 +20,7 @@ export type PluginEntry = {
   kind?: 'module' | 'infra';
 };
 
-function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
+export function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
   if (!Array.isArray(entries)) {
     throw new Error(
       `extensions.config.ts must export \`extensions\` as an array of { id, path }. Got ${typeof entries}.`,
@@ -90,21 +93,32 @@ export function topoSort<C extends TokenCatalog>(plugins: Plugin<C>[]): Plugin<C
   return sorted;
 }
 
+/** Imports the plugin an entry names, checking it is one and carries the entry's id. */
+export async function importPlugin<C extends TokenCatalog>(entry: PluginEntry): Promise<Plugin<C>> {
+  const mod = (await import(entry.path)) as { default?: Plugin<C> };
+  const plugin = mod.default;
+  if (!plugin || typeof plugin.register !== 'function') {
+    throw new Error(`Plugin at "${entry.path}" does not default-export a valid plugin`);
+  }
+  assertEntryMatchesPlugin(entry, plugin);
+  return plugin;
+}
+
+/**
+ * Imports `entries`, registers them in dependency order and checks their ports. With
+ * `requiredPorts: 'defer'` an unbound required port is left to the caller, which a
+ * SERVICE_MANIFEST boot folds into one error with everything else the manifest leaves out.
+ */
 export async function loadPlugins<C extends TokenCatalog>(
   entries: PluginEntry[],
   container: Container<C>,
+  { requiredPorts = 'assert' }: { requiredPorts?: 'assert' | 'defer' } = {},
 ): Promise<ModuleRegistryImpl<C>> {
   validateEntries(entries);
   const plugins: Plugin<C>[] = [];
 
   for (const entry of entries) {
-    const mod = (await import(entry.path)) as { default?: Plugin<C> };
-    const plugin = mod.default;
-    if (!plugin || typeof plugin.register !== 'function') {
-      throw new Error(`Plugin at "${entry.path}" does not default-export a valid plugin`);
-    }
-    assertEntryMatchesPlugin(entry, plugin);
-    plugins.push(plugin);
+    plugins.push(await importPlugin<C>(entry));
   }
 
   const ordered = topoSort(plugins);
@@ -116,9 +130,34 @@ export async function loadPlugins<C extends TokenCatalog>(
     registry.setOwner(null);
   }
 
-  assertRequiredPorts(ordered, container);
+  if (requiredPorts === 'assert') {
+    assertRequiredPorts(ordered, container);
+  }
+  for (const { plugin, port, without } of unboundOptionalPorts(ordered, container)) {
+    logger.warn({ plugin, port }, `${plugin} runs without ${port}: ${without}`);
+  }
 
   return registry;
+}
+
+export function portName(port: symbol) {
+  return String(port.description ?? port);
+}
+
+/**
+ * The optional and control ports no plugin bound. A plugin boots without one but skips what it
+ * backs - a check, an audit record - so the boot logs each, typically when a SERVICE_MANIFEST
+ * leaves out the module that binds it.
+ */
+export function unboundOptionalPorts<C extends TokenCatalog>(
+  plugins: Plugin<C>[],
+  container: Container<C>,
+): { plugin: string; port: string; without: string }[] {
+  return plugins.flatMap((plugin) =>
+    [...(plugin.optionalPorts ?? []), ...(plugin.controlPorts ?? [])]
+      .filter(({ port }) => !container.has(port))
+      .map(({ port, without }) => ({ plugin: plugin.id, port: portName(port), without })),
+  );
 }
 
 /**
@@ -146,8 +185,9 @@ export function assertRequiredPorts<C extends TokenCatalog>(
     throw new Error(
       `[plugin-host] Required ports are unbound at boot:\n${unbound.join('\n')}\n` +
         `A domain reaches another domain only through a port the other domain binds. ` +
-        `Install the package that provides each port (eg @openora/wallet binds WALLET_COMMANDS) ` +
-        `or remove the plugin that requires it. See ADR-0024.`,
+        `Load the module that binds each port (eg wallet binds WALLET_COMMANDS) - with ` +
+        `SERVICE_MANIFEST set, add it to the manifest - or remove the plugin that requires it. ` +
+        `See ADR-0024.`,
     );
   }
 }

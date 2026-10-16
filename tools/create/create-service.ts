@@ -8,22 +8,31 @@
  *
  * Usage:
  *   pnpm create:service <name> <module,module,...>
- *   pnpm create:service wallet identity,wallet
+ *
+ * Run without arguments, it prints an example that boots (service-example.json, which an E2E
+ * boots too). The manifest lists every module its modules depend on, every module that binds a
+ * port they require, and every module behind a control they would otherwise skip
+ * (`controlPorts`, AdminGuard's); a boot that misses any prints one manifest line adding all of
+ * them. The host bakes the service name as its SERVICE_NAME - its own Redis Streams consumer
+ * group.
  *
  * After scaffolding: `pnpm install`, build deps, then
  *   pnpm -F @openora/<name>-service dev          # uses the baked-in manifest
- *   SERVICE_MANIFEST=identity,wallet,chat pnpm -F @openora/<name>-service dev   # override
+ *   SERVICE_MANIFEST=<module,...> pnpm -F @openora/<name>-service dev   # override
  */
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
+const example = JSON.parse(
+  readFileSync(join(repoRoot, 'tools/create/service-example.json'), 'utf8'),
+) as { name: string; manifest: string[] };
 
 const [, , rawName, rawManifest] = process.argv;
 if (!rawName || !rawManifest) {
   console.error('Usage: pnpm create:service <name> <module,module,...>');
-  console.error('Example: pnpm create:service wallet identity,wallet');
+  console.error(`Example: pnpm create:service ${example.name} ${example.manifest.join(',')}`);
   process.exit(1);
 }
 
@@ -65,17 +74,13 @@ const files: Record<string, string> = {
           build: 'tsc',
           dev: 'node --import tsx --watch src/main.ts',
           start: 'node dist/main.js',
-          typecheck: 'tsc --noEmit',
+          'check:types': 'tsc --noEmit',
         },
         dependencies: {
-          '@orpc/server': '1.14.3',
           '@openora/core': 'workspace:*',
-          amqplib: '^2.0.1',
-          bullmq: '^5.77.6',
-          zod: '4.4.3',
         },
         devDependencies: {
-          tsx: '4.22.2',
+          tsx: '4.23.1',
           typescript: '6.0.3',
         },
       },
@@ -95,16 +100,22 @@ const files: Record<string, string> = {
     ) + '\n',
 
   'src/main.ts': `import { createApp, loadExtensions } from '@openora/core/server';
+import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
 
 // ${name} service: boots only the modules it owns. The module code is shared with
-// the monolith (root extensions.config.ts) - this host just narrows it via the
-// SERVICE_MANIFEST seam. Override the default at runtime with SERVICE_MANIFEST.
+// the monolith (root extensions.config.ts) - createApp narrows it via the
+// SERVICE_MANIFEST seam. Override the defaults at runtime with SERVICE_MANIFEST and
+// SERVICE_NAME; the name is this service's own consumer group.
 process.env['SERVICE_MANIFEST'] ??= '${manifest.join(',')}';
+process.env['SERVICE_NAME'] ??= '${name}';
 
 async function bootstrap() {
   const plugins = await loadExtensions();
   // Routes come from the loaded plugins; createApp exposes runtime API docs.
-  const { listen } = await createApp({ plugins });
+  const { listen } = await createApp({
+    plugins,
+    authSchema: { user, session, account, verification, twoFactor },
+  });
   await listen();
 }
 
@@ -122,9 +133,34 @@ for (const [rel, content] of Object.entries(files)) {
 console.log(`Created apps/${name} (${pkgName}) booting modules: ${manifest.join(', ')}`);
 console.log('Next:');
 console.log('  pnpm install');
-console.log(`  pnpm -F ${pkgName} dev        # boots the baked-in manifest`);
+console.log(
+  `  DATABASE_URL=... REDIS_URL=... CORS_ORIGINS=... pnpm -F ${pkgName} dev   # boots the baked-in manifest`,
+);
 console.log(`  SERVICE_MANIFEST=... pnpm -F ${pkgName} dev   # override at runtime`);
 console.log('To exclude these modules from the monolith, drop them from extensions.config.ts');
 console.log(
   'and run them only via this host (set REDIS_URL or bind MESSAGE_BROKER in an overlay; AMQP_URL only enables the outbox).',
 );
+console.warn('Before you deploy it:');
+console.warn(
+  '  - A module this service and another process both load handles each event in both, under each',
+);
+console.warn(
+  '    SERVICE_NAME - audit writes every row twice. Until ADR-0045 lands, split modules no other process loads.',
+);
+console.warn(
+  '  - A manifest that leaves out a module behind a control (RG limits, country checks, audit',
+);
+console.warn(
+  '    records, admin grants) refuses to boot and prints one manifest line with every module to',
+);
+console.warn(
+  '    add. Every split loads iam and identity for AdminGuard, and identity brings compliance,',
+);
+console.warn(
+  '    which depends on wallet, gaming, player-management and exchange-rate: about ten modules.',
+);
+console.warn(
+  '  - The boot logs each other optional port the manifest leaves unbound and what its module',
+);
+console.warn('    skips without it. Read those lines.');

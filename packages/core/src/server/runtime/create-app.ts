@@ -51,7 +51,14 @@ import {
 } from '@openora/core/contracts';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
-import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
+import { loadPlugins, parseServiceManifest, type PluginEntry } from '../plugin-host/index.js';
+import { importPlugin } from '../plugin-host/load-plugins.js';
+import {
+  assertServiceComplete,
+  selectServiceEntries,
+  type HostControl,
+  type ServiceManifestCheck,
+} from '../plugin-host/service-manifest.js';
 import { createMcpKernel } from '../mcp/index.js';
 import { authorizeWithAdminGuard } from '../mcp/authorize.js';
 import type { McpHttpTransport } from '../mcp/http-transport.js';
@@ -64,6 +71,7 @@ import {
 } from './client-address.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
 import type { CoreTokenCatalog } from './core-token-catalog.js';
+import { parseJobWorkers, selectJobWorkers } from './job-workers.js';
 
 // Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
 // only (public CMS content and the game catalogue). NOTHING
@@ -121,7 +129,7 @@ function resolveServiceName(): string {
   if (serviceName) {
     return serviceName;
   }
-  if (process.env['SERVICE_MANIFEST']) {
+  if (parseServiceManifest(process.env['SERVICE_MANIFEST']) !== null) {
     throw new Error(
       '[create-app] SERVICE_MANIFEST is set but SERVICE_NAME is not. A split service needs a stable ' +
         'name of its own: it becomes the MESSAGE_BROKER consumer group, and every service sharing a ' +
@@ -195,6 +203,25 @@ function requestMeta(c: Context, trustedProxies: TrustedProxies) {
     traceId: headers['x-trace-id'] ?? randomUUID(),
   };
 }
+
+// The ports AdminGuard reads with has(). An install without iam or identity runs without them
+// everywhere; a split service whose install has them must not, or an admin whose role was
+// revoked in the database, or who never enrolled 2FA, still acts through it.
+const ADMIN_GUARD_CONTROLS = [
+  {
+    owner: 'AdminGuard',
+    port: ADMIN_PERMISSION_RESOLVER,
+    boundBy: 'iam',
+    without:
+      'grants come from the static role table, so an admin whose role was revoked still acts',
+  },
+  {
+    owner: 'AdminGuard',
+    port: ADMIN_SECURITY_POLICY,
+    boundBy: 'identity',
+    without: 'admins skip the 2FA enrolment and session-integrity checks',
+  },
+] as const satisfies readonly HostControl<CoreTokenCatalog>[];
 
 const MCP_MAX_BODY_BYTES = 1_048_576;
 const MCP_SDK_PACKAGE = '@modelcontextprotocol/sdk';
@@ -341,8 +368,14 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
 }
 
 /**
- * The single composition root: wires the DI container, boots every plugin in
- * `config.plugins`, and mounts the resulting oRPC router on a Hono app.
+ * The single composition root: wires the DI container, boots the plugins in
+ * `config.plugins` that `SERVICE_MANIFEST` selects (every one when it is unset), and
+ * mounts the resulting oRPC router on a Hono app. A manifest that leaves out a module its
+ * modules depend on, the module that binds a port they require, or the module behind a
+ * control - a selected module's `controlPorts`, or AdminGuard's - that the plugin list has,
+ * fails the boot with one error naming all of them; a manifest boot resolves AdminGuard
+ * before it serves.
+ * `JOB_WORKERS` picks the job queues this process consumes (every one when it is unset).
  * Production is distributed-only (ADR-0030, superseding ADR-0010/0014/0016/0028):
  * `REDIS_URL` auto-binds `JOB_QUEUE`/`RATE_LIMITER`/`CACHE`/`MESSAGE_BROKER`/
  * `REALTIME_TRANSPORT` to their Redis-backed drivers - the broker being the
@@ -367,6 +400,8 @@ export async function createApp(
     config.trustedProxies,
     process.env['TRUSTED_PROXIES'],
   );
+  const jobWorkerSelection = parseJobWorkers(process.env['JOB_WORKERS']);
+  const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
 
   if (config.databaseUrl) {
     process.env['DATABASE_URL'] = config.databaseUrl;
@@ -453,10 +488,33 @@ export async function createApp(
   // first running every plugin's side effects.
   const corsOrigins = resolveCorsOrigins(config.cors);
 
-  const registry = await loadPlugins(config.plugins, container);
+  const bootLogger = createLogger('create-app');
+  const manifestCheck: ServiceManifestCheck<CoreTokenCatalog> | null =
+    manifest === null
+      ? null
+      : {
+          entries: config.plugins,
+          manifest,
+          readPlugin: (entry) => importPlugin(entry),
+          hostControls: ADMIN_GUARD_CONTROLS,
+          isBound: (port) => container.has(port),
+        };
+  const plugins = manifestCheck ? await selectServiceEntries(manifestCheck) : config.plugins;
+  if (manifestCheck) {
+    bootLogger.info({ modules: plugins.map((e) => e.id) }, 'SERVICE_MANIFEST active');
+  }
+
+  const registry = await loadPlugins(plugins, container, {
+    requiredPorts: manifestCheck ? 'defer' : 'assert',
+  });
   await configure?.(container);
 
   assertDurableSeamsBound(container);
+  // After configure(), so a port the composition root binds counts.
+  if (manifestCheck) {
+    await assertServiceComplete(manifestCheck);
+    container.get(ADMIN_GUARD);
+  }
 
   // Sealed after configure() so neither an overlay, the composition root nor a holder of the
   // returned container can replace the wrapper that enforces IAM and audit, and bound before
@@ -499,7 +557,20 @@ export async function createApp(
   // Built now so a broken tool or action-type factory fails boot, not the first call.
   const mcpTransport = await loadMcpTransport(container, container.get(MCP_KERNEL));
 
-  for (const registration of registry.jobs.getAll()) {
+  // After the router factories: a factory may register a worker too.
+  const workers = selectJobWorkers(registry.jobs.getAll(), jobWorkerSelection);
+  if (jobWorkerSelection !== null) {
+    const queuesOf = (list: typeof workers.consumed) => [...new Set(list.map((w) => w.queue))];
+    bootLogger.info(
+      {
+        consumed: queuesOf(workers.consumed),
+        skipped: queuesOf(workers.skipped),
+        idleExclusions: workers.idleExclusions,
+      },
+      'JOB_WORKERS active',
+    );
+  }
+  for (const registration of workers.consumed) {
     jobQueue.registerWorker(registration);
   }
 

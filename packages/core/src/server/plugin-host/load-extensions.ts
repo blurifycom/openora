@@ -1,13 +1,12 @@
 import { resolve, dirname, isAbsolute } from 'node:path';
 import { accessSync } from 'node:fs';
-import { applyServiceManifest, parseServiceManifest } from './service-manifest.js';
 import type { PluginEntry } from './load-plugins.js';
 
 /**
  * Load the extensions.config.ts registry from disk and resolve plugin paths.
  * Resolves via EXTENSIONS_CONFIG env var or walks up from process.cwd().
- * Optional `filter` lets a composition root drop entries before the service
- * manifest is applied.
+ * Optional `filter` lets a composition root drop entries. `SERVICE_MANIFEST` is
+ * applied by `createApp`, to this list or any other it is given.
  */
 export async function loadExtensions(
   filter?: (entries: PluginEntry[]) => PluginEntry[],
@@ -27,16 +26,7 @@ export async function loadExtensions(
     path: isAbsolute(entry.path) ? entry.path : resolve(configDir, entry.path),
   }));
 
-  const filtered = filter ? filter(resolved) : resolved;
-
-  const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
-  const selected = applyServiceManifest(filtered, manifest);
-  if (manifest !== null) {
-    process.stdout.write(
-      `SERVICE_MANIFEST active: booting ${selected.map((e) => e.id).join(', ')}\n`,
-    );
-  }
-  return selected;
+  return filter ? filter(resolved) : resolved;
 }
 
 function findConfigUpwards(start: string): string {
