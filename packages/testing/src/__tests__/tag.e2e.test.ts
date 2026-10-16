@@ -1,26 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import {
-  loadExtensions,
-  DRIZZLE,
-  EVENT_BUS,
-  type Container,
-  type CoreTokenCatalog,
-} from '@openora/core/server';
+import { DRIZZLE, EVENT_BUS, type Container, type CoreTokenCatalog } from '@openora/core/server';
 import { JOB_QUEUE, queue } from '@openora/core/contracts';
 import { session } from '@openora/core/pam/schema/identity';
 import { walletTransaction } from '@openora/core/wallet/schema';
 import {
-  setupTestDb,
-  bootTestApp,
   registerAndMaterializePlayer,
   asPlayer,
   asAdmin,
-  seedMinimal,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 /**
@@ -105,23 +98,14 @@ async function auditHasEntry(admin: TestClient, playerId: string, action: string
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  const plugins = await loadExtensions();
-  app = await bootTestApp({ plugins, databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
   // Reuse one admin session across the file; the identity login rate limit is
   // intentionally bounded and this suite performs many admin requests.
   admin = await asAdmin(app.app);
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {

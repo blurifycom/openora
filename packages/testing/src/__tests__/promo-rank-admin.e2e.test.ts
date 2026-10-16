@@ -1,20 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
 import { WAGER_TRACKING } from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { auditLog } from '@openora/core/audit/schema';
 import { promoRankTier } from '@openora/core/promo/schema/gamification';
 import {
-  setupTestDb,
-  bootTestApp,
-  seedMinimal,
   registerAndMaterializePlayer,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 let db: TestDb;
@@ -108,14 +107,7 @@ const recordWager = (userId: string, weightedAmount: string) =>
   );
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
 
   const promotions = await adminWithRole('bonus-promotions');
   admin = promotions.client;
@@ -125,8 +117,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await app.close();
-  await db.dispose();
+  await closeE2e({ app, db });
 });
 
 // The ladder is shared reference data in one test database, so a file that edits it hands the

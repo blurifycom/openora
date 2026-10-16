@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { loadExtensions } from '@openora/core/server';
 import { ACCESS_REVOKED_SIGNAL, chatChannel } from '@openora/core/contracts';
 import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
@@ -13,15 +12,14 @@ import {
   type ChatSignal,
 } from '@openora/core/engagement/contracts/chat';
 import {
-  setupTestDb,
-  bootTestApp,
   registerAndMaterializePlayer,
-  seedMinimal,
   asAdmin,
   type TestDb,
   type TestApp,
   type TestClient,
   uniqueUsername,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 const STREAM_PATH = '/chat/room-stream';
@@ -254,21 +252,13 @@ function accessRevoked(roomId: string | null) {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
   admin = await asAdmin(app.app);
 }, 60_000);
 
 afterAll(async () => {
   await Promise.allSettled(openStreams.map((stream) => stream.close()));
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('chat room stream: both lanes of a room on one connection', () => {

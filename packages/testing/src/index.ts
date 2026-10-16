@@ -23,3 +23,13 @@ export { capturedEmailsFor, clearCapturedEmails, type CapturedEmail } from './ca
 export { seedMinimal, type SeedMinimalOptions } from './seed.js';
 export { seedDemoData } from './seed-demo-data.js';
 export type { SeedAuth, SeedOptions, SeedResult } from './seed-demo-data.js';
+export { bootE2e, closeE2e, type E2e, type BootE2eOptions } from './e2e.js';
+export {
+  assignIamRoleByKey,
+  assignTag,
+  readJson,
+  registerChatter,
+  registerWithEmail,
+  verifyKyc,
+  type Chatter,
+} from './helpers.js';

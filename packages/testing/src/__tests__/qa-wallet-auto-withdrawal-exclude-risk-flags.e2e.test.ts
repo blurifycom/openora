@@ -12,13 +12,12 @@ import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { walletAutoWithdrawalConfig } from '@openora/core/wallet/schema';
 import {
-  setupTestDb,
-  bootTestApp,
   registerAndMaterializePlayer,
-  seedMinimal,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 /**
@@ -108,27 +107,18 @@ async function setConfig(input: {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
   const basePlugins = await loadExtensions();
 
   const fixture = fileURLToPath(
     new URL('./fixtures/qa-wallet-auto-withdrawal-exclude-risk-flags-plugin.ts', import.meta.url),
   );
 
-  appMain = await bootTestApp({
+  ({ db, app: appMain } = await bootE2e({
     plugins: [
       ...basePlugins,
       { id: 'qa-wallet-auto-withdrawal-exclude-risk-flags', path: fixture },
     ],
-    databaseUrl: db.url,
-  });
-
-  await seedMinimal(appMain.container, { playerCount: 0 });
+  }));
 
   const superAdminEmail = `super-admin-${randomUUID()}@e2e.test`;
   const created = await makeSuperAdmin(appMain, appMain.container, superAdminEmail);
@@ -136,8 +126,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await appMain?.close();
-  await db?.dispose();
+  await closeE2e({ app: appMain, db });
 });
 
 describe('upgraded install: the migration DEFAULT tags gate before any admin ever edits excludeRiskFlags', () => {

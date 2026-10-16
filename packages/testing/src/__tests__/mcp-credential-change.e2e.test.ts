@@ -12,9 +12,6 @@ import {
 } from '@openora/core/iam/schema';
 import { account, user } from '@openora/core/pam/schema/identity';
 import {
-  setupTestDb,
-  bootTestApp,
-  seedMinimal,
   registerPlayer,
   asAdmin,
   asPlayer,
@@ -23,6 +20,8 @@ import {
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 const MCP_URL = 'http://localhost/mcp';
@@ -140,14 +139,8 @@ async function resetPassword(email: string, newPassword: string) {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
   const fixture = (name: string) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
-  app = await bootTestApp({
+  ({ db, app } = await bootE2e({
     plugins: [
       ...(await loadExtensions()),
       { id: 'test-mcp-transport', path: fixture('test-mcp-transport-plugin.ts') },
@@ -156,14 +149,11 @@ beforeAll(async () => {
         path: fixture('test-failing-mcp-token-revocation-plugin.ts'),
       },
     ],
-    databaseUrl: db.url,
-  });
-  await seedMinimal(app.container, { playerCount: 0 });
+  }));
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('the credential stamp the MCP token gate reads', () => {

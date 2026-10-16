@@ -12,7 +12,6 @@ import { user } from '@openora/core/pam/schema/identity';
 import { walletAutoWithdrawalConfig } from '@openora/core/wallet/schema';
 import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 import {
-  setupTestDb,
   bootTestApp,
   registerAndMaterializePlayer,
   asAdmin,
@@ -21,6 +20,8 @@ import {
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 /**
@@ -98,15 +99,9 @@ async function pendingWithdrawalIds(admin: TestClient, currency = 'USD') {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
   const basePlugins = await loadExtensions();
 
-  appDefault = await bootTestApp({ plugins: basePlugins, databaseUrl: db.url });
+  ({ db, app: appDefault } = await bootE2e({ plugins: basePlugins, seed: false }));
 
   const gatedFixture = fileURLToPath(
     new URL('./fixtures/test-wallet-auto-withdrawal-config-plugin.ts', import.meta.url),
@@ -156,8 +151,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await appDefault?.close();
   await appGated?.close();
-  await appCapGated?.close();
-  await db?.dispose();
+  await closeE2e({ app: appCapGated, db });
 });
 
 describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () => {

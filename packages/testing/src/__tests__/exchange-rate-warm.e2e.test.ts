@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { DEFAULT_CRYPTO_CURRENCIES, JOB_QUEUE, queue } from '@openora/core/contracts';
 import { exchangeRateQuote } from '@openora/core/fx/schema/exchange-rate';
-import { bootTestApp, setupTestDb, type TestApp, type TestDb } from '../index.js';
+import { type TestApp, type TestDb, bootE2e, closeE2e } from '../index.js';
 import { TEST_EXCHANGE_RATE } from '../test-exchange-rate-provider-plugin.js';
 
 const rateProviderPluginPath = fileURLToPath(
@@ -14,24 +14,17 @@ let db: TestDb;
 let testApp: TestApp;
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  testApp = await bootTestApp({
+  ({ db, app: testApp } = await bootE2e({
     plugins: [
       ...(await loadExtensions()),
       { id: 'testing-exchange-rate-provider', path: rateProviderPluginPath },
     ],
-    databaseUrl: db.url,
-  });
+    seed: false,
+  }));
 }, 60_000);
 
 afterAll(async () => {
-  await testApp?.close();
-  await db?.dispose();
+  await closeE2e({ app: testApp, db });
 });
 
 const storedRates = async () =>

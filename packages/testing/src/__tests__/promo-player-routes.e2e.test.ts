@@ -1,17 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { loadExtensions, DRIZZLE, EVENT_BUS } from '@openora/core/server';
+import { DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import { BONUS_GRANTS } from '@openora/core/contracts';
 import { promoWeight, promoWeightProfile } from '@openora/core/promo/schema/bonus';
 import {
-  setupTestDb,
-  bootTestApp,
-  seedMinimal,
   registerAndMaterializePlayer,
   asAdmin,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 const JOB_WAIT = { timeout: 15000, interval: 100 };
@@ -51,14 +50,7 @@ async function player(): Promise<{ client: TestClient; userId: string }> {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
   admin = await asAdmin(app.app);
 
   const [profile] = await drizzle()
@@ -78,8 +70,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await app.close();
-  await db.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('a player reading their own bonuses', () => {
