@@ -129,13 +129,13 @@ export function createBonusRouter({
               NOT_FOUND: [GrantNotForfeitableNotFoundError, GrantNotFoundError],
             },
             async () => {
-              const closed = await lifecycle.forfeit(
-                input.id,
-                'admin',
-                { id: userId, isAdmin: true },
-                input.note,
-                context.clientMeta,
-              );
+              const closed = await lifecycle.forfeit({
+                grantId: input.id,
+                reason: 'admin',
+                actor: { id: userId, isAdmin: true },
+                note: input.note,
+                meta: context.clientMeta,
+              });
               events.emit('promo.bonus.forfeited', {
                 userId: closed.userId,
                 grantId: closed.grantId,

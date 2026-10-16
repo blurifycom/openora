@@ -280,12 +280,11 @@ describe('forfeiting a single grant by id', () => {
   it('closes it with no actor when a scheduled job forfeits it, not an admin', async () => {
     const grantId = await grant();
 
-    const closed = await lifecycle.forfeit(
+    const closed = await lifecycle.forfeit({
       grantId,
-      'terms_breach',
-      undefined,
-      'missed a required wagering day',
-    );
+      reason: 'terms_breach',
+      note: 'missed a required wagering day',
+    });
 
     expect(closed).toMatchObject({ grantId });
     expect(await rowOf(grantId)).toMatchObject({
@@ -302,7 +301,12 @@ describe('forfeiting a single grant by id', () => {
     const grantId = await grant();
     const actorId = randomUUID();
 
-    await lifecycle.forfeit(grantId, 'admin', { id: actorId, isAdmin: true }, 'manual takedown');
+    await lifecycle.forfeit({
+      grantId,
+      reason: 'admin',
+      actor: { id: actorId, isAdmin: true },
+      note: 'manual takedown',
+    });
 
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),
@@ -310,47 +314,53 @@ describe('forfeiting a single grant by id', () => {
     );
   });
 
-  it('files the audit row under the player, with the grant id and the admin client meta', async () => {
+  it('records the player and the admin client meta on the grant audit row', async () => {
     const userId = randomUUID();
     const grantId = await grant({ userId, amount: '40' });
     const meta = { ip: '203.0.113.7', userAgent: 'backoffice-test' };
 
-    await lifecycle.forfeit(
+    await lifecycle.forfeit({
       grantId,
-      'admin',
-      { id: randomUUID(), isAdmin: true },
-      'manual takedown',
+      reason: 'admin',
+      actor: { id: randomUUID(), isAdmin: true },
+      note: 'manual takedown',
       meta,
-    );
+    });
 
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         action: 'promo.bonus.forfeited',
-        resourceType: 'user',
-        resourceId: userId,
-        after: expect.objectContaining({ grantId, forfeitedAmount: '40.000000000000000000' }),
+        resourceType: 'promo_grant',
+        resourceId: grantId,
+        after: expect.objectContaining({ userId, forfeitedAmount: '40.000000000000000000' }),
         ...meta,
       }),
     );
   });
 
-  it('files a refused forfeit of a closed grant under the player as well', async () => {
+  it('records the player and the admin client meta on a refused forfeit as well', async () => {
     const userId = randomUUID();
     const grantId = await grant({ userId });
-    await lifecycle.forfeit(grantId, 'admin', undefined, 'first takedown');
+    await lifecycle.forfeit({ grantId, reason: 'admin', note: 'first takedown' });
     const meta = { ip: '203.0.113.7', userAgent: 'backoffice-test' };
 
     await expect(
-      lifecycle.forfeit(grantId, 'admin', { id: randomUUID(), isAdmin: true }, 'again', meta),
+      lifecycle.forfeit({
+        grantId,
+        reason: 'admin',
+        actor: { id: randomUUID(), isAdmin: true },
+        note: 'again',
+        meta,
+      }),
     ).rejects.toThrow();
 
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'promo.bonus.forfeit_refused',
-        resourceType: 'user',
-        resourceId: userId,
-        after: expect.objectContaining({ grantId, status: 'forfeited' }),
+        resourceType: 'promo_grant',
+        resourceId: grantId,
+        after: expect.objectContaining({ userId, status: 'forfeited' }),
         ...meta,
       }),
     );
@@ -359,7 +369,11 @@ describe('forfeiting a single grant by id', () => {
   it('throws when the grant does not exist, recording the refusal with no actor', async () => {
     const grantId = randomUUID();
     await expect(
-      lifecycle.forfeit(grantId, 'terms_breach', undefined, 'missed a required wagering day'),
+      lifecycle.forfeit({
+        grantId,
+        reason: 'terms_breach',
+        note: 'missed a required wagering day',
+      }),
     ).rejects.toThrow();
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
