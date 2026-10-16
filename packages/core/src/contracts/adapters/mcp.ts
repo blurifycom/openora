@@ -217,7 +217,10 @@ export type ActionTypeDescriptor = ActionTypeContract & {
   payloadJsonSchema: Record<string, unknown>;
 };
 
-/** The payload field that names the player an event is about. */
+/**
+ * The payload field that names the player an event is about. Resolve it to a player with
+ * `PLAYER_SEGMENT_READER.resolve`, by user id or by player id.
+ */
 export type TriggerSubjectField = 'playerId' | 'userId';
 
 export type TriggerDescriptor = {
@@ -227,24 +230,23 @@ export type TriggerDescriptor = {
   domain: string;
   payloadJsonSchema: Record<string, unknown>;
   /**
-   * `playerId` holds a player id, `userId` a user id that may also be a staff account's; null
-   * when the event is about no single player. The field can still be null on a given event,
-   * eg `playerId` on an identity event about a staff account.
+   * `userId` holds a user id, which may be a staff account's; `playerId` a player id that can
+   * be null on a given event. Null when the event is about no single player, or about one who
+   * is out of the segment reader's population by then.
    */
   subjectField: TriggerSubjectField | null;
 };
 
 /**
- * Topics where the payload's `playerId` or `userId` is not the player the event is about.
- * Every other topic takes `playerId` when its payload has one, else `userId`, else none.
+ * Topics whose derived subject is wrong. Every other topic takes `userId` when its payload has
+ * one, else `playerId`, else none: where a payload carries both they name the same person, and
+ * its `playerId` is null whenever the emitter could not read the player, while `userId` never
+ * is. Where a payload's `playerId` names whoever acted (the moderator in a kick, ban or role
+ * change), `userId` is still the member it happened to.
  */
 export const TRIGGER_SUBJECT_OVERRIDES: Partial<
   Record<DomainEventName, TriggerSubjectField | null>
 > = {
-  // playerId is the moderator or room owner who acted; userId is the member it happened to.
-  'chat.room.member.kicked': 'userId',
-  'chat.room.member.banned': 'userId',
-  'chat.room.member.role-changed': 'userId',
   // playerId is the inviter; the invited player is `inviteeId`.
   'chat.room.invite.sent': null,
   'chat.room.invite.withheld': null,
@@ -252,6 +254,9 @@ export const TRIGGER_SUBJECT_OVERRIDES: Partial<
   'iam.role.assigned': null,
   'iam.role.revoked': null,
   'identity.2fa.enrollment_blocked': null,
+  // The player has left the segment reader's population when the event arrives.
+  'player.account.closed': null,
+  'identity.user.deactivated': null,
 };
 
 function subjectFieldOf(topic: DomainEventName): TriggerSubjectField | null {
@@ -262,10 +267,10 @@ function subjectFieldOf(topic: DomainEventName): TriggerSubjectField | null {
   if (!(schema instanceof z.ZodObject)) {
     return null;
   }
-  if ('playerId' in schema.shape) {
-    return 'playerId';
+  if ('userId' in schema.shape) {
+    return 'userId';
   }
-  return 'userId' in schema.shape ? 'userId' : null;
+  return 'playerId' in schema.shape ? 'playerId' : null;
 }
 
 let eventTriggers: readonly TriggerDescriptor[] | undefined;

@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { DOMAIN_EVENT_CATALOG, getEventVersion } from '../../schemas/events.js';
+import * as z from 'zod';
+import {
+  DOMAIN_EVENT_CATALOG,
+  domainEventSchemas,
+  getEventVersion,
+  type DomainEventName,
+} from '../../schemas/events.js';
 import {
   McpToolError,
   RunContextSchema,
@@ -105,19 +111,60 @@ describe('triggerCatalog', () => {
 describe('triggerCatalog subjectField', () => {
   const subjectOf = (topic: string) =>
     triggerCatalog().find((trigger) => trigger.topic === topic)?.subjectField;
+  const payloadFields = (topic: DomainEventName): string[] => {
+    const schema: z.ZodType = domainEventSchemas[topic];
+    return schema instanceof z.ZodObject ? Object.keys(schema.shape) : [];
+  };
 
   it.each([
-    ['wallet.deposit.completed', 'playerId'],
-    ['identity.user.login', 'playerId'],
+    ['identity.user.login', 'userId'],
+    ['identity.2fa.enabled', 'userId'],
+    ['wallet.deposit.completed', 'userId'],
+    ['wallet.withdrawal.approved', 'userId'],
+    ['gaming.round.ended', 'userId'],
+    ['rg.self_exclusion.activated', 'userId'],
+    ['compliance.kyc.updated', 'userId'],
+    ['player.status.changed', 'userId'],
     ['promo.bonus.granted', 'userId'],
+    ['chat.room.member.joined', 'userId'],
+    ['chat.room.member.left', 'userId'],
+    ['chat.room.member.kicked', 'userId'],
+    ['chat.room.member.banned', 'userId'],
+    ['chat.room.member.role-changed', 'userId'],
+    ['chat.user.blocked', 'playerId'],
+    ['chat.user.ignored', 'playerId'],
+    ['chat.room.invite.accepted', 'playerId'],
+    ['tag.player.assigned', 'playerId'],
+    ['chat.room.invite.sent', null],
+    ['chat.room.invite.withheld', null],
+    ['iam.role.assigned', null],
+    ['identity.2fa.enrollment_blocked', null],
+    ['player.account.closed', null],
+    ['identity.user.deactivated', null],
     ['social.friend_request.sent', null],
     ['gaming.games.bulk_updated', null],
   ])('reads %s as about %s', (topic, subject) => {
     expect(subjectOf(topic)).toBe(subject);
   });
 
-  it('takes the member, not the moderator, for a chat moderation event', () => {
-    expect(subjectOf('chat.room.member.kicked')).toBe('userId');
+  it('takes the user wherever a payload names both a user and a player, unless listed', () => {
+    const both = DOMAIN_EVENT_CATALOG.filter(
+      (topic) =>
+        !(topic in TRIGGER_SUBJECT_OVERRIDES) &&
+        payloadFields(topic).includes('userId') &&
+        payloadFields(topic).includes('playerId'),
+    );
+
+    expect(both.length).toBeGreaterThan(60);
+    expect(both.filter((topic) => subjectOf(topic) !== 'userId')).toEqual([]);
+  });
+
+  it('names only a field the payload has', () => {
+    for (const trigger of triggerCatalog()) {
+      if (trigger.subjectField !== null) {
+        expect(payloadFields(trigger.topic)).toContain(trigger.subjectField);
+      }
+    }
   });
 
   it('lists only catalogued topics among its exceptions, and applies each', () => {
