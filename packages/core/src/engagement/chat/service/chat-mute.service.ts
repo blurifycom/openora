@@ -13,6 +13,7 @@ import { chatMute, chatPlatformBan, chatRoomMute, chatRoom } from '../schema/ind
 import { ChatPlayerMutedError, ChatPlayerBannedError } from './errors/chat-moderation.errors.js';
 import { platformScopesFor, resolveModerationTarget } from '../moderation/index.js';
 import { retireLapsedRows } from './chat-moderation-expiry.service.js';
+import { expiryFrom } from './chat-room-moderation.service.js';
 
 export class ChatMuteService {
   constructor(
@@ -102,8 +103,7 @@ export class ChatMuteService {
     actorId: Uuid;
   } & ClientMeta) {
     const target = await resolveModerationTarget(this.drizzle.db, roomId, { validate: true });
-    const expiresAt =
-      durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
+    const expiresAt = expiryFrom(durationSeconds);
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-mute:${userId}`, async () => {
         const now = new Date();
