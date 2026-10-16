@@ -576,6 +576,23 @@ describe('notificationEventMap', () => {
     expect(entry.securityAlert).toBe(false);
   });
 
+  it('tells the player a streak reward is waiting to be claimed', () => {
+    const userId = randomUUID();
+
+    const input = entryFor('promo.streak.milestone.reached').buildNotification({
+      userId,
+      day: 7,
+      grantId: null,
+    });
+
+    expect(input).toEqual({
+      userId,
+      type: 'promo.streak.milestone.reached',
+      params: { day: '7' },
+      data: { day: '7' },
+    });
+  });
+
   describe('promo.rank.changed', () => {
     const rankChanged = (bonuses: {
       dailyBonus: string | null;

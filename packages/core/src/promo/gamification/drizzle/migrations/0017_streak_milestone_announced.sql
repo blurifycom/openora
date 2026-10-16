@@ -1,0 +1,1 @@
+ALTER TABLE "promo_streak_milestone_grant" ADD COLUMN "announced_at" timestamp with time zone;

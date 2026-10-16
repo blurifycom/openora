@@ -262,8 +262,18 @@ export const PlayerStreakSchema = z.object({
   dailyMinWager: MoneyAmountSchema,
   currency: CurrencyTickerSchema,
   milestones: z.array(StreakMilestoneSchema),
+  /** Milestones the player has reached and not claimed yet. They do not expire. */
+  claimable: z.array(z.object({ id: UuidSchema, day: StreakMilestoneSchema.shape.day })),
 });
 export type PlayerStreak = z.infer<typeof PlayerStreakSchema>;
+
+export const ClaimStreakMilestoneInputSchema = z.object({ milestoneGrantId: UuidSchema });
+
+/** `restricted`: the player is under a responsible-gambling block, so the reward is forfeited. */
+export const StreakClaimResultSchema = z.object({
+  outcome: z.enum(['granted', 'restricted']),
+});
+export type StreakClaimResult = z.infer<typeof StreakClaimResultSchema>;
 
 export const StreakLeaderboardEntrySchema = z.object({
   userId: UuidSchema,
@@ -522,6 +532,10 @@ export const gamificationContract = {
 
   streaks: {
     get: oc.route({ method: 'GET', path: '/promo/streaks' }).output(PlayerStreakSchema),
+    claim: oc
+      .route({ method: 'POST', path: '/promo/streaks/claim' })
+      .input(ClaimStreakMilestoneInputSchema)
+      .output(StreakClaimResultSchema),
     leaderboard: oc
       .route({ method: 'GET', path: '/promo/streaks/leaderboard' })
       .output(StreakLeaderboardSchema),
