@@ -171,6 +171,13 @@ describe('recordWager', () => {
     expect((await streaks.getForPlayer(randomUUID())).claimable).toEqual([]);
   });
 
+  it('does not list a reward on a day the config no longer pays', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db.insert(promoStreakMilestoneGrant).values({ userId, day: 5 });
+
+    expect((await streaks.getForPlayer(userId)).claimable).toEqual([]);
+  });
+
   it('keeps the day-30 reward waiting to be claimed after the run resets', async () => {
     const userId = randomUUID();
     await seedStreak(userId, 29, daysAgo(1));
