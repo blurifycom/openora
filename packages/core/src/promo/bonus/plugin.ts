@@ -20,6 +20,7 @@ import {
   WALLET_READER,
   domainEventSchemas,
   queue,
+  type EventEnvelope,
   type JobQueueAdapter,
   type RealtimeTransport,
   type Uuid,
@@ -34,7 +35,12 @@ import {
   type EventBus,
   type Plugin,
 } from '@openora/core/server';
-import { GrantLifecycleService } from './service/grant-lifecycle.service.js';
+import { and, asc, eq, inArray, lte } from 'drizzle-orm';
+import {
+  GrantLifecycleService,
+  GrantNotForfeitableError,
+} from './service/grant-lifecycle.service.js';
+import { promoGrant } from './schema/index.js';
 import { createBonusLifecyclePort } from './service/bonus-lifecycle-port.service.js';
 import { GrantReaderService, bonusGrantLedger } from './service/grant-reader.service.js';
 import { GrantService } from './service/grant.service.js';
@@ -77,7 +83,10 @@ const ForfeitJobSchema = z.object({
   reason: BonusForfeitReasonSchema,
   actorId: UuidSchema.nullable(),
   actorIsAdmin: z.boolean(),
+  withdrawal: z.object({ transactionId: UuidSchema, requestedAt: z.iso.datetime() }).optional(),
 });
+
+const LIVE_GRANT_STATUSES = ['pending', 'active'] as const;
 
 /**
  * A deposit turning an opt-in into a bonus is a money movement, so it runs as a durable job for
@@ -91,6 +100,48 @@ const DepositJobSchema = z.object({
   currency: CurrencyTickerSchema,
   transactionId: UuidSchema,
 });
+
+/**
+ * A withdrawal forfeits what the player held when they asked for it, not a bonus granted while
+ * the job waited in the queue.
+ */
+async function forfeitHeldAt(
+  lifecycle: GrantLifecycleService,
+  drizzle: DrizzleService,
+  userId: Uuid,
+  withdrawal: { transactionId: Uuid; requestedAt: string },
+  actor: { id: Uuid; isAdmin: boolean } | undefined,
+) {
+  const held = await drizzle.db
+    .select({ id: promoGrant.id })
+    .from(promoGrant)
+    .where(
+      and(
+        eq(promoGrant.userId, userId),
+        inArray(promoGrant.status, LIVE_GRANT_STATUSES),
+        lte(promoGrant.createdAt, new Date(withdrawal.requestedAt)),
+      ),
+    )
+    .orderBy(asc(promoGrant.createdAt));
+  const closed: Awaited<ReturnType<GrantLifecycleService['forfeit']>>[] = [];
+  for (const { id } of held) {
+    try {
+      closed.push(
+        await lifecycle.forfeit(
+          id,
+          'withdrawal_while_active',
+          actor,
+          `withdrawal ${withdrawal.transactionId}`,
+        ),
+      );
+    } catch (err) {
+      if (!(err instanceof GrantNotForfeitableError)) {
+        throw err;
+      }
+    }
+  }
+  return closed;
+}
 
 export default {
   id: 'bonus',
@@ -193,16 +244,16 @@ export default {
       queue: FORFEIT_QUEUE,
       schema: ForfeitJobSchema,
       handler: async ({ payload }) => {
-        if (!lifecycle) {
+        if (!lifecycle || !drizzle) {
           throw new Error('promo-bonus-forfeit: service not constructed');
         }
-        const closed = await lifecycle.forfeitAllFor(
-          payload.userId,
-          payload.reason,
+        const actor =
           payload.actorId === null
             ? undefined
-            : { id: payload.actorId, isAdmin: payload.actorIsAdmin },
-        );
+            : { id: payload.actorId, isAdmin: payload.actorIsAdmin };
+        const closed = payload.withdrawal
+          ? await forfeitHeldAt(lifecycle, drizzle, payload.userId, payload.withdrawal, actor)
+          : await lifecycle.forfeitAllFor(payload.userId, payload.reason, actor);
         announce('promo.bonus.forfeited', closed, payload.reason);
       },
     });
@@ -227,7 +278,7 @@ export default {
           | 'account_deactivated'
           | 'withdrawal_while_active',
       ) =>
-      (payload: unknown) => {
+      (payload: unknown, envelope?: EventEnvelope) => {
         const parsed = domainEventSchemas[topic].safeParse(payload);
         if (!parsed.success) {
           logger.error({ topic }, 'promo bonus forfeit skipped - event payload failed validation');
@@ -239,14 +290,9 @@ export default {
         }
         const { userId } = parsed.data;
         const actorId = 'actorId' in parsed.data ? parsed.data.actorId : userId;
-        // A withdrawal request is always the player's own. Account closure and a ban
-        // (identity.user.deactivated) are always an admin action. A self-exclusion names its own
-        // initiator, which is 'player', 'admin' or 'system' - a
-        // rule-triggered exclusion is nobody's admin action, and recording it as one puts the
-        // wrong name on a regulator-facing audit row. Read via a type guard rather than the `in`
-        // narrowing the three-topic version used - the fourth topic in this union has no
-        // `initiatedBy` field at all, which collapses `parsed.data`'s inferred type to a point
-        // the compiler can no longer narrow through property presence alone.
+        // A withdrawal is the player's own act; closure and a ban are an admin's. A self-exclusion
+        // names its initiator, and a rule-triggered one is nobody's admin action - recording it as
+        // one puts the wrong name on a regulator-facing audit row.
         const initiatedBy: 'player' | 'admin' | 'system' =
           topic === 'wallet.withdrawal.requested'
             ? 'player'
@@ -266,6 +312,14 @@ export default {
               reason,
               actorId: initiatedBy === 'system' ? null : actorId,
               actorIsAdmin: initiatedBy === 'admin',
+              ...('transactionId' in parsed.data
+                ? {
+                    withdrawal: {
+                      transactionId: parsed.data.transactionId,
+                      requestedAt: envelope?.occurredAt ?? new Date().toISOString(),
+                    },
+                  }
+                : {}),
             },
             MONEY_JOB_RETRY,
           )

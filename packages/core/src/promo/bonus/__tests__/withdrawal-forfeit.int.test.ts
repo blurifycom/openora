@@ -63,9 +63,15 @@ function boot() {
   bonusPlugin.register(registry);
   registry.routers.getAll().get('promo-bonus')?.(container);
 
-  const publish = (topic: string, payload: unknown) => {
+  const publish = (topic: string, payload: unknown, occurredAt = new Date().toISOString()) => {
     for (const handler of registry.events.getAll().get(topic) ?? []) {
-      void handler(payload);
+      void handler(payload, {
+        eventId: randomUUID(),
+        topic,
+        payload,
+        occurredAt,
+        schemaVersion: 2,
+      });
     }
   };
   const runForfeitJob = async (payload: unknown) => {
@@ -141,11 +147,19 @@ describe('a withdrawal requested while a bonus is active', () => {
     const userId = randomUUID();
     const grantId = await grantFor(app, userId);
 
-    app.publish('wallet.withdrawal.requested', withdrawalRequested(userId));
+    const requested = withdrawalRequested(userId);
+    const occurredAt = new Date().toISOString();
+    app.publish('wallet.withdrawal.requested', requested, occurredAt);
 
     expect(app.jobs.enqueue).toHaveBeenCalledWith(
       'promo-bonus-forfeit',
-      { userId, reason: 'withdrawal_while_active', actorId: userId, actorIsAdmin: false },
+      {
+        userId,
+        reason: 'withdrawal_while_active',
+        actorId: userId,
+        actorIsAdmin: false,
+        withdrawal: { transactionId: requested.transactionId, requestedAt: occurredAt },
+      },
       expect.anything(),
     );
 
@@ -176,6 +190,28 @@ describe('a withdrawal requested while a bonus is active', () => {
     await app.runForfeitJob(app.jobs.enqueue.mock.calls[0]?.[1]);
 
     expect(await statusOf(bystanderGrant)).toBe('active');
+  });
+
+  it('leaves a bonus granted after the withdrawal was requested active', async () => {
+    const app = boot();
+    const userId = randomUUID();
+    const heldGrant = await grantFor(app, userId);
+    const occurredAt = new Date().toISOString();
+    const laterGrant = await grantFor(app, userId);
+    await db.drizzle.db
+      .update(promoGrant)
+      .set({ createdAt: new Date(Date.now() - 60_000) })
+      .where(eq(promoGrant.id, heldGrant));
+    await db.drizzle.db
+      .update(promoGrant)
+      .set({ createdAt: new Date(Date.now() + 60_000) })
+      .where(eq(promoGrant.id, laterGrant));
+
+    app.publish('wallet.withdrawal.requested', withdrawalRequested(userId), occurredAt);
+    await app.runForfeitJob(app.jobs.enqueue.mock.calls[0]?.[1]);
+
+    expect(await statusOf(heldGrant)).toBe('forfeited');
+    expect(await statusOf(laterGrant)).toBe('active');
   });
 
   it('enqueues nothing for a payload that fails validation', () => {
