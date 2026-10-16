@@ -17,9 +17,11 @@ receives its own copy of every event, and a module pulled into it for its depend
 handlers a second time across the cluster. A job whose handler needs the full container cannot
 live in a narrow service anyway: the MCP kernel (ADR-0042) is built in process from the tools and
 action types of the modules that process loaded, so an agent run needs every module that
-contributes them. Nor does a manifest service stay narrow once it touches money: it fails closed
-on the controls the rest of the install enforces (below), so one that loads identity also loads
-compliance and iam.
+contributes them. Nor does a manifest service stay narrow: it fails closed on the controls the
+rest of the install enforces (below). Every split loads iam and identity for AdminGuard, and with
+them audit and mail; identity's controls pull in compliance, and compliance depends on wallet,
+gaming, player-management and exchange-rate, player-management on chat. With the shipped modules
+a split carries those ten before the module it was made for, which is close to the monolith.
 
 ## Decision
 
@@ -56,6 +58,12 @@ and `JOB_WORKERS=reports.*`; give the replicas `JOB_WORKERS=!reports.*`. Sharing
 `SERVICE_NAME` makes the worker compete with the replicas for events instead of receiving a copy,
 and keeps it in the same realtime and presence namespace. It serves HTTP like any instance but
 needs no ingress.
+
+**Add-ons follow the same rule.** The selection filters the workers registered through
+`ctx.jobs.worker`, so an add-on moves its long-running jobs off the replicas only if it registers
+them there, under a queue-name prefix of its own (`agents.*`, say) that one pattern selects. A
+worker an add-on registers on `JOB_QUEUE` itself bypasses the selection and runs in every
+process.
 
 **A manifest fails closed on controls.** Some ports back a money, compliance, authorization or
 audit control and are read with `c.has()`. An install without the module that binds one has
