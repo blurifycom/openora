@@ -6,6 +6,7 @@ import { findOneOrThrow } from '@openora/core/server';
 import { migrate as identityMigrate } from '@openora/core/pam/migrate/identity';
 import { migrate } from '../migrate.js';
 import { promoOffer, promoWeight, promoWeightProfile } from '../schema/index.js';
+import { GrantLifecycleService } from '../service/grant-lifecycle.service.js';
 import { GrantReaderService } from '../service/grant-reader.service.js';
 import { GrantService } from '../service/grant.service.js';
 
@@ -115,5 +116,47 @@ describe('GrantReaderService', () => {
       offerName: 'Weekly Reload',
     });
     expect(adminRow).toHaveProperty('offerName');
+  });
+
+  it('shows the admin what a closed grant held, and nothing for a live one', async () => {
+    const audit = makeAuditWriter();
+    const service = new GrantService(audit);
+    const lifecycle = new GrantLifecycleService(db.drizzle, audit);
+    const reader = new GrantReaderService(db.drizzle);
+    const userId = randomUUID();
+    const issue = async (amount: string) => {
+      const outcome = await db.drizzle.db.transaction((tx) =>
+        service.grant(tx, {
+          userId,
+          currency: 'USD',
+          amount,
+          source: 'rank',
+          sourceRef: `rank-daily:${randomUUID()}`,
+          actor: { type: 'system' },
+          terms: { wageringMultiplier: '3', expiryDays: 14, weightProfileId },
+        }),
+      );
+      if (!outcome.ok) {
+        throw new Error('seed grant refused');
+      }
+      return outcome.grantId;
+    };
+    const forfeited = await issue('25');
+    const live = await issue('10');
+    await lifecycle.forfeit({
+      grantId: forfeited,
+      reason: 'admin',
+      actor: { id: randomUUID(), isAdmin: true },
+      note: 'abuse case',
+    });
+
+    const rows = await reader.listForAdmin(userId, { page: 1, limit: 10 });
+
+    expect(rows.find((row) => row.id === forfeited)).toMatchObject({
+      status: 'forfeited',
+      bonusBalance: '0.000000000000000000',
+      closedAmount: '25.000000000000000000',
+    });
+    expect(rows.find((row) => row.id === live)?.closedAmount).toBeNull();
   });
 });

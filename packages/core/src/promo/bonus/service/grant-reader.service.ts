@@ -70,6 +70,12 @@ const ADMIN_COLUMNS = {
   forfeitedById: promoGrant.forfeitedBy,
   forfeitedByName: user.name,
   forfeitedByEmail: user.email,
+  closedAmount: sql<string | null>`case when ${promoGrant.status} in ('forfeited', 'expired') then (
+    select abs(sum(${promoGrantEntry.bonusAmount}))::text
+    from ${promoGrantEntry}
+    where ${promoGrantEntry.grantId} = ${promoGrant.id}
+      and ${promoGrantEntry.type} in ('forfeit', 'expire')
+  ) end`,
 };
 
 const withForfeitActor = eq(user.id, promoGrant.forfeitedBy);
@@ -235,6 +241,7 @@ type AdminGrantRow = PlayerGrantRow & {
   forfeitedById: PromoGrant['forfeitedBy'];
   forfeitedByName: string | null;
   forfeitedByEmail: string | null;
+  closedAmount: string | null;
 };
 
 function toAdminGrant({

@@ -43,7 +43,7 @@ describe('notificationEventMap', () => {
     expect(input).toMatchObject({ userId, type: 'deposit.completed', data: { transactionId } });
   });
 
-  it('maps wallet.manual_adjustment.created to a balance.adjusted notification carrying the reason and transaction id', () => {
+  it('maps wallet.manual_adjustment.created to a balance.adjusted notification carrying the transaction id but not the admin reason', () => {
     const userId = randomUUID();
     const transactionId = randomUUID();
     const input = entryFor('wallet.manual_adjustment.created').buildNotification({
@@ -58,7 +58,7 @@ describe('notificationEventMap', () => {
     });
 
     expect(input).toMatchObject({ userId, type: 'balance.adjusted', data: { transactionId } });
-    expect(input.body).toContain('goodwill credit');
+    expect(input.body).not.toContain('goodwill credit');
   });
 
   it('maps chat.user.mentioned to the mentioned user, not the author, carrying room and message ids', () => {
@@ -513,7 +513,7 @@ describe('notificationEventMap', () => {
     expect(entry.securityAlert).toBe(false);
   });
 
-  it('leaves currency and reason untouched while only the amount substring is reformatted', () => {
+  it('tells the player the adjusted amount without the admin internal reason', () => {
     const input = entryFor('wallet.manual_adjustment.created').buildNotification({
       userId: randomUUID(),
       amount: '100.000000000000000000',
@@ -525,7 +525,7 @@ describe('notificationEventMap', () => {
       reason: 'goodwill credit',
     });
 
-    expect(input.body).toBe('Your balance was credited 100 EUR. Reason: goodwill credit.');
+    expect(input.body).toBe('Your balance was credited 100 EUR.');
   });
 
   describe('promo.rank.changed', () => {

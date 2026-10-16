@@ -322,7 +322,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
     userId: p.userId,
     type: 'balance.adjusted',
     title: 'Balance adjusted',
-    body: `Your balance was ${p.direction === 'credit' ? 'credited' : 'debited'} ${formatMoneyAmount(p.amount)} ${p.currency}. Reason: ${p.reason}.`,
+    body: `Your balance was ${p.direction === 'credit' ? 'credited' : 'debited'} ${formatMoneyAmount(p.amount)} ${p.currency}.`,
     data: { transactionId: p.transactionId },
   })),
 
