@@ -11,6 +11,8 @@ export type RgLimitDecision =
       limit: string;
       /** Spend already inside the period window, decimal string. */
       used: string;
+      /** The currency `limit` and `used` are in; `null` only when it cannot be resolved. */
+      currency: string | null;
     };
 
 export type RgLimitExceededData = {
@@ -19,6 +21,7 @@ export type RgLimitExceededData = {
   period: LimitPeriod;
   limit: string;
   used: string;
+  currency: string | null;
 };
 
 /** A money move refused by the player's own responsible-gambling limit. */
@@ -27,7 +30,7 @@ export class RgLimitExceededError extends Error {
 
   constructor(reason: RgLimitErrorReason, decision: Extract<RgLimitDecision, { allowed: false }>) {
     super(
-      `Refused: this would exceed the ${decision.period} ${decision.limitType} limit of ${decision.limit} (${decision.used} already used)`,
+      `Refused: this would exceed the ${decision.period} ${decision.limitType} limit of ${decision.limit}${decision.currency ? ` ${decision.currency}` : ''} (${decision.used} already used)`,
     );
     this.name = 'RgLimitExceededError';
     this.data = {
@@ -36,6 +39,7 @@ export class RgLimitExceededError extends Error {
       period: decision.period,
       limit: decision.limit,
       used: decision.used,
+      currency: decision.currency,
     };
   }
 }

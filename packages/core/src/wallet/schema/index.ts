@@ -20,6 +20,8 @@ import {
   WALLET_JOB_RUN_STATUSES,
   WALLET_RECONCILIATION_FINDING_KINDS,
   WALLET_RECONCILIATION_FINDING_STATUSES,
+  ON_RAMP_STATUSES,
+  type OnRampStatus,
   type WalletRail,
   type WalletTransactionStatus,
   type WalletCustodySweepStatus,
@@ -559,6 +561,50 @@ export const walletRefundedDeposit = pgTable(
   ],
 );
 
+export const walletOnRampOrderStatusEnum = pgEnum('wallet_on_ramp_order_status', ON_RAMP_STATUSES);
+
+// A fiat purchase on a vendor's hosted checkout, delivered on-chain to `walletAddress`. Never a
+// ledger row: the deposit path credits the coins when they land. Kept for the player's return
+// status, the AML trail, and so open orders count toward the deposit limit. The id is the
+// purchase id the vendor echoes back.
+export const walletOnRampOrder = pgTable(
+  'wallet_on_ramp_order',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Cross-module (identity), bare uuid.
+    userId: uuid().notNull(),
+    externalId: text(),
+    // Scoped to the player: a replayed checkout returns this order instead of opening another.
+    idempotencyKey: uuid().notNull(),
+    checkoutUrl: text(),
+    // When the vendor stops taking payment on the checkout; a pending order counts toward the
+    // deposit limit until then.
+    expiresAt: timestamp({ withTimezone: true }),
+    fiatAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    fiatCurrency: text().notNull(),
+    currency: text().notNull(),
+    network: text().notNull(),
+    walletAddress: text().notNull(),
+    walletTag: text(),
+    status: walletOnRampOrderStatusEnum().$type<OnRampStatus>().notNull().default('pending'),
+    cryptoAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    txHash: text(),
+    gatewayId: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex('wallet_on_ramp_order_external_id_idx')
+      .on(t.externalId)
+      .where(sql`${t.externalId} IS NOT NULL`),
+    uniqueIndex('wallet_on_ramp_order_user_id_idempotency_key_idx').on(t.userId, t.idempotencyKey),
+    index('wallet_on_ramp_order_user_id_status_idx').on(t.userId, t.status),
+  ],
+);
+
 export type Wallet = typeof wallet.$inferSelect;
 export type WalletTransaction = typeof walletTransaction.$inferSelect;
 export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;
@@ -572,3 +618,4 @@ export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
 export type WalletJobRun = typeof walletJobRun.$inferSelect;
 export type WalletReconciliationFinding = typeof walletReconciliationFinding.$inferSelect;
 export type WalletRefundedDeposit = typeof walletRefundedDeposit.$inferSelect;
+export type WalletOnRampOrder = typeof walletOnRampOrder.$inferSelect;
