@@ -1,11 +1,13 @@
 import { DrizzleService } from '@openora/core/server';
 import {
   MAX_PLAYER_SEGMENT_PAGE,
+  TagKeySchema,
   UuidSchema,
   type Player,
   type PlayerSegmentPage,
   type PlayerSegmentQuery,
   type PlayerSegmentReader,
+  type TagKey,
 } from '@openora/core/contracts';
 import { type SQL, and, asc, eq, exists, gt, inArray, isNull, ne } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
@@ -15,23 +17,35 @@ import { playerTag, tag } from '../schema/index.js';
 // The one definition of the population (see PlayerSegmentReader): a staff login can carry a
 // player profile too, so the role is checked as well as the profile.
 const inPopulation = (): SQL | undefined =>
-  and(eq(user.role, 'player'), ne(player.status, 'closed'));
+  and(eq(user.role, 'player'), eq(user.isActive, true), ne(player.status, 'closed'));
 
 const isUuid = (id: string) => UuidSchema.safeParse(id).success;
+
+function tagKeysOf(tags: readonly string[]): TagKey[] {
+  if (tags.length === 0) {
+    throw new RangeError('tags must name at least one tag; omit tags for every player');
+  }
+  const keys = TagKeySchema.array().safeParse(tags);
+  if (!keys.success) {
+    throw new RangeError('tags must hold only tag keys');
+  }
+  return [...new Set(keys.data)];
+}
 
 export class PlayerSegmentReaderService implements PlayerSegmentReader {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  async page({ tags = [], after, limit }: PlayerSegmentQuery): Promise<PlayerSegmentPage> {
+  async page({ tags, after, limit }: PlayerSegmentQuery): Promise<PlayerSegmentPage> {
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PLAYER_SEGMENT_PAGE) {
       throw new RangeError(`limit must be an integer from 1 to ${MAX_PLAYER_SEGMENT_PAGE}`);
     }
     if (after !== undefined && !isUuid(after)) {
       throw new RangeError('after must be the player id a previous page returned as next');
     }
+    const tagKeys = tags === undefined ? undefined : tagKeysOf(tags);
     const db = this.drizzle.db;
     const holdsAnyTag =
-      tags.length === 0
+      tagKeys === undefined
         ? undefined
         : exists(
             db
@@ -42,7 +56,7 @@ export class PlayerSegmentReaderService implements PlayerSegmentReader {
                 and(
                   eq(playerTag.playerId, player.id),
                   isNull(playerTag.removedAt),
-                  inArray(tag.key, [...new Set(tags)]),
+                  inArray(tag.key, tagKeys),
                 ),
               ),
           );

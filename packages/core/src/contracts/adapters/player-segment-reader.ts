@@ -2,10 +2,10 @@
  * Read-only view of the players an automated run may target, for code outside the player
  * modules (an agent run started for a segment, or for the player a domain event is about), so
  * it never re-implements who counts as a player. The population is every account with the
- * `player` role and a player profile whose status is not `closed`; suspended and self-excluded
- * players stay in it, because a check may need to look at them, and whatever may not be done
- * to them is refused where it would be done. Ids are player ids (`player.id`), the ones agent
- * tools take.
+ * `player` role that is not deactivated (`isActive` false, the back office's ban) and has a
+ * player profile whose status is not `closed`. Suspended and self-excluded players stay in it,
+ * because a check may need to look at them, and whatever may not be done to them is refused
+ * where it would be done. Ids are player ids (`player.id`), the ones agent tools take.
  */
 import { createToken, type Token } from './token.js';
 import type { Player } from '../schemas/player.js';
@@ -14,7 +14,10 @@ import type { TagKey } from '../schemas/tag.js';
 export const MAX_PLAYER_SEGMENT_PAGE = 1000;
 
 export type PlayerSegmentQuery = {
-  /** Only players holding at least one of these tags. Absent or empty: every player. */
+  /**
+   * Only players holding at least one of these tags; omit it for every player. An empty list
+   * or a key that is not a tag key throws a `RangeError`.
+   */
   tags?: readonly TagKey[];
   /** The `next` of the previous page. */
   after?: Player['id'];

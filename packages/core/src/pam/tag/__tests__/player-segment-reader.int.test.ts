@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { PlayerStatus, TagKey } from '@openora/core/contracts';
 import { createTestDb, seedPlayerWithUser, seedUser, type TestDb } from '@openora/core/testing';
+import { mock } from '../../../testing/mock.js';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
@@ -25,10 +26,19 @@ async function tagIdFor(key: TagKey) {
 
 async function seedPlayer({
   status = 'active',
+  deactivated = false,
   tags = [],
   removedTags = [],
-}: { status?: PlayerStatus; tags?: TagKey[]; removedTags?: TagKey[] } = {}) {
+}: {
+  status?: PlayerStatus;
+  deactivated?: boolean;
+  tags?: TagKey[];
+  removedTags?: TagKey[];
+} = {}) {
   const seeded = await seedPlayerWithUser(db, { status });
+  if (deactivated) {
+    await db.drizzle.db.update(user).set({ isActive: false }).where(eq(user.id, seeded.account.id));
+  }
   for (const key of [...tags, ...removedTags]) {
     await db.drizzle.db.insert(playerTag).values({
       playerId: seeded.player.id,
@@ -94,13 +104,14 @@ describe('PlayerSegmentReaderService.page (real PG)', () => {
     });
   });
 
-  it('keeps suspended, self-excluded and dormant players and leaves out closed ones and staff', async () => {
+  it('keeps suspended, self-excluded and dormant players and leaves out closed, deactivated and staff ones', async () => {
     const kept = await Promise.all(
       (['active', 'dormant', 'suspended', 'self_excluded'] as const).map(
         async (status) => (await seedPlayer({ status })).playerId,
       ),
     );
     await seedPlayer({ status: 'closed' });
+    await seedPlayer({ deactivated: true });
     await seedStaffWithProfile();
 
     expect((await reader.page({ limit: 100 })).playerIds).toEqual(ascending(kept));
@@ -126,6 +137,22 @@ describe('PlayerSegmentReaderService.page (real PG)', () => {
   ])('refuses %s', async (_case, query) => {
     await expect(reader.page(query)).rejects.toThrow(RangeError);
   });
+
+  it('refuses an empty tag list rather than reading it as every player', async () => {
+    await seedPlayer();
+
+    await expect(reader.page({ tags: [], limit: 10 })).rejects.toThrow(
+      new RangeError('tags must name at least one tag; omit tags for every player'),
+    );
+  });
+
+  it('refuses a tag key that is not a tag before it reaches the database', async () => {
+    const tags = mock<TagKey[]>(['vip', 'whale']);
+
+    await expect(reader.page({ tags, limit: 10 })).rejects.toThrow(
+      new RangeError('tags must hold only tag keys'),
+    );
+  });
 });
 
 describe('PlayerSegmentReaderService.resolve (real PG)', () => {
@@ -133,10 +160,19 @@ describe('PlayerSegmentReaderService.resolve (real PG)', () => {
     const active = await seedPlayer();
     const suspended = await seedPlayer({ status: 'suspended' });
     const closed = await seedPlayer({ status: 'closed' });
+    const deactivated = await seedPlayer({ deactivated: true });
     const staff = await seedStaffWithProfile();
 
     const resolved = await reader.resolve({
-      userIds: [active.userId, suspended.userId, closed.userId, staff.userId, randomUUID(), 'x'],
+      userIds: [
+        active.userId,
+        suspended.userId,
+        closed.userId,
+        deactivated.userId,
+        staff.userId,
+        randomUUID(),
+        'x',
+      ],
     });
 
     expect(resolved).toEqual(
