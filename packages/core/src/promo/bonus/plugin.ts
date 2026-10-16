@@ -208,18 +208,24 @@ export default {
     });
 
     // A bonus is money a player may not keep once they have excluded themselves, entered a
-    // cooling-off period, closed the account or been banned, and the rule is immediate rather
-    // than "by the next sweep".
+    // cooling-off period, closed the account or been banned, or once they withdraw while it is
+    // still active, and the rule is immediate rather than "by the next sweep".
     const forfeitEverything =
       <
         K extends
           | 'rg.self_exclusion.activated'
           | 'rg.cooling_off.activated'
           | 'player.account.closed'
-          | 'identity.user.deactivated',
+          | 'identity.user.deactivated'
+          | 'wallet.withdrawal.requested',
       >(
         topic: K,
-        reason: 'self_exclusion' | 'cooling_off' | 'account_closed' | 'account_deactivated',
+        reason:
+          | 'self_exclusion'
+          | 'cooling_off'
+          | 'account_closed'
+          | 'account_deactivated'
+          | 'withdrawal_while_active',
       ) =>
       (payload: unknown) => {
         const parsed = domainEventSchemas[topic].safeParse(payload);
@@ -231,18 +237,22 @@ export default {
           logger.error({ topic }, 'promo bonus forfeit dropped - job queue not bound yet');
           return;
         }
-        const { userId, actorId } = parsed.data;
-        // Account closure and a ban (identity.user.deactivated) are always an admin action. A
-        // self-exclusion names its own initiator, which is 'player', 'admin' or 'system' - a
+        const { userId } = parsed.data;
+        const actorId = 'actorId' in parsed.data ? parsed.data.actorId : userId;
+        // A withdrawal request is always the player's own. Account closure and a ban
+        // (identity.user.deactivated) are always an admin action. A self-exclusion names its own
+        // initiator, which is 'player', 'admin' or 'system' - a
         // rule-triggered exclusion is nobody's admin action, and recording it as one puts the
         // wrong name on a regulator-facing audit row. Read via a type guard rather than the `in`
         // narrowing the three-topic version used - the fourth topic in this union has no
         // `initiatedBy` field at all, which collapses `parsed.data`'s inferred type to a point
         // the compiler can no longer narrow through property presence alone.
         const initiatedBy: 'player' | 'admin' | 'system' =
-          topic === 'player.account.closed' || topic === 'identity.user.deactivated'
-            ? 'admin'
-            : (initiatedByOf(parsed.data) ?? 'system');
+          topic === 'wallet.withdrawal.requested'
+            ? 'player'
+            : topic === 'player.account.closed' || topic === 'identity.user.deactivated'
+              ? 'admin'
+              : (initiatedByOf(parsed.data) ?? 'system');
         // No queue idempotency key on purpose. It would have to be derived from the player and
         // the reason, and a player who excludes themselves, lets the cool-off lapse, takes a new
         // bonus and excludes themselves again produces the same key - which BullMQ drops
@@ -281,6 +291,10 @@ export default {
     ctx.events.on(
       'identity.user.deactivated',
       forfeitEverything('identity.user.deactivated', 'account_deactivated'),
+    );
+    ctx.events.on(
+      'wallet.withdrawal.requested',
+      forfeitEverything('wallet.withdrawal.requested', 'withdrawal_while_active'),
     );
 
     ctx.jobs.worker({
