@@ -127,12 +127,12 @@ async function forfeitHeldAt(
   for (const { id } of held) {
     try {
       closed.push(
-        await lifecycle.forfeit(
-          id,
-          'withdrawal_while_active',
+        await lifecycle.forfeit({
+          grantId: id,
+          reason: 'withdrawal_while_active',
           actor,
-          `withdrawal ${withdrawal.transactionId}`,
-        ),
+          note: `withdrawal ${withdrawal.transactionId}`,
+        }),
       );
     } catch (err) {
       if (!(err instanceof GrantNotForfeitableError)) {
