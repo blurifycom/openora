@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type {
   BonusGrantCommands,
   DomainEventPayload,
@@ -93,31 +93,78 @@ export class StreakPayoutService {
   }
 
   /**
-   * Marks unclaimed milestones nobody has been told about yet as announced and returns them. Run
-   * apart from the bet that reached a milestone, so a player is never told about a reward a
-   * rolled-back bet never earned.
+   * Marks unclaimed milestones nobody has been told about yet as announced and returns them.
+   * `recordWager` inserts the milestone inside the bet's own transaction, which has no
+   * after-commit hook, so the announcement is read back from committed rows instead. A player
+   * under a responsible-gambling block is not invited to claim: the milestone is settled
+   * `restricted`, the same outcome a claim would get.
    */
   async announceReached(): Promise<StreakMilestoneReached[]> {
-    const rows = await this.drizzle.db
-      .update(promoStreakMilestoneGrant)
-      .set({ announcedAt: new Date() })
+    if (!this.eligibility) {
+      return [];
+    }
+    const eligibility = this.eligibility;
+    const pending = await this.drizzle.db
+      .select({ id: promoStreakMilestoneGrant.id })
+      .from(promoStreakMilestoneGrant)
       .where(
-        inArray(
-          promoStreakMilestoneGrant.id,
-          this.drizzle.db
-            .select({ id: promoStreakMilestoneGrant.id })
-            .from(promoStreakMilestoneGrant)
-            .where(
-              and(
-                isNull(promoStreakMilestoneGrant.settledAt),
-                isNull(promoStreakMilestoneGrant.announcedAt),
-              ),
-            )
-            .limit(BATCH),
+        and(
+          isNull(promoStreakMilestoneGrant.settledAt),
+          isNull(promoStreakMilestoneGrant.announcedAt),
         ),
       )
-      .returning({ userId: promoStreakMilestoneGrant.userId, day: promoStreakMilestoneGrant.day });
-    return rows.map((row) => ({ ...row, grantId: null }));
+      .limit(BATCH);
+    const announced: StreakMilestoneReached[] = [];
+    for (const { id } of pending) {
+      const reached = await this.drizzle.db.transaction(async (tx) => {
+        const [row] = await tx
+          .select({ userId: promoStreakMilestoneGrant.userId, day: promoStreakMilestoneGrant.day })
+          .from(promoStreakMilestoneGrant)
+          .where(
+            and(
+              eq(promoStreakMilestoneGrant.id, id),
+              isNull(promoStreakMilestoneGrant.settledAt),
+              isNull(promoStreakMilestoneGrant.announcedAt),
+            ),
+          )
+          .for('update', { skipLocked: true });
+        if (!row) {
+          return null;
+        }
+        const restricted = await eligibility.isRestricted(row.userId, tx);
+        await tx
+          .update(promoStreakMilestoneGrant)
+          .set(
+            restricted
+              ? { settledAt: new Date(), outcome: 'restricted' }
+              : { announcedAt: new Date() },
+          )
+          .where(eq(promoStreakMilestoneGrant.id, id));
+        return restricted ? null : { ...row, grantId: null };
+      });
+      if (reached) {
+        announced.push(reached);
+      }
+    }
+    return announced;
+  }
+
+  /**
+   * Settles every reward a player has not claimed as `restricted` when a responsible-gambling
+   * block starts, the same rule that forfeits their active bonuses.
+   */
+  async forfeitUnclaimed(userId: Uuid): Promise<number> {
+    const settled = await this.drizzle.db
+      .update(promoStreakMilestoneGrant)
+      .set({ settledAt: new Date(), outcome: 'restricted' })
+      .where(
+        and(
+          eq(promoStreakMilestoneGrant.userId, userId),
+          isNull(promoStreakMilestoneGrant.settledAt),
+        ),
+      )
+      .returning({ id: promoStreakMilestoneGrant.id });
+    return settled.length;
   }
 
   private async settleOne(
@@ -137,7 +184,8 @@ export class StreakPayoutService {
         ),
       )
       .for('update', { skipLocked: true });
-    if (!row) {
+    const milestone = row && milestones.find((m) => m.day === row.day);
+    if (!milestone) {
       return null;
     }
     const settle = (outcome: StreakClaimResult['outcome']) =>
@@ -150,10 +198,9 @@ export class StreakPayoutService {
       await settle('restricted');
       return { outcome: 'restricted', granted: [], cashPaid: [] };
     }
-    const rewards = milestones.find((m) => m.day === row.day)?.rewards ?? [];
     const granted: Granted[] = [];
     const cashPaid: StreakCashPaid[] = [];
-    for (const [index, reward] of rewards.entries()) {
+    for (const [index, reward] of milestone.rewards.entries()) {
       const sourceRef = `streak-milestone:${id}:${index}`;
       if (reward.kind === 'rakebackBoost') {
         await this.applyRakebackBoost(tx, userId, reward);

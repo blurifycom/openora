@@ -11,6 +11,7 @@ import {
   WALLET_READER,
   PromoConfigSchema,
   WAGER_TRACKING,
+  domainEventSchemas,
   queue,
   resolveWalletDefaultCurrency,
   type IdentityReader,
@@ -211,6 +212,29 @@ export default {
       },
     });
 
+    const forfeitUnclaimedStreakRewards =
+      (topic: 'rg.self_exclusion.activated' | 'rg.cooling_off.activated') =>
+      async (payload: unknown) => {
+        const parsed = domainEventSchemas[topic].safeParse(payload);
+        if (!parsed.success || !streakPayouts) {
+          logger.error({ topic }, 'streak reward forfeit skipped');
+          return;
+        }
+        try {
+          await streakPayouts.forfeitUnclaimed(parsed.data.userId);
+        } catch (err) {
+          logger.error({ err, topic }, 'streak reward forfeit failed');
+        }
+      };
+    ctx.events.on(
+      'rg.self_exclusion.activated',
+      forfeitUnclaimedStreakRewards('rg.self_exclusion.activated'),
+    );
+    ctx.events.on(
+      'rg.cooling_off.activated',
+      forfeitUnclaimedStreakRewards('rg.cooling_off.activated'),
+    );
+
     ctx.jobs.worker({
       queue: STREAK_CLOSE_QUEUE,
       schema: EmptyJobSchema,
@@ -378,11 +402,15 @@ export default {
         streaks,
         streakPayouts,
         onStreakClaimed: async ({ granted, cashPaid }) => {
-          for (const grant of granted) {
-            events?.emit('promo.bonus.granted', grant);
-          }
-          for (const paid of cashPaid) {
-            await emitCashCredit(paid);
+          try {
+            for (const grant of granted) {
+              events?.emit('promo.bonus.granted', grant);
+            }
+            for (const paid of cashPaid) {
+              await emitCashCredit(paid);
+            }
+          } catch (err) {
+            logger.error({ err }, 'streak claim announcement failed after the claim committed');
           }
         },
         streakAdmin: new StreakAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
