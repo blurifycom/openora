@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
 import { adminRole, adminRolePermission, adminRoleAssignment } from '@openora/core/iam/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { auditLog } from '@openora/core/audit/schema';
@@ -17,14 +17,13 @@ import {
 } from '@openora/core/engagement/contracts/chat';
 import { chatMessage, chatRoomMember } from '@openora/core/engagement/schema/chat';
 import {
-  setupTestDb,
-  bootTestApp,
   asAdmin,
-  registerAndMaterializePlayer,
-  seedMinimal,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
+  registerChatter,
 } from '../index.js';
 
 let db: TestDb;
@@ -32,13 +31,8 @@ let app: TestApp;
 let admin: TestClient;
 let globalRoomId: string;
 
-async function registerChatter(prefix: string) {
-  const username = `${prefix.slice(0, 7)}_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
-  return registerAndMaterializePlayer(app, { email: `${username}@e2e.test`, username });
-}
-
 async function registerChatRoomViewer() {
-  const viewer = await registerChatter('viewer');
+  const viewer = await registerChatter(app, 'viewer');
   const drizzle = app.container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, viewer.userId));
   const [role] = await drizzle
@@ -92,14 +86,7 @@ const clientHeaders = {
 };
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
   admin = await asAdmin(app.app);
   const rooms = ChatRoomSchema.array().parse(await (await app.app.request('/chat/rooms')).json());
   const globalRoom = rooms.find((room) => room.slug === GLOBAL_CHAT_ROOM_ID);
@@ -110,8 +97,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('chat admin: room rules', () => {
@@ -220,7 +206,7 @@ describe('chat admin: room rules', () => {
   });
 
   it('answers not found for a private room and a deleted room, writing nothing', async () => {
-    const owner = await registerChatter('host');
+    const owner = await registerChatter(app, 'host');
     const privateRoom = await createPrivateRoom(owner.client);
     const privateRule = ChatRoomRuleSchema.parse(
       await (
@@ -260,7 +246,7 @@ describe('chat admin: room rules', () => {
 
 describe('chat admin: room status', () => {
   it('puts the global room into read-only mode by its row id, blocking player posts', async () => {
-    const player = await registerChatter('global');
+    const player = await registerChatter(app, 'global');
     const configurationPath = `/backoffice/chat/rooms/${globalRoomId}/configuration`;
 
     const readOnly = await admin.request(configurationPath, {
@@ -343,7 +329,7 @@ describe('chat admin: listing rooms', () => {
     const regions = await createPublicRoom(`${tag} europe`, 'regions');
     const moreRegions = await createPublicRoom(`${tag} asia`, 'regions');
     await createPublicRoom(`${tag} english`, 'languages');
-    const owner = await registerChatter('host');
+    const owner = await registerChatter(app, 'host');
     expect(
       (await owner.client.post('/chat/rooms/private', { name: `${tag} private` })).status,
     ).toBe(200);
@@ -361,7 +347,7 @@ describe('chat admin: listing rooms', () => {
   });
 
   it('rejects an unknown category and a player without the chat-room permission', async () => {
-    const player = await registerChatter('player');
+    const player = await registerChatter(app, 'player');
 
     expect((await admin.get('/backoffice/chat/rooms?category=casino')).status).toBe(400);
     expect((await player.client.get('/backoffice/chat/rooms')).status).toBe(403);
@@ -371,8 +357,8 @@ describe('chat admin: listing rooms', () => {
     const tag = `stats-${randomUUID().slice(0, 8)}`;
     const busy = await createPublicRoom(`${tag} busy`, 'games-sports');
     const quiet = await createPublicRoom(`${tag} quiet`, 'games-sports');
-    const first = await registerChatter('first');
-    const second = await registerChatter('second');
+    const first = await registerChatter(app, 'first');
+    const second = await registerChatter(app, 'second');
     for (const chatter of [first, second]) {
       expect((await chatter.client.post(`/chat/rooms/${busy.id}/join`)).status).toBe(200);
     }
@@ -417,7 +403,7 @@ describe('chat admin: listing rooms', () => {
   });
 
   it('reports the global room without a member count, from its messages', async () => {
-    const chatter = await registerChatter('global');
+    const chatter = await registerChatter(app, 'global');
     const posted = await chatter.client.post('/chat/global', { content: 'hello everyone' });
     expect(posted.status).toBe(200);
     const message = ChatMessageSchema.parse(await posted.json());

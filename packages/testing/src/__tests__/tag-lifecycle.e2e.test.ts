@@ -1,22 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import {
-  loadExtensions,
-  DRIZZLE,
-  type Container,
-  type CoreTokenCatalog,
-} from '@openora/core/server';
+import { DRIZZLE, type Container, type CoreTokenCatalog } from '@openora/core/server';
 import { rgExclusion } from '@openora/core/compliance/schema';
 import {
-  setupTestDb,
-  bootTestApp,
   registerAndMaterializePlayer,
   asAdmin,
-  seedMinimal,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
+  readJson,
 } from '../index.js';
 
 /**
@@ -31,11 +26,6 @@ const SYSTEM_ACTOR = '00000000-0000-0000-0000-000000000000';
 
 let db: TestDb;
 let app: TestApp;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function loginWithIp(honoApp: TestApp['app'], email: string, ip: string) {
   const loginRes = await honoApp.request('/identity/login', {
@@ -99,20 +89,11 @@ async function auditHasEntry(admin: TestClient, resourceId: string, action: stri
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  const plugins = await loadExtensions();
-  app = await bootTestApp({ plugins, databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('self_excluded: auto-assign/remove on rg.self_exclusion.activated/.lifted', () => {

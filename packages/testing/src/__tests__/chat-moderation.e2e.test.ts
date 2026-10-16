@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
 import { adminRole, adminRolePermission, adminRoleAssignment } from '@openora/core/iam/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { auditLog } from '@openora/core/audit/schema';
@@ -13,15 +13,13 @@ import {
   ChatRoomSchema,
 } from '@openora/core/engagement/contracts/chat';
 import {
-  setupTestDb,
-  bootTestApp,
   asAdmin,
-  registerAndMaterializePlayer,
-  seedMinimal,
   type TestDb,
   type TestApp,
   type TestClient,
-  uniqueUsername,
+  bootE2e,
+  closeE2e,
+  registerChatter,
 } from '../index.js';
 
 let db: TestDb;
@@ -29,13 +27,8 @@ let app: TestApp;
 let admin: TestClient;
 let globalRoomId: string;
 
-async function registerChatter(prefix: string) {
-  const username = uniqueUsername(prefix);
-  return registerAndMaterializePlayer(app, { email: `${username}@e2e.test`, username });
-}
-
 async function registerChatViewer() {
-  const viewer = await registerChatter('viewer');
+  const viewer = await registerChatter(app, 'viewer');
   const drizzle = app.container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, viewer.userId));
   const [role] = await drizzle
@@ -59,14 +52,7 @@ async function createRoomWithMember(owner: TestClient, member: TestClient) {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
   admin = await asAdmin(app.app);
   const rooms = ChatRoomSchema.array().parse(await (await app.app.request('/chat/rooms')).json());
   const globalRoom = rooms.find((room) => room.slug === GLOBAL_CHAT_ROOM_ID);
@@ -77,13 +63,12 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('chat: the global room under its row id', () => {
   it('stores a message sent to the global room id as a global message', async () => {
-    const sender = await registerChatter('global');
+    const sender = await registerChatter(app, 'global');
 
     const sent = await sender.client.post(`/chat/rooms/${globalRoomId}/messages`, {
       content: 'hello everyone',
@@ -98,7 +83,7 @@ describe('chat: the global room under its row id', () => {
   });
 
   it('refuses a globally banned player who sends to the global room id', async () => {
-    const banned = await registerChatter('banned');
+    const banned = await registerChatter(app, 'banned');
     const ban = await admin.post('/backoffice/chat/bans', {
       userId: banned.userId,
       roomId: GLOBAL_CHAT_ROOM_ID,
@@ -114,7 +99,7 @@ describe('chat: the global room under its row id', () => {
   });
 
   it('applies a ban issued by the global room id to the global chat', async () => {
-    const banned = await registerChatter('banned');
+    const banned = await registerChatter(app, 'banned');
     const ban = await admin.post('/backoffice/chat/bans', {
       userId: banned.userId,
       roomId: globalRoomId,
@@ -130,7 +115,7 @@ describe('chat: the global room under its row id', () => {
 
 describe('chat: the global room in the back office', () => {
   it('lists a message sent to the global room id under that id', async () => {
-    const sender = await registerChatter('global');
+    const sender = await registerChatter(app, 'global');
     const content = `seen-${randomUUID()}`;
     const sent = await sender.client.post(`/chat/rooms/${globalRoomId}/messages`, { content });
     expect(sent.status).toBe(200);
@@ -150,7 +135,7 @@ describe('chat: the global room in the back office', () => {
 
 describe('chat: back-office room join', () => {
   it('lets an admin join a private room', async () => {
-    const owner = await registerChatter('host');
+    const owner = await registerChatter(app, 'host');
     const created = await owner.client.post('/chat/rooms/private', {
       name: `room-${randomUUID()}`,
     });
@@ -162,7 +147,7 @@ describe('chat: back-office room join', () => {
   });
 
   it('refuses an admin who can only view chat rooms', async () => {
-    const owner = await registerChatter('host');
+    const owner = await registerChatter(app, 'host');
     const viewer = await registerChatViewer();
     const created = await owner.client.post('/chat/rooms/private', {
       name: `room-${randomUUID()}`,
@@ -178,7 +163,7 @@ describe('chat: back-office room join', () => {
 
 describe('chat: platform bans', () => {
   it('replaces an active ban when the player is banned again', async () => {
-    const player = await registerChatter('escal');
+    const player = await registerChatter(app, 'escal');
     await admin.post('/backoffice/chat/bans', {
       userId: player.userId,
       roomId: GLOBAL_CHAT_ROOM_ID,
@@ -201,8 +186,8 @@ describe('chat: platform bans', () => {
   });
 
   it('refuses a ban from a player without the moderation permission', async () => {
-    const player = await registerChatter('rogue');
-    const target = await registerChatter('target');
+    const player = await registerChatter(app, 'rogue');
+    const target = await registerChatter(app, 'target');
 
     const ban = await player.client.post('/backoffice/chat/bans', {
       userId: target.userId,
@@ -216,8 +201,8 @@ describe('chat: platform bans', () => {
 
 describe('chat: room configuration', () => {
   it('refuses to let a player join a locked room by its join code', async () => {
-    const owner = await registerChatter('host');
-    const latecomer = await registerChatter('late');
+    const owner = await registerChatter(app, 'host');
+    const latecomer = await registerChatter(app, 'late');
     const created = await owner.client.post('/chat/rooms/private', {
       name: `room-${randomUUID()}`,
     });
@@ -233,8 +218,8 @@ describe('chat: room configuration', () => {
   });
 
   it('holds a member to slow mode and lets the owner post freely', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
     const slowed = await owner.client.patch(`/chat/rooms/${room.id}/configuration`, {
       slowMode: true,
@@ -252,8 +237,8 @@ describe('chat: room configuration', () => {
   });
 
   it('refuses a configuration change from a member who is not a moderator', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const changed = await member.client.patch(`/chat/rooms/${room.id}/configuration`, {
@@ -266,8 +251,8 @@ describe('chat: room configuration', () => {
 
 describe('chat: leaving a room', () => {
   it('lets a member leave a room they are in', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const left = await member.client.post(`/chat/rooms/${room.id}/leave`);
@@ -276,9 +261,9 @@ describe('chat: leaving a room', () => {
   });
 
   it('refuses a player who is not a member of the private room', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
-    const outsider = await registerChatter('visitor');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
+    const outsider = await registerChatter(app, 'visitor');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const left = await outsider.client.post(`/chat/rooms/${room.id}/leave`);
@@ -287,8 +272,8 @@ describe('chat: leaving a room', () => {
   });
 
   it('refuses the owner, who must hand the room over or delete it', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const left = await owner.client.post(`/chat/rooms/${room.id}/leave`);
@@ -297,8 +282,8 @@ describe('chat: leaving a room', () => {
   });
 
   it('answers not found for a deleted room', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
     expect((await owner.client.del(`/chat/rooms/${room.id}`)).status).toBe(200);
 
@@ -310,8 +295,8 @@ describe('chat: leaving a room', () => {
 
 describe('chat: message history', () => {
   it('rejects a cursor that is not a timestamp', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const page = await member.client.get(`/chat/rooms/${room.id}/messages?before=yesterday`);
@@ -330,8 +315,8 @@ async function auditRows(action: string, resourceId: string) {
 
 describe('chat: room bans and mutes by a room moderator', () => {
   it('replaces a room ban and records the ban it replaced', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
     const ban = (body: Record<string, unknown>) =>
       owner.client.post(`/chat/rooms/${room.id}/ban`, { userId: member.userId, ...body });
@@ -351,8 +336,8 @@ describe('chat: room bans and mutes by a room moderator', () => {
   });
 
   it('refuses a room ban from a member who is not a moderator', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const ban = await member.client.post(`/chat/rooms/${room.id}/ban`, {
@@ -364,8 +349,8 @@ describe('chat: room bans and mutes by a room moderator', () => {
   });
 
   it('mutes a member in the room and lifts it again', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
     const send = () => member.client.post(`/chat/rooms/${room.id}/messages`, { content: 'hi' });
 
@@ -387,8 +372,8 @@ describe('chat: room bans and mutes by a room moderator', () => {
   });
 
   it('refuses a moderator muting themselves with 400', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const muted = await owner.client.post(`/chat/rooms/${room.id}/mute`, {
@@ -402,7 +387,7 @@ describe('chat: room bans and mutes by a room moderator', () => {
 
 describe('chat: back-office mutes and lifts', () => {
   it('mutes a player in global chat and lifts it', async () => {
-    const player = await registerChatter('loud');
+    const player = await registerChatter(app, 'loud');
     const send = () => player.client.post('/chat/global', { content: 'hello' });
     const muted = await admin.post('/backoffice/chat/mutes', {
       userId: player.userId,
@@ -422,7 +407,7 @@ describe('chat: back-office mutes and lifts', () => {
   });
 
   it('lifts a platform ban', async () => {
-    const player = await registerChatter('banned');
+    const player = await registerChatter(app, 'banned');
     await admin.post('/backoffice/chat/bans', {
       userId: player.userId,
       roomId: GLOBAL_CHAT_ROOM_ID,
@@ -439,8 +424,8 @@ describe('chat: back-office mutes and lifts', () => {
   });
 
   it('refuses a mute or a lift from a player', async () => {
-    const player = await registerChatter('rogue');
-    const target = await registerChatter('target');
+    const player = await registerChatter(app, 'rogue');
+    const target = await registerChatter(app, 'target');
     const body = { userId: target.userId, roomId: GLOBAL_CHAT_ROOM_ID, reason: 'x' };
 
     expect((await player.client.post('/backoffice/chat/mutes', body)).status).toBe(403);
@@ -454,9 +439,9 @@ describe('chat: back-office moderation lookups by user ids', () => {
     userIds.map((id) => `userIds[]=${id}`).join('&');
 
   it('lists only the active mutes and bans of the requested users', async () => {
-    const first = await registerChatter('first');
-    const second = await registerChatter('second');
-    const other = await registerChatter('other');
+    const first = await registerChatter(app, 'first');
+    const second = await registerChatter(app, 'second');
+    const other = await registerChatter(app, 'other');
     for (const { userId } of [first, second, other]) {
       const body = { userId, roomId: GLOBAL_CHAT_ROOM_ID, reason: 'lookup' };
       expect((await admin.post('/backoffice/chat/mutes', body)).status).toBe(200);
@@ -484,7 +469,7 @@ describe('chat: back-office moderation lookups by user ids', () => {
   });
 
   it('accepts a single user id passed as a bare query key', async () => {
-    const player = await registerChatter('single');
+    const player = await registerChatter(app, 'single');
     const body = { userId: player.userId, roomId: GLOBAL_CHAT_ROOM_ID, reason: 'lookup' };
     expect((await admin.post('/backoffice/chat/mutes', body)).status).toBe(200);
     expect((await admin.post('/backoffice/chat/bans', body)).status).toBe(200);
@@ -507,7 +492,7 @@ describe('chat: back-office moderation lookups by user ids', () => {
   });
 
   it('refuses the removed userId key rather than listing every player', async () => {
-    const player = await registerChatter('legacy');
+    const player = await registerChatter(app, 'legacy');
     const query = `userId=${player.userId}`;
 
     expect((await admin.get(`/backoffice/chat/mutes?${query}`)).status).toBe(400);
@@ -524,8 +509,8 @@ describe('chat: back-office moderation lookups by user ids', () => {
 
 describe('chat: room rules', () => {
   it('creates, edits and deletes a rule, auditing each change', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
     const created = await owner.client.post(`/chat/rooms/${room.id}/rules`, {
       content: 'Be kind',
@@ -545,8 +530,8 @@ describe('chat: room rules', () => {
   });
 
   it('refuses a rule from a member and a rule over the length cap', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const fromMember = await member.client.post(`/chat/rooms/${room.id}/rules`, {
@@ -563,7 +548,7 @@ describe('chat: room rules', () => {
 
 describe('chat: connection grant', () => {
   it('grants a connection with a client id and refuses an oversized one', async () => {
-    const player = await registerChatter('conn');
+    const player = await registerChatter(app, 'conn');
 
     const granted = await player.client.get('/chat/connection?clientId=tab-1');
     const oversized = await player.client.get(`/chat/connection?clientId=${'x'.repeat(129)}`);
@@ -575,8 +560,8 @@ describe('chat: connection grant', () => {
 
 describe('chat: online count', () => {
   it('counts the global room under its row id and refuses a banned player', async () => {
-    const player = await registerChatter('count');
-    const banned = await registerChatter('banned');
+    const player = await registerChatter(app, 'count');
+    const banned = await registerChatter(app, 'banned');
     await admin.post('/backoffice/chat/bans', {
       userId: banned.userId,
       roomId: GLOBAL_CHAT_ROOM_ID,
@@ -591,7 +576,7 @@ describe('chat: online count', () => {
   });
 
   it('answers 403, not 500, when a banned player reads the global room by its row id', async () => {
-    const banned = await registerChatter('banned');
+    const banned = await registerChatter(app, 'banned');
     await admin.post('/backoffice/chat/bans', {
       userId: banned.userId,
       roomId: GLOBAL_CHAT_ROOM_ID,
@@ -606,8 +591,8 @@ describe('chat: online count', () => {
 
 describe('chat: locked public room', () => {
   it('refuses a newcomer but lets a member join again', async () => {
-    const regular = await registerChatter('regular');
-    const newcomer = await registerChatter('late');
+    const regular = await registerChatter(app, 'regular');
+    const newcomer = await registerChatter(app, 'late');
     const created = await admin.post('/backoffice/chat/rooms', {
       name: `public-${randomUUID()}`,
       slug: `public-${randomUUID()}`,
@@ -630,8 +615,8 @@ describe('chat: locked public room', () => {
 
 describe('chat: message history cursor', () => {
   it('pages older messages with an offset timestamp cursor', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
     await owner.client.post(`/chat/rooms/${room.id}/messages`, { content: 'older' });
 

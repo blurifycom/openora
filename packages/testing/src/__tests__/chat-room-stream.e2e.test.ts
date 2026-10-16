@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { loadExtensions } from '@openora/core/server';
 import { ACCESS_REVOKED_SIGNAL, chatChannel } from '@openora/core/contracts';
 import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
@@ -13,15 +12,13 @@ import {
   type ChatSignal,
 } from '@openora/core/engagement/contracts/chat';
 import {
-  setupTestDb,
-  bootTestApp,
-  registerAndMaterializePlayer,
-  seedMinimal,
   asAdmin,
   type TestDb,
   type TestApp,
   type TestClient,
-  uniqueUsername,
+  bootE2e,
+  closeE2e,
+  registerChatter,
 } from '../index.js';
 
 const STREAM_PATH = '/chat/room-stream';
@@ -235,11 +232,6 @@ function postProbe(sender: TestClient, roomId?: string) {
   };
 }
 
-async function registerChatter(prefix: string) {
-  const username = uniqueUsername(prefix);
-  return registerAndMaterializePlayer(app, { email: `${username}@e2e.test`, username });
-}
-
 async function createRoomWithMember(owner: TestClient, member: TestClient) {
   const created = await owner.post('/chat/rooms/private', { name: `room-${randomUUID()}` });
   expect(created.status).toBe(200);
@@ -254,27 +246,19 @@ function accessRevoked(roomId: string | null) {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
   admin = await asAdmin(app.app);
 }, 60_000);
 
 afterAll(async () => {
   await Promise.allSettled(openStreams.map((stream) => stream.close()));
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('chat room stream: both lanes of a room on one connection', () => {
   it('delivers a member the room messages and signals, each tagged by lane', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const stream = await openRoomStream(member.client.request, room.id);
@@ -305,8 +289,8 @@ describe('chat room stream: both lanes of a room on one connection', () => {
   });
 
   it('delivers access-revoked to a removed member and then ends their stream', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('leaver');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'leaver');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const stream = await openRoomStream(member.client.request, room.id);
@@ -323,8 +307,8 @@ describe('chat room stream: both lanes of a room on one connection', () => {
   });
 
   it('cuts a member who leaves a private room', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('leaver');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'leaver');
     const room = await createRoomWithMember(owner.client, member.client);
     const stream = await openRoomStream(member.client.request, room.id);
     await stream.waitUntilLive(postProbe(owner.client, room.id));
@@ -337,8 +321,8 @@ describe('chat room stream: both lanes of a room on one connection', () => {
   });
 
   it('broadcasts a deleted message without its content', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
     const stream = await openRoomStream(owner.client.request, room.id);
     await stream.waitUntilLive(postProbe(owner.client, room.id));
@@ -357,8 +341,8 @@ describe('chat room stream: both lanes of a room on one connection', () => {
   });
 
   it('cuts only the removed member, and keeps streaming to the rest', async () => {
-    const owner = await registerChatter('host');
-    const removedMember = await registerChatter('leaver');
+    const owner = await registerChatter(app, 'host');
+    const removedMember = await registerChatter(app, 'leaver');
     const room = await createRoomWithMember(owner.client, removedMember.client);
     const ownerStream = await openRoomStream(owner.client.request, room.id);
     const removedStream = await openRoomStream(removedMember.client.request, room.id);
@@ -383,8 +367,8 @@ describe('chat room stream: both lanes of a room on one connection', () => {
   });
 
   it('cuts a platform-banned player off the global chat and their private rooms', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('banned');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'banned');
     const room = await createRoomWithMember(owner.client, member.client);
     const roomStream = await openRoomStream(member.client.request, room.id);
     const globalStream = await openRoomStream(member.client.request);
@@ -407,9 +391,9 @@ describe('chat room stream: both lanes of a room on one connection', () => {
   });
 
   it('refuses a private room stream to a player who is not a member', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
-    const outsider = await registerChatter('visitor');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
+    const outsider = await registerChatter(app, 'visitor');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const stream = await openRoomStream(outsider.client.request, room.id);
@@ -418,8 +402,8 @@ describe('chat room stream: both lanes of a room on one connection', () => {
   });
 
   it('refuses a private room stream to an anonymous viewer', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
 
     const stream = await openRoomStream(async (path, init) => app.app.request(path, init), room.id);
@@ -437,8 +421,8 @@ describe('chat room stream: both lanes of a room on one connection', () => {
   it('shows a player streaming the global room by its row id as online in mention search', async () => {
     const rooms = ChatRoomSchema.array().parse(await (await app.app.request('/chat/rooms')).json());
     const globalRoomId = rooms.find((room) => room.slug === '__global')!.id;
-    const streamer = await registerChatter('online');
-    const searcher = await registerChatter('search');
+    const streamer = await registerChatter(app, 'online');
+    const searcher = await registerChatter(app, 'search');
     const stream = await openRoomStream(streamer.client.request, globalRoomId);
     await stream.waitUntilLive(postProbe(streamer.client, globalRoomId));
 
@@ -455,8 +439,8 @@ describe('chat room stream: both lanes of a room on one connection', () => {
 
 describe('deprecated single-lane chat streams', () => {
   it('/chat/stream delivers plain room messages to a member', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('guest');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'guest');
     const room = await createRoomWithMember(owner.client, member.client);
     const stream = await openMessageStream(member.client.request, room.id);
     expect(stream.response.status).toBe(200);
@@ -471,8 +455,8 @@ describe('deprecated single-lane chat streams', () => {
   });
 
   it('/chat/stream ends a removed member stream and refuses the reconnect', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('leaver');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'leaver');
     const room = await createRoomWithMember(owner.client, member.client);
     const stream = await openMessageStream(member.client.request, room.id);
     await stream.waitUntilLive(postProbe(owner.client, room.id));
@@ -488,8 +472,8 @@ describe('deprecated single-lane chat streams', () => {
   });
 
   it('/chat/signals delivers access-revoked to a removed member, ends, and refuses the reconnect', async () => {
-    const owner = await registerChatter('host');
-    const member = await registerChatter('leaver');
+    const owner = await registerChatter(app, 'host');
+    const member = await registerChatter(app, 'leaver');
     const room = await createRoomWithMember(owner.client, member.client);
     const stream = await openSignalStream(member.client.request, room.id);
     const setRole = async (role: 'member' | 'moderator') => {

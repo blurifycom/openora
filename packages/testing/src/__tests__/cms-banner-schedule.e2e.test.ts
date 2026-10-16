@@ -5,12 +5,11 @@ import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { bannerSchedule } from '@openora/core/cms/schema';
 import {
   asAdmin,
-  bootTestApp,
-  seedMinimal,
-  setupTestDb,
   type TestApp,
   type TestClient,
   type TestDb,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 type BannerConfiguration = { id: string; isDefault: boolean };
@@ -68,13 +67,7 @@ async function createDefaultConfiguration(admin: TestClient, placement: string) 
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({
+  ({ db, app } = await bootE2e({
     plugins: [
       ...(await loadExtensions()),
       {
@@ -84,14 +77,11 @@ beforeAll(async () => {
         ),
       },
     ],
-    databaseUrl: db.url,
-  });
-  await seedMinimal(app.container, { playerCount: 0 });
+  }));
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('banner default schedule guard', () => {

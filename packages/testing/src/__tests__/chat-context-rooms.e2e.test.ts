@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { asc, like, or, sql, and, eq } from 'drizzle-orm';
-import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import {
   CHAT_CONTEXT_ROOMS,
@@ -15,25 +15,18 @@ import {
   ChatRoomSchema,
 } from '@openora/core/engagement/contracts/chat';
 import {
-  setupTestDb,
-  bootTestApp,
   asAdmin,
-  registerAndMaterializePlayer,
-  seedMinimal,
   type TestDb,
   type TestApp,
   type TestClient,
-  uniqueUsername,
+  bootE2e,
+  closeE2e,
+  registerChatter,
 } from '../index.js';
 
 let db: TestDb;
 let app: TestApp;
 let admin: TestClient;
-
-async function registerChatter(prefix: string) {
-  const username = uniqueUsername(prefix);
-  return registerAndMaterializePlayer(app, { email: `${username}@e2e.test`, username });
-}
 
 async function contextRoomFor(...memberIds: string[]) {
   const ref = `ctx:${randomUUID()}`;
@@ -77,25 +70,17 @@ async function openStream(client: TestClient, roomId: string) {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
   admin = await asAdmin(app.app);
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('chat: context rooms', () => {
   it('lets a member read, stream and post without listing the room', async () => {
-    const member = await registerChatter('member');
+    const member = await registerChatter(app, 'member');
     const { room } = await contextRoomFor(member.userId);
 
     const sent = await member.client.post(`/chat/rooms/${room.id}/messages`, { content: 'gl' });
@@ -122,8 +107,8 @@ describe('chat: context rooms', () => {
   });
 
   it('refuses a player who is not a member', async () => {
-    const member = await registerChatter('member');
-    const outsider = await registerChatter('outsider');
+    const member = await registerChatter(app, 'member');
+    const outsider = await registerChatter(app, 'outsider');
     const { room } = await contextRoomFor(member.userId);
 
     const history = await outsider.client.get(`/chat/rooms/${room.id}/messages`);
@@ -137,7 +122,7 @@ describe('chat: context rooms', () => {
   });
 
   it('keeps history readable but refuses posts once closed', async () => {
-    const member = await registerChatter('member');
+    const member = await registerChatter(app, 'member');
     const { ref, room } = await contextRoomFor(member.userId);
     await app.container.get(CHAT_CONTEXT_ROOMS).postSystemEvent({
       ref,
@@ -161,7 +146,7 @@ describe('chat: context rooms', () => {
   });
 
   it('audits the room, its members and its close as the system', async () => {
-    const member = await registerChatter('member');
+    const member = await registerChatter(app, 'member');
     const { ref, room } = await contextRoomFor(member.userId);
     await app.container.get(CHAT_CONTEXT_ROOMS).removeMember({ ref, userId: member.userId });
     await app.container.get(CHAT_CONTEXT_ROOMS).close({ ref });
@@ -204,7 +189,7 @@ describe('chat: context rooms', () => {
 
 describe('chat: deleting a system message', () => {
   it('refuses the room owner and lets staff delete it', async () => {
-    const owner = await registerChatter('host');
+    const owner = await registerChatter(app, 'host');
     const created = await owner.client.post('/chat/rooms/private', {
       name: `room-${randomUUID()}`,
     });

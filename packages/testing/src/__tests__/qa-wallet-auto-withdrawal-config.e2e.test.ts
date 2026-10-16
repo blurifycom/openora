@@ -10,12 +10,10 @@ import {
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
-import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { walletAutoWithdrawalConfig } from '@openora/core/wallet/schema';
 import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 import { definePlatformConfig, AutoWithdrawalConfigSchema } from '@openora/core/contracts';
 import {
-  setupTestDb,
   bootTestApp,
   applyMigrations,
   registerAndMaterializePlayer,
@@ -25,6 +23,11 @@ import {
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
+  readJson,
+  verifyKyc,
+  assignIamRoleByKey,
 } from '../index.js';
 
 /**
@@ -48,52 +51,6 @@ let superAdmin: TestClient;
 let paymentsManager: TestClient;
 let plainAdmin: TestClient;
 let unassignedAdmin: TestClient;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
-
-async function verifyKyc(admin: TestClient, userId: string) {
-  const res = await admin.post(`/compliance/players/${userId}/kyc/override`, {
-    tier: 'basic',
-    status: 'approved',
-    reason: 'QA fixture verification',
-  });
-  if (res.status !== 200) {
-    throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
-  }
-}
-
-/**
- * Assigns a REAL DB-backed IAM role (bypassing the API, since assignRole itself
- * requires an existing super-admin - a legitimate bootstrap gap, not a bug).
- * This is what actually exercises the dynamic ADMIN_PERMISSION_RESOLVER path the
- * implementer's mocked-AdminGuard tests never touch.
- *
- * AdminGuard.assert first gates on the coarse static `user.role` column (must be
- * one of the statically-declared roles - admin/support/content-manager) BEFORE it
- * ever consults the DB-backed permission resolver; only once past that gate does a
- * bound resolver's per-user grants (from the DB assignment) become authoritative.
- * So a DB-backed role (super-admin, payments-manager, ...) needs BOTH the static
- * `user.role = 'admin'` coarse flag AND the specific admin_role_assignment row.
- */
-async function assignIamRoleByKey(
-  container: Container<CoreTokenCatalog>,
-  userId: string,
-  roleKey: string,
-) {
-  const drizzle = container.get(DRIZZLE).db;
-  await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
-  const [role] = await drizzle.select().from(adminRole).where(eq(adminRole.key, roleKey));
-  if (!role) {
-    throw new Error(`assignIamRoleByKey: no seeded admin_role with key='${roleKey}'`);
-  }
-  await drizzle
-    .insert(adminRoleAssignment)
-    .values({ userId, roleId: role.id })
-    .onConflictDoNothing();
-}
 
 async function setStaticRole(container: Container<CoreTokenCatalog>, userId: string, role: string) {
   await container.get(DRIZZLE).db.update(user).set({ role }).where(eq(user.id, userId));
@@ -129,22 +86,16 @@ async function createIsolatedTestDatabase(): Promise<string> {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
   const basePlugins = await loadExtensions();
 
   const fixture = fileURLToPath(
     new URL('./fixtures/qa-wallet-auto-withdrawal-config-plugin.ts', import.meta.url),
   );
 
-  appMain = await bootTestApp({
+  ({ db, app: appMain } = await bootE2e({
     plugins: [...basePlugins, { id: 'qa-wallet-auto-withdrawal-config', path: fixture }],
-    databaseUrl: db.url,
-  });
+    seed: false,
+  }));
 
   // seedMinimal reads process.env.DATABASE_URL (a global, set as a side effect of
   // the most-recently-booted app) rather than taking a url param, so appMain must
@@ -197,8 +148,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await appMain?.close();
-  await appUnseeded?.close();
-  await db?.dispose();
+  await closeE2e({ app: appUnseeded, db });
   if (unseededAdminClient) {
     await unseededAdminClient.query(`DROP DATABASE IF EXISTS "${unseededDbName}" WITH (FORCE)`);
     await unseededAdminClient.end();

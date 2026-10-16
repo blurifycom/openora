@@ -14,15 +14,14 @@ import { adminRolePermission, mcpToken } from '@openora/core/iam/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { waitForRowLockWaiter, waitForTableLockWaiter } from '@openora/core/testing';
 import {
-  setupTestDb,
-  bootTestApp,
-  seedMinimal,
   registerAndMaterializePlayer,
   registerPlayer,
   asAdmin,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 import { MCP_TEST_RATE_LIMIT } from './fixtures/test-mcp-transport-plugin.js';
 
@@ -206,20 +205,12 @@ function toolAuditRows(tokenId: string) {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
   const fixturePath = fileURLToPath(
     new URL('./fixtures/test-mcp-transport-plugin.ts', import.meta.url),
   );
-  app = await bootTestApp({
+  ({ db, app } = await bootE2e({
     plugins: [...(await loadExtensions()), { id: 'test-mcp-transport', path: fixturePath }],
-    databaseUrl: db.url,
-  });
-  await seedMinimal(app.container, { playerCount: 0 });
+  }));
   admin = await asAdmin(app.app);
   moderator = await asAdmin(app.app, { email: 'moderator@oss.dev' });
   adminId = await userIdOf('admin@oss.dev');
@@ -228,8 +219,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('MCP tokens', () => {

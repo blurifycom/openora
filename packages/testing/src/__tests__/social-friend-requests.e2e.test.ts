@@ -1,25 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import {
-  loadExtensions,
-  DRIZZLE,
-  type Container,
-  type CoreTokenCatalog,
-} from '@openora/core/server';
+import { DRIZZLE, type Container, type CoreTokenCatalog } from '@openora/core/server';
 import { player } from '@openora/core/pam/schema/profile';
 import { friendship } from '@openora/core/engagement/schema/social';
 import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import {
-  setupTestDb,
-  bootTestApp,
   registerAndMaterializePlayer,
   asAdmin,
-  seedMinimal,
   type TestDb,
   type TestApp,
   type TestClient,
   uniqueUsername,
+  bootE2e,
+  closeE2e,
+  readJson,
 } from '../index.js';
 
 /**
@@ -48,11 +43,6 @@ import {
 let db: TestDb;
 let app: TestApp;
 let admin: TestClient;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function registerNamedPlayer(email: string, name: string) {
   const usernamePrefix = name
@@ -93,21 +83,12 @@ async function friendshipRowCount(
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  const basePlugins = await loadExtensions();
-  app = await bootTestApp({ plugins: basePlugins, databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
   admin = await asAdmin(app.app);
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('AC: relationship button-state + pending-on-send', () => {

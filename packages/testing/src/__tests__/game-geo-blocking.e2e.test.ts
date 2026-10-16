@@ -9,13 +9,13 @@ import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import {
   asAdmin,
-  bootTestApp,
   registerAndMaterializePlayer,
-  seedMinimal,
-  setupTestDb,
   type TestApp,
   type TestClient,
   type TestDb,
+  bootE2e,
+  closeE2e,
+  readJson,
 } from '../index.js';
 
 type SeededGame = { gameId: string; providerId: string };
@@ -25,11 +25,6 @@ let app: TestApp;
 let admin: TestClient;
 let player: TestClient;
 const seededGames: SeededGame[] = [];
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function deposit(amount: string) {
   const response = await player.post('/wallet/deposit', {
@@ -105,21 +100,13 @@ async function seedGame(label: string): Promise<SeededGame> {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
   const basePlugins = await loadExtensions();
   const geoFixturePath = fileURLToPath(
     new URL('./fixtures/test-game-geo-ip-plugin.ts', import.meta.url),
   );
-  app = await bootTestApp({
+  ({ db, app } = await bootE2e({
     plugins: [...basePlugins, { id: 'test-game-geo-ip', path: geoFixturePath }],
-    databaseUrl: db.url,
-  });
-  await seedMinimal(app.container, { playerCount: 0 });
+  }));
   admin = await asAdmin(app.app);
 
   const registered = await registerAndMaterializePlayer(app, {
@@ -140,8 +127,7 @@ afterAll(async () => {
       await drizzle.delete(gameProvider).where(eq(gameProvider.id, providerId));
     }
   }
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('per-game geo-blocking lifecycle', () => {

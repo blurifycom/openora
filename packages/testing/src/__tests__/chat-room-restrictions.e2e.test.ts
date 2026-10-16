@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
 import { adminRole, adminRolePermission, adminRoleAssignment } from '@openora/core/iam/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
@@ -18,14 +18,13 @@ import {
   chatRoomMute,
 } from '@openora/core/engagement/schema/chat';
 import {
-  setupTestDb,
-  bootTestApp,
   asAdmin,
-  registerAndMaterializePlayer,
-  seedMinimal,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
+  registerChatter,
 } from '../index.js';
 
 const RestrictionPageSchema = paginated(ChatRoomRestrictionSchema);
@@ -37,20 +36,11 @@ let admin: TestClient;
 let adminAccount: { id: string; name: string };
 let globalRoomId: string;
 
-async function registerChatter(prefix: string) {
-  const username = `${prefix.slice(0, 7)}_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
-  const registered = await registerAndMaterializePlayer(app, {
-    email: `${username}@e2e.test`,
-    username,
-  });
-  return { ...registered, username };
-}
-
 async function registerBackofficeViewer(
   resource: 'chat-room' | 'chat-moderation',
   level: 'read' | 'read_write' = 'read',
 ) {
-  const viewer = await registerChatter('viewer');
+  const viewer = await registerChatter(app, 'viewer');
   const drizzle = app.container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, viewer.userId));
   const [role] = await drizzle
@@ -111,14 +101,7 @@ const forUser = (items: ChatRoomRestriction[], userId: string) =>
   items.filter((item) => item.userId === userId);
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
   admin = await asAdmin(app.app);
   const [account] = await app.container
     .get(DRIZZLE)
@@ -135,18 +118,17 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('chat admin: listing the restrictions in a room', () => {
   it('lists room-moderator and staff restrictions with who set them', async () => {
-    const owner = await registerChatter('host');
-    const flooder = await registerChatter('flooder');
-    const troll = await registerChatter('troll');
+    const owner = await registerChatter(app, 'host');
+    const flooder = await registerChatter(app, 'flooder');
+    const troll = await registerChatter(app, 'troll');
     const room = await createPrivateRoomWith(owner.client, [flooder, troll]);
-    const everywhere = await registerChatter('every');
-    const throttled = await registerChatter('slowed');
+    const everywhere = await registerChatter(app, 'every');
+    const throttled = await registerChatter(app, 'slowed');
     expect(
       (
         await owner.client.post(`/chat/rooms/${room.id}/mute`, {
@@ -220,13 +202,13 @@ describe('chat admin: listing the restrictions in a room', () => {
   it('reaches each room kind only through the platform scopes that cover it', async () => {
     const room = await createPublicRoom();
     const otherRoom = await createPublicRoom();
-    const owner = await registerChatter('host');
-    const roomMuted = await registerChatter('inroom');
-    const publicBanned = await registerChatter('public');
-    const allMuted = await registerChatter('all');
-    const globalMuted = await registerChatter('global');
-    const elsewhere = await registerChatter('else');
-    const publicSlowed = await registerChatter('slowed');
+    const owner = await registerChatter(app, 'host');
+    const roomMuted = await registerChatter(app, 'inroom');
+    const publicBanned = await registerChatter(app, 'public');
+    const allMuted = await registerChatter(app, 'all');
+    const globalMuted = await registerChatter(app, 'global');
+    const elsewhere = await registerChatter(app, 'else');
+    const publicSlowed = await registerChatter(app, 'slowed');
     const privateRoom = await createPrivateRoomWith(owner.client, []);
     await adminRestrict('mutes', roomMuted.userId, room.id);
     await adminRestrict('bans', publicBanned.userId, '__all_public');
@@ -266,7 +248,9 @@ describe('chat admin: listing the restrictions in a room', () => {
   it('leaves out lifted and expired restrictions', async () => {
     const room = await createPublicRoom();
     const [active, lifted, expired, expiredInRoom, liftedInRoom] = await Promise.all(
-      ['active', 'lifted', 'expired', 'expired', 'lifted'].map((prefix) => registerChatter(prefix)),
+      ['active', 'lifted', 'expired', 'expired', 'lifted'].map((prefix) =>
+        registerChatter(app, prefix),
+      ),
     );
     await adminRestrict('mutes', active!.userId, room.id);
     await adminRestrict('bans', lifted!.userId, room.id);
@@ -327,9 +311,9 @@ describe('chat admin: listing the restrictions in a room', () => {
   });
 
   it('filters by type and pages newest first', async () => {
-    const owner = await registerChatter('host');
+    const owner = await registerChatter(app, 'host');
     const members = await Promise.all(
-      ['m1', 'm2', 'm3', 'm4'].map((prefix) => registerChatter(prefix)),
+      ['m1', 'm2', 'm3', 'm4'].map((prefix) => registerChatter(app, prefix)),
     );
     const room = await createPrivateRoomWith(owner.client, members);
     for (const member of members.slice(0, 3)) {
@@ -343,7 +327,7 @@ describe('chat admin: listing the restrictions in a room', () => {
     ).toBe(200);
     const publicRoom = await createPublicRoom();
     const otherRoom = await createPublicRoom();
-    const slowed = await registerChatter('slowed');
+    const slowed = await registerChatter(app, 'slowed');
     await adminRestrict('cooldowns', slowed.userId, publicRoom.id);
 
     const mutes = await listRestrictions(room.id, '?type=mute');
@@ -386,7 +370,7 @@ describe('chat admin: listing the restrictions in a room', () => {
   it('names a staff restriction by account name after its setter is back in the player role', async () => {
     const room = await createPublicRoom();
     const moderator = await registerBackofficeViewer('chat-moderation', 'read_write');
-    const muted = await registerChatter('muted');
+    const muted = await registerChatter(app, 'muted');
     const staffName = `Moderator ${randomUUID().slice(0, 8)}`;
     const drizzle = app.container.get(DRIZZLE).db;
     await drizzle.update(user).set({ name: staffName }).where(eq(user.id, moderator.userId));
@@ -411,7 +395,7 @@ describe('chat admin: listing the restrictions in a room', () => {
 
   it('refuses a caller without the chat-moderation permission and an unknown or deleted room', async () => {
     const room = await createPublicRoom();
-    const player = await registerChatter('player');
+    const player = await registerChatter(app, 'player');
     const roomViewer = await registerBackofficeViewer('chat-room');
     const moderationViewer = await registerBackofficeViewer('chat-moderation');
     const path = `/backoffice/chat/rooms/${room.id}/restrictions`;

@@ -9,7 +9,7 @@ import type {
   TagKey,
   KycStatus,
 } from '@openora/core/contracts';
-import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
+import { createTestDb, type TestDb, seedPlayerWithUser } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
@@ -113,20 +113,6 @@ async function activeAssignmentRow(playerId: string, tagRow: { id: string }) {
       ),
     );
   return row;
-}
-
-async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(player)
-    .values({ userId, ...overrides })
-    .returning();
-  return row!;
-}
-
-async function seedPlayerWithUser() {
-  const account = await seedUser(db);
-  const row = await seedPlayer(account.id);
-  return { account, player: row };
 }
 
 // Resolves identityReader.getPlayerIdByUserId for a fixed set of (userId, playerId)
@@ -864,8 +850,8 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
 
   describe('dormant_high_roller sweep (real PG)', () => {
     it('assigns to inactive users who also hold high_roller', async () => {
-      const { account: a1, player: p1 } = await seedPlayerWithUser();
-      const { account: a2, player: p2 } = await seedPlayerWithUser();
+      const { account: a1, player: p1 } = await seedPlayerWithUser(db);
+      const { account: a2, player: p2 } = await seedPlayerWithUser(db);
       const highRoller = await seedTagRow('high_roller');
       await seedActiveAssignment(p1.id, highRoller);
       const kycPending = await seedTagRow('kyc_pending');
@@ -888,7 +874,7 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
     });
 
     it('does not assign to inactive users without high_roller', async () => {
-      const { account, player: seededPlayer } = await seedPlayerWithUser();
+      const { account, player: seededPlayer } = await seedPlayerWithUser(db);
       const vip = await seedTagRow('vip');
       await seedActiveAssignment(seededPlayer.id, vip);
       await seedRule('dormant_high_roller', { thresholdDays: 60 });
@@ -937,7 +923,7 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
       highRiskTag: { id: string },
       metadata: PlayerTagAssignMetadata | null,
     ) {
-      const { account, player: seededPlayer } = await seedPlayerWithUser();
+      const { account, player: seededPlayer } = await seedPlayerWithUser(db);
       await seedActiveAssignment(seededPlayer.id, highRiskTag, { assignMetadata: metadata });
       return { account, player: seededPlayer };
     }
