@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { like } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { WAGER_TRACKING } from '@openora/core/contracts';
 import { walletTransaction } from '@openora/core/wallet/schema';
@@ -41,7 +41,7 @@ const creditsFor = (milestoneGrantId: string) =>
   drizzle()
     .select({ amount: walletTransaction.amount })
     .from(walletTransaction)
-    .where(eq(walletTransaction.providerRefId, `streak-milestone:${milestoneGrantId}:0`));
+    .where(like(walletTransaction.providerRefId, `streak-milestone:${milestoneGrantId}:%`));
 
 async function playerWithWaitingReward() {
   const player = await registerAndMaterializePlayer(app, {

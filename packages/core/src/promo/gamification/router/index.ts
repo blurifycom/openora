@@ -20,6 +20,7 @@ import {
   type StreakPayoutService,
 } from '../service/streak-payout.service.js';
 import { RaceNotFoundError, RaceService } from '../service/race.service.js';
+import { PayoutRateUnavailableError } from '../shared/payout-currency.js';
 import {
   RaceAdminService,
   RaceClosedError,
@@ -88,8 +89,12 @@ export function createGamificationRouter({
       ),
 
       claim: os.streaks.claim.handler(async ({ input, context }) => {
-        const claimed = await mapErrors({ NOT_FOUND: StreakMilestoneNotClaimableError }, () =>
-          streakPayouts.claim(getUserId(context), input.milestoneGrantId),
+        const claimed = await mapErrors(
+          {
+            NOT_FOUND: StreakMilestoneNotClaimableError,
+            SERVICE_UNAVAILABLE: PayoutRateUnavailableError,
+          },
+          () => streakPayouts.claim(getUserId(context), input.milestoneGrantId),
         );
         await onStreakClaimed(claimed);
         return { outcome: claimed.outcome };

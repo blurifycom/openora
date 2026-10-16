@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import type {
   ExchangeRateReader,
@@ -337,6 +337,10 @@ export class StreakService implements WagerTrackingCommands {
         and(
           eq(promoStreakMilestoneGrant.userId, userId),
           isNull(promoStreakMilestoneGrant.settledAt),
+          inArray(
+            promoStreakMilestoneGrant.day,
+            config.milestones.map((milestone) => milestone.day),
+          ),
         ),
       )
       .orderBy(asc(promoStreakMilestoneGrant.day));

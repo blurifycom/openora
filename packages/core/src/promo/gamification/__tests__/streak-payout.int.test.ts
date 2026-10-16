@@ -11,12 +11,19 @@ import type {
   WalletReader,
 } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
-import { promoStreakConfig, promoStreakMilestoneGrant } from '../schema/index.js';
+import {
+  promoPlayerStreak,
+  promoStreakConfig,
+  promoStreakDailyWager,
+  promoStreakMilestoneGrant,
+} from '../schema/index.js';
+import { StreakService } from '../service/streak.service.js';
 import {
   StreakMilestoneNotClaimableError,
   StreakPayoutService,
 } from '../service/streak-payout.service.js';
 import type { StreakMilestone } from '../contract/index.js';
+import { PayoutRateUnavailableError } from '../shared/payout-currency.js';
 
 let db: TestDb;
 const grant = vi.fn<BonusGrantCommands['grant']>();
@@ -51,6 +58,10 @@ const service = (payoutCurrency = 'USD') =>
     payoutCurrency,
     mock<WalletCommands>({ credit }),
   );
+
+const logger = { warn: vi.fn() };
+
+const yesterday = () => new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 
 const owe = async (userId: string, day: number) => {
   const [row] = await db.drizzle.db
@@ -88,6 +99,8 @@ beforeEach(async () => {
   grant.mockImplementation(async () => ({ ok: true, created: true, grantId: randomUUID() }));
   playsIn('USD');
   await db.drizzle.db.delete(promoStreakMilestoneGrant);
+  await db.drizzle.db.delete(promoStreakDailyWager);
+  await db.drizzle.db.delete(promoPlayerStreak);
   await db.drizzle.db.delete(promoStreakConfig);
   await db.drizzle.db.insert(promoStreakConfig).values({
     currency: 'USD',
@@ -99,6 +112,63 @@ beforeEach(async () => {
 });
 
 describe('claiming a streak reward', () => {
+  it('pays a day reached again on a later run, after the first reach was claimed', async () => {
+    const userId = randomUUID();
+    const streaks = new StreakService(db.drizzle, mock<ExchangeRateReader>({ convert }), logger);
+    const reachDayThree = async () => {
+      await db.drizzle.db
+        .insert(promoPlayerStreak)
+        .values({ userId, current: 2, best: 2, lastQualifyingDay: yesterday() })
+        .onConflictDoUpdate({
+          target: promoPlayerStreak.userId,
+          set: { current: 2, lastQualifyingDay: yesterday() },
+        });
+      await db.drizzle.db.transaction((tx) =>
+        streaks.recordWager(tx, {
+          userId,
+          currency: 'USD',
+          amount: '1',
+          weightedAmount: '1',
+          realAmount: '1',
+          context: { provider: 'aggregator', product: 'casino' },
+        }),
+      );
+      const [waiting] = (await streaks.getForPlayer(userId)).claimable;
+      return waiting?.id ?? '';
+    };
+
+    const first = await reachDayThree();
+    await service().claim(userId, first);
+    const second = await reachDayThree();
+
+    await expect(service().claim(userId, second)).resolves.toMatchObject({ outcome: 'granted' });
+
+    expect(second).toBe(first);
+    expect(credit).toHaveBeenCalledTimes(2);
+    const refs = credit.mock.calls.map((call) => call[1].providerRef?.providerRefId);
+    expect(new Set(refs).size).toBe(2);
+  });
+
+  it('refuses to settle a claim whose cash was already credited, and leaves it waiting', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+    credit.mockResolvedValue({ ok: true, moved: false, newBalance: '5' });
+
+    await expect(service().claim(userId, id)).rejects.toThrow(/already credited/);
+
+    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
+  });
+
+  it('refuses to settle a claim whose bonus was already granted, and leaves it waiting', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 7);
+    grant.mockResolvedValue({ ok: true, created: false, grantId: randomUUID() });
+
+    await expect(service().claim(userId, id)).rejects.toThrow(/already granted/);
+
+    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
+  });
+
   it('credits a cash reward to the real balance, with no bonus grant, and settles the milestone', async () => {
     const userId = randomUUID();
     const id = await owe(userId, 3);
@@ -113,7 +183,10 @@ describe('claiming a streak reward', () => {
       amount: '5',
       currency: 'USD',
       type: 'cashback',
-      providerRef: { providerName: 'promo-streak', providerRefId: `streak-milestone:${id}:0` },
+      providerRef: {
+        providerName: 'promo-streak',
+        providerRefId: expect.stringMatching(new RegExp(`^streak-milestone:${id}:\\d+:0$`)),
+      },
     });
     await expect(milestoneGrant(id)).resolves.toMatchObject({ outcome: 'granted' });
   });
@@ -210,7 +283,9 @@ describe('crediting a cash reward in a currency the player can actually hold', (
     const id = await owe(userId, 3);
     convert.mockResolvedValue(null);
 
-    await expect(service('USDT').claim(userId, id)).rejects.toThrow(/no exchange rate/);
+    await expect(service('USDT').claim(userId, id)).rejects.toBeInstanceOf(
+      PayoutRateUnavailableError,
+    );
 
     expect(credit).not.toHaveBeenCalled();
     await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
@@ -255,7 +330,7 @@ describe("granting a bonus reward in the player's active currency", () => {
     playsIn('USDT');
     convert.mockResolvedValue(null);
 
-    await expect(service().claim(userId, id)).rejects.toThrow(/no exchange rate/);
+    await expect(service().claim(userId, id)).rejects.toBeInstanceOf(PayoutRateUnavailableError);
 
     expect(grant).not.toHaveBeenCalled();
     await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
@@ -286,6 +361,12 @@ describe('announcing a reward waiting to be claimed', () => {
       outcome: 'restricted',
       announcedAt: null,
     });
+  });
+
+  it('does not announce a milestone on a day the config no longer pays', async () => {
+    await owe(randomUUID(), 5);
+
+    await expect(service().announceReached()).resolves.toEqual([]);
   });
 
   it('does not announce a milestone already claimed', async () => {

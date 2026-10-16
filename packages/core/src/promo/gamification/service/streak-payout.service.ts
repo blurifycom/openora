@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type {
   BonusGrantCommands,
   DomainEventPayload,
@@ -104,6 +104,13 @@ export class StreakPayoutService {
       return [];
     }
     const eligibility = this.eligibility;
+    const [config] = await this.drizzle.db
+      .select({ milestones: promoStreakConfig.milestones })
+      .from(promoStreakConfig);
+    const paidDays = config?.milestones.map((milestone) => milestone.day) ?? [];
+    if (paidDays.length === 0) {
+      return [];
+    }
     const pending = await this.drizzle.db
       .select({ id: promoStreakMilestoneGrant.id })
       .from(promoStreakMilestoneGrant)
@@ -111,6 +118,7 @@ export class StreakPayoutService {
         and(
           isNull(promoStreakMilestoneGrant.settledAt),
           isNull(promoStreakMilestoneGrant.announcedAt),
+          inArray(promoStreakMilestoneGrant.day, paidDays),
         ),
       )
       .limit(BATCH);
@@ -174,7 +182,10 @@ export class StreakPayoutService {
     milestones: readonly { day: number; rewards: readonly StreakReward[] }[],
   ): Promise<StreakClaimOutcome | null> {
     const [row] = await tx
-      .select({ day: promoStreakMilestoneGrant.day })
+      .select({
+        day: promoStreakMilestoneGrant.day,
+        reachedAt: promoStreakMilestoneGrant.reachedAt,
+      })
       .from(promoStreakMilestoneGrant)
       .where(
         and(
@@ -201,7 +212,9 @@ export class StreakPayoutService {
     const granted: Granted[] = [];
     const cashPaid: StreakCashPaid[] = [];
     for (const [index, reward] of milestone.rewards.entries()) {
-      const sourceRef = `streak-milestone:${id}:${index}`;
+      // A settled row is reactivated when its day is reached again, so the reach time keeps
+      // each reach's credits apart from the last one's.
+      const sourceRef = `streak-milestone:${id}:${row.reachedAt.getTime()}:${index}`;
       if (reward.kind === 'rakebackBoost') {
         await this.applyRakebackBoost(tx, userId, reward);
         continue;
@@ -210,10 +223,7 @@ export class StreakPayoutService {
         cashPaid.push(await this.grantCash(tx, userId, reward, sourceRef));
         continue;
       }
-      const paid = await this.grantOne(tx, userId, reward, sourceRef);
-      if (paid) {
-        granted.push(paid);
-      }
+      granted.push(await this.grantOne(tx, userId, reward, sourceRef));
     }
     await settle('granted');
     return { outcome: 'granted', granted, cashPaid };
@@ -224,7 +234,7 @@ export class StreakPayoutService {
     userId: Uuid,
     reward: Extract<StreakReward, { kind: 'bonus' | 'giftDrop' }>,
     sourceRef: string,
-  ): Promise<Granted | null> {
+  ): Promise<Granted> {
     if (!this.grants) {
       throw new Error('BONUS_GRANTS is not bound');
     }
@@ -258,7 +268,7 @@ export class StreakPayoutService {
       throw new Error(`grant refused: ${outcome.reason}`);
     }
     if (!outcome.created) {
-      return null;
+      throw new Error(`streak bonus ${sourceRef} was already granted`);
     }
     return {
       userId,
@@ -310,11 +320,14 @@ export class StreakPayoutService {
       // "roll back and retry" rule.
       throw new Error(`streak cash reward failed: ${outcome.reason}`);
     }
+    if (!outcome.moved) {
+      throw new Error(`streak cash reward ${sourceRef} was already credited`);
+    }
     return {
       userId,
       amount: priced.amount,
       currency: priced.currency,
-      transactionId: outcome.moved ? outcome.transactionId : null,
+      transactionId: outcome.transactionId,
     };
   }
 
