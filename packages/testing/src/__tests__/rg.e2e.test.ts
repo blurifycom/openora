@@ -16,6 +16,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  readJson,
 } from '../index.js';
 
 /**
@@ -37,11 +38,6 @@ const JOB_WAIT = { timeout: 15000, interval: 100 };
 let db: TestDb;
 let app: TestApp;
 let admin: TestClient;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function attemptLogin(email: string, password: string) {
   return app.app.request('/identity/login', {

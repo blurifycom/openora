@@ -18,6 +18,9 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  readJson,
+  verifyKyc,
+  assignTag,
 } from '../index.js';
 
 /**
@@ -38,34 +41,6 @@ import {
 let db: TestDb;
 let appMain: TestApp;
 let superAdmin: TestClient;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
-
-async function verifyKyc(admin: TestClient, userId: string) {
-  const res = await admin.post(`/compliance/players/${userId}/kyc/override`, {
-    tier: 'basic',
-    status: 'approved',
-    reason: 'QA fixture verification',
-  });
-  if (res.status !== 200) {
-    throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
-  }
-}
-
-async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
-  const res = await admin.post(`/player/${playerId}/player-tag`, {
-    tagKey,
-    assignReason: 'QA fixture - manual risk-tag seed',
-    assignActor: 'manual',
-  });
-  if (res.status !== 200) {
-    throw new Error(`assignTag(${tagKey}) failed (${res.status}): ${await res.text()}`);
-  }
-  return readJson(res);
-}
 
 // Bootstrap a super-admin the same way the sibling auto-withdrawal config suite does: stamp the static
 // user.role='admin' coarse gate, then attach the real DB-backed super-admin role

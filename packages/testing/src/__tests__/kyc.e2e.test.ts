@@ -19,6 +19,7 @@ import {
   type TestApp,
   bootE2e,
   closeE2e,
+  readJson,
 } from '../index.js';
 
 /**
@@ -51,11 +52,6 @@ let appGated: TestApp;
 
 function signWebhook(rawBody: string, secret: string): string {
   return `sha256=${createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')}`;
-}
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
 }
 
 // Withdrawals here are far below the default KYC triggers, so a test that needs KYC to be

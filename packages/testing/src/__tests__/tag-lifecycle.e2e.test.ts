@@ -11,6 +11,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  readJson,
 } from '../index.js';
 
 /**
@@ -25,11 +26,6 @@ const SYSTEM_ACTOR = '00000000-0000-0000-0000-000000000000';
 
 let db: TestDb;
 let app: TestApp;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function loginWithIp(honoApp: TestApp['app'], email: string, ip: string) {
   const loginRes = await honoApp.request('/identity/login', {

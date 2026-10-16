@@ -22,6 +22,9 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  readJson,
+  verifyKyc,
+  assignTag,
 } from '../index.js';
 
 /**
@@ -36,24 +39,8 @@ let appDefault: TestApp;
 let appGated: TestApp;
 let appCapGated: TestApp;
 
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
-
 async function setRole(container: Container<CoreTokenCatalog>, userId: string, role: string) {
   await container.get(DRIZZLE).db.update(user).set({ role }).where(eq(user.id, userId));
-}
-
-async function verifyKyc(admin: TestClient, userId: string) {
-  const res = await admin.post(`/compliance/players/${userId}/kyc/override`, {
-    tier: 'basic',
-    status: 'approved',
-    reason: 'e2e fixture verification',
-  });
-  if (res.status !== 200) {
-    throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
-  }
 }
 
 // Withdrawals here are far below the default KYC triggers, so a test that needs KYC to be
@@ -78,17 +65,6 @@ async function withKycWithdrawalThreshold(
     await run();
   } finally {
     await set(null);
-  }
-}
-
-async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
-  const res = await admin.post(`/player/${playerId}/player-tag`, {
-    tagKey,
-    assignReason: 'qa e2e fixture',
-    assignActor: 'manual',
-  });
-  if (res.status !== 200) {
-    throw new Error(`assignTag failed (${res.status}): ${await res.text()}`);
   }
 }
 

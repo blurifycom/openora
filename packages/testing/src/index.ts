@@ -29,7 +29,6 @@ export {
   assignTag,
   readJson,
   registerChatter,
-  registerWithEmail,
   verifyKyc,
   type Chatter,
 } from './helpers.js';

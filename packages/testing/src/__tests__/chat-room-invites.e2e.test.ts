@@ -12,113 +12,41 @@ import {
   ChatRoomInviteCandidateSchema,
   ChatRoomInviteLookupSchema,
   ChatRoomInviteSchema,
-  ChatRoomMemberSchema,
   ChatRoomSchema,
-  MyChatRoomInviteSchema,
   type ChatRoom,
 } from '@openora/core/engagement/contracts/chat';
 import {
   asAdmin,
-  registerAndMaterializePlayer,
+  type Chatter,
   type TestDb,
   type TestApp,
   type TestClient,
   bootE2e,
   closeE2e,
 } from '../index.js';
+import { WAIT, chatInviteHelpers } from '../chat-invite-helpers.js';
 
 let db: TestDb;
 let app: TestApp;
 let admin: TestClient;
 
-const WAIT = { timeout: 10_000, interval: 100 };
-
-type Chatter = Awaited<ReturnType<typeof registerAndMaterializePlayer>> & { username: string };
-
-async function registerChatter(prefix: string, email?: string): Promise<Chatter> {
-  const username = `${prefix.slice(0, 7)}_${randomInt(10 ** 9, 10 ** 10)}`;
-  const registered = await registerAndMaterializePlayer(app, {
-    email: email ?? `${username}@e2e.test`,
-    username,
-  });
-  return { ...registered, username };
-}
-
-async function createRoom(owner: Chatter) {
-  const created = await owner.client.post('/chat/rooms/private', { name: `room-${randomUUID()}` });
-  expect(created.status).toBe(200);
-  return ChatRoomSchema.parse(await created.json());
-}
-
-async function joinByCode(member: Chatter, room: ChatRoom) {
-  const joined = await member.client.post('/chat/rooms/join', { joinCode: room.joinCode });
-  expect(joined.status).toBe(200);
-}
-
-async function configureRoom(
-  owner: Chatter,
-  room: ChatRoom,
-  values: { moderatorInvite?: boolean; lockRoom?: boolean; onlyInvitedCanJoin?: boolean },
-) {
-  const res = await owner.client.patch(`/chat/rooms/${room.id}/configuration`, values);
-  expect(res.status).toBe(200);
-}
-
-async function addModerator(owner: Chatter, room: ChatRoom) {
-  const moderator = await registerChatter('keeper');
-  await joinByCode(moderator, room);
-  const promoted = await owner.client.post(
-    `/chat/rooms/${room.id}/members/${moderator.userId}/role`,
-    { role: 'moderator' },
-  );
-  expect(promoted.status).toBe(200);
-  return moderator;
-}
-
-function invite(actor: Chatter, room: ChatRoom, userId: string) {
-  return actor.client.post(`/chat/rooms/${room.id}/invites`, { userId });
-}
-
-async function sendInvite(actor: Chatter, room: ChatRoom, invitee: Chatter) {
-  const res = await invite(actor, room, invitee.userId);
-  expect(res.status).toBe(200);
-  return ChatRoomInviteSchema.parse(await res.json());
-}
-
-async function expectRejected(res: Response, status: number, reason: string) {
-  expect(res.status).toBe(status);
-  const body = (await res.json()) as { data?: { reason?: string } };
-  expect(body.data?.reason).toBe(reason);
-}
-
-async function myInvites(invitee: Chatter) {
-  const res = await invitee.client.get('/chat/invites');
-  expect(res.status).toBe(200);
-  return MyChatRoomInviteSchema.array().parse(await res.json());
-}
-
-async function roomMemberIds(owner: Chatter, room: ChatRoom) {
-  const res = await owner.client.get(`/chat/rooms/${room.id}/members`);
-  expect(res.status).toBe(200);
-  return ChatRoomMemberSchema.array()
-    .parse(await res.json())
-    .map((member) => member.userId);
-}
-
-async function inviteRow(inviteId: string) {
-  const [row] = await app.container
-    .get(DRIZZLE)
-    .db.select()
-    .from(chatRoomInvite)
-    .where(eq(chatRoomInvite.id, inviteId));
-  return row;
-}
-
-async function auditRows(resourceId: string, action: string) {
-  const res = await admin.get(`/audit/logs?resourceId=${resourceId}&action=${action}`);
-  expect(res.status).toBe(200);
-  return ((await res.json()) as { items: unknown[] }).items;
-}
+const {
+  registerChatter,
+  createRoom,
+  joinByCode,
+  configureRoom,
+  addModerator,
+  invite,
+  sendInvite,
+  expectRejected,
+  myInvites,
+  roomMemberIds,
+  inviteRow,
+  auditRows,
+} = chatInviteHelpers(
+  () => app,
+  () => admin,
+);
 
 async function inviteStatusOf(owner: Chatter, room: ChatRoom, invitee: Chatter) {
   const res = await owner.client.post(`/chat/rooms/${room.id}/invite-statuses`, {

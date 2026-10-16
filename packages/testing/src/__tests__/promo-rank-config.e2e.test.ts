@@ -13,6 +13,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  readJson,
 } from '../index.js';
 import { EXAMPLE_RANK_LADDER } from '../seed.js';
 
@@ -36,11 +37,6 @@ const CASINO_ONLY = {
     daily: { wageringMultiplier: '1', expiryDays: 1 },
   },
 };
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function adminWithRole(roleKey: string) {
   const { client, userId } = await registerAndMaterializePlayer(app, {

@@ -16,23 +16,17 @@ import {
 } from '@openora/core/engagement/contracts/chat';
 import {
   asAdmin,
-  registerAndMaterializePlayer,
   type TestDb,
   type TestApp,
   type TestClient,
-  uniqueUsername,
   bootE2e,
   closeE2e,
+  registerChatter,
 } from '../index.js';
 
 let db: TestDb;
 let app: TestApp;
 let admin: TestClient;
-
-async function registerChatter(prefix: string) {
-  const username = uniqueUsername(prefix);
-  return registerAndMaterializePlayer(app, { email: `${username}@e2e.test`, username });
-}
 
 async function contextRoomFor(...memberIds: string[]) {
   const ref = `ctx:${randomUUID()}`;
@@ -86,7 +80,7 @@ afterAll(async () => {
 
 describe('chat: context rooms', () => {
   it('lets a member read, stream and post without listing the room', async () => {
-    const member = await registerChatter('member');
+    const member = await registerChatter(app, 'member');
     const { room } = await contextRoomFor(member.userId);
 
     const sent = await member.client.post(`/chat/rooms/${room.id}/messages`, { content: 'gl' });
@@ -113,8 +107,8 @@ describe('chat: context rooms', () => {
   });
 
   it('refuses a player who is not a member', async () => {
-    const member = await registerChatter('member');
-    const outsider = await registerChatter('outsider');
+    const member = await registerChatter(app, 'member');
+    const outsider = await registerChatter(app, 'outsider');
     const { room } = await contextRoomFor(member.userId);
 
     const history = await outsider.client.get(`/chat/rooms/${room.id}/messages`);
@@ -128,7 +122,7 @@ describe('chat: context rooms', () => {
   });
 
   it('keeps history readable but refuses posts once closed', async () => {
-    const member = await registerChatter('member');
+    const member = await registerChatter(app, 'member');
     const { ref, room } = await contextRoomFor(member.userId);
     await app.container.get(CHAT_CONTEXT_ROOMS).postSystemEvent({
       ref,
@@ -152,7 +146,7 @@ describe('chat: context rooms', () => {
   });
 
   it('audits the room, its members and its close as the system', async () => {
-    const member = await registerChatter('member');
+    const member = await registerChatter(app, 'member');
     const { ref, room } = await contextRoomFor(member.userId);
     await app.container.get(CHAT_CONTEXT_ROOMS).removeMember({ ref, userId: member.userId });
     await app.container.get(CHAT_CONTEXT_ROOMS).close({ ref });
@@ -195,7 +189,7 @@ describe('chat: context rooms', () => {
 
 describe('chat: deleting a system message', () => {
   it('refuses the room owner and lets staff delete it', async () => {
-    const owner = await registerChatter('host');
+    const owner = await registerChatter(app, 'host');
     const created = await owner.client.post('/chat/rooms/private', {
       name: `room-${randomUUID()}`,
     });

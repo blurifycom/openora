@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE, type Container, type CoreTokenCatalog } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
@@ -10,11 +9,6 @@ import { registerAndMaterializePlayer, uniqueUsername } from './register.js';
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 export async function readJson(res: Response): Promise<any> {
   return res.json();
-}
-
-/** A registered, session-holding player whose email is `<prefix>-<uuid>@e2e.test`. */
-export function registerWithEmail(app: TestApp, prefix: string) {
-  return registerAndMaterializePlayer(app, { email: `${prefix}-${randomUUID()}@e2e.test` });
 }
 
 export type Chatter = Awaited<ReturnType<typeof registerAndMaterializePlayer>> & {

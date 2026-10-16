@@ -15,6 +15,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  readJson,
 } from '../index.js';
 
 type SeededGame = { gameId: string; providerId: string };
@@ -24,11 +25,6 @@ let app: TestApp;
 let admin: TestClient;
 let player: TestClient;
 const seededGames: SeededGame[] = [];
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function deposit(amount: string) {
   const response = await player.post('/wallet/deposit', {

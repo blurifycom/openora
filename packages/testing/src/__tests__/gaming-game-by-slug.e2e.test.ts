@@ -2,18 +2,13 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { DRIZZLE, type Container, type CoreTokenCatalog } from '@openora/core/server';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
-import { type TestDb, type TestApp, bootE2e, closeE2e } from '../index.js';
+import { type TestDb, type TestApp, bootE2e, closeE2e, readJson } from '../index.js';
 
 let db: TestDb;
 let app: TestApp;
 let playableSlug: string;
 let playableId: string;
 let inactiveSlug: string;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 function drizzleOf(container: Container<CoreTokenCatalog>) {
   return container.get(DRIZZLE).db;

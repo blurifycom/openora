@@ -8,17 +8,13 @@ import {
   type TestApp,
   bootE2e,
   closeE2e,
+  readJson,
 } from '../index.js';
 
 let db: TestDb;
 let app: TestApp;
 
 const LADDER_KEYS = ['bronze', 'silver', 'gold', 'platinum'];
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 const tierIdOf = (body: { tiers: { id: string; key: string }[] }, key: string) =>
   body.tiers.find((tier) => tier.key === key)?.id;

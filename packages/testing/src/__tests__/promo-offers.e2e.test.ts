@@ -12,6 +12,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  readJson,
 } from '../index.js';
 
 let db: TestDb;
@@ -19,11 +20,6 @@ let app: TestApp;
 let admin: TestClient;
 
 const drizzle = () => app.container.get(DRIZZLE).db;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 const offerBody = (over: Record<string, unknown> = {}) => ({
   key: `offer-${randomUUID()}`,

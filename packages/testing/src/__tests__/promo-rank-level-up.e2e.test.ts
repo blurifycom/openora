@@ -18,6 +18,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  readJson,
 } from '../index.js';
 import { EXAMPLE_RANK_LADDER } from '../seed.js';
 
@@ -31,11 +32,6 @@ const drizzle = () => app.container.get(DRIZZLE).db;
 const SILVER_THRESHOLD = '10000';
 const GOLD_THRESHOLD = '100000';
 const LEVEL_UP_TERMS = { wageringMultiplier: '2', expiryDays: 7 };
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 const wager = (userId: string, amount: string) =>
   drizzle().transaction((tx) =>

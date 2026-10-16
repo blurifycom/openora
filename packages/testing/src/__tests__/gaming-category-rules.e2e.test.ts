@@ -22,6 +22,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  readJson,
 } from '../index.js';
 
 const providers = (...providerIds: string[]) => ({ key: 'providers', params: { providerIds } });
@@ -31,11 +32,6 @@ let db: TestDb;
 let app: TestApp;
 let admin: TestClient;
 let player: TestClient;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 function drizzle() {
   return app.container.get(DRIZZLE).db;

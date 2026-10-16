@@ -14,6 +14,7 @@ import {
   uniqueUsername,
   bootE2e,
   closeE2e,
+  readJson,
 } from '../index.js';
 
 /**
@@ -42,11 +43,6 @@ import {
 let db: TestDb;
 let app: TestApp;
 let admin: TestClient;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function registerNamedPlayer(email: string, name: string) {
   const usernamePrefix = name

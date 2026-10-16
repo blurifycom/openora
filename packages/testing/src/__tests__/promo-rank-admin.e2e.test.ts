@@ -14,6 +14,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  readJson,
 } from '../index.js';
 
 let db: TestDb;
@@ -24,11 +25,6 @@ let support: TestClient;
 let seeded: { currency: string; tiers: ReturnType<typeof editable>[] };
 
 const drizzle = () => app.container.get(DRIZZLE).db;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function adminWithRole(roleKey: string) {
   const { client, userId } = await registerAndMaterializePlayer(app, {

@@ -7,25 +7,13 @@ import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { CHAT_CONTEXT_ROOMS, ChatContextSendDeniedDataSchema } from '@openora/core/contracts';
 import { ChatMessageSchema } from '@openora/core/engagement/contracts/chat';
-import {
-  registerAndMaterializePlayer,
-  type TestDb,
-  type TestApp,
-  uniqueUsername,
-  bootE2e,
-  closeE2e,
-} from '../index.js';
+import { type TestDb, type TestApp, bootE2e, closeE2e, registerChatter } from '../index.js';
 import { DENIED_CONTEXT_REF_PREFIX } from './fixtures/test-chat-context-send-policy-plugin.js';
 
 const SendRefusalSchema = z.object({ code: z.string(), data: ChatContextSendDeniedDataSchema });
 
 let db: TestDb;
 let app: TestApp;
-
-async function registerChatter(prefix: string) {
-  const username = uniqueUsername(prefix);
-  return registerAndMaterializePlayer(app, { email: `${username}@e2e.test`, username });
-}
 
 async function contextRoom(ref: string, memberId: string) {
   const { room } = await app.container
@@ -49,7 +37,7 @@ afterAll(async () => {
 
 describe('chat: context room send policy', () => {
   it('posts a message the bound policy allows', async () => {
-    const member = await registerChatter('allowed');
+    const member = await registerChatter(app, 'allowed');
     const room = await contextRoom(`ctx:${randomUUID()}`, member.userId);
 
     const sent = await member.client.post(`/chat/rooms/${room.id}/messages`, { content: 'gl' });
@@ -59,7 +47,7 @@ describe('chat: context room send policy', () => {
   });
 
   it('refuses a message the bound policy denies, with its reason, and stores nothing', async () => {
-    const member = await registerChatter('denied');
+    const member = await registerChatter(app, 'denied');
     const room = await contextRoom(`${DENIED_CONTEXT_REF_PREFIX}${randomUUID()}`, member.userId);
 
     const refused = await member.client.post(`/chat/rooms/${room.id}/messages`, { content: 'hi' });
@@ -74,7 +62,7 @@ describe('chat: context room send policy', () => {
   });
 
   it('audits a denied send as a refused access', async () => {
-    const member = await registerChatter('audited');
+    const member = await registerChatter(app, 'audited');
     const room = await contextRoom(`${DENIED_CONTEXT_REF_PREFIX}${randomUUID()}`, member.userId);
 
     const refused = await member.client.post(`/chat/rooms/${room.id}/messages`, { content: 'hi' });
