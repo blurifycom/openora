@@ -10,6 +10,7 @@ import {
   triggerCatalog,
   type ActionExecutionOutcome,
   type ActionTypeImplementation,
+  type DomainEventName,
   type McpToolHandler,
   type RunContext,
   type TokenCatalog,
@@ -772,6 +773,26 @@ describe('McpKernel catalog', () => {
     expect(toolFirst).toMatch(/^[0-9a-f]{16}$/);
     expect(actionFirst).toBe(toolFirst);
     expect(bumped).not.toBe(toolFirst);
+  });
+
+  it('versions the catalog by the allowed trigger topics, not by their order', () => {
+    const versionWith = (triggerTopics?: DomainEventName[]) =>
+      createMcpKernel({
+        tools: [],
+        actions: [],
+        container: new Container(),
+        authorize: async () => 'allowed',
+        audit: null,
+        ...(triggerTopics ? { triggerTopics } : {}),
+      }).catalogVersion;
+    const none = versionWith();
+    const one = versionWith(['promo.bonus.granted']);
+    const two = versionWith(['promo.bonus.granted', 'wallet.deposit.completed']);
+
+    expect(versionWith([])).toBe(none);
+    expect(one).not.toBe(none);
+    expect(two).not.toBe(one);
+    expect(versionWith(['wallet.deposit.completed', 'promo.bonus.granted'])).toBe(two);
   });
 
   it('fails the build when a factory returns no handler', () => {

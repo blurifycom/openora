@@ -111,7 +111,7 @@ export function createMcpKernel<C extends TokenCatalog>(deps: McpKernelDeps<C>):
   const triggers = allowedTriggers(deps.triggerTopics ?? []);
 
   return {
-    catalogVersion: catalogVersionOf(deps.tools, deps.actions),
+    catalogVersion: catalogVersionOf(deps.tools, deps.actions, triggers),
     listTools: () => toolDescriptors,
     listActionTypes: () => actionDescriptors,
     listTriggers: () => triggers,
@@ -203,10 +203,14 @@ function compareText(left: string, right: string): number {
 function catalogVersionOf(
   tools: readonly { contract: McpToolContract }[],
   actions: readonly { contract: ActionTypeContract }[],
+  triggers: readonly TriggerDescriptor[],
 ): string {
   const entries = [
     ...tools.map(({ contract }) => ['tool', contract.id, contract.schemaVersion] as const),
     ...actions.map(({ contract }) => ['action', contract.id, contract.schemaVersion] as const),
+    ...triggers.map(
+      ({ topic, version, subjectField }) => ['trigger', topic, version, subjectField] as const,
+    ),
   ].sort(([leftKind, leftId], [rightKind, rightId]) =>
     leftKind === rightKind ? compareText(leftId, rightId) : compareText(leftKind, rightKind),
   );

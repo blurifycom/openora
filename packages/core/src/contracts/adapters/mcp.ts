@@ -311,6 +311,10 @@ export type ActionExecutionResult = ({ ok: true } & ActionExecutionOutcome) | Mc
  * exactly one audit record.
  */
 export type McpKernel = {
+  /**
+   * Changes when a tool or action type is added, removed or bumps its schema version, and when
+   * an allowed trigger is added or removed or changes its version or subject field.
+   */
   readonly catalogVersion: string;
   listTools(): readonly McpToolDescriptor[];
   listActionTypes(): readonly ActionTypeDescriptor[];
