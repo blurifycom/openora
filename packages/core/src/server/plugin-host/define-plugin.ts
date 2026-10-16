@@ -39,14 +39,22 @@ export type EventHandler = (payload: unknown, envelope?: EventEnvelope) => void 
 
 /**
  * Receives every event on the topics the operator allow-listed as agent triggers
- * (`MCP_KERNEL.listTriggers()`), with the trigger it arrived as. It runs in line with the
- * topic's other handlers, and a throw is logged and the event acked without a retry: enqueue
- * a job and return.
+ * (`MCP_KERNEL.listTriggers()`), with the trigger it arrived as.
+ *
+ * - Delivery is at-least-once: dedupe on `envelope.eventId`.
+ * - A topic taken off the allow-list and listed again can replay its backlog, up to the
+ *   stream's maximum length, when nothing else in the service consumed it meanwhile: drop
+ *   events older than you care about by `envelope.occurredAt`.
+ * - The payload arrives as emitted and may hold personal data (an IP address, a user agent,
+ *   an email address): never hand it to a model.
+ * - It runs in line with the topic's other handlers, so a slow listener delays them, and a
+ *   throw is logged and the event acked without a retry: enqueue a job and return within a few
+ *   milliseconds.
  */
 export type TriggerListener = (
   trigger: TriggerDescriptor,
   payload: unknown,
-  envelope?: EventEnvelope,
+  envelope: EventEnvelope,
 ) => void | Promise<void>;
 
 export type RegisteredTriggerListener = {

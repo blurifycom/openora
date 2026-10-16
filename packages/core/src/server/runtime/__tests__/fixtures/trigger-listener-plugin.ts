@@ -4,7 +4,7 @@ import type { Plugin } from '../../../plugin-host/define-plugin.js';
 export type HeardTrigger = {
   trigger: TriggerDescriptor;
   payload: unknown;
-  envelope?: EventEnvelope;
+  envelope: EventEnvelope;
 };
 
 /** What the listener heard, on globalThis: the host imports this file by path, not the test. */

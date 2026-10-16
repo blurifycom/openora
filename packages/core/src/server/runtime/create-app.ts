@@ -489,8 +489,17 @@ export async function createApp(
   const triggerListeners = registry.triggers.getAll();
   if (triggerListeners.length > 0) {
     for (const trigger of allowedTriggers(container.get(PLATFORM_CONFIG).agents.triggers.topics)) {
-      for (const { listener } of triggerListeners) {
-        bus.on(trigger.topic, (payload, envelope) => listener(trigger, payload, envelope));
+      for (const { owner, listener } of triggerListeners) {
+        bus.on(trigger.topic, (payload, envelope) => {
+          if (!envelope) {
+            createLogger('agent-triggers').error(
+              { topic: trigger.topic, owner },
+              'agent trigger dropped - the event arrived without its envelope',
+            );
+            return;
+          }
+          return listener(trigger, payload, envelope);
+        });
       }
     }
   }
