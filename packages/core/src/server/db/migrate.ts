@@ -174,7 +174,7 @@ export async function runMigrations(opts: RunMigrationsOptions) {
   }
 }
 
-/** Apply the engine `outbox` migration set (the only engine-owned table); domain modules ship their own `migrate`. */
+/** Apply the engine `outbox` migration set (the outbox and instance tables); domain modules ship their own `migrate`. */
 export function migrate(databaseUrl?: string) {
   return runMigrations({
     migrationsFolder: fileURLToPath(new URL('./outbox/drizzle/migrations', import.meta.url)),

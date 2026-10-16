@@ -2,6 +2,8 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { arch, platform, version as nodeVersion } from 'node:process';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { CORE_VERSION } from './generated/core-version.js';
 
@@ -11,10 +13,16 @@ const templateRoot = join(here, '..', 'template');
 const MCP_COMMAND = 'node';
 const MCP_ARGS = ['node_modules/@openora/mcp/dist/main.js'];
 const SKIPPED_BASENAMES = new Set();
+const TELEMETRY_URL = 'https://telemetry.openora.ai/api/send';
+const TELEMETRY_DOCS_URL = 'https://openora.ai/documentation/telemetry';
+const UMAMI_WEBSITE_ID = '6c0c7f10-66e1-4100-a9b4-b5640982674d';
+const PING_TIMEOUT_MS = 2000;
+const CORE_RELEASE = CORE_VERSION.replace(/^[\^~]/, '');
 
 type ParsedArgs = {
   target: string;
   name?: string;
+  telemetry: boolean;
 };
 
 function die(message: string): never {
@@ -22,7 +30,7 @@ function die(message: string): never {
   process.exit(1);
 }
 
-const USAGE = 'Usage: npm create @openora <target-dir> [--name <name>]';
+const USAGE = 'Usage: npm create @openora <target-dir> [--name <name>] [--no-telemetry]';
 
 function readFlag(args: string[], index: number): { value: string | undefined; next: number } {
   const arg = args[index] ?? '';
@@ -37,6 +45,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
   let target: string | undefined;
   let name: string | undefined;
+  let telemetry = true;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === undefined) {
@@ -46,6 +55,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       const flag = readFlag(args, i);
       name = flag.value;
       i = flag.next;
+    } else if (arg === '--no-telemetry') {
+      telemetry = false;
     } else if (!arg.startsWith('-') && !target) {
       target = arg;
     }
@@ -53,7 +64,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   if (!target) {
     die(`missing target directory.\n  ${USAGE}`);
   }
-  return name === undefined ? { target } : { target, name };
+  return name === undefined ? { target, telemetry } : { target, name, telemetry };
 }
 
 function sanitizeName(raw: string): string {
@@ -115,8 +126,33 @@ function emitTree(srcRoot: string, vars: Record<string, string>, targetDir: stri
   }
 }
 
-function main(): void {
-  const { target, name: nameFlag } = parseArgs(process.argv);
+function isSet(flag: string | undefined): boolean {
+  return flag !== undefined && ['1', 'true', 'yes'].includes(flag.trim().toLowerCase());
+}
+
+// ponytail: mirrors the payload and opt-out flags of packages/core/src/server/runtime/telemetry.ts
+// so the scaffolder stays free of the core runtime; change both together.
+async function sendScaffoldPing(): Promise<void> {
+  await fetch(process.env['OPENORA_TELEMETRY_URL'] ?? TELEMETRY_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'user-agent': `openora/${CORE_RELEASE} (node)` },
+    body: JSON.stringify({
+      type: 'event',
+      payload: {
+        website: UMAMI_WEBSITE_ID,
+        hostname: 'instance',
+        url: '/scaffold',
+        name: 'scaffold',
+        id: randomUUID(),
+        data: { version: CORE_RELEASE, node: nodeVersion, os: platform, arch },
+      },
+    }),
+    signal: AbortSignal.timeout(PING_TIMEOUT_MS),
+  }).catch(() => undefined);
+}
+
+async function main(): Promise<void> {
+  const { target, name: nameFlag, telemetry } = parseArgs(process.argv);
   const targetDir = resolve(process.cwd(), target);
   const name = sanitizeName(nameFlag ?? basename(targetDir));
 
@@ -173,6 +209,22 @@ function main(): void {
   Code and run /start. This is a headless api - build your frontend in this repo
   and consume the api over HTTP with @openora/core/react.
 `);
+
+  const env = process.env;
+  if (
+    !telemetry ||
+    isSet(env['OPENORA_TELEMETRY_DISABLED']) ||
+    isSet(env['DO_NOT_TRACK']) ||
+    env['CI'] !== undefined ||
+    env['NODE_ENV'] === 'test'
+  ) {
+    return;
+  }
+  console.log(
+    `  Openora counts this run with one anonymous ping. Opt out with --no-telemetry or\n` +
+      `  OPENORA_TELEMETRY_DISABLED=1. Details: ${TELEMETRY_DOCS_URL}\n`,
+  );
+  await sendScaffoldPing();
 }
 
-main();
+await main();
