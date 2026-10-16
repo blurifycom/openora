@@ -11,7 +11,7 @@ import {
 } from '@openora/core/contracts';
 import { redisUrlForWorker } from '@openora/core/testing';
 import { makeJobQueue, mock } from '../../../testing/mock.js';
-import { AUTH_SESSION, type SessionResolver } from '../../auth/index.js';
+import { ADMIN_GUARD, AUTH_SESSION, type SessionResolver } from '../../auth/index.js';
 import type { Container } from '../../kernel/index.js';
 import type { PluginEntry } from '../../plugin-host/index.js';
 import { createApp } from '../create-app.js';
@@ -339,6 +339,7 @@ describe('createApp - a split service fails closed on a control it would skip', 
   const admin = entry('fixture-admin', 'admin');
   const iam = entry('iam', 'iam');
   const identity = entry('identity', 'identity');
+  const base = entry('fixture-base', 'base');
 
   /** Boots `plugins` under `manifest` (none: a full boot) and closes the app again. */
   async function boot(
@@ -379,7 +380,7 @@ describe('createApp - a split service fails closed on a control it would skip', 
 
   it('refuses admin routes without the ports AdminGuard checks them with', async () => {
     await expect(boot([admin, iam, identity], 'fixture-admin')).rejects.toThrow(
-      /SERVICE_MANIFEST=fixture-admin serves admin routes[\s\S]*- AdminGuard runs without ADMIN_PERMISSION_RESOLVER \(bound by iam\)[\s\S]*- AdminGuard runs without ADMIN_SECURITY_POLICY \(bound by identity\)[\s\S]*Add them: SERVICE_MANIFEST=fixture-admin,iam,identity/,
+      /- AdminGuard runs without ADMIN_PERMISSION_RESOLVER \(bound by iam\)[\s\S]*- AdminGuard runs without ADMIN_SECURITY_POLICY \(bound by identity\)[\s\S]*Add them: SERVICE_MANIFEST=fixture-admin,iam,identity/,
     );
   });
 
@@ -387,6 +388,57 @@ describe('createApp - a split service fails closed on a control it would skip', 
     await expect(
       boot([admin, iam, identity], 'fixture-admin,iam,identity'),
     ).resolves.toBeUndefined();
+  });
+
+  it('refuses a split that serves no admin routes without them too', async () => {
+    await expect(boot([base, iam, identity], 'fixture-base')).rejects.toThrow(
+      /- AdminGuard runs without ADMIN_PERMISSION_RESOLVER \(bound by iam\)[\s\S]*Add them: SERVICE_MANIFEST=fixture-base,iam,identity/,
+    );
+  });
+
+  it('builds AdminGuard at boot under a manifest, so a guard that cannot be built fails the boot', async () => {
+    const broken = (c: Container<CoreTokenCatalog>) =>
+      c.register(ADMIN_GUARD, () => {
+        throw new Error('fixture guard cannot be built');
+      });
+
+    await expect(boot([base], 'fixture-base', broken)).rejects.toThrow(
+      'fixture guard cannot be built',
+    );
+    await expect(boot([base], undefined, broken)).resolves.toBeUndefined();
+  });
+
+  it('names a missing dependency, required port, control and guard port in one error whose manifest boots', async () => {
+    const plugins = [
+      entry('fixture-split', 'split'),
+      entry('fixture-feature', 'feature'),
+      base,
+      entry('fixture-leaf', 'leaf'),
+      entry('fixture-dispatch', 'dispatch'),
+      limits,
+      iam,
+      identity,
+    ];
+
+    const refused = await boot(plugins, 'fixture-split').then(
+      () => new Error('booted'),
+      (err: unknown) => (err instanceof Error ? err : new Error(String(err))),
+    );
+
+    expect(refused.message).toContain(
+      'SERVICE_MANIFEST=fixture-split leaves out what this service needs:\n' +
+        '  - fixture-feature (required by fixture-split, fixture-leaf)\n' +
+        '  - fixture-base (required by fixture-feature)\n' +
+        '  - fixture-split requires FIXTURE_DISPATCH (bound by fixture-dispatch)\n' +
+        '  - fixture-split runs without FIXTURE_LIMITS (bound by fixture-limits): fixture limits go unenforced\n',
+    );
+    expect(refused.message).toMatch(/- AdminGuard runs without ADMIN_PERMISSION_RESOLVER/);
+    expect(refused.message).toMatch(/- fixture-leaf \(required by fixture-dispatch\)/);
+    const suggested = /^Add them: SERVICE_MANIFEST=(\S+)$/m.exec(refused.message)?.[1];
+    expect(suggested).toBe(
+      'fixture-split,fixture-feature,fixture-base,fixture-dispatch,fixture-limits,iam,identity,fixture-leaf',
+    );
+    await expect(boot(plugins, suggested)).resolves.toBeUndefined();
   });
 
   it('boots a full install unchanged, the controls left unbound', async () => {

@@ -1,7 +1,7 @@
 import type { Container } from '../kernel/index.js';
 import { createLogger } from '../kernel/logger.js';
 import type { TokenCatalog } from '@openora/core/contracts';
-import type { ControlPort, Plugin } from './define-plugin.js';
+import type { Plugin } from './define-plugin.js';
 import { ModuleRegistryImpl } from './module-registry.js';
 
 const logger = createLogger('plugin-host');
@@ -104,9 +104,15 @@ export async function importPlugin<C extends TokenCatalog>(entry: PluginEntry): 
   return plugin;
 }
 
+/**
+ * Imports `entries`, registers them in dependency order and checks their ports. With
+ * `requiredPorts: 'defer'` an unbound required port is left to the caller, which a
+ * SERVICE_MANIFEST boot folds into one error with everything else the manifest leaves out.
+ */
 export async function loadPlugins<C extends TokenCatalog>(
   entries: PluginEntry[],
   container: Container<C>,
+  { requiredPorts = 'assert' }: { requiredPorts?: 'assert' | 'defer' } = {},
 ): Promise<ModuleRegistryImpl<C>> {
   validateEntries(entries);
   const plugins: Plugin<C>[] = [];
@@ -124,7 +130,9 @@ export async function loadPlugins<C extends TokenCatalog>(
     registry.setOwner(null);
   }
 
-  assertRequiredPorts(ordered, container);
+  if (requiredPorts === 'assert') {
+    assertRequiredPorts(ordered, container);
+  }
   for (const { plugin, port, without } of unboundOptionalPorts(ordered, container)) {
     logger.warn({ plugin, port }, `${plugin} runs without ${port}: ${without}`);
   }
@@ -132,7 +140,7 @@ export async function loadPlugins<C extends TokenCatalog>(
   return registry;
 }
 
-function portName(port: symbol) {
+export function portName(port: symbol) {
   return String(port.description ?? port);
 }
 
@@ -149,30 +157,6 @@ export function unboundOptionalPorts<C extends TokenCatalog>(
     [...(plugin.optionalPorts ?? []), ...(plugin.controlPorts ?? [])]
       .filter(({ port }) => !container.has(port))
       .map(({ port, without }) => ({ plugin: plugin.id, port: portName(port), without })),
-  );
-}
-
-/** A control port nothing bound, with what its owner skips and the module that binds it. */
-export type UnboundControl = { owner: string; port: string; without: string; boundBy: string };
-
-/** The ports among `controls` that `container` has no binding for, named for `owner`. */
-export function unboundControls<C extends TokenCatalog>(
-  owner: string,
-  controls: readonly ControlPort<C>[],
-  container: Container<C>,
-): UnboundControl[] {
-  return controls
-    .filter(({ port }) => !container.has(port))
-    .map(({ port, without, boundBy }) => ({ owner, port: portName(port), without, boundBy }));
-}
-
-/** The `controlPorts` of `plugins` that nothing bound. */
-export function unboundControlPorts<C extends TokenCatalog>(
-  plugins: Plugin<C>[],
-  container: Container<C>,
-): UnboundControl[] {
-  return plugins.flatMap((plugin) =>
-    unboundControls(plugin.id, plugin.controlPorts ?? [], container),
   );
 }
 

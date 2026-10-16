@@ -63,15 +63,20 @@ nothing to enforce, so a full boot runs without it, as before. A split service i
 module runs in another process of the same install, and a split that skipped the control would
 let through what that process refuses. A plugin declares such a port in `controlPorts`, with the
 module that binds it, and a `SERVICE_MANIFEST` boot refuses to start while one is unbound and the
-plugin list has that module. The error names the port and what its module skips, and prints the
-manifest with the modules to add and what they need in turn. `AdminGuard` holds its own ports to
-the same rule when admin routes resolve it: without `ADMIN_PERMISSION_RESOLVER` (iam) it decides
-on the static role table, so an admin whose role was revoked still acts, and without
-`ADMIN_SECURITY_POLICY` (identity) it skips the 2FA enrolment and session checks. Declared today:
-`RG_LIMITS` (wallet, gaming), `GAME_GEO_CHECK` (gaming), `GEO_CHECK_COMMANDS` (identity, bonus,
-notifications), `MCP_TOKEN_REVOCATION` (identity) and `AUDIT_WRITER` (mail). A port whose absence
-already fails closed - no KYC policy means every gated withdrawal needs KYC, no risk tags send
-auto-approval to a human - is not a control port.
+plugin list has that module. Declared today: `RG_LIMITS` (wallet, gaming), `GAME_GEO_CHECK`
+(gaming), `GEO_CHECK_COMMANDS` (identity, bonus, notifications), `MCP_TOKEN_REVOCATION` (identity)
+and `AUDIT_WRITER` (mail). A port whose absence already fails closed - no KYC policy means every
+gated withdrawal needs KYC, no risk tags send auto-approval to a human - is not a control port.
+`AdminGuard` holds its own ports to the same rule on every manifest boot, which builds the guard
+before it serves, admin routes or not: without `ADMIN_PERMISSION_RESOLVER` (iam) it decides on the
+static role table, so an admin whose role was revoked still acts, and without
+`ADMIN_SECURITY_POLICY` (identity) it skips the 2FA enrolment and session checks.
+
+**A manifest is fixed in one edit.** A manifest boot fails once for everything the manifest leaves
+out - a dependency, the module that binds a required port, the module behind a control - naming
+each with what its module skips, and prints one manifest line that adds them all and what they
+need in turn. Which module binds a required port is learned by registering each plugin of the
+list on its own, only once the boot has already failed.
 
 ### Alternatives considered
 
@@ -96,6 +101,11 @@ auto-approval to a human - is not a control port.
   processes, so a queue excluded everywhere backs up silently. Queue-depth monitoring catches it.
 - Processes that share a `SERVICE_NAME` must load the same modules. The streams driver acks an
   event once per group, so a process without a handler for it loses the event for that group.
+- When a manifest boot fails, every plugin in the list registers once more, each into a
+  container of its own, to learn which binds which port. A `register()` that does more than
+  declare - logs, reads configuration and throws - does so again. One that throws counts as
+  binding what it bound before the throw, and the error names it when a required port is left
+  without a known binder.
 
 **Neutral:**
 
