@@ -78,7 +78,6 @@ const toClaim = (row: {
   physicalFulfillmentNote: row.physicalFulfillmentNote,
 });
 
-/** A claim with its tier key and winner's username - the shape every claim read returns. */
 const claimsQuery = (db: DrizzleDb | DrizzleTx) =>
   db
     .select({

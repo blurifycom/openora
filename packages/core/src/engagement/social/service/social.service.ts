@@ -123,7 +123,6 @@ export class SocialService {
     private readonly identityReader: IdentityReader,
   ) {}
 
-  /** One page of friendships matching `where`, newest first, and the full match count. */
   private async pagedFriendships(where: SQL | undefined, page: number, limit: number) {
     const [rows, countRows] = await Promise.all([
       this.drizzle.db
