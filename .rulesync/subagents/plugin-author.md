@@ -39,6 +39,7 @@ ctx.provide(TOKEN, factory); // bind/override a typed DI token (last registratio
 // SealedToken<T> (@openora/core/compliance) is rejected at compile time + runtime.
 ctx.routers.add(namespace, (c) => router); // mount oRPC routes
 ctx.events.on(topic, handler); // subscribe to the typed EventBus
+ctx.triggers.listen((trigger, payload, envelope) => enqueue()); // agent triggers: the topics the operator allow-listed (agents.triggers.topics); at-least-once (dedupe on envelope.eventId), raw payload (never to a model)
 ctx.jobs.worker({ queue, schema, handler, onDeadLetter }); // process JOB_QUEUE jobs (idempotent - at-least-once)
 ctx.mcp.tool(defineMcpTool({...}), (c) => async (input, run) => output); // agent tool: a read a model makes during a run
 ctx.actions.register(defineActionType({...}), (c) => ({ precondition, execute })); // action type: a change a model may only propose
