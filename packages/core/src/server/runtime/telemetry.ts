@@ -14,8 +14,7 @@ import type { CoreTokenCatalog } from './core-token-catalog.js';
 export const TELEMETRY_DEFAULT_URL = 'https://telemetry.openora.ai/api/send';
 export const TELEMETRY_DOCS_URL = 'https://openora.ai/documentation/telemetry';
 // Public by design: an Umami website id ships in every browser tracking snippet.
-// TODO: swap in the id of the telemetry website once it exists on the collector.
-const UMAMI_WEBSITE_ID = '00000000-0000-0000-0000-000000000000';
+const UMAMI_WEBSITE_ID = '6c0c7f10-66e1-4100-a9b4-b5640982674d';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -87,7 +86,7 @@ export async function collectTelemetry(
     ? container.get(PLAYER_ACTIVITY_TRACKER)
     : undefined;
   const countSince = (ms: number) =>
-    tracker ? tracker.countActiveSince(new Date(now.getTime() - ms)).catch(() => null) : null;
+    tracker?.countActiveSince?.(new Date(now.getTime() - ms)).catch(() => null) ?? null;
   const [instanceId, activePlayers1d, activePlayers30d] = await Promise.all([
     resolveInstanceId(container.get(DRIZZLE)),
     countSince(DAY_MS),

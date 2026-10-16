@@ -15,8 +15,7 @@ const MCP_ARGS = ['node_modules/@openora/mcp/dist/main.js'];
 const SKIPPED_BASENAMES = new Set();
 const TELEMETRY_URL = 'https://telemetry.openora.ai/api/send';
 const TELEMETRY_DOCS_URL = 'https://openora.ai/documentation/telemetry';
-// TODO: swap in the id of the telemetry website once it exists on the collector.
-const UMAMI_WEBSITE_ID = '00000000-0000-0000-0000-000000000000';
+const UMAMI_WEBSITE_ID = '6c0c7f10-66e1-4100-a9b4-b5640982674d';
 const PING_TIMEOUT_MS = 2000;
 const CORE_RELEASE = CORE_VERSION.replace(/^[\^~]/, '');
 
@@ -221,11 +220,11 @@ async function main(): Promise<void> {
   ) {
     return;
   }
-  await sendScaffoldPing();
   console.log(
     `  Openora counts this run with one anonymous ping. Opt out with --no-telemetry or\n` +
       `  OPENORA_TELEMETRY_DISABLED=1. Details: ${TELEMETRY_DOCS_URL}\n`,
   );
+  await sendScaffoldPing();
 }
 
 await main();
