@@ -8,6 +8,7 @@ import {
   index,
   bigserial,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { ACTOR_TYPES } from '../contract/index.js';
 
 // Derives from the contract tuple so the Zod schema and DB enum can never drift.
@@ -37,6 +38,7 @@ export const auditLog = pgTable(
   (t) => [
     index('audit_log_actor_id_idx').on(t.actorId),
     index('audit_log_resource_id_idx').on(t.resourceId),
+    index('audit_log_after_user_id_idx').on(sql`(${t.after}->>'userId')`),
     index('audit_log_action_idx').on(t.action),
     index('audit_log_resource_type_idx').on(t.resourceType),
     index('audit_log_created_at_idx').on(t.createdAt),
