@@ -7,6 +7,7 @@ import type {
   PlayEligibilityPort,
   Uuid,
   WalletCommands,
+  WalletReader,
 } from '@openora/core/contracts';
 import {
   makeNotFoundError,
@@ -66,6 +67,7 @@ export class StreakPayoutService {
     private readonly grants: BonusGrantCommands | undefined,
     private readonly eligibility: PlayEligibilityPort | undefined,
     private readonly rates: ExchangeRateReader,
+    private readonly walletReader: WalletReader,
     private readonly payoutCurrency: string,
     private readonly wallet?: WalletCommands,
   ) {}
@@ -179,9 +181,14 @@ export class StreakPayoutService {
     if (!this.grants) {
       throw new Error('BONUS_GRANTS is not bound');
     }
-    const amount = reward.kind === 'bonus' ? reward.amount : rollGiftDrop(reward.min, reward.max);
-    const currency = await this.currencyFor(tx);
-    const maxBet = reward.terms.maxBet ?? null;
+    const owed = reward.kind === 'bonus' ? reward.amount : rollGiftDrop(reward.min, reward.max);
+    const from = await this.currencyFor(tx);
+    const currency = (await this.walletReader.getBalances(userId, tx)).activeCurrency;
+    const amount = await this.inCurrency(tx, owed, from, currency);
+    const maxBet =
+      reward.terms.maxBet === null || reward.terms.maxBet === undefined
+        ? null
+        : await this.inCurrency(tx, reward.terms.maxBet, from, currency);
     const outcome = await this.grants.grant(tx, {
       userId,
       currency,
@@ -213,6 +220,21 @@ export class StreakPayoutService {
       source: 'streak',
       offerId: null,
     };
+  }
+
+  /**
+   * A bonus can only be wagered by bets in the currency it was granted in, so it is granted in
+   * the player's active currency. No rate throws, rolling the claim back so it can be retried.
+   */
+  private async inCurrency(tx: DrizzleTx, amount: string, from: string, to: string) {
+    if (from === to) {
+      return amount;
+    }
+    const converted = await this.rates.convert(amount, from, to, tx);
+    if (converted === null) {
+      throw new Error(`no exchange rate from ${from} to ${to} - retry once available`);
+    }
+    return converted;
   }
 
   /**

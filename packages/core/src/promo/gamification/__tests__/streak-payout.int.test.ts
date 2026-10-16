@@ -8,6 +8,7 @@ import type {
   ExchangeRateReader,
   PlayEligibilityPort,
   WalletCommands,
+  WalletReader,
 } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import { promoStreakConfig, promoStreakMilestoneGrant } from '../schema/index.js';
@@ -22,6 +23,7 @@ const grant = vi.fn<BonusGrantCommands['grant']>();
 const isRestricted = vi.fn<PlayEligibilityPort['isRestricted']>();
 const credit = vi.fn<WalletCommands['credit']>();
 const convert = vi.fn<ExchangeRateReader['convert']>();
+const getBalances = vi.fn<WalletReader['getBalances']>();
 
 const MILESTONES: StreakMilestone[] = [
   { day: 3, rewards: [{ kind: 'cash', amount: '5' }] },
@@ -45,6 +47,7 @@ const service = (payoutCurrency = 'USD') =>
     mock<BonusGrantCommands>({ grant }),
     mock<PlayEligibilityPort>({ isRestricted }),
     mock<ExchangeRateReader>({ convert }),
+    mock<WalletReader>({ getBalances }),
     payoutCurrency,
     mock<WalletCommands>({ credit }),
   );
@@ -69,6 +72,9 @@ const milestoneGrant = async (id: string) => {
   return row;
 };
 
+const playsIn = (activeCurrency: string) =>
+  getBalances.mockResolvedValue({ activeCurrency, balances: [] });
+
 beforeAll(async () => {
   db = await createTestDb([migrate]);
 });
@@ -80,6 +86,7 @@ beforeEach(async () => {
   isRestricted.mockResolvedValue(false);
   credit.mockResolvedValue({ ok: true, moved: true, transactionId: randomUUID(), newBalance: '5' });
   grant.mockImplementation(async () => ({ ok: true, created: true, grantId: randomUUID() }));
+  playsIn('USD');
   await db.drizzle.db.delete(promoStreakMilestoneGrant);
   await db.drizzle.db.delete(promoStreakConfig);
   await db.drizzle.db.insert(promoStreakConfig).values({
@@ -194,6 +201,51 @@ describe('crediting a cash reward in a currency the player can actually hold', (
     await expect(service('USDT').claim(userId, id)).rejects.toThrow(/no exchange rate/);
 
     expect(credit).not.toHaveBeenCalled();
+    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
+  });
+});
+
+describe("granting a bonus reward in the player's active currency", () => {
+  it('converts the amount and the stake cap from the streak currency', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 7);
+    playsIn('USDT');
+    convert.mockImplementation(async (amount) => (amount === '10' ? '9.9' : '1.98'));
+
+    const { granted } = await service().claim(userId, id);
+
+    expect(grant.mock.calls[0]?.[1]).toMatchObject({
+      userId,
+      currency: 'USDT',
+      amount: '9.9',
+      terms: { maxBet: '1.98' },
+    });
+    expect(granted).toEqual([expect.objectContaining({ currency: 'USDT', grantedAmount: '9.9' })]);
+  });
+
+  it('grants unconverted when the player already plays in the streak currency', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 7);
+
+    await service().claim(userId, id);
+
+    expect(convert).not.toHaveBeenCalled();
+    expect(grant.mock.calls[0]?.[1]).toMatchObject({
+      currency: 'USD',
+      amount: '10',
+      terms: { maxBet: '2' },
+    });
+  });
+
+  it('grants nothing and leaves the milestone waiting when no rate is available', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 7);
+    playsIn('USDT');
+    convert.mockResolvedValue(null);
+
+    await expect(service().claim(userId, id)).rejects.toThrow(/no exchange rate/);
+
+    expect(grant).not.toHaveBeenCalled();
     await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
   });
 });

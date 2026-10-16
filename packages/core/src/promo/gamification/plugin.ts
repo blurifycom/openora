@@ -289,6 +289,7 @@ export default {
         c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
         c.get(EXCHANGE_RATE_READER),
+        c.get(WALLET_READER),
         payoutCurrency,
         c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
       );
