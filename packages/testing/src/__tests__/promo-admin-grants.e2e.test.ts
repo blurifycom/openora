@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { BONUS_GRANTS } from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
@@ -53,15 +53,19 @@ async function grantBonus(userId: string, amount: string) {
   return outcome.grantId;
 }
 
-const auditRowsFor = (action: string, grantId: string) =>
+const forfeitRows = (grantId: string) =>
   drizzle()
     .select()
     .from(auditLog)
-    .where(and(eq(auditLog.action, action), sql`${auditLog.after}->>'grantId' = ${grantId}`));
+    .where(and(eq(auditLog.action, 'promo.bonus.forfeited'), eq(auditLog.resourceId, grantId)));
 
-const forfeitRows = (grantId: string) => auditRowsFor('promo.bonus.forfeited', grantId);
-
-const refusalRows = (grantId: string) => auditRowsFor('promo.bonus.forfeit_refused', grantId);
+const refusalRows = (grantId: string) =>
+  drizzle()
+    .select()
+    .from(auditLog)
+    .where(
+      and(eq(auditLog.action, 'promo.bonus.forfeit_refused'), eq(auditLog.resourceId, grantId)),
+    );
 
 async function adminWithRole(roleKey: string) {
   const { client, userId } = await registerAndMaterializePlayer(app, {
@@ -190,12 +194,17 @@ describe('support forfeiting a bonus', () => {
     expect(audited).toHaveLength(1);
     expect(audited[0]).toMatchObject({
       actorType: 'admin',
-      resourceType: 'user',
-      resourceId: userId,
       ip: '203.0.113.9',
       userAgent: 'forfeit-e2e-agent',
+      after: { userId },
     });
     expect(JSON.stringify(audited[0]?.after)).toContain('Charge-back investigation 4821');
+    const playerTab = await readJson(
+      await admin.get(`/audit/logs?q=${userId}&action=promo.bonus.forfeited`),
+    );
+    expect(playerTab.items.map((item: { resourceId: string }) => item.resourceId)).toEqual([
+      grantId,
+    ]);
   });
 
   it('refuses a forfeit with no reason worth recording', async () => {
@@ -243,9 +252,7 @@ describe('support forfeiting a bonus', () => {
 
     // A denial must not be filed as a forfeiture: counting forfeitures, or reading a grant's
     // history in a dispute, would otherwise mix probes in with movements that destroyed money.
-    const refusals = await refusalRows(missing);
-    expect(refusals).toHaveLength(1);
-    expect(refusals[0]).toMatchObject({ resourceType: 'promo_grant', resourceId: missing });
+    expect(await refusalRows(missing)).toHaveLength(1);
     expect(await forfeitRows(missing)).toHaveLength(0);
   });
 

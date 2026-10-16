@@ -162,7 +162,11 @@ function buildWhere(filters: AuditExportFilters) {
     resourceType ? eq(auditLog.resourceType, resourceType) : undefined,
     resourceId ? eq(auditLog.resourceId, resourceId) : undefined,
     searchTerms.length > 0
-      ? or(inArray(auditLog.actorId, searchTerms), inArray(auditLog.resourceId, searchTerms))
+      ? or(
+          inArray(auditLog.actorId, searchTerms),
+          inArray(auditLog.resourceId, searchTerms),
+          inArray(sql`${auditLog.after}->>'userId'`, searchTerms),
+        )
       : undefined,
     fromDate ? gte(auditLog.createdAt, startOfDayUtc(fromDate)) : undefined,
     toDate ? lte(auditLog.createdAt, endOfDayUtc(toDate)) : undefined,

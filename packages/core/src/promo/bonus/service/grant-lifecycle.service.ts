@@ -111,13 +111,19 @@ export class GrantLifecycleService {
    * `close` already allows it: a job has no admin session to assert, and recording one it does
    * not have would misname the regulator-facing audit row as an admin action.
    */
-  async forfeit(
-    grantId: PromoGrant['id'],
-    reason: BonusForfeitReason,
-    actor: { id: Uuid; isAdmin: boolean } | undefined,
-    note: string,
-    meta?: ClientMeta,
-  ): Promise<ClosedGrant> {
+  async forfeit({
+    grantId,
+    reason,
+    actor,
+    note,
+    meta,
+  }: {
+    grantId: PromoGrant['id'];
+    reason: BonusForfeitReason;
+    actor?: { id: Uuid; isAdmin: boolean } | undefined;
+    note: string;
+    meta?: ClientMeta | undefined;
+  }): Promise<ClosedGrant> {
     const [exists] = await this.drizzle.db
       .select({ status: promoGrant.status, userId: promoGrant.userId })
       .from(promoGrant)
@@ -188,10 +194,9 @@ export class GrantLifecycleService {
       // forfeitures - or reading a grant's history in a dispute - would otherwise mix probes at
       // ids that do not exist in with the movements that destroyed real money.
       action: 'promo.bonus.forfeit_refused',
-      ...(userId === null
-        ? { resourceType: 'promo_grant', resourceId: grantId }
-        : { resourceType: 'user', resourceId: userId }),
-      after: { grantId, status, note },
+      resourceType: 'promo_grant',
+      resourceId: grantId,
+      after: { ...(userId === null ? {} : { userId }), status, note },
       ...meta,
     });
   }
@@ -273,8 +278,8 @@ export class GrantLifecycleService {
             actorId: outcome.actor.id,
           }),
       action: outcome.action,
-      resourceType: 'user',
-      resourceId: claimed.userId,
+      resourceType: 'promo_grant',
+      resourceId: grantId,
       // From the locked read, not the update's RETURNING: Postgres returns the new row there, so
       // the audit row would have said the grant was already forfeited before it was forfeited.
       before: {
@@ -283,7 +288,7 @@ export class GrantLifecycleService {
         wageringProgress: locked.wageringProgress,
       },
       after: {
-        grantId,
+        userId: claimed.userId,
         status: outcome.status,
         bonusBalance: ZERO,
         forfeitedAmount,

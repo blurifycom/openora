@@ -143,7 +143,12 @@ describe('GrantReaderService', () => {
     };
     const forfeited = await issue('25');
     const live = await issue('10');
-    await lifecycle.forfeit(forfeited, 'admin', { id: randomUUID(), isAdmin: true }, 'abuse case');
+    await lifecycle.forfeit({
+      grantId: forfeited,
+      reason: 'admin',
+      actor: { id: randomUUID(), isAdmin: true },
+      note: 'abuse case',
+    });
 
     const rows = await reader.listForAdmin(userId, { page: 1, limit: 10 });
 
