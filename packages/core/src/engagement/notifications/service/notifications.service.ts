@@ -46,7 +46,12 @@ export class NotificationsService {
   async create(input: CreateNotificationInput): Promise<Notification | null> {
     const [record] = await this.drizzle.db
       .insert(notification)
-      .values({ ...input, data: input.data ?? null, eventId: input.eventId ?? null })
+      .values({
+        ...input,
+        params: input.params ?? null,
+        data: input.data ?? null,
+        eventId: input.eventId ?? null,
+      })
       .onConflictDoNothing({ target: notification.eventId })
       .returning();
     if (!record) {

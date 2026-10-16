@@ -11,9 +11,7 @@ import {
   TimestampSchema,
   UuidSchema,
   domainEventSchemas,
-  formatMoneyAmount,
   queue,
-  type BonusForfeitReason,
   type DomainEventName,
   type DomainEventPayload,
   type GeoCheckCommands,
@@ -32,63 +30,13 @@ import {
   toNotificationDto,
 } from './router/index.js';
 import { NotificationsService } from './service/notifications.service.js';
-import { CreateNotificationInputSchema, type CreateNotificationInput } from './contract/index.js';
-
-const describeLimitValue = (amount: string | null, minutes: number | null): string =>
-  amount !== null ? amount : `${minutes} minutes`;
-
-// A Rank Challenge tier may carry a cash amount, a physical item, or both (master/titan) - the
-// body text names whichever the player actually won.
-const describeRankChallengePrize = (p: {
-  cashAmount: string | null;
-  physicalItem: string | null;
-  currency: string;
-}): string => {
-  const parts = [
-    p.cashAmount !== null ? `${formatMoneyAmount(p.cashAmount)} ${p.currency}` : null,
-    p.physicalItem,
-  ].filter((part): part is string => part !== null);
-  return parts.join(' + ');
-};
-
-const describeRankBenefits = (p: {
-  currency: string;
-  rakebackPercent: string;
-  levelUpBonus?: string | null;
-  dailyBonus?: string | null;
-  weeklyBonus?: string | null;
-  monthlyBonus?: string | null;
-}): string => {
-  const bonuses = [
-    p.dailyBonus !== null && p.dailyBonus !== undefined
-      ? `${formatMoneyAmount(p.dailyBonus)} ${p.currency} daily`
-      : null,
-    p.weeklyBonus !== null && p.weeklyBonus !== undefined
-      ? `${formatMoneyAmount(p.weeklyBonus)} ${p.currency} weekly`
-      : null,
-    p.monthlyBonus !== null && p.monthlyBonus !== undefined
-      ? `${formatMoneyAmount(p.monthlyBonus)} ${p.currency} monthly`
-      : null,
-  ].filter((part): part is string => part !== null);
-  const rakeback = `${formatMoneyAmount(p.rakebackPercent)}% rakeback`;
-  const recurring =
-    bonuses.length > 0 ? `${rakeback} and a bonus worth ${bonuses.join(', ')}` : rakeback;
-  return p.levelUpBonus !== null && p.levelUpBonus !== undefined
-    ? `${recurring}, plus a one-off ${formatMoneyAmount(p.levelUpBonus)} ${p.currency} level-up bonus`
-    : recurring;
-};
-
-// Why a bonus was taken away, completing "Your bonus was forfeited ..." for the player.
-const FORFEIT_REASON_TEXT: Record<BonusForfeitReason, string> = {
-  self_exclusion: 'because you self-excluded',
-  cooling_off: 'because you started a cooling-off period',
-  account_closed: 'because your account was closed',
-  account_deactivated: 'because your account was deactivated',
-  admin: 'by our support team',
-  player_opt_out: 'at your request',
-  withdrawal_while_active: 'because you withdrew while it was active',
-  terms_breach: "because the offer's terms were not met",
-};
+import {
+  CreateNotificationInputSchema,
+  type CreateNotificationInput,
+  type NOTIFICATION_PARAM_KEYS,
+  type NotificationData,
+  type NotificationType,
+} from './contract/index.js';
 
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
@@ -138,6 +86,30 @@ function compactData(
   return entries.length > 0 ? Object.fromEntries(entries) : null;
 }
 
+type ParamKeys<T extends NotificationType> = (typeof NOTIFICATION_PARAM_KEYS)[T];
+
+// Every required key of the type and any of its optional ones - a key outside the type's set is a
+// compile error, so the map below cannot drift from NOTIFICATION_PARAM_KEYS.
+type NotificationParamsOf<T extends NotificationType> = Record<
+  ParamKeys<T>['required'][number],
+  string
+> &
+  Partial<Record<ParamKeys<T>['optional'][number], string | null>>;
+
+function notification<T extends NotificationType>(input: {
+  userId: string;
+  type: T;
+  params: NotificationParamsOf<T>;
+  data?: NotificationData | null;
+}): CreateNotificationInput {
+  return {
+    userId: input.userId,
+    type: input.type,
+    params: compactData(input.params),
+    data: input.data ?? null,
+  };
+}
+
 // A plain array literal would widen every entry's `event` to DomainEventName and lose the
 // payload type tied to it; this generic keeps K bound per entry so buildNotification stays
 // checked against that one event's actual payload shape.
@@ -165,13 +137,13 @@ function mapEvent<K extends DomainEventName>(
 export const notificationEventMap: NotificationMapEntry[] = [
   mapEvent(
     'wallet.withdrawal.approved',
-    (p) => ({
-      userId: p.userId,
-      type: 'withdrawal.approved',
-      title: 'Withdrawal approved',
-      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been approved and is being processed.`,
-      data: { transactionId: p.transactionId },
-    }),
+    (p) =>
+      notification({
+        userId: p.userId,
+        type: 'withdrawal.approved',
+        params: { amount: p.amount, currency: p.currency },
+        data: { transactionId: p.transactionId },
+      }),
     {
       email: (p, occurredAt) => ({
         key: 'withdrawalApproved',
@@ -187,13 +159,13 @@ export const notificationEventMap: NotificationMapEntry[] = [
 
   mapEvent(
     'wallet.withdrawal.rejected',
-    (p) => ({
-      userId: p.userId,
-      type: 'withdrawal.rejected',
-      title: 'Withdrawal rejected',
-      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} was rejected and the funds were returned to your balance.${p.reason ? ` Reason: ${p.reason}.` : ''}`,
-      data: { transactionId: p.transactionId },
-    }),
+    (p) =>
+      notification({
+        userId: p.userId,
+        type: 'withdrawal.rejected',
+        params: { amount: p.amount, currency: p.currency, reason: p.reason || null },
+        data: { transactionId: p.transactionId },
+      }),
     {
       email: (p, occurredAt) => ({
         key: 'withdrawalRejected',
@@ -210,13 +182,13 @@ export const notificationEventMap: NotificationMapEntry[] = [
 
   mapEvent(
     'wallet.withdrawal.requested',
-    (p) => ({
-      userId: p.userId,
-      type: 'withdrawal.requested',
-      title: 'Withdrawal requested',
-      body: `Your withdrawal request of ${formatMoneyAmount(p.amount)} ${p.currency} has been received and is pending review.`,
-      data: { transactionId: p.transactionId },
-    }),
+    (p) =>
+      notification({
+        userId: p.userId,
+        type: 'withdrawal.requested',
+        params: { amount: p.amount, currency: p.currency },
+        data: { transactionId: p.transactionId },
+      }),
     {
       email: (p, occurredAt) => ({
         key: 'securityWithdrawalRequested',
@@ -232,13 +204,13 @@ export const notificationEventMap: NotificationMapEntry[] = [
 
   mapEvent(
     'wallet.withdrawal.completed',
-    (p) => ({
-      userId: p.userId,
-      type: 'withdrawal.completed',
-      title: 'Withdrawal completed',
-      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
-      data: { transactionId: p.transactionId },
-    }),
+    (p) =>
+      notification({
+        userId: p.userId,
+        type: 'withdrawal.completed',
+        params: { amount: p.amount, currency: p.currency },
+        data: { transactionId: p.transactionId },
+      }),
     {
       email: (p, occurredAt) => ({
         key: 'withdrawalCompleted',
@@ -254,13 +226,13 @@ export const notificationEventMap: NotificationMapEntry[] = [
 
   mapEvent(
     'wallet.withdrawal.failed',
-    (p) => ({
-      userId: p.userId,
-      type: 'withdrawal.failed',
-      title: 'Withdrawal failed',
-      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} failed and the funds were returned to your balance.`,
-      data: { transactionId: p.transactionId },
-    }),
+    (p) =>
+      notification({
+        userId: p.userId,
+        type: 'withdrawal.failed',
+        params: { amount: p.amount, currency: p.currency },
+        data: { transactionId: p.transactionId },
+      }),
     {
       email: (p, occurredAt) => ({
         key: 'withdrawalFailed',
@@ -276,13 +248,13 @@ export const notificationEventMap: NotificationMapEntry[] = [
 
   mapEvent(
     'wallet.deposit.completed',
-    (p) => ({
-      userId: p.userId,
-      type: 'deposit.completed',
-      title: 'Deposit completed',
-      body: `Your deposit of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
-      data: { transactionId: p.transactionId },
-    }),
+    (p) =>
+      notification({
+        userId: p.userId,
+        type: 'deposit.completed',
+        params: { amount: p.amount, currency: p.currency },
+        data: { transactionId: p.transactionId },
+      }),
     {
       email: (p, occurredAt) => ({
         key: 'depositCompleted',
@@ -298,13 +270,13 @@ export const notificationEventMap: NotificationMapEntry[] = [
 
   mapEvent(
     'wallet.deposit.held',
-    (p) => ({
-      userId: p.userId,
-      type: 'deposit.held',
-      title: 'Deposit on hold',
-      body: `Your deposit of ${formatMoneyAmount(p.amount)} ${p.currency} is on hold and has not been added to your balance. Our support team will review it.`,
-      data: { transactionId: p.transactionId },
-    }),
+    (p) =>
+      notification({
+        userId: p.userId,
+        type: 'deposit.held',
+        params: { amount: p.amount, currency: p.currency },
+        data: { transactionId: p.transactionId },
+      }),
     {
       email: (p, occurredAt) => ({
         key: 'depositHeld',
@@ -318,25 +290,35 @@ export const notificationEventMap: NotificationMapEntry[] = [
     },
   ),
 
-  mapEvent('wallet.manual_adjustment.created', (p) => ({
-    userId: p.userId,
-    type: 'balance.adjusted',
-    title: 'Balance adjusted',
-    body: `Your balance was ${p.direction === 'credit' ? 'credited' : 'debited'} ${formatMoneyAmount(p.amount)} ${p.currency}. Reason: ${p.reason}.`,
-    data: { transactionId: p.transactionId },
-  })),
+  mapEvent('wallet.manual_adjustment.created', (p) =>
+    notification({
+      userId: p.userId,
+      type: 'balance.adjusted',
+      params: {
+        direction: p.direction,
+        amount: p.amount,
+        currency: p.currency,
+        reason: p.reason,
+      },
+      data: { transactionId: p.transactionId },
+    }),
+  ),
 
   mapEvent(
     'promo.bonus.granted',
-    (p) => ({
-      userId: p.userId,
-      type: 'promo.bonus.granted',
-      title: p.rankBonusKind
-        ? `${p.rankBonusKind[0].toUpperCase()}${p.rankBonusKind.slice(1)} bonus credited`
-        : 'Bonus credited',
-      body: `You received a ${formatMoneyAmount(p.grantedAmount)} ${p.currency} bonus. Wager ${formatMoneyAmount(p.wageringRequired)} ${p.currency} to unlock it.`,
-      data: { grantId: p.grantId },
-    }),
+    (p) =>
+      notification({
+        userId: p.userId,
+        type: 'promo.bonus.granted',
+        params: {
+          grantedAmount: p.grantedAmount,
+          wageringRequired: p.wageringRequired,
+          currency: p.currency,
+          rankBonusKind: p.rankBonusKind,
+          source: p.source,
+        },
+        data: { grantId: p.grantId },
+      }),
     {
       // A gift or rain comes from another player and is already announced where it happened;
       // a rain fans out to a whole room, so a mail per recipient would be noise.
@@ -356,13 +338,13 @@ export const notificationEventMap: NotificationMapEntry[] = [
 
   mapEvent(
     'promo.bonus.completed',
-    (p) => ({
-      userId: p.userId,
-      type: 'promo.bonus.completed',
-      title: 'Bonus unlocked',
-      body: `Your ${formatMoneyAmount(p.convertedAmount)} ${p.currency} bonus has cleared its wagering requirement and is now fully withdrawable.`,
-      data: { grantId: p.grantId },
-    }),
+    (p) =>
+      notification({
+        userId: p.userId,
+        type: 'promo.bonus.completed',
+        params: { amount: p.convertedAmount, currency: p.currency },
+        data: { grantId: p.grantId },
+      }),
     {
       email: (p) => ({
         key: 'bonusUnlocked',
@@ -371,31 +353,38 @@ export const notificationEventMap: NotificationMapEntry[] = [
     },
   ),
 
-  mapEvent('promo.bonus.forfeited', (p) => ({
-    userId: p.userId,
-    type: 'promo.bonus.forfeited',
-    title: 'Bonus forfeited',
-    body: `Your bonus was forfeited ${FORFEIT_REASON_TEXT[p.reason]}. ${formatMoneyAmount(p.forfeitedAmount)} ${p.currency} of bonus funds was removed.`,
-    data: { grantId: p.grantId },
-  })),
+  mapEvent('promo.bonus.forfeited', (p) =>
+    notification({
+      userId: p.userId,
+      type: 'promo.bonus.forfeited',
+      params: { amount: p.forfeitedAmount, currency: p.currency, reason: p.reason },
+      data: { grantId: p.grantId },
+    }),
+  ),
 
-  mapEvent('promo.bonus.expired', (p) => ({
-    userId: p.userId,
-    type: 'promo.bonus.expired',
-    title: 'Bonus expired',
-    body: `Your bonus expired before its wagering requirement was met. ${formatMoneyAmount(p.forfeitedAmount)} ${p.currency} of bonus funds was removed.`,
-    data: { grantId: p.grantId },
-  })),
+  mapEvent('promo.bonus.expired', (p) =>
+    notification({
+      userId: p.userId,
+      type: 'promo.bonus.expired',
+      params: { amount: p.forfeitedAmount, currency: p.currency },
+      data: { grantId: p.grantId },
+    }),
+  ),
 
   mapEvent(
     'promo.race.won',
-    (p) => ({
-      userId: p.userId,
-      type: 'promo.race.won',
-      title: 'You placed in a race',
-      body: `You placed #${p.position} in ${p.raceName} and won ${formatMoneyAmount(p.amount)} ${p.currency}.`,
-      data: { raceId: p.raceId },
-    }),
+    (p) =>
+      notification({
+        userId: p.userId,
+        type: 'promo.race.won',
+        params: {
+          position: String(p.position),
+          raceName: p.raceName,
+          amount: p.amount,
+          currency: p.currency,
+        },
+        data: { raceId: p.raceId },
+      }),
     {
       email: (p) => ({
         key: 'raceWon',
@@ -411,13 +400,18 @@ export const notificationEventMap: NotificationMapEntry[] = [
 
   mapEvent(
     'promo.rank-challenge.won',
-    (p) => ({
-      userId: p.userId,
-      type: 'promo.rank-challenge.won',
-      title: 'You won a Rank Challenge tier',
-      body: `You reached the ${p.tierName} tier and won ${describeRankChallengePrize(p)}.`,
-      data: { tierId: p.tierId },
-    }),
+    (p) =>
+      notification({
+        userId: p.userId,
+        type: 'promo.rank-challenge.won',
+        params: {
+          tierName: p.tierName,
+          cashAmount: p.cashAmount,
+          physicalItem: p.physicalItem,
+          currency: p.currency,
+        },
+        data: { tierId: p.tierId },
+      }),
     {
       email: (p) => ({
         key: 'rankChallengeWon' as const,
@@ -431,81 +425,88 @@ export const notificationEventMap: NotificationMapEntry[] = [
     },
   ),
 
-  mapEvent('promo.rank.changed', (p) => ({
-    userId: p.userId,
-    type: 'promo.rank.changed',
-    title: p.tierName ? `You reached ${p.tierName} rank` : 'Rank updated',
-    body:
-      p.tierName && p.currency && p.rakebackPercent
-        ? `Congratulations on reaching ${p.tierName}. Your rank now pays ${describeRankBenefits({
-            currency: p.currency,
-            rakebackPercent: p.rakebackPercent,
-            levelUpBonus: p.levelUpBonus,
-            dailyBonus: p.dailyBonus,
-            weeklyBonus: p.weeklyBonus,
-            monthlyBonus: p.monthlyBonus,
-          })}.`
-        : 'Your account rank has been updated.',
-    data: { tierId: p.tierId },
-  })),
+  mapEvent('promo.rank.changed', (p) =>
+    notification({
+      userId: p.userId,
+      type: 'promo.rank.changed',
+      params: {
+        tierName: p.tierName,
+        currency: p.currency,
+        rakebackPercent: p.rakebackPercent,
+        levelUpBonus: p.levelUpBonus,
+        dailyBonus: p.dailyBonus,
+        weeklyBonus: p.weeklyBonus,
+        monthlyBonus: p.monthlyBonus,
+      },
+      data: { tierId: p.tierId },
+    }),
+  ),
 
-  mapEvent('chat.user.mentioned', (p) => ({
-    userId: p.mentionedUserId,
-    type: 'chat.mention',
-    title: 'You were mentioned',
-    body: 'You were mentioned in a chat message.',
-    data: compactData({ roomId: p.roomId, messageId: p.messageId }),
-  })),
+  mapEvent('chat.user.mentioned', (p) =>
+    notification({
+      userId: p.mentionedUserId,
+      type: 'chat.mention',
+      params: {},
+      data: compactData({ roomId: p.roomId, messageId: p.messageId }),
+    }),
+  ),
 
-  mapEvent('chat.room.invite.sent', (p) => ({
-    userId: p.inviteeId,
-    type: 'chat.room_invite.received',
-    title: 'Room invite',
-    body: `${p.inviterUsername} invited you to a private room`,
-    data: { inviteId: p.inviteId, roomId: p.roomId, inviterId: p.inviterId, roomName: p.roomName },
-  })),
+  mapEvent('chat.room.invite.sent', (p) =>
+    notification({
+      userId: p.inviteeId,
+      type: 'chat.room_invite.received',
+      params: { inviterUsername: p.inviterUsername, roomName: p.roomName },
+      data: {
+        inviteId: p.inviteId,
+        roomId: p.roomId,
+        inviterId: p.inviterId,
+        roomName: p.roomName,
+      },
+    }),
+  ),
 
   // Pre-existing types: in-app only, unchanged from before the declarative-map refactor.
-  mapEvent('social.friend_request.sent', (p) => ({
-    userId: p.addresseeId,
-    type: 'social.friend_request.received',
-    title: 'New friend request',
-    body: `${p.requesterUsername} sent you a friend request.`,
-    data: { requesterId: p.requesterId },
-  })),
+  mapEvent('social.friend_request.sent', (p) =>
+    notification({
+      userId: p.addresseeId,
+      type: 'social.friend_request.received',
+      params: { requesterUsername: p.requesterUsername },
+      data: { requesterId: p.requesterId },
+    }),
+  ),
 
-  mapEvent('social.friend_request.accepted', (p) => ({
-    userId: p.requesterId,
-    type: 'social.friend_request.accepted',
-    title: 'Friend request accepted',
-    body: `${p.accepterUsername} accepted your friend request.`,
-    // accepterId, not requesterId: the recipient of THIS notification is the
-    // requester, so the linkable "other party" is whoever just accepted.
-    data: { accepterId: p.accepterId },
-  })),
+  mapEvent('social.friend_request.accepted', (p) =>
+    notification({
+      userId: p.requesterId,
+      type: 'social.friend_request.accepted',
+      params: { accepterUsername: p.accepterUsername },
+      // accepterId, not requesterId: the recipient of THIS notification is the
+      // requester, so the linkable "other party" is whoever just accepted.
+      data: { accepterId: p.accepterId },
+    }),
+  ),
 
   // In-app only: no `email` option passed to mapEvent, same as every other
   // no-mail entry above (the old boolean `{ sendEmail: false }` shape no longer exists).
-  mapEvent('chat.room.ownership.transferred', (p) => ({
-    userId: p.newOwnerId,
-    type: 'chat.room.ownership_transferred',
-    title: 'You are now the owner of a chat room',
-    body: `The owner of "${p.roomName}" had their account removed, so ownership of the room has passed to you.`,
-    data: { roomId: p.roomId },
-  })),
+  mapEvent('chat.room.ownership.transferred', (p) =>
+    notification({
+      userId: p.newOwnerId,
+      type: 'chat.room.ownership_transferred',
+      params: { roomName: p.roomName },
+      data: { roomId: p.roomId },
+    }),
+  ),
 ];
 
 export function buildKycResubmissionNotification(payload: {
   userId: string;
   reason: string | null;
 }): CreateNotificationInput {
-  return {
+  return notification({
     userId: payload.userId,
     type: 'kyc.resubmission_requested',
-    title: 'Document resubmission required',
-    body: `An admin has requested you resubmit your verification documents.${payload.reason ? ` Reason: ${payload.reason}.` : ''}`,
-    data: null,
-  };
+    params: { reason: payload.reason || null },
+  });
 }
 
 export function buildChatRoomScheduledForDeletionNotification(payload: {
@@ -513,13 +514,30 @@ export function buildChatRoomScheduledForDeletionNotification(payload: {
   roomId: string;
   roomName: string;
 }): CreateNotificationInput {
-  return {
+  return notification({
     userId: payload.userId,
     type: 'chat.room.scheduled_for_deletion',
-    title: 'Chat room closing',
-    body: `The owner of "${payload.roomName}" had their account removed and no moderator could take the room over. It will be permanently deleted in 30 days.`,
+    params: { roomName: payload.roomName },
     data: { roomId: payload.roomId },
-  };
+  });
+}
+
+// The admin's `reason` is internal: it is never copied into what the player sees.
+export function buildRgLimitAdminUpdatedNotification(
+  p: DomainEventPayload<'rg.limit.set'>,
+): CreateNotificationInput {
+  return notification({
+    userId: p.userId,
+    type: 'rg.limit.admin_updated',
+    params: {
+      period: p.period,
+      limitType: p.type,
+      previousAmount: p.previousAmount,
+      previousMinutes: p.previousMinutes === null ? null : String(p.previousMinutes),
+      amount: p.amount,
+      minutes: p.minutes === null ? null : String(p.minutes),
+    },
+  });
 }
 
 export default {
@@ -721,17 +739,9 @@ export default {
       if (!parsed.success || !svcRef || parsed.data.reason === null) {
         return;
       }
-      const p = parsed.data;
-      const title = 'Your responsible gambling limit was changed';
-      const previous =
-        p.previousAmount !== null || p.previousMinutes !== null
-          ? describeLimitValue(p.previousAmount, p.previousMinutes)
-          : 'no prior limit';
-      const next = describeLimitValue(p.amount, p.minutes);
-      const body = `An administrator changed your ${p.period} ${p.type} limit from ${previous} to ${next}.`;
       // In-app only: `RgService.setPlayerLimit` already sends the `rgLimitUpdated` mail on this write.
       svcRef
-        .create({ userId: p.userId, type: 'rg.limit.admin_updated', title, body })
+        .create(buildRgLimitAdminUpdatedNotification(parsed.data))
         .catch((err) => logger.error({ err }, 'rg.limit.set admin-override notification failed'));
     });
 

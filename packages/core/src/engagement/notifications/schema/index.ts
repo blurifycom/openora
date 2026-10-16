@@ -6,8 +6,10 @@ export const notification = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid().notNull(),
     type: text().notNull(),
-    title: text().notNull(),
-    body: text().notNull(),
+    // Nullable and no longer written: the client renders `type` with `params`. Dropped in a later release.
+    title: text(),
+    body: text(),
+    params: jsonb().$type<Record<string, string>>(),
     data: jsonb().$type<Record<string, string>>(),
     readAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),

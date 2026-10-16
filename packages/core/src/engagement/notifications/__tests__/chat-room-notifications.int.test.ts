@@ -144,10 +144,9 @@ describe('notifications plugin - chat room ownership (real PG)', () => {
     expect(rows[0]).toMatchObject({
       userId: newOwnerId,
       type: 'chat.room.ownership_transferred',
-      title: 'You are now the owner of a chat room',
+      params: { roomName: 'Wheel Spin' },
       data: { roomId },
     });
-    expect(rows[0]!.body).toContain('Wheel Spin');
   });
 
   it('notifies every member of a room on the countdown except the closed owner', async () => {
@@ -168,10 +167,9 @@ describe('notifications plugin - chat room ownership (real PG)', () => {
     expect(rows.map((r) => r.userId).sort()).toEqual([...memberIds].sort());
     expect(rows[0]).toMatchObject({
       type: 'chat.room.scheduled_for_deletion',
-      title: 'Chat room closing',
+      params: { roomName: 'Wheel Spin' },
       data: { roomId },
     });
-    expect(rows[0]!.body).toContain('30 days');
   });
 
   it('produces exactly one notification for a room whose only other member is closed', async () => {
