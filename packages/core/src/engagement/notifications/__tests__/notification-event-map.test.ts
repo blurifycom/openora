@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
+import { NOTIFICATION_PARAM_KEYS, NOTIFICATION_TYPES } from '../contract/index.js';
 import {
   buildChatRoomScheduledForDeletionNotification,
   buildKycResubmissionNotification,
+  buildRgLimitAdminUpdatedNotification,
   notificationEventMap,
 } from '../plugin.js';
 
@@ -26,7 +28,12 @@ describe('notificationEventMap', () => {
       adminId: randomUUID(),
     });
 
-    expect(input).toMatchObject({ userId, type: 'withdrawal.approved', data: { transactionId } });
+    expect(input).toEqual({
+      userId,
+      type: 'withdrawal.approved',
+      params: { amount: '10.00', currency: 'USD' },
+      data: { transactionId },
+    });
   });
 
   it('maps wallet.deposit.completed to a deposit.completed notification, carrying the transaction id', () => {
@@ -57,8 +64,12 @@ describe('notificationEventMap', () => {
       reason: 'goodwill credit',
     });
 
-    expect(input).toMatchObject({ userId, type: 'balance.adjusted', data: { transactionId } });
-    expect(input.body).toContain('goodwill credit');
+    expect(input).toEqual({
+      userId,
+      type: 'balance.adjusted',
+      params: { direction: 'credit', amount: '5.00', currency: 'USD', reason: 'goodwill credit' },
+      data: { transactionId },
+    });
   });
 
   it('maps chat.user.mentioned to the mentioned user, not the author, carrying room and message ids', () => {
@@ -73,8 +84,12 @@ describe('notificationEventMap', () => {
       messageId,
     });
 
-    expect(input.userId).toBe(mentionedUserId);
-    expect(input).toMatchObject({ type: 'chat.mention', data: { roomId, messageId } });
+    expect(input).toEqual({
+      userId: mentionedUserId,
+      type: 'chat.mention',
+      params: null,
+      data: { roomId, messageId },
+    });
   });
 
   it('carries only the message id for a global-chat mention (null roomId)', () => {
@@ -100,6 +115,7 @@ describe('notificationEventMap', () => {
 
     expect(input).toMatchObject({
       type: 'social.friend_request.received',
+      params: { requesterUsername: 'alice' },
       data: { requesterId },
     });
   });
@@ -118,6 +134,7 @@ describe('notificationEventMap', () => {
     expect(input.userId).toBe(requesterId);
     expect(input).toMatchObject({
       type: 'social.friend_request.accepted',
+      params: { accepterUsername: 'bob' },
       data: { accepterId },
     });
   });
@@ -136,9 +153,9 @@ describe('notificationEventMap', () => {
     expect(input).toMatchObject({
       userId: newOwnerId,
       type: 'chat.room.ownership_transferred',
+      params: { roomName: 'Wheel Spin' },
       data: { roomId },
     });
-    expect(input.body).toContain('Wheel Spin');
   });
 
   it('builds one scheduled-for-deletion notification per member, carrying the room id', () => {
@@ -154,16 +171,88 @@ describe('notificationEventMap', () => {
     expect(input).toMatchObject({
       userId,
       type: 'chat.room.scheduled_for_deletion',
+      params: { roomName: 'Wheel Spin' },
       data: { roomId },
     });
-    expect(input.body).toContain('Wheel Spin');
-    expect(input.body).toContain('30 days');
   });
 
   it('leaves data null for kyc.resubmission_requested (no linkable entity in the source payload)', () => {
     const input = buildKycResubmissionNotification({ userId: randomUUID(), reason: 'blurry' });
 
     expect(input.data).toBeNull();
+    expect(input.params).toEqual({ reason: 'blurry' });
+  });
+
+  it('leaves the reason out of a kyc.resubmission_requested notification that has none', () => {
+    expect(
+      buildKycResubmissionNotification({ userId: randomUUID(), reason: null }).params,
+    ).toBeNull();
+    expect(
+      buildKycResubmissionNotification({ userId: randomUUID(), reason: '' }).params,
+    ).toBeNull();
+  });
+
+  it('leaves an empty rejection reason out of a withdrawal.rejected notification', () => {
+    const input = entryFor('wallet.withdrawal.rejected').buildNotification({
+      userId: randomUUID(),
+      amount: '10.00',
+      currency: 'USD',
+      transactionId: randomUUID(),
+      adminId: randomUUID(),
+      reason: '',
+    });
+
+    expect(input.params).toEqual({ amount: '10.00', currency: 'USD' });
+  });
+
+  describe('rg.limit.admin_updated', () => {
+    const limitSet = {
+      userId: randomUUID(),
+      playerId: null,
+      actorId: randomUUID(),
+      limitId: randomUUID(),
+      initiatedBy: 'admin',
+      reason: 'internal case note',
+    } as const;
+
+    it('carries the limit as codes and raw values, never the admin reason', () => {
+      const input = buildRgLimitAdminUpdatedNotification({
+        ...limitSet,
+        type: 'deposit',
+        period: 'daily',
+        amount: '50.000000000000000000',
+        minutes: null,
+        previousAmount: '100.000000000000000000',
+        previousMinutes: null,
+      });
+
+      expect(input).toEqual({
+        userId: limitSet.userId,
+        type: 'rg.limit.admin_updated',
+        params: {
+          period: 'daily',
+          limitType: 'deposit',
+          previousAmount: '100.000000000000000000',
+          amount: '50.000000000000000000',
+        },
+        data: null,
+      });
+      expect(JSON.stringify(input)).not.toContain('internal case note');
+    });
+
+    it('stringifies a session limit in minutes and omits a missing previous limit', () => {
+      const input = buildRgLimitAdminUpdatedNotification({
+        ...limitSet,
+        type: 'session',
+        period: 'session',
+        amount: null,
+        minutes: 90,
+        previousAmount: null,
+        previousMinutes: null,
+      });
+
+      expect(input.params).toEqual({ period: 'session', limitType: 'session', minutes: '90' });
+    });
   });
 
   it('parse returns null instead of throwing on a payload that fails schema validation', () => {
@@ -298,7 +387,7 @@ describe('notificationEventMap', () => {
     ).toMatchObject({ key: 'withdrawalRejected', data: { reason: 'AML' } });
   });
 
-  describe('amount formatting in notification body text', () => {
+  describe('amounts in notification params', () => {
     const basePayloads = {
       'wallet.withdrawal.approved': (amount: string) => ({
         userId: randomUUID(),
@@ -356,53 +445,23 @@ describe('notificationEventMap', () => {
     } as const;
 
     const events = Object.keys(basePayloads) as (keyof typeof basePayloads)[];
+    const amounts = [
+      '100.000000000000000000',
+      '0.500000000000000000',
+      '1234.500000000000000000',
+      '0.000000001000000000',
+    ];
 
-    it.each(events)('trims the padded 18-decimal amount down to "100" in the %s body', (event) => {
-      const input = entryFor(event).buildNotification(
-        basePayloads[event]('100.000000000000000000'),
-      );
+    it.each(events)('passes the raw event amount through to the %s params untouched', (event) => {
+      for (const amount of amounts) {
+        const input = entryFor(event).buildNotification(basePayloads[event](amount));
 
-      expect(input.body).toContain('100');
-      expect(input.body).not.toContain('100.000000000000000000');
+        expect(input.params).toMatchObject({ amount, currency: 'EUR' });
+      }
     });
-
-    it.each(events)(
-      'resolves a fractional amount to "0.5", not "0.5000000000000000" or "1", in the %s body',
-      (event) => {
-        const input = entryFor(event).buildNotification(
-          basePayloads[event]('0.500000000000000000'),
-        );
-
-        expect(input.body).toContain('0.5');
-        expect(input.body).not.toContain('0.5000000000000000');
-        expect(input.body).not.toContain(' 1 ');
-      },
-    );
-
-    it.each(events)(
-      'adds a thousands separator, resolving to "1,234.5", in the %s body',
-      (event) => {
-        const input = entryFor(event).buildNotification(
-          basePayloads[event]('1234.500000000000000000'),
-        );
-
-        expect(input.body).toContain('1,234.5');
-      },
-    );
-
-    it.each(events)(
-      'does not collapse a tiny 18-decimal-scaled amount to "0" in the %s body',
-      (event) => {
-        const input = entryFor(event).buildNotification(
-          basePayloads[event]('0.000000001000000000'),
-        );
-
-        expect(input.body).toContain('0.000000001');
-      },
-    );
   });
 
-  it('routes promo.bonus.completed through the same amount formatter as every other entry', () => {
+  it('passes the raw converted amount of promo.bonus.completed through as its amount param', () => {
     const input = entryFor('promo.bonus.completed').buildNotification({
       userId: randomUUID(),
       grantId: randomUUID(),
@@ -410,11 +469,10 @@ describe('notificationEventMap', () => {
       convertedAmount: '1234.500000000000000000',
     });
 
-    expect(input.body).toContain('1,234.5');
-    expect(input.body).not.toContain('1234.500000000000000000');
+    expect(input.params).toEqual({ amount: '1234.500000000000000000', currency: 'EUR' });
   });
 
-  it('names a periodic rank bonus in its notification title', () => {
+  it('carries a periodic rank bonus kind and the grant source as codes', () => {
     const input = entryFor('promo.bonus.granted').buildNotification({
       userId: randomUUID(),
       grantId: randomUUID(),
@@ -426,7 +484,13 @@ describe('notificationEventMap', () => {
       rankBonusKind: 'weekly',
     });
 
-    expect(input.title).toBe('Weekly bonus credited');
+    expect(input.params).toEqual({
+      grantedAmount: '10',
+      wageringRequired: '10',
+      currency: 'USDT',
+      rankBonusKind: 'weekly',
+      source: 'rank',
+    });
   });
 
   describe('a bonus credit', () => {
@@ -469,13 +533,12 @@ describe('notificationEventMap', () => {
         actorId: null,
       });
 
-      expect(input).toMatchObject({
+      expect(input).toEqual({
         userId: closed.userId,
         type: 'promo.bonus.forfeited',
+        params: { amount: '12.500000000000000000', currency: 'USDT', reason: 'terms_breach' },
         data: { grantId: closed.grantId },
       });
-      expect(input.body).toContain("the offer's terms were not met");
-      expect(input.body).toContain('12.5 USDT');
     });
 
     it('tells the player an expired bonus is gone and how much', () => {
@@ -486,9 +549,9 @@ describe('notificationEventMap', () => {
 
       expect(input).toMatchObject({
         type: 'promo.bonus.expired',
+        params: { amount: '3.000000000000000000', currency: 'USDT' },
         data: { grantId: closed.grantId },
       });
-      expect(input.body).toContain('3 USDT');
     });
 
     it('stays in-app only', () => {
@@ -513,21 +576,6 @@ describe('notificationEventMap', () => {
     expect(entry.securityAlert).toBe(false);
   });
 
-  it('leaves currency and reason untouched while only the amount substring is reformatted', () => {
-    const input = entryFor('wallet.manual_adjustment.created').buildNotification({
-      userId: randomUUID(),
-      amount: '100.000000000000000000',
-      currency: 'EUR',
-      transactionId: randomUUID(),
-      playerId: null,
-      adminId: randomUUID(),
-      direction: 'credit',
-      reason: 'goodwill credit',
-    });
-
-    expect(input.body).toBe('Your balance was credited 100 EUR. Reason: goodwill credit.');
-  });
-
   describe('promo.rank.changed', () => {
     const rankChanged = (bonuses: {
       dailyBonus: string | null;
@@ -544,7 +592,7 @@ describe('notificationEventMap', () => {
       ...bonuses,
     });
 
-    it('congratulates the player on the rank and names everything it pays from now on', () => {
+    it('carries the rank and every benefit it pays as separate raw params', () => {
       const payload = rankChanged({
         dailyBonus: '2.000000000000000000',
         weeklyBonus: '10.000000000000000000',
@@ -556,8 +604,14 @@ describe('notificationEventMap', () => {
       expect(input).toEqual({
         userId: payload.userId,
         type: 'promo.rank.changed',
-        title: 'You reached Gold rank',
-        body: 'Congratulations on reaching Gold. Your rank now pays 5% rakeback and a bonus worth 2 USD daily, 10 USD weekly, 25 USD monthly.',
+        params: {
+          tierName: 'Gold',
+          currency: 'USD',
+          rakebackPercent: '5.00',
+          dailyBonus: '2.000000000000000000',
+          weeklyBonus: '10.000000000000000000',
+          monthlyBonus: '25.000000000000000000',
+        },
         data: { tierId: payload.tierId },
       });
     });
@@ -570,11 +624,7 @@ describe('notificationEventMap', () => {
         position: 1,
       });
 
-      expect(input).toMatchObject({
-        type: 'promo.rank.changed',
-        title: 'Rank updated',
-        body: 'Your account rank has been updated.',
-      });
+      expect(input).toMatchObject({ type: 'promo.rank.changed', params: null });
     });
 
     it('leaves out a bonus the rank does not pay', () => {
@@ -582,28 +632,29 @@ describe('notificationEventMap', () => {
         rankChanged({ dailyBonus: '0.500000000000000000', weeklyBonus: null, monthlyBonus: null }),
       );
 
-      expect(input.body).toBe(
-        'Congratulations on reaching Gold. Your rank now pays 5% rakeback and a bonus worth 0.5 USD daily.',
-      );
+      expect(input.params).toEqual({
+        tierName: 'Gold',
+        currency: 'USD',
+        rakebackPercent: '5.00',
+        dailyBonus: '0.500000000000000000',
+      });
     });
 
-    it('names the one-off level-up bonus reaching the rank earns', () => {
+    it('carries the one-off level-up bonus reaching the rank earns', () => {
       const input = entryFor('promo.rank.changed').buildNotification({
         ...rankChanged({ dailyBonus: null, weeklyBonus: null, monthlyBonus: null }),
         levelUpBonus: '50.000000000000000000',
       });
 
-      expect(input.body).toBe(
-        'Congratulations on reaching Gold. Your rank now pays 5% rakeback, plus a one-off 50 USD level-up bonus.',
-      );
+      expect(input.params).toMatchObject({ levelUpBonus: '50.000000000000000000' });
     });
 
-    it('names the rakeback alone when the rank pays no periodic bonus', () => {
+    it('carries the rakeback alone when the rank pays no periodic bonus', () => {
       const input = entryFor('promo.rank.changed').buildNotification(
         rankChanged({ dailyBonus: null, weeklyBonus: null, monthlyBonus: null }),
       );
 
-      expect(input.body).toBe('Congratulations on reaching Gold. Your rank now pays 5% rakeback.');
+      expect(input.params).toEqual({ tierName: 'Gold', currency: 'USD', rakebackPercent: '5.00' });
     });
 
     it('sends no email - a rank-up is an in-app moment', () => {
@@ -614,5 +665,170 @@ describe('notificationEventMap', () => {
         ),
       ).toBeNull();
     });
+  });
+
+  describe('params keys', () => {
+    const id = () => randomUUID();
+    const walletTxn = () => ({
+      userId: id(),
+      amount: '10.000000000000000000',
+      currency: 'USD',
+      transactionId: id(),
+      playerId: null,
+      adminId: id(),
+    });
+    // Every optional field filled, so an optional key outside the type's set would show up too.
+    const payloads: Record<string, unknown> = {
+      'wallet.withdrawal.approved': walletTxn(),
+      'wallet.withdrawal.rejected': { ...walletTxn(), reason: 'AML' },
+      'wallet.withdrawal.requested': walletTxn(),
+      'wallet.withdrawal.completed': walletTxn(),
+      'wallet.withdrawal.failed': walletTxn(),
+      'wallet.deposit.completed': walletTxn(),
+      'wallet.deposit.held': walletTxn(),
+      'wallet.manual_adjustment.created': { ...walletTxn(), direction: 'debit', reason: 'fix' },
+      'promo.bonus.granted': {
+        userId: id(),
+        grantId: id(),
+        currency: 'USDT',
+        grantedAmount: '10',
+        wageringRequired: '300',
+        source: 'rank',
+        offerId: null,
+        rankBonusKind: 'daily',
+      },
+      'promo.bonus.completed': {
+        userId: id(),
+        grantId: id(),
+        currency: 'USDT',
+        convertedAmount: '1',
+      },
+      'promo.bonus.forfeited': {
+        userId: id(),
+        grantId: id(),
+        currency: 'USDT',
+        forfeitedAmount: '1',
+        reason: 'admin',
+        actorId: id(),
+      },
+      'promo.bonus.expired': {
+        userId: id(),
+        grantId: id(),
+        currency: 'USDT',
+        forfeitedAmount: '1',
+      },
+      'promo.race.won': {
+        userId: id(),
+        raceId: id(),
+        raceName: 'Weekly race',
+        position: 3,
+        amount: '25',
+        currency: 'USDT',
+      },
+      'promo.rank-challenge.won': {
+        userId: id(),
+        tierId: id(),
+        tierKey: 'master',
+        tierName: 'Master',
+        cashAmount: '500',
+        physicalItem: 'Watch',
+        currency: 'USDT',
+      },
+      'promo.rank.changed': {
+        userId: id(),
+        tierId: id(),
+        previousTierId: id(),
+        position: 4,
+        tierName: 'Gold',
+        currency: 'USD',
+        rakebackPercent: '5.00',
+        levelUpBonus: '50',
+        dailyBonus: '1',
+        weeklyBonus: '5',
+        monthlyBonus: '20',
+      },
+      'chat.user.mentioned': {
+        mentionedUserId: id(),
+        byUserId: id(),
+        roomId: id(),
+        messageId: id(),
+      },
+      'chat.room.invite.sent': {
+        inviteId: id(),
+        roomId: id(),
+        inviterId: id(),
+        inviteeId: id(),
+        inviterUsername: 'alice',
+        roomName: 'High rollers',
+        playerId: null,
+      },
+      'social.friend_request.sent': {
+        friendshipId: id(),
+        requesterId: id(),
+        addresseeId: id(),
+        requesterUsername: 'alice',
+      },
+      'social.friend_request.accepted': {
+        friendshipId: id(),
+        requesterId: id(),
+        addresseeId: id(),
+        accepterId: id(),
+        accepterUsername: 'bob',
+      },
+      'chat.room.ownership.transferred': {
+        roomId: id(),
+        roomName: 'High rollers',
+        previousOwnerId: id(),
+        newOwnerId: id(),
+        reason: 'account-closed',
+      },
+    };
+
+    const coreCreated = [
+      ...notificationEventMap.map((entry) => entry.buildNotification(payloads[entry.event])),
+      buildKycResubmissionNotification({ userId: id(), reason: 'blurry' }),
+      buildChatRoomScheduledForDeletionNotification({ userId: id(), roomId: id(), roomName: 'R' }),
+      buildRgLimitAdminUpdatedNotification({
+        userId: id(),
+        playerId: null,
+        actorId: id(),
+        limitId: id(),
+        type: 'deposit',
+        period: 'weekly',
+        amount: '10',
+        minutes: null,
+        previousAmount: '20',
+        previousMinutes: null,
+        initiatedBy: 'admin',
+        reason: 'note',
+      }),
+    ];
+
+    it('declares the keys of exactly the notification types', () => {
+      expect(Object.keys(NOTIFICATION_PARAM_KEYS).sort()).toEqual([...NOTIFICATION_TYPES].sort());
+    });
+
+    // The rg fixture is a money limit, so the session-limit keys are legitimately absent.
+    const absentFromFixture: Record<string, readonly string[]> = {
+      'rg.limit.admin_updated': ['minutes', 'previousMinutes'],
+    };
+
+    it.each(notificationEventMap.map((entry) => [entry.event, entry] as const))(
+      'uses a %s fixture the real event schema accepts',
+      (event, entry) => {
+        expect(entry.parse(payloads[event])).not.toBeNull();
+      },
+    );
+
+    it.each(coreCreated.map((input) => [input.type, input] as const))(
+      'gives a core-created %s notification, from a fully filled payload, exactly its declared keys',
+      (type, input) => {
+        const { required, optional } = NOTIFICATION_PARAM_KEYS[type];
+        const absent = absentFromFixture[type] ?? [];
+        const expected = [...required, ...optional].filter((key) => !absent.includes(key));
+
+        expect(Object.keys(input.params ?? {}).sort()).toEqual(expected.sort());
+      },
+    );
   });
 });
