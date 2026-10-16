@@ -7,6 +7,7 @@ import {
   makeNotFoundError,
   moneyAdd,
   moneyCompare,
+  mapConcurrent,
   withAdvisoryXactLock,
   type DrizzleService,
   type DrizzleTx,
@@ -26,6 +27,7 @@ import {
   type AuditWritePort,
   type CacheAdapter,
   type ClientMeta,
+  type ExchangeRateReader,
   type GeoCheckCommands,
   type OnRampAdapter,
   type OnRampCheckout,
@@ -113,6 +115,7 @@ export class OnRampService {
   private readonly playEligibility: PlayEligibilityPort;
   private readonly geoCheck?: GeoCheckCommands;
   private readonly rgLimits?: RgLimitsPort;
+  private readonly rates?: ExchangeRateReader;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly cache?: CacheAdapter;
 
@@ -124,6 +127,7 @@ export class OnRampService {
     playEligibility: PlayEligibilityPort;
     geoCheck?: GeoCheckCommands;
     rgLimits?: RgLimitsPort;
+    rates?: ExchangeRateReader;
     limiter?: RateLimiterAdapter<RateLimitKey>;
     cache?: CacheAdapter;
   }) {
@@ -134,6 +138,7 @@ export class OnRampService {
     this.playEligibility = deps.playEligibility;
     this.geoCheck = deps.geoCheck;
     this.rgLimits = deps.rgLimits;
+    this.rates = deps.rates;
     this.limiter = deps.limiter;
     this.cache = deps.cache;
   }
@@ -173,7 +178,9 @@ export class OnRampService {
    * limit is checked and the order row inserted under one per-player lock, so concurrent
    * checkouts are counted against each other. The delivery address is always one the platform
    * issued to this player, and the order row exists before the vendor is called, so a webhook
-   * can always find it. A replayed key returns the original checkout.
+   * can always find it. The order fails only when the vendor does not open the checkout; once
+   * it has, a failure to record that leaves the order pending for the vendor's webhook. A
+   * replayed key returns the original checkout.
    */
   async checkout(
     purchase: OnRampPurchase & { idempotencyKey: string },
@@ -212,12 +219,31 @@ export class OnRampService {
         if (!order) {
           throw new IdempotencyKeyReuseError();
         }
+        await this.audit.recordInTransaction(tx, {
+          actorType: 'player',
+          actorId: userId,
+          action: 'wallet.on_ramp.checkout_requested',
+          resourceType: 'on_ramp_order',
+          resourceId: order.id,
+          after: {
+            purchaseId: order.id,
+            fiatAmount: purchase.fiatAmount,
+            fiatCurrency: purchase.fiatCurrency,
+            currency: purchase.currency,
+            network: purchase.network,
+            walletAddress: address.address,
+            country,
+            idempotencyKey,
+          },
+          ...purchase.meta,
+        });
         return order.id;
       }),
     );
 
+    let checkout: OnRampCheckout;
     try {
-      const checkout = await this.openCheckout({
+      checkout = await this.openCheckout({
         userId,
         purchaseId,
         fiatCurrency: purchase.fiatCurrency,
@@ -229,42 +255,42 @@ export class OnRampService {
         country,
         idempotencyKey: `${userId}:${idempotencyKey}`,
       });
-      await this.drizzle.db.transaction(async (tx) => {
-        await tx
-          .update(walletOnRampOrder)
-          .set({
-            externalId: checkout.externalId,
-            checkoutUrl: checkout.checkoutUrl,
-            expiresAt: new Date(checkout.expiresAt),
-          })
-          .where(eq(walletOnRampOrder.id, purchaseId));
-        await this.audit.recordInTransaction(tx, {
-          actorType: 'player',
-          actorId: userId,
-          action: 'wallet.on_ramp.checkout_created',
-          resourceType: 'on_ramp_order',
-          resourceId: purchaseId,
-          after: {
-            purchaseId,
-            externalId: checkout.externalId,
-            fiatAmount: purchase.fiatAmount,
-            fiatCurrency: purchase.fiatCurrency,
-            currency: purchase.currency,
-            network: purchase.network,
-            walletAddress: address.address,
-            country,
-            expiresAt: checkout.expiresAt,
-            acknowledged: true,
-            idempotencyKey,
-          },
-          ...purchase.meta,
-        });
-      });
-      return { purchaseId, checkoutUrl: checkout.checkoutUrl };
     } catch (err) {
       await this.failCheckout(purchase, purchaseId, err);
       throw err;
     }
+    await this.drizzle.db.transaction(async (tx) => {
+      await tx
+        .update(walletOnRampOrder)
+        .set({
+          externalId: checkout.externalId,
+          checkoutUrl: checkout.checkoutUrl,
+          expiresAt: new Date(checkout.expiresAt),
+        })
+        .where(eq(walletOnRampOrder.id, purchaseId));
+      await this.audit.recordInTransaction(tx, {
+        actorType: 'player',
+        actorId: userId,
+        action: 'wallet.on_ramp.checkout_created',
+        resourceType: 'on_ramp_order',
+        resourceId: purchaseId,
+        after: {
+          purchaseId,
+          externalId: checkout.externalId,
+          fiatAmount: purchase.fiatAmount,
+          fiatCurrency: purchase.fiatCurrency,
+          currency: purchase.currency,
+          network: purchase.network,
+          walletAddress: address.address,
+          country,
+          expiresAt: checkout.expiresAt,
+          acknowledged: true,
+          idempotencyKey,
+        },
+        ...purchase.meta,
+      });
+    });
+    return { purchaseId, checkoutUrl: checkout.checkoutUrl };
   }
 
   /**
@@ -657,11 +683,11 @@ export class OnRampService {
   }
 
   /**
-   * Checked on the fiat amount plus this player's still-open orders in the same fiat: processing
-   * ones of any age, pending ones until their checkout expires, and pending ones the vendor has
-   * not opened yet for `UNOPENED_CHECKOUT_HOLD` after they were recorded. Open orders in other
-   * fiats are not counted. The gate converts to the limit's currency. Runs under the caller's
-   * per-player lock.
+   * Checked on the fiat amount plus this player's still-open orders: processing ones of any age,
+   * pending ones until their checkout expires, and pending ones the vendor has not opened yet
+   * for `UNOPENED_CHECKOUT_HOLD` after they were recorded. Open orders in another fiat are
+   * converted to the purchase's fiat; with no rate for one, buying is unavailable rather than
+   * unchecked. The gate converts to the limit's currency. Runs under the caller's per-player lock.
    */
   private async assertWithinDepositLimit(
     tx: DrizzleTx,
@@ -670,15 +696,15 @@ export class OnRampService {
     if (!this.rgLimits) {
       return;
     }
-    const [open] = await tx
+    const openByFiat = await tx
       .select({
-        total: sql<string>`coalesce(sum(${walletOnRampOrder.fiatAmount}), 0)::text`,
+        fiatCurrency: walletOnRampOrder.fiatCurrency,
+        total: sql<string>`sum(${walletOnRampOrder.fiatAmount})::text`,
       })
       .from(walletOnRampOrder)
       .where(
         and(
           eq(walletOnRampOrder.userId, userId),
-          eq(walletOnRampOrder.fiatCurrency, fiatCurrency),
           or(
             eq(walletOnRampOrder.status, 'processing'),
             and(
@@ -693,8 +719,17 @@ export class OnRampService {
             ),
           ),
         ),
-      );
-    const openTotal = open?.total ?? '0';
+      )
+      .groupBy(walletOnRampOrder.fiatCurrency);
+    const openTotals = await mapConcurrent(openByFiat, 1, async (open) =>
+      open.fiatCurrency === fiatCurrency
+        ? open.total
+        : ((await this.rates?.convert(open.total, open.fiatCurrency, fiatCurrency, tx)) ?? null),
+    );
+    if (openTotals.includes(null)) {
+      throw new OnRampUnavailableError();
+    }
+    const openTotal = openTotals.reduce<string>((sum, total) => moneyAdd(sum, total ?? '0'), '0');
     const decision = await this.rgLimits.checkDeposit(
       tx,
       userId,

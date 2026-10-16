@@ -56,6 +56,7 @@ export type DirectAuditAction =
   | 'wallet.reconciliation_finding.resolved'
   | 'wallet.swap.refunded'
   | 'wallet.swap.fill_rejected'
+  | 'wallet.on_ramp.checkout_requested'
   | 'wallet.on_ramp.checkout_created'
   | 'wallet.on_ramp.checkout_failed'
   | 'wallet.on_ramp.status_changed'

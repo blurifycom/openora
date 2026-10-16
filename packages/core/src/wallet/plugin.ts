@@ -454,6 +454,7 @@ export default {
             playEligibility: c.get(PLAY_ELIGIBILITY),
             geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,
             rgLimits,
+            rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
             limiter: c.get(RATE_LIMITER),
             cache: c.has(CACHE) ? c.get(CACHE) : undefined,
           })
