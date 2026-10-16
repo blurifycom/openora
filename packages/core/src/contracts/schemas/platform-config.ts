@@ -287,7 +287,7 @@ export const PromoConfigSchema = z
       .prefault({}),
     streaks: z
       .object({
-        /** How often owed milestone rewards are settled. */
+        /** Unused: milestone rewards are claimed by the player. Kept so existing configs parse. */
         payoutCron: CronExpressionSchema.default(STREAK_PAYOUT_DEFAULT_CRON),
         /** How often a UTC day is closed out, resetting anyone who missed it. */
         closeCron: CronExpressionSchema.default(STREAK_CLOSE_DEFAULT_CRON),

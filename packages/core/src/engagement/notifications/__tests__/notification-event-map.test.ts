@@ -528,6 +528,24 @@ describe('notificationEventMap', () => {
     expect(input.body).toBe('Your balance was credited 100 EUR. Reason: goodwill credit.');
   });
 
+  it('tells the player a streak reward is waiting to be claimed', () => {
+    const userId = randomUUID();
+
+    const input = entryFor('promo.streak.milestone.reached').buildNotification({
+      userId,
+      day: 7,
+      grantId: null,
+    });
+
+    expect(input).toEqual({
+      userId,
+      type: 'promo.streak.milestone.reached',
+      title: 'Streak reward waiting',
+      body: 'You reached day 7 of your daily streak. Your reward is waiting to be claimed.',
+      data: { day: '7' },
+    });
+  });
+
   describe('promo.rank.changed', () => {
     const rankChanged = (bonuses: {
       dailyBonus: string | null;
