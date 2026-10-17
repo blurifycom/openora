@@ -333,10 +333,12 @@ export function createChatRouter({
       openRoomStream(input, context, signal),
     ),
 
+    // oxlint-disable-next-line typescript/no-deprecated -- the deprecated lane stays served until clients move to streamRoom.
     streamMessages: os.streamMessages.handler(async ({ input, signal, context }) =>
       messagesOf(await openRoomStream(input, context, signal)),
     ),
 
+    // oxlint-disable-next-line typescript/no-deprecated -- the deprecated lane stays served until clients move to streamRoom.
     streamSignals: os.streamSignals.handler(async ({ input, signal, context }) => {
       const roomId = await authorizeChannel(input, context);
       return createEventStreamGenerator(
