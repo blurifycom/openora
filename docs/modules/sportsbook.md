@@ -167,8 +167,9 @@ nothing else, so the provider may retry it or treat it as final.
   window's loss, like the rest of that round.
 - **Sportsbook stakes are real money only.** The bonus engine never draws, attributes or
   max-bet-checks them. They always count toward responsible-gambling spend. Rank level counts
-  them as the operator's rank setting says; rakeback and the rank challenge leave them out until
-  the operator adds them.
+  them as the operator's rank setting says. Rakeback and the rank challenge leave them out by
+  default, until the operator adds them; a ladder upgraded from before those lists existed counts
+  every product, sportsbook included.
 - **Cooling-off and self-exclusion end play at once.** Either one queues a retried job that revokes
   every live sportsbook session, at core and at the provider, and audits the revoke. A stake that
   lands before the job runs is still refused, because reserve checks play eligibility under its
