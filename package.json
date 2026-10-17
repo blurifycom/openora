@@ -63,7 +63,7 @@
     "@turbo/gen": "2.10.7",
     "@types/node": "26.1.1",
     "dependency-cruiser": "18.1.0",
-    "depretec": "0.2.3",
+    "depretec": "0.2.4",
     "husky": "9.1.7",
     "knip": "6.41.0",
     "oxfmt": "0.60.0",

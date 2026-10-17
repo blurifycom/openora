@@ -57,8 +57,8 @@ importers:
         specifier: 18.1.0
         version: 18.1.0
       depretec:
-        specifier: 0.2.3
-        version: 0.2.3
+        specifier: 0.2.4
+        version: 0.2.4
       husky:
         specifier: 9.1.7
         version: 9.1.7
@@ -2339,8 +2339,8 @@ packages:
     engines: {node: ^22||^24||>=26}
     hasBin: true
 
-  depretec@0.2.3:
-    resolution: {integrity: sha512-9OIr7cRkk07+2A5IDFhPJkACFjee8OA5cvrzOgDoOuxQGlZ1JOBvEE3d60W3LXhb2FM+iFnrRE5noDLhJNIW7A==}
+  depretec@0.2.4:
+    resolution: {integrity: sha512-BOb4gze9TiDoyBxOZsDCrujHuD/TWieTT0HBKrtzOo8N8M9r6I7dcH3TfajwoNNjaOQD9NFx4/aBgHRGwaEirA==}
     engines: {bun: '>=1.1', node: '>=18'}
     hasBin: true
 
@@ -6134,7 +6134,7 @@ snapshots:
       tsconfig-paths-webpack-plugin: 4.2.0
       watskeburt: 6.0.0
 
-  depretec@0.2.3:
+  depretec@0.2.4:
     dependencies:
       cac: 7.0.0
       cli-table3: 0.6.5
