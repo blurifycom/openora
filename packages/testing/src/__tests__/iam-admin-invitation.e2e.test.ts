@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
+import { auditLog } from '@openora/core/audit/schema';
 import { adminInvitation, adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import {
   setupTestDb,
@@ -24,6 +25,7 @@ let db: TestDb;
 let app: TestApp;
 let superAdmin: TestClient;
 let roleId: string;
+let superAdminId: string;
 
 const drizzle = () => app.container.get(DRIZZLE).db;
 
@@ -68,6 +70,11 @@ beforeAll(async () => {
     throw new Error('no seeded admin role');
   }
   roleId = role.id;
+  const [admin] = await drizzle()
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.email, 'admin@oss.dev'));
+  superAdminId = admin?.id ?? '';
 }, 60_000);
 
 afterAll(async () => {
@@ -94,6 +101,22 @@ describe('admin invitation', () => {
       .from(adminRoleAssignment)
       .where(eq(adminRoleAssignment.userId, account?.id ?? ''));
     expect(assignments).toEqual([{ roleId }]);
+    const [invitation] = await drizzle()
+      .select({ id: adminInvitation.id })
+      .from(adminInvitation)
+      .where(eq(adminInvitation.token, token));
+    await vi.waitFor(async () => {
+      const rows = await drizzle()
+        .select({ action: auditLog.action, actorId: auditLog.actorId })
+        .from(auditLog)
+        .where(eq(auditLog.resourceId, invitation?.id ?? ''));
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          { action: 'iam.invitation.created', actorId: superAdminId },
+          { action: 'iam.invitation.accepted', actorId: account?.id },
+        ]),
+      );
+    });
   });
 
   it('refuses a second redemption of the same token', async () => {

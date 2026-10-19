@@ -1228,6 +1228,13 @@ export const domainEventSchemas = {
   'cms.banner.schedule.created': cmsBannerScheduleEventBase,
   'cms.banner.schedule.updated': cmsBannerScheduleUpdatedEvent,
 
+  'iam.invitation.created': authContextBase.extend({
+    email: z.email(),
+    roleId: UuidSchema,
+    invitationId: UuidSchema,
+    actorId: UuidSchema,
+  }),
+
   // Emitted after an admin invitation is redeemed: the invitee's account (`userId`)
   // exists and already holds `roleId`.
   'iam.invitation.accepted': authContextBase.extend({

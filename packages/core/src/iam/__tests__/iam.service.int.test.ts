@@ -791,7 +791,8 @@ describe('IamService.inviteAdmin', () => {
   it('creates a pending invitation and dispatches an English invitation mail when caller is super-admin', async () => {
     const role = await seedRole();
     const mailDispatch = makeMailDispatch();
-    const svc = makeIamService(db.drizzle, makeEventBus(), mailDispatch);
+    const events = makeEventBus();
+    const svc = makeIamService(db.drizzle, events, mailDispatch);
     const result = await svc.inviteAdmin({
       email: 'new@admin.com',
       roleId: role.id,
@@ -811,6 +812,15 @@ describe('IamService.inviteAdmin', () => {
     const rows = await db.drizzle.db.select().from(adminInvitation);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ email: 'new@admin.com', status: 'pending' });
+    expect(events.emit).toHaveBeenCalledWith(
+      'iam.invitation.created',
+      expect.objectContaining({
+        email: 'new@admin.com',
+        roleId: role.id,
+        invitationId: result.id,
+        actorId: ADMIN_CALLER.userId,
+      }),
+    );
   });
 
   it('rejects a non-super-admin caller', async () => {

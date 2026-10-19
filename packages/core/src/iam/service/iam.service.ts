@@ -831,6 +831,15 @@ export class IamService {
       idempotencyKey: `admin-invitation:${row.id}`,
     });
 
+    this.events.emit('iam.invitation.created', {
+      email: row.email,
+      roleId: row.roleId,
+      invitationId: row.id,
+      actorId: input.caller.userId,
+      ip: input.caller.ip ?? null,
+      userAgent: input.caller.userAgent ?? null,
+    });
+
     return toInvitationDto(row);
   }
 
