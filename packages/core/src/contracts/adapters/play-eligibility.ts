@@ -10,7 +10,10 @@ import { createToken, type Token } from './token.js';
  * the expiry sweep, matching the login gate's lazy-expiry behaviour.
  *
  * A caller already inside a transaction passes it as `tx`: a second pool connection taken
- * while the first is held deadlocks once every connection is held by such a caller.
+ * while the first is held deadlocks once every connection is held by such a caller. The
+ * read then holds the player's row `FOR SHARE` until that transaction ends, so a
+ * restriction landing concurrently waits for it instead of committing between the check
+ * and the money movement it gates.
  */
 export type PlayEligibilityPort = {
   isRestricted(userId: string, tx?: unknown): Promise<boolean>;

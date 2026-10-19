@@ -10,6 +10,7 @@ import {
 } from '@openora/core/server';
 import {
   PLAY_ELIGIBILITY,
+  AUDIT_WRITER,
   type ActionExecutionContext,
   type PlayEligibilityPort,
   type PlayerStatus,
@@ -78,7 +79,7 @@ function makeService({ restricted = false } = {}) {
   const events = makeEventBus();
   const eligibility = playEligibility(restricted);
   return {
-    svc: new TagService(db.drizzle, events, eligibility.port),
+    svc: new TagService(db.drizzle, events, eligibility.port, makeAuditWriter()),
     events,
     isRestricted: eligibility.isRestricted,
   };
@@ -184,6 +185,7 @@ describe('TagService.assignPlayerTagForProposal (real PG)', () => {
       tagKey: 'high_risk',
       reason: REASON,
       actorId: ADMIN_ID,
+      auditRecorded: true,
     });
   });
 
@@ -282,6 +284,7 @@ function bootKernel({ restricted = false } = {}) {
   container.register(DRIZZLE, () => db.drizzle);
   container.register(EVENT_BUS, () => makeEventBus());
   container.register(PLAY_ELIGIBILITY, () => playEligibility(restricted).port);
+  container.register(AUDIT_WRITER, () => makeAuditWriter());
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   tagPlugin.register(registry);
   return createMcpKernel({

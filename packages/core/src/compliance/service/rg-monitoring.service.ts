@@ -321,6 +321,7 @@ export class RgMonitoringService {
   }
 
   private async depositsByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
+    const depositedAt = sql<Date>`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`;
     return db
       .select({
         currency: walletTransaction.currency,
@@ -336,11 +337,13 @@ export class RgMonitoringService {
           // lock before charging the PSP. Counting it is what stops two concurrent deposits
           // from spending the same headroom; it is released to `failed` if the charge fails.
           inArray(walletTransaction.status, ['completed', 'pending']),
-          gte(walletTransaction.createdAt, from),
+          // A held deposit an operator released later is spent when it reached the balance
+          // (reviewedAt), not when it landed on chain; every other deposit has no reviewedAt.
+          gte(depositedAt, from),
           // The database stamps createdAt, so the upper bound reads the same clock. An
           // app-side new Date() that trails the database by a millisecond would drop a
           // just-committed deposit out of the player's spend.
-          lte(walletTransaction.createdAt, sql`now()`),
+          lte(depositedAt, sql`now()`),
         ),
       )
       .groupBy(walletTransaction.currency);

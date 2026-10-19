@@ -10,7 +10,9 @@ export type {
   ActionTypeFactory,
   RegisteredMcpTool,
   RegisteredActionType,
+  RegisteredTriggerListener,
   EventHandler,
+  TriggerListener,
   TypedContainer,
 } from './define-plugin.js';
 export { ModuleRegistryImpl } from './module-registry.js';

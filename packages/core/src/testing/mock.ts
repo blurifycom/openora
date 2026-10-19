@@ -12,6 +12,7 @@ import {
   DEFAULT_PAYMENT_PROVIDER,
   type AuditWritePort,
   type CacheAdapter,
+  type ChatContextSendPolicy,
   type ClientMeta,
   type ExchangeRateReader,
   type IdentityReader,
@@ -223,6 +224,12 @@ export const makeRealtimeTransport = (): RealtimeTransport =>
 export const makeExchangeRateReader = (rate = '1'): ExchangeRateReader => ({
   getRate: vi.fn(async () => ({ rate, asOf: new Date().toISOString() })),
   convert: vi.fn(async (amount: string) => moneyScaleBy(amount, rate)),
+});
+
+export const makeChatContextSendPolicy = (
+  check: ChatContextSendPolicy['check'] = async () => ({ allowed: true }),
+): ChatContextSendPolicy & { check: Mock<ChatContextSendPolicy['check']> } => ({
+  check: vi.fn(check),
 });
 
 export const makeIdentityReader = (): IdentityReader =>

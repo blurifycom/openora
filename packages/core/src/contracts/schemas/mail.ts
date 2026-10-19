@@ -14,6 +14,7 @@ export const MAIL_TEMPLATE_KEYS = [
   'rgSelfExclusionActivated',
   'rgSelfExclusionLifted',
   'depositCompleted',
+  'depositHeld',
   'withdrawalApproved',
   'withdrawalRejected',
   'withdrawalCompleted',
@@ -69,6 +70,7 @@ export const EmailTemplateDataSchemas = {
   }),
   rgSelfExclusionLifted: z.object({ initiatedBy: RgInitiatorSchema }),
   depositCompleted: z.object({ ...WithdrawalDetailsShape }),
+  depositHeld: z.object({ ...WithdrawalDetailsShape }),
   withdrawalApproved: z.object({ ...WithdrawalDetailsShape }),
   withdrawalRejected: z.object({
     ...WithdrawalDetailsShape,
@@ -145,6 +147,7 @@ export const MailTemplateSchema = z.discriminatedUnion('key', [
   templateVariant('rgSelfExclusionActivated'),
   templateVariant('rgSelfExclusionLifted'),
   templateVariant('depositCompleted'),
+  templateVariant('depositHeld'),
   templateVariant('withdrawalApproved'),
   templateVariant('withdrawalRejected'),
   templateVariant('withdrawalCompleted'),

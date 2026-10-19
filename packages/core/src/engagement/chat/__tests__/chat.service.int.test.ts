@@ -22,7 +22,13 @@ import type {
   SocialCommands,
 } from '@openora/core/contracts';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { NO_CLIENT_META, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
+import {
+  NO_CLIENT_META,
+  makeChatContextSendPolicy,
+  makeEventBus,
+  makeIdentityReader,
+  mock,
+} from '../../../testing/mock.js';
 import { CHAT_ROOM_CATEGORIES, ChatMessageSchema, type ChatMessage } from '../contract/index.js';
 import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
@@ -143,6 +149,7 @@ function makeService(
     identityReader,
     allowedAttachmentHosts,
     socialCommands,
+    contextSendPolicy: makeChatContextSendPolicy(),
   });
   const membership = new ChatRoomMembershipService(
     db.drizzle,

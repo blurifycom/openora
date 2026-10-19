@@ -1,0 +1,1 @@
+ALTER TYPE "public"."tag_key" ADD VALUE 'withdrawal_lock';

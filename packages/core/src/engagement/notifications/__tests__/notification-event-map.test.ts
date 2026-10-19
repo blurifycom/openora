@@ -212,6 +212,28 @@ describe('notificationEventMap', () => {
     expect(entryFor('wallet.withdrawal.failed').securityAlert).toBe(false);
   });
 
+  it('tells the player in-app and by an always-sent mail that an on-chain deposit is on hold', () => {
+    const transactionId = randomUUID();
+    const payload = {
+      userId: randomUUID(),
+      amount: '0.5',
+      currency: 'BTC',
+      transactionId,
+      playerId: null,
+    };
+    const entry = entryFor('wallet.deposit.held');
+
+    expect(entry.buildNotification(payload)).toMatchObject({
+      type: 'deposit.held',
+      data: { transactionId },
+    });
+    expect(entry.buildEmail(payload, OCCURRED_AT)).toMatchObject({
+      key: 'depositHeld',
+      data: { amount: '0.5', currency: 'BTC', transactionId, occurredAt: OCCURRED_AT },
+    });
+    expect(entry.securityAlert).toBe(false);
+  });
+
   it('always mails the requested-withdrawal confirmation, not gated on the alert preference', () => {
     const transactionId = randomUUID();
     const payload = {

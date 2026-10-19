@@ -17,7 +17,13 @@ import type {
   AuditWritePort,
   RealtimeTransport,
 } from '@openora/core/contracts';
-import { NO_CLIENT_META, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
+import {
+  NO_CLIENT_META,
+  makeChatContextSendPolicy,
+  makeEventBus,
+  makeIdentityReader,
+  mock,
+} from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
@@ -89,6 +95,7 @@ function makeServices(transport: RealtimeTransport = makeTransport()) {
     moderation,
     identityReader,
     allowedAttachmentHosts: [],
+    contextSendPolicy: makeChatContextSendPolicy(),
   });
   const membership = new ChatRoomMembershipService(
     db.drizzle,

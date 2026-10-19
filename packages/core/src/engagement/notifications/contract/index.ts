@@ -22,6 +22,7 @@ export const NOTIFICATION_TYPES = [
   'chat.gift.expired',
   'rg.limit.admin_updated',
   'deposit.completed',
+  'deposit.held',
   'balance.adjusted',
   'withdrawal.requested',
   'withdrawal.completed',

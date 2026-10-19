@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import {
   type DrizzleService,
+  type DrizzleTx,
   type EventBus,
+  createDomainError,
   createLogger,
-  findOneOrThrow,
   makeConflictError,
   makeNotFoundError,
+  moneyCompare,
   moneyEquals,
+  moneySubtract,
   pageToOffset,
   serializeRow,
 } from '@openora/core/server';
@@ -21,12 +24,14 @@ import {
   type RgLimitsPort,
   type User,
   type WalletJobRunStatus,
+  type WalletReconciliationFindingKind,
 } from '@openora/core/contracts';
 import {
   wallet,
   walletCustodySweep,
   walletJobRun,
   walletReconciliationFinding,
+  walletRefundedDeposit,
   walletTransaction,
   type WalletJobRun,
   type WalletReconciliationFinding as WalletReconciliationFindingRow,
@@ -37,9 +42,16 @@ import type {
   ReconciliationResolution,
   WalletReconciliationFinding as WalletReconciliationFindingDto,
 } from '../contract/index.js';
-import type { WalletService } from './wallet.service.js';
 import {
+  DepositAlreadyOnLedgerError,
+  HeldDepositNotFoundError,
+  type WalletService,
+} from './wallet.service.js';
+import {
+  DEPOSIT_FINDING_KINDS,
   OUT_OF_CYCLE_RUN_ID,
+  isRefundedDeposit,
+  lockVendorDeposit,
   recordReconciliationFinding,
   rgDecisionForLandedCredit,
 } from './reconciliation-finding.service.js';
@@ -56,6 +68,60 @@ export const ReconciliationCreditMismatchError = makeConflictError(
   'ReconciliationCreditMismatchError',
   "The referenced transaction is not a manual credit matching this finding's currency and amount",
 );
+
+export const DepositAlreadyRefundedError = makeConflictError(
+  'DepositAlreadyRefundedError',
+  'This deposit was already refunded on chain and cannot be refunded or credited again',
+);
+
+export const ReconciliationRefundAmountError = createDomainError<
+  [refunded: string, deposited: string | null]
+>(
+  'ReconciliationRefundAmountError',
+  (refunded, deposited) =>
+    `A refund of ${refunded} does not match the ${deposited ?? 'unknown'} this finding is about`,
+);
+
+export const ReconciliationAttributionError = createDomainError<[reason: string]>(
+  'ReconciliationAttributionError',
+  (reason) => `The deposit cannot be credited to this player: ${reason}`,
+);
+
+export const ReconciliationOutcomeNotAllowedError = createDomainError<
+  [kind: string, outcome: string]
+>(
+  'ReconciliationOutcomeNotAllowedError',
+  (kind, outcome) => `A ${kind} finding cannot be resolved as ${outcome}`,
+);
+
+/**
+ * Deposits whose money is in custody and on no player's balance, so sending it back on chain
+ * settles them. An amount or currency mismatch is a deposit the player was already credited
+ * for: refunding it would pay the same money twice.
+ */
+const REFUNDABLE_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
+  'held_deposit',
+  'missing_deposit',
+  'unattributed_deposit',
+]);
+
+function assertOutcomeAllowed(
+  kind: WalletReconciliationFindingKind,
+  outcome: ReconciliationResolution['outcome'],
+): void {
+  const allowed =
+    kind === 'held_deposit'
+      ? outcome === 'released' || outcome === 'refunded'
+      : outcome === 'credited' ||
+        outcome === 'dismissed' ||
+        (outcome === 'refunded' && REFUNDABLE_FINDING_KINDS.has(kind));
+  if (!allowed) {
+    throw new ReconciliationOutcomeNotAllowedError(kind, outcome);
+  }
+}
+
+// Lowercased: an EVM address is the same account whatever its checksum casing.
+const sameAddress = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 type LedgerMatch = Pick<WalletTransaction, 'id' | 'currency' | 'amount' | 'network'>;
 
@@ -113,6 +179,13 @@ const JOB_NAME = 'wallet-reconciliation';
  */
 const MAX_CATCH_UP_MULTIPLE = 7;
 
+type CreditedDeposit = {
+  transactionId: WalletTransaction['id'];
+  userId: User['id'];
+  amount: string;
+  currency: string;
+};
+
 function toFindingDto(row: WalletReconciliationFindingRow): WalletReconciliationFindingDto {
   return serializeRow(row, { dateFields: ['createdAt', 'resolvedAt'], decimalFields: [] });
 }
@@ -130,10 +203,10 @@ export type ReconciliationServiceDeps = {
 /**
  * Owns the reconciliation job cycle (claim -> per-provider diff -> stuck-withdrawal /
  * stuck-sweep sweep -> finish + audit + alert) and the admin surface over its findings
- * (list/resolve). Never credits or moves money itself - every finding is a report; the
- * only paths that touch a balance are `WalletService.reconcileWithdrawalStatus` (already
- * idempotent) and the pre-existing manual-adjustment path a `credited` resolution merely
- * references.
+ * (list/resolve). A finding is a report; the cycle never credits anything itself. Money
+ * moves only through `WalletService`: `reconcileWithdrawalStatus` (already idempotent) in
+ * the cycle, and in a resolution the deposit credit or release (after the deposit hold
+ * policy) or the manual-adjustment row a non-deposit `credited` resolution references.
  */
 export class ReconciliationService {
   private readonly drizzle: DrizzleService;
@@ -196,11 +269,16 @@ export class ReconciliationService {
   }
 
   /**
-   * Conditional `UPDATE ... WHERE status = 'open'` is the whole double-resolve guard -
-   * a second resolve of an already-resolved finding matches zero rows and returns the
-   * row unchanged, with no second audit entry. `credited` requires the referenced
-   * transaction to already exist (the manual-adjustment path creates it - this never
-   * credits anything itself) and match the finding's currency/amount exactly.
+   * The finding row is locked first, so a second resolve of an already-resolved finding
+   * returns it unchanged, with no second audit entry and no second money move.
+   *
+   * `credited` on an on-chain deposit finding credits the deposit here, in this transaction,
+   * after the deposit hold policy: a player it would hold gets nothing and the finding stays
+   * open. Any other finding's `credited` references a `manual_credit` already made, matching
+   * its currency and amount exactly. A held deposit closes only by `released` (credited here,
+   * after the same policy check) or `refunded`; it is never dismissed, because the money is
+   * still in custody. A refund names the on-chain transaction, its destination and amount,
+   * and is open only to deposits no player was credited for.
    */
   async resolveFinding(
     adminId: User['id'],
@@ -208,49 +286,116 @@ export class ReconciliationService {
     resolution: ReconciliationResolution,
     meta?: ClientMeta,
   ): Promise<WalletReconciliationFindingDto> {
-    const { dto, creditedBy } = await this.drizzle.db.transaction(async (txn) => {
+    const { dto, credited } = await this.drizzle.db.transaction(async (txn) => {
+      const [finding] = await txn
+        .select()
+        .from(walletReconciliationFinding)
+        .where(eq(walletReconciliationFinding.id, id))
+        .for('update');
+      if (!finding) {
+        throw new ReconciliationFindingNotFoundError(id);
+      }
+      if (finding.status !== 'open') {
+        return { dto: toFindingDto(finding), credited: undefined };
+      }
+      assertOutcomeAllowed(finding.kind, resolution.outcome);
+      if (DEPOSIT_FINDING_KINDS.has(finding.kind) && finding.externalId) {
+        await lockVendorDeposit(txn, finding.providerName, finding.externalId);
+      }
+
       let transactionId: string | undefined;
       let resolutionNote: string | null = null;
-      let creditTx: WalletTransaction | undefined;
       let heldWithdrawalId: string | null = null;
+      let refundedDepositId: string | null = null;
+      let creditedDeposit: CreditedDeposit | undefined;
+      let releasedDeposit: CreditedDeposit | undefined;
 
       if (resolution.outcome === 'credited') {
-        const [finding] = await txn
-          .select()
-          .from(walletReconciliationFinding)
-          .where(eq(walletReconciliationFinding.id, id));
-        if (!finding) {
-          throw new ReconciliationFindingNotFoundError(id);
+        if (DEPOSIT_FINDING_KINDS.has(finding.kind)) {
+          if (resolution.transactionId) {
+            throw new ReconciliationOutcomeNotAllowedError(finding.kind, 'a manual credit');
+          }
+          creditedDeposit = await this.creditDepositFinding(
+            txn,
+            finding,
+            adminId,
+            resolution.userId,
+          );
+          transactionId = creditedDeposit.transactionId;
+        } else {
+          if (!resolution.transactionId) {
+            throw new ReconciliationOutcomeNotAllowedError(
+              finding.kind,
+              'credited without a manual credit',
+            );
+          }
+          const [tx] = await txn
+            .select()
+            .from(walletTransaction)
+            .where(eq(walletTransaction.id, resolution.transactionId));
+          if (!tx) {
+            throw new ReconciliationCreditTransactionNotFoundError(resolution.transactionId);
+          }
+          if (
+            tx.type !== 'manual_credit' ||
+            finding.currency === null ||
+            tx.currency.toUpperCase() !== finding.currency.toUpperCase() ||
+            finding.amount === null ||
+            !moneyEquals(tx.amount, finding.amount)
+          ) {
+            throw new ReconciliationCreditMismatchError();
+          }
+          transactionId = tx.id;
+          // Crediting a player for a withdrawal whose vendor outcome is unknown settles it by
+          // hand. The held row must leave `processing` with it, or the next reconciliation
+          // run (or a late webhook) can still refund or complete it on top of the credit.
+          if (finding.kind === 'unknown_at_provider') {
+            heldWithdrawalId = finding.transactionId;
+          }
         }
-        const [tx] = await txn
-          .select()
-          .from(walletTransaction)
-          .where(eq(walletTransaction.id, resolution.transactionId));
-        if (!tx) {
-          throw new ReconciliationCreditTransactionNotFoundError(resolution.transactionId);
+      } else if (resolution.outcome === 'released') {
+        if (!finding.transactionId) {
+          throw new HeldDepositNotFoundError();
+        }
+        const deposit = await this.wallet.releaseHeldDeposit(txn, finding.transactionId, adminId);
+        releasedDeposit = { ...deposit, transactionId: finding.transactionId };
+      } else if (resolution.outcome === 'refunded') {
+        // The gross that reached custody leaves it again: the chain fee comes out of it, so a
+        // partial refund would leave the remainder on no balance and no finding.
+        if (finding.amount === null || !moneyEquals(resolution.amount, finding.amount)) {
+          throw new ReconciliationRefundAmountError(resolution.amount, finding.amount);
         }
         if (
-          tx.type !== 'manual_credit' ||
-          finding.currency === null ||
-          tx.currency.toUpperCase() !== finding.currency.toUpperCase() ||
-          finding.amount === null ||
-          !moneyEquals(tx.amount, finding.amount)
+          finding.sourceAddress !== null &&
+          !sameAddress(finding.sourceAddress, resolution.destinationAddress) &&
+          !resolution.note
         ) {
-          throw new ReconciliationCreditMismatchError();
+          throw new ReconciliationOutcomeNotAllowedError(
+            finding.kind,
+            'refunded to an address other than its sender without a note',
+          );
         }
-        transactionId = tx.id;
-        creditTx = tx;
-        // Crediting a player for a withdrawal whose vendor outcome is unknown settles it by
-        // hand. The held row must leave `processing` with it, or the next reconciliation run
-        // (or a late webhook) can still refund or complete it on top of the manual credit.
-        if (finding.kind === 'unknown_at_provider') {
-          heldWithdrawalId = finding.transactionId;
+        await this.recordRefund(txn, finding);
+        resolutionNote = [
+          `refunded ${resolution.amount} ${finding.currency ?? ''} on chain in ${resolution.txHash} to ${resolution.destinationAddress}`,
+          resolution.note,
+        ]
+          .filter(Boolean)
+          .join(': ');
+        if (finding.kind === 'held_deposit') {
+          refundedDepositId = await this.markHeldDepositRefunded(
+            txn,
+            finding.transactionId,
+            adminId,
+          );
+        } else if (finding.kind === 'missing_deposit') {
+          refundedDepositId = await this.recordMissingDepositRefunded(txn, finding, adminId);
         }
       } else {
         resolutionNote = resolution.note;
       }
 
-      const updated = await txn
+      const [row] = await txn
         .update(walletReconciliationFinding)
         .set({
           status: 'resolved',
@@ -259,29 +404,12 @@ export class ReconciliationService {
           resolutionNote,
           ...(transactionId ? { transactionId } : {}),
         })
-        .where(
-          and(
-            eq(walletReconciliationFinding.id, id),
-            eq(walletReconciliationFinding.status, 'open'),
-          ),
-        )
+        .where(eq(walletReconciliationFinding.id, id))
         .returning();
-
-      if (updated.length === 0) {
-        const [existing] = await txn
-          .select()
-          .from(walletReconciliationFinding)
-          .where(eq(walletReconciliationFinding.id, id));
-        // Already resolved by a concurrent/earlier call: return it unchanged, no audit entry.
-        return {
-          dto: toFindingDto(
-            findOneOrThrow(existing ? [existing] : [], new ReconciliationFindingNotFoundError(id)),
-          ),
-          creditedBy: undefined,
-        };
+      if (!row) {
+        throw new ReconciliationFindingNotFoundError(id);
       }
 
-      const row = findOneOrThrow(updated, new ReconciliationFindingNotFoundError(id));
       if (heldWithdrawalId) {
         await txn
           .update(walletTransaction)
@@ -300,32 +428,248 @@ export class ReconciliationService {
         action: 'wallet.reconciliation_finding.resolved',
         resourceType: 'wallet_reconciliation_finding',
         resourceId: row.id,
-        before: { status: 'open' },
+        before: { status: 'open', transactionId: finding.transactionId },
         after: {
           status: row.status,
           outcome: resolution.outcome,
           transactionId: row.transactionId,
           resolutionNote: row.resolutionNote,
           closedWithdrawalId: heldWithdrawalId,
+          releasedDepositId: releasedDeposit?.transactionId ?? null,
+          creditedDeposit: creditedDeposit ?? null,
+          refundedDepositId,
+          ...(resolution.outcome === 'refunded'
+            ? {
+                refundAmount: resolution.amount,
+                refundCurrency: finding.currency,
+                refundTxHash: resolution.txHash,
+                refundDestinationAddress: resolution.destinationAddress,
+                // null when the vendor never reported who sent the deposit.
+                refundDestinationDiffersFromSource:
+                  finding.sourceAddress === null
+                    ? null
+                    : !sameAddress(finding.sourceAddress, resolution.destinationAddress),
+              }
+            : {}),
         },
         ...meta,
       });
-      return { dto: toFindingDto(row), creditedBy: creditTx ? { row, tx: creditTx } : undefined };
+      return {
+        dto: toFindingDto(row),
+        credited: creditedDeposit
+          ? { finding: row, deposit: creditedDeposit }
+          : releasedDeposit
+            ? { finding: undefined, deposit: releasedDeposit }
+            : undefined,
+      };
     });
 
-    if (creditedBy) {
-      await this.recordRgBreachForHandCredit(creditedBy.row, creditedBy.tx);
+    if (credited) {
+      await this.wallet.announceDepositCompleted(credited.deposit);
+      if (credited.finding) {
+        await this.recordRgBreachForHandCredit(credited.finding, credited.deposit);
+      }
     }
     return dto;
   }
 
   /**
-   * The hand-credit counterpart of the gate `WalletService.creditDepositByAddress` runs.
-   * An admin resolving a deposit finding as `credited` puts on-chain money in the player's
-   * wallet through a `manual_credit`, which no deposit window counts and no limit refuses,
-   * so without this the poll-then-credit route is the one way past a deposit limit that
-   * leaves no trace. The credit IS the attempted move here, the opposite of the webhook
-   * path's `0`, because the gate does not count a `manual_credit` row at all.
+   * Who an on-chain deposit finding belongs to and how much of it the player is still owed.
+   * A finding whose deposit no ledger row carries yet is owed in full and is keyed on the
+   * vendor id, so a webhook redelivery replays it. One whose ledger row exists is owed only
+   * the shortfall of an underpaid amount; any other (a currency mismatch, an overpayment, a
+   * deposit still held) is not a credit at all.
+   */
+  private async creditDepositFinding(
+    txn: DrizzleTx,
+    finding: WalletReconciliationFindingRow,
+    adminId: User['id'],
+    attributedUserId: User['id'] | undefined,
+  ): Promise<CreditedDeposit> {
+    if (finding.currency === null || finding.amount === null) {
+      throw new ReconciliationCreditMismatchError();
+    }
+    if (
+      finding.externalId &&
+      (await isRefundedDeposit(txn, finding.providerName, finding.externalId))
+    ) {
+      throw new DepositAlreadyRefundedError();
+    }
+    let owner: User['id'] | undefined;
+    let amount = finding.amount;
+    let providerRefId = finding.externalId;
+    if (finding.transactionId) {
+      const [ledger] = await txn
+        .select({
+          type: walletTransaction.type,
+          status: walletTransaction.status,
+          amount: walletTransaction.amount,
+          currency: walletTransaction.currency,
+          userId: wallet.userId,
+        })
+        .from(walletTransaction)
+        .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+        .where(eq(walletTransaction.id, finding.transactionId));
+      if (
+        finding.kind !== 'amount_mismatch' ||
+        ledger?.type !== 'deposit' ||
+        ledger.status !== 'completed' ||
+        ledger.currency.toUpperCase() !== finding.currency.toUpperCase()
+      ) {
+        throw new ReconciliationOutcomeNotAllowedError(
+          finding.kind,
+          'credited while its ledger deposit is not a completed one in the same currency',
+        );
+      }
+      amount = moneySubtract(finding.amount, ledger.amount);
+      if (moneyCompare(amount, '0') <= 0) {
+        throw new ReconciliationCreditMismatchError();
+      }
+      owner = ledger.userId;
+      providerRefId = null;
+    } else if (finding.address) {
+      owner = await this.wallet.depositAddressOwner({
+        address: finding.address,
+        network: finding.network ?? undefined,
+        tag: finding.tag ?? undefined,
+      });
+    }
+    if (attributedUserId && owner && attributedUserId !== owner) {
+      throw new ReconciliationAttributionError('the deposit belongs to another player');
+    }
+    const userId = owner ?? attributedUserId;
+    if (!userId) {
+      throw new ReconciliationAttributionError('name the player it belongs to');
+    }
+    return this.wallet.creditDepositByHand(txn, {
+      userId,
+      adminId,
+      amount,
+      currency: finding.currency,
+      network: finding.network,
+      providerName: finding.providerName,
+      providerRefId,
+      address: finding.address,
+      tag: finding.tag,
+      txHash: finding.txHash,
+    });
+  }
+
+  /**
+   * Marks the vendor deposit refunded, durably and whatever the finding kind, so no later
+   * finding about the same vendor transaction can be refunded or credited again. A deposit
+   * already on the ledger was credited (a held one is the exception: its row is the hold), so
+   * refunding it would pay the same money twice.
+   */
+  private async recordRefund(
+    txn: DrizzleTx,
+    finding: WalletReconciliationFindingRow,
+  ): Promise<void> {
+    if (!finding.externalId) {
+      throw new ReconciliationOutcomeNotAllowedError(
+        finding.kind,
+        'refunded without a vendor transaction id',
+      );
+    }
+    if (finding.kind !== 'held_deposit') {
+      const [onLedger] = await txn
+        .select({ id: walletTransaction.id })
+        .from(walletTransaction)
+        .where(
+          and(
+            eq(walletTransaction.providerName, finding.providerName),
+            eq(walletTransaction.providerRefId, finding.externalId),
+            eq(walletTransaction.type, 'deposit'),
+          ),
+        );
+      if (onLedger) {
+        throw new DepositAlreadyOnLedgerError();
+      }
+    }
+    const [marked] = await txn
+      .insert(walletRefundedDeposit)
+      .values({
+        providerName: finding.providerName,
+        externalId: finding.externalId,
+        findingId: finding.id,
+      })
+      .onConflictDoNothing()
+      .returning({ id: walletRefundedDeposit.id });
+    if (!marked) {
+      throw new DepositAlreadyRefundedError();
+    }
+  }
+
+  /**
+   * A missing deposit refunded on chain becomes a terminal `refunded` deposit row keyed on
+   * the vendor id, or the vendor redelivering it would still credit the player. A deposit to
+   * an address no player owns has no wallet to key it on, and a redelivery of it is filed
+   * as unattributed, never credited, so it records nothing.
+   */
+  private async recordMissingDepositRefunded(
+    txn: DrizzleTx,
+    finding: WalletReconciliationFindingRow,
+    adminId: User['id'],
+  ): Promise<WalletTransaction['id'] | null> {
+    if (
+      !finding.address ||
+      !finding.externalId ||
+      finding.currency === null ||
+      finding.amount === null
+    ) {
+      return null;
+    }
+    const userId = await this.wallet.depositAddressOwner({
+      address: finding.address,
+      network: finding.network ?? undefined,
+      tag: finding.tag ?? undefined,
+    });
+    if (!userId) {
+      return null;
+    }
+    return this.wallet.recordRefundedDeposit(txn, {
+      userId,
+      adminId,
+      amount: finding.amount,
+      currency: finding.currency,
+      network: finding.network,
+      providerName: finding.providerName,
+      providerRefId: finding.externalId,
+      address: finding.address,
+      tag: finding.tag,
+      txHash: finding.txHash,
+    });
+  }
+
+  private async markHeldDepositRefunded(
+    txn: DrizzleTx,
+    depositId: WalletTransaction['id'] | null,
+    adminId: User['id'],
+  ): Promise<WalletTransaction['id']> {
+    const [refunded] = depositId
+      ? await txn
+          .update(walletTransaction)
+          .set({ status: 'refunded', reviewedBy: adminId, reviewedAt: sql`now()` })
+          .where(
+            and(
+              eq(walletTransaction.id, depositId),
+              eq(walletTransaction.type, 'deposit'),
+              eq(walletTransaction.status, 'on_hold'),
+            ),
+          )
+          .returning({ id: walletTransaction.id })
+      : [];
+    if (!refunded) {
+      throw new HeldDepositNotFoundError();
+    }
+    return refunded.id;
+  }
+
+  /**
+   * A report on top of the policy `creditDepositFinding` already asked: with no policy bound
+   * nothing refuses a deposit past the player's limit, so the breach becomes a finding, as
+   * on the webhook path. The credit is a committed `deposit` row the gate already reads out
+   * of the window, so the attempted move is `0`.
    *
    * Never blocks the resolution: the admin's credit has already committed, and failing
    * their request over a report would only lose the report - a retry finds the finding
@@ -334,20 +678,13 @@ export class ReconciliationService {
    */
   private async recordRgBreachForHandCredit(
     finding: WalletReconciliationFindingRow,
-    tx: WalletTransaction,
+    deposit: CreditedDeposit,
   ): Promise<void> {
     try {
-      const [holder] = await this.drizzle.db
-        .select({ userId: wallet.userId })
-        .from(wallet)
-        .where(eq(wallet.id, tx.walletId));
-      if (!holder) {
-        return;
-      }
       const decision = await rgDecisionForLandedCredit(
         this.drizzle.db,
         this.rgLimits,
-        { userId: holder.userId, attempted: tx.amount, currency: tx.currency },
+        { userId: deposit.userId, attempted: '0', currency: deposit.currency },
         { externalId: finding.externalId, txHash: finding.txHash },
       );
       if (!decision) {
@@ -359,9 +696,9 @@ export class ReconciliationService {
           runId: OUT_OF_CYCLE_RUN_ID,
           providerName: finding.providerName,
           kind: 'rg_limit_breach',
-          currency: tx.currency,
+          currency: deposit.currency,
           network: finding.network,
-          amount: tx.amount,
+          amount: deposit.amount,
           address: finding.address,
           tag: finding.tag,
           txHash: finding.txHash,
@@ -369,14 +706,14 @@ export class ReconciliationService {
           // a breach filed for the same deposit by the webhook path, and these two are
           // separate credits of separate money whenever both exist.
           externalId: finding.id,
-          transactionId: tx.id,
-          detail: `credited by hand past the player's ${decision.period} ${decision.limitType} limit of ${decision.limit} (${decision.used} in the window before this credit) - resolving finding ${finding.id}`,
+          transactionId: deposit.transactionId,
+          detail: `credited by hand past the player's ${decision.period} ${decision.limitType} limit of ${decision.limit} (${decision.used} in the window, this credit included) - resolving finding ${finding.id}`,
         },
         this.audit,
       );
     } catch (err) {
       logger.error(
-        { err, findingId: finding.id, transactionId: tx.id },
+        { err, findingId: finding.id, transactionId: deposit.transactionId },
         'RG breach finding for a hand-credited deposit could not be recorded',
       );
     }
@@ -617,6 +954,7 @@ export class ReconciliationService {
           address: event.address,
           tag: event.tag ?? null,
           txHash: event.txHash,
+          sourceAddress: event.sourceAddress ?? null,
           externalId: event.externalId,
           transactionId: tx?.id ?? null,
           detail:

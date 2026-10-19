@@ -296,6 +296,28 @@ export const notificationEventMap: NotificationMapEntry[] = [
     },
   ),
 
+  mapEvent(
+    'wallet.deposit.held',
+    (p) => ({
+      userId: p.userId,
+      type: 'deposit.held',
+      title: 'Deposit on hold',
+      body: `Your deposit of ${formatMoneyAmount(p.amount)} ${p.currency} is on hold and has not been added to your balance. Our support team will review it.`,
+      data: { transactionId: p.transactionId },
+    }),
+    {
+      email: (p, occurredAt) => ({
+        key: 'depositHeld',
+        data: {
+          amount: p.amount,
+          currency: p.currency,
+          transactionId: p.transactionId,
+          occurredAt,
+        },
+      }),
+    },
+  ),
+
   mapEvent('wallet.manual_adjustment.created', (p) => ({
     userId: p.userId,
     type: 'balance.adjusted',

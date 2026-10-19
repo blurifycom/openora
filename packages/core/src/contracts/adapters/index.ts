@@ -332,6 +332,13 @@ export type { PlayerTags } from './player-tags.js';
 export { PLAYER_TAGS } from './player-tags.js';
 
 export type {
+  PlayerSegmentPage,
+  PlayerSegmentQuery,
+  PlayerSegmentReader,
+} from './player-segment-reader.js';
+export { MAX_PLAYER_SEGMENT_PAGE, PLAYER_SEGMENT_READER } from './player-segment-reader.js';
+
+export type {
   AdminUserRow,
   AdminUserListOptions,
   AdminUserDirectory,
@@ -394,6 +401,8 @@ export type { PlayEligibilityPort } from './play-eligibility.js';
 export { PLAY_ELIGIBILITY } from './play-eligibility.js';
 export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
 export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
+export type { DepositHoldPolicy } from './deposit-hold.js';
+export { DEPOSIT_HOLD_POLICY } from './deposit-hold.js';
 
 export type {
   ChatSystemMessage,
@@ -408,6 +417,11 @@ export type { ChatRoomAccess } from './chat-room-access.js';
 export { CHAT_ROOM_ACCESS } from './chat-room-access.js';
 export type { ChatContextRooms, ChatContextRoomWrite } from './chat-context-rooms.js';
 export { CHAT_CONTEXT_ROOMS } from './chat-context-rooms.js';
+export type { ChatContextSendPolicy } from './chat-context-send-policy.js';
+export {
+  CHAT_CONTEXT_SEND_POLICY,
+  ChatContextSendDeniedError,
+} from './chat-context-send-policy.js';
 
 export type { PlayerActivityTracker } from './player-activity.js';
 export { PLAYER_ACTIVITY_TRACKER } from './player-activity.js';
@@ -439,6 +453,7 @@ export type {
   McpToolDescriptor,
   ActionTypeDescriptor,
   TriggerDescriptor,
+  TriggerSubjectField,
   McpInputIssue,
   McpFailure,
   McpToolResult,
@@ -469,6 +484,7 @@ export {
   ACTION_EXECUTION_OUTCOMES,
   ActionExecutionOutcomeSchema,
   defineActionType,
+  TRIGGER_SUBJECT_OVERRIDES,
   triggerCatalog,
   MCP_KERNEL,
 } from './mcp.js';

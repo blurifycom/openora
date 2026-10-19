@@ -9,6 +9,7 @@ import type { AdminUserDirectory, AuditWritePort } from '@openora/core/contracts
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import {
   NO_CLIENT_META,
+  makeChatContextSendPolicy,
   makeEventBus,
   makeIdentityReader,
   makeRealtimeTransport,
@@ -52,6 +53,7 @@ function makeService() {
     moderation,
     identityReader: makeIdentityReader(),
     allowedAttachmentHosts: [],
+    contextSendPolicy: makeChatContextSendPolicy(),
   });
 }
 
