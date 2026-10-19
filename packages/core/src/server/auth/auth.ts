@@ -30,14 +30,14 @@ export type DispatchOtpMail = (args: {
 // implementation and fans the code out over whichever delivery port the operator has
 // bound, so core never names a delivery vendor. Omitted = the code is generated but
 // never delivered (eg tests).
-export type SendTwoFactorOtp = (args: {
+type SendTwoFactorOtp = (args: {
   userId: string;
   email: string;
   phoneNumber: string | null;
   code: string;
 }) => Promise<void> | void;
 
-export type TwoFactorOptions = {
+type TwoFactorOptions = {
   /** Seconds a device stays trusted after a successful second factor. */
   trustDeviceMaxAgeSec?: number;
   /** Minutes a delivered OTP stays valid. */

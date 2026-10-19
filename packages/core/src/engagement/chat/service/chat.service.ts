@@ -92,7 +92,6 @@ export {
   ChatRoomOwnerCannotLeaveError,
   ChatRoomJoinCodeNotFoundError,
   ChatRoomBannedError,
-  ChatPlayerBannedError,
 } from './errors/chat-moderation.errors.js';
 import {
   ChatRoomNotMemberError,
@@ -250,7 +249,7 @@ export const ChatRoomRuleNotFoundError = createDomainError(
   'ChatRoomRuleNotFoundError',
   (id: string) => `Chat room rule not found: ${id}`,
 );
-export const ChatRoomConfigurationNotFoundError = createDomainError(
+const ChatRoomConfigurationNotFoundError = createDomainError(
   'ChatRoomConfigurationNotFoundError',
   (id: string) => `Chat room configuration not found: ${id}`,
 );

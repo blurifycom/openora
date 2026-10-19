@@ -420,6 +420,13 @@ function jsonFieldRejection(
   if (node.const !== undefined || node.enum !== undefined) {
     return null;
   }
+  // zod emits a plain `.nullable()` as `type: [T, 'null']` rather than an anyOf.
+  if (Array.isArray(node.type)) {
+    return firstRejection(
+      node.type.filter((type) => type !== 'null'),
+      (type) => jsonFieldRejection({ ...node, type }, label, path),
+    );
+  }
   switch (node.type) {
     case 'string':
     case 'number':

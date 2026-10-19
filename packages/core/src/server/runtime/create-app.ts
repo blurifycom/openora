@@ -203,7 +203,7 @@ function requestMeta(c: Context, trustedProxies: TrustedProxies) {
 
 const MCP_MAX_BODY_BYTES = 1_048_576;
 const MCP_SDK_PACKAGE = '@modelcontextprotocol/sdk';
-const MCP_SDK_VERSION = '1.29.0';
+const MCP_SDK_VERSION = '^1.29.0';
 
 type MountedMcpTransport = { path: string; transport: McpHttpTransport };
 

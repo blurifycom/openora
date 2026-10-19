@@ -24,7 +24,7 @@ import type {
 } from '../contract/index.js';
 import { ChatCommandTypeSchema } from '../contract/index.js';
 import { chatCommandConfig } from '../schema/index.js';
-export const CommandDisabledError = makeNotFoundError('ChatCommand');
+const CommandDisabledError = makeNotFoundError('ChatCommand');
 
 function toDescriptor(row: typeof chatCommandConfig.$inferSelect): ChatCommandDescriptor {
   return {

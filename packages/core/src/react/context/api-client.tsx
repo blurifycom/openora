@@ -2,8 +2,8 @@
 
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 
-export type QueryValue = string | number | boolean | undefined | null;
-export type QueryParams = Record<string, QueryValue>;
+type QueryValue = string | number | boolean | undefined | null;
+type QueryParams = Record<string, QueryValue>;
 
 export type OssApiClient = {
   baseUrl: string;
@@ -13,7 +13,7 @@ export type OssApiClient = {
   delete: <T = unknown>(path: string) => Promise<T>;
 };
 
-export type OssApiClientConfig = {
+type OssApiClientConfig = {
   baseUrl: string;
 };
 

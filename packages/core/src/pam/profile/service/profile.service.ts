@@ -31,7 +31,7 @@ import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
 import { assertUsernameAllowed } from '../../shared/username.js';
 import { phoneMatchesCountryCallingCode } from './phone-country.js';
 
-export const ProfileUserNotFoundError = makeNotFoundError('User');
+const ProfileUserNotFoundError = makeNotFoundError('User');
 
 export const UnsupportedDisplayCurrencyError = createDomainError<[currency: string]>(
   'UnsupportedDisplayCurrencyError',
