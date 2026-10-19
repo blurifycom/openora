@@ -31,7 +31,7 @@ const text = `${ti.description ?? ''}\n${ti.prompt ?? ''}`.toLowerCase();
 // High-signal phrase -> the roster agent that owns that work. Keep each pattern
 // SPECIFIC; err toward missing a case over false-blocking a generic task.
 const ROUTES = [
-  { agent: 'qa', re: /\b(playwright|e2e test|end-to-end test|e2e coverage)\b/ },
+  { agent: 'tester', re: /\b(playwright|e2e test|end-to-end test|e2e coverage)\b/ },
   {
     agent: 'security-reviewer',
     re: /\bsecurity (review|audit)\b|\baudit\b[^.]*\bvulnerabilit|\b(authz|owasp)\b/,

@@ -8,7 +8,16 @@
 // rules and skills - and the `consumerOwned` overrides in .rulesync/sync.json - are tracked.
 //
 // To change a synced file, edit openora's tools/templates/consumer and take the next bump.
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmdirSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join, relative, sep } from 'node:path';
@@ -151,6 +160,35 @@ const start = current.indexOf(BEGIN);
 const end = start === -1 ? -1 : current.indexOf(END, start + BEGIN.length);
 if (start !== -1 && end === -1) {
   die(`${gitignore} has a ${BEGIN} marker with no matching ${END} - repair or delete the block.`);
+}
+// A file the template dropped or renamed is still on disk from the last render, untracked and
+// no longer ignored. The old block lists what was rendered then: delete what fell out of it.
+const stale =
+  start === -1
+    ? []
+    : current
+        .slice(start + BEGIN.length, end)
+        .split('\n')
+        .filter((line) => line.startsWith('/'))
+        .map((line) => line.slice(1))
+        .filter(
+          (path) => SYNCED_ROOTS.some((root) => path.startsWith(root)) && !path.includes('..'),
+        )
+        .filter((path) => !ignored.some((file) => file.path === path));
+// Never one this repo has since started tracking. (No paths: ls-files would list them all.)
+const staleTracked = new Set(stale.length > 0 ? gitTracked(stale) : []);
+for (const path of stale.filter((path) => !staleTracked.has(path))) {
+  const target = join(ROOT, path);
+  if (existsSync(target)) {
+    unlinkSync(target);
+    for (
+      let dir = dirname(target);
+      dir !== ROOT && readdirSync(dir).length === 0;
+      dir = dirname(dir)
+    ) {
+      rmdirSync(dir);
+    }
+  }
 }
 const updated =
   start === -1

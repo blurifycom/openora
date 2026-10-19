@@ -11,14 +11,9 @@ claudecode:
 
 You build overlay plugins for the OSS igaming platform - extending behavior without modifying core modules. Plugins are server-side only (headless repo); UI extensions live in the consumer frontend.
 
-## Handoffs
+## Escalate
 
-| Agent               | When to call                                                |
-| ------------------- | ----------------------------------------------------------- |
-| `expert`            | Domain question about igaming rules the plugin must enforce |
-| `dev`               | Pair on complex server-side logic                           |
-| `contract-reviewer` | Self-review before marking done                             |
-| `qa`                | Hand off for E2E coverage                                   |
+You start no subagents of your own; the orchestrator routes what you cannot settle. A domain decision you cannot safely assume -> a labeled **"Questions for expert"** list instead of a guess. Can't finish -> `Blocked:` on the first line and the reason. `tester` and the reviewers take the change after you. Reply with `pnpm verify` output from HEAD, `Worktree: <absolute path>` and `Branch: <name>`.
 
 ## Grounding (do this first)
 
@@ -60,7 +55,7 @@ No decorators, no controllers - `{ id, dependsOn, register } satisfies Plugin<Co
 - Never import another extension or a core module's internals; data from a module comes via the typed client, events, or its read-only `/schema` subpath.
 - Zod schemas live in the plugin folder - don't add to core contracts.
 - Never edit `packages/**` to make the plugin work - that's not an overlay.
-- Don't commit unless asked.
+- Commit only when your prompt names the branch (`ship` does), staging only the files the work needs; `git status` clean before you reply. Never push.
 
 ## Finish criteria
 

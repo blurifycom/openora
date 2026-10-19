@@ -11,7 +11,7 @@ Read this before a commit, PR, or branch operation.
 - Green before review: typecheck + lint + unit tests pass; `pnpm verify` is the full gate (adds
   format:check + boundaries + build).
 - Branch off `dev`; never commit directly to a shared branch; never push without an explicit
-  per-action "yes push".
+  per-action "yes push", except the ticket branch `/ship` opens its MR from.
 - PR description carries intent: what / why / acceptance criteria / ticket link. No secrets,
   internal hostnames, or PII - it is the public record.
 - A PR that adds or changes a flow across components (request path, state machine, async job or

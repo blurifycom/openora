@@ -53,9 +53,10 @@ a DI token wins).
 
 `.claude/agents/` ships agents scoped to this repo, generated from `.rulesync/subagents/`:
 
+- `planner` - plan a ticket: the blocking questions, or a plan with risk-driven test cases
 - `builder` - configure extensions, swap adapters, write overlays, customize UI
 - `expert` - turn product asks into requirements + acceptance criteria
-- `qa` - verify a change by hand, capture screenshot evidence, propose the tests, triage bugs
+- `tester` - attack a built change against the running stack, return a verdict table with screenshots, add the tests, triage bugs
 - `debugger`, `deployer`, `quality-reviewer`, `security-reviewer`, `compliance-reviewer` - root-cause, packaging, review
 
 The `oss` MCP server (`.mcp.json`) gives them read-only inspection of the platform surface.

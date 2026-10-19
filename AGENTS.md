@@ -79,7 +79,7 @@ Report defects a reader can act on: a concrete input or state and the wrong resu
 
 ## The roster
 
-Delegate to the matching named agent; do not use a generic agent for a roster task. `expert` (fuzzy ask -> requirements and acceptance criteria), `dev` (implement a spec), `module-author` (a whole new module), `plugin-author` (an overlay), `qa` (automated tests plus a hands-on walkthrough), `docs` (prose audited against the code), `cleaner` (delete the surplus a branch added, before the PR), `operator` (consume the platform as a downstream operator would), and the reviewers `contract-reviewer`, `quality-reviewer`, `security-reviewer`.
+Delegate to the matching named agent; do not use a generic agent for a roster task. `planner` (a ticket or ask -> plan and test cases), `expert` (fuzzy ask -> requirements and acceptance criteria), `builder` (implement a plan), `module-author` (a whole new module), `plugin-author` (an overlay), `tester` (a hands-on walkthrough, attacks and a verdict table, plus the API tests it exercised), `docs` (prose audited against the code), `cleaner` (delete the surplus a branch added, before the PR), `operator` (consume the platform as a downstream operator would), and the reviewers `contract-reviewer`, `quality-reviewer`, `security-reviewer`.
 
 # Engineering conventions
 
