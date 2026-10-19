@@ -764,6 +764,7 @@ describe('notificationEventMap', () => {
         weeklyBonus: '5',
         monthlyBonus: '20',
       },
+      'promo.streak.milestone.reached': { userId: id(), day: 7, grantId: null },
       'chat.user.mentioned': {
         mentionedUserId: id(),
         byUserId: id(),
