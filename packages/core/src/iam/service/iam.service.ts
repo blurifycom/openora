@@ -28,6 +28,7 @@ import type {
   CacheAdapter,
   SessionCommands,
   User,
+  UserCommands,
   ClientMeta,
   SortOrder,
   PageQuery,
@@ -227,6 +228,7 @@ export type IamServiceDeps = {
   identityReader: IdentityReader;
   mcpTokens: McpTokenService;
   sessionCommands?: SessionCommands | undefined;
+  userCommands: UserCommands;
   rateLimiter?: RateLimiterAdapter<RateLimitKey> | undefined;
 };
 
@@ -237,6 +239,7 @@ export class IamService {
   private readonly identityReader: IdentityReader;
   private readonly mcpTokens: McpTokenService;
   private readonly sessionCommands: SessionCommands | undefined;
+  private readonly userCommands: UserCommands;
   private readonly rateLimiter: RateLimiterAdapter<RateLimitKey> | undefined;
 
   constructor({
@@ -246,6 +249,7 @@ export class IamService {
     identityReader,
     mcpTokens,
     sessionCommands,
+    userCommands,
     rateLimiter,
   }: IamServiceDeps) {
     this.drizzle = drizzle;
@@ -254,6 +258,7 @@ export class IamService {
     this.identityReader = identityReader;
     this.mcpTokens = mcpTokens;
     this.sessionCommands = sessionCommands;
+    this.userCommands = userCommands;
     this.rateLimiter = rateLimiter;
   }
 
@@ -829,34 +834,48 @@ export class IamService {
     return toInvitationDto(row);
   }
 
+  /**
+   * Redeems a pending invitation: creates the invitee's back-office account with the password
+   * they chose and assigns the invited role, all in one transaction. A spent, expired or unknown
+   * token throws `InvitationConflictError`; an email that already has an account rolls back
+   * with a `CONFLICT` whose `data.reason` is `email_taken`.
+   */
   async acceptInvitation(
-    token: string,
+    input: { token: string; name: string; password: string },
     meta?: ClientMeta,
   ): Promise<{ success: true; email: string }> {
     // Atomic conditional UPDATE: the DB evaluates pending + not-expired under row lock,
     // so two concurrent accepts cannot both succeed. Public path - tenant is derived
     // from the row, not the request, so no tenant predicate is needed.
     const now = new Date();
-    const row = findOneOrThrow(
-      await this.drizzle.db
-        .update(adminInvitation)
-        .set({ status: 'accepted', acceptedAt: now })
-        .where(
-          and(
-            eq(adminInvitation.token, token),
-            eq(adminInvitation.status, 'pending'),
-            gt(adminInvitation.expiresAt, now),
-          ),
-        )
-        .returning(),
-      new InvitationConflictError(),
-    );
+    const { row, userId } = await this.drizzle.db.transaction(async (tx) => {
+      const row = findOneOrThrow(
+        await tx
+          .update(adminInvitation)
+          .set({ status: 'accepted', acceptedAt: now })
+          .where(
+            and(
+              eq(adminInvitation.token, input.token),
+              eq(adminInvitation.status, 'pending'),
+              gt(adminInvitation.expiresAt, now),
+            ),
+          )
+          .returning(),
+        new InvitationConflictError(),
+      );
+      const { id: userId } = await this.userCommands.createAdmin(
+        { email: row.email, name: input.name, password: input.password },
+        tx,
+      );
+      await tx.insert(adminRoleAssignment).values({ userId, roleId: row.roleId });
+      return { row, userId };
+    });
 
-    // Emit only on actual transition - a replayed accept must never double-provision.
     this.events.emit('iam.invitation.accepted', {
       email: row.email,
       roleId: row.roleId,
       invitationId: row.id,
+      userId,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });

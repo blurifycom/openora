@@ -50,6 +50,14 @@ export const SESSION_COMMANDS: Token<SessionCommands> =
 export type UserCommands = {
   /** Throws if the handle is taken; comparison is case-insensitive. `tx` joins the caller's transaction. */
   setUsername(userId: string, username: string, tx?: unknown): Promise<{ success: boolean }>;
+  /**
+   * Creates a back-office user that signs in with this email and password. Throws `CONFLICT`
+   * with `data.reason: 'email_taken'` if any account holds the email. `tx` joins the caller's transaction.
+   */
+  createAdmin(
+    input: { email: string; name: string; password: string },
+    tx?: unknown,
+  ): Promise<{ id: string }>;
 };
 
 export const USER_COMMANDS: Token<UserCommands> = createToken<UserCommands>('USER_COMMANDS');

@@ -1228,13 +1228,13 @@ export const domainEventSchemas = {
   'cms.banner.schedule.created': cmsBannerScheduleEventBase,
   'cms.banner.schedule.updated': cmsBannerScheduleUpdatedEvent,
 
-  // Emitted when an admin invitation token is accepted. The consumer (identity
-  // module or an overlay) provisions the user account and completes the role
-  // assignment by resolving the userId from the email.
+  // Emitted after an admin invitation is redeemed: the invitee's account (`userId`)
+  // exists and already holds `roleId`.
   'iam.invitation.accepted': authContextBase.extend({
     email: z.email(),
     roleId: UuidSchema,
     invitationId: UuidSchema,
+    userId: UuidSchema,
   }),
 
   // Backoffice RBAC mutations. The envelope does NOT carry the
