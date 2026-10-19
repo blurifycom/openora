@@ -28,8 +28,10 @@ The orchestrator: one ticket key in, a green MR in Code Review out. You own the 
 ## What ship may write without asking
 
 - Jira, on this ticket only: the Plan comment (and its test cases where the repo's `test-plan` skill keeps them), a questions comment, a blocker comment, the MR link comment, and the transitions to In Progress and to Code Review. Nothing else: no field edits, no other transitions, no other tickets.
-- Git: commits on the ticket branch `<type>/{{trackerKey}}-XXX/<slug>` and pushing it. Never a push to `{{mrTarget}}`, `stage`, `prod` or any shared branch, never a force-push.
-- The forge: opening the MR for that branch and replying on its review threads.
+- Git: commits on the ticket branch `<type>/{{trackerKey}}-XXX/<slug>` and pushing it. Never a push to `{{mrTarget}}`, `stage`, `prod` or any shared branch.
+- Force-push: only `git push --force-with-lease` on the ticket branch, and only while every commit on the remote branch past `{{mrTarget}}` is your own (`git log --format=%ae origin/{{mrTarget}}..origin/<branch>` shows only your `git config user.email`). Someone else's commit there: merge, never push over it. Never a plain `--force`.
+- Merging: into a feature branch only (`{{mrTarget}}` merged into the ticket branch to clear conflicts, a stacked MR into its parent ticket branch). Never into `{{mrTarget}}`, `dev`, `develop`, `stage`, `staging`, `prod`, `production`, `main` or `master`.
+- The forge: opening the MR for that branch and replying on its review threads. Every comment you leave starts with `Agent:`, so `watch-pr.mjs` and other tools never take it for one to answer.
 - Slack: a one-line draft only, never sent.
 
 ## Do what the work needs, inside the worktree
@@ -41,13 +43,21 @@ Never stop to ask for something local that deleting the worktree undoes: do it, 
 - Data: the worktree's own database and Redis db - create, migrate, seed and reset them freely. Migrations come from the repo's generator, generated files from its regen command.
 - Processes and tools: start what the tests need on the worktree's own ports and stop it before you report; install a local tool the repo's docs name (browsers for Playwright and the like).
 
+## Access outside the repo
+
+The plan's Access list names every account or session outside the repo the work needs (a cloud CLI profile, a provider's dashboard, a sandbox API), each with what it is for, a read-only check that proves the session works and the login a person runs. Before 2, every run runs each check:
+
+- One fails -> `Asked:` on its own line, then each missing login as the command a person runs (`! aws sso login --profile <p>`) or the page to log in to in the browser. Report it, stop; no ticket comment. `/ship {{trackerKey}}-XXX` again picks up from here.
+- All pass -> what the Access list names is approved for what it names, without asking: open it, create and configure what the plan needs there, put a dev key it issues in the worktree's `.env`.
+- Every change outside the repo goes in the reply and the MR description under "Outside the repo", one line each: where, what, how to undo it. A change to something that already existed records its old value.
+
 ## Never, however blocked
 
-Anything shared, remote, or not undone by deleting the worktree:
+Anything shared, remote, or not undone by deleting the worktree, unless the Access list names it:
 
-- Servers, stage and prod, ssh, cloud consoles, deploys, and any database that is not the worktree's own.
-- CI/CD settings and variables, repo settings, other people's branches and MRs, merging.
-- A database, Redis db, process or worktree this run did not create: no drop, flush, kill or delete.
+- Servers, ssh, cloud accounts, dashboards, deploys, stage and prod, and any database that is not the worktree's own.
+- CI/CD settings and variables, repo settings, other people's branches and MRs.
+- Anything this run did not create, in the repo or outside it: no drop, flush, kill or delete.
 - Secrets: never commit, print or invent a real-looking one; a `.env` with real values stays uncommitted.
 - Gates: no `--no-verify`, no skipped or loosened test, lint rule or guard hook, no hand edit to a generated file or `node_modules`.
 
@@ -64,8 +74,7 @@ Every run starts here, so a run that died midway resumes where it stopped. Read 
 | Branch, no MR                               | 3. Test, then 4. Review, then 5. Open the MR |
 | MR open, CI red or conflicts                | 6. `fix-pipeline` skill                     |
 | MR open, review threads with no reply       | 6. `fix-review-comments` skill              |
-| MR open, CI still running                   | 7. Ready for review                         |
-| MR open, green, nothing unanswered          | Report "Ready for review:" and the MR URL   |
+| MR open, CI running, or green and answered  | 7. Ready for review                         |
 | MR merged or closed                         | Report it, do nothing                       |
 
 A comment added to the ticket after the Plan comment that changes scope sends you back to 1.
@@ -113,15 +122,22 @@ Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-
 - Each thread is checked against the code on this branch first: correct | already handled | wrong on this branch | out of scope. Only a correct one changes code; the rest get an answer.
 - A red job is reproduced locally first; `builder` fixes its cause. Never skip or loosen a test.
 - Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Nothing is pushed untested.
-- Push the ticket branch without asking; only a force-push still waits for a yes. Reply per thread with what changed and the test that proves it, or why nothing changed. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer.
+- Push the ticket branch without asking (a force-push only as above). Reply per thread, in the thread itself, with what changed and the test that proves it, or why nothing changed. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer.
 
 Then 7.
 
 ### 7. Ready for review
 
-Watch the MR's pipeline on its last commit until it finishes, with the forge's watch command (`docs/agents/forge.md`) run in the background, never a sleep loop. Red: 6, then watch again; still red after three fixes -> blocker comment, report, stop. Green: read the threads again, since bots and scanners comment once the pipeline ends, and run 6 for any new one.
+Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` as a background command, never a sleep loop in the session. It prints one line and exits when there is work:
 
-Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, and the description holds the AC table, the screenshots and the UNCHECKED rows. Report "Ready for review:" and the MR URL. A person's comments that come later bring the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
+- `failed` or `conflicts` -> 6, then watch again. Still red after three fixes -> blocker comment, report, stop.
+- `threads <ids>` (unanswered for two checks in a row, from a person or a bot) -> 6 for those, then watch again.
+- `green` -> check the MR is ready (below), report "Ready for review:" and the MR URL, then watch again without `--until-green`.
+- `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `error ...` -> report it, stop.
+
+Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, and the description holds the AC table, the screenshots and the UNCHECKED rows.
+
+Keep watching until the MR merges or closes, for as long as the session lives. A caller that says it watches the MR itself (a headless run) gets the report at `green`, and you stop there; it brings the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
 
 ## Rules
 

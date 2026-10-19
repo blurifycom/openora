@@ -33,5 +33,6 @@ Or the plan:
 - **Decisions** - each with its source (who, where, date), so nobody reopens them.
 - **Plan** - a `- [ ]` checklist: what changes where (package, contract, table, event), the implementer per slice (`module-author`, `plugin-author` or `builder`), the simplest approach that meets every case, what is left out.
 - **Test cases** - every AC first, then one per real risk beyond the input: code that calls what changes, boundaries, bad or empty data, permissions, double submit and concurrency, stored data, other routes returning the same value. Each with its priority (P1 blocks money, KYC, RG or play; P2 works with a workaround; P3 cosmetic), how it is checked (unit, API E2E, manual) and what the tester sees. 5-15 cases; more means the change needs splitting - say so.
+- **Access** - every account or session outside the repo the work needs (a cloud CLI profile, a provider's sandbox API, a third-party console), each with what it is for, a read-only check that proves the session works (`aws sts get-caller-identity --profile <p>`, a CLI's `auth status`) and the login a person runs. The narrowest one that does the job, a sandbox or dev account over prod. "None" when the repo and its local stack are enough.
 
 Plain words. This repo is public: no ticket content beyond the bare key, no internal links, hostnames, operator names or personal data.
