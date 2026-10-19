@@ -307,9 +307,6 @@ export type WithdrawalSortBy = z.infer<typeof WithdrawalSortBySchema>;
 export const WalletTransactionListQuerySchema = PageQuerySchema.extend({
   sortBy: WalletTransactionSortBySchema.optional(),
   sortOrder: SortOrderSchema.default('desc').optional(),
-  // With `sortBy=amount`: sort by the signed amount converted into this currency at the current
-  // rate, as a list shown in the player's display currency reads. A row with no rate sorts last.
-  // Without it, `amount` compares each row's own-currency figure.
   amountCurrency: WalletCurrencyInputSchema.optional(),
   types: z.array(WalletTransactionTypeSchema).max(WALLET_TRANSACTION_TYPES.length).optional(),
   statuses: z
