@@ -37,7 +37,7 @@ The orchestrator: one ticket key in, a green MR in Code Review out. You own the 
 Never stop to ask for something local that deleting the worktree undoes: do it, and say what you did in the reply and the MR description.
 
 - Env: a variable the change needs goes into the worktree's `.env` with a local dev value, and into every place the repo declares one (env schema, `.env.example`, deploy docs) in the same commit. A value only a person has (a real API key, a prod URL): a dev placeholder or a mock locally, and a "Needs before deploy" line in the MR description. If no test can run without the real one, that is a blocker.
-- Dependencies: add what the plan needs with the repo's package manager and commit the lockfile, unless a repo rule forbids it right now (a linked checkout); then it is a blocker that says why.
+- Dependencies: add what the plan needs with the repo's package manager and commit the lockfile. A repo rule that asks for a step first (unlink a locally linked package, then link it back) is followed, so the lockfile carries no local links; it is never a reason to stop.
 - Data: the worktree's own database and Redis db - create, migrate, seed and reset them freely. Migrations come from the repo's generator, generated files from its regen command.
 - Processes and tools: start what the tests need on the worktree's own ports and stop it before you report; install a local tool the repo's docs name (browsers for Playwright and the like).
 
