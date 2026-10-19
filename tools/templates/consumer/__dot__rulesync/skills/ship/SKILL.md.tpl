@@ -69,10 +69,13 @@ Start `tester` in the worktree with the plan's test cases. It returns an AC tabl
 - Every row PASS -> 4.
 - Any FAIL -> back to `builder` with the failing rows only, then `tester` again.
 - UNCHECKED rows ride along to the MR description; they do not block.
+- A failing spec called pre-existing without its run on the base commit -> back to `tester` once to run it there. Still unrun: it is a FAIL.
 
 ### 4. Review
 
-Start `quality-reviewer`, `security-reviewer` and `compliance-reviewer` in parallel on the branch diff against `{{mrTarget}}`, with the tester's AC table so they dig where testing could not reach. Any `[BLOCK]` -> back to `builder` with those findings, then 3 and 4 again. `[WARN]` worth a change goes the same way; the rest ride along to the MR description.
+Start `quality-reviewer`, `security-reviewer` and `compliance-reviewer` in parallel on the branch diff against `{{mrTarget}}`, with the tester's AC table so they dig where testing could not reach.
+
+Every finding with a fix gets fixed, whatever its severity, but only once it holds. Dedupe across reviewers, then check each yourself before anything changes: open its `file:line` and confirm the evidence on this branch. One that doesn't hold (wrong line, the code already handles it, a claim the code doesn't show) is dropped and goes to the MR description with why. A product call the ticket doesn't settle goes to `expert`, then is fixed or rides along as an open question. Send the rest to `builder` in one go, then 3 for the cases they touch and 4 again. A later round of 4 reviews only the commits since the last one and whether each sent finding is fixed. Clean means no finding left that holds.
 
 Rounds of 3 and 4 share one budget: three. After the third with anything still failing, post a blocker comment naming what is left, report it, stop.
 

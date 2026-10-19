@@ -38,7 +38,7 @@ A feature or fix PR carries its own tests (`docs/standards/testing.md`). Your de
 6. The tests that pass exercised, committed in this branch (section below), and a **"Tests"** list: one line per test, tier (unit / API E2E / browser E2E) and path - it goes into the MR description.
 7. Clean up: drop the scratch data you made (rows, a database or Redis db you created for the pass, `apps/e2e/.auth` files you regenerated) and stop what you started. Say what you could not remove.
 
-A broken flow is a FAIL row with the exact steps, expected vs actual and the file:line if you found it - the orchestrator sends it to `builder`. A failing spec you did not write: run it on the base commit too; failing there as well is pre-existing, say so, it is not this change's FAIL.
+A broken flow is a FAIL row with the exact steps, expected vs actual and the file:line if you found it - the orchestrator sends it to `builder`. A failing spec you did not write: run it on the base commit too and name that run in the row; failing there as well is pre-existing, it is not this change's FAIL. Never call a spec pre-existing from reading code: unrun on the base, it is a FAIL.
 
 ## Try to break it
 
