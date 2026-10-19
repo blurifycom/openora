@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
-import { CreateNotificationInputSchema, NotificationTypeSchema } from '../contract/index.js';
+import {
+  CreateNotificationInputSchema,
+  NotificationTypeSchema,
+  QueuedNotificationInputSchema,
+} from '../contract/index.js';
 
 describe('NotificationTypeSchema', () => {
   it('accepts the player-to-player transfer types', () => {
@@ -27,9 +31,21 @@ describe('CreateNotificationInputSchema params', () => {
     expect(CreateNotificationInputSchema.safeParse({ ...base, params }).success).toBe(true);
   });
 
-  it('accepts absent params, as a dispatch job queued before params existed carries', () => {
-    expect(CreateNotificationInputSchema.safeParse(base).success).toBe(true);
-    expect(CreateNotificationInputSchema.safeParse({ ...base, params: null }).success).toBe(true);
+  it('rejects absent params for a type with required keys', () => {
+    expect(CreateNotificationInputSchema.safeParse(base).error?.issues[0]?.path).toEqual([
+      'params',
+    ]);
+    expect(CreateNotificationInputSchema.safeParse({ ...base, params: null }).success).toBe(false);
+  });
+
+  it('accepts absent params for a type with no required keys', () => {
+    const vip = { userId: base.userId, type: 'vip.assigned' } as const;
+    expect(CreateNotificationInputSchema.safeParse(vip).success).toBe(true);
+  });
+
+  it('accepts absent params only on a queued job, as the previous release queued them', () => {
+    expect(QueuedNotificationInputSchema.safeParse(base).success).toBe(true);
+    expect(QueuedNotificationInputSchema.safeParse({ ...base, params: null }).success).toBe(true);
   });
 
   it('rejects params missing a required key, naming it', () => {

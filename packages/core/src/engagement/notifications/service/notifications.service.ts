@@ -13,6 +13,7 @@ import type { PaginationOptions, User } from '@openora/core/contracts';
 import { notification, type Notification } from '../schema/index.js';
 import {
   CreateNotificationInputSchema,
+  QueuedNotificationInputSchema,
   type CreateNotificationInput,
   type NotificationSortBy,
 } from '../contract/index.js';
@@ -49,7 +50,16 @@ export class NotificationsService {
 
   // Parsed here, not only on the dispatch job: an overlay calls this directly.
   async create(raw: CreateNotificationInput): Promise<Notification | null> {
-    const input = CreateNotificationInputSchema.parse(raw);
+    return this.insert(CreateNotificationInputSchema.parse(raw));
+  }
+
+  // The dispatch worker's entry: a job queued by the previous release has no `params`.
+  // ponytail: remove together with the title/body columns; the worker then calls create().
+  async createFromQueuedJob(raw: CreateNotificationInput): Promise<Notification | null> {
+    return this.insert(QueuedNotificationInputSchema.parse(raw));
+  }
+
+  private async insert(input: CreateNotificationInput): Promise<Notification | null> {
     const [record] = await this.drizzle.db
       .insert(notification)
       .values({

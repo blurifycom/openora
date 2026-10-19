@@ -118,22 +118,26 @@ export const NotificationSchema = z.object({
 });
 export type Notification = z.infer<typeof NotificationSchema>;
 
-// Internal-only - fed by domain-event handlers in plugin.ts and by overlays, not a wire route.
-// `params` present must match its type's NOTIFICATION_PARAM_KEYS; absent stays valid, since a
-// dispatch job queued before params existed carries none.
-export const CreateNotificationInputSchema = z
-  .object({
-    userId: UuidSchema,
-    type: NotificationTypeSchema,
-    params: NotificationParamsSchema.nullable().optional(),
-    data: NotificationDataSchema.nullable().optional(),
-    eventId: UuidSchema.nullable().optional(),
-  })
-  .superRefine(({ type, params }, ctx) => {
+const NotificationInputObjectSchema = z.object({
+  userId: UuidSchema,
+  type: NotificationTypeSchema,
+  params: NotificationParamsSchema.nullable().optional(),
+  data: NotificationDataSchema.nullable().optional(),
+  eventId: UuidSchema.nullable().optional(),
+});
+
+function checkParams(requireParams: boolean) {
+  return (
+    { type, params }: z.infer<typeof NotificationInputObjectSchema>,
+    ctx: z.RefinementCtx,
+  ) => {
+    const { required, optional } = NOTIFICATION_PARAM_KEYS[type];
     if (!params) {
+      if (requireParams && required.length > 0) {
+        ctx.addIssue({ code: 'custom', path: ['params'], message: `required for ${type}` });
+      }
       return;
     }
-    const { required, optional } = NOTIFICATION_PARAM_KEYS[type];
     const allowed: readonly string[] = [...required, ...optional];
     for (const key of required.filter((k) => params[k] === undefined)) {
       ctx.addIssue({ code: 'custom', path: ['params', key], message: `required for ${type}` });
@@ -141,8 +145,22 @@ export const CreateNotificationInputSchema = z
     for (const key of Object.keys(params).filter((k) => !allowed.includes(k))) {
       ctx.addIssue({ code: 'custom', path: ['params', key], message: `not declared for ${type}` });
     }
-  });
+  };
+}
+
+// Internal-only - fed by domain-event handlers in plugin.ts and by overlays, not a wire route.
+// `params` must match its type's NOTIFICATION_PARAM_KEYS; it may be absent only for a type with no
+// required keys.
+export const CreateNotificationInputSchema = NotificationInputObjectSchema.superRefine(
+  checkParams(true),
+);
 export type CreateNotificationInput = z.infer<typeof CreateNotificationInputSchema>;
+
+// A dispatch job queued by the previous release carries no `params` at all, so only the job
+// boundary accepts it absent. ponytail: remove together with the title/body columns.
+export const QueuedNotificationInputSchema = NotificationInputObjectSchema.superRefine(
+  checkParams(false),
+);
 
 export const NOTIFICATION_SORT_BY_VALUES = ['createdAt'] as const;
 export const NotificationSortBySchema = z.enum(NOTIFICATION_SORT_BY_VALUES).default('createdAt');

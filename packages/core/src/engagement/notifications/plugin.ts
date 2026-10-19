@@ -31,7 +31,7 @@ import {
 } from './router/index.js';
 import { NotificationsService } from './service/notifications.service.js';
 import {
-  CreateNotificationInputSchema,
+  QueuedNotificationInputSchema,
   type CreateNotificationInput,
   type NOTIFICATION_PARAM_KEYS,
   type NotificationData,
@@ -54,7 +54,7 @@ const KycResubmissionNotifyJobSchema = z.object({
 
 const NotificationDispatchJobSchema = z.object({
   event: z.string(),
-  input: CreateNotificationInputSchema,
+  input: QueuedNotificationInputSchema,
   email: MailTemplateSchema.nullish(),
   // Backlog jobs produced before security alerts existed omit this field.
   securityAlert: z.boolean().default(false),
@@ -849,7 +849,7 @@ export default {
         if (!svcRef) {
           return;
         }
-        const record = await svcRef.create(payload.input);
+        const record = await svcRef.createFromQueuedJob(payload.input);
         if (!record) {
           // A prior attempt may have already persisted the in-app notification. Continue so a
           // retried security alert can still be delivered through this job's retry policy.
