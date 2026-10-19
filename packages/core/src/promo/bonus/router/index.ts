@@ -48,8 +48,15 @@ const PUBLIC_OFFERS_RATE_LIMIT = { limit: 60, windowMs: 60 * 1000 };
 // Forfeiting is also a player-account action, so support staff who manage players may do it.
 const FORFEIT_PERMISSIONS = [
   { resource: 'bonus', action: 'cancel' },
+  { resource: 'bonus', action: 'view' },
   { resource: 'player', action: 'update' },
 ] as const;
+
+function canForfeit(granted: readonly (typeof FORFEIT_PERMISSIONS)[number][]): boolean {
+  const holds = (resource: string, action: string) =>
+    granted.some((permission) => permission.resource === resource && permission.action === action);
+  return holds('bonus', 'cancel') || (holds('player', 'update') && holds('bonus', 'view'));
+}
 
 export function createBonusRouter({
   grants,
@@ -114,9 +121,8 @@ export function createBonusRouter({
         }),
 
         forfeit: os.admin.grants.forfeit.handler(async ({ input, context }) => {
-          const { userId } = await adminGuard.assert(context, 'bonus', 'view');
-          const granted = await adminGuard.filterGranted(userId, FORFEIT_PERMISSIONS);
-          if (granted.length === 0) {
+          const { userId } = await adminGuard.assert(context);
+          if (!canForfeit(await adminGuard.filterGranted(userId, FORFEIT_PERMISSIONS))) {
             await adminGuard.assert(context, 'bonus', 'cancel');
           }
           return mapErrors(
