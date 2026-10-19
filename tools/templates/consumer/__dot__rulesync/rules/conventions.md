@@ -102,7 +102,8 @@ above) if this repo has no UI apps.
   description), and the tests that pass exercised, listed in the description's "Tests" list.
   Which tier each one belongs to, and how to run the manual pass: `docs/standards/testing.md`.
 - **Green before review:** `/check` (typecheck + lint + unit tests) while iterating, `pnpm verify`
-  (adds format, boundaries, build) before the PR. Conventional commits, lowercase subject (PR
+  on the committed tree before the PR (the `guard-mr` hook refuses to open one until it passed on
+  HEAD). Conventional commits, lowercase subject (PR
   title too - a squash merge turns it into the commit), one PR per concern. Never push without
   explicit confirmation. The description carries what / why / acceptance criteria / bare ticket
   key, the manual-verification evidence (screenshots of each changed screen, before and after on a
