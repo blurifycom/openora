@@ -84,6 +84,7 @@ import { emitExpiredInvites, expirePendingInvites } from './chat-room-invite-exp
 import { emitAccessRefused } from './chat-access-refusal.service.js';
 import { ChatMessageNotFoundError, ChatRoomNotFoundError } from './chat-moderation.service.js';
 import { toMessage, toSystemMessage } from './chat-message-mapping.service.js';
+import { assertRoomModerator, findRoomMember } from './chat-room-moderation.service.js';
 export {
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
@@ -108,7 +109,6 @@ import type {
   ChatMessage,
   ChatRoomStreamEvent,
   ChatRoomCategory,
-  ChatRoomRole,
   ChatRoomRule,
   CreateRoomRuleInput,
   RoomPostingConfigurationInput,
@@ -253,8 +253,6 @@ const ChatRoomConfigurationNotFoundError = createDomainError(
   'ChatRoomConfigurationNotFoundError',
   (id: string) => `Chat room configuration not found: ${id}`,
 );
-
-const CHAT_MODERATOR_ROLES: readonly ChatRoomRole[] = ['moderator', 'owner'];
 
 // Global-room messages are stored with a null room id.
 function perRoomMessages(query: (roomMessages: SQL | undefined) => SQL) {
@@ -926,32 +924,6 @@ export class ChatService {
     });
   }
 
-  private async assertRoomModerator(
-    roomId: ChatRoom['id'],
-    actorId: User['id'],
-    targetId?: User['id'],
-  ) {
-    const [actor] = await this.drizzle.db
-      .select({ role: chatRoomMember.role })
-      .from(chatRoomMember)
-      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, actorId)))
-      .limit(1);
-    if (!actor || !CHAT_MODERATOR_ROLES.includes(actor.role)) {
-      throw new ChatRoomNotModeratorError(roomId);
-    }
-    if (targetId) {
-      const [target] = await this.drizzle.db
-        .select({ role: chatRoomMember.role })
-        .from(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, targetId)))
-        .limit(1);
-      if (actor.role !== 'owner' && target && target.role !== 'member') {
-        throw new ChatRoomNotModeratorError(roomId);
-      }
-    }
-    return actor.role;
-  }
-
   async listRoomRules(
     roomReference: ChatRoom['id'] | typeof GLOBAL_CHAT_ROOM_ID,
     viewerId?: User['id'],
@@ -1004,7 +976,7 @@ export class ChatService {
     orderNum?: number;
     content: string;
   } & ClientMeta) {
-    await this.assertRoomModerator(roomId, actorId);
+    await assertRoomModerator(this.drizzle.db, roomId, actorId);
     const created = await this.drizzle.db.transaction((tx) =>
       this.insertRoomRule(tx, {
         roomId,
@@ -1084,7 +1056,7 @@ export class ChatService {
     orderNum?: number;
     content?: string;
   } & ClientMeta) {
-    await this.assertRoomModerator(roomId, actorId);
+    await assertRoomModerator(this.drizzle.db, roomId, actorId);
     const updated = await this.drizzle.db.transaction((tx) =>
       this.patchRoomRule(tx, {
         roomId,
@@ -1171,7 +1143,7 @@ export class ChatService {
     id: ChatRoomRule['id'];
     actorId: User['id'];
   } & ClientMeta) {
-    await this.assertRoomModerator(roomId, actorId);
+    await assertRoomModerator(this.drizzle.db, roomId, actorId);
     await this.drizzle.db.transaction((tx) =>
       this.removeRoomRule(tx, { roomId, id, actorId, actorType: 'player', ip, userAgent }),
     );
@@ -1260,7 +1232,7 @@ export class ChatService {
     lockRoom?: boolean;
     moderatorInvite?: boolean;
   } & ClientMeta) {
-    await this.assertRoomModerator(roomId, actorId);
+    await assertRoomModerator(this.drizzle.db, roomId, actorId);
     const updated = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, `chat-room:${roomId}`, async () => {
         const before = await this.findRoomConfiguration(tx, roomId);
@@ -1392,12 +1364,7 @@ export class ChatService {
   }
 
   private async roomRole(db: DrizzleDb | DrizzleTx, roomId: ChatRoom['id'], userId: User['id']) {
-    const [member] = await db
-      .select({ role: chatRoomMember.role })
-      .from(chatRoomMember)
-      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
-      .limit(1);
-    return member?.role ?? null;
+    return (await findRoomMember(db, roomId, userId))?.role ?? null;
   }
 
   async listRoomUsers({
@@ -1409,7 +1376,7 @@ export class ChatService {
     actorId: User['id'];
     status: 'all' | 'member' | 'owner';
   }) {
-    await this.assertRoomModerator(roomId, actorId);
+    await assertRoomModerator(this.drizzle.db, roomId, actorId);
     const role = status === 'all' ? undefined : status;
     const canSeeAdminUsers = await this.canSeeAdminUsers(actorId);
     const [room] = await this.drizzle.db
@@ -1460,7 +1427,7 @@ export class ChatService {
   }
 
   async listRoomBlockedUsers({ roomId, actorId }: { roomId: ChatRoom['id']; actorId: User['id'] }) {
-    await this.assertRoomModerator(roomId, actorId);
+    await assertRoomModerator(this.drizzle.db, roomId, actorId);
     const rows = await this.drizzle.db
       .select()
       .from(chatRoomBan)
@@ -1980,7 +1947,7 @@ export class ChatService {
       }
       roomId = globalRoom.id;
     }
-    await this.assertRoomModerator(roomId, userId);
+    await assertRoomModerator(this.drizzle.db, roomId, userId);
     if (message.type === 'system') {
       await emitAccessRefused(this.drizzle.db, this.events, {
         actorId: userId,
