@@ -15,7 +15,9 @@ import type {
   McpToolFactory,
   RegisteredActionType,
   RegisteredMcpTool,
+  RegisteredTriggerListener,
   RouterFactory,
+  TriggerListener,
   TypedContainer,
   EventHandler,
 } from './define-plugin.js';
@@ -26,6 +28,7 @@ const UNKNOWN_OWNER = 'unknown';
 export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistry<C> {
   private _routers = new Map<string, RouterFactory<C>>();
   private _events = new Map<string, EventHandler[]>();
+  private _triggerListeners: RegisteredTriggerListener[] = [];
   private _jobs: WorkerRegistration<unknown>[] = [];
   private _mcpTools: McpToolDefinition[] = [];
   private _tools: RegisteredMcpTool<C>[] = [];
@@ -95,6 +98,13 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
       this._events.set(event, handlers);
     },
     getAll: () => this._events,
+  };
+
+  triggers = {
+    listen: (listener: TriggerListener) => {
+      this._triggerListeners.push({ owner: this._owner, listener });
+    },
+    getAll: () => this._triggerListeners,
   };
 
   jobs = {

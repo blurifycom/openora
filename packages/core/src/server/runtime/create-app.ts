@@ -52,11 +52,12 @@ import {
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
-import { createMcpKernel } from '../mcp/index.js';
+import { allowedTriggers, createMcpKernel } from '../mcp/index.js';
 import { authorizeWithAdminGuard } from '../mcp/authorize.js';
 import type { McpHttpTransport } from '../mcp/http-transport.js';
 import { payloadTooLarge } from '../mcp/transport-gate.js';
 import { assertDurableSeamsBound } from './assert-durable-seams.js';
+import { startTelemetry } from './telemetry.js';
 import {
   applyClientAddress,
   resolveTrustedProxies,
@@ -158,6 +159,10 @@ export type CreateAppConfig = {
   httpCache?: { paths?: string[]; additionalPaths?: string[]; maxAgeSeconds?: number } | false;
 
   disableHealthModule?: boolean;
+
+  // `false` turns off the anonymous usage telemetry, as OPENORA_TELEMETRY_DISABLED=1 or
+  // DO_NOT_TRACK=1 do. See docs/platform/telemetry.md for what it sends.
+  telemetry?: false;
 
   // Peers (IP or CIDR) allowed to set `X-Real-IP` / `X-Forwarded-For` - the reverse proxy in
   // front of the API. Any other peer's forwarding headers are replaced with its socket
@@ -468,6 +473,7 @@ export async function createApp(
       container: c,
       authorize: (adminId, iam) => authorizeWithAdminGuard(c.get(ADMIN_GUARD), adminId, iam),
       audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
+      triggerTopics: c.get(PLATFORM_CONFIG).agents.triggers.topics,
     }),
   );
 
@@ -481,6 +487,25 @@ export async function createApp(
   for (const [event, handlers] of registry.events.getAll()) {
     for (const handler of handlers) {
       bus.on(event, handler);
+    }
+  }
+  // The same topics MCP_KERNEL lists, read from the config rather than the kernel so its
+  // tool factories still run after the routers. No listener, no subscription.
+  const triggerListeners = registry.triggers.getAll();
+  if (triggerListeners.length > 0) {
+    for (const trigger of allowedTriggers(container.get(PLATFORM_CONFIG).agents.triggers.topics)) {
+      for (const { owner, listener } of triggerListeners) {
+        bus.on(trigger.topic, (payload, envelope) => {
+          if (!envelope) {
+            createLogger('agent-triggers').error(
+              { topic: trigger.topic, owner },
+              'agent trigger dropped - the event arrived without its envelope',
+            );
+            return;
+          }
+          return listener(trigger, payload, envelope);
+        });
+      }
     }
   }
 
@@ -510,6 +535,8 @@ export async function createApp(
     relay.start();
     container.onDispose(() => relay.stop());
   }
+
+  startTelemetry(container, config.telemetry);
 
   if (!config.disableHealthModule) {
     const os = implement(healthContract).$context<OssContext>();

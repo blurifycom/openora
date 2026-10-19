@@ -17,6 +17,9 @@ AUTH_SECRET=change-me-in-production-min-32-chars
 # up -d` starts this alongside Postgres.
 REDIS_URL=redis://localhost:6379
 
+# Anonymous usage telemetry is on by default: https://openora.ai/documentation/telemetry
+# OPENORA_TELEMETRY_DISABLED=1
+
 # Ports
 PORT=3001
 CORS_ORIGINS=http://localhost:3000,http://localhost:3002

@@ -17,6 +17,7 @@ import {
   makeAuditWriter,
   makeEventBus,
   makeIdentityReader,
+  makeUserCommands,
   makeRateLimiter,
   mock,
   testContext,
@@ -69,6 +70,7 @@ function buildRouter({
     mailDispatch: mock<MailDispatchPort>({}),
     identityReader: makeIdentityReader(),
     mcpTokens,
+    userCommands: makeUserCommands(),
   });
   return createIamRouter(iam, guard, mcpTokens);
 }

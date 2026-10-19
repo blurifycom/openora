@@ -11,7 +11,12 @@ import {
 import { eq, and, isNull, asc, desc, count, lt } from 'drizzle-orm';
 import type { PaginationOptions, User } from '@openora/core/contracts';
 import { notification, type Notification } from '../schema/index.js';
-import type { CreateNotificationInput, NotificationSortBy } from '../contract/index.js';
+import {
+  CreateNotificationInputSchema,
+  QueuedNotificationInputSchema,
+  type CreateNotificationInput,
+  type NotificationSortBy,
+} from '../contract/index.js';
 
 export const NotificationNotFoundError = makeNotFoundError('Notification');
 
@@ -43,10 +48,26 @@ export class NotificationsService {
     return record ?? null;
   }
 
-  async create(input: CreateNotificationInput): Promise<Notification | null> {
+  // Parsed here, not only on the dispatch job: an overlay calls this directly.
+  async create(raw: CreateNotificationInput): Promise<Notification | null> {
+    return this.insert(CreateNotificationInputSchema.parse(raw));
+  }
+
+  // The dispatch worker's entry: a job queued by the previous release has no `params`.
+  // ponytail: remove together with the title/body columns; the worker then calls create().
+  async createFromQueuedJob(raw: CreateNotificationInput): Promise<Notification | null> {
+    return this.insert(QueuedNotificationInputSchema.parse(raw));
+  }
+
+  private async insert(input: CreateNotificationInput): Promise<Notification | null> {
     const [record] = await this.drizzle.db
       .insert(notification)
-      .values({ ...input, data: input.data ?? null, eventId: input.eventId ?? null })
+      .values({
+        ...input,
+        params: input.params ?? null,
+        data: input.data ?? null,
+        eventId: input.eventId ?? null,
+      })
       .onConflictDoNothing({ target: notification.eventId })
       .returning();
     if (!record) {

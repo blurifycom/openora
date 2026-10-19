@@ -514,11 +514,11 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
     await vi.waitFor(async () => {
       const notifyRes = await client.get('/notifications');
       const { items } = await readJson(notifyRes);
-      const found = (items as Array<{ type: string; body: string }>).find(
+      const found = (items as Array<{ type: string; params: Record<string, string> | null }>).find(
         (n) => n.type === 'kyc.resubmission_requested',
       );
       expect(found).toBeTruthy();
-      expect(found?.body).toContain('document photo is blurry');
+      expect(found?.params).toEqual({ reason: 'document photo is blurry' });
     });
 
     const historyBefore = kycView.basic.history.length;

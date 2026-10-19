@@ -115,8 +115,8 @@ describe('chat: the global room under its row id', () => {
 
 describe('chat: the global room in the back office', () => {
   it('lists a message sent to the global room id under that id', async () => {
-    const sender = await registerChatter(app, 'global');
-    const content = `seen-${randomUUID()}`;
+    const sender = await registerChatter('global');
+    const content = 'seen-by-moderators';
     const sent = await sender.client.post(`/chat/rooms/${globalRoomId}/messages`, { content });
     expect(sent.status).toBe(200);
 

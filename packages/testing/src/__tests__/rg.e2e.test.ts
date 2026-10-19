@@ -142,14 +142,18 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
     await vi.waitFor(async () => {
       const notifyRes = await client.get('/notifications');
       const notifications = await readJson(notifyRes);
-      const found = (notifications as { items: Array<{ type: string; body: string }> }).items.find(
-        (n) => n.type === 'rg.limit.admin_updated',
-      );
+      const found = (
+        notifications as {
+          items: Array<{ type: string; params: Record<string, string> | null }>;
+        }
+      ).items.find((n) => n.type === 'rg.limit.admin_updated');
       expect(found).toBeTruthy();
-      expect(found?.body).toContain('deposit');
-      expect(found?.body).toContain('daily');
-      expect(found?.body).toContain('500');
-      expect(found?.body).not.toContain('operator lowered on a support request');
+      expect(found?.params).toEqual({
+        period: 'daily',
+        limitType: 'deposit',
+        amount: '500',
+      });
+      expect(JSON.stringify(found)).not.toContain('operator lowered on a support request');
     });
 
     // The email goes out from its own event handler, so the in-app row landing first says
