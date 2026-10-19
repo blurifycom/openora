@@ -401,6 +401,7 @@ describe('createApp - the player-activity stamp', () => {
               await writing;
               stamped = true;
             },
+            countActiveSince: async () => 0,
           }));
         },
       );

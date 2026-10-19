@@ -361,6 +361,14 @@ export class PlayerService implements PlayerActivityTracker {
       );
   }
 
+  async countActiveSince(since: Date): Promise<number> {
+    const [row] = await this.drizzle.db
+      .select({ value: count() })
+      .from(player)
+      .where(gte(player.lastSeenAt, since));
+    return row?.value ?? 0;
+  }
+
   async remove(playerId: Player['id'], actorId: User['id']) {
     const before = await this.drizzle.db.transaction(async (trx) => {
       const locked = findOneOrThrow(

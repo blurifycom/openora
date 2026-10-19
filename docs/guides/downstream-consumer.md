@@ -70,6 +70,8 @@ await listen();
 
 `createApp` refuses to boot without CORS origins: it takes `cors.origins`, else the comma-separated `CORS_ORIGINS` env var. Pass `cors: false` for an API served same-origin only. Request bodies are capped at 4 MiB (413 above it); raise or lower the cap with `bodyLimit: { maxBytes }`, or turn it off with `bodyLimit: false` when a proxy in front already enforces one.
 
+`createApp` sends anonymous usage telemetry unless `telemetry: false` is passed or `OPENORA_TELEMETRY_DISABLED=1` is set. [Usage telemetry](../platform/telemetry.md) lists what a report carries.
+
 Downstream consumers create their own thin entrypoint that calls `createApp` and bring
 their own `extensions.config.ts`. See `tools/templates/consumer/apps/api/src/main.ts.tpl` for the reference.
 
