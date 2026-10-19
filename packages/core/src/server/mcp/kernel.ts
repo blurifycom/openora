@@ -14,6 +14,7 @@ import {
   type ActionTypeDescriptor,
   type ActionTypeImplementation,
   type AuditWritePort,
+  type DomainEventName,
   type McpFailure,
   type McpIamRequirement,
   type McpInputIssue,
@@ -25,6 +26,7 @@ import {
   type RunActor,
   type RunContext,
   type TokenCatalog,
+  type TriggerDescriptor,
 } from '@openora/core/contracts';
 import type {
   RegisteredActionType,
@@ -56,6 +58,8 @@ export type McpKernelDeps<C extends TokenCatalog> = {
   container: TypedContainer<C>;
   authorize: McpAuthorizer;
   audit: AuditWritePort | null;
+  /** The domain events that may start a run (`PlatformConfig.agents.triggers.topics`); none when absent. */
+  triggerTopics?: readonly DomainEventName[];
 };
 
 type ServedTool = {
@@ -104,18 +108,25 @@ export function createMcpKernel<C extends TokenCatalog>(deps: McpKernelDeps<C>):
   const state: KernelState = { tools, actions, authorize: deps.authorize, audit: deps.audit };
   const toolDescriptors = [...tools.values()].map((tool) => tool.descriptor);
   const actionDescriptors = [...actions.values()].map((action) => action.descriptor);
+  const triggers = allowedTriggers(deps.triggerTopics ?? []);
 
   return {
-    catalogVersion: catalogVersionOf(deps.tools, deps.actions),
+    catalogVersion: catalogVersionOf(deps.tools, deps.actions, triggers),
     listTools: () => toolDescriptors,
     listActionTypes: () => actionDescriptors,
-    listTriggers: () => triggerCatalog(),
+    listTriggers: () => triggers,
     invokeTool: (toolId, input, run) => invokeTool(state, { toolId, input, run }),
     checkPrecondition: (actionTypeId, payload, run) =>
       checkPrecondition(state, { actionTypeId, payload, run }),
     executeAction: (actionTypeId, payload, context) =>
       executeAction(state, { actionTypeId, payload, context }),
   };
+}
+
+/** The trigger catalog's entries for the given topics, in catalog order. */
+export function allowedTriggers(topics: readonly DomainEventName[]): readonly TriggerDescriptor[] {
+  const allowed = new Set<string>(topics);
+  return triggerCatalog().filter((trigger) => allowed.has(trigger.topic));
 }
 
 function serveTool<C extends TokenCatalog>(
@@ -192,10 +203,14 @@ function compareText(left: string, right: string): number {
 function catalogVersionOf(
   tools: readonly { contract: McpToolContract }[],
   actions: readonly { contract: ActionTypeContract }[],
+  triggers: readonly TriggerDescriptor[],
 ): string {
   const entries = [
     ...tools.map(({ contract }) => ['tool', contract.id, contract.schemaVersion] as const),
     ...actions.map(({ contract }) => ['action', contract.id, contract.schemaVersion] as const),
+    ...triggers.map(
+      ({ topic, version, subjectField }) => ['trigger', topic, version, subjectField] as const,
+    ),
   ].sort(([leftKind, leftId], [rightKind, rightId]) =>
     leftKind === rightKind ? compareText(leftId, rightId) : compareText(leftKind, rightKind),
   );

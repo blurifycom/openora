@@ -7,6 +7,7 @@ import {
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import {
+  PLAYER_SEGMENT_READER,
   PLAYER_TAGS,
   TAG_EVALUATION_COMMANDS,
   WALLET_READER,
@@ -24,6 +25,7 @@ import {
   type TagKey,
 } from '@openora/core/contracts';
 import z from 'zod';
+import { PlayerSegmentReaderService } from './adapters/player-segment-reader.service.js';
 import {
   TagService,
   TagNotFoundError,
@@ -115,6 +117,7 @@ export default {
       }));
 
     ctx.provide(PLAYER_TAGS, tagService);
+    ctx.provide(PLAYER_SEGMENT_READER, (c) => new PlayerSegmentReaderService(c.get(DRIZZLE)));
     // Synchronous counterpart to the wallet.withdrawal.requested subscription below - see
     // TagEvaluationService.evaluateWithdrawalRequested for why auto-approval can't rely on
     // the async event handler alone. ADR-0017.
