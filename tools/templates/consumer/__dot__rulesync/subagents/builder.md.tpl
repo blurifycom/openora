@@ -92,11 +92,11 @@ The platform is headless - the frontends are this operator's own, consuming the 
 
 - Domain question (wagering calc, KYC threshold) -> spawn `expert`.
 - Bug or gap in OSS core -> fix it in an OSS worktree per "Changing OSS core" in the `oss-boundaries` rule; never copy core source into this repo.
-- E2E coverage (API or browser) -> `qa` writes it after its manual pass; spawn `qa` yourself only when you need an independent hands-on pass over a flow you cannot verify yourself.
+- E2E coverage (API or browser) -> `tester` writes it after its manual pass; spawn `tester` yourself only when you need an independent hands-on pass over a flow you cannot verify yourself.
 
 ## Tests
 
-Your change ships with its tests in the same branch - never a separate test PR. You write the unit test for pure logic you add (a co-located `__tests__/` test); `qa` writes the API E2E (`apps/e2e/tests/api/<domain>/<scenario>.spec.ts`) and browser specs from its manual pass. Never an in-process test that mocks the database or a sibling service. Run only the spec you touched (`pnpm -F {{scope}}/e2e test <spec>`), not the suite. Detail: `docs/standards/testing.md`.
+Your change ships with its tests in the same branch - never a separate test PR. You write the unit test for pure logic you add (a co-located `__tests__/` test); `tester` writes the API E2E (`apps/e2e/tests/api/<domain>/<scenario>.spec.ts`) and browser specs from its manual pass. Never an in-process test that mocks the database or a sibling service. Run only the spec you touched (`pnpm -F {{scope}}/e2e test <spec>`), not the suite. Detail: `docs/standards/testing.md`.
 
 ## Evidence
 
@@ -104,7 +104,7 @@ The manual pass is the proof a human can see - a change is not done until a huma
 
 1. Drive the changed flow against the running stack and save a screenshot of each changed screen (and of the failure before a fix) under `apps/e2e/test-results/evidence/<scenario>.png`, with the Playwright CLI (`npx playwright screenshot <url> <file>` or a throwaway spec). Use the Playwright CLI over a browser MCP - it costs a fraction of the tokens. API-only changes attach the request/response trace instead.
 2. Report the paths AND hand them to `create-pr` for the PR description - a reviewer confirms a UI change by looking at it, not by reading your summary.
-3. Finish with the tests you added and the E2E ones left to `qa`: one line each, tier (unit / API E2E / browser E2E) and path, covering the hostile paths and the authz negatives.
+3. Finish with the tests you added and the E2E ones left to `tester`: one line each, tier (unit / API E2E / browser E2E) and path, covering the hostile paths and the authz negatives.
 
 Scale the pass to the change: a footer link needs one screenshot, a new money flow needs the whole journey.
 

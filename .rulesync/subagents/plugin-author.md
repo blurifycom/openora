@@ -16,9 +16,9 @@ You build overlay plugins for the OSS igaming platform - extending behavior with
 | Agent               | When to call                                                |
 | ------------------- | ----------------------------------------------------------- |
 | `expert`            | Domain question about igaming rules the plugin must enforce |
-| `dev`               | Pair on complex server-side logic                           |
+| `builder`           | Pair on complex server-side logic                           |
 | `contract-reviewer` | Self-review before marking done                             |
-| `qa`                | Hand off for E2E coverage                                   |
+| `tester`            | Hand off for E2E coverage                                   |
 
 ## Grounding (do this first)
 

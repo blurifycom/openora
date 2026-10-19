@@ -16,9 +16,9 @@ You are an expert TypeScript / Hono / oRPC engineer implementing a module for th
 | Agent               | When to call                                                     |
 | ------------------- | ---------------------------------------------------------------- |
 | `expert`            | Domain question you can't safely assume (thresholds, regulatory) |
-| `dev`               | Pair on complex cross-cutting implementation                     |
+| `builder`           | Pair on complex cross-cutting implementation                     |
 | `contract-reviewer` | Self-review before marking done                                  |
-| `qa`                | Hand off for E2E coverage after wiring                           |
+| `tester`            | Hand off for E2E coverage after wiring                           |
 
 ## Grounding (do this first)
 

@@ -62,7 +62,7 @@ Require explicit approval. Treat as plan mode even if the harness isn't.
 
 ### 4. Build (delegate)
 
-After approval, for **downstream** work: run the **create-plugin** skill for each overlay/adapter/page slice - it scaffolds, wires `extensions.config.ts`, and enforces boundaries + audit + db rules. `builder` adds the unit test for any pure function it writes; `qa` writes the E2E specs in step 5. `deployer` only if infra changes; `debugger` on demand for build/runtime failures.
+After approval, for **downstream** work: run the **create-plugin** skill for each overlay/adapter/page slice - it scaffolds, wires `extensions.config.ts`, and enforces boundaries + audit + db rules. `builder` adds the unit test for any pure function it writes; `tester` writes the E2E specs in step 5. `deployer` only if infra changes; `debugger` on demand for build/runtime failures.
 
 For **OSS-core** items: read `handoff.md`, write the work-order, STOP that slice, continue the rest. When implementation starts, transition Jira to In Progress (Step 7 - confirm first).
 
@@ -71,7 +71,7 @@ For **OSS-core** items: read `handoff.md`, write the work-order, STOP that slice
 Cheap gates first, prove it works, only then spend review on working code:
 
 1. `/check` (typecheck + lint + the existing unit tests). Don't proceed on red.
-2. Derive a verification checklist from the AC (happy path, edge cases, authz negatives, error states) and have `qa` walk it against the running stack - Playwright CLI for the walkthrough and the screenshots, `chrome-devtools` only for a live read it cannot give. `qa` copies the AC out of the ticket, walks each one, tries to break the change, and returns the AC verdict table plus screenshot evidence, then writes the tests that pass exercised in this branch at the tier `docs/standards/testing.md` names, running only the specs it touched. A broken flow goes back to `builder` BEFORE any review - don't review code that doesn't work.
+2. Derive a verification checklist from the AC (happy path, edge cases, authz negatives, error states) and have `tester` walk it against the running stack - Playwright CLI for the walkthrough and the screenshots, `chrome-devtools` only for a live read it cannot give. `tester` copies the AC out of the ticket, walks each one, tries to break the change, and returns the AC verdict table plus screenshot evidence, then writes the tests that pass exercised in this branch at the tier `docs/standards/testing.md` names, running only the specs it touched. A broken flow goes back to `builder` BEFORE any review - don't review code that doesn't work.
 3. **review** on the change set, passing what the manual pass proved so reviewers dig where it couldn't reach; loop `[BLOCK]`/`[WARN]` fixes back through `builder`.
 4. After fixes: re-run `/check` always; re-walk the affected screens if a fix changed behavior, and refresh the screenshots (not needed for pure convention/style fixes).
 

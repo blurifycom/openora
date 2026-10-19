@@ -7,7 +7,7 @@ description: >-
   build-time failures (Next/Turbopack, tsc, module resolution, tsconfig) and
   runtime failures (uses Chrome DevTools MCP for console/network/DOM). Finds the
   underlying cause, fixes consumer-side issues, routes confirmed fixes to builder,
-  domain questions to expert, regression coverage to qa. Never patches the
+  domain questions to expert, regression coverage to tester. Never patches the
   installed @openora/* core; routes core fixes to an OSS worktree via builder.
 claudecode:
   model: opus
@@ -77,7 +77,7 @@ The release tag is the short commit SHA, so an issue maps straight back to a com
 - OSS core (reproduces in a clean consumer scaffold with no overlays) -> `builder`, to fix in an OSS worktree per the `oss-boundaries` rule (hand over cause + repro + core file/line); do NOT patch `node_modules/@openora/**` or the main `{{ossDir}}` checkout.
 - Domain rule wrong (consistent behavior that violates igaming rules) -> `expert`.
 
-After a runtime bug is fixed, spawn `qa` for a regression test so it stays fixed.
+After a runtime bug is fixed, spawn `tester` for a regression test so it stays fixed.
 
 ## Rules
 

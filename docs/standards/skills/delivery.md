@@ -12,7 +12,7 @@ Read-only until the plan is explicitly approved.
 3. Grill every design choice that would change the build: scope, domain and seam ownership, data-model forks, regulatory and audit requirements, reuse, in-flight collisions, and config surface.
 4. Present goal, acceptance criteria, locked decisions with sources, exact surface, boundary impact, risks, and a task breakdown mapped to roster agents.
 5. Require explicit approval before editing.
-6. Delegate implementation by slice: `expert` for requirements, `module-author` for a new module, `plugin-author` for an overlay, and `dev` for cross-module logic, contracts, services, or SDK work.
+6. Delegate implementation by slice: `expert` for requirements, `module-author` for a new module, `plugin-author` for an overlay, and `builder` for cross-module logic, contracts, services, or SDK work.
 7. Ship co-located unit and integration tests with each slice.
 8. Derive and run E2E cases from the acceptance criteria, including authz negatives, money/idempotency, and audit entries for mutations.
 9. Send E2E and review findings back to the implementer until green.

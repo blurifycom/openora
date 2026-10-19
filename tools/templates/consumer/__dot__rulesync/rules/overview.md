@@ -63,7 +63,7 @@ Once requirements are confirmed, **delegate the rest to the agents** via the Tas
 
 1. `expert` - formalizes the requirements into acceptance criteria, flags compliance/gaps.
 2. `builder` - implements (`pnpm gen ...`, code, wiring).
-3. `qa` - walks the acceptance criteria against the running stack by hand, returns screenshot evidence, then writes the tests that pass exercised in the same branch.
+3. `tester` - walks the acceptance criteria against the running stack by hand, returns screenshot evidence, then writes the tests that pass exercised in the same branch.
 
 Only return to the user to resolve genuine decisions they alone can make.
 
@@ -88,7 +88,7 @@ Delegate work to these scoped agents - the `start` / `enhance-intent` playbooks 
 
 - `expert` - turns a fuzzy product ask into requirements + acceptance criteria (jurisdiction rules, player journey). Advisory, writes no code. Use BEFORE building anything non-obvious.
 - `builder` - senior fullstack engineer. Implements overlays, swaps adapters, mounts UI pages.
-- `qa` - writes/runs Playwright E2E tests; triages whether a bug is in OSS core (upstream) or your overlay (local fix).
+- `tester` - writes/runs Playwright E2E tests; triages whether a bug is in OSS core (upstream) or your overlay (local fix).
 - `debugger` - root-causes failures, build-time (Next/Turbopack, tsc, module resolution) and runtime (Chrome DevTools: console/network/DOM). Spawn it whenever something errors or behaves wrong; it finds the cause and routes the fix.
 - `quality-reviewer` - reviews a diff: correctness, boundaries, conventions, UI quality, dependencies, performance, reliability. Findings only.
 - `security-reviewer` - reviews a diff: authz, secrets/PII, input validation. Findings only.

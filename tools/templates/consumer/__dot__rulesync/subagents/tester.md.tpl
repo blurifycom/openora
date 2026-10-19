@@ -1,7 +1,7 @@
 ---
 targets:
   - '*'
-name: qa
+name: tester
 description: >-
   QA engineer for a downstream igaming built on @openora/*. Verifies a change by
   hand against the operator's local stack, checks every acceptance criterion
