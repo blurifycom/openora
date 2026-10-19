@@ -296,16 +296,12 @@ export const notificationEventMap: NotificationMapEntry[] = [
     },
   ),
 
+  // The admin's `reason` is internal: it is never copied into what the player sees.
   mapEvent('wallet.manual_adjustment.created', (p) =>
     notification({
       userId: p.userId,
       type: 'balance.adjusted',
-      params: {
-        direction: p.direction,
-        amount: p.amount,
-        currency: p.currency,
-        reason: p.reason,
-      },
+      params: { direction: p.direction, amount: p.amount, currency: p.currency },
       data: { transactionId: p.transactionId },
     }),
   ),

@@ -50,7 +50,7 @@ describe('notificationEventMap', () => {
     expect(input).toMatchObject({ userId, type: 'deposit.completed', data: { transactionId } });
   });
 
-  it('maps wallet.manual_adjustment.created to a balance.adjusted notification carrying the reason and transaction id', () => {
+  it('maps wallet.manual_adjustment.created to a balance.adjusted notification carrying the transaction id, never the admin reason', () => {
     const userId = randomUUID();
     const transactionId = randomUUID();
     const input = entryFor('wallet.manual_adjustment.created').buildNotification({
@@ -67,7 +67,7 @@ describe('notificationEventMap', () => {
     expect(input).toEqual({
       userId,
       type: 'balance.adjusted',
-      params: { direction: 'credit', amount: '5.00', currency: 'USD', reason: 'goodwill credit' },
+      params: { direction: 'credit', amount: '5.00', currency: 'USD' },
       data: { transactionId },
     });
   });

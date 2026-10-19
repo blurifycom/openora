@@ -61,7 +61,7 @@ export const NOTIFICATION_PARAM_KEYS = {
   'withdrawal.failed': { required: ['amount', 'currency'], optional: [] },
   'deposit.completed': { required: ['amount', 'currency'], optional: [] },
   'deposit.held': { required: ['amount', 'currency'], optional: [] },
-  'balance.adjusted': { required: ['direction', 'amount', 'currency', 'reason'], optional: [] },
+  'balance.adjusted': { required: ['direction', 'amount', 'currency'], optional: [] },
   'promo.bonus.granted': {
     required: ['grantedAmount', 'wageringRequired', 'currency', 'source'],
     optional: ['rankBonusKind'],
