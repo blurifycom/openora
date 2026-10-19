@@ -162,19 +162,29 @@ if (start !== -1 && end === -1) {
   die(`${gitignore} has a ${BEGIN} marker with no matching ${END} - repair or delete the block.`);
 }
 // A file the template dropped or renamed is still on disk from the last render, untracked and
-// no longer ignored. The old block lists what was rendered then: delete what fell out of it.
-const stale =
+// no longer ignored: delete what fell out of it. The old block lists what was rendered then,
+// but after a branch switch the committed block already names the new set, so the manifest
+// (outside git, per checkout) remembers what this checkout actually has on disk.
+const manifest = join(ROOT, 'node_modules/.cache/sync-agents.json');
+const lastRendered = (() => {
+  try {
+    const paths = JSON.parse(readFileSync(manifest, 'utf8'));
+    return Array.isArray(paths) ? paths.filter((path) => typeof path === 'string') : [];
+  } catch {
+    return [];
+  }
+})();
+const lastBlock =
   start === -1
     ? []
     : current
         .slice(start + BEGIN.length, end)
         .split('\n')
         .filter((line) => line.startsWith('/'))
-        .map((line) => line.slice(1))
-        .filter(
-          (path) => SYNCED_ROOTS.some((root) => path.startsWith(root)) && !path.includes('..'),
-        )
-        .filter((path) => !ignored.some((file) => file.path === path));
+        .map((line) => line.slice(1));
+const stale = [...new Set([...lastBlock, ...lastRendered])]
+  .filter((path) => SYNCED_ROOTS.some((root) => path.startsWith(root)) && !path.includes('..'))
+  .filter((path) => !ignored.some((file) => file.path === path));
 // Never one this repo has since started tracking. (No paths: ls-files would list them all.)
 const staleTracked = new Set(stale.length > 0 ? gitTracked(stale) : []);
 for (const path of stale.filter((path) => !staleTracked.has(path))) {
@@ -197,6 +207,8 @@ const updated =
 if (updated !== current) {
   writeFileSync(gitignore, updated);
 }
+mkdirSync(dirname(manifest), { recursive: true });
+writeFileSync(manifest, JSON.stringify(ignored.map(({ path }) => path)));
 
 console.log(`sync:agents - ${rendered.length - owned.length} template-owned file(s) rendered.`);
 if (owned.length > 0) {

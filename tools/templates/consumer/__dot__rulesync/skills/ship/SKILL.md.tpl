@@ -82,7 +82,7 @@ Rounds of 3 and 4 share one budget: three. After the third with anything still f
 
 ### 6. Keep the MR green
 
-Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-comments` on unanswered threads. No such skill in this repo: do the same by hand per `docs/agents/forge.md` - reproduce locally, fix the cause, gate, push the ticket branch, reply per thread. Never skip or loosen a test, never resolve a thread.
+Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-comments` on unanswered threads. No such skill in this repo: do the same per `docs/agents/forge.md` - reproduce locally, `builder` fixes the cause and runs the gate, push the ticket branch, reply per thread. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer. Never skip or loosen a test.
 
 ## Rules
 

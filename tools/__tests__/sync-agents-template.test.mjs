@@ -67,3 +67,20 @@ test('a file the template no longer renders is deleted, unless the consumer trac
     /^\/\.rulesync\/subagents\/planner\.md$/m,
   );
 });
+
+test('after a branch switch already brought the new block, the last render is still pruned', () => {
+  put('.rulesync/subagents/qa.md', 'old');
+  put('node_modules/.cache/sync-agents.json', JSON.stringify(['.rulesync/subagents/qa.md']));
+
+  execFileSync('node', [join(template, 'tools/sync-agents.mjs')], {
+    cwd: consumer,
+    stdio: 'ignore',
+  });
+
+  assert.equal(existsSync(join(consumer, '.rulesync/subagents/qa.md')), false);
+  assert.ok(
+    JSON.parse(
+      readFileSync(join(consumer, 'node_modules/.cache/sync-agents.json'), 'utf8'),
+    ).includes('.rulesync/subagents/tester.md'),
+  );
+});
