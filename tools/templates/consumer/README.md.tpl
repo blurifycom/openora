@@ -38,6 +38,10 @@ The `oss` MCP server is declared in `.mcp.json`. Approve it in your editor, rest
 
 To pull the newest platform release, re-run `pnpm install` (the pin tracks the `latest` stable tag).
 
+The API sends anonymous usage telemetry (a random instance id, the version, the Node.js runtime and
+two active-player counts). Set `OPENORA_TELEMETRY_DISABLED=1` in `.env` to turn it off; every field
+is listed at https://openora.ai/documentation/telemetry.
+
 ## Extending
 
 | Need | Command |

@@ -2,26 +2,64 @@
 
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { arch, platform, version as nodeVersion } from 'node:process';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { CORE_VERSION } from './generated/core-version.js';
-import { buildVars, emitTree, parseArgs, posix, sanitizeName } from './render.js';
+import {
+  buildVars,
+  emitTree,
+  isTelemetryEnabled,
+  parseArgs,
+  posix,
+  sanitizeName,
+} from './render.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const templateRoot = join(here, '..', 'template');
+const TELEMETRY_URL = 'https://telemetry.openora.ai/api/send';
+const TELEMETRY_DOCS_URL = 'https://openora.ai/documentation/telemetry';
+const UMAMI_WEBSITE_ID = '6c0c7f10-66e1-4100-a9b4-b5640982674d';
+const PING_TIMEOUT_MS = 2000;
+const CORE_RELEASE = CORE_VERSION.replace(/^[\^~]/, '');
 
 function die(message: string): never {
   console.error(`\n  error: ${message}\n`);
   process.exit(1);
 }
 
-function main(): void {
+// ponytail: mirrors the payload of packages/core/src/server/runtime/telemetry.ts
+// so the scaffolder stays free of the core runtime; change both together.
+async function sendScaffoldPing(): Promise<void> {
+  await fetch(process.env['OPENORA_TELEMETRY_URL'] ?? TELEMETRY_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'user-agent': `Mozilla/5.0 (compatible; openora/${CORE_RELEASE})`,
+    },
+    body: JSON.stringify({
+      type: 'event',
+      payload: {
+        website: UMAMI_WEBSITE_ID,
+        hostname: 'instance',
+        url: '/scaffold',
+        name: 'scaffold',
+        id: randomUUID(),
+        data: { version: CORE_RELEASE, node: nodeVersion, os: platform, arch },
+      },
+    }),
+    signal: AbortSignal.timeout(PING_TIMEOUT_MS),
+  }).catch(() => undefined);
+}
+
+async function main(): Promise<void> {
   let parsed: ReturnType<typeof parseArgs>;
   try {
     parsed = parseArgs(process.argv);
   } catch (error) {
     die(error instanceof Error ? error.message : String(error));
   }
-  const { target, name: nameFlag } = parsed;
+  const { target, name: nameFlag, telemetry } = parsed;
   const targetDir = resolve(process.cwd(), target);
   const name = sanitizeName(nameFlag ?? basename(targetDir));
 
@@ -58,6 +96,15 @@ function main(): void {
   Code and run /start. This is a headless api - build your frontend in this repo
   and consume the api over HTTP with @openora/core/react.
 `);
+
+  if (!isTelemetryEnabled(telemetry, process.env)) {
+    return;
+  }
+  console.log(
+    `  Openora counts this run with one anonymous ping. Opt out with --no-telemetry or\n` +
+      `  OPENORA_TELEMETRY_DISABLED=1. Details: ${TELEMETRY_DOCS_URL}\n`,
+  );
+  await sendScaffoldPing();
 }
 
-main();
+await main();
