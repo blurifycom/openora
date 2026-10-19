@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { BONUS_GRANTS, WALLET_COMMANDS } from '@openora/core/contracts';
+import { exchangeRateQuote } from '@openora/core/fx/schema/exchange-rate';
 import {
   setupTestDb,
   bootTestApp,
@@ -51,6 +52,29 @@ const credit = (userId: string, amount: string, type: 'gift' | 'rain') =>
       amount,
       currency: 'USD',
       type,
+      providerRef: { providerName: 'chat', providerRefId: randomUUID() },
+    }),
+  );
+
+const creditIn = (userId: string, amount: string, currency: string) =>
+  drizzle().transaction((tx) =>
+    app.container.get(WALLET_COMMANDS).credit(tx, {
+      userId,
+      amount,
+      currency,
+      type: 'win',
+      allowNewCurrency: true,
+      providerRef: { providerName: 'game', providerRefId: randomUUID() },
+    }),
+  );
+
+const debitIn = (userId: string, amount: string, currency: string) =>
+  drizzle().transaction((tx) =>
+    app.container.get(WALLET_COMMANDS).debit(tx, {
+      userId,
+      amount,
+      currency,
+      type: 'tip',
       providerRef: { providerName: 'chat', providerRefId: randomUUID() },
     }),
   );
@@ -150,6 +174,60 @@ describe('player transaction history', () => {
 
     expect(asc.items.map((i) => Number(i.amount))).toEqual([1, 5, 20, 100]);
     expect(desc.items.map((i) => Number(i.amount))).toEqual([100, 20, 5, 1]);
+  });
+
+  it('sorts by the signed amount converted into the requested currency', async () => {
+    // Against the USD pivot: BTC 50000, ETH 2000, TRX 0.25. LTC has no rate at all.
+    await drizzle()
+      .insert(exchangeRateQuote)
+      .values(
+        Object.entries({ BTC: '50000', ETH: '2000', TRX: '0.25' }).map(([baseCurrency, rate]) => ({
+          baseCurrency,
+          quoteCurrency: 'USD',
+          rate,
+          providerAsOf: new Date(),
+        })),
+      )
+      .onConflictDoNothing();
+    const player = await registerAndMaterializePlayer(app, {
+      email: `history-fx-${randomUUID()}@example.test`,
+    });
+    await deposit(player.client, '100'); // +400 TRX
+    await debitIn(player.userId, '20', 'USD'); // -80 TRX
+    await creditIn(player.userId, '0.01', 'BTC'); // +2000 TRX
+    await debitIn(player.userId, '0.009', 'BTC'); // -1800 TRX
+    await creditIn(player.userId, '0.005', 'ETH'); // +40 TRX
+    await creditIn(player.userId, '1', 'LTC'); // no rate
+    const shown = (h: History) =>
+      h.items.map((i) => `${i.direction === 'debit' ? '-' : '+'}${Number(i.amount)} ${i.currency}`);
+
+    const asc = await history(player.client, '&sortBy=amount&sortOrder=asc&amountCurrency=trx');
+    const desc = await history(player.client, '&sortBy=amount&sortOrder=desc&amountCurrency=TRX');
+
+    expect(shown(asc)).toEqual([
+      '-0.009 BTC',
+      '-20 USD',
+      '+0.005 ETH',
+      '+100 USD',
+      '+0.01 BTC',
+      '+1 LTC',
+    ]);
+    expect(shown(desc)).toEqual([
+      '+0.01 BTC',
+      '+100 USD',
+      '+0.005 ETH',
+      '-20 USD',
+      '-0.009 BTC',
+      '+1 LTC',
+    ]);
+  });
+
+  it('rejects an amount currency the operator does not offer', async () => {
+    const { client } = await seededPlayer();
+
+    const res = await client.get('/wallet/transactions?sortBy=amount&amountCurrency=ZZZ');
+
+    expect(res.status).toBe(400);
   });
 
   it('pages over the whole filtered history, not one half of it', async () => {
