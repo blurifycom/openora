@@ -5,6 +5,7 @@ import {
   makeAuditWriter,
   makeIdentityReader,
   makeRateLimiter,
+  makeUserCommands,
   mock,
   NO_CLIENT_META,
   makeEventBus,
@@ -93,6 +94,7 @@ function makeIamService(
     identityReader,
     mcpTokens: makeMcpTokens().mcpTokens,
     sessionCommands,
+    userCommands: makeUserCommands(),
     rateLimiter,
   });
 }
@@ -105,6 +107,7 @@ function makeIamServiceWithTokens() {
     mailDispatch: makeMailDispatch(),
     identityReader,
     mcpTokens,
+    userCommands: makeUserCommands(),
   });
   return { svc, audit };
 }
@@ -668,6 +671,8 @@ describe('IamService.previewEffectivePermissions', () => {
 });
 
 describe('IamService.acceptInvitation', () => {
+  const ACCEPT = { name: 'New Admin', password: 'correct-horse-battery' };
+
   async function seedInvitation() {
     const role = await seedRole();
     const token = randomUUID();
@@ -678,34 +683,104 @@ describe('IamService.acceptInvitation', () => {
       status: 'pending',
       expiresAt: new Date(Date.now() + 60_000),
     });
-    return token;
+    return { token, roleId: role.id };
   }
 
-  it('accepts once and emits exactly one event; a replay conflicts and emits nothing more', async () => {
-    const token = await seedInvitation();
+  function makeAcceptService(userCommands = makeUserCommands()) {
     const events = makeEventBus();
-    const svc = makeIamService(db.drizzle, events, makeMailDispatch());
+    const svc = new IamService({
+      drizzle: db.drizzle,
+      events,
+      mailDispatch: makeMailDispatch(),
+      identityReader,
+      mcpTokens: makeMcpTokens().mcpTokens,
+      userCommands,
+    });
+    return { svc, events, userCommands };
+  }
 
-    const first = await svc.acceptInvitation(token);
-    expect(first).toEqual({ success: true, email: 'who@admin.com' });
-    await expect(svc.acceptInvitation(token)).rejects.toBeInstanceOf(InvitationConflictError);
+  const assignmentsOf = (roleId: string) =>
+    db.drizzle.db.select().from(adminRoleAssignment).where(eq(adminRoleAssignment.roleId, roleId));
+
+  it('creates the invitee account with the chosen password and grants the invited role', async () => {
+    const { token, roleId } = await seedInvitation();
+    const { svc, events, userCommands } = makeAcceptService();
+    const userId = randomUUID();
+    userCommands.createAdmin.mockResolvedValueOnce({ id: userId });
+
+    const result = await svc.acceptInvitation({ token, ...ACCEPT });
+
+    expect(result).toEqual({ success: true, email: 'who@admin.com' });
+    expect(userCommands.createAdmin).toHaveBeenCalledWith(
+      { email: 'who@admin.com', ...ACCEPT },
+      expect.anything(),
+    );
+    expect(await assignmentsOf(roleId)).toMatchObject([{ userId, roleId }]);
+    expect(events.emit).toHaveBeenCalledWith(
+      'iam.invitation.accepted',
+      expect.objectContaining({ email: 'who@admin.com', roleId, userId }),
+    );
+  });
+
+  it('accepts once; a replay conflicts and provisions nothing more', async () => {
+    const { token, roleId } = await seedInvitation();
+    const { svc, events, userCommands } = makeAcceptService();
+
+    await svc.acceptInvitation({ token, ...ACCEPT });
+    await expect(svc.acceptInvitation({ token, ...ACCEPT })).rejects.toBeInstanceOf(
+      InvitationConflictError,
+    );
+    expect(userCommands.createAdmin).toHaveBeenCalledTimes(1);
+    expect(await assignmentsOf(roleId)).toHaveLength(1);
     expect(events.emit).toHaveBeenCalledTimes(1);
   });
 
-  it('two concurrent accepts: exactly one succeeds, one event (atomic conditional UPDATE)', async () => {
-    const token = await seedInvitation();
-    const events = makeEventBus();
-    const svc = makeIamService(db.drizzle, events, makeMailDispatch());
+  it('rejects an expired invitation without creating an account', async () => {
+    const { token } = await seedInvitation();
+    await db.drizzle.db
+      .update(adminInvitation)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(adminInvitation.token, token));
+    const { svc, userCommands } = makeAcceptService();
+
+    await expect(svc.acceptInvitation({ token, ...ACCEPT })).rejects.toBeInstanceOf(
+      InvitationConflictError,
+    );
+    expect(userCommands.createAdmin).not.toHaveBeenCalled();
+  });
+
+  it('leaves the invitation pending when the account cannot be created', async () => {
+    const { token, roleId } = await seedInvitation();
+    const userCommands = makeUserCommands();
+    const emailTaken = new Error('Email is already in use');
+    userCommands.createAdmin.mockRejectedValueOnce(emailTaken);
+    const { svc, events } = makeAcceptService(userCommands);
+
+    await expect(svc.acceptInvitation({ token, ...ACCEPT })).rejects.toBe(emailTaken);
+
+    const [row] = await db.drizzle.db
+      .select()
+      .from(adminInvitation)
+      .where(eq(adminInvitation.token, token));
+    expect(row?.status).toBe('pending');
+    expect(await assignmentsOf(roleId)).toHaveLength(0);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('two concurrent accepts: exactly one succeeds and provisions one account', async () => {
+    const { token } = await seedInvitation();
+    const { svc, events, userCommands } = makeAcceptService();
 
     const results = await Promise.allSettled([
-      svc.acceptInvitation(token),
-      svc.acceptInvitation(token),
+      svc.acceptInvitation({ token, ...ACCEPT }),
+      svc.acceptInvitation({ token, ...ACCEPT }),
     ]);
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
     const rejected = results.filter((r) => r.status === 'rejected');
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
     expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(InvitationConflictError);
+    expect(userCommands.createAdmin).toHaveBeenCalledTimes(1);
     expect(events.emit).toHaveBeenCalledTimes(1);
   });
 });
@@ -716,7 +791,8 @@ describe('IamService.inviteAdmin', () => {
   it('creates a pending invitation and dispatches an English invitation mail when caller is super-admin', async () => {
     const role = await seedRole();
     const mailDispatch = makeMailDispatch();
-    const svc = makeIamService(db.drizzle, makeEventBus(), mailDispatch);
+    const events = makeEventBus();
+    const svc = makeIamService(db.drizzle, events, mailDispatch);
     const result = await svc.inviteAdmin({
       email: 'new@admin.com',
       roleId: role.id,
@@ -736,6 +812,15 @@ describe('IamService.inviteAdmin', () => {
     const rows = await db.drizzle.db.select().from(adminInvitation);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ email: 'new@admin.com', status: 'pending' });
+    expect(events.emit).toHaveBeenCalledWith(
+      'iam.invitation.created',
+      expect.objectContaining({
+        email: 'new@admin.com',
+        roleId: role.id,
+        invitationId: result.id,
+        actorId: ADMIN_CALLER.userId,
+      }),
+    );
   });
 
   it('rejects a non-super-admin caller', async () => {
