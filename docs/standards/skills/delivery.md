@@ -28,6 +28,7 @@ Every run starts here, so a run that died midway resumes where it stopped: the t
 - Push the branch and open its PR without asking under `/ship` (not under `--ask`). Never push `dev` or `stage`, never force-push.
 - Draft Slack notices only, and only after delivery.
 - One PR per concern.
+- The orchestrator edits no code, commits nothing and runs no gate itself: every fix goes to the implementer. Code changed after 3 means 3 runs again for the cases it touches, and 4 for the new commits.
 
 ## Create pull request
 

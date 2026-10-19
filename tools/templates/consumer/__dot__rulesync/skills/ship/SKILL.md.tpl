@@ -87,6 +87,8 @@ Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-
 ## Rules
 
 - One ticket, one branch, one MR.
+- You edit no code, commit nothing and run no gate yourself, however small the fix: every fix goes to `builder`. Code changed after 3 means 3 runs again for the cases it touches, and 4 for the new commits.
+- A subagent that stops short (no gate output, uncommitted work) goes back to it once, never finished by you.
 - Never claim a step passed without its output: the gate from HEAD, the AC table, the review findings.
 - A run you resume with a branch but no MR re-runs 3 and 4: verdicts from a dead run are gone.
 - Clean up what the run started: worktree databases and Redis dbs stay for the next round until the MR merges; processes you started stop before you report.
