@@ -473,12 +473,11 @@ describe('chat room invites: accepting', () => {
       const listRes = await invitee.client.get('/notifications');
       expect(listRes.status).toBe(200);
       const { items } = (await listRes.json()) as {
-        items: { type: string; title: string; body: string; data: Record<string, string> }[];
+        items: { type: string; params: Record<string, string>; data: Record<string, string> }[];
       };
       const row = items.find((n) => n.type === 'chat.room_invite.received');
       expect(row).toMatchObject({
-        title: 'Room invite',
-        body: `${owner.username} invited you to a private room`,
+        params: { inviterUsername: owner.username, roomName: room.name },
         data: {
           inviteId: sent.id,
           roomId: room.id,

@@ -160,7 +160,7 @@ describe('AC: relationship button-state + pending-on-send', () => {
 });
 
 describe('AC: recipient gets an in-app notification, type round-trips, and audit trail exists', () => {
-  it('notifications.list surfaces social.friend_request.received with the right title/body; audit log exists', async () => {
+  it('notifications.list surfaces social.friend_request.received with the requester username param; audit log exists', async () => {
     const a = await registerNamedPlayer(`notif-a-${randomUUID()}@e2e.test`, 'Carol');
     const b = await registerNamedPlayer(`notif-b-${randomUUID()}@e2e.test`, 'Dave');
 
@@ -175,7 +175,7 @@ describe('AC: recipient gets an in-app notification, type round-trips, and audit
       const listRes = await b.client.get('/notifications');
       expect(listRes.status).toBe(200);
       const { items } = (await readJson(listRes)) as {
-        items: Array<{ type: string; title: string; body: string }>;
+        items: Array<{ type: string; params: Record<string, string> | null }>;
       };
       const row = items.find((n) => n.type === 'social.friend_request.received');
       // This is the exact silent-drop failure mode the brief calls out: a
@@ -184,8 +184,7 @@ describe('AC: recipient gets an in-app notification, type round-trips, and audit
       // this response - so finding it HERE (not just in the DB) is the real
       // assertion that the type round-trips end to end.
       expect(row).toBeTruthy();
-      expect(row?.title).toBe('New friend request');
-      expect(row?.body).toContain(a.username);
+      expect(row?.params).toEqual({ requesterUsername: a.username });
     });
 
     await vi.waitFor(async () => {
@@ -331,11 +330,11 @@ describe('locked decision: mutual/simultaneous request auto-accepts', () => {
     // A was the ORIGINAL requester - A gets the accepted notification, not B.
     await vi.waitFor(async () => {
       const { items } = (await readJson(await a.client.get('/notifications'))) as {
-        items: Array<{ type: string; body: string }>;
+        items: Array<{ type: string; params: Record<string, string> | null }>;
       };
       const row = items.find((n) => n.type === 'social.friend_request.accepted');
       expect(row).toBeTruthy();
-      expect(row?.body).toContain(b.username);
+      expect(row?.params).toEqual({ accepterUsername: b.username });
     });
 
     // Already-accepted friendship -> re-send fails ALREADY_FRIENDS, in either direction.

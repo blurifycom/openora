@@ -22,6 +22,20 @@
       "when": 1787911988004,
       "tag": "0002_open_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792139148939,
+      "tag": "0003_bizarre_daredevil",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792142187456,
+      "tag": "0004_magical_mystique",
+      "breakpoints": true
     }
   ]
 }

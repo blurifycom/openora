@@ -24,8 +24,7 @@ async function seedNotification(overrides: Partial<typeof notification.$inferIns
     .values({
       userId: randomUUID(),
       type: 'withdrawal.approved',
-      title: 'Payout approved',
-      body: 'Your withdrawal is on its way.',
+      params: { amount: '10.00', currency: 'USD' },
       ...overrides,
     })
     .returning();
@@ -45,6 +44,43 @@ beforeEach(async () => {
 });
 
 describe('NotificationsService.create (real PG)', () => {
+  it('refuses params that miss a required key of the type, writing nothing', async () => {
+    const { svc, events } = makeService();
+
+    await expect(
+      svc.create({
+        userId: randomUUID(),
+        type: 'chat.tip.received',
+        params: { amount: '5', currency: 'USDT' },
+      }),
+    ).rejects.toThrow('senderUsername');
+    expect(await db.drizzle.db.select().from(notification)).toHaveLength(0);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('refuses a direct create without params for a type with required keys, writing nothing', async () => {
+    const { svc } = makeService();
+
+    await expect(svc.create({ userId: randomUUID(), type: 'chat.tip.received' })).rejects.toThrow(
+      'required for chat.tip.received',
+    );
+    expect(await db.drizzle.db.select().from(notification)).toHaveLength(0);
+  });
+
+  it('does not persist pre-rendered text an overlay still passes alongside params', async () => {
+    const { svc } = makeService();
+    const legacyInput = {
+      userId: randomUUID(),
+      type: 'vip.assigned' as const,
+      title: 'Welcome to VIP',
+      body: 'You are now a VIP.',
+    };
+
+    const created = await svc.create(legacyInput);
+
+    expect(created).toMatchObject({ title: '', body: '', params: null });
+  });
+
   it('persists an unread notification and emits created', async () => {
     const { svc, events } = makeService();
     const userId = randomUUID();
@@ -52,11 +88,17 @@ describe('NotificationsService.create (real PG)', () => {
     const created = await svc.create({
       userId,
       type: 'withdrawal.approved',
-      title: 'Hello',
-      body: 'World',
+      params: { amount: '10.00', currency: 'USD' },
     });
 
-    expect(created).toMatchObject({ userId, title: 'Hello', readAt: null });
+    expect(created).toMatchObject({
+      userId,
+      params: { amount: '10.00', currency: 'USD' },
+      // Not written, but defaulted to '' so the previous release can still read the row.
+      title: '',
+      body: '',
+      readAt: null,
+    });
     expect(await db.drizzle.db.select().from(notification)).toHaveLength(1);
     expect(events.emit).toHaveBeenCalledWith('notifications.created', {
       notificationId: created!.id,
@@ -71,15 +113,13 @@ describe('NotificationsService.create (real PG)', () => {
     const created = await svc.create({
       userId: addresseeId,
       type: 'social.friend_request.received',
-      title: 'New friend request',
-      body: 'Alex sent you a friend request.',
+      params: { requesterUsername: 'Alex' },
     });
 
     expect(created).toMatchObject({
       userId: addresseeId,
       type: 'social.friend_request.received',
-      title: 'New friend request',
-      body: 'Alex sent you a friend request.',
+      params: { requesterUsername: 'Alex' },
       readAt: null,
     });
   });
@@ -91,15 +131,13 @@ describe('NotificationsService.create (real PG)', () => {
     const created = await svc.create({
       userId: requesterId,
       type: 'social.friend_request.accepted',
-      title: 'Friend request accepted',
-      body: 'Sam accepted your friend request.',
+      params: { accepterUsername: 'Sam' },
     });
 
     expect(created).toMatchObject({
       userId: requesterId,
       type: 'social.friend_request.accepted',
-      title: 'Friend request accepted',
-      body: 'Sam accepted your friend request.',
+      params: { accepterUsername: 'Sam' },
       readAt: null,
     });
   });
@@ -111,15 +149,13 @@ describe('NotificationsService.create (real PG)', () => {
     const created = await svc.create({
       userId,
       type: 'promo.bonus.completed',
-      title: 'Bonus unlocked',
-      body: 'Your 25.00 USD bonus credit has cleared its rollover requirement and is now fully withdrawable.',
+      params: { amount: '25.00', currency: 'USD' },
     });
 
     expect(created).toMatchObject({
       userId,
       type: 'promo.bonus.completed',
-      title: 'Bonus unlocked',
-      body: 'Your 25.00 USD bonus credit has cleared its rollover requirement and is now fully withdrawable.',
+      params: { amount: '25.00', currency: 'USD' },
       readAt: null,
     });
   });
@@ -132,8 +168,7 @@ describe('NotificationsService.create (real PG)', () => {
     const created = await svc.create({
       userId,
       type: 'deposit.completed',
-      title: 'Deposit completed',
-      body: 'body',
+      params: { amount: '10.00', currency: 'USD' },
       data: { transactionId },
     });
 
@@ -145,35 +180,34 @@ describe('NotificationsService.create (real PG)', () => {
     expect(stored?.data).toEqual({ transactionId });
   });
 
-  it('defaults data to null when the caller omits it', async () => {
+  it('defaults params and data to null when the caller omits them', async () => {
     const { svc } = makeService();
 
     const created = await svc.create({
       userId: randomUUID(),
       type: 'kyc.resubmission_requested',
-      title: 'Document resubmission required',
-      body: 'body',
     });
 
+    expect(created?.params).toBeNull();
     expect(created?.data).toBeNull();
   });
 
   it.each([
-    ['deposit.completed', 'Deposit completed'],
-    ['balance.adjusted', 'Balance adjusted'],
-    ['withdrawal.requested', 'Withdrawal requested'],
-    ['withdrawal.completed', 'Withdrawal completed'],
-    ['withdrawal.failed', 'Withdrawal failed'],
-    ['chat.mention', 'You were mentioned'],
+    'deposit.completed',
+    'balance.adjusted',
+    'withdrawal.requested',
+    'withdrawal.completed',
+    'withdrawal.failed',
+    'chat.mention',
   ] as const)(
-    'persists a %s notification produced by the map-driven dispatch',
-    async (type, title) => {
+    'persists a %s notification from a dispatch job queued without params',
+    async (type) => {
       const { svc } = makeService();
       const userId = randomUUID();
 
-      const created = await svc.create({ userId, type, title, body: 'body' });
+      const created = await svc.createFromQueuedJob({ userId, type });
 
-      expect(created).toMatchObject({ userId, type, title, readAt: null });
+      expect(created).toMatchObject({ userId, type, readAt: null });
     },
   );
 
@@ -184,8 +218,7 @@ describe('NotificationsService.create (real PG)', () => {
     const input = {
       userId,
       type: 'deposit.completed' as const,
-      title: 'Deposit completed',
-      body: 'body',
+      params: { amount: '10.00', currency: 'USD' },
       eventId,
     };
 
@@ -208,8 +241,7 @@ describe('NotificationsService.getById (real PG)', () => {
     const created = await svc.create({
       userId: randomUUID(),
       type: 'withdrawal.approved',
-      title: 'Payout approved',
-      body: 'Your withdrawal is on its way.',
+      params: { amount: '10.00', currency: 'USD' },
     });
 
     const found = await svc.getById(created!.id);
@@ -260,8 +292,6 @@ describe('NotificationsService.listForUser (real PG)', () => {
       Array.from({ length: 55 }, () => ({
         userId,
         type: 'withdrawal.approved' as const,
-        title: 'Payout approved',
-        body: 'body',
       })),
     );
 
