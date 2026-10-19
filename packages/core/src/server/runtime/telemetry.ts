@@ -11,8 +11,8 @@ import { DRIZZLE, openoraInstance, type DrizzleService } from '../db/index.js';
 import { createLogger, type Container } from '../kernel/index.js';
 import type { CoreTokenCatalog } from './core-token-catalog.js';
 
-export const TELEMETRY_DEFAULT_URL = 'https://telemetry.openora.ai/api/send';
-export const TELEMETRY_DOCS_URL = 'https://openora.ai/documentation/telemetry';
+const TELEMETRY_DEFAULT_URL = 'https://telemetry.openora.ai/api/send';
+const TELEMETRY_DOCS_URL = 'https://openora.ai/documentation/telemetry';
 // Public by design: an Umami website id ships in every browser tracking snippet.
 const UMAMI_WEBSITE_ID = '6c0c7f10-66e1-4100-a9b4-b5640982674d';
 
@@ -29,7 +29,7 @@ const corePackage: { version: string } = createRequire(import.meta.url)(
 );
 const coreVersion = corePackage.version;
 
-export type TelemetryEvent = 'boot' | 'heartbeat';
+type TelemetryEvent = 'boot' | 'heartbeat';
 type Env = Record<string, string | undefined>;
 
 export type TelemetryBody = {
@@ -78,7 +78,7 @@ export async function resolveInstanceId(drizzle: DrizzleService): Promise<string
   return row.instanceId;
 }
 
-export async function collectTelemetry(
+async function collectTelemetry(
   container: Container<CoreTokenCatalog>,
   event: TelemetryEvent,
   now = new Date(),

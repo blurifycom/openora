@@ -22,5 +22,3 @@ export const playerNote = pgTable(
       .where(sql`${t.proposalId} IS NOT NULL`),
   ],
 );
-
-export type PlayerNote = typeof playerNote.$inferSelect;

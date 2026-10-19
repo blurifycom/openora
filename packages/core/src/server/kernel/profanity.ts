@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { DataSet, englishDataset, englishRecommendedTransformers, RegExpMatcher } from 'obscenity';
 
-export const SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de', 'ru', 'pt'] as const;
+const SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de', 'ru', 'pt'] as const;
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 

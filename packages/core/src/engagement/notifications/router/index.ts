@@ -48,7 +48,7 @@ export function toNotificationDto(row: NotificationRow): Notification | null {
   };
 }
 
-export function createNotificationStream(
+function createNotificationStream(
   realtime: RealtimeTransport,
   userId: User['id'],
   signal: AbortSignal | undefined,
