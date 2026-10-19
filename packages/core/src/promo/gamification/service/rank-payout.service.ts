@@ -1,4 +1,5 @@
-import { and, asc, eq, gt, gte, isNotNull, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type {
   BonusGrantCommands,
   ExchangeRateReader,
@@ -115,8 +116,11 @@ export class RankPayoutService {
    *
    * A promotion onto the rank every player starts on, and one for a player under a
    * responsible-gambling block that cannot be checked, is caught up without being announced.
+   * The level-up bonus is named only on a move up onto a rank whose bonus was recorded for the
+   * player and not forfeited, so a rank set by any other path than wagering does not promise one.
    */
   async announceRankChanges(): Promise<RankChanged[]> {
+    const announcedTier = alias(promoRankTier, 'announced_tier');
     if (!this.eligibility) {
       this.logger.warn({}, 'rank change announcements skipped - play eligibility not bound');
       return [];
@@ -135,13 +139,23 @@ export class RankPayoutService {
           tierName: promoRankTier.name,
           currency: promoRankTier.currency,
           rakebackPercent: promoRankTier.rakebackPercent,
-          levelUpBonus: promoRankTier.levelUpBonus,
+          levelUpBonus: promoRankLevelUp.amount,
           dailyBonus: promoRankTier.dailyBonus,
           weeklyBonus: promoRankTier.weeklyBonus,
           monthlyBonus: promoRankTier.monthlyBonus,
         })
         .from(promoPlayerRank)
         .innerJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
+        .leftJoin(announcedTier, eq(announcedTier.id, promoPlayerRank.announcedTierId))
+        .leftJoin(
+          promoRankLevelUp,
+          and(
+            eq(promoRankLevelUp.userId, promoPlayerRank.userId),
+            eq(promoRankLevelUp.tierId, promoPlayerRank.tierId),
+            or(isNull(promoRankLevelUp.outcome), eq(promoRankLevelUp.outcome, 'granted')),
+            or(isNull(announcedTier.position), gt(promoRankTier.position, announcedTier.position)),
+          ),
+        )
         .where(
           and(
             gt(promoPlayerRank.userId, after),
