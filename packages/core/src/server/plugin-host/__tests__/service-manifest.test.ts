@@ -282,6 +282,20 @@ describe('the one error a manifest boot fails with', () => {
     );
   });
 
+  it('registers none of the plugins the boot registered a second time', async () => {
+    const registers = new Map(install.map(({ id, register }) => [id, vi.fn(register)]));
+    const { check } = checkOf(
+      install.map((p) => ({ ...p, register: registers.get(p.id) ?? p.register })),
+      ['identity'],
+    );
+
+    await expect(
+      assertServiceComplete({ ...check, registered: new Set(['identity']) }),
+    ).rejects.toThrow(/- identity requires MAIL \(bound by mail\)/);
+    expect(registers.get('identity')).not.toHaveBeenCalled();
+    expect(registers.get('mail')).toHaveBeenCalledOnce();
+  });
+
   it('names a required port no module in the plugin list binds', async () => {
     const { check } = checkOf(withoutModules('mail'), ['identity']);
     const run = assertServiceComplete(check);

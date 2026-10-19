@@ -167,5 +167,13 @@ export type Plugin<C extends TokenCatalog> = {
   optionalPorts?: readonly OptionalPort<C>[];
   // Logged like optionalPorts, but an unbound one fails a SERVICE_MANIFEST boot.
   controlPorts?: readonly ControlPort<C>[];
+  /**
+   * Declares into `ctx` what the plugin contributes, and does nothing else: no timer, connection,
+   * file or network read, process listener, global, or `process.env` write. A SERVICE_MANIFEST
+   * boot that fails registers every plugin it has not registered yet, each into a container of
+   * its own that is then dropped, to learn which binds which port. Open a resource in a
+   * `provide()` or router factory, closing it with `c.onDispose()`: those run only for the
+   * container that serves. Reading configuration and throwing on a bad value is fine.
+   */
   register(ctx: PluginContext<C>): void | Promise<void>;
 };

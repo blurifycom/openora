@@ -389,12 +389,32 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
  * `container.dispose()` (via `close()`) runs disposers in REVERSE registration
  * order, so DRIZZLE is registered before JOB_QUEUE to guarantee workers drain
  * before the DB closes. A router namespace registered by more than one plugin
- * throws at boot, not at request time.
+ * throws at boot, not at request time. A boot that fails disposes the container before it
+ * rethrows: the caller gets no app to close, so what the boot opened - the Redis client, a
+ * connection `configure` bound - is closed here.
  */
 export async function createApp(
   config: CreateAppConfig,
   configure?: (container: Container<CoreTokenCatalog>) => void | Promise<void>,
 ): Promise<CreatedApp> {
+  const container = new Container<CoreTokenCatalog>();
+  try {
+    return await bootApp(container, config, configure);
+  } catch (err) {
+    await container
+      .dispose()
+      .catch((disposeErr: unknown) =>
+        createLogger('create-app').error({ err: disposeErr }, 'closing a failed boot failed'),
+      );
+    throw err;
+  }
+}
+
+async function bootApp(
+  container: Container<CoreTokenCatalog>,
+  config: CreateAppConfig,
+  configure?: (container: Container<CoreTokenCatalog>) => void | Promise<void>,
+) {
   // Parsed first so a malformed entry fails the boot before anything is bound.
   const trustedProxies = resolveTrustedProxies(
     config.trustedProxies,
@@ -407,7 +427,6 @@ export async function createApp(
     process.env['DATABASE_URL'] = config.databaseUrl;
   }
 
-  const container = new Container<CoreTokenCatalog>();
   container.register(DRIZZLE, () => {
     const svc = new DrizzleService();
     container.onDispose(() => svc.dispose());
@@ -512,7 +531,10 @@ export async function createApp(
   assertDurableSeamsBound(container);
   // After configure(), so a port the composition root binds counts.
   if (manifestCheck) {
-    await assertServiceComplete(manifestCheck);
+    await assertServiceComplete({
+      ...manifestCheck,
+      registered: new Set(plugins.map(({ id }) => id)),
+    });
     container.get(ADMIN_GUARD);
   }
 

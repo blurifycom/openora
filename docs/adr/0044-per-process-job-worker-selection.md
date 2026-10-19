@@ -83,8 +83,13 @@ static role table, so an admin whose role was revoked still acts, and without
 **A manifest is fixed in one edit.** A manifest boot fails once for everything the manifest leaves
 out - a dependency, the module that binds a required port, the module behind a control - naming
 each with what its module skips, and prints one manifest line that adds them all and what they
-need in turn. Which module binds a required port is learned by registering each plugin of the
-list on its own, only once the boot has already failed.
+need in turn. Which module binds a port is learned only once the boot has already failed: what
+the modules the boot registered bound is in its container, and every other plugin of the list
+registers once, on its own, into a container that is then dropped. That is why `register()`
+only declares into the registry - a timer, connection, file read, process listener, global or
+`process.env` write there would run in that pass too - and a resource opens in a `provide()` or
+router factory, which only the container that serves runs. A failed boot disposes its container,
+closing what the boot had opened.
 
 ### Alternatives considered
 
@@ -109,11 +114,11 @@ list on its own, only once the boot has already failed.
   processes, so a queue excluded everywhere backs up silently. Queue-depth monitoring catches it.
 - Processes that share a `SERVICE_NAME` must load the same modules. The streams driver acks an
   event once per group, so a process without a handler for it loses the event for that group.
-- When a manifest boot fails, every plugin in the list registers once more, each into a
-  container of its own, to learn which binds which port. A `register()` that does more than
-  declare - logs, reads configuration and throws - does so again. One that throws counts as
-  binding what it bound before the throw, and the error names it when a required port is left
-  without a known binder.
+- When a manifest boot fails, every plugin of the list the boot had not registered registers
+  once, to learn what it binds. A `register()` that does more than declare - logs, reads
+  configuration and throws - does so in that pass. One that throws counts as binding what it
+  bound before the throw, and the error names it when a required port is left without a known
+  binder.
 
 **Neutral:**
 

@@ -51,6 +51,11 @@ export type ServiceManifestCheck<C extends TokenCatalog> = {
   hostControls: readonly HostControl<C>[];
   /** Whether the process has bound the port so far. */
   isBound: (port: C[keyof C]) => boolean;
+  /**
+   * The plugins this process has registered. What they bound is in its container, which
+   * `isBound` reads, so the boot error does not register them a second time.
+   */
+  registered?: ReadonlySet<string>;
 };
 
 type MissingModule = { kind: 'module'; id: string; requiredBy: string[]; listed: boolean };
@@ -205,8 +210,8 @@ function shortfall<C extends TokenCatalog>(
 
 /**
  * The one error a manifest boot fails with: every module the manifest leaves out and why, and a
- * manifest line that adds them all, so one edit fixes it. Reads and registers every plugin in
- * the list, each on its own, to learn which module binds which port.
+ * manifest line that adds them all, so one edit fixes it. Reads every plugin in the list and
+ * registers each one the process has not, on its own, to learn which module binds which port.
  */
 async function shortfallError<C extends TokenCatalog>(check: ServiceManifestCheck<C>) {
   const plugins = new Map<string, Plugin<C>>();
@@ -220,7 +225,8 @@ async function shortfallError<C extends TokenCatalog>(check: ServiceManifestChec
     ]),
     ...check.hostControls.map(({ port }) => port),
   ];
-  const { binders, failed } = await portBinders([...plugins.values()], ports);
+  const unregistered = [...plugins.values()].filter(({ id }) => !check.registered?.has(id));
+  const { binders, failed } = await portBinders(unregistered, ports);
   const { findings, added } = shortfall(check, plugins, binders);
   const manifest = check.manifest.join(',');
   const unknownBinder = findings.some((f) => f.kind === 'required' && f.boundBy === undefined);

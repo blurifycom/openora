@@ -31,6 +31,7 @@ import {
 import type { PluginEntry } from '../../plugin-host/index.js';
 import { createApp } from '../create-app.js';
 import type { CoreTokenCatalog } from '../core-token-catalog.js';
+import { countedRegistrations } from './fixtures/counted-plugin.js';
 import { FIXTURE_LIMITS } from './fixtures/limits-plugin.js';
 import { heardTriggers } from './fixtures/trigger-listener-plugin.js';
 import { getCurrentClientMeta } from '../../kernel/request-context.js';
@@ -518,6 +519,23 @@ describe('createApp - a split service fails closed on a control it would skip', 
     await expect(boot([limited, limits], 'fixture-limited')).rejects.toThrow(
       /- fixture-limited runs without FIXTURE_LIMITS \(bound by fixture-limits\): fixture limits go unenforced\nAdd them: SERVICE_MANIFEST=fixture-limited,fixture-limits/,
     );
+  });
+
+  it('registers each loaded plugin once and closes the connection it opened when it refuses', async () => {
+    const counted = entry('fixture-counted', 'counted');
+    const openSockets = () =>
+      process.getActiveResourcesInfo().filter((type) => type === 'TCPSocketWrap').length;
+    const socketsBefore = openSockets();
+    countedRegistrations().count = 0;
+
+    await expect(boot([counted, limits], 'fixture-counted')).rejects.toThrow(
+      /- fixture-counted runs without FIXTURE_LIMITS \(bound by fixture-limits\)/,
+    );
+
+    expect(countedRegistrations().count).toBe(1);
+    await vi.waitFor(() => expect(openSockets()).toBeLessThanOrEqual(socketsBefore), {
+      timeout: 2_000,
+    });
   });
 
   it('boots once the manifest has that module, or the composition root binds the port', async () => {

@@ -1487,11 +1487,11 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'social.friend_request.cancelled',
 ] as const;
 
+const logger = createLogger('audit');
+
 export default {
   id: 'audit',
   register(ctx) {
-    const logger = createLogger('audit');
-
     // Subscriptions are wired before router factories run (create-app.ts boot order),
     // so svcRef is null at registration but set before any real event arrives.
     let svcRef: AuditService | null = null;

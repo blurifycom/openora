@@ -522,6 +522,8 @@ export function buildChatRoomScheduledForDeletionNotification(payload: {
   };
 }
 
+const logger = createLogger('notifications');
+
 export default {
   id: 'notifications',
   controlPorts: [
@@ -532,8 +534,6 @@ export default {
     },
   ],
   register(ctx) {
-    const logger = createLogger('notifications');
-
     // Subscriptions are wired before router factories run (boot order), so these refs are
     // null at registration but set from the router factory before any real event arrives.
     let svcRef: NotificationsService | null = null;
