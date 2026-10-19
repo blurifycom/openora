@@ -2,7 +2,7 @@
 
 ## Ship
 
-Use for an OSS platform-core feature, a consumer work-order requiring `@openora/*` changes, or a standalone core feature. Input is a ticket key, a work-order path, or a described feature. One change in, a green reviewed PR out, with nobody in the loop.
+Use for an OSS platform-core feature, a consumer work-order requiring `@openora/*` changes, or a standalone core feature. Input is a ticket key, a work-order path, or a described feature. One change in, a green reviewed PR out, with nobody in the loop. You own the whole delivery: you are done when the PR is ready for a person to review it (step 6), not when it is opened.
 
 You run in the main session and are the only one who delegates: each step goes to its subagent, you read its verdict and pick the next step yourself. Every subagent you start is told it starts no subagents of its own. A domain question one returns comes back to you; ask `expert` and pass the answer on.
 
@@ -12,7 +12,7 @@ You run in the main session and are the only one who delegates: each step goes t
 
 Every run starts here, so a run that died midway resumes where it stopped: the ticket or work order, `git branch -a --list '*<key>*'`, then `gh pr list --head <branch>` and its checks.
 
-- No plan yet -> 1. A branch, no PR -> 3, 4, 5 (a dead run's verdicts are gone, so test and review run again). An open PR with red checks or conflicts -> the fix-pipeline workflow. Unanswered review threads -> the fix-review-comments workflow. Green with nothing unanswered, or merged -> report it and stop.
+- No plan yet -> 1. A branch, no PR -> 3, 4, 5 (a dead run's verdicts are gone, so test and review run again). An open PR with red checks or conflicts -> the fix-pipeline workflow. Unanswered review threads -> the fix-review-comments workflow. Checks still running -> 6. Green with nothing unanswered, or merged -> report it and stop.
 
 ### Workflow
 
@@ -21,6 +21,7 @@ Every run starts here, so a run that died midway resumes where it stopped: the t
 3. **Test.** Start `tester` in the worktree with the plan's test cases. Any FAIL row goes back to the implementer with those rows only, then `tester` again. A failing test called pre-existing without its run on the base commit goes back to `tester` once to run it there; still unrun, it is a FAIL.
 4. **Review.** Start `security-reviewer` (focus `risk`, which also works `contract-reviewer`'s checklist) and `quality-reviewer` in parallel on the branch diff per `review.md`, with the tester's verdict table. Every finding with a fix gets fixed, whatever its severity, once it holds: dedupe across reviewers, open each `file:line` and confirm the evidence on this branch; one that doesn't hold is dropped into the PR description with why. Send the rest to the implementer in one go, then 3 for the cases they touch and 4 again; a later round of 4 reviews only the new commits and whether each sent finding is fixed. Rounds of 3 and 4 share one budget of three; after the third with anything still failing, report what is left and stop.
 5. **Finish.** `docs` on the branch diff per `docs/standards/documentation.md`, `cleaner` over it, regenerate after contract or Drizzle changes, `pnpm verify`, then the pull-request workflow below.
+6. **Ready for review.** Watch the PR's checks on its last commit until they finish (`gh pr checks <n> --watch` in the background, never a sleep loop). Red or conflicts -> the fix-pipeline workflow, then watch again; still red after three fixes -> report what is left and stop. Green -> read the threads again (bots comment once checks end) and run the fix-review-comments workflow on any new one. Under `/ship` both workflows send every fix through the implementer, then `tester` re-runs the cases it touches and leaves a test that fails without it, then 4 on the new commits, and only then push. Ready means green checks on the last commit, no conflicts, every thread answered, and the verdict table in the description: report "Ready for review:" and the URL. Later comments from a person bring it back through `/ship`, which lands here.
 
 ### Delivery rules
 
@@ -28,6 +29,8 @@ Every run starts here, so a run that died midway resumes where it stopped: the t
 - Push the branch and open its PR without asking under `/ship` (not under `--ask`). Never push `dev` or `stage`, never force-push.
 - Draft Slack notices only, and only after delivery.
 - One PR per concern.
+- Inside its worktree, `/ship` does what the work needs without asking and says so in the PR: a new env var goes into the local `.env` with a dev value and into every place the repo declares one, a dependency the plan needs is added with its lockfile, and the worktree's own database is created, migrated, seeded and reset freely. A value only a person has gets a dev placeholder and a "Needs before deploy" line in the PR.
+- Never, however blocked: servers, ssh, deploys or a database that is not the worktree's own; CI settings and variables, repo settings, other people's branches, merging; dropping, flushing or killing what this run did not create; committing, printing or inventing a secret; `--no-verify`, a skipped or loosened test or guard. Blocked by one of these -> `Blocked:` with what is needed and who can do it. Every subagent started gets both lists.
 - The orchestrator edits no code, commits nothing and runs no gate itself: every fix goes to the implementer. Code changed after 3 means 3 runs again for the cases it touches, and 4 for the new commits.
 
 ## Create pull request

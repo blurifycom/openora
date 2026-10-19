@@ -4,7 +4,8 @@ targets: ['*']
 description: >
   Take one {{trackerKey}} ticket from plan to a green, reviewed MR with nobody in the loop: planner
   plans it with test cases, builder builds it, tester attacks it, the reviewers review it, then it
-  pushes the ticket branch, opens the MR and moves the ticket. Resumable: every run reads the ticket,
+  pushes the ticket branch, opens the MR, moves the ticket and watches the MR until it is ready for a
+  person to review. Resumable: every run reads the ticket,
   branch, MR and CI and does the next step, including fixing a red pipeline or new review comments.
   Stops only on a question or a blocker. Use on "ship {{trackerKey}}-XXX", "add feature", "deliver
   {{trackerKey}}-XXX", or /ship {{trackerKey}}-XXX [--ask].
@@ -12,7 +13,7 @@ description: >
 
 # ship ({{name}})
 
-The orchestrator: one ticket key in, a green MR in Code Review out. You run in the main session and are the only one who delegates. You hand each step to its subagent, read its verdict, and pick the next step yourself - never wait for a person between steps. Every subagent you start is told it starts no subagents of its own; a domain question one of them returns comes back to you, you ask `expert`, and you pass the answer on.
+The orchestrator: one ticket key in, a green MR in Code Review out. You own the ticket's whole delivery, plan to review: you are done when the MR is ready for a person to review it (step 7), not when it is opened. You run in the main session and are the only one who delegates. You hand each step to its subagent, read its verdict, and pick the next step yourself - never wait for a person between steps. Every subagent you start is told it starts no subagents of its own; a domain question one of them returns comes back to you, you ask `expert`, and you pass the answer on.
 
 ## Coordinates
 
@@ -31,6 +32,27 @@ The orchestrator: one ticket key in, a green MR in Code Review out. You run in t
 - The forge: opening the MR for that branch and replying on its review threads.
 - Slack: a one-line draft only, never sent.
 
+## Do what the work needs, inside the worktree
+
+Never stop to ask for something local that deleting the worktree undoes: do it, and say what you did in the reply and the MR description.
+
+- Env: a variable the change needs goes into the worktree's `.env` with a local dev value, and into every place the repo declares one (env schema, `.env.example`, deploy docs) in the same commit. A value only a person has (a real API key, a prod URL): a dev placeholder or a mock locally, and a "Needs before deploy" line in the MR description. If no test can run without the real one, that is a blocker.
+- Dependencies: add what the plan needs with the repo's package manager and commit the lockfile, unless a repo rule forbids it right now (a linked checkout); then it is a blocker that says why.
+- Data: the worktree's own database and Redis db - create, migrate, seed and reset them freely. Migrations come from the repo's generator, generated files from its regen command.
+- Processes and tools: start what the tests need on the worktree's own ports and stop it before you report; install a local tool the repo's docs name (browsers for Playwright and the like).
+
+## Never, however blocked
+
+Anything shared, remote, or not undone by deleting the worktree:
+
+- Servers, stage and prod, ssh, cloud consoles, deploys, and any database that is not the worktree's own.
+- CI/CD settings and variables, repo settings, other people's branches and MRs, merging.
+- A database, Redis db, process or worktree this run did not create: no drop, flush, kill or delete.
+- Secrets: never commit, print or invent a real-looking one; a `.env` with real values stays uncommitted.
+- Gates: no `--no-verify`, no skipped or loosened test, lint rule or guard hook, no hand edit to a generated file or `node_modules`.
+
+Blocked by one of these: `Blocked:` with what is needed and who can do it. Every subagent you start gets both lists.
+
 ## Read the state, do the next step
 
 Every run starts here, so a run that died midway resumes where it stopped. Read the ticket per `docs/agents/issue-tracker.md`, then `git branch -a --list '*{{trackerKey}}-XXX*'`, then the MR for that branch and its CI per `docs/agents/forge.md`.
@@ -42,7 +64,8 @@ Every run starts here, so a run that died midway resumes where it stopped. Read 
 | Branch, no MR                               | 3. Test, then 4. Review, then 5. Open the MR |
 | MR open, CI red or conflicts                | 6. `fix-pipeline` skill                     |
 | MR open, review threads with no reply       | 6. `fix-review-comments` skill              |
-| MR open, green, nothing unanswered          | Report "nothing to do" and the MR URL       |
+| MR open, CI still running                   | 7. Ready for review                         |
+| MR open, green, nothing unanswered          | Report "Ready for review:" and the MR URL   |
 | MR merged or closed                         | Report it, do nothing                       |
 
 A comment added to the ticket after the Plan comment that changes scope sends you back to 1.
@@ -81,11 +104,24 @@ Rounds of 3 and 4 share one budget: three. After the third with anything still f
 
 ### 5. Open the MR
 
-`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table, its screenshots and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Draft the one-line Slack notice to `{{teamChannel}}`: emoji + MR title as a link.
+`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table, its screenshots and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Draft the one-line Slack notice to `{{teamChannel}}`: emoji + MR title as a link. Then 7.
 
-### 6. Keep the MR green
+### 6. Red CI and review comments
 
-Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-comments` on unanswered threads. No such skill in this repo: do the same per `docs/agents/forge.md` - reproduce locally, `builder` fixes the cause and runs the gate, push the ticket branch, reply per thread. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer. Never skip or loosen a test.
+Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-comments` on unanswered threads from a person or a bot. No such skill in this repo: do the same per `docs/agents/forge.md`. Under `/ship` they run like this:
+
+- Each thread is checked against the code on this branch first: correct | already handled | wrong on this branch | out of scope. Only a correct one changes code; the rest get an answer.
+- A red job is reproduced locally first; `builder` fixes its cause. Never skip or loosen a test.
+- Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Nothing is pushed untested.
+- Push the ticket branch without asking; only a force-push still waits for a yes. Reply per thread with what changed and the test that proves it, or why nothing changed. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer.
+
+Then 7.
+
+### 7. Ready for review
+
+Watch the MR's pipeline on its last commit until it finishes, with the forge's watch command (`docs/agents/forge.md`) run in the background, never a sleep loop. Red: 6, then watch again; still red after three fixes -> blocker comment, report, stop. Green: read the threads again, since bots and scanners comment once the pipeline ends, and run 6 for any new one.
+
+Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, and the description holds the AC table, the screenshots and the UNCHECKED rows. Report "Ready for review:" and the MR URL. A person's comments that come later bring the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
 
 ## Rules
 
