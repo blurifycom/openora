@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { makeAuditWriter, mock } from '../../../testing/mock.js';
 import type {
   BonusGrantCommands,
   ExchangeRateReader,
@@ -31,6 +31,7 @@ const isRestricted = vi.fn<PlayEligibilityPort['isRestricted']>();
 const credit = vi.fn<WalletCommands['credit']>();
 const convert = vi.fn<ExchangeRateReader['convert']>();
 const getBalances = vi.fn<WalletReader['getBalances']>();
+const audit = makeAuditWriter();
 
 const MILESTONES: StreakMilestone[] = [
   { day: 3, rewards: [{ kind: 'cash', amount: '5' }] },
@@ -49,15 +50,16 @@ const MILESTONES: StreakMilestone[] = [
 // The streak's own currency and the payout currency match by default, so most tests exercise
 // the no-conversion path - the currency-conversion behaviour has its own describe blocks below.
 const service = (payoutCurrency = 'USD') =>
-  new StreakPayoutService(
-    db.drizzle,
-    mock<BonusGrantCommands>({ grant }),
-    mock<PlayEligibilityPort>({ isRestricted }),
-    mock<ExchangeRateReader>({ convert }),
-    mock<WalletReader>({ getBalances }),
+  new StreakPayoutService({
+    drizzle: db.drizzle,
+    grants: mock<BonusGrantCommands>({ grant }),
+    eligibility: mock<PlayEligibilityPort>({ isRestricted }),
+    rates: mock<ExchangeRateReader>({ convert }),
+    walletReader: mock<WalletReader>({ getBalances }),
     payoutCurrency,
-    mock<WalletCommands>({ credit }),
-  );
+    audit,
+    wallet: mock<WalletCommands>({ credit }),
+  });
 
 const logger = { warn: vi.fn() };
 
@@ -379,6 +381,9 @@ describe('announcing a reward waiting to be claimed', () => {
 });
 
 describe('a responsible-gambling block starting', () => {
+  const block = (userId: string, actor: { id: string; isAdmin: boolean } | null = null) =>
+    service().forfeitUnclaimed({ userId, reason: 'self_exclusion', actor });
+
   it("settles the player's unclaimed rewards as restricted and leaves claimed ones alone", async () => {
     const userId = randomUUID();
     const claimed = await owe(userId, 3);
@@ -386,10 +391,71 @@ describe('a responsible-gambling block starting', () => {
     const waiting = await owe(userId, 7);
     const otherPlayers = await owe(randomUUID(), 3);
 
-    await expect(service().forfeitUnclaimed(userId)).resolves.toBe(1);
+    await expect(block(userId)).resolves.toBe(1);
 
     await expect(milestoneGrant(claimed)).resolves.toMatchObject({ outcome: 'granted' });
     await expect(milestoneGrant(waiting)).resolves.toMatchObject({ outcome: 'restricted' });
     await expect(milestoneGrant(otherPlayers)).resolves.toMatchObject({ settledAt: null });
+  });
+
+  it('writes one audit row per forfeited reward, in the forfeit transaction', async () => {
+    const userId = randomUUID();
+    const waiting = await owe(userId, 3);
+
+    await block(userId);
+
+    expect(audit.recordManyInTransaction).toHaveBeenCalledWith(expect.anything(), [
+      expect.objectContaining({
+        actorType: 'system',
+        action: 'promo.streak.milestone.forfeited',
+        resourceType: 'promo_streak_milestone_grant',
+        resourceId: waiting,
+        before: { settledAt: null, outcome: null },
+        after: expect.objectContaining({
+          userId,
+          day: 3,
+          outcome: 'restricted',
+          reason: 'self_exclusion',
+        }),
+      }),
+    ]);
+    expect(audit.recordManyInTransaction.mock.calls[0]?.[1][0]).not.toHaveProperty('actorId');
+  });
+
+  it.each([
+    { isAdmin: true, actorType: 'admin' },
+    { isAdmin: false, actorType: 'player' },
+  ])('names the $actorType who started the block as the actor', async ({ isAdmin, actorType }) => {
+    const userId = randomUUID();
+    await owe(userId, 3);
+    const actorId = randomUUID();
+
+    await block(userId, { id: actorId, isAdmin });
+
+    expect(audit.recordManyInTransaction.mock.calls[0]?.[1]).toEqual([
+      expect.objectContaining({ actorType, actorId }),
+    ]);
+  });
+
+  it('forfeits and audits nothing a second time when the job is retried', async () => {
+    const userId = randomUUID();
+    await owe(userId, 3);
+    await owe(userId, 7);
+
+    await expect(block(userId)).resolves.toBe(2);
+    await expect(block(userId)).resolves.toBe(0);
+
+    const entries = audit.recordManyInTransaction.mock.calls.flatMap(([, rows]) => rows);
+    expect(entries).toHaveLength(2);
+  });
+
+  it('leaves the rewards waiting and writes no audit row when the audit write fails', async () => {
+    const userId = randomUUID();
+    const waiting = await owe(userId, 3);
+    audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    await expect(block(userId)).rejects.toThrow(/audit unavailable/);
+
+    await expect(milestoneGrant(waiting)).resolves.toMatchObject({ settledAt: null });
   });
 });

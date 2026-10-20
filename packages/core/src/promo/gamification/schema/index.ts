@@ -355,9 +355,9 @@ export const promoStreakMilestoneGrant = pgTable(
     reachedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     settledAt: timestamp({ withTimezone: true }),
     /**
-     * `granted`, or why nothing was: `restricted` for a player under an RG block when claiming,
-     * `reversed` when a rollback took the day that reached it back under the minimum before it
-     * was claimed.
+     * `granted`, or why nothing was: `restricted` for a player under an RG block, settled when
+     * the block starts or when the reward is announced or claimed during it, `reversed` when a
+     * rollback took the day that reached it back under the minimum before it was claimed.
      */
     outcome: text(),
     /** When the player was told the reward is waiting to be claimed. */

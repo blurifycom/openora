@@ -271,6 +271,10 @@ export const PlayerStreakSchema = z.object({
 });
 export type PlayerStreak = z.infer<typeof PlayerStreakSchema>;
 
+/** Why a player's unclaimed streak rewards were forfeited: the responsible-gambling block that started. */
+export const StreakForfeitReasonSchema = z.enum(['self_exclusion', 'cooling_off']);
+export type StreakForfeitReason = z.infer<typeof StreakForfeitReasonSchema>;
+
 export const ClaimStreakMilestoneInputSchema = z.object({ milestoneGrantId: UuidSchema });
 
 /** `restricted`: the player is under a responsible-gambling block, so the reward is forfeited. */

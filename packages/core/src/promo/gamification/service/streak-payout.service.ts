@@ -1,6 +1,7 @@
 import { randomInt } from 'node:crypto';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type {
+  AuditWritePort,
   BonusGrantCommands,
   DomainEventPayload,
   ExchangeRateReader,
@@ -16,7 +17,7 @@ import {
   type DrizzleTx,
 } from '@openora/core/server';
 import { promoPlayerRank, promoStreakConfig, promoStreakMilestoneGrant } from '../schema/index.js';
-import type { StreakClaimResult, StreakReward } from '../contract/index.js';
+import type { StreakClaimResult, StreakForfeitReason, StreakReward } from '../contract/index.js';
 import { priceForPayout } from '../shared/payout-currency.js';
 
 type Granted = DomainEventPayload<'promo.bonus.granted'>;
@@ -40,6 +41,20 @@ export type StreakMilestoneReached = DomainEventPayload<'promo.streak.milestone.
 
 export const StreakMilestoneNotClaimableError = makeNotFoundError('StreakMilestone');
 
+export type StreakPayoutDeps = {
+  drizzle: DrizzleService;
+  grants: BonusGrantCommands | undefined;
+  eligibility: PlayEligibilityPort | undefined;
+  rates: ExchangeRateReader;
+  walletReader: WalletReader;
+  payoutCurrency: string;
+  audit: AuditWritePort;
+  wallet?: WalletCommands | undefined;
+};
+
+/** Who started the block: null when no person did (a rule), so the audit row names the system. */
+export type StreakForfeitActor = { id: Uuid; isAdmin: boolean } | null;
+
 const BATCH = 500;
 const DAY_MS = 86_400_000;
 
@@ -62,15 +77,25 @@ function rollGiftDrop(min: string, max: string): string {
  * `RankPayoutService` applies - a bonus waiting at the end of a block is an incentive to return.
  */
 export class StreakPayoutService {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly grants: BonusGrantCommands | undefined,
-    private readonly eligibility: PlayEligibilityPort | undefined,
-    private readonly rates: ExchangeRateReader,
-    private readonly walletReader: WalletReader,
-    private readonly payoutCurrency: string,
-    private readonly wallet?: WalletCommands,
-  ) {}
+  private readonly drizzle: DrizzleService;
+  private readonly grants: BonusGrantCommands | undefined;
+  private readonly eligibility: PlayEligibilityPort | undefined;
+  private readonly rates: ExchangeRateReader;
+  private readonly walletReader: WalletReader;
+  private readonly payoutCurrency: string;
+  private readonly audit: AuditWritePort;
+  private readonly wallet: WalletCommands | undefined;
+
+  constructor(deps: StreakPayoutDeps) {
+    this.drizzle = deps.drizzle;
+    this.grants = deps.grants;
+    this.eligibility = deps.eligibility;
+    this.rates = deps.rates;
+    this.walletReader = deps.walletReader;
+    this.payoutCurrency = deps.payoutCurrency;
+    this.audit = deps.audit;
+    this.wallet = deps.wallet;
+  }
 
   /**
    * Row lock with SKIP LOCKED plus the unsettled filter make a double or parallel claim settle
@@ -159,20 +184,57 @@ export class StreakPayoutService {
 
   /**
    * Settles every reward a player has not claimed as `restricted` when a responsible-gambling
-   * block starts, the same rule that forfeits their active bonuses.
+   * block starts, the same rule that forfeits their active bonuses, with one audit row per reward
+   * in the same transaction. The `settledAt is null` claim makes a retried job write nothing twice.
    */
-  async forfeitUnclaimed(userId: Uuid): Promise<number> {
-    const settled = await this.drizzle.db
-      .update(promoStreakMilestoneGrant)
-      .set({ settledAt: new Date(), outcome: 'restricted' })
-      .where(
-        and(
-          eq(promoStreakMilestoneGrant.userId, userId),
-          isNull(promoStreakMilestoneGrant.settledAt),
-        ),
-      )
-      .returning({ id: promoStreakMilestoneGrant.id });
-    return settled.length;
+  async forfeitUnclaimed({
+    userId,
+    reason,
+    actor,
+  }: {
+    userId: Uuid;
+    reason: StreakForfeitReason;
+    actor: StreakForfeitActor;
+  }): Promise<number> {
+    return this.drizzle.db.transaction(async (tx) => {
+      const forfeited = await tx
+        .update(promoStreakMilestoneGrant)
+        .set({ settledAt: new Date(), outcome: 'restricted' })
+        .where(
+          and(
+            eq(promoStreakMilestoneGrant.userId, userId),
+            isNull(promoStreakMilestoneGrant.settledAt),
+          ),
+        )
+        .returning({
+          id: promoStreakMilestoneGrant.id,
+          day: promoStreakMilestoneGrant.day,
+          reachedAt: promoStreakMilestoneGrant.reachedAt,
+        });
+      await this.audit.recordManyInTransaction(
+        tx,
+        forfeited.map((row) => ({
+          ...(actor === null
+            ? { actorType: 'system' as const }
+            : {
+                actorType: actor.isAdmin ? ('admin' as const) : ('player' as const),
+                actorId: actor.id,
+              }),
+          action: 'promo.streak.milestone.forfeited',
+          resourceType: 'promo_streak_milestone_grant',
+          resourceId: row.id,
+          before: { settledAt: null, outcome: null },
+          after: {
+            userId,
+            day: row.day,
+            reachedAt: row.reachedAt.toISOString(),
+            outcome: 'restricted',
+            reason,
+          },
+        })),
+      );
+      return forfeited.length;
+    });
   }
 
   private async settleOne(
