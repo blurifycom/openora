@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import {
+  type DrizzleDb,
   type DrizzleService,
   type DrizzleTx,
   type EventBus,
@@ -823,7 +824,24 @@ export class ReconciliationService {
       }
 
       openFindings = await this.countOpenFindings();
-      await this.finishRun(jobRunId, status, { ...counts, openFindings });
+      // One transaction: a run is never recorded completed without its audit entry and alert.
+      await this.drizzle.db.transaction(async (txn) => {
+        await this.finishRun(jobRunId, status, { ...counts, openFindings }, txn);
+        await this.audit.recordInTransaction(txn, {
+          actorType: 'system',
+          action: cfg ? 'wallet.reconciliation_run.completed' : 'wallet.reconciliation_run.skipped',
+          resourceType: 'wallet_job_run',
+          resourceId: runId,
+          after: { runId, ...counts, openFindings },
+        });
+        if (cfg && openFindings > cfg.alertThreshold) {
+          await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
+            runId,
+            openFindings,
+            threshold: cfg.alertThreshold,
+          });
+        }
+      });
     } catch (err) {
       await this.finishRun(jobRunId, 'failed', {
         ...counts,
@@ -839,27 +857,11 @@ export class ReconciliationService {
       throw err;
     }
 
-    // Past the try: the run is already recorded finished, so a failing audit or alert write
-    // surfaces as an error without rewriting a completed run as failed.
-    await this.audit.record({
-      actorType: 'system',
-      action: cfg ? 'wallet.reconciliation_run.completed' : 'wallet.reconciliation_run.skipped',
-      resourceType: 'wallet_job_run',
-      resourceId: runId,
-      after: { runId, ...counts, openFindings },
-    });
-
     if (cfg && openFindings > cfg.alertThreshold) {
       logger.error(
         { runId, openFindings, threshold: cfg.alertThreshold },
         'wallet reconciliation: open findings exceed threshold',
       );
-      // No surrounding transaction to join: the outbox write alone makes the alert durable.
-      await this.events.emitInTransaction(this.drizzle.db, 'wallet.reconciliation.alert', {
-        runId,
-        openFindings,
-        threshold: cfg.alertThreshold,
-      });
     }
 
     return { runId };
@@ -1371,8 +1373,9 @@ export class ReconciliationService {
     jobRunId: WalletJobRun['id'],
     status: WalletJobRunStatus,
     summary: Record<string, unknown>,
+    db: DrizzleDb | DrizzleTx = this.drizzle.db,
   ): Promise<void> {
-    await this.drizzle.db
+    await db
       .update(walletJobRun)
       .set({ finishedAt: new Date(), status, summary })
       .where(eq(walletJobRun.id, jobRunId));
