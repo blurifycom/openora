@@ -55,6 +55,9 @@ does not repeat it.
   still waiting, and auto-approval only ever takes a withdrawal nobody has held. Only a waiting
   withdrawal can be held, and holding one already held changes nothing, so a replayed proposal
   holds it once.
+- **Buying crypto with fiat never credits the ledger.** An on-ramp vendor delivers to an address
+  this module issued, and the ordinary deposit path credits the coins when they land. The vendor's
+  status updates move only the order record, owned by `wallet_on_ramp_order`, and the audit log.
 - **Admin actions are guarded and audited.** The guard is the first line of the handler. A manual
   adjustment, an approval, a rejection, a hold, a catalog edit and a resolved finding each write an
   audit entry naming the actor and the reason.
