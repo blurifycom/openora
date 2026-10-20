@@ -531,6 +531,23 @@ describe('AuditService.list() (real PG)', () => {
     expect(result.total).toBe(3);
   });
 
+  it('q matches a row about another resource by the user id it records', async () => {
+    await seed([
+      {
+        actorType: 'admin',
+        action: 'a',
+        resourceType: 'promo_grant',
+        resourceId: 'grant-1',
+        after: { userId: 'user-7' },
+      },
+      { actorType: 'admin', action: 'b', resourceType: 'promo_grant', resourceId: 'grant-2' },
+    ]);
+
+    const result = await makeService().list({ q: 'user-7', page: 1, limit: 10 });
+
+    expect(result.items.map((item) => item.resourceId)).toEqual(['grant-1']);
+  });
+
   it('applies explicit resourceId filter', async () => {
     await seed([
       { actorType: 'system', action: 'a', resourceType: 'transaction', resourceId: 'txn-42' },

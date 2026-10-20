@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import {
   createEventStreamGenerator,
+  createLogger,
   getUserId,
   mapErrors,
   assertRateLimit,
@@ -15,6 +16,8 @@ import {
   PaymentRejectedError,
   SwapLimitExceededError,
   SwapRefusedError,
+  OnRampRefusedError,
+  OnRampVendorUnavailableError,
   makeRateLimitKey,
   type AuditWritePort,
   type JobQueueAdapter,
@@ -25,6 +28,7 @@ import {
   type RateLimitKey,
   type RealtimeTransport,
   type SwapWebhookEvent,
+  type OnRampWebhookEvent,
   type User,
 } from '@openora/core/contracts';
 import { walletContract, type WalletBalanceUpdate } from '../contract/index.js';
@@ -61,6 +65,7 @@ import {
   WithdrawalAddressAlreadyExistsError,
   WithdrawalAddressLimitReachedError,
   WalletReferenceRateUnavailableError,
+  UnsupportedAmountCurrencyError,
   HeldDepositNotFoundError,
   DepositStillHeldError,
   DepositAlreadyOnLedgerError,
@@ -70,6 +75,13 @@ import {
   SwapPairUnsupportedError,
   SwapUnavailableError,
 } from '../service/swap.service.js';
+import {
+  type OnRampService,
+  OnRampGeoBlockedError,
+  OnRampOrderNotFoundError,
+  OnRampRestrictedError,
+  OnRampUnavailableError,
+} from '../service/on-ramp.service.js';
 import {
   ReconciliationService,
   ReconciliationFindingNotFoundError,
@@ -142,6 +154,8 @@ export function createWalletBalanceStream(
  * own dependencies here, which as positional parameters git merges into a signature that
  * declares one twice without ever reporting a conflict.
  */
+const logger = createLogger('wallet-router');
+
 export type WalletRouterDeps = {
   wallet: WalletService;
   adminGuard: AdminGuard;
@@ -155,6 +169,21 @@ export type WalletRouterDeps = {
   /** Absent when no SWAP_ADAPTER is bound - every swap route then refuses. */
   swap?: SwapService;
   swapWebhook?: SwapWebhookPort;
+  /** Absent when no ON_RAMP_ADAPTER is bound - every on-ramp route then refuses. */
+  onRamp?: OnRampService;
+  onRampWebhook?: OnRampWebhookPort;
+};
+
+/** Same pairing rule as the swap one: one vendor's key verifies that vendor's format. */
+export type OnRampWebhookPort = {
+  verify(
+    rawBody: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): boolean | Promise<boolean>;
+  parse(
+    rawBody: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): OnRampWebhookEvent | null;
 };
 
 /** The verifier/parser pair for an inbound swap webhook, bound together for the same reason
@@ -182,6 +211,8 @@ export function createWalletRouter({
   limiter,
   swap,
   swapWebhook,
+  onRamp,
+  onRampWebhook,
 }: WalletRouterDeps) {
   const os = implement(walletContract).$context<OssContext>();
 
@@ -199,6 +230,26 @@ export function createWalletRouter({
       throw new SwapUnavailableError();
     }
     return swap;
+  };
+
+  const requireOnRamp = (): OnRampService => {
+    if (!onRamp) {
+      throw new OnRampUnavailableError();
+    }
+    return onRamp;
+  };
+
+  const onRampRefusals = {
+    FORBIDDEN: [OnRampRestrictedError, OnRampGeoBlockedError],
+    CONFLICT: [
+      OnRampUnavailableError,
+      OnRampVendorUnavailableError,
+      RgLimitExceededError,
+      DepositAddressUnsupportedError,
+      IdempotencyKeyReuseError,
+    ],
+    SERVICE_UNAVAILABLE: WalletReferenceRateUnavailableError,
+    BAD_REQUEST: [OnRampRefusedError, UnsupportedNetworkError, DepositDisabledError],
   };
 
   return os.router({
@@ -288,12 +339,16 @@ export function createWalletRouter({
     }),
 
     listTransactions: os.listTransactions.handler(({ context, input }) =>
-      wallet.getTransactions({ ...input, userId: getUserId(context), includeGrants: true }),
+      mapErrors({ BAD_REQUEST: UnsupportedAmountCurrencyError }, () =>
+        wallet.getTransactions({ ...input, userId: getUserId(context), includeGrants: true }),
+      ),
     ),
 
     listPlayerTransactions: os.listPlayerTransactions.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
-      return wallet.getTransactions({ ...input, includeInternal: true });
+      return mapErrors({ BAD_REQUEST: UnsupportedAmountCurrencyError }, () =>
+        wallet.getTransactions({ ...input, includeInternal: true }),
+      );
     }),
 
     withdrawals: {
@@ -551,6 +606,64 @@ export function createWalletRouter({
         const event = swapWebhook.parse(rawBody, context.request.headers);
         if (event) {
           await swap.reconcileSwapStatus(event);
+        }
+        return { ok: true as const };
+      }),
+    },
+
+    onRamp: {
+      options: os.onRamp.options.handler(({ context }) =>
+        mapErrors(onRampRefusals, () =>
+          requireOnRamp().options(getUserId(context), context.clientMeta),
+        ),
+      ),
+
+      quote: os.onRamp.quote.handler(({ input, context }) =>
+        mapErrors(onRampRefusals, () =>
+          requireOnRamp().quote({ userId: getUserId(context), meta: context.clientMeta, ...input }),
+        ),
+      ),
+
+      checkout: os.onRamp.checkout.handler(({ input, context }) =>
+        mapErrors(onRampRefusals, () =>
+          requireOnRamp().checkout({
+            userId: getUserId(context),
+            meta: context.clientMeta,
+            fiatCurrency: input.fiatCurrency,
+            fiatAmount: input.fiatAmount,
+            currency: input.currency,
+            network: input.network,
+            idempotencyKey: input.idempotencyKey,
+          }),
+        ),
+      ),
+
+      order: os.onRamp.order.handler(({ input, context }) =>
+        mapErrors({ NOT_FOUND: OnRampOrderNotFoundError, CONFLICT: OnRampUnavailableError }, () =>
+          requireOnRamp().getOrder(getUserId(context), input.purchaseId),
+        ),
+      ),
+
+      webhook: os.onRamp.webhook.handler(async ({ context }) => {
+        await throttleWebhook(context);
+        // Uniform with the swap webhook: never confirm which vendor, if any, is bound. A verifier
+        // that throws has not verified anything, so it gets the same answer.
+        const rawBody = context.rawBody;
+        const verified =
+          onRampWebhook !== undefined &&
+          rawBody !== undefined &&
+          (await Promise.resolve()
+            .then(() => onRampWebhook.verify(rawBody, context.request.headers))
+            .catch((err: unknown) => {
+              logger.warn({ err }, 'on-ramp webhook verifier threw - rejected');
+              return false;
+            }));
+        if (!onRamp || !onRampWebhook || !verified) {
+          throw new ORPCError('UNAUTHORIZED', { message: 'Invalid on-ramp webhook signature' });
+        }
+        const event = onRampWebhook.parse(rawBody, context.request.headers);
+        if (event) {
+          await onRamp.recordWebhook(event);
         }
         return { ok: true as const };
       }),

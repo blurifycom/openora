@@ -12,6 +12,7 @@ import {
   withAdvisoryXactLock,
   assertRateLimit,
   createLogger,
+  isPositiveMoney,
   mapConcurrent,
   moneyEquals,
   moneyAdd,
@@ -38,6 +39,7 @@ import {
   railFor as sharedRailFor,
   resolveExchangeRatePivot,
   resolveWalletReferenceCurrency,
+  resolveDisplayCurrencies,
   type Player,
   type PlayerTags,
   type RgLimitsPort,
@@ -72,6 +74,8 @@ import {
   notInArray,
   isNull,
   or,
+  gt,
+  notExists,
   type SQL,
 } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
@@ -84,6 +88,7 @@ import {
   walletDepositAddress,
   walletWithdrawalAddress,
   walletAsset,
+  walletOnRampOrder,
   type Wallet,
   type WalletDepositAddress,
   type WalletTransaction,
@@ -150,6 +155,11 @@ export const WalletReferenceRateUnavailableError = createDomainError<
   'WalletReferenceRateUnavailableError',
   (currency, referenceCurrency) =>
     `no fresh ${currency}/${referenceCurrency} exchange rate to record this transaction's reference value`,
+);
+
+export const UnsupportedAmountCurrencyError = createDomainError<[currency: string]>(
+  'UnsupportedAmountCurrencyError',
+  (currency) => `Currency is not offered by this operator: ${currency}`,
 );
 
 export const WithdrawalNotPendingError = makeConflictError(
@@ -673,7 +683,13 @@ export type HandDeposit = {
 };
 
 /** Serialises one player's PSP deposits, so an RG reservation cannot be spent twice. */
-const depositSlotKey = (userId: User['id']) => `wallet-deposit:${userId}`;
+export const depositSlotKey = (userId: User['id']) => `wallet-deposit:${userId}`;
+
+// An on-ramp order the vendor has not opened yet counts toward the deposit limit this long.
+const UNOPENED_ON_RAMP_HOLD = '15 minutes';
+// A completed on-ramp order counts until the player's credit with its tx hash lands, but at most
+// this long after it completed, so one whose hash never matches cannot hold the limit forever.
+const UNCREDITED_ON_RAMP_HOLD = '1 day';
 
 const heldReason = (deposit: Pick<WalletTransaction, 'status' | 'reviewReason'>) =>
   deposit.status === 'on_hold' ? (deposit.reviewReason ?? 'held for review') : null;
@@ -1025,7 +1041,12 @@ export class WalletService {
     }
   }
 
-  private async assertWithinRgDepositLimit(
+  /**
+   * The player's deposit limit, judged on `amount` plus their on-ramp orders whose coins have not
+   * been credited yet, so a card deposit and a crypto purchase cannot spend the same headroom.
+   * The caller holds `depositSlotKey(userId)`.
+   */
+  async assertWithinRgDepositLimit(
     tx: DrizzleDb | DrizzleTx,
     userId: User['id'],
     amount: string,
@@ -1034,10 +1055,93 @@ export class WalletService {
     if (!this.rgLimits) {
       return;
     }
-    const decision = await this.rgLimits.checkDeposit(tx, userId, amount, currency);
-    if (!decision.allowed) {
-      throw new RgLimitExceededError('deposit_limit_exceeded', decision);
+    const pending = await this.uncreditedOnRampTotal(tx, userId, currency);
+    const decision = await this.rgLimits.checkDeposit(
+      tx,
+      userId,
+      moneyAdd(amount, pending),
+      currency,
+    );
+    if (decision.allowed) {
+      return;
     }
+    const countsPending =
+      isPositiveMoney(pending) &&
+      decision.currency === currency &&
+      moneyCompare(decision.used, decision.limit) !== 0;
+    throw new RgLimitExceededError(
+      'deposit_limit_exceeded',
+      countsPending ? { ...decision, used: moneyAdd(decision.used, pending) } : decision,
+    );
+  }
+
+  /**
+   * On-ramp orders not yet credited, in `currency`: processing ones of any age, pending ones until
+   * their checkout expires or, unopened, for `UNOPENED_ON_RAMP_HOLD`, and completed ones until a
+   * deposit credited to the same player carries their tx hash. Another fiat is converted; with no rate, the limit
+   * cannot be judged and the move is refused.
+   */
+  private async uncreditedOnRampTotal(
+    tx: DrizzleDb | DrizzleTx,
+    userId: User['id'],
+    currency: string,
+  ): Promise<string> {
+    const order = walletOnRampOrder;
+    const openByFiat = await tx
+      .select({
+        fiatCurrency: order.fiatCurrency,
+        total: sql<string>`sum(${order.fiatAmount})::text`,
+      })
+      .from(order)
+      .where(
+        and(
+          eq(order.userId, userId),
+          or(
+            eq(order.status, 'processing'),
+            and(
+              eq(order.status, 'pending'),
+              or(
+                gt(order.expiresAt, sql`now()`),
+                and(
+                  isNull(order.expiresAt),
+                  gt(order.createdAt, sql`now() - ${UNOPENED_ON_RAMP_HOLD}::interval`),
+                ),
+              ),
+            ),
+            and(
+              eq(order.status, 'completed'),
+              gt(order.updatedAt, sql`now() - ${UNCREDITED_ON_RAMP_HOLD}::interval`),
+              notExists(
+                tx
+                  .select({ id: walletTransaction.id })
+                  .from(walletTransaction)
+                  .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+                  .where(
+                    and(
+                      eq(walletTransaction.txHash, order.txHash),
+                      eq(wallet.userId, order.userId),
+                      eq(walletTransaction.type, 'deposit'),
+                      eq(walletTransaction.status, 'completed'),
+                    ),
+                  ),
+              ),
+            ),
+          ),
+        ),
+      )
+      .groupBy(order.fiatCurrency);
+    const totals = await mapConcurrent(openByFiat, 1, async (open) => {
+      if (open.fiatCurrency === currency) {
+        return open.total;
+      }
+      const converted =
+        (await this.rates?.convert(open.total, open.fiatCurrency, currency, tx)) ?? null;
+      if (converted === null) {
+        throw new WalletReferenceRateUnavailableError(open.fiatCurrency, currency);
+      }
+      return converted;
+    });
+    return totals.reduce<string>((sum, total) => moneyAdd(sum, total), '0');
   }
 
   private resolveRail(currency: string): WalletRail {
@@ -3278,6 +3382,7 @@ export class WalletService {
     limit,
     sortBy,
     sortOrder,
+    amountCurrency,
     types,
     statuses,
     currencies,
@@ -3342,13 +3447,22 @@ export class WalletService {
     }
     const where = conditions.length ? sql`where ${sql.join(conditions, sql` and `)}` : sql``;
     const dir = (sortOrder ?? 'desc') === 'asc' ? sql`asc` : sql`desc`;
-    const sortColumn = sql.identifier(TX_SORT_COLUMNS[sortBy ?? 'createdAt']);
-
     const db = this.drizzle.db;
+
+    let source = history;
+    let orderBy = sql`${sql.identifier(TX_SORT_COLUMNS[sortBy ?? 'createdAt'])} ${dir}`;
+    if (sortBy === 'amount' && amountCurrency) {
+      const rates = await this.amountSortRates(history, amountCurrency);
+      source = sql`${history} left join unnest(${sql.param(rates.map((r) => r.currency))}::text[],
+        ${sql.param(rates.map((r) => r.rate))}::numeric[]) as r(currency, rate) using (currency)`;
+      // The sign a player sees: a debit reads negative, a row without a direction unsigned.
+      orderBy = sql`(case when direction = 'debit' then -amount else amount end) * rate ${dir} nulls last`;
+    }
+
     const [{ rows }, { rows: counted }] = await Promise.all([
       db.execute<TransactionHistoryRow>(sql`
-        select * from ${history} ${where}
-        order by ${sortColumn} ${dir}, id desc
+        select * from ${source} ${where}
+        order by ${orderBy}, id desc
         limit ${limit} offset ${pageToOffset(page, limit)}`),
       db.execute<{ n: number }>(sql`select count(*)::int as n from ${history} ${where}`),
     ]);
@@ -3382,6 +3496,27 @@ export class WalletService {
       page,
       limit,
     };
+  }
+
+  /**
+   * The current rate into `target` for every currency in the history: the same reader that
+   * prices the player's display currency, so the order matches the converted amounts shown.
+   * `target` is checked first, since an unknown code would otherwise buy a vendor call.
+   */
+  private async amountSortRates(history: SQL, target: string) {
+    if (!resolveDisplayCurrencies(this.platformConfig?.displayCurrencies).includes(target)) {
+      throw new UnsupportedAmountCurrencyError(target);
+    }
+    const { rows } = await this.drizzle.db.execute<{ currency: string }>(
+      sql`select distinct currency from ${history}`,
+    );
+    return mapConcurrent(rows, 5, async ({ currency }) => ({
+      currency,
+      rate:
+        currency.toUpperCase() === target
+          ? '1'
+          : ((await this.rates?.getRate(currency, target))?.rate ?? null),
+    }));
   }
 
   async getOrCreateDepositAddress(

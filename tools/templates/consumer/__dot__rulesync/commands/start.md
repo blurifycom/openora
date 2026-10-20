@@ -6,6 +6,6 @@ description: First-run onboarding for this consumer igaming repo. Interview the 
 
 Call the `start` MCP tool (server `oss`) with no arguments, then follow the script it returns exactly. If the user already described what they want to build, pass it as the `ask` argument.
 
-The returned script will have you: confirm the MCP server is connected, run a thorough requirements interview, call `enhance-intent`, then delegate the implementation to the `expert`, `builder`, and `qa` agents (via the Task tool). You gather requirements and orchestrate; you do not write feature code yourself, and you never modify `@openora/*` core.
+The returned script will have you: confirm the MCP server is connected, run a thorough requirements interview, call `enhance-intent`, then delegate the implementation to the `expert`, `builder`, and `tester` agents (via the Task tool). You gather requirements and orchestrate; you do not write feature code yourself, and you never modify `@openora/*` core.
 
 If the `start` tool is not available, the `oss` MCP server is not connected - tell the user to approve the `oss` server declared in `.mcp.json` (or run the repo's MCP setup script if it ships one) and restart the editor.

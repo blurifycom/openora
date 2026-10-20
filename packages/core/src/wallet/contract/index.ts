@@ -5,11 +5,15 @@ import {
   CurrencyTickerSchema,
   KycStatusSchema,
   MoneyAmountSchema,
+  OnRampOptionsSchema,
+  OnRampQuoteSchema,
+  OnRampStatusSchema,
   MONEY_PRECISION,
   MONEY_SCALE,
   TagKeySchema,
   TimestampSchema,
   UuidSchema,
+  WalletNetworkSchema,
   WalletRailSchema,
   WalletTransactionStatusSchema,
   WalletTransactionTypeSchema,
@@ -21,6 +25,8 @@ import {
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
 export {
+  OnRampOptionsSchema,
+  OnRampQuoteSchema,
   WalletRailSchema,
   WalletTransactionStatusSchema,
   WalletTransactionTypeSchema,
@@ -36,11 +42,6 @@ const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0,
 const WalletCurrencyCodeSchema = CurrencyTickerSchema;
 
 const WalletCurrencyInputSchema = CurrencyTickerInputSchema;
-
-// A currency does not identify a chain: USDT settles on ERC20, TRC20 and BEP20 with
-// different addresses, fees and minimums. Free-form rather than an enum because each
-// vendor spells chains its own way (ERC20 vs ETHEREUM vs eth-mainnet).
-const WalletNetworkSchema = z.string().trim().min(1).max(32);
 
 const WalletNetworkInputSchema = WalletNetworkSchema.transform((n) => n.toUpperCase());
 
@@ -307,6 +308,7 @@ export type WithdrawalSortBy = z.infer<typeof WithdrawalSortBySchema>;
 export const WalletTransactionListQuerySchema = PageQuerySchema.extend({
   sortBy: WalletTransactionSortBySchema.optional(),
   sortOrder: SortOrderSchema.default('desc').optional(),
+  amountCurrency: WalletCurrencyInputSchema.optional(),
   types: z.array(WalletTransactionTypeSchema).max(WALLET_TRANSACTION_TYPES.length).optional(),
   statuses: z
     .array(WalletTransactionStatusSchema)
@@ -501,6 +503,39 @@ export const SwapResultSchema = z.object({
   // Null until the vendor reports a fill - an async desk settles by webhook.
   toAmount: MoneyAmountSchema.nullable(),
 });
+
+export const OnRampQuoteInputSchema = z.object({
+  fiatCurrency: CurrencyTickerInputSchema,
+  fiatAmount: PositiveMoneyAmountSchema,
+  currency: WalletCurrencyInputSchema,
+  network: WalletNetworkInputSchema,
+});
+
+// No delivery address: the server always sends the vendor one it issued to this player.
+// `acknowledged` is the player's confirmation that a third party takes the payment.
+export const OnRampCheckoutInputSchema = OnRampQuoteInputSchema.extend({
+  idempotencyKey: UuidSchema,
+  acknowledged: z.literal(true),
+});
+
+export const OnRampCheckoutSchema = z.object({
+  purchaseId: UuidSchema,
+  // The client navigates to it, so nothing but https gets through.
+  checkoutUrl: z.url({ protocol: /^https$/ }),
+});
+export type OnRampCheckoutResponse = z.infer<typeof OnRampCheckoutSchema>;
+
+export const OnRampOrderInputSchema = z.object({ purchaseId: UuidSchema });
+
+export const OnRampOrderSchema = z.object({
+  purchaseId: UuidSchema,
+  status: OnRampStatusSchema,
+  fiatAmount: MoneyAmountSchema,
+  fiatCurrency: CurrencyTickerSchema,
+  currency: WalletCurrencyCodeSchema,
+  network: WalletNetworkSchema,
+});
+export type OnRampOrder = z.infer<typeof OnRampOrderSchema>;
 
 export const PaymentWebhookInputSchema = z.record(z.string(), z.unknown());
 export const PaymentWebhookOutputSchema = z.object({ ok: z.literal(true) });
@@ -861,6 +896,48 @@ export const walletContract = {
     // - a swap desk signs with a different key than the PSP.
     webhook: oc
       .route({ method: 'POST', path: '/wallet/swap/webhook' })
+      .input(PaymentWebhookInputSchema)
+      .output(PaymentWebhookOutputSchema),
+  },
+
+  // Buying crypto with fiat from a third-party vendor; the coins land on the player's own
+  // deposit address and are credited by the ordinary deposit path, never by these routes.
+  onRamp: {
+    options: oc
+      .route({
+        method: 'GET',
+        path: '/wallet/on-ramp/options',
+        summary: 'List on-ramp fiats and assets',
+      })
+      .output(OnRampOptionsSchema),
+
+    quote: oc
+      .route({ method: 'POST', path: '/wallet/on-ramp/quote', summary: 'Price a crypto purchase' })
+      .input(OnRampQuoteInputSchema)
+      .output(z.array(OnRampQuoteSchema)),
+
+    checkout: oc
+      .route({
+        method: 'POST',
+        path: '/wallet/on-ramp/checkout',
+        summary: 'Open a crypto purchase',
+      })
+      .input(OnRampCheckoutInputSchema)
+      .output(OnRampCheckoutSchema),
+
+    // The player's own order only; another player's answers NOT_FOUND like an unknown id.
+    order: oc
+      .route({
+        method: 'GET',
+        path: '/wallet/on-ramp/orders/{purchaseId}',
+        summary: 'Read a crypto purchase status',
+      })
+      .input(OnRampOrderInputSchema)
+      .output(OnRampOrderSchema),
+
+    // Unauthenticated, verified by its own ON_RAMP_WEBHOOK_VERIFIER.
+    webhook: oc
+      .route({ method: 'POST', path: '/wallet/on-ramp/webhook' })
       .input(PaymentWebhookInputSchema)
       .output(PaymentWebhookOutputSchema),
   },

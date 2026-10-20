@@ -45,6 +45,19 @@ import {
 // Anonymous and read-only, so throttled per address like the anonymous geo-check.
 const PUBLIC_OFFERS_RATE_LIMIT = { limit: 60, windowMs: 60 * 1000 };
 
+// Forfeiting is also a player-account action, so support staff who manage players may do it.
+const FORFEIT_PERMISSIONS = [
+  { resource: 'bonus', action: 'cancel' },
+  { resource: 'bonus', action: 'view' },
+  { resource: 'player', action: 'update' },
+] as const;
+
+function canForfeit(granted: readonly (typeof FORFEIT_PERMISSIONS)[number][]): boolean {
+  const holds = (resource: string, action: string) =>
+    granted.some((permission) => permission.resource === resource && permission.action === action);
+  return holds('bonus', 'cancel') || (holds('player', 'update') && holds('bonus', 'view'));
+}
+
 export function createBonusRouter({
   grants,
   offers,
@@ -108,7 +121,10 @@ export function createBonusRouter({
         }),
 
         forfeit: os.admin.grants.forfeit.handler(async ({ input, context }) => {
-          const { userId } = await adminGuard.assert(context, 'bonus', 'cancel');
+          const { userId } = await adminGuard.assert(context);
+          if (!canForfeit(await adminGuard.filterGranted(userId, FORFEIT_PERMISSIONS))) {
+            await adminGuard.assert(context, 'bonus', 'cancel');
+          }
           return mapErrors(
             {
               CONFLICT: GrantNotForfeitableError,
@@ -119,12 +135,13 @@ export function createBonusRouter({
               NOT_FOUND: [GrantNotForfeitableNotFoundError, GrantNotFoundError],
             },
             async () => {
-              const closed = await lifecycle.forfeit(
-                input.id,
-                'admin',
-                { id: userId, isAdmin: true },
-                input.note,
-              );
+              const closed = await lifecycle.forfeit({
+                grantId: input.id,
+                reason: 'admin',
+                actor: { id: userId, isAdmin: true },
+                note: input.note,
+                meta: context.clientMeta,
+              });
               events.emit('promo.bonus.forfeited', {
                 userId: closed.userId,
                 grantId: closed.grantId,
