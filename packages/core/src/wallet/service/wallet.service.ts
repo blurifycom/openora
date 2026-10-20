@@ -38,6 +38,7 @@ import {
   railFor as sharedRailFor,
   resolveExchangeRatePivot,
   resolveWalletReferenceCurrency,
+  resolveDisplayCurrencies,
   type Player,
   type PlayerTags,
   type RgLimitsPort,
@@ -150,6 +151,11 @@ export const WalletReferenceRateUnavailableError = createDomainError<
   'WalletReferenceRateUnavailableError',
   (currency, referenceCurrency) =>
     `no fresh ${currency}/${referenceCurrency} exchange rate to record this transaction's reference value`,
+);
+
+export const UnsupportedAmountCurrencyError = createDomainError<[currency: string]>(
+  'UnsupportedAmountCurrencyError',
+  (currency) => `Currency is not offered by this operator: ${currency}`,
 );
 
 export const WithdrawalNotPendingError = makeConflictError(
@@ -3278,6 +3284,7 @@ export class WalletService {
     limit,
     sortBy,
     sortOrder,
+    amountCurrency,
     types,
     statuses,
     currencies,
@@ -3342,13 +3349,22 @@ export class WalletService {
     }
     const where = conditions.length ? sql`where ${sql.join(conditions, sql` and `)}` : sql``;
     const dir = (sortOrder ?? 'desc') === 'asc' ? sql`asc` : sql`desc`;
-    const sortColumn = sql.identifier(TX_SORT_COLUMNS[sortBy ?? 'createdAt']);
-
     const db = this.drizzle.db;
+
+    let source = history;
+    let orderBy = sql`${sql.identifier(TX_SORT_COLUMNS[sortBy ?? 'createdAt'])} ${dir}`;
+    if (sortBy === 'amount' && amountCurrency) {
+      const rates = await this.amountSortRates(history, amountCurrency);
+      source = sql`${history} left join unnest(${sql.param(rates.map((r) => r.currency))}::text[],
+        ${sql.param(rates.map((r) => r.rate))}::numeric[]) as r(currency, rate) using (currency)`;
+      // The sign a player sees: a debit reads negative, a row without a direction unsigned.
+      orderBy = sql`(case when direction = 'debit' then -amount else amount end) * rate ${dir} nulls last`;
+    }
+
     const [{ rows }, { rows: counted }] = await Promise.all([
       db.execute<TransactionHistoryRow>(sql`
-        select * from ${history} ${where}
-        order by ${sortColumn} ${dir}, id desc
+        select * from ${source} ${where}
+        order by ${orderBy}, id desc
         limit ${limit} offset ${pageToOffset(page, limit)}`),
       db.execute<{ n: number }>(sql`select count(*)::int as n from ${history} ${where}`),
     ]);
@@ -3382,6 +3398,27 @@ export class WalletService {
       page,
       limit,
     };
+  }
+
+  /**
+   * The current rate into `target` for every currency in the history: the same reader that
+   * prices the player's display currency, so the order matches the converted amounts shown.
+   * `target` is checked first, since an unknown code would otherwise buy a vendor call.
+   */
+  private async amountSortRates(history: SQL, target: string) {
+    if (!resolveDisplayCurrencies(this.platformConfig?.displayCurrencies).includes(target)) {
+      throw new UnsupportedAmountCurrencyError(target);
+    }
+    const { rows } = await this.drizzle.db.execute<{ currency: string }>(
+      sql`select distinct currency from ${history}`,
+    );
+    return mapConcurrent(rows, 5, async ({ currency }) => ({
+      currency,
+      rate:
+        currency.toUpperCase() === target
+          ? '1'
+          : ((await this.rates?.getRate(currency, target))?.rate ?? null),
+    }));
   }
 
   async getOrCreateDepositAddress(

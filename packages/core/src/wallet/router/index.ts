@@ -61,6 +61,7 @@ import {
   WithdrawalAddressAlreadyExistsError,
   WithdrawalAddressLimitReachedError,
   WalletReferenceRateUnavailableError,
+  UnsupportedAmountCurrencyError,
   HeldDepositNotFoundError,
   DepositStillHeldError,
   DepositAlreadyOnLedgerError,
@@ -288,12 +289,16 @@ export function createWalletRouter({
     }),
 
     listTransactions: os.listTransactions.handler(({ context, input }) =>
-      wallet.getTransactions({ ...input, userId: getUserId(context), includeGrants: true }),
+      mapErrors({ BAD_REQUEST: UnsupportedAmountCurrencyError }, () =>
+        wallet.getTransactions({ ...input, userId: getUserId(context), includeGrants: true }),
+      ),
     ),
 
     listPlayerTransactions: os.listPlayerTransactions.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
-      return wallet.getTransactions({ ...input, includeInternal: true });
+      return mapErrors({ BAD_REQUEST: UnsupportedAmountCurrencyError }, () =>
+        wallet.getTransactions({ ...input, includeInternal: true }),
+      );
     }),
 
     withdrawals: {
