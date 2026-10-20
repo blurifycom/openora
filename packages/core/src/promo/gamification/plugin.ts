@@ -227,9 +227,9 @@ export default {
           logger.warn({}, 'streak announcement skipped - service not constructed');
           return;
         }
-        for (const reached of await streakPayouts.announceReached()) {
-          events?.emit('promo.streak.milestone.reached', reached);
-        }
+        await streakPayouts.announceReached((reached) =>
+          events?.emit('promo.streak.milestone.reached', reached),
+        );
       },
     });
 
@@ -384,6 +384,7 @@ export default {
         walletReader: c.get(WALLET_READER),
         payoutCurrency,
         audit: c.get(AUDIT_WRITER),
+        logger,
         wallet: c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
       });
       racePayouts = new RacePayoutService(

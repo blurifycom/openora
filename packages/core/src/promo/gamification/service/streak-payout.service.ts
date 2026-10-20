@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import type {
   AuditWritePort,
   BonusGrantCommands,
@@ -41,6 +41,8 @@ export type StreakMilestoneReached = DomainEventPayload<'promo.streak.milestone.
 
 export const StreakMilestoneNotClaimableError = makeNotFoundError('StreakMilestone');
 
+type Logger = { error: (context: object, message: string) => void };
+
 export type StreakPayoutDeps = {
   drizzle: DrizzleService;
   grants: BonusGrantCommands | undefined;
@@ -49,6 +51,7 @@ export type StreakPayoutDeps = {
   walletReader: WalletReader;
   payoutCurrency: string;
   audit: AuditWritePort;
+  logger: Logger;
   wallet?: WalletCommands | undefined;
 };
 
@@ -84,6 +87,7 @@ export class StreakPayoutService {
   private readonly walletReader: WalletReader;
   private readonly payoutCurrency: string;
   private readonly audit: AuditWritePort;
+  private readonly logger: Logger;
   private readonly wallet: WalletCommands | undefined;
 
   constructor(deps: StreakPayoutDeps) {
@@ -94,6 +98,7 @@ export class StreakPayoutService {
     this.walletReader = deps.walletReader;
     this.payoutCurrency = deps.payoutCurrency;
     this.audit = deps.audit;
+    this.logger = deps.logger;
     this.wallet = deps.wallet;
   }
 
@@ -118,15 +123,16 @@ export class StreakPayoutService {
   }
 
   /**
-   * Marks unclaimed milestones nobody has been told about yet as announced and returns them.
-   * `recordWager` inserts the milestone inside the bet's own transaction, which has no
-   * after-commit hook, so the announcement is read back from committed rows instead. A player
-   * under a responsible-gambling block is not invited to claim: the milestone is settled
-   * `restricted`, the same outcome a claim would get.
+   * Marks unclaimed milestones nobody has been told about yet as announced, handing each to
+   * `announce` once its own transaction has committed. `recordWager` inserts the milestone inside
+   * the bet's own transaction, which has no after-commit hook, so the announcement is read back
+   * from committed rows instead. A row that fails is logged and left for the next tick without
+   * holding back the rest of the batch. A player under a responsible-gambling block is not invited
+   * to claim: the milestone is settled `restricted`, the same outcome a claim would get.
    */
-  async announceReached(): Promise<StreakMilestoneReached[]> {
+  async announceReached(announce: (reached: StreakMilestoneReached) => void): Promise<void> {
     if (!this.eligibility) {
-      return [];
+      return;
     }
     const eligibility = this.eligibility;
     const [config] = await this.drizzle.db
@@ -134,7 +140,7 @@ export class StreakPayoutService {
       .from(promoStreakConfig);
     const paidDays = config?.milestones.map((milestone) => milestone.day) ?? [];
     if (paidDays.length === 0) {
-      return [];
+      return;
     }
     const pending = await this.drizzle.db
       .select({ id: promoStreakMilestoneGrant.id })
@@ -146,40 +152,19 @@ export class StreakPayoutService {
           inArray(promoStreakMilestoneGrant.day, paidDays),
         ),
       )
+      .orderBy(asc(promoStreakMilestoneGrant.reachedAt))
       .limit(BATCH);
-    const announced: StreakMilestoneReached[] = [];
     for (const { id } of pending) {
-      const reached = await this.drizzle.db.transaction(async (tx) => {
-        const [row] = await tx
-          .select({ userId: promoStreakMilestoneGrant.userId, day: promoStreakMilestoneGrant.day })
-          .from(promoStreakMilestoneGrant)
-          .where(
-            and(
-              eq(promoStreakMilestoneGrant.id, id),
-              isNull(promoStreakMilestoneGrant.settledAt),
-              isNull(promoStreakMilestoneGrant.announcedAt),
-            ),
-          )
-          .for('update', { skipLocked: true });
-        if (!row) {
+      const reached = await this.drizzle.db
+        .transaction((tx) => this.announceOne(tx, id, eligibility))
+        .catch((err: unknown) => {
+          this.logger.error({ err, milestoneGrantId: id }, 'streak milestone announcement failed');
           return null;
-        }
-        const restricted = await eligibility.isRestricted(row.userId, tx);
-        await tx
-          .update(promoStreakMilestoneGrant)
-          .set(
-            restricted
-              ? { settledAt: new Date(), outcome: 'restricted' }
-              : { announcedAt: new Date() },
-          )
-          .where(eq(promoStreakMilestoneGrant.id, id));
-        return restricted ? null : { ...row, grantId: null };
-      });
+        });
       if (reached) {
-        announced.push(reached);
+        announce(reached);
       }
     }
-    return announced;
   }
 
   /**
@@ -235,6 +220,35 @@ export class StreakPayoutService {
       );
       return forfeited.length;
     });
+  }
+
+  private async announceOne(
+    tx: DrizzleTx,
+    id: Uuid,
+    eligibility: PlayEligibilityPort,
+  ): Promise<StreakMilestoneReached | null> {
+    const [row] = await tx
+      .select({ userId: promoStreakMilestoneGrant.userId, day: promoStreakMilestoneGrant.day })
+      .from(promoStreakMilestoneGrant)
+      .where(
+        and(
+          eq(promoStreakMilestoneGrant.id, id),
+          isNull(promoStreakMilestoneGrant.settledAt),
+          isNull(promoStreakMilestoneGrant.announcedAt),
+        ),
+      )
+      .for('update', { skipLocked: true });
+    if (!row) {
+      return null;
+    }
+    const restricted = await eligibility.isRestricted(row.userId, tx);
+    await tx
+      .update(promoStreakMilestoneGrant)
+      .set(
+        restricted ? { settledAt: new Date(), outcome: 'restricted' } : { announcedAt: new Date() },
+      )
+      .where(eq(promoStreakMilestoneGrant.id, id));
+    return restricted ? null : { ...row, grantId: null };
   }
 
   private async settleOne(

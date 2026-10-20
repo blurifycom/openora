@@ -21,6 +21,7 @@ import { StreakService } from '../service/streak.service.js';
 import {
   StreakMilestoneNotClaimableError,
   StreakPayoutService,
+  type StreakMilestoneReached,
 } from '../service/streak-payout.service.js';
 import type { StreakMilestone } from '../contract/index.js';
 import { PayoutRateUnavailableError } from '../shared/payout-currency.js';
@@ -32,6 +33,7 @@ const credit = vi.fn<WalletCommands['credit']>();
 const convert = vi.fn<ExchangeRateReader['convert']>();
 const getBalances = vi.fn<WalletReader['getBalances']>();
 const audit = makeAuditWriter();
+const payoutLogger = { error: vi.fn() };
 
 const MILESTONES: StreakMilestone[] = [
   { day: 3, rewards: [{ kind: 'cash', amount: '5' }] },
@@ -58,8 +60,15 @@ const service = (payoutCurrency = 'USD') =>
     walletReader: mock<WalletReader>({ getBalances }),
     payoutCurrency,
     audit,
+    logger: payoutLogger,
     wallet: mock<WalletCommands>({ credit }),
   });
+
+const announceReached = async () => {
+  const announced: StreakMilestoneReached[] = [];
+  await service().announceReached((reached) => announced.push(reached));
+  return announced;
+};
 
 const logger = { warn: vi.fn() };
 
@@ -344,8 +353,8 @@ describe('announcing a reward waiting to be claimed', () => {
     const userId = randomUUID();
     const id = await owe(userId, 3);
 
-    const first = await service().announceReached();
-    const second = await service().announceReached();
+    const first = await announceReached();
+    const second = await announceReached();
 
     expect(first).toEqual([{ userId, day: 3, grantId: null }]);
     expect(second).toEqual([]);
@@ -357,7 +366,7 @@ describe('announcing a reward waiting to be claimed', () => {
     const userId = randomUUID();
     const id = await owe(userId, 3);
 
-    await expect(service().announceReached()).resolves.toEqual([]);
+    await expect(announceReached()).resolves.toEqual([]);
 
     await expect(milestoneGrant(id)).resolves.toMatchObject({
       outcome: 'restricted',
@@ -368,7 +377,7 @@ describe('announcing a reward waiting to be claimed', () => {
   it('does not announce a milestone on a day the config no longer pays', async () => {
     await owe(randomUUID(), 5);
 
-    await expect(service().announceReached()).resolves.toEqual([]);
+    await expect(announceReached()).resolves.toEqual([]);
   });
 
   it('does not announce a milestone already claimed', async () => {
@@ -376,7 +385,50 @@ describe('announcing a reward waiting to be claimed', () => {
     const id = await owe(userId, 3);
     await service().claim(userId, id);
 
-    await expect(service().announceReached()).resolves.toEqual([]);
+    await expect(announceReached()).resolves.toEqual([]);
+  });
+});
+
+describe('announcing a batch with a row that fails', () => {
+  it('announces the rows that committed and leaves the failing one waiting for the next tick', async () => {
+    const [first, failing, last] = [randomUUID(), randomUUID(), randomUUID()];
+    await owe(first, 3);
+    const failingId = await owe(failing, 3);
+    const lastId = await owe(last, 7);
+    isRestricted.mockImplementation(async (userId) => {
+      if (userId === failing) {
+        throw new Error('eligibility lookup failed');
+      }
+      return false;
+    });
+
+    const announced = await announceReached();
+
+    expect(announced).toEqual(
+      expect.arrayContaining([
+        { userId: first, day: 3, grantId: null },
+        { userId: last, day: 7, grantId: null },
+      ]),
+    );
+    expect(announced).toHaveLength(2);
+    expect(payoutLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ milestoneGrantId: failingId }),
+      'streak milestone announcement failed',
+    );
+    await expect(milestoneGrant(failingId)).resolves.toMatchObject({
+      settledAt: null,
+      announcedAt: null,
+    });
+    expect((await milestoneGrant(lastId))?.announcedAt).toBeInstanceOf(Date);
+  });
+
+  it('announces the failed row once it succeeds on a later tick', async () => {
+    const userId = randomUUID();
+    await owe(userId, 3);
+    isRestricted.mockRejectedValueOnce(new Error('eligibility lookup failed'));
+
+    await expect(announceReached()).resolves.toEqual([]);
+    await expect(announceReached()).resolves.toEqual([{ userId, day: 3, grantId: null }]);
   });
 });
 
