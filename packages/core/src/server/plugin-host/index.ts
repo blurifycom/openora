@@ -8,7 +8,9 @@ export type {
   ActionTypeFactory,
   RegisteredMcpTool,
   RegisteredActionType,
+  RegisteredTriggerListener,
   EventHandler,
+  TriggerListener,
   RegisteredEventHandler,
   TypedContainer,
 } from './define-plugin.js';

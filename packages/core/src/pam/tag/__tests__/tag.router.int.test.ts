@@ -4,7 +4,13 @@ import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type { PlayEligibilityPort, TagKey } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { makeEventBus, makeAdminGuard, mock, testContext } from '../../../testing/mock.js';
+import {
+  makeAuditWriter,
+  makeEventBus,
+  makeAdminGuard,
+  mock,
+  testContext,
+} from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { tag, tagRule, playerTag } from '../schema/index.js';
 import { createTagRouter } from '../router/index.js';
@@ -47,7 +53,12 @@ const allowingGuard = () => makeAdminGuard({ caller: { userId: CALLER } });
 
 function build(adminGuard: AdminGuard) {
   const events = makeEventBus();
-  const tagService = new TagService(db.drizzle, events, mock<PlayEligibilityPort>({}));
+  const tagService = new TagService(
+    db.drizzle,
+    events,
+    mock<PlayEligibilityPort>({}),
+    makeAuditWriter(),
+  );
   const ruleService = new TagRuleService(db.drizzle, events);
   return { router: createTagRouter(tagService, ruleService, adminGuard), events };
 }

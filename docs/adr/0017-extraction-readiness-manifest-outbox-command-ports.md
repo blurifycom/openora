@@ -4,7 +4,7 @@
 **Status**: Accepted; implemented (manifest boot + outbox seam + `WALLET_COMMANDS` reference; outbox off by default).
 **Relates to**: ADR-0010 (event-driven broker direction), ADR-0014 (job-queue/realtime seams), ADR-0016 (event envelope).
 
-> **Update (2026-10-13)**: [ADR-0044](./0044-at-least-once-event-delivery.md) made the outbox always on - `OUTBOX_ENABLED` is gone, `createApp` always binds `OUTBOX` and starts the `OutboxRelay`, and money and compliance events are emitted with `emitInTransaction`. The "Opt-in" paragraph below no longer holds. The relay now claims rows atomically with a lease, and consumers dedup per handler through `processed_events` instead of on `eventId` alone.
+> **Update (2026-10-13)**: [ADR-0045](./0045-at-least-once-event-delivery.md) made the outbox always on - `OUTBOX_ENABLED` is gone, `createApp` always binds `OUTBOX` and starts the `OutboxRelay`, and money and compliance events are emitted with `emitInTransaction`. The "Opt-in" paragraph below no longer holds. The relay now claims rows atomically with a lease, and consumers dedup per handler through `processed_events` instead of on `eventId` alone.
 
 ## Context
 

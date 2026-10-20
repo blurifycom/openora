@@ -217,17 +217,68 @@ export type ActionTypeDescriptor = ActionTypeContract & {
   payloadJsonSchema: Record<string, unknown>;
 };
 
+/**
+ * The payload field that names the player an event is about. Resolve it to a player with
+ * `PLAYER_SEGMENT_READER.resolve`, by user id or by player id.
+ */
+export type TriggerSubjectField = 'playerId' | 'userId';
+
 export type TriggerDescriptor = {
   kind: 'event';
   topic: DomainEventName;
   version: number;
   domain: string;
   payloadJsonSchema: Record<string, unknown>;
+  /**
+   * `userId` holds a user id, which may be a staff account's; `playerId` a player id that can
+   * be null on a given event. Null when the event is about no single player, or about one who
+   * is out of the segment reader's population by then.
+   */
+  subjectField: TriggerSubjectField | null;
 };
+
+/**
+ * Topics whose derived subject is wrong. Every other topic takes `userId` when its payload has
+ * one, else `playerId`, else none: where a payload carries both they name the same person, and
+ * its `playerId` is null whenever the emitter could not read the player, while `userId` never
+ * is. Where a payload's `playerId` names whoever acted (the moderator in a kick, ban or role
+ * change), `userId` is still the member it happened to.
+ */
+export const TRIGGER_SUBJECT_OVERRIDES: Partial<
+  Record<DomainEventName, TriggerSubjectField | null>
+> = {
+  // playerId is the inviter; the invited player is `inviteeId`.
+  'chat.room.invite.sent': null,
+  'chat.room.invite.withheld': null,
+  // About admin accounts.
+  'iam.role.assigned': null,
+  'iam.role.revoked': null,
+  'identity.2fa.enrollment_blocked': null,
+  // The player has left the segment reader's population when the event arrives.
+  'player.account.closed': null,
+  'identity.user.deactivated': null,
+};
+
+function subjectFieldOf(topic: DomainEventName): TriggerSubjectField | null {
+  if (topic in TRIGGER_SUBJECT_OVERRIDES) {
+    return TRIGGER_SUBJECT_OVERRIDES[topic] ?? null;
+  }
+  const schema: z.ZodType = domainEventSchemas[topic];
+  if (!(schema instanceof z.ZodObject)) {
+    return null;
+  }
+  if ('userId' in schema.shape) {
+    return 'userId';
+  }
+  return 'playerId' in schema.shape ? 'playerId' : null;
+}
 
 let eventTriggers: readonly TriggerDescriptor[] | undefined;
 
-/** Every domain event as a trigger, derived from `domainEventSchemas` once and memoised. */
+/**
+ * Every domain event as a trigger, derived from `domainEventSchemas` once and memoised. What
+ * may start a run is the kernel's `listTriggers()`: the operator's allow-list of these.
+ */
 export function triggerCatalog(): readonly TriggerDescriptor[] {
   eventTriggers ??= DOMAIN_EVENT_CATALOG.map((topic) => {
     const [domain = topic] = topic.split('.');
@@ -241,6 +292,7 @@ export function triggerCatalog(): readonly TriggerDescriptor[] {
         io: 'output',
         unrepresentable: 'any',
       }),
+      subjectField: subjectFieldOf(topic),
     };
   });
   return eventTriggers;
@@ -259,9 +311,14 @@ export type ActionExecutionResult = ({ ok: true } & ActionExecutionOutcome) | Mc
  * exactly one audit record.
  */
 export type McpKernel = {
+  /**
+   * Changes when a tool or action type is added, removed or bumps its schema version, and when
+   * an allowed trigger is added or removed or changes its version or subject field.
+   */
   readonly catalogVersion: string;
   listTools(): readonly McpToolDescriptor[];
   listActionTypes(): readonly ActionTypeDescriptor[];
+  /** The domain events the operator allow-listed in `PlatformConfig.agents.triggers.topics`. */
   listTriggers(): readonly TriggerDescriptor[];
   invokeTool(toolId: string, input: unknown, run: RunContext): Promise<McpToolResult>;
   /**

@@ -8,7 +8,7 @@
 >
 > **Update (2026-08-31)**: [ADR-0031](./0031-realtime-transport-sse-and-http-over-web-sockets.md) closed the last exception: `InProcessRealtimeTransport` is deleted and `REALTIME_TRANSPORT` joins `assertDurableSeamsBound`, auto-binding `RedisPubSubRealtimeTransport` on `REDIS_URL` with no in-process fallback. Production is now distributed-only for all five durable seams, not four; `SseClientAuthorizer` (a stateless grant-issuer, not a seam with delivery semantics) is unaffected and stays as-is.
 >
-> **Update (2026-10-13)**: [ADR-0044](./0044-at-least-once-event-delivery.md) changed the Redis Streams broker's delivery semantics: an entry is XACKed only when every local handler succeeded, failed entries are redelivered via `XAUTOCLAIM` and dead-lettered to `oss:dlq:<topic>` after 5 deliveries, and retention is `MINID ~ now - 7d` instead of `MAXLEN ~ 10000`. The distributed-only decision is unchanged.
+> **Update (2026-10-13)**: [ADR-0045](./0045-at-least-once-event-delivery.md) changed the Redis Streams broker's delivery semantics: an entry is XACKed only when every local handler succeeded, failed entries are redelivered via `XAUTOCLAIM` and dead-lettered to `oss:dlq:<topic>` after 5 deliveries, and retention is `MINID ~ now - 7d` instead of `MAXLEN ~ 10000`. The distributed-only decision is unchanged.
 
 ## Context
 

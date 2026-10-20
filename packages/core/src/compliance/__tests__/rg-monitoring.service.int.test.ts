@@ -407,6 +407,20 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
     expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
   });
 
+  it("counts a held deposit released today in today's window even though it landed days ago", async () => {
+    const userId = randomUUID();
+    await seedDepositLimit(userId, '100');
+    await seedCompletedDeposit(db, userId, '50', {
+      createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+      reviewedAt: new Date(),
+    });
+    const gate = new RgLimitGate(makeService(), identityRates());
+
+    const decision = await gate.checkDeposit(db.drizzle.db, userId, '60', 'USD');
+
+    expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
+  });
+
   it('spendFor itself throws RgRateUnavailableError rather than silently treating a foreign-currency group as zero', async () => {
     const userId = randomUUID();
     await seedCompletedDeposit(db, userId, '0.001', { currency: 'BTC' });

@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import type { PlayEligibilityPort, TagKey } from '@openora/core/contracts';
+import type { AuditWritePort, PlayEligibilityPort, TagKey } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { makeEventBus, mock } from '../../../testing/mock.js';
+import { auditLog } from '@openora/core/audit/schema';
+import { migrate as migrateAudit } from '@openora/core/audit/migrate';
+import { AuditService } from '@openora/core/audit/server';
+import { makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { playerTag, tag } from '../schema/index.js';
 import {
@@ -18,11 +21,25 @@ import {
 } from '../service/tag.service.js';
 
 let db: TestDb;
+let audit: AuditWritePort;
 
-function makeService() {
+function makeService(writer: AuditWritePort = audit) {
   const events = makeEventBus();
-  return { svc: new TagService(db.drizzle, events, mock<PlayEligibilityPort>({})), events };
+  return {
+    svc: new TagService(db.drizzle, events, mock<PlayEligibilityPort>({}), writer),
+    events,
+  };
 }
+
+const failingAudit = () =>
+  mock<AuditWritePort>({
+    recordInTransaction: async () => {
+      throw new Error('audit write failed');
+    },
+  });
+
+const auditRowsFor = (playerId: string) =>
+  db.drizzle.db.select().from(auditLog).where(eq(auditLog.resourceId, playerId));
 
 async function seedTag(key: TagKey, isSticky = false) {
   const [row] = await db.drizzle.db.insert(tag).values({ key, isSticky }).returning();
@@ -72,7 +89,16 @@ async function activeAssignmentRow(playerId: string, tagId: string) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile]);
+  db = await createTestDb([migrate, migrateProfile, migrateAudit]);
+  // The real audit writer, so the audit rows are rows in audit_log on the tag write's own
+  // transaction rather than calls on a spy.
+  const svc = new AuditService(db.drizzle, makeEventBus(), makeIdentityReader());
+  audit = {
+    record: (entry) => svc.record(entry).then(() => undefined),
+    recordInTransaction: (tx, entry) => svc.recordInTransaction(tx, entry).then(() => undefined),
+    recordManyInTransaction: (tx, entries) =>
+      svc.recordManyInTransaction(tx, entries).then(() => undefined),
+  };
 });
 
 afterAll(async () => {
@@ -81,7 +107,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${playerTag}, ${tag}, ${player} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${playerTag}, ${tag}, ${player}, ${auditLog} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -276,6 +302,106 @@ describe('TagService.assignPlayerTag (real PG)', () => {
     }
     expect(await playerTagsOf(p.id)).toHaveLength(1);
     expect(events.emit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TagService tag change audit (real PG)', () => {
+  it('appends the assignment audit row and marks the event as recorded', async () => {
+    const { svc, events } = makeService();
+    await seedTag('withdrawal_lock', true);
+    const p = await seedPlayer();
+    const actorId = randomUUID();
+
+    await svc.assignPlayerTag(assignment(p.id, 'withdrawal_lock', actorId), {
+      ip: '203.0.113.7',
+      userAgent: 'test-agent',
+    });
+
+    const rows = await auditRowsFor(p.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      action: 'tag.player.assigned',
+      actorType: 'admin',
+      actorId,
+      resourceType: 'player',
+      after: { tagKey: 'withdrawal_lock', reason: 'manual review' },
+      ip: '203.0.113.7',
+      userAgent: 'test-agent',
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'tag.player.assigned',
+      expect.objectContaining({ playerId: p.id, auditRecorded: true }),
+    );
+  });
+
+  it('appends the removal audit row and marks the event as recorded', async () => {
+    const { svc, events } = makeService();
+    await seedTag('withdrawal_lock', true);
+    const p = await seedPlayer();
+    const actorId = randomUUID();
+    await svc.assignPlayerTag(assignment(p.id, 'withdrawal_lock', actorId));
+
+    await svc.removePlayerTag(removal(p.id, 'withdrawal_lock', actorId));
+
+    const rows = await auditRowsFor(p.id);
+    expect(rows.map((row) => row.action).sort()).toEqual([
+      'tag.player.assigned',
+      'tag.player.removed',
+    ]);
+    expect(rows.find((row) => row.action === 'tag.player.removed')).toMatchObject({
+      actorType: 'admin',
+      after: { tagKey: 'withdrawal_lock', reason: 'no longer applies' },
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'tag.player.removed',
+      expect.objectContaining({ playerId: p.id, auditRecorded: true }),
+    );
+  });
+
+  it('leaves the player untagged and emits nothing when the audit write fails', async () => {
+    const { svc, events } = makeService(failingAudit());
+    await seedTag('withdrawal_lock', true);
+    const p = await seedPlayer();
+
+    await expect(
+      svc.assignPlayerTag(assignment(p.id, 'withdrawal_lock', randomUUID())),
+    ).rejects.toThrow('audit write failed');
+
+    expect(await playerTagsOf(p.id)).toHaveLength(0);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('keeps the tag active and emits nothing when the removal audit write fails', async () => {
+    await seedTag('withdrawal_lock', true);
+    const p = await seedPlayer();
+    const actorId = randomUUID();
+    await makeService().svc.assignPlayerTag(assignment(p.id, 'withdrawal_lock', actorId));
+    const { svc, events } = makeService(failingAudit());
+
+    await expect(svc.removePlayerTag(removal(p.id, 'withdrawal_lock', actorId))).rejects.toThrow(
+      'audit write failed',
+    );
+
+    const [row] = await playerTagsOf(p.id);
+    expect(row?.removedAt).toBeNull();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('records a system actor for an assignment without an admin', async () => {
+    const { svc } = makeService();
+    await seedTag('high_risk');
+    const p = await seedPlayer();
+
+    await svc.assignPlayerTag({
+      playerId: p.id,
+      tagKey: 'high_risk',
+      assignReason: 'rule breach',
+      assignActor: 'scheduled',
+      assignActorUserId: null,
+    });
+
+    const [row] = await auditRowsFor(p.id);
+    expect(row).toMatchObject({ actorType: 'system', action: 'tag.player.assigned' });
   });
 });
 

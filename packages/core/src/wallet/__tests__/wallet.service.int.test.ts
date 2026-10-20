@@ -9,7 +9,9 @@ import {
   type ExchangeRateReader,
   type PaymentAdapter,
   type AdminPlayerSummary,
+  type PlayerTags,
   type TagEvaluationCommands,
+  type TagKey,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -50,6 +52,7 @@ import {
   DepositDisabledError,
   WalletAssetUnknownProviderError,
   DestinationAddressNotWhitelistedError,
+  WithdrawalLockedError,
 } from '../service/wallet.service.js';
 import { WithdrawalQueueItemSchema } from '../contract/index.js';
 
@@ -2206,6 +2209,119 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
     expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
   });
 
+  function holdPolicy(reason: string | null) {
+    return { holdReason: vi.fn(async () => reason) };
+  }
+
+  it('records a deposit the hold policy holds as on_hold, credits nothing, files a held_deposit finding and tells the player', async () => {
+    const depositHold = holdPolicy('self_excluded');
+    const { svc, events, audit } = makeService({ depositHold });
+    const w = await seedWallet({ currency: 'BTC', balance: '1' });
+    await seedAddress(w.userId, 'bc1qheld');
+    const externalId = randomUUID();
+
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qheld',
+      amount: '0.5',
+      currency: 'BTC',
+      externalId,
+      txHash: '0xheld',
+    });
+
+    expect(await balanceOf(w.userId)).toBe(1);
+    expect(emittedTopics(events)).toEqual(['wallet.deposit.held']);
+    expect(depositHold.holdReason).toHaveBeenCalledWith(expect.anything(), {
+      userId: w.userId,
+      amount: '0.5',
+      currency: 'BTC',
+    });
+    const [held] = await txRows(w.id);
+    expect(held).toMatchObject({
+      type: 'deposit',
+      status: 'on_hold',
+      reviewReason: 'self_excluded',
+    });
+    const findings = await findingsFor(externalId);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      kind: 'held_deposit',
+      status: 'open',
+      transactionId: held?.id,
+    });
+    expect(findings[0]?.detail).toContain('self_excluded');
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'wallet.reconciliation_finding.recorded' }),
+    );
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('never credits a held deposit on redelivery, even once the policy would let it through', async () => {
+    const depositHold = holdPolicy('deposit_limit_exceeded');
+    const { svc, events } = makeService({ depositHold });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qheldreplay');
+    const event = {
+      kind: 'deposit' as const,
+      address: 'bc1qheldreplay',
+      amount: '2',
+      currency: 'BTC',
+      externalId: randomUUID(),
+      txHash: '0xheldreplay',
+    };
+
+    await svc.creditDepositByAddress(event);
+    depositHold.holdReason.mockResolvedValue(null);
+    await svc.creditDepositByAddress(event);
+
+    expect(await balanceOf(w.userId)).toBe(0);
+    expect(await txRows(w.id)).toHaveLength(1);
+    expect(await findingsFor(event.externalId)).toHaveLength(1);
+    expect(emittedTopics(events)).toEqual(['wallet.deposit.held']);
+  });
+
+  it('credits normally when the hold policy returns no reason', async () => {
+    const { svc, events } = makeService({ depositHold: holdPolicy(null) });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qnohold');
+    const externalId = randomUUID();
+
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qnohold',
+      amount: '1',
+      currency: 'BTC',
+      externalId,
+      txHash: '0xnohold',
+    });
+
+    expect(await balanceOf(w.userId)).toBe(1);
+    expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
+    expect(await findingsFor(externalId)).toHaveLength(0);
+  });
+
+  it('writes nothing when the hold policy throws, so the redelivery is decided afresh', async () => {
+    const depositHold = { holdReason: vi.fn(async () => Promise.reject(new Error('gate down'))) };
+    const { svc } = makeService({ depositHold });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qholdfails');
+
+    await expect(
+      svc.creditDepositByAddress({
+        kind: 'deposit',
+        address: 'bc1qholdfails',
+        amount: '1',
+        currency: 'BTC',
+        externalId: randomUUID(),
+        txHash: '0xholdfails',
+      }),
+    ).rejects.toThrow('gate down');
+
+    expect(await balanceOf(w.userId)).toBe(0);
+    expect(await txRows(w.id)).toHaveLength(0);
+  });
+
   it('credits nobody and files a currency_mismatch finding on a currency mismatch', async () => {
     const { svc, events } = makeService();
     const w = await seedWallet({ currency: 'BTC' });
@@ -2289,5 +2405,156 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
         txHash: '0xcollide',
       }),
     ).rejects.toBeInstanceOf(AmbiguousDepositAddressError);
+  });
+});
+
+describe('WalletService withdrawal lock (real PG)', () => {
+  // Mutable per test: the admin places or releases the hold between calls.
+  let activeTags: Map<string, TagKey[]>;
+  const lockedService = () =>
+    makeService({
+      riskTags: mock<PlayerTags>({
+        getActiveTagKeys: vi.fn(async (ids: readonly string[]) => {
+          return new Map(
+            ids.flatMap((id) => (activeTags.has(id) ? [[id, activeTags.get(id) ?? []]] : [])),
+          );
+        }),
+      }),
+    });
+
+  beforeEach(() => {
+    activeTags = new Map();
+  });
+
+  it('refuses a withdrawal request from a locked player before any debit', async () => {
+    const w = await seedWallet({ balance: '100' });
+    activeTags.set(w.userId, ['withdrawal_lock']);
+    const { svc, events } = lockedService();
+
+    await expect(
+      svc.withdraw({ userId: w.userId, amount: '40', currency: 'USD', ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(WithdrawalLockedError);
+
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await db.drizzle.db.select().from(walletTransaction)).toEqual([]);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('still lets a player with only unrelated tags withdraw', async () => {
+    const w = await seedWallet({ balance: '100' });
+    activeTags.set(w.userId, ['vip', 'high_risk']);
+    const { svc } = lockedService();
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('keeps a withdrawal queued before the lock unapprovable until the lock is released', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const { svc, psp } = lockedService();
+    const { transactionId } = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    activeTags.set(w.userId, ['withdrawal_lock']);
+
+    await expect(svc.approveWithdrawal(randomUUID(), transactionId)).rejects.toBeInstanceOf(
+      WithdrawalLockedError,
+    );
+    const [held] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, transactionId));
+    expect(held?.status).toBe('pending');
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+
+    activeTags.delete(w.userId);
+    const approved = await svc.approveWithdrawal(randomUUID(), transactionId);
+    expect(approved.status).toBe('completed');
+  });
+
+  it('puts a withdrawal back exactly as queued when the lock lands after the pre-check, before any PSP call', async () => {
+    const w = await seedWallet();
+    const reviewedAt = new Date('2026-01-01T00:00:00.000Z');
+    const queued = await seedTx(w.id, {
+      status: 'on_hold',
+      reviewedBy: randomUUID(),
+      reviewedAt,
+      reviewReason: 'held for source of funds',
+    });
+    // Unlocked for the pre-check, locked by the time the flip has committed.
+    const getActiveTagKeys = vi
+      .fn<PlayerTags['getActiveTagKeys']>()
+      .mockResolvedValueOnce(new Map())
+      .mockResolvedValue(new Map([[w.userId, ['withdrawal_lock']]]));
+    const { svc, psp } = makeService({ riskTags: mock<PlayerTags>({ getActiveTagKeys }) });
+
+    await expect(svc.approveWithdrawal(randomUUID(), queued.id)).rejects.toBeInstanceOf(
+      WithdrawalLockedError,
+    );
+
+    const [row] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, queued.id));
+    expect(row).toMatchObject({
+      status: 'on_hold',
+      reviewedBy: queued.reviewedBy,
+      reviewedAt,
+      reviewReason: 'held for source of funds',
+    });
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+  });
+
+  it("still lets an admin reject a locked player's queued withdrawal, refunding it", async () => {
+    const w = await seedWallet({ balance: '100' });
+    const { svc } = lockedService();
+    const { transactionId } = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    activeTags.set(w.userId, ['withdrawal_lock']);
+
+    const rejected = await svc.rejectWithdrawal(randomUUID(), transactionId, 'under investigation');
+
+    expect(rejected.status).toBe('rejected');
+    expect(await balanceOf(w.userId)).toBe(100);
+  });
+
+  it("flags a locked player's rows in the withdrawal queue", async () => {
+    const locked = await seedWallet();
+    const free = await seedWallet();
+    await seedTx(locked.id);
+    await seedTx(free.id);
+    activeTags.set(locked.userId, ['withdrawal_lock']);
+    const { svc } = lockedService();
+
+    const { items } = await svc.listWithdrawals({ page: 1, limit: 20 });
+
+    expect(Object.fromEntries(items.map((i) => [i.userId, i.withdrawalLocked]))).toEqual({
+      [locked.userId]: true,
+      [free.userId]: false,
+    });
+    expect(() => WithdrawalQueueItemSchema.parse(items[0])).not.toThrow();
+  });
+
+  it('reads no player as locked when the tag module is not bound', async () => {
+    const w = await seedWallet();
+    await seedTx(w.id);
+    const { svc } = makeService();
+
+    const { items } = await svc.listWithdrawals({ page: 1, limit: 20 });
+
+    expect(items[0]?.withdrawalLocked).toBe(false);
   });
 });

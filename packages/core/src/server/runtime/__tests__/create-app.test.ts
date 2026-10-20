@@ -1,18 +1,38 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import type { Logger } from 'pino';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   MESSAGE_BROKER,
   JOB_QUEUE,
   CACHE,
   MCP_KERNEL,
+  PLATFORM_CONFIG,
   RATE_LIMITER,
   PLAYER_ACTIVITY_TRACKER,
+  definePlatformConfig,
+  getEventVersion,
+  type BrokerHandler,
+  type DomainEventName,
+  type EventEnvelope,
   type McpKernel,
+  type MessageBrokerAdapter,
+  type OutboxWriter,
 } from '@openora/core/contracts';
 import { redisUrlForWorker } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import { AUTH_SESSION, type SessionResolver } from '../../auth/index.js';
 import { createApp } from '../create-app.js';
 import { getCurrentClientMeta } from '../../kernel/request-context.js';
+import {
+  EVENT_BUS,
+  createEventBus,
+  type EventBus,
+  type EventHandler,
+  type ProcessedEventLog,
+} from '../../kernel/index.js';
+import type { PluginEntry } from '../../plugin-host/index.js';
+import { heardTriggers } from './fixtures/trigger-listener-plugin.js';
 
 // A syntactically valid but unreachable DB url - fine here because nothing in this
 // suite ever runs a query: DrizzleService's pg.Pool connects lazily, and neither
@@ -90,6 +110,155 @@ describe('createApp - the MCP kernel binding', () => {
         process.env['REDIS_URL'] = saved;
       }
     }
+  });
+});
+
+describe('createApp - agent trigger listeners', () => {
+  const saved = process.env['REDIS_URL'];
+  const fixture = (file: string) => fileURLToPath(new URL(`./fixtures/${file}`, import.meta.url));
+  const recording: PluginEntry = {
+    id: 'trigger-listener',
+    path: fixture('trigger-listener-plugin.ts'),
+  };
+  const throwing: PluginEntry = {
+    id: 'throwing-trigger-listener',
+    path: fixture('throwing-trigger-listener-plugin.ts'),
+  };
+
+  afterEach(() => {
+    heardTriggers().length = 0;
+    if (saved === undefined) {
+      delete process.env['REDIS_URL'];
+    } else {
+      process.env['REDIS_URL'] = saved;
+    }
+  });
+
+  function bootWith(topics: DomainEventName[], plugins: PluginEntry[], bus: EventBus) {
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    return createApp({ plugins, databaseUrl: DUMMY_DATABASE_URL }, (container) => {
+      container.register(EVENT_BUS, () => bus);
+      container.register(PLATFORM_CONFIG, () =>
+        definePlatformConfig({ agents: { triggers: { topics } } }),
+      );
+    });
+  }
+
+  function subscriptionBus() {
+    const subscribed = new Map<string, EventHandler[]>();
+    const bus = mock<EventBus>({
+      on: (topic: string, handler: EventHandler) => {
+        subscribed.set(topic, [...(subscribed.get(topic) ?? []), handler]);
+        return () => undefined;
+      },
+    });
+    return { bus, subscribed };
+  }
+
+  function brokerBackedBus() {
+    const subscribed = new Map<string, BrokerHandler[]>();
+    const broker = mock<MessageBrokerAdapter>({
+      subscribe: (topic: string, handler: BrokerHandler) => {
+        subscribed.set(topic, [...(subscribed.get(topic) ?? []), handler]);
+        return () => undefined;
+      },
+    });
+    const logger = mock<Logger>({ error: vi.fn() });
+    // Like the Redis broker: every handler runs even when a sibling throws, and a failure
+    // leaves the entry pending for redelivery instead of reaching the caller.
+    const deliver = async (envelope: EventEnvelope) => {
+      await Promise.allSettled(
+        (subscribed.get(envelope.topic) ?? []).map((handler) => handler(envelope)),
+      );
+    };
+    const bus = createEventBus({
+      broker,
+      outbox: mock<OutboxWriter>(),
+      processedEvents: mock<ProcessedEventLog>(),
+      logger,
+    });
+    return { bus, logger, deliver };
+  }
+
+  const loginEnvelope = (): EventEnvelope => ({
+    eventId: randomUUID(),
+    topic: 'identity.user.login',
+    payload: { userId: randomUUID(), playerId: null },
+    occurredAt: new Date().toISOString(),
+    schemaVersion: getEventVersion('identity.user.login'),
+  });
+
+  it('subscribes a listener to the allow-listed topics only, and hands it the trigger', async () => {
+    const { bus, subscribed } = subscriptionBus();
+    const created = await bootWith(['promo.bonus.granted'], [recording], bus);
+    const envelope = mock<EventEnvelope>({ eventId: 'event-1' });
+
+    expect([...subscribed.keys()]).toEqual(['promo.bonus.granted']);
+    for (const handler of subscribed.get('promo.bonus.granted') ?? []) {
+      await handler({ userId: 'user-1' }, envelope);
+    }
+    expect(heardTriggers()).toEqual([
+      {
+        trigger: expect.objectContaining({ topic: 'promo.bonus.granted', subjectField: 'userId' }),
+        payload: { userId: 'user-1' },
+        envelope,
+      },
+    ]);
+    expect(created.container.get(MCP_KERNEL).listTriggers()).toEqual([
+      expect.objectContaining({ topic: 'promo.bonus.granted' }),
+    ]);
+
+    await created.close();
+  });
+
+  it('subscribes nothing for a listener while no topic is allow-listed', async () => {
+    const { bus, subscribed } = subscriptionBus();
+    const created = await bootWith([], [recording], bus);
+
+    expect(subscribed.size).toBe(0);
+
+    await created.close();
+  });
+
+  it('subscribes nothing to an allow-listed topic while no plugin listens', async () => {
+    const { bus, subscribed } = subscriptionBus();
+    const created = await bootWith(['promo.bonus.granted'], [], bus);
+
+    expect(subscribed.size).toBe(0);
+    expect(created.container.get(MCP_KERNEL).listTriggers()).toHaveLength(1);
+
+    await created.close();
+  });
+
+  it('drops an event that arrives without its envelope', async () => {
+    const { bus, subscribed } = subscriptionBus();
+    const created = await bootWith(['promo.bonus.granted'], [recording], bus);
+
+    for (const handler of subscribed.get('promo.bonus.granted') ?? []) {
+      await handler({ userId: 'user-1' });
+    }
+
+    expect(heardTriggers()).toEqual([]);
+
+    await created.close();
+  });
+
+  it('still delivers to the other listeners when one throws', async () => {
+    const { bus, logger, deliver } = brokerBackedBus();
+    const created = await bootWith(['identity.user.login'], [throwing, recording], bus);
+    const envelope = loginEnvelope();
+
+    await expect(deliver(envelope)).resolves.toBeUndefined();
+
+    expect(heardTriggers()).toEqual([
+      expect.objectContaining({ envelope: expect.objectContaining({ eventId: envelope.eventId }) }),
+    ]);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'identity.user.login' }),
+      'event subscriber threw',
+    );
+
+    await created.close();
   });
 });
 
@@ -247,6 +416,7 @@ describe('createApp - the player-activity stamp', () => {
               await writing;
               stamped = true;
             },
+            countActiveSince: async () => 0,
           }));
         },
       );

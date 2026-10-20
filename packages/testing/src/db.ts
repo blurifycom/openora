@@ -64,7 +64,7 @@ const TEMPLATE_PREFIX = 'oss_igaming_test_tpl';
  * that somehow did not would otherwise create databases under a name the teardown never
  * looks for, so an absent id is an error rather than a default.
  */
-export function testRunId(): string {
+function testRunId(): string {
   const id = process.env['OPENORA_TEST_RUN_ID'];
   if (!id) {
     throw new Error('OPENORA_TEST_RUN_ID is not set - this tier requires its global setup');

@@ -7,7 +7,7 @@ import {
   withAdvisoryXactLock,
   createLogger,
 } from '@openora/core/server';
-import type { DrizzleTx, EventBus } from '@openora/core/server';
+import type { DrizzleDb, DrizzleTx, EventBus } from '@openora/core/server';
 import {
   normalizeKycStatus,
   type PlayerStatus,
@@ -39,6 +39,28 @@ const logger = createLogger('player-management');
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
 const BLOCKING_PLAYER_STATUSES = new Set<PlayerStatus>(['suspended', 'closed']);
+
+const playersWithTags = (db: DrizzleDb) =>
+  db
+    .select({
+      player,
+      email: user.email,
+      username: user.username,
+      // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
+      tags: sql<
+        string[]
+      >`coalesce(array_agg(${tag.key}::text) filter (where ${tag.key} is not null), '{}'::text[])`,
+    })
+    .from(player)
+    .leftJoin(user, eq(user.id, player.userId))
+    .leftJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
+    .leftJoin(tag, eq(tag.id, playerTag.tagId))
+    .groupBy(player.id, user.email, user.username);
+
+const toTaggedPlayer = (row: Awaited<ReturnType<typeof playersWithTags>>[number]) => ({
+  ...toPlayer(row.player, row.email ?? '', row.username ?? ''),
+  tags: row.tags as TagKey[],
+});
 
 function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -168,21 +190,7 @@ export class PlayerService implements PlayerActivityTracker {
     }
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
     const [rows, [{ n }]] = await Promise.all([
-      db
-        .select({
-          player,
-          email: user.email,
-          username: user.username,
-          // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
-          tags: sql<
-            string[]
-          >`coalesce(array_agg(${tag.key}::text) filter (where ${tag.key} is not null), '{}'::text[])`,
-        })
-        .from(player)
-        .leftJoin(user, eq(user.id, player.userId))
-        .leftJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
-        .leftJoin(tag, eq(tag.id, playerTag.tagId))
-        .groupBy(player.id, user.email, user.username)
+      playersWithTags(db)
         .where(whereClause)
         .orderBy(
           ((sortOrder ?? 'desc') === 'asc' ? asc : desc)(
@@ -207,38 +215,15 @@ export class PlayerService implements PlayerActivityTracker {
         .leftJoin(user, eq(user.id, player.userId))
         .where(whereClause),
     ]);
-    const items = rows.map((r) => ({
-      ...toPlayer(r.player, r.email ?? '', r.username ?? ''),
-      tags: r.tags as TagKey[],
-    }));
-    return { items, total: Number(n), page, limit };
+    return { items: rows.map(toTaggedPlayer), total: Number(n), page, limit };
   }
 
   private async fetchOneWithTags(playerId: Player['id']) {
-    const db = this.drizzle.db;
     const row = findOneOrThrow(
-      await db
-        .select({
-          player,
-          email: user.email,
-          username: user.username,
-          // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
-          tags: sql<
-            string[]
-          >`coalesce(array_agg(${tag.key}::text) filter (where ${tag.key} is not null), '{}'::text[])`,
-        })
-        .from(player)
-        .leftJoin(user, eq(user.id, player.userId))
-        .leftJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
-        .leftJoin(tag, eq(tag.id, playerTag.tagId))
-        .groupBy(player.id, user.email, user.username)
-        .where(eq(player.id, playerId)),
+      await playersWithTags(this.drizzle.db).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
-    return {
-      ...toPlayer(row.player, row.email ?? '', row.username ?? ''),
-      tags: row.tags as TagKey[],
-    };
+    return toTaggedPlayer(row);
   }
 
   async get(playerId: Player['id']) {
@@ -368,6 +353,14 @@ export class PlayerService implements PlayerActivityTracker {
           or(isNull(player.lastSeenAt), lt(player.lastSeenAt, sql`now() - interval '1 minute'`)),
         ),
       );
+  }
+
+  async countActiveSince(since: Date): Promise<number> {
+    const [row] = await this.drizzle.db
+      .select({ value: count() })
+      .from(player)
+      .where(gte(player.lastSeenAt, since));
+    return row?.value ?? 0;
   }
 
   async remove(playerId: Player['id'], actorId: User['id']) {

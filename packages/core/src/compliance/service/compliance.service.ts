@@ -59,9 +59,9 @@ export const LimitNotFoundError = makeNotFoundError('Limit');
 
 export const LimitOwnershipError = makeOwnershipError('Limit');
 
-export const CountryRuleNotFoundError = makeNotFoundError('CountryRule');
+const CountryRuleNotFoundError = makeNotFoundError('CountryRule');
 
-export const GlobalKycConfigNotFoundError = makeNotFoundError('GlobalKycConfig');
+const GlobalKycConfigNotFoundError = makeNotFoundError('GlobalKycConfig');
 
 export const CountryRuleVersionConflictError = makeConflictError(
   'CountryRuleVersionConflictError',

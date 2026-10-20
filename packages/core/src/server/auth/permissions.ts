@@ -42,7 +42,7 @@ export const adminRole = ac.newRole({
   'mcp-token': ['view', 'revoke'],
 });
 
-export const supportRole = ac.newRole({
+const supportRole = ac.newRole({
   player: ['view', 'update'],
   transaction: ['view'],
   compliance: ['view'],
@@ -50,7 +50,7 @@ export const supportRole = ac.newRole({
   analytics: ['view'],
 });
 
-export const contentManagerRole = ac.newRole({
+const contentManagerRole = ac.newRole({
   content: ['create', 'update', 'delete', 'publish'],
   game: ['view', 'enable', 'disable'],
 });

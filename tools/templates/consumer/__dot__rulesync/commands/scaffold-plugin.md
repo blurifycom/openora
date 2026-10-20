@@ -13,6 +13,12 @@ After the generator finishes, open `apps/api/src/extensions/<name>/plugin.ts` an
   compile + runtime).
 - `ctx.routers.add(namespace, (c) => router)` - mount oRPC routes (Zod input/output, no inline schemas).
 - `ctx.events.on(event, handler)` - subscribe to the typed `EventBus`.
+- `ctx.triggers.listen((trigger, payload, envelope) => ...)` - hear the domain events the operator
+  allow-listed as agent triggers (`agents.triggers.topics`). Delivery is at-least-once: dedupe on
+  `envelope.eventId`, and drop what is older than you care about by `envelope.occurredAt`, since a
+  topic listed again can replay its backlog. The payload is raw and may hold personal data, so
+  never hand it to a model. Enqueue a job and return: a slow listener delays the topic's other
+  handlers.
 - `ctx.mcp.tool(defineMcpTool({...}), (c) => async (input, run) => output)` - register an agent tool,
   a read a model makes during a run.
 - `ctx.actions.register(defineActionType({...}), (c) => ({ precondition, execute }))` - register an

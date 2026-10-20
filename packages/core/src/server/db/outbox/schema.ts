@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   text,
@@ -6,6 +7,9 @@ import {
   timestamp,
   index,
   PrimaryKeyBuilder,
+  boolean,
+  uuid,
+  check,
 } from 'drizzle-orm/pg-core';
 
 // Transactional outbox table. A service writes the event envelope here INSIDE the
@@ -14,7 +18,7 @@ import {
 // between "state changed" and "event published". The OutboxRelay claims pending
 // rows (claimedAt lease), publishes them to the MESSAGE_BROKER and stamps
 // publishedAt. Delivery is at-least-once; consumers dedup via processed_events.
-// See ADR-0016 and ADR-0044.
+// See ADR-0016 and ADR-0045.
 export const eventOutbox = pgTable(
   'event_outbox',
   {
@@ -35,11 +39,23 @@ export const eventOutbox = pgTable(
 
 export type EventOutboxRow = typeof eventOutbox.$inferSelect;
 
+// One row per deployment: the anonymous id the usage telemetry reports under. The check pins the
+// table to a single row, so replicas racing on first boot converge on one id.
+export const openoraInstance = pgTable(
+  'openora_instance',
+  {
+    singleton: boolean().primaryKey().default(true),
+    instanceId: uuid().notNull().defaultRandom(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('openora_instance_singleton', sql`${t.singleton}`)],
+);
+
 // Consumer-side dedup. One row per (event, handler) that finished successfully, so a
 // redelivered event skips the handlers that already ran. `consumer` is the stable
 // handler identity built in createApp: `<service>/<plugin>/<topic>[#n]`. Pruned by the
 // OutboxRelay once older than the stream retention - past it the broker can no longer
-// redeliver the event. See ADR-0044.
+// redeliver the event. See ADR-0045.
 export const processedEvents = pgTable(
   'processed_events',
   {

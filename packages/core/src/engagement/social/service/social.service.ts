@@ -123,6 +123,25 @@ export class SocialService {
     private readonly identityReader: IdentityReader,
   ) {}
 
+  private async pagedFriendships(where: SQL | undefined, page: number, limit: number) {
+    const [rows, countRows] = await Promise.all([
+      this.drizzle.db
+        .select({
+          id: friendship.id,
+          requesterId: friendship.requesterId,
+          addresseeId: friendship.addresseeId,
+          createdAt: friendship.createdAt,
+        })
+        .from(friendship)
+        .where(where)
+        .orderBy(desc(friendship.createdAt))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(friendship).where(where),
+    ]);
+    return { rows, total: Number(countRows[0]?.n ?? 0) };
+  }
+
   /** `player` rows widened with the identity-owned handle. */
   private playersWithUsername(where: SQL) {
     return this.drizzle.db
@@ -434,21 +453,7 @@ export class SocialService {
       isNull(friendship.removedAt),
     );
 
-    const [rows, countRows] = await Promise.all([
-      this.drizzle.db
-        .select({
-          id: friendship.id,
-          requesterId: friendship.requesterId,
-          addresseeId: friendship.addresseeId,
-          createdAt: friendship.createdAt,
-        })
-        .from(friendship)
-        .where(where)
-        .orderBy(desc(friendship.createdAt))
-        .limit(limit)
-        .offset(pageToOffset(page, limit)),
-      this.drizzle.db.select({ n: count() }).from(friendship).where(where),
-    ]);
+    const { rows, total } = await this.pagedFriendships(where, page, limit);
 
     const otherUserIds = rows.map((row) =>
       row.requesterId === callerId ? row.addresseeId : row.requesterId,
@@ -510,7 +515,7 @@ export class SocialService {
       ];
     });
 
-    return { items, total: Number(countRows[0]?.n ?? 0), page, limit };
+    return { items, total, page, limit };
   }
 
   async acceptFriendRequest(callerId: Uuid, friendshipId: Uuid): Promise<Friendship> {
@@ -580,39 +585,34 @@ export class SocialService {
     // friendship_removed_excludes_refused_key check constraint) frees the pair's
     // partial-unique slot, same as cancelFriendRequest - decline and cancel both
     // let either side send a new request afterwards.
-    const rows = await this.drizzle.db
-      .update(friendship)
-      .set({ removedAt: new Date() })
-      .where(
-        and(
-          eq(friendship.id, friendshipId),
-          eq(friendship.addresseeId, callerId),
-          isNull(friendship.acceptedAt),
-          isNull(friendship.refusedAt),
-          isNull(friendship.removedAt),
-        ),
-      )
-      .returning();
-    const updated = rows[0];
-    if (!updated) {
-      throw new FriendRequestNotFoundError(friendshipId);
-    }
-
-    this.events.emit('social.friend_request.declined', {
-      friendshipId: updated.id,
-      requesterId: updated.requesterId,
-      addresseeId: updated.addresseeId,
-    });
+    return this.withdrawFriendRequest(
+      friendshipId,
+      eq(friendship.addresseeId, callerId),
+      'social.friend_request.declined',
+    );
   }
 
   async cancelFriendRequest(callerId: Uuid, friendshipId: Uuid): Promise<void> {
+    return this.withdrawFriendRequest(
+      friendshipId,
+      eq(friendship.requesterId, callerId),
+      'social.friend_request.cancelled',
+    );
+  }
+
+  /** Closes a pending request the caller is `party` to, then announces it as `event`. */
+  private async withdrawFriendRequest(
+    friendshipId: Uuid,
+    party: SQL,
+    event: 'social.friend_request.declined' | 'social.friend_request.cancelled',
+  ): Promise<void> {
     const rows = await this.drizzle.db
       .update(friendship)
       .set({ removedAt: new Date() })
       .where(
         and(
           eq(friendship.id, friendshipId),
-          eq(friendship.requesterId, callerId),
+          party,
           isNull(friendship.acceptedAt),
           isNull(friendship.refusedAt),
           isNull(friendship.removedAt),
@@ -624,7 +624,7 @@ export class SocialService {
       throw new FriendRequestNotFoundError(friendshipId);
     }
 
-    this.events.emit('social.friend_request.cancelled', {
+    this.events.emit(event, {
       friendshipId: updated.id,
       requesterId: updated.requesterId,
       addresseeId: updated.addresseeId,
@@ -644,21 +644,7 @@ export class SocialService {
       isNull(friendship.removedAt),
     );
 
-    const [rows, countRows] = await Promise.all([
-      this.drizzle.db
-        .select({
-          id: friendship.id,
-          requesterId: friendship.requesterId,
-          addresseeId: friendship.addresseeId,
-          createdAt: friendship.createdAt,
-        })
-        .from(friendship)
-        .where(where)
-        .orderBy(desc(friendship.createdAt))
-        .limit(limit)
-        .offset(pageToOffset(page, limit)),
-      this.drizzle.db.select({ n: count() }).from(friendship).where(where),
-    ]);
+    const { rows, total } = await this.pagedFriendships(where, page, limit);
 
     const counterpartIds = rows.map((row) =>
       direction === 'incoming' ? row.requesterId : row.addresseeId,
@@ -730,7 +716,7 @@ export class SocialService {
       ];
     });
 
-    return { items, total: Number(countRows[0]?.n ?? 0), page, limit };
+    return { items, total, page, limit };
   }
 
   private async getMutualFriendsCounts(

@@ -40,6 +40,7 @@ import {
   WalletService,
   WalletReferenceRateUnavailableError,
   WithdrawalAmountNotAboveFeeError,
+  WithdrawalPrecisionError,
 } from '../service/wallet.service.js';
 
 let db: TestDb;
@@ -92,12 +93,15 @@ type ServiceOptions = {
   // the values the rule shipped hardcoded); null count turns the check off.
   velocityCount?: number | null;
   velocityWindowHours?: number;
+  withdrawalDecimals?: number;
   // Leaves the singleton config row unseeded, to exercise the row-missing
   // fail-closed path.
   skipConfigSeed?: boolean;
   kycStatus?: KycStatus | null;
   directoryThrows?: boolean;
   riskTags?: TagKey[] | 'unbound';
+  // Replaces the fixed `riskTags` stub, for a test that changes the tags between reads.
+  playerTags?: PlayerTags;
   kycPolicy?: KycWithdrawalPolicy;
 };
 
@@ -113,7 +117,9 @@ async function makeService({
   kycStatus = 'verified',
   directoryThrows = false,
   riskTags = [],
+  playerTags,
   kycPolicy,
+  withdrawalDecimals,
 }: ServiceOptions = {}) {
   if (autoWithdrawal && !skipConfigSeed) {
     await db.drizzle.db.insert(walletAutoWithdrawalConfig).values({
@@ -131,6 +137,9 @@ async function makeService({
       externalId: randomUUID(),
       status: 'completed' as const,
     })),
+    ...(withdrawalDecimals === undefined
+      ? {}
+      : { withdrawalDecimals: vi.fn(() => withdrawalDecimals) }),
   };
   const audit = makeAuditWriter();
   const directory = mock<AdminUserDirectory>({
@@ -160,11 +169,13 @@ async function makeService({
     ...(riskTags === 'unbound'
       ? {}
       : {
-          riskTags: mock<PlayerTags>({
-            getActiveTagKeys: vi.fn(
-              async (ids: readonly string[]) => new Map(ids.map((id) => [id, riskTags])),
-            ),
-          }),
+          riskTags:
+            playerTags ??
+            mock<PlayerTags>({
+              getActiveTagKeys: vi.fn(
+                async (ids: readonly string[]) => new Map(ids.map((id) => [id, riskTags])),
+              ),
+            }),
         }),
   });
   return { svc, events, psp, audit };
@@ -457,6 +468,71 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(result.status).toBe('pending');
   });
 
+  it('never auto-approves for a player locked after the request passed its own check, even with no exclusions configured', async () => {
+    const w = await seedWallet();
+    // Unlocked when the request is checked, locked by the time auto-approval reads the tags.
+    const playerTags = mock<PlayerTags>({
+      getActiveTagKeys: vi
+        .fn<PlayerTags['getActiveTagKeys']>()
+        .mockResolvedValueOnce(new Map())
+        .mockResolvedValue(new Map([[w.userId, ['withdrawal_lock']]])),
+    });
+    const { svc, psp } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      excludeRiskFlags: [],
+      playerTags,
+    });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+  });
+
+  it('reverts an auto-approval flip to pending when the lock lands after the gates passed, without paying out or auditing an approval', async () => {
+    const w = await seedWallet();
+    // Unlocked for the request check and the gates, locked once the flip has committed.
+    const playerTags = mock<PlayerTags>({
+      getActiveTagKeys: vi
+        .fn<PlayerTags['getActiveTagKeys']>()
+        .mockResolvedValueOnce(new Map())
+        .mockResolvedValueOnce(new Map())
+        .mockResolvedValue(new Map([[w.userId, ['withdrawal_lock']]])),
+    });
+    const { svc, psp, audit } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      excludeRiskFlags: [],
+      playerTags,
+    });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+    expect(await txById(result.transactionId)).toMatchObject({
+      status: 'pending',
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewReason: null,
+      autoApprovalPivotAmount: null,
+    });
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'wallet.withdrawal.auto_approved' }),
+    );
+  });
+
   it('awaits the synchronous tag evaluation (TAG_EVALUATION_COMMANDS) before reading risk tags, so a withdrawal_review assignment it makes is honored by auto-approval instead of raced by the async event handler', async () => {
     const callOrder: string[] = [];
     // Stands in for TagEvaluationService.evaluateWithdrawalRequested committing a
@@ -522,7 +598,12 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
 
     // Ordering proof: the synchronous command-port call happened, and completed, before
     // auto-approval's risk-tag read - never the reverse, and never concurrent/unawaited.
-    expect(callOrder).toEqual(['evaluateWithdrawalRequested', 'getActiveTagKeys']);
+    // The first read is the request's own withdrawal-lock check, before any debit.
+    expect(callOrder).toEqual([
+      'getActiveTagKeys',
+      'evaluateWithdrawalRequested',
+      'getActiveTagKeys',
+    ]);
     expect(tagEvaluationCommands.evaluateWithdrawalRequested).toHaveBeenCalledWith(
       expect.anything(),
       { userId: w.userId, amount: '40' },
@@ -1330,6 +1411,22 @@ describe('WalletService.withdraw network fee (real PG)', () => {
       .from(walletBalance)
       .where(eq(walletBalance.walletId, w.id));
     expect(balance?.amount).toBe('60.000000000000000000');
+  });
+
+  it('refuses an amount finer than the vendor pays out for the network, before any debit', async () => {
+    await seedUsdAsset('2.5');
+    const { svc, psp } = await makeService({ withdrawalDecimals: 2 });
+    const w = await seedWallet({ balance: '100' });
+
+    await expect(
+      svc.withdraw({ userId: w.userId, amount: '40.125', currency: 'USD', ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(WithdrawalPrecisionError);
+    expect(psp.withdrawalDecimals).toHaveBeenCalledWith('USD', 'SEPA');
+    const rows = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.walletId, w.id));
+    expect(rows).toHaveLength(0);
   });
 
   it('refuses a withdrawal that does not exceed the fee, before any debit', async () => {

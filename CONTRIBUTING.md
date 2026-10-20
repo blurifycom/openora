@@ -50,8 +50,6 @@ Scripts are grouped by prefix: `check:*` reports, `fix:*` rewrites, `gen:*` emit
 | `pnpm db:seed`            | demo data (idempotent)                                              |
 | `pnpm db:setup:test`      | provision the integration-test database                             |
 
-`check:deprecations` excludes `packages/core/src/pam/identity/adapters/identity-reader.service.ts`: depretec mis-resolves Drizzle's `SQL.as` overloads and flags the non-deprecated `as(alias: string)` one. Drop the exclusion once depretec resolves overloads correctly.
-
 ## Scaffolding (don't hand-roll)
 
 ```bash

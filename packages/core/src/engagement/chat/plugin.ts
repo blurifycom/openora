@@ -11,6 +11,8 @@ import {
   RATE_LIMITER,
   CHAT_SYSTEM_WRITER,
   CHAT_BLOCK_WRITER,
+  CHAT_CONTEXT_ROOMS,
+  CHAT_CONTEXT_SEND_POLICY,
   CHAT_MODERATION,
   CHAT_ROOM_ACCESS,
   ADMIN_USER_DIRECTORY,
@@ -31,6 +33,7 @@ import {
   ChatRoomNotFoundError,
 } from './service/chat-moderation.service.js';
 import { ChatRoomMembershipService } from './service/chat-room-membership.service.js';
+import { ChatContextRoomService } from './service/chat-context-room.service.js';
 import { ChatRoomInviteService } from './service/chat-room-invite.service.js';
 import { ChatRoomBanService } from './service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from './service/chat-room-mute.service.js';
@@ -73,6 +76,7 @@ export default {
     let inviteRef: ChatRoomInviteService | undefined;
     ctx.provide(CHAT_REALTIME_TRANSPORT, (c) => c.get(REALTIME_TRANSPORT));
     ctx.provide(CHAT_REALTIME_CLIENT_AUTHORIZER, (c) => c.get(REALTIME_CLIENT_AUTHORIZER));
+    ctx.provide(CHAT_CONTEXT_SEND_POLICY, () => ({ check: async () => ({ allowed: true }) }));
     ctx.provide(
       CHAT_MODERATION,
       (c) =>
@@ -98,6 +102,7 @@ export default {
           ? c.get(PLATFORM_CONFIG).chat.allowedAttachmentHosts
           : [],
         socialCommands: c.has(SOCIAL_COMMANDS) ? c.get(SOCIAL_COMMANDS) : undefined,
+        contextSendPolicy: c.get(CHAT_CONTEXT_SEND_POLICY),
       });
     const createMembershipService = (
       c: Parameters<typeof ctx.routers.add>[1] extends (c: infer C) => unknown ? C : never,
@@ -111,6 +116,18 @@ export default {
       );
     ctx.provide(CHAT_SYSTEM_WRITER, createChatService);
     ctx.provide(CHAT_BLOCK_WRITER, createChatService);
+    ctx.provide(
+      CHAT_CONTEXT_ROOMS,
+      (c) =>
+        new ChatContextRoomService({
+          drizzle: c.get(DRIZZLE),
+          audit: c.get(AUDIT_WRITER),
+          events: c.get(EVENT_BUS),
+          identityReader: c.get(IDENTITY_READER),
+          transport: c.get(CHAT_REALTIME_TRANSPORT),
+          systemWriter: c.get(CHAT_SYSTEM_WRITER),
+        }),
+    );
     ctx.provide(CHAT_ROOM_ACCESS, (c) => ({
       verifyRoomAccess: async (roomId, viewerId) => {
         await mapErrors(
@@ -159,7 +176,7 @@ export default {
     let purgeRef: ChatRoomPurgeService | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
 
-    // Awaited and thrown: a failed enqueue leaves the event pending for redelivery (ADR-0044).
+    // Awaited and thrown: a failed enqueue leaves the event pending for redelivery (ADR-0045).
     const requireJobQueue = (): JobQueueAdapter => {
       if (!jobQueueRef) {
         throw new Error('chat job queue not bound yet');

@@ -14,7 +14,7 @@ import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { mock, makeEventBus } from '../../../testing/mock.js';
+import { mock, makeEventBus, makeAuditWriter } from '../../../testing/mock.js';
 import { TagEvaluationService } from '../service/tag-evaluation.service.js';
 import { SYSTEM_ACTOR_ID } from '../contract/index.js';
 import { TagService } from '../service/tag.service.js';
@@ -146,7 +146,12 @@ function makeServices(
   } = {},
 ) {
   const events = makeEventBus();
-  const tagService = new TagService(db.drizzle, events, mock<PlayEligibilityPort>({}));
+  const tagService = new TagService(
+    db.drizzle,
+    events,
+    mock<PlayEligibilityPort>({}),
+    makeAuditWriter(),
+  );
   const ruleService = new TagRuleService(db.drizzle, events);
   const walletReader = mock<WalletReader>({
     getLifetimeDeposit: vi.fn().mockResolvedValue('0'),

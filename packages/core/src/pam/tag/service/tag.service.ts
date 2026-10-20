@@ -25,10 +25,12 @@ import {
   type User,
   type ClientMeta,
   type PaginationOptions,
+  type AuditWritePort,
+  type DomainEventPayload,
 } from '@openora/core/contracts';
 import { SYSTEM_ACTOR_ID, type PlayerTagSortBy, type PlayerTagWithTag } from '../contract/index.js';
 import { player } from '@openora/core/pam/schema/profile';
-import { playerTag, tag } from '../schema/index.js';
+import { playerTag, tag, type Tag } from '../schema/index.js';
 import { mapDbError } from '@openora/core/common/errors';
 import { toTag, toPlayerTagWithTag } from './tag-mappers.js';
 import type { PlayerTagAssignMetadata } from '../contract/player-tag-assign-metadata.js';
@@ -124,12 +126,46 @@ function mergeAssignMetadata(
   };
 }
 
+type TagPlayerChange = DomainEventPayload<'tag.player.assigned'>;
+
+// The same row the audit plugin's tag.player.* subscriber would write for this change.
+function tagChangeAuditEntry(
+  action: 'tag.player.assigned' | 'tag.player.removed',
+  change: TagPlayerChange,
+) {
+  return {
+    actorType: change.actorId === SYSTEM_ACTOR_ID ? ('system' as const) : ('admin' as const),
+    actorId: change.actorId,
+    action,
+    resourceType: 'player',
+    resourceId: change.playerId,
+    after: { tagKey: change.tagKey, reason: change.reason },
+    ip: change.ip ?? null,
+    userAgent: change.userAgent ?? null,
+  };
+}
+
 export class TagService implements PlayerTags {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly event: EventBus,
     private readonly playEligibility: PlayEligibilityPort,
+    private readonly audit: AuditWritePort,
   ) {}
+
+  /**
+   * Appends the audit row for a tag change inside the transaction that makes it, so a tag such
+   * as withdrawal_lock never takes effect without its audit record. The event published after
+   * commit carries auditRecorded, which stops the audit subscriber writing the row twice.
+   */
+  private async _recordTagChange(
+    trx: DrizzleTx,
+    action: 'tag.player.assigned' | 'tag.player.removed',
+    change: TagPlayerChange,
+  ) {
+    await this.audit.recordInTransaction(trx, tagChangeAuditEntry(action, change));
+    return { ...change, auditRecorded: true as const };
+  }
 
   // Keyed by auth `userId`, not the internal `player.id`. Users with no active tags are absent from the map.
   public async getActiveTagKeys(userIds: readonly string[]) {
@@ -286,17 +322,7 @@ export class TagService implements PlayerTags {
     // (player_tag_active_key) backing the onConflictDoNothing below. Without it, two
     // concurrent calls (or the same at-least-once event redelivered) can both pass
     // this SELECT before either commits, creating duplicate active rows.
-    const [existing] = await trx
-      .select()
-      .from(playerTag)
-      .where(
-        and(
-          eq(playerTag.tagId, foundTag.id),
-          eq(playerTag.playerId, args.playerId),
-          isNull(playerTag.removedAt),
-        ),
-      )
-      .limit(1);
+    const [existing] = await this._findActiveAssignment(trx, foundTag.id, args.playerId);
     if (existing) {
       // A later event can reveal a breach dimension absent from the original assignment;
       // without merging it in, the resweep would act on stale metadata and could wrongly
@@ -330,18 +356,26 @@ export class TagService implements PlayerTags {
   public async assignPlayerTag(args: AssignPlayerTagArgs, meta?: ClientMeta) {
     try {
       const db = this.drizzle.db;
-      const outcome = await db.transaction((trx) => this._assignPlayerTagOnTx(trx, args));
+      const outcome = await db.transaction(async (trx) => {
+        const assigned = await this._assignPlayerTagOnTx(trx, args);
+        if (assigned.status === 'already_active') {
+          // Returned, not thrown, so a metadata merge on the active row still commits.
+          return assigned;
+        }
+        const event = await this._recordTagChange(trx, 'tag.player.assigned', {
+          playerId: args.playerId,
+          tagKey: args.tagKey,
+          reason: args.assignReason,
+          actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
+          ip: meta?.ip ?? null,
+          userAgent: meta?.userAgent ?? null,
+        });
+        return { ...assigned, event };
+      });
       if (outcome.status === 'already_active') {
         throw new TagAlreadyInUseError();
       }
-      void this.event.emit('tag.player.assigned', {
-        playerId: args.playerId,
-        tagKey: args.tagKey,
-        reason: args.assignReason,
-        actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
-        ip: meta?.ip ?? null,
-        userAgent: meta?.userAgent ?? null,
-      });
+      void this.event.emit('tag.player.assigned', outcome.event);
       return outcome.row;
     } catch (e) {
       mapDbError(e);
@@ -375,21 +409,25 @@ export class TagService implements PlayerTags {
     }
   }
 
+  private _findActiveAssignment(trx: DrizzleTx, tagId: Tag['id'], playerId: Player['id']) {
+    return trx
+      .select()
+      .from(playerTag)
+      .where(
+        and(
+          eq(playerTag.tagId, tagId),
+          eq(playerTag.playerId, playerId),
+          isNull(playerTag.removedAt),
+        ),
+      )
+      .limit(1);
+  }
+
   private async _removePlayerTagOnTx(trx: DrizzleTx, args: RemovePlayerTagInput) {
     const foundTag = await this._findTagByKeyOrThrow(args.tagKey, trx);
     const removalReason = resolveRemovalReason(args.removalReason, foundTag.isSticky);
     const active = findOneOrThrow(
-      await trx
-        .select()
-        .from(playerTag)
-        .where(
-          and(
-            eq(playerTag.tagId, foundTag.id),
-            eq(playerTag.playerId, args.playerId),
-            isNull(playerTag.removedAt),
-          ),
-        )
-        .limit(1),
+      await this._findActiveAssignment(trx, foundTag.id, args.playerId),
       new TagAssignmentNotFoundError(args.playerId),
     );
     const [updated] = await trx
@@ -409,43 +447,19 @@ export class TagService implements PlayerTags {
     try {
       const db = this.drizzle.db;
       const result = await db.transaction(async (trx) => {
-        const foundTag = await this._findTagByKeyOrThrow(args.tagKey, trx);
-        const removalReason = resolveRemovalReason(args.removalReason, foundTag.isSticky);
-        const active = findOneOrThrow(
-          await trx
-            .select()
-            .from(playerTag)
-            .where(
-              and(
-                eq(playerTag.tagId, foundTag.id),
-                eq(playerTag.playerId, args.playerId),
-                isNull(playerTag.removedAt),
-              ),
-            )
-            .limit(1),
-          new TagAssignmentNotFoundError(args.playerId),
-        );
-        const [updated] = await trx
-          .update(playerTag)
-          .set({
-            removedAt: new Date(),
-            removalReason,
-            removalActor: args.removalActor,
-            removalActorUserId: args.removalActorUserId,
-          })
-          .where(eq(playerTag.id, active.id))
-          .returning();
-        return toPlayerTagWithTag(updated, foundTag.key);
+        const removed = await this._removePlayerTagOnTx(trx, args);
+        const recorded = await this._recordTagChange(trx, 'tag.player.removed', {
+          playerId: args.playerId,
+          tagKey: args.tagKey,
+          reason: removed.removalReason ?? DEFAULT_MANUAL_REMOVAL_REASON,
+          actorId: args.removalActorUserId ?? SYSTEM_ACTOR_ID,
+          ip: meta?.ip ?? null,
+          userAgent: meta?.userAgent ?? null,
+        });
+        return { row: removed, event: recorded };
       });
-      void this.event.emit('tag.player.removed', {
-        playerId: args.playerId,
-        tagKey: args.tagKey,
-        reason: result.removalReason ?? DEFAULT_MANUAL_REMOVAL_REASON,
-        actorId: args.removalActorUserId ?? SYSTEM_ACTOR_ID,
-        ip: meta?.ip ?? null,
-        userAgent: meta?.userAgent ?? null,
-      });
-      return result;
+      void this.event.emit('tag.player.removed', result.event);
+      return result.row;
     } catch (e) {
       mapDbError(e);
     }
@@ -459,25 +473,15 @@ export class TagService implements PlayerTags {
    * commit half-way and strand the player with no active row. Under a genuine
    * concurrent replace for the same (tag, player), the loser serializes on the row
    * lock + the player_tag_active_key unique index and throws TagAlreadyInUseError
-   * with NOTHING committed. Emits tag.player.removed (only when a row was actually
-   * removed) and tag.player.assigned after the commit.
+   * with NOTHING committed. Appends the audit rows on the same transaction and emits
+   * tag.player.removed (only when a row was actually removed) and tag.player.assigned
+   * after the commit.
    */
   public async replacePlayerTag(args: ReplacePlayerTagInput) {
     try {
       const db = this.drizzle.db;
       const { removalReason, ...assignArgs } = args;
-      const [activeAtStart] = await db
-        .select({ id: playerTag.id })
-        .from(playerTag)
-        .innerJoin(tag, eq(tag.id, playerTag.tagId))
-        .where(
-          and(
-            eq(playerTag.playerId, args.playerId),
-            eq(tag.key, args.tagKey),
-            isNull(playerTag.removedAt),
-          ),
-        )
-        .limit(1);
+      const [activeAtStart] = await this._activeAssignmentByKey(db, args.playerId, args.tagKey);
       const result = await db.transaction(async (trx) => {
         // Serialize replacements for the same player before inspecting/removing the
         // current assignment. The partial unique index protects the insert, but without
@@ -489,18 +493,11 @@ export class TagService implements PlayerTags {
           .where(eq(player.id, args.playerId))
           .for('update');
 
-        const [activeAfterWait] = await trx
-          .select({ id: playerTag.id })
-          .from(playerTag)
-          .innerJoin(tag, eq(tag.id, playerTag.tagId))
-          .where(
-            and(
-              eq(playerTag.playerId, args.playerId),
-              eq(tag.key, args.tagKey),
-              isNull(playerTag.removedAt),
-            ),
-          )
-          .limit(1);
+        const [activeAfterWait] = await this._activeAssignmentByKey(
+          trx,
+          args.playerId,
+          args.tagKey,
+        );
         if (
           activeAfterWait &&
           (activeAtStart === undefined || activeAfterWait.id !== activeAtStart.id)
@@ -534,22 +531,27 @@ export class TagService implements PlayerTags {
           // db.transaction callback is exactly how that rollback happens.
           throw new TagAlreadyInUseError();
         }
-        return { row: assigned.row, removed };
-      });
-      if (result.removed) {
-        void this.event.emit('tag.player.removed', {
+        const actorId = args.assignActorUserId ?? SYSTEM_ACTOR_ID;
+        const removedEvent = removed
+          ? await this._recordTagChange(trx, 'tag.player.removed', {
+              playerId: args.playerId,
+              tagKey: args.tagKey,
+              reason: removalReason,
+              actorId,
+            })
+          : null;
+        const assignedEvent = await this._recordTagChange(trx, 'tag.player.assigned', {
           playerId: args.playerId,
           tagKey: args.tagKey,
-          reason: removalReason,
-          actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
+          reason: args.assignReason,
+          actorId,
         });
-      }
-      void this.event.emit('tag.player.assigned', {
-        playerId: args.playerId,
-        tagKey: args.tagKey,
-        reason: args.assignReason,
-        actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
+        return { row: assigned.row, removedEvent, assignedEvent };
       });
+      if (result.removedEvent) {
+        void this.event.emit('tag.player.removed', result.removedEvent);
+      }
+      void this.event.emit('tag.player.assigned', result.assignedEvent);
       return result.row;
     } catch (e) {
       mapDbError(e);
@@ -563,8 +565,12 @@ export class TagService implements PlayerTags {
       .where(eq(player.id, playerId));
   }
 
-  private async _hasActiveTag(db: DrizzleDb | DrizzleTx, playerId: Player['id'], tagKey: TagKey) {
-    const [active] = await db
+  private _activeAssignmentByKey(
+    db: DrizzleDb | DrizzleTx,
+    playerId: Player['id'],
+    tagKey: TagKey,
+  ) {
+    return db
       .select({ id: playerTag.id })
       .from(playerTag)
       .innerJoin(tag, eq(tag.id, playerTag.tagId))
@@ -572,6 +578,10 @@ export class TagService implements PlayerTags {
         and(eq(playerTag.playerId, playerId), eq(tag.key, tagKey), isNull(playerTag.removedAt)),
       )
       .limit(1);
+  }
+
+  private async _hasActiveTag(db: DrizzleDb | DrizzleTx, playerId: Player['id'], tagKey: TagKey) {
+    const [active] = await this._activeAssignmentByKey(db, playerId, tagKey);
     return active !== undefined;
   }
 
@@ -640,15 +650,21 @@ export class TagService implements PlayerTags {
         if (!(await this._isEligibleForTag(trx, target, args.tagKey))) {
           throw new PlayerNotEligibleForTagError();
         }
-        return this._assignPlayerTagOnTx(trx, args);
-      });
-      if (outcome.status === 'created') {
-        void this.event.emit('tag.player.assigned', {
+        const assigned = await this._assignPlayerTagOnTx(trx, args);
+        if (assigned.status === 'already_active') {
+          return assigned;
+        }
+        const event = await this._recordTagChange(trx, 'tag.player.assigned', {
           playerId: args.playerId,
           tagKey: args.tagKey,
           reason: args.assignReason,
           actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
         });
+        return { ...assigned, event };
+      });
+      if (outcome.status === 'created') {
+        void this.event.emit('tag.player.assigned', outcome.event);
+        return { status: outcome.status, row: outcome.row };
       }
       return outcome;
     } catch (e) {

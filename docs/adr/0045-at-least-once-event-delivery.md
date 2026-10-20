@@ -1,4 +1,4 @@
-# ADR-0044: At-least-once event delivery - always-on outbox, redelivery, dead-letter, dedup
+# ADR-0045: At-least-once event delivery - always-on outbox, redelivery, dead-letter, dedup
 
 **Date**: 2026-10-13
 **Status**: Accepted

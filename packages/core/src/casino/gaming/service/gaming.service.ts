@@ -39,6 +39,7 @@ import {
   type GameGeoDecision,
   type GamingNotifyGamesChangedArgs,
   type GamingSetGameAvailabilityArgs,
+  type GamingSetGameAvailabilityOutcome,
   type PlayEligibilityPort,
   type RgLimitsPort,
   type WalletCommands,
@@ -852,34 +853,41 @@ export class GamingService {
     return rounds.map(toGameRound);
   }
 
-  async setGameAvailability({ gameId, isUnavailable }: GamingSetGameAvailabilityArgs) {
-    const changed = await this.drizzle.db.transaction(async (tx) => {
-      const current = findOneOrThrow(
-        await tx
-          .select({ isUnavailable: game.isUnavailable })
-          .from(game)
-          .where(eq(game.id, gameId))
-          .limit(1)
-          .for('update'),
-        new GameNotFoundError(gameId),
-      );
-      if (current.isUnavailable === isUnavailable) {
-        return false;
-      }
-      await tx.update(game).set({ isUnavailable }).where(eq(game.id, gameId));
-      // Flips a game's playable/unplayable split within any category it's in - a pinned
-      // slot's meaning depends on that split, so it must re-rank too. See docs/modules/gaming.md.
-      await markCategoriesRankDirtyForGames(tx, [gameId]);
-      return true;
-    });
-    if (changed) {
-      this.events.emit('gaming.game.availability_changed', {
-        gameId,
-        before: { isUnavailable: !isUnavailable },
-        after: { isUnavailable },
-      });
+  async setGameAvailability(args: GamingSetGameAvailabilityArgs) {
+    const outcome = await this.drizzle.db.transaction((tx) =>
+      this.setGameAvailabilityInTransaction(tx, args),
+    );
+    if (outcome.changed) {
+      this.events.emit('gaming.game.availability_changed', outcome.event);
     }
-    return { changed };
+    return { changed: outcome.changed };
+  }
+
+  async setGameAvailabilityInTransaction(
+    tx: unknown,
+    { gameId, isUnavailable }: GamingSetGameAvailabilityArgs,
+  ): Promise<GamingSetGameAvailabilityOutcome> {
+    const txn = tx as DrizzleTx;
+    const current = findOneOrThrow(
+      await txn
+        .select({ isUnavailable: game.isUnavailable })
+        .from(game)
+        .where(eq(game.id, gameId))
+        .limit(1)
+        .for('no key update'),
+      new GameNotFoundError(gameId),
+    );
+    if (current.isUnavailable === isUnavailable) {
+      return { changed: false };
+    }
+    await txn.update(game).set({ isUnavailable }).where(eq(game.id, gameId));
+    // Flips a game's playable/unplayable split within any category it's in - a pinned
+    // slot's meaning depends on that split, so it must re-rank too. See docs/modules/gaming.md.
+    await markCategoriesRankDirtyForGames(txn, [gameId]);
+    return {
+      changed: true,
+      event: { gameId, before: { isUnavailable: !isUnavailable }, after: { isUnavailable } },
+    };
   }
 
   async notifyGamesChanged({

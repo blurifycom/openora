@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["extensions.config.ts", ".rulesync/hooks/*.mjs"],
+      "ignore": ["tools/templates/**"],
+      "ignoreDependencies": ["valibot"]
+    },
+    "packages/core": {
+      "entry": [
+        "src/**/drizzle.config.ts",
+        "src/{compliance,casino/*,engagement/*,fx/*,pam/*,promo/*}/index.ts",
+        "src/**/__tests__/fixtures/**/*.ts"
+      ],
+      "ignoreDependencies": ["naughty-words", "react"]
+    }
+  }
+}

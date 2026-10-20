@@ -35,6 +35,7 @@ import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
   CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL,
   OWNERLESS_ROOM_RETENTION_DAYS,
+  STAFF_USER_ROLES,
 } from '../contract/constants.js';
 import {
   ChatRoomBannedError,
@@ -54,10 +55,9 @@ import {
   expireInvitesSentBy,
   expirePendingInvites,
 } from './chat-room-invite-expiry.service.js';
+import { findRoomMember } from './chat-room-moderation.service.js';
 
 const MODERATOR_ROLES = ['moderator', 'owner'] as const;
-
-const STAFF_USER_ROLES = ['admin', 'super-admin'] as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -73,7 +73,7 @@ type OwnershipHandover =
     };
 
 function toRoom(record: typeof chatRoom.$inferSelect) {
-  const { deletedAt: _deletedAt, ...room } = record;
+  const { deletedAt: _deletedAt, kind: _kind, contextRef: _contextRef, ...room } = record;
   return serializeRow(
     { ...room, isBanned: false, bannedUntil: null },
     { dateFields: ['createdAt', 'bannedUntil', 'scheduledDeletionAt'] },
@@ -269,16 +269,14 @@ export class ChatRoomMembershipService {
         const [room] = await t
           .select({ id: chatRoom.id, isPublic: chatRoom.isPublic })
           .from(chatRoom)
-          .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
+          .where(
+            and(eq(chatRoom.id, roomId), eq(chatRoom.kind, 'standard'), isNull(chatRoom.deletedAt)),
+          )
           .limit(1);
         if (!room) {
           throw new ChatRoomNotFoundError(roomId);
         }
-        const [member] = await t
-          .select({ role: chatRoomMember.role })
-          .from(chatRoomMember)
-          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
-          .limit(1);
+        const member = await findRoomMember(t, roomId, userId);
         if (!room.isPublic && !member) {
           throw new ChatRoomNotMemberError(roomId);
         }
@@ -346,22 +344,14 @@ export class ChatRoomMembershipService {
     }
     const { removed, expired } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
-        const [moderator] = await t
-          .select({ role: chatRoomMember.role })
-          .from(chatRoomMember)
-          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, moderatorId)))
-          .limit(1);
+        const moderator = await findRoomMember(t, roomId, moderatorId);
         if (!moderator) {
           throw new ChatRoomNotMemberError(roomId);
         }
         if (moderator.role !== 'moderator' && moderator.role !== 'owner') {
           throw new ChatRoomNotModeratorError(roomId);
         }
-        const [target] = await t
-          .select({ role: chatRoomMember.role })
-          .from(chatRoomMember)
-          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
-          .limit(1);
+        const target = await findRoomMember(t, roomId, userId);
         if (moderator.role !== 'owner' && target && target.role !== 'member') {
           throw new ChatRoomNotModeratorError(roomId);
         }
@@ -412,8 +402,8 @@ export class ChatRoomMembershipService {
 
   /**
    * Grants or revokes the `moderator` role on a private room's member. Owner-only: a moderator
-   * must not be able to create peers, so the shared `assertModerator` guard is deliberately not
-   * used. Idempotent - a target already at the requested role is a successful no-op. Zero
+   * must not be able to create peers, so the shared `assertRoomModerator` guard is deliberately
+   * not used. Idempotent - a target already at the requested role is a successful no-op. Zero
    * moderators is a valid end state, so the last revoke is never blocked.
    */
   async setMemberRole({
@@ -442,22 +432,14 @@ export class ChatRoomMembershipService {
         if (!room) {
           throw new ChatRoomNotFoundError(roomId);
         }
-        const [actor] = await t
-          .select({ role: chatRoomMember.role })
-          .from(chatRoomMember)
-          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, actorId)))
-          .limit(1);
+        const actor = await findRoomMember(t, roomId, actorId);
         if (!actor) {
           throw new ChatRoomNotMemberError(roomId);
         }
         if (actor.role !== 'owner') {
           throw new ChatRoomNotModeratorError(roomId);
         }
-        const [target] = await t
-          .select({ role: chatRoomMember.role })
-          .from(chatRoomMember)
-          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
-          .limit(1);
+        const target = await findRoomMember(t, roomId, userId);
         if (!target) {
           throw new ChatRoomNotMemberError(roomId);
         }

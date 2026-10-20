@@ -56,8 +56,7 @@ async function seedNotification(overrides: Partial<typeof notification.$inferIns
     .values({
       userId: randomUUID(),
       type: 'withdrawal.approved',
-      title: 'Payout approved',
-      body: 'Your withdrawal is on its way.',
+      params: { amount: '10.000000000000000000', currency: 'USD' },
       ...overrides,
     })
     .returning();
@@ -113,6 +112,57 @@ describe('notifications router: list', () => {
     const withoutData = page.items.find((n) => n.type === 'kyc.resubmission_requested');
     expect(withData?.data).toEqual({ transactionId });
     expect(withoutData?.data).toBeNull();
+  });
+
+  it('returns the params for the client to render the type with, and no rendered text', async () => {
+    const { router } = build();
+    const userId = randomUUID();
+    await seedNotification({ userId });
+
+    const page = await call(router.list, { page: 1, limit: 10 }, { context: ctxFor(userId) });
+
+    expect(page.items[0]?.params).toEqual({ amount: '10.000000000000000000', currency: 'USD' });
+    expect(page.items[0]).not.toHaveProperty('title');
+    expect(page.items[0]).not.toHaveProperty('body');
+  });
+
+  it('reads a row written before params existed back with params null', async () => {
+    const { router } = build();
+    const userId = randomUUID();
+    const legacy = await seedNotification({
+      userId,
+      title: 'Withdrawal approved',
+      body: 'Your withdrawal of 10 USD has been approved and is being processed.',
+      params: null,
+    });
+
+    const page = await call(router.list, { page: 1, limit: 10 }, { context: ctxFor(userId) });
+
+    expect(page.items).toEqual([
+      {
+        id: legacy.id,
+        userId,
+        type: 'withdrawal.approved',
+        params: null,
+        data: null,
+        readAt: null,
+        createdAt: legacy.createdAt.toISOString(),
+      },
+    ]);
+  });
+
+  it('keeps a row whose params are malformed, reporting params as null', async () => {
+    const { router } = build();
+    const userId = randomUUID();
+    const row = await seedNotification({ userId });
+    await db.drizzle.db.execute(
+      sql`UPDATE ${notification} SET params = '{"amount": 10}'::jsonb WHERE ${notification.id} = ${row.id}`,
+    );
+
+    const page = await call(router.list, { page: 1, limit: 10 }, { context: ctxFor(userId) });
+
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({ id: row.id, params: null });
   });
 });
 
@@ -184,8 +234,7 @@ describe('notifications router: stream', () => {
       id: randomUUID(),
       userId,
       type: 'deposit.completed',
-      title: 'Deposit completed',
-      body: 'Your deposit of 10.00 USD has been completed.',
+      params: { amount: '10.00', currency: 'USD' },
       data: { transactionId: randomUUID() },
       readAt: null,
       createdAt: new Date().toISOString(),

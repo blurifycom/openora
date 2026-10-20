@@ -70,7 +70,7 @@ const BULK_APPROVE_CONCURRENCY = 10;
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
 
-export const KycVerificationNotFoundError = makeNotFoundError('KycVerification');
+const KycVerificationNotFoundError = makeNotFoundError('KycVerification');
 
 export const KycResubmissionAlreadyRequestedError = makeConflictError(
   'KycResubmissionAlreadyRequestedError',
@@ -90,7 +90,7 @@ export const KycVerificationInProgressError = makeConflictError(
 // Fail-closed: a referenceId is supposed to belong to one player. If rows sharing one
 // ever don't, that's a vendor reference collision - refuse to touch any of them rather
 // than risk writing one player's decision onto another player's kyc_verification row.
-export const KycReferenceOwnerMismatchError = createDomainError<[referenceId: string]>(
+const KycReferenceOwnerMismatchError = createDomainError<[referenceId: string]>(
   'KycReferenceOwnerMismatchError',
   (referenceId) =>
     `kyc_verification rows sharing referenceId ${referenceId} belong to different users`,
@@ -99,7 +99,7 @@ export const KycReferenceOwnerMismatchError = createDomainError<[referenceId: st
 // The webhook-supplied tier and KycAdapter.resolveDecision's tier disagree for the same
 // referenceId - the vendor's own signals are inconsistent, so refuse the decision rather
 // than guess which tier it actually belongs to.
-export const KycReferenceTierMismatchError = createDomainError<[referenceId: string]>(
+const KycReferenceTierMismatchError = createDomainError<[referenceId: string]>(
   'KycReferenceTierMismatchError',
   (referenceId) =>
     `webhook-supplied tier and resolveDecision-supplied tier disagree for referenceId ${referenceId}`,

@@ -15,7 +15,9 @@ import type {
   McpToolFactory,
   RegisteredActionType,
   RegisteredMcpTool,
+  RegisteredTriggerListener,
   RouterFactory,
+  TriggerListener,
   TypedContainer,
   EventHandler,
   RegisteredEventHandler,
@@ -28,6 +30,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
   private _routers = new Map<string, RouterFactory<C>>();
   private _events = new Map<string, RegisteredEventHandler[]>();
   private _consumerOrdinals = new Map<string, number>();
+  private _triggerListeners: RegisteredTriggerListener[] = [];
   private _jobs: WorkerRegistration<unknown>[] = [];
   private _mcpTools: McpToolDefinition[] = [];
   private _tools: RegisteredMcpTool<C>[] = [];
@@ -100,6 +103,13 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
       this._events.set(event, handlers);
     },
     getAll: () => this._events,
+  };
+
+  triggers = {
+    listen: (listener: TriggerListener) => {
+      this._triggerListeners.push({ owner: this._owner, listener });
+    },
+    getAll: () => this._triggerListeners,
   };
 
   jobs = {

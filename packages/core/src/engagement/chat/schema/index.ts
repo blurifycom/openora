@@ -14,6 +14,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import {
   CHAT_ROOM_CATEGORIES,
+  CHAT_ROOM_KINDS,
   CHAT_ROOM_ROLES,
   CHAT_ROOM_INVITE_STATUSES,
   CHAT_MODERATION_SCOPE_VALUES,
@@ -25,6 +26,7 @@ import { zodJsonb } from '@openora/core/server';
 
 export const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
 export const chatRoomCategory = pgEnum('chat_room_category', CHAT_ROOM_CATEGORIES);
+export const chatRoomKind = pgEnum('chat_room_kind', CHAT_ROOM_KINDS);
 export const chatMessageType = pgEnum('chat_message_type', CHAT_MESSAGE_TYPES);
 export const chatModerationScope = pgEnum('chat_moderation_scope', CHAT_MODERATION_SCOPE_VALUES);
 export const chatRoomInviteStatus = pgEnum('chat_room_invite_status', CHAT_ROOM_INVITE_STATUSES);
@@ -44,15 +46,23 @@ export const chatRoom = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp({ withTimezone: true }),
     scheduledDeletionAt: timestamp({ withTimezone: true }),
+    kind: chatRoomKind().notNull().default('standard'),
+    // The caller's own key for a context room, e.g. the id of the thing the room is about.
+    contextRef: text(),
   },
   (t) => [
     uniqueIndex('chat_room_slug_key').on(t.slug),
     uniqueIndex('chat_room_join_code_key').on(t.joinCode),
+    uniqueIndex('chat_room_context_ref_key').on(t.contextRef),
     index('chat_room_deleted_at_idx').on(t.deletedAt),
     index('chat_room_creator_public_deleted_at_idx').on(t.creatorId, t.isPublic, t.deletedAt),
     index('chat_room_scheduled_deletion_idx')
       .on(t.scheduledDeletionAt)
       .where(sql`${t.scheduledDeletionAt} IS NOT NULL`),
+    check(
+      'chat_room_context_kind_check',
+      sql`(${t.kind} = 'context') = (${t.contextRef} IS NOT NULL) AND (${t.kind} = 'standard' OR NOT ${t.isPublic})`,
+    ),
   ],
 );
 
@@ -71,7 +81,9 @@ export const chatMessage = pgTable(
     attachment: zodJsonb(ChatAttachmentSchema, 'chat_message.attachment')(),
     isDeleted: boolean().notNull().default(false),
     deletedAt: timestamp({ withTimezone: true }),
-    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp({ withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
   },
   (t) => [
     index('chat_msg_room_id_created_at_idx').on(t.roomId, t.createdAt),

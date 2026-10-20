@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { vi, type Mock } from 'vitest';
 import { ORPCError } from '@orpc/server';
 import {
@@ -12,6 +13,7 @@ import {
   DEFAULT_PAYMENT_PROVIDER,
   type AuditWritePort,
   type CacheAdapter,
+  type ChatContextSendPolicy,
   type ClientMeta,
   type ExchangeRateReader,
   type IdentityReader,
@@ -22,6 +24,7 @@ import {
   type RateLimitKey,
   type RateLimiterAdapter,
   type RealtimeTransport,
+  type UserCommands,
 } from '@openora/core/contracts';
 
 // The one sanctioned home for test-double type assertions. A unit test standing in
@@ -225,6 +228,12 @@ export const makeExchangeRateReader = (rate = '1'): ExchangeRateReader => ({
   convert: vi.fn(async (amount: string) => moneyScaleBy(amount, rate)),
 });
 
+export const makeChatContextSendPolicy = (
+  check: ChatContextSendPolicy['check'] = async () => ({ allowed: true }),
+): ChatContextSendPolicy & { check: Mock<ChatContextSendPolicy['check']> } => ({
+  check: vi.fn(check),
+});
+
 export const makeIdentityReader = (): IdentityReader =>
   mock<IdentityReader>({
     getLastLoginAt: vi.fn().mockResolvedValue(null),
@@ -236,6 +245,14 @@ export const makeIdentityReader = (): IdentityReader =>
     getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([]),
     canReceiveLoginWithdrawalAlerts: vi.fn().mockResolvedValue(false),
   });
+
+/** UserCommands double whose `createAdmin` answers a fresh id, for a test that does not read identity's rows. */
+export const makeUserCommands = (): UserCommands & {
+  createAdmin: Mock<UserCommands['createAdmin']>;
+} => ({
+  setUsername: vi.fn(async () => ({ success: true })),
+  createAdmin: vi.fn(async () => ({ id: randomUUID() })),
+});
 
 const matches = (refs: readonly string[], resource: string, action: string) =>
   refs.includes(resource) || refs.includes(`${resource}:${action}`);

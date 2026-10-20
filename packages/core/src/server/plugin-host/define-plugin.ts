@@ -9,6 +9,7 @@ import type {
   Token,
   TokenCatalog,
   TokenValue,
+  TriggerDescriptor,
   WorkerRegistration,
 } from '@openora/core/contracts';
 
@@ -35,6 +36,31 @@ export type TypedContainer<C extends TokenCatalog> = {
 export type RouterFactory<C extends TokenCatalog> = (c: TypedContainer<C>) => unknown;
 
 export type EventHandler = (payload: unknown, envelope?: EventEnvelope) => void | Promise<void>;
+
+/**
+ * Receives every event on the topics the operator allow-listed as agent triggers
+ * (`MCP_KERNEL.listTriggers()`), with the trigger it arrived as.
+ *
+ * - Delivery is at-least-once: dedupe on `envelope.eventId`.
+ * - A topic taken off the allow-list and listed again can replay its backlog, up to the
+ *   stream's maximum length, when nothing else in the service consumed it meanwhile: drop
+ *   events older than you care about by `envelope.occurredAt`.
+ * - The payload arrives as emitted and may hold personal data (an IP address, a user agent,
+ *   an email address): never hand it to a model.
+ * - It runs in line with the topic's other handlers, so a slow listener delays them, and a
+ *   throw is logged and the event acked without a retry: enqueue a job and return within a few
+ *   milliseconds.
+ */
+export type TriggerListener = (
+  trigger: TriggerDescriptor,
+  payload: unknown,
+  envelope: EventEnvelope,
+) => void | Promise<void>;
+
+export type RegisteredTriggerListener = {
+  owner: string;
+  listener: TriggerListener;
+};
 
 // `consumer` is the handler's dedup identity, `<plugin id>/<topic>`, suffixed `#<n>` for the
 // n-th (n >= 1) further handler the same plugin registers on the same topic. Plugin ids and
@@ -89,6 +115,11 @@ export type ModuleRegistry<C extends TokenCatalog> = {
   events: {
     on(event: string, handler: EventHandler): void;
     getAll(): Map<string, RegisteredEventHandler[]>;
+  };
+  // Subscribed at boot to the allow-listed trigger topics, which register() cannot read.
+  triggers: {
+    listen(listener: TriggerListener): void;
+    getAll(): readonly RegisteredTriggerListener[];
   };
   // Started at boot against the resolved JOB_QUEUE (after all providers, so an overlay's durable driver is in effect). See ADR-0014.
   jobs: {

@@ -30,8 +30,8 @@ import type { Paginated } from '@openora/core/contracts/kit';
 import { useOrpcQueryUtils } from '@openora/core/react';
 import { identityContract, type SessionItem } from '../contract/index.js';
 
-export type UseMySessionsResult = UseQueryResult<Paginated<SessionItem>, Error>;
-export type UseRevokeMySessionResult = UseMutationResult<IdentitySuccess, Error, { id: string }>;
+type UseMySessionsResult = UseQueryResult<Paginated<SessionItem>, Error>;
+type UseRevokeMySessionResult = UseMutationResult<IdentitySuccess, Error, { id: string }>;
 export type UseMySecurityControlsResult = UseQueryResult<SecurityControls, Error>;
 export type UseSetLoginWithdrawalAlertsResult = UseMutationResult<
   SecurityControls,
@@ -64,9 +64,9 @@ export type UseConfirmPhoneVerificationResult = UseMutationResult<
   Error,
   PhoneVerificationConfirmInput
 >;
-export type UseTwoFactorStatusResult = UseQueryResult<TwoFactorStatus, Error>;
+type UseTwoFactorStatusResult = UseQueryResult<TwoFactorStatus, Error>;
 // The route takes no body, so the mutation carries no variables of its own.
-export type UseSendTwoFactorOtpResult = UseMutationResult<SendTwoFactorOtpResult, Error, unknown>;
+type UseSendTwoFactorOtpResult = UseMutationResult<SendTwoFactorOtpResult, Error, unknown>;
 export type UseRegenerateBackupCodesResult = UseMutationResult<
   BackupCodesResult,
   Error,

@@ -307,6 +307,7 @@ export type WithdrawalSortBy = z.infer<typeof WithdrawalSortBySchema>;
 export const WalletTransactionListQuerySchema = PageQuerySchema.extend({
   sortBy: WalletTransactionSortBySchema.optional(),
   sortOrder: SortOrderSchema.default('desc').optional(),
+  amountCurrency: WalletCurrencyInputSchema.optional(),
   types: z.array(WalletTransactionTypeSchema).max(WALLET_TRANSACTION_TYPES.length).optional(),
   statuses: z
     .array(WalletTransactionStatusSchema)
@@ -340,6 +341,8 @@ export const WithdrawalQueueItemSchema = z.object({
   status: WalletTransactionStatusSchema,
   kycStatus: KycStatusSchema.nullable(),
   riskTags: z.array(z.string()),
+  /** The player carries the `withdrawal_lock` hold: this withdrawal cannot be approved until it is released. */
+  withdrawalLocked: z.boolean(),
   requestedAt: TimestampSchema,
   destinationAddress: z.string().nullable(),
   // An approver on a tag chain is releasing funds to an address shared by many accounts, so
@@ -613,6 +616,7 @@ export const WalletReconciliationFindingSchema = z.object({
   address: z.string().nullable(),
   tag: z.string().nullable(),
   txHash: z.string().nullable(),
+  sourceAddress: z.string().nullable(),
   externalId: z.string().nullable(),
   transactionId: UuidSchema.nullable(),
   detail: z.string().nullable(),
@@ -631,11 +635,29 @@ export const ListReconciliationFindingsInputSchema = PageQuerySchema.extend({
 });
 export type ListReconciliationFindingsInput = z.infer<typeof ListReconciliationFindingsInputSchema>;
 
-// There is no third way to close a finding: crediting the player (a manual ledger entry
-// made elsewhere, referenced here by its transactionId) or dismissing it as a non-issue
-// (a mandatory note explaining why). Never a bare status flip with no evidence either way.
+// Every way to close a finding carries its evidence: a credit (credited), the held deposit
+// itself credited after a fresh policy check (released), the on-chain transaction that sent
+// the money back and how much it sent (refunded), or a mandatory note explaining why it is
+// a non-issue (dismissed). Never a bare status flip with no evidence.
+//
+// `credited` means two things by finding kind. A deposit finding names no transaction: the
+// resolution credits the deposit itself, after the deposit hold policy, and `userId` is the
+// player an unattributed deposit belongs to (every other deposit finding derives it). Any
+// other finding names the `manual_credit` already made for it in `transactionId`.
 export const ReconciliationResolutionSchema = z.discriminatedUnion('outcome', [
-  z.object({ outcome: z.literal('credited'), transactionId: UuidSchema }),
+  z.object({
+    outcome: z.literal('credited'),
+    transactionId: UuidSchema.optional(),
+    userId: UuidSchema.optional(),
+  }),
+  z.object({ outcome: z.literal('released') }),
+  z.object({
+    outcome: z.literal('refunded'),
+    amount: PositiveMoneyAmountSchema,
+    txHash: z.string().trim().min(1).max(200),
+    destinationAddress: z.string().trim().min(1).max(200),
+    note: z.string().trim().min(1).optional(),
+  }),
   z.object({ outcome: z.literal('dismissed'), note: z.string().trim().min(1) }),
 ]);
 export type ReconciliationResolution = z.infer<typeof ReconciliationResolutionSchema>;

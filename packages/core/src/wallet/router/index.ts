@@ -36,6 +36,7 @@ import {
   WithdrawalNotPendingError,
   InsufficientBalanceError,
   KycRequiredError,
+  WithdrawalLockedError,
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
@@ -53,12 +54,17 @@ import {
   WithdrawalDisabledError,
   BelowMinimumWithdrawalError,
   WithdrawalAmountNotAboveFeeError,
+  WithdrawalPrecisionError,
   DepositDisabledError,
   BelowMinimumDepositError,
   PlayerNotFoundError,
   WithdrawalAddressAlreadyExistsError,
   WithdrawalAddressLimitReachedError,
   WalletReferenceRateUnavailableError,
+  UnsupportedAmountCurrencyError,
+  HeldDepositNotFoundError,
+  DepositStillHeldError,
+  DepositAlreadyOnLedgerError,
 } from '../service/wallet.service.js';
 import {
   SwapService,
@@ -70,6 +76,10 @@ import {
   ReconciliationFindingNotFoundError,
   ReconciliationCreditTransactionNotFoundError,
   ReconciliationCreditMismatchError,
+  ReconciliationOutcomeNotAllowedError,
+  ReconciliationRefundAmountError,
+  ReconciliationAttributionError,
+  DepositAlreadyRefundedError,
 } from '../service/reconciliation.service.js';
 
 // Unauthenticated route: it costs a signature verification (and, for a custody vendor,
@@ -150,7 +160,7 @@ export type WalletRouterDeps = {
 
 /** The verifier/parser pair for an inbound swap webhook, bound together for the same reason
  * the payment one is: never verify with one vendor's key and parse with another's format. */
-export type SwapWebhookPort = {
+type SwapWebhookPort = {
   verify(
     rawBody: string,
     headers: Record<string, string | string[] | undefined>,
@@ -239,8 +249,10 @@ export function createWalletRouter({
             UnsupportedNetworkError,
             BelowMinimumWithdrawalError,
             WithdrawalAmountNotAboveFeeError,
+            WithdrawalPrecisionError,
           ],
           CONFLICT: [
+            WithdrawalLockedError,
             KycRequiredError,
             IdempotencyKeyReuseError,
             DestinationAddressRequiredError,
@@ -277,12 +289,16 @@ export function createWalletRouter({
     }),
 
     listTransactions: os.listTransactions.handler(({ context, input }) =>
-      wallet.getTransactions({ ...input, userId: getUserId(context), includeGrants: true }),
+      mapErrors({ BAD_REQUEST: UnsupportedAmountCurrencyError }, () =>
+        wallet.getTransactions({ ...input, userId: getUserId(context), includeGrants: true }),
+      ),
     ),
 
     listPlayerTransactions: os.listPlayerTransactions.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
-      return wallet.getTransactions({ ...input, includeInternal: true });
+      return mapErrors({ BAD_REQUEST: UnsupportedAmountCurrencyError }, () =>
+        wallet.getTransactions({ ...input, includeInternal: true }),
+      );
     }),
 
     withdrawals: {
@@ -305,7 +321,7 @@ export function createWalletRouter({
         return mapErrors(
           {
             NOT_FOUND: WithdrawalNotFoundError,
-            CONFLICT: [WithdrawalNotPendingError, PaymentRejectedError],
+            CONFLICT: [WithdrawalNotPendingError, WithdrawalLockedError, PaymentRejectedError],
           },
           () => wallet.approveWithdrawal(adminId, input.withdrawalId, { ip, userAgent }),
         );
@@ -594,13 +610,28 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'wallet-reconciliation', 'resolve');
+        // `credited` on a deposit finding and `released` put custody money on a player's
+        // balance, so they need what any other hand credit (`manualAdjustment`) needs.
+        if (input.resolution.outcome === 'credited' || input.resolution.outcome === 'released') {
+          await adminGuard.assertSuperAdmin(context);
+        }
         return mapErrors(
           {
             NOT_FOUND: [
               ReconciliationFindingNotFoundError,
               ReconciliationCreditTransactionNotFoundError,
+              PlayerNotFoundError,
             ],
-            CONFLICT: ReconciliationCreditMismatchError,
+            CONFLICT: [
+              ReconciliationCreditMismatchError,
+              ReconciliationOutcomeNotAllowedError,
+              ReconciliationRefundAmountError,
+              ReconciliationAttributionError,
+              HeldDepositNotFoundError,
+              DepositStillHeldError,
+              DepositAlreadyOnLedgerError,
+              DepositAlreadyRefundedError,
+            ],
           },
           () =>
             reconciliation.resolveFinding(adminId, input.id, input.resolution, { ip, userAgent }),

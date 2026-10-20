@@ -22,9 +22,17 @@ export const tagKeys = [
   'withdrawal_review',
   'multi_account',
   'level',
+  'withdrawal_lock',
 ] as const;
 export const TagKeySchema = z.enum(tagKeys);
 export type TagKey = z.infer<typeof TagKeySchema>;
+
+/**
+ * The operator's hold on a player's payouts and value transfers (an investigation, an
+ * "account lock"). Sticky: only an admin with a reason releases it. Wallet refuses a
+ * withdrawal request and any approval while it is active; the player can still log in.
+ */
+export const WITHDRAWAL_LOCK_TAG = 'withdrawal_lock' satisfies TagKey;
 
 export const tagSchema = z.object({
   id: UuidSchema,

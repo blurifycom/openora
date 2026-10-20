@@ -6,6 +6,7 @@ import { execSync } from 'node:child_process';
 import { dirname, join, parse } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDepGraph, impactOf, type DepGraph } from './dep-graph.js';
+import { classifyIntent, type IntentKind } from './intent.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -392,30 +393,6 @@ server.registerTool(
     return lines.join('\n');
   }),
 );
-
-type IntentKind = 'feature' | 'adapter' | 'ui-page' | 'route' | 'unsure';
-
-function classifyIntent(ask: string): IntentKind {
-  const a = ` ${ask.toLowerCase()} `;
-  const has = (re: RegExp) => re.test(a);
-  if (
-    has(/\b(payment|psp|stripe|adyen|kyc|onfido|sms|email|notification|vendor|adapter|gateway)\b/)
-  ) {
-    return 'adapter';
-  }
-  if (has(/\b(page|screen|dashboard|view|frontend|admin panel|backoffice page|player page)\b/)) {
-    return 'ui-page';
-  }
-  if (has(/\b(endpoint|route|procedure|api method|rpc)\b/)) {
-    return 'route';
-  }
-  if (
-    has(/\b(feature|module|tournament|leaderboard|jackpot|loyalty|bonus|cashback|mission|reward)\b/)
-  ) {
-    return 'feature';
-  }
-  return 'unsure';
-}
 
 function buildConsumerPlaybook(
   kind: IntentKind,

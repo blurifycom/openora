@@ -1,0 +1,1 @@
+ALTER TABLE "chat_message" ALTER COLUMN "created_at" SET DEFAULT clock_timestamp();

@@ -143,6 +143,9 @@ export type ChatRoomScheduledForDeletionSignal = z.infer<
   typeof ChatRoomScheduledForDeletionSignalSchema
 >;
 
+export const ChatRoomClosedSignalSchema = z.object({ roomId: UuidSchema });
+export type ChatRoomClosedSignal = z.infer<typeof ChatRoomClosedSignalSchema>;
+
 // Envelope of the room channel's SIGNAL lane, served by `streamRoom`. `payload` stays
 // `unknown` because the vocabulary of names is open: a client parses the ones it asked for
 // (eg ChatMemberRoleChangedSignalSchema for `chat:member-role-changed`) and ignores the rest.

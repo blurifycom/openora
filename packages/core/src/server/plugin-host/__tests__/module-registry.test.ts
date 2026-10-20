@@ -70,6 +70,21 @@ describe('ModuleRegistryImpl', () => {
       { handler: h2, consumer: 'unknown/wallet.deposit.completed#1' },
     ]);
   });
+
+  it('triggers.listen() keeps each listener with the plugin that registered it', () => {
+    const { reg } = newRegistry();
+    const first = () => {};
+    const second = () => {};
+    reg.setOwner('agents');
+    reg.triggers.listen(first);
+    reg.setOwner(null);
+    reg.triggers.listen(second);
+
+    expect(reg.triggers.getAll()).toEqual([
+      { owner: 'agents', listener: first },
+      { owner: 'unknown', listener: second },
+    ]);
+  });
 });
 
 const validTool = defineMcpTool({
@@ -95,6 +110,7 @@ const validTool = defineMcpTool({
     email: z.string(),
     balance: MoneyAmountSchema,
     lastLoginAt: z.iso.datetime().nullable(),
+    nickname: z.string().nullable(),
   }),
   redact: { allow: ['playerId', 'status', 'balance', 'lastLoginAt'], personal: ['playerId'] },
   errors: ['player_not_found'],
@@ -106,6 +122,7 @@ const toolFactory = () => async () => ({
   email: 'player@example.com',
   balance: '10.00',
   lastLoginAt: null,
+  nickname: null,
 });
 
 const validAction = defineActionType({

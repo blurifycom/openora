@@ -14,6 +14,7 @@ import {
   IgnoreCommandMetadataSchema,
   UnignoreCommandMetadataSchema,
   DonateCommandMetadataSchema,
+  SystemEventMetadataSchema,
 } from './chat-command-metadata.js';
 
 export const CHAT_MESSAGE_TYPES = ['user', 'system'] as const;
@@ -29,6 +30,7 @@ export const CommandMetadataSchema = z.discriminatedUnion('command', [
   IgnoreCommandMetadataSchema,
   UnignoreCommandMetadataSchema,
   DonateCommandMetadataSchema,
+  SystemEventMetadataSchema,
 ]);
 export type CommandMetadata = z.infer<typeof CommandMetadataSchema>;
 
@@ -46,7 +48,7 @@ export const SystemChatMessageSchema = z.object({
 });
 export type SystemChatMessage = z.infer<typeof SystemChatMessageSchema>;
 
-/** A system-authored chat message carrying structured command metadata. */
+/** @alias A system-authored chat message carrying structured command metadata. */
 export const CommandChatMessageSchema = SystemChatMessageSchema;
 export type CommandChatMessage = SystemChatMessage;
 
@@ -57,6 +59,10 @@ export type CommandChatMessage = SystemChatMessage;
  * send a raw `null`.
  */
 export const GLOBAL_CHAT_ROOM_ID = '__global';
+
+// Author of a system message no player wrote; the nil UUID matches no account.
+export const CHAT_SYSTEM_AUTHOR_ID = '00000000-0000-0000-0000-000000000000';
+export const CHAT_SYSTEM_AUTHOR_USERNAME = 'system';
 
 export const CHAT_MODERATION_SCOPES = [GLOBAL_CHAT_ROOM_ID, '__all_public', '__all'] as const;
 export const CHAT_MODERATION_SCOPE_VALUES = [...CHAT_MODERATION_SCOPES, 'room'] as const;

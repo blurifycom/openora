@@ -53,7 +53,7 @@ export default {
 
     // The refresh recomputes from the ledger, so it runs as a retryable job: a failed read or
     // an unpriced currency retries instead of leaving totalDeposits stale until the next deposit.
-    // Awaited and thrown: a failed enqueue leaves the event pending for redelivery (ADR-0044).
+    // Awaited and thrown: a failed enqueue leaves the event pending for redelivery (ADR-0045).
     ctx.events.on('wallet.deposit.completed', async (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
       if (!parsed.success) {

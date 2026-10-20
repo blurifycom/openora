@@ -10,6 +10,7 @@ import {
   triggerCatalog,
   type ActionExecutionOutcome,
   type ActionTypeImplementation,
+  type DomainEventName,
   type McpToolHandler,
   type RunContext,
   type TokenCatalog,
@@ -722,7 +723,27 @@ describe('McpKernel catalog', () => {
         payloadJsonSchema: expect.objectContaining({ required: ['withdrawalId', 'reason'] }),
       }),
     ]);
-    expect(kernel.listTriggers()).toBe(triggerCatalog());
+    expect(kernel.listTriggers()).toEqual([]);
+  });
+
+  it('lists the allow-listed trigger topics in catalog order', () => {
+    const kernel = createMcpKernel({
+      tools: [],
+      actions: [],
+      container: new Container(),
+      authorize: async () => 'allowed',
+      audit: null,
+      triggerTopics: ['promo.bonus.granted', 'wallet.deposit.completed'],
+    });
+    const catalog = triggerCatalog();
+
+    expect(kernel.listTriggers()).toEqual(
+      catalog.filter((trigger) =>
+        ['promo.bonus.granted', 'wallet.deposit.completed'].includes(trigger.topic),
+      ),
+    );
+    expect(kernel.listTriggers()).toHaveLength(2);
+    expect(kernel.listTriggers()).toBe(kernel.listTriggers());
   });
 
   it('runs each factory once, when the kernel is built', async () => {
@@ -752,6 +773,26 @@ describe('McpKernel catalog', () => {
     expect(toolFirst).toMatch(/^[0-9a-f]{16}$/);
     expect(actionFirst).toBe(toolFirst);
     expect(bumped).not.toBe(toolFirst);
+  });
+
+  it('versions the catalog by the allowed trigger topics, not by their order', () => {
+    const versionWith = (triggerTopics?: DomainEventName[]) =>
+      createMcpKernel({
+        tools: [],
+        actions: [],
+        container: new Container(),
+        authorize: async () => 'allowed',
+        audit: null,
+        ...(triggerTopics ? { triggerTopics } : {}),
+      }).catalogVersion;
+    const none = versionWith();
+    const one = versionWith(['promo.bonus.granted']);
+    const two = versionWith(['promo.bonus.granted', 'wallet.deposit.completed']);
+
+    expect(versionWith([])).toBe(none);
+    expect(one).not.toBe(none);
+    expect(two).not.toBe(one);
+    expect(versionWith(['wallet.deposit.completed', 'promo.bonus.granted'])).toBe(two);
   });
 
   it('fails the build when a factory returns no handler', () => {

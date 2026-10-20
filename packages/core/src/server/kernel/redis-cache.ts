@@ -37,7 +37,7 @@ export class RedisCache implements CacheAdapter {
     }
     const result = await this.client.set(PREFIX + key, JSON.stringify(value), {
       expiration: { type: 'PX', value: opts.ttlMs },
-      NX: true,
+      condition: 'NX',
     });
     return result === 'OK';
   }

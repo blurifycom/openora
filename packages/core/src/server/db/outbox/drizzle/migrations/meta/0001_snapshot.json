@@ -1,5 +1,5 @@
 {
-  "id": "b492b0f0-12ad-4b89-adfe-7d8e0fdc5b6c",
+  "id": "13658414-cdd2-447d-80a6-ed1ca7e9f4fe",
   "prevId": "8e20a713-5cd3-423e-8eea-8d2bd3d9832c",
   "version": "7",
   "dialect": "postgresql",
@@ -57,12 +57,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "claimed_at": {
-          "name": "claimed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
         "attempts": {
           "name": "attempts",
           "type": "integer",
@@ -108,57 +102,43 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.processed_events": {
-      "name": "processed_events",
+    "public.openora_instance": {
+      "name": "openora_instance",
       "schema": "",
       "columns": {
-        "event_id": {
-          "name": "event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
+        "singleton": {
+          "name": "singleton",
+          "type": "boolean",
+          "primaryKey": true,
+          "notNull": true,
+          "default": true
         },
-        "consumer": {
-          "name": "consumer",
-          "type": "text",
+        "instance_id": {
+          "name": "instance_id",
+          "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "gen_random_uuid()"
         },
-        "processed_at": {
-          "name": "processed_at",
+        "created_at": {
+          "name": "created_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
         }
       },
-      "indexes": {
-        "processed_events_processed_at_idx": {
-          "name": "processed_events_processed_at_idx",
-          "columns": [
-            {
-              "expression": "processed_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "processed_events_event_id_consumer_pk": {
-          "name": "processed_events_event_id_consumer_pk",
-          "columns": ["event_id", "consumer"]
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "openora_instance_singleton": {
+          "name": "openora_instance_singleton",
+          "value": "\"openora_instance\".\"singleton\""
+        }
+      },
       "isRLSEnabled": false
     }
   },

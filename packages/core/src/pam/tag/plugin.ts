@@ -7,6 +7,7 @@ import {
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import {
+  PLAYER_SEGMENT_READER,
   PLAYER_TAGS,
   TAG_EVALUATION_COMMANDS,
   WALLET_READER,
@@ -14,6 +15,7 @@ import {
   ADMIN_USER_DIRECTORY,
   JOB_QUEUE,
   PLAY_ELIGIBILITY,
+  AUDIT_WRITER,
   McpToolError,
   queue,
   runActorAdminId,
@@ -23,6 +25,7 @@ import {
   type TagKey,
 } from '@openora/core/contracts';
 import z from 'zod';
+import { PlayerSegmentReaderService } from './adapters/player-segment-reader.service.js';
 import {
   TagService,
   TagNotFoundError,
@@ -81,12 +84,17 @@ async function assignForProposal(
 
 export default {
   id: 'tag',
-  dependsOn: ['wallet', 'identity'],
+  dependsOn: ['wallet', 'identity', 'audit'],
   register(ctx) {
     // One memoized instance backs the PLAYER_TAGS port and the router closure.
     let svc: TagService | null = null;
     const tagService = (c: TypedContainer<CoreTokenCatalog>) =>
-      (svc ??= new TagService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(PLAY_ELIGIBILITY)));
+      (svc ??= new TagService(
+        c.get(DRIZZLE),
+        c.get(EVENT_BUS),
+        c.get(PLAY_ELIGIBILITY),
+        c.get(AUDIT_WRITER),
+      ));
 
     // One memoized instance backs the router closure and the TAG_EVALUATION_COMMANDS port.
     let ruleSvc: TagRuleService | null = null;
@@ -109,6 +117,7 @@ export default {
       }));
 
     ctx.provide(PLAYER_TAGS, tagService);
+    ctx.provide(PLAYER_SEGMENT_READER, (c) => new PlayerSegmentReaderService(c.get(DRIZZLE)));
     // Synchronous counterpart to the wallet.withdrawal.requested subscription below - see
     // TagEvaluationService.evaluateWithdrawalRequested for why auto-approval can't rely on
     // the async event handler alone. ADR-0017.
@@ -118,7 +127,7 @@ export default {
     }));
 
     // Throws rather than no-ops before construction, so the event is redelivered instead of
-    // being recorded as handled (ADR-0044).
+    // being recorded as handled (ADR-0045).
     const requireEvaluation = (): TagEvaluationService => {
       if (!evalSvc) {
         throw new Error('tag evaluation service not constructed');

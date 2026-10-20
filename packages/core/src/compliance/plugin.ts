@@ -224,7 +224,7 @@ export default {
     });
 
     // Handlers await their work and throw when a dependency is missing: a failure leaves the
-    // event pending, so the broker redelivers it rather than marking it handled (ADR-0044).
+    // event pending, so the broker redelivers it rather than marking it handled (ADR-0045).
     const requireJobQueue = (): JobQueueAdapter => {
       if (!jobQueueRef) {
         throw new Error('compliance job queue not bound yet');

@@ -242,6 +242,19 @@ describe('PlayerService.touchLastSeen (real PG)', () => {
   });
 });
 
+describe('PlayerService.countActiveSince (real PG)', () => {
+  it('counts only players seen inside the window', async () => {
+    const { svc } = makeService();
+    const windowStart = new Date(Date.UTC(2999, 0, 1));
+    const before = await svc.countActiveSince(windowStart);
+    await seedPlayer(randomUUID(), { lastSeenAt: new Date(windowStart.getTime() + 1000) });
+    await seedPlayer(randomUUID(), { lastSeenAt: windowStart });
+    await seedPlayer(randomUUID(), { lastSeenAt: new Date(windowStart.getTime() - 1000) });
+
+    expect(await svc.countActiveSince(windowStart)).toBe(before + 2);
+  });
+});
+
 describe('PlayerService.getByUserId (real PG)', () => {
   it('returns the player enriched with the identity email', async () => {
     const { svc } = makeService();

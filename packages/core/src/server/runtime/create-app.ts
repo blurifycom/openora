@@ -58,11 +58,12 @@ import {
 } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
-import { createMcpKernel } from '../mcp/index.js';
+import { allowedTriggers, createMcpKernel } from '../mcp/index.js';
 import { authorizeWithAdminGuard } from '../mcp/authorize.js';
 import type { McpHttpTransport } from '../mcp/http-transport.js';
 import { payloadTooLarge } from '../mcp/transport-gate.js';
 import { assertDurableSeamsBound } from './assert-durable-seams.js';
+import { startTelemetry } from './telemetry.js';
 import {
   applyClientAddress,
   resolveTrustedProxies,
@@ -165,6 +166,10 @@ export type CreateAppConfig = {
 
   disableHealthModule?: boolean;
 
+  // `false` turns off the anonymous usage telemetry, as OPENORA_TELEMETRY_DISABLED=1 or
+  // DO_NOT_TRACK=1 do. See docs/platform/telemetry.md for what it sends.
+  telemetry?: false;
+
   // Peers (IP or CIDR) allowed to set `X-Real-IP` / `X-Forwarded-For` - the reverse proxy in
   // front of the API. Any other peer's forwarding headers are replaced with its socket
   // address, so a direct caller cannot pick the IP that per-IP throttles key on. Falls back
@@ -204,7 +209,7 @@ function requestMeta(c: Context, trustedProxies: TrustedProxies) {
 
 const MCP_MAX_BODY_BYTES = 1_048_576;
 const MCP_SDK_PACKAGE = '@modelcontextprotocol/sdk';
-const MCP_SDK_VERSION = '1.29.0';
+const MCP_SDK_VERSION = '^1.29.0';
 
 type MountedMcpTransport = { path: string; transport: McpHttpTransport };
 
@@ -358,7 +363,7 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
  * + `configure` and throws a clear, actionable error listing every always-needed seam
  * that still has no binding - none of the five has an in-process fallback.
  * The transactional outbox is always on: `OUTBOX` is bound and the `OutboxRelay`
- * runs in every process (ADR-0044).
+ * runs in every process (ADR-0045).
  * `container.dispose()` (via `close()`) runs disposers in REVERSE registration
  * order, so DRIZZLE is registered before JOB_QUEUE to guarantee workers drain
  * before the DB closes. A router namespace registered by more than one plugin
@@ -385,7 +390,7 @@ export async function createApp(
     return svc;
   });
   // Postgres is always present, so the outbox is too: emitInTransaction() commits the
-  // event with its state change and the relay below publishes it (ADR-0044).
+  // event with its state change and the relay below publishes it (ADR-0045).
   container.register(OUTBOX, () => new DrizzleOutboxWriter());
   container.register(EVENT_BUS, (c) =>
     createEventBus({
@@ -466,6 +471,7 @@ export async function createApp(
       container: c,
       authorize: (adminId, iam) => authorizeWithAdminGuard(c.get(ADMIN_GUARD), adminId, iam),
       audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
+      triggerTopics: c.get(PLATFORM_CONFIG).agents.triggers.topics,
     }),
   );
 
@@ -481,6 +487,25 @@ export async function createApp(
       // Prefixed with the service: an infra overlay loads in every split service, and
       // each service's copy of the handler must run.
       bus.on(event, handler, { consumer: `${serviceName}/${consumer}` });
+    }
+  }
+  // The same topics MCP_KERNEL lists, read from the config rather than the kernel so its
+  // tool factories still run after the routers. No listener, no subscription.
+  const triggerListeners = registry.triggers.getAll();
+  if (triggerListeners.length > 0) {
+    for (const trigger of allowedTriggers(container.get(PLATFORM_CONFIG).agents.triggers.topics)) {
+      for (const { owner, listener } of triggerListeners) {
+        bus.on(trigger.topic, (payload, envelope) => {
+          if (!envelope) {
+            createLogger('agent-triggers').error(
+              { topic: trigger.topic, owner },
+              'agent trigger dropped - the event arrived without its envelope',
+            );
+            return;
+          }
+          return listener(trigger, payload, envelope);
+        });
+      }
     }
   }
 
@@ -508,6 +533,8 @@ export async function createApp(
   });
   relay.start();
   container.onDispose(() => relay.stop());
+
+  startTelemetry(container, config.telemetry);
 
   if (!config.disableHealthModule) {
     const os = implement(healthContract).$context<OssContext>();

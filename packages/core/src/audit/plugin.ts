@@ -221,6 +221,23 @@ export async function mapEventToRecord(
     };
   }
 
+  // created: the inviting admin acts; accepted: the invitee's new account acts.
+  if (topic.startsWith('iam.invitation.')) {
+    const isAccepted = topic === 'iam.invitation.accepted';
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(isAccepted ? p['userId'] : p['actorId']),
+      resourceType: 'invitation',
+      resourceId: str(p['invitationId']),
+      after: {
+        email: p['email'] ?? null,
+        roleId: p['roleId'] ?? null,
+        ...(isAccepted ? { userId: p['userId'] ?? null } : {}),
+      },
+    };
+  }
+
   // actorId = acting admin; resourceId = subject role. permissions.changed/updated
   // carries the matrix diff; assigned/revoked carries the target user in after.userId.
   if (topic.startsWith('iam.role.')) {
@@ -1463,6 +1480,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'cms.banner.schedule.created',
   'cms.banner.schedule.updated',
   'notifications.created',
+  'iam.invitation.created',
   'iam.invitation.accepted',
   'iam.role.created',
   'iam.role.updated',
@@ -1507,7 +1525,7 @@ export default {
 
     for (const topic of SUBSCRIBED_TOPICS) {
       // Awaited and thrown, never swallowed: a failed write leaves the event pending, so the
-      // broker redelivers it instead of the change going unaudited (ADR-0044).
+      // broker redelivers it instead of the change going unaudited (ADR-0045).
       ctx.events.on(topic, async (payload) => {
         if (!isRecord(payload)) {
           return;

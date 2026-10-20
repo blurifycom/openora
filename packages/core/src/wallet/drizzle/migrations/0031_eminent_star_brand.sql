@@ -1,0 +1,1 @@
+ALTER TYPE "public"."wallet_transaction_status" ADD VALUE 'refunded';

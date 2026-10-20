@@ -126,7 +126,7 @@ one. Every sweep is audited into the append-only log either way.
 
 ## Reconciliation
 
-Three things start a finding.
+Four things start a finding.
 
 - **The scheduled sweep of vendor transactions.** Every deposit the vendor reports is matched
   against the ledger. No matching row, or a row whose amount or currency disagrees, is a finding.
@@ -134,6 +134,10 @@ Three things start a finding.
   targeted status lookup. A vendor that reports a final state closes it; a vendor that knows
   nothing about it is a finding.
 - **The live path failing to attribute a deposit.** Funds arrived and no player could be resolved.
+- **A deposit the hold policy stopped.** When `DEPOSIT_HOLD_POLICY` is bound and names a reason,
+  the deposit is recorded `on_hold` and not credited. The finding closes as `released` (the held
+  row is credited once the policy lets it in) or `refunded` (with the refund tx hash and
+  destination address); it cannot be dismissed while the money is in custody.
 
 Findings are reported, never auto-credited. Crediting one is an admin action with an actor and a
 reason, and both the run and the resolution go to the audit log. Findings past a threshold raise an

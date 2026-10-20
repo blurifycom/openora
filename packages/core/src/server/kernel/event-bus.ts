@@ -15,7 +15,7 @@ import { createLogger } from './logger.js';
 import { getCurrentTraceId } from './request-context.js';
 
 // How long a published event stays redeliverable: the Redis Streams retention, and the
-// age past which outbox and processed_events rows are pruned. See ADR-0044.
+// age past which outbox and processed_events rows are pruned. See ADR-0045.
 export const EVENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
 export type EventHandler<T = unknown> = (
