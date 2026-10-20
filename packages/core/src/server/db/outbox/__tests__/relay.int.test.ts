@@ -157,6 +157,30 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
     expect((await rowsById()).get(fresh.eventId)?.publishedAt).toBeNull();
   });
 
+  it('hands back the rest of a batch once half its lease is spent publishing', async () => {
+    const first = await seedRow({ occurredAt: new Date('2026-01-01T00:00:00.000Z') });
+    const second = await seedRow({ occurredAt: new Date('2026-01-01T00:00:01.000Z') });
+    let clock = Date.now();
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    // The first publish takes 20s, past the 15s budget of a 30s lease.
+    const broker = brokerThat(() => {
+      clock += 20_000;
+    });
+    const relay = new OutboxRelay(db.drizzle.db, broker);
+
+    try {
+      await expect(relay.drainOnce()).resolves.toBe(1);
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(broker.publish).toHaveBeenCalledTimes(1);
+    const rows = await rowsById();
+    expect(rows.get(first.eventId)?.publishedAt).not.toBeNull();
+    expect(rows.get(second.eventId)?.publishedAt).toBeNull();
+    expect(rows.get(second.eventId)?.claimedAt).toBeNull();
+  });
+
   it('publishes each row exactly once across two concurrent relays', async () => {
     const seeded = await Promise.all(Array.from({ length: 50 }, () => seedRow()));
     const published: string[] = [];

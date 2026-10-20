@@ -7,9 +7,13 @@ import type { DrizzleDb } from '../drizzle.js';
 // A claimed row whose relay died mid-publish becomes claimable again after this.
 const CLAIM_LEASE_MS = 30_000;
 const PRUNE_INTERVAL_MS = 60 * 60_000;
-// Dedupe records outlive the stream entries they guard: MINID trimming is approximate, so an
-// entry can still be pending (and redeliverable) a while past EVENT_RETENTION_MS.
+// Dedupe records outlive the stream entries they guard: the broker only redelivers an entry
+// younger than EVENT_RETENTION_MS (an older pending one is dead-lettered), and a record is
+// written after its entry, so a day's margin keeps every redeliverable entry deduped.
 const PROCESSED_EVENTS_RETENTION_MS = EVENT_RETENTION_MS + 24 * 60 * 60_000;
+// A batch stops publishing once this much of its lease is spent and hands the rest back, so
+// another relay can't reclaim and republish rows this one is still working through.
+const PUBLISH_BUDGET_MS = CLAIM_LEASE_MS / 2;
 
 export type OutboxRelayOptions = {
   intervalMs?: number; // poll cadence; default 200
@@ -99,9 +103,13 @@ export class OutboxRelay {
     try {
       await this.pruneIfDue();
       const batch = await this.claimBatch();
+      const deadline = Date.now() + PUBLISH_BUDGET_MS;
       const published: EventOutboxRow['eventId'][] = [];
+      const unsent: EventOutboxRow['eventId'][] = [];
       for (const row of batch) {
-        if (await this.publishRow(row)) {
+        if (Date.now() > deadline) {
+          unsent.push(row.eventId);
+        } else if (await this.publishRow(row)) {
           published.push(row.eventId);
         }
       }
@@ -110,6 +118,12 @@ export class OutboxRelay {
           .update(eventOutbox)
           .set({ publishedAt: sql`now()` })
           .where(inArray(eventOutbox.eventId, published));
+      }
+      if (unsent.length > 0) {
+        await this.db
+          .update(eventOutbox)
+          .set({ claimedAt: null })
+          .where(inArray(eventOutbox.eventId, unsent));
       }
       return published.length;
     } catch (err) {
