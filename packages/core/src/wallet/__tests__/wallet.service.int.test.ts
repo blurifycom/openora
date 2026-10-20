@@ -2013,6 +2013,7 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
       period: 'daily',
       limit: '1',
       used: '0.5',
+      currency: 'BTC',
     }));
     const { svc, events } = makeService({ rgLimits });
     const w = await seedWallet({ currency: 'BTC', balance: '0' });
@@ -2047,6 +2048,7 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
         period: 'daily',
         limit: '1',
         used: '2',
+        currency: 'BTC',
       })),
     });
     const w = await seedWallet({ currency: 'BTC', balance: '0' });
@@ -2079,6 +2081,7 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
         period: 'daily',
         limit: '1',
         used: '2',
+        currency: 'BTC',
       })),
     });
     // A player holds one deposit address per currency, so two vendors means two players.
@@ -2116,6 +2119,7 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
         period: 'daily',
         limit: '1',
         used: '3',
+        currency: 'BTC',
       })),
     });
     const w = await seedWallet({ currency: 'BTC', balance: '0' });

@@ -415,13 +415,13 @@ function buildConsumerPlaybook(
         '1. Spawn the `expert` agent (Task tool) to turn this ask into requirements + acceptance criteria (player journey, jurisdiction rules, edge cases). Skip only for a trivial change.',
         '2. Spawn the `builder` agent to implement: `pnpm gen plugin`, then in `register(ctx)` add routes (`ctx.routers.add`) and subscribe to events (`ctx.events.on`).',
         '3. Register the plugin in `extensions.config.ts` at the repo root.',
-        '4. Spawn the `qa` agent to write/run a Playwright E2E test for the acceptance criteria.',
+        '4. Spawn the `tester` agent to write/run a Playwright E2E test for the acceptance criteria.',
         '5. Run `pnpm check:types && pnpm check:lint`.',
         '',
         '## Agents',
         '- `expert` - requirements + AC (advisory, no code)',
         '- `builder` - implements the overlay',
-        '- `qa` - E2E test + bug triage (OSS-core vs overlay)',
+        '- `tester` - E2E test + bug triage (OSS-core vs overlay)',
       ].join('\n');
     case 'adapter':
       return [
@@ -450,12 +450,12 @@ function buildConsumerPlaybook(
         '',
         '## Playbook',
         '1. Spawn the `builder` agent to implement the page in your frontend repo.',
-        '2. Spawn the `qa` agent to verify the page renders and behaves in a browser.',
+        '2. Spawn the `tester` agent to verify the page renders and behaves in a browser.',
         '3. Run `pnpm check:types`.',
         '',
         '## Agents',
         '- `builder` - mounts/extends the page',
-        '- `qa` - browser verification',
+        '- `tester` - browser verification',
       ].join('\n');
     case 'route':
       return [
@@ -484,7 +484,7 @@ function buildConsumerPlaybook(
         '## Agents available in this repo',
         '- `expert` - domain/product requirements (advisory)',
         '- `builder` - fullstack implementation',
-        '- `qa` - E2E testing',
+        '- `tester` - E2E testing',
       ].join('\n');
   }
 }
@@ -591,7 +591,7 @@ server.registerTool(
 
     const role = [
       '## Your role',
-      'You are a requirements interviewer and orchestrator, NOT the implementer. Your one human-facing job is to collect thorough requirements from the user. Everything after that - scaffolding, code, tests - you delegate to the agents (`expert`, `builder`, `qa`) via the Task tool. Keep the user out of the loop after requirements are confirmed, except to resolve genuine decisions only they can make.',
+      'You are a requirements interviewer and orchestrator, NOT the implementer. Your one human-facing job is to collect thorough requirements from the user. Everything after that - scaffolding, code, tests - you delegate to the agents (`expert`, `builder`, `tester`) via the Task tool. Keep the user out of the loop after requirements are confirmed, except to resolve genuine decisions only they can make.',
     ].join('\n');
 
     if (ask) {
@@ -650,7 +650,7 @@ server.registerTool(
             'Call `enhance-intent` (ask = the confirmed requirements summary, kind = step 1). Then follow its playbook, which delegates to the agents:',
             '- `expert` formalizes requirements + acceptance criteria (and may surface gaps - if so, ask the user those, then continue).',
             '- `builder` implements (`pnpm gen ...`, code).',
-            '- `qa` writes/runs the E2E test.',
+            '- `tester` writes/runs the E2E test.',
             'You orchestrate; you do not write feature code yourself.',
             '',
             `Platform modules: ${modules.join(', ') || '(catalog not loaded)'}`,

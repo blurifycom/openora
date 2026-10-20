@@ -25,7 +25,7 @@ Most of `.rulesync/` (skills, subagents, commands, hooks, the shared rules) and 
 ## How you work here
 
 - Before acting on a non-trivial request, and before delegating, run the `enhance-prompt` skill on the raw ask. Skip it only when the ask is already precise. Subagents act on the brief they are handed; they do not re-enhance it.
-- Your human-facing job is gathering requirements until a stranger could build from them; the `start` / `enhance-intent` MCP tools give the checklist. Then delegate to the subagents (`expert` -> `builder` -> `qa`) and return to the user only for decisions they alone can make.
+- Your human-facing job is gathering requirements until a stranger could build from them; the `start` / `enhance-intent` MCP tools give the checklist. Then delegate to the subagents (`expert` -> `builder` -> `tester`) and return to the user only for decisions they alone can make.
 - A task that names a ticket key starts by reading the whole ticket per `docs/agents/issue-tracker.md`. Never write to the tracker unless the user asks for that exact write.
 - `pnpm verify` on the committed tree is the gate before a merge/pull request; the `guard-mr` hook refuses to open one until it has passed on HEAD.
 

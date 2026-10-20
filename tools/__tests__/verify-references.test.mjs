@@ -27,7 +27,7 @@ function fixture(files) {
 function run(files) {
   const root = fixture({
     'package.json': JSON.stringify({ scripts: { verify: 'true' } }),
-    '.rulesync/subagents/dev.md': '# dev\n',
+    '.rulesync/subagents/builder.md': '# builder\n',
     'docs/adr/0001-first.md': '# ADR-0001\n',
     ...files,
   });
@@ -41,7 +41,7 @@ function run(files) {
 test('passes when every pointer resolves', () => {
   const { code } = run({
     '.rulesync/skills/review/SKILL.md':
-      '---\nname: review\ndescription: x\n---\n\n[doc](../../subagents/dev.md)\n',
+      '---\nname: review\ndescription: x\n---\n\n[doc](../../subagents/builder.md)\n',
   });
   assert.equal(code, 0);
 });

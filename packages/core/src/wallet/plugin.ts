@@ -28,6 +28,10 @@ import {
   resolveExchangeRatePivot,
   SWAP_ADAPTER,
   SWAP_WEBHOOK_VERIFIER,
+  ON_RAMP_ADAPTER,
+  ON_RAMP_WEBHOOK_VERIFIER,
+  GEO_CHECK_COMMANDS,
+  CACHE,
   AUDIT_WRITER,
   JOB_QUEUE,
   McpToolError,
@@ -62,6 +66,7 @@ import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
 import { ReconciliationService } from './service/reconciliation.service.js';
 import { SwapService } from './service/swap.service.js';
+import { OnRampService } from './service/on-ramp.service.js';
 
 const logger = createLogger('wallet');
 
@@ -435,6 +440,39 @@ export default {
             }
           : undefined;
 
+      // Same resting state as swap: core binds no on-ramp vendor, and the routes then refuse.
+      // A vendor bound without the geo or deposit-limit gate stays off rather than ungated.
+      const onRampAdapter = c.has(ON_RAMP_ADAPTER) ? c.get(ON_RAMP_ADAPTER) : undefined;
+      const onRampVerifier = c.has(ON_RAMP_WEBHOOK_VERIFIER)
+        ? c.get(ON_RAMP_WEBHOOK_VERIFIER)
+        : undefined;
+      const geoCheck = c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined;
+      if (onRampAdapter && (!geoCheck || !rgLimits)) {
+        logger.warn(
+          'on-ramp vendor bound without GEO_CHECK_COMMANDS or RG_LIMITS - on-ramp is off',
+        );
+      }
+      const onRamp =
+        onRampAdapter && geoCheck && rgLimits
+          ? new OnRampService({
+              drizzle: c.get(DRIZZLE),
+              wallet,
+              adapter: onRampAdapter,
+              audit: c.get(AUDIT_WRITER),
+              playEligibility: c.get(PLAY_ELIGIBILITY),
+              geoCheck,
+              limiter: c.get(RATE_LIMITER),
+              cache: c.has(CACHE) ? c.get(CACHE) : undefined,
+            })
+          : undefined;
+      const onRampWebhook =
+        onRampAdapter && onRampVerifier
+          ? {
+              verify: onRampVerifier.verify.bind(onRampVerifier),
+              parse: onRampAdapter.parseWebhook.bind(onRampAdapter),
+            }
+          : undefined;
+
       return createWalletRouter({
         wallet,
         adminGuard: c.get(ADMIN_GUARD),
@@ -447,6 +485,8 @@ export default {
         limiter: c.get(RATE_LIMITER),
         swap,
         swapWebhook,
+        onRamp,
+        onRampWebhook,
       });
     });
   },

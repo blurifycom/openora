@@ -8,7 +8,17 @@
 // rules and skills - and the `consumerOwned` overrides in .rulesync/sync.json - are tracked.
 //
 // To change a synced file, edit openora's tools/templates/consumer and take the next bump.
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmdirSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join, relative, sep } from 'node:path';
@@ -28,6 +38,14 @@ const SYNCED_ROOTS = [
 // import _shared.mjs, so both must exist in a fresh clone before the first install.
 const NEVER_IGNORED = new Set(['tools/sync-agents.mjs', '.rulesync/hooks/_shared.mjs']);
 const SKIPPED_BASENAMES = new Set();
+// Dropped before the manifest below existed. The first install after the bump runs the previous,
+// tracked copy of this script, which overwrites itself and the .gitignore block but deletes
+// nothing, so the next run has no record of these.
+const RETIRED = [
+  '.rulesync/skills/add-feature/SKILL.md',
+  '.rulesync/skills/add-feature/handoff.md',
+  '.rulesync/subagents/qa.md',
+];
 
 const die = (message) => {
   console.error(`sync:agents - ${message}`);
@@ -152,6 +170,56 @@ const end = start === -1 ? -1 : current.indexOf(END, start + BEGIN.length);
 if (start !== -1 && end === -1) {
   die(`${gitignore} has a ${BEGIN} marker with no matching ${END} - repair or delete the block.`);
 }
+// A file the template dropped or renamed is still on disk from the last render, untracked and
+// no longer ignored: delete what fell out of it. The old block lists what was rendered then,
+// but after a branch switch the committed block already names the new set, so the manifest
+// (outside git, per checkout) remembers what this checkout actually has on disk.
+const manifest = join(ROOT, 'node_modules/.cache/sync-agents.json');
+const lastRendered = (() => {
+  try {
+    const paths = JSON.parse(readFileSync(manifest, 'utf8'));
+    return Array.isArray(paths) ? paths.filter((path) => typeof path === 'string') : [];
+  } catch {
+    return [];
+  }
+})();
+const lastBlock =
+  start === -1
+    ? []
+    : current
+        .slice(start + BEGIN.length, end)
+        .split('\n')
+        .filter((line) => line.startsWith('/'))
+        .map((line) => line.slice(1));
+// The block and the manifest are plain text anyone can edit: a symlinked directory on the way
+// would point the delete outside the checkout, so every parent must resolve to itself.
+const realRoot = realpathSync(ROOT);
+const parentIsReal = (path) => {
+  try {
+    return realpathSync(dirname(join(ROOT, path))) === join(realRoot, dirname(path));
+  } catch {
+    return false;
+  }
+};
+const stale = [...new Set([...lastBlock, ...lastRendered, ...RETIRED])]
+  .filter((path) => SYNCED_ROOTS.some((root) => path.startsWith(root)) && !path.includes('..'))
+  .filter((path) => !ignored.some((file) => file.path === path) && !consumerOwned.has(path))
+  .filter(parentIsReal);
+// Never one this repo has since started tracking. (No paths: ls-files would list them all.)
+const staleTracked = new Set(stale.length > 0 ? gitTracked(stale) : []);
+for (const path of stale.filter((path) => !staleTracked.has(path))) {
+  const target = join(ROOT, path);
+  if (existsSync(target)) {
+    unlinkSync(target);
+    for (
+      let dir = dirname(target);
+      dir !== ROOT && readdirSync(dir).length === 0;
+      dir = dirname(dir)
+    ) {
+      rmdirSync(dir);
+    }
+  }
+}
 const updated =
   start === -1
     ? `${current.trimEnd()}\n\n${block}\n`.trimStart()
@@ -159,6 +227,8 @@ const updated =
 if (updated !== current) {
   writeFileSync(gitignore, updated);
 }
+mkdirSync(dirname(manifest), { recursive: true });
+writeFileSync(manifest, JSON.stringify(ignored.map(({ path }) => path)));
 
 console.log(`sync:agents - ${rendered.length - owned.length} template-owned file(s) rendered.`);
 if (owned.length > 0) {

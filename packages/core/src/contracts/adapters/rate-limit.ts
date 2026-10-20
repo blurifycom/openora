@@ -25,6 +25,8 @@ export const RATE_LIMIT_KEYS = {
   VERIFY_EMAIL: 'verify-email',
   WALLET_MUTATION: 'wallet-mutation',
   WALLET_WEBHOOK: 'wallet-webhook',
+  ON_RAMP: 'on-ramp',
+  ON_RAMP_STATUS: 'on-ramp-status',
   CHAT_ROOM_JOIN: 'chat-room-join',
   CHAT_ROOM_INVITE: 'chat-room-invite',
   CHAT_ROOM_INVITE_LOOKUP: 'chat-room-invite-lookup',

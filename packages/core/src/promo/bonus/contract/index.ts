@@ -253,6 +253,8 @@ export const AdminGrantSchema = PlayerGrantSchema.extend({
     .nullable(),
   /** The note recorded with the forfeit, when it had one. */
   forfeitNote: z.string().nullable(),
+  /** What the grant held when it expired or was forfeited; null while it is live or held nothing. */
+  closedAmount: MoneyAmountSchema.nullable(),
 });
 
 export type AdminGrant = z.infer<typeof AdminGrantSchema>;

@@ -31,7 +31,7 @@ fi
 lintable=$(printf '%s\n' "$staged" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs)$' || true)
 if [ -n "$lintable" ]; then
   printf '%s\n' "$lintable" | tr '\n' '\0' | xargs -0 "$BIN/oxfmt" || exit 1
-  printf '%s\n' "$lintable" | tr '\n' '\0' | xargs -0 "$BIN/oxlint" --fix || exit 1
+  printf '%s\n' "$lintable" | tr '\n' '\0' | xargs -0 "$BIN/oxlint" --fix --no-error-on-unmatched-pattern || exit 1
 fi
 
 # Catch-all for the file types oxfmt cannot format (SQL and friends). Scoped to the

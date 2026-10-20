@@ -1,6 +1,6 @@
 # Agentic Workflow
 
-Copy-paste recipes: what to type, in what order, for each common job. Each step says what you type and what happens; your only manual work is answering questions and approving gates. `docs/guides/agent-quickstart.md` is the manual per-module walkthrough if you want to drive every step yourself.
+Copy-paste recipes: what to type, in what order, for each common job. Each step says what you type and what happens; your only manual work is answering the questions an agent can't settle. `docs/guides/agent-quickstart.md` is the manual per-module walkthrough if you want to drive every step yourself.
 
 One-time setup (once per clone):
 
@@ -17,27 +17,22 @@ First time on the platform? Let it onboard you - it interviews you for requireme
 ## Implement a feature (end to end)
 
 ```
-/add-feature OSS-123          # or a work-order path, or just describe the feature
+/ship OSS-123                 # or a work-order path, or just describe the feature
 ```
 
-Then follow the flow - it stops for you twice:
+It runs on its own and stops only for a question or a blocker:
 
-1. **Answer the grill questions.** The agent asks about scope edges, module ownership, data-model choices. Pick options or type answers.
-2. **Approve the plan.** You get the exact surface (packages, tables, contracts, events) + task breakdown. Say "approved" (or correct it first). Nothing is edited before this.
-3. Wait - implementation, tests, parallel review (`contract-reviewer` + `security-reviewer` + `quality-reviewer`), and QA e2e run agent-side, with fixes looped in automatically.
-4. When it reports green:
+1. `planner` reads the input and the code it touches and returns a plan with test cases, or the questions only you can answer. Answer them and run `/ship` again.
+2. `builder` (or `module-author` / `plugin-author`) builds it in its own worktree, `tester` drives and attacks it, then `security-reviewer` and `quality-reviewer` review it. Failures go back to the builder, up to three rounds.
+3. It pushes the branch and opens the PR. Run `/ship OSS-123` again later and it fixes red CI or answers new review comments.
 
-```
-/create-pr
-```
-
-5. Confirm the push when asked (pushes always need your explicit "yes").
+Want to approve the plan and the push yourself? `/ship OSS-123 --ask`.
 
 Fuzzy idea instead of a ticket? Start with the domain expert, then feed its output to step 1:
 
 ```
 ask the expert agent: turn "<your idea>" into requirements with acceptance criteria
-/add-feature <the resulting spec>
+/ship <the resulting spec>
 ```
 
 ## Review code
@@ -55,7 +50,7 @@ Everyday review of your branch (cheap, works on capped plans):
 
 ## Add a module / route / plugin by hand
 
-When you want to drive implementation yourself instead of `/add-feature`:
+When you want to drive implementation yourself instead of `/ship`:
 
 ```
 /scaffold-module tournaments              # new domain module, registered + working list route

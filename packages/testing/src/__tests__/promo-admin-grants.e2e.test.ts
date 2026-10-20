@@ -67,6 +67,19 @@ const refusalRows = (grantId: string) =>
       and(eq(auditLog.action, 'promo.bonus.forfeit_refused'), eq(auditLog.resourceId, grantId)),
     );
 
+async function adminWithRole(roleKey: string) {
+  const { client, userId } = await registerAndMaterializePlayer(app, {
+    email: `${roleKey}-${randomUUID()}@example.test`,
+  });
+  await drizzle().update(user).set({ role: 'admin' }).where(eq(user.id, userId));
+  const [role] = await drizzle().select().from(adminRole).where(eq(adminRole.key, roleKey));
+  if (!role) {
+    throw new Error(`no seeded ${roleKey} role`);
+  }
+  await drizzle().insert(adminRoleAssignment).values({ userId, roleId: role.id });
+  return { client, userId };
+}
+
 beforeAll(async () => {
   process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
   process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
@@ -153,8 +166,14 @@ describe('support forfeiting a bonus', () => {
     const grantId = await grantBonus(userId, '120');
 
     const body = await readJson(
-      await admin.post(`/backoffice/promo/grants/${grantId}/forfeit`, {
-        note: 'Charge-back investigation 4821',
+      await admin.request(`/backoffice/promo/grants/${grantId}/forfeit`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'user-agent': 'forfeit-e2e-agent',
+          'x-real-ip': '203.0.113.9',
+        },
+        body: JSON.stringify({ note: 'Charge-back investigation 4821' }),
       }),
     );
 
@@ -173,8 +192,19 @@ describe('support forfeiting a bonus', () => {
     });
     const audited = await forfeitRows(grantId);
     expect(audited).toHaveLength(1);
-    expect(audited[0]?.actorType).toBe('admin');
+    expect(audited[0]).toMatchObject({
+      actorType: 'admin',
+      ip: '203.0.113.9',
+      userAgent: 'forfeit-e2e-agent',
+      after: { userId },
+    });
     expect(JSON.stringify(audited[0]?.after)).toContain('Charge-back investigation 4821');
+    const playerTab = await readJson(
+      await admin.get(`/audit/logs?q=${userId}&action=promo.bonus.forfeited`),
+    );
+    expect(playerTab.items.map((item: { resourceId: string }) => item.resourceId)).toEqual([
+      grantId,
+    ]);
   });
 
   it('refuses a forfeit with no reason worth recording', async () => {
@@ -265,6 +295,60 @@ describe('support forfeiting a bonus', () => {
 
     const res = await client.post(`/backoffice/promo/grants/${grantId}/forfeit`, {
       note: 'Trying it on from a player session',
+    });
+
+    expect(res.status).toBe(403);
+    const [row] = await drizzle().select().from(promoGrant).where(eq(promoGrant.id, grantId));
+    expect(row?.status).toBe('active');
+  });
+});
+
+describe('who may forfeit a bonus', () => {
+  it('lets a support manager, who manages players but not bonuses, forfeit one', async () => {
+    const support = await adminWithRole('support-manager');
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `forfeit-support-${randomUUID()}@example.test`,
+    });
+    const grantId = await grantBonus(userId, '30');
+
+    const res = await support.client.post(`/backoffice/promo/grants/${grantId}/forfeit`, {
+      note: 'Support case, bonus abuse confirmed',
+    });
+
+    expect(res.status).toBe(200);
+    expect(await readJson(res)).toMatchObject({
+      status: 'forfeited',
+      forfeitedBy: { id: support.userId },
+    });
+    const [audited] = await forfeitRows(grantId);
+    expect(audited).toMatchObject({ actorType: 'admin', actorId: support.userId });
+  });
+
+  it('refuses a role that sees bonuses but can neither cancel them nor update players', async () => {
+    const casino = await adminWithRole('casino-manager');
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `forfeit-casino-${randomUUID()}@example.test`,
+    });
+    const grantId = await grantBonus(userId, '30');
+
+    const res = await casino.client.post(`/backoffice/promo/grants/${grantId}/forfeit`, {
+      note: 'Not my call to make here',
+    });
+
+    expect(res.status).toBe(403);
+    const [row] = await drizzle().select().from(promoGrant).where(eq(promoGrant.id, grantId));
+    expect(row?.status).toBe('active');
+  });
+
+  it('refuses a role that updates players but cannot see bonuses at all', async () => {
+    const risk = await adminWithRole('risk-fraud-manager');
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `forfeit-risk-${randomUUID()}@example.test`,
+    });
+    const grantId = await grantBonus(userId, '30');
+
+    const res = await risk.client.post(`/backoffice/promo/grants/${grantId}/forfeit`, {
+      note: 'Fraud review, outside the bonus screen',
     });
 
     expect(res.status).toBe(403);
