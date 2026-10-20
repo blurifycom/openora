@@ -1,12 +1,14 @@
-import { and, asc, count, desc, eq, gt, gte, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, gte, isNotNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 import { makeNotFoundError, pageToOffset, type DrizzleService } from '@openora/core/server';
-import type { User } from '@openora/core/contracts';
+import type { DateRange, IdentityReader, User } from '@openora/core/contracts';
 import type {
   AdminSportsbookBet,
   ListAdminSportsbookBetsInput,
   ListSportsbookBetsInput,
   SportsbookBet,
   SportsbookBetTransaction,
+  SportsbookPlayerSummaryInput,
   SportsbookPromotionReportInput,
   SportsbookPromotionReportRow,
 } from '../contract/index.js';
@@ -16,6 +18,7 @@ import {
   type SportsbookBetRow,
   type SportsbookBetTransactionRow,
 } from '../schema/index.js';
+import { assertSportsbookPlayer } from './restriction.service.js';
 
 export const SportsbookBetNotFoundError = makeNotFoundError('SportsbookBet');
 
@@ -75,8 +78,22 @@ function toTransaction(row: SportsbookBetTransactionRow): SportsbookBetTransacti
   };
 }
 
+function within(column: PgColumn, { dateFrom, dateTo }: DateRange) {
+  return [
+    ...(dateFrom ? [gte(column, new Date(dateFrom))] : []),
+    ...(dateTo ? [lte(column, new Date(dateTo))] : []),
+  ];
+}
+
+function sumOf(amount: SQL | PgColumn, where: SQL) {
+  return sql<string>`coalesce(sum(${amount}) filter (where ${where}), 0)::numeric(38, 18)`;
+}
+
 export class SportsbookBetQueryService {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly identity: IdentityReader,
+  ) {}
 
   async listOwn(userId: User['id'], input: ListSportsbookBetsInput) {
     const { items, ...page } = await this.list(input, [eq(sportsbookBet.userId, userId)]);
@@ -128,13 +145,11 @@ export class SportsbookBetQueryService {
    * What promotions paid and reopens took back in the range, by type label and currency. It reads
    * the append-only transaction rows, so a later reopen never changes a closed period.
    */
-  async promotionReport({
-    dateFrom,
-    dateTo,
-  }: SportsbookPromotionReportInput): Promise<SportsbookPromotionReportRow[]> {
+  async promotionReport(
+    range: SportsbookPromotionReportInput,
+  ): Promise<SportsbookPromotionReportRow[]> {
     const tx = sportsbookBetTransaction;
-    const partOf = (kind: 'settle' | 'reopen') =>
-      sql<string>`coalesce(sum(${tx.promotionAmount}) filter (where ${tx.kind} = ${kind}), 0)::numeric(38, 18)`;
+    const partOf = (kind: 'settle' | 'reopen') => sumOf(tx.promotionAmount, eq(tx.kind, kind));
     return this.drizzle.db
       .select({
         type: sql<SportsbookPromotionReportRow['type']>`${sportsbookBet.promotionType}`,
@@ -150,8 +165,7 @@ export class SportsbookBetQueryService {
         and(
           gt(tx.promotionAmount, '0'),
           isNotNull(sportsbookBet.promotionType),
-          dateFrom ? gte(tx.createdAt, new Date(dateFrom)) : undefined,
-          dateTo ? lte(tx.createdAt, new Date(dateTo)) : undefined,
+          ...within(tx.createdAt, range),
         ),
       )
       .groupBy(sportsbookBet.promotionType, sportsbookBet.promotionFunder, sportsbookBet.currency)
@@ -160,6 +174,32 @@ export class SportsbookBetQueryService {
         asc(sportsbookBet.promotionFunder),
         asc(sportsbookBet.currency),
       );
+  }
+
+  async playerSummary({ userId, ...range }: SportsbookPlayerSummaryInput) {
+    await assertSportsbookPlayer(this.identity, userId);
+    const bet = sportsbookBet;
+    const allOf = (conditions: SQL[]) => sql`(${sql.join(conditions, sql` and `)})`;
+    const accepted = allOf([isNotNull(bet.acceptedAt), ...within(bet.acceptedAt, range)]);
+    const settled = allOf([eq(bet.status, 'settled'), ...within(bet.settledAt, range)]);
+    const open = eq(bet.status, 'accepted');
+    return this.drizzle.db
+      .select({
+        currency: bet.currency,
+        bets: sql<number>`count(*) filter (where ${accepted})`.mapWith(Number),
+        stake: sumOf(bet.stake, accepted),
+        cashStake: sumOf(bet.cashStake, accepted),
+        promotionStake: sumOf(sql`${bet.stake} - ${bet.cashStake}`, accepted),
+        payout: sumOf(bet.payoutTotal, settled),
+        cashPayout: sumOf(sql`${bet.payoutTotal} - ${bet.promotionPaid}`, settled),
+        promotionPayout: sumOf(bet.promotionPaid, settled),
+        ggr: sql<string>`(${sumOf(bet.cashStake, accepted)} - ${sumOf(bet.payoutTotal, settled)})::numeric(38, 18)`,
+        openExposure: sumOf(bet.stake, open),
+      })
+      .from(bet)
+      .where(and(eq(bet.userId, userId), or(accepted, settled, open)))
+      .groupBy(bet.currency)
+      .orderBy(asc(bet.currency));
   }
 
   private async list({ page, limit, status }: ListSportsbookBetsInput, filters: SQL[]) {

@@ -35,6 +35,10 @@ GGR, RG spend, wager tracking and debt.
   race, and its payout never reduces measured loss. Debt it leaves is taken back in its own round.
 - **Old overlays are unchanged.** New fields join the request fingerprint only when present, so a
   retry across the deploy keeps its fingerprint.
+- **The player summary reads bet rows, not the ledger.** GGR is cash stake minus payout, the payout
+  taken at each bet's latest settlement. For a bet accepted and never reopened the two agree.
+  Matching the ledger for a reopened bet would mean tracing which part of each shortfall was
+  offset, collected or written off, and when; the debt list shows what is owed.
 
 ## Consequences
 

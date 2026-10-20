@@ -16,6 +16,12 @@ import type { SportsbookSessionService } from './session.service.js';
 export const SportsbookPlayerNotFoundError = makeNotFoundError('SportsbookPlayer');
 const SportsbookRestrictionNotFoundError = makeNotFoundError('SportsbookRestriction');
 
+export async function assertSportsbookPlayer(identity: IdentityReader, userId: User['id']) {
+  if ((await identity.getPlayerIdByUserId(userId)) === null) {
+    throw new SportsbookPlayerNotFoundError(userId);
+  }
+}
+
 type RestrictionRow = typeof sportsbookPlayerRestriction.$inferSelect;
 
 function toRestriction(userId: User['id'], row: RestrictionRow | undefined): SportsbookRestriction {
@@ -55,7 +61,7 @@ export class SportsbookRestrictionService {
   }
 
   async get(userId: User['id']): Promise<SportsbookRestriction> {
-    await this.assertPlayer(userId);
+    await assertSportsbookPlayer(this.identity, userId);
     const [row] = await this.drizzle.db
       .select()
       .from(sportsbookPlayerRestriction)
@@ -108,7 +114,7 @@ export class SportsbookRestrictionService {
       current: RestrictionRow | undefined,
     ) => Promise<RestrictionRow | undefined>,
   ): Promise<SportsbookRestriction> {
-    await this.assertPlayer(userId);
+    await assertSportsbookPlayer(this.identity, userId);
     const { after, revoked } = await this.drizzle.db.transaction(async (tx) => {
       await lockPlayer(tx, userId);
       const [current] = await tx
@@ -146,11 +152,5 @@ export class SportsbookRestrictionService {
 
     await this.sessions.revokeAtProvider(userId, revoked);
     return after;
-  }
-
-  private async assertPlayer(userId: User['id']): Promise<void> {
-    if ((await this.identity.getPlayerIdByUserId(userId)) === null) {
-      throw new SportsbookPlayerNotFoundError(userId);
-    }
   }
 }

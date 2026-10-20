@@ -1488,3 +1488,100 @@ describe('promotion report', () => {
     ]);
   });
 });
+
+describe('player summary', () => {
+  const summary = async (userId: string, range = '') => {
+    const res = await admin.get(`/backoffice/sportsbook/players/${userId}/summary${range}`);
+    expect(res.status).toBe(200);
+    return res.json();
+  };
+  const zero = money('0');
+
+  it('counts a stake in the period the bet was accepted and its payout in the period it settled', async () => {
+    const player = await fundedPlayer(app, '100');
+    const { args, betId } = await acceptedBet(app, player, { stake: '10' });
+    expectApplied(await settle(args.providerBetId, 'won', '25'));
+    const open = await acceptedBet(app, player, { stake: '5' });
+    const backdate = (id: string, at: { acceptedAt: Date; settledAt?: Date }) =>
+      drizzle().update(sportsbookBet).set(at).where(eq(sportsbookBet.id, id));
+    await backdate(betId, {
+      acceptedAt: new Date('2026-09-30T22:00:00Z'),
+      settledAt: new Date('2026-10-01T10:00:00Z'),
+    });
+    await backdate(open.betId, { acceptedAt: new Date('2026-09-15T12:00:00Z') });
+    const september = '?dateFrom=2026-09-01T00:00:00Z&dateTo=2026-09-30T23:59:59.999Z';
+    const october = '?dateFrom=2026-10-01T00:00:00Z&dateTo=2026-10-31T23:59:59.999Z';
+    const row = (fields: Record<string, unknown>) => ({
+      currency: 'USD',
+      bets: 0,
+      stake: zero,
+      cashStake: zero,
+      promotionStake: zero,
+      payout: zero,
+      cashPayout: zero,
+      promotionPayout: zero,
+      ggr: zero,
+      openExposure: money('5'),
+      ...fields,
+    });
+
+    expect(await summary(player.userId, september)).toEqual([
+      row({ bets: 2, stake: money('15'), cashStake: money('15'), ggr: money('15') }),
+    ]);
+    expect(await summary(player.userId, october)).toEqual([
+      row({ payout: money('25'), cashPayout: money('25'), ggr: money('-25') }),
+    ]);
+    expect(await summary(player.userId)).toEqual([
+      row({
+        bets: 2,
+        stake: money('15'),
+        cashStake: money('15'),
+        payout: money('25'),
+        cashPayout: money('25'),
+        ggr: money('-10'),
+      }),
+    ]);
+    expect(await summary(player.userId, '?dateFrom=2026-11-01T00:00:00Z')).toEqual([row({})]);
+  });
+
+  it('splits promotion-paid money from cash, counts open stakes as exposure and leaves out a cancelled bet', async () => {
+    const player = await fundedPlayer(app, '100');
+    const free = await acceptedBet(app, player, { stake: '5', promotion: freebet });
+    expectApplied(await settle(free.args.providerBetId, 'won', '12.50'));
+    const refunded = await acceptedBet(app, player, { stake: '5', promotion: noRisk });
+    expectApplied(await settle(refunded.args.providerBetId, 'lost', '5'));
+    const lost = await acceptedBet(app, player, { stake: '10' });
+    expectApplied(await settle(lost.args.providerBetId, 'lost', '0'));
+    await acceptedBet(app, player, { stake: '4' });
+    const voided = await acceptedBet(app, player, { stake: '10' });
+    expectApplied(await settle(voided.args.providerBetId, 'void', '10'));
+    const reopened = await acceptedBet(app, player, { stake: '3' });
+    expectApplied(await settle(reopened.args.providerBetId, 'won', '6'));
+    expectApplied(await reopen(reopened.args.providerBetId));
+    const cancelled = reserveArgs(player.sessionId, { stake: '7' });
+    expectApplied(await ledgerOf(app).reserve(cancelled));
+    expectApplied(
+      await ledgerOf(app).cancel({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: cancelled.providerBetId,
+        reason: 'rejected',
+      }),
+    );
+
+    expect(await summary(player.userId)).toEqual([
+      {
+        currency: 'USD',
+        bets: 6,
+        stake: money('37'),
+        cashStake: money('32'),
+        promotionStake: money('5'),
+        payout: money('27.5'),
+        cashPayout: money('10'),
+        promotionPayout: money('17.5'),
+        ggr: money('4.5'),
+        openExposure: money('7'),
+      },
+    ]);
+  });
+});
