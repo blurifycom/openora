@@ -65,6 +65,11 @@ function dlqKey(streamKeyName: string): string {
   return DLQ_PREFIX + streamKeyName.slice(STREAM_PREFIX.length);
 }
 
+// A stream id is `<ms since epoch>-<seq>`, stamped by Redis on XADD.
+function streamIdTime(id: string): number {
+  return Number(id.split('-')[0]);
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -287,10 +292,25 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
           );
         }
         for (const message of claimed.messages) {
-          if (message) {
-            const deliveries = await this.deliveryCount(reader, key, group, message.id);
-            await this.dispatch(reader, key, group, message, handlers, deliveries);
+          if (!message) {
+            continue;
           }
+          const deliveries = await this.deliveryCount(reader, key, group, message.id);
+          // MINID trimming is approximate and pending entries survive it, so one can outlive
+          // the processed_events rows that dedupe it. Re-running it would repeat handlers that
+          // already succeeded; it goes to the dead-letter stream for a human instead.
+          if (streamIdTime(message.id) < Date.now() - EVENT_RETENTION_MS) {
+            await this.deadLetter(
+              reader,
+              key,
+              group,
+              message,
+              deliveries,
+              new Error('pending past the event retention window'),
+            );
+            continue;
+          }
+          await this.dispatch(reader, key, group, message, handlers, deliveries);
         }
         next = claimed.nextId;
       } while (next !== '0-0');

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { MAX_DELIVERIES, RedisStreamsBroker } from '../redis-streams-broker.js';
+import { EVENT_RETENTION_MS } from '../event-bus.js';
 import { createTestRedis, waitForConsumerGroup, type TestRedis } from '@openora/core/testing';
 import type { EventEnvelope } from '@openora/core/contracts';
 
@@ -340,6 +341,34 @@ describe('RedisStreamsBroker', () => {
     });
     const pending = await redis.client.xPending(streamOf(topic), 'svc');
     expect(pending.pending).toBe(0);
+  });
+
+  it('dead-letters a pending entry older than the retention window instead of re-running it', async () => {
+    const broker = makeBroker('svc', FAST_RECLAIM);
+    const topic = uniqueTopic();
+    let attempts = 0;
+    broker.subscribe(topic, () => {
+      attempts += 1;
+      throw new Error('transient');
+    });
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
+
+    // An id from past the retention window, as a pending entry left behind by a long outage.
+    const staleId = `${Date.now() - EVENT_RETENTION_MS - 60_000}-0`;
+    await redis.client.xAdd(streamOf(topic), staleId, {
+      data: JSON.stringify(makeEnvelope(topic)),
+    });
+
+    await vi.waitFor(async () => expect(await redis.client.xLen(`oss:dlq:${topic}`)).toBe(1), {
+      timeout: 5000,
+    });
+    expect(attempts).toBe(1);
+    const [dead] = await redis.client.xRange(`oss:dlq:${topic}`, '-', '+');
+    expect(dead!.message).toMatchObject({
+      streamId: staleId,
+      error: 'pending past the event retention window',
+    });
+    expect((await redis.client.xPending(streamOf(topic), 'svc')).pending).toBe(0);
   });
 
   it('dead-letters an entry that is not valid JSON without calling handlers', async () => {
