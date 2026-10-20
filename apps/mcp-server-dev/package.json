@@ -14,11 +14,11 @@
     "@modelcontextprotocol/sdk": "1.32.1",
     "@openora/core": "workspace:*",
     "pg": "8.22.0",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/node": "25.9.2",
-    "@types/pg": "8.20.0",
+    "@types/node": "26.6.5",
+    "@types/pg": "8.23.1",
     "typescript": "6.0.3"
   }
 }

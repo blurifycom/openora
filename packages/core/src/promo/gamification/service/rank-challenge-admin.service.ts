@@ -5,6 +5,7 @@ import type { AuditWritePort, Uuid } from '@openora/core/contracts';
 import {
   createDomainError,
   withAdvisoryXactLock,
+  type DrizzleDb,
   type DrizzleService,
   type DrizzleTx,
 } from '@openora/core/server';
@@ -14,6 +15,7 @@ import type {
   SetRankChallengeLadderInput,
 } from '../contract/index.js';
 import { promoRankChallengeClaim, promoRankChallengeTier } from '../schema/index.js';
+import { TIER_COLUMNS, withWinners } from '../shared/rank-challenge-ladder.js';
 
 export const RankChallengeLadderCurrencyHeldError = createDomainError(
   'RankChallengeLadderCurrencyHeldError',
@@ -28,16 +30,6 @@ export const RankChallengeLadderVersionConflictError = createDomainError(
 );
 
 const LADDER_LOCK_KEY = 'promo_rank_challenge_ladder';
-
-const TIER_COLUMNS = {
-  id: promoRankChallengeTier.id,
-  key: promoRankChallengeTier.key,
-  name: promoRankChallengeTier.name,
-  position: promoRankChallengeTier.position,
-  wagerThreshold: promoRankChallengeTier.wagerThreshold,
-  cashAmount: promoRankChallengeTier.cashAmount,
-  physicalItem: promoRankChallengeTier.physicalItem,
-};
 
 /**
  * The ladder has no row of its own to carry a version counter, so its version is a digest of
@@ -54,28 +46,13 @@ async function toLadder(
     .select({ ...TIER_COLUMNS, currency: promoRankChallengeTier.currency })
     .from(promoRankChallengeTier)
     .orderBy(asc(promoRankChallengeTier.position), asc(promoRankChallengeTier.id));
-  const claims = await tx
-    .select({
-      tierId: promoRankChallengeClaim.tierId,
-      userId: promoRankChallengeClaim.userId,
-      username: user.username,
-      claimedAt: promoRankChallengeClaim.claimedAt,
-    })
-    .from(promoRankChallengeClaim)
-    .innerJoin(user, eq(user.id, promoRankChallengeClaim.userId));
-  const byTier = new Map(claims.map((c) => [c.tierId, c]));
   return {
     currency: rows[0]?.currency ?? fallbackCurrency,
     version: ladderVersion(rows),
-    tiers: rows.map(({ currency: _currency, ...tier }) => {
-      const claim = byTier.get(tier.id);
-      return {
-        ...tier,
-        winnerUserId: claim?.userId ?? null,
-        winnerUsername: claim?.username ?? null,
-        claimedAt: claim ? claim.claimedAt.toISOString() : null,
-      };
-    }),
+    tiers: await withWinners(
+      tx,
+      rows.map(({ currency: _currency, ...tier }) => tier),
+    ),
   };
 }
 
@@ -100,6 +77,26 @@ const toClaim = (row: {
   physicalFulfilledAt: row.physicalFulfilledAt ? row.physicalFulfilledAt.toISOString() : null,
   physicalFulfillmentNote: row.physicalFulfillmentNote,
 });
+
+const claimsQuery = (db: DrizzleDb | DrizzleTx) =>
+  db
+    .select({
+      tierId: promoRankChallengeClaim.tierId,
+      tierKey: promoRankChallengeTier.key,
+      userId: promoRankChallengeClaim.userId,
+      username: user.username,
+      cashAmount: promoRankChallengeClaim.cashAmount,
+      physicalItem: promoRankChallengeClaim.physicalItem,
+      claimedAt: promoRankChallengeClaim.claimedAt,
+      physicalFulfilledAt: promoRankChallengeClaim.physicalFulfilledAt,
+      physicalFulfillmentNote: promoRankChallengeClaim.physicalFulfillmentNote,
+    })
+    .from(promoRankChallengeClaim)
+    .innerJoin(
+      promoRankChallengeTier,
+      eq(promoRankChallengeTier.id, promoRankChallengeClaim.tierId),
+    )
+    .innerJoin(user, eq(user.id, promoRankChallengeClaim.userId));
 
 /**
  * The operator's side of the Rank Challenge: read/replace the ladder, list winner records, and
@@ -199,47 +196,14 @@ export class RankChallengeAdminService {
   }
 
   async listClaims(): Promise<RankChallengeClaim[]> {
-    const rows = await this.drizzle.db
-      .select({
-        tierId: promoRankChallengeClaim.tierId,
-        tierKey: promoRankChallengeTier.key,
-        userId: promoRankChallengeClaim.userId,
-        username: user.username,
-        cashAmount: promoRankChallengeClaim.cashAmount,
-        physicalItem: promoRankChallengeClaim.physicalItem,
-        claimedAt: promoRankChallengeClaim.claimedAt,
-        physicalFulfilledAt: promoRankChallengeClaim.physicalFulfilledAt,
-        physicalFulfillmentNote: promoRankChallengeClaim.physicalFulfillmentNote,
-      })
-      .from(promoRankChallengeClaim)
-      .innerJoin(
-        promoRankChallengeTier,
-        eq(promoRankChallengeTier.id, promoRankChallengeClaim.tierId),
-      )
-      .innerJoin(user, eq(user.id, promoRankChallengeClaim.userId))
-      .orderBy(desc(promoRankChallengeClaim.claimedAt));
+    const rows = await claimsQuery(this.drizzle.db).orderBy(
+      desc(promoRankChallengeClaim.claimedAt),
+    );
     return rows.map(toClaim);
   }
 
   async listFulfilmentQueue(): Promise<RankChallengeClaim[]> {
-    const rows = await this.drizzle.db
-      .select({
-        tierId: promoRankChallengeClaim.tierId,
-        tierKey: promoRankChallengeTier.key,
-        userId: promoRankChallengeClaim.userId,
-        username: user.username,
-        cashAmount: promoRankChallengeClaim.cashAmount,
-        physicalItem: promoRankChallengeClaim.physicalItem,
-        claimedAt: promoRankChallengeClaim.claimedAt,
-        physicalFulfilledAt: promoRankChallengeClaim.physicalFulfilledAt,
-        physicalFulfillmentNote: promoRankChallengeClaim.physicalFulfillmentNote,
-      })
-      .from(promoRankChallengeClaim)
-      .innerJoin(
-        promoRankChallengeTier,
-        eq(promoRankChallengeTier.id, promoRankChallengeClaim.tierId),
-      )
-      .innerJoin(user, eq(user.id, promoRankChallengeClaim.userId))
+    const rows = await claimsQuery(this.drizzle.db)
       .where(
         and(
           isNotNull(promoRankChallengeClaim.physicalItem),
@@ -282,25 +246,7 @@ export class RankChallengeAdminService {
         before: { physicalFulfilledAt: null },
         after: { physicalFulfilledAt: new Date().toISOString(), note },
       });
-      const [row] = await tx
-        .select({
-          tierId: promoRankChallengeClaim.tierId,
-          tierKey: promoRankChallengeTier.key,
-          userId: promoRankChallengeClaim.userId,
-          username: user.username,
-          cashAmount: promoRankChallengeClaim.cashAmount,
-          physicalItem: promoRankChallengeClaim.physicalItem,
-          claimedAt: promoRankChallengeClaim.claimedAt,
-          physicalFulfilledAt: promoRankChallengeClaim.physicalFulfilledAt,
-          physicalFulfillmentNote: promoRankChallengeClaim.physicalFulfillmentNote,
-        })
-        .from(promoRankChallengeClaim)
-        .innerJoin(
-          promoRankChallengeTier,
-          eq(promoRankChallengeTier.id, promoRankChallengeClaim.tierId),
-        )
-        .innerJoin(user, eq(user.id, promoRankChallengeClaim.userId))
-        .where(eq(promoRankChallengeClaim.tierId, tierId));
+      const [row] = await claimsQuery(tx).where(eq(promoRankChallengeClaim.tierId, tierId));
       if (!row) {
         throw new Error('rank challenge claim vanished after update');
       }

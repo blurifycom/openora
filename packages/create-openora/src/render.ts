@@ -8,9 +8,10 @@ const SKIPPED_BASENAMES = new Set();
 export type ParsedArgs = {
   target: string;
   name?: string;
+  telemetry: boolean;
 };
 
-const USAGE = 'Usage: npm create @openora <target-dir> [--name <name>]';
+const USAGE = 'Usage: npm create @openora <target-dir> [--name <name>] [--no-telemetry]';
 
 function readFlag(args: string[], index: number): { value: string | undefined; next: number } {
   const arg = args[index] ?? '';
@@ -25,6 +26,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
   let target: string | undefined;
   let name: string | undefined;
+  let telemetry = true;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === undefined) {
@@ -34,6 +36,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       const flag = readFlag(args, i);
       name = flag.value;
       i = flag.next;
+    } else if (arg === '--no-telemetry') {
+      telemetry = false;
     } else if (!arg.startsWith('-') && !target) {
       target = arg;
     }
@@ -41,7 +45,22 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (!target) {
     throw new Error(`missing target directory.\n  ${USAGE}`);
   }
-  return name === undefined ? { target } : { target, name };
+  return name === undefined ? { target, telemetry } : { target, name, telemetry };
+}
+
+function isSet(flag: string | undefined): boolean {
+  return flag !== undefined && ['1', 'true', 'yes'].includes(flag.trim().toLowerCase());
+}
+
+// Mirrors `isTelemetryEnabled` in core's server/runtime/telemetry.ts; change both together.
+export function isTelemetryEnabled(telemetry: boolean, env: NodeJS.ProcessEnv): boolean {
+  return (
+    telemetry &&
+    !isSet(env['OPENORA_TELEMETRY_DISABLED']) &&
+    !isSet(env['DO_NOT_TRACK']) &&
+    env['CI'] === undefined &&
+    env['NODE_ENV'] !== 'test'
+  );
 }
 
 export function sanitizeName(raw: string): string {

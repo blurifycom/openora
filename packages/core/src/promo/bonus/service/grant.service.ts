@@ -26,12 +26,12 @@ import {
   type GrantTermsSnapshot,
 } from '../schema/index.js';
 
-export const WagerWeightProfileNotFoundError = makeNotFoundError('WagerWeightProfile');
-export const GrantConflictError = makeConflictError(
+const WagerWeightProfileNotFoundError = makeNotFoundError('WagerWeightProfile');
+const GrantConflictError = makeConflictError(
   'GrantConflictError',
   'A different grant already exists for this source reference',
 );
-export const UnusableWeightProfileError = makeConflictError(
+const UnusableWeightProfileError = makeConflictError(
   'UnusableWeightProfileError',
   'This weight profile has no positive weight, so no wager could ever progress a grant on it',
 );
@@ -52,7 +52,7 @@ export const DEFAULT_WEIGHT_PROFILE_NAME = 'default';
  * turnover of the gifted amount, a month to do it in. An operator narrows both from the
  * backoffice; the point is that gifted money is never withdrawable the instant it lands.
  */
-export const DEFAULT_GRANT_TERMS = { wageringMultiplier: '1', expiryDays: 30 } as const;
+const DEFAULT_GRANT_TERMS = { wageringMultiplier: '1', expiryDays: 30 } as const;
 
 const grantArgsSchema = z
   .object({

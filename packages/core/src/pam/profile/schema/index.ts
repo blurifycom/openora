@@ -69,6 +69,7 @@ export const player = pgTable(
   (t) => [
     index('player_status_idx').on(t.status),
     index('player_created_at_idx').on(t.createdAt),
+    index('player_last_seen_at_idx').on(t.lastSeenAt),
     check(
       'player_display_decimal_places_range',
       sql`${t.displayDecimalPlaces} BETWEEN 0 AND ${sql.raw(String(MAX_DISPLAY_DECIMAL_PLACES))}`,

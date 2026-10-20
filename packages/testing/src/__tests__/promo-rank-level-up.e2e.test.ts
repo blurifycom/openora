@@ -97,7 +97,7 @@ const isCaughtUp = async (userId: string) => {
   return row !== undefined && row.announcedTierId === row.tierId;
 };
 
-type NotificationRow = { type: string; title: string; body: string; data: unknown };
+type NotificationRow = { type: string; params: unknown; data: unknown };
 
 const rankNotifications = async (client: TestClient): Promise<NotificationRow[]> => {
   const { items } = (await readJson(await client.get('/notifications'))) as {
@@ -234,8 +234,14 @@ describe('a player ranking up and being told about it', () => {
       async () =>
         expect(await rankNotifications(client)).toEqual([
           expect.objectContaining({
-            title: 'You reached Silver rank',
-            body: 'Congratulations on reaching Silver. Your rank now pays 3% rakeback and a bonus worth 5 USDT daily, 50 USDT monthly, plus a one-off 10 USDT level-up bonus.',
+            params: {
+              tierName: 'Silver',
+              currency: 'USDT',
+              rakebackPercent: '3.00',
+              dailyBonus: '5.000000000000000000',
+              monthlyBonus: '50.000000000000000000',
+              levelUpBonus: '10.000000000000000000',
+            },
             data: { tierId: await tierId('silver') },
           }),
         ]),

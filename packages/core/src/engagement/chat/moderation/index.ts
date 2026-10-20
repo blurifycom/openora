@@ -1,4 +1,4 @@
-export { validateAttachment, type AttachmentValidationResult } from './validate-attachment.js';
+export { validateAttachment } from './validate-attachment.js';
 export {
   platformScopesFor,
   resolveModerationTarget,

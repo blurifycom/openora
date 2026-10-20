@@ -3,8 +3,8 @@ import type { LoginSecurityState } from '@openora/core/contracts';
 
 export const DEFAULT_MAX_LOGIN_ATTEMPTS = 5;
 export const DEFAULT_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
-export const LOCKOUT_WINDOW_MS = 24 * 60 * 60 * 1000;
-export const LOCKOUT_TIER_DURATIONS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
+const LOCKOUT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const LOCKOUT_TIER_DURATIONS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
 
 export function isActiveLockout(lockoutUntil: Date | null | undefined, nowMs = Date.now()) {
   return lockoutUntil !== null && lockoutUntil !== undefined && lockoutUntil.getTime() > nowMs;

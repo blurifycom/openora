@@ -14,7 +14,7 @@ description: Commit, push, and open a pull request on this repo's forge, targeti
 2. **Land the paired OSS change first, if there is one.** It is paired when `{{ossDir}}/.worktrees/<branch, / as +>` exists or `git -C {{ossDir}} branch --list <branch>` matches. First finish step 3 of "Changing OSS core" in the `oss-boundaries` rule (verify, OSS review, no open BLOCK). Then run steps 3-7 inside that worktree under the OSS repo's own delivery rules (`<worktree>/docs/standards/skills/delivery.md`: `gh`, its PR template, `pnpm verify`, public-record rules), with its own explicit push confirmation. Reuse an open OSS PR (`gh pr list --head <branch>` in the worktree).
 3. **Scope the commit.** `git status -s`. Commit ONLY changes that belong to this unit of work. If unrelated/pre-existing edits are present, do NOT bundle them - stage your files explicitly and tell the user what you left out. Never `git add -A` blindly when foreign changes are in the tree.
 4. **Commit.** Conventional-commit message (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`); the scope is a commitlint-enum package or app, never the ticket key; for ticket work the key goes at the END of the subject (e.g. `feat(web): add deposit limits ({{trackerKey}}-123)`). No "Co-Authored-By" / "Generated with" trailers.
-5. **Verify before pushing** (cheap insurance): run `/check` (typecheck + lint + unit). Don't push a red tree.
+5. **Verify the commit.** Run `pnpm verify` on the committed, clean tree: it is the pre-MR gate and records the verified commit. The `guard-mr` hook refuses to open the pull request until that record matches HEAD. Don't push a red tree.
 6. **Push** the current branch - but STOP and get an explicit per-action "yes push" from the user FIRST. Report the commit SHA, then ask. Invoking this skill is NOT push authorization. Pushing to a shared/env branch (`{{mrTarget}}`, `stage`, `prod`) without that explicit yes is forbidden. Only after the yes: `git push -u origin <current>`.
 7. **Open the pull request** using the command in `docs/agents/forge.md` (only after the push is confirmed and done). Reuse an open request for the same source -> target instead of creating a duplicate, and never delete a long-lived branch on merge.
 8. **Report** the pull-request URL back to the user, and the OSS PR URL when paired.
@@ -33,6 +33,6 @@ description: Commit, push, and open a pull request on this repo's forge, targeti
 ## Rules
 
 - NEVER push without an explicit per-action "yes push" from the user. Invoking this skill does NOT authorize a push. Report the commit SHA, ask, then push only on yes.
-- The repo check must pass before the push.
+- `pnpm verify` must pass on the commit you push.
 - Keep the pull request scoped to one concern; split unrelated changes into separate ones.
 - No AI-attribution trailers anywhere - not in the commit, not in the pull-request title or description. No "Generated with", no "Co-Authored-By: Claude", no robot-emoji footer.

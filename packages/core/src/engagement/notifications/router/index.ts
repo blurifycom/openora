@@ -10,6 +10,7 @@ import {
   notificationsContract,
   NotificationTypeSchema,
   NotificationDataSchema,
+  NotificationParamsSchema,
   type Notification,
 } from '../contract/index.js';
 import type { Notification as NotificationRow } from '../schema/index.js';
@@ -33,19 +34,21 @@ export function toNotificationDto(row: NotificationRow): Notification | null {
   if (data && !data.success) {
     return null;
   }
+  // Unlike `data`, a malformed `params` does not hide the row: the client can still render the
+  // type's title without it, as it does for a row written before `params` existed.
+  const params = NotificationParamsSchema.safeParse(row.params);
   return {
     id: row.id,
     userId: row.userId,
     type: type.data,
-    title: row.title,
-    body: row.body,
+    params: params.success ? params.data : null,
     data: data ? data.data : null,
     readAt: row.readAt ? row.readAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
   };
 }
 
-export function createNotificationStream(
+function createNotificationStream(
   realtime: RealtimeTransport,
   userId: User['id'],
   signal: AbortSignal | undefined,

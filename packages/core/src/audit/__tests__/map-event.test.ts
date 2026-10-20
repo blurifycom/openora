@@ -6,6 +6,47 @@ const playerId = '22222222-2222-2222-2222-222222222222';
 const adminId = '33333333-3333-3333-3333-333333333333';
 const sessionId = '44444444-4444-4444-4444-444444444444';
 
+describe('mapEventToRecord: admin invitations', () => {
+  const invitationId = '55555555-5555-4555-8555-555555555555';
+  const roleId = '66666666-6666-4666-8666-666666666666';
+
+  it('files an invitation under the invitation with the inviting admin as actor', async () => {
+    const row = await mapEventToRecord('iam.invitation.created', {
+      email: 'new@admin.com',
+      roleId,
+      invitationId,
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      action: 'iam.invitation.created',
+      resourceType: 'invitation',
+      resourceId: invitationId,
+      after: { email: 'new@admin.com', roleId },
+    });
+  });
+
+  it('files an acceptance under the same invitation with the new account as actor', async () => {
+    const row = await mapEventToRecord('iam.invitation.accepted', {
+      email: 'new@admin.com',
+      roleId,
+      invitationId,
+      userId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: userId,
+      action: 'iam.invitation.accepted',
+      resourceType: 'invitation',
+      resourceId: invitationId,
+      after: { email: 'new@admin.com', roleId, userId },
+    });
+  });
+});
+
 describe('mapEventToRecord: identity.session.revoked', () => {
   it('keeps a self-revoke a player action even though it carries an actorId', async () => {
     const row = await mapEventToRecord('identity.session.revoked', {
