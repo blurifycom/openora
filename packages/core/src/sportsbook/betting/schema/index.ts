@@ -373,6 +373,11 @@ export const sportsbookReconciliationFinding = pgTable(
     index('sportsbook_reconciliation_finding_status_created_at_idx').on(t.status, t.createdAt),
     index('sportsbook_reconciliation_finding_created_at_idx').on(t.createdAt, t.id),
     index('sportsbook_reconciliation_finding_bet_id_kind_idx').on(t.betId, t.kind),
+    index('sportsbook_reconciliation_finding_user_id_created_at_idx').on(
+      t.userId,
+      t.createdAt,
+      t.id,
+    ),
   ],
 );
 

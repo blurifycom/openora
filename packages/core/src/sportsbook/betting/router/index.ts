@@ -131,7 +131,10 @@ export function createSportsbookRouter({
 
     adminGetBet: os.adminGetBet.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'sportsbook', 'view');
-      return mapErrors({ NOT_FOUND: SportsbookBetNotFoundError }, () => bets.adminGet(input.id));
+      const bet = await mapErrors({ NOT_FOUND: SportsbookBetNotFoundError }, () =>
+        bets.adminGet(input.id),
+      );
+      return { ...bet, providerStatusLookup: align.canLookUp(bet.provider) };
     }),
 
     alignBet: os.alignBet.handler(async ({ input, context }) => {

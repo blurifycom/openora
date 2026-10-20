@@ -38,7 +38,8 @@ fields. This file does not repeat it.
 - **Sportsbook debt.** What a reversed settlement could not take back, per player and currency,
   with the withdrawal hold that lives exactly as long as the debt.
 - **Reconciliation findings.** Everything the ledger noticed but could not decide on its own, for
-  an admin to resolve.
+  an admin to resolve. The list filters by `userId`, and each finding carries its bet's
+  `currency`, null when it has no bet.
 
 ## Building a provider bridge
 
@@ -66,7 +67,8 @@ and core disagree, the overlay converts; core never learns a provider's wire for
    retried. A binding without a revoke leaves the widget session open at the provider until it
    expires, though core refuses its session lookups and stakes. Without the binding, session issue
    is refused and reconciliation files findings instead of resolving bets. Without the status
-   lookup, align is refused as `provider_unavailable` and a reserve the provider never confirms is
+   lookup, align is refused as `provider_unavailable` (the admin bet detail answers
+   `providerStatusLookup: false`, so a UI can hide it) and a reserve the provider never confirms is
    filed as unresolved after the reconciliation attempt budget. Session issue also needs the
    platform's `GEO_CHECK_COMMANDS`; without it the sportsbook is unavailable.
 
