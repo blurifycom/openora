@@ -20,7 +20,7 @@ Rules that hold regardless of tracker:
 - Text-only reads are incomplete when attachments exist. Use a tool that returns the image bytes.
 - No key resolves: say "no ticket" and review against the PR description. The fetch fails: say "no access". Never infer acceptance criteria silently.
 - Keep private tracker content out of the public repo: never paste ticket text, attachments, internal URLs, or people's names into tracked files, commit bodies, PR descriptions, or review comments. A bare key in a branch or commit subject is the most that may appear.
-- Reading authorizes nothing: no comments, transitions, or edits on any tracker unless the user asks for that exact write.
+- Reading authorizes nothing: no comments, transitions, or edits on any tracker unless the user asks for that exact write. `/ship <key>` is that ask for its own writes on that ticket, listed in `docs/standards/skills/delivery.md#ship`, and nothing else.
 
 ## When a skill says "fetch the relevant ticket"
 
@@ -28,4 +28,4 @@ Resolve the key (argument, PR body, PR title, branch, commit subjects), read it 
 
 ## Writing anywhere
 
-Don't. Reading a tracker or a wiki authorizes no write back to either, and this repo opens no GitHub issues. A finding goes in the PR review or back to the user, who decides where it is filed.
+Don't, outside `/ship`'s own writes on its ticket. Reading a tracker or a wiki authorizes no write back to either, and this repo opens no GitHub issues. A finding goes in the PR review or back to the user, who decides where it is filed.

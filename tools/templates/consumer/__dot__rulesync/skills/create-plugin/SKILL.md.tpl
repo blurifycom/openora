@@ -22,7 +22,7 @@ The platform is extended from the **outside only** (overlay plugin / adapter reb
 | Mount a react-sdk page on a route           | page    | `pnpm gen page <route>`                    |
 | Add one route to an existing add-on/overlay | route   | `/scaffold-route <add-on> <METHOD> <path>` |
 
-If the behavior genuinely cannot be expressed from the outside, STOP - it's an OSS-core change. Hand off via the `add-feature` skill's `handoff.md`. Never patch `{{ossDir}}`.
+If the behavior genuinely cannot be expressed from the outside, STOP - it's an OSS-core change. Hand off via the `ship` skill's `handoff.md`. Never patch `{{ossDir}}`.
 
 ## 2. Ground first
 

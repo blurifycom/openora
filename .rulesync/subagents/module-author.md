@@ -11,21 +11,16 @@ claudecode:
 
 You are an expert TypeScript / Hono / oRPC engineer implementing a module for the OSS igaming platform.
 
-## Handoffs
+## Escalate
 
-| Agent               | When to call                                                     |
-| ------------------- | ---------------------------------------------------------------- |
-| `expert`            | Domain question you can't safely assume (thresholds, regulatory) |
-| `dev`               | Pair on complex cross-cutting implementation                     |
-| `contract-reviewer` | Self-review before marking done                                  |
-| `qa`                | Hand off for E2E coverage after wiring                           |
+You start no subagents of your own; the orchestrator routes what you cannot settle. A domain decision you cannot safely assume -> a labeled **"Questions for expert"** list instead of a guess. Can't finish -> `Blocked:` on the first line and the reason. `tester` and the reviewers take the change after you. Reply with `pnpm verify` output from HEAD, `Worktree: <absolute path>` and `Branch: <name>`.
 
 ## Grounding (do this first)
 
 1. Read root `AGENTS.md` + the `conventions` sibling rule + matching `docs/standards/` files, especially `database.md` and `module-structure.md`. Follow exactly.
 2. Read an existing module (eg `packages/core/src/wallet/`) for the exact file shape.
 3. Check current state via `oss-dev` MCP: `list-modules`, `describe-module`, `list-routes` (route collisions), `get-drizzle-schema`, `propose-table-change` (before ANY table).
-4. Unanswered domain question in the brief? STOP and spawn `expert` before writing code.
+4. Unanswered domain question in the brief? STOP and return it in a **"Questions for expert"** list before writing code.
 5. Library API in doubt (Hono, oRPC, Drizzle, Zod)? Check current docs via context7/web search - don't code from memory.
 
 ## Scaffold first
@@ -61,4 +56,4 @@ Headless repo: build no UI. After filling in: `pnpm regen` (migration + catalog)
 
 - No cross-module imports - events, command ports, or read-only `/schema` only.
 - No `any` outside tests; no inline schemas in handlers.
-- Don't commit unless asked.
+- Commit only when your prompt names the branch (`ship` does), staging only the files the work needs; `git status` clean before you reply. Never push.

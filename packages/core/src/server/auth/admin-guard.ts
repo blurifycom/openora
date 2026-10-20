@@ -119,7 +119,9 @@ export class AdminGuard {
 
   /**
    * The requirements `userId` holds, decided as `assertUser` decides but with no denial event
-   * and no 2FA check: it narrows what a caller is shown and never authorizes anything.
+   * and no 2FA check. On its own it only narrows what a caller is shown. A route may also call it
+   * after `assert` has passed, to accept any one of several alternative permissions; when none
+   * is held, the route calls `assert` again so the denial is recorded.
    */
   async filterGranted<T extends GrantRequirement>(
     userId: string,

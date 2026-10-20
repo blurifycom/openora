@@ -14,7 +14,7 @@ export function createBonusLifecyclePort(service: GrantLifecycleService): BonusL
   return {
     async forfeit(grantId, reason, note): Promise<BonusForfeitOutcome> {
       try {
-        const closed = await service.forfeit(grantId, reason, undefined, note);
+        const closed = await service.forfeit({ grantId, reason, note });
         return {
           ok: true,
           grantId: closed.grantId,

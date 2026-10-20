@@ -1,0 +1,1 @@
+CREATE INDEX "audit_log_after_user_id_idx" ON "audit_log" USING btree (("after"->>'userId'));

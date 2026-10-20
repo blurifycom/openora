@@ -160,7 +160,7 @@ function hideStaffExceptOwner(canSeeAdminUsers: boolean, creatorId: User['id'] |
 function emitMentions({
   events,
   directory,
-  isBlockedByMentioned,
+  isMentionSuppressed,
   content,
   byUserId,
   roomId,
@@ -168,7 +168,7 @@ function emitMentions({
 }: {
   events: EventBus;
   directory: AdminUserDirectory;
-  isBlockedByMentioned: (mentionedUserId: User['id']) => Promise<boolean>;
+  isMentionSuppressed: (mentionedUserId: User['id']) => Promise<boolean>;
   content: string;
   byUserId: User['id'];
   roomId: ChatRoom['id'] | null;
@@ -187,11 +187,11 @@ function emitMentions({
       return;
     }
     const mentionedUserId = summary.userId;
-    const blocked = await isBlockedByMentioned(mentionedUserId).catch((err: unknown) => {
-      logger.error({ err, mentionedUserId, messageId }, 'chat mention block check failed');
+    const suppressed = await isMentionSuppressed(mentionedUserId).catch((err: unknown) => {
+      logger.error({ err, mentionedUserId, messageId }, 'chat mention eligibility check failed');
       return true;
     });
-    if (blocked) {
+    if (suppressed) {
       return;
     }
     events.emit('chat.user.mentioned', { mentionedUserId, byUserId, roomId, messageId });
@@ -1920,8 +1920,8 @@ export class ChatService {
     emitMentions({
       events: this.events,
       directory: this.directory,
-      isBlockedByMentioned: (mentionedUserId) =>
-        this.isBlocked(this.drizzle.db, mentionedUserId, userId),
+      isMentionSuppressed: (mentionedUserId) =>
+        this.isMentionSuppressed(mentionedUserId, userId, roomId),
       content: safeContent,
       byUserId: userId,
       roomId,
@@ -2022,8 +2022,8 @@ export class ChatService {
     emitMentions({
       events: this.events,
       directory: this.directory,
-      isBlockedByMentioned: (mentionedUserId) =>
-        this.isBlocked(this.drizzle.db, mentionedUserId, userId),
+      isMentionSuppressed: (mentionedUserId) =>
+        this.isMentionSuppressed(mentionedUserId, userId, null),
       content: safeContent,
       byUserId: userId,
       roomId: null,
@@ -2341,6 +2341,51 @@ export class ChatService {
       )
       .limit(1);
     return row !== undefined;
+  }
+
+  private async isIgnored(ignorerId: User['id'], ignoredId: User['id']) {
+    const [row] = await this.drizzle.db
+      .select({ ignoredId: chatUserIgnore.ignoredId })
+      .from(chatUserIgnore)
+      .where(
+        and(
+          eq(chatUserIgnore.ignorerId, ignorerId),
+          eq(chatUserIgnore.ignoredId, ignoredId),
+          isNull(chatUserIgnore.removedAt),
+        ),
+      )
+      .limit(1);
+    return row !== undefined;
+  }
+
+  private async isMentionSuppressed(
+    mentionedUserId: User['id'],
+    senderId: User['id'],
+    roomId: ChatRoom['id'] | null,
+  ) {
+    const [blocked, ignored] = await Promise.all([
+      this.isBlocked(this.drizzle.db, mentionedUserId, senderId),
+      this.isIgnored(mentionedUserId, senderId),
+    ]);
+    if (blocked || ignored) {
+      return true;
+    }
+    if (roomId === null) {
+      return false;
+    }
+    return this.verifyRoomAccess(roomId, mentionedUserId).then(
+      () => false,
+      (err: unknown) => {
+        if (
+          err instanceof ChatRoomNotMemberError ||
+          err instanceof ChatPlayerBannedError ||
+          err instanceof ChatRoomNotFoundError
+        ) {
+          return true;
+        }
+        throw err;
+      },
+    );
   }
 
   async createRoom({

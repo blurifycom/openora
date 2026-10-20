@@ -27,6 +27,7 @@ const REFUSED = {
   period: 'daily' as const,
   limit: '100',
   used: '90',
+  currency: 'USD',
 };
 
 function makeService(rgLimits?: RgLimitsPort) {
@@ -84,7 +85,13 @@ describe('WalletService deposit RG limit gate (real PG)', () => {
     await expect(
       svc.deposit({ userId: randomUUID(), amount: '30', currency: 'USD' }),
     ).rejects.toMatchObject({
-      data: { limitType: 'deposit', period: 'daily', limit: '100', used: '90' },
+      data: {
+        limitType: 'deposit',
+        period: 'daily',
+        limit: '100',
+        used: '90',
+        currency: 'USD',
+      },
     });
   });
 
