@@ -215,7 +215,7 @@ describe('notificationEventMap', () => {
       reason: 'internal case note',
     } as const;
 
-    it('carries the limit as codes and raw values, never the admin reason', () => {
+    it('carries the limit as codes and raw values with its currency, never the admin reason', () => {
       const input = buildRgLimitAdminUpdatedNotification({
         ...limitSet,
         type: 'deposit',
@@ -224,6 +224,7 @@ describe('notificationEventMap', () => {
         minutes: null,
         previousAmount: '100.000000000000000000',
         previousMinutes: null,
+        currency: 'USDT',
       });
 
       expect(input).toEqual({
@@ -234,6 +235,7 @@ describe('notificationEventMap', () => {
           limitType: 'deposit',
           previousAmount: '100.000000000000000000',
           amount: '50.000000000000000000',
+          currency: 'USDT',
         },
         data: null,
       });
@@ -249,6 +251,7 @@ describe('notificationEventMap', () => {
         minutes: 90,
         previousAmount: null,
         previousMinutes: null,
+        currency: null,
       });
 
       expect(input.params).toEqual({ period: 'session', limitType: 'session', minutes: '90' });
@@ -799,6 +802,7 @@ describe('notificationEventMap', () => {
         minutes: null,
         previousAmount: '20',
         previousMinutes: null,
+        currency: 'USD',
         initiatedBy: 'admin',
         reason: 'note',
       }),

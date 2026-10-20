@@ -139,6 +139,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         actorId,
         amount: '100',
         previousAmount: null,
+        currency: 'USD',
         reason: 'player requested via support',
       }),
     );
