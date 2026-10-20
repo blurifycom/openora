@@ -24,6 +24,17 @@ fields. This file does not repeat it.
 - **Player restrictions.** An admin can block one player from sportsbook play without touching
   casino play. Staff who can view the sportsbook can see a player's current restriction,
   unrestricted when none is in place; changing it needs the right to suspend.
+- **Player summary.** `GET /backoffice/sportsbook/players/{userId}/summary` totals a player's bets
+  per currency under the `sportsbook` view grant, empty when no bet was accepted or settled in the
+  range and none is open. With `dateFrom` and `dateTo`, a stake counts in the period its bet was
+  accepted and a payout in the period it settled; a cancelled bet counts in neither. Open exposure
+  is the stake of every accepted, unsettled bet now, whatever the range. GGR is cash stake minus
+  payout, the wallet ledger's rule applied per bet: a promotion-paid stake earns nothing and a
+  promotion payout costs in full. It reads each bet's latest settlement, so a reopened bet shows as
+  open until it settles again and its payout leaves the period it first settled in, even when the
+  reversal was collected. The ledger books a stake at reserve, not acceptance, and is cash-basis for
+  a reopened bet, so a reversal left as debt or written off makes the ledger GGR lower than the
+  summary's (ADR-0047).
 - **Sportsbook debt.** What a reversed settlement could not take back, per player and currency,
   with the withdrawal hold that lives exactly as long as the debt.
 - **Reconciliation findings.** Everything the ledger noticed but could not decide on its own, for

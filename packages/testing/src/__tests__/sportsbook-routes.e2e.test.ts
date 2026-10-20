@@ -1068,6 +1068,39 @@ describe('sportsbook player restriction routes', () => {
   });
 });
 
+describe('sportsbook player summary route', () => {
+  it('returns an empty list for a player with no bets, also to a view-only admin', async () => {
+    const player = await fundedPlayer(app, '100');
+    const path = `/backoffice/sportsbook/players/${player.userId}/summary`;
+    const res = await admin.get(path);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+
+    await acceptedBet(app, player, { stake: '10' });
+    const viewer = await staffWithRole('admin');
+    const viewed = await viewer.get(path);
+    expect(viewed.status).toBe(200);
+    expect(await json<betting.SportsbookPlayerSummaryRow[]>(viewed)).toEqual([
+      expect.objectContaining({ currency: 'USD', bets: 1, openExposure: money(10) }),
+    ]);
+  });
+
+  it('answers 404 for an unknown player, 400 for a bad range and refuses a player, staff without the sportsbook grant or anonymous reader', async () => {
+    expect((await admin.get(`/backoffice/sportsbook/players/${randomUUID()}/summary`)).status).toBe(
+      404,
+    );
+    const player = await fundedPlayer(app, '100');
+    const path = `/backoffice/sportsbook/players/${player.userId}/summary`;
+    expect(
+      (await admin.get(`${path}?dateFrom=2026-10-02T00:00:00Z&dateTo=2026-10-01T00:00:00Z`)).status,
+    ).toBe(400);
+    expect((await player.client.get(path)).status).toBe(403);
+    expect((await stranger.get(path)).status).toBe(403);
+    expect((await (await staffWithRole('casino-manager')).get(path)).status).toBe(403);
+    expect((await anonymous(path)).status).toBe(401);
+  });
+});
+
 describe('sportsbook findings routes', () => {
   it('lists a fingerprint mismatch finding and resolves it once with an audited note', async () => {
     const player = await fundedPlayer(app, '100');

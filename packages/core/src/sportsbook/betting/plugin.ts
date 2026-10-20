@@ -98,7 +98,7 @@ export default {
         const align = new SportsbookAlignService({ drizzle, ledger, audit, provider });
         ref = {
           align,
-          bets: new SportsbookBetQueryService(drizzle),
+          bets: new SportsbookBetQueryService(drizzle, identity),
           config,
           debts,
           findings: new SportsbookFindingService(drizzle, audit),

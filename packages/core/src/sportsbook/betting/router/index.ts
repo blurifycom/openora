@@ -71,6 +71,7 @@ export function createSportsbookRouter({
     suspend,
     resume,
     getRestriction,
+    playerSummary,
     restrictPlayer,
     liftRestriction,
     listFindings,
@@ -92,6 +93,7 @@ export function createSportsbookRouter({
     suspend,
     resume,
     getRestriction,
+    playerSummary,
     restrictPlayer,
     liftRestriction,
     listFindings,
@@ -175,6 +177,13 @@ export function createSportsbookRouter({
       await adminGuard.assert(context, 'sportsbook', 'view');
       return mapErrors({ NOT_FOUND: SportsbookPlayerNotFoundError }, () =>
         restrictions.get(input.userId),
+      );
+    }),
+
+    playerSummary: os.playerSummary.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'sportsbook', 'view');
+      return mapErrors({ NOT_FOUND: SportsbookPlayerNotFoundError }, () =>
+        bets.playerSummary(input),
       );
     }),
 
