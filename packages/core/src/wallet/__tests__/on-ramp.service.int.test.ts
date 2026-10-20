@@ -815,6 +815,41 @@ describe('OnRampService.checkout gates (real PG)', () => {
     ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
   });
 
+  it('opens and records the checkout again when a retry finds it was never recorded', async () => {
+    const { service, adapter, audit } = makeService();
+    audit.recordInTransaction
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('audit store down'));
+    const userId = randomUUID();
+    const idempotencyKey = randomUUID();
+    await expect(service.checkout({ ...PURCHASE, userId, idempotencyKey })).rejects.toThrow(
+      'audit store down',
+    );
+
+    const retry = await service.checkout({ ...PURCHASE, userId, idempotencyKey });
+
+    const rows = await db.drizzle.db.select().from(walletOnRampOrder);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: retry.purchaseId,
+      status: 'pending',
+      checkoutUrl: retry.checkoutUrl,
+    });
+    expect(adapter.createCheckout).toHaveBeenCalledTimes(2);
+    expect(adapter.createCheckout).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        purchaseId: retry.purchaseId,
+        idempotencyKey: `${userId}:${idempotencyKey}`,
+      }),
+    );
+    expect(audit.recordInTransaction).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'wallet.on_ramp.checkout_created' }),
+    );
+    expect(await service.checkout({ ...PURCHASE, userId, idempotencyKey })).toEqual(retry);
+    expect(adapter.createCheckout).toHaveBeenCalledTimes(2);
+  });
+
   it('marks the order failed and audits only the error class when the vendor cannot open it', async () => {
     const adapter = makeAdapter();
     adapter.createCheckout.mockRejectedValue(
@@ -1382,6 +1417,26 @@ describe('POST /wallet/on-ramp/webhook', () => {
         action: 'wallet.on_ramp.webhook_mismatch',
         resourceId: row.id,
         after: expect.objectContaining({ mismatch }),
+      }),
+    );
+  });
+
+  it("ignores an event naming one order's purchase id and another order's external id", async () => {
+    const { service, wallet, audit } = makeService();
+    const userId = randomUUID();
+    const [orderA, orderB] = [await openOrder(service, userId), await openOrder(service, userId)];
+    const router = routerWith({ service, wallet }, webhookPort);
+
+    await deliver(router, eventFor(orderA, { externalId: orderB.externalId ?? '' }));
+
+    expect((await orderRow(orderA.id)).status).toBe('pending');
+    expect((await orderRow(orderB.id)).status).toBe('pending');
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'wallet.on_ramp.webhook_mismatch',
+        resourceId: orderA.id,
+        after: expect.objectContaining({ mismatch: 'order', externalId: orderB.externalId }),
       }),
     );
   });

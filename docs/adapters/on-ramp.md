@@ -22,7 +22,9 @@ route refuses and nothing else changes.
   which also fixes the price. Quotes are estimates for display; an empty list is valid and does not
   block a checkout.
 - **Echo the purchase id.** `createCheckout` carries core's `purchaseId`. Send it back on every
-  status update; core falls back to the vendor's `externalId` when it is missing.
+  status update; core falls back to the vendor's `externalId` when it is missing. The webhook's
+  `externalId` is the same order id `createCheckout` returned; an event whose `externalId`
+  disagrees with the one recorded on its order is ignored and audited as a mismatch.
 - **Return an https checkout URL and its expiry.** `createCheckout` answers the vendor's order id,
   an https `checkoutUrl` and `expiresAt`, the ISO timestamp after which the vendor stops taking
   payment on it. Core validates the answer; anything else, a plain-http URL included, fails the
@@ -79,7 +81,8 @@ route refuses and nothing else changes.
    vendor for a checkout with that order's id. A failure at the vendor marks the order failed and
    is audited with the error's class only. A failure while recording an opened checkout leaves the
    order pending, so the vendor's webhook still finds it. A retry under the
-   same idempotency key returns the original checkout.
+   same idempotency key returns the original checkout; if it was never recorded, core asks the
+   vendor for it again under the same key and records it then.
 5. The player pays on the vendor's page. The order's status is readable by its owner only, and is
    refreshed from the vendor while it is still open.
 6. The vendor sends status updates; each change is applied to the order and audited. Status only

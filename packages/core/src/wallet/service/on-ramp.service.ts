@@ -35,7 +35,7 @@ import {
   type RateLimiterAdapter,
   type User,
 } from '@openora/core/contracts';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { OnRampCheckoutResponse, OnRampOrder } from '../contract/index.js';
 import { walletOnRampOrder, type WalletOnRampOrder } from '../schema/index.js';
 import {
@@ -169,7 +169,8 @@ export class OnRampService {
    * issued to this player, and the order row exists before the vendor is called, so a webhook
    * can always find it. The order fails only when the vendor does not open the checkout; once
    * it has, a failure to record that leaves the order pending for the vendor's webhook. A
-   * replayed key returns the original checkout.
+   * replayed key returns the original checkout, asking the vendor for it again if it was never
+   * recorded.
    */
   async checkout(
     purchase: OnRampPurchase & { idempotencyKey: string },
@@ -177,8 +178,11 @@ export class OnRampService {
     const { userId, idempotencyKey } = purchase;
     const country = await this.admit(userId, purchase.meta);
     const replayed = await this.replay(purchase);
+    if (replayed?.checkoutUrl) {
+      return { purchaseId: replayed.id, checkoutUrl: replayed.checkoutUrl };
+    }
     if (replayed) {
-      return replayed;
+      return this.openAndRecordCheckout(purchase, replayed, country);
     }
     const assets = await this.assertPurchasable(purchase, country);
     await this.assertAboveDepositMinimum(purchase, assets, country);
@@ -234,7 +238,25 @@ export class OnRampService {
         return order.id;
       }),
     );
+    return this.openAndRecordCheckout(
+      purchase,
+      { id: purchaseId, walletAddress: address.address, walletTag: address.tag || null },
+      country,
+    );
+  }
 
+  /**
+   * Asks the vendor to open the order's checkout and records it. The vendor dedupes on the
+   * idempotency key, so a retry gets the checkout an earlier attempt opened; only the first
+   * attempt to record it writes and audits.
+   */
+  private async openAndRecordCheckout(
+    purchase: OnRampPurchase & { idempotencyKey: string },
+    order: Pick<WalletOnRampOrder, 'id' | 'walletAddress' | 'walletTag'>,
+    country: string | null,
+  ): Promise<OnRampCheckoutResponse> {
+    const { userId, idempotencyKey } = purchase;
+    const purchaseId = order.id;
     let checkout: OnRampCheckout;
     try {
       checkout = await this.openCheckout({
@@ -244,8 +266,8 @@ export class OnRampService {
         fiatAmount: purchase.fiatAmount,
         currency: purchase.currency,
         network: purchase.network,
-        walletAddress: address.address,
-        walletTag: address.tag || undefined,
+        walletAddress: order.walletAddress,
+        walletTag: order.walletTag ?? undefined,
         country,
         idempotencyKey: `${userId}:${idempotencyKey}`,
       });
@@ -254,14 +276,18 @@ export class OnRampService {
       throw err;
     }
     await this.drizzle.db.transaction(async (tx) => {
-      await tx
+      const [recorded] = await tx
         .update(walletOnRampOrder)
         .set({
           externalId: checkout.externalId,
           checkoutUrl: checkout.checkoutUrl,
           expiresAt: new Date(checkout.expiresAt),
         })
-        .where(eq(walletOnRampOrder.id, purchaseId));
+        .where(and(eq(walletOnRampOrder.id, purchaseId), isNull(walletOnRampOrder.checkoutUrl)))
+        .returning({ id: walletOnRampOrder.id });
+      if (!recorded) {
+        return;
+      }
       await this.audit.recordInTransaction(tx, {
         actorType: 'player',
         actorId: userId,
@@ -275,7 +301,7 @@ export class OnRampService {
           fiatCurrency: purchase.fiatCurrency,
           currency: purchase.currency,
           network: purchase.network,
-          walletAddress: address.address,
+          walletAddress: order.walletAddress,
           country,
           expiresAt: checkout.expiresAt,
           acknowledged: true,
@@ -327,11 +353,12 @@ export class OnRampService {
   }
 
   /**
-   * Records a vendor status update on its order. An unknown order, or one whose customer or
-   * delivery address disagrees with the event, is logged and dropped - the vendor still gets a
-   * success, so a forged or misrouted event learns nothing. So is an event the adapter parsed
-   * into something malformed: refusing it would only have the vendor redeliver it forever. A
-   * redelivery writes nothing. Never credits: a `completed` order is paid by the on-chain deposit.
+   * Records a vendor status update on its order. An unknown order, or one whose vendor id,
+   * customer or delivery address disagrees with the event, is logged and dropped - the vendor
+   * still gets a success, so a forged or misrouted event learns nothing. So is an event the
+   * adapter parsed into something malformed: refusing it would only have the vendor redeliver it
+   * forever. A redelivery writes nothing. Never credits: a `completed` order is paid by the
+   * on-chain deposit.
    */
   async recordWebhook(parsed: OnRampWebhookEvent): Promise<void> {
     const valid = OnRampWebhookEventSchema.safeParse(parsed);
@@ -533,10 +560,14 @@ export class OnRampService {
     return byExternalId;
   }
 
-  // An earlier attempt under the same key: its checkout again, never a second order.
+  /**
+   * The order an earlier attempt under the same key opened, never a second one. A pending order
+   * with no checkout recorded is handed back to be opened again; a failed one has nothing to hand
+   * back, and the client retries under a fresh key.
+   */
   private async replay(
     purchase: OnRampPurchase & { idempotencyKey: string },
-  ): Promise<OnRampCheckoutResponse | null> {
+  ): Promise<WalletOnRampOrder | null> {
     const [order] = await this.drizzle.db
       .select()
       .from(walletOnRampOrder)
@@ -554,12 +585,10 @@ export class OnRampService {
       moneyCompare(order.fiatAmount, purchase.fiatAmount) === 0 &&
       order.currency === purchase.currency &&
       order.network === purchase.network;
-    // A failed or still-opening attempt has no checkout to hand back; the client retries
-    // under a fresh key.
-    if (!samePurchase || order.checkoutUrl === null) {
+    if (!samePurchase || (order.checkoutUrl === null && order.status !== 'pending')) {
       throw new IdempotencyKeyReuseError();
     }
-    return { purchaseId: order.id, checkoutUrl: order.checkoutUrl };
+    return order;
   }
 
   /** Throttle, RG restriction, then geo. Returns the country the vendor is told. */
@@ -685,12 +714,15 @@ export class OnRampService {
   }
 }
 
-type WebhookMismatch = 'customer' | 'wallet';
+type WebhookMismatch = 'order' | 'customer' | 'wallet';
 
 function webhookMismatch(
   order: WalletOnRampOrder,
   event: OnRampWebhookEvent,
 ): WebhookMismatch | null {
+  if (order.externalId !== null && order.externalId !== event.externalId) {
+    return 'order';
+  }
   if (event.externalCustomerId !== undefined && event.externalCustomerId !== order.userId) {
     return 'customer';
   }
