@@ -115,7 +115,7 @@ export type ModuleRegistry<C extends TokenCatalog> = {
     listen(listener: TriggerListener): void;
     getAll(): readonly RegisteredTriggerListener[];
   };
-  // Started at boot against the resolved JOB_QUEUE (after all providers, so an overlay's durable driver is in effect), unless JOB_WORKERS leaves the queue to another process. See ADR-0014, ADR-0044.
+  // Started at boot against the resolved JOB_QUEUE (after all providers, so an overlay's durable driver is in effect), unless JOB_WORKERS leaves the queue to another process. See ADR-0014, ADR-0045.
   jobs: {
     worker<T>(registration: WorkerRegistration<T>): void;
     getAll(): WorkerRegistration<unknown>[];

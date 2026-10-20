@@ -1,4 +1,4 @@
-# ADR-0044: Per-process job worker selection
+# ADR-0045: Per-process job worker selection
 
 **Date**: 2026-10-13
 **Status**: Proposed

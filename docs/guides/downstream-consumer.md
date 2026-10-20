@@ -95,14 +95,14 @@ and each job reaches one of them.
   Identity's controls pull in compliance, and compliance depends on wallet, gaming,
   player-management and exchange-rate; player-management depends on chat. A split is those ten
   modules plus the ones you meant to move, and until
-  [ADR-0045](../adr/0045-dependency-only-modules-provide-but-do-not-consume.md) lands each of the
+  [ADR-0046](../adr/0046-dependency-only-modules-provide-but-do-not-consume.md) lands each of the
   ten handles every event once in the split and once in the rest of the install.
 
 - **Fewer queues in a process.** `JOB_WORKERS` picks the job queues a process consumes: names,
   `prefix*` patterns, `!` to exclude. To keep a long-running queue off the API replicas, run one
   more instance with the same plugins and `SERVICE_NAME` and `JOB_WORKERS=<queues>`, and give the
   replicas `JOB_WORKERS=!<queues>`. Every queue needs a consumer somewhere. See
-  [ADR-0044](../adr/0044-per-process-job-worker-selection.md).
+  [ADR-0045](../adr/0045-per-process-job-worker-selection.md).
 
 ## Seeding reference data (production)
 

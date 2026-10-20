@@ -81,7 +81,7 @@ export default {
 
 `Sentry.init` runs in the factory, which `createApp` resolves once for the container that serves,
 not in `register()`: a failed `SERVICE_MANIFEST` boot registers plugins into a container it then
-drops (ADR-0044). Initialising in a file preloaded with `node --import` works as well.
+drops (ADR-0045). Initialising in a file preloaded with `node --import` works as well.
 
 Register it last in `extensions.config.ts` (a `kind: 'infra'` overlay). A PostHog/Rollbar shop
 writes the equivalent overlay against the same port - core is unchanged.

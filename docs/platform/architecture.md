@@ -102,7 +102,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable. For the pooling/sweeping/reconciliation shape a custody-style payment vendor adds, see [docs/adapters/custody.md](../adapters/custody.md#custody-topology).
 
-**Background jobs** - long-running work runs off the request path on `JOB_QUEUE`: a module registers a worker with `ctx.jobs.worker` and enqueues to it. Every process consumes every queue by default; `JOB_WORKERS` narrows that, so a long-running queue can live on an extra instance that boots the same plugins while the API replicas skip it. See [ADR-0044](../adr/0044-per-process-job-worker-selection.md).
+**Background jobs** - long-running work runs off the request path on `JOB_QUEUE`: a module registers a worker with `ctx.jobs.worker` and enqueues to it. Every process consumes every queue by default; `JOB_WORKERS` narrows that, so a long-running queue can live on an extra instance that boots the same plugins while the API replicas skip it. See [ADR-0045](../adr/0045-per-process-job-worker-selection.md).
 
 **SDK & consumption surface**
 
