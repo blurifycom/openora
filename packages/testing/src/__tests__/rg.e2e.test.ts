@@ -171,6 +171,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
         period: 'daily',
         limitType: 'deposit',
         amount: '500',
+        currency: 'USD',
       });
       expect(JSON.stringify(found)).not.toContain('operator lowered on a support request');
     });

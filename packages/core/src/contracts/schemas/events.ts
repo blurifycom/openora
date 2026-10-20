@@ -1101,6 +1101,7 @@ export const domainEventSchemas = {
     minutes: z.number().int().nullable(),
     previousAmount: MoneyAmountSchema.nullable(),
     previousMinutes: z.number().int().nullable(),
+    currency: CurrencyTickerSchema.nullable(),
     initiatedBy: RgInitiatorSchema,
     reason: z.string().nullable(),
   }),
@@ -1381,7 +1382,8 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   'wallet.manual_adjustment.created': 2,
   // v2: amount/previousAmount (decimal string) + minutes/previousMinutes polymorphic
   // pair (money limit vs session-time limit), never a JS number.
-  'rg.limit.set': 4,
+  // v5: currency of a money limit, null for a session limit.
+  'rg.limit.set': 5,
   'rg.cooling_off.activated': 2,
   // v2: permanent renamed to isPermanent (non-predicate boolean naming rule).
   // v3: durationMonths added - the chosen term, explicit for the regulatory export.
