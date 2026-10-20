@@ -105,6 +105,56 @@ export class GrantLifecycleService {
   }
 
   /**
+   * Every live grant the player held when `tx` began, closed on `tx`. A grant created after that
+   * is not the one the rule was about, and a grant another path closed first comes back from
+   * `close` as null and is skipped - no refusal row, since nobody attempted it.
+   */
+  async forfeitHeld(
+    tx: DrizzleTx,
+    {
+      userId,
+      reason,
+      actor,
+      note,
+      meta,
+    }: {
+      userId: Uuid;
+      reason: BonusForfeitReason;
+      actor: { id: Uuid; isAdmin: boolean };
+      note: string;
+      meta?: ClientMeta | undefined;
+    },
+  ): Promise<ClosedGrant[]> {
+    const held = await tx
+      .select({ id: promoGrant.id })
+      .from(promoGrant)
+      .where(
+        and(
+          eq(promoGrant.userId, userId),
+          inArray(promoGrant.status, LIVE_STATUSES),
+          lte(promoGrant.createdAt, sql`now()`),
+        ),
+      )
+      .orderBy(asc(promoGrant.createdAt));
+
+    const closed: ClosedGrant[] = [];
+    for (const { id } of held) {
+      const row = await this.close(tx, id, {
+        status: 'forfeited',
+        action: 'promo.bonus.forfeited',
+        reason,
+        actor,
+        note,
+        ...(meta === undefined ? {} : { meta }),
+      });
+      if (row) {
+        closed.push(row);
+      }
+    }
+    return closed;
+  }
+
+  /**
    * A single grant, taken away by name rather than by player - the shape a scheduled job needs
    * (an Activity Bonus grant that missed its daily wager) that `forfeitAllFor` cannot give it,
    * since that sweeps every live grant a player holds. `actor` is optional for the same reason

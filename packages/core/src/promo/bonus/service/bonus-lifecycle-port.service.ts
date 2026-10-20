@@ -1,5 +1,9 @@
-import type { BonusForfeitOutcome, BonusLifecycleCommands } from '@openora/core/contracts';
-import type { EventBus } from '@openora/core/server';
+import type {
+  BonusForfeitHeldArgs,
+  BonusForfeitOutcome,
+  BonusLifecycleCommands,
+} from '@openora/core/contracts';
+import type { DrizzleTx, EventBus } from '@openora/core/server';
 import {
   GrantLifecycleService,
   GrantNotFoundError,
@@ -44,6 +48,15 @@ export function createBonusLifecyclePort(
         }
         throw err;
       }
+    },
+    async forfeitHeld(tx: DrizzleTx, args: BonusForfeitHeldArgs) {
+      const closed = await service.forfeitHeld(tx, args);
+      return closed.map(({ grantId, userId, currency, forfeitedAmount }) => ({
+        grantId,
+        userId,
+        currency,
+        forfeitedAmount,
+      }));
     },
   };
 }

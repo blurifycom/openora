@@ -276,6 +276,135 @@ describe('forfeiting every grant a player holds', () => {
   });
 });
 
+const waitForLockWait = async () => {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const result = await db.drizzle.db.execute<{ waiting: number }>(
+      sql`select count(*)::int as waiting from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`,
+    );
+    if ((result.rows[0]?.waiting ?? 0) > 0) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('no session ever waited on a row lock');
+};
+
+describe('forfeiting what a player held, on the caller’s transaction', () => {
+  const held = (userId: Uuid) => ({
+    userId,
+    reason: 'withdrawal_while_active' as const,
+    actor: { id: userId, isAdmin: false },
+    note: 'withdrawal 1',
+    meta: { ip: '203.0.113.7', userAgent: 'test-agent' },
+  });
+
+  it('takes every live grant in every currency as the player', async () => {
+    const userId = randomUUID();
+    const usd = await grant({ userId, currency: 'USD', amount: '10' });
+    const eur = await grant({ userId, currency: 'EUR', amount: '20' });
+
+    const closed = await db.drizzle.db.transaction((tx) => lifecycle.forfeitHeld(tx, held(userId)));
+
+    expect(closed.map((c) => c.grantId).sort()).toEqual([usd, eur].sort());
+    expect(await rowOf(usd)).toMatchObject({
+      status: 'forfeited',
+      forfeitReason: 'withdrawal_while_active',
+      forfeitedBy: userId,
+      forfeitNote: 'withdrawal 1',
+    });
+    expect((await rowOf(eur)).status).toBe('forfeited');
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'promo.bonus.forfeited',
+        actorType: 'player',
+        actorId: userId,
+        ip: '203.0.113.7',
+        userAgent: 'test-agent',
+      }),
+    );
+  });
+
+  it('rolls back with the caller’s transaction', async () => {
+    const userId = randomUUID();
+    const grantId = await grant({ userId });
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await lifecycle.forfeitHeld(tx, held(userId));
+        throw new Error('the withdrawal failed');
+      }),
+    ).rejects.toThrow('the withdrawal failed');
+
+    expect(await rowOf(grantId)).toMatchObject({ status: 'active' });
+    expect(await entriesOf(grantId)).toHaveLength(1);
+  });
+
+  it('leaves a grant created after the transaction began', async () => {
+    const userId = randomUUID();
+    const later = await grant({ userId });
+    await db.drizzle.db
+      .update(promoGrant)
+      .set({ createdAt: new Date(Date.now() + 60_000) })
+      .where(eq(promoGrant.id, later));
+
+    const closed = await db.drizzle.db.transaction((tx) => lifecycle.forfeitHeld(tx, held(userId)));
+
+    expect(closed).toEqual([]);
+    expect((await rowOf(later)).status).toBe('active');
+  });
+
+  it('skips a grant another path closed first and records no refusal for it', async () => {
+    const userId = randomUUID();
+    const grantId = await grant({ userId });
+    let locked!: () => void;
+    const lockTaken = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const racer = db.drizzle.db.transaction(async (tx) => {
+      await tx.select().from(promoGrant).where(eq(promoGrant.id, grantId)).for('update');
+      await tx
+        .update(promoGrant)
+        .set({
+          status: 'forfeited',
+          forfeitReason: 'admin',
+          closedAt: new Date(),
+          bonusBalance: '0',
+          wageringProgress: '0',
+        })
+        .where(eq(promoGrant.id, grantId));
+      await tx.insert(promoGrantEntry).values({
+        grantId,
+        userId,
+        currency: 'USD',
+        type: 'forfeit',
+        bonusAmount: '-100',
+        balanceAfter: '0',
+      });
+      locked();
+      await released;
+    });
+    await lockTaken;
+
+    const forfeiting = db.drizzle.db.transaction((tx) => lifecycle.forfeitHeld(tx, held(userId)));
+    await waitForLockWait();
+    release();
+    await racer;
+
+    expect(await forfeiting).toEqual([]);
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'promo.bonus.forfeited', actorId: userId }),
+    );
+  });
+});
+
 describe('forfeiting a single grant by id', () => {
   it('closes it with no actor when a scheduled job forfeits it, not an admin', async () => {
     const grantId = await grant();

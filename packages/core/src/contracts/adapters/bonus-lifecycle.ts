@@ -1,17 +1,32 @@
 /**
- * Bonus lifecycle command port: a single named grant taken away by a system/job context that has
- * no admin session to assert - the shape `forfeitAllFor` (reached only from inside the bonus
- * module, off `rg.*`/`player.account.closed` events) cannot give an external caller, since that
- * sweeps every live grant a player holds rather than the one grant a rule decided on. Mirrors the
- * BONUS_GRANTS idiom: a command port, not a class export, so the bonus module's own transaction
- * and audit-row shape stay its own.
+ * Bonus lifecycle command port: grants taken away from outside the bonus module. `forfeit` closes
+ * a single named grant for a system/job context that has no admin session to assert; `forfeitHeld`
+ * closes every grant a player holds on the caller's own transaction, for a money movement whose
+ * rule ends the bonus (a withdrawal). Mirrors the BONUS_GRANTS idiom: a command port, not a class
+ * export, so the bonus module's own transaction and audit-row shape stay its own.
  */
+import type { ClientMeta } from '../schemas/common.js';
 import type { BonusForfeitReason } from '../schemas/promo.js';
 import { createToken, type Token } from './token.js';
 
 export type BonusForfeitOutcome =
   | { ok: true; grantId: string; userId: string; currency: string; forfeitedAmount: string }
   | { ok: false; reason: 'not_found' | 'not_forfeitable' };
+
+export type BonusForfeitedGrant = {
+  grantId: string;
+  userId: string;
+  currency: string;
+  forfeitedAmount: string;
+};
+
+export type BonusForfeitHeldArgs = {
+  userId: string;
+  reason: BonusForfeitReason;
+  actor: { id: string; isAdmin: boolean };
+  note: string;
+  meta?: ClientMeta | undefined;
+};
 
 export type BonusLifecycleCommands = {
   /**
@@ -21,6 +36,13 @@ export type BonusLifecycleCommands = {
    * resolve to `not_forfeitable` rather than a second ledger entry.
    */
   forfeit(grantId: string, reason: BonusForfeitReason, note: string): Promise<BonusForfeitOutcome>;
+  /**
+   * Every live grant the player held when the caller's transaction began, in every currency,
+   * taken away on that transaction - so the forfeit commits or rolls back with the movement that
+   * caused it. A grant another path closed first is skipped, never refused: the player made no
+   * attempt on it. Emits nothing; the caller announces `promo.bonus.forfeited` after its commit.
+   */
+  forfeitHeld(tx: unknown, args: BonusForfeitHeldArgs): Promise<BonusForfeitedGrant[]>;
 };
 
 export const BONUS_LIFECYCLE: Token<BonusLifecycleCommands> = createToken('BONUS_LIFECYCLE');
