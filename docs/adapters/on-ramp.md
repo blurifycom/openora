@@ -62,19 +62,23 @@ route refuses and nothing else changes.
 3. The player confirms. Before the vendor is called, core refuses a player under a
    responsible-gambling restriction, a blocked country, an amount outside the vendor's fiat range,
    an asset the platform does not take deposits in, an estimate under the network's deposit
-   minimum, and a purchase that would exceed the player's deposit limit. The limit is checked on
-   the fiat amount plus the player's still-open orders in that fiat: processing orders of any age,
-   pending ones until their checkout expires, and pending ones the vendor has not opened yet for
-   fifteen minutes after they are recorded. The check and the order's insert hold one per-player
-   lock, so concurrent checkouts count against each other. An order the vendor still reports
-   pending past its expiry, a completed one whose coins are not credited yet, and an open order in
-   another fiat are not counted; the `rg_limit_breach` finding filed when the deposit is credited
-   covers them. The RG and geo gates run before a retried key is replayed. An estimate the vendor
-   fails to give does not block the checkout. Options, quote and checkout share one per-player
-   throttle, separate from wallet mutations; reading an order has its own.
+   minimum, and a purchase that would exceed the player's deposit limit. Where the network has a
+   deposit minimum, an estimate is required: one the vendor fails to give, answers malformed, or
+   gives for another amount, fiat or asset than asked leaves buying unavailable. The limit is
+   checked on the fiat amount plus the player's orders whose coins are not credited yet:
+   processing orders of any age, pending ones until their checkout expires, pending ones the
+   vendor has not opened yet for fifteen minutes after they are recorded, and completed ones until
+   a deposit credited to the same player carries their tx hash, for at most a day after completing. Orders in another fiat are
+   converted; with no rate the checkout is refused. A card or PSP deposit counts the same orders,
+   and both take the player's deposit lock, so neither can spend the other's headroom. An order the
+   vendor still reports pending past its expiry is not counted; the `rg_limit_breach` finding
+   filed when the deposit is credited covers it. The RG and geo gates run before a retried key is
+   replayed. Options, quote and checkout share one per-player throttle, separate from wallet
+   mutations; reading an order has its own.
 4. Core records a pending order against a deposit address issued to this player, then asks the
-   vendor for a checkout with that order's id. A failure, at the vendor or while recording its
-   answer, marks the order failed and is audited with the error's class only. A retry under the
+   vendor for a checkout with that order's id. A failure at the vendor marks the order failed and
+   is audited with the error's class only. A failure while recording an opened checkout leaves the
+   order pending, so the vendor's webhook still finds it. A retry under the
    same idempotency key returns the original checkout.
 5. The player pays on the vendor's page. The order's status is readable by its owner only, and is
    refreshed from the vendor while it is still open.
@@ -82,12 +86,13 @@ route refuses and nothing else changes.
    moves forward - pending to processing or a terminal status, processing to a terminal status or
    refunded, completed to refunded - judged against the order's status under a row lock, so two
    racing updates cannot drop the later one. Anything else is logged and ignored. A redelivery
-   writes nothing unless it adds a tx hash, gateway or crypto amount, which is recorded and
-   audited. A verifier that throws is answered like a bad signature.
+   writes nothing unless it fills a tx hash, gateway or crypto amount the order is still missing,
+   which is recorded and audited; it never replaces one already recorded. A verifier that throws is answered like a bad signature.
 7. The coins land on-chain and the deposit path credits them.
 
 ## Binding a vendor
 
 An overlay plugin in the consumer's repo binds the adapter and, for webhooks, the matching
 verifier. Scaffold it with `/scaffold-plugin`, and register it after the wallet module. Core binds
-neither.
+neither. The on-ramp stays off, with a warning at boot, unless `GEO_CHECK_COMMANDS` and `RG_LIMITS` are
+bound too; the compliance module binds both.

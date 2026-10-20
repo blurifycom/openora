@@ -39,6 +39,7 @@ import { createWalletRouter, type OnRampWebhookPort } from '../router/index.js';
 import type { ReconciliationService } from '../service/reconciliation.service.js';
 import { migrate } from '../migrate.js';
 import {
+  wallet as walletTable,
   walletAsset,
   walletBalance,
   walletDepositAddress,
@@ -49,13 +50,13 @@ import {
   DepositDisabledError,
   IdempotencyKeyReuseError,
   UnsupportedNetworkError,
+  WalletReferenceRateUnavailableError,
   WalletService,
 } from '../service/wallet.service.js';
 import {
   OnRampGeoBlockedError,
   OnRampRestrictedError,
   OnRampService,
-  OnRampUnavailableError,
 } from '../service/on-ramp.service.js';
 
 let db: TestDb;
@@ -119,7 +120,7 @@ function makeService({
   adapter = makeAdapter(),
   audit = makeAuditWriter(),
   restricted = false,
-  geoCheck,
+  geoCheck = geoAt(true, 'DE'),
   rgLimits,
   rates,
   limiter,
@@ -142,6 +143,8 @@ function makeService({
     paymentProviders: makePaymentProviderRegistry(),
     audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
+    rgLimits,
+    rates,
   });
   const service = new OnRampService({
     drizzle: db.drizzle,
@@ -150,8 +153,6 @@ function makeService({
     audit,
     playEligibility: mock<PlayEligibilityPort>({ isRestricted: vi.fn(async () => restricted) }),
     geoCheck,
-    rgLimits,
-    rates,
     limiter,
     cache,
   });
@@ -286,6 +287,7 @@ describe('OnRampService.checkout gates (real PG)', () => {
       adapter: mock<OnRampAdapter>(adapter),
       audit: makeAuditWriter(),
       playEligibility: mock<PlayEligibilityPort>({ isRestricted }),
+      geoCheck: geoAt(true, 'DE'),
     });
     const purchase = { ...PURCHASE, userId: randomUUID(), idempotencyKey: randomUUID() };
     await restrictedLater.checkout(purchase);
@@ -384,14 +386,19 @@ describe('OnRampService.checkout gates (real PG)', () => {
     expect(adapter.createCheckout).not.toHaveBeenCalled();
   });
 
-  it('still opens a checkout when the vendor has no estimate', async () => {
+  it.each([
+    ['has no estimate', []],
+    ['estimates only another network', [{ ...QUOTE, network: 'ERC20' }]],
+    ['estimates another amount', [{ ...QUOTE, fiatAmount: '1000', cryptoAmount: '985' }]],
+  ])('refuses before the vendor opens a checkout when it %s', async (_label, quotes) => {
     const adapter = makeAdapter();
-    adapter.getQuotes.mockResolvedValue([]);
+    adapter.getQuotes.mockResolvedValue(quotes);
     const { service } = makeService({ adapter });
     await expect(
       service.checkout({ ...PURCHASE, userId: randomUUID(), idempotencyKey: randomUUID() }),
-    ).resolves.toMatchObject({ checkoutUrl: expect.stringMatching(/^https:\/\//) });
-    expect(adapter.createCheckout).toHaveBeenCalledOnce();
+    ).rejects.toBeInstanceOf(OnRampVendorUnavailableError);
+    expect(adapter.createCheckout).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(walletOnRampOrder)).toEqual([]);
   });
 
   it('checks the deposit limit on the fiat amount plus the open orders, converted to its fiat', async () => {
@@ -443,7 +450,35 @@ describe('OnRampService.checkout gates (real PG)', () => {
         status: 'pending',
         createdAt: longAgo,
       },
-      { ...order, idempotencyKey: randomUUID(), fiatAmount: '500', status: 'completed' },
+      {
+        ...order,
+        idempotencyKey: randomUUID(),
+        fiatAmount: '500',
+        status: 'completed',
+        createdAt: longAgo,
+        updatedAt: longAgo,
+      },
+      {
+        ...order,
+        idempotencyKey: randomUUID(),
+        fiatAmount: '5',
+        status: 'completed',
+        txHash: '0xcredited',
+      },
+      {
+        ...order,
+        idempotencyKey: randomUUID(),
+        fiatAmount: '7',
+        status: 'completed',
+        createdAt: longAgo,
+      },
+      {
+        ...order,
+        idempotencyKey: randomUUID(),
+        fiatAmount: '11',
+        status: 'completed',
+        txHash: '0xbatch',
+      },
       {
         ...order,
         idempotencyKey: randomUUID(),
@@ -457,6 +492,29 @@ describe('OnRampService.checkout gates (real PG)', () => {
         idempotencyKey: randomUUID(),
         fiatAmount: '900',
         status: 'processing',
+      },
+    ]);
+
+    const [credited, otherPlayers] = await db.drizzle.db
+      .insert(walletTable)
+      .values([{ userId }, { userId: randomUUID() }])
+      .returning();
+    await db.drizzle.db.insert(walletTransaction).values([
+      {
+        walletId: credited?.id ?? '',
+        type: 'deposit',
+        status: 'completed',
+        amount: '5',
+        currency: 'USDT',
+        txHash: '0xcredited',
+      },
+      {
+        walletId: otherPlayers?.id ?? '',
+        type: 'deposit',
+        status: 'completed',
+        amount: '11',
+        currency: 'USDT',
+        txHash: '0xbatch',
       },
     ]);
 
@@ -475,7 +533,7 @@ describe('OnRampService.checkout gates (real PG)', () => {
       expect.anything(),
     );
     const attempted = vi.mocked(rgLimits.checkDeposit).mock.calls[0]?.[2];
-    expect(Number(attempted)).toBe(1030);
+    expect(Number(attempted)).toBe(1048);
   });
 
   it('refuses before the vendor when an open order in another fiat has no rate', async () => {
@@ -494,7 +552,7 @@ describe('OnRampService.checkout gates (real PG)', () => {
 
     await expect(
       service.checkout({ ...PURCHASE, userId, idempotencyKey: randomUUID() }),
-    ).rejects.toBeInstanceOf(OnRampUnavailableError);
+    ).rejects.toBeInstanceOf(WalletReferenceRateUnavailableError);
     expect(adapter.createCheckout).not.toHaveBeenCalled();
   });
 
@@ -528,7 +586,9 @@ describe('OnRampService.checkout gates (real PG)', () => {
       used: '10',
       currency: 'EUR',
     }));
-    const { service } = makeService({ rgLimits: mock<RgLimitsPort>({ checkDeposit }) });
+    const adapter = makeAdapter();
+    adapter.getQuotes.mockResolvedValue([{ ...QUOTE, fiatAmount: '50', cryptoAmount: '49' }]);
+    const { service } = makeService({ adapter, rgLimits: mock<RgLimitsPort>({ checkDeposit }) });
     const userId = randomUUID();
     await db.drizzle.db.insert(walletOnRampOrder).values({
       userId,
@@ -621,15 +681,15 @@ describe('OnRampService.checkout gates (real PG)', () => {
       'the vendor estimate is malformed',
       () => Promise.resolve([{ ...QUOTE, cryptoAmount: '1e-3' }]),
     ],
-  ])('still opens a checkout when %s', async (_label, getQuotes) => {
+  ])('refuses before the vendor opens a checkout when %s', async (_label, getQuotes) => {
     const adapter = makeAdapter();
     adapter.getQuotes.mockImplementation(getQuotes);
     const { service } = makeService({ adapter });
 
     await expect(
       service.checkout({ ...PURCHASE, userId: randomUUID(), idempotencyKey: randomUUID() }),
-    ).resolves.toMatchObject({ checkoutUrl: expect.stringMatching(/^https:\/\//) });
-    expect(adapter.createCheckout).toHaveBeenCalledOnce();
+    ).rejects.toBeInstanceOf(OnRampVendorUnavailableError);
+    expect(adapter.createCheckout).not.toHaveBeenCalled();
   });
 
   it('keeps the order pending for the webhook when recording the opened checkout fails', async () => {
@@ -1016,6 +1076,47 @@ describe('wallet.onRamp routes', () => {
     expect(adapter.getOptions).not.toHaveBeenCalled();
   });
 
+  it('refuses a card deposit over the headroom an open on-ramp order holds, writing nothing', async () => {
+    const checkDeposit = vi.fn(async (_tx: unknown, _userId: string, attempted: string) =>
+      Number(attempted) <= 100
+        ? { allowed: true as const }
+        : {
+            allowed: false as const,
+            limitType: 'deposit' as const,
+            period: 'day' as const,
+            limit: '100',
+            used: '0',
+            currency: 'EUR',
+          },
+    );
+    const { wallet } = makeService({ rgLimits: mock<RgLimitsPort>({ checkDeposit }) });
+    const router = routerWith({ wallet });
+    const userId = randomUUID();
+    await db.drizzle.db.insert(walletOnRampOrder).values({
+      userId,
+      idempotencyKey: randomUUID(),
+      fiatAmount: '80',
+      fiatCurrency: 'EUR',
+      currency: 'USDT',
+      network: 'TRC20',
+      walletAddress: `T-${userId}`,
+      status: 'processing',
+    });
+
+    await expect(
+      call(
+        router.deposit,
+        { amount: '80', currency: 'EUR', idempotencyKey: randomUUID() },
+        { context: playerContext(userId) },
+      ),
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      data: { limit: '100', used: expect.stringMatching(/^80(\.0+)?$/) },
+    });
+    expect(Number(checkDeposit.mock.calls[0]?.[2])).toBe(160);
+    expect(await db.drizzle.db.select().from(walletTransaction)).toEqual([]);
+  });
+
   it('answers CONFLICT when no on-ramp vendor is bound', async () => {
     const { wallet } = makeService();
     const router = routerWith({ wallet });
@@ -1247,6 +1348,9 @@ describe('POST /wallet/on-ramp/webhook', () => {
         after: expect.objectContaining({ from: 'processing', to: 'processing', txHash: '0xdef' }),
       }),
     );
+
+    await deliver(router, eventFor(row, { status: 'processing', txHash: '0xstale' }));
+    expect((await orderRow(row.id)).txHash).toBe('0xdef');
   });
 
   it('refunds a completed order', async () => {

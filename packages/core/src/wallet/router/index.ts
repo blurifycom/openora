@@ -247,6 +247,7 @@ export function createWalletRouter({
       DepositAddressUnsupportedError,
       IdempotencyKeyReuseError,
     ],
+    SERVICE_UNAVAILABLE: WalletReferenceRateUnavailableError,
     BAD_REQUEST: [OnRampRefusedError, UnsupportedNetworkError, DepositDisabledError],
   };
 

@@ -5,12 +5,9 @@ import {
   isPositiveMoney,
   makeConflictError,
   makeNotFoundError,
-  moneyAdd,
   moneyCompare,
-  mapConcurrent,
   withAdvisoryXactLock,
   type DrizzleService,
-  type DrizzleTx,
 } from '@openora/core/server';
 import {
   makeRateLimitKey,
@@ -22,12 +19,10 @@ import {
   OnRampVendorUnavailableError,
   OnRampWebhookEventSchema,
   RATE_LIMIT_KEYS,
-  RgLimitExceededError,
   UuidSchema,
   type AuditWritePort,
   type CacheAdapter,
   type ClientMeta,
-  type ExchangeRateReader,
   type GeoCheckCommands,
   type OnRampAdapter,
   type OnRampCheckout,
@@ -38,14 +33,14 @@ import {
   type PlayEligibilityPort,
   type RateLimitKey,
   type RateLimiterAdapter,
-  type RgLimitsPort,
   type User,
 } from '@openora/core/contracts';
-import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { OnRampCheckoutResponse, OnRampOrder } from '../contract/index.js';
 import { walletOnRampOrder, type WalletOnRampOrder } from '../schema/index.js';
 import {
   assertDepositAllowed,
+  depositSlotKey,
   DepositDisabledError,
   IdempotencyKeyReuseError,
   type WalletService,
@@ -57,11 +52,11 @@ const ON_RAMP_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 const ON_RAMP_STATUS_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 
 const OPTIONS_TTL_MS = 60 * 1000;
-const UNOPENED_CHECKOUT_HOLD = '15 minutes';
 // However fast the client polls, the vendor is asked about an order at most this often.
 const STATUS_TTL_MS = 10 * 1000;
 
 const OPEN_STATUSES: readonly OnRampStatus[] = ['pending', 'processing'];
+const DELIVERY_DETAILS = ['txHash', 'gatewayId', 'cryptoAmount'] as const;
 
 const NEXT_STATUSES: Record<OnRampStatus, readonly OnRampStatus[]> = {
   pending: ['processing', 'completed', 'failed', 'cancelled', 'expired'],
@@ -113,9 +108,7 @@ export class OnRampService {
   private readonly adapter: OnRampAdapter;
   private readonly audit: AuditWritePort;
   private readonly playEligibility: PlayEligibilityPort;
-  private readonly geoCheck?: GeoCheckCommands;
-  private readonly rgLimits?: RgLimitsPort;
-  private readonly rates?: ExchangeRateReader;
+  private readonly geoCheck: GeoCheckCommands;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly cache?: CacheAdapter;
 
@@ -125,9 +118,7 @@ export class OnRampService {
     adapter: OnRampAdapter;
     audit: AuditWritePort;
     playEligibility: PlayEligibilityPort;
-    geoCheck?: GeoCheckCommands;
-    rgLimits?: RgLimitsPort;
-    rates?: ExchangeRateReader;
+    geoCheck: GeoCheckCommands;
     limiter?: RateLimiterAdapter<RateLimitKey>;
     cache?: CacheAdapter;
   }) {
@@ -137,8 +128,6 @@ export class OnRampService {
     this.audit = deps.audit;
     this.playEligibility = deps.playEligibility;
     this.geoCheck = deps.geoCheck;
-    this.rgLimits = deps.rgLimits;
-    this.rates = deps.rates;
     this.limiter = deps.limiter;
     this.cache = deps.cache;
   }
@@ -175,8 +164,8 @@ export class OnRampService {
   /**
    * Every gate runs before the vendor opens an order, and the player gates run before a replay,
    * so a player restricted since the first attempt cannot fetch its checkout again. The deposit
-   * limit is checked and the order row inserted under one per-player lock, so concurrent
-   * checkouts are counted against each other. The delivery address is always one the platform
+   * limit is checked and the order row inserted under the player's deposit lock, so concurrent
+   * checkouts and deposits are counted against each other. The delivery address is always one the platform
    * issued to this player, and the order row exists before the vendor is called, so a webhook
    * can always find it. The order fails only when the vendor does not open the checkout; once
    * it has, a failure to record that leaves the order pending for the vendor's webhook. A
@@ -200,8 +189,13 @@ export class OnRampService {
       purchase.network,
     );
     const purchaseId = await this.drizzle.db.transaction((tx) =>
-      withAdvisoryXactLock(tx, checkoutLockKey(userId), async () => {
-        await this.assertWithinDepositLimit(tx, purchase);
+      withAdvisoryXactLock(tx, depositSlotKey(userId), async () => {
+        await this.wallet.assertWithinRgDepositLimit(
+          tx,
+          userId,
+          purchase.fiatAmount,
+          purchase.fiatCurrency,
+        );
         const [order] = await tx
           .insert(walletOnRampOrder)
           .values({
@@ -380,7 +374,8 @@ export class OnRampService {
   /**
    * Applies a vendor report to the order under a row lock and audits it, in one transaction. The
    * status only moves forward along `NEXT_STATUSES`; a report of the current status still records
-   * the delivery details it adds. Anything else is out of order and writes nothing. Returns the
+   * the delivery details the order is still missing, never replacing one, so a late redelivery
+   * cannot overwrite a newer one. Anything else is out of order and writes nothing. Returns the
    * order's status afterwards.
    */
   private async transition(
@@ -404,17 +399,19 @@ export class OnRampService {
         );
         return { status: locked.status, written: false };
       }
-      if (!moves && !addsDeliveryDetails(locked, next)) {
+      if (!moves && !fillsDeliveryDetails(locked, next)) {
         logger.info({ purchaseId, status: locked.status }, 'on-ramp status redelivered - ignored');
         return { status: locked.status, written: false };
       }
+      const pick = <K extends (typeof DELIVERY_DETAILS)[number]>(detail: K) =>
+        moves ? (next[detail] ?? locked[detail]) : (locked[detail] ?? next[detail]);
       const [updated] = await tx
         .update(walletOnRampOrder)
         .set({
           status: next.status,
-          txHash: next.txHash ?? locked.txHash,
-          gatewayId: next.gatewayId ?? locked.gatewayId,
-          cryptoAmount: next.cryptoAmount ?? locked.cryptoAmount,
+          txHash: pick('txHash'),
+          gatewayId: pick('gatewayId'),
+          cryptoAmount: pick('cryptoAmount'),
         })
         .where(eq(walletOnRampOrder.id, purchaseId))
         .returning();
@@ -575,9 +572,6 @@ export class OnRampService {
     if (await this.playEligibility.isRestricted(userId)) {
       throw new OnRampRestrictedError();
     }
-    if (!this.geoCheck) {
-      return null;
-    }
     const access = await this.geoCheck.checkAccess(meta.ip);
     if (!access.allowed) {
       throw new OnRampGeoBlockedError();
@@ -634,24 +628,25 @@ export class OnRampService {
 
   /**
    * A delivery under the network's deposit minimum lands on chain but is never credited. Judged on
-   * the best estimate; with no estimate, or none the vendor could give, the checkout goes ahead.
+   * the best estimate. With a minimum to meet and no estimate to judge it on - the vendor failed,
+   * answered garbage or had none - buying is unavailable rather than unchecked.
    */
   private async assertAboveDepositMinimum(
     purchase: OnRampPurchase,
     assets: readonly { network: string; minDeposit: string }[],
     country: string | null,
   ) {
-    const [best] = await this.fetchQuotes(purchase, country).catch((err: unknown) => {
-      logger.warn(
-        { err, userId: purchase.userId, currency: purchase.currency, network: purchase.network },
-        'on-ramp estimate failed - checking out without one',
-      );
-      return [];
-    });
     const asset = assets.find(
       (candidate) => candidate.network.toUpperCase() === purchase.network.toUpperCase(),
     );
-    if (best && asset && moneyCompare(best.cryptoAmount, asset.minDeposit) < 0) {
+    if (!asset || !isPositiveMoney(asset.minDeposit)) {
+      return;
+    }
+    const [best] = await this.fetchQuotes(purchase, country);
+    if (!best) {
+      throw new OnRampVendorUnavailableError();
+    }
+    if (moneyCompare(best.cryptoAmount, asset.minDeposit) < 0) {
       throw new OnRampRefusedError({
         reason: 'below_deposit_minimum',
         currency: purchase.currency,
@@ -661,7 +656,7 @@ export class OnRampService {
     }
   }
 
-  // A quote that would deliver nothing is not a quote.
+  // A quote that would deliver nothing, or for another purchase than the one asked, is not a quote.
   private async fetchQuotes(
     { userId, fiatCurrency, fiatAmount, currency, network }: OnRampPurchase,
     country: string | null,
@@ -679,71 +674,13 @@ export class OnRampService {
     if (!parsed.success) {
       throw new OnRampVendorUnavailableError({ cause: parsed.error });
     }
-    return parsed.data.filter((quote) => isPositiveMoney(quote.cryptoAmount));
-  }
-
-  /**
-   * Checked on the fiat amount plus this player's still-open orders: processing ones of any age,
-   * pending ones until their checkout expires, and pending ones the vendor has not opened yet
-   * for `UNOPENED_CHECKOUT_HOLD` after they were recorded. Open orders in another fiat are
-   * converted to the purchase's fiat; with no rate for one, buying is unavailable rather than
-   * unchecked. The gate converts to the limit's currency. Runs under the caller's per-player lock.
-   */
-  private async assertWithinDepositLimit(
-    tx: DrizzleTx,
-    { userId, fiatAmount, fiatCurrency }: OnRampPurchase,
-  ) {
-    if (!this.rgLimits) {
-      return;
-    }
-    const openByFiat = await tx
-      .select({
-        fiatCurrency: walletOnRampOrder.fiatCurrency,
-        total: sql<string>`sum(${walletOnRampOrder.fiatAmount})::text`,
-      })
-      .from(walletOnRampOrder)
-      .where(
-        and(
-          eq(walletOnRampOrder.userId, userId),
-          or(
-            eq(walletOnRampOrder.status, 'processing'),
-            and(
-              eq(walletOnRampOrder.status, 'pending'),
-              or(
-                gt(walletOnRampOrder.expiresAt, sql`now()`),
-                and(
-                  isNull(walletOnRampOrder.expiresAt),
-                  gt(walletOnRampOrder.createdAt, sql`now() - ${UNOPENED_CHECKOUT_HOLD}::interval`),
-                ),
-              ),
-            ),
-          ),
-        ),
-      )
-      .groupBy(walletOnRampOrder.fiatCurrency);
-    const openTotals = await mapConcurrent(openByFiat, 1, async (open) =>
-      open.fiatCurrency === fiatCurrency
-        ? open.total
-        : ((await this.rates?.convert(open.total, open.fiatCurrency, fiatCurrency, tx)) ?? null),
-    );
-    if (openTotals.includes(null)) {
-      throw new OnRampUnavailableError();
-    }
-    const openTotal = openTotals.reduce<string>((sum, total) => moneyAdd(sum, total ?? '0'), '0');
-    const decision = await this.rgLimits.checkDeposit(
-      tx,
-      userId,
-      moneyAdd(fiatAmount, openTotal),
-      fiatCurrency,
-    );
-    if (decision.allowed) {
-      return;
-    }
-    const usedIsSpend =
-      decision.currency === fiatCurrency && moneyCompare(decision.used, decision.limit) !== 0;
-    throw new RgLimitExceededError(
-      'deposit_limit_exceeded',
-      usedIsSpend ? { ...decision, used: moneyAdd(decision.used, openTotal) } : decision,
+    const wanted = assetKey(currency, network);
+    return parsed.data.filter(
+      (quote) =>
+        isPositiveMoney(quote.cryptoAmount) &&
+        quote.fiatCurrency.toUpperCase() === fiatCurrency.toUpperCase() &&
+        moneyCompare(quote.fiatAmount, fiatAmount) === 0 &&
+        assetKey(quote.currency, quote.network) === wanted,
     );
   }
 }
@@ -766,19 +703,12 @@ function webhookMismatch(
   return null;
 }
 
-function addsDeliveryDetails(
+function fillsDeliveryDetails(
   order: WalletOnRampOrder,
-  next: Pick<OnRampWebhookEvent, 'txHash' | 'gatewayId' | 'cryptoAmount'>,
+  next: Pick<OnRampWebhookEvent, (typeof DELIVERY_DETAILS)[number]>,
 ): boolean {
-  return (
-    (next.txHash !== undefined && next.txHash !== order.txHash) ||
-    (next.gatewayId !== undefined && next.gatewayId !== order.gatewayId) ||
-    (next.cryptoAmount !== undefined &&
-      (order.cryptoAmount === null || moneyCompare(next.cryptoAmount, order.cryptoAmount) !== 0))
-  );
+  return DELIVERY_DETAILS.some((detail) => order[detail] === null && next[detail] !== undefined);
 }
-
-const checkoutLockKey = (userId: User['id']) => `wallet:on-ramp:checkout:${userId}`;
 
 const statusCacheKey = (purchaseId: WalletOnRampOrder['id']) =>
   `wallet:on-ramp:status:${purchaseId}`;

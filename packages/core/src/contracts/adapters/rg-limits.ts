@@ -11,8 +11,8 @@ export type RgLimitDecision =
       limit: string;
       /** Spend already inside the period window, decimal string. */
       used: string;
-      /** The currency `limit` and `used` are in; `null` only when it cannot be resolved. */
-      currency: string | null;
+      /** The currency `limit` and `used` are in; `null` or absent when it cannot be resolved. */
+      currency?: string | null;
     };
 
 export type RgLimitExceededData = {
@@ -39,7 +39,7 @@ export class RgLimitExceededError extends Error {
       period: decision.period,
       limit: decision.limit,
       used: decision.used,
-      currency: decision.currency,
+      currency: decision.currency ?? null,
     };
   }
 }

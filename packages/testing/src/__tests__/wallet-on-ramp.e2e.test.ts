@@ -197,3 +197,32 @@ describe('POST /wallet/on-ramp/webhook', () => {
     expect(await json(order)).toMatchObject({ purchaseId, status: 'cancelled' });
   });
 });
+
+describe('on-ramp orders and card deposits share the RG deposit limit', () => {
+  it('refuses a card deposit over the headroom an open order holds, takes one within it', async () => {
+    const client = await player();
+    const limit = await client.put('/compliance/limits', {
+      type: 'deposit',
+      amount: '150',
+      minutes: null,
+      currency: 'EUR',
+      period: 'daily',
+    });
+    expect(limit.status).toBe(200);
+    await checkout(client);
+
+    const over = await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '100',
+      currency: 'EUR',
+    });
+    expect(over.status).toBe(409);
+
+    const within = await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '50',
+      currency: 'EUR',
+    });
+    expect(within.status).toBe(200);
+  });
+});
