@@ -48,7 +48,7 @@ export const SystemChatMessageSchema = z.object({
 });
 export type SystemChatMessage = z.infer<typeof SystemChatMessageSchema>;
 
-/** A system-authored chat message carrying structured command metadata. */
+/** @alias A system-authored chat message carrying structured command metadata. */
 export const CommandChatMessageSchema = SystemChatMessageSchema;
 export type CommandChatMessage = SystemChatMessage;
 

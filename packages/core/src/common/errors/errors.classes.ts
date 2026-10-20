@@ -6,12 +6,6 @@ export class ConflictError extends AppError {
   }
 }
 
-export class NotFoundError extends AppError {
-  constructor(message = 'Not found') {
-    super(message, 'NOT_FOUND');
-  }
-}
-
 export class ValidationError extends AppError {
   constructor(message = 'Invalid input') {
     super(message, 'BAD_REQUEST');

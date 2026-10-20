@@ -138,6 +138,19 @@ jobs:
       - name: Core integration (shard ${{ matrix.shard }}/3)
         run: pnpm exec turbo run test:integration --filter=@openora/core -- --shard=${{ matrix.shard }}/3
 
+  # Advisory: unused code is fixable debt, not a merge gate. Not in `verify.needs`, and
+  # continue-on-error keeps a red result from failing the run.
+  unused:
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache: 'false'
+      - run: pnpm check:unused
+
   # Stable required-check name; aggregates the jobs above.
   verify:
     if: always() && github.event.action != 'edited'

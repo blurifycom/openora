@@ -18,16 +18,7 @@ import {
   promoRankChallengeTier,
   promoRankChallengeWager,
 } from '../schema/index.js';
-
-const TIER_COLUMNS = {
-  id: promoRankChallengeTier.id,
-  key: promoRankChallengeTier.key,
-  name: promoRankChallengeTier.name,
-  position: promoRankChallengeTier.position,
-  wagerThreshold: promoRankChallengeTier.wagerThreshold,
-  cashAmount: promoRankChallengeTier.cashAmount,
-  physicalItem: promoRankChallengeTier.physicalItem,
-};
+import { TIER_COLUMNS, withWinners } from '../shared/rank-challenge-ladder.js';
 
 /**
  * The Rank Challenge engine: a fifth `WAGER_TRACKING` consumer alongside `RankService`,
@@ -161,28 +152,7 @@ export class RankChallengeService implements WagerTrackingCommands {
   /** The ladder as an operator configured it, plus who has won each tier so far. Public. */
   async getLadder(): Promise<RankChallengeLadder> {
     const { currency, tiers } = await this.getTiers();
-    const claims = await this.drizzle.db
-      .select({
-        tierId: promoRankChallengeClaim.tierId,
-        userId: promoRankChallengeClaim.userId,
-        username: user.username,
-        claimedAt: promoRankChallengeClaim.claimedAt,
-      })
-      .from(promoRankChallengeClaim)
-      .innerJoin(user, eq(user.id, promoRankChallengeClaim.userId));
-    const byTier = new Map(claims.map((c) => [c.tierId, c]));
-    return {
-      currency,
-      tiers: tiers.map((tier) => {
-        const claim = byTier.get(tier.id);
-        return {
-          ...tier,
-          winnerUserId: claim?.userId ?? null,
-          winnerUsername: claim?.username ?? null,
-          claimedAt: claim ? claim.claimedAt.toISOString() : null,
-        };
-      }),
-    };
+    return { currency, tiers: await withWinners(this.drizzle.db, tiers) };
   }
 
   async getForPlayer(userId: Uuid): Promise<PlayerRankChallenge> {

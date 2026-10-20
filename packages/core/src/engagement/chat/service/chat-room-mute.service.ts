@@ -1,45 +1,19 @@
 import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import { DrizzleService, withAdvisoryXactLock } from '@openora/core/server';
-import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 import type { AuditWritePort, ClientMeta, Uuid } from '@openora/core/contracts';
-import { chatRoomMember, chatRoomMute } from '../schema/index.js';
+import { chatRoomMute } from '../schema/index.js';
 import { retireLapsedRows } from './chat-moderation-expiry.service.js';
 import {
-  ChatRoomNotModeratorError,
-  ChatRoomSelfModerationError,
-} from './errors/chat-moderation.errors.js';
+  assertNotSelfModeration,
+  assertRoomModerator,
+  expiryFrom,
+} from './chat-room-moderation.service.js';
 
 export class ChatRoomMuteService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly audit: AuditWritePort,
   ) {}
-
-  private async assertModerator(
-    db: DrizzleDb | DrizzleTx,
-    roomId: Uuid,
-    actorId: Uuid,
-    targetId?: Uuid,
-  ) {
-    const [actor] = await db
-      .select({ role: chatRoomMember.role })
-      .from(chatRoomMember)
-      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, actorId)))
-      .limit(1);
-    if (!actor || (actor.role !== 'moderator' && actor.role !== 'owner')) {
-      throw new ChatRoomNotModeratorError(roomId);
-    }
-    if (targetId) {
-      const [target] = await db
-        .select({ role: chatRoomMember.role })
-        .from(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, targetId)))
-        .limit(1);
-      if (actor.role !== 'owner' && target && target.role !== 'member') {
-        throw new ChatRoomNotModeratorError(roomId);
-      }
-    }
-  }
 
   async muteRoomMember({
     roomId,
@@ -56,14 +30,11 @@ export class ChatRoomMuteService {
     durationSeconds?: number | null;
     reason?: string;
   } & ClientMeta) {
-    if (moderatorId === userId) {
-      throw new ChatRoomSelfModerationError();
-    }
-    const expiresAt =
-      durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
+    assertNotSelfModeration(moderatorId, userId);
+    const expiresAt = expiryFrom(durationSeconds);
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
-        await this.assertModerator(t, roomId, moderatorId, userId);
+        await assertRoomModerator(t, roomId, moderatorId, userId);
         const now = new Date();
         const targetMutes = and(
           eq(chatRoomMute.roomId, roomId),
@@ -119,7 +90,7 @@ export class ChatRoomMuteService {
   } & ClientMeta) {
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
-        await this.assertModerator(t, roomId, moderatorId, userId);
+        await assertRoomModerator(t, roomId, moderatorId, userId);
         const [lifted] = await t
           .update(chatRoomMute)
           .set({ liftedAt: new Date(), liftedBy: moderatorId })

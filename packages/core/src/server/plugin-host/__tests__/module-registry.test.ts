@@ -107,6 +107,7 @@ const validTool = defineMcpTool({
     email: z.string(),
     balance: MoneyAmountSchema,
     lastLoginAt: z.iso.datetime().nullable(),
+    nickname: z.string().nullable(),
   }),
   redact: { allow: ['playerId', 'status', 'balance', 'lastLoginAt'], personal: ['playerId'] },
   errors: ['player_not_found'],
@@ -118,6 +119,7 @@ const toolFactory = () => async () => ({
   email: 'player@example.com',
   balance: '10.00',
   lastLoginAt: null,
+  nickname: null,
 });
 
 const validAction = defineActionType({

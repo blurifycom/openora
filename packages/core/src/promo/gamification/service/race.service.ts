@@ -18,6 +18,7 @@ import {
 } from '@openora/core/server';
 import type { Race, RaceForPlayer, RaceLeaderboardEntry } from '../contract/index.js';
 import { promoRace, promoRaceRoundWager, promoRaceWager } from '../schema/index.js';
+import { RACE_COLUMNS, toRace } from '../shared/race-mapper.js';
 import { roundReversal } from '../shared/round-reversal.js';
 
 export const RaceNotFoundError = makeNotFoundError('Race');
@@ -48,46 +49,6 @@ export const RACE_STANDING_ORDER = [
   asc(promoRaceWager.updatedAt),
   asc(promoRaceWager.userId),
 ];
-
-const RACE_COLUMNS = {
-  id: promoRace.id,
-  name: promoRace.name,
-  currency: promoRace.currency,
-  startAt: promoRace.startAt,
-  endAt: promoRace.endAt,
-  prizePool: promoRace.prizePool,
-  positions: promoRace.positions,
-  eligibleProducts: promoRace.eligibleProducts,
-  closedAt: promoRace.closedAt,
-  createdAt: promoRace.createdAt,
-  updatedAt: promoRace.updatedAt,
-};
-
-const toRace = (row: {
-  id: string;
-  name: string;
-  currency: string;
-  startAt: Date;
-  endAt: Date;
-  prizePool: string;
-  positions: Race['positions'];
-  eligibleProducts: string[];
-  closedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-}): Race => ({
-  id: row.id,
-  name: row.name,
-  currency: row.currency,
-  startAt: row.startAt.toISOString(),
-  endAt: row.endAt.toISOString(),
-  prizePool: row.prizePool,
-  positions: row.positions,
-  eligibleProducts: row.eligibleProducts,
-  closedAt: row.closedAt ? row.closedAt.toISOString() : null,
-  createdAt: row.createdAt.toISOString(),
-  updatedAt: row.updatedAt.toISOString(),
-});
 
 const LEADERBOARD_CAP = 100;
 

@@ -10,7 +10,7 @@ Run in order, stop at the first failure:
 2. `pnpm check:lint`
 3. `pnpm test:unit`
 
-`pnpm verify` runs the same three via turbo and is what CI gates on; a repo that adds format, boundaries or build checks wires them into that script.
+`pnpm verify` is the pre-MR gate: these three plus whatever else the repo wires into that script (format, boundaries, build). It also records the verified commit, which the `guard-mr` hook checks before an MR/PR is opened.
 
 After running:
 

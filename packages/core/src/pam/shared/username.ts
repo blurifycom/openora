@@ -7,7 +7,7 @@ export const UsernameBlockedError = createDomainError<[]>(
 );
 
 /** Handles that read as staff or the platform itself. Operators add their own via `reservedUsernames`. */
-export const BUILT_IN_RESERVED_USERNAMES = [
+const BUILT_IN_RESERVED_USERNAMES = [
   'admin',
   'admins',
   'administrator',

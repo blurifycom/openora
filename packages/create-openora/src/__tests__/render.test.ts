@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildVars,
   emitTree,
+  isTelemetryEnabled,
   outputPath,
   parseArgs,
   sanitizeName,
@@ -59,19 +60,54 @@ describe('parseArgs', () => {
   const argv = (...args: string[]) => ['node', 'create-openora', ...args];
 
   it('reads --name=value', () => {
-    expect(parseArgs(argv('dir', '--name=x'))).toEqual({ target: 'dir', name: 'x' });
+    expect(parseArgs(argv('dir', '--name=x'))).toEqual({
+      target: 'dir',
+      name: 'x',
+      telemetry: true,
+    });
   });
 
   it('reads --name value', () => {
-    expect(parseArgs(argv('dir', '--name', 'x'))).toEqual({ target: 'dir', name: 'x' });
+    expect(parseArgs(argv('dir', '--name', 'x'))).toEqual({
+      target: 'dir',
+      name: 'x',
+      telemetry: true,
+    });
   });
 
   it('omits name when not given', () => {
-    expect(parseArgs(argv('dir'))).toEqual({ target: 'dir' });
+    expect(parseArgs(argv('dir'))).toEqual({ target: 'dir', telemetry: true });
+  });
+
+  it('turns telemetry off with --no-telemetry', () => {
+    expect(parseArgs(argv('dir', '--no-telemetry'))).toEqual({ target: 'dir', telemetry: false });
   });
 
   it('throws without a target', () => {
     expect(() => parseArgs(argv('--name', 'x'))).toThrow('missing target directory');
+  });
+});
+
+describe('isTelemetryEnabled', () => {
+  it('is on by default', () => {
+    expect(isTelemetryEnabled(true, {})).toBe(true);
+  });
+
+  it('is off with --no-telemetry', () => {
+    expect(isTelemetryEnabled(false, {})).toBe(false);
+  });
+
+  it.each([
+    { OPENORA_TELEMETRY_DISABLED: ' yes ' },
+    { DO_NOT_TRACK: '1' },
+    { CI: '' },
+    { NODE_ENV: 'test' },
+  ])('is off under %o', (env) => {
+    expect(isTelemetryEnabled(true, env)).toBe(false);
+  });
+
+  it('stays on when OPENORA_TELEMETRY_DISABLED=0', () => {
+    expect(isTelemetryEnabled(true, { OPENORA_TELEMETRY_DISABLED: '0' })).toBe(true);
   });
 });
 

@@ -120,7 +120,7 @@ export function createIamRouter(
     acceptInvitation: os.acceptInvitation.handler(({ input, context }) => {
       return mapErrors(
         { NOT_FOUND: InvitationNotFoundError, CONFLICT: InvitationConflictError },
-        () => svc.acceptInvitation(input.token, context.clientMeta),
+        () => svc.acceptInvitation(input, context.clientMeta),
       );
     }),
 

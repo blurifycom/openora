@@ -1,0 +1,1 @@
+CREATE INDEX "player_last_seen_at_idx" ON "player" USING btree ("last_seen_at");

@@ -139,6 +139,32 @@ export async function lockVendorDeposit(
   await txn.execute(sql`select pg_advisory_xact_lock(hashtext(${key}))`);
 }
 
+const SAME_DEPOSIT_KIND: Partial<
+  Record<WalletReconciliationFindingKind, WalletReconciliationFindingKind>
+> = {
+  missing_deposit: 'unattributed_deposit',
+  unattributed_deposit: 'missing_deposit',
+};
+
+async function hasFinding(
+  db: DrizzleDb | DrizzleTx,
+  kind: WalletReconciliationFindingKind,
+  providerName: WalletReconciliationFindingRow['providerName'],
+  externalId: NonNullable<WalletReconciliationFindingRow['externalId']>,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: walletReconciliationFinding.id })
+    .from(walletReconciliationFinding)
+    .where(
+      and(
+        eq(walletReconciliationFinding.kind, kind),
+        eq(walletReconciliationFinding.providerName, providerName),
+        eq(walletReconciliationFinding.externalId, externalId),
+      ),
+    );
+  return row !== undefined;
+}
+
 async function insertFinding(db: DrizzleDb | DrizzleTx, input: ReconciliationFindingInput) {
   // A refunded deposit is settled: a redelivery or re-poll of it must not reopen it as a
   // finding of another kind an admin could refund or credit a second time.
@@ -151,6 +177,17 @@ async function insertFinding(db: DrizzleDb | DrizzleTx, input: ReconciliationFin
       { kind: input.kind, providerName: input.providerName, externalId: input.externalId },
       'reconciliation finding not filed: the deposit was already refunded on chain',
     );
+    return undefined;
+  }
+  // A deposit to an address we never issued is both unattributable (webhook) and missing
+  // from the ledger (poll). Whichever files first owns it, open or resolved - a second one
+  // would double the alert count, and reopen a deposit an admin already dismissed.
+  const sameDepositKind = SAME_DEPOSIT_KIND[input.kind];
+  if (
+    sameDepositKind &&
+    input.externalId &&
+    (await hasFinding(db, sameDepositKind, input.providerName, input.externalId))
+  ) {
     return undefined;
   }
   const [row] = await db

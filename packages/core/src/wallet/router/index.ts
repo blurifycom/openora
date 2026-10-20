@@ -160,7 +160,7 @@ export type WalletRouterDeps = {
 
 /** The verifier/parser pair for an inbound swap webhook, bound together for the same reason
  * the payment one is: never verify with one vendor's key and parse with another's format. */
-export type SwapWebhookPort = {
+type SwapWebhookPort = {
   verify(
     rawBody: string,
     headers: Record<string, string | string[] | undefined>,

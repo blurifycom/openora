@@ -158,7 +158,7 @@ export class StreakService implements WagerTrackingCommands {
           lastQualifyingDay: today,
           updatedAt: sql`now()`,
         },
-        where: sql`${promoPlayerStreak.lastQualifyingDay} is distinct from ${today}::date`,
+        setWhere: sql`${promoPlayerStreak.lastQualifyingDay} is distinct from ${today}::date`,
       })
       .returning({ current: promoPlayerStreak.current });
     if (!advanced) {
@@ -175,7 +175,7 @@ export class StreakService implements WagerTrackingCommands {
         .onConflictDoUpdate({
           target: [promoStreakMilestoneGrant.userId, promoStreakMilestoneGrant.day],
           set: { reachedAt: sql`now()`, settledAt: null, outcome: null },
-          where: sql`${promoStreakMilestoneGrant.settledAt} is not null`,
+          setWhere: sql`${promoStreakMilestoneGrant.settledAt} is not null`,
         });
     }
 

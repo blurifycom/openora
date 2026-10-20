@@ -39,7 +39,7 @@ export const GameProviderMappingInUseError = createDomainError<
     `Provider ${providerId} still has games on aggregator ${aggregator}; move them before removing the mapping`,
 );
 
-export function toProviderSummary(record: typeof gameProvider.$inferSelect) {
+function toProviderSummary(record: typeof gameProvider.$inferSelect) {
   return {
     id: record.id,
     slug: record.slug,

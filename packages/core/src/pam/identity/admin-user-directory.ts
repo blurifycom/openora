@@ -35,6 +35,31 @@ const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&')
 
 // Identity owns the `user` table, so it owns the admin directory port.
 // admin-console depends only on ADMIN_USER_DIRECTORY - never on this schema. See ADR-0017/0025.
+const PLAYER_LOOKUP_COLUMNS = {
+  playerId: player.id,
+  userId: player.userId,
+  username: user.username,
+  kycStatus: player.kycStatus,
+  email: user.email,
+  language: user.language,
+  avatarUrl: user.image,
+  createdAt: player.createdAt,
+  level: player.level,
+  currency: player.currency,
+};
+
+/**
+ * The player table stores kycStatus as free text; coerce unknown values to null so the port's
+ * KycStatus contract holds without a cast. Normalize the deprecated `verified` value to
+ * `approved` here - the single read boundary every admin consumer (wallet queue filter, tag
+ * evaluation, admin-console) goes through - so a legacy row is indistinguishable from a fresh
+ * one downstream.
+ */
+function withKycStatus<T extends { kycStatus: string | null }>(row: T) {
+  const kyc = KycStatusSchema.safeParse(row.kycStatus);
+  return { ...row, kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null };
+}
+
 function toRow(r: typeof user.$inferSelect) {
   return {
     id: r.id,
@@ -187,49 +212,16 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       return [];
     }
     const rows = await this.drizzle.db
-      .select({
-        playerId: player.id,
-        userId: player.userId,
-        username: user.username,
-        kycStatus: player.kycStatus,
-        email: user.email,
-        language: user.language,
-        avatarUrl: user.image,
-        createdAt: player.createdAt,
-        level: player.level,
-        currency: player.currency,
-      })
+      .select(PLAYER_LOOKUP_COLUMNS)
       .from(player)
       .innerJoin(user, eq(player.userId, user.id))
       .where(and(inArray(player.userId, [...userIds]), eq(user.role, 'player')));
-    return rows.map((r) => {
-      // The player table stores kycStatus as free text; coerce unknown values to null
-      // so the port's KycStatus contract holds without a cast. Normalize the deprecated
-      // `verified` value to `approved` here - the single read boundary every admin
-      // consumer (wallet queue filter, tag evaluation, admin-console) goes through -
-      // so a legacy row is indistinguishable from a fresh one downstream.
-      const kyc = KycStatusSchema.safeParse(r.kycStatus);
-      return {
-        ...r,
-        kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null,
-      };
-    });
+    return rows.map(withKycStatus);
   }
 
   async getPlayerByUsername(username: string) {
     const rows = await this.drizzle.db
-      .select({
-        playerId: player.id,
-        userId: player.userId,
-        username: user.username,
-        kycStatus: player.kycStatus,
-        email: user.email,
-        language: user.language,
-        avatarUrl: user.image,
-        createdAt: player.createdAt,
-        level: player.level,
-        currency: player.currency,
-      })
+      .select(PLAYER_LOOKUP_COLUMNS)
       .from(player)
       .innerJoin(user, eq(player.userId, user.id))
       // Exact, case-insensitive match - ILIKE would let % and _ in `username` act as
@@ -240,8 +232,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     if (!row) {
       return null;
     }
-    const kyc = KycStatusSchema.safeParse(row.kycStatus);
-    return { ...row, kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null };
+    return withKycStatus(row);
   }
 
   async findPlayerIds(query: string, limit = 1000, options?: PlayerIdSearchOptions) {
