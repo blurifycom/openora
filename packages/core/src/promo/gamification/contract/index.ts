@@ -262,7 +262,11 @@ export const PlayerStreakSchema = z.object({
   dailyMinWager: MoneyAmountSchema,
   currency: CurrencyTickerSchema,
   milestones: z.array(StreakMilestoneSchema),
-  /** Milestones the player has reached and not claimed yet. They do not expire. */
+  /**
+   * Milestones the player has reached and not claimed yet. They do not expire. One entry per
+   * milestone day at most: reaching a day again while its reward is still waiting adds no second
+   * reward, and the day pays again only once the waiting one is claimed.
+   */
   claimable: z.array(z.object({ id: UuidSchema, day: StreakMilestoneSchema.shape.day })),
 });
 export type PlayerStreak = z.infer<typeof PlayerStreakSchema>;
