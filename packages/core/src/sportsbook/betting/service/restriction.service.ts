@@ -54,6 +54,15 @@ export class SportsbookRestrictionService {
     this.sessions = deps.sessions;
   }
 
+  async get(userId: User['id']): Promise<SportsbookRestriction> {
+    await this.assertPlayer(userId);
+    const [row] = await this.drizzle.db
+      .select()
+      .from(sportsbookPlayerRestriction)
+      .where(eq(sportsbookPlayerRestriction.userId, userId));
+    return toRestriction(userId, row);
+  }
+
   async restrict(
     userId: User['id'],
     reason: string,
@@ -99,9 +108,7 @@ export class SportsbookRestrictionService {
       current: RestrictionRow | undefined,
     ) => Promise<RestrictionRow | undefined>,
   ): Promise<SportsbookRestriction> {
-    if ((await this.identity.getPlayerIdByUserIdSafe(userId)) === null) {
-      throw new SportsbookPlayerNotFoundError(userId);
-    }
+    await this.assertPlayer(userId);
     const { after, revoked } = await this.drizzle.db.transaction(async (tx) => {
       await lockPlayer(tx, userId);
       const [current] = await tx
@@ -139,5 +146,11 @@ export class SportsbookRestrictionService {
 
     await this.sessions.revokeAtProvider(userId, revoked);
     return after;
+  }
+
+  private async assertPlayer(userId: User['id']): Promise<void> {
+    if ((await this.identity.getPlayerIdByUserId(userId)) === null) {
+      throw new SportsbookPlayerNotFoundError(userId);
+    }
   }
 }

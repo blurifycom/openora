@@ -22,7 +22,8 @@ fields. This file does not repeat it.
   cap is in USD for every currency: reserve values a promotion-paid stake with the platform's
   exchange rates and refuses it above the cap, or when it has no USD rate while a cap is set.
 - **Player restrictions.** An admin can block one player from sportsbook play without touching
-  casino play.
+  casino play. Staff who can view the sportsbook can see a player's current restriction,
+  unrestricted when none is in place; changing it needs the right to suspend.
 - **Sportsbook debt.** What a reversed settlement could not take back, per player and currency,
   with the withdrawal hold that lives exactly as long as the debt.
 - **Reconciliation findings.** Everything the ledger noticed but could not decide on its own, for
