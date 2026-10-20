@@ -335,8 +335,13 @@ export type {
   PlayerSegmentPage,
   PlayerSegmentQuery,
   PlayerSegmentReader,
+  PlayerSegmentTag,
 } from './player-segment-reader.js';
-export { MAX_PLAYER_SEGMENT_PAGE, PLAYER_SEGMENT_READER } from './player-segment-reader.js';
+export {
+  MAX_PLAYER_SEGMENT_PAGE,
+  MAX_PLAYER_SEGMENT_TAGS,
+  PLAYER_SEGMENT_READER,
+} from './player-segment-reader.js';
 
 export type {
   AdminUserRow,
