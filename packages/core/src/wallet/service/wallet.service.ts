@@ -60,6 +60,7 @@ import {
   type WalletTransactionType,
   type WalletTransactionStatus,
   type BonusGrantLedgerReader,
+  type BonusLifecycleCommands,
 } from '@openora/core/contracts';
 import {
   eq,
@@ -929,6 +930,8 @@ export type WalletServiceDeps = {
   depositHold?: DepositHoldPolicy;
   // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
   grantLedger?: BonusGrantLedgerReader;
+  // Optional: bound by the bonus module. Absent = there is no bonus a withdrawal could forfeit.
+  bonusLifecycle?: BonusLifecycleCommands;
 };
 
 /**
@@ -957,6 +960,7 @@ export class WalletService {
   private readonly depositHold?: DepositHoldPolicy;
 
   private readonly grantLedger?: BonusGrantLedgerReader;
+  private readonly bonusLifecycle?: BonusLifecycleCommands;
 
   constructor({
     drizzle,
@@ -975,6 +979,7 @@ export class WalletService {
     kycPolicy,
     depositHold,
     grantLedger,
+    bonusLifecycle,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -992,6 +997,7 @@ export class WalletService {
     this.kycPolicy = kycPolicy;
     this.depositHold = depositHold;
     this.grantLedger = grantLedger;
+    this.bonusLifecycle = bonusLifecycle;
   }
 
   // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
@@ -1870,8 +1876,8 @@ export class WalletService {
       destinationTag,
     );
 
-    const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
-      async (txn) => {
+    const { transactionId, status, replayed, walletId, rail, forfeited } =
+      await this.drizzle.db.transaction(async (txn) => {
         // FOR UPDATE serializes concurrent withdrawals against a double-debit TOCTOU under READ COMMITTED.
         const current = findOneOrThrow(
           await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
@@ -1892,6 +1898,7 @@ export class WalletService {
               replayed: true,
               walletId: current.id,
               rail: this.resolveRail(currency),
+              forfeited: [],
             };
           }
         }
@@ -1926,6 +1933,7 @@ export class WalletService {
             replayed,
             walletId: current.id,
             rail: this.resolveRail(currency),
+            forfeited: [],
           };
         }
 
@@ -1939,6 +1947,19 @@ export class WalletService {
           );
         }
 
+        // A player may not cash out while a bonus is live, and the rule holds in every currency.
+        // On this transaction, after the balance lock, so a bet cannot convert the bonus between
+        // the request and the forfeit, and the lock order matches a bet's. A rejected withdrawal
+        // does not bring the bonus back.
+        const forfeited =
+          (await this.bonusLifecycle?.forfeitHeld(txn, {
+            userId,
+            reason: 'withdrawal_while_active',
+            actor: { id: userId, isAdmin: false },
+            note: `withdrawal ${row.id}`,
+            meta: { ip: ip ?? null, userAgent: userAgent ?? null },
+          })) ?? [];
+
         if (this.tagEvaluationCommands) {
           await this.tagEvaluationCommands.evaluateWithdrawalRequested(txn, { userId, amount });
         }
@@ -1949,9 +1970,9 @@ export class WalletService {
           replayed,
           walletId: current.id,
           rail: this.resolveRail(currency),
+          forfeited,
         };
-      },
-    );
+      });
 
     if (replayed) {
       return { transactionId, status };
@@ -1966,6 +1987,13 @@ export class WalletService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
+    for (const grant of forfeited) {
+      this.events.emit('promo.bonus.forfeited', {
+        ...grant,
+        reason: 'withdrawal_while_active',
+        actorId: null,
+      });
+    }
 
     // Fail-closed post-step: decides who approves (system vs manual queue), never throws out of withdraw() - failure leaves the row pending.
     const auto = await this.maybeAutoApprove({
