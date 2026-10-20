@@ -941,6 +941,144 @@ describe('ChatService @mention detection (real PG)', () => {
     expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
   });
 
+  it('does not emit chat.user.mentioned in global chat when the mentioned user ignores the sender', async () => {
+    const bobId = randomUUID();
+    const authorId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    await svc.ignoreUser(bobId, authorId);
+
+    await svc.sendGlobalMessage({ userId: authorId, username: 'alice', content: 'hello @bob' });
+
+    await settle();
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
+
+  it('does not emit chat.user.mentioned in a room when the mentioned user ignores the sender', async () => {
+    const bobId = randomUUID();
+    const authorId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    const room = await seedRoom();
+    await svc.ignoreUser(bobId, authorId);
+
+    await svc.sendRoomMessage({
+      userId: authorId,
+      username: 'alice',
+      roomId: room.id,
+      content: 'hello @bob',
+    });
+
+    await settle();
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
+
+  it('does not emit chat.user.mentioned for a non-member mentioned in a private room', async () => {
+    const bobId = randomUUID();
+    const authorId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    const room = await seedRoom({ isPublic: false, category: 'private-channels' });
+    await db.drizzle.db
+      .insert(chatRoomMember)
+      .values({ roomId: room.id, userId: authorId, role: 'owner' });
+
+    await svc.sendRoomMessage({
+      userId: authorId,
+      username: 'alice',
+      roomId: room.id,
+      content: 'hello @bob',
+    });
+
+    await settle();
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
+
+  it('emits chat.user.mentioned for a member mentioned in a private room', async () => {
+    const bobId = randomUUID();
+    const authorId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    const room = await seedRoom({ isPublic: false, category: 'private-channels' });
+    await db.drizzle.db.insert(chatRoomMember).values([
+      { roomId: room.id, userId: authorId, role: 'owner' },
+      { roomId: room.id, userId: bobId, role: 'member' },
+    ]);
+
+    const msg = await svc.sendRoomMessage({
+      userId: authorId,
+      username: 'alice',
+      roomId: room.id,
+      content: 'hello @bob',
+    });
+
+    await waitFor(() =>
+      vi.mocked(events.emit).mock.calls.some(([topic]) => topic === 'chat.user.mentioned'),
+    );
+    expect(events.emit).toHaveBeenCalledWith('chat.user.mentioned', {
+      mentionedUserId: bobId,
+      byUserId: authorId,
+      roomId: room.id,
+      messageId: msg.id,
+    });
+  });
+
+  it('does not emit chat.user.mentioned for a non-participant mentioned in a context room', async () => {
+    const bobId = randomUUID();
+    const carolId = randomUUID();
+    const authorId = randomUUID();
+    const { svc, events } = makeService(
+      mentionDirectory([summaryFor(bobId, 'bob'), summaryFor(carolId, 'carol')]),
+    );
+    const room = await seedRoom({
+      kind: 'context',
+      contextRef: `ctx:${randomUUID()}`,
+      isPublic: false,
+      category: 'private-channels',
+    });
+    await db.drizzle.db.insert(chatRoomMember).values([
+      { roomId: room.id, userId: authorId, role: 'member' },
+      { roomId: room.id, userId: carolId, role: 'member' },
+    ]);
+
+    const msg = await svc.sendRoomMessage({
+      userId: authorId,
+      username: 'alice',
+      roomId: room.id,
+      content: 'hello @bob and @carol',
+    });
+
+    await waitFor(() =>
+      vi.mocked(events.emit).mock.calls.some(([topic]) => topic === 'chat.user.mentioned'),
+    );
+    await settle();
+    const mentionCalls = vi
+      .mocked(events.emit)
+      .mock.calls.filter(([topic]) => topic === 'chat.user.mentioned');
+    expect(mentionCalls).toEqual([
+      [
+        'chat.user.mentioned',
+        { mentionedUserId: carolId, byUserId: authorId, roomId: room.id, messageId: msg.id },
+      ],
+    ]);
+  });
+
+  it('does not emit chat.user.mentioned for a player banned from the room', async () => {
+    const bobId = randomUUID();
+    const authorId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    const room = await seedRoom();
+    await db.drizzle.db
+      .insert(chatRoomBan)
+      .values({ roomId: room.id, userId: bobId, bannedBy: randomUUID() });
+
+    await svc.sendRoomMessage({
+      userId: authorId,
+      username: 'alice',
+      roomId: room.id,
+      content: 'hello @bob',
+    });
+
+    await settle();
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
+
   it('fails closed (does not emit) when the block check throws', async () => {
     const authorId = randomUUID();
     const { svc, events } = makeService(mentionDirectory([summaryFor('not-a-valid-uuid', 'bob')]));
