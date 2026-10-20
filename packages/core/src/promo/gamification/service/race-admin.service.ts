@@ -9,6 +9,7 @@ import {
 } from '@openora/core/server';
 import type { CreateRaceInput, Race, UpdateRaceInput } from '../contract/index.js';
 import { promoRace } from '../schema/index.js';
+import { RACE_COLUMNS, toRace } from '../shared/race-mapper.js';
 import { RaceNotFoundError } from './race.service.js';
 
 export { RaceNotFoundError };
@@ -22,46 +23,6 @@ export const RaceClosedError = makeConflictError(
   'RaceClosedError',
   'a closed race cannot be edited - standings are already frozen',
 );
-
-const RACE_COLUMNS = {
-  id: promoRace.id,
-  name: promoRace.name,
-  currency: promoRace.currency,
-  startAt: promoRace.startAt,
-  endAt: promoRace.endAt,
-  prizePool: promoRace.prizePool,
-  positions: promoRace.positions,
-  eligibleProducts: promoRace.eligibleProducts,
-  closedAt: promoRace.closedAt,
-  createdAt: promoRace.createdAt,
-  updatedAt: promoRace.updatedAt,
-};
-
-const toRace = (row: {
-  id: string;
-  name: string;
-  currency: string;
-  startAt: Date;
-  endAt: Date;
-  prizePool: string;
-  positions: Race['positions'];
-  eligibleProducts: string[];
-  closedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-}): Race => ({
-  id: row.id,
-  name: row.name,
-  currency: row.currency,
-  startAt: row.startAt.toISOString(),
-  endAt: row.endAt.toISOString(),
-  prizePool: row.prizePool,
-  positions: row.positions,
-  eligibleProducts: row.eligibleProducts,
-  closedAt: row.closedAt ? row.closedAt.toISOString() : null,
-  createdAt: row.createdAt.toISOString(),
-  updatedAt: row.updatedAt.toISOString(),
-});
 
 function assertPositionsAffordable(prizePool: string, positions: readonly { prize: string }[]) {
   const sum = positions.reduce((total, entry) => moneyAdd(total, entry.prize), '0');

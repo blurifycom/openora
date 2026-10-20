@@ -241,6 +241,39 @@ describe('ReconciliationService.runCycle - missing deposit', () => {
     const findings = await findingRows();
     expect(findings).toHaveLength(1);
   });
+
+  it('files one finding for a deposit to an unknown address, whichever path sees it first', async () => {
+    const deposit = (externalId: string) => ({
+      kind: 'deposit' as const,
+      address: 'bc1qnobody',
+      amount: '1',
+      currency: 'BTC',
+      txHash: `0x${externalId}`,
+      externalId,
+    });
+    const webhookFirst = deposit(randomUUID());
+    const pollFirst = deposit(randomUUID());
+    const { wallet: walletSvc, reconciliation } = makeServices(
+      listTransactionsReturning([webhookFirst, pollFirst]),
+    );
+
+    await walletSvc.creditDepositByAddress(webhookFirst);
+    // A dismissed unattributed deposit stays settled: the next poll must not reopen it.
+    await db.drizzle.db
+      .update(walletReconciliationFinding)
+      .set({ status: 'resolved', resolvedAt: new Date() });
+    await reconciliation.runCycle();
+    await walletSvc.creditDepositByAddress(pollFirst);
+
+    const findings = await findingRows();
+    expect(findings.map(({ kind, externalId }) => ({ kind, externalId }))).toEqual(
+      expect.arrayContaining([
+        { kind: 'unattributed_deposit', externalId: webhookFirst.externalId },
+        { kind: 'missing_deposit', externalId: pollFirst.externalId },
+      ]),
+    );
+    expect(findings).toHaveLength(2);
+  });
 });
 
 describe('ReconciliationService.runCycle - amount and currency mismatch', () => {

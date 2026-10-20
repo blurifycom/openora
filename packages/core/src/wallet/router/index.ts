@@ -61,6 +61,7 @@ import {
   WithdrawalAddressAlreadyExistsError,
   WithdrawalAddressLimitReachedError,
   WalletReferenceRateUnavailableError,
+  UnsupportedAmountCurrencyError,
   HeldDepositNotFoundError,
   DepositStillHeldError,
   DepositAlreadyOnLedgerError,
@@ -159,7 +160,7 @@ export type WalletRouterDeps = {
 
 /** The verifier/parser pair for an inbound swap webhook, bound together for the same reason
  * the payment one is: never verify with one vendor's key and parse with another's format. */
-export type SwapWebhookPort = {
+type SwapWebhookPort = {
   verify(
     rawBody: string,
     headers: Record<string, string | string[] | undefined>,
@@ -288,12 +289,16 @@ export function createWalletRouter({
     }),
 
     listTransactions: os.listTransactions.handler(({ context, input }) =>
-      wallet.getTransactions({ ...input, userId: getUserId(context), includeGrants: true }),
+      mapErrors({ BAD_REQUEST: UnsupportedAmountCurrencyError }, () =>
+        wallet.getTransactions({ ...input, userId: getUserId(context), includeGrants: true }),
+      ),
     ),
 
     listPlayerTransactions: os.listPlayerTransactions.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
-      return wallet.getTransactions({ ...input, includeInternal: true });
+      return mapErrors({ BAD_REQUEST: UnsupportedAmountCurrencyError }, () =>
+        wallet.getTransactions({ ...input, includeInternal: true }),
+      );
     }),
 
     withdrawals: {

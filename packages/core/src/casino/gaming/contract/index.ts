@@ -233,7 +233,7 @@ export const GameProviderDetailSchema = GameProviderSummarySchema.extend({
   updatedAt: TimestampSchema,
 });
 export type GameProviderDetail = z.infer<typeof GameProviderDetailSchema>;
-// Alias kept for existing imports; new code uses GameProviderDetailSchema.
+/** @alias Kept for existing imports; new code uses GameProviderDetailSchema. */
 export const GameProviderSchema = GameProviderDetailSchema;
 
 export const GameCategoryDetailSchema = GameCategorySummaryWithTranslationsSchema.extend({
@@ -253,7 +253,7 @@ export const GameCategoryDetailSchema = GameCategorySummaryWithTranslationsSchem
   updatedAt: TimestampSchema,
 });
 export type GameCategoryDetail = z.infer<typeof GameCategoryDetailSchema>;
-// Alias kept for existing imports; new code uses GameCategoryDetailSchema.
+/** @alias Kept for existing imports; new code uses GameCategoryDetailSchema. */
 export const GameCategorySchema = GameCategoryDetailSchema;
 
 const CatalogFilterSchema = CatalogQueryBaseSchema.extend({
@@ -616,6 +616,7 @@ export const GameTagDetailSchema = GameTagSummarySchema.extend({
   updatedAt: TimestampSchema,
 });
 export type GameTagDetail = z.infer<typeof GameTagDetailSchema>;
+/** @alias */
 export const GameTagSchema = GameTagDetailSchema;
 
 export const CreateGameTagInputSchema = z.object({

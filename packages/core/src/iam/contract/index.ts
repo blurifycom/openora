@@ -2,6 +2,7 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   InvitationStatusSchema,
+  PasswordSchema,
   PermissionLevelSchema,
   TimestampSchema,
   UuidSchema,
@@ -180,7 +181,13 @@ export const iamContract = {
 
   acceptInvitation: oc
     .route({ method: 'POST', path: '/iam/invitations/accept' })
-    .input(z.object({ token: z.string() }))
+    .input(
+      z.object({
+        token: z.string(),
+        name: z.string().trim().min(1).max(100),
+        password: PasswordSchema,
+      }),
+    )
     .output(z.object({ success: z.literal(true), email: z.string() })),
 
   forceLogout: oc

@@ -37,7 +37,7 @@ import {
   readWalletBalanceForUpdate,
 } from './wallet.service.js';
 
-export const WalletCommandAmountError = createDomainError<[operation: string, amount: string]>(
+const WalletCommandAmountError = createDomainError<[operation: string, amount: string]>(
   'WalletCommandAmountError',
   (operation, amount) => `wallet ${operation} amount must be positive (got ${amount})`,
 );
@@ -58,29 +58,29 @@ export const WalletRgRestrictedError = makeConflictError(
   'wager is restricted by an active responsible-gambling exclusion',
 );
 
-export const WalletBonusEngineUnavailableError = createDomainError<[type: string]>(
+const WalletBonusEngineUnavailableError = createDomainError<[type: string]>(
   'WalletBonusEngineUnavailableError',
   (type) =>
     `a ${type} credit needs the bonus engine to hold its wagering requirement, and none is bound`,
 );
 
-export const WalletBonusGrantRefusedError = createDomainError<[reason: string]>(
+const WalletBonusGrantRefusedError = createDomainError<[reason: string]>(
   'WalletBonusGrantRefusedError',
   (reason) => `the bonus engine refused the grant behind this credit: ${reason}`,
 );
 
-export const WalletBonusSourceRefRequiredError = createDomainError<[type: string]>(
+const WalletBonusSourceRefRequiredError = createDomainError<[type: string]>(
   'WalletBonusSourceRefRequiredError',
   (type) =>
     `a ${type} credit needs a stable providerRef.providerRefId so a retry cannot grant twice`,
 );
 
-export const WalletCreditFailedError = createDomainError<[walletId: string, currency: string]>(
+const WalletCreditFailedError = createDomainError<[walletId: string, currency: string]>(
   'WalletCreditFailedError',
   (walletId, currency) => `wallet ${walletId} has no ${currency} balance row to credit`,
 );
 
-export const WalletBonusConversionError = createDomainError<[walletId: string, currency: string]>(
+const WalletBonusConversionError = createDomainError<[walletId: string, currency: string]>(
   'WalletBonusConversionError',
   (walletId, currency) =>
     `wallet ${walletId} has no ${currency} balance row to convert a completed bonus into`,

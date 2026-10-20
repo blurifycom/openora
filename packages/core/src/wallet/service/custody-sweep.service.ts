@@ -38,7 +38,6 @@ export const CUSTODY_SWEEP_QUEUE = queue('wallet.custody-sweep');
 // runId synchronously, before the job actually runs. A cron tick omits it and the
 // service mints its own.
 export const CustodySweepJobPayloadSchema = z.object({ runId: UuidSchema.optional() });
-export type CustodySweepJobPayload = z.infer<typeof CustodySweepJobPayloadSchema>;
 
 const IN_FLIGHT_STATUSES = ['pending', 'processing', 'unknown'] as const;
 

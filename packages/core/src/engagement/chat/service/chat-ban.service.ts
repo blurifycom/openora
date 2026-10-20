@@ -25,6 +25,7 @@ import {
 import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
 import { retireLapsedRows } from './chat-moderation-expiry.service.js';
 import { emitExpiredInvites, expireInvitesInvolving } from './chat-room-invite-expiry.service.js';
+import { expiryFrom } from './chat-room-moderation.service.js';
 
 const logger = createLogger('chat');
 
@@ -65,8 +66,7 @@ export class ChatBanService {
     actorId: Uuid;
   } & ClientMeta) {
     const target = await resolveModerationTarget(this.drizzle.db, roomId, { validate: true });
-    const expiresAt =
-      durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
+    const expiresAt = expiryFrom(durationSeconds);
     const expired = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, chatPlatformBanLockKey(userId), async () => {
         const now = new Date();

@@ -307,6 +307,7 @@ export type WithdrawalSortBy = z.infer<typeof WithdrawalSortBySchema>;
 export const WalletTransactionListQuerySchema = PageQuerySchema.extend({
   sortBy: WalletTransactionSortBySchema.optional(),
   sortOrder: SortOrderSchema.default('desc').optional(),
+  amountCurrency: WalletCurrencyInputSchema.optional(),
   types: z.array(WalletTransactionTypeSchema).max(WALLET_TRANSACTION_TYPES.length).optional(),
   statuses: z
     .array(WalletTransactionStatusSchema)

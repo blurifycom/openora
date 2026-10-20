@@ -44,6 +44,10 @@ Everything enters through typed plugin objects - `{ id, dependsOn, register } sa
 
 The fastest path is the consumer scaffold and docs in the [main repository](https://github.com/blurifycom/openora) - it walks through booting an API, enabling modules, and overriding adapters.
 
+## Telemetry
+
+The server sends an anonymous usage report on start and once a day: a random instance id, the version, the Node.js runtime and two active-player counts. No personal data. Turn it off with `OPENORA_TELEMETRY_DISABLED=1`, `DO_NOT_TRACK=1` or `createApp({ telemetry: false })`. Every field is listed in [usage telemetry](https://openora.ai/documentation/telemetry).
+
 ## License
 
 [AGPL-3.0-only](./LICENSE). A commercial license is available - see [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md).

@@ -19,6 +19,7 @@ import type {
   RankPlayersEntry,
 } from '../contract/index.js';
 import { openPeriodKey, RANK_PERIOD_KINDS } from '../shared/rank-period.js';
+import { TIER_COLUMNS, toLadder } from '../shared/rank-ladder.js';
 import {
   promoPlayerRank,
   promoRankConfig,
@@ -39,19 +40,6 @@ const tierFor = <T extends LadderRung>(ladder: readonly T[], lifetime: string) =
 // An empty list counts every bet. A bet always names its product, so there is no third case.
 const countsToward = (eligibleProducts: readonly string[], product: string) =>
   eligibleProducts.length === 0 || eligibleProducts.includes(product);
-
-const TIER_COLUMNS = {
-  id: promoRankTier.id,
-  key: promoRankTier.key,
-  name: promoRankTier.name,
-  position: promoRankTier.position,
-  wagerThreshold: promoRankTier.wagerThreshold,
-  rakebackPercent: promoRankTier.rakebackPercent,
-  dailyBonus: promoRankTier.dailyBonus,
-  weeklyBonus: promoRankTier.weeklyBonus,
-  monthlyBonus: promoRankTier.monthlyBonus,
-  levelUpBonus: promoRankTier.levelUpBonus,
-};
 
 export class RankService implements WagerTrackingCommands {
   constructor(
@@ -216,10 +204,7 @@ export class RankService implements WagerTrackingCommands {
     if (!lowest) {
       throw new RankLadderNotConfiguredError('default');
     }
-    return {
-      currency: lowest.currency,
-      tiers: tiers.map(({ currency: _currency, ...tier }) => tier),
-    };
+    return toLadder(lowest.currency, tiers);
   }
 
   /**
