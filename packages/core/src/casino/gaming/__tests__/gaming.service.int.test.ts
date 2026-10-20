@@ -539,6 +539,56 @@ describe('GamingService.startRound (real PG)', () => {
     expect(Number(rounds[0]?.betAmount)).toBe(10);
   });
 
+  it('records the round start in the debit transaction, before the launch', async () => {
+    const created = await seedGame({ name: 'Aces' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '90',
+      currency: 'USD',
+    });
+    const events = makeEventBus();
+    const launchGame = vi.fn().mockRejectedValue(new Error('provider down'));
+    const svc = makeService({
+      provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
+      walletCommands,
+      events,
+    });
+    const userId = '00000000-0000-0000-0000-000000000303';
+
+    await expect(startRound(svc, userId, created.id, 'USD', '10')).rejects.toThrow('provider down');
+
+    const rounds = await db.drizzle.db.select().from(gameRound);
+    const debitTx = vi.mocked(walletCommands.debit).mock.calls[0]?.[0];
+    expect(rounds).toHaveLength(1);
+    expect(walletCommands.debit).toHaveBeenCalledTimes(1);
+    expect(events.emitInTransaction).toHaveBeenCalledWith(debitTx, 'gaming.round.started', {
+      roundId: rounds[0]?.id,
+      gameId: created.id,
+      userId,
+      playerId: null,
+      currency: 'USD',
+    });
+  });
+
+  it('rolls the debit and round back and never launches when the round-start write fails', async () => {
+    const created = await seedGame({ name: 'Aces' });
+    const events = makeEventBus();
+    events.emitInTransaction.mockRejectedValue(new Error('outbox down'));
+    const launchGame = vi.fn();
+    const svc = makeService({
+      provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
+      events,
+    });
+
+    await expect(
+      startRound(svc, '00000000-0000-0000-0000-000000000304', created.id, 'USD', '10'),
+    ).rejects.toThrow('outbox down');
+
+    expect(launchGame).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+  });
+
   it('throws InsufficientBalanceError, persists no round, and never launches the game when the debit fails', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a2', name: 'Aces' });
     const walletCommands = makeWalletCommands({ ok: false, available: '2' });
@@ -1183,9 +1233,6 @@ describe('GamingService.startRound bonus completion (real PG)', () => {
       },
     );
     expect(launchGame).toHaveBeenCalledOnce();
-    expect(
-      events.emitInTransaction.mock.calls.filter(([, topic]) => topic === 'gaming.round.started'),
-    ).toEqual([]);
   });
 
   it('emits nothing when the bet completed no bonus', async () => {
