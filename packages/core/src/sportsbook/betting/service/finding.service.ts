@@ -15,7 +15,11 @@ import type {
   SportsbookFinding,
   SportsbookFindingKind,
 } from '../contract/index.js';
-import { sportsbookReconciliationFinding, type SportsbookFindingRow } from '../schema/index.js';
+import {
+  sportsbookBet,
+  sportsbookReconciliationFinding,
+  type SportsbookFindingRow,
+} from '../schema/index.js';
 
 export const SportsbookFindingNotFoundError = makeNotFoundError('SportsbookFinding');
 export const SportsbookFindingResolvedError = makeConflictError(
@@ -34,13 +38,17 @@ export type SportsbookFindingArgs = {
   detail?: Record<string, unknown>;
 };
 
-function toFinding(row: SportsbookFindingRow): SportsbookFinding {
+function toFinding(
+  row: SportsbookFindingRow,
+  currency: SportsbookFinding['currency'],
+): SportsbookFinding {
   return {
     id: row.id,
     kind: row.kind,
     provider: row.provider,
     betId: row.betId,
     userId: row.userId,
+    currency,
     detail: row.detail,
     status: row.status,
     resolvedBy: row.resolvedBy,
@@ -77,7 +85,7 @@ export class SportsbookFindingService {
     private readonly audit: AuditWritePort,
   ) {}
 
-  async list({ page, limit, status, kind }: ListSportsbookFindingsInput) {
+  async list({ page, limit, status, kind, userId }: ListSportsbookFindingsInput) {
     const filters: SQL[] = [];
     if (status) {
       filters.push(eq(sportsbookReconciliationFinding.status, status));
@@ -85,11 +93,15 @@ export class SportsbookFindingService {
     if (kind) {
       filters.push(eq(sportsbookReconciliationFinding.kind, kind));
     }
+    if (userId) {
+      filters.push(eq(sportsbookReconciliationFinding.userId, userId));
+    }
     const where = filters.length > 0 ? and(...filters) : undefined;
     const [rows, [{ total }]] = await Promise.all([
       this.drizzle.db
-        .select()
+        .select({ finding: sportsbookReconciliationFinding, currency: sportsbookBet.currency })
         .from(sportsbookReconciliationFinding)
+        .leftJoin(sportsbookBet, eq(sportsbookBet.id, sportsbookReconciliationFinding.betId))
         .where(where)
         .orderBy(
           desc(sportsbookReconciliationFinding.createdAt),
@@ -99,7 +111,12 @@ export class SportsbookFindingService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ total: count() }).from(sportsbookReconciliationFinding).where(where),
     ]);
-    return { items: rows.map(toFinding), total: Number(total), page, limit };
+    return {
+      items: rows.map((r) => toFinding(r.finding, r.currency)),
+      total: Number(total),
+      page,
+      limit,
+    };
   }
 
   async resolve(
@@ -119,6 +136,13 @@ export class SportsbookFindingService {
       if (current.status !== 'open') {
         throw new SportsbookFindingResolvedError();
       }
+      const [bet] = current.betId
+        ? await tx
+            .select({ currency: sportsbookBet.currency })
+            .from(sportsbookBet)
+            .where(eq(sportsbookBet.id, current.betId))
+        : [];
+      const currency = bet?.currency ?? null;
       const rows = await tx
         .update(sportsbookReconciliationFinding)
         .set({
@@ -129,14 +153,17 @@ export class SportsbookFindingService {
         })
         .where(eq(sportsbookReconciliationFinding.id, id))
         .returning();
-      const after = toFinding(findOneOrThrow(rows, new SportsbookFindingNotFoundError(id)));
+      const after = toFinding(
+        findOneOrThrow(rows, new SportsbookFindingNotFoundError(id)),
+        currency,
+      );
       await this.audit.recordInTransaction(tx, {
         actorId: actor.userId,
         actorType: 'admin',
         action: 'sportsbook.finding.resolved',
         resourceType: 'sportsbook_reconciliation_finding',
         resourceId: id,
-        before: toFinding(current),
+        before: toFinding(current, currency),
         after,
         ip: actor.ip,
         userAgent: actor.userAgent,

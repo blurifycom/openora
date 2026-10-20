@@ -1,0 +1,1 @@
+CREATE INDEX "sportsbook_reconciliation_finding_user_id_created_at_idx" ON "sportsbook_reconciliation_finding" USING btree ("user_id","created_at","id");

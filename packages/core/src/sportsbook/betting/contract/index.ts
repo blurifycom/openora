@@ -200,6 +200,8 @@ export type SportsbookBetTransaction = z.infer<typeof SportsbookBetTransactionSc
 
 export const AdminSportsbookBetDetailSchema = AdminSportsbookBetSchema.extend({
   transactions: z.array(SportsbookBetTransactionSchema),
+  /** Whether the bound provider can report this bet's status, which align needs. */
+  providerStatusLookup: z.boolean(),
 });
 export type AdminSportsbookBetDetail = z.infer<typeof AdminSportsbookBetDetailSchema>;
 
@@ -258,6 +260,11 @@ export const SportsbookFindingSchema = z.object({
   provider: SportsbookProviderNameSchema.nullable(),
   betId: UuidSchema.nullable(),
   userId: UuidSchema.nullable(),
+  /**
+   * The bet's currency, which any amount in `detail` is in; null when there is no bet, where a
+   * refused stake's `detail` names its own.
+   */
+  currency: CurrencyTickerSchema.nullable(),
   detail: z.record(z.string(), z.unknown()),
   status: SportsbookFindingStatusSchema,
   resolvedBy: UuidSchema.nullable(),
@@ -270,6 +277,7 @@ export type SportsbookFinding = z.infer<typeof SportsbookFindingSchema>;
 export const ListSportsbookFindingsInputSchema = PageQuerySchema.extend({
   status: SportsbookFindingStatusSchema.optional(),
   kind: SportsbookFindingKindSchema.optional(),
+  userId: UuidSchema.optional(),
 });
 export type ListSportsbookFindingsInput = z.infer<typeof ListSportsbookFindingsInputSchema>;
 

@@ -869,6 +869,7 @@ export class SportsbookLedgerService {
           args,
           {
             providerBetId: args.providerBetId,
+            currency: args.currency,
             stake: args.stake,
             potentialPayout: args.potentialPayout,
             potentialAmount: args.promotion?.potentialAmount ?? null,
