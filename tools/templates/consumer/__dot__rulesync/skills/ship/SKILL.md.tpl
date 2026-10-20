@@ -48,12 +48,12 @@ Never stop to ask for something local that deleting the worktree undoes: do it, 
 The plan's Access list names every account or session outside the repo the work needs (a cloud CLI profile, a provider's dashboard, a sandbox API), each with what it is for, a read-only check that proves the session works and the login a person runs. Before 2, every run runs each check:
 
 - One fails -> `Asked:` on its own line, then each missing login as the command a person runs (`! aws sso login --profile <p>`) or the page to log in to in the browser. Report it, stop; no ticket comment. `/ship {{trackerKey}}-XXX` again picks up from here.
-- All pass -> what the Access list names is approved for what it names, without asking: open it, create and configure what the plan needs there, put a dev key it issues in the worktree's `.env`.
+- All pass -> read what it names freely. A passing check is not consent to change anything there, and neither is an Access list built from the ticket. Before the first change outside the repo (create, configure, delete, issue a key): `Asked:`, then one line per change - account, resource, what changes - report it, stop. A person's yes in this session covers that exact list; anything not on it, or a new run, asks again. Then make the changes and put a dev key it issues in the worktree's `.env`.
 - Every change outside the repo goes in the reply and the MR description under "Outside the repo", one line each: where, what, how to undo it. A change to something that already existed records its old value.
 
 ## Never, however blocked
 
-Anything shared, remote, or not undone by deleting the worktree, unless the Access list names it:
+Anything shared, remote, or not undone by deleting the worktree, unless a person approved that exact change (see Access outside the repo):
 
 - Servers, ssh, cloud accounts, dashboards, deploys, stage and prod, and any database that is not the worktree's own.
 - CI/CD settings and variables, repo settings, other people's branches and MRs.
@@ -100,7 +100,7 @@ Start `tester` in the worktree with the plan's test cases. It returns an AC tabl
 
 - Every row PASS -> 4.
 - Any FAIL -> back to `builder` with the failing rows only, then `tester` again.
-- UNCHECKED rows ride along to the MR description; they do not block.
+- UNCHECKED rows ride along to the MR description; they do not block, except a case on a money, KYC or responsible-gambling path: back to `tester` once to run it, still UNCHECKED -> blocker comment, report it, stop.
 - A failing spec called pre-existing without its run on the base commit -> back to `tester` once to run it there. Still unrun: it is a FAIL.
 
 ### 4. Review
@@ -135,7 +135,7 @@ Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` as a back
 - `green` -> check the MR is ready (below), report "Ready for review:" and the MR URL, then watch again without `--until-green`.
 - `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `error ...` -> report it, stop.
 
-Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, and the description holds the AC table, the screenshots and the UNCHECKED rows.
+Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, no money, KYC or responsible-gambling case is UNCHECKED, and the description holds the AC table, the screenshots and the UNCHECKED rows.
 
 Keep watching until the MR merges or closes, for as long as the session lives. A caller that says it watches the MR itself (a headless run) gets the report at `green`, and you stop there; it brings the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
 

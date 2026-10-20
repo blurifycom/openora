@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Watches the MR or PR of a branch and prints one line, then exits, when ship has work on it:
 //   failed | conflicts | threads <ids> | green (only with --until-green) | merged | closed | error <message>
-// A thread waits for an answer while its last comment doesn't start with "Agent:"; it is reported once it
-// stayed the same for two checks, so a review with ten comments is one line. Run it in the background:
+// A thread waits for an answer until its last comment is an "Agent:" reply from the account this runs as
+// (anyone can type the prefix); it is reported once it stayed the same for two checks, so a review with
+// ten comments is one line. Run it in the background:
 //   node watch-pr.mjs <branch> [--until-green]        WATCH_DEBUG=1 prints every check to stderr
 import { execFileSync } from 'node:child_process';
 
@@ -32,16 +33,22 @@ const untilGreen = flags.includes('--until-green');
 const run = (cmd, args) =>
   execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const json = (cmd, args) => JSON.parse(run(cmd, args));
-const unansweredIds = (lastComments) =>
+const unansweredIds = (lastComments, me) =>
   lastComments
-    .filter((comment) => !comment.body.trimStart().startsWith(AGENT_REPLY))
+    .filter(
+      (comment) => !(comment.author === me && comment.body.trimStart().startsWith(AGENT_REPLY)),
+    )
     .map((comment) => String(comment.id))
     .sort();
 
-const THREADS = `query($owner: String!, $name: String!, $number: Int!) {
+const THREADS = `query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  viewer { login }
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-    reviewThreads(first: 100) { nodes { isResolved comments(last: 1) { nodes { id body } } } }
-    comments(last: 1) { nodes { id body } }
+    reviewThreads(first: 100, after: $endCursor) {
+      nodes { isResolved comments(last: 1) { nodes { id body author { login } } } }
+      pageInfo { hasNextPage endCursor }
+    }
+    comments(last: 1) { nodes { id body author { login } } }
   } }
 }`;
 
@@ -57,6 +64,8 @@ function github() {
   const args = [
     'api',
     'graphql',
+    '--paginate',
+    '--slurp',
     '-f',
     `query=${THREADS}`,
     '-f',
@@ -66,10 +75,13 @@ function github() {
     '-F',
     `number=${pr.number}`,
   ];
-  const { reviewThreads, comments } = json('gh', args).data.repository.pullRequest;
-  const open = reviewThreads.nodes
+  const pages = json('gh', args).map((page) => page.data);
+  const open = pages
+    .flatMap(({ repository }) => repository.pullRequest.reviewThreads.nodes)
     .filter((thread) => !thread.isResolved)
-    .flatMap((thread) => thread.comments.nodes);
+    .flatMap((thread) => thread.comments.nodes)
+    .concat(pages[0].repository.pullRequest.comments.nodes)
+    .map((comment) => ({ ...comment, author: comment.author?.login }));
   const checks = pr.statusCheckRollup ?? [];
   const ci = !checks.length
     ? null
@@ -86,17 +98,22 @@ function github() {
     state: pr.state.toLowerCase(),
     conflicts: pr.mergeable === 'CONFLICTING',
     ci,
-    unanswered: unansweredIds([...open, ...comments.nodes]),
+    unanswered: unansweredIds(open, pages[0].viewer.login),
   };
 }
 
 function gitlab() {
   const mr = json('glab', ['mr', 'view', branch, '-F', 'json']);
-  // ponytail: first 100 discussions only; paginate if an MR ever gets more
-  const discussions = json('glab', [
+  const discussions = run('glab', [
     'api',
+    '--paginate',
+    '--output',
+    'ndjson',
     `projects/${mr.project_id}/merge_requests/${mr.iid}/discussions?per_page=100`,
-  ]);
+  ])
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
   const open = discussions
     .map((discussion) => discussion.notes.filter((note) => !note.system))
     .filter(
@@ -107,7 +124,8 @@ function gitlab() {
           notes.every((note) => !note.resolvable || note.resolved)
         ),
     )
-    .map((notes) => notes.at(-1));
+    .map((notes) => notes.at(-1))
+    .map((note) => ({ ...note, author: note.author?.username }));
   const pipeline = mr.head_pipeline?.sha === mr.sha ? mr.head_pipeline.status : null;
   const ci = !pipeline
     ? null
@@ -117,7 +135,8 @@ function gitlab() {
         ? 'passed'
         : 'running';
   const state = mr.state === 'opened' ? 'open' : mr.state === 'merged' ? 'merged' : 'closed';
-  return { state, conflicts: mr.has_conflicts === true, ci, unanswered: unansweredIds(open) };
+  const me = json('glab', ['api', 'user']).username;
+  return { state, conflicts: mr.has_conflicts === true, ci, unanswered: unansweredIds(open, me) };
 }
 
 const say = (line) => {

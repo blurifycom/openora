@@ -78,9 +78,42 @@ test('after a branch switch already brought the new block, the last render is st
   });
 
   assert.equal(existsSync(join(consumer, '.rulesync/subagents/qa.md')), false);
+  // consumerOwned and not yet committed: the consumer's, not stale.
+  assert.ok(existsSync(join(consumer, '.rulesync/sync.json')));
   assert.ok(
     JSON.parse(
       readFileSync(join(consumer, 'node_modules/.cache/sync-agents.json'), 'utf8'),
     ).includes('.rulesync/subagents/tester.md'),
   );
+});
+
+test('the first run after an upgrade by the previous script still prunes the retired files', () => {
+  // The previous script rewrote the block to the new set and kept no manifest.
+  rmSync(join(consumer, 'node_modules/.cache/sync-agents.json'));
+  put('.rulesync/skills/add-feature/SKILL.md', 'old');
+  put('.rulesync/subagents/qa.md', 'old');
+
+  execFileSync('node', [join(template, 'tools/sync-agents.mjs')], {
+    cwd: consumer,
+    stdio: 'ignore',
+  });
+
+  assert.equal(existsSync(join(consumer, '.rulesync/skills/add-feature')), false);
+  assert.equal(existsSync(join(consumer, '.rulesync/subagents/qa.md')), false);
+});
+
+test('a stale path through a symlinked directory never deletes outside the checkout', () => {
+  const outside = mkdtempSync(join(tmpdir(), 'sync-agents-outside-'));
+  after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFileSync(join(outside, 'victim'), 'not yours');
+  symlinkSync(outside, join(consumer, '.rulesync/subagents/out'));
+  git('add', '-f', '.rulesync/subagents/out');
+  put('node_modules/.cache/sync-agents.json', JSON.stringify(['.rulesync/subagents/out/victim']));
+
+  execFileSync('node', [join(template, 'tools/sync-agents.mjs')], {
+    cwd: consumer,
+    stdio: 'ignore',
+  });
+
+  assert.equal(readFileSync(join(outside, 'victim'), 'utf8'), 'not yours');
 });

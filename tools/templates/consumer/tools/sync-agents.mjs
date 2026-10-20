@@ -13,6 +13,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmdirSync,
   statSync,
   unlinkSync,
@@ -37,6 +38,14 @@ const SYNCED_ROOTS = [
 // import _shared.mjs, so both must exist in a fresh clone before the first install.
 const NEVER_IGNORED = new Set(['tools/sync-agents.mjs', '.rulesync/hooks/_shared.mjs']);
 const SKIPPED_BASENAMES = new Set();
+// Dropped before the manifest below existed. The first install after the bump runs the previous,
+// tracked copy of this script, which overwrites itself and the .gitignore block but deletes
+// nothing, so the next run has no record of these.
+const RETIRED = [
+  '.rulesync/skills/add-feature/SKILL.md',
+  '.rulesync/skills/add-feature/handoff.md',
+  '.rulesync/subagents/qa.md',
+];
 
 const die = (message) => {
   console.error(`sync:agents - ${message}`);
@@ -182,9 +191,20 @@ const lastBlock =
         .split('\n')
         .filter((line) => line.startsWith('/'))
         .map((line) => line.slice(1));
-const stale = [...new Set([...lastBlock, ...lastRendered])]
+// The block and the manifest are plain text anyone can edit: a symlinked directory on the way
+// would point the delete outside the checkout, so every parent must resolve to itself.
+const realRoot = realpathSync(ROOT);
+const parentIsReal = (path) => {
+  try {
+    return realpathSync(dirname(join(ROOT, path))) === join(realRoot, dirname(path));
+  } catch {
+    return false;
+  }
+};
+const stale = [...new Set([...lastBlock, ...lastRendered, ...RETIRED])]
   .filter((path) => SYNCED_ROOTS.some((root) => path.startsWith(root)) && !path.includes('..'))
-  .filter((path) => !ignored.some((file) => file.path === path));
+  .filter((path) => !ignored.some((file) => file.path === path) && !consumerOwned.has(path))
+  .filter(parentIsReal);
 // Never one this repo has since started tracking. (No paths: ls-files would list them all.)
 const staleTracked = new Set(stale.length > 0 ? gitTracked(stale) : []);
 for (const path of stale.filter((path) => !staleTracked.has(path))) {
