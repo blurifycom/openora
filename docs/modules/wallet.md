@@ -54,8 +54,9 @@ does not repeat it.
   not the `withdrawal_lock` tag: that one is an investigation an admin owns, and a hold lives
   exactly as long as the state the module keeps (ADR-0046).
 - **A correction debit is never refused for a short balance.** It collects what the balance holds
-  and reports the rest as a shortfall the calling module records as debt. Only the collected part
-  reaches the ledger.
+  and reports the rest as a shortfall the calling module records as debt. Its ledger row carries
+  what was collected and what was asked, a zero collection included, so a retry with the same
+  reference replays the first result and one asking a different amount is refused.
 - **Every bet, win and reversal leg of a round carries its `externalRoundId`.** RG spend nets a
   round's legs by it, and a leg without one never offsets a stake. A correction debit without one
   is refused, since a reversal outside its round would drop out of loss spend, and a plain `debit`

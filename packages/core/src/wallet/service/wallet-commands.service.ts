@@ -126,7 +126,7 @@ export class WalletCommandsService implements WalletCommands {
     amount: string,
     direction: ManualAdjustmentDirection,
     providerRef?: WalletProviderRef,
-    { correction = false }: { correction?: boolean } = {},
+    { correctionRequestedAmount }: { correctionRequestedAmount?: string } = {},
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const insertQuery = txn.insert(walletTransaction).values({
       walletId: row.id,
@@ -139,7 +139,7 @@ export class WalletCommandsService implements WalletCommands {
       providerName: providerRef?.providerName,
       providerRefId: providerRef?.providerRefId,
       externalRoundId: providerRef?.externalRoundId,
-      correction,
+      correctionRequestedAmount,
       metadata:
         providerRef?.responseSnapshot !== undefined
           ? JSON.stringify(providerRef.responseSnapshot)
@@ -497,12 +497,12 @@ export class WalletCommandsService implements WalletCommands {
     const replayed = await this.findByProviderRef(txn, providerRef);
     if (replayed) {
       if (
-        !replayed.correction ||
+        replayed.correctionRequestedAmount === null ||
         replayed.walletId !== row.id ||
         replayed.type !== type ||
         replayed.direction !== 'debit' ||
         replayed.currency !== key ||
-        moneyCompare(amount, replayed.amount) < 0
+        moneyCompare(amount, replayed.correctionRequestedAmount) !== 0
       ) {
         throw new WalletCorrectionRefConflictError(
           providerRef.providerName,
@@ -521,24 +521,18 @@ export class WalletCommandsService implements WalletCommands {
     // even when the caller catches the conflict and commits.
     return txn.transaction(async (sp) => {
       const taken = await collectWalletBalance(sp, row.id, key, amount);
-      if (!taken) {
-        return {
-          moved: false,
-          collected: '0',
-          shortfall: amount,
-          newBalance: await readWalletBalance(sp, row.id, key),
-        };
-      }
+      const collected = taken?.collected ?? '0';
 
-      // Only what was collected reaches the ledger; the shortfall is the caller's debt, not money that moved.
+      // Only what was collected moves; the shortfall is the caller's debt, not money that moved.
+      // A zero collection still writes its row, so a retry replays it instead of collecting again.
       const { row: ledgerRow, replayed: raced } = await this.writeLedgerRow(
         sp,
         { id: row.id, currency: key },
         type,
-        taken.collected,
+        collected,
         'debit',
         providerRef,
-        { correction: true },
+        { correctionRequestedAmount: amount },
       );
       if (raced) {
         throw new WalletCorrectionRefConflictError(
@@ -547,11 +541,20 @@ export class WalletCommandsService implements WalletCommands {
         );
       }
 
+      const shortfall = moneySubtract(amount, collected);
+      if (!taken) {
+        return {
+          moved: false,
+          collected,
+          shortfall,
+          newBalance: await readWalletBalance(sp, row.id, key),
+        };
+      }
       return {
         moved: true,
         transactionId: ledgerRow.id,
-        collected: taken.collected,
-        shortfall: moneySubtract(amount, taken.collected),
+        collected,
+        shortfall,
         newBalance: taken.balance,
       };
     });

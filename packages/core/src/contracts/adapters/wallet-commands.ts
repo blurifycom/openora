@@ -156,17 +156,16 @@ export type WalletCorrectionDebitArgs = {
   type: WalletCorrectionDebitType;
   /**
    * Required, with its round: a retry with the same reference collects once. One already on another
-   * ledger move, or a replay asking less than the first call collected, is refused.
+   * ledger move, or a replay asking a different amount than the first call, is refused.
    */
   providerRef: WalletProviderRef & { externalRoundId: string };
 };
 
 /**
  * Collects min(real balance, amount); `shortfall` is the rest, which the caller records as debt.
- * `moved: false` means nothing was collected now: a zero balance, or a replayed `providerRef`, whose
- * `collected` is what the first call took and whose `shortfall` is counted against the amount the
- * replay passes. A zero collection writes no ledger row, so the reference guards nothing then: the
- * caller's own idempotency row, written in the same transaction, is what stops a retry collecting again.
+ * `moved: false` means nothing was collected now: a zero balance, or a replayed `providerRef`, which
+ * returns what the first call collected. Every call writes its ledger row, a zero one included, so
+ * a retry replays it instead of collecting again.
  */
 export type WalletCorrectionDebitOutcome =
   | {

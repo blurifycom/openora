@@ -1167,14 +1167,36 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     expect(rows.map((r) => Number(r.amount))).toEqual([20]);
   });
 
-  it('writes no ledger row when the balance is empty', async () => {
+  it('writes a zero row with the requested amount when the balance is empty', async () => {
     const w = await seedWallet({ balance: '0' });
 
     const outcome = await reversal(w.userId, '50');
 
-    expect(outcome).toMatchObject({ moved: false, collected: '0', shortfall: '50' });
-    expect(Number(outcome.newBalance)).toBe(0);
-    expect(await txRows(w.id)).toEqual([]);
+    expect(outcome.moved).toBe(false);
+    expect([outcome.collected, outcome.shortfall, outcome.newBalance].map(Number)).toEqual([
+      0, 50, 0,
+    ]);
+    const rows = await txRows(w.id);
+    expect(rows.map((r) => [Number(r.amount), Number(r.correctionRequestedAmount)])).toEqual([
+      [0, 50],
+    ]);
+  });
+
+  it('collects nothing on a retry after a zero collection, even once the balance is back', async () => {
+    const w = await seedWallet({ balance: '0' });
+    const ref = randomUUID();
+    await reversal(w.userId, '50', ref);
+    await db.drizzle.db
+      .update(walletBalance)
+      .set({ amount: '100' })
+      .where(eq(walletBalance.walletId, w.id));
+
+    const replay = await reversal(w.userId, '50', ref);
+
+    expect(replay.moved).toBe(false);
+    expect([replay.collected, replay.shortfall].map(Number)).toEqual([0, 50]);
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(1);
   });
 
   it('reports a player without a wallet as owing the whole amount', async () => {
@@ -1201,15 +1223,23 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     expect(await txRows(w.id)).toHaveLength(1);
   });
 
-  it('refuses a replay asking less than the first call collected', async () => {
+  it.each([
+    ['less', '30'],
+    ['more', '80'],
+  ])('refuses a replay asking %s than the first call', async (_label, replayAmount) => {
     const w = await seedWallet({ balance: '40' });
     const ref = randomUUID();
     await reversal(w.userId, '50', ref);
+    await db.drizzle.db
+      .update(walletBalance)
+      .set({ amount: '100' })
+      .where(eq(walletBalance.walletId, w.id));
 
-    await expect(reversal(w.userId, '30', ref)).rejects.toMatchObject({
+    await expect(reversal(w.userId, replayAmount, ref)).rejects.toMatchObject({
       name: 'WalletCorrectionRefConflictError',
     });
-    expect(await balanceOf(w.userId)).toBe(0);
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(1);
   });
 
   it('refuses a reference already used by another ledger move', async () => {
