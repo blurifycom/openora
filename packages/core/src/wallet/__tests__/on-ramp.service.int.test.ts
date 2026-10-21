@@ -1441,6 +1441,19 @@ describe('POST /wallet/on-ramp/webhook', () => {
     );
   });
 
+  it("applies an event that names the vendor's own order id instead of the checkout id", async () => {
+    const { service, wallet, audit } = makeService();
+    const row = await openOrder(service);
+    const router = routerWith({ service, wallet }, webhookPort);
+
+    await deliver(router, eventFor(row, { externalId: `ord_${randomUUID()}` }));
+
+    expect((await orderRow(row.id)).status).toBe('completed');
+    expect(audit.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'wallet.on_ramp.webhook_mismatch' }),
+    );
+  });
+
   it('acknowledges but ignores an event for an order the platform never opened', async () => {
     const { service, wallet, audit } = makeService();
     const router = routerWith({ service, wallet }, webhookPort);

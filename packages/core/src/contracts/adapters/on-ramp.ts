@@ -69,8 +69,9 @@ export type OnRampCheckout = z.infer<typeof OnRampCheckoutResultSchema>;
 
 /**
  * `purchaseId` is the id core passed to `createCheckout`, echoed back by the vendor; core falls
- * back to `externalId` when it is absent. `externalId` is the same id `createCheckout` returned;
- * an event whose `externalId` differs from the one recorded on its order is ignored. `walletAddress` (with `walletTag` on a memo chain) is
+ * back to `externalId` when it is absent. `externalId` is the id `createCheckout` returned, or the
+ * vendor's own order id when its webhooks never name the checkout; an event whose `externalId` is
+ * recorded on another order is ignored. `walletAddress` (with `walletTag` on a memo chain) is
  * the address the order delivers to, and `externalCustomerId` the `userId` passed at checkout,
  * when the vendor echoes them. `gatewayId` is the payment provider the player chose. Core
  * validates a parsed event against this schema and ignores one that fails it.
