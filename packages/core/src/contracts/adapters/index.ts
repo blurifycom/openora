@@ -51,6 +51,7 @@ export type {
 export {
   WALLET_COMMANDS,
   WALLET_CORRECTION_DEBIT_TYPES,
+  WalletCorrectionExceedsRoundError,
   WalletCorrectionRefConflictError,
   WalletCorrectionRoundError,
   WalletCorrectionTypeError,

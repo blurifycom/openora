@@ -56,7 +56,9 @@ does not repeat it.
 - **A correction debit is never refused for a short balance.** It collects what the balance holds
   and reports the rest as a shortfall the calling module records as debt. Its ledger row carries
   what was collected and what was asked, a zero collection included, so a retry with the same
-  reference replays the first result and one asking a different amount is refused.
+  reference replays the first result and one asking a different amount is refused. It never takes
+  back more than its round paid: a payout reversal is capped by the round's wins less its earlier
+  reversals, and a re-collected stake by the round's stake reversals less its earlier corrections.
 - **Every bet, win and reversal leg of a round carries its `externalRoundId`.** RG spend nets a
   round's legs by it, and a leg without one never offsets a stake. A correction debit without one
   is refused, since a reversal outside its round would drop out of loss spend, and a plain `debit`

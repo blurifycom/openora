@@ -138,6 +138,37 @@ export class WalletCorrectionRoundError extends Error {
   }
 }
 
+/**
+ * Thrown by `correctionDebit` asking more than its round has left to take back: the round's `win`
+ * credits less its `win_reversal` debits, or its `bet_reversal` credits less its correction `bet`
+ * debits, counting what was collected. Nothing is collected.
+ */
+export class WalletCorrectionExceedsRoundError extends Error {
+  readonly providerName: string;
+  readonly externalRoundId: string;
+  readonly type: WalletCorrectionDebitType;
+  readonly requested: string;
+  readonly available: string;
+
+  constructor(
+    providerName: string,
+    externalRoundId: string,
+    type: WalletCorrectionDebitType,
+    requested: string,
+    available: string,
+  ) {
+    super(
+      `${type} correction of ${requested} exceeds the ${available} round ${providerName}/${externalRoundId} has left`,
+    );
+    this.name = 'WalletCorrectionExceedsRoundError';
+    this.providerName = providerName;
+    this.externalRoundId = externalRoundId;
+    this.type = type;
+    this.requested = requested;
+    this.available = available;
+  }
+}
+
 /** Thrown by `placeWithdrawalHold` for a player with no wallet row, which has nothing to hold. */
 export class WalletHoldWithoutWalletError extends Error {
   readonly userId: string;
@@ -189,7 +220,8 @@ export type WalletCommands = {
   credit(tx: unknown, args: WalletCreditArgs): Promise<WalletCreditOutcome>;
   /**
    * A correction is never refused for a short balance, and skips play eligibility, RG limits and
-   * the bonus engine: it takes back money already paid, it is not a wager.
+   * the bonus engine: it takes back money already paid, it is not a wager. It is refused with
+   * `WalletCorrectionExceedsRoundError` for more than its round paid, a player with no wallet included.
    */
   correctionDebit(
     tx: unknown,
