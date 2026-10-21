@@ -1214,6 +1214,53 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     expect(await correctionRows(w.id)).toHaveLength(0);
   });
 
+  it('audits each row it writes in the caller transaction, and nothing on a replay or refusal', async () => {
+    const auditor = makeAuditWriter();
+    const audited = new WalletCommandsService(eligibility(false), auditor);
+    const w = await seedPaidWallet({ balance: '20' });
+    const correct = (amount: string, providerRefId: string) =>
+      audited.correctionDebit(db.drizzle.db, {
+        userId: w.userId,
+        amount,
+        currency: 'USD',
+        type: 'win_reversal',
+        providerRef: { providerName: 'provider', providerRefId, externalRoundId: 'bet-1' },
+      });
+    const [short, empty] = [randomUUID(), randomUUID()];
+
+    await correct('50', short);
+    await correct('40', empty);
+    await correct('50', short);
+    await expect(correct('60', short)).rejects.toMatchObject({
+      name: 'WalletCorrectionRefConflictError',
+    });
+
+    const rows = await correctionRows(w.id);
+    const rowOf = (ref: string) => rows.find((r) => r.providerRefId === ref)?.id;
+    expect(auditor.recordInTransaction).toHaveBeenCalledTimes(2);
+    const records = auditor.recordInTransaction.mock.calls.map(([tx, record]) => {
+      expect(tx).toBe(db.drizzle.db);
+      return record;
+    });
+    expect(records).toMatchObject([
+      {
+        actorType: 'system',
+        action: 'wallet.correction.debited',
+        resourceType: 'wallet_transaction',
+        resourceId: rowOf(short),
+        after: { userId: w.userId, type: 'win_reversal', requested: '50', providerRefId: short },
+      },
+      { action: 'wallet.correction.debited', resourceId: rowOf(empty), after: { requested: '40' } },
+    ]);
+    const amounts = records.map(({ before, after }) =>
+      [before.balance, after.balance, after.collected, after.shortfall].map(Number),
+    );
+    expect(amounts).toEqual([
+      [20, 0, 20, 30],
+      [0, 0, 0, 40],
+    ]);
+  });
+
   describe('round cap', () => {
     const round = (externalRoundId: string, providerName = 'provider') => ({
       providerName,
