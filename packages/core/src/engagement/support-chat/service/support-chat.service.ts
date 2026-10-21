@@ -38,9 +38,10 @@ export const SupportChatUnavailableError = createDomainError<[]>(
   () => 'Support chat is unavailable',
 );
 
+// Its message reaches the player, so the detail is logged where it is thrown instead.
 export const SupportChatLinkMissingError = createDomainError<[]>(
   'SupportChatLinkMissingError',
-  () => 'support-chat customer link missing after a conflicting insert',
+  () => 'Support chat could not be opened',
 );
 
 export type SupportCustomerReading = Omit<SupportCustomerContext, 'accountStatus' | 'syncedAt'> & {
@@ -90,17 +91,18 @@ const withoutSyncedAt = (context: SupportCustomerContext) =>
   JSON.stringify({ ...context, syncedAt: null });
 
 /**
- * Writes the context, then re-reads it and writes again while it moved, so the last write any
+ * Writes `first`, then re-reads and writes again while the context moved, so the last write any
  * sync makes is checked against the database as it stands after that write. Two syncs racing
  * each other therefore converge on the latest state whichever write lands last. Stops quietly
  * when `read` finds nothing; throws once the cap is spent so the job retries later.
  */
 export async function syncUntilSettled(
+  first: SupportCustomerContext,
   read: () => Promise<SupportCustomerContext | null>,
   write: (context: SupportCustomerContext) => Promise<void>,
 ): Promise<void> {
-  let context = await read();
-  for (let round = 0; context; round++) {
+  let context = first;
+  for (let round = 0; ; round++) {
     await write(context);
     const current = await read();
     if (!current || withoutSyncedAt(current) === withoutSyncedAt(context)) {
@@ -149,20 +151,36 @@ export class SupportChatService {
 
   /** Writes the current context onto the player's vendor customer; a player who never opened the chat is skipped. */
   async syncCustomer(userId: User['id']): Promise<void> {
-    const playerId = await this.deps.identityReader.getPlayerIdByUserId(userId);
-    const customerId = playerId ? await this.findCustomerId(playerId) : null;
-    if (!customerId) {
+    const linked = await this.readLinkedContext(userId);
+    if (!linked) {
       return;
     }
     await syncUntilSettled(
-      () => this.buildContext(userId),
-      (context) => this.deps.provider.syncCustomer(customerId, context),
+      linked.context,
+      async () => (await this.readLinkedContext(userId))?.context ?? null,
+      (context) => this.deps.provider.syncCustomer(linked.customerId, context),
     );
   }
 
-  async buildContext(userId: User['id']): Promise<SupportCustomerContext | null> {
+  /** Whether the player ever opened the chat: only then is there a vendor customer to refresh. */
+  async hasLinkedCustomer(userId: User['id']): Promise<boolean> {
+    const [row] = await this.deps.drizzle.db
+      .select({ playerId: supportChatCustomer.playerId })
+      .from(supportChatCustomer)
+      .innerJoin(player, eq(player.id, supportChatCustomer.playerId))
+      .where(eq(player.userId, userId))
+      .limit(1);
+    return row !== undefined;
+  }
+
+  /** The linked vendor customer and the context read now, in one query; null when not linked. */
+  private async readLinkedContext(userId: User['id']): Promise<{
+    customerId: SupportChatCustomer['providerCustomerId'];
+    context: SupportCustomerContext;
+  } | null> {
     const [row] = await this.deps.drizzle.db
       .select({
+        customerId: supportChatCustomer.providerCustomerId,
         playerId: player.id,
         userId: player.userId,
         username: user.username,
@@ -171,7 +189,8 @@ export class SupportChatService {
         kycStatus: player.kycStatus,
         rankName: promoRankTier.name,
       })
-      .from(player)
+      .from(supportChatCustomer)
+      .innerJoin(player, eq(player.id, supportChatCustomer.playerId))
       .innerJoin(user, eq(user.id, player.userId))
       .leftJoin(promoPlayerRank, eq(promoPlayerRank.userId, player.userId))
       .leftJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
@@ -180,11 +199,15 @@ export class SupportChatService {
     if (!row) {
       return null;
     }
+    const { customerId, ...reading } = row;
     const [exclusions, { activeCurrency }] = await Promise.all([
       this.deps.rgExclusionReader.getExclusionState(userId),
       this.deps.walletReader.getBalances(userId),
     ]);
-    return toSupportCustomerContext({ ...row, ...exclusions, activeCurrency }, new Date());
+    return {
+      customerId,
+      context: toSupportCustomerContext({ ...reading, ...exclusions, activeCurrency }, new Date()),
+    };
   }
 
   private async findCustomerId(
@@ -233,6 +256,7 @@ export class SupportChatService {
     }
     const linked = await this.findCustomerId(playerId);
     if (!linked) {
+      logger.error({ playerId }, 'support-chat link missing after a conflicting insert');
       throw new SupportChatLinkMissingError();
     }
     return linked === created.customerId ? created : this.issueToken(playerId, linked);

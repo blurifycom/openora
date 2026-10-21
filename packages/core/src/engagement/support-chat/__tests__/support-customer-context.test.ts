@@ -89,10 +89,14 @@ describe('toSupportCustomerContext', () => {
 });
 
 describe('syncUntilSettled', () => {
-  it('writes once when the context did not move', async () => {
+  const at = (overrides: Partial<SupportCustomerReading> = {}) =>
+    toSupportCustomerContext(reading(overrides), new Date());
+
+  it('writes once when the context did not move, ignoring a newer syncedAt', async () => {
     const written: unknown[] = [];
     await syncUntilSettled(
-      async () => toSupportCustomerContext(reading(), new Date()),
+      toSupportCustomerContext(reading(), NOW),
+      async () => at(),
       async (context) => {
         written.push(context);
       },
@@ -101,10 +105,11 @@ describe('syncUntilSettled', () => {
   });
 
   it('writes again with the newer context when it moved during the write', async () => {
-    const reads = [reading(), reading({ isSelfExcluded: true }), reading({ isSelfExcluded: true })];
+    const reads = [at({ isSelfExcluded: true }), at({ isSelfExcluded: true })];
     const written: boolean[] = [];
     await syncUntilSettled(
-      async () => toSupportCustomerContext(reads.shift() ?? reading(), NOW),
+      at(),
+      async () => reads.shift() ?? null,
       async (context) => {
         written.push(context.isSelfExcluded);
       },
@@ -117,7 +122,8 @@ describe('syncUntilSettled', () => {
     let writes = 0;
     await expect(
       syncUntilSettled(
-        async () => toSupportCustomerContext(reading({ rankName: `rank-${read++}` }), NOW),
+        at({ rankName: 'rank-start' }),
+        async () => at({ rankName: `rank-${read++}` }),
         async () => {
           writes++;
         },
@@ -126,14 +132,15 @@ describe('syncUntilSettled', () => {
     expect(writes).toBe(1 + MAX_EXTRA_SYNC_ROUNDS);
   });
 
-  it('writes nothing when there is no context to read', async () => {
+  it('stops after the first write when the re-read finds nothing', async () => {
     let writes = 0;
     await syncUntilSettled(
+      at(),
       async () => null,
       async () => {
         writes++;
       },
     );
-    expect(writes).toBe(0);
+    expect(writes).toBe(1);
   });
 });
