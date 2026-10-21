@@ -332,7 +332,15 @@ describe('POST /support-chat/session', () => {
     const res = await other.client.post(SESSION);
     expect(res.status).toBe(500);
     const text = await res.text();
-    for (const leak of ['support_chat_customer', 'duplicate', 'insert', owner.customerId]) {
+    expect(JSON.parse(text)).toMatchObject({ status: 500, message: 'Internal server error' });
+    for (const leak of [
+      'support_chat_customer',
+      'duplicate',
+      'insert',
+      'link missing',
+      'conflicting',
+      owner.customerId,
+    ]) {
       expect(text).not.toContain(leak);
     }
     expect(await linkRows(other.playerId)).toHaveLength(0);
