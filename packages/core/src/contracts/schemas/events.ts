@@ -56,6 +56,7 @@ import {
   SportsbookDebtCauseSchema,
   SportsbookProviderIdSchema,
   SportsbookProviderNameSchema,
+  SportsbookPromotionSchema,
 } from './sportsbook.js';
 import {
   BonusForfeitReasonSchema,
@@ -547,11 +548,15 @@ export const domainEventSchemas = {
 
   // Sportsbook ledger steps, emitted once the step's own transaction committed. The bet
   // transaction row and the wallet ledger rows it wrote are the step's atomic record.
-  'sportsbook.bet.placed': sportsbookBetBase.extend({ stake: MoneyAmountSchema }),
+  'sportsbook.bet.placed': sportsbookBetBase.extend({
+    stake: MoneyAmountSchema,
+    promotion: SportsbookPromotionSchema.optional(),
+  }),
   // `legs` is set when the confirm carried the accepted terms.
   'sportsbook.bet.accepted': sportsbookBetBase.extend({
     potentialPayout: MoneyAmountSchema,
     legs: z.array(SportsbookBetLegSchema).optional(),
+    promotionPotential: MoneyAmountSchema.optional(),
   }),
   'sportsbook.bet.cancelled': sportsbookBetBase.extend({
     reason: SportsbookCancelReasonSchema,
@@ -560,6 +565,7 @@ export const domainEventSchemas = {
   'sportsbook.bet.settled': sportsbookBetBase.extend({
     result: SportsbookBetResultSchema,
     payout: MoneyAmountSchema,
+    promotionAmount: MoneyAmountSchema.optional(),
   }),
   // `shortfall` is what the reopen could not take back and recorded as debt.
   'sportsbook.bet.reopened': sportsbookBetBase.extend({

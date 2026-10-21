@@ -24,7 +24,9 @@ export const PLAYER_IP = '203.0.113.20';
 
 const pluginPath = (file: string) => fileURLToPath(new URL(`../../${file}`, import.meta.url));
 
-export async function bootSportsbookApp(): Promise<E2e> {
+export async function bootSportsbookApp({
+  provider = 'scripted',
+}: { provider?: 'scripted' | 'without-status' } = {}): Promise<E2e> {
   return bootE2e({
     plugins: [
       ...(await loadExtensions()),
@@ -33,7 +35,15 @@ export async function bootSportsbookApp(): Promise<E2e> {
         id: 'testing-exchange-rate-provider',
         path: pluginPath('test-exchange-rate-provider-plugin.ts'),
       },
-      { id: 'testing-sportsbook-provider', path: pluginPath('test-sportsbook-provider-plugin.ts') },
+      provider === 'scripted'
+        ? {
+            id: 'testing-sportsbook-provider',
+            path: pluginPath('test-sportsbook-provider-plugin.ts'),
+          }
+        : {
+            id: 'testing-sportsbook-provider-without-status',
+            path: pluginPath('test-sportsbook-provider-without-status-plugin.ts'),
+          },
     ],
   });
 }
@@ -43,8 +53,9 @@ export const ledgerOf = (app: TestApp): SportsbookLedger => app.container.get(SP
 export async function enableSportsbook(
   app: TestApp,
   overrides: Record<string, unknown> = {},
+  signedIn?: TestClient,
 ): Promise<TestClient> {
-  const admin = await asAdmin(app.app);
+  const admin = signedIn ?? (await asAdmin(app.app));
   const res = await admin.put('/backoffice/sportsbook/config', {
     enabled: true,
     currencies: [

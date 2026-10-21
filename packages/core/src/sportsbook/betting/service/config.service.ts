@@ -12,6 +12,7 @@ import {
 import type { AuditWritePort } from '@openora/core/contracts';
 import {
   SPORTSBOOK_CONFIG_DEFAULTS,
+  SPORTSBOOK_PROMOTIONS_DEFAULTS,
   type SportsbookConfig,
   type UpdateSportsbookConfigInput,
 } from '../contract/index.js';
@@ -33,6 +34,7 @@ const DEFAULT_SPORTSBOOK_CONFIG: SportsbookConfig = {
   currencies: [],
   blockedCountries: [],
   ...SPORTSBOOK_CONFIG_DEFAULTS,
+  promotions: SPORTSBOOK_PROMOTIONS_DEFAULTS,
   updatedAt: null,
 };
 
@@ -48,6 +50,7 @@ function toConfig(row: SportsbookConfigRow | undefined): SportsbookConfig {
     reserveTimeoutSeconds: row.reserveTimeoutSeconds,
     settlementGraceMinutes: row.settlementGraceMinutes,
     sessionTtlMinutes: row.sessionTtlMinutes,
+    promotions: row.promotions,
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -70,7 +73,13 @@ export class SportsbookConfigService {
     if (input.enabled && input.currencies.length === 0) {
       throw new SportsbookConfigInvalidError();
     }
-    return this.write({ actor, action: 'sportsbook.config.set', values: input, reason: null });
+    const { promotions, ...rest } = input;
+    return this.write({
+      actor,
+      action: 'sportsbook.config.set',
+      values: promotions === undefined ? rest : { ...rest, promotions },
+      reason: null,
+    });
   }
 
   async setSuspended(

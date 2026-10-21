@@ -4,6 +4,7 @@ import {
   CountryCodeSchema,
   CurrencyTickerInputSchema,
   CurrencyTickerSchema,
+  DateRangeSchema,
   IdInputSchema,
   LanguageTagSchema,
   MONEY_SCALE,
@@ -17,6 +18,7 @@ import {
   SportsbookProviderBetStatusSchema,
   SportsbookProviderNameSchema,
   SportsbookProviderIdSchema,
+  SportsbookPromotionTypeSchema,
   TimestampSchema,
   UserIdInputSchema,
   UuidSchema,
@@ -57,6 +59,7 @@ export const SPORTSBOOK_FINDING_KINDS = [
   'reserve_unresolved',
   'settlement_overdue',
   'provider_mismatch',
+  'promotion_payout_unusual',
 ] as const;
 export const SportsbookFindingKindSchema = z.enum(SPORTSBOOK_FINDING_KINDS);
 export type SportsbookFindingKind = z.infer<typeof SportsbookFindingKindSchema>;
@@ -83,6 +86,31 @@ export const SPORTSBOOK_CONFIG_DEFAULTS = {
   sessionTtlMinutes: 240,
 } as const;
 
+export const SPORTSBOOK_PROMOTION_FUNDERS = ['operator', 'provider'] as const;
+export const SportsbookPromotionFunderSchema = z.enum(SPORTSBOOK_PROMOTION_FUNDERS);
+export type SportsbookPromotionFunder = z.infer<typeof SportsbookPromotionFunderSchema>;
+
+const atMost = (max: number) => (record: Record<string, unknown>) =>
+  Object.keys(record).length <= max;
+
+export const SportsbookPromotionsConfigSchema = z.object({
+  /** Off by default: a reserve that carries a promotion is refused until the operator opts in. */
+  enabled: z.boolean(),
+  /** The largest promotion-paid stake, valued in USD at reserve; `null` caps none. */
+  maxPromotionStakeUsd: MoneyAmountSchema.nullable(),
+  /** Who funds each promotion type, for the report only; a type left out is the operator's. */
+  funder: z
+    .record(SportsbookPromotionTypeSchema, SportsbookPromotionFunderSchema)
+    .refine(atMost(200), 'at most 200 promotion types'),
+});
+export type SportsbookPromotionsConfig = z.infer<typeof SportsbookPromotionsConfigSchema>;
+
+export const SPORTSBOOK_PROMOTIONS_DEFAULTS = {
+  enabled: false,
+  maxPromotionStakeUsd: null,
+  funder: {},
+} as const satisfies SportsbookPromotionsConfig;
+
 const configFields = {
   enabled: z.boolean(),
   currencies: z
@@ -101,12 +129,17 @@ const configFields = {
 export const SportsbookConfigSchema = z.object({
   ...configFields,
   currencies: z.array(SportsbookCurrencySchema.extend({ currency: CurrencyTickerSchema })),
+  promotions: SportsbookPromotionsConfigSchema,
   suspended: z.boolean(),
   updatedAt: TimestampSchema.nullable(),
 });
 export type SportsbookConfig = z.infer<typeof SportsbookConfigSchema>;
 
-export const UpdateSportsbookConfigInputSchema = z.object(configFields);
+export const UpdateSportsbookConfigInputSchema = z.object({
+  ...configFields,
+  /** Replaces the stored promotion settings whole; omitted leaves them as they are. */
+  promotions: SportsbookPromotionsConfigSchema.optional(),
+});
 export type UpdateSportsbookConfigInput = z.infer<typeof UpdateSportsbookConfigInputSchema>;
 
 export const SportsbookBetSchema = z.object({
@@ -132,6 +165,17 @@ export type SportsbookBet = z.infer<typeof SportsbookBetSchema>;
 export const AdminSportsbookBetSchema = SportsbookBetSchema.extend({
   userId: UuidSchema,
   sessionId: UuidSchema,
+  /** What the player paid of `stake`: zero for a promotion-paid stake. */
+  cashStake: MoneyAmountSchema,
+  voidPayout: MoneyAmountSchema,
+  maxLossRefund: MoneyAmountSchema,
+  promotionType: SportsbookPromotionTypeSchema.nullable(),
+  promotionId: SportsbookProviderIdSchema.nullable(),
+  /** Who funds the promotion, as the funder map named it when the bet was reserved. */
+  promotionFunder: SportsbookPromotionFunderSchema.nullable(),
+  promotionPotential: MoneyAmountSchema.nullable(),
+  /** The part of `payoutTotal` a promotion funded. */
+  promotionPaid: MoneyAmountSchema,
 });
 export type AdminSportsbookBet = z.infer<typeof AdminSportsbookBetSchema>;
 
@@ -142,11 +186,13 @@ export const SportsbookBetTransactionSchema = z.object({
   amount: MoneyAmountSchema,
   potentialPayout: MoneyAmountSchema.nullable(),
   legs: z.array(SportsbookBetLegSchema).nullable(),
+  promotionPotential: MoneyAmountSchema.nullable(),
   betVersion: z.int(),
   result: SportsbookBetResultSchema.nullable(),
   cancelReason: SportsbookCancelReasonSchema.nullable(),
   walletTransactionIds: z.array(UuidSchema),
   balanceAfter: MoneyAmountSchema.nullable(),
+  promotionAmount: MoneyAmountSchema.nullable(),
   createdAt: TimestampSchema,
 });
 export type SportsbookBetTransaction = z.infer<typeof SportsbookBetTransactionSchema>;
@@ -274,6 +320,24 @@ export const AlignSportsbookBetOutputSchema = z.object({
 });
 export type AlignSportsbookBetOutput = z.infer<typeof AlignSportsbookBetOutputSchema>;
 
+export const SportsbookPromotionReportInputSchema = DateRangeSchema;
+export type SportsbookPromotionReportInput = z.infer<typeof SportsbookPromotionReportInputSchema>;
+
+export const SportsbookPromotionReportRowSchema = z.object({
+  type: SportsbookPromotionTypeSchema,
+  funder: SportsbookPromotionFunderSchema,
+  currency: CurrencyTickerSchema,
+  /** Settles in the range that paid a promotion part. */
+  bets: z.int().nonnegative(),
+  promotionPaid: MoneyAmountSchema,
+  /**
+   * The promotion part of settlements reopened in the range, whether or not the player's balance
+   * covered it; what a reopen could not collect is sportsbook debt.
+   */
+  promotionReversed: MoneyAmountSchema,
+});
+export type SportsbookPromotionReportRow = z.infer<typeof SportsbookPromotionReportRowSchema>;
+
 export const sportsbookContract = {
   issueSession: oc
     .route({ method: 'POST', path: '/sportsbook/session' })
@@ -345,6 +409,10 @@ export const sportsbookAdminContract = {
     .route({ method: 'POST', path: '/backoffice/sportsbook/debts/{id}/write-off' })
     .input(WriteOffSportsbookDebtInputSchema)
     .output(SportsbookDebtSchema),
+  promotionReport: oc
+    .route({ method: 'GET', path: '/backoffice/sportsbook/promotions/report' })
+    .input(SportsbookPromotionReportInputSchema)
+    .output(z.array(SportsbookPromotionReportRowSchema)),
 };
 
 export const SPORTSBOOK_RECONCILE_QUEUE = queue('sportsbook.reconcile');

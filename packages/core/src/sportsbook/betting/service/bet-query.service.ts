@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, gte, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
 import { makeNotFoundError, pageToOffset, type DrizzleService } from '@openora/core/server';
 import type { User } from '@openora/core/contracts';
 import type {
@@ -7,6 +7,8 @@ import type {
   ListSportsbookBetsInput,
   SportsbookBet,
   SportsbookBetTransaction,
+  SportsbookPromotionReportInput,
+  SportsbookPromotionReportRow,
 } from '../contract/index.js';
 import {
   sportsbookBet,
@@ -39,7 +41,19 @@ function toBet(row: SportsbookBetRow): SportsbookBet {
 }
 
 export function toAdminBet(row: SportsbookBetRow): AdminSportsbookBet {
-  return { ...toBet(row), userId: row.userId, sessionId: row.sessionId };
+  return {
+    ...toBet(row),
+    userId: row.userId,
+    sessionId: row.sessionId,
+    cashStake: row.cashStake,
+    voidPayout: row.voidPayout,
+    maxLossRefund: row.maxLossRefund,
+    promotionType: row.promotionType,
+    promotionId: row.promotionId,
+    promotionFunder: row.promotionFunder,
+    promotionPotential: row.promotionPotential,
+    promotionPaid: row.promotionPaid,
+  };
 }
 
 function toTransaction(row: SportsbookBetTransactionRow): SportsbookBetTransaction {
@@ -50,9 +64,11 @@ function toTransaction(row: SportsbookBetTransactionRow): SportsbookBetTransacti
     amount: row.amount,
     potentialPayout: row.potentialPayout,
     legs: row.legs,
+    promotionPotential: row.promotionPotential,
     betVersion: row.betVersion,
     result: row.result,
     cancelReason: row.cancelReason,
+    promotionAmount: row.promotionAmount,
     walletTransactionIds: row.walletTransactionIds,
     balanceAfter: row.balanceAfter,
     createdAt: row.createdAt.toISOString(),
@@ -106,6 +122,44 @@ export class SportsbookBetQueryService {
       throw new SportsbookBetNotFoundError(id);
     }
     return { ...toAdminBet(row), transactions: transactions.map(toTransaction) };
+  }
+
+  /**
+   * What promotions paid and reopens took back in the range, by type label and currency. It reads
+   * the append-only transaction rows, so a later reopen never changes a closed period.
+   */
+  async promotionReport({
+    dateFrom,
+    dateTo,
+  }: SportsbookPromotionReportInput): Promise<SportsbookPromotionReportRow[]> {
+    const tx = sportsbookBetTransaction;
+    const partOf = (kind: 'settle' | 'reopen') =>
+      sql<string>`coalesce(sum(${tx.promotionAmount}) filter (where ${tx.kind} = ${kind}), 0)::numeric(38, 18)`;
+    return this.drizzle.db
+      .select({
+        type: sql<SportsbookPromotionReportRow['type']>`${sportsbookBet.promotionType}`,
+        funder: sql<SportsbookPromotionReportRow['funder']>`${sportsbookBet.promotionFunder}`,
+        currency: sportsbookBet.currency,
+        bets: sql<number>`count(*) filter (where ${tx.kind} = 'settle')`.mapWith(Number),
+        promotionPaid: partOf('settle'),
+        promotionReversed: partOf('reopen'),
+      })
+      .from(tx)
+      .innerJoin(sportsbookBet, eq(sportsbookBet.id, tx.betId))
+      .where(
+        and(
+          gt(tx.promotionAmount, '0'),
+          isNotNull(sportsbookBet.promotionType),
+          dateFrom ? gte(tx.createdAt, new Date(dateFrom)) : undefined,
+          dateTo ? lte(tx.createdAt, new Date(dateTo)) : undefined,
+        ),
+      )
+      .groupBy(sportsbookBet.promotionType, sportsbookBet.promotionFunder, sportsbookBet.currency)
+      .orderBy(
+        asc(sportsbookBet.promotionType),
+        asc(sportsbookBet.promotionFunder),
+        asc(sportsbookBet.currency),
+      );
   }
 
   private async list({ page, limit, status }: ListSportsbookBetsInput, filters: SQL[]) {

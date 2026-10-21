@@ -1579,4 +1579,61 @@ describe('sportsbook debt routes', () => {
       ).status,
     ).toBe(409);
   });
+
+  it('counts a collected debt back into the loss its reopened win took out', async () => {
+    const player = await fundedPlayer(app, '10');
+    const limit = await admin.put(`/compliance/players/${player.userId}/limits`, {
+      type: 'loss',
+      amount: '1000',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+      reason: 'loss limit for the debt check',
+      confirm: true,
+    });
+    expect(limit.status).toBe(200);
+    const lossUsed = async () => {
+      const limits = await json<{ type: string; used: string | null }[]>(
+        await player.client.get('/compliance/limits'),
+      );
+      return limits.find((l) => l.type === 'loss')?.used;
+    };
+    const won = await acceptedBet(app, player, { stake: '10', potentialPayout: '100' });
+    expectApplied(
+      await ledgerOf(app).settle({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: won.args.providerBetId,
+        result: 'won',
+        payout: '100',
+      }),
+    );
+    const withdrawal = await player.client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '100',
+      currency: 'USD',
+    });
+    expect(withdrawal.status).toBe(200);
+    expect(await balanceOf(app, player.userId)).toBe(money(0));
+    expectApplied(
+      await ledgerOf(app).reopen({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: won.args.providerBetId,
+      }),
+    );
+    const debt = await debtOf(player.userId);
+    expect(debt.outstanding).toBe(money(100));
+
+    await deposit(player.client, '100');
+    expect(
+      (
+        await admin.post(`/backoffice/sportsbook/debts/${debt.id}/collect`, {
+          idempotencyKey: randomUUID(),
+        })
+      ).status,
+    ).toBe(200);
+
+    expect(await lossUsed()).toBe(money(10));
+  });
 });
