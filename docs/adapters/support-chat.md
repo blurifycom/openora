@@ -60,11 +60,12 @@ strict, so a field reaches the vendor only when it is added to the contract on p
    request path.
 4. The sync job writes the context for a linked player. It retries with backoff for about four
    hours and logs an error when it gives up.
-5. Besides every chat open, a linked player's context is refreshed when a self-exclusion or
-   cooling-off starts, ends or is lifted, when the account status changes or the account is
-   closed or reopened, when the KYC status or rank changes, and when the email changes. A player
-   who never opened the chat gets no sync. A username change has no event today, so it reaches
-   the vendor on the player's next chat open; the same holds for an active-currency change.
+5. Besides every chat open, a linked player's context is refreshed when a self-exclusion starts
+   or is lifted, when a cooling-off starts, ends or is lifted, when the account status changes or
+   the account is closed or reopened, when the KYC status or rank changes, and when the email
+   changes. A player who never opened the chat gets no sync. A username change has no event today,
+   so it reaches the vendor on the player's next chat open; the same holds for an active-currency
+   change.
 
 ## Unbound
 
