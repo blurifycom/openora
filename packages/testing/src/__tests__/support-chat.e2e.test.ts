@@ -22,11 +22,10 @@ import { player } from '@openora/core/pam/schema/profile';
 import { promoPlayerRank } from '@openora/core/promo/schema/gamification';
 import {
   asAdmin,
-  bootTestApp,
+  bootE2e,
   clearCapturedEmails,
+  closeE2e,
   registerAndMaterializePlayer,
-  seedMinimal,
-  setupTestDb,
   waitForEmail,
   type TestApp,
   type TestClient,
@@ -184,21 +183,16 @@ const syncJobsFor = (spy: ReturnType<typeof watchEnqueues>, userId: string) =>
   );
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-  db = await setupTestDb();
   const extensions = await loadExtensions();
-  testApp = await bootTestApp({
+  ({ db, app: testApp } = await bootE2e({
     plugins: [...extensions, { id: 'testing-support-chat', path: supportChatPluginPath }],
-    databaseUrl: db.url,
-  });
-  await seedMinimal(testApp.container, { playerCount: 0 });
+  }));
   admin = await asAdmin(testApp.app);
   // Its own database: on a shared one its outbox relay would claim the other app's events.
-  unconfiguredDb = await setupTestDb();
-  unconfiguredApp = await bootTestApp({ plugins: extensions, databaseUrl: unconfiguredDb.url });
+  ({ db: unconfiguredDb, app: unconfiguredApp } = await bootE2e({
+    plugins: extensions,
+    seed: false,
+  }));
   resetSupportChat();
 }, 60_000);
 
@@ -209,10 +203,8 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await unconfiguredApp?.close();
-  await testApp?.close();
-  await db?.dispose();
-  await unconfiguredDb?.dispose();
+  await closeE2e({ app: unconfiguredApp, db: unconfiguredDb });
+  await closeE2e({ app: testApp, db });
 });
 
 describe('POST /support-chat/session', () => {
