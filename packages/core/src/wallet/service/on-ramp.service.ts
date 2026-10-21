@@ -375,7 +375,9 @@ export class OnRampService {
       );
       return;
     }
-    const mismatch = webhookMismatch(order, event);
+    const mismatch = (await this.namesAnotherOrder(order, event.externalId))
+      ? 'order'
+      : webhookMismatch(order, event);
     if (mismatch) {
       logger.warn(
         { purchaseId: order.id, externalId: event.externalId, mismatch },
@@ -561,6 +563,26 @@ export class OnRampService {
   }
 
   /**
+   * Whether `externalId` is the vendor id recorded on a different order. A vendor may name the
+   * order on its webhooks by an id of its own rather than the checkout id `createCheckout`
+   * returned, so an id no other order holds is not a mismatch.
+   */
+  private async namesAnotherOrder(
+    order: WalletOnRampOrder,
+    externalId: OnRampWebhookEvent['externalId'],
+  ): Promise<boolean> {
+    if (order.externalId === externalId) {
+      return false;
+    }
+    const [other] = await this.drizzle.db
+      .select({ id: walletOnRampOrder.id })
+      .from(walletOnRampOrder)
+      .where(eq(walletOnRampOrder.externalId, externalId))
+      .limit(1);
+    return other !== undefined;
+  }
+
+  /**
    * The order an earlier attempt under the same key opened, never a second one. A pending order
    * with no checkout recorded is handed back to be opened again; a failed one has nothing to hand
    * back, and the client retries under a fresh key.
@@ -714,15 +736,10 @@ export class OnRampService {
   }
 }
 
-type WebhookMismatch = 'order' | 'customer' | 'wallet';
-
 function webhookMismatch(
   order: WalletOnRampOrder,
   event: OnRampWebhookEvent,
-): WebhookMismatch | null {
-  if (order.externalId !== null && order.externalId !== event.externalId) {
-    return 'order';
-  }
+): 'customer' | 'wallet' | null {
   if (event.externalCustomerId !== undefined && event.externalCustomerId !== order.userId) {
     return 'customer';
   }

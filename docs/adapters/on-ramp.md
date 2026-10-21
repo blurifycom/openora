@@ -22,9 +22,9 @@ route refuses and nothing else changes.
   which also fixes the price. Quotes are estimates for display; an empty list is valid and does not
   block a checkout.
 - **Echo the purchase id.** `createCheckout` carries core's `purchaseId`. Send it back on every
-  status update; core falls back to the vendor's `externalId` when it is missing. The webhook's
-  `externalId` is the same order id `createCheckout` returned; an event whose `externalId`
-  disagrees with the one recorded on its order is ignored and audited as a mismatch.
+  status update; core falls back to the vendor's `externalId` when it is missing, so a vendor whose
+  webhooks name its own order id rather than the checkout id must echo the purchase id. An event
+  whose `externalId` is recorded on another order is ignored and audited as a mismatch.
 - **Return an https checkout URL and its expiry.** `createCheckout` answers the vendor's order id,
   an https `checkoutUrl` and `expiresAt`, the ISO timestamp after which the vendor stops taking
   payment on it. Core validates the answer; anything else, a plain-http URL included, fails the
