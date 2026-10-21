@@ -35,7 +35,7 @@ import {
   type RateLimiterAdapter,
   type User,
 } from '@openora/core/contracts';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import type { OnRampCheckoutResponse, OnRampOrder } from '../contract/index.js';
 import { walletOnRampOrder, type WalletOnRampOrder } from '../schema/index.js';
 import {
@@ -336,7 +336,10 @@ export class OnRampService {
       try {
         const reported = await this.vendorStatus(order.id, order.externalId);
         if (reported !== null) {
-          status = await this.transition(order.id, { status: reported });
+          status = await this.transition(order.id, {
+            status: reported,
+            externalId: order.externalId,
+          });
         }
       } catch (err) {
         logger.warn({ err, purchaseId }, 'on-ramp status refresh failed - answering stored status');
@@ -353,8 +356,9 @@ export class OnRampService {
   }
 
   /**
-   * Records a vendor status update on its order. An unknown order, or one whose vendor id,
-   * customer or delivery address disagrees with the event, is logged and dropped - the vendor
+   * Records a vendor status update on its order. An unknown order, an event naming the vendor id
+   * recorded on another order, or one whose customer or delivery address disagrees with the
+   * order, is logged and dropped - the vendor
    * still gets a success, so a forged or misrouted event learns nothing. So is an event the
    * adapter parsed into something malformed: refusing it would only have the vendor redeliver it
    * forever. A redelivery writes nothing. Never credits: a `completed` order is paid by the
@@ -394,6 +398,7 @@ export class OnRampService {
     }
     await this.transition(order.id, {
       status: event.status,
+      externalId: event.externalId,
       txHash: event.txHash,
       gatewayId: event.gatewayId,
       cryptoAmount: event.cryptoAmount,
@@ -404,12 +409,15 @@ export class OnRampService {
    * Applies a vendor report to the order under a row lock and audits it, in one transaction. The
    * status only moves forward along `NEXT_STATUSES`; a report of the current status still records
    * the delivery details the order is still missing, never replacing one, so a late redelivery
-   * cannot overwrite a newer one. Anything else is out of order and writes nothing. Returns the
-   * order's status afterwards.
+   * cannot overwrite a newer one. Anything else is out of order and writes nothing. The audit row
+   * carries the vendor id that reported it. Returns the order's status afterwards.
    */
   private async transition(
     purchaseId: WalletOnRampOrder['id'],
-    next: Pick<OnRampWebhookEvent, 'status' | 'txHash' | 'gatewayId' | 'cryptoAmount'>,
+    next: Pick<
+      OnRampWebhookEvent,
+      'status' | 'externalId' | 'txHash' | 'gatewayId' | 'cryptoAmount'
+    >,
   ): Promise<OnRampStatus> {
     const result = await this.drizzle.db.transaction(async (tx) => {
       const [locked] = await tx
@@ -460,6 +468,7 @@ export class OnRampService {
         },
         after: {
           userId: updated.userId,
+          externalId: next.externalId,
           from: locked.status,
           to: updated.status,
           txHash: updated.txHash,
@@ -577,7 +586,7 @@ export class OnRampService {
     const [other] = await this.drizzle.db
       .select({ id: walletOnRampOrder.id })
       .from(walletOnRampOrder)
-      .where(eq(walletOnRampOrder.externalId, externalId))
+      .where(and(eq(walletOnRampOrder.externalId, externalId), ne(walletOnRampOrder.id, order.id)))
       .limit(1);
     return other !== undefined;
   }

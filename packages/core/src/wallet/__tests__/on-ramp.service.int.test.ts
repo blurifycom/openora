@@ -1290,6 +1290,7 @@ describe('POST /wallet/on-ramp/webhook', () => {
         resourceId: row.id,
         after: {
           userId: row.userId,
+          externalId: row.externalId,
           from: 'pending',
           to: 'completed',
           txHash: '0xabc',
