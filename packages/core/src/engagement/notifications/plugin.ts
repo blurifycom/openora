@@ -538,6 +538,7 @@ export function buildRgLimitAdminUpdatedNotification(
       previousMinutes: p.previousMinutes === null ? null : String(p.previousMinutes),
       amount: p.amount,
       minutes: p.minutes === null ? null : String(p.minutes),
+      currency: p.currency,
     },
   });
 }

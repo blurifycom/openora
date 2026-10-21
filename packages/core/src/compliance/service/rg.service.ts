@@ -477,6 +477,7 @@ export class RgService {
           minutes: input.minutes,
           previousAmount: existing?.amount ?? null,
           previousMinutes: existing?.minutes ?? null,
+          currency: toWireCurrency(written.type, written.currency),
           initiatedBy,
           reason: input.reason,
           ip: meta?.ip ?? null,
