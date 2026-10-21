@@ -1,4 +1,5 @@
-import { eq } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import {
   createDomainError,
   createLogger,
@@ -25,6 +26,8 @@ import { promoPlayerRank, promoRankTier } from '@openora/core/promo/schema/gamif
 import { supportChatCustomer, type SupportChatCustomer } from '../schema/index.js';
 
 const logger = createLogger('support-chat');
+
+const lowestTier = alias(promoRankTier, 'lowest_tier');
 
 export const SupportChatPlayerNotFoundError = makeNotFoundError('Player');
 
@@ -187,7 +190,12 @@ export class SupportChatService {
         email: user.email,
         playerStatus: player.status,
         kycStatus: player.kycStatus,
-        rankName: promoRankTier.name,
+        // A player with no tier yet sits on the ladder's bottom rung, as the rank read shows it.
+        rankName: sql<string | null>`coalesce(${promoRankTier.name}, (${this.deps.drizzle.db
+          .select({ name: lowestTier.name })
+          .from(lowestTier)
+          .orderBy(asc(lowestTier.position))
+          .limit(1)}))`,
       })
       .from(supportChatCustomer)
       .innerJoin(player, eq(player.id, supportChatCustomer.playerId))
