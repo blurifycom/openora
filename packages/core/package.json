@@ -728,6 +728,26 @@
       "types": "./dist/promo/gamification/seed/index.d.ts",
       "import": "./dist/promo/gamification/seed/index.js",
       "default": "./dist/promo/gamification/seed/index.js"
+    },
+    "./engagement/contracts/support-chat": {
+      "types": "./dist/engagement/support-chat/contract/index.d.ts",
+      "import": "./dist/engagement/support-chat/contract/index.js",
+      "default": "./dist/engagement/support-chat/contract/index.js"
+    },
+    "./engagement/schema/support-chat": {
+      "types": "./dist/engagement/support-chat/schema/index.d.ts",
+      "import": "./dist/engagement/support-chat/schema/index.js",
+      "default": "./dist/engagement/support-chat/schema/index.js"
+    },
+    "./engagement/plugins/support-chat": {
+      "types": "./dist/engagement/support-chat/plugin.d.ts",
+      "import": "./dist/engagement/support-chat/plugin.js",
+      "default": "./dist/engagement/support-chat/plugin.js"
+    },
+    "./engagement/migrate/support-chat": {
+      "types": "./dist/engagement/support-chat/migrate.d.ts",
+      "import": "./dist/engagement/support-chat/migrate.js",
+      "default": "./dist/engagement/support-chat/migrate.js"
     }
   },
   "publishConfig": {
