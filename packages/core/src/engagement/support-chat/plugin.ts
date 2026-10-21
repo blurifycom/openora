@@ -44,7 +44,6 @@ const SYNC_TOPICS = [
   'compliance.kyc.updated',
   'promo.rank.changed',
   'identity.email.changed',
-  'identity.profile.updated',
 ] as const satisfies readonly DomainEventName[];
 
 export default {
@@ -79,7 +78,9 @@ export default {
             { ...detail, userId: payload.userId, attempt },
             'support-chat sync attempt failed',
           );
-          throw err;
+          throw err instanceof SupportChatProviderError
+            ? new SupportChatProviderError(err.reason)
+            : err;
         });
       },
       onDeadLetter: ({ payload }) => {
