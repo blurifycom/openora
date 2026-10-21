@@ -8,6 +8,7 @@ import {
   JOB_QUEUE,
   RG_EXCLUSION_READER,
   SUPPORT_CHAT_PROVIDER,
+  SupportCustomerContextSchema,
   WALLET_READER,
   queue,
 } from '@openora/core/contracts';
@@ -346,6 +347,74 @@ describe('support context reads responsible gambling the way compliance does', (
         .where(eq(player.id, p.playerId));
     });
     expect(context).toMatchObject({ isSelfExcluded: true, accountStatus: 'closed' });
+  });
+});
+
+describe('support-chat session edge cases and RG attacks', () => {
+  it('asks the vendor for a new customer first and for the linked one after, and stamps a recent syncedAt', async () => {
+    const p = await newPlayer();
+    const customerId = await openSession(p.client);
+    await openSession(p.client);
+    await waitForSyncs(customerId, 1);
+    const requests = readSupportChatCalls().tokenRequests;
+    const mine = requests.filter((r) => r.customerId === customerId);
+    expect(mine).toHaveLength(1);
+    expect(requests.filter((r) => r.customerId === undefined).length).toBeGreaterThanOrEqual(1);
+    expect(requests.findIndex((r) => r.customerId === customerId)).toBeGreaterThan(
+      requests.findIndex((r) => r.customerId === undefined),
+    );
+    const syncedAt = Date.parse(String(lastSyncFor(customerId)?.context.syncedAt));
+    expect(Math.abs(Date.now() - syncedAt)).toBeLessThan(60_000);
+  });
+
+  it('has a sent context the strict schema accepts and rejects once any extra key is added', async () => {
+    const p = await newPlayer();
+    const customerId = await openSession(p.client);
+    await waitForSyncs(customerId, 1);
+    const context = lastSyncFor(customerId)?.context;
+    expect(SupportCustomerContextSchema.safeParse(context).success).toBe(true);
+    expect(SupportCustomerContextSchema.safeParse({ ...context, balance: 1 }).success).toBe(false);
+  });
+
+  it('gives an admin without a player profile a refusal and no link', async () => {
+    const res = await admin.post(SESSION);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+  });
+
+  it('treats a lifted cooling-off with a future expiry as not cooling off and an active one as cooling off', async () => {
+    const lifted = await contextAfter((p) =>
+      insertExclusion({
+        userId: p.userId,
+        kind: 'cooling_off',
+        status: 'lifted',
+        expiresAt: new Date(Date.now() + 3_600_000),
+        liftedAt: new Date(),
+      }).then(() => undefined),
+    );
+    expect(lifted).toMatchObject({ isCoolingOff: false });
+    const active = await contextAfter((p) =>
+      insertExclusion({
+        userId: p.userId,
+        kind: 'cooling_off',
+        status: 'active',
+        expiresAt: new Date(Date.now() + 3_600_000),
+      }).then(() => undefined),
+    );
+    expect(active).toMatchObject({ isCoolingOff: true, isSelfExcluded: false });
+  });
+
+  it('does not bind an expired-status self-exclusion', async () => {
+    const context = await contextAfter((p) =>
+      insertExclusion({
+        userId: p.userId,
+        kind: 'self_exclusion',
+        status: 'expired',
+        isPermanent: false,
+        expiresAt: HOUR_AGO(),
+      }).then(() => undefined),
+    );
+    expect(context).toMatchObject({ isSelfExcluded: false, accountStatus: 'active' });
   });
 });
 
