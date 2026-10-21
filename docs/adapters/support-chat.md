@@ -36,7 +36,8 @@ strict, so a field reaches the vendor only when it is added to the contract on p
   non-positive lifetime or anything else malformed answers the player as unavailable.
 - **Throw the port's provider error on a refusal, an unreachable vendor or an unexpected
   answer,** with a short reason. The reason goes to the log only; the player gets a fixed
-  "unavailable" refusal. Never put a token, a request body or an unmasked email in it.
+  "unavailable" refusal. Never put a token, a request body or an unmasked email in it, and do
+  not attach a raw HTTP error as its `cause`: it can carry headers and bodies.
 - **Make the context sync idempotent.** The same context may be written more than once, and two
   syncs for one player may run at once. Core re-reads the context after each write and writes
   again when it moved, so the last write converges on the database's latest state; the adapter
@@ -57,10 +58,13 @@ strict, so a field reaches the vendor only when it is added to the contract on p
    fails the open instead of merging two players.
 3. Core enqueues a context sync and answers the token at once; vendor writes never sit on the
    request path.
-4. The sync job writes the context for a linked player and skips a player who never opened the
-   chat. It retries with backoff for about four hours and logs an error when it gives up. Any
-   change to the player's responsible-gambling state, account status, KYC status, rank, email or
-   profile enqueues it again.
+4. The sync job writes the context for a linked player. It retries with backoff for about four
+   hours and logs an error when it gives up.
+5. Besides every chat open, a linked player's context is refreshed when a self-exclusion or
+   cooling-off starts, ends or is lifted, when the account status changes or the account is
+   closed or reopened, when the KYC status or rank changes, and when the email changes. A player
+   who never opened the chat gets no sync. A username or active-currency change emits no event,
+   so it reaches the vendor on the player's next chat open.
 
 ## Unbound
 

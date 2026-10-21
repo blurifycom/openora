@@ -8,7 +8,10 @@ import {
   SUPPORT_CHAT_PROVIDER,
   UuidSchema,
   WALLET_READER,
+  SupportChatProviderError,
+  domainEventSchemas,
   queue,
+  type DomainEventName,
   type JobQueueAdapter,
   type Uuid,
 } from '@openora/core/contracts';
@@ -27,7 +30,8 @@ const SYNC_ENQUEUE_OPTIONS = {
   backoff: { type: 'exponential', delayMs: 30_000 },
 } as const;
 
-// Every change to what support staff see refreshes the vendor customer.
+// What refreshes a linked player's context besides a chat open. Username and active-currency
+// changes emit no event; the next open picks them up.
 const SYNC_TOPICS = [
   'rg.self_exclusion.activated',
   'rg.self_exclusion.lifted',
@@ -41,17 +45,16 @@ const SYNC_TOPICS = [
   'promo.rank.changed',
   'identity.email.changed',
   'identity.profile.updated',
-] as const;
+] as const satisfies readonly DomainEventName[];
 
 export default {
   id: 'support-chat',
-  dependsOn: ['identity', 'wallet', 'compliance', 'audit'],
+  dependsOn: ['identity', 'profile', 'gamification', 'wallet', 'compliance', 'audit'],
   register(ctx) {
     // Set by the router factory, which runs after subscriptions are wired but before any
     // event or job arrives (see create-app.ts boot order).
     let jobQueue: JobQueueAdapter | null = null;
     let service: SupportChatService | null = null;
-    let providerBound = false;
 
     const scheduleSync = async (userId: Uuid) => {
       if (!jobQueue) {
@@ -70,7 +73,12 @@ export default {
           return;
         }
         await service.syncCustomer(payload.userId).catch((err: unknown) => {
-          logger.warn({ err, userId: payload.userId, attempt }, 'support-chat sync attempt failed');
+          // A provider error carries its short reason only: its `cause` may hold vendor detail.
+          const detail = err instanceof SupportChatProviderError ? { reason: err.reason } : { err };
+          logger.warn(
+            { ...detail, userId: payload.userId, attempt },
+            'support-chat sync attempt failed',
+          );
           throw err;
         });
       },
@@ -82,16 +90,28 @@ export default {
       },
     });
 
-    // A handler throws rather than drop the event when the queue is not ready, so the broker
-    // logs it and redelivers (ADR-0045).
-    for (const topic of SYNC_TOPICS) {
-      ctx.events.on(topic, async (payload) => {
-        const parsed = SyncJobSchema.safeParse(payload);
-        if (!parsed.success || !providerBound) {
+    // Throws while the queue is not bound yet, so the broker redelivers the event rather than
+    // it being marked handled (ADR-0045). With no provider bound, or a player who never opened
+    // the chat, there is nothing to refresh.
+    const refreshOn =
+      <K extends (typeof SYNC_TOPICS)[number]>(topic: K) =>
+      async (payload: unknown) => {
+        const parsed = domainEventSchemas[topic].safeParse(payload);
+        if (!parsed.success) {
+          logger.error({ topic }, 'support-chat refresh skipped - event payload failed validation');
           return;
         }
-        await scheduleSync(parsed.data.userId);
-      });
+        if (!jobQueue) {
+          throw new Error(`support-chat refresh for '${topic}' - job queue not bound yet`);
+        }
+        const { userId } = parsed.data;
+        if (!service || !(await service.hasLinkedCustomer(userId))) {
+          return;
+        }
+        await scheduleSync(userId);
+      };
+    for (const topic of SYNC_TOPICS) {
+      ctx.events.on(topic, refreshOn(topic));
     }
 
     ctx.routers.add('supportChat', (c) => {
@@ -103,7 +123,6 @@ export default {
         );
         return createSupportChatRouter(null, limiter);
       }
-      providerBound = true;
       service = new SupportChatService({
         drizzle: c.get(DRIZZLE),
         audit: c.get(AUDIT_WRITER),
