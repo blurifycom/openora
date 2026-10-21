@@ -16,6 +16,7 @@ import {
   registerAndMaterializePlayer,
   asAdmin,
   seedMinimal,
+  type BootTestAppConfig,
   type TestDb,
   type TestApp,
 } from '../index.js';
@@ -30,7 +31,10 @@ import {
  * test with a mocked DB cannot: real routing, real authz, real DB state, and the
  * real (fire-and-forget) event -> audit pipeline.
  *
- * Two app instances share one database:
+ * Two app instances, each on its own database: an app's outbox relay publishes every
+ * pending event in its database into its own broker, so on a shared database an event
+ * written through `appGated` could be handled only by `appDefault`, which has no re-KYC
+ * thresholds.
  * - `appDefault` boots the stock stack (MockKycAdapter, no PLATFORM_CONFIG bound - the
  *   withdrawal gate is therefore off) to prove the default submit/admin-read path.
  * - `appGated` adds a test-only overlay (fixtures/test-kyc-config-plugin.ts) binding
@@ -44,7 +48,8 @@ import {
 
 const KYC_WEBHOOK_SECRET = 'e2e-kyc-webhook-secret';
 
-let db: TestDb;
+let dbDefault: TestDb;
+let dbGated: TestDb;
 let appDefault: TestApp;
 let appGated: TestApp;
 
@@ -90,6 +95,15 @@ async function seedLegacyVerifiedStatus(container: Container<CoreTokenCatalog>, 
     .where(eq(player.userId, userId));
 }
 
+async function bootSeededApp(
+  plugins: BootTestAppConfig['plugins'],
+  databaseUrl: string,
+): Promise<TestApp> {
+  const app = await bootTestApp({ plugins, databaseUrl });
+  await seedMinimal(app.container, { playerCount: 0 });
+  return app;
+}
+
 beforeAll(async () => {
   process.env['KYC_WEBHOOK_SECRET'] = KYC_WEBHOOK_SECRET;
   process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
@@ -97,28 +111,26 @@ beforeAll(async () => {
   process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
   process.env['NODE_ENV'] ??= 'test';
 
-  db = await setupTestDb();
   const basePlugins = await loadExtensions();
 
-  appDefault = await bootTestApp({ plugins: basePlugins, databaseUrl: db.url });
+  dbDefault = await setupTestDb();
+  appDefault = await bootSeededApp(basePlugins, dbDefault.url);
 
   const fixturePath = fileURLToPath(
     new URL('./fixtures/test-kyc-config-plugin.ts', import.meta.url),
   );
-  appGated = await bootTestApp({
-    plugins: [...basePlugins, { id: 'test-kyc-config', path: fixturePath }],
-    databaseUrl: db.url,
-  });
-
-  // Both apps share one database - seed the admin fixture once via appDefault's
-  // container; appGated's asAdmin() logs into the same underlying `user` row.
-  await seedMinimal(appDefault.container, { playerCount: 0 });
+  dbGated = await setupTestDb();
+  appGated = await bootSeededApp(
+    [...basePlugins, { id: 'test-kyc-config', path: fixturePath }],
+    dbGated.url,
+  );
 }, 60_000);
 
 afterAll(async () => {
   await appDefault?.close();
   await appGated?.close();
-  await db?.dispose();
+  await dbDefault?.dispose();
+  await dbGated?.dispose();
 });
 
 describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {

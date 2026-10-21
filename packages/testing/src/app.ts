@@ -53,8 +53,12 @@ export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'igaming'> & {
  * BullMQ, Redis cache, Redis rate limiter and Redis Pub/Sub - so event fan-out, job
  * retries, throttling and realtime push are exercised for real rather than through
  * an in-process stand-in. Each booted app claims its own Redis logical database, so
- * several apps in one test file cannot compete for each other's events, jobs, cache
- * entries or channels.
+ * several apps in one test file cannot compete for each other's jobs, cache entries or
+ * channels. Outbox events (`emitInTransaction`) are the exception when two apps share a
+ * database: every app's relay publishes the pending events of its database into its own
+ * broker, so such an event reaches the handlers of whichever app claimed it first, not
+ * of the app that wrote it. Boot each app on its own `setupTestDb()` when their handlers
+ * behave differently.
  *
  * The broker reads from `startId: '0'` here, unlike production's `$`: a test acts
  * within milliseconds of boot, and a group created lazily at `$` would silently drop
