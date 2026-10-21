@@ -6,24 +6,23 @@
  * export, so the bonus module's own transaction and audit-row shape stay its own.
  */
 import type { ClientMeta } from '../schemas/common.js';
+import type { DomainEventPayload } from '../schemas/events.js';
 import type { BonusForfeitReason } from '../schemas/promo.js';
 import { createToken, type Token } from './token.js';
 
+type ForfeitedEvent = DomainEventPayload<'promo.bonus.forfeited'>;
+
+export type BonusForfeitedGrant = Pick<
+  ForfeitedEvent,
+  'grantId' | 'userId' | 'currency' | 'forfeitedAmount'
+>;
+
 export type BonusForfeitOutcome =
-  | { ok: true; grantId: string; userId: string; currency: string; forfeitedAmount: string }
+  | ({ ok: true } & BonusForfeitedGrant)
   | { ok: false; reason: 'not_found' | 'not_forfeitable' };
 
-export type BonusForfeitedGrant = {
-  grantId: string;
-  userId: string;
-  currency: string;
-  forfeitedAmount: string;
-};
-
-export type BonusForfeitHeldArgs = {
-  userId: string;
-  reason: BonusForfeitReason;
-  actor: { id: string; isAdmin: boolean };
+export type BonusForfeitHeldArgs = Pick<ForfeitedEvent, 'userId' | 'reason'> & {
+  actor: { id: ForfeitedEvent['userId']; isAdmin: boolean };
   note: string;
   meta?: ClientMeta | undefined;
 };

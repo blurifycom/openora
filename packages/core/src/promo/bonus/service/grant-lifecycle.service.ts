@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm';
 import {
   type AuditWritePort,
+  type BonusForfeitHeldArgs,
   type BonusForfeitReason,
   type ClientMeta,
   type Uuid,
@@ -111,19 +112,7 @@ export class GrantLifecycleService {
    */
   async forfeitHeld(
     tx: DrizzleTx,
-    {
-      userId,
-      reason,
-      actor,
-      note,
-      meta,
-    }: {
-      userId: Uuid;
-      reason: BonusForfeitReason;
-      actor: { id: Uuid; isAdmin: boolean };
-      note: string;
-      meta?: ClientMeta | undefined;
-    },
+    { userId, reason, actor, note, meta }: BonusForfeitHeldArgs,
   ): Promise<ClosedGrant[]> {
     const held = await tx
       .select({ id: promoGrant.id })
