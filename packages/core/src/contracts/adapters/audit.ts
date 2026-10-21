@@ -90,6 +90,7 @@ export type DirectAuditAction =
   | 'wallet.withdrawal.held'
   | 'wallet.withdrawal_hold.placed'
   | 'wallet.withdrawal_hold.released'
+  | 'wallet.correction.debited'
   | 'chat.cooldown.created'
   | 'chat.cooldown.lifted'
   | 'chat.cooldown.expired'

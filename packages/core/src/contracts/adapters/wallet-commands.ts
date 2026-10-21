@@ -195,8 +195,8 @@ export type WalletCorrectionDebitArgs = {
 /**
  * Collects min(real balance, amount); `shortfall` is the rest, which the caller records as debt.
  * `moved: false` means nothing was collected now: a zero balance, or a replayed `providerRef`, which
- * returns what the first call collected. Every call writes its ledger row, a zero one included, so
- * a retry replays it instead of collecting again.
+ * returns what the first call collected. Every call writes its ledger row and its audit row in
+ * `tx`, a zero one included, so a retry replays it instead of collecting again.
  */
 export type WalletCorrectionDebitOutcome =
   | {

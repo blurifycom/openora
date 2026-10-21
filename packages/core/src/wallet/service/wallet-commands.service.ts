@@ -538,7 +538,7 @@ export class WalletCommandsService implements WalletCommands {
 
     // A savepoint, so a reference another wallet takes meanwhile puts the collected balance back
     // even when the caller catches the conflict and commits.
-    return txn.transaction(async (sp) => {
+    const { outcome, ledgerRowId } = await txn.transaction(async (sp) => {
       const taken = await collectWalletBalance(sp, row.id, key, amount);
       const collected = taken?.collected ?? '0';
 
@@ -561,22 +561,43 @@ export class WalletCommandsService implements WalletCommands {
       }
 
       const shortfall = moneySubtract(amount, collected);
-      if (!taken) {
-        return {
-          moved: false,
-          collected,
-          shortfall,
-          newBalance: await readWalletBalance(sp, row.id, key),
-        };
-      }
-      return {
-        moved: true,
-        transactionId: ledgerRow.id,
-        collected,
-        shortfall,
-        newBalance: taken.balance,
-      };
+      const result: WalletCorrectionDebitOutcome = taken
+        ? {
+            moved: true,
+            transactionId: ledgerRow.id,
+            collected,
+            shortfall,
+            newBalance: taken.balance,
+          }
+        : {
+            moved: false,
+            collected,
+            shortfall,
+            newBalance: await readWalletBalance(sp, row.id, key),
+          };
+      return { outcome: result, ledgerRowId: ledgerRow.id };
     });
+
+    await this.audit.recordInTransaction(txn, {
+      actorType: 'system',
+      action: 'wallet.correction.debited',
+      resourceType: 'wallet_transaction',
+      resourceId: ledgerRowId,
+      before: { balance: moneyAdd(outcome.newBalance, outcome.collected), currency: key },
+      after: {
+        balance: outcome.newBalance,
+        currency: key,
+        userId,
+        type,
+        requested: amount,
+        collected: outcome.collected,
+        shortfall: outcome.shortfall,
+        providerName: providerRef.providerName,
+        providerRefId: providerRef.providerRefId,
+        externalRoundId: providerRef.externalRoundId,
+      },
+    });
+    return outcome;
   }
 
   // Takes a wallet row lock that conflicts with the ones withdraw and approval read holds under,
