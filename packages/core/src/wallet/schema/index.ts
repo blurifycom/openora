@@ -163,8 +163,9 @@ export const walletTransaction = pgTable(
     // Client-supplied dedup key for deposit/withdraw. A wallet is 1:1 with its user, so
     // scoping the unique index on walletId is equivalent to scoping on userId.
     idempotencyKey: uuid(),
-    // Written by a correction debit, so its replay never matches the stake debit it re-collects.
-    correction: boolean().notNull().default(false),
+    // What a correction debit asked to collect; `amount` is what it took, zero included. NULL on
+    // every other row, so a correction's replay never matches the stake debit it re-collects.
+    correctionRequestedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

@@ -1805,12 +1805,11 @@
           "primaryKey": false,
           "notNull": false
         },
-        "correction": {
-          "name": "correction",
-          "type": "boolean",
+        "correction_requested_amount": {
+          "name": "correction_requested_amount",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
-          "notNull": true,
-          "default": false
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
