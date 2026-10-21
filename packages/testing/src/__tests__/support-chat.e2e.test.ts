@@ -19,6 +19,7 @@ import { rgExclusion } from '@openora/core/compliance/schema';
 import { SupportChatService } from '@openora/core/engagement/server';
 import { supportChatCustomer } from '@openora/core/engagement/schema/support-chat';
 import { player } from '@openora/core/pam/schema/profile';
+import { promoPlayerRank } from '@openora/core/promo/schema/gamification';
 import {
   asAdmin,
   bootTestApp,
@@ -42,6 +43,7 @@ import {
   setSupportChatSyncDelay,
   supportChatSyncAttempts,
 } from '../test-support-chat-plugin.js';
+import { EXAMPLE_RANK_LADDER } from '../seed.js';
 
 const supportChatPluginPath = fileURLToPath(
   new URL('../test-support-chat-plugin.ts', import.meta.url),
@@ -710,6 +712,34 @@ describe('support context refresh', () => {
       async () => ok(await p.client.post('/identity/email/change/confirm', { newEmail, otp })),
       { email: newEmail },
     );
+  });
+
+  it('names the lowest tier for a player with no tier, and keeps a held tier', async () => {
+    const lowest = EXAMPLE_RANK_LADDER.tiers[0]?.name;
+    const noRow = await linkedPlayer();
+    expect(lastSyncFor(noRow.customerId)?.context).toMatchObject({ rankName: lowest });
+
+    const noTier = await contextAfter(async (p) => {
+      await testApp.container
+        .get(DRIZZLE)
+        .db.insert(promoPlayerRank)
+        .values({ userId: p.userId, currency: EXAMPLE_RANK_LADDER.currency, tierId: null });
+    });
+    expect(noTier).toMatchObject({ rankName: lowest });
+
+    const held = await contextAfter(async (p) => {
+      await testApp.container.get(DRIZZLE).db.transaction((tx) =>
+        testApp.container.get(WAGER_TRACKING).recordWager(tx, {
+          userId: p.userId,
+          currency: 'USDT',
+          amount: '10000',
+          weightedAmount: '10000',
+          realAmount: '10000',
+          context: { provider: 'aggregator', product: 'casino' },
+        }),
+      );
+    });
+    expect(held).toMatchObject({ rankName: EXAMPLE_RANK_LADDER.tiers[1]?.name });
   });
 
   it('a rank change writes the new tier name', async () => {
