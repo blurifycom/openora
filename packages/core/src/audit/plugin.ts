@@ -1,4 +1,4 @@
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { AUDIT_WRITER, IDENTITY_READER, type DomainEventName } from '@openora/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
@@ -1508,8 +1508,6 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
 export default {
   id: 'audit',
   register(ctx) {
-    const logger = createLogger('audit');
-
     // Subscriptions are wired before router factories run (create-app.ts boot order),
     // so svcRef is null at registration but set before any real event arrives.
     let svcRef: AuditService | null = null;
@@ -1526,8 +1524,10 @@ export default {
     });
 
     for (const topic of SUBSCRIBED_TOPICS) {
-      ctx.events.on(topic, (payload) => {
-        if (!svcRef || !isRecord(payload)) {
+      // Awaited and thrown, never swallowed: a failed write leaves the event pending, so the
+      // broker redelivers it instead of the change going unaudited (ADR-0045).
+      ctx.events.on(topic, async (payload) => {
+        if (!isRecord(payload)) {
           return;
         }
         // KYC exemptions and game geo rule syncs append their audit record inside the state
@@ -1535,10 +1535,10 @@ export default {
         if (payload['auditRecorded'] === true) {
           return;
         }
-        const svc = svcRef;
-        void mapEventToRecord(topic, payload)
-          .then((record) => svc.record(record))
-          .catch((err) => logger.error({ err, topic }, 'audit record failed'));
+        if (!svcRef) {
+          throw new Error(`audit record for '${topic}' skipped - service not constructed`);
+        }
+        await svcRef.record(await mapEventToRecord(topic, payload));
       });
     }
 

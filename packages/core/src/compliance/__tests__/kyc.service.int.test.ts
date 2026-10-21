@@ -137,7 +137,8 @@ describe('KycVerificationService.submit (real PG)', () => {
 
     expect(result.tier).toBe('advanced');
     expect(statusWriter.setStatus).not.toHaveBeenCalled();
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'compliance.kyc.updated',
       expect.objectContaining({ userId, tier: 'advanced', previousStatus: 'not_started' }),
     );
@@ -159,7 +160,8 @@ describe('KycVerificationService.submit (real PG)', () => {
     });
     expect(rows[0]?.decidedAt).toBeInstanceOf(Date);
     expect(result.status).toBe('approved');
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'compliance.kyc.submitted',
       expect.objectContaining({ userId, referenceId: adapterResult.referenceId }),
     );
@@ -170,7 +172,7 @@ describe('KycVerificationService.submit (real PG)', () => {
       expect.anything(),
     );
     const statusCallOrder = vi.mocked(statusWriter.setStatus).mock.invocationCallOrder[0];
-    const emitCallOrder = vi.mocked(events.emit).mock.invocationCallOrder[0];
+    const emitCallOrder = vi.mocked(events.emitInTransaction).mock.invocationCallOrder[0];
     expect(statusCallOrder).toEqual(expect.any(Number));
     expect(emitCallOrder).toEqual(expect.any(Number));
     expect(statusCallOrder ?? Number.POSITIVE_INFINITY).toBeLessThan(emitCallOrder ?? 0);
@@ -453,7 +455,8 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
       expect.objectContaining({ source: 'reverify' }),
       expect.anything(),
     );
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'compliance.kyc.reverify_required',
       expect.objectContaining({ userId }),
     );
@@ -679,7 +682,8 @@ describe('KycVerificationService.applyExemption (real PG)', () => {
         after: expect.objectContaining({ source: 'exemption' }),
       }),
     );
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'compliance.kyc.updated',
       expect.objectContaining({ source: 'exemption', auditRecorded: true }),
     );

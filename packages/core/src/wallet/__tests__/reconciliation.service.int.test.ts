@@ -721,9 +721,12 @@ describe('ReconciliationService.runCycle - audit', () => {
 
     await reconciliation.runCycle();
 
-    const entries = (audit.record as ReturnType<typeof vi.fn>).mock.calls.map(
-      ([entry]) => entry as Record<string, unknown>,
-    );
+    const entries = [
+      ...(audit.record as ReturnType<typeof vi.fn>).mock.calls.map(([entry]) => entry),
+      ...(audit.recordInTransaction as ReturnType<typeof vi.fn>).mock.calls.map(
+        ([, entry]) => entry,
+      ),
+    ] as Record<string, unknown>[];
     expect(entries.map((e) => e.action)).toEqual([
       'wallet.reconciliation_finding.recorded',
       'wallet.reconciliation_run.completed',
@@ -731,6 +734,25 @@ describe('ReconciliationService.runCycle - audit', () => {
     const payload = JSON.stringify(entries);
     expect(payload).not.toContain('bc1qaudited');
     expect(payload).not.toContain('0xaudited');
+  });
+
+  it('never leaves a run completed without its audit entry', async () => {
+    const { reconciliation, audit } = makeServices(listTransactionsReturning([]));
+    (audit.recordInTransaction as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('audit store down'),
+    );
+    const runId = randomUUID();
+
+    await expect(reconciliation.runCycle(runId)).rejects.toThrow('audit store down');
+
+    const runs = await db.drizzle.db
+      .select()
+      .from(walletJobRun)
+      .where(eq(walletJobRun.runId, runId));
+    expect(runs.map((r) => r.status)).toEqual(['failed']);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'wallet.reconciliation_run.failed', resourceId: runId }),
+    );
   });
 });
 

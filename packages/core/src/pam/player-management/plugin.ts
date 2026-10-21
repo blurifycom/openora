@@ -1,4 +1,4 @@
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
 import {
   AUDIT_WRITER,
   KYC_STATUS_WRITER,
@@ -36,8 +36,6 @@ function makePlayerService(c: TypedContainer<CoreTokenCatalog>) {
   );
 }
 
-const logger = createLogger('player-management');
-
 const TOTAL_DEPOSITS_QUEUE = queue('player-total-deposits');
 const TotalDepositsJobSchema = z.object({ userId: UuidSchema });
 
@@ -55,23 +53,25 @@ export default {
 
     // The refresh recomputes from the ledger, so it runs as a retryable job: a failed read or
     // an unpriced currency retries instead of leaving totalDeposits stale until the next deposit.
-    ctx.events.on('wallet.deposit.completed', (payload) => {
+    // Awaited and thrown: a failed enqueue leaves the event pending for redelivery (ADR-0045).
+    ctx.events.on('wallet.deposit.completed', async (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
-      if (!parsed.success || !jobQueue) {
+      if (!parsed.success) {
         return;
       }
-      void jobQueue
-        .enqueue(
-          TOTAL_DEPOSITS_QUEUE,
-          { userId: parsed.data.userId },
-          {
-            idempotencyKey: `player-total-deposits:${parsed.data.transactionId}`,
-            orderingKey: parsed.data.userId,
-            attempts: 10,
-            backoff: { type: 'exponential', delayMs: 1_000 },
-          },
-        )
-        .catch((err) => logger.error({ err }, 'player total deposits enqueue failed'));
+      if (!jobQueue) {
+        throw new Error('player total deposits - job queue not bound yet');
+      }
+      await jobQueue.enqueue(
+        TOTAL_DEPOSITS_QUEUE,
+        { userId: parsed.data.userId },
+        {
+          idempotencyKey: `player-total-deposits:${parsed.data.transactionId}`,
+          orderingKey: parsed.data.userId,
+          attempts: 10,
+          backoff: { type: 'exponential', delayMs: 1_000 },
+        },
+      );
     });
     ctx.jobs.worker({
       queue: TOTAL_DEPOSITS_QUEUE,

@@ -7,8 +7,12 @@ export type IdentityReader = {
   getLastLoginAt(userId: User['id']): Promise<Date | null>;
   /** Returns player user ids whose most recent session predates sinceDate. Used for the daily inactive batch sweep. */
   getPlayerIdsInactiveSince(sinceDate: Date): Promise<User['id'][]>;
-  /** Resolves the player profile id for a given auth user id, or null when no profile exists yet. */
-  getPlayerIdByUserId(userId: User['id']): Promise<Player['id'] | null>;
+  /**
+   * Resolves the player profile id for a given auth user id, or null when no profile exists yet.
+   * Pass the caller's `tx` when enriching an event inside a transaction: the lookup then runs on
+   * the same connection instead of holding the tx open while waiting on a second pool connection.
+   */
+  getPlayerIdByUserId(userId: User['id'], tx?: unknown): Promise<Player['id'] | null>;
   /** Best-effort variant for optional event enrichment; lookup failures resolve to null. */
   getPlayerIdByUserIdSafe(userId: User['id']): Promise<Player['id'] | null>;
   /** Batched, best-effort variant of {@link getPlayerIdByUserIdSafe} for enriching events across many users in one round trip. */

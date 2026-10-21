@@ -920,7 +920,7 @@ export class ComplianceService {
         new GeoRuleGameNotFoundError(input.gameId),
       );
 
-      return withGameGeoRuleLocks(tx, input.gameId, countryCodes, async () => {
+      const paired = await withGameGeoRuleLocks(tx, input.gameId, countryCodes, async () => {
         const before = await tx
           .select()
           .from(gameGeoRule)
@@ -946,21 +946,23 @@ export class ComplianceService {
           .returning();
         return pairGeoRuleChanges(before, rows);
       });
+      // The audit trail for this change is the event's subscriber, so it commits with the rows.
+      for (const { before, after } of paired) {
+        await this.events.emitInTransaction(tx, 'compliance.game-geo-rule.upserted', {
+          ruleId: after.id,
+          gameId: input.gameId,
+          countryCode: after.countryCode,
+          reason: input.reason,
+          before,
+          after,
+          actorId,
+          ip: meta.ip,
+          userAgent: meta.userAgent,
+        });
+      }
+      return paired;
     });
 
-    for (const { before, after } of changes) {
-      this.events.emit('compliance.game-geo-rule.upserted', {
-        ruleId: after.id,
-        gameId: input.gameId,
-        countryCode: after.countryCode,
-        reason: input.reason,
-        before,
-        after,
-        actorId,
-        ip: meta.ip,
-        userAgent: meta.userAgent,
-      });
-    }
     return changes.map(({ after }) => after);
   }
 
@@ -981,25 +983,26 @@ export class ComplianceService {
         if (missing.length > 0) {
           throw new GameGeoRuleNotFoundError(`${input.gameId}:${missing.join(',')}`);
         }
-        return rows
+        const removed = rows
           .map(serializeGeoRule)
           .sort((a, b) => a.countryCode.localeCompare(b.countryCode));
+        for (const before of removed) {
+          await this.events.emitInTransaction(tx, 'compliance.game-geo-rule.deleted', {
+            ruleId: before.id,
+            gameId: before.gameId,
+            countryCode: before.countryCode,
+            reason: input.reason,
+            before,
+            after: null,
+            actorId,
+            ip: meta.ip,
+            userAgent: meta.userAgent,
+          });
+        }
+        return removed;
       }),
     );
 
-    for (const before of deleted) {
-      this.events.emit('compliance.game-geo-rule.deleted', {
-        ruleId: before.id,
-        gameId: before.gameId,
-        countryCode: before.countryCode,
-        reason: input.reason,
-        before,
-        after: null,
-        actorId,
-        ip: meta.ip,
-        userAgent: meta.userAgent,
-      });
-    }
     return deleted;
   }
 
@@ -1384,7 +1387,7 @@ export class ComplianceService {
         new GeoRuleProviderNotFoundError(input.providerId),
       );
 
-      return withAdvisoryXactLocks(
+      const paired = await withAdvisoryXactLocks(
         tx,
         countryCodes.map((countryCode) => providerGeoRuleLockKey(input.providerId, countryCode)),
         async () => {
@@ -1414,21 +1417,22 @@ export class ComplianceService {
           return pairGeoRuleChanges(before, rows);
         },
       );
+      for (const { before, after } of paired) {
+        await this.events.emitInTransaction(tx, 'compliance.provider-geo-rule.upserted', {
+          ruleId: after.id,
+          providerId: input.providerId,
+          countryCode: after.countryCode,
+          reason: input.reason,
+          before,
+          after,
+          actorId,
+          ip: meta.ip,
+          userAgent: meta.userAgent,
+        });
+      }
+      return paired;
     });
 
-    for (const { before, after } of changes) {
-      this.events.emit('compliance.provider-geo-rule.upserted', {
-        ruleId: after.id,
-        providerId: input.providerId,
-        countryCode: after.countryCode,
-        reason: input.reason,
-        before,
-        after,
-        actorId,
-        ip: meta.ip,
-        userAgent: meta.userAgent,
-      });
-    }
     return changes.map(({ after }) => after);
   }
 
@@ -1456,26 +1460,27 @@ export class ComplianceService {
           if (missing.length > 0) {
             throw new ProviderGeoRuleNotFoundError(`${input.providerId}:${missing.join(',')}`);
           }
-          return rows
+          const removed = rows
             .map(serializeGeoRule)
             .sort((a, b) => a.countryCode.localeCompare(b.countryCode));
+          for (const before of removed) {
+            await this.events.emitInTransaction(tx, 'compliance.provider-geo-rule.deleted', {
+              ruleId: before.id,
+              providerId: before.providerId,
+              countryCode: before.countryCode,
+              reason: input.reason,
+              before,
+              after: null,
+              actorId,
+              ip: meta.ip,
+              userAgent: meta.userAgent,
+            });
+          }
+          return removed;
         },
       ),
     );
 
-    for (const before of deleted) {
-      this.events.emit('compliance.provider-geo-rule.deleted', {
-        ruleId: before.id,
-        providerId: before.providerId,
-        countryCode: before.countryCode,
-        reason: input.reason,
-        before,
-        after: null,
-        actorId,
-        ip: meta.ip,
-        userAgent: meta.userAgent,
-      });
-    }
     return deleted;
   }
 

@@ -59,13 +59,16 @@ describe('ModuleRegistryImpl', () => {
     expect(() => reg.routers.add('wallet', () => ({}) as never)).toThrow(/already registered/);
   });
 
-  it('events.on() accumulates handlers per event', () => {
+  it('events.on() accumulates handlers per event, each with a distinct stable consumer id', () => {
     const { reg } = newRegistry();
     const h1 = () => {};
     const h2 = () => {};
     reg.events.on('wallet.deposit.completed', h1);
     reg.events.on('wallet.deposit.completed', h2);
-    expect(reg.events.getAll().get('wallet.deposit.completed')).toEqual([h1, h2]);
+    expect(reg.events.getAll().get('wallet.deposit.completed')).toEqual([
+      { handler: h1, consumer: 'unknown/wallet.deposit.completed' },
+      { handler: h2, consumer: 'unknown/wallet.deposit.completed#1' },
+    ]);
   });
 
   it('triggers.listen() keeps each listener with the plugin that registered it', () => {

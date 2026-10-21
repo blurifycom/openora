@@ -134,14 +134,19 @@ export default {
       if (!parsed.success || !envelope) {
         return;
       }
-      publishBalanceChanged(parsed.data.userId, parsed.data.currency, 'deposit', envelope.eventId);
+      return publishBalanceChanged(
+        parsed.data.userId,
+        parsed.data.currency,
+        'deposit',
+        envelope.eventId,
+      );
     });
     ctx.events.on('wallet.withdrawal.requested', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.withdrawal.requested'].safeParse(payload);
       if (!parsed.success || !envelope) {
         return;
       }
-      publishBalanceChanged(
+      return publishBalanceChanged(
         parsed.data.userId,
         parsed.data.currency,
         'withdrawal',
@@ -153,7 +158,7 @@ export default {
       if (!parsed.success || !envelope) {
         return;
       }
-      publishBalanceChanged(
+      return publishBalanceChanged(
         parsed.data.userId,
         parsed.data.currency,
         'withdrawal',
@@ -165,7 +170,7 @@ export default {
       if (!parsed.success || !envelope) {
         return;
       }
-      publishBalanceChanged(
+      return publishBalanceChanged(
         parsed.data.userId,
         parsed.data.currency,
         'withdrawal',
@@ -179,15 +184,22 @@ export default {
       if (!parsed.success || !envelope) {
         return;
       }
-      publishBalanceChanged(parsed.data.userId, parsed.data.fromCurrency, 'swap', envelope.eventId);
-      publishBalanceChanged(parsed.data.userId, parsed.data.toCurrency, 'swap', envelope.eventId);
+      return Promise.all([
+        publishBalanceChanged(
+          parsed.data.userId,
+          parsed.data.fromCurrency,
+          'swap',
+          envelope.eventId,
+        ),
+        publishBalanceChanged(parsed.data.userId, parsed.data.toCurrency, 'swap', envelope.eventId),
+      ]).then(() => undefined);
     });
     ctx.events.on('wallet.manual_adjustment.created', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.manual_adjustment.created'].safeParse(payload);
       if (!parsed.success || !envelope) {
         return;
       }
-      publishBalanceChanged(
+      return publishBalanceChanged(
         parsed.data.userId,
         parsed.data.currency,
         'adjustment',
@@ -199,7 +211,12 @@ export default {
       if (!parsed.success || !envelope) {
         return;
       }
-      publishBalanceChanged(parsed.data.userId, parsed.data.currency, 'gameplay', envelope.eventId);
+      return publishBalanceChanged(
+        parsed.data.userId,
+        parsed.data.currency,
+        'gameplay',
+        envelope.eventId,
+      );
     });
 
     // One memoized instance backs the cron worker and the router factory below - lazily

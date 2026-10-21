@@ -613,59 +613,66 @@ export default {
       }
     };
 
+    // Event handlers await their work and throw when the module isn't wired: a failure leaves
+    // the event pending, so the broker redelivers it instead of marking it handled (ADR-0045).
+    const requireService = (): NotificationsService => {
+      if (!svcRef) {
+        throw new Error('notifications service not constructed');
+      }
+      return svcRef;
+    };
+    const requireJobQueue = (): JobQueueAdapter => {
+      if (!jobQueueRef) {
+        throw new Error('notifications job queue not bound yet');
+      }
+      return jobQueueRef;
+    };
+
     // The one place every `create()` call ends up on the realtime channel from - this
     // module's own dispatch jobs below, and an overlay's own `NotificationsService` instance
     // over a consumer-specific event `domainEventSchemas` has no entry for, since both share
     // this event bus and `create()` always emits this topic. Re-reads the row rather than
     // carrying it on the event: the event is `{ notificationId, userId }` only, the same shape
     // every other consumer of this topic (the audit log) already treats as the full payload.
-    ctx.events.on('notifications.created', (payload) => {
+    ctx.events.on('notifications.created', async (payload) => {
       const parsed = domainEventSchemas['notifications.created'].safeParse(payload);
-      if (!parsed.success || !svcRef) {
+      if (!parsed.success) {
         return;
       }
-      void svcRef
-        .getById(parsed.data.notificationId)
-        .then((record) => {
-          if (record) {
-            publishNotification(record);
-          }
-        })
-        .catch((err: unknown) => logger.error({ err }, 'notification realtime lookup failed'));
+      const record = await requireService().getById(parsed.data.notificationId);
+      if (record) {
+        publishNotification(record);
+      }
     });
 
     for (const entry of notificationEventMap) {
-      ctx.events.on(entry.event, (payload, envelope) => {
-        if (!jobQueueRef || !envelope) {
+      ctx.events.on(entry.event, async (payload, envelope) => {
+        if (!envelope) {
           return;
         }
         const data = entry.parse(payload);
         if (data === null) {
           return;
         }
-        jobQueueRef
-          .enqueue(
-            NOTIFICATIONS_DISPATCH_QUEUE,
-            {
-              event: entry.event,
-              input: {
-                ...entry.buildNotification(data),
-                ...LEGACY_DISPATCH_TEXT,
-                eventId: envelope.eventId,
-              },
-              email: entry.buildEmail(data, envelope.occurredAt),
-              // An opted-in entry's email is preference-gated; every other entry always mails.
-              securityAlert: entry.securityAlert,
+        await requireJobQueue().enqueue(
+          NOTIFICATIONS_DISPATCH_QUEUE,
+          {
+            event: entry.event,
+            input: {
+              ...entry.buildNotification(data),
+              ...LEGACY_DISPATCH_TEXT,
+              eventId: envelope.eventId,
             },
-            {
-              idempotencyKey: `notifications-dispatch:${envelope.eventId}`,
-              attempts: 5,
-              backoff: { type: 'exponential', delayMs: 1000 },
-            },
-          )
-          .catch((err) =>
-            logger.error({ err, event: entry.event }, 'notification dispatch enqueue failed'),
-          );
+            email: entry.buildEmail(data, envelope.occurredAt),
+            // An opted-in entry's email is preference-gated; every other entry always mails.
+            securityAlert: entry.securityAlert,
+          },
+          {
+            idempotencyKey: `notifications-dispatch:${envelope.eventId}`,
+            attempts: 5,
+            backoff: { type: 'exponential', delayMs: 1000 },
+          },
+        );
       });
     }
 
@@ -692,6 +699,7 @@ export default {
     };
 
     ctx.events.on('identity.email.verified', async (payload) => {
+      requireService();
       if (!mailDispatchRef) {
         return;
       }
@@ -701,18 +709,20 @@ export default {
       }
       const { userId, ip } = parsed.data;
       const promotionsEligible = await isEligibleForPromotions(userId, ip);
-      await mailDispatchRef
-        .toUser({
-          userId,
-          template: { key: 'welcome', data: { promotionsEligible } },
-          idempotencyKey: `welcome-mail:${userId}`,
-        })
-        .catch((err) => logger.error({ err }, 'welcome mail enqueue failed'));
+      await mailDispatchRef.toUser({
+        userId,
+        template: { key: 'welcome', data: { promotionsEligible } },
+        idempotencyKey: `welcome-mail:${userId}`,
+      });
     });
 
     ctx.events.on('identity.authentication.succeeded', async (payload, envelope) => {
       const parsed = domainEventSchemas['identity.authentication.succeeded'].safeParse(payload);
-      if (!parsed.success || !jobQueueRef || !identityReaderRef) {
+      if (!parsed.success) {
+        return;
+      }
+      const jobQueue = requireJobQueue();
+      if (!identityReaderRef) {
         return;
       }
       if (!envelope?.eventId) {
@@ -728,7 +738,7 @@ export default {
       if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts?.(parsed.data.userId))) {
         return;
       }
-      await jobQueueRef.enqueue(
+      await jobQueue.enqueue(
         SECURITY_ALERT_DISPATCH_QUEUE,
         { userId: parsed.data.userId, eventId: envelope.eventId, occurredAt: envelope.occurredAt },
         {
@@ -741,20 +751,22 @@ export default {
 
     // Non-null `reason` marks an admin override (ADR-0037); player-initiated
     // limit changes always emit `reason: null`.
-    ctx.events.on('rg.limit.set', (payload) => {
+    ctx.events.on('rg.limit.set', async (payload, envelope) => {
       const parsed = domainEventSchemas['rg.limit.set'].safeParse(payload);
-      if (!parsed.success || !svcRef || parsed.data.reason === null) {
+      if (!parsed.success || parsed.data.reason === null) {
         return;
       }
       // In-app only: `RgService.setPlayerLimit` already sends the `rgLimitUpdated` mail on this write.
-      svcRef
-        .create(buildRgLimitAdminUpdatedNotification(parsed.data))
-        .catch((err) => logger.error({ err }, 'rg.limit.set admin-override notification failed'));
+      // The event id dedups the row when a redelivery re-runs this handler.
+      await requireService().create({
+        ...buildRgLimitAdminUpdatedNotification(parsed.data),
+        ...(envelope ? { eventId: envelope.eventId } : {}),
+      });
     });
 
-    ctx.events.on('chat.room.scheduled_for_deletion', (payload, envelope) => {
+    ctx.events.on('chat.room.scheduled_for_deletion', async (payload, envelope) => {
       const parsed = domainEventSchemas['chat.room.scheduled_for_deletion'].safeParse(payload);
-      if (!parsed.success || !jobQueueRef) {
+      if (!parsed.success) {
         return;
       }
       const p = parsed.data;
@@ -763,39 +775,35 @@ export default {
         return;
       }
       const eventId = envelope.eventId;
-      const jobQueue = jobQueueRef;
+      const jobQueue = requireJobQueue();
       for (const userId of p.memberIds.filter((id) => id !== p.previousOwnerId)) {
-        jobQueue
-          .enqueue(
-            NOTIFICATIONS_DISPATCH_QUEUE,
-            {
-              event: 'chat.room.scheduled_for_deletion',
-              input: {
-                ...LEGACY_DISPATCH_TEXT,
-                ...buildChatRoomScheduledForDeletionNotification({
-                  userId,
-                  roomId: p.roomId,
-                  roomName: p.roomName,
-                }),
-              },
-              // In-app only: `email` is nullish on NotificationDispatchJobSchema, so
-              // omitting it is the current equivalent of the old `sendEmail: false`.
+        await jobQueue.enqueue(
+          NOTIFICATIONS_DISPATCH_QUEUE,
+          {
+            event: 'chat.room.scheduled_for_deletion',
+            input: {
+              ...LEGACY_DISPATCH_TEXT,
+              ...buildChatRoomScheduledForDeletionNotification({
+                userId,
+                roomId: p.roomId,
+                roomName: p.roomName,
+              }),
             },
-            {
-              idempotencyKey: `notifications-dispatch:${eventId}:${userId}`,
-              attempts: 5,
-              backoff: { type: 'exponential', delayMs: 1000 },
-            },
-          )
-          .catch((err) =>
-            logger.error({ err }, 'chat.room.scheduled_for_deletion dispatch enqueue failed'),
-          );
+            // In-app only: `email` is nullish on NotificationDispatchJobSchema, so
+            // omitting it is the current equivalent of the old `sendEmail: false`.
+          },
+          {
+            idempotencyKey: `notifications-dispatch:${eventId}:${userId}`,
+            attempts: 5,
+            backoff: { type: 'exponential', delayMs: 1000 },
+          },
+        );
       }
     });
 
-    ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
+    ctx.events.on('compliance.kyc.updated', async (payload, envelope) => {
       const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
-      if (!parsed.success || !jobQueueRef) {
+      if (!parsed.success) {
         return;
       }
       const p = parsed.data;
@@ -812,13 +820,11 @@ export default {
         );
         return;
       }
-      jobQueueRef
-        .enqueue(
-          KYC_RESUBMISSION_NOTIFY_QUEUE,
-          { userId: p.userId, reason: p.reason, eventId: envelope.eventId },
-          { idempotencyKey: `kyc-resubmission-notify:${envelope.eventId}` },
-        )
-        .catch((err) => logger.error({ err }, 'kyc-resubmission-notify enqueue failed'));
+      await requireJobQueue().enqueue(
+        KYC_RESUBMISSION_NOTIFY_QUEUE,
+        { userId: p.userId, reason: p.reason, eventId: envelope.eventId },
+        { idempotencyKey: `kyc-resubmission-notify:${envelope.eventId}` },
+      );
     });
 
     ctx.jobs.worker({

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { makeAuditWriter } from '../../../testing/mock.js';
+import { makeAuditWriter, makeEventBus } from '../../../testing/mock.js';
 import { findOneOrThrow } from '@openora/core/server';
 import { migrate as identityMigrate } from '@openora/core/pam/migrate/identity';
 import { migrate } from '../migrate.js';
@@ -121,7 +121,7 @@ describe('GrantReaderService', () => {
   it('shows the admin what a closed grant held, and nothing for a live one', async () => {
     const audit = makeAuditWriter();
     const service = new GrantService(audit);
-    const lifecycle = new GrantLifecycleService(db.drizzle, audit);
+    const lifecycle = new GrantLifecycleService(db.drizzle, audit, makeEventBus());
     const reader = new GrantReaderService(db.drizzle);
     const userId = randomUUID();
     const issue = async (amount: string) => {

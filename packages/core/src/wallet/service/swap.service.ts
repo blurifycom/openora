@@ -296,16 +296,15 @@ export class SwapService {
     }
     const toCurrency = this.toCurrencyOf(out);
 
-    // The transaction returns the player the row belongs to, or `undefined` when another
-    // delivery already settled this swap.
-    const settled = await this.drizzle.db.transaction(async (txn) => {
+    // A no-op when another delivery already settled this swap.
+    await this.drizzle.db.transaction(async (txn) => {
       const flipped = await txn
         .update(walletTransaction)
         .set({ status: 'completed', providerRefId: externalId })
         .where(and(eq(walletTransaction.id, out.id), eq(walletTransaction.status, 'processing')))
         .returning({ id: walletTransaction.id });
       if (flipped.length === 0) {
-        return undefined;
+        return;
       }
 
       // On `txn`, not the pool: the settlement must not be gated on a read that only
@@ -342,19 +341,15 @@ export class SwapService {
           externalId,
         },
       });
-      return userId;
-    });
-
-    if (settled) {
-      this.events.emit('wallet.swap.completed', {
-        userId: settled,
+      await this.events.emitInTransaction(txn, 'wallet.swap.completed', {
+        userId,
         transactionId: out.id,
         fromCurrency: out.currency,
         fromAmount: out.amount,
         toCurrency: balanceKey(toCurrency),
         toAmount,
       });
-    }
+    });
 
     return { transactionId: out.id, status: 'completed', toAmount };
   }
