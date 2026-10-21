@@ -11,12 +11,9 @@ import {
 import { player } from '@openora/core/pam/schema/profile';
 import { kycVerification } from '@openora/core/compliance/schema';
 import {
-  bootTestApp,
   registerAndMaterializePlayer,
   asAdmin,
-  seedMinimal,
-  type TestDb,
-  type TestApp,
+  type E2e,
   bootE2e,
   closeE2e,
   readJson,
@@ -32,7 +29,8 @@ import {
  * test with a mocked DB cannot: real routing, real authz, real DB state, and the
  * real (fire-and-forget) event -> audit pipeline.
  *
- * Two app instances share one database:
+ * Two app instances, each on its own database - a shared one lets either app's outbox
+ * relay claim the other's events, so a deposit could be handled without the gated config:
  * - `appDefault` boots the stock stack (MockKycAdapter, no PLATFORM_CONFIG bound - the
  *   withdrawal gate is therefore off) to prove the default submit/admin-read path.
  * - `appGated` adds a test-only overlay (fixtures/test-kyc-config-plugin.ts) binding
@@ -46,9 +44,10 @@ import {
 
 const KYC_WEBHOOK_SECRET = 'e2e-kyc-webhook-secret';
 
-let db: TestDb;
-let appDefault: TestApp;
-let appGated: TestApp;
+let defaultE2e: E2e | undefined;
+let gatedE2e: E2e | undefined;
+let appDefault: E2e['app'];
+let appGated: E2e['app'];
 
 function signWebhook(rawBody: string, secret: string): string {
   return `sha256=${createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')}`;
@@ -92,24 +91,20 @@ beforeAll(async () => {
 
   const basePlugins = await loadExtensions();
 
-  ({ db, app: appDefault } = await bootE2e({ plugins: basePlugins, seed: false }));
+  defaultE2e = await bootE2e({ plugins: basePlugins });
+  appDefault = defaultE2e.app;
 
   const fixturePath = fileURLToPath(
     new URL('./fixtures/test-kyc-config-plugin.ts', import.meta.url),
   );
-  appGated = await bootTestApp({
+  gatedE2e = await bootE2e({
     plugins: [...basePlugins, { id: 'test-kyc-config', path: fixturePath }],
-    databaseUrl: db.url,
   });
-
-  // Both apps share one database - seed the admin fixture once via appDefault's
-  // container; appGated's asAdmin() logs into the same underlying `user` row.
-  await seedMinimal(appDefault.container, { playerCount: 0 });
+  appGated = gatedE2e.app;
 }, 60_000);
 
 afterAll(async () => {
-  await appDefault?.close();
-  await closeE2e({ app: appGated, db });
+  await Promise.all([defaultE2e && closeE2e(defaultE2e), gatedE2e && closeE2e(gatedE2e)]);
 });
 
 describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
