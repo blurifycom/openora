@@ -94,7 +94,13 @@ export type DirectAuditAction =
   | 'chat.cooldown.created'
   | 'chat.cooldown.lifted'
   | 'chat.cooldown.expired'
-  | 'support_chat.customer.linked';
+  | 'support_chat.customer.linked'
+  | 'sportsbook.config.set'
+  | 'sportsbook.config.suspended'
+  | 'sportsbook.config.resumed'
+  | 'sportsbook.finding.resolved'
+  | 'sportsbook.bet.aligned'
+  | 'sportsbook.sessions.revoked';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain
