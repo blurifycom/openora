@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { findOneOrThrow } from '@openora/core/server';
+import { findOneOrThrow, type DrizzleTx } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { BonusGrantArgs, Uuid } from '@openora/core/contracts';
 import { makeAuditWriter } from '../../../testing/mock.js';
@@ -276,17 +276,26 @@ describe('forfeiting every grant a player holds', () => {
   });
 });
 
-const waitForLockWait = async () => {
+const backendPid = async (tx: DrizzleTx) => {
+  const result = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+  const pid = result.rows[0]?.pid;
+  if (pid === undefined) {
+    throw new Error('no backend pid');
+  }
+  return pid;
+};
+
+const waitUntilBlockedBy = async (blockerPid: number) => {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const result = await db.drizzle.db.execute<{ waiting: number }>(
-      sql`select count(*)::int as waiting from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`,
+      sql`select count(*)::int as waiting from pg_stat_activity where ${blockerPid} = any(pg_blocking_pids(pid))`,
     );
     if ((result.rows[0]?.waiting ?? 0) > 0) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error('no session ever waited on a row lock');
+  throw new Error(`no session ever waited on backend ${blockerPid}`);
 };
 
 describe('forfeiting what a player held, on the caller’s transaction', () => {
@@ -357,8 +366,8 @@ describe('forfeiting what a player held, on the caller’s transaction', () => {
   it('skips a grant another path closed first and records no refusal for it', async () => {
     const userId = randomUUID();
     const grantId = await grant({ userId });
-    let locked!: () => void;
-    const lockTaken = new Promise<void>((resolve) => {
+    let locked!: (pid: number) => void;
+    const lockTaken = new Promise<number>((resolve) => {
       locked = resolve;
     });
     let release!: () => void;
@@ -386,13 +395,13 @@ describe('forfeiting what a player held, on the caller’s transaction', () => {
         bonusAmount: '-100',
         balanceAfter: '0',
       });
-      locked();
+      locked(await backendPid(tx));
       await released;
     });
-    await lockTaken;
+    const racerPid = await lockTaken;
 
     const forfeiting = db.drizzle.db.transaction((tx) => lifecycle.forfeitHeld(tx, held(userId)));
-    await waitForLockWait();
+    await waitUntilBlockedBy(racerPid);
     release();
     await racer;
 
