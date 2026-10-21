@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import * as z from 'zod';
-import { loadExtensions, DRIZZLE } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
 import {
   MCP_KERNEL,
   type ActionExecutionContext,
@@ -18,14 +18,13 @@ import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
 import { walletTransaction } from '@openora/core/wallet/schema';
 import {
-  setupTestDb,
-  bootTestApp,
-  seedMinimal,
   registerAndMaterializePlayer,
   asAdmin,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 let db: TestDb;
@@ -274,14 +273,7 @@ async function usdBalance(client: TestClient): Promise<string> {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
   admin = await asAdmin(app.app);
   kernel = app.container.get(MCP_KERNEL);
 
@@ -296,8 +288,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('MCP kernel registries match the generated catalog', () => {

@@ -11,13 +11,12 @@ import {
 import { player } from '@openora/core/pam/schema/profile';
 import { kycVerification } from '@openora/core/compliance/schema';
 import {
-  setupTestDb,
-  bootTestApp,
   registerAndMaterializePlayer,
   asAdmin,
-  seedMinimal,
-  type TestDb,
-  type TestApp,
+  type E2e,
+  bootE2e,
+  closeE2e,
+  readJson,
 } from '../index.js';
 
 /**
@@ -30,7 +29,8 @@ import {
  * test with a mocked DB cannot: real routing, real authz, real DB state, and the
  * real (fire-and-forget) event -> audit pipeline.
  *
- * Two app instances share one database:
+ * Two app instances, each on its own database - a shared one lets either app's outbox
+ * relay claim the other's events, so a deposit could be handled without the gated config:
  * - `appDefault` boots the stock stack (MockKycAdapter, no PLATFORM_CONFIG bound - the
  *   withdrawal gate is therefore off) to prove the default submit/admin-read path.
  * - `appGated` adds a test-only overlay (fixtures/test-kyc-config-plugin.ts) binding
@@ -44,17 +44,13 @@ import {
 
 const KYC_WEBHOOK_SECRET = 'e2e-kyc-webhook-secret';
 
-let db: TestDb;
-let appDefault: TestApp;
-let appGated: TestApp;
+let defaultE2e: E2e | undefined;
+let gatedE2e: E2e | undefined;
+let appDefault: E2e['app'];
+let appGated: E2e['app'];
 
 function signWebhook(rawBody: string, secret: string): string {
   return `sha256=${createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')}`;
-}
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
 }
 
 // Withdrawals here are far below the default KYC triggers, so a test that needs KYC to be
@@ -92,33 +88,23 @@ async function seedLegacyVerifiedStatus(container: Container<CoreTokenCatalog>, 
 
 beforeAll(async () => {
   process.env['KYC_WEBHOOK_SECRET'] = KYC_WEBHOOK_SECRET;
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
 
-  db = await setupTestDb();
   const basePlugins = await loadExtensions();
 
-  appDefault = await bootTestApp({ plugins: basePlugins, databaseUrl: db.url });
+  defaultE2e = await bootE2e({ plugins: basePlugins });
+  appDefault = defaultE2e.app;
 
   const fixturePath = fileURLToPath(
     new URL('./fixtures/test-kyc-config-plugin.ts', import.meta.url),
   );
-  appGated = await bootTestApp({
+  gatedE2e = await bootE2e({
     plugins: [...basePlugins, { id: 'test-kyc-config', path: fixturePath }],
-    databaseUrl: db.url,
   });
-
-  // Both apps share one database - seed the admin fixture once via appDefault's
-  // container; appGated's asAdmin() logs into the same underlying `user` row.
-  await seedMinimal(appDefault.container, { playerCount: 0 });
+  appGated = gatedE2e.app;
 }, 60_000);
 
 afterAll(async () => {
-  await appDefault?.close();
-  await appGated?.close();
-  await db?.dispose();
+  await Promise.all([defaultE2e && closeE2e(defaultE2e), gatedE2e && closeE2e(gatedE2e)]);
 });
 
 describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {

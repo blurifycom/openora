@@ -12,7 +12,6 @@ import { user } from '@openora/core/pam/schema/identity';
 import { walletAutoWithdrawalConfig } from '@openora/core/wallet/schema';
 import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 import {
-  setupTestDb,
   bootTestApp,
   registerAndMaterializePlayer,
   asAdmin,
@@ -21,6 +20,11 @@ import {
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
+  readJson,
+  verifyKyc,
+  assignTag,
 } from '../index.js';
 
 /**
@@ -35,24 +39,8 @@ let appDefault: TestApp;
 let appGated: TestApp;
 let appCapGated: TestApp;
 
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
-
 async function setRole(container: Container<CoreTokenCatalog>, userId: string, role: string) {
   await container.get(DRIZZLE).db.update(user).set({ role }).where(eq(user.id, userId));
-}
-
-async function verifyKyc(admin: TestClient, userId: string) {
-  const res = await admin.post(`/compliance/players/${userId}/kyc/override`, {
-    tier: 'basic',
-    status: 'approved',
-    reason: 'e2e fixture verification',
-  });
-  if (res.status !== 200) {
-    throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
-  }
 }
 
 // Withdrawals here are far below the default KYC triggers, so a test that needs KYC to be
@@ -80,17 +68,6 @@ async function withKycWithdrawalThreshold(
   }
 }
 
-async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
-  const res = await admin.post(`/player/${playerId}/player-tag`, {
-    tagKey,
-    assignReason: 'qa e2e fixture',
-    assignActor: 'manual',
-  });
-  if (res.status !== 200) {
-    throw new Error(`assignTag failed (${res.status}): ${await res.text()}`);
-  }
-}
-
 async function pendingWithdrawalIds(admin: TestClient, currency = 'USD') {
   const res = await admin.get(`/wallet/withdrawals?status=pending&currency=${currency}&limit=100`);
   const body = await readJson(res);
@@ -98,15 +75,9 @@ async function pendingWithdrawalIds(admin: TestClient, currency = 'USD') {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
   const basePlugins = await loadExtensions();
 
-  appDefault = await bootTestApp({ plugins: basePlugins, databaseUrl: db.url });
+  ({ db, app: appDefault } = await bootE2e({ plugins: basePlugins, seed: false }));
 
   const gatedFixture = fileURLToPath(
     new URL('./fixtures/test-wallet-auto-withdrawal-config-plugin.ts', import.meta.url),
@@ -156,8 +127,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await appDefault?.close();
   await appGated?.close();
-  await appCapGated?.close();
-  await db?.dispose();
+  await closeE2e({ app: appCapGated, db });
 });
 
 describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () => {

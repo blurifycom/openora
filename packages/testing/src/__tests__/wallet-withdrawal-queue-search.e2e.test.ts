@@ -4,13 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { loadExtensions } from '@openora/core/server';
 import {
   asAdmin,
-  bootTestApp,
   registerAndMaterializePlayer,
-  seedMinimal,
-  setupTestDb,
   type TestApp,
   type TestClient,
   type TestDb,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 // A BTC deposit snapshots its reference value, which needs a BTC rate.
@@ -58,24 +57,16 @@ async function withdraw(
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-  db = await setupTestDb();
-  testApp = await bootTestApp({
+  ({ db, app: testApp } = await bootE2e({
     plugins: [
       ...(await loadExtensions()),
       { id: 'testing-exchange-rate-provider', path: exchangeRatePluginPath },
     ],
-    databaseUrl: db.url,
-  });
-  await seedMinimal(testApp.container, { playerCount: 0 });
+  }));
 }, 60_000);
 
 afterAll(async () => {
-  await testApp?.close();
-  await db?.dispose();
+  await closeE2e({ app: testApp, db });
 });
 
 describe('withdrawal queue search', () => {

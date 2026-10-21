@@ -7,15 +7,7 @@ import { auditLog } from '@openora/core/audit/schema';
 import { countryRule } from '@openora/core/compliance/schema';
 import { promoOffer } from '@openora/core/promo/schema/bonus';
 import { user } from '@openora/core/pam/schema/identity';
-import {
-  asAdmin,
-  bootTestApp,
-  seedMinimal,
-  setupTestDb,
-  type TestApp,
-  type TestDb,
-  uniqueUsername,
-} from '../index.js';
+import { asAdmin, type TestApp, type TestDb, uniqueUsername, bootE2e, closeE2e } from '../index.js';
 import { forceEmailVerified } from '../register.js';
 
 const BLOCKED_IP = '203.0.113.10';
@@ -67,13 +59,7 @@ const blockedAuditRows = (countryCode: string) =>
   geoAuditRows('compliance.geo.access_blocked', countryCode);
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({
+  ({ db, app } = await bootE2e({
     plugins: [
       ...(await loadExtensions()),
       {
@@ -85,9 +71,7 @@ beforeAll(async () => {
         path: fileURLToPath(new URL('../test-mirror-target-policy-plugin.ts', import.meta.url)),
       },
     ],
-    databaseUrl: db.url,
-  });
-  await seedMinimal(app.container, { playerCount: 0 });
+  }));
   await app.container
     .get(DRIZZLE)
     .db.insert(countryRule)
@@ -102,8 +86,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('country access enforcement', () => {
