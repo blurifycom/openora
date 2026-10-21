@@ -362,6 +362,9 @@ export class WalletCommandsService implements WalletCommands {
   ): Promise<WalletCreditOutcome> {
     const txn = tx as DrizzleDb;
 
+    if (type === 'win_reversal') {
+      throw new WalletCorrectionTypeError(type);
+    }
     if (Number(amount) <= 0) {
       throw new WalletCommandAmountError('credit', amount);
     }

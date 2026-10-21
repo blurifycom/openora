@@ -93,8 +93,8 @@ export const WALLET_CORRECTION_DEBIT_TYPES = ['win_reversal', 'bet'] as const;
 export type WalletCorrectionDebitType = (typeof WALLET_CORRECTION_DEBIT_TYPES)[number];
 
 /**
- * Thrown by `correctionDebit` for a type outside `WALLET_CORRECTION_DEBIT_TYPES`, and by `debit` for
- * `win_reversal`, which only a correction, with its round, may write.
+ * Thrown by `correctionDebit` for a type outside `WALLET_CORRECTION_DEBIT_TYPES`, and by `debit` and
+ * `credit` for `win_reversal`, which only a correction, with its round, may write.
  */
 export class WalletCorrectionTypeError extends Error {
   readonly type: string;

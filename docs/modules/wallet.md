@@ -59,7 +59,7 @@ does not repeat it.
 - **Every bet, win and reversal leg of a round carries its `externalRoundId`.** RG spend nets a
   round's legs by it, and a leg without one never offsets a stake. A correction debit without one
   is refused, since a reversal outside its round would drop out of loss spend, and a plain `debit`
-  never writes a `win_reversal`. A round's payouts and reversals count only when all its bets fall
+  or `credit` never writes a `win_reversal`. A round's payouts and reversals count only when all its bets fall
   inside the limit window, and a round's stake never nets below zero.
 - **Cross-module money moves through the wallet's command port, inside the caller's transaction.**
   Another module never reads or writes wallet tables directly, and a transfer is never settled over
