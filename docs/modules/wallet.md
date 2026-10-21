@@ -44,9 +44,10 @@ does not repeat it.
   read through `PLAYER_TAGS`; with no tag module bound, no player can be locked.
 - **A module's withdrawal hold blocks every withdrawal the same way, under its own reason.** A
   module places and releases its hold through `WALLET_COMMANDS` in its own transaction, keyed by
-  (player, source), and releases only its own. A player with no wallet row cannot be held. It is
-  not the `withdrawal_lock` tag: that one is an investigation an admin owns, and a hold lives
-  exactly as long as the state the module keeps (ADR-0046).
+  (player, source), and releases only its own. The wallet audits each change in that transaction.
+  A player with no wallet row cannot be held. It is not the `withdrawal_lock` tag: that one is an
+  investigation an admin owns, and a hold lives exactly as long as the state the module keeps
+  (ADR-0046).
 - **A correction debit is never refused for a short balance.** It collects what the balance holds
   and reports the rest as a shortfall the calling module records as debt. Its ledger row carries
   what was collected and what was asked, a zero collection included, so a retry with the same

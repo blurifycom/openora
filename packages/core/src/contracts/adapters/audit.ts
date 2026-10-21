@@ -86,6 +86,8 @@ export type DirectAuditAction =
   | 'iam.mcp_token.created'
   | 'iam.mcp_token.revoked'
   | 'wallet.withdrawal.held'
+  | 'wallet.withdrawal_hold.placed'
+  | 'wallet.withdrawal_hold.released'
   | 'chat.cooldown.created'
   | 'chat.cooldown.lifted'
   | 'chat.cooldown.expired';
