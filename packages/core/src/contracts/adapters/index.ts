@@ -61,7 +61,12 @@ export { BONUS_GRANTS } from './bonus-grants.js';
 export type { BonusGrantLedgerReader } from './bonus-grant-ledger.js';
 export { BONUS_GRANT_LEDGER } from './bonus-grant-ledger.js';
 
-export type { BonusLifecycleCommands, BonusForfeitOutcome } from './bonus-lifecycle.js';
+export type {
+  BonusLifecycleCommands,
+  BonusForfeitOutcome,
+  BonusForfeitHeldArgs,
+  BonusForfeitedGrant,
+} from './bonus-lifecycle.js';
 export { BONUS_LIFECYCLE } from './bonus-lifecycle.js';
 
 export type {
