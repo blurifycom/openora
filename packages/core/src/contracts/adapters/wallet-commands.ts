@@ -227,7 +227,11 @@ export type WalletCommands = {
     tx: unknown,
     args: WalletCorrectionDebitArgs,
   ): Promise<WalletCorrectionDebitOutcome>;
-  /** Blocks every withdrawal until released. Placing an existing hold updates its reason. The caller audits it. Throws `WalletHoldWithoutWalletError` for a player with no wallet. */
+  /**
+   * Blocks every withdrawal until released. Placing an existing hold updates its reason. A hold
+   * placed, re-reasoned or released writes its audit row in `tx`. Throws
+   * `WalletHoldWithoutWalletError` for a player with no wallet.
+   */
   placeWithdrawalHold(tx: unknown, args: WalletWithdrawalHoldArgs): Promise<{ placed: boolean }>;
   releaseWithdrawalHold(
     tx: unknown,

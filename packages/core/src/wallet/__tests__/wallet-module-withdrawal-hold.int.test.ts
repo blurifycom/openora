@@ -37,9 +37,10 @@ import { WalletCommandsService } from '../service/wallet-commands.service.js';
 
 let db: TestDb;
 
+const audit = makeAuditWriter();
 const commands = new WalletCommandsService(
   mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(false) }),
-  makeAuditWriter(),
+  audit,
 );
 
 function makeService(overrides: Partial<WalletServiceDeps> = {}) {
@@ -151,6 +152,49 @@ describe('WALLET_COMMANDS withdrawal holds (real PG)', () => {
     const rows = await db.drizzle.db.select().from(walletWithdrawalHold);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ userId: w.userId, source: 'sportsbook', reason: 'second' });
+  });
+
+  it('audits a hold placed, re-reasoned and released in the caller transaction, and nothing else', async () => {
+    const w = await seedWallet();
+    audit.recordInTransaction.mockClear();
+    const release = () =>
+      commands.releaseWithdrawalHold(db.drizzle.db, { userId: w.userId, source: 'sportsbook' });
+
+    await hold(w.userId, 'sportsbook', 'first');
+    await hold(w.userId, 'sportsbook', 'first');
+    await hold(w.userId, 'sportsbook', 'second');
+    await release();
+    await release();
+
+    const subject = { userId: w.userId, source: 'sportsbook' };
+    expect(audit.recordInTransaction.mock.calls.map(([tx, entry]) => [tx, entry])).toEqual([
+      [
+        db.drizzle.db,
+        expect.objectContaining({
+          actorType: 'system',
+          action: 'wallet.withdrawal_hold.placed',
+          resourceType: 'wallet_withdrawal_hold',
+          before: null,
+          after: { ...subject, reason: 'first' },
+        }),
+      ],
+      [
+        db.drizzle.db,
+        expect.objectContaining({
+          action: 'wallet.withdrawal_hold.placed',
+          before: { ...subject, reason: 'first' },
+          after: { ...subject, reason: 'second' },
+        }),
+      ],
+      [
+        db.drizzle.db,
+        expect.objectContaining({
+          action: 'wallet.withdrawal_hold.released',
+          before: { ...subject, reason: 'second' },
+          after: null,
+        }),
+      ],
+    ]);
   });
 
   it('refuses a hold for a player with no wallet, writing nothing', async () => {

@@ -591,19 +591,29 @@ export class WalletCommandsService implements WalletCommands {
     if (!(await this.selectWallet(txn, userId, true))) {
       throw new WalletHoldWithoutWalletError(userId);
     }
-    const [inserted] = await txn
-      .insert(walletWithdrawalHold)
-      .values({ userId, source, reason })
-      .onConflictDoNothing()
-      .returning({ id: walletWithdrawalHold.id });
-    if (inserted) {
-      return { placed: true };
+    const bySource = and(
+      eq(walletWithdrawalHold.userId, userId),
+      eq(walletWithdrawalHold.source, source),
+    );
+    const [existing] = await txn.select().from(walletWithdrawalHold).where(bySource);
+    if (existing?.reason === reason) {
+      return { placed: false };
     }
-    await txn
-      .update(walletWithdrawalHold)
-      .set({ reason })
-      .where(and(eq(walletWithdrawalHold.userId, userId), eq(walletWithdrawalHold.source, source)));
-    return { placed: false };
+    const [held] = existing
+      ? await txn.update(walletWithdrawalHold).set({ reason }).where(bySource).returning()
+      : await txn.insert(walletWithdrawalHold).values({ userId, source, reason }).returning();
+    if (!held) {
+      throw new Error('wallet withdrawal hold: write returned no row');
+    }
+    await this.audit.recordInTransaction(txn, {
+      actorType: 'system',
+      action: 'wallet.withdrawal_hold.placed',
+      resourceType: 'wallet_withdrawal_hold',
+      resourceId: held.id,
+      before: existing ? { userId, source, reason: existing.reason } : null,
+      after: { userId, source, reason },
+    });
+    return { placed: !existing };
   }
 
   async releaseWithdrawalHold(
@@ -612,11 +622,22 @@ export class WalletCommandsService implements WalletCommands {
   ): Promise<{ released: boolean }> {
     const txn = tx as DrizzleDb;
     await this.selectWallet(txn, userId, true);
-    const deleted = await txn
+    const [released] = await txn
       .delete(walletWithdrawalHold)
       .where(and(eq(walletWithdrawalHold.userId, userId), eq(walletWithdrawalHold.source, source)))
-      .returning({ id: walletWithdrawalHold.id });
-    return { released: deleted.length > 0 };
+      .returning();
+    if (!released) {
+      return { released: false };
+    }
+    await this.audit.recordInTransaction(txn, {
+      actorType: 'system',
+      action: 'wallet.withdrawal_hold.released',
+      resourceType: 'wallet_withdrawal_hold',
+      resourceId: released.id,
+      before: { userId, source, reason: released.reason },
+      after: null,
+    });
+    return { released: true };
   }
 
   // Read under the wallet lock every correction takes, so two corrections of one round cannot both fit.
