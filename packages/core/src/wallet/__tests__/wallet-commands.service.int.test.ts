@@ -726,6 +726,32 @@ describe('WalletCommandsService outcome moved/transactionId (real PG)', () => {
 });
 
 describe('WalletCommandsService.correctionDebit (real PG)', () => {
+  // Pays a win and a stake back in each round these tests correct, without moving the balance.
+  async function seedPaidWallet(overrides: Parameters<typeof seedWallet>[0] = {}) {
+    const row = await seedWallet(overrides);
+    for (const externalRoundId of ['bet-1', 'round-1']) {
+      for (const type of ['win', 'bet_reversal'] as const) {
+        await db.drizzle.db.insert(walletTransaction).values({
+          walletId: row.id,
+          type,
+          amount: '1000',
+          currency: row.currency,
+          status: 'completed',
+          direction: 'credit',
+          providerName: 'provider',
+          providerRefId: `paid:${randomUUID()}`,
+          externalRoundId,
+        });
+      }
+    }
+    return row;
+  }
+
+  async function correctionRows(walletId: string) {
+    const rows = await txRows(walletId);
+    return rows.filter((r) => !r.providerRefId?.startsWith('paid:'));
+  }
+
   const reversal = (userId: string, amount: string, ref = randomUUID()) =>
     svc.correctionDebit(db.drizzle.db, {
       userId,
@@ -736,7 +762,7 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     });
 
   it('collects the whole amount when the balance covers it', async () => {
-    const w = await seedWallet({ balance: '100' });
+    const w = await seedPaidWallet({ balance: '100' });
 
     const outcome = await reversal(w.userId, '30');
 
@@ -744,7 +770,7 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     expect(Number(outcome.newBalance)).toBe(70);
     expect(Number(outcome.collected)).toBe(30);
     expect(Number(outcome.shortfall)).toBe(0);
-    const [row] = await txRows(w.id);
+    const [row] = await correctionRows(w.id);
     expect(row).toMatchObject({
       type: 'win_reversal',
       direction: 'debit',
@@ -755,7 +781,7 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
   });
 
   it('collects what the balance holds, reports the rest, and records only the collected part', async () => {
-    const w = await seedWallet({ balance: '20' });
+    const w = await seedPaidWallet({ balance: '20' });
 
     const outcome = await reversal(w.userId, '50');
 
@@ -763,12 +789,12 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     expect(Number(outcome.collected)).toBe(20);
     expect(Number(outcome.shortfall)).toBe(30);
     expect(await balanceOf(w.userId)).toBe(0);
-    const rows = await txRows(w.id);
+    const rows = await correctionRows(w.id);
     expect(rows.map((r) => Number(r.amount))).toEqual([20]);
   });
 
   it('writes a zero row with the requested amount when the balance is empty', async () => {
-    const w = await seedWallet({ balance: '0' });
+    const w = await seedPaidWallet({ balance: '0' });
 
     const outcome = await reversal(w.userId, '50');
 
@@ -776,14 +802,14 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     expect([outcome.collected, outcome.shortfall, outcome.newBalance].map(Number)).toEqual([
       0, 50, 0,
     ]);
-    const rows = await txRows(w.id);
+    const rows = await correctionRows(w.id);
     expect(rows.map((r) => [Number(r.amount), Number(r.correctionRequestedAmount)])).toEqual([
       [0, 50],
     ]);
   });
 
   it('collects nothing on a retry after a zero collection, even once the balance is back', async () => {
-    const w = await seedWallet({ balance: '0' });
+    const w = await seedPaidWallet({ balance: '0' });
     const ref = randomUUID();
     await reversal(w.userId, '50', ref);
     await db.drizzle.db
@@ -796,17 +822,18 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     expect(replay.moved).toBe(false);
     expect([replay.collected, replay.shortfall].map(Number)).toEqual([0, 50]);
     expect(await balanceOf(w.userId)).toBe(100);
-    expect(await txRows(w.id)).toHaveLength(1);
+    expect(await correctionRows(w.id)).toHaveLength(1);
   });
 
-  it('reports a player without a wallet as owing the whole amount', async () => {
-    const outcome = await reversal(randomUUID(), '50');
-
-    expect(outcome).toEqual({ moved: false, collected: '0', shortfall: '50', newBalance: '0' });
+  it('refuses a player without a wallet, whose round paid nothing', async () => {
+    await expect(reversal(randomUUID(), '50')).rejects.toMatchObject({
+      name: 'WalletCorrectionExceedsRoundError',
+      available: '0',
+    });
   });
 
   it('collects once for a replayed reference', async () => {
-    const w = await seedWallet({ balance: '20' });
+    const w = await seedPaidWallet({ balance: '20' });
     const ref = randomUUID();
     await reversal(w.userId, '50', ref);
     await db.drizzle.db
@@ -820,14 +847,14 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     expect(Number(replay.collected)).toBe(20);
     expect(Number(replay.shortfall)).toBe(30);
     expect(await balanceOf(w.userId)).toBe(100);
-    expect(await txRows(w.id)).toHaveLength(1);
+    expect(await correctionRows(w.id)).toHaveLength(1);
   });
 
   it.each([
     ['less', '30'],
     ['more', '80'],
   ])('refuses a replay asking %s than the first call', async (_label, replayAmount) => {
-    const w = await seedWallet({ balance: '40' });
+    const w = await seedPaidWallet({ balance: '40' });
     const ref = randomUUID();
     await reversal(w.userId, '50', ref);
     await db.drizzle.db
@@ -839,11 +866,11 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
       name: 'WalletCorrectionRefConflictError',
     });
     expect(await balanceOf(w.userId)).toBe(100);
-    expect(await txRows(w.id)).toHaveLength(1);
+    expect(await correctionRows(w.id)).toHaveLength(1);
   });
 
   it('refuses a reference already used by another ledger move', async () => {
-    const w = await seedWallet({ balance: '100' });
+    const w = await seedPaidWallet({ balance: '100' });
     const providerRef = { providerName: 'provider', providerRefId: randomUUID() };
     await svc.credit(db.drizzle.db, {
       userId: w.userId,
@@ -860,7 +887,7 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
   });
 
   it("refuses a re-stake reusing the original stake's reference", async () => {
-    const w = await seedWallet({ balance: '100' });
+    const w = await seedPaidWallet({ balance: '100' });
     const providerRef = {
       providerName: 'provider',
       providerRefId: randomUUID(),
@@ -881,8 +908,8 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
   });
 
   it('puts the balance back when another wallet takes the reference mid-correction', async () => {
-    const owner = await seedWallet({ balance: '100' });
-    const other = await seedWallet({ balance: '100' });
+    const owner = await seedPaidWallet({ balance: '100' });
+    const other = await seedPaidWallet({ balance: '100' });
     const providerRefId = randomUUID();
     let commitOwner = () => {};
     const ownerMayCommit = new Promise<void>((resolve) => {
@@ -926,7 +953,7 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
 
     expect(await colliding).toMatchObject({ name: 'WalletCorrectionRefConflictError' });
     expect(await balanceOf(other.userId)).toBe(100);
-    expect(await txRows(other.id)).toHaveLength(0);
+    expect(await correctionRows(other.id)).toHaveLength(0);
   });
 
   it.each([
@@ -955,7 +982,7 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
   ] as const)(
     'lets a credit and %s share a transaction while another credit waits',
     async (_, follow, balance) => {
-      const w = await seedWallet({ balance: '20' });
+      const w = await seedPaidWallet({ balance: '20' });
       let finish = () => {};
       const mayFinish = new Promise<void>((resolve) => {
         finish = resolve;
@@ -997,7 +1024,7 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
   );
 
   it('lets a credit and a correction share a transaction while another correction waits', async () => {
-    const w = await seedWallet({ balance: '20' });
+    const w = await seedPaidWallet({ balance: '20' });
     const correct = (tx: DrizzleTx, amount: string) =>
       svc.correctionDebit(tx, {
         userId: w.userId,
@@ -1042,7 +1069,7 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
   });
 
   it('never overdraws when two corrections race for one balance', async () => {
-    const w = await seedWallet({ balance: '50' });
+    const w = await seedPaidWallet({ balance: '50' });
 
     const outcomes = await Promise.all([
       db.drizzle.db.transaction((tx) =>
@@ -1076,12 +1103,12 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     expect(outcomes.reduce((sum, o) => sum + Number(o.collected), 0)).toBe(50);
     expect(outcomes.reduce((sum, o) => sum + Number(o.shortfall), 0)).toBe(30);
     expect(await balanceOf(w.userId)).toBe(0);
-    const ledger = await txRows(w.id);
+    const ledger = await correctionRows(w.id);
     expect(ledger.reduce((sum, r) => sum + Number(r.amount), 0)).toBe(50);
   });
 
   it('collects against the balance a concurrent balance writer leaves behind', async () => {
-    const w = await seedWallet({ balance: '50' });
+    const w = await seedPaidWallet({ balance: '50' });
     let commitWriter = () => {};
     const writerMayCommit = new Promise<void>((resolve) => {
       commitWriter = resolve;
@@ -1109,7 +1136,7 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
   });
 
   it('skips play eligibility, the wager limit and the bonus engine for a stake correction', async () => {
-    const w = await seedWallet({ balance: '100' });
+    const w = await seedPaidWallet({ balance: '100' });
     const isRestricted = vi.fn().mockResolvedValue(true);
     const limits = refusingLimits();
     const wager = vi.fn();
@@ -1137,7 +1164,7 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
   });
 
   it('refuses any type other than a payout reversal or a stake', async () => {
-    const w = await seedWallet({ balance: '100' });
+    const w = await seedPaidWallet({ balance: '100' });
 
     await expect(
       svc.correctionDebit(db.drizzle.db, {
@@ -1157,7 +1184,7 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
   });
 
   it('refuses a payout reversal through a plain debit, which skips the round id check', async () => {
-    const w = await seedWallet({ balance: '100' });
+    const w = await seedPaidWallet({ balance: '100' });
 
     await expect(
       svc.debit(db.drizzle.db, {
@@ -1168,11 +1195,11 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
       }),
     ).rejects.toMatchObject({ name: 'WalletCorrectionTypeError' });
     expect(await balanceOf(w.userId)).toBe(100);
-    expect(await txRows(w.id)).toHaveLength(0);
+    expect(await correctionRows(w.id)).toHaveLength(0);
   });
 
   it('refuses a payout reversal through a credit, which would move GGR the wrong way', async () => {
-    const w = await seedWallet({ balance: '100' });
+    const w = await seedPaidWallet({ balance: '100' });
 
     await expect(
       svc.credit(db.drizzle.db, {
@@ -1184,11 +1211,114 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
       }),
     ).rejects.toMatchObject({ name: 'WalletCorrectionTypeError' });
     expect(await balanceOf(w.userId)).toBe(100);
-    expect(await txRows(w.id)).toHaveLength(0);
+    expect(await correctionRows(w.id)).toHaveLength(0);
+  });
+
+  describe('round cap', () => {
+    const round = (externalRoundId: string, providerName = 'provider') => ({
+      providerName,
+      providerRefId: randomUUID(),
+      externalRoundId,
+    });
+    const pay = (userId: string, type: 'win' | 'bet_reversal', amount: string, ref = round('r')) =>
+      svc.credit(db.drizzle.db, { userId, amount, currency: 'USD', type, providerRef: ref });
+    const correct = (
+      userId: string,
+      type: 'win_reversal' | 'bet',
+      amount: string,
+      ref = round('r'),
+    ) =>
+      svc.correctionDebit(db.drizzle.db, {
+        userId,
+        amount,
+        currency: 'USD',
+        type,
+        providerRef: ref,
+      });
+
+    it('refuses a payout reversal above what the round paid, collecting nothing', async () => {
+      const w = await seedWallet({ balance: '100' });
+      await pay(w.userId, 'win', '30');
+
+      await expect(correct(w.userId, 'win_reversal', '30.01')).rejects.toMatchObject({
+        name: 'WalletCorrectionExceedsRoundError',
+        requested: '30.01',
+      });
+      expect(await balanceOf(w.userId)).toBe(130);
+      expect((await correct(w.userId, 'win_reversal', '30')).moved).toBe(true);
+    });
+
+    it('counts what earlier reversals of the round collected', async () => {
+      const w = await seedWallet({ balance: '20' });
+      await pay(w.userId, 'win', '50');
+      await db.drizzle.db
+        .update(walletBalance)
+        .set({ amount: '20' })
+        .where(eq(walletBalance.walletId, w.id));
+
+      const first = await correct(w.userId, 'win_reversal', '50');
+      expect(Number(first.collected)).toBe(20);
+      await db.drizzle.db
+        .update(walletBalance)
+        .set({ amount: '100' })
+        .where(eq(walletBalance.walletId, w.id));
+
+      await expect(correct(w.userId, 'win_reversal', '30.01')).rejects.toMatchObject({
+        name: 'WalletCorrectionExceedsRoundError',
+      });
+      const offset = await correct(w.userId, 'win_reversal', '30');
+      expect(Number(offset.collected)).toBe(30);
+      await expect(correct(w.userId, 'win_reversal', '0.01')).rejects.toMatchObject({
+        name: 'WalletCorrectionExceedsRoundError',
+      });
+    });
+
+    it("re-collects a voided stake only up to the round's stake reversals", async () => {
+      const w = await seedWallet({ balance: '100' });
+      await svc.debit(db.drizzle.db, {
+        userId: w.userId,
+        amount: '10',
+        type: 'bet',
+        providerRef: round('r'),
+      });
+      await pay(w.userId, 'bet_reversal', '10');
+
+      expect((await correct(w.userId, 'bet', '10')).moved).toBe(true);
+      await expect(correct(w.userId, 'bet', '0.01')).rejects.toMatchObject({
+        name: 'WalletCorrectionExceedsRoundError',
+        type: 'bet',
+      });
+      expect(await balanceOf(w.userId)).toBe(90);
+    });
+
+    it('never lets a stake correction draw on a payout, or another round or provider', async () => {
+      const w = await seedWallet({ balance: '100' });
+      await pay(w.userId, 'win', '50');
+      await pay(w.userId, 'bet_reversal', '50', round('other'));
+      await pay(w.userId, 'bet_reversal', '50', round('r', 'other-provider'));
+
+      await expect(correct(w.userId, 'bet', '1')).rejects.toMatchObject({
+        name: 'WalletCorrectionExceedsRoundError',
+        available: '0.000000000000000000',
+      });
+      expect(await balanceOf(w.userId)).toBe(250);
+    });
+
+    it('replays a reference whose round is already used up', async () => {
+      const w = await seedWallet({ balance: '100' });
+      await pay(w.userId, 'win', '30');
+      const ref = round('r');
+      await correct(w.userId, 'win_reversal', '30', ref);
+
+      const replay = await correct(w.userId, 'win_reversal', '30', ref);
+
+      expect(replay.moved).toBe(false);
+      expect(Number(replay.collected)).toBe(30);
+    });
   });
 
   it('refuses a correction without a round id, which RG spend could not net', async () => {
-    const w = await seedWallet({ balance: '100' });
+    const w = await seedPaidWallet({ balance: '100' });
 
     await expect(
       svc.correctionDebit(db.drizzle.db, {
@@ -1201,6 +1331,6 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
       }),
     ).rejects.toMatchObject({ name: 'WalletCorrectionRoundError' });
     expect(await balanceOf(w.userId)).toBe(100);
-    expect(await txRows(w.id)).toHaveLength(0);
+    expect(await correctionRows(w.id)).toHaveLength(0);
   });
 });

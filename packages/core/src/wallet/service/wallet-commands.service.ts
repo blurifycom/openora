@@ -2,6 +2,7 @@ import {
   MaxBetExceededError,
   RgLimitExceededError,
   WALLET_CORRECTION_DEBIT_TYPES,
+  WalletCorrectionExceedsRoundError,
   WalletCorrectionRefConflictError,
   WalletCorrectionRoundError,
   WalletCorrectionTypeError,
@@ -18,6 +19,7 @@ import {
   type WalletCreditOutcome,
   type WalletCorrectionDebitArgs,
   type WalletCorrectionDebitOutcome,
+  type WalletCorrectionDebitType,
   type WalletProviderRef,
   type WalletWithdrawalHoldArgs,
   type WalletTransactionType,
@@ -32,7 +34,7 @@ import {
   moneySubtract,
   type DrizzleDb,
 } from '@openora/core/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import {
   wallet,
   walletTransaction,
@@ -491,7 +493,13 @@ export class WalletCommandsService implements WalletCommands {
     const key = balanceKey(currency);
     const row = await this.selectWallet(txn, userId, true);
     if (!row) {
-      return { moved: false, collected: '0', shortfall: amount, newBalance: '0' };
+      throw new WalletCorrectionExceedsRoundError(
+        providerRef.providerName,
+        providerRef.externalRoundId,
+        type,
+        amount,
+        '0',
+      );
     }
 
     const replayed = await this.findByProviderRef(txn, providerRef);
@@ -515,6 +523,17 @@ export class WalletCommandsService implements WalletCommands {
         shortfall: moneySubtract(amount, replayed.amount),
         newBalance: await readWalletBalance(txn, row.id, key),
       };
+    }
+
+    const available = await this.roundCorrectable(txn, row.id, key, type, providerRef);
+    if (moneyCompare(amount, available) > 0) {
+      throw new WalletCorrectionExceedsRoundError(
+        providerRef.providerName,
+        providerRef.externalRoundId,
+        type,
+        amount,
+        available,
+      );
     }
 
     // A savepoint, so a reference another wallet takes meanwhile puts the collected balance back
@@ -598,6 +617,34 @@ export class WalletCommandsService implements WalletCommands {
       .where(and(eq(walletWithdrawalHold.userId, userId), eq(walletWithdrawalHold.source, source)))
       .returning({ id: walletWithdrawalHold.id });
     return { released: deleted.length > 0 };
+  }
+
+  // Read under the wallet lock every correction takes, so two corrections of one round cannot both fit.
+  private async roundCorrectable(
+    txn: DrizzleDb,
+    walletId: Wallet['id'],
+    currency: string,
+    type: WalletCorrectionDebitType,
+    providerRef: WalletProviderRef & { externalRoundId: string },
+  ): Promise<string> {
+    const paid = type === 'win_reversal' ? 'win' : 'bet_reversal';
+    const t = walletTransaction;
+    const [round] = await txn
+      .select({
+        paid: sql<string>`coalesce(sum(${t.amount}) filter (where ${t.type} = ${paid} and ${t.direction} = 'credit'), 0)`,
+        taken: sql<string>`coalesce(sum(${t.amount}) filter (where ${t.type} = ${type} and ${t.direction} = 'debit' and ${isNotNull(t.correctionRequestedAmount)}), 0)`,
+      })
+      .from(t)
+      .where(
+        and(
+          eq(t.walletId, walletId),
+          eq(t.providerName, providerRef.providerName),
+          eq(t.externalRoundId, providerRef.externalRoundId),
+          eq(t.currency, currency),
+          eq(t.status, 'completed'),
+        ),
+      );
+    return moneySubtract(round?.paid ?? '0', round?.taken ?? '0');
   }
 
   // NO KEY UPDATE leaves another transaction's ledger insert (a KEY SHARE on this row) unblocked.
