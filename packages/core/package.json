@@ -728,6 +728,41 @@
       "types": "./dist/promo/gamification/seed/index.d.ts",
       "import": "./dist/promo/gamification/seed/index.js",
       "default": "./dist/promo/gamification/seed/index.js"
+    },
+    "./sportsbook": {
+      "types": "./dist/sportsbook/index.d.ts",
+      "import": "./dist/sportsbook/index.js",
+      "default": "./dist/sportsbook/index.js"
+    },
+    "./sportsbook/contracts": {
+      "types": "./dist/sportsbook/contracts.d.ts",
+      "import": "./dist/sportsbook/contracts.js",
+      "default": "./dist/sportsbook/contracts.js"
+    },
+    "./sportsbook/server": {
+      "types": "./dist/sportsbook/server.d.ts",
+      "import": "./dist/sportsbook/server.js",
+      "default": "./dist/sportsbook/server.js"
+    },
+    "./sportsbook/contracts/betting": {
+      "types": "./dist/sportsbook/betting/contract/index.d.ts",
+      "import": "./dist/sportsbook/betting/contract/index.js",
+      "default": "./dist/sportsbook/betting/contract/index.js"
+    },
+    "./sportsbook/schema/betting": {
+      "types": "./dist/sportsbook/betting/schema/index.d.ts",
+      "import": "./dist/sportsbook/betting/schema/index.js",
+      "default": "./dist/sportsbook/betting/schema/index.js"
+    },
+    "./sportsbook/plugins/betting": {
+      "types": "./dist/sportsbook/betting/plugin.d.ts",
+      "import": "./dist/sportsbook/betting/plugin.js",
+      "default": "./dist/sportsbook/betting/plugin.js"
+    },
+    "./sportsbook/migrate/betting": {
+      "types": "./dist/sportsbook/betting/migrate.d.ts",
+      "import": "./dist/sportsbook/betting/migrate.js",
+      "default": "./dist/sportsbook/betting/migrate.js"
     }
   },
   "publishConfig": {

@@ -50,6 +50,14 @@ import {
 } from './player.js';
 import { WalletTransactionTypeSchema } from './wallet-tx.js';
 import {
+  SportsbookBetLegSchema,
+  SportsbookBetResultSchema,
+  SportsbookCancelReasonSchema,
+  SportsbookDebtCauseSchema,
+  SportsbookProviderIdSchema,
+  SportsbookProviderNameSchema,
+} from './sportsbook.js';
+import {
   BonusForfeitReasonSchema,
   BonusGrantSourceSchema,
   ContributionPercentSchema,
@@ -206,6 +214,19 @@ export const AUTHENTICATION_METHODS = [
 ] as const;
 export const AuthenticationMethodSchema = z.enum(AUTHENTICATION_METHODS);
 export type AuthenticationMethod = z.infer<typeof AuthenticationMethodSchema>;
+
+const sportsbookBetBase = z.object({
+  betId: UuidSchema,
+  userId: UuidSchema,
+  playerId: UuidSchema.nullable(),
+  provider: SportsbookProviderNameSchema,
+  providerBetId: SportsbookProviderIdSchema,
+  providerTxId: SportsbookProviderIdSchema,
+  currency: CurrencyTickerSchema,
+  version: z.number().int().positive(),
+  // The bet's audit row is written in the step's own transaction.
+  auditRecorded: z.literal(true).optional(),
+});
 
 export const domainEventSchemas = {
   'identity.user.registered': authContextBase.extend({
@@ -522,6 +543,46 @@ export const domainEventSchemas = {
     roundId: UuidSchema,
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+  }),
+
+  // Sportsbook ledger steps, emitted once the step's own transaction committed. The bet
+  // transaction row and the wallet ledger rows it wrote are the step's atomic record.
+  'sportsbook.bet.placed': sportsbookBetBase.extend({ stake: MoneyAmountSchema }),
+  // `legs` is set when the confirm carried the accepted terms.
+  'sportsbook.bet.accepted': sportsbookBetBase.extend({
+    potentialPayout: MoneyAmountSchema,
+    legs: z.array(SportsbookBetLegSchema).optional(),
+  }),
+  'sportsbook.bet.cancelled': sportsbookBetBase.extend({
+    reason: SportsbookCancelReasonSchema,
+    refunded: MoneyAmountSchema,
+  }),
+  'sportsbook.bet.settled': sportsbookBetBase.extend({
+    result: SportsbookBetResultSchema,
+    payout: MoneyAmountSchema,
+  }),
+  // `shortfall` is what the reopen could not take back and recorded as debt.
+  'sportsbook.bet.reopened': sportsbookBetBase.extend({
+    collected: MoneyAmountSchema,
+    shortfall: MoneyAmountSchema,
+  }),
+  'sportsbook.restriction.changed': authContextBase.extend({
+    userId: UuidSchema,
+    restricted: z.boolean(),
+    reason: z.string().nullable(),
+    actorId: UuidSchema,
+    auditRecorded: z.literal(true).optional(),
+  }),
+  // `actorId` is null when a ledger step changed the debt (a reopen or an offset).
+  'sportsbook.debt.changed': z.object({
+    debtId: UuidSchema,
+    userId: UuidSchema,
+    currency: CurrencyTickerSchema,
+    cause: SportsbookDebtCauseSchema,
+    amount: MoneyAmountSchema,
+    outstanding: MoneyAmountSchema,
+    actorId: UuidSchema.nullable(),
+    auditRecorded: z.literal(true).optional(),
   }),
 
   'lobby.layout.updated': authContextBase.extend({

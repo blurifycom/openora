@@ -56,12 +56,21 @@ export class RgRateUnavailableError extends Error {
   }
 }
 
+/** Every sportsbook money leg moves loss-limit spend, an admin debt collect included, so each one re-evaluates the thresholds. */
+export const SPORTSBOOK_RG_EVAL_TOPICS = [
+  'sportsbook.bet.placed',
+  'sportsbook.bet.cancelled',
+  'sportsbook.bet.settled',
+  'sportsbook.bet.reopened',
+  'sportsbook.debt.changed',
+] as const;
 // The recompute trigger carried on the enqueued job - which upstream event fired.
 export const RG_EVAL_TRIGGERS = [
   'wallet.deposit.completed',
   'gaming.round.ended',
   'rg.exclusion.login_blocked',
   'rg.limit.set',
+  ...SPORTSBOOK_RG_EVAL_TOPICS,
 ] as const;
 export type RgEvalTrigger = (typeof RG_EVAL_TRIGGERS)[number];
 
