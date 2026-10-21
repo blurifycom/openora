@@ -1290,6 +1290,7 @@ describe('POST /wallet/on-ramp/webhook', () => {
         resourceId: row.id,
         after: {
           userId: row.userId,
+          externalId: row.externalId,
           from: 'pending',
           to: 'completed',
           txHash: '0xabc',
@@ -1438,6 +1439,19 @@ describe('POST /wallet/on-ramp/webhook', () => {
         resourceId: orderA.id,
         after: expect.objectContaining({ mismatch: 'order', externalId: orderB.externalId }),
       }),
+    );
+  });
+
+  it("applies an event that names the vendor's own order id instead of the checkout id", async () => {
+    const { service, wallet, audit } = makeService();
+    const row = await openOrder(service);
+    const router = routerWith({ service, wallet }, webhookPort);
+
+    await deliver(router, eventFor(row, { externalId: `ord_${randomUUID()}` }));
+
+    expect((await orderRow(row.id)).status).toBe('completed');
+    expect(audit.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'wallet.on_ramp.webhook_mismatch' }),
     );
   });
 

@@ -196,6 +196,28 @@ describe('POST /wallet/on-ramp/webhook', () => {
     const order = await client.get(`/wallet/on-ramp/orders/${String(purchaseId)}`);
     expect(await json(order)).toMatchObject({ purchaseId, status: 'cancelled' });
   });
+
+  it("moves an order on the vendor's own order id, ignores another order's id", async () => {
+    const client = await player();
+    const { purchaseId } = await checkout(client);
+    const other = await checkout(await player());
+    const statusOf = async () =>
+      json(await client.get(`/wallet/on-ramp/orders/${String(purchaseId)}`));
+
+    const misrouted = await deliverWebhook(
+      { purchaseId, externalId: externalIdOf(other.checkoutUrl), status: 'cancelled' },
+      'valid',
+    );
+    expect(misrouted.status).toBe(200);
+    expect(await statusOf()).toMatchObject({ purchaseId, status: 'pending' });
+
+    const vendorOrder = await deliverWebhook(
+      { purchaseId, externalId: `ord_${randomUUID()}`, status: 'cancelled' },
+      'valid',
+    );
+    expect(vendorOrder.status).toBe(200);
+    expect(await statusOf()).toMatchObject({ purchaseId, status: 'cancelled' });
+  });
 });
 
 describe('on-ramp orders and card deposits share the RG deposit limit', () => {
