@@ -20,7 +20,7 @@ type SupportChatState = {
   nextTokenAnswer: NextTokenAnswer | null;
   syncDelayMs: number;
   failSyncs: boolean;
-  syncAttempts: number;
+  syncAttempts: string[];
   heldSync: { customerId: string; reached: () => void; released: Promise<void> } | null;
 };
 
@@ -34,7 +34,7 @@ const freshState = (): SupportChatState => ({
   nextTokenAnswer: null,
   syncDelayMs: 0,
   failSyncs: false,
-  syncAttempts: 0,
+  syncAttempts: [],
   heldSync: null,
 });
 const state = (): SupportChatState => (holder[STATE] ??= freshState());
@@ -69,8 +69,9 @@ export const failSupportChatSyncs = (on: boolean) => {
   state().failSyncs = on;
 };
 
-/** Every `syncCustomer` call so far, landed or failed. */
-export const supportChatSyncAttempts = () => state().syncAttempts;
+/** How many `syncCustomer` calls `customerId` has had so far, landed or failed. */
+export const supportChatSyncAttempts = (customerId: string) =>
+  state().syncAttempts.filter((attempted) => attempted === customerId).length;
 
 /**
  * Holds the next `syncCustomer` call for `customerId` before it lands: `reached` resolves once
@@ -125,7 +126,7 @@ export default {
           },
           async syncCustomer(customerId, context) {
             const s = state();
-            s.syncAttempts++;
+            s.syncAttempts.push(customerId);
             if (s.failSyncs) {
               throw new SupportChatProviderError('test vendor write refused');
             }

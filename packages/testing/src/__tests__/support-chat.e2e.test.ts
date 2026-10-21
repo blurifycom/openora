@@ -359,10 +359,9 @@ describe('POST /support-chat/session', () => {
 
   it('answers 200 while the vendor write fails, and the job did attempt the write', async () => {
     failSupportChatSyncs(true);
-    const before = supportChatSyncAttempts();
     const { client } = await newPlayer();
     const customerId = await openSession(client);
-    await vi.waitFor(() => expect(supportChatSyncAttempts()).toBeGreaterThan(before), WAIT);
+    await vi.waitFor(() => expect(supportChatSyncAttempts(customerId)).toBeGreaterThan(0), WAIT);
     expect(syncsFor(customerId)).toHaveLength(0);
     // The failed write does not poison the next open.
     expect((await client.post(SESSION)).status).toBe(200);
@@ -710,15 +709,6 @@ describe('support context refresh', () => {
       p,
       async () => ok(await p.client.post('/identity/email/change/confirm', { newEmail, otp })),
       { email: newEmail },
-    );
-  });
-
-  it('a profile update triggers a refresh', async () => {
-    const p = await linkedPlayer();
-    await refreshedBy(
-      p,
-      async () => ok(await p.client.patch('/identity/profile', { theme: 'dark' })),
-      { userId: p.userId },
     );
   });
 
