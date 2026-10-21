@@ -20,6 +20,8 @@ import { SportsbookBetNotFoundError, toAdminBet } from './bet-query.service.js';
 import { fileFinding } from './finding.service.js';
 import {
   ALIGN_TX_PREFIX,
+  defaultPromotionAmount,
+  isValidPromotionAmount,
   isValidSettlement,
   type LedgerStep,
   type SportsbookLedgerService,
@@ -79,6 +81,7 @@ function alignmentSteps(bet: SportsbookBetRow, observed: SportsbookProviderBetSt
               providerTxId: alignTxId(bet, version, 'settle'),
               result: observed.result,
               payout: observed.payout,
+              promotionAmount: observed.promotionAmount,
               expectedVersion: version,
             },
           },
@@ -97,7 +100,16 @@ function alignmentSteps(bet: SportsbookBetRow, observed: SportsbookProviderBetSt
   if (observed.status === 'pending') {
     return none;
   }
-  if (observed.status === 'settled' && !isValidSettlement(bet, observed.result, observed.payout)) {
+  if (
+    observed.status === 'settled' &&
+    (!isValidSettlement(bet, observed.result, observed.payout) ||
+      !isValidPromotionAmount(
+        bet,
+        observed.result,
+        observed.payout,
+        observed.promotionAmount ?? defaultPromotionAmount(bet, observed.result, observed.payout),
+      ))
+  ) {
     return mismatch;
   }
 
@@ -134,7 +146,11 @@ function alignmentSteps(bet: SportsbookBetRow, observed: SportsbookProviderBetSt
         return mismatch;
       }
       if (observed.result === bet.result && moneyEquals(observed.payout, bet.payoutTotal)) {
-        return none;
+        // Re-settling to move only the attribution would reverse and re-pay real money.
+        return observed.promotionAmount === undefined ||
+          moneyEquals(observed.promotionAmount, bet.promotionPaid)
+          ? none
+          : mismatch;
       }
       return { steps: [reopen(), ...settle(bet.version + 1)], mismatch: false };
     case 'cancelled':
@@ -179,6 +195,9 @@ export class SportsbookAlignService {
     }
     if (provider.name !== bet.provider) {
       throw new SportsbookAlignProviderError();
+    }
+    if (!provider.getBetStatus) {
+      throw new SportsbookProviderUnavailableError();
     }
     try {
       return SportsbookProviderBetStatusSchema.parse(

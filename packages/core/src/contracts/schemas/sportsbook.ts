@@ -35,6 +35,7 @@ export const SPORTSBOOK_REFUSAL_REASONS = [
   'fingerprint_mismatch',
   'invalid_amount',
   'bet_not_found',
+  'promotion_not_allowed',
 ] as const;
 export const SportsbookRefusalReasonSchema = z.enum(SPORTSBOOK_REFUSAL_REASONS);
 export type SportsbookRefusalReason = z.infer<typeof SportsbookRefusalReasonSchema>;
@@ -65,6 +66,35 @@ const ledgerRequest = {
 
 const SportsbookBetLegsSchema = z.array(SportsbookBetLegSchema).min(1).max(100);
 
+/** The operator's own name for a promotion; core reports by it and never interprets it. */
+export const SportsbookPromotionTypeSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  // A record drops this key, so the funder map could never name it; refused, it reaches no bet.
+  .refine((type) => type !== '__proto__', 'reserved name');
+
+const promotionLabel = {
+  type: SportsbookPromotionTypeSchema,
+  /** The provider's id for the promotion granted to the player, when it has one. */
+  id: SportsbookProviderIdSchema.optional(),
+  /** The promotion's part of `potentialPayout`, for a boost. */
+  potentialAmount: MoneyAmountSchema.optional(),
+};
+
+/**
+ * The money facts of a provider promotion on a bet. Strict, so a fact core does not understand
+ * is refused rather than dropped.
+ */
+export const SportsbookPromotionSchema = z.discriminatedUnion('stake', [
+  z
+    .object({ ...promotionLabel, stake: z.literal('promotion'), voidReturnsStake: z.boolean() })
+    .strict(),
+  z.object({ ...promotionLabel, stake: z.literal('player'), refundsLoss: z.boolean() }).strict(),
+]);
+export type SportsbookPromotion = z.infer<typeof SportsbookPromotionSchema>;
+
 export const SportsbookReserveArgsSchema = z.object({
   ...ledgerRequest,
   sessionId: UuidSchema,
@@ -72,6 +102,7 @@ export const SportsbookReserveArgsSchema = z.object({
   stake: MoneyAmountSchema,
   potentialPayout: MoneyAmountSchema,
   legs: SportsbookBetLegsSchema,
+  promotion: SportsbookPromotionSchema.optional(),
 });
 export type SportsbookReserveArgs = z.input<typeof SportsbookReserveArgsSchema>;
 
@@ -84,11 +115,13 @@ export type SportsbookSessionArgs = z.input<typeof SportsbookSessionArgsSchema>;
 /**
  * The terms the provider accepted, sent together or not at all: the reserved legs in the same order,
  * where only the odds may change, and the potential payout they give. The stake never changes.
+ * `promotionPotential` is the promotion's part of that payout, for a boost the new odds changed.
  */
 export const SportsbookConfirmArgsSchema = z.object({
   ...ledgerRequest,
   potentialPayout: MoneyAmountSchema.optional(),
   legs: SportsbookBetLegsSchema.optional(),
+  promotionPotential: MoneyAmountSchema.optional(),
 });
 export type SportsbookConfirmArgs = z.input<typeof SportsbookConfirmArgsSchema>;
 
@@ -104,6 +137,8 @@ export const SportsbookSettleArgsSchema = z.object({
   result: SportsbookBetResultSchema,
   /** The total payout of this settlement, stake included; `'0'` for a loss. Never a delta. */
   payout: MoneyAmountSchema,
+  /** The part of `payout` a promotion funds; core derives it from the bet when omitted. */
+  promotionAmount: MoneyAmountSchema.optional(),
   expectedVersion: z.int().positive().optional(),
 });
 export type SportsbookSettleArgs = z.input<typeof SportsbookSettleArgsSchema>;
@@ -121,6 +156,7 @@ export const SportsbookProviderBetStatusSchema = z.discriminatedUnion('status', 
     status: z.literal('settled'),
     result: SportsbookBetResultSchema,
     payout: MoneyAmountSchema,
+    promotionAmount: MoneyAmountSchema.optional(),
   }),
 ]);
 export type SportsbookProviderBetStatus = z.infer<typeof SportsbookProviderBetStatusSchema>;
