@@ -373,60 +373,50 @@ export class RgMonitoringService {
       sql`, `,
     );
     const result = await db.execute<{ currency: string; total: string }>(sql`
-      with stakes as (
-        select t.currency, sum(t.amount) as amount
+      with legs as (
+        select t.wallet_id, t.provider_name, t.external_round_id, t.currency, t.type,
+          case when t.direction = 'debit' then t.amount else -t.amount end as signed
         from ${walletTransaction} t
         join ${wallet} w on w.id = t.wallet_id
         where w.user_id = ${userId}
           and t.status = 'completed'
           and t.created_at >= ${from}
-          and t.type = 'bet'
-          and t.direction = 'debit'
-        group by t.currency
+          and (t.type, t.direction) in (${types})
       ),
-      whole_rounds as (
-        select distinct o.wallet_id, o.provider_name, o.external_round_id
-        from ${walletTransaction} o
-        join ${wallet} w on w.id = o.wallet_id
+      rounds as (
+        select wallet_id, provider_name, external_round_id, currency,
+          coalesce(sum(signed) filter (where type = 'bet'), 0) as stake,
+          coalesce(sum(signed) filter (where type in ('bet', 'bet_reversal')), 0) as net_stake,
+          coalesce(sum(signed) filter (where type not in ('bet', 'bet_reversal')), 0) as net_win,
+          external_round_id is not null
+            and count(*) filter (where type = 'bet') > 0
+            and count(*) filter (where type <> 'bet') > 0 as nets
+        from legs
+        group by wallet_id, provider_name, external_round_id, currency
+      ),
+      opened_before as (
+        select distinct p.wallet_id, p.provider_name, p.external_round_id
+        from ${walletTransaction} p
+        join ${wallet} w on w.id = p.wallet_id
+        join rounds r on r.wallet_id = p.wallet_id
+          and r.provider_name = p.provider_name
+          and r.external_round_id = p.external_round_id
         where w.user_id = ${userId}
-          and o.status = 'completed'
-          and o.created_at >= ${from}
-          and o.type <> 'bet'
-          and (o.type::text, o.direction::text) in (${types})
-          and o.external_round_id is not null
-          and not exists (
-            select 1 from ${walletTransaction} p
-            where p.wallet_id = o.wallet_id
-              and p.provider_name = o.provider_name
-              and p.external_round_id = o.external_round_id
-              and p.type = 'bet'
-              and p.status = 'completed'
-              and p.created_at < ${from}
-          )
-      ),
-      offsets as (
-        select l.currency,
-          greatest(coalesce(sum(l.signed) filter (where l.type in ('bet', 'bet_reversal')), 0), 0)
-            + coalesce(sum(l.signed) filter (where l.type not in ('bet', 'bet_reversal')), 0)
-            - coalesce(sum(l.signed) filter (where l.type = 'bet'), 0) as amount
-        from whole_rounds r
-        cross join lateral (
-          select l.type, l.currency,
-            case when l.direction = 'debit' then l.amount else -l.amount end as signed
-          from ${walletTransaction} l
-          where l.external_round_id = r.external_round_id
-            and l.wallet_id = r.wallet_id
-            and l.provider_name = r.provider_name
-            and l.status = 'completed'
-            and l.created_at >= ${from}
-            and (l.type::text, l.direction::text) in (${types})
-        ) l
-        group by r.wallet_id, r.provider_name, r.external_round_id, l.currency
-        having count(*) filter (where l.type = 'bet') > 0
+          and r.nets
+          and p.type = 'bet'
+          and p.status = 'completed'
+          and p.created_at < ${from}
       )
-      select currency, greatest(sum(amount), 0) as total
-      from (select * from stakes union all select * from offsets) s
-      group by currency
+      select r.currency,
+        greatest(sum(
+          case when r.nets and o.wallet_id is null then greatest(r.net_stake, 0) + r.net_win
+          else r.stake end
+        ), 0) as total
+      from rounds r
+      left join opened_before o on o.wallet_id = r.wallet_id
+        and o.provider_name = r.provider_name
+        and o.external_round_id = r.external_round_id
+      group by r.currency
     `);
     return result.rows;
   }
