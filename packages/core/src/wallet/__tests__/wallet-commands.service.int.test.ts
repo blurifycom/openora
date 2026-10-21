@@ -1141,6 +1141,22 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     expect(await txRows(w.id)).toHaveLength(0);
   });
 
+  it('refuses a payout reversal through a credit, which would move GGR the wrong way', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    await expect(
+      svc.credit(db.drizzle.db, {
+        userId: w.userId,
+        amount: '10',
+        currency: 'USD',
+        type: 'win_reversal',
+        providerRef: { providerName: 'provider', providerRefId: randomUUID() },
+      }),
+    ).rejects.toMatchObject({ name: 'WalletCorrectionTypeError' });
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(0);
+  });
+
   it('refuses a correction without a round id, which RG spend could not net', async () => {
     const w = await seedWallet({ balance: '100' });
 
