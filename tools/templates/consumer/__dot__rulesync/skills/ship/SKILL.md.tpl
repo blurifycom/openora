@@ -113,7 +113,7 @@ Rounds of 3 and 4 share one budget: three. After the third with anything still f
 
 ### 5. Open the MR
 
-`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table, its screenshots and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Draft the one-line Slack notice to `{{teamChannel}}`: emoji + MR title as a link. Then 7.
+`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table, its videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Draft the one-line Slack notice to `{{teamChannel}}`: emoji + MR title as a link. Then 7.
 
 ### 6. Red CI and review comments
 

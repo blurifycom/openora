@@ -99,12 +99,12 @@ You start no subagents of your own. What you cannot settle yourself goes in your
 
 ## Tests
 
-Your change ships with its tests in the same branch - never a separate test PR. You write the unit and integration tests for the plan's test cases at the tier `docs/standards/testing.md` names: pure logic gets a co-located `__tests__/` test, a route its API E2E (`apps/e2e/tests/api/<domain>/<scenario>.spec.ts`, happy + one hostile path). Never an in-process test that mocks the database or a sibling service. `tester` drives the running stack, attacks the change and adds the browser specs; you do not run a manual pass or take screenshots.
+Your change ships with its tests in the same branch - never a separate test PR. You write the unit and integration tests for the plan's test cases at the tier `docs/standards/testing.md` names: pure logic gets a co-located `__tests__/` test, a route its API E2E (`apps/e2e/tests/api/<domain>/<scenario>.spec.ts`, happy + one hostile path). Never an in-process test that mocks the database or a sibling service. `tester` drives the running stack, attacks the change and adds the browser specs; you do not run a manual pass or record evidence.
 
 ## Done means
 
 1. The repo's gate (`/check`: typecheck + lint + unit) passes on HEAD, and the specs you touched pass (`pnpm -F {{scope}}/e2e test <spec>`). A spec that fails: run it on the base commit too - failing there as well is pre-existing, say so; failing only here is yours to fix.
-2. Commit with the repo's commit style, staging only the files the work needs: no test output, screenshots, logs, scratch scripts, unrelated formatting. `git status` is clean before you reply.
+2. Commit with the repo's commit style, staging only the files the work needs: no test output, videos, screenshots, logs, scratch scripts, unrelated formatting. `git status` is clean before you reply.
 3. Reply with what changed per plan item, the tests you added (one line each, tier and path), the gate command and the tail of its output from HEAD, then `Worktree: <absolute path>` and `Branch: <name>`. Never write "passed" without that output.
 
 ## Rules
