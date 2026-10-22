@@ -121,12 +121,44 @@ export const LoginSecurityStateSchema = z.object({
   lockoutUntil: TimestampSchema.nullable(),
 });
 
+export const ACQUISITION_MAX_PARAMS = 10;
+
+/**
+ * The marketing parameters a visitor arrived with (an affiliate tag, a referral code, UTM
+ * values), as the client captured them. Stored verbatim and never interpreted by the
+ * platform: which parameter means what is the operator's decision. Client-supplied, so
+ * nothing here is evidence of anything on its own.
+ */
+export const RegistrationAcquisitionSchema = z.object({
+  params: z
+    .record(
+      z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/),
+      z
+        .string()
+        .max(512)
+        // oxlint-disable-next-line no-control-regex -- Postgres rejects NUL and lone surrogates in jsonb
+        .regex(/^(?:[^\u0000-\u001f\u007f\ud800-\udfff]|[\ud800-\udbff][\udc00-\udfff])+$/),
+    )
+    .refine((params) => {
+      const count = Object.keys(params).length;
+      return count > 0 && count <= ACQUISITION_MAX_PARAMS;
+    }),
+  firstSeenAt: TimestampSchema.optional(),
+  landingHost: z
+    .string()
+    .max(253)
+    .regex(/^[A-Za-z0-9.-]+(:\d{1,5})?$/)
+    .optional(),
+});
+export type RegistrationAcquisition = z.infer<typeof RegistrationAcquisitionSchema>;
+
 export const RegisterInputSchema = credentialsBase.extend({
   password: PasswordSchema,
   username: UsernameSchema,
   acceptedTerms: z.literal(true),
   acceptedAge: z.literal(true),
   timezone: TimezoneSchema.optional(),
+  acquisition: RegistrationAcquisitionSchema.optional(),
 });
 
 export const RegisterOutputSchema = z.object({ status: z.literal('check-email') });

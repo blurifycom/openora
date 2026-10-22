@@ -1,9 +1,11 @@
+import type { RegistrationAcquisition } from '../schemas/identity.js';
 import { createToken, type Token } from './token.js';
 
 export type PlayerProvisioning = {
   /**
-   * `created: false` means a player row already existed, so this consent record was
-   * NOT stored. Callers must surface that - it is a compliance record, not a no-op.
+   * `created: false` means a player row already existed, so this consent record - and
+   * the acquisition, when one was passed - was NOT stored. Callers must surface that - it
+   * is a compliance record, not a no-op.
    */
   createForRegistration(
     record: PlayerRegistrationRecord,
@@ -26,6 +28,7 @@ export type PlayerRegistrationRecord = {
   ageAcceptedAt: Date;
   registrationIp: string | null;
   registrationUserAgent: string | null;
+  acquisition?: RegistrationAcquisition;
 };
 
 export const PLAYER_PROVISIONING: Token<PlayerProvisioning> = createToken('PLAYER_PROVISIONING');
