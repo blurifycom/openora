@@ -17,6 +17,7 @@ import {
 } from '@openora/core/contracts';
 import {
   DRIZZLE,
+  EVENT_BUS,
   eventOutbox,
   loadExtensions,
   processedEvents,
@@ -400,6 +401,52 @@ describe('POST /support-chat/session', () => {
     expect(syncsFor(customerId)).toHaveLength(0);
     // The failed write does not poison the next open.
     expect((await client.post(SESSION)).status).toBe(200);
+  });
+
+  it('keeps the first sync owed through a job queue outage on first open', async () => {
+    const p = await newPlayer();
+    const pg = testApp.container.get(DRIZZLE).db;
+    const jobQueue = testApp.container.get(JOB_QUEUE);
+    const enqueue = jobQueue.enqueue.bind(jobQueue);
+    let refused = 0;
+    vi.spyOn(jobQueue, 'enqueue').mockImplementation((name, payload, options) => {
+      if (String(name) === SYNC_QUEUE && JSON.stringify(payload).includes(p.userId)) {
+        refused++;
+        return Promise.reject(new Error('job queue down'));
+      }
+      return enqueue(name, payload, options);
+    });
+
+    const customerId = await openSession(p.client);
+
+    // The link and its event commit together, so the sync is owed even though no job exists.
+    expect(await linkRows(p.playerId)).toHaveLength(1);
+    const [linked] = await pg
+      .select({ eventId: eventOutbox.eventId })
+      .from(eventOutbox)
+      .where(
+        and(
+          eq(eventOutbox.topic, 'support_chat.customer.linked'),
+          sql`${eventOutbox.payload}->>'userId' = ${p.userId}`,
+        ),
+      );
+    expect(linked).toBeDefined();
+
+    // The subscriber's enqueue failed and it threw, so the event is not marked handled and
+    // the broker redelivers it once the queue is back.
+    await vi.waitFor(() => expect(refused).toBe(1), WAIT);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const handled = await pg
+      .select({ eventId: processedEvents.eventId })
+      .from(processedEvents)
+      .where(
+        and(
+          eq(processedEvents.eventId, linked!.eventId),
+          like(processedEvents.consumer, '%/support-chat/support_chat.customer.linked'),
+        ),
+      );
+    expect(handled).toHaveLength(0);
+    expect(syncsFor(customerId)).toHaveLength(0);
   });
 
   it('links exactly one customer for three concurrent first opens and audits it once', async () => {
@@ -809,6 +856,7 @@ describe('support context refresh', () => {
     const service = new SupportChatService({
       drizzle: c.get(DRIZZLE),
       audit: c.get(AUDIT_WRITER),
+      events: c.get(EVENT_BUS),
       identityReader: c.get(IDENTITY_READER),
       walletReader: c.get(WALLET_READER),
       rgExclusionReader: c.get(RG_EXCLUSION_READER),

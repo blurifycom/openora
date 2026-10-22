@@ -15,7 +15,7 @@ import {
   type JobQueueAdapter,
   type Uuid,
 } from '@openora/core/contracts';
-import { DRIZZLE, createLogger } from '@openora/core/server';
+import { DRIZZLE, EVENT_BUS, createLogger } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { SupportChatService } from './service/support-chat.service.js';
 import { createSupportChatRouter } from './router/index.js';
@@ -30,9 +30,10 @@ const SYNC_ENQUEUE_OPTIONS = {
   backoff: { type: 'exponential', delayMs: 30_000 },
 } as const;
 
-// What refreshes a linked player's context besides a chat open. Username and active-currency
-// changes emit no event; the next open picks them up.
+// What refreshes a linked player's context besides a chat open, the first link included.
+// Username and active-currency changes emit no event; the next open picks them up.
 const SYNC_TOPICS = [
+  'support_chat.customer.linked',
   'rg.self_exclusion.activated',
   'rg.self_exclusion.lifted',
   'rg.cooling_off.activated',
@@ -127,6 +128,7 @@ export default {
       service = new SupportChatService({
         drizzle: c.get(DRIZZLE),
         audit: c.get(AUDIT_WRITER),
+        events: c.get(EVENT_BUS),
         identityReader: c.get(IDENTITY_READER),
         walletReader: c.get(WALLET_READER),
         rgExclusionReader: c.get(RG_EXCLUSION_READER),

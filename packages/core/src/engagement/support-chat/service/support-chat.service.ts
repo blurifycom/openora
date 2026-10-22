@@ -5,6 +5,7 @@ import {
   createLogger,
   makeNotFoundError,
   type DrizzleService,
+  type EventBus,
 } from '@openora/core/server';
 import {
   SupportChatCustomerTokenSchema,
@@ -129,6 +130,7 @@ export async function syncUntilSettled(
 type SupportChatDeps = {
   drizzle: DrizzleService;
   audit: AuditWritePort;
+  events: EventBus;
   identityReader: IdentityReader;
   walletReader: WalletReader;
   rgExclusionReader: RgExclusionReader;
@@ -149,9 +151,11 @@ export class SupportChatService {
       throw new SupportChatPlayerNotFoundError(userId);
     }
     const customerId = await this.findCustomerId(playerId);
-    const token = customerId
-      ? await this.issueToken(playerId, customerId)
-      : await this.linkNewCustomer(userId, playerId, clientMeta);
+    if (!customerId) {
+      // The first sync rides on the link's own event, so a queue outage cannot drop it.
+      return this.linkNewCustomer(userId, playerId, clientMeta);
+    }
+    const token = await this.issueToken(playerId, customerId);
     await this.deps
       .scheduleSync(userId)
       .catch((err: unknown) =>
@@ -266,6 +270,10 @@ export class SupportChatService {
           resourceId: playerId,
           after: { providerCustomerId: created.customerId },
           ...clientMeta,
+        });
+        await this.deps.events.emitInTransaction(tx, 'support_chat.customer.linked', {
+          userId,
+          playerId,
         });
       }
       return row !== undefined;
