@@ -12,6 +12,7 @@ import type {
   AuditWritePort,
   GeoCheckCommands,
   PlayEligibilityPort,
+  PlayRefusal,
   SportsbookProvider,
   SportsbookSessionArgs,
   SportsbookSessionOutcome,
@@ -26,13 +27,15 @@ import {
 import {
   SPORTSBOOK_RECONCILE_BATCH,
   type IssueSportsbookSessionInput,
+  type RevokeSportsbookSessionInput,
+  type SportsbookAvailability,
   type SportsbookRgRevokeJob,
   type SportsbookSession,
 } from '../contract/index.js';
 import { sportsbookSession, type SportsbookSessionRow } from '../schema/index.js';
 import type { SportsbookConfigService } from './config.service.js';
 import { lockConfig, lockPlayer } from './locks.service.js';
-import { isPlayerRestricted } from './restriction-check.service.js';
+import { isPlayerRestricted, playRefusal } from './restriction-check.service.js';
 
 const logger = createLogger('sportsbook');
 
@@ -51,11 +54,14 @@ export const SportsbookGeoRestrictedError = createDomainError<[]>(
   () => 'Sportsbook is not available in your country',
   { reason: 'geo_restricted' },
 );
-export const SportsbookPlayerBlockedError = createDomainError<[]>(
-  'SportsbookPlayerBlockedError',
-  () => 'Sportsbook play is blocked for this account',
-  { reason: 'player_blocked' },
-);
+export class SportsbookPlayerBlockedError extends Error {
+  readonly data: { reason: PlayRefusal | 'player_blocked' };
+  constructor(reason: PlayRefusal | 'player_blocked') {
+    super(`Sportsbook play is blocked for this account: ${reason}`);
+    this.name = 'SportsbookPlayerBlockedError';
+    this.data = { reason };
+  }
+}
 export const SportsbookProviderUnavailableError = createDomainError<[]>(
   'SportsbookProviderUnavailableError',
   () => 'The sportsbook provider could not open a session',
@@ -64,6 +70,10 @@ export const SportsbookProviderUnavailableError = createDomainError<[]>(
 const SportsbookSessionNotFoundError = makeNotFoundError('SportsbookSession');
 
 const MINUTE_MS = 60_000;
+
+type Region =
+  | { available: true; countryCode: string }
+  | { available: false; reason: NonNullable<SportsbookAvailability['reason']> };
 const PROVIDER_REVOKE_CONCURRENCY = 4;
 
 /** A session a reserve may bet on: live, bound to this provider. */
@@ -115,19 +125,14 @@ export class SportsbookSessionService {
     ipAddress: string | null,
   ): Promise<SportsbookSession> {
     const provider = this.provider;
-    if (!provider || !this.geoCheck) {
-      throw new SportsbookUnavailableError();
+    const region = await this.region(ipAddress);
+    if (!provider || !region.available) {
+      throw region.available || region.reason === 'unavailable'
+        ? new SportsbookUnavailableError()
+        : new SportsbookGeoRestrictedError();
     }
+    const { countryCode } = region;
     const currency = input.currency.toUpperCase();
-    const offered = await this.config.get(this.drizzle.db);
-    if (!offered.enabled || offered.suspended) {
-      throw new SportsbookUnavailableError();
-    }
-    const geo = await this.geoCheck.checkAccess(ipAddress);
-    const countryCode = geo.countryCode?.toUpperCase() ?? null;
-    if (!geo.allowed || !countryCode) {
-      throw new SportsbookGeoRestrictedError();
-    }
 
     const session = await this.drizzle.db.transaction(async (tx) => {
       await lockConfig(tx, 'shared');
@@ -142,12 +147,11 @@ export class SportsbookSessionService {
       if (config.blockedCountries.includes(countryCode)) {
         throw new SportsbookGeoRestrictedError();
       }
-      if (
-        (await isPlayerRestricted(tx, userId)) ||
-        (await this.playEligibility.isRestricted(userId, tx))
-      ) {
-        throw new SportsbookPlayerBlockedError();
+      const refusal = await playRefusal(this.playEligibility, userId, tx);
+      if (refusal) {
+        throw new SportsbookPlayerBlockedError(refusal);
       }
+      const browseOnly = await isPlayerRestricted(tx, userId);
       const rows = await tx
         .insert(sportsbookSession)
         .values({
@@ -158,7 +162,10 @@ export class SportsbookSessionService {
           expiresAt: new Date(Date.now() + config.sessionTtlMinutes * MINUTE_MS),
         })
         .returning();
-      return findOneOrThrow(rows, new SportsbookSessionNotFoundError(userId));
+      return {
+        ...findOneOrThrow(rows, new SportsbookSessionNotFoundError(userId)),
+        browseOnly,
+      };
     });
 
     const expiresAt = session.expiresAt.toISOString();
@@ -205,7 +212,32 @@ export class SportsbookSessionService {
       launchUrl: opened.launchUrl ?? null,
       currency,
       expiresAt,
+      browseOnly: session.browseOnly,
     };
+  }
+
+  /** The rules `issue` applies to the caller's address, for a visitor who has no session yet. */
+  async availability(ipAddress: string | null): Promise<SportsbookAvailability> {
+    const region = await this.region(ipAddress);
+    return region.available
+      ? { available: true, reason: null }
+      : { available: false, reason: region.reason };
+  }
+
+  private async region(ipAddress: string | null): Promise<Region> {
+    if (!this.provider || !this.geoCheck) {
+      return { available: false, reason: 'unavailable' };
+    }
+    const config = await this.config.get(this.drizzle.db);
+    if (!config.enabled || config.suspended) {
+      return { available: false, reason: 'unavailable' };
+    }
+    const geo = await this.geoCheck.checkAccess(ipAddress);
+    const countryCode = geo.countryCode?.toUpperCase() ?? null;
+    if (!geo.allowed || !countryCode || config.blockedCountries.includes(countryCode)) {
+      return { available: false, reason: 'geo_restricted' };
+    }
+    return { available: true, countryCode };
   }
 
   /** The provider's authenticate and balance callbacks. Reads only; reserve re-checks under its locks. */
@@ -220,13 +252,17 @@ export class SportsbookSessionService {
       .select()
       .from(sportsbookSession)
       .where(eq(sportsbookSession.id, sessionId.data));
-    if (
-      !isLiveSession(session, provider) ||
-      (await isPlayerRestricted(this.drizzle.db, session.userId)) ||
-      (await this.playEligibility.isRestricted(session.userId))
-    ) {
+    if (!isLiveSession(session, provider)) {
       return { status: 'refused', reason: 'session_invalid' };
     }
+    const refusal = await playRefusal(this.playEligibility, session.userId);
+    if (refusal) {
+      return {
+        status: 'refused',
+        reason: refusal === 'player_blocked' ? 'session_invalid' : refusal,
+      };
+    }
+    const browseOnly = await isPlayerRestricted(this.drizzle.db, session.userId);
     const { balances } = await this.walletReader.getBalances(session.userId);
     return {
       status: 'ok',
@@ -235,17 +271,50 @@ export class SportsbookSessionService {
       countryCode: session.countryCode,
       expiresAt: session.expiresAt.toISOString(),
       balance: balances.find((b) => b.currency === session.currency)?.balance ?? '0',
+      browseOnly,
     };
   }
 
+  /**
+   * The player's own logout: ends the one session, or all their live ones, and tells the provider
+   * after commit. Repeating it, or naming another player's session, revokes nothing.
+   */
+  async revokeOwn(
+    userId: User['id'],
+    { sessionId }: RevokeSportsbookSessionInput,
+  ): Promise<SportsbookSessionRow['id'][]> {
+    const ids = await this.drizzle.db.transaction(async (tx) => {
+      await lockPlayer(tx, userId);
+      const revoked = await this.revokeLive(tx, userId, sessionId);
+      if (revoked.length > 0) {
+        await this.audit.recordInTransaction(tx, {
+          actorId: userId,
+          actorType: 'player',
+          action: 'sportsbook.sessions.revoked',
+          resourceType: 'sportsbook_session',
+          resourceId: userId,
+          after: { revokedSessions: revoked, trigger: 'logout' },
+        });
+      }
+      return revoked;
+    });
+    await this.revokeAtProvider(userId, ids);
+    return ids;
+  }
+
   /** Runs under the caller's player lock; hand the result to `revokeAtProvider` after commit. */
-  async revokeLive(tx: DrizzleTx, userId: User['id']): Promise<SportsbookSessionRow['id'][]> {
+  async revokeLive(
+    tx: DrizzleTx,
+    userId: User['id'],
+    sessionId?: SportsbookSessionRow['id'],
+  ): Promise<SportsbookSessionRow['id'][]> {
     const rows = await tx
       .update(sportsbookSession)
       .set({ revokedAt: new Date() })
       .where(
         and(
           eq(sportsbookSession.userId, userId),
+          sessionId ? eq(sportsbookSession.id, sessionId) : undefined,
           isNull(sportsbookSession.revokedAt),
           gt(sportsbookSession.expiresAt, new Date()),
         ),
@@ -319,7 +388,7 @@ export class SportsbookSessionService {
     return failed.filter((id) => id !== null);
   }
 
-  /** Revokes the live sessions of every player play eligibility refuses, should an RG revoke not have run. */
+  /** Revokes the live sessions of every player play eligibility refuses, should an RG revoke not have run or the account have been closed. */
   async revokeIneligible(now = new Date()): Promise<number> {
     let revoked = 0;
     let after: User['id'] | undefined;
@@ -337,7 +406,7 @@ export class SportsbookSessionService {
         .orderBy(asc(sportsbookSession.userId))
         .limit(SPORTSBOOK_RECONCILE_BATCH);
       await mapConcurrent(page, PROVIDER_REVOKE_CONCURRENCY, async ({ userId }) => {
-        if (!(await this.playEligibility.isRestricted(userId))) {
+        if ((await playRefusal(this.playEligibility, userId)) === null) {
           return;
         }
         revoked += 1;

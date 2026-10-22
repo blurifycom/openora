@@ -5,7 +5,7 @@ import {
   type WalletProviderTransaction,
   type ExchangeRateReader,
 } from '@openora/core/contracts';
-import { and, count, eq, gt, inArray, lt, sum } from 'drizzle-orm';
+import { and, count, eq, gt, inArray, isNotNull, lt, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 import {
   providerRefCondition,
@@ -151,6 +151,25 @@ export class WalletReaderService implements WalletReader {
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
       .where(providerRefCondition(providerName, providerRefId));
     return row ? toProviderTransaction(row.transaction, row.userId) : null;
+  }
+
+  async findOwnProviderTransaction(
+    userId: string,
+    transactionId: string,
+  ): Promise<WalletProviderTransaction | null> {
+    const [row] = await this.drizzle.db
+      .select({ transaction: walletTransaction })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
+      .where(
+        and(
+          eq(wallet.userId, userId),
+          eq(walletTransaction.id, transactionId),
+          isNotNull(walletTransaction.providerName),
+          isNotNull(walletTransaction.providerRefId),
+        ),
+      );
+    return row ? toProviderTransaction(row.transaction, userId) : null;
   }
 
   getBalance(userId: string): Promise<{ balance: string; currency: string }> {

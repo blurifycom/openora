@@ -21,6 +21,7 @@ import {
   WalletReconciliationFindingStatusSchema,
   WALLET_TRANSACTION_STATUSES,
   WALLET_TRANSACTION_TYPES,
+  WAGER_PRODUCTS,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
@@ -206,6 +207,7 @@ export const WalletTransactionSchema = z.object({
   fee: MoneyAmountSchema.nullable(),
   createdAt: TimestampSchema,
   reviewReason: z.string().nullable(),
+  product: z.enum(WAGER_PRODUCTS).nullable(),
 });
 
 // A ledger row's value in the player's reference currency when it was written. Never
@@ -318,6 +320,7 @@ export const WalletTransactionListQuerySchema = PageQuerySchema.extend({
   from: TimestampSchema.optional(),
   to: TimestampSchema.optional(),
   search: z.string().trim().min(1).max(128).optional(),
+  products: z.array(z.enum(WAGER_PRODUCTS)).max(WAGER_PRODUCTS.length).optional(),
 }).refine((q) => !q.from || !q.to || Date.parse(q.from) <= Date.parse(q.to), {
   message: '`from` must not be after `to`',
   path: ['from'],

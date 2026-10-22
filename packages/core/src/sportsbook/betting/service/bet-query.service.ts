@@ -1,7 +1,21 @@
-import { and, asc, count, desc, eq, gt, gte, isNotNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  lte,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { makeNotFoundError, pageToOffset, type DrizzleService } from '@openora/core/server';
-import type { DateRange, IdentityReader, User } from '@openora/core/contracts';
+import type { DateRange, IdentityReader, User, Uuid, WalletReader } from '@openora/core/contracts';
 import type {
   AdminSportsbookBet,
   ListAdminSportsbookBetsInput,
@@ -12,6 +26,7 @@ import type {
   SportsbookPromotionReportInput,
   SportsbookPromotionReportRow,
 } from '../contract/index.js';
+import { SPORTSBOOK_WALLET_PROVIDER_PREFIX } from '../contract/index.js';
 import {
   sportsbookBet,
   sportsbookBetTransaction,
@@ -93,6 +108,7 @@ export class SportsbookBetQueryService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly identity: IdentityReader,
+    private readonly walletReader: WalletReader,
   ) {}
 
   async listOwn(userId: User['id'], input: ListSportsbookBetsInput) {
@@ -107,6 +123,30 @@ export class SportsbookBetQueryService {
       .where(and(eq(sportsbookBet.id, id), eq(sportsbookBet.userId, userId)));
     if (!row) {
       throw new SportsbookBetNotFoundError(id);
+    }
+    return toBet(row);
+  }
+
+  async getOwnByTransaction(userId: User['id'], transactionId: Uuid): Promise<SportsbookBet> {
+    const move = await this.walletReader.findOwnProviderTransaction?.(userId, transactionId);
+    const provider = move?.providerName.startsWith(SPORTSBOOK_WALLET_PROVIDER_PREFIX)
+      ? move.providerName.slice(SPORTSBOOK_WALLET_PROVIDER_PREFIX.length)
+      : null;
+    const [row] =
+      provider && move?.externalRoundId
+        ? await this.drizzle.db
+            .select()
+            .from(sportsbookBet)
+            .where(
+              and(
+                eq(sportsbookBet.provider, provider),
+                eq(sportsbookBet.providerBetId, move.externalRoundId),
+                eq(sportsbookBet.userId, userId),
+              ),
+            )
+        : [];
+    if (!row) {
+      throw new SportsbookBetNotFoundError(transactionId);
     }
     return toBet(row);
   }
@@ -181,23 +221,25 @@ export class SportsbookBetQueryService {
     const bet = sportsbookBet;
     const allOf = (conditions: SQL[]) => sql`(${sql.join(conditions, sql` and `)})`;
     const accepted = allOf([isNotNull(bet.acceptedAt), ...within(bet.acceptedAt, range)]);
+    const reserved = allOf([eq(bet.status, 'reserved'), ...within(bet.createdAt, range)]);
+    const staked = sql`(${accepted} or ${reserved})`;
     const settled = allOf([eq(bet.status, 'settled'), ...within(bet.settledAt, range)]);
-    const open = eq(bet.status, 'accepted');
+    const open = inArray(bet.status, ['reserved', 'accepted']);
     return this.drizzle.db
       .select({
         currency: bet.currency,
-        bets: sql<number>`count(*) filter (where ${accepted})`.mapWith(Number),
-        stake: sumOf(bet.stake, accepted),
-        cashStake: sumOf(bet.cashStake, accepted),
-        promotionStake: sumOf(sql`${bet.stake} - ${bet.cashStake}`, accepted),
+        bets: sql<number>`count(*) filter (where ${staked})`.mapWith(Number),
+        stake: sumOf(bet.stake, staked),
+        cashStake: sumOf(bet.cashStake, staked),
+        promotionStake: sumOf(sql`${bet.stake} - ${bet.cashStake}`, staked),
         payout: sumOf(bet.payoutTotal, settled),
         cashPayout: sumOf(sql`${bet.payoutTotal} - ${bet.promotionPaid}`, settled),
         promotionPayout: sumOf(bet.promotionPaid, settled),
-        ggr: sql<string>`(${sumOf(bet.cashStake, accepted)} - ${sumOf(bet.payoutTotal, settled)})::numeric(38, 18)`,
+        ggr: sql<string>`(${sumOf(bet.cashStake, staked)} - ${sumOf(bet.payoutTotal, settled)})::numeric(38, 18)`,
         openExposure: sumOf(bet.stake, open),
       })
       .from(bet)
-      .where(and(eq(bet.userId, userId), or(accepted, settled, open)))
+      .where(and(eq(bet.userId, userId), or(staked, settled, open)))
       .groupBy(bet.currency)
       .orderBy(asc(bet.currency));
   }
