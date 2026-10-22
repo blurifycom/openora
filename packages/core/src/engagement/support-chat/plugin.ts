@@ -35,6 +35,8 @@ const SYNC_ENQUEUE_OPTIONS = {
   attempts: 10,
   backoff: { type: 'exponential', delayMs: 30_000 },
 } as const;
+// Once those retries run out, one try at the top of each hour until a sync lands.
+const RESYNC_EVERY_MS = 60 * 60_000;
 
 // What refreshes a linked player's context besides a chat open, the first link included.
 // Username and active-currency changes emit no event; the next open picks them up.
@@ -70,6 +72,25 @@ export default {
       await jobQueue.enqueue(SYNC_QUEUE, { userId }, SYNC_ENQUEUE_OPTIONS);
     };
 
+    // A self-excluded player cannot sign in to refresh it, so support would see stale RG state
+    // for good. The key names the hour: every give-up in that hour shares one job, and the key
+    // is never reused while the queue still keeps the failed job.
+    const scheduleResync = async (userId: Uuid) => {
+      if (!jobQueue) {
+        throw new Error('support-chat job queue not bound yet');
+      }
+      const slot = Math.floor(Date.now() / RESYNC_EVERY_MS) + 1;
+      await jobQueue.enqueue(
+        SYNC_QUEUE,
+        { userId },
+        {
+          attempts: 1,
+          delayMs: slot * RESYNC_EVERY_MS - Date.now(),
+          idempotencyKey: `support-chat-resync:${userId}:${slot}`,
+        },
+      );
+    };
+
     // No orderingKey: the shipped drivers do not honour it. Two syncs for one player may run
     // at once; syncCustomer re-reads after each write, so the last write still converges.
     ctx.jobs.worker({
@@ -97,11 +118,20 @@ export default {
             : err;
         });
       },
-      onDeadLetter: ({ payload }) => {
+      onDeadLetter: async ({ payload }) => {
+        if (!service) {
+          // Nothing here could resync it: the documented misconfiguration ends at this log.
+          logger.error(
+            { userId: payload.userId },
+            'support-chat sync gave up - no SUPPORT_CHAT_PROVIDER bound in this process',
+          );
+          return;
+        }
         logger.error(
           { userId: payload.userId },
-          'support-chat sync gave up - support sees stale context until the next refresh',
+          'support-chat sync gave up - support sees stale context until the hourly resync lands',
         );
+        await scheduleResync(payload.userId);
       },
     });
 
