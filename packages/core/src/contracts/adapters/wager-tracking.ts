@@ -56,6 +56,21 @@ export type WagerReversalArgs = {
 };
 
 /**
+ * A bet whose stake counts once its outcome is known, reported when it settles. A bet settled again
+ * after a reopen is reported again; a consumer counts each round at most once.
+ */
+export type SettledWagerArgs = {
+  userId: string;
+  currency: string;
+  /** The part of the stake the player paid from their own funds. */
+  realAmount: string;
+  context: WagerContext;
+  round: WagerRound;
+  /** The bet's first settlement other than a void, so a re-settle counts where the first one did. */
+  qualifiedAt: Date;
+};
+
+/**
  * A real-money wallet credit a `recordWager` consumer made inside the caller's own transaction -
  * rank rakeback today. Reported back rather than fired as an event from inside the port, since a
  * consumer here has no view of when the caller's transaction actually commits; the caller collects
@@ -76,6 +91,8 @@ export type WagerTrackingCommands = {
    * counter is deliberately monotonic (the rank ladder) has nothing to undo.
    */
   reverseWager?(tx: unknown, args: WagerReversalArgs): Promise<void>;
+  /** Optional: only a consumer that counts a product at settlement rather than at the wager. */
+  recordSettledWager?(tx: unknown, args: SettledWagerArgs): Promise<void>;
 };
 
 export const WAGER_TRACKING: Token<WagerTrackingCommands> = createToken('WAGER_TRACKING');

@@ -31,7 +31,7 @@ const baseInput: CreateRaceInput = {
     { position: 2, prize: '250' },
     { position: 3, prize: '100' },
   ],
-  eligibleProducts: [],
+  eligibleProducts: ['casino'],
 };
 
 beforeAll(async () => {

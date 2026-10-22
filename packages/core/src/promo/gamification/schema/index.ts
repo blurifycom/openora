@@ -412,8 +412,8 @@ export const promoRace = pgTable(
     prizePool: money().notNull(),
     /** `{ position, prize }[]`, validated 1..N contiguous, prizes summing to at most `prizePool`. */
     positions: jsonb().$type<RacePositions>().notNull(),
-    /** Products whose stakes count toward this race. Empty counts every product. */
-    eligibleProducts: text().array().notNull().default([]).$type<RaceEligibleProducts>(),
+    /** Products whose stakes count toward this race. */
+    eligibleProducts: text().array().notNull().$type<RaceEligibleProducts>(),
     /** Set once, by the settle job, when standings are frozen and prizes granted. */
     closedAt: timestamp({ withTimezone: true }),
     createdBy: uuid(),
@@ -427,6 +427,7 @@ export const promoRace = pgTable(
   (t) => [
     check('promo_race_prize_pool_positive', sql`${t.prizePool} > 0`),
     check('promo_race_dates_ordered', sql`${t.endAt} > ${t.startAt}`),
+    check('promo_race_eligible_products_set', sql`cardinality(${t.eligibleProducts}) > 0`),
     index('promo_race_open_idx')
       .on(t.startAt, t.endAt)
       .where(sql`${t.closedAt} is null`),
