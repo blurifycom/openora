@@ -135,7 +135,7 @@ export const RegistrationAcquisitionSchema = z.object({
       z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/),
       z
         .string()
-        .max(512)
+        .max(256)
         // oxlint-disable-next-line no-control-regex -- Postgres rejects NUL and lone surrogates in jsonb
         .regex(/^(?:[^\u0000-\u001f\u007f\ud800-\udfff]|[\ud800-\udbff][\udc00-\udfff])+$/),
     )

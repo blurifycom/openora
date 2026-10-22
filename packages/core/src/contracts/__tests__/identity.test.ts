@@ -89,13 +89,19 @@ describe('registration acquisition', () => {
     ['a key outside the allowed characters', { params: { 'bad key': 'v' } }],
     ['an over-long key', { params: { ['k'.repeat(65)]: 'v' } }],
     ['an empty value', { params: { aff_id: '' } }],
-    ['an over-long value', { params: { aff_id: 'v'.repeat(513) } }],
+    ['an over-long value', { params: { aff_id: 'v'.repeat(257) } }],
     ['a value with a control character', { params: { aff_id: 'a\u0000b' } }],
     ['a value that is not well-formed Unicode', { params: { aff_id: 'a\ud800b' } }],
     ['a landing host that is not a host name', { params: { aff_id: 'v' }, landingHost: 'a b/c' }],
     ['a first-seen time that is not ISO', { params: { aff_id: 'v' }, firstSeenAt: 'yesterday' }],
   ])('rejects %s', (_case, input) => {
     expect(RegistrationAcquisitionSchema.safeParse(input).success).toBe(false);
+  });
+
+  it('accepts a value at the maximum length', () => {
+    expect(
+      RegistrationAcquisitionSchema.safeParse({ params: { aff_id: 'v'.repeat(256) } }).success,
+    ).toBe(true);
   });
 
   it('keeps acquisition optional on sign-up', () => {
