@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { user, session } from '@openora/core/pam/schema/identity';
-import { player } from '@openora/core/pam/schema/profile';
+import { player, playerAcquisition } from '@openora/core/pam/schema/profile';
 import { auditLog } from '@openora/core/audit/schema';
 import {
   verificationOtpFor,
@@ -280,6 +280,77 @@ describe('registration email verification', () => {
     expect(row?.termsAcceptedAt).toBeInstanceOf(Date);
     expect(row?.ageAcceptedAt).toBeInstanceOf(Date);
     expect(row?.registrationIp).not.toBeNull();
+  });
+
+  describe('acquisition parameters', () => {
+    const acquisition = {
+      params: { aff_id: 'a_1234b_56c_', utm_source: 'review-site' },
+      firstSeenAt: '2026-10-01T12:00:00.000Z',
+      landingHost: 'casino.example',
+    };
+
+    const acquisitionFor = async (userId: string) => {
+      const db = app.container.get(DRIZZLE).db;
+      const [owner] = await db
+        .select({ id: player.id })
+        .from(player)
+        .where(eq(player.userId, userId));
+      if (!owner) {
+        return undefined;
+      }
+      const [row] = await db
+        .select()
+        .from(playerAcquisition)
+        .where(eq(playerAcquisition.playerId, owner.id));
+      return row;
+    };
+
+    it('stores the parameters the visitor arrived with alongside the new player', async () => {
+      const userId = await registerPlayer(app, {
+        email: `reg-acq-${randomUUID()}@e2e.test`,
+        acquisition,
+      });
+
+      expect(await acquisitionFor(userId)).toMatchObject({
+        params: acquisition.params,
+        firstSeenAt: new Date(acquisition.firstSeenAt),
+        landingHost: acquisition.landingHost,
+      });
+    });
+
+    it('carries the stored parameters on the registration audit record', async () => {
+      const userId = await registerPlayer(app, {
+        email: `reg-acq-audit-${randomUUID()}@e2e.test`,
+        acquisition,
+      });
+
+      await vi.waitFor(async () => {
+        const rows = await app.container
+          .get(DRIZZLE)
+          .db.select()
+          .from(auditLog)
+          .where(eq(auditLog.action, 'identity.user.registered'));
+        const row = rows.find((r) => (r.after as { userId?: string })?.userId === userId);
+        expect(row?.after).toMatchObject({ acquisition });
+      });
+    });
+
+    it('stores nothing for a player who arrived without parameters', async () => {
+      const userId = await registerPlayer(app, { email: `reg-acq-none-${randomUUID()}@e2e.test` });
+
+      expect(await acquisitionFor(userId)).toBeUndefined();
+    });
+
+    it('rejects parameters outside the accepted shape without creating the account', async () => {
+      const email = `reg-acq-bad-${randomUUID()}@e2e.test`;
+      const res = await submitRegistration(app, {
+        email,
+        acquisition: { params: { 'bad key!': 'x' } },
+      });
+
+      expect(res.status).toBe(400);
+      expect(await userIdFor(email)).toBeUndefined();
+    });
   });
 
   it('rejects a username that is already taken, case-insensitively', async () => {

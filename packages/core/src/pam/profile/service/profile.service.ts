@@ -20,7 +20,7 @@ import type {
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey, resolveTimezone } from '@openora/core/contracts';
 import { eq } from 'drizzle-orm';
-import { player } from '../schema/index.js';
+import { player, playerAcquisition } from '../schema/index.js';
 import type {
   UpdatePlayerProfileInput,
   SetDisplayCurrencyInput,
@@ -131,14 +131,30 @@ export class ProfileService implements PlayerProvisioning {
     this.reservedUsernames = reservedUsernames;
   }
 
-  /** Idempotent: a retried registration never overwrites the original consent record. */
-  async createForRegistration({ userId, ...consent }: PlayerRegistrationRecord) {
-    const [inserted] = await this.drizzle.db
-      .insert(player)
-      .values({ userId, ...consent })
-      .onConflictDoNothing({ target: player.userId })
-      .returning({ id: player.id });
-    return inserted ? { created: true, playerId: inserted.id } : { created: false };
+  /**
+   * Idempotent: a retried registration never overwrites the original consent record, and
+   * the acquisition is stored only with the player row it was captured for.
+   */
+  async createForRegistration({ userId, acquisition, ...consent }: PlayerRegistrationRecord) {
+    return this.drizzle.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(player)
+        .values({ userId, ...consent })
+        .onConflictDoNothing({ target: player.userId })
+        .returning({ id: player.id });
+      if (!inserted) {
+        return { created: false };
+      }
+      if (acquisition) {
+        await tx.insert(playerAcquisition).values({
+          playerId: inserted.id,
+          params: acquisition.params,
+          firstSeenAt: acquisition.firstSeenAt ? new Date(acquisition.firstSeenAt) : null,
+          landingHost: acquisition.landingHost ?? null,
+        });
+      }
+      return { created: true, playerId: inserted.id };
+    });
   }
 
   /**
