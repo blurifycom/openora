@@ -101,4 +101,14 @@ describe('registration acquisition', () => {
   it('keeps acquisition optional on sign-up', () => {
     expect(RegisterInputSchema.safeParse(registerInput('password1234')).success).toBe(true);
   });
+
+  it('drops a malformed acquisition instead of refusing the sign-up', () => {
+    const result = RegisterInputSchema.safeParse({
+      ...registerInput('password1234'),
+      acquisition: { params: { aff_id: 'v' }, landingHost: '[::1]:3000' },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.acquisition).toBeUndefined();
+  });
 });

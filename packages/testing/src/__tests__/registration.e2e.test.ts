@@ -341,15 +341,13 @@ describe('registration email verification', () => {
       expect(await acquisitionFor(userId)).toBeUndefined();
     });
 
-    it('rejects parameters outside the accepted shape without creating the account', async () => {
-      const email = `reg-acq-bad-${randomUUID()}@e2e.test`;
-      const res = await submitRegistration(app, {
-        email,
+    it('registers the player and stores nothing when the parameters are malformed', async () => {
+      const userId = await registerPlayer(app, {
+        email: `reg-acq-bad-${randomUUID()}@e2e.test`,
         acquisition: { params: { 'bad key!': 'x' } },
       });
 
-      expect(res.status).toBe(400);
-      expect(await userIdFor(email)).toBeUndefined();
+      expect(await acquisitionFor(userId)).toBeUndefined();
     });
   });
 

@@ -158,7 +158,7 @@ export const RegisterInputSchema = credentialsBase.extend({
   acceptedTerms: z.literal(true),
   acceptedAge: z.literal(true),
   timezone: TimezoneSchema.optional(),
-  acquisition: RegistrationAcquisitionSchema.optional(),
+  acquisition: RegistrationAcquisitionSchema.optional().catch(undefined),
 });
 
 export const RegisterOutputSchema = z.object({ status: z.literal('check-email') });
