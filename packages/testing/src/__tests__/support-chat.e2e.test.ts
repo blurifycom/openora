@@ -403,6 +403,26 @@ describe('POST /support-chat/session', () => {
     expect((await client.post(SESSION)).status).toBe(200);
   });
 
+  it('reschedules a sync that ran out of retries for the next hour, one job per player', async () => {
+    failSupportChatSyncs(true);
+    const p = await newPlayer();
+    await openSession(p.client);
+    const enqueues = watchEnqueues(testApp);
+    await enqueueSync(p.userId);
+    await enqueueSync(p.userId);
+    const resyncs = () =>
+      syncJobsFor(enqueues, p.userId)
+        .map(([, , opts]) => opts)
+        .filter((opts) => opts?.idempotencyKey?.startsWith('support-chat-resync:'));
+    await vi.waitFor(() => expect(resyncs()).toHaveLength(2), WAIT);
+    const [first, second] = resyncs();
+    // Both give-ups share one key, so the queue holds a single resync for the player.
+    expect(second?.idempotencyKey).toBe(first?.idempotencyKey);
+    expect(first?.attempts).toBe(1);
+    expect(first?.delayMs).toBeGreaterThan(0);
+    expect(first?.delayMs).toBeLessThanOrEqual(3_600_000);
+  });
+
   it('keeps the first sync owed through a job queue outage on first open', async () => {
     const p = await newPlayer();
     const pg = testApp.container.get(DRIZZLE).db;
@@ -868,6 +888,7 @@ describe('support context refresh', () => {
     const { userId } = await newPlayer(unconfiguredApp);
     const reported: { error: unknown; context: unknown }[] = [];
     setErrorReporter((error, context) => reported.push({ error, context }));
+    const enqueues = watchEnqueues(unconfiguredApp);
     try {
       await unconfiguredApp.container
         .get(JOB_QUEUE)
@@ -888,6 +909,8 @@ describe('support context refresh', () => {
         return found;
       }, WAIT);
       expect((deadLetter.error as Error).message).toContain('SUPPORT_CHAT_PROVIDER');
+      // Nothing here could run a resync, so the give-up schedules none.
+      expect(syncJobsFor(enqueues, userId)).toHaveLength(1);
     } finally {
       setErrorReporter(undefined);
     }
