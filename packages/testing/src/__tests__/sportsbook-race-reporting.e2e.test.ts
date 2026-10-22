@@ -21,6 +21,7 @@ import {
   expectApplied,
   fundedPlayer,
   ledgerOf,
+  reserveArgs,
   txId,
 } from './fixtures/sportsbook.js';
 
@@ -145,13 +146,17 @@ describe('race eligible products', () => {
   });
 
   it.each([
-    ['an empty list', []],
-    ['a repeated product', ['casino', 'casino']],
-    ['an unknown product', ['slots']],
-  ])('refuses %s on create', async (_, products) => {
+    ['an empty list', [], ['eligibleProducts'], 'select at least one product'],
+    ['a repeated product', ['casino', 'casino'], ['eligibleProducts'], 'products must not repeat'],
+    ['an unknown product', ['slots'], ['eligibleProducts', 0], expect.any(String)],
+  ])('refuses %s on create', async (_, products, path, message) => {
     const res = await admin.post('/backoffice/promo/races', raceInput(products));
 
     expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: 'BAD_REQUEST',
+      data: { issues: [expect.objectContaining({ path, message })] },
+    });
   });
 
   it('refuses an empty list on update', async () => {
@@ -218,6 +223,47 @@ describe('revenue by product', () => {
       ggr: 25,
     });
     expect(row(await products(accepted.from, resettled.to), 'sportsbook')).toEqual({
+      stakes: 10,
+      payouts: 0,
+      ggr: 10,
+    });
+  });
+
+  it('nets a voided stake to nothing', async () => {
+    const player = await fundedPlayer(app);
+    const played = await window(async () => {
+      const { args } = await acceptedBet(app, player, { stake: '10', potentialPayout: '25' });
+      await settle(args.providerBetId, 'void', '10');
+    });
+
+    expect(row(await products(played.from, played.to), 'sportsbook')).toEqual({
+      stakes: 10,
+      payouts: 10,
+      ggr: 0,
+    });
+  });
+
+  it('leaves out a cancelled reserve and keeps an accepted bet the provider tries to cancel', async () => {
+    const player = await fundedPlayer(app);
+    const cancel = (providerBetId: string) =>
+      ledgerOf(app).cancel({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId,
+        reason: 'rejected',
+      });
+    const played = await window(async () => {
+      const reserved = reserveArgs(player.sessionId, { stake: '7' });
+      expectApplied(await ledgerOf(app).reserve(reserved));
+      expectApplied(await cancel(reserved.providerBetId));
+      const { args } = await acceptedBet(app, player, { stake: '10' });
+      expect(await cancel(args.providerBetId)).toEqual({
+        status: 'refused',
+        reason: 'illegal_transition',
+      });
+    });
+
+    expect(row(await products(played.from, played.to), 'sportsbook')).toEqual({
       stakes: 10,
       payouts: 0,
       ggr: 10,
