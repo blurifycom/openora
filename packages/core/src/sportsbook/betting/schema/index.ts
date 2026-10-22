@@ -183,6 +183,7 @@ export const sportsbookBet = pgTable(
     index('sportsbook_bet_user_id_accepted_at_idx').on(t.userId, t.acceptedAt),
     index('sportsbook_bet_user_id_status_settled_at_idx').on(t.userId, t.status, t.settledAt),
     index('sportsbook_bet_created_at_idx').on(t.createdAt),
+    index('sportsbook_bet_accepted_at_idx').on(t.acceptedAt),
     index('sportsbook_bet_status_created_at_idx').on(t.status, t.createdAt, t.id),
     index('sportsbook_bet_reserved_created_at_idx')
       .on(t.createdAt, t.id)
@@ -263,6 +264,7 @@ export const sportsbookBetTransaction = pgTable(
       .on(t.provider, t.providerBetId)
       .where(sql`${t.kind} = 'reserve' OR ${t.betId} IS NULL`),
     index('sportsbook_bet_transaction_bet_id_created_at_idx').on(t.betId, t.createdAt),
+    index('sportsbook_bet_transaction_kind_created_at_idx').on(t.kind, t.createdAt),
     index('sportsbook_bet_transaction_promotion_created_at_idx')
       .on(t.createdAt)
       .where(sql`${t.promotionAmount} > 0`),
