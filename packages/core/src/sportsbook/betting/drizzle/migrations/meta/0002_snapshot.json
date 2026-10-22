@@ -1,5 +1,5 @@
 {
-  "id": "89749124-a3aa-40f2-9310-0e34c3246c89",
+  "id": "d56d8ded-46f5-4852-8bec-3d74b67287a9",
   "prevId": "6a5382ff-b293-4dfe-ac82-61e669a84bd6",
   "version": "7",
   "dialect": "postgresql",
@@ -227,6 +227,54 @@
             },
             {
               "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_bet_user_id_accepted_at_idx": {
+          "name": "sportsbook_bet_user_id_accepted_at_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "accepted_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_bet_user_id_status_settled_at_idx": {
+          "name": "sportsbook_bet_user_id_status_settled_at_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "settled_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
