@@ -146,7 +146,7 @@ console.warn(
   '  - A module this service and another process both load handles each event in both, under each',
 );
 console.warn(
-  '    SERVICE_NAME - audit writes every row twice. Until ADR-0046 lands, split modules no other process loads.',
+  '    SERVICE_NAME - audit writes every row twice. Until ADR-0047 lands, split modules no other process loads.',
 );
 console.warn(
   '  - A manifest that leaves out a module behind a control (RG limits, country checks, audit',

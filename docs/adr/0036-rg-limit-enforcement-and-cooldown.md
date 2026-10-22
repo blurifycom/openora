@@ -11,7 +11,7 @@ and the concurrency reasoning) is unchanged.
 **Update (2026-10-16)**: `RG_LIMITS` stays optional for its consumers in a full boot, but wallet
 and gaming list it in `controlPorts`, so a `SERVICE_MANIFEST` boot that loads either refuses to
 start without the compliance module while the plugin list has it: another process of the install
-enforces the limits there ([ADR-0045](./0045-per-process-job-worker-selection.md)).
+enforces the limits there ([ADR-0046](./0046-per-process-job-worker-selection.md)).
 
 ## Context
 

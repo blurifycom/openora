@@ -8,7 +8,7 @@
 >
 > **Update (2026-08-31)**: [ADR-0031](./0031-realtime-transport-sse-and-http-over-web-sockets.md) shipped `RedisPubSubRealtimeTransport` and deleted `InProcessRealtimeTransport` too - `REALTIME_TRANSPORT` now auto-binds on `REDIS_URL` exactly like `JOB_QUEUE`, with no in-process fallback either. Both seams from this ADR are now fully superseded on the production-default question; the seam shapes and the client-push-is-not-inter-module decision are still unchanged.
 >
-> **Update (2026-10-13)**: a worker still starts at boot against the resolved `JOB_QUEUE`, unless `JOB_WORKERS` leaves its queue to another process ([ADR-0045](./0045-per-process-job-worker-selection.md)).
+> **Update (2026-10-13)**: a worker still starts at boot against the resolved `JOB_QUEUE`, unless `JOB_WORKERS` leaves its queue to another process ([ADR-0046](./0046-per-process-job-worker-selection.md)).
 
 ## Context
 

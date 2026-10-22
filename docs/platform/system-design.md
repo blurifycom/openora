@@ -292,7 +292,7 @@ that adds it all. A split service
 needs a `SERVICE_NAME` of its own - its consumer group - while an instance that only takes a
 share of the queues keeps the replicas' `SERVICE_NAME`, so it competes for events rather than
 receiving a copy. `JOB_WORKERS` picks the queues a process consumes
-([ADR-0045](../adr/0045-per-process-job-worker-selection.md)).
+([ADR-0046](../adr/0046-per-process-job-worker-selection.md)).
 
 ## Reference - domain -> modules -> tables -> routes
 

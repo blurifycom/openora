@@ -1,8 +1,8 @@
-# ADR-0046: Dependency-only modules provide but do not consume
+# ADR-0047: Dependency-only modules provide but do not consume
 
 **Date**: 2026-10-13
 **Status**: Proposed
-**Relates to**: ADR-0017 (service manifest), ADR-0030 (`SERVICE_NAME`), ADR-0045 (job worker selection).
+**Relates to**: ADR-0017 (service manifest), ADR-0030 (`SERVICE_NAME`), ADR-0046 (job worker selection).
 
 ## Context
 

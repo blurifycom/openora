@@ -40,7 +40,7 @@ ctx.mcp.tool(defineMcpTool({...}), (c) => async (input, run) => output); // agen
 ctx.actions.register(defineActionType({...}), (c) => ({ precondition, execute })); // action type: a change a model may only propose
 ```
 
-`register()` only declares into `ctx`. A timer, connection, file or network read, process listener, global or `process.env` write goes in a `provide()` or router factory, closed with `c.onDispose()`: a failed `SERVICE_MANIFEST` boot registers the plugins it has not loaded into a container it then drops, to learn which binds which port (ADR-0045).
+`register()` only declares into `ctx`. A timer, connection, file or network read, process listener, global or `process.env` write goes in a `provide()` or router factory, closed with `c.onDispose()`: a failed `SERVICE_MANIFEST` boot registers the plugins it has not loaded into a container it then drops, to learn which binds which port (ADR-0046).
 
 Agent tools and action types are served only through the `MCP_KERNEL` token, which checks the IAM grant of the admin behind the run, validates input, returns only the allow-listed output keys and declared error codes, and audits every tool call and action execution. A shape it cannot serve (eg a tool input that is not a top-level `z.object`, or an unbounded string) fails boot with the fix. `execute` must perform nothing on a replay while its effect still holds, and answer `already_applied`. The one-argument `ctx.mcp.tool(definition)` still registers but the kernel does not serve it. Contract types: `packages/core/src/contracts/adapters/mcp.ts`; why: ADR-0042.
 
