@@ -72,6 +72,7 @@ export class FinancialAnalyticsService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly cache: CacheAdapter,
+    private readonly sportsbook = false,
   ) {}
 
   async summary(query: FinancialSummaryQuery): Promise<FinancialSummary> {
@@ -175,6 +176,7 @@ export class FinancialAnalyticsService {
     const bet = sportsbookBet;
     const tx = sportsbookBetTransaction;
     const prior = alias(sportsbookBetTransaction, 'prior_settle');
+    const book = <T>(query: () => Promise<T[]>) => (this.sportsbook ? query() : []);
     const [rounds, bookStakes, bookPayouts, bookReversals] = await Promise.all([
       db
         .select({
@@ -192,32 +194,38 @@ export class FinancialAnalyticsService {
           ),
         )
         .groupBy(game.gameType, gameRound.currency),
-      db
-        .select({ currency: bet.currency, amount: total(bet.cashStake) })
-        .from(bet)
-        .where(and(isNotNull(bet.acceptedAt), ...inRange(bet.acceptedAt, bet.currency, query)))
-        .groupBy(bet.currency),
-      db
-        .select({ currency: bet.currency, amount: total(tx.amount) })
-        .from(tx)
-        .innerJoin(bet, eq(bet.id, tx.betId))
-        .where(and(eq(tx.kind, 'settle'), ...inRange(tx.createdAt, bet.currency, query)))
-        .groupBy(bet.currency),
+      book(() =>
+        db
+          .select({ currency: bet.currency, amount: total(bet.cashStake) })
+          .from(bet)
+          .where(and(isNotNull(bet.acceptedAt), ...inRange(bet.acceptedAt, bet.currency, query)))
+          .groupBy(bet.currency),
+      ),
+      book(() =>
+        db
+          .select({ currency: bet.currency, amount: total(tx.amount) })
+          .from(tx)
+          .innerJoin(bet, eq(bet.id, tx.betId))
+          .where(and(eq(tx.kind, 'settle'), ...inRange(tx.createdAt, bet.currency, query)))
+          .groupBy(bet.currency),
+      ),
       // A reopen takes back the whole payout of the settlement it reopens, whatever it collected.
-      db
-        .select({ currency: bet.currency, amount: total(prior.amount) })
-        .from(tx)
-        .innerJoin(bet, eq(bet.id, tx.betId))
-        .innerJoin(
-          prior,
-          and(
-            eq(prior.betId, tx.betId),
-            eq(prior.kind, 'settle'),
-            eq(prior.betVersion, sql`${tx.betVersion} - 1`),
-          ),
-        )
-        .where(and(eq(tx.kind, 'reopen'), ...inRange(tx.createdAt, bet.currency, query)))
-        .groupBy(bet.currency),
+      book(() =>
+        db
+          .select({ currency: bet.currency, amount: total(prior.amount) })
+          .from(tx)
+          .innerJoin(bet, eq(bet.id, tx.betId))
+          .innerJoin(
+            prior,
+            and(
+              eq(prior.betId, tx.betId),
+              eq(prior.kind, 'settle'),
+              eq(prior.betVersion, sql`${tx.betVersion} - 1`),
+            ),
+          )
+          .where(and(eq(tx.kind, 'reopen'), ...inRange(tx.createdAt, bet.currency, query)))
+          .groupBy(bet.currency),
+      ),
     ]);
 
     const rows = new Map<string, ProductRevenue>();
