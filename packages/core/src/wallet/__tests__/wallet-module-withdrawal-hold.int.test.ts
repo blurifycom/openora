@@ -8,6 +8,7 @@ import {
   type PaymentAdapter,
   type PlatformConfig,
   type PlayEligibilityPort,
+  type PlayerTags,
   WalletHoldWithoutWalletError,
 } from '@openora/core/contracts';
 import { createTestDb, waitForRowLockWaiter, type TestDb } from '@openora/core/testing';
@@ -127,6 +128,18 @@ const hold = (userId: string, source = 'sportsbook', reason = 'unpaid correction
 
 const withdraw = (svc: WalletService, userId: string) =>
   svc.withdraw({ userId, amount: '40', currency: 'USD', ...NO_CLIENT_META });
+
+// Places a hold from the post-flip lock read, once the flip to processing has committed.
+const holdOnceFlipped = (w: { id: string; userId: string }) =>
+  mock<PlayerTags>({
+    getActiveTagKeys: vi.fn(async () => {
+      const rows = await withdrawalsOf(w.id);
+      if (rows.some((r) => r.status === 'processing')) {
+        await hold(w.userId);
+      }
+      return new Map();
+    }),
+  });
 
 beforeAll(async () => {
   db = await createTestDb([migrate, migrateProfile]);
@@ -364,6 +377,38 @@ describe('WalletService withdrawals under a module hold (real PG)', () => {
     expect(psp.processWithdrawal).not.toHaveBeenCalled();
     expect(await txById(result.transactionId)).toMatchObject({
       status: 'pending',
+      autoApprovalPivotAmount: null,
+    });
+  });
+
+  it('puts an approval back as queued when a hold commits after the flip, before any PSP call', async () => {
+    const w = await seedWallet();
+    const { svc, psp } = makeService({ riskTags: holdOnceFlipped(w) });
+    const { transactionId } = await withdraw(svc, w.userId);
+
+    await expect(svc.approveWithdrawal(randomUUID(), transactionId)).rejects.toBeInstanceOf(
+      WithdrawalHeldError,
+    );
+    expect(await txById(transactionId)).toMatchObject({
+      status: 'pending',
+      reviewedBy: null,
+      reviewedAt: null,
+    });
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+  });
+
+  it('puts an auto-approval back for a human when a hold commits after the flip', async () => {
+    await seedAutoApprovalConfig();
+    const w = await seedWallet();
+    const { svc, psp } = makeAutoService({ riskTags: holdOnceFlipped(w) });
+
+    const result = await withdraw(svc, w.userId);
+
+    expect(result.status).toBe('pending');
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(await txById(result.transactionId)).toMatchObject({
+      status: 'pending',
+      reviewReason: null,
       autoApprovalPivotAmount: null,
     });
   });
