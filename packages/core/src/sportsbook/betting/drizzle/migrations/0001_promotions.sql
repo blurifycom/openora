@@ -3,6 +3,18 @@ ALTER TYPE "public"."sportsbook_finding_kind" ADD VALUE 'promotion_payout_unusua
 ALTER TABLE "sportsbook_bet" ADD COLUMN "cash_stake" numeric(38, 18);--> statement-breakpoint
 ALTER TABLE "sportsbook_bet" ADD COLUMN "void_payout" numeric(38, 18);--> statement-breakpoint
 UPDATE "sportsbook_bet" SET "cash_stake" = "stake", "void_payout" = "stake";--> statement-breakpoint
+-- A previous-release writer omits cash_stake and void_payout; its bets are all cash-staked.
+CREATE OR REPLACE FUNCTION "sportsbook_bet_legacy_insert"()
+RETURNS trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+	NEW."cash_stake" := COALESCE(NEW."cash_stake", NEW."stake");
+	NEW."void_payout" := COALESCE(NEW."void_payout", NEW."stake");
+	RETURN NEW;
+END
+$fn$;--> statement-breakpoint
+CREATE TRIGGER "sportsbook_bet_legacy_insert" BEFORE INSERT ON "sportsbook_bet"
+FOR EACH ROW WHEN (NEW."cash_stake" IS NULL OR NEW."void_payout" IS NULL)
+EXECUTE FUNCTION "sportsbook_bet_legacy_insert"();--> statement-breakpoint
 ALTER TABLE "sportsbook_bet" ALTER COLUMN "cash_stake" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "sportsbook_bet" ALTER COLUMN "void_payout" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "sportsbook_bet" ADD COLUMN "max_loss_refund" numeric(38, 18) DEFAULT '0' NOT NULL;--> statement-breakpoint
