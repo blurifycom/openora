@@ -37,7 +37,9 @@ strict, so a field reaches the vendor only when it is added to the contract on p
 - **Throw the port's provider error on a refusal, an unreachable vendor or an unexpected
   answer,** with a short reason. The reason goes to the log only; the player gets a fixed
   "unavailable" refusal. Never put a token, a request body or an unmasked email in it, and do
-  not attach a raw HTTP error as its `cause`: it can carry headers and bodies.
+  not attach a raw HTTP error as its `cause`: it can carry headers and bodies. Any other error
+  that escapes the adapter is handled the same way, but core keeps only its class name as the
+  reason, so throwing the provider error is what leaves a useful reason in the log.
 - **Make the context sync idempotent.** The same context may be written more than once, and two
   syncs for one player may run at once. Core re-reads the context after each write and writes
   again when it moved, so the last write converges on the database's latest state; the adapter
