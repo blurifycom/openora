@@ -5,6 +5,8 @@ import type { Paginated } from '@openora/core/contracts';
 import { DRIZZLE } from '@openora/core/server';
 import type { betting } from '@openora/core/sportsbook/contracts';
 import { auditLog } from '@openora/core/audit/schema';
+import { user } from '@openora/core/pam/schema/identity';
+import { player as playerProfile } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
   sportsbookBet,
@@ -263,25 +265,33 @@ describe('sportsbook session route', () => {
     expect((await openSession(stranger)).status).toBe(200);
   });
 
-  it('refuses a restricted player and lets them back once the restriction is lifted', async () => {
-    const { client, userId } = await registerAndMaterializePlayer(app, {
-      email: `sportsbook-${randomUUID()}@example.com`,
-    });
-    const restricted = await admin.post(`/backoffice/sportsbook/players/${userId}/restriction`, {
-      reason: 'affordability review',
-    });
-    expect(restricted.status).toBe(200);
+  it('issues a restricted player a browse-only session, refuses every bet, and takes bets once lifted', async () => {
+    const player = await fundedPlayer(app, '100');
+    const path = `/backoffice/sportsbook/players/${player.userId}/restriction`;
+    expect((await admin.post(path, { reason: 'affordability review' })).status).toBe(200);
 
-    const res = await openSession(client);
-    expect(res.status).toBe(403);
-    expect(mockSportsbookProviderState.issued).toHaveLength(0);
+    const res = await openSession(player.client);
+    expect(res.status).toBe(200);
+    const session = await json<{ sessionId: string; browseOnly: boolean }>(res);
+    expect(session.browseOnly).toBe(true);
+    expect(
+      await ledgerOf(app).session({ provider: PROVIDER, sessionId: session.sessionId }),
+    ).toMatchObject({ status: 'ok', browseOnly: true });
+    for (const stake of ['10', '0.01']) {
+      expect(await ledgerOf(app).reserve(reserveArgs(session.sessionId, { stake }))).toEqual({
+        status: 'refused',
+        reason: 'sportsbook_restricted',
+      });
+    }
+    expect(await balanceOf(app, player.userId)).toBe(money(100));
 
-    const lifted = await del(admin, `/backoffice/sportsbook/players/${userId}/restriction`, {
-      userId,
-      reason: 'review passed',
-    });
+    const lifted = await del(admin, path, { userId: player.userId, reason: 'review passed' });
     expect(lifted.status).toBe(200);
-    expect((await openSession(client)).status).toBe(200);
+    expect(
+      await ledgerOf(app).session({ provider: PROVIDER, sessionId: session.sessionId }),
+    ).toMatchObject({ status: 'ok', browseOnly: false });
+    expectApplied(await ledgerOf(app).reserve(reserveArgs(session.sessionId)));
+    expect(await balanceOf(app, player.userId)).toBe(money(90));
   });
 
   it('answers 503 when the provider cannot open the session and revokes it at both ends', async () => {
@@ -399,6 +409,332 @@ describe('sportsbook session route', () => {
       await putConfig();
     }
     expectApplied(await ledgerOf(app).reserve(reserveArgs(player.sessionId)));
+  });
+});
+
+describe('sportsbook availability route', () => {
+  const availability = (ip?: string) =>
+    anonymous('/sportsbook/availability', { headers: ip ? { 'x-real-ip': ip } : {} });
+
+  it('answers a guest from an allowed country without a session', async () => {
+    const res = await availability(PLAYER_IP);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual({ available: true, reason: null });
+    expect(mockSportsbookProviderState.issued).toHaveLength(0);
+  });
+
+  it('answers geo_restricted for a blocked or unresolvable country, as a session issue would', async () => {
+    expect(await json(await availability('198.51.100.7'))).toEqual({
+      available: false,
+      reason: 'geo_restricted',
+    });
+    expect(await json(await availability())).toEqual({
+      available: false,
+      reason: 'geo_restricted',
+    });
+    await putConfig({ blockedCountries: ['PL'] });
+    try {
+      expect(await json(await availability(PLAYER_IP))).toEqual({
+        available: false,
+        reason: 'geo_restricted',
+      });
+      expect((await openSession(stranger)).status).toBe(403);
+    } finally {
+      await putConfig();
+    }
+  });
+
+  it('answers unavailable while the sportsbook is suspended', async () => {
+    await admin.post('/backoffice/sportsbook/suspend', { reason: 'provider incident' });
+    try {
+      expect(await json(await availability(PLAYER_IP))).toEqual({
+        available: false,
+        reason: 'unavailable',
+      });
+    } finally {
+      await admin.post('/backoffice/sportsbook/resume', { reason: 'incident over' });
+    }
+    expect(await json(await availability(PLAYER_IP))).toEqual({ available: true, reason: null });
+  });
+});
+
+describe('sportsbook refusal reasons', () => {
+  const setUser = (userId: string, values: Partial<typeof user.$inferInsert>) =>
+    app.container.get(DRIZZLE).db.update(user).set(values).where(eq(user.id, userId));
+
+  const setPlayerStatus = (userId: string, status: typeof playerProfile.$inferInsert.status) =>
+    app.container
+      .get(DRIZZLE)
+      .db.update(playerProfile)
+      .set({ status })
+      .where(eq(playerProfile.userId, userId));
+
+  // Blocking through the platform's routes also ends the login, so these write the state
+  // directly: a block that reached the account while its login lived on.
+  it.each([
+    {
+      reason: 'cooling_off',
+      apply: (userId: string) =>
+        setUser(userId, { rgBlocked: true, rgBlockedUntil: new Date(Date.now() + 3_600_000) }),
+    },
+    {
+      reason: 'self_excluded',
+      apply: (userId: string) => setUser(userId, { rgBlocked: true, rgBlockedUntil: null }),
+    },
+    {
+      reason: 'account_suspended',
+      apply: (userId: string) => setPlayerStatus(userId, 'suspended'),
+    },
+    { reason: 'account_closed', apply: (userId: string) => setPlayerStatus(userId, 'closed') },
+  ])('refuses a session issue with $reason', async ({ reason, apply }) => {
+    const { client, userId } = await fundedPlayer(app, '100');
+    await apply(userId);
+    const res = await openSession(client);
+    expect(res.status).toBe(403);
+    expect((await json<ErrorBody>(res)).data?.['reason']).toBe(reason);
+  });
+
+  it.each([
+    { reason: 'account_suspended', status: 'suspended' },
+    { reason: 'account_closed', status: 'closed' },
+  ])(
+    'ends the login of a $status account and refuses its live session, taking no money',
+    async ({ reason, status }) => {
+      const { client, userId, playerId } = await registerAndMaterializePlayer(app, {
+        email: `sportsbook-${randomUUID()}@example.com`,
+      });
+      await deposit(client, '100');
+      const { sessionId } = await json<{ sessionId: string }>(await openSession(client));
+      expect((await admin.patch(`/players/${playerId}`, { status })).status).toBe(200);
+
+      expect((await openSession(client)).status).toBe(401);
+      expect(await ledgerOf(app).session({ provider: PROVIDER, sessionId })).toEqual({
+        status: 'refused',
+        reason,
+      });
+      expect(await ledgerOf(app).reserve(reserveArgs(sessionId))).toEqual({
+        status: 'refused',
+        reason,
+      });
+      expect(await balanceOf(app, userId)).toBe(money(100));
+    },
+  );
+
+  it.each([
+    { kind: 'deactivated', values: { isActive: false } },
+    { kind: 'banned', values: { banned: true, banExpires: null } },
+  ])('refuses describe and reserve on a live session of a $kind account', async ({ values }) => {
+    const player = await fundedPlayer(app, '100');
+    await setUser(player.userId, values);
+    expect(
+      await ledgerOf(app).session({ provider: PROVIDER, sessionId: player.sessionId }),
+    ).toEqual({ status: 'refused', reason: 'account_inactive' });
+    expect(await ledgerOf(app).reserve(reserveArgs(player.sessionId))).toEqual({
+      status: 'refused',
+      reason: 'account_inactive',
+    });
+    expect(await balanceOf(app, player.userId)).toBe(money(100));
+  });
+
+  it('lets a player whose ban has expired bet', async () => {
+    const player = await fundedPlayer(app, '100');
+    await setUser(player.userId, { banned: true, banExpires: new Date(Date.now() - 60_000) });
+    expectApplied(await ledgerOf(app).reserve(reserveArgs(player.sessionId)));
+  });
+
+  it('names an unoffered currency and a suspended sportsbook on reserve', async () => {
+    const player = await fundedPlayer(app, '100');
+    expect(await ledgerOf(app).reserve(reserveArgs(player.sessionId, { currency: 'GBP' }))).toEqual(
+      { status: 'refused', reason: 'currency_not_offered' },
+    );
+    await admin.post('/backoffice/sportsbook/suspend', { reason: 'provider incident' });
+    try {
+      expect(await ledgerOf(app).reserve(reserveArgs(player.sessionId))).toEqual({
+        status: 'refused',
+        reason: 'suspended',
+      });
+    } finally {
+      await admin.post('/backoffice/sportsbook/resume', { reason: 'incident over' });
+    }
+    expect(await balanceOf(app, player.userId)).toBe(money(100));
+  });
+
+  it('names a currency the sportsbook does not offer on session issue', async () => {
+    const res = await openSession(stranger, 'GBP');
+    expect(res.status).toBe(400);
+    expect((await json<ErrorBody>(res)).data?.['reason']).toBe('currency_not_offered');
+  });
+});
+
+describe('sportsbook session revoke route', () => {
+  const revoke = (client: TestClient, body: Record<string, unknown> = {}) =>
+    del(client, '/sportsbook/session', body);
+
+  it('revokes the caller live sessions at core and the provider, audited, and answers a repeat with nothing', async () => {
+    const player = await fundedPlayer(app, '100');
+    const res = await revoke(player.client);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual({ revoked: 1 });
+    const [session] = await sessionsOf(player.userId);
+    expect(session?.revokedAt).not.toBeNull();
+    expect(mockSportsbookProviderState.revoked).toEqual([player.sessionId]);
+    const rows = await auditRows('sportsbook.sessions.revoked', player.userId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      actorType: 'player',
+      actorId: player.userId,
+      after: { revokedSessions: [player.sessionId], trigger: 'logout' },
+    });
+
+    expect(
+      await ledgerOf(app).session({ provider: PROVIDER, sessionId: player.sessionId }),
+    ).toEqual({ status: 'refused', reason: 'session_invalid' });
+    expect(await ledgerOf(app).reserve(reserveArgs(player.sessionId))).toEqual({
+      status: 'refused',
+      reason: 'session_invalid',
+    });
+
+    const again = await revoke(player.client);
+    expect(again.status).toBe(200);
+    expect(await json(again)).toEqual({ revoked: 0 });
+    expect(mockSportsbookProviderState.revoked).toEqual([player.sessionId]);
+    expect(await auditRows('sportsbook.sessions.revoked', player.userId)).toHaveLength(1);
+  });
+
+  it('revokes only the named session, and nothing for another player session', async () => {
+    const player = await fundedPlayer(app, '100');
+    const other = await fundedPlayer(app, '100');
+    const second = await json<{ sessionId: string }>(await openSession(player.client));
+
+    expect(await json(await revoke(player.client, { sessionId: other.sessionId }))).toEqual({
+      revoked: 0,
+    });
+    expect((await sessionsOf(other.userId))[0]?.revokedAt).toBeNull();
+
+    expect(await json(await revoke(player.client, { sessionId: second.sessionId }))).toEqual({
+      revoked: 1,
+    });
+    const byId = new Map((await sessionsOf(player.userId)).map((s) => [s.id, s.revokedAt]));
+    expect(byId.get(second.sessionId)).not.toBeNull();
+    expect(byId.get(player.sessionId)).toBeNull();
+  });
+
+  it('answers 401 without a login and 400 for a malformed session id', async () => {
+    const res = await anonymous('/sportsbook/session', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(401);
+    expect((await revoke(stranger, { sessionId: 'not-a-uuid' })).status).toBe(400);
+  });
+});
+
+describe('sportsbook bet by wallet transaction route', () => {
+  const ledgerRows = (userId: string) =>
+    app.container
+      .get(DRIZZLE)
+      .db.select({ id: walletTransaction.id, type: walletTransaction.type })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(and(eq(wallet.userId, userId), like(walletTransaction.providerName, 'sportsbook:%')))
+      .orderBy(asc(walletTransaction.createdAt));
+
+  it('returns the bet behind each of the caller own sportsbook wallet rows', async () => {
+    const player = await fundedPlayer(app, '100');
+    const { args, betId } = await acceptedBet(app, player, { stake: '10', potentialPayout: '30' });
+    expectApplied(
+      await ledgerOf(app).settle({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: args.providerBetId,
+        result: 'won',
+        payout: '30',
+      }),
+    );
+    const rows = await ledgerRows(player.userId);
+    expect(rows.map((r) => r.type)).toEqual(['bet', 'win']);
+    for (const row of rows) {
+      const res = await player.client.get(`/sportsbook/bets/by-transaction/${row.id}`);
+      expect(res.status).toBe(200);
+      expect(await json<Bet>(res)).toMatchObject({ id: betId, providerBetId: args.providerBetId });
+    }
+  });
+
+  it("answers 404 for another player's row, a non-sportsbook row and an unknown id", async () => {
+    const player = await fundedPlayer(app, '100');
+    const other = await fundedPlayer(app, '100');
+    await acceptedBet(app, other, { stake: '10' });
+    const [otherRow] = await ledgerRows(other.userId);
+    const notFound = async (id: string) => {
+      const res = await player.client.get(`/sportsbook/bets/by-transaction/${id}`);
+      expect(res.status).toBe(404);
+      expect(await res.text()).not.toContain(other.userId);
+    };
+    await notFound(otherRow!.id);
+    const [deposited] = await app.container
+      .get(DRIZZLE)
+      .db.select({ id: walletTransaction.id })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(and(eq(wallet.userId, player.userId), eq(walletTransaction.type, 'deposit')));
+    await notFound(deposited!.id);
+    await notFound(randomUUID());
+    expect((await player.client.get('/sportsbook/bets/by-transaction/not-a-uuid')).status).toBe(
+      400,
+    );
+    expect((await anonymous(`/sportsbook/bets/by-transaction/${otherRow!.id}`)).status).toBe(401);
+  });
+});
+
+describe('wallet history product', () => {
+  type Row = { id: string; type: string; product: string | null };
+  const history = async (client: TestClient, query: string) => {
+    const res = await client.get(`/wallet/transactions?${query}`);
+    expect(res.status).toBe(200);
+    return json<Page<Row>>(res);
+  };
+
+  it('names sportsbook rows and filters by product in SQL before paging', async () => {
+    const player = await fundedPlayer(app, '100');
+    const won = await acceptedBet(app, player, { stake: '10', potentialPayout: '30' });
+    await acceptedBet(app, player, { stake: '5' });
+    await acceptedBet(app, player, { stake: '5' });
+    expectApplied(
+      await ledgerOf(app).settle({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: won.args.providerBetId,
+        result: 'won',
+        payout: '30',
+      }),
+    );
+
+    const all = await history(player.client, 'limit=50');
+    expect(all.total).toBe(5);
+    expect(all.items.find((r) => r.type === 'deposit')?.product).toBeNull();
+    expect(all.items.filter((r) => r.product === 'sportsbook')).toHaveLength(4);
+
+    const first = await history(player.client, 'products[]=sportsbook&limit=3&page=1');
+    const second = await history(player.client, 'products[]=sportsbook&limit=3&page=2');
+    expect(first.total).toBe(4);
+    expect(second.total).toBe(4);
+    expect(first.items).toHaveLength(3);
+    expect(second.items).toHaveLength(1);
+    const paged = [...first.items, ...second.items];
+    expect(new Set(paged.map((r) => r.id)).size).toBe(4);
+    expect(paged.every((r) => r.product === 'sportsbook')).toBe(true);
+    expect(paged.map((r) => r.type).sort()).toEqual(['bet', 'bet', 'bet', 'win']);
+
+    expect((await history(player.client, 'products[]=casino')).total).toBe(0);
+    expect(
+      (await history(player.client, 'products[]=casino&products[]=sportsbook&types[]=win')).total,
+    ).toBe(1);
+  });
+
+  it('rejects an unknown product', async () => {
+    expect((await stranger.get('/wallet/transactions?products[]=sport%25')).status).toBe(400);
+    expect((await stranger.get('/wallet/transactions?products[]=lottery')).status).toBe(400);
   });
 });
 
@@ -1081,7 +1417,9 @@ describe('sportsbook player restriction routes', () => {
     expect(
       (await del(victim.client, path, { userId: victim.userId, reason: 'self lift' })).status,
     ).toBe(403);
-    expect((await openSession(victim.client)).status).toBe(403);
+    const res = await openSession(victim.client);
+    expect(res.status).toBe(200);
+    expect((await json<{ browseOnly: boolean }>(res)).browseOnly).toBe(true);
   });
 });
 
