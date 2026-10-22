@@ -79,6 +79,14 @@ export function toSupportCustomerContext(
   };
 }
 
+// An adapter may throw anything, such as an HTTP client error holding the vendor API key or the
+// player's data. Only its class name survives, so nothing of it reaches a log, the error reporter
+// or the job queue.
+const asProviderError = (err: unknown): SupportChatProviderError =>
+  err instanceof SupportChatProviderError
+    ? err
+    : new SupportChatProviderError(`adapter threw ${err instanceof Error ? err.name : typeof err}`);
+
 /** Extra writes a sync makes when the context moved under it, before it gives up to the job's retry. */
 export const MAX_EXTRA_SYNC_ROUNDS = 2;
 
@@ -161,7 +169,10 @@ export class SupportChatService {
     await syncUntilSettled(
       linked.context,
       async () => (await this.readLinkedContext(userId))?.context ?? null,
-      (context) => this.deps.provider.syncCustomer(linked.customerId, context),
+      (context) =>
+        this.deps.provider.syncCustomer(linked.customerId, context).catch((err: unknown) => {
+          throw asProviderError(err);
+        }),
     );
   }
 
@@ -283,10 +294,7 @@ export class SupportChatService {
     try {
       answer = await this.deps.provider.issueCustomerToken(customerId ? { customerId } : {});
     } catch (err) {
-      if (err instanceof SupportChatProviderError) {
-        throw refuse(err.reason);
-      }
-      throw err;
+      throw refuse(asProviderError(err).reason);
     }
     const parsed = SupportChatCustomerTokenSchema.safeParse(answer);
     if (!parsed.success) {

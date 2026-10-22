@@ -11,6 +11,7 @@ export type TestSupportChatSync = { customerId: string; context: SupportCustomer
 
 type NextTokenAnswer =
   | { kind: 'fail'; reason: string }
+  | { kind: 'throw'; error: Error }
   | { kind: 'malformed' }
   | { kind: 'customer'; customerId: string };
 
@@ -19,7 +20,7 @@ type SupportChatState = {
   syncs: TestSupportChatSync[];
   nextTokenAnswer: NextTokenAnswer | null;
   syncDelayMs: number;
-  failSyncs: boolean;
+  failSyncs: boolean | Error;
   syncAttempts: string[];
   heldSync: { customerId: string; reached: () => void; released: Promise<void> } | null;
 };
@@ -44,9 +45,13 @@ export const resetSupportChat = () => {
   holder[STATE] = freshState();
 };
 
-/** The next `issueCustomerToken` throws a provider error carrying `reason`. */
-export const failNextSupportChatToken = (reason: string) => {
-  state().nextTokenAnswer = { kind: 'fail', reason };
+/**
+ * The next `issueCustomerToken` throws a provider error carrying `reason`, or, given an
+ * `Error`, throws that error as is - an adapter that let a raw client error escape.
+ */
+export const failNextSupportChatToken = (reason: string | Error) => {
+  state().nextTokenAnswer =
+    typeof reason === 'string' ? { kind: 'fail', reason } : { kind: 'throw', error: reason };
 };
 
 /** The next `issueCustomerToken` answers a token without an access token. */
@@ -64,8 +69,8 @@ export const setSupportChatSyncDelay = (ms: number) => {
   state().syncDelayMs = ms;
 };
 
-/** While on, every `syncCustomer` throws a provider error instead of landing. */
-export const failSupportChatSyncs = (on: boolean) => {
+/** While on, every `syncCustomer` throws a provider error, or the given `Error` as is, instead of landing. */
+export const failSupportChatSyncs = (on: boolean | Error) => {
   state().failSyncs = on;
 };
 
@@ -113,6 +118,9 @@ export default {
             if (next?.kind === 'fail') {
               throw new SupportChatProviderError(next.reason);
             }
+            if (next?.kind === 'throw') {
+              throw next.error;
+            }
             const customerId =
               next?.kind === 'customer'
                 ? next.customerId
@@ -127,6 +135,9 @@ export default {
           async syncCustomer(customerId, context) {
             const s = state();
             s.syncAttempts.push(customerId);
+            if (s.failSyncs instanceof Error) {
+              throw s.failSyncs;
+            }
             if (s.failSyncs) {
               throw new SupportChatProviderError('test vendor write refused');
             }

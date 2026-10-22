@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { inspect } from 'node:util';
 import { and, eq, like, sql } from 'drizzle-orm';
 import {
   AUDIT_WRITER,
@@ -8,12 +9,19 @@ import {
   JOB_QUEUE,
   RG_EXCLUSION_READER,
   SUPPORT_CHAT_PROVIDER,
+  SupportChatProviderError,
   SupportCustomerContextSchema,
   WAGER_TRACKING,
   WALLET_READER,
   queue,
 } from '@openora/core/contracts';
-import { DRIZZLE, eventOutbox, loadExtensions, processedEvents } from '@openora/core/server';
+import {
+  DRIZZLE,
+  eventOutbox,
+  loadExtensions,
+  processedEvents,
+  setErrorReporter,
+} from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { rgExclusion } from '@openora/core/compliance/schema';
 import { SupportChatService } from '@openora/core/engagement/server';
@@ -317,6 +325,39 @@ describe('POST /support-chat/session', () => {
     await openSession(client);
     answerNextSupportChatTokenWith(`customer-${randomUUID()}`);
     expect((await client.post(SESSION)).status).toBe(503);
+  });
+
+  it('keeps a raw adapter error and its vendor secret out of the response and the error reporter', async () => {
+    const secret = `sk_live_${randomUUID()}`;
+    const rawClientError = () =>
+      Object.assign(new Error(`POST https://vendor.example/customers?key=${secret} failed`), {
+        config: { headers: { Authorization: `Bearer ${secret}` } },
+      });
+    const reported: { error: unknown; context: unknown }[] = [];
+    setErrorReporter((error, context) => reported.push({ error, context }));
+    try {
+      const p = await newPlayer();
+      failNextSupportChatToken(rawClientError());
+      const refused = await p.client.post(SESSION);
+      expect(refused.status).toBe(503);
+      expect(await refused.text()).not.toContain(secret);
+
+      failSupportChatSyncs(rawClientError());
+      await openSession(p.client);
+      await enqueueSync(p.userId);
+      const deadLetter = await vi.waitFor(() => {
+        const found = reported.find(({ context }) => inspect(context).includes(SYNC_QUEUE));
+        if (!found) {
+          throw new Error('sync dead-letter not reported yet');
+        }
+        return found;
+      }, WAIT);
+      expect(deadLetter.error).toBeInstanceOf(SupportChatProviderError);
+      expect((deadLetter.error as Error).cause).toBeUndefined();
+      expect(inspect(reported, { depth: null })).not.toContain(secret);
+    } finally {
+      setErrorReporter(undefined);
+    }
   });
 
   it("fails with 500, links nothing and leaks no database detail when the vendor hands out another player's customer", async () => {
