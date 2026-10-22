@@ -8,7 +8,7 @@ import { createAnalyticsRouter } from './router/index.js';
 
 export default {
   id: 'analytics',
-  dependsOn: ['wallet', 'identity', 'profile', 'gaming'],
+  dependsOn: ['wallet', 'identity', 'profile', 'gaming', 'betting'],
   register(ctx) {
     let financialRef: FinancialAnalyticsService | null = null;
     const financialAnalytics = (c: TypedContainer<CoreTokenCatalog>) =>
