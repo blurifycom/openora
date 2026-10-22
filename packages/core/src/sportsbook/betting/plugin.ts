@@ -10,6 +10,7 @@ import {
   SPORTSBOOK_LEDGER,
   SPORTSBOOK_PROVIDER,
   SportsbookProviderNameSchema,
+  WAGER_TRACKING,
   WALLET_COMMANDS,
   WALLET_READER,
   domainEventSchemas,
@@ -94,6 +95,7 @@ export default {
           wallet,
           walletReader,
           rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+          wagerTracking: c.has(WAGER_TRACKING) ? c.get(WAGER_TRACKING) : undefined,
         });
         const align = new SportsbookAlignService({ drizzle, ledger, audit, provider });
         ref = {
