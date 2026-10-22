@@ -843,12 +843,54 @@ describe('support context refresh', () => {
     );
   });
 
-  it('enqueues no sync when no provider is bound', async () => {
+  it('with no provider and no linked player, handles an RG event without enqueuing a sync', async () => {
     const enqueues = watchEnqueues(unconfiguredApp);
     const p = await newPlayer(unconfiguredApp);
     await ok(await p.client.post('/compliance/rg/cooling-off', { durationHours: 24 }));
     await waitForSupportChatHandled(unconfiguredApp, 'rg.cooling_off.activated', p.userId);
     expect(syncJobsFor(enqueues, p.userId)).toHaveLength(0);
+  });
+
+  it('enqueues a sync for a linked player from a process without a provider', async () => {
+    const p = await newPlayer(unconfiguredApp);
+    // Linked by another process, one that has the provider bound.
+    await unconfiguredApp.container
+      .get(DRIZZLE)
+      .db.insert(supportChatCustomer)
+      .values({ playerId: p.playerId, providerCustomerId: `customer-${randomUUID()}` });
+    const enqueues = watchEnqueues(unconfiguredApp);
+    await ok(await p.client.post('/compliance/rg/cooling-off', { durationHours: 24 }));
+    await waitForSupportChatHandled(unconfiguredApp, 'rg.cooling_off.activated', p.userId);
+    expect(syncJobsFor(enqueues, p.userId)).toHaveLength(1);
+  });
+
+  it('fails and retries a sync job in a process without a provider instead of completing it', async () => {
+    const { userId } = await newPlayer(unconfiguredApp);
+    const reported: { error: unknown; context: unknown }[] = [];
+    setErrorReporter((error, context) => reported.push({ error, context }));
+    try {
+      await unconfiguredApp.container
+        .get(JOB_QUEUE)
+        .enqueue(
+          queue(SYNC_QUEUE),
+          { userId },
+          { attempts: 2, backoff: { type: 'fixed', delayMs: 10 } },
+        );
+      // Dead-lettered on its second attempt: both attempts failed, none completed it.
+      const deadLetter = await vi.waitFor(() => {
+        const found = reported.find(
+          ({ context }) =>
+            inspect(context).includes(SYNC_QUEUE) && inspect(context).includes('attempt: 2'),
+        );
+        if (!found) {
+          throw new Error('sync dead-letter not reported yet');
+        }
+        return found;
+      }, WAIT);
+      expect((deadLetter.error as Error).message).toContain('SUPPORT_CHAT_PROVIDER');
+    } finally {
+      setErrorReporter(undefined);
+    }
   });
 
   it('converges on the latest state when an older sync lands after a newer one', async () => {
