@@ -444,6 +444,15 @@ export const notificationEventMap: NotificationMapEntry[] = [
     }),
   ),
 
+  mapEvent('promo.streak.milestone.reached', (p) =>
+    notification({
+      userId: p.userId,
+      type: 'promo.streak.milestone.reached',
+      params: { day: String(p.day) },
+      data: { day: String(p.day) },
+    }),
+  ),
+
   mapEvent('chat.user.mentioned', (p) =>
     notification({
       userId: p.mentionedUserId,

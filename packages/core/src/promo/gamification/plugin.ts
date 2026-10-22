@@ -10,10 +10,13 @@ import {
   WALLET_COMMANDS,
   WALLET_READER,
   PromoConfigSchema,
+  UuidSchema,
   WAGER_TRACKING,
+  domainEventSchemas,
   queue,
   resolveWalletDefaultCurrency,
   type IdentityReader,
+  type JobQueueAdapter,
   type WagerReversalArgs,
   type WagerTrackingArgs,
   type WagerTrackingCommands,
@@ -44,13 +47,19 @@ import { RankChallengeService } from './service/rank-challenge.service.js';
 import { RankChallengeAdminService } from './service/rank-challenge-admin.service.js';
 import { RankChallengePayoutService } from './service/rank-challenge-payout.service.js';
 import { createGamificationRouter } from './router/index.js';
-import { RankPayoutKindSchema } from './contract/index.js';
+import {
+  RankPayoutKindSchema,
+  StreakForfeitReasonSchema,
+  type StreakForfeitReason,
+} from './contract/index.js';
 
 const logger = createLogger('promo-gamification');
 
 const RANK_PAYOUT_QUEUE = queue('promo-rank-payout');
 const STREAK_PAYOUT_QUEUE = queue('promo-streak-payout');
+const STREAK_ANNOUNCE_QUEUE = queue('promo-streak-announce');
 const STREAK_CLOSE_QUEUE = queue('promo-streak-close');
+const STREAK_FORFEIT_QUEUE = queue('promo-streak-forfeit');
 const RACE_PAYOUT_QUEUE = queue('promo-race-payout');
 const RANK_CHALLENGE_PAYOUT_QUEUE = queue('promo-rank-challenge-payout');
 const RANK_ANNOUNCE_QUEUE = queue('promo-rank-announce');
@@ -62,11 +71,25 @@ const RACE_PAYOUT_CRON = '*/1 * * * *';
 // so settling it - the cash credit and the win announcement - runs on the same short tick.
 const RANK_CHALLENGE_PAYOUT_CRON = '*/1 * * * *';
 const RANK_ANNOUNCE_CRON = '*/1 * * * *';
+const STREAK_ANNOUNCE_CRON = '*/1 * * * *';
 const RANK_PERIOD_PRUNE_CRON = '30 3 * * *';
 
 // The cron tick carries only which payout to run; what is owed is read from the database.
 const RankPayoutJobSchema = z.object({ kind: RankPayoutKindSchema });
 const EmptyJobSchema = z.object({});
+
+/**
+ * Forfeiting a player's unclaimed streak rewards when a responsible-gambling block starts runs as
+ * a retried job, not inside the best-effort event handler: a failure there would leave the
+ * rewards claimable once the block lapses. The `settledAt is null` claim makes a retry harmless.
+ */
+const StreakForfeitJobSchema = z.object({
+  userId: UuidSchema,
+  reason: StreakForfeitReasonSchema,
+  actorId: UuidSchema.nullable(),
+  actorIsAdmin: z.boolean(),
+});
+const FORFEIT_JOB_RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
 
 /** Fans a bet out to every wager-tracking consumer this module owns, on the one sealed port. */
 class CompositeWagerTracking implements WagerTrackingCommands {
@@ -125,6 +148,7 @@ export default {
     let streaks: StreakService | null = null;
     let events: EventBus | null = null;
     let identityReader: IdentityReader | null = null;
+    let jobs: JobQueueAdapter | null = null;
 
     const emitCashCredit = async (args: {
       userId: string;
@@ -196,22 +220,88 @@ export default {
     });
 
     ctx.jobs.worker({
-      queue: STREAK_PAYOUT_QUEUE,
+      queue: STREAK_ANNOUNCE_QUEUE,
       schema: EmptyJobSchema,
       handler: async () => {
         if (!streakPayouts) {
-          logger.warn({}, 'streak payout skipped - service not constructed');
+          logger.warn({}, 'streak announcement skipped - service not constructed');
           return;
         }
-        const { granted, cashPaid } = await streakPayouts.settlePending();
-        for (const grant of granted) {
-          events?.emit('promo.bonus.granted', grant);
+        await streakPayouts.announceReached((reached) =>
+          events?.emit('promo.streak.milestone.reached', reached),
+        );
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: STREAK_FORFEIT_QUEUE,
+      schema: StreakForfeitJobSchema,
+      handler: async ({ payload }) => {
+        if (!streakPayouts) {
+          throw new Error('promo-streak-forfeit: service not constructed');
         }
-        for (const paid of cashPaid) {
-          await emitCashCredit(paid);
+        const forfeited = await streakPayouts.forfeitUnclaimed({
+          userId: payload.userId,
+          reason: payload.reason,
+          actor:
+            payload.actorId === null
+              ? null
+              : { id: payload.actorId, isAdmin: payload.actorIsAdmin },
+        });
+        if (forfeited > 0) {
+          logger.info(
+            { userId: payload.userId, forfeited, reason: payload.reason },
+            'unclaimed streak rewards forfeited',
+          );
         }
       },
     });
+
+    const forfeitUnclaimedStreakRewards =
+      (
+        topic: 'rg.self_exclusion.activated' | 'rg.cooling_off.activated',
+        reason: StreakForfeitReason,
+      ) =>
+      (payload: unknown) => {
+        const parsed = domainEventSchemas[topic].safeParse(payload);
+        if (!parsed.success) {
+          logger.error(
+            { topic },
+            'streak reward forfeit skipped - event payload failed validation',
+          );
+          return;
+        }
+        if (!jobs) {
+          logger.error({ topic }, 'streak reward forfeit dropped - job queue not bound yet');
+          return;
+        }
+        const { userId, actorId, initiatedBy } = parsed.data;
+        // No queue idempotency key, for the reason the bonus forfeit gives: a second block after
+        // the first lapsed would derive the same key and be dropped. The durable guard is the
+        // `settledAt is null` claim inside `forfeitUnclaimed`.
+        void jobs
+          .enqueue(
+            STREAK_FORFEIT_QUEUE,
+            {
+              userId,
+              reason,
+              actorId: initiatedBy === 'system' ? null : actorId,
+              actorIsAdmin: initiatedBy === 'admin',
+            },
+            FORFEIT_JOB_RETRY,
+          )
+          .catch((err: unknown) =>
+            logger.error({ err, userId }, 'streak reward forfeit enqueue failed'),
+          );
+      };
+    ctx.events.on(
+      'rg.self_exclusion.activated',
+      forfeitUnclaimedStreakRewards('rg.self_exclusion.activated', 'self_exclusion'),
+    );
+    ctx.events.on(
+      'rg.cooling_off.activated',
+      forfeitUnclaimedStreakRewards('rg.cooling_off.activated', 'cooling_off'),
+    );
 
     ctx.jobs.worker({
       queue: STREAK_CLOSE_QUEUE,
@@ -286,15 +376,17 @@ export default {
         c.get(WALLET_READER),
         logger,
       );
-      streakPayouts = new StreakPayoutService(
-        c.get(DRIZZLE),
-        c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
-        c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
-        c.get(EXCHANGE_RATE_READER),
+      streakPayouts = new StreakPayoutService({
+        drizzle: c.get(DRIZZLE),
+        grants: c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
+        eligibility: c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        rates: c.get(EXCHANGE_RATE_READER),
+        walletReader: c.get(WALLET_READER),
         payoutCurrency,
+        audit: c.get(AUDIT_WRITER),
         logger,
-        c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
-      );
+        wallet: c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
+      });
       racePayouts = new RacePayoutService(
         c.get(DRIZZLE),
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
@@ -318,7 +410,8 @@ export default {
       const schedule = PromoConfigSchema.parse(
         c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).promo : {},
       );
-      const jobs = c.get(JOB_QUEUE);
+      const jobQueue = c.get(JOB_QUEUE);
+      jobs = jobQueue;
       // The periodic kinds share one tick: each run pays only a period that has closed since
       // the last, so when a player is actually paid is the anchor in the ladder's settings.
       for (const [kind, cron] of [
@@ -327,19 +420,23 @@ export default {
         ['weekly', schedule.ranks.periodicCron],
         ['monthly', schedule.ranks.periodicCron],
       ] as const) {
-        void jobs
+        void jobQueue
           .schedule(RANK_PAYOUT_QUEUE, `promo-rank-payout.${kind}.cron`, { kind }, { cron })
           .catch((err: unknown) => logger.error({ err, kind }, 'rank payout schedule failed'));
       }
-      void jobs
+      // Milestone rewards are claimed by the player now; drop the schedule that used to pay them.
+      void jobQueue
+        .unschedule(STREAK_PAYOUT_QUEUE, 'promo-streak-payout.cron')
+        .catch((err: unknown) => logger.error({ err }, 'streak payout unschedule failed'));
+      void jobQueue
         .schedule(
-          STREAK_PAYOUT_QUEUE,
-          'promo-streak-payout.cron',
+          STREAK_ANNOUNCE_QUEUE,
+          'promo-streak-announce.cron',
           {},
-          { cron: schedule.streaks.payoutCron },
+          { cron: STREAK_ANNOUNCE_CRON },
         )
-        .catch((err: unknown) => logger.error({ err }, 'streak payout schedule failed'));
-      void jobs
+        .catch((err: unknown) => logger.error({ err }, 'streak announcement schedule failed'));
+      void jobQueue
         .schedule(
           STREAK_CLOSE_QUEUE,
           'promo-streak-close.cron',
@@ -347,10 +444,10 @@ export default {
           { cron: schedule.streaks.closeCron },
         )
         .catch((err: unknown) => logger.error({ err }, 'streak close schedule failed'));
-      void jobs
+      void jobQueue
         .schedule(RACE_PAYOUT_QUEUE, 'promo-race-payout.cron', {}, { cron: RACE_PAYOUT_CRON })
         .catch((err: unknown) => logger.error({ err }, 'race payout schedule failed'));
-      void jobs
+      void jobQueue
         .schedule(
           RANK_CHALLENGE_PAYOUT_QUEUE,
           'promo-rank-challenge-payout.cron',
@@ -358,10 +455,10 @@ export default {
           { cron: RANK_CHALLENGE_PAYOUT_CRON },
         )
         .catch((err: unknown) => logger.error({ err }, 'rank challenge payout schedule failed'));
-      void jobs
+      void jobQueue
         .schedule(RANK_ANNOUNCE_QUEUE, 'promo-rank-announce.cron', {}, { cron: RANK_ANNOUNCE_CRON })
         .catch((err: unknown) => logger.error({ err }, 'rank announcement schedule failed'));
-      void jobs
+      void jobQueue
         .schedule(
           RANK_PERIOD_PRUNE_QUEUE,
           'promo-rank-period-prune.cron',
@@ -374,6 +471,19 @@ export default {
         ranks: rankService(c),
         admin: new RankAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         streaks,
+        streakPayouts,
+        onStreakClaimed: async ({ granted, cashPaid }) => {
+          try {
+            for (const grant of granted) {
+              events?.emit('promo.bonus.granted', grant);
+            }
+            for (const paid of cashPaid) {
+              await emitCashCredit(paid);
+            }
+          } catch (err) {
+            logger.error({ err }, 'streak claim announcement failed after the claim committed');
+          }
+        },
         streakAdmin: new StreakAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         races: raceService(c),
         raceAdmin: new RaceAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
