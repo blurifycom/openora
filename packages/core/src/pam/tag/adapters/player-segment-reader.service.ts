@@ -1,6 +1,7 @@
 import { DrizzleService } from '@openora/core/server';
 import {
   MAX_PLAYER_SEGMENT_PAGE,
+  MAX_PLAYER_SEGMENT_TAGS,
   TagKeySchema,
   UuidSchema,
   type Player,
@@ -9,7 +10,7 @@ import {
   type PlayerSegmentReader,
   type TagKey,
 } from '@openora/core/contracts';
-import { type SQL, and, asc, eq, exists, gt, inArray, isNull, ne } from 'drizzle-orm';
+import { type SQL, and, asc, count, eq, exists, gt, inArray, isNull, ne } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
@@ -23,7 +24,7 @@ const isUuid = (id: string) => UuidSchema.safeParse(id).success;
 
 function tagKeysOf(tags: readonly string[]): TagKey[] {
   if (tags.length === 0) {
-    throw new RangeError('tags must name at least one tag; omit tags for every player');
+    throw new RangeError('tags must name at least one tag');
   }
   const keys = TagKeySchema.array().safeParse(tags);
   if (!keys.success) {
@@ -97,5 +98,22 @@ export class PlayerSegmentReaderService implements PlayerSegmentReader {
       resolved.set(row.key, row.id);
     }
     return resolved;
+  }
+
+  async describe(tags: readonly string[]) {
+    if (tags.length > MAX_PLAYER_SEGMENT_TAGS) {
+      throw new RangeError(`describe takes at most ${MAX_PLAYER_SEGMENT_TAGS} tags`);
+    }
+    const tagKeys = tagKeysOf(tags);
+    const rows = await this.drizzle.db
+      .select({ key: tag.key, playerCount: count() })
+      .from(playerTag)
+      .innerJoin(tag, eq(tag.id, playerTag.tagId))
+      .innerJoin(player, eq(player.id, playerTag.playerId))
+      .innerJoin(user, eq(user.id, player.userId))
+      .where(and(inArray(tag.key, tagKeys), isNull(playerTag.removedAt), inPopulation()))
+      .groupBy(tag.key);
+    const counts = new Map(rows.map((row) => [row.key, row.playerCount]));
+    return tagKeys.map((key) => ({ tag: key, name: key, playerCount: counts.get(key) ?? 0 }));
   }
 }

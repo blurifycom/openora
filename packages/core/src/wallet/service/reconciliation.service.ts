@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import {
+  type DrizzleDb,
   type DrizzleService,
   type DrizzleTx,
   type EventBus,
@@ -454,6 +455,10 @@ export class ReconciliationService {
         },
         ...meta,
       });
+      const announced = creditedDeposit ?? releasedDeposit;
+      if (announced) {
+        await this.wallet.announceDepositCompleted(txn, announced);
+      }
       return {
         dto: toFindingDto(row),
         credited: creditedDeposit
@@ -464,11 +469,8 @@ export class ReconciliationService {
       };
     });
 
-    if (credited) {
-      await this.wallet.announceDepositCompleted(credited.deposit);
-      if (credited.finding) {
-        await this.recordRgBreachForHandCredit(credited.finding, credited.deposit);
-      }
+    if (credited?.finding) {
+      await this.recordRgBreachForHandCredit(credited.finding, credited.deposit);
     }
     return dto;
   }
@@ -778,8 +780,10 @@ export class ReconciliationService {
       unreconciledHours: 0,
     };
 
+    const cfg = this.platformConfig?.wallet?.reconciliation;
+    const status = cfg ? 'completed' : 'skipped';
+    let openFindings: number;
     try {
-      const cfg = this.platformConfig?.wallet?.reconciliation;
       if (cfg) {
         const until = new Date();
         const { since, unreconciledHours } = await this.resolveWindow(until, cfg.lookbackHours);
@@ -819,30 +823,25 @@ export class ReconciliationService {
         );
       }
 
-      const openFindings = await this.countOpenFindings();
-      const status = cfg ? 'completed' : 'skipped';
-      await this.finishRun(jobRunId, status, { ...counts, openFindings });
-      await this.audit.record({
-        actorType: 'system',
-        action: cfg ? 'wallet.reconciliation_run.completed' : 'wallet.reconciliation_run.skipped',
-        resourceType: 'wallet_job_run',
-        resourceId: runId,
-        after: { runId, ...counts, openFindings },
-      });
-
-      if (cfg && openFindings > cfg.alertThreshold) {
-        logger.error(
-          { runId, openFindings, threshold: cfg.alertThreshold },
-          'wallet reconciliation: open findings exceed threshold',
-        );
-        this.events.emit('wallet.reconciliation.alert', {
-          runId,
-          openFindings,
-          threshold: cfg.alertThreshold,
+      openFindings = await this.countOpenFindings();
+      // One transaction: a run is never recorded completed without its audit entry and alert.
+      await this.drizzle.db.transaction(async (txn) => {
+        await this.finishRun(jobRunId, status, { ...counts, openFindings }, txn);
+        await this.audit.recordInTransaction(txn, {
+          actorType: 'system',
+          action: cfg ? 'wallet.reconciliation_run.completed' : 'wallet.reconciliation_run.skipped',
+          resourceType: 'wallet_job_run',
+          resourceId: runId,
+          after: { runId, ...counts, openFindings },
         });
-      }
-
-      return { runId };
+        if (cfg && openFindings > cfg.alertThreshold) {
+          await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
+            runId,
+            openFindings,
+            threshold: cfg.alertThreshold,
+          });
+        }
+      });
     } catch (err) {
       await this.finishRun(jobRunId, 'failed', {
         ...counts,
@@ -857,6 +856,15 @@ export class ReconciliationService {
       });
       throw err;
     }
+
+    if (cfg && openFindings > cfg.alertThreshold) {
+      logger.error(
+        { runId, openFindings, threshold: cfg.alertThreshold },
+        'wallet reconciliation: open findings exceed threshold',
+      );
+    }
+
+    return { runId };
   }
 
   private async reconcileProvider(
@@ -1365,8 +1373,9 @@ export class ReconciliationService {
     jobRunId: WalletJobRun['id'],
     status: WalletJobRunStatus,
     summary: Record<string, unknown>,
+    db: DrizzleDb | DrizzleTx = this.drizzle.db,
   ): Promise<void> {
-    await this.drizzle.db
+    await db
       .update(walletJobRun)
       .set({ finishedAt: new Date(), status, summary })
       .where(eq(walletJobRun.id, jobRunId));

@@ -1151,7 +1151,8 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
       { ip: '1.2.3.4', userAgent: 'agent' },
     );
 
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'compliance.game-geo-rule.upserted',
       expect.objectContaining({
         gameId,
@@ -1160,7 +1161,8 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
         after: expect.objectContaining({ reason: 'updated restriction' }),
       }),
     );
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'compliance.game-geo-rule.deleted',
       expect.objectContaining({ gameId, actorId, reason: 'licence restored', after: null }),
     );
@@ -1239,9 +1241,9 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
       ),
     ]);
 
-    const upsertPayloads = events.emit.mock.calls
-      .filter(([event]) => event === 'compliance.game-geo-rule.upserted')
-      .map(([, payload]) => payload);
+    const upsertPayloads = events.emitInTransaction.mock.calls
+      .filter(([, event]) => event === 'compliance.game-geo-rule.upserted')
+      .map(([, , payload]) => payload);
     expect(upsertPayloads).toHaveLength(2);
     expect(upsertPayloads.filter(({ before }) => before === null)).toHaveLength(1);
 
@@ -1334,7 +1336,7 @@ describe('ComplianceService per-provider geo rules (real PG)', () => {
         { ip: null, userAgent: null },
       ),
     ).rejects.toBeInstanceOf(GeoRuleProviderNotFoundError);
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
   });
 
   it('upserts and deletes a provider rule with auditable before and after state', async () => {
@@ -1365,7 +1367,8 @@ describe('ComplianceService per-provider geo rules (real PG)', () => {
       meta,
     );
 
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'compliance.provider-geo-rule.upserted',
       expect.objectContaining({
         providerId,
@@ -1374,7 +1377,8 @@ describe('ComplianceService per-provider geo rules (real PG)', () => {
         after: expect.objectContaining({ reason: 'updated restriction' }),
       }),
     );
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'compliance.provider-geo-rule.deleted',
       expect.objectContaining({ providerId, actorId, reason: 'licence restored', after: null }),
     );
@@ -2038,7 +2042,10 @@ describe('ComplianceService.replaceGameGeoRules (real PG)', () => {
     });
 
     expect(rule).toMatchObject({ source: 'admin', reason: 'confirmed by compliance' });
-    expect(emitted(events, 'compliance.game-geo-rule.upserted').at(-1)).toMatchObject({
+    const adminUpserts = events.emitInTransaction.mock.calls
+      .filter(([, event]) => event === 'compliance.game-geo-rule.upserted')
+      .map(([, , payload]) => payload);
+    expect(adminUpserts.at(-1)).toMatchObject({
       before: { source: SOURCE },
       after: { source: 'admin' },
     });

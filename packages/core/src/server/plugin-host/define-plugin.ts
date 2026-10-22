@@ -62,6 +62,12 @@ export type RegisteredTriggerListener = {
   listener: TriggerListener;
 };
 
+// `consumer` is the handler's dedup identity, `<plugin id>/<topic>`, suffixed `#<n>` for the
+// n-th (n >= 1) further handler the same plugin registers on the same topic. Plugin ids and
+// topics are fixed by code, so it survives restarts, replica changes and plugin reordering;
+// it shifts only when a plugin reorders its own handlers for one topic.
+export type RegisteredEventHandler = { handler: EventHandler; consumer: string };
+
 // Tool and action-type factories run once, when MCP_KERNEL is built after every provider is
 // bound - never at registration.
 export type McpToolFactory<
@@ -108,7 +114,7 @@ export type ModuleRegistry<C extends TokenCatalog> = {
   };
   events: {
     on(event: string, handler: EventHandler): void;
-    getAll(): Map<string, EventHandler[]>;
+    getAll(): Map<string, RegisteredEventHandler[]>;
   };
   // Subscribed at boot to the allow-listed trigger topics, which register() cannot read.
   triggers: {

@@ -1,4 +1,4 @@
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import {
   ADMIN_PERMISSION_RESOLVER,
@@ -22,8 +22,6 @@ import { createIamRouter } from './router/index.js';
 import { DrizzleAdminPlayerActivity } from './adapters/admin-player-activity.js';
 import { DrizzleAdminRoleAssignmentDirectory } from './adapters/admin-role-assignment-directory.js';
 import { DrizzleMcpTokenAuthenticator } from './adapters/mcp-token-authenticator.js';
-
-const logger = createLogger('iam');
 
 function makeMcpTokenService(c: TypedContainer<CoreTokenCatalog>) {
   return new McpTokenService({
@@ -64,9 +62,7 @@ export default {
         if (!parsed.success || !resolverRef) {
           return;
         }
-        resolverRef
-          .invalidateUser(parsed.data.userId)
-          .catch((err) => logger.error({ err }, 'grant cache purge failed'));
+        return resolverRef.invalidateUser(parsed.data.userId);
       });
     }
     ctx.events.on('iam.role.permissions.changed', (payload) => {
@@ -74,9 +70,7 @@ export default {
       if (!parsed.success || !resolverRef) {
         return;
       }
-      resolverRef
-        .invalidateRole(parsed.data.roleId)
-        .catch((err) => logger.error({ err }, 'grant cache purge failed'));
+      return resolverRef.invalidateRole(parsed.data.roleId);
     });
 
     ctx.provide(ADMIN_PLAYER_ACTIVITY, (c) => new DrizzleAdminPlayerActivity(c.get(DRIZZLE)));

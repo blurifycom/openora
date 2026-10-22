@@ -1,18 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import {
   asAdmin,
-  bootTestApp,
   registerAndMaterializePlayer,
-  seedMinimal,
-  setupTestDb,
   type TestApp,
   type TestClient,
   type TestDb,
   uniqueUsername,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 type AuditItem = {
@@ -40,13 +39,7 @@ async function statusChanges(playerId: string): Promise<AuditItem[]> {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-  db = await setupTestDb();
-  testApp = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(testApp.container, { playerCount: 0 });
+  ({ db, app: testApp } = await bootE2e());
   admin = await asAdmin(testApp.app);
   const [account] = await testApp.container
     .get(DRIZZLE)
@@ -60,8 +53,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await testApp?.close();
-  await db?.dispose();
+  await closeE2e({ app: testApp, db });
 });
 
 describe('player status change audit', () => {

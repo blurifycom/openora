@@ -1,19 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
 import { WAGER_TRACKING, type WagerProduct } from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { auditLog } from '@openora/core/audit/schema';
 import {
-  setupTestDb,
-  bootTestApp,
-  seedMinimal,
   registerAndMaterializePlayer,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
+  readJson,
 } from '../index.js';
 import { EXAMPLE_RANK_LADDER } from '../seed.js';
 
@@ -37,11 +37,6 @@ const CASINO_ONLY = {
     daily: { wageringMultiplier: '1', expiryDays: 1 },
   },
 };
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function adminWithRole(roleKey: string) {
   const { client, userId } = await registerAndMaterializePlayer(app, {
@@ -75,22 +70,14 @@ const wager = (userId: string, amount: string, product: WagerProduct) =>
   );
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
 
   admin = await adminWithRole('bonus-promotions');
   support = await adminWithRole('customer-support-agent');
 }, 60_000);
 
 afterAll(async () => {
-  await app.close();
-  await db.dispose();
+  await closeE2e({ app, db });
 });
 
 // The settings are shared reference data in one test database; hand the next test what it seeded.

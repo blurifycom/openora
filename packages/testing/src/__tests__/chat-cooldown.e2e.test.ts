@@ -1,29 +1,23 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
-import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import { ChatCooldownEntrySchema, ChatRoomSchema } from '@openora/core/engagement/contracts/chat';
 import {
-  setupTestDb,
-  bootTestApp,
   asAdmin,
-  registerAndMaterializePlayer,
-  seedMinimal,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
+  registerChatter,
 } from '../index.js';
 
 let db: TestDb;
 let app: TestApp;
 let admin: TestClient;
-
-async function registerChatter(prefix: string) {
-  const username = `${prefix.slice(0, 7)}_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
-  return registerAndMaterializePlayer(app, { email: `${username}@e2e.test`, username });
-}
 
 async function createPublicRoom() {
   const created = await admin.post('/backoffice/chat/rooms', {
@@ -45,25 +39,17 @@ const refusalData = async (response: Response) =>
   ((await response.json()) as { data?: { reason?: string; retryAfterMs?: number } }).data;
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
   admin = await asAdmin(app.app);
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('chat: back-office player cooldowns', () => {
   it('holds a player to a global cooldown, lists it, and lifts it', async () => {
-    const player = await registerChatter('flood');
+    const player = await registerChatter(app, 'flood');
     const send = () => player.client.post('/chat/global', { content: 'hello' });
     const set = await admin.post('/backoffice/chat/cooldowns', {
       userId: player.userId,
@@ -108,7 +94,7 @@ describe('chat: back-office player cooldowns', () => {
   });
 
   it('shares one window across every room an all-chats cooldown covers', async () => {
-    const player = await registerChatter('hopper');
+    const player = await registerChatter(app, 'hopper');
     const [first, second] = [await createPublicRoom(), await createPublicRoom()];
     for (const room of [first, second]) {
       expect((await player.client.post(`/chat/rooms/${room.id}/join`)).status).toBe(200);
@@ -136,7 +122,7 @@ describe('chat: back-office player cooldowns', () => {
   });
 
   it('replaces the active cooldown and audits the previous one', async () => {
-    const player = await registerChatter('replace');
+    const player = await registerChatter(app, 'replace');
     const body = { userId: player.userId, roomId: '__all_public', reason: 'first' };
     expect(
       (await admin.post('/backoffice/chat/cooldowns', { ...body, cooldownSeconds: 30 })).status,
@@ -175,8 +161,8 @@ describe('chat: back-office player cooldowns', () => {
   });
 
   it('refuses the cooldown routes to a player', async () => {
-    const player = await registerChatter('rogue');
-    const target = await registerChatter('target');
+    const player = await registerChatter(app, 'rogue');
+    const target = await registerChatter(app, 'target');
     const body = {
       userId: target.userId,
       roomId: GLOBAL_CHAT_ROOM_ID,
@@ -192,8 +178,8 @@ describe('chat: back-office player cooldowns', () => {
   });
 
   it('rejects an unknown room, a private room and an out-of-range interval', async () => {
-    const owner = await registerChatter('host');
-    const target = await registerChatter('target');
+    const owner = await registerChatter(app, 'host');
+    const target = await registerChatter(app, 'target');
     const created = await owner.client.post('/chat/rooms/private', {
       name: `room-${randomUUID()}`,
     });

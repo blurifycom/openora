@@ -284,9 +284,11 @@ describe('request_enhanced_kyc through the MCP kernel (real PG)', () => {
       triggeredBy: 'manual',
       decisionReason: REASON,
     });
-    const updates = events.emit.mock.calls.filter(([topic]) => topic === 'compliance.kyc.updated');
+    const updates = events.emitInTransaction.mock.calls.filter(
+      ([, topic]) => topic === 'compliance.kyc.updated',
+    );
     expect(updates).toHaveLength(1);
-    expect(updates[0]?.[1]).toMatchObject({
+    expect(updates[0]?.[2]).toMatchObject({
       userId: row.userId,
       actorId: adminId,
       tier: 'advanced',

@@ -20,12 +20,13 @@ import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/s
 import { BONUS_GRANTS } from '@openora/core/contracts';
 import { promoWeight, promoWeightProfile } from '@openora/core/promo/schema/bonus';
 import {
-  setupTestDb,
-  bootTestApp,
   registerAndMaterializePlayer,
   type TestDb,
   type TestApp,
   type TestClient,
+  bootE2e,
+  closeE2e,
+  readJson,
 } from '../index.js';
 
 const exchangeRatePluginPath = fileURLToPath(
@@ -35,11 +36,6 @@ const exchangeRatePluginPath = fileURLToPath(
 let db: TestDb;
 let app: TestApp;
 let gameId: string;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function deposit(client: TestClient, amount: string, currency = 'USD') {
   const res = await client.post('/wallet/deposit', {
@@ -63,19 +59,13 @@ async function balanceOf(container: Container<CoreTokenCatalog>, userId: string)
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({
+  ({ db, app } = await bootE2e({
     plugins: [
       ...(await loadExtensions()),
       { id: 'testing-exchange-rate-provider', path: exchangeRatePluginPath },
     ],
-    databaseUrl: db.url,
-  });
+    seed: false,
+  }));
 
   const [providerRow] = await app.container
     .get(DRIZZLE)
@@ -112,8 +102,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await app.container.get(DRIZZLE).db.delete(gameRound).where(eq(gameRound.gameId, gameId));
   await app.container.get(DRIZZLE).db.delete(game).where(eq(game.id, gameId));
-  await app.close();
-  await db.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('gaming stake debit e2e', () => {

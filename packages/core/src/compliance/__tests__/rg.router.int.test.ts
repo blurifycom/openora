@@ -224,7 +224,8 @@ describe('compliance RG router writes', () => {
     const stored = await limitsOf(USER);
     expect(stored).toHaveLength(1);
     expect(stored[0]?.period).toBe('daily');
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'rg.limit.set',
       expect.objectContaining({
         userId: USER,

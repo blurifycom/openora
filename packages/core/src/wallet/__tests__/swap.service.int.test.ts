@@ -196,7 +196,8 @@ describe('SwapService (real PG)', () => {
         }),
       ]),
     );
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'wallet.swap.completed',
       expect.objectContaining({ userId: w.userId, toCurrency: 'BTC', toAmount: '0.00152' }),
     );

@@ -1,19 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import {
-  setupTestDb,
-  bootTestApp,
   registerPlayer,
   asPlayer,
   waitForEmail,
   capturedEmailsFor,
   clearCapturedEmails,
-  seedMinimal,
   type TestDb,
   type TestApp,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 let db: TestDb;
@@ -50,19 +49,11 @@ const codeFrom = async (address: string, subject: string): Promise<string> => {
 };
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 0 });
+  ({ db, app } = await bootE2e());
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('welcome mail', () => {

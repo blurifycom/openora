@@ -148,29 +148,38 @@ export default {
       if (!parsed.success) {
         return;
       }
-      void realtimeTransport?.publish<SessionEventsPush>(sessionEventsChannel(parsed.data.userId), {
-        type: 'revoked-all',
-        ...(parsed.data.exceptSessionId ? { exceptSessionId: parsed.data.exceptSessionId } : {}),
-      });
+      return realtimeTransport?.publish<SessionEventsPush>(
+        sessionEventsChannel(parsed.data.userId),
+        {
+          type: 'revoked-all',
+          ...(parsed.data.exceptSessionId ? { exceptSessionId: parsed.data.exceptSessionId } : {}),
+        },
+      );
     });
     ctx.events.on('identity.session.revoked', (raw) => {
       const parsed = domainEventSchemas['identity.session.revoked'].safeParse(raw);
       if (!parsed.success) {
         return;
       }
-      void realtimeTransport?.publish<SessionEventsPush>(sessionEventsChannel(parsed.data.userId), {
-        type: 'session-revoked',
-        sessionId: parsed.data.sessionId,
-      });
+      return realtimeTransport?.publish<SessionEventsPush>(
+        sessionEventsChannel(parsed.data.userId),
+        {
+          type: 'session-revoked',
+          sessionId: parsed.data.sessionId,
+        },
+      );
     });
     ctx.events.on('identity.user.unlocked', (raw) => {
       const parsed = domainEventSchemas['identity.user.unlocked'].safeParse(raw);
       if (!parsed.success) {
         return;
       }
-      void realtimeTransport?.publish<SessionEventsPush>(sessionEventsChannel(parsed.data.userId), {
-        type: 'unlocked',
-      });
+      return realtimeTransport?.publish<SessionEventsPush>(
+        sessionEventsChannel(parsed.data.userId),
+        {
+          type: 'unlocked',
+        },
+      );
     });
 
     const withdrawalPinHmacSecret = process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ?? '';

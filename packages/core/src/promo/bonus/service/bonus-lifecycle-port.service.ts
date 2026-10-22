@@ -1,5 +1,4 @@
 import type { BonusForfeitOutcome, BonusLifecycleCommands } from '@openora/core/contracts';
-import type { EventBus } from '@openora/core/server';
 import {
   GrantLifecycleService,
   GrantNotFoundError,
@@ -8,26 +7,14 @@ import {
 
 /**
  * Adapts `GrantLifecycleService.forfeit` (throws on refusal) to the BONUS_LIFECYCLE command port
- * shape (returns an outcome) and announces the same `promo.bonus.forfeited` topic a router- or
- * rule-driven forfeit already emits, so a job-driven one gets the same realtime balance signal
- * and player notification for free rather than a second announcement path to keep in sync.
+ * shape (returns an outcome). The service itself emits `promo.bonus.forfeited`, so a job-driven
+ * forfeit gets the same realtime balance signal and player notification as any other.
  */
-export function createBonusLifecyclePort(
-  service: GrantLifecycleService,
-  bus: EventBus,
-): BonusLifecycleCommands {
+export function createBonusLifecyclePort(service: GrantLifecycleService): BonusLifecycleCommands {
   return {
     async forfeit(grantId, reason, note): Promise<BonusForfeitOutcome> {
       try {
         const closed = await service.forfeit({ grantId, reason, note });
-        bus.emit('promo.bonus.forfeited', {
-          userId: closed.userId,
-          grantId: closed.grantId,
-          currency: closed.currency,
-          forfeitedAmount: closed.forfeitedAmount,
-          reason,
-          actorId: null,
-        });
         return {
           ok: true,
           grantId: closed.grantId,
