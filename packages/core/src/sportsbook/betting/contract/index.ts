@@ -181,7 +181,7 @@ export type IssueSportsbookSessionInput = z.infer<typeof IssueSportsbookSessionI
 export const SportsbookSessionSchema = z.object({
   sessionId: UuidSchema,
   token: z.string(),
-  launchUrl: z.string().nullable(),
+  launchUrl: z.url({ protocol: /^https$/ }).nullable(),
   currency: CurrencyTickerSchema,
   expiresAt: TimestampSchema,
 });

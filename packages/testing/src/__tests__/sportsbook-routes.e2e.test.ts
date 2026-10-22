@@ -299,6 +299,22 @@ describe('sportsbook session route', () => {
     expect(session?.providerRevokeAttemptedAt).not.toBeNull();
   });
 
+  it.each(['javascript:alert(1)', 'http://provider.test/launch'])(
+    'refuses a provider launch url %s and revokes the session at both ends',
+    async (launchUrl) => {
+      const { client, userId } = await registerAndMaterializePlayer(app, {
+        email: `sportsbook-${randomUUID()}@example.com`,
+      });
+      mockSportsbookProviderState.launchUrl = launchUrl;
+      const res = await openSession(client);
+      expect(res.status).toBe(503);
+      expect(await res.text()).not.toContain(launchUrl);
+      const [session] = await sessionsOf(userId);
+      expect(session?.revokedAt).not.toBeNull();
+      expect(mockSportsbookProviderState.revoked).toContain(session!.id);
+    },
+  );
+
   it('answers 503 for a session revoked while the provider was opening it', async () => {
     const { client, userId } = await registerAndMaterializePlayer(app, {
       email: `sportsbook-${randomUUID()}@example.com`,
