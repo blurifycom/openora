@@ -127,6 +127,23 @@ export async function syncUntilSettled(
   }
 }
 
+/**
+ * Whether the player ever opened the chat: only then is there a vendor customer to refresh. Read
+ * from the table, so a process without a provider bound still sees a link another process made.
+ */
+export async function hasLinkedCustomer(
+  drizzle: DrizzleService,
+  userId: User['id'],
+): Promise<boolean> {
+  const [row] = await drizzle.db
+    .select({ playerId: supportChatCustomer.playerId })
+    .from(supportChatCustomer)
+    .innerJoin(player, eq(player.id, supportChatCustomer.playerId))
+    .where(eq(player.userId, userId))
+    .limit(1);
+  return row !== undefined;
+}
+
 type SupportChatDeps = {
   drizzle: DrizzleService;
   audit: AuditWritePort;
@@ -178,17 +195,6 @@ export class SupportChatService {
           throw asProviderError(err);
         }),
     );
-  }
-
-  /** Whether the player ever opened the chat: only then is there a vendor customer to refresh. */
-  async hasLinkedCustomer(userId: User['id']): Promise<boolean> {
-    const [row] = await this.deps.drizzle.db
-      .select({ playerId: supportChatCustomer.playerId })
-      .from(supportChatCustomer)
-      .innerJoin(player, eq(player.id, supportChatCustomer.playerId))
-      .where(eq(player.userId, userId))
-      .limit(1);
-    return row !== undefined;
   }
 
   /** The linked vendor customer and the context read now, in one query; null when not linked. */

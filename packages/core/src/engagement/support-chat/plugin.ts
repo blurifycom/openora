@@ -15,9 +15,15 @@ import {
   type JobQueueAdapter,
   type Uuid,
 } from '@openora/core/contracts';
-import { DRIZZLE, EVENT_BUS, createLogger } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { SupportChatService } from './service/support-chat.service.js';
+import {
+  DRIZZLE,
+  EVENT_BUS,
+  createLogger,
+  type CoreTokenCatalog,
+  type DrizzleService,
+  type Plugin,
+} from '@openora/core/server';
+import { SupportChatService, hasLinkedCustomer } from './service/support-chat.service.js';
 import { createSupportChatRouter } from './router/index.js';
 
 const logger = createLogger('support-chat');
@@ -54,6 +60,7 @@ export default {
     // Set by the router factory, which runs after subscriptions are wired but before any
     // event or job arrives (see create-app.ts boot order).
     let jobQueue: JobQueueAdapter | null = null;
+    let drizzle: DrizzleService | null = null;
     let service: SupportChatService | null = null;
 
     const scheduleSync = async (userId: Uuid) => {
@@ -70,7 +77,13 @@ export default {
       schema: SyncJobSchema,
       handler: async ({ payload, attempt }) => {
         if (!service) {
-          return;
+          // Another process may have the provider bound: fail so the queue retries the job there
+          // instead of acking a sync that never ran.
+          logger.warn(
+            { userId: payload.userId, attempt },
+            'support-chat sync attempt failed - no SUPPORT_CHAT_PROVIDER bound in this process',
+          );
+          throw new Error('support-chat sync needs a SUPPORT_CHAT_PROVIDER, none bound here');
         }
         await service.syncCustomer(payload.userId).catch((err: unknown) => {
           // A provider error carries its short reason only: its `cause` may hold vendor detail.
@@ -93,8 +106,9 @@ export default {
     });
 
     // Throws while the queue is not bound yet, so the broker redelivers the event rather than
-    // it being marked handled (ADR-0045). With no provider bound, or a player who never opened
-    // the chat, there is nothing to refresh.
+    // it being marked handled (ADR-0045). A player who never opened the chat has nothing to
+    // refresh. A linked one gets a job even where no provider is bound: another process may have
+    // one, and the worker retries until it does.
     const refreshOn =
       <K extends (typeof SYNC_TOPICS)[number]>(topic: K) =>
       async (payload: unknown) => {
@@ -103,11 +117,11 @@ export default {
           logger.error({ topic }, 'support-chat refresh skipped - event payload failed validation');
           return;
         }
-        if (!jobQueue) {
+        if (!jobQueue || !drizzle) {
           throw new Error(`support-chat refresh for '${topic}' - job queue not bound yet`);
         }
         const { userId } = parsed.data;
-        if (!service || !(await service.hasLinkedCustomer(userId))) {
+        if (!(await hasLinkedCustomer(drizzle, userId))) {
           return;
         }
         await scheduleSync(userId);
@@ -118,6 +132,7 @@ export default {
 
     ctx.routers.add('supportChat', (c) => {
       jobQueue = c.get(JOB_QUEUE);
+      drizzle = c.get(DRIZZLE);
       const limiter = c.get(RATE_LIMITER);
       if (!c.has(SUPPORT_CHAT_PROVIDER)) {
         logger.warn(
@@ -126,7 +141,7 @@ export default {
         return createSupportChatRouter(null, limiter);
       }
       service = new SupportChatService({
-        drizzle: c.get(DRIZZLE),
+        drizzle,
         audit: c.get(AUDIT_WRITER),
         events: c.get(EVENT_BUS),
         identityReader: c.get(IDENTITY_READER),
