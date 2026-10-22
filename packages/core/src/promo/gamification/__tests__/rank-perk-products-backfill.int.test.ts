@@ -14,6 +14,7 @@ import { RakebackService } from '../service/rakeback.service.js';
 
 const MIGRATIONS = new URL('../drizzle/migrations/', import.meta.url);
 const ADDED_IN = '0018_aberrant_killer_shrike';
+const BACKFILLED_IN = '0019_rank_perk_products_backfill';
 
 const JOURNAL_TAGS = (
   JSON.parse(readFileSync(fileURLToPath(new URL('meta/_journal.json', MIGRATIONS)), 'utf8')) as {
@@ -26,7 +27,10 @@ const sqlOf = (tag: string) =>
     '--> statement-breakpoint',
   );
 
-const UPGRADE_SQL = JOURNAL_TAGS.slice(JOURNAL_TAGS.indexOf(ADDED_IN)).flatMap(sqlOf);
+const UPGRADE_SQL = JOURNAL_TAGS.slice(
+  JOURNAL_TAGS.indexOf(ADDED_IN),
+  JOURNAL_TAGS.indexOf(BACKFILLED_IN) + 1,
+).flatMap(sqlOf);
 
 const LADDER = {
   currency: 'USDT',
