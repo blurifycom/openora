@@ -3,6 +3,7 @@
  * overlay. Core calls it only outside a transaction. Core ships no default binding: with none,
  * session issue refuses and reconciliation files findings instead of resolving bets.
  */
+import * as z from 'zod';
 import type { SportsbookProviderBetStatus } from '../schemas/sportsbook.js';
 import { createToken, type Token } from './token.js';
 
@@ -17,11 +18,16 @@ export type SportsbookProviderSessionArgs = {
   locale?: string;
 };
 
-export type SportsbookProviderSession = {
-  /** What the client hands the provider's widget. Never stored by core. */
-  token: string;
-  launchUrl?: string;
-};
+/**
+ * `token` is what the client hands the provider's widget; core never stores it. `launchUrl` must
+ * be https: the client navigates to it. Core validates the result and refuses the session on
+ * anything else.
+ */
+export const SportsbookProviderSessionSchema = z.object({
+  token: z.string().min(1),
+  launchUrl: z.url({ protocol: /^https$/ }).optional(),
+});
+export type SportsbookProviderSession = z.infer<typeof SportsbookProviderSessionSchema>;
 
 export type SportsbookProvider = {
   /** The provider key every ledger call for this provider carries. */

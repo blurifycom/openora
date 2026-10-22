@@ -18,7 +18,11 @@ import type {
   User,
   WalletReader,
 } from '@openora/core/contracts';
-import { SportsbookSessionArgsSchema, UuidSchema } from '@openora/core/contracts';
+import {
+  SportsbookProviderSessionSchema,
+  SportsbookSessionArgsSchema,
+  UuidSchema,
+} from '@openora/core/contracts';
 import {
   SPORTSBOOK_RECONCILE_BATCH,
   type IssueSportsbookSessionInput,
@@ -160,14 +164,16 @@ export class SportsbookSessionService {
     const expiresAt = session.expiresAt.toISOString();
     let opened;
     try {
-      opened = await provider.issueSession({
-        sessionId: session.id,
-        userId,
-        currency,
-        countryCode,
-        expiresAt,
-        ...(input.locale === undefined ? {} : { locale: input.locale }),
-      });
+      opened = SportsbookProviderSessionSchema.parse(
+        await provider.issueSession({
+          sessionId: session.id,
+          userId,
+          currency,
+          countryCode,
+          expiresAt,
+          ...(input.locale === undefined ? {} : { locale: input.locale }),
+        }),
+      );
     } catch (err) {
       logger.warn({ err, sessionId: session.id }, 'sportsbook: provider refused to open a session');
       try {

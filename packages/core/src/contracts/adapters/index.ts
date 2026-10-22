@@ -606,4 +606,4 @@ export type {
   SportsbookProviderSession,
   SportsbookProviderSessionArgs,
 } from './sportsbook-provider.js';
-export { SPORTSBOOK_PROVIDER } from './sportsbook-provider.js';
+export { SPORTSBOOK_PROVIDER, SportsbookProviderSessionSchema } from './sportsbook-provider.js';

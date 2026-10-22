@@ -6,6 +6,8 @@ import {
   type SportsbookProviderSessionArgs,
 } from '@openora/core/contracts';
 
+const DEFAULT_LAUNCH_URL = 'https://provider.test/launch';
+
 /**
  * A scripted SPORTSBOOK_PROVIDER for tests only: a test sets what the provider reports for a bet
  * and reads which sessions core issued and revoked. Opt-in; core ships no provider binding.
@@ -16,6 +18,7 @@ export const mockSportsbookProviderState = {
   revoked: [] as string[],
   lookups: [] as string[],
   failIssue: false,
+  launchUrl: DEFAULT_LAUNCH_URL,
   failLookup: false,
   /** How many of the next session revokes fail. */
   failRevokes: 0,
@@ -27,6 +30,7 @@ export const mockSportsbookProviderState = {
     mockSportsbookProviderState.revoked.length = 0;
     mockSportsbookProviderState.lookups.length = 0;
     mockSportsbookProviderState.failIssue = false;
+    mockSportsbookProviderState.launchUrl = DEFAULT_LAUNCH_URL;
     mockSportsbookProviderState.failLookup = false;
     mockSportsbookProviderState.failRevokes = 0;
     mockSportsbookProviderState.onIssue = null;
@@ -44,7 +48,7 @@ export const mockSportsbookProvider: SportsbookProvider = {
     }
     await state.onIssue?.(args);
     state.issued.push(args);
-    return { token: `token-${args.sessionId}`, launchUrl: 'https://provider.test/launch' };
+    return { token: `token-${args.sessionId}`, launchUrl: state.launchUrl };
   },
   async revokeSession({ sessionId }) {
     if (state.failRevokes > 0) {
