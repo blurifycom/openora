@@ -59,7 +59,8 @@ strict, so a field reaches the vendor only when it is added to the contract on p
    loser's vendor customer is left unused. A vendor customer already linked to another player
    fails the open instead of merging two players.
 3. Core enqueues a context sync and answers the token at once; vendor writes never sit on the
-   request path.
+   request path. On a first open the sync rides on an event committed with the link, so a job
+   queue outage delays the first context instead of losing it.
 4. The sync job writes the context for a linked player. It retries with backoff for about four
    hours and logs an error when it gives up.
 5. Besides every chat open, a linked player's context is refreshed when a self-exclusion starts
