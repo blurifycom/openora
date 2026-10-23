@@ -62,6 +62,18 @@ export const apply = defineActionType({
   errors: [],
 });
 
+export const reward = defineActionType({
+  id: 'demo_reward',
+  title: 'Reward demo',
+  description: 'Grants the player something.',
+  schemaVersion: 1,
+  iam: { resource: 'tag', action: 'create' },
+  reversible: true,
+  benefitsPlayer: true,
+  payloadSchema: z.object({ playerId: UuidSchema }),
+  errors: [],
+});
+
 export const dynamic = defineMcpTool({ id: TOOL_ID, title: 'x' });
 `,
   'packages/core/src/demo/__tests__/fake.test.ts': `
@@ -93,6 +105,18 @@ test('catalogues tool and action-type literals with their IAM and flags', () => 
       schemaVersion: 1,
       iam: { resource: 'tag', action: 'create' },
       reversible: false,
+      benefitsPlayer: false,
+    },
+    {
+      id: 'demo_reward',
+      module: 'demo',
+      file: 'packages/core/src/demo/contract/agent-tools.ts',
+      title: 'Reward demo',
+      description: 'Grants the player something.',
+      schemaVersion: 1,
+      iam: { resource: 'tag', action: 'create' },
+      reversible: true,
+      benefitsPlayer: true,
     },
   ]);
 });

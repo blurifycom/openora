@@ -436,6 +436,12 @@ describe('ModuleRegistryImpl - MCP tools and action types', () => {
       /reversible must be a boolean/,
     ],
     [
+      'a benefitsPlayer flag that is not a boolean',
+      { benefitsPlayer: 'true' },
+      /benefitsPlayer must be a boolean when present/,
+    ],
+    ['a null benefitsPlayer flag', { benefitsPlayer: null }, /benefitsPlayer must be a boolean/],
+    [
       'a payload whose top level is a union',
       {
         payloadSchema: z.union([
@@ -460,6 +466,15 @@ describe('ModuleRegistryImpl - MCP tools and action types', () => {
 
     expect(() => reg.actions.register(actionWith(overrides), actionFactory)).toThrow(message);
     expect(reg.actions.getAll()).toEqual([]);
+  });
+
+  it.each([true, false])('accepts an action type declaring benefitsPlayer: %s', (flag) => {
+    const { reg } = newRegistry();
+    const contract = defineActionType({ ...validAction, benefitsPlayer: flag });
+
+    reg.actions.register(contract, actionFactory);
+
+    expect(reg.actions.getAll().map((entry) => entry.contract.benefitsPlayer)).toEqual([flag]);
   });
 
   it('rejects a tool id an action type already holds', () => {
