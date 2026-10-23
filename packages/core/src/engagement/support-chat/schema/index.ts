@@ -4,7 +4,7 @@ import { pgTable, uuid, text, timestamp } from 'drizzle-orm/pg-core';
 // modules. `providerCustomerId` is unique so two players can never share one vendor customer.
 export const supportChatCustomer = pgTable('support_chat_customer', {
   playerId: uuid().primaryKey(),
-  providerCustomerId: text().notNull().unique(),
+  providerCustomerId: text().notNull().unique('support_chat_customer_provider_customer_id_unique'),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
