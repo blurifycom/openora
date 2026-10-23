@@ -884,7 +884,7 @@ describe('support context refresh', () => {
     expect(syncJobsFor(enqueues, p.userId)).toHaveLength(1);
   });
 
-  it('fails and retries a sync job in a process without a provider instead of completing it', async () => {
+  it('fails and retries a sync job in a process without a provider, and still owes the hourly resync', async () => {
     const { userId } = await newPlayer(unconfiguredApp);
     const reported: { error: unknown; context: unknown }[] = [];
     setErrorReporter((error, context) => reported.push({ error, context }));
@@ -909,8 +909,13 @@ describe('support context refresh', () => {
         return found;
       }, WAIT);
       expect((deadLetter.error as Error).message).toContain('SUPPORT_CHAT_PROVIDER');
-      // Nothing here could run a resync, so the give-up schedules none.
-      expect(syncJobsFor(enqueues, userId)).toHaveLength(1);
+      // Another process may have the provider, so the give-up still owes the hourly resync.
+      await vi.waitFor(() => {
+        const resyncs = syncJobsFor(enqueues, userId).filter(([, , opts]) =>
+          opts?.idempotencyKey?.startsWith(`support-chat-resync:${userId}:`),
+        );
+        expect(resyncs).toHaveLength(1);
+      }, WAIT);
     } finally {
       setErrorReporter(undefined);
     }
