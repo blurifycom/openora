@@ -1,5 +1,5 @@
 {
-  "id": "a2700735-7160-4371-96da-beac7932ed81",
+  "id": "aeb24182-cac8-4b72-8a73-27cc2f397f9d",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -32,8 +32,8 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "support_chat_customer_providerCustomerId_unique": {
-          "name": "support_chat_customer_providerCustomerId_unique",
+        "support_chat_customer_provider_customer_id_unique": {
+          "name": "support_chat_customer_provider_customer_id_unique",
           "nullsNotDistinct": false,
           "columns": ["provider_customer_id"]
         }
