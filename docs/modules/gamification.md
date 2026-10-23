@@ -55,7 +55,8 @@ A race names the products it counts, and an empty list is refused; a race create
 rule counted every product, so it was given all four. A sportsbook stake counts toward a race
 when the bet first settles other than as a void, and only its cash part, in the races open at that
 moment. A reserve the provider never accepts and a freebet never count. A re-settle after a reopen
-adds nothing, a void takes the stake back, and the next settle counts it again.
+adds nothing, a void takes the stake back, and the next settle counts it again. A settle that
+lands while a race's payout is closing it skips that race.
 
 ## The counter is safe only where it is called
 

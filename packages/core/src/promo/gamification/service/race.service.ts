@@ -37,6 +37,21 @@ const ROUND_KEY = [
 
 type OpenRace = { id: string; currency: string; eligibleProducts: readonly string[] };
 
+// Race-id order, the order reverseWager locks standings in.
+const openRaceRows = (tx: DrizzleTx, at: Date) =>
+  tx
+    .select({
+      id: promoRace.id,
+      currency: promoRace.currency,
+      eligibleProducts: promoRace.eligibleProducts,
+    })
+    .from(promoRace)
+    .where(and(lte(promoRace.startAt, at), gt(promoRace.endAt, at), isNull(promoRace.closedAt)))
+    .orderBy(asc(promoRace.id));
+
+const countsProduct = (product: string) => (race: OpenRace) =>
+  race.eligibleProducts.includes(product);
+
 const INCOGNITO = 'Incognito';
 
 /**
@@ -121,7 +136,9 @@ export class RaceService implements WagerTrackingCommands {
     if (moneyCompare(args.realAmount, '0') <= 0) {
       return;
     }
-    for (const race of await this.openRaces(tx, args.qualifiedAt, args.context.product)) {
+    // Skips a race its payout is closing right now, so a closed race never changes.
+    const open = await openRaceRows(tx, args.qualifiedAt).for('key share', { skipLocked: true });
+    for (const race of open.filter(countsProduct(args.context.product))) {
       const [counted] = await tx
         .select({ stake: promoRaceRoundWager.stake })
         .from(promoRaceRoundWager)
@@ -162,15 +179,7 @@ export class RaceService implements WagerTrackingCommands {
   }
 
   private async openRaces(tx: DrizzleTx, at: Date, product: string): Promise<OpenRace[]> {
-    const open = await tx
-      .select({
-        id: promoRace.id,
-        currency: promoRace.currency,
-        eligibleProducts: promoRace.eligibleProducts,
-      })
-      .from(promoRace)
-      .where(and(lte(promoRace.startAt, at), gt(promoRace.endAt, at), isNull(promoRace.closedAt)));
-    return open.filter((race) => race.eligibleProducts.includes(product));
+    return (await openRaceRows(tx, at)).filter(countsProduct(product));
   }
 
   private async inRaceCurrency(

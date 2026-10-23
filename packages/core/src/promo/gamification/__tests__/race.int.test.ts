@@ -355,6 +355,18 @@ describe('counting a sportsbook bet when it settles', () => {
     expect(await wageredOf(raceId, userId)).toBeNull();
   });
 
+  it('skips a race its payout is closing', async () => {
+    const raceId = await insertRace({ eligibleProducts: ['sportsbook'] });
+    const userId = randomUUID();
+
+    await db.drizzle.db.transaction(async (payout) => {
+      await payout.select().from(promoRace).where(eq(promoRace.id, raceId)).for('update');
+      await settled(userId, '50', 'bet-1');
+    });
+
+    expect(await wageredOf(raceId, userId)).toBeNull();
+  });
+
   it('counts only the products a race names', async () => {
     const casinoOnly = await insertRace({ eligibleProducts: ['casino'] });
     const mixed = await insertRace({ eligibleProducts: ['casino', 'sportsbook'] });
