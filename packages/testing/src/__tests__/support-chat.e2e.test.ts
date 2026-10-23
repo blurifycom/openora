@@ -434,6 +434,38 @@ describe('POST /support-chat/session', () => {
     expect(first?.delayMs).toBeLessThanOrEqual(3_600_000);
   });
 
+  it('reports a sync that ran out of retries to error tracking, naming the player only', async () => {
+    const reported: { error: unknown; context: unknown }[] = [];
+    setErrorReporter((error, context) => reported.push({ error, context }));
+    try {
+      failSupportChatSyncs(true);
+      const p = await newPlayer();
+      await openSession(p.client);
+      const [{ username } = { username: '' }] = await testApp.container
+        .get(DRIZZLE)
+        .db.select({ username: user.username })
+        .from(user)
+        .where(eq(user.id, p.userId));
+      await enqueueSync(p.userId);
+      const gaveUp = await vi.waitFor(() => {
+        const found = reported.find(({ context }) =>
+          inspect(context).includes('support-chat sync gave up'),
+        );
+        if (!found) {
+          throw new Error('sync give-up not reported yet');
+        }
+        return found;
+      }, WAIT);
+      expect(gaveUp.error).toBeInstanceOf(SupportChatProviderError);
+      expect(gaveUp.context).toMatchObject({ extra: { userId: p.userId } });
+      const sent = inspect(gaveUp, { depth: null });
+      expect(sent).not.toContain(p.email);
+      expect(sent).not.toContain(username);
+    } finally {
+      setErrorReporter(undefined);
+    }
+  });
+
   it('asks the queue again when it refuses to schedule the resync once', async () => {
     failSupportChatSyncs(true);
     const p = await newPlayer();
