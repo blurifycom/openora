@@ -63,8 +63,10 @@ strict, so a field reaches the vendor only when it is added to the contract on p
    queue outage delays the first context instead of losing it.
 4. The sync job writes the context for a linked player. It retries with backoff for about four
    hours, then logs an error and tries once at the top of each hour until a sync lands, so an
-   outage cannot leave support staff on a stale RG state for good. Every give-up for a player in
-   the same hour shares one hourly try.
+   outage does not leave support staff on a stale RG state. Every give-up for a player in the
+   same hour shares one hourly try. Scheduling that try is itself retried once; when the job
+   queue refuses it twice, or the process stops before it is scheduled, an error names the
+   player and their context waits for their next refresh.
 5. Besides every chat open, a linked player's context is refreshed when a self-exclusion starts
    or is lifted, when a cooling-off starts, ends or is lifted, when the account status changes or
    the account is closed or reopened, when the KYC status or rank changes, and when the email

@@ -27,6 +27,7 @@ import { auditLog } from '@openora/core/audit/schema';
 import { rgExclusion } from '@openora/core/compliance/schema';
 import { SupportChatService } from '@openora/core/engagement/server';
 import { supportChatCustomer } from '@openora/core/engagement/schema/support-chat';
+import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { promoPlayerRank } from '@openora/core/promo/schema/gamification';
 import {
@@ -191,6 +192,12 @@ const syncJobsFor = (spy: ReturnType<typeof watchEnqueues>, userId: string) =>
     ([name, payload]) => String(name) === SYNC_QUEUE && JSON.stringify(payload).includes(userId),
   );
 
+/** The options of every hourly resync enqueued for `userId`, refused or not. */
+const resyncsFor = (spy: ReturnType<typeof watchEnqueues>, userId: string) =>
+  syncJobsFor(spy, userId)
+    .map(([, , opts]) => opts)
+    .filter((opts) => opts?.idempotencyKey?.startsWith(`support-chat-resync:${userId}:`));
+
 beforeAll(async () => {
   const extensions = await loadExtensions();
   ({ db, app: testApp } = await bootE2e({
@@ -240,15 +247,23 @@ describe('POST /support-chat/session', () => {
 
     await waitForSyncs(customerId, 1);
     const context = lastSyncFor(customerId)?.context;
+    const [{ username } = { username: '' }] = await testApp.container
+      .get(DRIZZLE)
+      .db.select({ username: user.username })
+      .from(user)
+      .where(eq(user.id, p.userId));
+    const { activeCurrency } = await testApp.container.get(WALLET_READER).getBalances(p.userId);
+    expect(username).not.toBe(p.email);
+    expect(activeCurrency).toEqual(expect.any(String));
     expect(context).toMatchObject({
       playerId: p.playerId,
       userId: p.userId,
       email: p.email,
-      username: expect.any(String),
+      username,
       accountStatus: 'active',
       isSelfExcluded: false,
       isCoolingOff: false,
-      activeCurrency: expect.any(String),
+      activeCurrency,
     });
     expect(Math.abs(Date.now() - Date.parse(String(context?.syncedAt)))).toBeLessThan(60_000);
   });
@@ -410,17 +425,33 @@ describe('POST /support-chat/session', () => {
     const enqueues = watchEnqueues(testApp);
     await enqueueSync(p.userId);
     await enqueueSync(p.userId);
-    const resyncs = () =>
-      syncJobsFor(enqueues, p.userId)
-        .map(([, , opts]) => opts)
-        .filter((opts) => opts?.idempotencyKey?.startsWith('support-chat-resync:'));
-    await vi.waitFor(() => expect(resyncs()).toHaveLength(2), WAIT);
-    const [first, second] = resyncs();
+    await vi.waitFor(() => expect(resyncsFor(enqueues, p.userId)).toHaveLength(2), WAIT);
+    const [first, second] = resyncsFor(enqueues, p.userId);
     // Both give-ups share one key, so the queue holds a single resync for the player.
     expect(second?.idempotencyKey).toBe(first?.idempotencyKey);
     expect(first?.attempts).toBe(1);
     expect(first?.delayMs).toBeGreaterThan(0);
     expect(first?.delayMs).toBeLessThanOrEqual(3_600_000);
+  });
+
+  it('asks the queue again when it refuses to schedule the resync once', async () => {
+    failSupportChatSyncs(true);
+    const p = await newPlayer();
+    await openSession(p.client);
+    const jobQueue = testApp.container.get(JOB_QUEUE);
+    const enqueue = jobQueue.enqueue.bind(jobQueue);
+    let refused = 0;
+    const enqueues = vi.spyOn(jobQueue, 'enqueue').mockImplementation((name, payload, options) => {
+      if (options?.idempotencyKey?.startsWith(`support-chat-resync:${p.userId}:`) && !refused) {
+        refused++;
+        return Promise.reject(new Error('job queue down'));
+      }
+      return enqueue(name, payload, options);
+    });
+    await enqueueSync(p.userId);
+    // The refused one and the one that went through.
+    await vi.waitFor(() => expect(resyncsFor(enqueues, p.userId)).toHaveLength(2), WAIT);
+    expect(refused).toBe(1);
   });
 
   it('keeps the first sync owed through a job queue outage on first open', async () => {
@@ -910,12 +941,7 @@ describe('support context refresh', () => {
       }, WAIT);
       expect((deadLetter.error as Error).message).toContain('SUPPORT_CHAT_PROVIDER');
       // Another process may have the provider, so the give-up still owes the hourly resync.
-      await vi.waitFor(() => {
-        const resyncs = syncJobsFor(enqueues, userId).filter(([, , opts]) =>
-          opts?.idempotencyKey?.startsWith(`support-chat-resync:${userId}:`),
-        );
-        expect(resyncs).toHaveLength(1);
-      }, WAIT);
+      await vi.waitFor(() => expect(resyncsFor(enqueues, userId)).toHaveLength(1), WAIT);
     } finally {
       setErrorReporter(undefined);
     }
