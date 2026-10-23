@@ -79,13 +79,13 @@ configured and boot logs one warning. Whether a player is linked is read from th
 from the process, so a refresh still enqueues a sync for a player another process linked. A
 process without a provider fails that job, logging a warning per attempt, and the queue retries
 it, so in a fleet where only some processes have the provider bound the sync lands on one that
-has it instead of being dropped. With no provider anywhere and no linked player, nothing is
-enqueued and nothing fails.
+has it instead of being dropped. A give-up still schedules the hourly try, whichever process
+gives up. With no provider anywhere and no linked player, nothing is enqueued and nothing fails.
 
 To turn the support chat off, remove the module from `extensions.config.ts`, together with any
 plugin that depends on it. Keeping the module loaded with no provider bound while players are
-still linked is treated as a misconfiguration: each refresh for those players retries until the
-job gives up and logs an error.
+still linked is treated as a misconfiguration: each refreshed player keeps getting one try an
+hour, and every failed one logs an error, until a provider is bound or the module is removed.
 
 ## Binding a vendor
 

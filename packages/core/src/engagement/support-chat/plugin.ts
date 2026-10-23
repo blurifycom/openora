@@ -118,15 +118,9 @@ export default {
             : err;
         });
       },
+      // Scheduled whichever process gives up: one without the provider cannot tell a fleet where
+      // another process has it from one where none does, so the resync stays owed either way.
       onDeadLetter: async ({ payload }) => {
-        if (!service) {
-          // Nothing here could resync it: the documented misconfiguration ends at this log.
-          logger.error(
-            { userId: payload.userId },
-            'support-chat sync gave up - no SUPPORT_CHAT_PROVIDER bound in this process',
-          );
-          return;
-        }
         logger.error(
           { userId: payload.userId },
           'support-chat sync gave up - support sees stale context until the hourly resync lands',
