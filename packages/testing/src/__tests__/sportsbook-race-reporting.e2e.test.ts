@@ -51,18 +51,18 @@ beforeEach(() => mockSportsbookProviderState.reset());
 
 const hoursFromNow = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
 
-const raceInput = (eligibleProducts: unknown) => ({
+const raceInput = (eligibleProducts: unknown, startAt = hoursFromNow(-1)) => ({
   name: `Race ${randomUUID()}`,
   currency: 'USD',
-  startAt: hoursFromNow(-1),
+  startAt,
   endAt: hoursFromNow(24),
   prizePool: '100',
   positions: [{ position: 1, prize: '100' }],
   eligibleProducts,
 });
 
-async function createRace(eligibleProducts: string[]) {
-  const res = await admin.post('/backoffice/promo/races', raceInput(eligibleProducts));
+async function createRace(eligibleProducts: string[], startAt?: string) {
+  const res = await admin.post('/backoffice/promo/races', raceInput(eligibleProducts, startAt));
   if (res.status !== 200) {
     throw new Error(`race create failed (${res.status}): ${await res.text()}`);
   }
@@ -106,6 +106,36 @@ describe('a race counting sportsbook bets', () => {
     await reopen(args.providerBetId);
     await settle(args.providerBetId, 'won', '25');
     expect(await standing(player, raceId)).toBe(10);
+  });
+
+  it('keeps a re-settled stake in the races open when the bet first settled', async () => {
+    const open = await createRace(['sportsbook']);
+    const player = await fundedPlayer(app);
+    const { args } = await acceptedBet(app, player, { stake: '10', potentialPayout: '25' });
+    await settle(args.providerBetId, 'won', '25');
+    const later = await createRace(['sportsbook'], new Date().toISOString());
+
+    await reopen(args.providerBetId);
+    await settle(args.providerBetId, 'void', '10');
+    await reopen(args.providerBetId);
+    await settle(args.providerBetId, 'won', '25');
+
+    expect(await standing(player, open)).toBe(10);
+    expect(await standing(player, later)).toBe(0);
+  });
+
+  it('counts from the first settle that is not a void', async () => {
+    const open = await createRace(['sportsbook']);
+    const player = await fundedPlayer(app);
+    const { args } = await acceptedBet(app, player, { stake: '10', potentialPayout: '25' });
+    await settle(args.providerBetId, 'void', '10');
+    const later = await createRace(['sportsbook'], new Date().toISOString());
+
+    await reopen(args.providerBetId);
+    await settle(args.providerBetId, 'won', '25');
+
+    expect(await standing(player, open)).toBe(10);
+    expect(await standing(player, later)).toBe(10);
   });
 
   it('never counts a stake a freebet paid for', async () => {
