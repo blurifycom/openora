@@ -63,7 +63,8 @@ strict, so a field reaches the vendor only when it is added to the contract on p
    queue outage delays the first context instead of losing it.
 4. The sync job writes the context for a linked player. It retries with backoff for about four
    hours, then logs an error and tries once at the top of each hour until a sync lands, so an
-   outage does not leave support staff on a stale RG state. Every give-up for a player in the
+   outage does not leave support staff on a stale RG state. Each give-up reaches the bound
+   error tracker with the player's user id and the last error. Every give-up for a player in the
    same hour shares one hourly try. Scheduling that try is itself retried once; when the job
    queue refuses it twice, or the process stops before it is scheduled, an error names the
    player and their context waits for their next refresh.

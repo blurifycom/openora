@@ -121,10 +121,10 @@ export default {
       },
       // Scheduled whichever process gives up: one without the provider cannot tell a fleet where
       // another process has it from one where none does, so the resync stays owed either way.
-      onDeadLetter: async ({ payload }) => {
+      onDeadLetter: async ({ payload, id }, error) => {
         logger.error(
-          { userId: payload.userId },
-          'support-chat sync gave up - support sees stale context until the hourly resync lands',
+          { err: error, userId: payload.userId, jobId: id },
+          'support-chat sync gave up - support may see stale context until the hourly resync lands',
         );
         // The driver only logs a hook that throws, so a refused enqueue would end the chain: try
         // once more after a pause, then say plainly the context is stranded.
@@ -136,7 +136,7 @@ export default {
           .catch((err: unknown) =>
             logger.error(
               { err, userId: payload.userId },
-              'support-chat resync not scheduled - support sees stale context until the next refresh',
+              'support-chat resync not scheduled - support may see stale context until the next refresh',
             ),
           );
       },
