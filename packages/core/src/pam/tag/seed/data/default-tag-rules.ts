@@ -85,4 +85,11 @@ export const DEFAULT_TAG_RULES: UpsertTagRuleInput[] = [
     thresholdDays: null,
     thresholdCount: null,
   },
+  {
+    tagKey: 'recent_depositor',
+    isEnabled: false,
+    threshold: null,
+    thresholdDays: 7,
+    thresholdCount: null,
+  },
 ];

@@ -21,6 +21,7 @@ import {
 } from '@openora/core/pam/contracts/tag';
 
 const EVAL_CHUNK_SIZE = 100;
+const LAST_DEPOSIT_LOOKUP_CHUNK = 1000;
 const MULTI_ACCOUNT_REASON = 'identity signal matched another player account';
 const BONUS_ABUSER_REASON = 'multi-account risk rule matched';
 const logger = createLogger('pam-tag-evaluation');
@@ -121,7 +122,7 @@ export class TagEvaluationService {
   }
 
   /**
-   * Evaluates high_roller and large_depositor rules.
+   * Evaluates high_roller, large_depositor and recent_depositor rules.
    * Called on wallet.deposit.completed.
    */
   async onDepositCompleted(payload: unknown) {
@@ -131,10 +132,19 @@ export class TagEvaluationService {
     }
     const { userId, amount } = parsed.data;
 
-    const [highRoller, largeDepositor] = await Promise.all([
+    const [highRoller, largeDepositor, recentDepositor] = await Promise.all([
       this.getEnabledRule('high_roller'),
       this.getEnabledRule('large_depositor'),
+      this.getEnabledRule('recent_depositor'),
     ]);
+
+    if (recentDepositor && recentDepositor.thresholdDays !== null) {
+      await this.tryAssignTag({
+        userId,
+        tagKey: 'recent_depositor',
+        reason: 'completed a deposit',
+      });
+    }
 
     // Tag-threshold comparisons are evaluation decisions, not ledger writes -
     // moneyToNumber is the documented single conversion point.
@@ -606,7 +616,7 @@ export class TagEvaluationService {
   }
 
   /**
-   * Daily scheduled evaluation, three independent sweeps:
+   * Daily scheduled evaluation, four independent sweeps:
    *  - inactive: assigns to players who have not logged in for rule.thresholdDays
    *    days. Removal is handled by onUserLogin on next login.
    *  - dormant_high_roller: a co-occurrence check, not a history lookup - high_roller
@@ -628,11 +638,16 @@ export class TagEvaluationService {
    *    "do not auto-remove". Skipped entirely when thresholdDays or thresholdCount is
    *    null - an amount-only high_risk rule isn't resweepable by the cron; it stays
    *    until an admin clears it or a future withdrawal re-triggers assignment.
+   *  - recent_depositor: removal-only. A deposit assigns it (onDepositCompleted), and no
+   *    event marks the day it stops being true, so a holder whose last completed deposit
+   *    reached the balance more than rule.thresholdDays days ago, or who has none, loses
+   *    it here.
    */
   async runDailyEvaluation() {
     await this._runInactiveSweep();
     await this._runDormantHighRollerSweep();
     await this._runHighRiskResweep();
+    await this._runRecentDepositorSweep();
   }
 
   private async _runInactiveSweep() {
@@ -735,5 +750,39 @@ export class TagEvaluationService {
         });
       }
     });
+  }
+
+  private async _runRecentDepositorSweep() {
+    const rule = await this.getEnabledRule('recent_depositor');
+    if (!rule || rule.thresholdDays === null) {
+      return;
+    }
+    const reader = this.walletReader;
+    if (!reader.getLastDepositAts) {
+      logger.warn(
+        'the bound WALLET_READER has no getLastDepositAts - recent_depositor holders are not swept',
+      );
+      return;
+    }
+    const holderUserIds = (await this.tag.listActiveHoldersByTagKey('recent_depositor')).map(
+      (holder) => holder.userId,
+    );
+    const cutoff = Date.now() - rule.thresholdDays * 24 * 60 * 60 * 1000;
+    const lapsed: User['id'][] = [];
+    for (let start = 0; start < holderUserIds.length; start += LAST_DEPOSIT_LOOKUP_CHUNK) {
+      const chunk = holderUserIds.slice(start, start + LAST_DEPOSIT_LOOKUP_CHUNK);
+      const lastDepositAts = await reader.getLastDepositAts(chunk);
+      lapsed.push(
+        ...chunk.filter((userId) => (lastDepositAts.get(userId)?.getTime() ?? 0) < cutoff),
+      );
+    }
+
+    await mapConcurrent(lapsed, EVAL_CHUNK_SIZE, (userId) =>
+      this.tryRemoveTag({
+        userId,
+        tagKey: 'recent_depositor',
+        reason: 'no completed deposit within the configured window',
+      }),
+    );
   }
 }
