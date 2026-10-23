@@ -190,10 +190,15 @@ export class SupportChatService {
     await syncUntilSettled(
       linked.context,
       async () => (await this.readLinkedContext(userId))?.context ?? null,
-      (context) =>
-        this.deps.provider.syncCustomer(linked.customerId, context).catch((err: unknown) => {
+      // Awaited inside the try, so an adapter that throws before handing back a promise is
+      // wrapped too.
+      async (context) => {
+        try {
+          await this.deps.provider.syncCustomer(linked.customerId, context);
+        } catch (err) {
           throw asProviderError(err);
-        }),
+        }
+      },
     );
   }
 

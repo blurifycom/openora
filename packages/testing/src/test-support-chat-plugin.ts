@@ -69,7 +69,11 @@ export const setSupportChatSyncDelay = (ms: number) => {
   state().syncDelayMs = ms;
 };
 
-/** While on, every `syncCustomer` throws a provider error, or the given `Error` as is, instead of landing. */
+/**
+ * While on, every `syncCustomer` rejects with a provider error instead of landing. Given an
+ * `Error`, it throws that error as is and before returning a promise - an adapter that let a raw
+ * client error escape from code that is not async.
+ */
 export const failSupportChatSyncs = (on: boolean | Error) => {
   state().failSyncs = on;
 };
@@ -132,25 +136,27 @@ export default {
               expiresInMs: 3_600_000,
             };
           },
-          async syncCustomer(customerId, context) {
+          syncCustomer(customerId, context) {
             const s = state();
             s.syncAttempts.push(customerId);
             if (s.failSyncs instanceof Error) {
               throw s.failSyncs;
             }
-            if (s.failSyncs) {
-              throw new SupportChatProviderError('test vendor write refused');
-            }
-            const held = s.heldSync?.customerId === customerId ? s.heldSync : null;
-            if (held) {
-              s.heldSync = null;
-              held.reached();
-              await held.released;
-            }
-            if (s.syncDelayMs > 0) {
-              await new Promise((resolve) => setTimeout(resolve, s.syncDelayMs));
-            }
-            state().syncs.push({ customerId, context });
+            return (async () => {
+              if (s.failSyncs) {
+                throw new SupportChatProviderError('test vendor write refused');
+              }
+              const held = s.heldSync?.customerId === customerId ? s.heldSync : null;
+              if (held) {
+                s.heldSync = null;
+                held.reached();
+                await held.released;
+              }
+              if (s.syncDelayMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, s.syncDelayMs));
+              }
+              state().syncs.push({ customerId, context });
+            })();
           },
         }) satisfies SupportChatProvider,
     );

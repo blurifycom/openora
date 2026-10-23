@@ -37,6 +37,7 @@ const SYNC_ENQUEUE_OPTIONS = {
 } as const;
 // Once those retries run out, one try at the top of each hour until a sync lands.
 const RESYNC_EVERY_MS = 60 * 60_000;
+const RESYNC_RETRY_PAUSE_MS = 1_000;
 
 // What refreshes a linked player's context besides a chat open, the first link included.
 // Username and active-currency changes emit no event; the next open picks them up.
@@ -125,7 +126,19 @@ export default {
           { userId: payload.userId },
           'support-chat sync gave up - support sees stale context until the hourly resync lands',
         );
-        await scheduleResync(payload.userId);
+        // The driver only logs a hook that throws, so a refused enqueue would end the chain: try
+        // once more after a pause, then say plainly the context is stranded.
+        await scheduleResync(payload.userId)
+          .catch(async () => {
+            await new Promise((resolve) => setTimeout(resolve, RESYNC_RETRY_PAUSE_MS));
+            await scheduleResync(payload.userId);
+          })
+          .catch((err: unknown) =>
+            logger.error(
+              { err, userId: payload.userId },
+              'support-chat resync not scheduled - support sees stale context until the next refresh',
+            ),
+          );
       },
     });
 
