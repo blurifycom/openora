@@ -1,3 +1,5 @@
+<p align="center"><img src="./docs/assets/banner.webp" alt="Openora - open-source, headless, AI-native casino platform framework"></p>
+
 # AI-Native Open-source Casino Platform Framework
 
 [![Pipeline](https://github.com/blurifycom/openora/actions/workflows/pipeline.yml/badge.svg?branch=dev)](https://github.com/blurifycom/openora/actions/workflows/pipeline.yml)
@@ -34,6 +36,7 @@ The platform ships the backend surface (auth, wallet, player management, complia
 - [How it fits together](#how-it-fits-together)
 - [Extending the platform](#extending-the-platform)
 - [Build your own iGaming on top](#build-your-own-igaming-on-top)
+- [Marketplace](#marketplace)
 - [Frontend](#frontend)
 - [Roadmap](#roadmap)
 - [Documentation](#documentation)
@@ -140,6 +143,12 @@ cd ../my-igaming && pnpm install && pnpm dev
 ```
 
 See [docs/guides/downstream-consumer.md](./docs/guides/downstream-consumer.md) for the full guide.
+
+## Marketplace
+
+[![Openora Marketplace](./docs/assets/marketplace.webp)](https://openora.ai/integrations)
+
+Ready-made integrations for game providers, payments, KYC and player support, each built on the same adapter seams and shipped as source code you own. Browse what's available and what's in development on the [marketplace](https://openora.ai/integrations).
 
 ## Frontend
 
