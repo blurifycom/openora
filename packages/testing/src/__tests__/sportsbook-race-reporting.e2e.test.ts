@@ -16,6 +16,7 @@ import {
   PROVIDER,
   type SportsbookPlayer,
   acceptedBet,
+  balanceOf,
   bootSportsbookApp,
   enableSportsbook,
   expectApplied,
@@ -227,6 +228,31 @@ describe('revenue by product', () => {
       payouts: 0,
       ggr: 10,
     });
+  });
+
+  it('takes back the whole reopened payout and leaves what it could not collect to the debts', async () => {
+    const player = await fundedPlayer(app, '10');
+    const { args } = await acceptedBet(app, player, { stake: '10', potentialPayout: '25' });
+    await settle(args.providerBetId, 'won', '25');
+    const withdrawal = await player.client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '20',
+      currency: 'USD',
+    });
+    expect(withdrawal.status).toBe(200);
+
+    const reopened = await window(() => reopen(args.providerBetId));
+
+    expect(row(await products(reopened.from, reopened.to), 'sportsbook')).toEqual({
+      stakes: 0,
+      payouts: -25,
+      ggr: 25,
+    });
+    expect(Number(await balanceOf(app, player.userId))).toBe(0);
+    const debts = await admin.get(`/backoffice/sportsbook/debts?userId=${player.userId}`);
+    expect(debts.status).toBe(200);
+    const { items } = (await debts.json()) as { items: { outstanding: string }[] };
+    expect(items.map((d) => Number(d.outstanding))).toEqual([20]);
   });
 
   it('nets a voided stake to nothing', async () => {
