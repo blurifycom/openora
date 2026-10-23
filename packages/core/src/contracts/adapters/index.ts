@@ -105,6 +105,9 @@ export type {
   WalletBalanceReading,
   WalletBalancesReading,
   WalletProviderTransaction,
+  WalletLifetimeWithdrawals,
+  WalletLastDeposit,
+  WalletWithdrawalRequests,
 } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
