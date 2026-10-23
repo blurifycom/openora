@@ -296,17 +296,17 @@ describe('revenue by product', () => {
     });
   });
 
-  it('reports game rounds under their game type next to sportsbook', async () => {
+  it('reports game rounds under their game type, and sportsbook from the book alone', async () => {
     const drizzle = app.container.get(DRIZZLE).db;
     const userId = await registerPlayer(app, { email: `products-${randomUUID()}@example.com` });
     const [provider] = await drizzle
       .insert(gameProvider)
       .values({ slug: `products-${randomUUID()}`, name: 'Products Provider', isActive: true })
       .returning();
-    const [casinoGame, houseGame] = await drizzle
+    const [casinoGame, houseGame, bookGame] = await drizzle
       .insert(game)
       .values(
-        (['casino', 'original'] as const).map((gameType) => ({
+        (['casino', 'original', 'sportsbook'] as const).map((gameType) => ({
           name: `Products ${gameType}`,
           slug: `products-${gameType}-${randomUUID()}`,
           providerId: provider!.id,
@@ -331,6 +331,14 @@ describe('revenue by product', () => {
           status: 'completed',
           betAmount: '8',
           winAmount: '10',
+          currency: 'USD',
+        },
+        {
+          gameId: bookGame!.id,
+          userId,
+          status: 'completed',
+          betAmount: '30',
+          winAmount: '0',
           currency: 'USD',
         },
         { gameId: casinoGame!.id, userId, status: 'active', betAmount: '50', currency: 'USD' },

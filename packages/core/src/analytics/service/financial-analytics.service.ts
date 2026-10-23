@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, lte, ne, sql, type SQL } from 'drizzle-orm';
 import { alias, type PgColumn } from 'drizzle-orm/pg-core';
 import type { CacheAdapter, GameType, Granularity } from '@openora/core/contracts';
 import { DrizzleService, moneyAdd, moneySubtract } from '@openora/core/server';
@@ -190,6 +190,8 @@ export class FinancialAnalyticsService {
         .where(
           and(
             eq(gameRound.status, COMPLETED_STATUS),
+            // With the book loaded its ledger is the sportsbook row, not a catalog game typed so.
+            ...(this.sportsbook ? [ne(game.gameType, 'sportsbook')] : []),
             ...inRange(gameRound.startedAt, gameRound.currency, query),
           ),
         )

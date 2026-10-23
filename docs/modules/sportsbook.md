@@ -310,7 +310,9 @@ nothing else, so the provider may retry it or treat it as final.
   sportsbook debts, and a written-off debt is a cost the report does not show. A month heavy in
   promotion wins can push GGR negative in the shared totals. `GET /analytics/financial/products`
   splits stakes, payouts and GGR by product: a sportsbook stake counts when the bet is accepted,
-  a payout when it settles, and a reopen takes the payout back in the reopen's period.
+  a payout when it settles, and a reopen takes the payout back in the reopen's period. While the
+  book is loaded, its ledger is the whole sportsbook row: catalog game rounds typed `sportsbook`
+  are left out.
 - **A promotion win is real money with no deposit behind it.** It is withdrawable at once. Read the
   promotion report alongside the withdrawal review as the anti-money-laundering control.
 - **Cooling-off and self-exclusion end play at once.** Either one queues a retried job that revokes
