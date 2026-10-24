@@ -207,6 +207,8 @@ const UserChatMessageSchema = z.object({
   roomId: UuidSchema.nullable(),
   userId: UuidSchema,
   username: z.string(),
+  // Read live from the author's account, so it is current on every message, old ones included.
+  avatarUrl: z.string().nullable(),
   // UNTRUSTED user text: profanity-gated and URL-defanged server-side but NOT HTML-escaped.
   // Consumers MUST render as text or escape before injecting into HTML.
   content: z.string(),
