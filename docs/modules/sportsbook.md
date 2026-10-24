@@ -13,7 +13,15 @@ fields. This file does not repeat it.
   transaction core applied, each committed with the wallet move it made. That row is the replay
   answer and the retry guard.
 - **Sessions.** The short-lived reference a player's widget carries. Core binds a bet to a player
-  through the session it issued, never through a player id the provider echoes back.
+  through the session it issued, never through a player id the provider echoes back. A refused
+  issue answers with `data.reason`: `unavailable`, `geo_restricted`, `currency_not_offered`,
+  `provider_unavailable`, or why the account may not play (`self_excluded`, `cooling_off`,
+  `account_suspended`, `account_closed`, `account_inactive`, `player_blocked` when it cannot be
+  named). `GET /sportsbook/availability` answers a visitor without a session by the same region
+  rules as issue. `DELETE /sportsbook/session` is the player's logout: it revokes their live
+  sessions, or the one named, and audits it; a repeat revokes nothing. The provider is told
+  through its revoke call when the bridge has one; without it the revoke is local, and every later
+  callback with that session is refused as `session_invalid`.
 - **Operator configuration.** Whether the sportsbook is on, a suspension switch with a reason, the
   currencies it is offered in, the countries it refuses on top of the platform's own geo blocks,
   the timeouts reconciliation works from, and whether provider promotions are accepted. A config
@@ -23,18 +31,23 @@ fields. This file does not repeat it.
   exchange rates and refuses it above the cap, or when it has no USD rate while a cap is set.
 - **Player restrictions.** An admin can block one player from sportsbook play without touching
   casino play. Staff who can view the sportsbook can see a player's current restriction,
-  unrestricted when none is in place; changing it needs the right to suspend.
+  unrestricted when none is in place; changing it needs the right to suspend. Restricting revokes
+  the player's live sessions. A restricted player is still issued a session, marked `browseOnly`,
+  so they can browse; every reserve on it is refused as `sportsbook_restricted` until the
+  restriction is lifted, and the same session takes bets from then on.
+- **Bet by wallet row.** `GET /sportsbook/bets/by-transaction/{transactionId}` returns the bet
+  behind one of the caller's own sportsbook wallet rows, and 404 for any other row.
 - **Player summary.** `GET /backoffice/sportsbook/players/{userId}/summary` totals a player's bets
-  per currency under the `sportsbook` view grant, empty when no bet was accepted or settled in the
+  per currency under the `sportsbook` view grant, empty when no bet was staked or settled in the
   range and none is open. With `dateFrom` and `dateTo`, a stake counts in the period its bet was
-  accepted and a payout in the period it settled; a cancelled bet counts in neither. Open exposure
-  is the stake of every accepted, unsettled bet now, whatever the range. GGR is cash stake minus
-  payout, the wallet ledger's rule applied per bet: a promotion-paid stake earns nothing and a
-  promotion payout costs in full. It reads each bet's latest settlement, so a reopened bet shows as
-  open until it settles again and its payout leaves the period it first settled in, even when the
-  reversal was collected. The ledger books a stake at reserve, not acceptance, and is cash-basis for
-  a reopened bet, so a reversal left as debt or written off makes the ledger GGR lower than the
-  summary's (ADR-0047).
+  accepted, or reserved while it is not yet accepted, and a payout in the period it settled; a
+  cancelled bet counts in neither. Open exposure is the stake of every reserved or accepted,
+  unsettled bet now, whatever the range. GGR is cash stake minus payout, the wallet ledger's rule
+  applied per bet: a promotion-paid stake earns nothing and a promotion payout costs in full. It
+  reads each bet's latest settlement, so a reopened bet shows as open until it settles again and
+  its payout leaves the period it first settled in, even when the reversal was collected. The
+  ledger books a stake at reserve, not acceptance, and is cash-basis for a reopened bet, so a
+  reversal left as debt or written off makes the ledger GGR lower than the summary's (ADR-0047).
 - **Sportsbook debt.** What a reversed settlement could not take back, per player and currency,
   with the withdrawal hold that lives exactly as long as the debt.
 - **Reconciliation findings.** Everything the ledger noticed but could not decide on its own, for
@@ -188,10 +201,13 @@ unusual promotion payout.
 An operation either applied, replayed, or was refused. Applied and replayed both carry the bet's
 state after the operation and the player's real balance in the bet currency; answer the provider
 with them the same way. A tombstone, a cancel for a bet core never saw, carries neither. A refusal
-carries a typed reason, which the overlay maps to the provider's error code:
+carries a typed reason, which the overlay maps to the provider's error code. The reason set only
+grows, so an overlay maps a reason it does not know to its generic refusal:
 
-- the player may not play now: blocked, restricted, suspended, over a limit, or a session that is
-  no longer live;
+- the player may not play now: `self_excluded`, `cooling_off`, `account_suspended`,
+  `account_closed`, `account_inactive`, `sportsbook_restricted`, `player_blocked` when the account
+  state cannot be named, `limit`, `suspended` for the whole sportsbook, `currency_not_offered`, or
+  `session_invalid` for a session that is no longer live;
 - the balance does not cover the stake;
 - the operation does not fit the bet's state, or the bet is unknown;
 - the transaction id was reused for different content, or the amount is invalid for the bet's
@@ -207,13 +223,15 @@ nothing else, so the provider may retry it or treat it as final.
 
 ## Rules that are easy to get wrong here
 
-- **Only stakes are gated.** Configuration, suspension, restriction, the sportsbook's blocked
-  countries and play eligibility are checked when a session is issued and again, under the locks,
-  when a stake is reserved. The platform's geo check runs at session issue only, and reserve does
-  not repeat it. Responsible-gambling limits are checked only at reserve, by the wallet debit that
-  takes the stake. A promotion-paid stake has no debit, so the reserve's own eligibility check is
-  the only responsible-gambling gate it meets. Confirm, cancel, settle and reopen are never gated:
-  a disabled or suspended sportsbook still settles every open bet.
+- **Only stakes are gated.** Configuration, suspension, the sportsbook's blocked countries and play
+  eligibility, account state included, are checked when a session is issued and again, under the
+  locks, when a stake is reserved; the provider's session lookup refuses a player who may not play
+  with the same reason. A sportsbook restriction is checked at reserve only. The platform's geo
+  check runs at session issue only, and reserve does not repeat it. Responsible-gambling limits are
+  checked only at reserve, by the wallet debit that takes the stake. A promotion-paid stake has no
+  debit, so the reserve's own eligibility check is the only responsible-gambling gate it meets.
+  Confirm, cancel, settle and reopen are never gated: a disabled or suspended sportsbook still
+  settles every open bet.
 - **No network call runs inside a ledger transaction.** Session issue writes its row, commits, then
   calls the provider; a revoke calls the provider after its commit; reconciliation and align ask
   the provider before they open a transaction.

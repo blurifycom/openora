@@ -36,6 +36,13 @@ export const SPORTSBOOK_REFUSAL_REASONS = [
   'invalid_amount',
   'bet_not_found',
   'promotion_not_allowed',
+  'self_excluded',
+  'cooling_off',
+  'account_suspended',
+  'account_closed',
+  'account_inactive',
+  'sportsbook_restricted',
+  'currency_not_offered',
 ] as const;
 export const SportsbookRefusalReasonSchema = z.enum(SPORTSBOOK_REFUSAL_REASONS);
 export type SportsbookRefusalReason = z.infer<typeof SportsbookRefusalReasonSchema>;

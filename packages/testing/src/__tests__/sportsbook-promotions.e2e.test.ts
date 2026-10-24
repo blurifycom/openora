@@ -760,13 +760,19 @@ describe('refused declarations', () => {
   );
 
   it.each([
-    { kind: 'cooling-off', path: '/compliance/rg/cooling-off', body: { durationHours: 24 } },
+    {
+      kind: 'cooling-off',
+      path: '/compliance/rg/cooling-off',
+      body: { durationHours: 24 },
+      reason: 'cooling_off',
+    },
     {
       kind: 'self-exclusion',
       path: '/compliance/rg/self-exclusion',
       body: { isPermanent: true, confirm: true },
+      reason: 'self_excluded',
     },
-  ])('refuses a promotion-paid stake after $kind', async ({ path, body }) => {
+  ])('refuses a promotion-paid stake after $kind', async ({ path, body, reason }) => {
     const player = await fundedPlayer(app, '100');
     expect((await player.client.post(path, body)).status).toBe(200);
     await vi.waitFor(
@@ -785,10 +791,7 @@ describe('refused declarations', () => {
       .where(eq(sportsbookSession.id, player.sessionId));
 
     const args = reserveArgs(player.sessionId, { stake: '5', promotion: freebet });
-    expect(await ledgerOf(app).reserve(args)).toEqual({
-      status: 'refused',
-      reason: 'player_blocked',
-    });
+    expect(await ledgerOf(app).reserve(args)).toEqual({ status: 'refused', reason });
     expect(await betsFor(args.providerBetId)).toEqual([]);
   });
 
@@ -1582,6 +1585,99 @@ describe('player summary', () => {
         ggr: money('4.5'),
         openExposure: money('7'),
       },
+    ]);
+  });
+
+  const cashRow = (fields: Record<string, unknown>) => ({
+    currency: 'USD',
+    bets: 0,
+    stake: zero,
+    cashStake: zero,
+    promotionStake: zero,
+    payout: zero,
+    cashPayout: zero,
+    promotionPayout: zero,
+    ggr: zero,
+    openExposure: zero,
+    ...fields,
+  });
+
+  it('counts a reserved stake as staked and open until a cancel returns it', async () => {
+    const player = await fundedPlayer(app, '100');
+    const held = reserveArgs(player.sessionId, { stake: '8' });
+    expectApplied(await ledgerOf(app).reserve(held));
+    const dropped = reserveArgs(player.sessionId, { stake: '6' });
+    expectApplied(await ledgerOf(app).reserve(dropped));
+    expect(await balanceOf(app, player.userId)).toBe(money('86'));
+    expect(await summary(player.userId)).toEqual([
+      cashRow({
+        bets: 2,
+        stake: money('14'),
+        cashStake: money('14'),
+        ggr: money('14'),
+        openExposure: money('14'),
+      }),
+    ]);
+
+    expectApplied(
+      await ledgerOf(app).cancel({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: dropped.providerBetId,
+        reason: 'rejected',
+      }),
+    );
+    const afterCancel = cashRow({
+      bets: 1,
+      stake: money('8'),
+      cashStake: money('8'),
+      ggr: money('8'),
+      openExposure: money('8'),
+    });
+    expect(await summary(player.userId)).toEqual([afterCancel]);
+
+    expectApplied(
+      await ledgerOf(app).confirm({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: held.providerBetId,
+      }),
+    );
+    expect(await summary(player.userId)).toEqual([afterCancel]);
+    expect(await balanceOf(app, player.userId)).toBe(money('92'));
+  });
+
+  it('follows a reopened bet back to open and on to its new settlement, as the wallet does', async () => {
+    const player = await fundedPlayer(app, '100');
+    const { args } = await acceptedBet(app, player, { stake: '10', potentialPayout: '30' });
+    expectApplied(await settle(args.providerBetId, 'won', '30'));
+    expect(await summary(player.userId)).toEqual([
+      cashRow({
+        bets: 1,
+        stake: money('10'),
+        cashStake: money('10'),
+        payout: money('30'),
+        cashPayout: money('30'),
+        ggr: money('-20'),
+      }),
+    ]);
+
+    expectApplied(await reopen(args.providerBetId));
+    expect(await balanceOf(app, player.userId)).toBe(money('90'));
+    expect(await summary(player.userId)).toEqual([
+      cashRow({
+        bets: 1,
+        stake: money('10'),
+        cashStake: money('10'),
+        ggr: money('10'),
+        openExposure: money('10'),
+      }),
+    ]);
+
+    expectApplied(await settle(args.providerBetId, 'lost', '0'));
+    expect(await balanceOf(app, player.userId)).toBe(money('90'));
+    expect(await summary(player.userId)).toEqual([
+      cashRow({ bets: 1, stake: money('10'), cashStake: money('10'), ggr: money('10') }),
     ]);
   });
 });

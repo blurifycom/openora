@@ -10,6 +10,21 @@ export const isWagerProduct = (value: string): value is WagerProduct =>
   (WAGER_PRODUCTS as readonly string[]).includes(value);
 
 /**
+ * A ledger row's `providerName` names its product when it starts with `<product>:`, as the
+ * sportsbook's `sportsbook:<provider>` does. Any other provider name names no product.
+ */
+export const wagerProductProviderPrefix = (product: WagerProduct): string => `${product}:`;
+
+export function wagerProductOfProviderName(providerName: string | null): WagerProduct | null {
+  const separator = providerName?.indexOf(':') ?? -1;
+  if (!providerName || separator <= 0) {
+    return null;
+  }
+  const product = providerName.slice(0, separator);
+  return isWagerProduct(product) ? product : null;
+}
+
+/**
  * What a single bet was placed on. Threaded from the game provider seam through the wallet
  * debit into the bonus engine, which resolves a wagering weight from it (game, then category,
  * then product, then the profile default), and on into gamification, which counts qualifying

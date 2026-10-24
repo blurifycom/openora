@@ -10,6 +10,7 @@ import {
   MONEY_SCALE,
   MoneyAmountSchema,
   NonEmptyReasonSchema,
+  PLAY_REFUSALS,
   PageQuerySchema,
   SportsbookBetLegSchema,
   SportsbookBetResultSchema,
@@ -25,6 +26,7 @@ import {
   UuidSchema,
   paginated,
   queue,
+  wagerProductProviderPrefix,
 } from '@openora/core/contracts';
 
 export {
@@ -70,7 +72,7 @@ export const SportsbookFindingStatusSchema = z.enum(SPORTSBOOK_FINDING_STATUSES)
 export type SportsbookFindingStatus = z.infer<typeof SportsbookFindingStatusSchema>;
 
 /** The provider key the wallet ledger rows of this module carry, so they never collide with a casino provider's references. */
-export const SPORTSBOOK_WALLET_PROVIDER_PREFIX = 'sportsbook:';
+export const SPORTSBOOK_WALLET_PROVIDER_PREFIX = wagerProductProviderPrefix('sportsbook');
 /** `source` of the withdrawal hold sportsbook debt places. */
 export const SPORTSBOOK_HOLD_SOURCE = 'sportsbook';
 
@@ -233,8 +235,46 @@ export const SportsbookSessionSchema = z.object({
   launchUrl: z.url({ protocol: /^https$/ }).nullable(),
   currency: CurrencyTickerSchema,
   expiresAt: TimestampSchema,
+  /** The player is restricted from sportsbook: they may browse, and every bet is refused. */
+  browseOnly: z.boolean(),
 });
 export type SportsbookSession = z.infer<typeof SportsbookSessionSchema>;
+
+export const SPORTSBOOK_UNAVAILABLE_REASONS = ['unavailable', 'geo_restricted'] as const;
+export const SportsbookUnavailableReasonSchema = z.enum(SPORTSBOOK_UNAVAILABLE_REASONS);
+export type SportsbookUnavailableReason = z.infer<typeof SportsbookUnavailableReasonSchema>;
+
+/** `data.reason` of an `issueSession` error. `player_blocked` is the reason when the account state cannot be named. */
+export const SPORTSBOOK_SESSION_REFUSAL_REASONS = [
+  ...SPORTSBOOK_UNAVAILABLE_REASONS,
+  'currency_not_offered',
+  'provider_unavailable',
+  'player_blocked',
+  ...PLAY_REFUSALS,
+] as const;
+export const SportsbookSessionRefusalReasonSchema = z.enum(SPORTSBOOK_SESSION_REFUSAL_REASONS);
+export type SportsbookSessionRefusalReason = z.infer<typeof SportsbookSessionRefusalReasonSchema>;
+
+/** Whether the caller's address may reach the sportsbook at all, signed in or not. */
+export const SportsbookAvailabilitySchema = z.object({
+  available: z.boolean(),
+  reason: SportsbookUnavailableReasonSchema.nullable(),
+});
+export type SportsbookAvailability = z.infer<typeof SportsbookAvailabilitySchema>;
+
+export const RevokeSportsbookSessionInputSchema = z.object({
+  /** Omitted revokes every live session of the caller. */
+  sessionId: UuidSchema.optional(),
+});
+export type RevokeSportsbookSessionInput = z.infer<typeof RevokeSportsbookSessionInputSchema>;
+
+export const RevokeSportsbookSessionOutputSchema = z.object({
+  revoked: z.int().nonnegative(),
+});
+export type RevokeSportsbookSessionOutput = z.infer<typeof RevokeSportsbookSessionOutputSchema>;
+
+export const SportsbookBetByTransactionInputSchema = z.object({ transactionId: UuidSchema });
+export type SportsbookBetByTransactionInput = z.infer<typeof SportsbookBetByTransactionInputSchema>;
 
 const ReasonSchema = NonEmptyReasonSchema.max(500);
 
@@ -351,9 +391,10 @@ export const SportsbookPlayerSummaryInputSchema = DateRangeSchema.extend(UserIdI
 export type SportsbookPlayerSummaryInput = z.infer<typeof SportsbookPlayerSummaryInputSchema>;
 
 /**
- * One currency of a player's accepted and settled bets, as each bet stands now. Stake-side fields
- * count bets accepted in the range, payout-side fields bets settled in it, and `openExposure` is
- * now, whatever the range.
+ * One currency of a player's bets, as each bet stands now. Stake-side fields count every bet not
+ * cancelled, by its acceptance or, while still reserved, its debit, in the range; payout-side
+ * fields bets settled in it; and `openExposure` the reserved and accepted stakes now, whatever the
+ * range.
  */
 export const SportsbookPlayerSummaryRowSchema = z.object({
   currency: CurrencyTickerSchema,
@@ -375,10 +416,21 @@ export const SportsbookPlayerSummaryRowSchema = z.object({
 export type SportsbookPlayerSummaryRow = z.infer<typeof SportsbookPlayerSummaryRowSchema>;
 
 export const sportsbookContract = {
+  availability: oc
+    .route({ method: 'GET', path: '/sportsbook/availability' })
+    .output(SportsbookAvailabilitySchema),
   issueSession: oc
     .route({ method: 'POST', path: '/sportsbook/session' })
     .input(IssueSportsbookSessionInputSchema)
     .output(SportsbookSessionSchema),
+  revokeSession: oc
+    .route({ method: 'DELETE', path: '/sportsbook/session' })
+    .input(RevokeSportsbookSessionInputSchema)
+    .output(RevokeSportsbookSessionOutputSchema),
+  getBetByTransaction: oc
+    .route({ method: 'GET', path: '/sportsbook/bets/by-transaction/{transactionId}' })
+    .input(SportsbookBetByTransactionInputSchema)
+    .output(SportsbookBetSchema),
   listBets: oc
     .route({ method: 'GET', path: '/sportsbook/bets' })
     .input(ListSportsbookBetsInputSchema)

@@ -13,6 +13,7 @@ import type {
   SportsbookSessionArgs,
   SportsbookSettleArgs,
 } from '../schemas/sportsbook.js';
+import type { PlayRefusal } from './play-eligibility.js';
 import { createToken, type Token } from './token.js';
 
 /**
@@ -52,12 +53,14 @@ export type SportsbookSessionOutcome =
       countryCode: string;
       expiresAt: string;
       balance: string;
+      /** The player is restricted from sportsbook: they may browse, and every reserve refuses. */
+      browseOnly: boolean;
     }
-  | { status: 'refused'; reason: 'session_invalid' };
+  | { status: 'refused'; reason: 'session_invalid' | PlayRefusal };
 
 /** Idempotent on the provider transaction id, which may not start with `core-align:`: core's own ids. */
 export type SportsbookLedger = {
-  /** Resolves a live session the provider presents back: who plays, in which currency, with what balance. Refused once the player may not play. Read-only. */
+  /** Resolves a live session the provider presents back: who plays, in which currency, with what balance. Refused, naming why, once the player may not play. Read-only. */
   session(args: SportsbookSessionArgs): Promise<SportsbookSessionOutcome>;
   /** Debits the cash stake, nothing for a promotion-paid stake, and records the bet as reserved. Refused for a bet core already holds, and once the bet was cancelled before core saw it. */
   reserve(args: SportsbookReserveArgs): Promise<SportsbookLedgerOutcome>;
