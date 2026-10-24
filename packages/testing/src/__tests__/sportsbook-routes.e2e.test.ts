@@ -43,6 +43,7 @@ type Page<T> = Paginated<T>;
 type Finding = betting.SportsbookFinding;
 type Debt = betting.SportsbookDebt;
 type Config = betting.SportsbookConfig;
+type Restriction = betting.SportsbookRestriction;
 
 let db: TestDb;
 let app: TestApp;
@@ -103,11 +104,11 @@ const sessionsOf = async (userId: string) =>
     .from(sportsbookSession)
     .where(eq(sportsbookSession.userId, userId));
 
-async function sportsbookManager(): Promise<TestClient> {
+async function staffWithRole(roleKey: string): Promise<TestClient> {
   const { client, userId } = await registerAndMaterializePlayer(app, {
-    email: `sportsbook-manager-${randomUUID()}@example.com`,
+    email: `${roleKey}-${randomUUID()}@example.com`,
   });
-  await assignIamRoleByKey(app.container, userId, 'sportsbook-manager');
+  await assignIamRoleByKey(app.container, userId, roleKey);
   return client;
 }
 
@@ -656,7 +657,11 @@ describe('sportsbook bet align route', () => {
       (await anonymous(`/backoffice/sportsbook/bets/${betId}/align`, { method: 'POST' })).status,
     ).toBe(401);
     expect(
-      (await (await sportsbookManager()).post(`/backoffice/sportsbook/bets/${betId}/align`)).status,
+      (
+        await (
+          await staffWithRole('sportsbook-manager')
+        ).post(`/backoffice/sportsbook/bets/${betId}/align`)
+      ).status,
     ).toBe(403);
     expect(mockSportsbookProviderState.lookups).toEqual([]);
     expect((await adminBet(betId)).status).toBe('accepted');
@@ -885,6 +890,63 @@ describe('sportsbook suspend and resume routes', () => {
 });
 
 describe('sportsbook player restriction routes', () => {
+  it('reads the restriction as it changes, unrestricted when no restriction was ever set', async () => {
+    const player = await fundedPlayer(app, '100');
+    const path = `/backoffice/sportsbook/players/${player.userId}/restriction`;
+    const read = async () => {
+      const res = await admin.get(path);
+      expect(res.status).toBe(200);
+      return json<Restriction>(res);
+    };
+
+    expect(await read()).toEqual({
+      userId: player.userId,
+      restricted: false,
+      reason: null,
+      createdAt: null,
+    });
+
+    await admin.post(path, { reason: 'review' });
+    const restricted = await read();
+    expect(restricted).toMatchObject({ userId: player.userId, restricted: true, reason: 'review' });
+    expect(restricted.createdAt).not.toBeNull();
+
+    await del(admin, path, { userId: player.userId, reason: 'review passed' });
+    expect(await read()).toMatchObject({ restricted: false, reason: null, createdAt: null });
+    expect(await auditRows('sportsbook.restriction.changed', player.userId)).toHaveLength(2);
+  });
+
+  it('lets a view-only admin read a restriction it cannot change', async () => {
+    const player = await fundedPlayer(app, '100');
+    const path = `/backoffice/sportsbook/players/${player.userId}/restriction`;
+    const viewer = await staffWithRole('admin');
+
+    await admin.post(path, { reason: 'review' });
+    const res = await viewer.get(path);
+    expect(res.status).toBe(200);
+    expect(await json<Restriction>(res)).toMatchObject({ restricted: true });
+    expect((await del(viewer, path, { userId: player.userId, reason: 'not allowed' })).status).toBe(
+      403,
+    );
+    expect(await auditRows('sportsbook.restriction.changed', player.userId)).toHaveLength(1);
+  });
+
+  it('answers 404 when reading an unknown player and refuses staff without the sportsbook grant, a player or an anonymous reader', async () => {
+    expect(
+      (await admin.get(`/backoffice/sportsbook/players/${randomUUID()}/restriction`)).status,
+    ).toBe(404);
+    expect((await admin.get('/backoffice/sportsbook/players/not-a-uuid/restriction')).status).toBe(
+      400,
+    );
+
+    const player = await fundedPlayer(app, '100');
+    const path = `/backoffice/sportsbook/players/${player.userId}/restriction`;
+    expect((await (await staffWithRole('customer-support-agent')).get(path)).status).toBe(403);
+    expect((await player.client.get(path)).status).toBe(403);
+    expect((await stranger.get(path)).status).toBe(403);
+    expect((await anonymous(path)).status).toBe(401);
+  });
+
   it('restricts a player, revokes their live sessions, audits the reason and blocks the next reserve', async () => {
     const player = await fundedPlayer(app, '100');
     const path = `/backoffice/sportsbook/players/${player.userId}/restriction`;
@@ -923,7 +985,7 @@ describe('sportsbook player restriction routes', () => {
     };
     const firstBy = await restrictedBy();
     const repeat = await (
-      await sportsbookManager()
+      await staffWithRole('sportsbook-manager')
     ).post(path, {
       reason: 'self-exclusion request',
     });
@@ -1086,7 +1148,7 @@ describe('sportsbook findings routes', () => {
     expect(
       (
         await (
-          await sportsbookManager()
+          await staffWithRole('sportsbook-manager')
         ).post(`/backoffice/sportsbook/findings/${finding.id}/resolve`, {
           note: 'without refund rights',
         })
@@ -1328,7 +1390,11 @@ describe('sportsbook debt routes', () => {
     expect((await player.client.post(path, { idempotencyKey: randomUUID() })).status).toBe(403);
     expect((await stranger.post(path, { idempotencyKey: randomUUID() })).status).toBe(403);
     expect(
-      (await (await sportsbookManager()).post(path, { idempotencyKey: randomUUID() })).status,
+      (
+        await (
+          await staffWithRole('sportsbook-manager')
+        ).post(path, { idempotencyKey: randomUUID() })
+      ).status,
     ).toBe(403);
     expect(
       (
@@ -1518,7 +1584,7 @@ describe('sportsbook debt routes', () => {
     expect(
       (
         await (
-          await sportsbookManager()
+          await staffWithRole('sportsbook-manager')
         ).post(path, { reason: 'without refund rights', idempotencyKey: randomUUID() })
       ).status,
     ).toBe(403);
