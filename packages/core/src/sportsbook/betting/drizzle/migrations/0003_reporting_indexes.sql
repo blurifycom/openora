@@ -1,0 +1,2 @@
+CREATE INDEX "sportsbook_bet_accepted_at_idx" ON "sportsbook_bet" USING btree ("accepted_at");--> statement-breakpoint
+CREATE INDEX "sportsbook_bet_transaction_kind_created_at_idx" ON "sportsbook_bet_transaction" USING btree ("kind","created_at");

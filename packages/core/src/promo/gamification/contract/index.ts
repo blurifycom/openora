@@ -370,6 +370,11 @@ export type RacePositions = z.infer<typeof RacePositionsSchema>;
 export const RaceEligibleProductsSchema = z.array(z.string().trim().min(1).max(64)).max(50);
 export type RaceEligibleProducts = z.infer<typeof RaceEligibleProductsSchema>;
 
+const RaceEligibleProductsInputSchema = z
+  .array(z.enum(WAGER_PRODUCTS))
+  .min(1, 'select at least one product')
+  .refine((products) => new Set(products).size === products.length, 'products must not repeat');
+
 const RaceFieldsShape = {
   name: z.string().min(1).max(200),
   currency: CurrencyTickerSchema,
@@ -377,20 +382,22 @@ const RaceFieldsShape = {
   endAt: TimestampSchema,
   prizePool: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
   positions: RacePositionsSchema,
-  /** Products whose stakes count toward this race. Empty counts every product. */
+  /** Products whose stakes count toward this race. */
   eligibleProducts: RaceEligibleProductsSchema,
 } as const;
+
+const RaceInputShape = { ...RaceFieldsShape, eligibleProducts: RaceEligibleProductsInputSchema };
 
 const raceDatesOrdered = (v: { startAt: string; endAt: string }) =>
   new Date(v.endAt).getTime() > new Date(v.startAt).getTime();
 
 export const CreateRaceInputSchema = z
-  .object(RaceFieldsShape)
+  .object(RaceInputShape)
   .refine(raceDatesOrdered, { message: 'endAt must be after startAt', path: ['endAt'] });
 export type CreateRaceInput = z.infer<typeof CreateRaceInputSchema>;
 
 export const UpdateRaceInputSchema = z
-  .object({ raceId: UuidSchema, ...RaceFieldsShape })
+  .object({ raceId: UuidSchema, ...RaceInputShape })
   .refine(raceDatesOrdered, { message: 'endAt must be after startAt', path: ['endAt'] });
 export type UpdateRaceInput = z.infer<typeof UpdateRaceInputSchema>;
 

@@ -22,6 +22,13 @@
       "when": 1792655239358,
       "tag": "0002_player_reads",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792667466300,
+      "tag": "0003_reporting_indexes",
+      "breakpoints": true
     }
   ]
 }
