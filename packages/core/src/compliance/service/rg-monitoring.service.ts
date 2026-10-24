@@ -19,12 +19,28 @@ import type {
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
 import { resolveLimitCurrency, RgLimitCurrencyUnresolvedError } from './rg.service.js';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
-import { gameRound } from '@openora/core/casino/schema/gaming';
 import { session } from '@openora/core/pam/schema/identity';
 import type { RgFlagListItem, ListRgFlagsInput, RgFlagDetail } from '../contract/index.js';
 import { periodWindow, isAtThreshold, thresholdPct } from './rg-eval.js';
 
 const logger = createLogger('compliance-rg-monitoring');
+
+type LedgerRow = typeof walletTransaction.$inferSelect;
+type PlayLeg = {
+  type: Extract<LedgerRow['type'], 'bet' | 'bet_reversal' | 'win' | 'win_reversal'>;
+  direction: NonNullable<LedgerRow['direction']>;
+};
+
+const WAGER_LEGS = [
+  { type: 'bet', direction: 'debit' },
+  { type: 'bet_reversal', direction: 'credit' },
+] as const satisfies readonly PlayLeg[];
+
+const LOSS_LEGS = [
+  ...WAGER_LEGS,
+  { type: 'win', direction: 'credit' },
+  { type: 'win_reversal', direction: 'debit' },
+] as const satisfies readonly PlayLeg[];
 
 export class RgRateUnavailableError extends Error {
   constructor(
@@ -280,18 +296,9 @@ export class RgMonitoringService {
         limitCurrency,
       );
     }
-    if (type === 'loss') {
-      return this.convertedTotal(
-        db,
-        await this.netLossByCurrency(db, userId, from),
-        type,
-        period,
-        limitCurrency,
-      );
-    }
     return this.convertedTotal(
       db,
-      await this.betsByCurrency(db, userId, from),
+      await this.playByCurrency(db, userId, from, type === 'loss' ? LOSS_LEGS : WAGER_LEGS),
       type,
       period,
       limitCurrency,
@@ -349,26 +356,69 @@ export class RgMonitoringService {
       .groupBy(walletTransaction.currency);
   }
 
-  private async betsByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
-    return db
-      .select({
-        currency: gameRound.currency,
-        total: sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`,
-      })
-      .from(gameRound)
-      .where(and(eq(gameRound.userId, userId), gte(gameRound.startedAt, from)))
-      .groupBy(gameRound.currency);
-  }
-
-  private async netLossByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
-    return db
-      .select({
-        currency: gameRound.currency,
-        total: sql<string>`greatest(coalesce(sum(${gameRound.betAmount} - ${gameRound.winAmount}), 0), 0)`,
-      })
-      .from(gameRound)
-      .where(and(eq(gameRound.userId, userId), gte(gameRound.startedAt, from)))
-      .groupBy(gameRound.currency);
+  /**
+   * Play from the wallet ledger, whatever product it was on, netted per round. The ledger does not
+   * say which bet a reversal reverses, so a round's reversals, wins and win reversals count only
+   * when every bet of it was placed inside the window; a round that started before it adds only its
+   * stakes. A round's stake never nets below 0, and a leg without a round id never offsets one.
+   */
+  private async playByCurrency(
+    db: DrizzleDb | DrizzleTx,
+    userId: User['id'],
+    from: Date,
+    legs: readonly PlayLeg[],
+  ) {
+    const types = sql.join(
+      legs.map((leg) => sql`(${leg.type}, ${leg.direction})`),
+      sql`, `,
+    );
+    const result = await db.execute<{ currency: string; total: string }>(sql`
+      with legs as (
+        select t.wallet_id, t.provider_name, t.external_round_id, t.currency, t.type,
+          case when t.direction = 'debit' then t.amount else -t.amount end as signed
+        from ${walletTransaction} t
+        join ${wallet} w on w.id = t.wallet_id
+        where w.user_id = ${userId}
+          and t.status = 'completed'
+          and t.created_at >= ${from}
+          and (t.type, t.direction) in (${types})
+      ),
+      rounds as (
+        select wallet_id, provider_name, external_round_id, currency,
+          coalesce(sum(signed) filter (where type = 'bet'), 0) as stake,
+          coalesce(sum(signed) filter (where type in ('bet', 'bet_reversal')), 0) as net_stake,
+          coalesce(sum(signed) filter (where type not in ('bet', 'bet_reversal')), 0) as net_win,
+          external_round_id is not null
+            and count(*) filter (where type = 'bet') > 0
+            and count(*) filter (where type <> 'bet') > 0 as nets
+        from legs
+        group by wallet_id, provider_name, external_round_id, currency
+      ),
+      opened_before as (
+        select distinct p.wallet_id, p.provider_name, p.external_round_id
+        from ${walletTransaction} p
+        join ${wallet} w on w.id = p.wallet_id
+        join rounds r on r.wallet_id = p.wallet_id
+          and r.provider_name = p.provider_name
+          and r.external_round_id = p.external_round_id
+        where w.user_id = ${userId}
+          and r.nets
+          and p.type = 'bet'
+          and p.status = 'completed'
+          and p.created_at < ${from}
+      )
+      select r.currency,
+        greatest(sum(
+          case when r.nets and o.wallet_id is null then greatest(r.net_stake, 0) + r.net_win
+          else r.stake end
+        ), 0) as total
+      from rounds r
+      left join opened_before o on o.wallet_id = r.wallet_id
+        and o.provider_name = r.provider_name
+        and o.external_round_id = r.external_round_id
+      group by r.currency
+    `);
+    return result.rows;
   }
 
   clearLimitThresholdFlag(userId: User['id'], limitType: string): Promise<void> {

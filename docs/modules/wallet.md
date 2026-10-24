@@ -42,6 +42,24 @@ does not repeat it.
   before any debit, and neither an admin nor auto-approval can approve a withdrawal that was
   already waiting when the lock landed; it stays queued and can still be rejected. The tag is
   read through `PLAYER_TAGS`; with no tag module bound, no player can be locked.
+- **A module's withdrawal hold blocks every withdrawal the same way, under its own reason.** A
+  module places and releases its hold through `WALLET_COMMANDS` in its own transaction, keyed by
+  (player, source), and releases only its own. The wallet audits each change in that transaction.
+  A player with no wallet row cannot be held. It is not the `withdrawal_lock` tag: that one is an
+  investigation an admin owns, and a hold lives exactly as long as the state the module keeps
+  (ADR-0046).
+- **A correction debit is never refused for a short balance.** It collects what the balance holds
+  and reports the rest as a shortfall the calling module records as debt. Its ledger row carries
+  what was collected and what was asked, a zero collection included, so a retry with the same
+  reference replays the first result and one asking a different amount is refused. Each row it
+  writes is audited as `wallet.correction.debited` in the caller's transaction. It never takes
+  back more than its round paid: a payout reversal is capped by the round's wins less its earlier
+  reversals, and a re-collected stake by the round's stake reversals less its earlier corrections.
+- **Every bet, win and reversal leg of a round carries its `externalRoundId`.** RG spend nets a
+  round's legs by it, and a leg without one never offsets a stake. A correction debit without one
+  is refused, since a reversal outside its round would drop out of loss spend, and a plain `debit`
+  or `credit` never writes a `win_reversal`. A round's payouts and reversals count only when all
+  its bets fall inside the limit window, and a round's stake never nets below zero.
 - **Cross-module money moves through the wallet's command port, inside the caller's transaction.**
   Another module never reads or writes wallet tables directly, and a transfer is never settled over
   an event.

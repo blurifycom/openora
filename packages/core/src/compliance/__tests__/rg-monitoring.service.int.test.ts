@@ -73,7 +73,23 @@ async function seedPlayer(userId: string, currency: string) {
 const seedDeposit = (userId: string, amount: string, backdatedTo?: Date) =>
   seedCompletedDeposit(db, userId, amount, backdatedTo ? { createdAt: backdatedTo } : {});
 
-async function seedBet(userId: string, betAmount: string, winAmount = '0') {
+type Leg = Pick<typeof walletTransaction.$inferInsert, 'type' | 'amount' | 'direction'> &
+  Partial<typeof walletTransaction.$inferInsert>;
+
+async function seedLeg(userId: string, leg: Leg) {
+  await db.drizzle.db.insert(wallet).values({ userId, currency: 'USD' }).onConflictDoNothing();
+  const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+  await db.drizzle.db
+    .insert(walletTransaction)
+    .values({ walletId: row!.id, currency: 'USD', status: 'completed', ...leg });
+}
+
+async function seedCasinoRound(
+  userId: string,
+  betAmount: string,
+  winAmount = '0',
+  at = new Date(),
+) {
   const [provider] = await db.drizzle.db
     .insert(gameProvider)
     .values({ slug: `studio-${randomUUID()}`, name: 'Mock Studio' })
@@ -93,9 +109,27 @@ async function seedBet(userId: string, betAmount: string, winAmount = '0') {
     })
     .returning();
   await db.drizzle.db.insert(gameCategoryGame).values({ gameId: g!.id, categoryId: category!.id });
-  await db.drizzle.db
+  const [round] = await db.drizzle.db
     .insert(gameRound)
-    .values({ gameId: g!.id, userId, betAmount, winAmount, currency: 'USD' });
+    .values({ gameId: g!.id, userId, betAmount, winAmount, currency: 'USD', startedAt: at })
+    .returning();
+  const ref = { providerName: 'internal', externalRoundId: round!.id, createdAt: at };
+  await seedLeg(userId, {
+    type: 'bet',
+    amount: betAmount,
+    direction: 'debit',
+    providerRefId: `bet:${round!.id}`,
+    ...ref,
+  });
+  if (Number(winAmount) > 0) {
+    await seedLeg(userId, {
+      type: 'win',
+      amount: winAmount,
+      direction: 'credit',
+      providerRefId: `win:${round!.id}`,
+      ...ref,
+    });
+  }
 }
 
 async function seedSession(userId: string, startedMinutesAgo: number) {
@@ -221,7 +255,7 @@ describe('RgMonitoringService.evaluateUser - deposit limits (real PG)', () => {
 });
 
 describe('RgMonitoringService.evaluateUser - wager limits (real PG)', () => {
-  it('sums game rounds for a wager limit', async () => {
+  it('sums stakes for a wager limit', async () => {
     const userId = randomUUID();
     await db.drizzle.db.insert(userLimit).values({
       userId,
@@ -231,7 +265,7 @@ describe('RgMonitoringService.evaluateUser - wager limits (real PG)', () => {
       currency: 'USD',
       period: 'daily',
     });
-    await seedBet(userId, '90');
+    await seedCasinoRound(userId, '90');
 
     await makeService().evaluateUser(userId, 'gaming.round.ended');
 
@@ -250,7 +284,7 @@ describe('RgMonitoringService.evaluateUser - loss limits (real PG)', () => {
   it('counts NET loss - stakes minus winnings - not gross stakes', async () => {
     const userId = randomUUID();
     await seedLossLimit(userId, '100');
-    await seedBet(userId, '1000', '900');
+    await seedCasinoRound(userId, '1000', '900');
 
     await makeService().evaluateUser(userId, 'gaming.round.ended');
 
@@ -265,7 +299,7 @@ describe('RgMonitoringService.evaluateUser - loss limits (real PG)', () => {
   it('does not flag a player who is up on the window', async () => {
     const userId = randomUUID();
     await seedLossLimit(userId, '100');
-    await seedBet(userId, '100', '400');
+    await seedCasinoRound(userId, '100', '400');
 
     await makeService().evaluateUser(userId, 'gaming.round.ended');
 
@@ -275,12 +309,213 @@ describe('RgMonitoringService.evaluateUser - loss limits (real PG)', () => {
   it('flags a net loss that reaches the 80% band', async () => {
     const userId = randomUUID();
     await seedLossLimit(userId, '100');
-    await seedBet(userId, '200', '120');
+    await seedCasinoRound(userId, '200', '120');
 
     await makeService().evaluateUser(userId, 'gaming.round.ended');
 
     const [flag] = await flagsOf(userId);
     expect(flag).toMatchObject({ flagType: 'limit_threshold', limitType: 'loss' });
+  });
+});
+
+describe('RgMonitoringService.spendFor - play from the wallet ledger (real PG)', () => {
+  const HOUR = 60 * 60 * 1000;
+  const windowStart = () => new Date(Date.now() - HOUR);
+  const before = () => new Date(Date.now() - 2 * HOUR);
+  const spend = (
+    userId: string,
+    type: 'wager' | 'loss',
+    rates: ExchangeRateReader = identityRates(),
+  ) =>
+    makeService(undefined, rates).spendFor(
+      db.drizzle.db,
+      userId,
+      type,
+      'daily',
+      windowStart(),
+      'USD',
+    );
+
+  async function sportsbookLeg(
+    userId: string,
+    ticket: string,
+    leg: Pick<Leg, 'type' | 'amount' | 'direction'> & {
+      at?: Date;
+      currency?: string;
+      correction?: boolean;
+    },
+  ) {
+    await seedLeg(userId, {
+      type: leg.type,
+      amount: leg.amount,
+      direction: leg.direction,
+      correctionRequestedAmount: leg.correction ? leg.amount : null,
+      currency: leg.currency ?? 'USD',
+      providerName: 'sportsbook',
+      providerRefId: `${leg.type}:${ticket}:${randomUUID()}`,
+      externalRoundId: ticket,
+      createdAt: leg.at ?? new Date(),
+    });
+  }
+
+  it('reads the same wager and loss as the casino rounds for plain rounds', async () => {
+    const userId = randomUUID();
+    await seedCasinoRound(userId, '100', '30');
+    await seedCasinoRound(userId, '50', '0');
+    await seedCasinoRound(userId, '20', '45');
+    await seedCasinoRound(userId, '500', '0', before());
+    await seedCasinoRound(userId, '10', '400', before());
+    const legacy = await db.drizzle.db.execute<{ wager: string; loss: string }>(sql`
+      select coalesce(sum(${gameRound.betAmount}), 0) as wager,
+        greatest(coalesce(sum(${gameRound.betAmount} - ${gameRound.winAmount}), 0), 0) as loss
+      from ${gameRound}
+      where ${gameRound.userId} = ${userId} and ${gameRound.startedAt} >= ${windowStart()}
+    `);
+
+    expect(Number(await spend(userId, 'wager'))).toBe(Number(legacy.rows[0]!.wager));
+    expect(Number(await spend(userId, 'loss'))).toBe(Number(legacy.rows[0]!.loss));
+    expect(await spend(userId, 'wager')).toBe('170.000000000000000000');
+    expect(await spend(userId, 'loss')).toBe('95.000000000000000000');
+  });
+
+  it('counts a stake on any product, not only casino rounds', async () => {
+    const userId = randomUUID();
+    await sportsbookLeg(userId, 't1', { type: 'bet', amount: '40', direction: 'debit' });
+
+    expect(await spend(userId, 'wager')).toBe('40.000000000000000000');
+    expect(await spend(userId, 'loss')).toBe('40.000000000000000000');
+  });
+
+  it('nets a voided stake out of the window its bet was placed in, and only that one', async () => {
+    const userId = randomUUID();
+    await sportsbookLeg(userId, 'in', { type: 'bet', amount: '40', direction: 'debit' });
+    await sportsbookLeg(userId, 'in', { type: 'bet_reversal', amount: '40', direction: 'credit' });
+    await sportsbookLeg(userId, 'old', {
+      type: 'bet',
+      amount: '70',
+      direction: 'debit',
+      at: before(),
+    });
+    await sportsbookLeg(userId, 'old', { type: 'bet_reversal', amount: '70', direction: 'credit' });
+    await sportsbookLeg(userId, 'open', { type: 'bet', amount: '25', direction: 'debit' });
+
+    expect(await spend(userId, 'wager')).toBe('25.000000000000000000');
+  });
+
+  it('adds a win taken back to the loss, and ignores a win on a bet placed before the window', async () => {
+    const userId = randomUUID();
+    await sportsbookLeg(userId, 'won', { type: 'bet', amount: '10', direction: 'debit' });
+    await sportsbookLeg(userId, 'won', { type: 'win', amount: '30', direction: 'credit' });
+    await sportsbookLeg(userId, 'won', { type: 'win_reversal', amount: '30', direction: 'debit' });
+    await sportsbookLeg(userId, 'old', {
+      type: 'bet',
+      amount: '5',
+      direction: 'debit',
+      at: before(),
+    });
+    await sportsbookLeg(userId, 'old', { type: 'win', amount: '500', direction: 'credit' });
+
+    expect(await spend(userId, 'loss')).toBe('10.000000000000000000');
+  });
+
+  it('counts only the in-window stake of a round that started before the window', async () => {
+    const userId = randomUUID();
+    await sportsbookLeg(userId, 'r', {
+      type: 'bet',
+      amount: '10',
+      direction: 'debit',
+      at: before(),
+    });
+    await sportsbookLeg(userId, 'r', { type: 'bet', amount: '10', direction: 'debit' });
+    await sportsbookLeg(userId, 'r', { type: 'bet_reversal', amount: '10', direction: 'credit' });
+    await sportsbookLeg(userId, 'r', { type: 'win', amount: '50', direction: 'credit' });
+
+    expect(await spend(userId, 'wager')).toBe('10.000000000000000000');
+    expect(await spend(userId, 'loss')).toBe('10.000000000000000000');
+  });
+
+  it('does not let a reopened bet bring back the void of a stake placed before the window', async () => {
+    const userId = randomUUID();
+    await sportsbookLeg(userId, 't', {
+      type: 'bet',
+      amount: '100',
+      direction: 'debit',
+      at: before(),
+    });
+    await sportsbookLeg(userId, 't', { type: 'bet_reversal', amount: '100', direction: 'credit' });
+    await sportsbookLeg(userId, 'other', { type: 'bet', amount: '99', direction: 'debit' });
+    await sportsbookLeg(userId, 't', {
+      type: 'bet',
+      amount: '0.01',
+      direction: 'debit',
+      correction: true,
+    });
+
+    expect(await spend(userId, 'wager')).toBe('99.010000000000000000');
+  });
+
+  it("never lets one round's reversal offset another round's stake", async () => {
+    const userId = randomUUID();
+    await sportsbookLeg(userId, 'x', { type: 'bet', amount: '10', direction: 'debit' });
+    await sportsbookLeg(userId, 'x', { type: 'bet_reversal', amount: '30', direction: 'credit' });
+    await sportsbookLeg(userId, 'y', { type: 'bet', amount: '20', direction: 'debit' });
+
+    expect(await spend(userId, 'wager')).toBe('20.000000000000000000');
+  });
+
+  it('ignores a leg whose direction does not match its type', async () => {
+    const userId = randomUUID();
+    await sportsbookLeg(userId, 't', { type: 'bet', amount: '40', direction: 'debit' });
+    await sportsbookLeg(userId, 't', { type: 'bet', amount: '15', direction: 'credit' });
+    await sportsbookLeg(userId, 't', { type: 'win', amount: '25', direction: 'debit' });
+
+    expect(await spend(userId, 'wager')).toBe('40.000000000000000000');
+    expect(await spend(userId, 'loss')).toBe('40.000000000000000000');
+  });
+
+  it('never lets a reversal or a win without a round id offset a stake', async () => {
+    const userId = randomUUID();
+    await sportsbookLeg(userId, 't1', { type: 'bet', amount: '60', direction: 'debit' });
+    await seedLeg(userId, { type: 'bet_reversal', amount: '60', direction: 'credit' });
+    await seedLeg(userId, { type: 'win', amount: '60', direction: 'credit' });
+
+    expect(await spend(userId, 'wager')).toBe('60.000000000000000000');
+    expect(await spend(userId, 'loss')).toBe('60.000000000000000000');
+  });
+
+  it('skips a ledger row that did not complete', async () => {
+    const userId = randomUUID();
+    await sportsbookLeg(userId, 't1', { type: 'bet', amount: '60', direction: 'debit' });
+    await seedLeg(userId, {
+      type: 'bet',
+      amount: '900',
+      direction: 'debit',
+      status: 'failed',
+      providerName: 'sportsbook',
+      externalRoundId: 't2',
+    });
+
+    expect(await spend(userId, 'wager')).toBe('60.000000000000000000');
+  });
+
+  it('floors each currency at zero before converting, so a win in one does not offset a loss in another', async () => {
+    const userId = randomUUID();
+    const btc = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async (amount: string, from: string, to: string) =>
+        from === 'BTC' && to === 'USD' ? (Number(amount) * 1000).toFixed(18) : null,
+      ),
+    });
+    await sportsbookLeg(userId, 'usd', { type: 'bet', amount: '10', direction: 'debit' });
+    await sportsbookLeg(userId, 'usd', { type: 'win', amount: '60', direction: 'credit' });
+    await sportsbookLeg(userId, 'btc', {
+      type: 'bet',
+      amount: '0.1',
+      direction: 'debit',
+      currency: 'BTC',
+    });
+
+    expect(Number(await spend(userId, 'loss', btc))).toBe(100);
   });
 });
 
@@ -295,7 +530,7 @@ describe('RgLimitGate loss handling (real PG)', () => {
       currency: 'USD',
       period: 'daily',
     });
-    await seedBet(userId, '500');
+    await seedCasinoRound(userId, '500');
     const gate = new RgLimitGate(makeService(), identityRates());
 
     await expect(gate.checkWager(db.drizzle.db, userId, '400', 'USD')).resolves.toEqual({
@@ -313,7 +548,7 @@ describe('RgLimitGate loss handling (real PG)', () => {
       currency: 'USD',
       period: 'daily',
     });
-    await seedBet(userId, '90');
+    await seedCasinoRound(userId, '90');
     const gate = new RgLimitGate(makeService(), identityRates());
 
     await expect(gate.checkWager(db.drizzle.db, userId, '20', 'USD')).resolves.toMatchObject({
@@ -332,7 +567,7 @@ describe('RgLimitGate loss handling (real PG)', () => {
       currency: 'USD',
       period: 'daily',
     });
-    await seedBet(userId, '90');
+    await seedCasinoRound(userId, '90');
     const gate = new RgLimitGate(makeService(), identityRates());
 
     await expect(gate.checkWager(db.drizzle.db, userId, '10', 'USD')).resolves.toEqual({
