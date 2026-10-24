@@ -76,6 +76,7 @@ const GeneratedAgentSurfaceSchema = z.object({
       schemaVersion: z.number().nullable(),
       iam: CatalogIamSchema,
       reversible: z.boolean().nullable(),
+      benefitsPlayer: z.boolean().nullable(),
     }),
   ),
 });
@@ -326,6 +327,7 @@ describe('MCP kernel registries match the generated catalog', () => {
       schemaVersion: action.schemaVersion,
       iam: { resource: action.iam.resource, action: action.iam.action },
       reversible: action.reversible,
+      benefitsPlayer: action.benefitsPlayer ?? false,
     }));
 
     expect(byId(generated.agentTools).map((entry) => entry.id)).toEqual(
