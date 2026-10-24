@@ -101,6 +101,7 @@ import {
   ChatPlayerMutedError,
   ChatSystemMessageProtectedError,
 } from './errors/chat-moderation.errors.js';
+import { ChatAvatarUrlSchema } from '../contract/index.js';
 import type {
   AdminRoomSortBy,
   BlockedUserSortBy,
@@ -369,6 +370,11 @@ function isGlobalRoom(room: { slug: string }) {
 
 // The avatar is read live off the author's account, never copied onto the row, so a changed
 // picture shows on old messages too and a client never fetches one profile per author.
+// An image that is not a URL shows as no avatar instead of failing the whole listing.
+function toAvatarUrl(image: string | null): string | null {
+  return ChatAvatarUrlSchema.safeParse(image).data ?? null;
+}
+
 function toPublicMessage(
   record: typeof chatMessage.$inferSelect,
   avatarUrl: string | null,
@@ -376,7 +382,7 @@ function toPublicMessage(
   if (record.type === 'system') {
     return toSystemMessage(record);
   }
-  return { ...toMessage(record), avatarUrl } as ChatMessage;
+  return { ...toMessage(record), avatarUrl: toAvatarUrl(avatarUrl) } as ChatMessage;
 }
 
 // One unreadable system message drops out of the page; the rest of the history is still
@@ -394,7 +400,7 @@ function toSentMessage(
   record: typeof chatMessage.$inferSelect,
   avatarUrl: string | null,
 ): ChatMessage {
-  return { ...toMessage(record), avatarUrl } as ChatMessage;
+  return { ...toMessage(record), avatarUrl: toAvatarUrl(avatarUrl) } as ChatMessage;
 }
 
 // A system message this service just wrote: its metadata came in typed by the contract, so

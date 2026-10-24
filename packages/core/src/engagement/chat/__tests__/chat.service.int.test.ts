@@ -572,10 +572,15 @@ describe('ChatService message reads (real PG)', () => {
     expect(messages.map((m) => m.id)).toEqual([newer.id, older.id]);
   });
 
-  it("reads each author's current avatar, null when the author has none or no account", async () => {
+  it("reads each author's current avatar, null when the author has none, a non-URL one or no account", async () => {
     const { svc } = makeService();
     const withAvatar = await seedUser(db, { username: 'alice', image: 'https://cdn.test/old.png' });
     const withoutAvatar = await seedUser(db, { username: 'bob' });
+    const withRelativeAvatar = await seedUser(db, { username: 'carol', image: '/avatar.png' });
+    await seedMessage({
+      userId: withRelativeAvatar.id,
+      createdAt: new Date('2026-01-04T00:00:00.000Z'),
+    });
     await seedMessage({ userId: withAvatar.id, createdAt: new Date('2026-01-03T00:00:00.000Z') });
     await seedMessage({
       userId: withoutAvatar.id,
@@ -590,6 +595,7 @@ describe('ChatService message reads (real PG)', () => {
     const messages = await svc.getGlobalMessages();
 
     expect(messages.map((m) => (m.type === 'user' ? m.avatarUrl : undefined))).toEqual([
+      null,
       'https://cdn.test/new.png',
       null,
       null,
