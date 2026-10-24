@@ -16,7 +16,11 @@ fields. This file does not repeat it.
   through the session it issued, never through a player id the provider echoes back.
 - **Operator configuration.** Whether the sportsbook is on, a suspension switch with a reason, the
   currencies it is offered in, the countries it refuses on top of the platform's own geo blocks,
-  and the timeouts reconciliation works from.
+  the timeouts reconciliation works from, and whether provider promotions are accepted. A config
+  update that carries `promotions` replaces the whole object, so it sends `enabled`, `funder` and
+  `maxPromotionStakeUsd` together, with `null` for no cap. Leaving `promotions` out keeps it. The
+  cap is in USD for every currency: reserve values a promotion-paid stake with the platform's
+  exchange rates and refuses it above the cap, or when it has no USD rate while a cap is set.
 - **Player restrictions.** An admin can block one player from sportsbook play without touching
   casino play.
 - **Sportsbook debt.** What a reversed settlement could not take back, per player and currency,
@@ -37,8 +41,9 @@ and core disagree, the overlay converts; core never learns a provider's wire for
 2. **Signature verification, before anything else.** Verify the provider's signature over the raw
    body before parsing it, and fail closed: a missing key, an unknown scheme or a bad signature is
    refused without touching the ledger. Never log the raw body, a session token or the signature.
-3. **The outbound provider binding.** Session issue, session revoke and a bet status lookup, as
-   the provider port in `packages/core/src/contracts/adapters/sportsbook-provider.ts` declares.
+3. **The outbound provider binding.** Session issue, session revoke and, when the provider has
+   one, a bet status lookup, as the provider port in
+   `packages/core/src/contracts/adapters/sportsbook-provider.ts` declares.
    Its name is the lowercase provider key every ledger call for this provider carries. Each move a
    callback makes is a wallet row under the provider name `sportsbook:<provider>`, with the
    reference `tx:<provider tx id>`. The debt offset a payout triggers and an admin collect take
@@ -47,9 +52,11 @@ and core disagree, the overlay converts; core never learns a provider's wire for
    `collect:<idempotency key>:<shortfall id>`. A deployment binds one provider.
    A revoke must resolve for a session the provider never opened or already closed; a throw is
    retried. A binding without a revoke leaves the widget session open at the provider until it
-   expires, though core refuses its session lookups and stakes. Without the binding, session
-   issue is refused and reconciliation files findings instead of resolving bets. Session issue
-   also needs the platform's `GEO_CHECK_COMMANDS`; without it the sportsbook is unavailable.
+   expires, though core refuses its session lookups and stakes. Without the binding, session issue
+   is refused and reconciliation files findings instead of resolving bets. Without the status
+   lookup, align is refused as `provider_unavailable` and a reserve the provider never confirms is
+   filed as unresolved after the reconciliation attempt budget. Session issue also needs the
+   platform's `GEO_CHECK_COMMANDS`; without it the sportsbook is unavailable.
 
 ### Mapping callbacks to ledger operations
 
@@ -73,7 +80,8 @@ and core disagree, the overlay converts; core never learns a provider's wire for
 - **One reserve per bet.** A second reserve for a bet core already holds, under a new transaction
   id, is refused and filed.
 - **Send the total payout, never a delta.** A provider that sends deltas is converted in the
-  overlay. A loss settles with a zero payout; a void pays back exactly the stake.
+  overlay. A loss settles with a zero payout and a void pays back exactly the stake, unless the
+  reserve declared a promotion (below).
 - **Pin the version when the provider gives one.** A reopen moves the bet to its next version, and
   a settle or reopen that names a version only applies to that version, so a late duplicate from
   before a correction cannot land on the corrected bet.
@@ -82,6 +90,84 @@ and core disagree, the overlay converts; core never learns a provider's wire for
 - **Never call the port inside the overlay's own database transaction.** Each operation opens and
   commits its own, so the overlay can never take a lock out of order or hold one across its own
   network call.
+
+### Provider promotions
+
+The provider owns its promotions: it grants them, shows them and reports on the callbacks that a
+bet used one. Core books the cash that moves and reports what the promotions paid. ADR-0047
+records the design. Promotions are off by default; an operator turns them on in the sportsbook
+config, with one USD cap on a promotion-paid stake and a funder (operator or provider) per type
+label for the report. A bet keeps the funder the map named when it was reserved.
+
+At reserve the overlay declares the money facts of the bet, never a type core interprets:
+
+| Industry type                            | Declaration                                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------------------ |
+| Freebet, stake not returned              | `stake: 'promotion'`, `voidReturnsStake: false`                                |
+| Free money, stake returned               | `stake: 'promotion'`, `voidReturnsStake: true`                                 |
+| No-risk or risk-free bet, acca insurance | `stake: 'player'`, `refundsLoss: true`                                         |
+| Payout, odds or combo boost              | `stake: 'player'`, `refundsLoss: false`, with `potentialAmount`                |
+| Stake back as a new freebet              | `stake: 'player'`, `refundsLoss: false`; the new freebet lives at the provider |
+
+Every declaration also carries the operator's own `type` label and, when the provider has one,
+the provider's grant `id`. The reserve `stake` stays the betslip stake the odds apply to, also for a
+freebet, and `potentialPayout` includes any boost.
+
+Core resolves the declaration into three amounts on the bet and holds every later step to them:
+
+| Declaration                        | Cash stake | Void payout | Max loss refund |
+| ---------------------------------- | ---------- | ----------- | --------------- |
+| none                               | stake      | stake       | 0               |
+| promotion-paid, stake not returned | 0          | 0           | 0               |
+| promotion-paid, stake returned     | 0          | stake       | 0               |
+| player-paid, no loss refund        | stake      | stake       | 0               |
+| player-paid, loss refund           | stake      | stake       | stake           |
+
+Database checks hold the same rules, and refuse a stake split between the player and a promotion.
+
+- **A promotion-paid stake moves no money at reserve.** A void pays what the declaration says
+  (nothing, or the stake as a `win`; a stake-returning one may also void at 0 when the provider
+  re-grants the promotion instead), a loss pays nothing, and every payout is a `win`.
+- **A loss refund is a settle with result `lost` and the refund as its payout.** It may not exceed
+  the stake, and only a bet that declared `refundsLoss: true` may pay one.
+- **Send `promotionAmount` on a settle where core cannot know the split.** For a boost win it is
+  the boost part, for a no-risk half loss it is what the promotion added. Left out, it defaults to
+  the whole payout of a promotion-paid stake, the refund of a lost bet, the declared boost (at most
+  the payout) on any other paying result, and 0 on a void or half loss. It must be 0 on a bet that
+  declared no promotion and the whole payout of a promotion-paid stake. On a player-paid stake it
+  must be 0 on a void, at most the loss refund on a loss, at most the larger of the loss refund and
+  the declared boost on a half loss, and at most the declared boost otherwise, never above the
+  payout. A `potentialAmount` above `potentialPayout` refuses the reserve as
+  `invalid_amount`.
+- **A promotion-paid stake may have a potential payout below the stake.** A freebet that keeps its
+  stake pays only the winnings (stake 10 at odds 1.5 pays 5). The potential payout must cover the
+  cash stake, which is 0 here.
+- **Send `promotionPotential` on a confirm whose new odds change the boost.** It is the promotion's
+  part of the accepted `potentialPayout` and replaces the reserved one. It needs the accepted terms
+  and a promotion bet, may change only when an odds did, and is required once the stored part
+  exceeds the new payout.
+- **A reopen takes back everything the last settlement paid, in real money.** A promotion win was
+  withdrawable; a shortfall becomes debt with a hold.
+
+What the overlay must do:
+
+- **Refuse any reserve carrying a promotion type the overlay does not map.** Dropping the field
+  charges the player for a freebet. An older core drops an unknown declaration the same way, so
+  pin the core version the overlay was built against.
+- **Never send a bonus-funded stake share.** Sportsbook stakes are real money or wholly a provider
+  promotion; the provider's operator-bonus amount is left out or sent as 0.
+- **Keep the provider's accept callback on.** Reconciliation resolves a reserve the provider never
+  confirms through the bet status lookup. Without one the stake stays reserved and the bet is
+  filed as unresolved, until the overlay applies the provider's outcome through the ledger.
+- **Revoke the player's unused provider promotions on cooling-off and self-exclusion.** Subscribe
+  to `rg.cooling_off.activated` and `rg.self_exclusion.activated`, and revoke through the provider's
+  own promotion API. The `revokeSession` port ends sessions only, and core holds no grant to
+  revoke.
+
+A declaration with an unknown or contradictory key, a promotion while promotions are off, and a
+promotion-paid stake over the cap are refused as `promotion_not_allowed`. When every leg carries
+decimal odds, a promotion-paid payout above the stake times their product is paid and filed as an
+unusual promotion payout.
 
 ### Answering the provider
 
@@ -111,8 +197,9 @@ nothing else, so the provider may retry it or treat it as final.
   countries and play eligibility are checked when a session is issued and again, under the locks,
   when a stake is reserved. The platform's geo check runs at session issue only, and reserve does
   not repeat it. Responsible-gambling limits are checked only at reserve, by the wallet debit that
-  takes the stake. Confirm, cancel, settle and reopen are never gated: a disabled or
-  suspended sportsbook still settles every open bet.
+  takes the stake. A promotion-paid stake has no debit, so the reserve's own eligibility check is
+  the only responsible-gambling gate it meets. Confirm, cancel, settle and reopen are never gated:
+  a disabled or suspended sportsbook still settles every open bet.
 - **No network call runs inside a ledger transaction.** Session issue writes its row, commits, then
   calls the provider; a revoke calls the provider after its commit; reconciliation and align ask
   the provider before they open a transaction.
@@ -126,7 +213,10 @@ nothing else, so the provider may retry it or treat it as final.
 - **The provider is the outcome authority.** An admin never types a result or a payout. The only
   manual correction is align-with-provider: core asks the provider for the bet's status and applies
   it through the same guarded ledger operations a callback uses. A status core cannot reach from
-  the bet's state, or a settlement the ledger would refuse, becomes a finding, not a move. Align
+  the bet's state, or a settlement the ledger would refuse, becomes a finding, not a move. A
+  provider status that differs from a settled bet only in its `promotionAmount` moves nothing: the
+  split the settle callback sent stands in `promotion_paid`, and the other split is filed, since
+  re-settling for the attribution alone would reverse and re-pay real money. Align
   and reconciliation apply the answer only to the bet as it stood when they asked: a callback that
   moved the bet during the lookup makes the answer stale, so nothing is applied, and an admin
   align answers 409 `bet_changed` to be run again.
@@ -138,19 +228,21 @@ nothing else, so the provider may retry it or treat it as final.
   their product: it rises when the product rises, falls when it falls, and holds when it holds, so
   `2.5` rewritten as `2.50` moves nothing. Odds in another format only let the payout change when
   their text did. The payout need not equal stake times odds, since providers round and cap their
-  own way, but it must fit the currency's decimals and be at least the stake. The stake never
-  changes. Valid terms replace the bet's potential payout and legs; the reserve's transaction row
-  keeps the original ones. Terms that do not fit are refused as `invalid_amount` and filed, and the
-  bet stays reserved. If valid terms never arrive, reconciliation confirms the bet on its reserved
-  terms from the provider's status, and the open finding tells an admin to check the payout.
+  own way, but it must fit the currency's decimals and be at least the cash stake, as at
+  reserve. The stake never changes. Valid terms replace the bet's potential payout and legs; the
+  reserve's transaction row keeps the original ones. Terms that do not fit are refused as
+  `invalid_amount` and filed, and the bet stays reserved. If valid terms never arrive,
+  reconciliation confirms the bet on its reserved terms from the provider's status, and the open
+  finding tells an admin to check the payout.
 - **The country list blocks, it does not allow.** The platform's geo check runs first. The
   sportsbook's `blockedCountries` only adds countries; an empty list offers the sportsbook wherever
   the platform trades. Session issue refuses a country it cannot resolve, and reserve refuses a
   session whose country was listed after it opened, as `session_invalid`. The player's language
   tag is passed to the provider at issue, refused when malformed, and never stored.
-- **A reversal never overdraws a balance.** A reopen takes back what the settlement paid, a win as
-  a `win_reversal` and a voided stake as a `bet`, from the real balance. What it cannot take back
-  becomes debt in that currency, a withdrawal hold, and a finding, in the same transaction.
+- **A reversal never overdraws a balance.** A reopen takes back what the settlement paid, from the
+  real balance: a voided cash stake as a `bet`, and any other payout, a promotion's included, as a
+  `win_reversal`. What it cannot take back becomes debt in that currency, a withdrawal hold, and a
+  finding, in the same transaction.
 - **Debt is recovered from later sportsbook wins first.** A settlement in that currency pays the
   full win, then takes back up to the outstanding debt. An admin can also collect from the
   balance, or write the debt off with a reason; both, like align and resolving a finding, need
@@ -169,7 +261,23 @@ nothing else, so the provider may retry it or treat it as final.
   max-bet-checks them. They always count toward responsible-gambling spend. Rank level counts
   them as the operator's rank setting says. Rakeback and the rank challenge leave them out by
   default, until the operator adds them; a ladder upgraded from before those lists existed counts
-  every product, sportsbook included.
+  every product, sportsbook included. A provider promotion is not a bonus-funded stake: a
+  promotion-paid stake writes no debit, so it is no wager, no spend and no rank, streak or race progress, and its
+  payout never reduces a player's measured loss. Reopening it, and an offset or collect of the debt
+  that left, land in its own round and are not netted either. A cash bet's shortfall nets in that
+  bet's round even when a promotion payout pays it back, unless that bet was placed before the
+  limit window; the promotion payout itself never counts. A player-paid promotion stake is a real
+  wager: a refunded loss keeps its rank, streak and race progress, and its rakeback where the
+  ladder pays rakeback on sportsbook.
+- **Promotion cost is not in the platform bonus cost.** The analytics bonus cost sums bonus ledger
+  rows, and every sportsbook promotion payout is a `win`. The admin promotion report sums what
+  promotions paid, and the promotion part reopens reversed, by type label, funder and currency. A
+  reopen counts in its own period, so a closed period never changes. The reversed part counts
+  whether or not the player's balance covered it; what a reopen could not collect is in the
+  sportsbook debts, and a written-off debt is a cost the report does not show. A month heavy in
+  promotion wins can push GGR negative in the shared totals, which have no product split.
+- **A promotion win is real money with no deposit behind it.** It is withdrawable at once. Read the
+  promotion report alongside the withdrawal review as the anti-money-laundering control.
 - **Cooling-off and self-exclusion end play at once.** Either one queues a retried job that revokes
   every live sportsbook session, at core and at the provider, and audits the revoke. A stake that
   lands before the job runs is still refused, because reserve checks play eligibility under its
