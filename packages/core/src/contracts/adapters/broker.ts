@@ -33,8 +33,9 @@ export type BrokerHandler = (envelope: EventEnvelope) => void | Promise<void>;
 
 export type SubscribeOptions = {
   /**
-   * Forward hint for grouped consumers: Kafka consumer group / RabbitMQ queue group.
-   * When omitted, the adapter creates an exclusive per-process queue (fan-out).
+   * Overrides the consumer group (Kafka consumer group / RabbitMQ queue group). `EventBus`
+   * never sets it, so module handlers join the deployment's group - `SERVICE_NAME` in the
+   * Redis Streams driver - and each event reaches one replica per service.
    */
   consumerGroup?: string;
 };

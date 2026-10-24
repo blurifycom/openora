@@ -20,25 +20,32 @@ import {
   type OutboxWriter,
 } from '@openora/core/contracts';
 import { redisUrlForWorker } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
-import { AUTH_SESSION, type SessionResolver } from '../../auth/index.js';
-import { createApp } from '../create-app.js';
-import { getCurrentClientMeta } from '../../kernel/request-context.js';
+import { makeJobQueue, mock } from '../../../testing/mock.js';
+import { ADMIN_GUARD, AUTH_SESSION, type SessionResolver } from '../../auth/index.js';
 import {
   EVENT_BUS,
   createEventBus,
+  type Container,
   type EventBus,
   type EventHandler,
   type ProcessedEventLog,
 } from '../../kernel/index.js';
 import type { PluginEntry } from '../../plugin-host/index.js';
+import { createApp } from '../create-app.js';
+import type { CoreTokenCatalog } from '../core-token-catalog.js';
+import { countedRegistrations } from './fixtures/counted-plugin.js';
+import { FIXTURE_LIMITS } from './fixtures/limits-plugin.js';
 import { heardTriggers } from './fixtures/trigger-listener-plugin.js';
+import { getCurrentClientMeta } from '../../kernel/request-context.js';
 
 // A syntactically valid but unreachable DB url - fine here because nothing in this
 // suite ever runs a query: DrizzleService's pg.Pool connects lazily, and neither
 // health.ping nor better-auth's getSession() touch the DB when the request carries
 // no session cookie (getSessionFromCtx short-circuits on a missing cookie).
 const DUMMY_DATABASE_URL = 'postgres://test:test@127.0.0.1:1/create_app_test';
+
+const fixture = (name: string) =>
+  fileURLToPath(new URL(`./fixtures/${name}-plugin.ts`, import.meta.url));
 
 describe('createApp - distributed-only durable seams (ADR-0030)', () => {
   it('throws a clear, actionable error when no durable seam is bound', async () => {
@@ -115,14 +122,10 @@ describe('createApp - the MCP kernel binding', () => {
 
 describe('createApp - agent trigger listeners', () => {
   const saved = process.env['REDIS_URL'];
-  const fixture = (file: string) => fileURLToPath(new URL(`./fixtures/${file}`, import.meta.url));
-  const recording: PluginEntry = {
-    id: 'trigger-listener',
-    path: fixture('trigger-listener-plugin.ts'),
-  };
+  const recording: PluginEntry = { id: 'trigger-listener', path: fixture('trigger-listener') };
   const throwing: PluginEntry = {
     id: 'throwing-trigger-listener',
-    path: fixture('throwing-trigger-listener-plugin.ts'),
+    path: fixture('throwing-trigger-listener'),
   };
 
   afterEach(() => {
@@ -386,6 +389,245 @@ describe('createApp - service name for the Redis Streams consumer group', () => 
     await expect(createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL })).rejects.toThrow(
       /SERVICE_MANIFEST is set but SERVICE_NAME is not/,
     );
+  });
+});
+
+describe('createApp - SERVICE_MANIFEST and JOB_WORKERS on the plugin list it is given', () => {
+  const keys = ['REDIS_URL', 'SERVICE_MANIFEST', 'SERVICE_NAME', 'JOB_WORKERS'] as const;
+  const saved = keys.map((key) => [key, process.env[key]] as const);
+
+  afterEach(() => {
+    for (const [key, value] of saved) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  // A static list, as a consumer that never calls loadExtensions() passes it.
+  const plugins: PluginEntry[] = [
+    { id: 'fixture-base', path: fixture('base') },
+    { id: 'fixture-feature', path: fixture('feature') },
+    { id: 'fixture-leaf', path: fixture('leaf') },
+  ];
+
+  /** Boots the fixtures under `env` and returns the queues whose workers were registered. */
+  async function bootQueues(
+    env: { SERVICE_MANIFEST?: string; JOB_WORKERS?: string },
+    list: PluginEntry[] = plugins,
+  ) {
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    for (const key of ['SERVICE_MANIFEST', 'SERVICE_NAME', 'JOB_WORKERS'] as const) {
+      delete process.env[key];
+    }
+    if (env.SERVICE_MANIFEST) {
+      process.env['SERVICE_MANIFEST'] = env.SERVICE_MANIFEST;
+      process.env['SERVICE_NAME'] = 'fixture';
+    }
+    if (env.JOB_WORKERS) {
+      process.env['JOB_WORKERS'] = env.JOB_WORKERS;
+    }
+    const jobs = makeJobQueue();
+    const created = await createApp({ plugins: list, databaseUrl: DUMMY_DATABASE_URL }, (c) => {
+      c.register(JOB_QUEUE, () => jobs);
+    });
+    await created.close();
+    return vi.mocked(jobs.registerWorker).mock.calls.map(([registration]) => registration.queue);
+  }
+
+  it('boots only the modules the manifest selects', async () => {
+    expect(await bootQueues({ SERVICE_MANIFEST: 'fixture-base' })).toEqual([
+      'fixture-base.daily',
+      'fixture-base.weekly',
+    ]);
+  });
+
+  it('names every module the manifest leaves out in one boot error', async () => {
+    await expect(bootQueues({ SERVICE_MANIFEST: 'fixture-leaf' })).rejects.toThrow(
+      /fixture-feature \(required by fixture-leaf\)[\s\S]*fixture-base \(required by fixture-feature\)[\s\S]*SERVICE_MANIFEST=fixture-leaf,fixture-feature,fixture-base/,
+    );
+  });
+
+  it('registers only the workers JOB_WORKERS selects', async () => {
+    expect(await bootQueues({ JOB_WORKERS: 'fixture-base.*,!fixture-base.weekly' })).toEqual([
+      'fixture-base.daily',
+    ]);
+    expect(await bootQueues({ JOB_WORKERS: '!fixture-base.*' })).toEqual(['fixture-feature.sync']);
+  });
+
+  it('boots with an exclusion that matches no queue', async () => {
+    expect(await bootQueues({ JOB_WORKERS: '!absent.*' })).toHaveLength(3);
+  });
+
+  it('fails the boot on an inclusion that matches no queue', async () => {
+    await expect(bootQueues({ JOB_WORKERS: 'fixture-bsae.*' })).rejects.toThrow(
+      /does not register: fixture-bsae\.\*/,
+    );
+  });
+
+  it('fails the boot on a malformed JOB_WORKERS', async () => {
+    await expect(bootQueues({ JOB_WORKERS: 'none,fixture-base.daily' })).rejects.toThrow(
+      /"none" stands alone/,
+    );
+  });
+
+  it('starts a worker a router factory registers', async () => {
+    const late = [{ id: 'fixture-late-worker', path: fixture('late-worker') }];
+
+    expect(await bootQueues({}, late)).toEqual(['fixture-late-worker.run']);
+    expect(await bootQueues({ JOB_WORKERS: 'fixture-late-worker.*' }, late)).toEqual([
+      'fixture-late-worker.run',
+    ]);
+  });
+});
+
+describe('createApp - a split service fails closed on a control it would skip', () => {
+  const keys = ['REDIS_URL', 'SERVICE_MANIFEST', 'SERVICE_NAME'] as const;
+  const saved = keys.map((key) => [key, process.env[key]] as const);
+
+  afterEach(() => {
+    for (const [key, value] of saved) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  const entry = (id: string, name: string): PluginEntry => ({ id, path: fixture(name) });
+  const limited = entry('fixture-limited', 'limited');
+  const limits = entry('fixture-limits', 'limits');
+  const admin = entry('fixture-admin', 'admin');
+  const iam = entry('iam', 'iam');
+  const identity = entry('identity', 'identity');
+  const base = entry('fixture-base', 'base');
+
+  /** Boots `plugins` under `manifest` (none: a full boot) and closes the app again. */
+  async function boot(
+    plugins: PluginEntry[],
+    manifest?: string,
+    configure?: (container: Container<CoreTokenCatalog>) => void,
+  ) {
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    delete process.env['SERVICE_MANIFEST'];
+    delete process.env['SERVICE_NAME'];
+    if (manifest) {
+      process.env['SERVICE_MANIFEST'] = manifest;
+      process.env['SERVICE_NAME'] = 'fixture';
+    }
+    const created = await createApp({ plugins, databaseUrl: DUMMY_DATABASE_URL }, (c) => {
+      c.register(JOB_QUEUE, () => makeJobQueue());
+      configure?.(c);
+    });
+    await created.close();
+  }
+
+  it("refuses a module's unbound control port, naming the module that binds it", async () => {
+    await expect(boot([limited, limits], 'fixture-limited')).rejects.toThrow(
+      /- fixture-limited runs without FIXTURE_LIMITS \(bound by fixture-limits\): fixture limits go unenforced\nAdd them: SERVICE_MANIFEST=fixture-limited,fixture-limits/,
+    );
+  });
+
+  it('registers each loaded plugin once and closes the connection it opened when it refuses', async () => {
+    const counted = entry('fixture-counted', 'counted');
+    const openSockets = () =>
+      process.getActiveResourcesInfo().filter((type) => type === 'TCPSocketWrap').length;
+    const socketsBefore = openSockets();
+    countedRegistrations().count = 0;
+
+    await expect(boot([counted, limits], 'fixture-counted')).rejects.toThrow(
+      /- fixture-counted runs without FIXTURE_LIMITS \(bound by fixture-limits\)/,
+    );
+
+    expect(countedRegistrations().count).toBe(1);
+    await vi.waitFor(() => expect(openSockets()).toBeLessThanOrEqual(socketsBefore), {
+      timeout: 2_000,
+    });
+  });
+
+  it('boots once the manifest has that module, or the composition root binds the port', async () => {
+    await expect(
+      boot([limited, limits], 'fixture-limited,fixture-limits'),
+    ).resolves.toBeUndefined();
+    await expect(
+      boot([limited, limits], 'fixture-limited', (c) =>
+        c.registerUnsafe(FIXTURE_LIMITS, () => ({ check: () => true })),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it('refuses admin routes without the ports AdminGuard checks them with', async () => {
+    await expect(boot([admin, iam, identity], 'fixture-admin')).rejects.toThrow(
+      /- AdminGuard runs without ADMIN_PERMISSION_RESOLVER \(bound by iam\)[\s\S]*- AdminGuard runs without ADMIN_SECURITY_POLICY \(bound by identity\)[\s\S]*Add them: SERVICE_MANIFEST=fixture-admin,iam,identity/,
+    );
+  });
+
+  it('boots admin routes once the manifest has iam and identity', async () => {
+    await expect(
+      boot([admin, iam, identity], 'fixture-admin,iam,identity'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('refuses a split that serves no admin routes without them too', async () => {
+    await expect(boot([base, iam, identity], 'fixture-base')).rejects.toThrow(
+      /- AdminGuard runs without ADMIN_PERMISSION_RESOLVER \(bound by iam\)[\s\S]*Add them: SERVICE_MANIFEST=fixture-base,iam,identity/,
+    );
+  });
+
+  it('builds AdminGuard at boot under a manifest, so a guard that cannot be built fails the boot', async () => {
+    const broken = (c: Container<CoreTokenCatalog>) =>
+      c.register(ADMIN_GUARD, () => {
+        throw new Error('fixture guard cannot be built');
+      });
+
+    await expect(boot([base], 'fixture-base', broken)).rejects.toThrow(
+      'fixture guard cannot be built',
+    );
+    await expect(boot([base], undefined, broken)).resolves.toBeUndefined();
+  });
+
+  it('names a missing dependency, required port, control and guard port in one error whose manifest boots', async () => {
+    const plugins = [
+      entry('fixture-split', 'split'),
+      entry('fixture-feature', 'feature'),
+      base,
+      entry('fixture-leaf', 'leaf'),
+      entry('fixture-dispatch', 'dispatch'),
+      limits,
+      iam,
+      identity,
+    ];
+
+    const refused = await boot(plugins, 'fixture-split').then(
+      () => new Error('booted'),
+      (err: unknown) => (err instanceof Error ? err : new Error(String(err))),
+    );
+
+    expect(refused.message).toContain(
+      'SERVICE_MANIFEST=fixture-split leaves out what this service needs:\n' +
+        '  - fixture-feature (required by fixture-split, fixture-leaf)\n' +
+        '  - fixture-base (required by fixture-feature)\n' +
+        '  - fixture-split requires FIXTURE_DISPATCH (bound by fixture-dispatch)\n' +
+        '  - fixture-split runs without FIXTURE_LIMITS (bound by fixture-limits): fixture limits go unenforced\n',
+    );
+    expect(refused.message).toMatch(/- AdminGuard runs without ADMIN_PERMISSION_RESOLVER/);
+    expect(refused.message).toMatch(/- fixture-leaf \(required by fixture-dispatch\)/);
+    const suggested = /^Add them: SERVICE_MANIFEST=(\S+)$/m.exec(refused.message)?.[1];
+    expect(suggested).toBe(
+      'fixture-split,fixture-feature,fixture-base,fixture-dispatch,fixture-limits,iam,identity,fixture-leaf',
+    );
+    await expect(boot(plugins, suggested)).resolves.toBeUndefined();
+  });
+
+  it('boots a full install unchanged, the controls left unbound', async () => {
+    await expect(boot([limited, admin])).resolves.toBeUndefined();
+  });
+
+  it('boots a manifest whose plugin list has no module behind the controls', async () => {
+    await expect(boot([limited, admin], 'fixture-limited,fixture-admin')).resolves.toBeUndefined();
   });
 });
 

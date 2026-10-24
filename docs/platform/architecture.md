@@ -102,7 +102,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable. For the pooling/sweeping/reconciliation shape a custody-style payment vendor adds, see [docs/adapters/custody.md](../adapters/custody.md#custody-topology).
 
-**Background jobs** - long-running work runs off the request path in a BullMQ worker shipped as an overlay plugin (`/scaffold-plugin <name>-worker`): a module emits an event via the typed `EventBus`, the worker plugin subscribes in `register(ctx)` and processes the job. There is no standalone worker app.
+**Background jobs** - long-running work runs off the request path on `JOB_QUEUE`: a module registers a worker with `ctx.jobs.worker` and enqueues to it. Every process consumes every queue by default; `JOB_WORKERS` narrows that, so a long-running queue can live on an extra instance that boots the same plugins while the API replicas skip it. See [ADR-0046](../adr/0046-per-process-job-worker-selection.md).
 
 **SDK & consumption surface**
 
@@ -187,5 +187,6 @@ for the full direction; the shape:
   scaffolds a thin host); point its broker at the shared stream and its events keep
   flowing. The `no-cross-module-schema-read` lint warning flags the remaining
   shared-table couplings to retire first. Scale the stateless Hono API horizontally;
-  scale async work by moving consumers to their own services. See
+  scale async work by moving consumers to their own services, or narrow the queues a
+  process consumes with `JOB_WORKERS`. See
   [ADR-0017](../adr/0017-extraction-readiness-manifest-outbox-command-ports.md).

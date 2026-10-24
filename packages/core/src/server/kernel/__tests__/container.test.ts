@@ -64,6 +64,17 @@ describe('Container', () => {
     expect(() => c.get(A)).toThrow(/Circular dependency/);
   });
 
+  it('rethrows a refusing factory on every get, not as a circular dependency', () => {
+    const TOKEN = createToken('refuses');
+    const c = new Container();
+    c.register(TOKEN, () => {
+      throw new Error('refused');
+    });
+
+    expect(() => c.get(TOKEN)).toThrow('refused');
+    expect(() => c.get(TOKEN)).toThrow('refused');
+  });
+
   it('runs disposers in reverse registration order', async () => {
     const c = new Container();
     const order: string[] = [];
