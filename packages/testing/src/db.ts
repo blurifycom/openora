@@ -23,6 +23,7 @@ import { migrate as migrateSocial } from '@openora/core/engagement/migrate/socia
 import { migrate as migrateExchangeRate } from '@openora/core/fx/migrate/exchange-rate';
 import { migrate as migratePromoBonus } from '@openora/core/promo/migrate/bonus';
 import { migrate as migratePromoGamification } from '@openora/core/promo/migrate/gamification';
+import { migrate as migrateSportsbookBetting } from '@openora/core/sportsbook/migrate/betting';
 
 const DEFAULT_TEST_URL = 'postgres://postgres:postgres@localhost:5434/oss_igaming_test';
 
@@ -47,6 +48,7 @@ async function applyAllMigrations(url: string): Promise<void> {
   await migrateExchangeRate(url);
   await migratePromoBonus(url);
   await migratePromoGamification(url);
+  await migrateSportsbookBetting(url);
 }
 
 export async function applyMigrations(url: string): Promise<void> {
