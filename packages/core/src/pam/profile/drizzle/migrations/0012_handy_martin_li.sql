@@ -1,0 +1,1 @@
+CREATE INDEX "player_acquisition_params_idx" ON "player_acquisition" USING gin ("params");
