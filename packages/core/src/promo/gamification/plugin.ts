@@ -115,6 +115,12 @@ class CompositeWagerTracking implements WagerTrackingCommands {
       await consumer.recordSettledWager?.(tx, args);
     }
   }
+
+  async reverseSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
+    for (const consumer of this.consumers) {
+      await consumer.reverseSettledWager?.(tx, args);
+    }
+  }
 }
 
 const rankService = (c: TypedContainer<CoreTokenCatalog>) =>

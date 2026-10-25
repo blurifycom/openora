@@ -220,6 +220,11 @@ export class RaceService implements WagerTrackingCommands {
       });
   }
 
+  // A void reaches reverseWager too when the bonus engine is loaded; the second call finds no stake left.
+  async reverseSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
+    await this.reverseWager(tx, args);
+  }
+
   /**
    * Takes a rolled-back stake back out of every race the round counted in and that has not closed
    * yet - a closed race's standings are frozen and already paid. Each race takes back its own

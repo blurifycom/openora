@@ -1448,7 +1448,9 @@ export class SportsbookLedgerService {
       if (debtChange) {
         await this.debts.writeAudit(tx, debtChange);
       }
-      if (result !== 'void') {
+      if (result === 'void') {
+        await this.reverseSettledStake(tx, settled, args);
+      } else {
         await this.trackSettledStake(tx, settled, args);
       }
       await step?.(tx, settled);
@@ -1499,6 +1501,23 @@ export class SportsbookLedgerService {
       context: { provider: args.provider, product: 'sportsbook' },
       round: { providerName: ref.providerName, externalRoundId: ref.externalRoundId },
       qualifiedAt: first?.at ?? new Date(),
+    });
+  }
+
+  private async reverseSettledStake(
+    tx: DrizzleTx,
+    bet: SportsbookBetRow,
+    args: SettleArgs,
+  ): Promise<void> {
+    if (!this.wagerTracking?.reverseSettledWager || !isPositiveMoney(bet.cashStake)) {
+      return;
+    }
+    const ref = walletRef(args);
+    await this.wagerTracking.reverseSettledWager(tx, {
+      userId: bet.userId,
+      currency: bet.currency,
+      round: { providerName: ref.providerName, externalRoundId: ref.externalRoundId },
+      realAmount: bet.cashStake,
     });
   }
 

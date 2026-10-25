@@ -93,6 +93,8 @@ export type WagerTrackingCommands = {
   reverseWager?(tx: unknown, args: WagerReversalArgs): Promise<void>;
   /** Optional: only a consumer that counts a product at settlement rather than at the wager. */
   recordSettledWager?(tx: unknown, args: SettledWagerArgs): Promise<void>;
+  /** Takes back what `recordSettledWager` counted when the bet is voided. Repeating it takes nothing more. */
+  reverseSettledWager?(tx: unknown, args: WagerReversalArgs): Promise<void>;
 };
 
 export const WAGER_TRACKING: Token<WagerTrackingCommands> = createToken('WAGER_TRACKING');
