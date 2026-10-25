@@ -221,7 +221,7 @@ describe('revenue by product', () => {
   async function window<T>(step: () => Promise<T>) {
     const from = new Date();
     await step();
-    return { from, to: new Date() };
+    return { from, to: new Date(Date.now() + 1) };
   }
 
   it('counts the stake when accepted, the payout when settled, and takes a reopened payout back then', async () => {
