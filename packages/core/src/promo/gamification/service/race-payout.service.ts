@@ -1,5 +1,6 @@
 import { and, eq, isNull, lte } from 'drizzle-orm';
 import type {
+  AuditWritePort,
   ExchangeRateReader,
   PlayEligibilityPort,
   Uuid,
@@ -28,6 +29,27 @@ export type RaceWon = {
   transactionId: string | null;
 };
 
+type AuditEntry = Parameters<AuditWritePort['record']>[0];
+
+type PayoutSettled = {
+  userId: Uuid;
+  position: number;
+  amount: string;
+  currency: string;
+  outcome: 'granted' | 'restricted';
+  transactionId: string | null;
+};
+
+// A withheld payout is as much a decision as a paid one, so both are recorded.
+const payoutAudit = (raceId: Uuid, settled: PayoutSettled): AuditEntry => ({
+  actorType: 'system',
+  action: 'promo.race.payout.settled',
+  resourceType: 'promo_race',
+  resourceId: raceId,
+  before: { settledAt: null },
+  after: settled,
+});
+
 type Logger = {
   warn: (context: object, message: string) => void;
   error: (context: object, message: string) => void;
@@ -53,6 +75,7 @@ export class RacePayoutService {
     private readonly wallet: WalletCommands | undefined,
     private readonly rates: ExchangeRateReader,
     private readonly payoutCurrency: string,
+    private readonly audit: AuditWritePort,
     private readonly logger: Logger,
   ) {}
 
@@ -108,6 +131,7 @@ export class RacePayoutService {
     const settled = new Set(already.map((row) => row.userId));
 
     const won: RaceWon[] = [];
+    const audits: AuditEntry[] = [];
     for (const [index, standing] of standings.entries()) {
       if (settled.has(standing.userId)) {
         continue;
@@ -127,6 +151,16 @@ export class RacePayoutService {
           grantId: null,
           outcome: 'restricted',
         });
+        audits.push(
+          payoutAudit(raceId, {
+            userId: standing.userId,
+            position: index + 1,
+            amount: position.prize,
+            currency: race.currency,
+            outcome: 'restricted',
+            transactionId: null,
+          }),
+        );
         continue;
       }
       if (!this.wallet) {
@@ -170,6 +204,17 @@ export class RacePayoutService {
         grantId: null,
         outcome: 'granted',
       });
+      const transactionId = credited.moved ? credited.transactionId : null;
+      audits.push(
+        payoutAudit(raceId, {
+          userId: standing.userId,
+          position: index + 1,
+          amount: priced.amount,
+          currency: priced.currency,
+          outcome: 'granted',
+          transactionId,
+        }),
+      );
       won.push({
         userId: standing.userId,
         raceId,
@@ -177,7 +222,7 @@ export class RacePayoutService {
         position: index + 1,
         amount: priced.amount,
         currency: priced.currency,
-        transactionId: credited.moved ? credited.transactionId : null,
+        transactionId,
       });
     }
 
@@ -185,6 +230,8 @@ export class RacePayoutService {
       .update(promoRace)
       .set({ closedAt: settledAt, updatedAt: settledAt })
       .where(eq(promoRace.id, raceId));
+    // With the credits and the close, so a prize can never be paid without its record.
+    await this.audit.recordManyInTransaction(tx, audits);
     // Frozen standings ignore a rollback, so what each round counted here is no longer needed.
     await tx.delete(promoRaceRoundWager).where(eq(promoRaceRoundWager.raceId, raceId));
     return won;

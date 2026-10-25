@@ -22,6 +22,11 @@ import { priceForPayout } from '../shared/payout-currency.js';
 
 type Granted = DomainEventPayload<'promo.bonus.granted'>;
 
+type RakebackBoost = Pick<
+  Extract<StreakReward, { kind: 'rakebackBoost' }>,
+  'percentPoints' | 'days'
+>;
+
 /** What `plugin.ts` announces per cash reward, once the claim's transaction has committed. */
 export type StreakCashPaid = {
   userId: Uuid;
@@ -275,24 +280,41 @@ export class StreakPayoutService {
     if (!milestone) {
       return null;
     }
-    const settle = (outcome: StreakClaimResult['outcome']) =>
-      tx
+    // Cash and boosts never reach the bonus engine, so the claim is recorded here, with the
+    // settlement it describes.
+    const settle = async (
+      outcome: StreakClaimResult['outcome'],
+      paid: { grantIds: Uuid[]; cashPaid: StreakCashPaid[]; rakebackBoosts: RakebackBoost[] },
+    ) => {
+      await tx
         .update(promoStreakMilestoneGrant)
         .set({ settledAt: new Date(), outcome })
         .where(eq(promoStreakMilestoneGrant.id, id));
+      await this.audit.recordInTransaction(tx, {
+        actorType: 'player',
+        actorId: userId,
+        action: 'promo.streak.milestone.claimed',
+        resourceType: 'promo_streak_milestone_grant',
+        resourceId: id,
+        before: { settledAt: null, outcome: null },
+        after: { userId, day: row.day, reachedAt: row.reachedAt.toISOString(), outcome, ...paid },
+      });
+    };
 
     if ((await this.eligibility?.isRestricted(userId, tx)) ?? true) {
-      await settle('restricted');
+      await settle('restricted', { grantIds: [], cashPaid: [], rakebackBoosts: [] });
       return { outcome: 'restricted', granted: [], cashPaid: [] };
     }
     const granted: Granted[] = [];
     const cashPaid: StreakCashPaid[] = [];
+    const rakebackBoosts: RakebackBoost[] = [];
     for (const [index, reward] of milestone.rewards.entries()) {
       // A settled row is reactivated when its day is reached again, so the reach time keeps
       // each reach's credits apart from the last one's.
       const sourceRef = `streak-milestone:${id}:${row.reachedAt.getTime()}:${index}`;
       if (reward.kind === 'rakebackBoost') {
         await this.applyRakebackBoost(tx, userId, reward);
+        rakebackBoosts.push({ percentPoints: reward.percentPoints, days: reward.days });
         continue;
       }
       if (reward.kind === 'cash') {
@@ -301,7 +323,11 @@ export class StreakPayoutService {
       }
       granted.push(await this.grantOne(tx, userId, reward, sourceRef));
     }
-    await settle('granted');
+    await settle('granted', {
+      grantIds: granted.map((grant) => grant.grantId),
+      cashPaid,
+      rakebackBoosts,
+    });
     return { outcome: 'granted', granted, cashPaid };
   }
 

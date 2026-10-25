@@ -479,6 +479,43 @@ describe('mapEventToRecord: gaming.provider.updated', () => {
   });
 });
 
+describe('mapEventToRecord: catalogue rows rewritten by an importer', () => {
+  const gameId = '99999999-9999-4999-8999-999999999999';
+  const tagId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const providerId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+  it('files created games under the game resource with no actor', async () => {
+    const row = await mapEventToRecord('gaming.games.created', { gameIds: [gameId] });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      action: 'gaming.games.created',
+      resourceType: 'game',
+      resourceId: null,
+      before: null,
+      after: { gameIds: [gameId] },
+    });
+    expect(row).not.toHaveProperty('actorId');
+  });
+
+  it('keeps the links the changed games had before the rewrite', async () => {
+    const row = await mapEventToRecord('gaming.games.changed', {
+      gameIds: [gameId],
+      tagIds: [tagId],
+      providerIds: [providerId],
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      action: 'gaming.games.changed',
+      resourceType: 'game',
+      resourceId: null,
+      before: { tagIds: [tagId], providerIds: [providerId] },
+      after: { gameIds: [gameId] },
+    });
+  });
+});
+
 describe('mapEventToRecord: gaming.game.availability_changed', () => {
   it('audits a vendor outage flip as a system action on the game', async () => {
     const gameId = '99999999-9999-4999-8999-999999999999';

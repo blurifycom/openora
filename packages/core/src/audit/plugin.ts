@@ -1151,6 +1151,21 @@ export async function mapEventToRecord(
     };
   }
 
+  // Catalogue rows an importer inserted or rewrote outside the admin update: no actor, and the
+  // event carries ids only. `before` is what the rewritten games were linked to.
+  if (topic === 'gaming.games.created') {
+    return { ...base, resourceType: 'game', before: null, after: { gameIds: p['gameIds'] ?? [] } };
+  }
+
+  if (topic === 'gaming.games.changed') {
+    return {
+      ...base,
+      resourceType: 'game',
+      before: { tagIds: p['tagIds'] ?? [], providerIds: p['providerIds'] ?? [] },
+      after: { gameIds: p['gameIds'] ?? [] },
+    };
+  }
+
   if (topic === 'gaming.game.availability_changed') {
     return {
       ...base,
@@ -1347,7 +1362,7 @@ export async function mapEventToRecord(
   return base;
 }
 
-const SUBSCRIBED_TOPICS: DomainEventName[] = [
+export const SUBSCRIBED_TOPICS = [
   'compliance.geo.access_blocked',
   'compliance.geo.access_redirected',
   'identity.user.registered',
@@ -1420,6 +1435,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'gaming.category.membership_evaluated',
   'gaming.category.membership_evaluation.failed',
   'gaming.game.availability_changed',
+  'gaming.games.created',
+  'gaming.games.changed',
   'chat.user.blocked',
   'chat.user.unblocked',
   'chat.user.ignored',
@@ -1503,7 +1520,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'social.friendship.removed',
   'social.friend_request.declined',
   'social.friend_request.cancelled',
-] as const;
+] as const satisfies readonly DomainEventName[];
 
 export default {
   id: 'audit',
