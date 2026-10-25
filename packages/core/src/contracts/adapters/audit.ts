@@ -14,6 +14,8 @@ import { createSealedToken, type SealedToken } from './token.js';
  * and so have no entry in `domainEventSchemas`. Add new direct actions here.
  */
 export type DirectAuditAction =
+  // Fallback record for an admin mutation that wrote no audit row of its own: `admin.<resource>.<action>`.
+  | `admin.${string}.${string}`
   | 'admin.user.updated'
   | 'admin.player.updated'
   | 'admin.player.removed'
@@ -109,9 +111,15 @@ type AuditEntry = {
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
   correlationId?: string | null;
+  result?: string | null;
 } & Partial<ClientMeta>;
 
 export type AuditWritePort = {
+  /**
+   * Topics whose publication already leaves an audit record: the ones the audit module subscribes
+   * to, and the ones whose writer appends the row at the source. A topic outside the set is exempt.
+   */
+  readonly auditedTopics: ReadonlySet<string>;
   record(entry: AuditEntry): Promise<void>;
   recordInTransaction(tx: unknown, entry: AuditEntry): Promise<void>;
   /**

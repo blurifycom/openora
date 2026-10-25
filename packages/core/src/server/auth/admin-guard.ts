@@ -16,6 +16,7 @@ import { holdsGrant, isRoleName, type ResourceName, type ActionOf } from './perm
 import type { OssContext, EventBus } from '../kernel/index.js';
 import { createLogger } from '../kernel/logger.js';
 import { extractClientMeta } from '../kernel/router-utils.js';
+import { noteGrantedPermission } from '../kernel/request-context.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
@@ -90,12 +91,16 @@ export class AdminGuard {
       });
     }
 
-    return this.enforce({
+    const caller = await this.enforce({
       userId,
       clientMeta: { ip, userAgent },
       permission: resource !== undefined && action !== undefined ? { resource, action } : undefined,
       session: { sessionId: resolvedSession?.sessionId ?? null },
     });
+    if (resource !== undefined && action !== undefined) {
+      noteGrantedPermission({ userId, resource, action, ip, userAgent });
+    }
+    return caller;
   }
 
   /**
@@ -151,6 +156,13 @@ export class AdminGuard {
         data: { reason: AuthGuardReasonSchema.enum.admin_required },
       });
     }
+    noteGrantedPermission({
+      userId: caller.userId,
+      resource: 'admin',
+      action: 'super-admin',
+      ip: caller.ip,
+      userAgent: caller.userAgent,
+    });
     return caller;
   }
 

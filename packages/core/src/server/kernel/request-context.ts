@@ -1,10 +1,21 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ClientMeta } from '@openora/core/contracts';
 
+/** What the active request has done that bears on its audit trail; read by the admin-mutation fallback. */
+export type RequestAuditTrail = {
+  /** The first permission an admin guard granted, with the caller it granted it to. */
+  grant?: { userId: string; resource: string; action: string } & ClientMeta;
+  /** An audit row was appended. */
+  written: boolean;
+  /** Topics published, `emit` and `emitInTransaction` alike. */
+  published: Set<string>;
+};
+
 export type RequestContext = {
   userId?: string;
   traceId: string;
   clientMeta?: ClientMeta;
+  audit?: RequestAuditTrail;
 };
 
 export type RequestStorage = AsyncLocalStorage<RequestContext>;
@@ -27,4 +38,32 @@ export function getCurrentClientMeta(): ClientMeta {
 
 export function withRequestContext<T>(ctx: RequestContext, fn: () => T): T {
   return requestStorage.run(ctx, fn);
+}
+
+function auditTrail(): RequestAuditTrail | undefined {
+  const store = requestStorage.getStore();
+  return store && (store.audit ??= { written: false, published: new Set() });
+}
+
+/** The active request's audit trail, or undefined on system/background paths. */
+export function getRequestAuditTrail(): RequestAuditTrail | undefined {
+  return requestStorage.getStore()?.audit;
+}
+
+export function noteGrantedPermission(grant: NonNullable<RequestAuditTrail['grant']>): void {
+  const trail = auditTrail();
+  if (trail) {
+    trail.grant ??= grant;
+  }
+}
+
+export function noteAuditWrite(): void {
+  const trail = auditTrail();
+  if (trail) {
+    trail.written = true;
+  }
+}
+
+export function notePublishedTopic(topic: string): void {
+  auditTrail()?.published.add(topic);
 }

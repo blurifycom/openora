@@ -1,10 +1,14 @@
-export type { RequestContext, RequestStorage } from './request-context.js';
+export type { RequestContext, RequestAuditTrail, RequestStorage } from './request-context.js';
 export {
   requestStorage,
   getCurrentRequestContext,
   getCurrentTraceId,
   getCurrentClientMeta,
   withRequestContext,
+  getRequestAuditTrail,
+  noteGrantedPermission,
+  noteAuditWrite,
+  notePublishedTopic,
 } from './request-context.js';
 
 export type {

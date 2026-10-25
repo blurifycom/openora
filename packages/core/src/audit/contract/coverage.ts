@@ -1,5 +1,5 @@
 import type { DomainEventName } from '@openora/core/contracts';
-import type { SUBSCRIBED_TOPICS } from '../plugin.js';
+import type { SUBSCRIBED_TOPICS } from './subscribed-topics.js';
 
 type NotSubscribedTopic = Exclude<DomainEventName, (typeof SUBSCRIBED_TOPICS)[number]>;
 

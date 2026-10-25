@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DOMAIN_EVENT_CATALOG } from '@openora/core/contracts';
-import { SUBSCRIBED_TOPICS } from '../plugin.js';
+import { SUBSCRIBED_TOPICS } from '../contract/subscribed-topics.js';
 import { AUDIT_COVERAGE_GAPS } from '../contract/coverage.js';
 
 describe('audit coverage', () => {

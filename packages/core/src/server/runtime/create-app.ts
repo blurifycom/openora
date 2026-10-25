@@ -62,6 +62,7 @@ import { allowedTriggers, createMcpKernel } from '../mcp/index.js';
 import { authorizeWithAdminGuard } from '../mcp/authorize.js';
 import type { McpHttpTransport } from '../mcp/http-transport.js';
 import { payloadTooLarge } from '../mcp/transport-gate.js';
+import { adminMutationAudit } from './admin-mutation-audit.js';
 import { assertDurableSeamsBound } from './assert-durable-seams.js';
 import { startTelemetry } from './telemetry.js';
 import {
@@ -552,6 +553,9 @@ export async function createApp(
       }),
       new ResponseHeadersPlugin(),
     ],
+    clientInterceptors: container.has(AUDIT_WRITER)
+      ? [adminMutationAudit(container.get(AUDIT_WRITER))]
+      : [],
     interceptors: [
       onError((error) => {
         // oRPC wraps a thrown native error (a DB failure, a bug) into an
