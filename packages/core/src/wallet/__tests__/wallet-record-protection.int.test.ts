@@ -105,7 +105,7 @@ describe('wallet_transaction record protection (real PG)', () => {
     expect(after?.status).toBe('completed');
   });
 
-  it('fills the provider reference and balance once, then freezes them', async () => {
+  it('fills balanceAfter once, then freezes it, while provider references stay updatable', async () => {
     const row = await seedLedgerRow();
 
     await update(row.id, {
@@ -115,9 +115,8 @@ describe('wallet_transaction record protection (real PG)', () => {
       balanceAfter: '90',
     });
 
-    await rejectedWith(update(row.id, { providerRefId: 'ref-2' }), /append-only/);
     await rejectedWith(update(row.id, { balanceAfter: '1' }), /append-only/);
-    await rejectedWith(update(row.id, { txHash: '0xdef' }), /append-only/);
+    await expect(update(row.id, { providerRefId: 'ref-2', txHash: '0xdef' })).resolves.toBeDefined();
   });
 
   it('passes an update that matches no row', async () => {

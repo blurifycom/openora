@@ -2,9 +2,10 @@ import { fileURLToPath } from 'node:url';
 import { appendOnlyTableSql, runMigrations } from '@openora/core/server/migrate';
 
 // The ledger is the financial transaction record, so it is append-only: no DELETE, and an UPDATE
-// moves only a row's lifecycle (status, review fields), its provider references and balance_after
-// once each is first known. Amount, type, currency, direction, ids, round ref and created_at
-// never change. A data-fixing migration must disable the trigger itself, then re-enable it.
+// moves only a row's lifecycle (status, review fields, provider references) and balance_after
+// once it is first known. Amount, type, currency, direction, ids, round ref and created_at never
+// change. Provider references stay updatable: a vendor that reports a different id on completion
+// must not block the money update. A data-fixing migration must disable the trigger itself, then re-enable it.
 const LEDGER_RECORD_SQL = appendOnlyTableSql('wallet_transaction', {
   mutableColumns: [
     'status',
@@ -12,8 +13,11 @@ const LEDGER_RECORD_SQL = appendOnlyTableSql('wallet_transaction', {
     'reviewed_at',
     'review_reason',
     'auto_approval_pivot_amount',
+    'provider_name',
+    'provider_ref_id',
+    'tx_hash',
   ],
-  setOnceColumns: ['provider_name', 'provider_ref_id', 'tx_hash', 'balance_after'],
+  setOnceColumns: ['balance_after'],
 });
 
 // NOT VALID: enforces every new write without failing the migration on a balance already
