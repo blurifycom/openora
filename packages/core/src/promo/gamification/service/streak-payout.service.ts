@@ -253,6 +253,16 @@ export class StreakPayoutService {
         restricted ? { settledAt: new Date(), outcome: 'restricted' } : { announcedAt: new Date() },
       )
       .where(eq(promoStreakMilestoneGrant.id, id));
+    if (restricted) {
+      await this.audit.recordInTransaction(tx, {
+        actorType: 'system',
+        action: 'promo.streak.milestone.claimed',
+        resourceType: 'promo_streak_milestone_grant',
+        resourceId: id,
+        before: { settledAt: null, outcome: null },
+        after: { userId: row.userId, day: row.day, outcome: 'restricted' },
+      });
+    }
     return restricted ? null : { ...row, grantId: null };
   }
 

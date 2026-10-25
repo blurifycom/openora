@@ -424,7 +424,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   await db.delete(chatUserIgnore);
   await db.delete(chatMessage);
   await db.delete(chatRoom);
-  // The ledger and the round record deny DELETE, so a dev reset truncates them.
   await db.execute(sql`TRUNCATE ${walletTransaction}, ${gameRound}`);
   await db.delete(walletBalance);
   await db.delete(wallet);

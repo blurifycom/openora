@@ -199,14 +199,14 @@ export class SwapService {
 
       // Bonus funds live on their grant and never enter `wallet_balance`, so everything this
       // row holds is the player's own money and swappable.
-      const debited = await debitWalletBalance(txn, current.id, fromCurrency, fromAmount);
-      if (debited.length !== 1) {
+      const [debited] = await debitWalletBalance(txn, current.id, fromCurrency, fromAmount);
+      if (!debited) {
         throw new InsufficientBalanceError(
           await readWalletBalance(txn, current.id, fromCurrency),
           fromAmount,
         );
       }
-      await stampBalanceAfter(txn, inserted.id, debited);
+      await stampBalanceAfter(txn, inserted.id, debited.amount);
 
       return { row: inserted, replayed: false };
     });

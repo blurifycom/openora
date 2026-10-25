@@ -41,14 +41,12 @@ async function backdateSessions(
     .where(eq(session.userId, userId));
 }
 
-async function backdateTransaction(
+async function backdateTransactionWithLedgerGuardOff(
   container: Container<CoreTokenCatalog>,
   transactionId: string,
   daysAgo: number,
 ) {
   const past = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
-  // created_at is immutable on the ledger, so a test that ages a row switches the guard off for
-  // its own statement, the way a data-fixing migration would.
   await container.get(DRIZZLE).db.transaction(async (tx) => {
     await tx.execute(
       sql`ALTER TABLE wallet_transaction DISABLE TRIGGER wallet_transaction_append_only_update`,
@@ -344,8 +342,8 @@ describe('high_risk: existing assign path unaffected, frequency-only resweep', (
     await auditHasEntry(admin, playerId, 'tag.player.assigned');
 
     // Age both withdrawals out of the 7-day window, then resweep.
-    await backdateTransaction(app.container, w1.transactionId, 10);
-    await backdateTransaction(app.container, w2.transactionId, 10);
+    await backdateTransactionWithLedgerGuardOff(app.container, w1.transactionId, 10);
+    await backdateTransactionWithLedgerGuardOff(app.container, w2.transactionId, 10);
     await runDailySweep(app.container);
 
     await vi.waitFor(async () => {

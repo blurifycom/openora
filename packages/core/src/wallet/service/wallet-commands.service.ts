@@ -95,7 +95,6 @@ export type WalletCommandsPorts = {
 };
 
 export class WalletCommandsService implements WalletCommands {
-  // Per currency, uppercased like the balance keys. Empty when the operator configured none.
   private readonly significantAmountThresholds: ReadonlyMap<string, string>;
 
   constructor(
@@ -110,14 +109,12 @@ export class WalletCommandsService implements WalletCommands {
     );
   }
 
-  // One record when a single bet or win reaches the operator's threshold for its currency, in the
-  // transaction that moved the money. Compared in the row's own currency: no rate lookup on the
-  // bet path. No threshold for the currency (or none configured at all) writes nothing.
   private async auditSignificantAmount(
     txn: DrizzleDb,
     action: 'wallet.large_bet.recorded' | 'wallet.large_win.recorded',
     userId: Uuid,
     ledgerRow: WalletTransaction,
+    balance: { before: string; after: string },
   ): Promise<void> {
     const threshold = this.significantAmountThresholds.get(balanceKey(ledgerRow.currency));
     if (threshold === undefined || moneyCompare(ledgerRow.amount, threshold) < 0) {
@@ -128,10 +125,12 @@ export class WalletCommandsService implements WalletCommands {
       action,
       resourceType: 'wallet_transaction',
       resourceId: ledgerRow.id,
+      before: { balance: balance.before },
       after: {
         userId,
         amount: ledgerRow.amount,
         currency: ledgerRow.currency,
+        balance: balance.after,
         threshold,
         providerName: ledgerRow.providerName,
         providerRefId: ledgerRow.providerRefId,
@@ -308,7 +307,10 @@ export class WalletCommandsService implements WalletCommands {
       debitedBalance,
     );
     if (type === 'bet') {
-      await this.auditSignificantAmount(txn, 'wallet.large_bet.recorded', userId, ledgerRow);
+      await this.auditSignificantAmount(txn, 'wallet.large_bet.recorded', userId, ledgerRow, {
+        before: available,
+        after: debitedBalance,
+      });
     }
 
     if (!wagered) {
@@ -492,24 +494,26 @@ export class WalletCommandsService implements WalletCommands {
           })
         : { realShare: amount };
 
-    const balances = await creditWalletBalance(txn, row.id, currency, settlement.realShare);
-    const [credited] = balances;
+    const [credited] = await creditWalletBalance(txn, row.id, currency, settlement.realShare);
     if (!credited) {
       throw new WalletCreditFailedError(row.id, currency);
     }
-    await stampBalanceAfter(txn, ledgerRow.id, balances);
+    await stampBalanceAfter(txn, ledgerRow.id, credited.amount);
+    const balanceBefore = moneySubtract(credited.amount, settlement.realShare);
 
     if (type === 'win') {
-      await this.auditSignificantAmount(txn, 'wallet.large_win.recorded', userId, ledgerRow);
+      await this.auditSignificantAmount(txn, 'wallet.large_win.recorded', userId, ledgerRow, {
+        before: balanceBefore,
+        after: credited.amount,
+      });
     }
     if (type === 'bet_reversal') {
-      // A void takes a bet back out of the player's history, so it is a significant event whatever
-      // the amount, and it commits with the credit that returns the stake.
       await this.audit.recordInTransaction(txn, {
         actorType: 'system',
         action: 'wallet.bet.reversed',
         resourceType: 'wallet_transaction',
         resourceId: ledgerRow.id,
+        before: { balance: balanceBefore },
         after: {
           userId,
           amount,

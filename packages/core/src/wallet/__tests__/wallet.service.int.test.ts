@@ -315,6 +315,29 @@ describe('WalletService.deposit (real PG)', () => {
 });
 
 describe('WalletService.manualAdjust (real PG)', () => {
+  it('stamps the balance each adjustment left behind', async () => {
+    const playerId = randomUUID();
+    const { svc } = makeService({ identityReader: playerIdentityReader(playerId) });
+    const player = await seedWallet({ balance: '10' });
+    const adjust = (direction: 'credit' | 'debit', amount: string) =>
+      svc.manualAdjust({
+        adminId: randomUUID(),
+        userId: player.userId,
+        direction,
+        amount,
+        currency: 'USD',
+        reason: 'balance check',
+        idempotencyKey: randomUUID(),
+        ...NO_CLIENT_META,
+      });
+
+    const credit = await adjust('credit', '5');
+    const debit = await adjust('debit', '3');
+
+    expect(Number((await txById(credit.transactionId)).balanceAfter)).toBe(15);
+    expect(Number((await txById(debit.transactionId)).balanceAfter)).toBe(12);
+  });
+
   it('credits, debits, writes an immutable ledger row and replays exactly once', async () => {
     const playerId = randomUUID();
     const { svc, audit, psp } = makeService({ identityReader: playerIdentityReader(playerId) });

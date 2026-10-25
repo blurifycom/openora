@@ -69,11 +69,8 @@ afterAll(async () => {
 
 describe('fallback audit for admin mutations', () => {
   it('writes exactly one record for an admin mutation that audits nothing itself', async () => {
-    // Already active: the bulk write changes nothing, so it appends no audit row of its own.
-    const res = await admin.post('/backoffice/gaming/games/bulk/active', {
-      gameIds: [activeGameId],
-      isActive: true,
-    });
+    const noOpActivation = { gameIds: [activeGameId], isActive: true };
+    const res = await admin.post('/backoffice/gaming/games/bulk/active', noOpActivation);
     expect(res.status).toBe(200);
 
     expect(await fallbackRows('admin.game-config.update')).toEqual([
@@ -107,8 +104,6 @@ describe('fallback audit for admin mutations', () => {
     });
     expect(res.status).toBe(200);
 
-    // The event subscriber appends its row after the response, so wait for it before checking
-    // that the fallback added nothing beside it.
     await vi.waitFor(async () => expect(await countRows()).toBe(rowsBefore + 1));
     expect(await fallbackRows()).toHaveLength(before);
   });
@@ -156,10 +151,11 @@ describe('fallback audit for admin mutations', () => {
     });
 
     expect((await admin.get('/backoffice/gaming/games?page=1&limit=5')).status).toBe(200);
-    // A POST under a `view` grant is a search, not an intervention.
-    expect(
-      (await admin.post('/backoffice/gaming/games/search', { page: 1, limit: 5 })).status,
-    ).toBe(200);
+    const searchUnderViewGrant = await admin.post('/backoffice/gaming/games/search', {
+      page: 1,
+      limit: 5,
+    });
+    expect(searchUnderViewGrant.status).toBe(200);
     expect((await client.patch('/profile', { username: uniqueUsername('fb') })).status).toBe(200);
     expect((await client.patch(`/players/${playerId}`, { status: 'suspended' })).status).toBe(403);
 

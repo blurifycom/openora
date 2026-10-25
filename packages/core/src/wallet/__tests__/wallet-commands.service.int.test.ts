@@ -727,6 +727,8 @@ describe('WalletCommandsService bet reversal audit (real PG)', () => {
         action: 'wallet.bet.reversed',
         resourceType: 'wallet_transaction',
         resourceId: (await txRows(w.id))[0]?.id,
+        before: { balance: '100.000000000000000000' },
+        after: expect.objectContaining({ balance: '125.000000000000000000' }),
       }),
     );
   });
@@ -787,6 +789,13 @@ describe('WalletCommandsService significant bets and wins (real PG)', () => {
     await gated.debit(db.drizzle.db, { userId: w.userId, amount: '100', type: 'bet' });
 
     expect(largeActions(writer)).toEqual(['wallet.large_bet.recorded']);
+    expect(writer.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        before: { balance: '901.000000000000000000' },
+        after: expect.objectContaining({ balance: '801.000000000000000000' }),
+      }),
+    );
   });
 
   it('writes nothing for a currency without a threshold', async () => {

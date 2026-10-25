@@ -51,7 +51,6 @@ async function seedRound() {
   );
 }
 
-// Drizzle wraps a driver error; the trigger's own message is on its cause.
 const rejectedWith = async (query: PromiseLike<unknown>, message: RegExp) => {
   const error = await Promise.resolve(query).then(
     () => undefined,

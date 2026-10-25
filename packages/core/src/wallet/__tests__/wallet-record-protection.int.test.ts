@@ -4,7 +4,7 @@ import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate } from '../migrate.js';
-import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
+import { wallet, walletTransaction } from '../schema/index.js';
 
 let db: TestDb;
 
@@ -51,7 +51,6 @@ async function seedLedgerRow(overrides: Partial<typeof walletTransaction.$inferI
   );
 }
 
-// Drizzle wraps a driver error; the trigger's own message is on its cause.
 const rejectedWith = async (query: PromiseLike<unknown>, message: RegExp) => {
   const error = await Promise.resolve(query).then(
     () => undefined,
@@ -64,14 +63,14 @@ const rejectedWith = async (query: PromiseLike<unknown>, message: RegExp) => {
 const update = (id: string, set: Partial<typeof walletTransaction.$inferInsert>) =>
   db.drizzle.db.update(walletTransaction).set(set).where(eq(walletTransaction.id, id));
 
+const removeRow = (id: string) =>
+  db.drizzle.db.delete(walletTransaction).where(eq(walletTransaction.id, id));
+
 describe('wallet_transaction record protection (real PG)', () => {
   it('rejects removing a ledger row', async () => {
     const row = await seedLedgerRow();
 
-    await rejectedWith(
-      db.drizzle.db.delete(walletTransaction).where(eq(walletTransaction.id, row.id)),
-      /append-only/,
-    );
+    await rejectedWith(removeRow(row.id), /append-only/);
     expect(await db.drizzle.db.select().from(walletTransaction)).toHaveLength(1);
   });
 
@@ -116,7 +115,9 @@ describe('wallet_transaction record protection (real PG)', () => {
     });
 
     await rejectedWith(update(row.id, { balanceAfter: '1' }), /append-only/);
-    await expect(update(row.id, { providerRefId: 'ref-2', txHash: '0xdef' })).resolves.toBeDefined();
+    await expect(
+      update(row.id, { providerRefId: 'ref-2', txHash: '0xdef' }),
+    ).resolves.toBeDefined();
   });
 
   it('passes an update that matches no row', async () => {
@@ -125,24 +126,23 @@ describe('wallet_transaction record protection (real PG)', () => {
     await expect(update(randomUUID(), { amount: '99' })).resolves.toBeDefined();
   });
 
+  it('keeps denying after the migration runs again', async () => {
+    await migrate(db.url);
+    const row = await seedLedgerRow();
+
+    await rejectedWith(update(row.id, { amount: '11' }), /append-only/);
+    await rejectedWith(removeRow(row.id), /append-only/);
+    const triggers = await db.drizzle.db.execute(
+      sql`SELECT tgname FROM pg_trigger WHERE tgrelid = 'wallet_transaction'::regclass AND tgname LIKE '%append_only%'`,
+    );
+    expect(triggers.rows).toHaveLength(2);
+  });
+
   it('still allows TRUNCATE for test and seed cleanup', async () => {
     await seedLedgerRow();
 
     await db.drizzle.db.execute(sql`TRUNCATE ${walletTransaction}`);
 
     expect(await db.drizzle.db.select().from(walletTransaction)).toHaveLength(0);
-  });
-});
-
-describe('wallet_balance non-negative guard (real PG)', () => {
-  it('rejects a negative balance', async () => {
-    const w = await seedWallet();
-
-    await rejectedWith(
-      db.drizzle.db
-        .insert(walletBalance)
-        .values({ walletId: w.id, currency: 'USD', amount: '-0.01' }),
-      /wallet_balance_amount_non_negative/,
-    );
   });
 });

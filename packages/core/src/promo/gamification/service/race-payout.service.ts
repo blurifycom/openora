@@ -31,14 +31,10 @@ export type RaceWon = {
 
 type AuditEntry = Parameters<AuditWritePort['record']>[0];
 
-type PayoutSettled = {
-  userId: Uuid;
-  position: number;
-  amount: string;
-  currency: string;
-  outcome: 'granted' | 'restricted';
-  transactionId: string | null;
-};
+type PayoutSettled = Pick<
+  RaceWon,
+  'userId' | 'position' | 'amount' | 'currency' | 'transactionId'
+> & { outcome: 'granted' | 'restricted' };
 
 // A withheld payout is as much a decision as a paid one, so both are recorded.
 const payoutAudit = (raceId: Uuid, settled: PayoutSettled): AuditEntry => ({

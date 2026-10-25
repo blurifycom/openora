@@ -14,8 +14,6 @@ import { createSealedToken, type SealedToken } from './token.js';
  * and so have no entry in `domainEventSchemas`. Add new direct actions here.
  */
 export type DirectAuditAction =
-  // Fallback record for an admin mutation that wrote no audit row of its own: `admin.<resource>.<action>`.
-  | `admin.${string}.${string}`
   | 'admin.user.updated'
   | 'admin.player.updated'
   | 'admin.player.removed'

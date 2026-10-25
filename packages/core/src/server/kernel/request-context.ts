@@ -3,7 +3,7 @@ import type { ClientMeta } from '@openora/core/contracts';
 
 /** What the active request has done that bears on its audit trail; read by the admin-mutation fallback. */
 export type RequestAuditTrail = {
-  /** The first permission an admin guard granted, with the caller it granted it to. */
+  /** The first permission an admin guard granted (a `view` grant yields to any later one), with the caller it granted it to. */
   grant?: { userId: string; resource: string; action: string } & ClientMeta;
   /** An audit row was appended. */
   written: boolean;
@@ -52,8 +52,8 @@ export function getRequestAuditTrail(): RequestAuditTrail | undefined {
 
 export function noteGrantedPermission(grant: NonNullable<RequestAuditTrail['grant']>): void {
   const trail = auditTrail();
-  if (trail) {
-    trail.grant ??= grant;
+  if (trail && (!trail.grant || (trail.grant.action === 'view' && grant.action !== 'view'))) {
+    trail.grant = grant;
   }
 }
 

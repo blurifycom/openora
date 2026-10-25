@@ -15,11 +15,11 @@ does not repeat it.
   key, reference value); only the status, review and provider reference columns move, and
   `balanceAfter` is filled once and then frozen. `balanceAfter` is the
   player's balance in that currency after the row moved money, set in the same transaction as the
-  move; it is null on older rows, on a request that has not settled, and on a refund (which writes
-  no row of its own). For a stake partly funded by a bonus the ledger `amount` is the whole stake
+  move; it is null on older rows, on a deposit that has not settled, and on a refund (which writes
+  no row of its own). A withdrawal request is stamped when it is made, since that is when the
+  balance is debited. For a stake partly funded by a bonus the ledger `amount` is the whole stake
   while the balance moved by the real part only. Cleanup is TRUNCATE, which the trigger lets
-  through; a migration that has to repair rows disables the trigger itself. A balance row also
-  cannot go negative (a `NOT VALID` check, so rows that predate it are tolerated).
+  through; a migration that has to repair rows disables the trigger itself.
 - **The asset catalog.** The currency-and-network pairs the operator accepts, and for each pair the
   vendor's own asset identifier, the minimums, the fee, and independent switches for deposit and
   withdrawal. Which pairs exist is operator configuration, not code.

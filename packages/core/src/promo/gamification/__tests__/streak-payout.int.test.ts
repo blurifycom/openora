@@ -412,6 +412,11 @@ describe('announcing a reward waiting to be claimed', () => {
       outcome: 'restricted',
       announcedAt: null,
     });
+    expect(audit.recordInTransaction.mock.calls[0]?.[1]).toMatchObject({
+      action: 'promo.streak.milestone.claimed',
+      resourceId: id,
+      after: { userId, day: 3, outcome: 'restricted' },
+    });
   });
 
   it('does not announce a milestone on a day the config no longer pays', async () => {

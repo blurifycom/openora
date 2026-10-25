@@ -59,18 +59,23 @@ const SQL_IDENTIFIER = /^[a-z][a-z0-9_]*$/;
  * here. TRUNCATE is untouched, which keeps test and dev resets working. There is no bypass: a
  * deliberate repair is a migration that disables the trigger itself. The UPDATE check runs per
  * row, so an UPDATE that matches nothing passes.
+ *
+ * One string per table, re-runnable on every deploy: the functions are replaced in place (the
+ * update function carries the column list, so a changed list takes effect without touching the
+ * trigger) and a trigger is created only when missing, so the table is never left uncovered and
+ * no lock is taken after the first run.
  */
 export function appendOnlyTableSql(
   table: string,
   { mutableColumns, setOnceColumns = [] }: { mutableColumns: string[]; setOnceColumns?: string[] },
-): string[] {
+): string {
   const columns = [...mutableColumns, ...setOnceColumns];
   for (const name of [table, ...columns]) {
     if (!SQL_IDENTIFIER.test(name)) {
       throw new Error(`Invalid SQL identifier: ${name}`);
     }
   }
-  const exempt = `ARRAY[${columns.map((column) => `'${column}'`).join(', ')}]`;
+  const exempt = `ARRAY[${columns.map((column) => `'${column}'`).join(', ')}]::text[]`;
   const setOnceChecks = setOnceColumns
     .map(
       (
@@ -80,13 +85,16 @@ export function appendOnlyTableSql(
      END IF;`,
     )
     .join('\n     ');
-  return [
-    `CREATE OR REPLACE FUNCTION ${table}_deny_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+  const createTriggerIfMissing = (name: string, timing: string, each: string, fn: string) =>
+    `IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '${table}'::regclass AND tgname = '${name}') THEN
+       CREATE TRIGGER ${name} BEFORE ${timing} ON ${table} FOR EACH ${each} EXECUTE FUNCTION ${fn}();
+     END IF;`;
+  return `CREATE OR REPLACE FUNCTION ${table}_deny_delete() RETURNS trigger LANGUAGE plpgsql AS $$
    BEGIN
      RAISE EXCEPTION '${table} is append-only: % is not permitted', TG_OP;
    END;
-   $$`,
-    `CREATE OR REPLACE FUNCTION ${table}_guard_update() RETURNS trigger LANGUAGE plpgsql AS $$
+   $$;
+   CREATE OR REPLACE FUNCTION ${table}_guard_update() RETURNS trigger LANGUAGE plpgsql AS $$
    BEGIN
      IF to_jsonb(NEW) - ${exempt} IS DISTINCT FROM to_jsonb(OLD) - ${exempt} THEN
        RAISE EXCEPTION '${table} is append-only: UPDATE may change only ${columns.join(', ')}';
@@ -94,16 +102,13 @@ export function appendOnlyTableSql(
      ${setOnceChecks}
      RETURN NEW;
    END;
-   $$`,
-    `DROP TRIGGER IF EXISTS ${table}_append_only_delete ON ${table}`,
-    `CREATE TRIGGER ${table}_append_only_delete
-     BEFORE DELETE ON ${table}
-     FOR EACH STATEMENT EXECUTE FUNCTION ${table}_deny_delete()`,
-    `DROP TRIGGER IF EXISTS ${table}_append_only_update ON ${table}`,
-    `CREATE TRIGGER ${table}_append_only_update
-     BEFORE UPDATE ON ${table}
-     FOR EACH ROW EXECUTE FUNCTION ${table}_guard_update()`,
-  ];
+   $$;
+   DO $$
+   BEGIN
+     ${createTriggerIfMissing(`${table}_append_only_delete`, 'DELETE', 'STATEMENT', `${table}_deny_delete`)}
+     ${createTriggerIfMissing(`${table}_append_only_update`, 'UPDATE', 'ROW', `${table}_guard_update`)}
+   END
+   $$`;
 }
 
 function migrateUrl(override?: string): string {

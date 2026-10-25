@@ -39,7 +39,6 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  // The ledger denies DELETE; a test empties it with TRUNCATE.
   await db.drizzle.db.execute(sql`TRUNCATE ${walletTransaction}`);
   await db.drizzle.db.delete(wallet);
 });

@@ -16,7 +16,7 @@ import { holdsGrant, isRoleName, type ResourceName, type ActionOf } from './perm
 import type { OssContext, EventBus } from '../kernel/index.js';
 import { createLogger } from '../kernel/logger.js';
 import { extractClientMeta } from '../kernel/router-utils.js';
-import { noteGrantedPermission } from '../kernel/request-context.js';
+import { getCurrentClientMeta, noteGrantedPermission } from '../kernel/request-context.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
@@ -133,7 +133,13 @@ export class AdminGuard {
     requirements: readonly T[],
   ): Promise<T[]> {
     const { account, granted } = await this.resolveAccess(userId, requirements);
-    return account?.isActive && account.isAdmin ? granted : [];
+    if (!account?.isActive || !account.isAdmin) {
+      return [];
+    }
+    for (const { resource, action } of granted) {
+      noteGrantedPermission({ userId, resource, action, ...getCurrentClientMeta() });
+    }
+    return granted;
   }
 
   async assertSuperAdmin(context: unknown): Promise<AdminCaller> {
