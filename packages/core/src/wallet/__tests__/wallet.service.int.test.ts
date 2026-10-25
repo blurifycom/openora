@@ -255,6 +255,20 @@ describe('WalletService.deposit (real PG)', () => {
     );
   });
 
+  it('stamps the balance a completed deposit left behind', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '10' });
+
+    const result = await svc.deposit({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      provider: 'stripe',
+    });
+
+    expect(Number((await txById(result.transactionId)).balanceAfter)).toBe(50);
+  });
+
   it('records the crypto rail for a crypto currency', async () => {
     const { svc } = makeService();
     const w = await seedWallet({ currency: 'BTC' });
@@ -472,6 +486,20 @@ describe('WalletService.withdraw (real PG)', () => {
       'wallet.withdrawal.requested',
       expect.objectContaining({ userId: w.userId, amount: '40', ip: null, userAgent: null }),
     );
+  });
+
+  it('stamps the balance the hold left behind on the withdrawal row', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100' });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(Number((await txById(result.transactionId)).balanceAfter)).toBe(60);
   });
 
   it('stores the destination address and the crypto rail for a crypto withdrawal', async () => {

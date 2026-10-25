@@ -35,6 +35,7 @@ import {
   railFor,
   readWalletBalance,
   readWalletBalanceForUpdate,
+  stampBalanceAfter,
 } from './wallet.service.js';
 
 const WalletCommandAmountError = createDomainError<[operation: string, amount: string]>(
@@ -94,11 +95,50 @@ export type WalletCommandsPorts = {
 };
 
 export class WalletCommandsService implements WalletCommands {
+  // Per currency, uppercased like the balance keys. Empty when the operator configured none.
+  private readonly significantAmountThresholds: ReadonlyMap<string, string>;
+
   constructor(
     private readonly playEligibility: PlayEligibilityPort,
     private readonly audit: AuditWritePort,
     private readonly ports: WalletCommandsPorts = {},
-  ) {}
+  ) {
+    this.significantAmountThresholds = new Map(
+      Object.entries(ports.platformConfig?.wallet?.significantAmountThresholds ?? {}).map(
+        ([currency, threshold]) => [balanceKey(currency), threshold],
+      ),
+    );
+  }
+
+  // One record when a single bet or win reaches the operator's threshold for its currency, in the
+  // transaction that moved the money. Compared in the row's own currency: no rate lookup on the
+  // bet path. No threshold for the currency (or none configured at all) writes nothing.
+  private async auditSignificantAmount(
+    txn: DrizzleDb,
+    action: 'wallet.large_bet.recorded' | 'wallet.large_win.recorded',
+    userId: Uuid,
+    ledgerRow: WalletTransaction,
+  ): Promise<void> {
+    const threshold = this.significantAmountThresholds.get(balanceKey(ledgerRow.currency));
+    if (threshold === undefined || moneyCompare(ledgerRow.amount, threshold) < 0) {
+      return;
+    }
+    await this.audit.recordInTransaction(txn, {
+      actorType: 'system',
+      action,
+      resourceType: 'wallet_transaction',
+      resourceId: ledgerRow.id,
+      after: {
+        userId,
+        amount: ledgerRow.amount,
+        currency: ledgerRow.currency,
+        threshold,
+        providerName: ledgerRow.providerName,
+        providerRefId: ledgerRow.providerRefId,
+        externalRoundId: ledgerRow.externalRoundId,
+      },
+    });
+  }
 
   // Completed ledger row shared by every gameplay move. `direction` is required (not
   // optional) so a new call site can't compile without deciding it - `debit()` always
@@ -111,12 +151,14 @@ export class WalletCommandsService implements WalletCommands {
     amount: string,
     direction: ManualAdjustmentDirection,
     providerRef?: WalletProviderRef,
+    balanceAfter?: string,
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const insertQuery = txn.insert(walletTransaction).values({
       walletId: row.id,
       type,
       amount,
       currency: row.currency,
+      balanceAfter,
       status: 'completed',
       direction,
       rail: railFor(row.currency, this.ports.platformConfig?.wallet?.cryptoCurrencies),
@@ -188,7 +230,7 @@ export class WalletCommandsService implements WalletCommands {
     const available = await readWalletBalanceForUpdate(txn, row.id, debitCurrency);
 
     if (type === 'loss') {
-      await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit', providerRef);
+      await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit', providerRef, available);
       return { ok: true, moved: false, newBalance: available, currency: debitCurrency };
     }
 
@@ -263,7 +305,11 @@ export class WalletCommandsService implements WalletCommands {
       amount,
       'debit',
       providerRef,
+      debitedBalance,
     );
+    if (type === 'bet') {
+      await this.auditSignificantAmount(txn, 'wallet.large_bet.recorded', userId, ledgerRow);
+    }
 
     if (!wagered) {
       return {
@@ -313,7 +359,15 @@ export class WalletCommandsService implements WalletCommands {
     if (!credited) {
       throw new WalletBonusConversionError(debitRow.id, debitRow.currency);
     }
-    await this.writeLedgerRow(txn, debitRow, 'bonus', convertedAmount, 'credit');
+    await this.writeLedgerRow(
+      txn,
+      debitRow,
+      'bonus',
+      convertedAmount,
+      'credit',
+      undefined,
+      credited.amount,
+    );
     // The one movement that turns a bonus into withdrawable money. A regulator asking who
     // released it reads this row, and it commits with the balance it describes.
     await this.audit.recordInTransaction(txn, {
@@ -438,9 +492,35 @@ export class WalletCommandsService implements WalletCommands {
           })
         : { realShare: amount };
 
-    const [credited] = await creditWalletBalance(txn, row.id, currency, settlement.realShare);
+    const balances = await creditWalletBalance(txn, row.id, currency, settlement.realShare);
+    const [credited] = balances;
     if (!credited) {
       throw new WalletCreditFailedError(row.id, currency);
+    }
+    await stampBalanceAfter(txn, ledgerRow.id, balances);
+
+    if (type === 'win') {
+      await this.auditSignificantAmount(txn, 'wallet.large_win.recorded', userId, ledgerRow);
+    }
+    if (type === 'bet_reversal') {
+      // A void takes a bet back out of the player's history, so it is a significant event whatever
+      // the amount, and it commits with the credit that returns the stake.
+      await this.audit.recordInTransaction(txn, {
+        actorType: 'system',
+        action: 'wallet.bet.reversed',
+        resourceType: 'wallet_transaction',
+        resourceId: ledgerRow.id,
+        after: {
+          userId,
+          amount,
+          currency: creditRow.currency,
+          credited: settlement.realShare,
+          balance: credited.amount,
+          providerName: ledgerRow.providerName,
+          providerRefId: ledgerRow.providerRefId,
+          externalRoundId: ledgerRow.externalRoundId,
+        },
+      });
     }
 
     return { ok: true, moved: true, transactionId: ledgerRow.id, newBalance: credited.amount };

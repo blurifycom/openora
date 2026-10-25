@@ -90,6 +90,9 @@ export type DirectAuditAction =
   | 'iam.mcp_token.created'
   | 'iam.mcp_token.revoked'
   | 'wallet.withdrawal.held'
+  | 'wallet.bet.reversed'
+  | 'wallet.large_bet.recorded'
+  | 'wallet.large_win.recorded'
   | 'chat.cooldown.created'
   | 'chat.cooldown.lifted'
   | 'chat.cooldown.expired';

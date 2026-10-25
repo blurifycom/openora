@@ -1,6 +1,6 @@
 // See ADR-0020.
 import { findOneOrThrow, type DrizzleDb } from '@openora/core/server';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import { assignRoleByKey } from '@openora/core/iam/seed';
 import { player } from '@openora/core/pam/schema/profile';
@@ -424,11 +424,11 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   await db.delete(chatUserIgnore);
   await db.delete(chatMessage);
   await db.delete(chatRoom);
-  await db.delete(walletTransaction);
+  // The ledger and the round record deny DELETE, so a dev reset truncates them.
+  await db.execute(sql`TRUNCATE ${walletTransaction}, ${gameRound}`);
   await db.delete(walletBalance);
   await db.delete(wallet);
   await db.delete(player);
-  await db.delete(gameRound);
   await db.delete(gameCategoryGame);
   await db.delete(game);
   await db.delete(gameProvider);

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE, EVENT_BUS, type Container, type CoreTokenCatalog } from '@openora/core/server';
 import { JOB_QUEUE, queue } from '@openora/core/contracts';
 import { session } from '@openora/core/pam/schema/identity';
@@ -47,11 +47,20 @@ async function backdateTransaction(
   daysAgo: number,
 ) {
   const past = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
-  await container
-    .get(DRIZZLE)
-    .db.update(walletTransaction)
-    .set({ createdAt: past })
-    .where(eq(walletTransaction.id, transactionId));
+  // created_at is immutable on the ledger, so a test that ages a row switches the guard off for
+  // its own statement, the way a data-fixing migration would.
+  await container.get(DRIZZLE).db.transaction(async (tx) => {
+    await tx.execute(
+      sql`ALTER TABLE wallet_transaction DISABLE TRIGGER wallet_transaction_append_only_update`,
+    );
+    await tx
+      .update(walletTransaction)
+      .set({ createdAt: past })
+      .where(eq(walletTransaction.id, transactionId));
+    await tx.execute(
+      sql`ALTER TABLE wallet_transaction ENABLE TRIGGER wallet_transaction_append_only_update`,
+    );
+  });
 }
 
 async function activeTagKeys(admin: TestClient, playerId: string): Promise<string[]> {

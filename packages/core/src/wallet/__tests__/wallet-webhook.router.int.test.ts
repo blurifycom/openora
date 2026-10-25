@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import {
@@ -55,7 +55,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.delete(walletReconciliationFinding);
-  await db.drizzle.db.delete(walletTransaction);
+  // The ledger denies DELETE; a test empties it with TRUNCATE.
+  await db.drizzle.db.execute(sql`TRUNCATE ${walletTransaction}`);
   await db.drizzle.db.delete(walletDepositAddress);
   await db.drizzle.db.delete(walletBalance);
   await db.drizzle.db.delete(wallet);

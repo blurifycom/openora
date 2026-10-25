@@ -89,6 +89,14 @@ export const WalletConfigSchema = z
      */
     defaultReferenceCurrency: CurrencyTickerInputSchema.optional(),
     /**
+     * Per-currency amount (currency code -> decimal string) at or above which a single bet or a
+     * single win leaves a `wallet.large_bet.recorded` / `wallet.large_win.recorded` audit record.
+     * Compared in the transaction's own currency, with no rate lookup on the bet path, so a
+     * currency without an entry is never flagged. Absent = disabled. One transaction only; a
+     * player's total over a period is not summed.
+     */
+    significantAmountThresholds: z.record(z.string(), MoneyAmountSchema).optional(),
+    /**
      * Vendor-side account each provider's sweeps move player funds into, keyed by the
      * provider name in `wallet_asset.providerName` (`default` for the single bound
      * adapter). Keyed rather than flat because one operator can run several vendors,

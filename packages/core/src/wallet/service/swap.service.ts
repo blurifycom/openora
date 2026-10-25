@@ -35,6 +35,7 @@ import {
   railFor,
   debitWalletBalance,
   readWalletBalance,
+  stampBalanceAfter,
 } from './wallet.service.js';
 
 const logger = createLogger('wallet-swap');
@@ -205,6 +206,7 @@ export class SwapService {
           fromAmount,
         );
       }
+      await stampBalanceAfter(txn, inserted.id, debited);
 
       return { row: inserted, replayed: false };
     });
@@ -311,12 +313,13 @@ export class SwapService {
       // fills in an audit field and an event payload. A failure here rolls the credit
       // back with it instead of leaving the in-leg uncredited and the out-leg processing.
       const userId = await this.userIdForWallet(txn, out.walletId);
-      await creditWalletBalance(txn, out.walletId, toCurrency, toAmount);
+      const [credited] = await creditWalletBalance(txn, out.walletId, toCurrency, toAmount);
       await txn.insert(walletTransaction).values({
         walletId: out.walletId,
         type: 'swap_in',
         amount: toAmount,
         currency: balanceKey(toCurrency),
+        balanceAfter: credited?.amount,
         status: 'completed',
         direction: 'credit',
         rail: railFor(toCurrency, this.platformConfig?.wallet?.cryptoCurrencies),

@@ -113,6 +113,12 @@ export const walletTransaction = pgTable(
     type: walletTransactionTypeEnum().notNull(),
     amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     currency: text().notNull(),
+    // The wallet's real balance in `currency` right after this row's money moved, written in the
+    // same transaction as the move. The balance before is this minus the signed `amount`, except
+    // for a stake bonus funds partly paid (they sit on the grant, not here). Set once, when the
+    // balance moves: a deposit's at completion, a withdrawal's at the request. NULL on rows written
+    // before this column existed and on rows that moved no balance (a pending deposit, a failed one).
+    balanceAfter: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     // The chain this moved on. A currency does not identify one, so reconciliation and
     // reporting are per (currency, network). Null on a fiat rail and on any internal
     // transaction type (bet/win/bonus) that never touches a chain.

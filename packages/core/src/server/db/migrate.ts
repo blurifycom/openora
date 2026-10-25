@@ -50,6 +50,62 @@ export type RunMigrationsOptions = {
   postSql?: string[];
 };
 
+const SQL_IDENTIFIER = /^[a-z][a-z0-9_]*$/;
+
+/**
+ * `postSql` that makes `table` a protected record: DELETE is denied for the whole statement (as
+ * the audit log does), and an UPDATE may change only `mutableColumns`, plus `setOnceColumns` while
+ * they are still NULL. Every other column, one added later included, is immutable until named
+ * here. TRUNCATE is untouched, which keeps test and dev resets working. There is no bypass: a
+ * deliberate repair is a migration that disables the trigger itself. The UPDATE check runs per
+ * row, so an UPDATE that matches nothing passes.
+ */
+export function appendOnlyTableSql(
+  table: string,
+  { mutableColumns, setOnceColumns = [] }: { mutableColumns: string[]; setOnceColumns?: string[] },
+): string[] {
+  const columns = [...mutableColumns, ...setOnceColumns];
+  for (const name of [table, ...columns]) {
+    if (!SQL_IDENTIFIER.test(name)) {
+      throw new Error(`Invalid SQL identifier: ${name}`);
+    }
+  }
+  const exempt = `ARRAY[${columns.map((column) => `'${column}'`).join(', ')}]`;
+  const setOnceChecks = setOnceColumns
+    .map(
+      (
+        column,
+      ) => `IF OLD.${column} IS NOT NULL AND NEW.${column} IS DISTINCT FROM OLD.${column} THEN
+       RAISE EXCEPTION '${table} is append-only: ${column} cannot change once set';
+     END IF;`,
+    )
+    .join('\n     ');
+  return [
+    `CREATE OR REPLACE FUNCTION ${table}_deny_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+   BEGIN
+     RAISE EXCEPTION '${table} is append-only: % is not permitted', TG_OP;
+   END;
+   $$`,
+    `CREATE OR REPLACE FUNCTION ${table}_guard_update() RETURNS trigger LANGUAGE plpgsql AS $$
+   BEGIN
+     IF to_jsonb(NEW) - ${exempt} IS DISTINCT FROM to_jsonb(OLD) - ${exempt} THEN
+       RAISE EXCEPTION '${table} is append-only: UPDATE may change only ${columns.join(', ')}';
+     END IF;
+     ${setOnceChecks}
+     RETURN NEW;
+   END;
+   $$`,
+    `DROP TRIGGER IF EXISTS ${table}_append_only_delete ON ${table}`,
+    `CREATE TRIGGER ${table}_append_only_delete
+     BEFORE DELETE ON ${table}
+     FOR EACH STATEMENT EXECUTE FUNCTION ${table}_deny_delete()`,
+    `DROP TRIGGER IF EXISTS ${table}_append_only_update ON ${table}`,
+    `CREATE TRIGGER ${table}_append_only_update
+     BEFORE UPDATE ON ${table}
+     FOR EACH ROW EXECUTE FUNCTION ${table}_guard_update()`,
+  ];
+}
+
 function migrateUrl(override?: string): string {
   const url = override ?? process.env['DATABASE_ADMIN_URL'] ?? process.env['DATABASE_URL'];
   if (!url) {
