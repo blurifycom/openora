@@ -2,23 +2,16 @@
   "$schema": "https://raw.githubusercontent.com/stryker-mutator/stryker-js/master/packages/core/schema/stryker-schema.json",
   "testRunner": "vitest",
   "vitest": {
-    "configFile": "vitest.config.ts"
+    "configFile": "vitest.integration.config.ts"
   },
-  "checkers": [
-    "typescript"
-  ],
+  "checkers": ["typescript"],
   "tsconfigFile": "tsconfig.json",
   "mutate": [
     "src/wallet/**/*.ts",
     "!src/wallet/**/__tests__/**",
     "!src/wallet/**/*.{test,spec}.ts"
   ],
-  "reporters": [
-    "html",
-    "json",
-    "clear-text",
-    "progress"
-  ],
+  "reporters": ["html", "json", "clear-text", "progress"],
   "htmlReporter": {
     "fileName": "reports/mutation/mutation.html"
   },
@@ -28,8 +21,7 @@
   "incremental": true,
   "incrementalFile": "reports/stryker-incremental.json",
   "coverageAnalysis": "perTest",
-  "plugins": [
-    "@stryker-mutator/vitest-runner",
-    "@stryker-mutator/typescript-checker"
-  ]
+  "plugins": ["@stryker-mutator/vitest-runner", "@stryker-mutator/typescript-checker"],
+  "concurrency": 4,
+  "timeoutMS": 60000
 }
