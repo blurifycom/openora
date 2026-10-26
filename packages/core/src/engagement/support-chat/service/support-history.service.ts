@@ -160,7 +160,7 @@ export class SupportHistoryService {
     const { customerId } = row;
     const [tickets, chats] = await Promise.all([
       windows.length === 0
-        ? { state: 'no_email' as const, items: [] }
+        ? { state: complete ? ('no_email' as const) : ('unavailable' as const), items: [] }
         : this.section(userId, 'ticket', () =>
             this.deps.reader.listTickets({ windows, includeResolved }),
           ),

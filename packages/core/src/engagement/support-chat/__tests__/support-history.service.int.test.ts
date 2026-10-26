@@ -99,7 +99,7 @@ describe('SupportHistoryService logging (real PG)', () => {
     expect(inspect(log.warn.mock.calls, { depth: null })).not.toContain(secret);
   });
 
-  it('warns with the user id alone when the email change trail has a gap', async () => {
+  it('answers tickets unavailable and warns with the user id alone when a gap in the email change trail leaves no window', async () => {
     const p = await linkedPlayer();
     await new AuditService(db.drizzle, makeEventBus(), makeIdentityReader()).record({
       actorType: 'player',
@@ -114,7 +114,7 @@ describe('SupportHistoryService logging (real PG)', () => {
 
     const history = await service({ listTickets }).getHistory(p.userId, false);
 
-    expect(history.tickets).toEqual({ state: 'no_email', items: [] });
+    expect(history.tickets).toEqual({ state: 'unavailable', items: [] });
     expect(listTickets).not.toHaveBeenCalled();
     expect(warned()).toEqual([{ userId: p.userId }]);
     expect(inspect(log.warn.mock.calls, { depth: null })).not.toContain('@test.dev');

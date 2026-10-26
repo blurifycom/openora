@@ -115,7 +115,8 @@ Core works out which identities belong to the player and hands them to the reade
   shortly after each change, outside the change's transaction, so one can be lost or land out of
   order. Core keeps a window only when the rows at both its ends agree on the email; where they
   do not, it drops the window whose start is unknown and logs a warning, so the player shows
-  fewer tickets rather than someone else's. Nothing records the email an account registered
+  fewer tickets rather than someone else's. When no window survives, the tickets section
+  answers unavailable, not `no_email`. Nothing records the email an account registered
   with, so a lost first change cannot be noticed: the window from registration is kept while the
   rest of the trail agrees, and dropped once anything contradicts it.
 - **Chats** are matched by the vendor customer the player is linked to. A player who never
