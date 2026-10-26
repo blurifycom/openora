@@ -14,6 +14,7 @@ let db: TestDb;
 let grants: GrantService;
 let lifecycle: GrantLifecycleService;
 let audit: ReturnType<typeof makeAuditWriter>;
+let events: ReturnType<typeof makeEventBus>;
 let weightProfileId: Uuid;
 
 const args = (over: Partial<BonusGrantArgs> = {}): BonusGrantArgs => ({
@@ -71,7 +72,8 @@ beforeAll(async () => {
   db = await createTestDb([migrate]);
   audit = makeAuditWriter();
   grants = new GrantService(audit);
-  lifecycle = new GrantLifecycleService(db.drizzle, audit, makeEventBus());
+  events = makeEventBus();
+  lifecycle = new GrantLifecycleService(db.drizzle, audit, events);
 });
 
 afterAll(async () => {
@@ -332,6 +334,26 @@ describe('forfeiting what a player held, on the caller’s transaction', () => {
         userAgent: 'test-agent',
       }),
     );
+  });
+
+  it('announces each forfeited grant once, on the caller’s transaction', async () => {
+    const userId = randomUUID();
+    const usd = await grant({ userId, currency: 'USD', amount: '10' });
+    const eur = await grant({ userId, currency: 'EUR', amount: '20' });
+
+    await db.drizzle.db.transaction((tx) => lifecycle.forfeitHeld(tx, held(userId)));
+
+    const announced = events.emitInTransaction.mock.calls.filter(
+      ([, topic]) => topic === 'promo.bonus.forfeited',
+    );
+    expect(announced.map(([, , payload]) => payload)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ grantId: usd, reason: 'withdrawal_while_active', actorId: null }),
+        expect.objectContaining({ grantId: eur, reason: 'withdrawal_while_active', actorId: null }),
+      ]),
+    );
+    expect(announced).toHaveLength(2);
+    expect(events.emit).not.toHaveBeenCalled();
   });
 
   it('rolls back with the caller’s transaction', async () => {
