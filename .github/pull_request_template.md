@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- 3-5 short bullets, one per change, in plain sentences a reviewer reads in seconds: what the change does, not how. Details go in Why and Risks. Bare ticket key, no URLs. -->
+<!-- Up to 5 short bullets, one per change (a one-change PR gets one bullet), in plain sentences a reviewer reads in seconds: what the change does, not how. Details go in Why and Risks. Bare ticket key, no URLs. -->
 
 ## Why
 
