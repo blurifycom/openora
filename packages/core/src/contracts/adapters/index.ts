@@ -298,6 +298,19 @@ export {
   SupportCustomerContextSchema,
   SupportChatProviderError,
 } from './support-chat.js';
+export type {
+  SupportHistory,
+  SupportHistoryEmailWindow,
+  SupportHistoryItem,
+  SupportHistoryReader,
+} from './support-history.js';
+export {
+  SUPPORT_HISTORY_READER,
+  SupportHistoryEmailWindowSchema,
+  SupportHistoryItemSchema,
+  SupportHistoryProviderError,
+  SupportHistorySchema,
+} from './support-history.js';
 export type { RgExclusionReader } from './rg-exclusion-reader.js';
 export { RG_EXCLUSION_READER } from './rg-exclusion-reader.js';
 

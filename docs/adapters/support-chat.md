@@ -77,8 +77,9 @@ strict, so a field reaches the vendor only when it is added to the contract on p
 
 ## Unbound
 
-Core binds no provider. Without one, the session route answers service-unavailable as not
-configured and boot logs one warning. Whether a player is linked is read from the database, not
+Core binds no provider and no history reader. Without a provider, the session route answers
+service-unavailable as not configured and boot logs one warning; without a reader, the history
+route does the same with its own warning. Whether a player is linked is read from the database, not
 from the process, so a refresh still enqueues a sync for a player another process linked. A
 process without a provider fails that job, logging a warning per attempt, and the queue retries
 it, so in a fleet where only some processes have the provider bound the sync lands on one that
@@ -90,13 +91,57 @@ plugin that depends on it. Keeping the module loaded with no provider bound whil
 still linked is treated as a misconfiguration: each refreshed player keeps getting one try an
 hour, and every failed one logs an error, until a provider is bound or the module is removed.
 
+## Support history
+
+A second port, `SUPPORT_HISTORY_READER`
+([`packages/core/src/contracts/adapters/support-history.ts`](../../packages/core/src/contracts/adapters/support-history.ts)),
+lets the back office list a player's vendor tickets and chat threads on
+`GET /support-chat/admin/players/{userId}/history`. It is a separate token from the chat
+provider: an operator may bind either without the other. Only an admin holding `support-chat`
+`view` reaches it. No predefined role carries that grant except the super admin; an operator
+gives it through a role it assigns.
+
+Core works out which identities belong to the player and hands them to the reader:
+
+- **Tickets** are matched by the requester's email, inside email windows. Each window is one
+  email the player held, from when it became theirs (registration or an email change) to when it
+  stopped being theirs; the current email's window is open-ended. Previous emails come from the
+  audit log's email-change rows, and only the three most recent are kept. A freed address can be
+  registered by another player, so a ticket counts only when it was created inside its email's
+  window: the reader must filter by creation date, never return every ticket an address ever
+  opened.
+- **Chats** are matched by the vendor customer the player is linked to. A player who never
+  opened the chat has no link, and the reader is not asked.
+
+What a reader must guarantee:
+
+- **`includeResolved: false` must not touch the vendor's resolved archive.** Resolved tickets
+  cost their own calls; the back office asks for them only when staff opt in.
+- **One item per chat thread.** The vendor's agent app links each thread on its own, so the item
+  id is the thread id.
+- **Statuses per kind.** A ticket is `open`, `waiting`, `on_hold`, `solved` or `closed`; a chat is
+  `active` or `ended`. Core validates every item against the strict item schema and these
+  statuses; one item off-contract makes that whole section unavailable.
+- **UTC timestamps ending in `Z`.** The schema accepts nothing else, such as an offset.
+- **Errors follow the chat provider's rules.** Throw the port's support-history provider error
+  with a short reason: no token, no request body, emails masked. Any other error that escapes is
+  reduced to its class name.
+
+The answer has a tickets and a chats section, each `ok` with its items newest first, or
+`unavailable` when its read failed, or `no_email` / `not_linked` when there was nothing to ask.
+One section failing never hides the other; the reason goes to the log only. Core caches the whole
+answer for 60 seconds per player and `includeResolved` value, keeping its original `fetchedAt`,
+and limits each admin to 30 calls a minute, cache hits included, so staff clicking around do not
+spend the vendor's API quota. The default cache is in-process, so each replica fetches on its
+own; binding the Redis cache shares it.
+
 ## Binding a vendor
 
-An overlay plugin in the consumer's repo binds the provider. Scaffold it with `/scaffold-plugin`
-and register it after the support-chat module.
+An overlay plugin in the consumer's repo binds the provider, the history reader, or both.
+Scaffold it with `/scaffold-plugin` and register it after the support-chat module.
 
 ## Not built yet
 
-Listing a player's vendor chats or tickets for the back office will be a further read method on
-this port. An account-manager field in the context and erasing the vendor customer under a
-data-rights request wait for those features to land in core.
+An account-manager field in the context, erasing the vendor customer and its history under a
+data-rights request, and pushing history updates instead of the cache wait for those features to
+land in core.

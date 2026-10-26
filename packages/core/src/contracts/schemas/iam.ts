@@ -52,6 +52,7 @@ export const adminStatement = {
   'agent-config': ['view', 'update'] as const,
   'mcp-access': ['use'] as const,
   'mcp-token': ['view', 'revoke'] as const,
+  'support-chat': ['view'] as const,
 } as const;
 
 export type AdminResource = keyof typeof adminStatement;
