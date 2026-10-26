@@ -1,7 +1,7 @@
 name: Mutation
 
 # Nightly StrykerJS over the wallet module (packages/core `stryker.config.json`) against the
-# core integration tier. Incremental: the cached result means only mutants in code or tests
+# core unit and integration tiers. Incremental: the cached result means only mutants in code or tests
 # that changed since the last run are re-tested. A report, not a gate.
 on:
   schedule:
