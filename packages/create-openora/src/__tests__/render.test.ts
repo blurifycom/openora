@@ -21,6 +21,7 @@ import {
   substitute,
   undotSegment,
 } from '../render.js';
+import { VERSIONS } from '../generated/versions.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const consumerTemplates = resolve(here, '../../../../tools/templates/consumer');
@@ -147,7 +148,7 @@ describe('emitTree', () => {
 
 describe('consumer templates', () => {
   it('only reference keys that buildVars provides', () => {
-    const provided = new Set(Object.keys(buildVars('app', '^1.0.0')));
+    const provided = new Set(Object.keys(buildVars('app', VERSIONS)));
     const used = new Set<string>();
     for (const file of listFiles(consumerTemplates).filter((f) => f.endsWith('.tpl'))) {
       for (const match of readFileSync(file, 'utf8').matchAll(/\{\{(\w+)\}\}/g)) {

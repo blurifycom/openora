@@ -22,17 +22,17 @@
   "devDependencies": {
     "@openora/create": "{{coreVersion}}",
     "@openora/mcp": "latest",
-    "@turbo/gen": "2.9.14",
-    "@types/node": "25.9.0",
-    "oxlint": "1.64.0",
-    "rulesync": "8.25.0",
-    "tsx": "4.22.2",
-    "turbo": "2.9.14",
-    "typescript": "6.0.3"
+    "@turbo/gen": "{{turboVersion}}",
+    "@types/node": "{{typesNodeVersion}}",
+    "oxlint": "{{oxlintVersion}}",
+    "rulesync": "{{rulesyncVersion}}",
+    "tsx": "{{tsxVersion}}",
+    "turbo": "{{turboVersion}}",
+    "typescript": "{{typescriptVersion}}"
   },
   "engines": {
     "node": ">=22.0.0",
     "pnpm": ">=10.0.0"
   },
-  "packageManager": "pnpm@11.5.2"
+  "packageManager": "{{packageManager}}"
 }

@@ -17,7 +17,7 @@ The endpoint is off by default. Enabling it takes two steps.
    and loads it only while the endpoint is on, so a deployment without MCP never installs it.
 
    ```bash
-   pnpm add @modelcontextprotocol/sdk@1.32.1
+   pnpm add @modelcontextprotocol/sdk
    ```
 
 2. Turn the endpoint on in the `agents.mcp` block of the platform config, with the backoffice

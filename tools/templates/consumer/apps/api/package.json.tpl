@@ -14,7 +14,7 @@
     "@openora/core": "{{coreVersion}}"
   },
   "devDependencies": {
-    "tsx": "4.22.2",
-    "typescript": "6.0.3"
+    "tsx": "{{tsxVersion}}",
+    "typescript": "{{typescriptVersion}}"
   }
 }
