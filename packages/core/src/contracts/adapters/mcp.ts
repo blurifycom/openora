@@ -220,6 +220,8 @@ export type McpToolDescriptor = McpToolContract & {
 };
 
 export type ActionTypeDescriptor = ActionTypeContract & {
+  /** False for an action type that leaves it out. */
+  benefitsPlayer: boolean;
   owner: string;
   payloadJsonSchema: Record<string, unknown>;
 };

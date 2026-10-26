@@ -786,7 +786,7 @@ describe('McpKernel catalog', () => {
       );
     }).kernel;
 
-    expect(plain.listActionTypes().map((action) => action.benefitsPlayer)).toEqual([undefined]);
+    expect(plain.listActionTypes().map((action) => action.benefitsPlayer)).toEqual([false]);
     expect(benefiting.listActionTypes().map((action) => action.benefitsPlayer)).toEqual([true]);
     expect(benefiting.catalogVersion).toBe(plain.catalogVersion);
   });
