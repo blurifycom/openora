@@ -305,7 +305,9 @@ export type {
   SupportHistoryReader,
 } from './support-history.js';
 export {
+  SUPPORT_CHAT_STATUSES,
   SUPPORT_HISTORY_READER,
+  SUPPORT_TICKET_STATUSES,
   SupportHistoryEmailWindowSchema,
   SupportHistoryItemSchema,
   SupportHistoryProviderError,

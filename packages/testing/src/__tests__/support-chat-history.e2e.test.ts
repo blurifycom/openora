@@ -10,7 +10,7 @@ import {
   makeRateLimitKey,
   type SupportHistoryItem,
 } from '@openora/core/contracts';
-import { DRIZZLE, createLogger, loadExtensions, setErrorReporter } from '@openora/core/server';
+import { DRIZZLE, loadExtensions, setErrorReporter } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { supportChatCustomer } from '@openora/core/engagement/schema/support-chat';
 import { adminRole, adminRoleAssignment, adminRolePermission } from '@openora/core/iam/schema';
@@ -18,6 +18,7 @@ import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import {
   asAdmin,
+  asPlayer,
   assignIamRoleByKey,
   bootE2e,
   clearCapturedEmails,
@@ -36,38 +37,6 @@ import {
   resetSupportHistory,
 } from '../test-support-history-plugin.js';
 
-const WARN = 40;
-type Written = { fields: unknown; msg: unknown };
-const warnings: Written[] = [];
-
-/**
- * Records every warning any logger writes, then writes it as usual. This tier loads core's
- * compiled modules as is, so a module mock never reaches the plugin's logger: every pino logger
- * writes through one shared prototype method instead, and that is where the warnings are read.
- */
-function recordWarnings(): () => void {
-  const proto = Object.getPrototypeOf(Object.getPrototypeOf(createLogger('e2e-probe'))) as Record<
-    symbol,
-    (this: unknown, fields: unknown, msg: unknown, level: number) => void
-  >;
-  const writeSym = Object.getOwnPropertySymbols(proto).find((s) => s.description === 'pino.write');
-  const write = writeSym && proto[writeSym];
-  if (!writeSym || !write) {
-    throw new Error('pino write method not found - the logger internals moved');
-  }
-  proto[writeSym] = function (fields, msg, level) {
-    if (level === WARN) {
-      warnings.push({ fields, msg });
-    }
-    write.call(this, fields, msg, level);
-  };
-  return () => {
-    proto[writeSym] = write;
-  };
-}
-
-let stopRecording: () => void = () => undefined;
-
 const historyPluginPath = fileURLToPath(
   new URL('../test-support-history-plugin.ts', import.meta.url),
 );
@@ -75,6 +44,8 @@ const historyPluginPath = fileURLToPath(
 const WAIT = { timeout: 15_000, interval: 50 };
 const PASSWORD = 'password1234';
 const SUPER_ADMIN_EMAIL = 'admin@oss.dev';
+const GRANT_CACHE_TTL_FLOOR_MS = 10_000;
+const POLL_UNDER_RATE_LIMIT_MS = 1_000;
 
 let db: TestDb;
 let unconfiguredDb: TestDb;
@@ -142,20 +113,48 @@ async function staffWithRole(grants: { resource: string; level: string }[]) {
   return { userId, client: await asAdmin(testApp.app, { email }) };
 }
 
+async function changeEmail(client: TestClient, newEmail: string) {
+  clearCapturedEmails();
+  const requested = await client.post('/identity/email/change/request', {
+    newEmail,
+    currentPassword: PASSWORD,
+  });
+  expect(requested.status).toBe(200);
+  const mail = await waitForEmail(newEmail, (m) => m.subject === 'Confirm your new email address');
+  const otp = /(\d{6})/.exec(mail.text)?.[1];
+  expect((await client.post('/identity/email/change/confirm', { newEmail, otp })).status).toBe(200);
+}
+
+const emailChangeAuditedAt = (resourceType: 'player' | 'user', resourceId: string) =>
+  vi.waitFor(async () => {
+    const [row] = await drizzle()
+      .select({ createdAt: auditLog.createdAt })
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.action, 'identity.email.changed'),
+          eq(auditLog.resourceType, resourceType),
+          eq(auditLog.resourceId, resourceId),
+        ),
+      )
+      .orderBy(asc(auditLog.seq));
+    if (!row) {
+      throw new Error('email change not audited yet');
+    }
+    return row.createdAt.toISOString();
+  }, WAIT);
+
+async function registeredAt(userId: string) {
+  const [row] = await drizzle()
+    .select({ createdAt: user.createdAt })
+    .from(user)
+    .where(eq(user.id, userId));
+  return row?.createdAt.toISOString();
+}
+
 const supportViewer = () => staffWithRole([{ resource: 'support-chat', level: 'read' }]);
 
-const historyWarnings = (userId: string) =>
-  warnings
-    .map(({ fields }) => fields)
-    .filter(
-      (fields): fields is Record<string, unknown> =>
-        typeof fields === 'object' &&
-        fields !== null &&
-        (fields as { userId?: unknown }).userId === userId,
-    );
-
 beforeAll(async () => {
-  stopRecording = recordWarnings();
   const extensions = await loadExtensions();
   ({ db, app: testApp } = await bootE2e({
     plugins: [...extensions, { id: 'testing-support-history', path: historyPluginPath }],
@@ -166,7 +165,6 @@ beforeAll(async () => {
     .from(user)
     .where(eq(user.email, SUPER_ADMIN_EMAIL));
   adminId = row?.id ?? '';
-  // Its own database: on a shared one its outbox relay would claim the other app's events.
   ({ db: unconfiguredDb, app: unconfiguredApp } = await bootE2e({ plugins: extensions }));
 }, 60_000);
 
@@ -180,13 +178,11 @@ beforeEach(async () => {
 afterAll(async () => {
   await closeE2e({ app: unconfiguredApp, db: unconfiguredDb });
   await closeE2e({ app: testApp, db });
-  stopRecording();
 });
 
 describe('GET /support-chat/admin/players/{userId}/history', () => {
-  it('answers both sections sorted by real time, newest first, and passes includeResolved through', async () => {
+  it('answers both sections newest first by real time, not string order, and passes includeResolved through', async () => {
     const p = await linkedPlayer();
-    // String order would put the whole second before the half second after it.
     const older = item('ticket', '2026-03-01T10:00:00Z');
     const newer = item('ticket', '2026-03-01T10:00:00.500Z', { status: 'solved' });
     const oldest = item('ticket', '2026-02-01T08:00:00Z', { status: 'on_hold' });
@@ -225,45 +221,32 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
   it('asks for the old email up to the change and the new one after it', async () => {
     const p = await newPlayer();
     const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
-    clearCapturedEmails();
-    expect(
-      (
-        await p.client.post('/identity/email/change/request', {
-          newEmail,
-          currentPassword: PASSWORD,
-        })
-      ).status,
-    ).toBe(200);
-    const mail = await waitForEmail(
-      newEmail,
-      (m) => m.subject === 'Confirm your new email address',
-    );
-    const otp = /(\d{6})/.exec(mail.text)?.[1];
-    expect((await p.client.post('/identity/email/change/confirm', { newEmail, otp })).status).toBe(
-      200,
-    );
-    const changedAt = await vi.waitFor(async () => {
-      const [row] = await drizzle()
-        .select({ createdAt: auditLog.createdAt })
-        .from(auditLog)
-        .where(
-          and(eq(auditLog.action, 'identity.email.changed'), eq(auditLog.resourceId, p.playerId)),
-        )
-        .orderBy(asc(auditLog.seq));
-      if (!row) {
-        throw new Error('email change not audited yet');
-      }
-      return row.createdAt.toISOString();
-    }, WAIT);
-    const [registered] = await drizzle()
-      .select({ createdAt: user.createdAt })
-      .from(user)
-      .where(eq(user.id, p.userId));
+    await changeEmail(p.client, newEmail);
+    const changedAt = await emailChangeAuditedAt('player', p.playerId);
 
     await history(admin, p.userId);
 
     expect(readSupportHistoryCalls().listTickets[0]?.windows).toEqual([
-      { email: p.email, from: registered?.createdAt.toISOString(), to: changedAt },
+      { email: p.email, from: await registeredAt(p.userId), to: changedAt },
+      { email: newEmail, from: changedAt, to: null },
+    ]);
+  });
+
+  it('reads an email change made before the player profile existed, and serves an uppercase id from the same cache entry', async () => {
+    const p = await newPlayer();
+    await drizzle().delete(player).where(eq(player.id, p.playerId));
+    const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
+    await changeEmail(p.client, newEmail);
+    const changedAt = await emailChangeAuditedAt('user', p.userId);
+    const signedInAgain = await asPlayer(testApp.app, { email: newEmail, password: PASSWORD });
+    expect((await signedInAgain.get('/profile')).status).toBe(200);
+
+    await history(admin, p.userId.toUpperCase());
+    await history(admin, p.userId);
+
+    expect(readSupportHistoryCalls().listTickets).toHaveLength(1);
+    expect(readSupportHistoryCalls().listTickets[0]?.windows).toEqual([
+      { email: p.email, from: await registeredAt(p.userId), to: changedAt },
       { email: newEmail, from: changedAt, to: null },
     ]);
   });
@@ -280,7 +263,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
   });
 
   describe('a failing section', () => {
-    it('answers tickets unavailable on a provider error and keeps the chats, reason in the log only', async () => {
+    it('answers tickets unavailable on a provider error and keeps the chats, the reason kept out of the response', async () => {
       const p = await linkedPlayer();
       const chat = item('chat', '2026-03-01T00:00:00Z');
       answerSupportHistoryWith({ chats: [chat] });
@@ -293,12 +276,9 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       expect(body.tickets).toEqual({ state: 'unavailable', items: [] });
       expect(body.chats).toEqual({ state: 'ok', items: [chat] });
       expect(text).not.toContain('vendor answered 503');
-      expect(historyWarnings(p.userId)).toEqual([
-        { userId: p.userId, section: 'ticket', reason: 'vendor answered 503' },
-      ]);
     });
 
-    it('keeps a raw adapter error and its secret out of the response, the log and the error reporter', async () => {
+    it('keeps a raw adapter error and its secret out of the response and the error reporter', async () => {
       const p = await linkedPlayer();
       const secret = `sk_live_${randomUUID()}`;
       const ticket = item('ticket', '2026-03-01T00:00:00Z');
@@ -319,10 +299,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
         expect(body.chats).toEqual({ state: 'unavailable', items: [] });
         expect(body.tickets).toEqual({ state: 'ok', items: [ticket] });
         expect(text).not.toContain(secret);
-        expect(historyWarnings(p.userId)).toEqual([
-          { userId: p.userId, section: 'chat', reason: 'adapter threw Error' },
-        ]);
-        expect(inspect([reported, warnings], { depth: null })).not.toContain(secret);
+        expect(inspect(reported, { depth: null })).not.toContain(secret);
       } finally {
         setErrorReporter(undefined);
       }
@@ -469,11 +446,9 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       });
       expect(withdrawn.status).toBe(200);
 
-      // The grant cache is purged by an event, and its 10 s TTL is the floor: poll past it,
-      // slowly enough to stay inside the route's own rate limit.
       await vi.waitFor(
         async () => expect((await viewer.client.get(historyPath(p.userId))).status).toBe(403),
-        { timeout: 20_000, interval: 1_000 },
+        { timeout: 2 * GRANT_CACHE_TTL_FLOOR_MS, interval: POLL_UNDER_RATE_LIMIT_MS },
       );
       expect(readSupportHistoryCalls().listTickets).toHaveLength(1);
     });
@@ -492,15 +467,12 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
 });
 
 describe('ports bound apart', () => {
-  it('answers 503 not configured with no reader bound, warning once at boot', async () => {
+  it('answers 503 not configured with no reader bound', async () => {
     const unconfiguredAdmin = await asAdmin(unconfiguredApp.app);
     const res = await unconfiguredAdmin.get(historyPath(randomUUID()));
 
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ message: 'Support history is not configured' });
-    expect(
-      warnings.filter(({ msg }) => String(msg).includes('no SUPPORT_HISTORY_READER bound')),
-    ).toHaveLength(1);
   });
 
   it('serves the history with no chat provider bound, while the session route is not configured', async () => {

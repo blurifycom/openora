@@ -8,10 +8,13 @@ import * as z from 'zod';
 import { TimestampSchema } from '../schemas/common.js';
 import { createToken, type Token } from './token.js';
 
+export const SUPPORT_TICKET_STATUSES = ['open', 'waiting', 'on_hold', 'solved', 'closed'] as const;
+export const SUPPORT_CHAT_STATUSES = ['active', 'ended'] as const;
+
 /**
- * One vendor ticket or one chat thread. A ticket is `open`, `waiting`, `on_hold`, `solved` or
- * `closed`; a chat is `active` or `ended`. Core validates the adapter's answer against this
- * schema and those per-kind statuses, and treats anything else as unavailable.
+ * One vendor ticket or one chat thread, a ticket with a ticket status and a chat with a chat
+ * status. Core validates the adapter's answer against this schema and those per-kind statuses,
+ * and treats anything else as unavailable.
  */
 export const SupportHistoryItemSchema = z
   .object({
@@ -22,7 +25,7 @@ export const SupportHistoryItemSchema = z
     reference: z.string().min(1),
     // The ticket subject; null for a chat.
     subject: z.string().nullable(),
-    status: z.enum(['open', 'waiting', 'on_hold', 'solved', 'closed', 'active', 'ended']),
+    status: z.enum([...SUPPORT_TICKET_STATUSES, ...SUPPORT_CHAT_STATUSES]),
     // The staff display name, null when unassigned.
     assignee: z.string().nullable(),
     createdAt: TimestampSchema,

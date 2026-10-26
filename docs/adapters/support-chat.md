@@ -99,7 +99,8 @@ lets the back office list a player's vendor tickets and chat threads on
 `GET /support-chat/admin/players/{userId}/history`. It is a separate token from the chat
 provider: an operator may bind either without the other. Only an admin holding `support-chat`
 `view` reaches it. No predefined role carries that grant except the super admin; an operator
-gives it through a role it assigns.
+gives it through a role it assigns, which needs the iam module loaded. Without iam, the static
+fallback roles decide, and none of them grants it.
 
 Core works out which identities belong to the player and hands them to the reader:
 
@@ -110,6 +111,13 @@ Core works out which identities belong to the player and hands them to the reade
   registered by another player, so a ticket counts only when it was created inside its email's
   window: the reader must filter by creation date, never return every ticket an address ever
   opened.
+- **A gap in the email trail drops windows, never widens them.** The audit rows are written
+  shortly after each change, outside the change's transaction, so one can be lost or land out of
+  order. Core keeps a window only when the rows at both its ends agree on the email; where they
+  do not, it drops the window whose start is unknown and logs a warning, so the player shows
+  fewer tickets rather than someone else's. Nothing records the email an account registered
+  with, so a lost first change cannot be noticed: the window from registration is kept while the
+  rest of the trail agrees, and dropped once anything contradicts it.
 - **Chats** are matched by the vendor customer the player is linked to. A player who never
   opened the chat has no link, and the reader is not asked.
 

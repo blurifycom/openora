@@ -13,7 +13,7 @@ type ChatsInput = Parameters<SupportHistoryReader['listChats']>[0];
 type SupportHistoryState = {
   answers: Record<Method, SupportHistoryItem[]>;
   failures: Partial<Record<Method, string | Error>>;
-  malformed: Partial<Record<Method, unknown>>;
+  malformed: Partial<Record<Method, SupportHistoryItem>>;
   calls: { listTickets: TicketsInput[]; listChats: ChatsInput[] };
 };
 
@@ -54,8 +54,24 @@ export const failSupportHistory = (method: Method, reason: string | Error) => {
   state().failures[method] = reason;
 };
 
-/** `method` answers its items plus `item` (by default one missing its url) from now on. */
-export const malformSupportHistory = (method: Method, item: unknown = { kind: 'ticket' }) => {
+// Typed as an item, but its offset timestamp fails the schema, which takes only UTC `Z` times.
+const OFFSET_TIMESTAMP_ITEM: SupportHistoryItem = {
+  kind: 'ticket',
+  id: 'offset-timestamp',
+  reference: '#offset',
+  subject: null,
+  status: 'open',
+  assignee: null,
+  createdAt: '2026-01-01T01:00:00+01:00',
+  updatedAt: '2026-01-01T01:00:00+01:00',
+  url: 'https://agent.example.test/ticket/offset-timestamp',
+};
+
+/** `method` answers its items plus `item` (by default one with an offset timestamp) from now on. */
+export const malformSupportHistory = (
+  method: Method,
+  item: SupportHistoryItem = OFFSET_TIMESTAMP_ITEM,
+) => {
   state().malformed[method] = item;
 };
 
@@ -71,9 +87,8 @@ const answer = async (method: Method): Promise<SupportHistoryItem[]> => {
   if (failure !== undefined) {
     throw typeof failure === 'string' ? new SupportHistoryProviderError(failure) : failure;
   }
-  const items = [...s.answers[method]];
-  // The double plays an adapter that answers off-contract: core must catch it.
-  return method in s.malformed ? ([...items, s.malformed[method]] as SupportHistoryItem[]) : items;
+  const malformed = s.malformed[method];
+  return malformed ? [...s.answers[method], malformed] : [...s.answers[method]];
 };
 
 /**

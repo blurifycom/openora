@@ -1,11 +1,12 @@
 import * as z from 'zod';
 import { and, asc, eq, or } from 'drizzle-orm';
-import { createDomainError, createLogger, type DrizzleService } from '@openora/core/server';
+import { cached, createDomainError, createLogger, type DrizzleService } from '@openora/core/server';
 import {
+  SUPPORT_CHAT_STATUSES,
+  SUPPORT_TICKET_STATUSES,
   SupportHistoryItemSchema,
   SupportHistoryProviderError,
   type CacheAdapter,
-  type SupportHistory,
   type SupportHistoryEmailWindow,
   type SupportHistoryItem,
   type SupportHistoryReader,
@@ -27,19 +28,24 @@ export const SupportHistoryNotConfiguredError = createDomainError<[]>(
 );
 
 const STATUSES_OF: Record<SupportHistoryItem['kind'], ReadonlySet<SupportHistoryItem['status']>> = {
-  ticket: new Set(['open', 'waiting', 'on_hold', 'solved', 'closed']),
-  chat: new Set(['active', 'ended']),
+  ticket: new Set(SUPPORT_TICKET_STATUSES),
+  chat: new Set(SUPPORT_CHAT_STATUSES),
 };
 
 const SupportHistoryItemsSchema = z.array(SupportHistoryItemSchema);
 
-type EmailChange = { email: string | null; at: Date };
+type EmailChange = { before: string | null; after: string | null; at: Date };
 
 /**
- * The emails a player held and when, oldest first, the current one last and open-ended. Each
- * change (in the order it happened) ends the window of the email it replaced; a change without
- * that email ends the window before it without adding one. Only the most recent previous emails
- * are kept.
+ * The emails a player held and when, oldest first, the current one last and open-ended. Changes
+ * come in the order the audit log wrote them. A window is kept only when the rows on both of
+ * its ends agree on the email: each change's replaced email must be the previous change's new
+ * one, and the current email the last change's new one. Where they do not, an event was lost or
+ * written out of order, and the window whose start is unknown is dropped rather than widened, so
+ * a player is shown fewer tickets, never another player's. Nothing records the email an account
+ * registered with, so the first window, from registration, is the one link that cannot be
+ * checked: it is kept while the chain holds and dropped once anything contradicts it. Only the
+ * most recent previous emails are kept. `complete` is false when a window was dropped.
  */
 export function buildEmailWindows({
   currentEmail,
@@ -49,19 +55,43 @@ export function buildEmailWindows({
   currentEmail: User['email'];
   registeredAt: Date;
   changes: readonly EmailChange[];
-}): SupportHistoryEmailWindow[] {
+}) {
   const closed: SupportHistoryEmailWindow[] = [];
-  let from = registeredAt;
-  for (const change of changes) {
-    if (change.email) {
-      closed.push({ email: change.email, from: from.toISOString(), to: change.at.toISOString() });
+  // `email: null` is the email registered with, which no record holds.
+  let held: { email: string | null; from: Date } | null = { email: null, from: registeredAt };
+  let registrationWindow: SupportHistoryEmailWindow | null = null;
+  let dropped = false;
+  let contradicted = false;
+  const contradicts = (email: string | null) =>
+    held !== null && held.email !== null && email !== null && held.email !== email;
+
+  for (const { before, after, at } of changes) {
+    if (held && before && (held.email === null || held.email === before)) {
+      const window = { email: before, from: held.from.toISOString(), to: at.toISOString() };
+      registrationWindow = held.email === null ? window : registrationWindow;
+      closed.push(window);
+    } else {
+      dropped = true;
+      contradicted ||= contradicts(before);
     }
-    from = change.at;
+    held = after ? { email: after, from: at } : null;
   }
-  const previous = closed.slice(-MAX_PREVIOUS_EMAILS);
-  return currentEmail
-    ? [...previous, { email: currentEmail, from: from.toISOString(), to: null }]
-    : previous;
+
+  const current =
+    held && currentEmail && (held.email === null || held.email === currentEmail)
+      ? { email: currentEmail, from: held.from.toISOString(), to: null }
+      : null;
+  if (!current) {
+    dropped = true;
+    contradicted ||= contradicts(currentEmail);
+  }
+  const previous = closed
+    .filter((window) => !contradicted || window !== registrationWindow)
+    .slice(-MAX_PREVIOUS_EMAILS);
+  return {
+    windows: current ? [...previous, current] : previous,
+    complete: !dropped && !contradicted,
+  };
 }
 
 // An adapter may throw anything, such as an HTTP client error holding the vendor API key or an
@@ -70,6 +100,9 @@ const reasonOf = (err: unknown): string =>
   err instanceof SupportHistoryProviderError
     ? err.reason
     : `adapter threw ${err instanceof Error ? err.name : typeof err}`;
+
+const emailOf = (side: Record<string, unknown> | null) =>
+  typeof side?.['email'] === 'string' ? side['email'] : null;
 
 type Section = { state: 'ok' | 'unavailable'; items: SupportHistoryItem[] };
 
@@ -86,14 +119,18 @@ export class SupportHistoryService {
    * A player's vendor tickets and chat threads, cached whole per `(userId, includeResolved)` for
    * a minute, `fetchedAt` included. Each section fails on its own, its reason to the log only.
    */
-  async getHistory(userId: User['id'], includeResolved: boolean): Promise<SupportHistory> {
-    const key = `support-chat-history:${userId}:${includeResolved}`;
-    // ponytail: no stampede lock - concurrent misses each reach the vendor; the per-admin rate
-    // limit caps how many. Add a setIfAbsent lock if the vendor quota needs it.
-    const cached = await this.deps.cache.get<SupportHistory>(key);
-    if (cached !== undefined) {
-      return cached;
-    }
+  async getHistory(userId: User['id'], includeResolved: boolean) {
+    // The audit log keeps ids as text, so an uppercase id would miss its rows and split the cache.
+    const id = userId.toLowerCase();
+    return cached(
+      this.deps.cache,
+      `support-chat-history:${id}:${includeResolved}`,
+      HISTORY_CACHE_TTL_MS,
+      () => this.load(id, includeResolved),
+    );
+  }
+
+  private async load(userId: User['id'], includeResolved: boolean) {
     const [row] = await this.deps.drizzle.db
       .select({
         email: user.email,
@@ -109,11 +146,17 @@ export class SupportHistoryService {
     if (!row) {
       throw new SupportChatPlayerNotFoundError(userId);
     }
-    const windows = buildEmailWindows({
+    const { windows, complete } = buildEmailWindows({
       currentEmail: row.email,
       registeredAt: row.registeredAt,
       changes: await this.emailChanges(userId, row.playerId),
     });
+    if (!complete) {
+      logger.warn(
+        { userId },
+        'support history email windows dropped - email change trail has a gap',
+      );
+    }
     const { customerId } = row;
     const [tickets, chats] = await Promise.all([
       windows.length === 0
@@ -125,20 +168,18 @@ export class SupportHistoryService {
         ? { state: 'not_linked' as const, items: [] }
         : this.section(userId, 'chat', () => this.deps.reader.listChats({ customerId })),
     ]);
-    const history: SupportHistory = { tickets, chats, fetchedAt: new Date().toISOString() };
-    await this.deps.cache.set(key, history, { ttlMs: HISTORY_CACHE_TTL_MS });
-    return history;
+    return { tickets, chats, fetchedAt: new Date().toISOString() };
   }
 
   /**
    * The player's email changes from the audit log, in the order they were written. The audit
-   * subscriber writes each row after the change commits (the event is not on the outbox), so a
-   * lost event is a missing window: that email's tickets do not show.
+   * subscriber writes each row shortly after its change (the event is not on the outbox), so a
+   * row can be lost or land out of order; `buildEmailWindows` drops what that leaves unknown.
    */
-  private async emailChanges(userId: User['id'], playerId: Player['id']): Promise<EmailChange[]> {
+  private async emailChanges(userId: User['id'], playerId: Player['id']) {
     // The audit subject is the player when the account has one, the user otherwise.
     const rows = await this.deps.drizzle.db
-      .select({ before: auditLog.before, at: auditLog.createdAt })
+      .select({ before: auditLog.before, after: auditLog.after, at: auditLog.createdAt })
       .from(auditLog)
       .where(
         and(
@@ -150,10 +191,13 @@ export class SupportHistoryService {
         ),
       )
       .orderBy(asc(auditLog.seq));
-    return rows.map(({ before, at }) => {
-      const email = before?.['email'];
-      return { email: typeof email === 'string' ? email : null, at };
-    });
+    return rows.map(
+      ({ before, after, at }): EmailChange => ({
+        before: emailOf(before),
+        after: emailOf(after),
+        at,
+      }),
+    );
   }
 
   private async section(
