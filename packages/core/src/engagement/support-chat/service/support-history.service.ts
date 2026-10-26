@@ -39,13 +39,15 @@ type EmailChange = { before: string | null; after: string | null; at: Date };
 /**
  * The emails a player held and when, oldest first, the current one last and open-ended. Changes
  * come in the order the audit log wrote them. A window is kept only when the rows on both of
- * its ends agree on the email: each change's replaced email must be the previous change's new
- * one, and the current email the last change's new one. Where they do not, an event was lost or
- * written out of order, and the window whose start is unknown is dropped rather than widened, so
- * a player is shown fewer tickets, never another player's. Nothing records the email an account
- * registered with, so the first window, from registration, is the one link that cannot be
- * checked: it is kept while the chain holds and dropped once anything contradicts it. Only the
- * most recent previous emails are kept. `complete` is false when a window was dropped.
+ * its ends agree on the email and run forward in time: each change's replaced email must be the
+ * previous change's new one, and the current email the last change's new one. Where they do
+ * not, an event was lost, written out of order or stamped by a skewed clock, and the window
+ * whose start is unknown is dropped rather than widened, so a player is shown fewer tickets,
+ * never another player's. Nothing records the email an account registered with, so the first
+ * window, from registration, is the one link that cannot be checked: it is kept while the chain
+ * holds and dropped once anything contradicts it. Only the most recent previous emails are
+ * kept. `complete` is false when a window was dropped; an account with no current email drops
+ * nothing.
  */
 export function buildEmailWindows({
   currentEmail,
@@ -57,41 +59,39 @@ export function buildEmailWindows({
   changes: readonly EmailChange[];
 }) {
   const closed: SupportHistoryEmailWindow[] = [];
-  // `email: null` is the email registered with, which no record holds.
-  let held: { email: string | null; from: Date } | null = { email: null, from: registeredAt };
-  let registrationWindow: SupportHistoryEmailWindow | null = null;
+  let recordedEmail: string | null = null;
+  let heldSince: Date | null = registeredAt;
+  let registrationKept = false;
   let dropped = false;
   let contradicted = false;
   const contradicts = (email: string | null) =>
-    held !== null && held.email !== null && email !== null && held.email !== email;
+    recordedEmail !== null && email !== null && recordedEmail !== email;
 
   for (const { before, after, at } of changes) {
-    if (held && before && (held.email === null || held.email === before)) {
-      const window = { email: before, from: held.from.toISOString(), to: at.toISOString() };
-      registrationWindow = held.email === null ? window : registrationWindow;
-      closed.push(window);
+    const skewed: boolean = heldSince !== null && at < heldSince;
+    if (heldSince && before && !skewed && (recordedEmail === null || recordedEmail === before)) {
+      registrationKept ||= recordedEmail === null;
+      closed.push({ email: before, from: heldSince.toISOString(), to: at.toISOString() });
     } else {
       dropped = true;
-      contradicted ||= contradicts(before);
+      contradicted ||= skewed || contradicts(before);
     }
-    held = after ? { email: after, from: at } : null;
+    recordedEmail = after;
+    heldSince = after && !skewed ? at : null;
   }
 
   const current =
-    held && currentEmail && (held.email === null || held.email === currentEmail)
-      ? { email: currentEmail, from: held.from.toISOString(), to: null }
+    currentEmail && heldSince && (recordedEmail === null || recordedEmail === currentEmail)
+      ? { email: currentEmail, from: heldSince.toISOString(), to: null }
       : null;
-  if (!current) {
+  if (currentEmail && !current) {
     dropped = true;
     contradicted ||= contradicts(currentEmail);
   }
   const previous = closed
-    .filter((window) => !contradicted || window !== registrationWindow)
+    .slice(contradicted && registrationKept ? 1 : 0)
     .slice(-MAX_PREVIOUS_EMAILS);
-  return {
-    windows: current ? [...previous, current] : previous,
-    complete: !dropped && !contradicted,
-  };
+  return { windows: current ? [...previous, current] : previous, complete: !dropped };
 }
 
 // An adapter may throw anything, such as an HTTP client error holding the vendor API key or an
@@ -102,7 +102,7 @@ const reasonOf = (err: unknown): string =>
     : `adapter threw ${err instanceof Error ? err.name : typeof err}`;
 
 const emailOf = (side: Record<string, unknown> | null) =>
-  typeof side?.['email'] === 'string' ? side['email'] : null;
+  typeof side?.['email'] === 'string' && side['email'] ? side['email'] : null;
 
 type Section = { state: 'ok' | 'unavailable'; items: SupportHistoryItem[] };
 

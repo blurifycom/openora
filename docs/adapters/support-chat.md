@@ -113,10 +113,11 @@ Core works out which identities belong to the player and hands them to the reade
   opened.
 - **A gap in the email trail drops windows, never widens them.** The audit rows are written
   shortly after each change, outside the change's transaction, so one can be lost or land out of
-  order. Core keeps a window only when the rows at both its ends agree on the email; where they
-  do not, it drops the window whose start is unknown and logs a warning, so the player shows
-  fewer tickets rather than someone else's. When no window survives, the tickets section
-  answers unavailable, not `no_email`. Nothing records the email an account registered
+  order, or carry a skewed time. Core keeps a window only when the rows at both its ends agree on
+  the email and run forward in time; where they do not, it drops the window whose start is
+  unknown and logs a warning, so the player shows fewer tickets rather than someone else's. The
+  tickets section can then be `ok` and still incomplete: the gap shows in the log only. When no
+  window survives, it answers `unavailable`. Nothing records the email an account registered
   with, so a lost first change cannot be noticed: the window from registration is kept while the
   rest of the trail agrees, and dropped once anything contradicts it.
 - **Chats** are matched by the vendor customer the player is linked to. A player who never
@@ -137,7 +138,9 @@ What a reader must guarantee:
   reduced to its class name.
 
 The answer has a tickets and a chats section, each `ok` with its items newest first, or
-`unavailable` when its read failed, or `no_email` / `not_linked` when there was nothing to ask.
+`unavailable` when its read failed or a gap in the email trail left no window to ask with, or
+`no_email` (the account has no email and its trail has no gap) / `not_linked` when there was
+nothing to ask.
 One section failing never hides the other; the reason goes to the log only. Core caches the whole
 answer for 60 seconds per player and `includeResolved` value, keeping its original `fetchedAt`,
 and limits each admin to 30 calls a minute, cache hits included, so staff clicking around do not

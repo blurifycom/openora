@@ -54,7 +54,6 @@ export const failSupportHistory = (method: Method, reason: string | Error) => {
   state().failures[method] = reason;
 };
 
-// Typed as an item, but its offset timestamp fails the schema, which takes only UTC `Z` times.
 const OFFSET_TIMESTAMP_ITEM: SupportHistoryItem = {
   kind: 'ticket',
   id: 'offset-timestamp',

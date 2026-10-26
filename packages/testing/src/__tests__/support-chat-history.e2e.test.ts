@@ -251,6 +251,27 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     ]);
   });
 
+  it('answers tickets unavailable without asking the vendor when the email change trail contradicts itself', async () => {
+    const p = await newPlayer();
+    await drizzle()
+      .insert(auditLog)
+      .values({
+        actorType: 'player',
+        actorId: p.playerId,
+        action: 'identity.email.changed',
+        resourceType: 'player',
+        resourceId: p.playerId,
+        before: { email: `support-history-old-${randomUUID()}@e2e.test` },
+        after: { email: `support-history-not-current-${randomUUID()}@e2e.test` },
+        hash: randomUUID(),
+      });
+
+    const body = await history(admin, p.userId);
+
+    expect(body.tickets).toEqual({ state: 'unavailable', items: [] });
+    expect(readSupportHistoryCalls().listTickets).toEqual([]);
+  });
+
   it('answers chats not linked without asking the vendor for an unlinked player', async () => {
     const p = await newPlayer();
     answerSupportHistoryWith({ tickets: [item('ticket', '2026-03-01T00:00:00Z')] });

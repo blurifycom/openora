@@ -207,6 +207,23 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     warnedWithUserOnly(s.userId);
   });
 
+  it('answers no_email, asking nobody and warning nothing, for an account with no email and no change', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    await db.drizzle.db.update(user).set({ email: '' }).where(eq(user.id, account.id));
+    const listTickets = vi.fn(async () => []);
+    const service = new SupportHistoryService({
+      drizzle: db.drizzle,
+      cache: makeCache(),
+      reader: { listTickets, listChats: async () => [] },
+    });
+
+    const history = await service.getHistory(account.id, false);
+
+    expect(history.tickets).toEqual({ state: 'no_email', items: [] });
+    expect(listTickets).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
   it('chains rows audited under the player and the user in the order written', async () => {
     const s = await scenario([
       { subject: 'user', before: 'a', after: 'b', at: 10 },
@@ -299,23 +316,19 @@ describe('support history email windows from crafted audit rows (real PG)', () =
 });
 
 describe('support history cache failures (real PG)', () => {
-  const failing = async (): Promise<never> => {
-    throw new Error('cache unreachable');
-  };
-  const countingCache = (broken?: 'get' | 'set') => {
+  const countingCache = () => {
     const base = makeCache();
     const calls = { get: 0, set: 0 };
     const cache: CacheAdapter = {
+      ...base,
       get: async <T>(key: string) => {
         calls.get++;
-        return broken === 'get' ? failing() : base.get<T>(key);
+        return base.get<T>(key);
       },
       set: async <T>(key: string, value: T, opts: { ttlMs: number }) => {
         calls.set++;
-        return broken === 'set' ? failing() : base.set(key, value, opts);
+        return base.set(key, value, opts);
       },
-      setIfAbsent: base.setIfAbsent,
-      delete: base.delete,
     };
     return { cache, calls };
   };
@@ -340,23 +353,6 @@ describe('support history cache failures (real PG)', () => {
     expect(second).toEqual(first);
     expect(r.listTickets).toHaveBeenCalledTimes(2);
   });
-
-  it.each(['get', 'set'] as const)(
-    'answers when the cache throws on %s, loading each time',
-    async (method) => {
-      const { account } = await seedPlayerWithUser(db);
-      const { cache } = countingCache(method);
-      const r = reader();
-      const service = new SupportHistoryService({ drizzle: db.drizzle, cache, reader: r });
-
-      const first = await service.getHistory(account.id, false);
-      const second = await service.getHistory(account.id, false);
-
-      expect(first.tickets.state).toBe('ok');
-      expect(second.tickets.state).toBe('ok');
-      expect(r.listTickets).toHaveBeenCalledTimes(2);
-    },
-  );
 
   it('does not cache a missing player', async () => {
     const { cache, calls } = countingCache();

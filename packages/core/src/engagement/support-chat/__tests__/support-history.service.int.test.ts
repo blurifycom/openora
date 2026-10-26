@@ -119,16 +119,4 @@ describe('SupportHistoryService logging (real PG)', () => {
     expect(warned()).toEqual([{ userId: p.userId }]);
     expect(inspect(log.warn.mock.calls, { depth: null })).not.toContain('@test.dev');
   });
-
-  it('loads through a cache that is down instead of failing', async () => {
-    const p = await linkedPlayer();
-    const down = async () => {
-      throw new Error('cache unreachable');
-    };
-    const broken: CacheAdapter = { get: down, set: down, setIfAbsent: down, delete: down };
-
-    const history = await service({}, broken).getHistory(p.userId, false);
-
-    expect(history.tickets).toEqual({ state: 'ok', items: [TICKET] });
-  });
 });

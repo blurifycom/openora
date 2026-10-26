@@ -87,4 +87,27 @@ describe('buildEmailWindows', () => {
       complete: false,
     });
   });
+
+  it('keeps the closed window but drops the current one when a change lacks the new email', () => {
+    expect(windowsOf('c', [change('a', null, 10)])).toEqual({
+      windows: [{ email: 'a@example.test', from: REGISTERED.toISOString(), to: iso(10) }],
+      complete: false,
+    });
+  });
+
+  it('drops a window whose end was stamped before its start, and the registration window with it', () => {
+    expect(
+      windowsOf('d', [change('a', 'b', 20), change('b', 'c', 10), change('c', 'd', 30)]),
+    ).toEqual({
+      windows: [{ email: 'd@example.test', from: iso(30), to: null }],
+      complete: false,
+    });
+  });
+
+  it('drops nothing for an account with no current email', () => {
+    expect(buildEmailWindows({ currentEmail: '', registeredAt: REGISTERED, changes: [] })).toEqual({
+      windows: [],
+      complete: true,
+    });
+  });
 });
