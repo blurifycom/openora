@@ -13,7 +13,7 @@ import {
 import { DRIZZLE, createLogger, loadExtensions, setErrorReporter } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { supportChatCustomer } from '@openora/core/engagement/schema/support-chat';
-import { adminRole, adminRolePermission } from '@openora/core/iam/schema';
+import { adminRole, adminRoleAssignment, adminRolePermission } from '@openora/core/iam/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import {
@@ -442,6 +442,40 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       expect((await admin.get(historyPath(adminId))).status).toBe(404);
       expect((await admin.get(historyPath('not-a-uuid'))).status).toBe(400);
       expect(readSupportHistoryCalls()).toEqual({ listTickets: [], listChats: [] });
+    });
+
+    it('refuses a non-boolean includeResolved with 400 before the reader is reached', async () => {
+      const p = await newPlayer();
+      for (const value of ['1', 'yes', 'TRUE', '', 'true&includeResolved=false']) {
+        const res = await admin.get(historyPath(p.userId, `?includeResolved=${value}`));
+        expect(res.status, value).toBe(400);
+      }
+      expect(readSupportHistoryCalls().listTickets).toEqual([]);
+    });
+
+    it('stops answering an admin whose role is withdrawn, though the answer is still cached', async () => {
+      const p = await newPlayer();
+      const viewer = await supportViewer();
+      const [assignment] = await drizzle()
+        .select({ roleId: adminRoleAssignment.roleId })
+        .from(adminRoleAssignment)
+        .where(eq(adminRoleAssignment.userId, viewer.userId));
+      expect((await viewer.client.get(historyPath(p.userId))).status).toBe(200);
+
+      const withdrawn = await admin.request('/iam/assignments', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId: viewer.userId, roleId: assignment?.roleId }),
+      });
+      expect(withdrawn.status).toBe(200);
+
+      // The grant cache is purged by an event, and its 10 s TTL is the floor: poll past it,
+      // slowly enough to stay inside the route's own rate limit.
+      await vi.waitFor(
+        async () => expect((await viewer.client.get(historyPath(p.userId))).status).toBe(403),
+        { timeout: 20_000, interval: 1_000 },
+      );
+      expect(readSupportHistoryCalls().listTickets).toHaveLength(1);
     });
 
     it('limits each admin to 30 calls a minute, cache hits included, and leaves another admin alone', async () => {
