@@ -256,6 +256,63 @@ describe('DrizzleAdminWalletReporting.listTransactions (real PG)', () => {
   });
 });
 
+describe('DrizzleAdminWalletReporting.listTransactions search (real PG)', () => {
+  const page = { page: 1, limit: 50 };
+  const found = async (search: string) =>
+    (await reporting.listTransactions({ ...page, search })).rows.map((r) => r.id);
+
+  it('finds a row by id prefix, case-insensitively and with or without dashes', async () => {
+    const w = await seedWallet();
+    const target = await seedTx(w.id);
+    await seedTx(w.id);
+    const hex = target.id.replaceAll('-', '');
+
+    expect(await found(target.id)).toEqual([target.id]);
+    expect(await found(target.id.toUpperCase())).toEqual([target.id]);
+    expect(await found(hex)).toEqual([target.id]);
+    expect(await found(target.id.slice(0, 13))).toContain(target.id);
+  });
+
+  it('matches nothing for input that cannot start a uuid', async () => {
+    const w = await seedWallet();
+    const target = await seedTx(w.id);
+
+    expect(await found(`${target.id}0`)).toEqual([]);
+    expect(await found(`${target.id.slice(0, 8)}xyz`)).toEqual([]);
+    expect(await found('zz')).toEqual([]);
+  });
+
+  it('finds a row by exact provider reference or tx hash, not by a fragment', async () => {
+    const w = await seedWallet();
+    const byRef = await seedTx(w.id, { providerRefId: 'psp-9' });
+    const byHash = await seedTx(w.id, { txHash: '0xabc' });
+    await seedTx(w.id);
+
+    expect(await found('psp-9')).toEqual([byRef.id]);
+    expect(await found('0xabc')).toEqual([byHash.id]);
+    expect(await found('psp-')).toEqual([]);
+    expect(await found('0xab')).toEqual([]);
+  });
+
+  it('counts only the matches in total', async () => {
+    const w = await seedWallet();
+    await seedTx(w.id, { providerRefId: 'psp-9' });
+    await seedTx(w.id);
+
+    const { total } = await reporting.listTransactions({ ...page, search: 'psp-9' });
+
+    expect(total).toBe(1);
+  });
+
+  it('returns every row when no filter is set', async () => {
+    const w = await seedWallet();
+    await seedTx(w.id);
+    await seedTx(w.id);
+
+    expect((await reporting.listTransactions(page)).total).toBe(2);
+  });
+});
+
 describe('DrizzleAdminWalletReporting.getTransaction (real PG)', () => {
   it('returns null when no row matches', async () => {
     expect(await reporting.getTransaction(randomUUID())).toBeNull();
