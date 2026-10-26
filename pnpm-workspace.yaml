@@ -13,13 +13,13 @@ overrides:
   # Security pins (transitive, high-severity - dependency_audit gates at `high`).
   esbuild@<0.28.1: '>=0.28.1' # GHSA-gv7w-rqvm-qjhr (also clears its moderate + low)
   form-data@<4.0.6: '>=4.0.6' # GHSA-hmw2-7cc7-3qxx (via rulesync>fastmcp>...>axios)
-  undici@>=7.23.0 <7.29.0: '>=7.29.0 <8' # GHSA-4cwx-7wf7-3272 + GHSA-vmh5-mc38-953g (via rulesync>fastmcp>undici); stay on the 7.x major fastmcp expects
+  undici@>=7.0.0 <7.30.1: '>=7.30.1 <8' # GHSA-4cwx-7wf7-3272 + GHSA-vmh5-mc38-953g + the 7.30.1 DoS and SRI-bypass fixes (via rulesync>fastmcp>undici); stay on the 7.x major fastmcp expects
   axios@<1.18.0: '>=1.18.0 <2' # GHSA-gcfj-64vw-6mp9
   brace-expansion@>=3.0.0 <5.0.7: '>=5.0.7 <6' # GHSA-3jxr-9vmj-r5cp
-  fast-uri@>=3.0.0 <3.1.6: '>=3.1.6 <4' # GHSA-7p8r-x3mc-p8w7 + GHSA-p8qw-3xw2-6r9p
+  fast-uri@>=3.0.0 <3.1.9: '>=3.1.9 <4' # GHSA-7p8r-x3mc-p8w7 + GHSA-p8qw-3xw2-6r9p + the 3.1.9 scheme and host fixes
   '@hono/node-server@<1.19.15': '>=1.19.15 <2' # GHSA-4jw3-3xr5-hjhm (via rulesync>@modelcontextprotocol/sdk)
-  body-parser@>=2.0.0 <2.3.0: '>=2.3.0 <3' # GHSA-v422-hmwv-36x6
-  ip-address@<10.3.1: '>=10.3.1 <11' # GHSA-mwp4-54f8-5fhr
+  body-parser@>=2.0.0 <2.4.0: '>=2.4.0 <3' # GHSA-v422-hmwv-36x6 + the 2.4.0 trailing-bytes DoS fix
+  ip-address@<10.7.4: '>=10.7.4 <11' # GHSA-mwp4-54f8-5fhr + the 10.7.4 Address6 zone parsing fix
   js-yaml@>=3.0.0 <3.15.2: '>=3.15.2 <4' # GHSA-5p4m-2wfm-xmqj + GHSA-2883-xcg3-v3hh
   js-yaml@>=4.0.0 <4.3.2: '>=4.3.2 <5' # GHSA-5p4m-2wfm-xmqj + GHSA-2883-xcg3-v3hh
   js-yaml@>=5.0.0 <5.2.2: '>=5.2.2 <6' # GHSA-pm4m-ph32-ghv5
@@ -27,6 +27,14 @@ overrides:
   postcss@<8.5.23: '>=8.5.23 <9' # GHSA-r28c-9q8g-f849
   qs@<6.16.0: '>=6.16.0 <7' # GHSA-x5fp-wj9c-mxmx + GHSA-4mjr-xmp4-gh2g
   smol-toml@<1.7.1: '>=1.7.1 <2' # GHSA-7w5x-hrqm-74c2 (via oxfmt/oxlint toolchain)
+  zod@<4.6.6: '>=4.6.6 <5' # memory exhaustion on oversized constrained input (via rulesync)
+  follow-redirects@>=1.16.0 <1.16.1: '>=1.16.1 <2' # cross-origin credential leak (via rulesync>fastmcp>axios)
+  # vite is an auto-installed peer of @vitest/mocker, which overrides do not reach, so the safe
+  # version is also pinned as a root devDependency (same as valibot below).
+  vite@>=8.0.0 <8.1.6: '>=8.1.6 <9' # server.fs.allow bypass and launch-editor fixes (via vitest)
+  '@vitest/mocker@<4.1.12': '>=4.1.12 <5' # mock-registration code injection (via vitest)
+  tinypool@<2.1.2: '>=2.1.2 <3' # prototype-pollution gadget to RCE (via oxfmt)
+  '@modelcontextprotocol/sdk@<1.32.0': '>=1.32.0 <2' # OAuth credential leak, bearer auth, request size DoS (via rulesync)
   # valibot is an auto-installed peer of @valibot/to-json-schema, which overrides do not reach,
   # so the safe version is also pinned as a root devDependency to satisfy that peer.
   valibot: '>=1.4.2 <2' # GHSA-8fgm-h9v8-8rgh (via rulesync>@valibot/to-json-schema)
