@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- Outcome and scope in 1-2 sentences. Bare ticket key, no URLs. -->
+<!-- 3-5 short bullets, one per change, in plain sentences a reviewer reads in seconds: what the change does, not how. Details go in Why and Risks. Bare ticket key, no URLs. -->
 
 ## Why
 
