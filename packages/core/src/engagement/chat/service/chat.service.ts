@@ -101,6 +101,7 @@ import {
   ChatPlayerMutedError,
   ChatSystemMessageProtectedError,
 } from './errors/chat-moderation.errors.js';
+import { ChatAvatarUrlSchema } from '../contract/index.js';
 import type {
   AdminRoomSortBy,
   BlockedUserSortBy,
@@ -367,22 +368,39 @@ function isGlobalRoom(room: { slug: string }) {
   return room.slug === GLOBAL_CHAT_ROOM_ID;
 }
 
-function toPublicMessage(record: typeof chatMessage.$inferSelect): ChatMessage | null {
+// The avatar is read live off the author's account, never copied onto the row, so a changed
+// picture shows on old messages too and a client never fetches one profile per author.
+// An image that is not a URL shows as no avatar instead of failing the whole listing.
+function toAvatarUrl(image: string | null): string | null {
+  return ChatAvatarUrlSchema.safeParse(image).data ?? null;
+}
+
+function toPublicMessage(
+  record: typeof chatMessage.$inferSelect,
+  avatarUrl: string | null,
+): ChatMessage | null {
   if (record.type === 'system') {
     return toSystemMessage(record);
   }
-  return toMessage(record) as ChatMessage;
+  return { ...toMessage(record), avatarUrl: toAvatarUrl(avatarUrl) } as ChatMessage;
 }
 
 // One unreadable system message drops out of the page; the rest of the history is still
 // served. Failing the whole listing would take a room's chat down over a single old row.
-function toPublicMessages(records: (typeof chatMessage.$inferSelect)[]): ChatMessage[] {
-  return records.map(toPublicMessage).filter((message) => message !== null);
+function toPublicMessages(
+  rows: { message: typeof chatMessage.$inferSelect; avatarUrl: string | null }[],
+): ChatMessage[] {
+  return rows
+    .map(({ message, avatarUrl }) => toPublicMessage(message, avatarUrl))
+    .filter((message) => message !== null);
 }
 
 // The message this service just inserted, which is always a `user` row.
-function toSentMessage(record: typeof chatMessage.$inferSelect): ChatMessage {
-  return toMessage(record) as ChatMessage;
+function toSentMessage(
+  record: typeof chatMessage.$inferSelect,
+  avatarUrl: string | null,
+): ChatMessage {
+  return { ...toMessage(record), avatarUrl: toAvatarUrl(avatarUrl) } as ChatMessage;
 }
 
 // A system message this service just wrote: its metadata came in typed by the contract, so
@@ -583,13 +601,16 @@ export class ChatService {
     return new Map(summaries.map((s) => [s.userId, s.username]));
   }
 
-  private async resolveUsername(userId: User['id'], fallback: string) {
+  private async resolveAuthor(userId: User['id'], fallback: string) {
     const [row] = await this.drizzle.db
-      .select({ username: user.username })
+      .select({ username: user.username, avatarUrl: user.image })
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
-    return row?.username.trim() || fallback || 'anonymous';
+    return {
+      username: row?.username.trim() || fallback || 'anonymous',
+      avatarUrl: row?.avatarUrl ?? null,
+    };
   }
 
   /** Throws ChatRoomNotFoundError or ChatRoomNotMemberError; returns the room on success. */
@@ -1473,8 +1494,9 @@ export class ChatService {
     }
     await this.appendExcludedSendersFilter(conditions, viewerId);
     const messages = await this.drizzle.db
-      .select()
+      .select({ message: chatMessage, avatarUrl: user.image })
       .from(chatMessage)
+      .leftJoin(user, eq(user.id, chatMessage.userId))
       .where(and(...conditions))
       .orderBy(desc(chatMessage.createdAt))
       .limit(limit);
@@ -1529,9 +1551,10 @@ export class ChatService {
     );
     const [rows, [{ n }]] = await Promise.all([
       this.drizzle.db
-        .select({ message: chatMessage, playerId: player.id })
+        .select({ message: chatMessage, playerId: player.id, avatarUrl: user.image })
         .from(chatMessage)
         .leftJoin(player, eq(player.userId, chatMessage.userId))
+        .leftJoin(user, eq(user.id, chatMessage.userId))
         .where(where)
         .orderBy(desc(chatMessage.createdAt))
         .limit(limit)
@@ -1543,8 +1566,8 @@ export class ChatService {
         .where(where),
     ]);
     return {
-      items: rows.flatMap(({ message, playerId }) => {
-        const mapped = toPublicMessage(message);
+      items: rows.flatMap(({ message, playerId, avatarUrl }) => {
+        const mapped = toPublicMessage(message, avatarUrl);
         return mapped ? [{ ...mapped, playerId }] : [];
       }),
       total: Number(n),
@@ -1891,9 +1914,9 @@ export class ChatService {
 
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
-    const resolvedUsername = await this.resolveUsername(userId, username);
+    const author = await this.resolveAuthor(userId, username);
     const record = await this.insertUserMessage(
-      { roomId, userId, username: resolvedUsername, content: safeContent, attachment },
+      { roomId, userId, username: author.username, content: safeContent, attachment },
       throttle,
       room,
     ).catch(async (err: unknown) => {
@@ -1915,7 +1938,7 @@ export class ChatService {
       userId,
     });
 
-    const message = toSentMessage(record);
+    const message = toSentMessage(record, author.avatarUrl);
     publishChatEvent(this.transport, roomId, message);
     emitMentions({
       events: this.events,
@@ -1970,8 +1993,9 @@ export class ChatService {
     ];
     await this.appendExcludedSendersFilter(conditions, viewerId);
     const messages = await this.drizzle.db
-      .select()
+      .select({ message: chatMessage, avatarUrl: user.image })
       .from(chatMessage)
+      .leftJoin(user, eq(user.id, chatMessage.userId))
       .where(and(...conditions))
       .orderBy(desc(chatMessage.createdAt))
       .limit(limit);
@@ -2005,9 +2029,9 @@ export class ChatService {
     const throttle = await this.sendThrottle({ userId, roomId: null, reach: 'global', slowMode });
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
-    const resolvedUsername = await this.resolveUsername(userId, username);
+    const author = await this.resolveAuthor(userId, username);
     const record = await this.insertUserMessage(
-      { roomId: null, userId, username: resolvedUsername, content: safeContent, attachment },
+      { roomId: null, userId, username: author.username, content: safeContent, attachment },
       throttle,
     );
 
@@ -2017,7 +2041,7 @@ export class ChatService {
       userId,
     });
 
-    const message = toSentMessage(record);
+    const message = toSentMessage(record, author.avatarUrl);
     publishChatEvent(this.transport, null, message);
     emitMentions({
       events: this.events,

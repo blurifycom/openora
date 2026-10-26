@@ -15,7 +15,13 @@ function toTombstone(record: typeof chatMessage.$inferSelect): ChatMessage | nul
     const message = toSystemMessage(record);
     return message && { ...message, content: '', isDeleted: true };
   }
-  return { ...toMessage(record), content: '', attachment: null, isDeleted: true } as ChatMessage;
+  return {
+    ...toMessage(record),
+    content: '',
+    attachment: null,
+    avatarUrl: null,
+    isDeleted: true,
+  } as ChatMessage;
 }
 
 export class ChatMessageModerationService {

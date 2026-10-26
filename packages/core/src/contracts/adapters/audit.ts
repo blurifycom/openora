@@ -88,7 +88,8 @@ export type DirectAuditAction =
   | 'wallet.withdrawal.held'
   | 'chat.cooldown.created'
   | 'chat.cooldown.lifted'
-  | 'chat.cooldown.expired';
+  | 'chat.cooldown.expired'
+  | 'support_chat.customer.linked';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain

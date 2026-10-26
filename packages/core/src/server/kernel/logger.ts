@@ -1,3 +1,4 @@
+import { isSpanContextValid, trace } from '@opentelemetry/api';
 import { pino, levels, type Logger } from 'pino';
 import { reportError } from './error-reporter.js';
 import { getCurrentRequestContext } from './request-context.js';
@@ -24,12 +25,21 @@ function levelAndDestination(): [string, typeof DISCARD | undefined] {
   return level === 'silent' ? ['info', DISCARD] : [level, undefined];
 }
 
+export function activeTraceLogFields(): Record<string, string> {
+  const spanContext = trace.getActiveSpan()?.spanContext();
+  if (!spanContext || !isSpanContextValid(spanContext)) {
+    return {};
+  }
+  return { trace_id: spanContext.traceId, span_id: spanContext.spanId };
+}
+
 export function createLogger(name: string): Logger {
   const [level, destination] = levelAndDestination();
   return pino(
     {
       name,
       level,
+      mixin: activeTraceLogFields,
       hooks: {
         logMethod(inputArgs, method, level) {
           method.apply(this, inputArgs);

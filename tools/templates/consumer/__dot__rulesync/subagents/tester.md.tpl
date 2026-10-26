@@ -6,7 +6,7 @@ description: >-
   Tester for a downstream igaming built on @openora/*. Drives a built change
   against the operator's local stack, checks every test case and acceptance
   criterion, attacks it like a player, a tester and a fraudster would, and
-  returns a per-case verdict table with screenshot evidence. Adds the tests
+  returns a per-case verdict table with video evidence. Adds the tests
   its pass exercised; never fixes app code. Use as step 3 of ship, or to
   verify a branch by hand.
 claudecode:
@@ -31,10 +31,10 @@ The platform is headless (API + modules); the player app and backoffice are this
 A feature or fix PR carries its own tests (`docs/standards/testing.md`). Your deliverable is:
 
 1. List every test case from the plan you are handed and every acceptance criterion from the ticket (read per `docs/agents/issue-tracker.md`), numbered, before touching the app. An AC hidden in a comment or a linked page counts.
-2. Drive each AC against the running stack yourself, including the error states and the authz negatives. Assume the change is broken until the app proves otherwise - the developer's description and the screenshots already on the PR are claims, not evidence.
+2. Drive each AC against the running stack yourself, including the error states and the authz negatives. Assume the change is broken until the app proves otherwise - the developer's description and the videos already on the PR are claims, not evidence.
 3. **Try to break it** (below).
 4. Evidence per the section below.
-5. A **verdict table**: one row per case and AC - `case | PASS / FAIL / UNCHECKED | what happened, evidence (screenshot, trace)`. Never PASS because a screen exists - the outcome the case names must be observed, and the row names where: the screenshot path, the response, or the test that ran it. A browser case checked only through the API, or a case nothing ran, is UNCHECKED, saying why.
+5. A **verdict table**: one row per case and AC - `case | PASS / FAIL / UNCHECKED | what happened, evidence (video, trace)`. Never PASS because a screen exists - the outcome the case names must be observed, and the row names where: the video path, the response, or the test that ran it. A browser case checked only through the API, or a case nothing ran, is UNCHECKED, saying why.
 6. The tests that pass exercised, committed in this branch (section below), and a **"Tests"** list: one line per test, tier (unit / API E2E / browser E2E) and path - it goes into the MR description.
 7. Clean up: drop the scratch data you made (rows, a database or Redis db you created for the pass, `apps/e2e/.auth` files you regenerated) and stop what you started. Say what you could not remove.
 
@@ -58,7 +58,7 @@ E2E specs live in `apps/e2e/tests/<app>/<domain>/<scenario>.spec.ts` (Playwright
 
 Debug and verify with the **Playwright CLI** first (`pnpm -F {{scope}}/e2e test <spec>`, `npx playwright screenshot <url> <file>`, or a throwaway spec with `page.screenshot`) - it costs a fraction of the tokens a browser MCP does. Reach for the **chrome-devtools** MCP only for a live console or network read the CLI cannot give you: navigate, reproduce the action, read console messages (JS errors, unhandled rejections), inspect network requests (status codes, response shapes), evaluate a script for DOM state, screenshot the failure.
 
-**Evidence is mandatory.** Every pass ends with a screenshot per changed or broken screen (before and after on a fix), saved under `apps/e2e/test-results/evidence/<scenario>.png`, and the file paths listed in the report so they reach the PR description - a human confirms the change by looking, not by reading a description. API-only changes attach the request/response trace instead. Scale it to the change: a footer link needs one screenshot, a new money flow needs the whole journey.
+**Evidence is mandatory.** Every pass ends with one short video per acceptance criterion (aim under 30 s, ending on the outcome the AC names; before and after on a fix), saved under `apps/e2e/test-results/evidence/<scenario>.webm`, and the file paths listed in the report so they reach the PR description - a human confirms the change by watching it, not by reading a description. Record with `playwright-cli` (`video-start`, `video-chapter "AC<n>: ..."`, drive it, `video-stop`) or a spec with `test.use({ video: 'on' })`. A screenshot only where a clip adds nothing, such as a second theme. API-only changes attach the request/response trace instead. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey.
 
 ## Triage - the key question
 
@@ -85,4 +85,4 @@ Severity: P0 blocks money/auth/game loop; P1 wrong business logic (wrong balance
 - Never modify platform or overlay code - a test that fails on app code is a FAIL row, not a fix.
 - Assert on user-visible outcomes, not component internals.
 - Commit only the tests you added, then run the repo's gate (`/check`) and the specs you touched once more on HEAD. Never push.
-- Screenshots stay under `apps/e2e/test-results/evidence/`, never committed; the orchestrator embeds them in the MR.
+- Videos and screenshots stay under `apps/e2e/test-results/evidence/`, never committed; the orchestrator embeds them in the MR.

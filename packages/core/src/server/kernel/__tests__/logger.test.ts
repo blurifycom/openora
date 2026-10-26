@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createLogger } from '../logger.js';
+import { TraceFlags, trace } from '@opentelemetry/api';
+import { activeTraceLogFields, createLogger } from '../logger.js';
 import { setErrorReporter } from '../error-reporter.js';
 
 afterEach(() => {
   setErrorReporter(undefined);
+  vi.restoreAllMocks();
 });
 
 describe('createLogger error-reporter hook', () => {
@@ -60,5 +62,35 @@ describe('createLogger error-reporter hook', () => {
 
   it('is inert when no reporter is bound', () => {
     expect(() => createLogger('test').error({ err: new Error('x') }, 'no reporter')).not.toThrow();
+  });
+});
+
+describe('activeTraceLogFields', () => {
+  it('adds the active span trace and span ids', () => {
+    const traceId = '4bf92f3577b34da6a3ce929d0e0e4736';
+    const spanId = '00f067aa0ba902b7';
+    vi.spyOn(trace, 'getActiveSpan').mockReturnValue(
+      trace.wrapSpanContext({ traceId, spanId, traceFlags: TraceFlags.SAMPLED }),
+    );
+
+    expect(activeTraceLogFields()).toEqual({ trace_id: traceId, span_id: spanId });
+  });
+
+  it('adds nothing outside a span', () => {
+    vi.spyOn(trace, 'getActiveSpan').mockReturnValue(undefined);
+
+    expect(activeTraceLogFields()).toEqual({});
+  });
+
+  it('adds nothing for an invalid span context', () => {
+    vi.spyOn(trace, 'getActiveSpan').mockReturnValue(
+      trace.wrapSpanContext({
+        traceId: '0'.repeat(32),
+        spanId: '0'.repeat(16),
+        traceFlags: TraceFlags.NONE,
+      }),
+    );
+
+    expect(activeTraceLogFields()).toEqual({});
   });
 });

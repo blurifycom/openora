@@ -258,6 +258,7 @@ describe('ChatService realtime wiring', () => {
     roomId: 'r1',
     userId: 'u1',
     username: 'alice',
+    avatarUrl: null,
     content: 'hi',
     type: 'user',
     metadata: null,
@@ -336,6 +337,7 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
     roomId: null,
     userId: 'sender',
     username: 'alice',
+    avatarUrl: null,
     content: 'hi',
     type: 'user',
     metadata: null,
@@ -430,6 +432,19 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
       roomId: null,
       userId: account.id,
     });
+  });
+
+  it("carries the author's avatar so a client needs no profile fetch per author", async () => {
+    const { svc } = makeService();
+    const account = await seedUser(db, { username: 'alice', image: 'https://cdn.test/a.png' });
+
+    const msg = await svc.sendGlobalMessage({
+      userId: account.id,
+      username: 'alice',
+      content: 'hi',
+    });
+
+    expect(msg).toMatchObject({ avatarUrl: 'https://cdn.test/a.png' });
   });
 
   it('falls back to the passed name, then anonymous, when no user row exists', async () => {
@@ -555,6 +570,36 @@ describe('ChatService message reads (real PG)', () => {
     const messages = await svc.getGlobalMessages();
 
     expect(messages.map((m) => m.id)).toEqual([newer.id, older.id]);
+  });
+
+  it("reads each author's current avatar, null when the author has none, a non-URL one or no account", async () => {
+    const { svc } = makeService();
+    const withAvatar = await seedUser(db, { username: 'alice', image: 'https://cdn.test/old.png' });
+    const withoutAvatar = await seedUser(db, { username: 'bob' });
+    const withRelativeAvatar = await seedUser(db, { username: 'carol', image: '/avatar.png' });
+    await seedMessage({
+      userId: withRelativeAvatar.id,
+      createdAt: new Date('2026-01-04T00:00:00.000Z'),
+    });
+    await seedMessage({ userId: withAvatar.id, createdAt: new Date('2026-01-03T00:00:00.000Z') });
+    await seedMessage({
+      userId: withoutAvatar.id,
+      createdAt: new Date('2026-01-02T00:00:00.000Z'),
+    });
+    await seedMessage({ userId: randomUUID(), createdAt: new Date('2026-01-01T00:00:00.000Z') });
+    await db.drizzle.db
+      .update(user)
+      .set({ image: 'https://cdn.test/new.png' })
+      .where(eq(user.id, withAvatar.id));
+
+    const messages = await svc.getGlobalMessages();
+
+    expect(messages.map((m) => (m.type === 'user' ? m.avatarUrl : undefined))).toEqual([
+      null,
+      'https://cdn.test/new.png',
+      null,
+      null,
+    ]);
   });
 
   it('serves a legacy rain message whose metadata amounts exceed the current decimal scale', async () => {

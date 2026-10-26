@@ -728,6 +728,26 @@
       "types": "./dist/promo/gamification/seed/index.d.ts",
       "import": "./dist/promo/gamification/seed/index.js",
       "default": "./dist/promo/gamification/seed/index.js"
+    },
+    "./engagement/contracts/support-chat": {
+      "types": "./dist/engagement/support-chat/contract/index.d.ts",
+      "import": "./dist/engagement/support-chat/contract/index.js",
+      "default": "./dist/engagement/support-chat/contract/index.js"
+    },
+    "./engagement/schema/support-chat": {
+      "types": "./dist/engagement/support-chat/schema/index.d.ts",
+      "import": "./dist/engagement/support-chat/schema/index.js",
+      "default": "./dist/engagement/support-chat/schema/index.js"
+    },
+    "./engagement/plugins/support-chat": {
+      "types": "./dist/engagement/support-chat/plugin.d.ts",
+      "import": "./dist/engagement/support-chat/plugin.js",
+      "default": "./dist/engagement/support-chat/plugin.js"
+    },
+    "./engagement/migrate/support-chat": {
+      "types": "./dist/engagement/support-chat/migrate.d.ts",
+      "import": "./dist/engagement/support-chat/migrate.js",
+      "default": "./dist/engagement/support-chat/migrate.js"
     }
   },
   "publishConfig": {
@@ -744,6 +764,7 @@
   },
   "dependencies": {
     "@hono/node-server": "2.1.5",
+    "@opentelemetry/api": "1.9.1",
     "@orpc/client": "1.15.7",
     "@orpc/contract": "1.15.7",
     "@orpc/openapi": "1.15.7",
@@ -778,7 +799,7 @@
     "jsdom": "29.1.1",
     "typescript": "6.0.3",
     "vite-tsconfig-paths": "6.1.1",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   },
   "peerDependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
