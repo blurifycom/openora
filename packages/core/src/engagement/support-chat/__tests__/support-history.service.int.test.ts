@@ -127,7 +127,7 @@ describe('SupportHistoryService logging (real PG)', () => {
     expect(inspect(log.warn.mock.calls, { depth: null })).not.toContain(secret);
   });
 
-  it('answers tickets unavailable and warns with the user id alone when a gap in the email change trail leaves no window', async () => {
+  it('trusts no window when the email trail is inconsistent: tickets unavailable, nobody asked, the user id alone logged', async () => {
     const p = await linkedPlayer();
     await new AuditService(db.drizzle, makeEventBus(), makeIdentityReader()).record({
       actorType: 'player',
@@ -188,6 +188,8 @@ describe('SupportHistoryService logging (real PG)', () => {
     'javascript:alert(1)',
     'data:text/html,<script>alert(1)</script>',
     'http://agent.example.test/1',
+    'https:../players/1',
+    'https:evil.example',
   ])('answers a section unavailable for an item linking to %s', async (url) => {
     const p = await linkedPlayer();
 
@@ -199,4 +201,18 @@ describe('SupportHistoryService logging (real PG)', () => {
     expect(history.tickets).toEqual({ state: 'unavailable', items: [] });
     expect(warned()).toEqual([{ userId: p.userId, section: 'ticket', reason: 'malformed answer' }]);
   });
+
+  it.each(['https://agent.example.test/ticket/1', 'HTTPS://agent.example.test'])(
+    'accepts an absolute https link as given (%s)',
+    async (url) => {
+      const p = await linkedPlayer();
+
+      const history = await service({ listTickets: async () => [{ ...TICKET, url }] }).getHistory(
+        p.userId,
+        false,
+      );
+
+      expect(history.tickets).toEqual({ state: 'ok', items: [{ ...TICKET, url }] });
+    },
+  );
 });
