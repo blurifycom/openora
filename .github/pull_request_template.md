@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- Outcome and scope in 1-2 sentences. Bare ticket key, no URLs. -->
+<!-- Up to 10 short bullets (aim for 5 or fewer), one per change (a one-change PR gets one bullet), in plain sentences a reviewer reads in seconds: what the change does, not how. Details go in Why and Risks. Bare ticket key, no URLs. -->
 
 ## Why
 
