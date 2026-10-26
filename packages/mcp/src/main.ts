@@ -9,6 +9,9 @@ import { buildDepGraph, impactOf, type DepGraph } from './dep-graph.js';
 import { classifyIntent, type IntentKind } from './intent.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const ownPackage: { version: string } = JSON.parse(
+  readFileSync(join(here, '..', 'package.json'), 'utf8'),
+);
 
 type CatalogModule = {
   id: string;
@@ -158,7 +161,7 @@ function withCatalog(fn: (catalog: Catalog) => string) {
 
 const server = new McpServer({
   name: 'oss',
-  version: '0.1.0',
+  version: ownPackage.version,
 });
 
 server.registerTool(
