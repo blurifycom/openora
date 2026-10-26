@@ -149,28 +149,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(log.warn).not.toHaveBeenCalled();
   });
 
-  it('gives the current email no window starting before it was held when the last change was lost', async () => {
-    // a -> b audited, b -> cur lost.
-    const s = await scenario([{ before: 'a', after: 'b', at: 10 }]);
-    expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
-    warnedWithUserOnly(s.userId);
-  });
-
-  it('trusts no window when a lost middle change breaks the trail', async () => {
-    // e3 -> e4 lost.
-    const s = await scenario([
-      { before: 'e1', after: 'e2', at: 1 },
-      { before: 'e2', after: 'e3', at: 2 },
-      { before: 'e4', after: 'e5', at: 3 },
-      { before: 'e5', after: 'cur', at: 4 },
-    ]);
-    expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
-    warnedWithUserOnly(s.userId);
-  });
-
-  it('gives the replaced email no window from registration when the rows were written out of order', async () => {
+  it('trusts no window when the rows were written out of order, read in write order not time order', async () => {
     const s = await scenario([
       { before: 'b', after: 'cur', at: 20 },
       { before: 'a', after: 'b', at: 10 },
@@ -180,7 +159,16 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     warnedWithUserOnly(s.userId);
   });
 
-  it('trusts no window for a duplicated row', async () => {
+  it('counts a redelivered row, same emails and same change time, once', async () => {
+    const s = await scenario([
+      { before: 'a', after: 'cur', at: 10, changedAt: 9 },
+      { before: 'a', after: 'cur', at: 11, changedAt: 9 },
+    ]);
+    expect(s.asked).toEqual([[s.win('a', 'registered', 9), s.win('cur', 9, null)]]);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('trusts no window for a repeated legacy row, which cannot be told from a real repeat', async () => {
     const s = await scenario([
       { before: 'a', after: 'cur', at: 10 },
       { before: 'a', after: 'cur', at: 11 },
@@ -189,7 +177,6 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
     warnedWithUserOnly(s.userId);
   });
-
   it('keeps contiguous windows for a change to the same email', async () => {
     const s = await scenario([{ before: 'cur', after: 'cur', at: 10 }]);
     expect(s.asked).toEqual([[s.win('cur', 'registered', 10), s.win('cur', 10, null)]]);
@@ -212,7 +199,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     warnedWithUserOnly(s.userId);
   });
 
-  it('answers tickets unavailable, asking nobody, when every row lacks an email', async () => {
+  it('trusts no window when no row holds a usable email', async () => {
     const s = await scenario([
       { before: {}, after: {}, at: 10 },
       { before: { email: 5 }, after: { email: null }, at: 11 },
@@ -238,50 +225,6 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(history.tickets).toEqual({ state: 'no_email', items: [] });
     expect(listTickets).not.toHaveBeenCalled();
     expect(log.warn).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    [
-      'a time that falls back',
-      [
-        ['a', 'b', 10],
-        ['b', 'c', 5],
-        ['c', 'cur', 7],
-      ],
-    ],
-    [
-      'a time that jumps ahead',
-      [
-        ['x', 'a', 10],
-        ['a', 'b', 30],
-        ['b', 'cur', 20],
-      ],
-    ],
-    [
-      'two changes at the same time',
-      [
-        ['a', 'b', 10],
-        ['b', 'cur', 10],
-      ],
-    ],
-    ['a change at registration', [['a', 'cur', 0]]],
-    ['a change before registration', [['a', 'cur', -5]]],
-  ] as const)('trusts no window for %s', async (_fault, trail) => {
-    const s = await scenario(trail.map(([before, after, at]) => ({ before, after, at })));
-    expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
-    warnedWithUserOnly(s.userId);
-  });
-
-  it('trusts no window for a missing new email beside a reordering', async () => {
-    const s = await scenario([
-      { before: 'b', after: 'cur', at: 20 },
-      { before: 'a', at: 21 },
-      { before: 'b', after: 'cur', at: 22 },
-    ]);
-    expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
-    warnedWithUserOnly(s.userId);
   });
 
   it('times each window by the change time the row carries, however late the row was written', async () => {
@@ -348,7 +291,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(log.warn).not.toHaveBeenCalled();
   });
 
-  it('gives no window from registration when rows of both subjects are interleaved out of order', async () => {
+  it('trusts no window when rows of both subjects are interleaved out of order', async () => {
     const s = await scenario([
       { subject: 'player', before: 'b', after: 'cur', at: 20 },
       { subject: 'user', before: 'a', after: 'b', at: 10 },

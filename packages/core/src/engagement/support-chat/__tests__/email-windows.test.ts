@@ -64,6 +64,35 @@ describe('buildEmailWindows', () => {
     });
   });
 
+  it('counts a redelivered row, same emails and same carried change time, once', () => {
+    const redelivered = { ...change('a', 'b', 10), timedByChange: true };
+
+    expect(windowsOf('b', [redelivered, { ...redelivered }])).toEqual({
+      windows: [
+        { email: 'a@example.test', from: REGISTERED.toISOString(), to: iso(10) },
+        { email: 'b@example.test', from: iso(10), to: null },
+      ],
+      complete: true,
+    });
+  });
+
+  it.each([
+    ['a repeated row timed by its write time', [change('a', 'b', 10), change('a', 'b', 10)]],
+    [
+      'a repeated row with another change time',
+      [
+        { ...change('a', 'b', 10), timedByChange: true },
+        { ...change('a', 'b', 11), timedByChange: true },
+      ],
+    ],
+    [
+      'a repeat of a row timed by its write time',
+      [change('a', 'b', 10), { ...change('a', 'b', 10), timedByChange: true }],
+    ],
+  ])('trusts no window for %s', (_fault, changes) => {
+    expect(windowsOf('b', changes)).toEqual(UNTRUSTED);
+  });
+
   it('answers no window and no gap for an account with no email and no change', () => {
     expect(windowsOf('', [])).toEqual({ windows: [], complete: true });
   });

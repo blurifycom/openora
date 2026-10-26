@@ -35,7 +35,23 @@ const STATUSES_OF: Record<SupportHistoryItem['kind'], ReadonlySet<SupportHistory
 
 const SupportHistoryItemsSchema = z.array(SupportHistoryItemSchema);
 
-type EmailChange = { before: string | null; after: string | null; at: Date };
+// `timedByChange` when `at` is the change time the event carried, not the row's write time.
+type EmailChange = {
+  before: string | null;
+  after: string | null;
+  at: Date;
+  timedByChange?: boolean;
+};
+
+// A redelivered event writes its row again: the same emails and the same carried change time.
+// A row timed by its write time cannot be told from a real repeat, so it is never collapsed.
+const isRedelivery = (change: EmailChange, previous: EmailChange | undefined) =>
+  previous !== undefined &&
+  change.timedByChange === true &&
+  previous.timedByChange === true &&
+  change.before === previous.before &&
+  change.after === previous.after &&
+  change.at.getTime() === previous.at.getTime();
 
 /**
  * The emails a player held and when, oldest first, the current one last and open-ended. The
@@ -44,8 +60,9 @@ type EmailChange = { before: string | null; after: string | null; at: Date };
  * registration, and the last new email is the current one. Anything else means an event was
  * lost, duplicated, reordered or mis-stamped, and no window is returned (`complete: false`), so a
  * player is shown no tickets rather than another player's. Nothing records the email an account
- * registered with, so a lost first change cannot be noticed. Only the most recent previous
- * emails are kept.
+ * registered with, so a lost first change cannot be noticed. A row repeating the one before it,
+ * change time included, is a redelivery and counts once. Only the most recent previous emails are
+ * kept.
  */
 export function buildEmailWindows({
   currentEmail,
@@ -60,7 +77,8 @@ export function buildEmailWindows({
   const closed: SupportHistoryEmailWindow[] = [];
   let from = registeredAt;
   let lastNewEmail: string | null = null;
-  for (const { before, after, at } of changes) {
+  const distinct = changes.filter((change, i) => !isRedelivery(change, changes[i - 1]));
+  for (const { before, after, at } of distinct) {
     if (!before || !after || at <= from || (lastNewEmail !== null && before !== lastNewEmail)) {
       return untrusted;
     }
@@ -68,7 +86,7 @@ export function buildEmailWindows({
     lastNewEmail = after;
     from = at;
   }
-  if ((lastNewEmail ?? currentEmail) !== currentEmail) {
+  if (lastNewEmail !== null && lastNewEmail !== currentEmail) {
     return untrusted;
   }
   if (!currentEmail) {
@@ -143,10 +161,7 @@ export class SupportHistoryService {
       changes: await this.emailChanges(userId, row.playerId),
     });
     if (!complete) {
-      logger.warn(
-        { userId },
-        'support history email windows dropped - email change trail has a gap',
-      );
+      logger.warn({ userId }, 'support history email trail inconsistent - no window built');
     }
     const { customerId } = row;
     const [tickets, chats] = await Promise.all([
@@ -183,13 +198,15 @@ export class SupportHistoryService {
         ),
       )
       .orderBy(asc(auditLog.seq));
-    return rows.map(
-      ({ before, after, at }): EmailChange => ({
+    return rows.map(({ before, after, at }): EmailChange => {
+      const changedAt = changedAtOf(after);
+      return {
         before: emailOf(before),
         after: emailOf(after),
-        at: changedAtOf(after) ?? at,
-      }),
-    );
+        at: changedAt ?? at,
+        timedByChange: changedAt !== null,
+      };
+    });
   }
 
   private async section(

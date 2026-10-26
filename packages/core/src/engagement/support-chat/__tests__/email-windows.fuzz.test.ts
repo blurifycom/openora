@@ -13,7 +13,7 @@ const rng = (seed: number) => () => {
 type Row = { before: string | null; after: string | null; at: Date };
 
 describe('buildEmailWindows against corrupted audit trails', () => {
-  it('never reports a window wider than the time the player held that email', () => {
+  it('trusts no window for a corrupted trail, and none wider than the truth for an intact one', () => {
     const random = rng(20260101);
     const pick = (n: number) => Math.floor(random() * n);
     for (let trial = 0; trial < 5000; trial++) {
@@ -28,12 +28,10 @@ describe('buildEmailWindows against corrupted audit trails', () => {
       }
       held.set(email(count), { from: day(10 * count), to: null });
 
-      const structural = random() < 0.5;
-      // A lost first change cannot be noticed (nothing records the registration email).
+      const original = JSON.stringify(rows);
       for (let k = pick(4); k > 0; k--) {
         const i = pick(rows.length);
-        // A row missing its new email beside a reordering is a compound fault: see the report.
-        const kind = structural ? pick(3) : 3 + pick(2);
+        const kind = pick(5);
         switch (kind) {
           case 0:
             rows.splice(i, 1);
@@ -57,14 +55,18 @@ describe('buildEmailWindows against corrupted audit trails', () => {
       if (!rows.some((row) => row.before === email(0) || row.after === email(1))) {
         continue;
       }
-      const { windows } = buildEmailWindows({
+      const result = buildEmailWindows({
         currentEmail: email(count),
         registeredAt: REGISTERED,
         changes: rows,
       });
-      for (const w of windows) {
+      const note = JSON.stringify({ trial, rows, result });
+      if (JSON.stringify(rows) !== original) {
+        expect(result, note).toEqual({ windows: [], complete: false });
+        continue;
+      }
+      for (const w of result.windows) {
         const truth = held.get(w.email)!;
-        const note = JSON.stringify({ trial, rows, w });
         expect(Date.parse(w.from), note).toBeGreaterThanOrEqual(truth.from.getTime());
         expect(w.to === null ? Infinity : Date.parse(w.to), note).toBeLessThanOrEqual(
           truth.to?.getTime() ?? Infinity,
