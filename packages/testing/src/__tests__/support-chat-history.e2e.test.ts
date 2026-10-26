@@ -256,6 +256,73 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     ]);
   });
 
+  it('windows two real email changes by the times their events carried, each no later than its audit write', async () => {
+    const p = await newPlayer();
+    const second = `support-history-second-${randomUUID()}@e2e.test`;
+    const third = `support-history-third-${randomUUID()}@e2e.test`;
+    await changeEmail(p.client, second);
+    const first = await emailChangeAuditedAt('player', p.playerId);
+    const again = await asPlayer(testApp.app, { email: second, password: PASSWORD });
+    await changeEmail(again, third);
+    const rows = await vi.waitFor(async () => {
+      const found = await drizzle()
+        .select({ after: auditLog.after, createdAt: auditLog.createdAt })
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.action, 'identity.email.changed'),
+            eq(auditLog.resourceType, 'player'),
+            eq(auditLog.resourceId, p.playerId),
+          ),
+        )
+        .orderBy(asc(auditLog.seq));
+      if (found.length < 2) {
+        throw new Error('second email change not audited yet');
+      }
+      return found;
+    }, WAIT);
+    const changedAts = rows.map((r) => String(r.after?.['changedAt']));
+    expect(changedAts[0]).toBe(first.changedAt);
+    expect(Date.parse(changedAts[0] ?? '')).toBeLessThan(Date.parse(changedAts[1] ?? ''));
+    rows.forEach((r, i) =>
+      expect(Date.parse(changedAts[i] ?? '')).toBeLessThanOrEqual(r.createdAt.getTime()),
+    );
+
+    await history(admin, p.userId);
+
+    expect(readSupportHistoryCalls().listTickets[0]?.windows).toEqual([
+      { email: p.email, from: await registeredAt(p.userId), to: changedAts[0] },
+      { email: second, from: changedAts[0], to: changedAts[1] },
+      { email: third, from: changedAts[1], to: null },
+    ]);
+  });
+
+  it('answers tickets unavailable when a later email change claims an earlier time than the one before it', async () => {
+    const p = await newPlayer();
+    const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
+    await changeEmail(p.client, newEmail);
+    const { changedAt } = await emailChangeAuditedAt('player', p.playerId);
+    const later = `support-history-later-${randomUUID()}@e2e.test`;
+    await drizzle()
+      .insert(auditLog)
+      .values({
+        actorType: 'player',
+        actorId: p.playerId,
+        action: 'identity.email.changed',
+        resourceType: 'player',
+        resourceId: p.playerId,
+        before: { email: newEmail },
+        after: { email: later, changedAt: new Date(Date.parse(changedAt) - 1_000).toISOString() },
+        hash: randomUUID(),
+      });
+    await drizzle().update(user).set({ email: later }).where(eq(user.id, p.userId));
+
+    const body = await history(admin, p.userId);
+
+    expect(body.tickets).toEqual({ state: 'unavailable', items: [] });
+    expect(readSupportHistoryCalls().listTickets).toEqual([]);
+  });
+
   it('answers tickets unavailable without asking the vendor when the email change trail contradicts itself', async () => {
     const p = await newPlayer();
     await drizzle()
@@ -355,6 +422,38 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       const third = await history(admin, wrongKind.userId);
       expect(third.chats).toEqual({ state: 'unavailable', items: [] });
       expect(third.tickets.state).toBe('ok');
+    });
+  });
+
+  describe('item links', () => {
+    it.each([
+      'javascript:alert(1)',
+      'data:text/html,<script>alert(1)</script>',
+      'http://agent.example.test/ticket/1',
+    ])('answers only the section holding a link to %s unavailable', async (url) => {
+      const p = await linkedPlayer();
+      answerSupportHistoryWith({
+        tickets: [item('ticket', '2026-03-01T00:00:00Z', { url })],
+        chats: [item('chat', '2026-03-01T00:00:00Z')],
+      });
+
+      const body = await history(admin, p.userId);
+
+      expect(body.tickets).toEqual({ state: 'unavailable', items: [] });
+      expect(body.chats.state).toBe('ok');
+      expect(body.chats.items).toHaveLength(1);
+      expect(JSON.stringify(body)).not.toContain(url);
+    });
+
+    it('passes an https link through unchanged', async () => {
+      const p = await linkedPlayer();
+      const url = 'https://agent.example.test/ticket/ok';
+      answerSupportHistoryWith({ tickets: [item('ticket', '2026-03-01T00:00:00Z', { url })] });
+
+      const body = await history(admin, p.userId);
+
+      expect(body.tickets.state).toBe('ok');
+      expect(body.tickets.items.map((i) => i.url)).toEqual([url]);
     });
   });
 

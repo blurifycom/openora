@@ -48,6 +48,8 @@ type Row = {
   after?: string | Record<string, unknown>;
   /** Hours after registration. */
   at: number;
+  /** Hours after registration the event claims, or a raw value, written into `after.changedAt`. */
+  changedAt?: number | string;
   action?: string;
 };
 
@@ -63,6 +65,16 @@ async function scenario(rows: Row[]) {
   const resolve = (value: string) => (value === 'cur' ? account.email : name(value));
   const side = (value: Row['before']) =>
     typeof value === 'string' ? { email: resolve(value) } : value;
+  const withChangedAt = (after: ReturnType<typeof side>, changedAt: Row['changedAt']) => {
+    if (changedAt === undefined) {
+      return after ?? null;
+    }
+    const value =
+      typeof changedAt === 'number'
+        ? new Date(registeredAt.getTime() + changedAt * HOUR).toISOString()
+        : changedAt;
+    return { ...after, changedAt: value };
+  };
   for (const row of rows) {
     const subject = row.subject ?? 'player';
     await db.drizzle.db.insert(auditLog).values({
@@ -72,7 +84,7 @@ async function scenario(rows: Row[]) {
       resourceType: subject,
       resourceId: subject === 'player' ? player.id : account.id,
       before: side(row.before) ?? null,
-      after: side(row.after) ?? null,
+      after: withChangedAt(side(row.after), row.changedAt),
       hash: randomUUID(),
       createdAt: new Date(registeredAt.getTime() + row.at * HOUR),
     });
@@ -227,6 +239,103 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(listTickets).not.toHaveBeenCalled();
     expect(log.warn).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      'a time that falls back',
+      [
+        ['a', 'b', 10],
+        ['b', 'c', 5],
+        ['c', 'cur', 7],
+      ],
+    ],
+    [
+      'a time that jumps ahead',
+      [
+        ['x', 'a', 10],
+        ['a', 'b', 30],
+        ['b', 'cur', 20],
+      ],
+    ],
+    [
+      'two changes at the same time',
+      [
+        ['a', 'b', 10],
+        ['b', 'cur', 10],
+      ],
+    ],
+    ['a change at registration', [['a', 'cur', 0]]],
+    ['a change before registration', [['a', 'cur', -5]]],
+  ] as const)('trusts no window for %s', async (_fault, trail) => {
+    const s = await scenario(trail.map(([before, after, at]) => ({ before, after, at })));
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
+    warnedWithUserOnly(s.userId);
+  });
+
+  it('trusts no window for a missing new email beside a reordering', async () => {
+    const s = await scenario([
+      { before: 'b', after: 'cur', at: 20 },
+      { before: 'a', at: 21 },
+      { before: 'b', after: 'cur', at: 22 },
+    ]);
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
+    warnedWithUserOnly(s.userId);
+  });
+
+  it('times each window by the change time the row carries, however late the row was written', async () => {
+    const s = await scenario([
+      { before: 'a', after: 'b', at: 10, changedAt: 8 },
+      { before: 'b', after: 'cur', at: 20, changedAt: 15 },
+    ]);
+    expect(s.asked).toEqual([
+      [s.win('a', 'registered', 8), s.win('b', 8, 15), s.win('cur', 15, null)],
+    ]);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('chains a row with a change time and a legacy row without one', async () => {
+    const s = await scenario([
+      { before: 'a', after: 'b', at: 10, changedAt: 8 },
+      { before: 'b', after: 'cur', at: 20 },
+    ]);
+    expect(s.asked).toEqual([
+      [s.win('a', 'registered', 8), s.win('b', 8, 20), s.win('cur', 20, null)],
+    ]);
+  });
+
+  it.each([
+    ['a later change time earlier than the one before', 10, 5],
+    ['a later change time equal to the one before', 10, 10],
+    ['a later change time before registration', 10, -1],
+  ])('trusts no window for %s', async (_fault, first, second) => {
+    const s = await scenario([
+      { before: 'a', after: 'b', at: 10, changedAt: first },
+      { before: 'b', after: 'cur', at: 20, changedAt: second },
+    ]);
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
+    warnedWithUserOnly(s.userId);
+  });
+
+  it('trusts no window when a legacy row written earlier follows a later claimed change time', async () => {
+    // First row claims hour 30 but was written at 10; the next, legacy, row falls back to its write time 20.
+    const s = await scenario([
+      { before: 'a', after: 'b', at: 10, changedAt: 30 },
+      { before: 'b', after: 'cur', at: 20 },
+    ]);
+    expect(s.asked).toEqual([]);
+    warnedWithUserOnly(s.userId);
+  });
+
+  it.each(['not a time', '2026-03-01 10:00:00', '2026-03-01T10:00:00+02:00', '1767225600'])(
+    'falls back to the write time for an unparsable or non-UTC change time (%j)',
+    async (changedAt) => {
+      const s = await scenario([{ before: 'a', after: 'cur', at: 10, changedAt }]);
+      expect(s.asked).toEqual([[s.win('a', 'registered', 10), s.win('cur', 10, null)]]);
+    },
+  );
 
   it('chains rows audited under the player and the user in the order written', async () => {
     const s = await scenario([
