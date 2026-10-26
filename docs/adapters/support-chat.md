@@ -113,7 +113,9 @@ Core works out which identities belong to the player and hands them to the reade
   opened.
 - **The email trail is trusted only when fully consistent.** The audit rows are written
   shortly after each change, outside the change's transaction, so one can be lost, duplicated,
-  land out of order or carry a skewed time. Core builds windows only when every change names
+  land out of order or carry a skewed time. Each row carries the time the change committed, so a
+  slow or redelivered write does not move a window's bounds; a row written before that field
+  existed is timed by when it was written. Core builds windows only when every change names
   both emails, each replaced email is the previous change's new one, the changes run strictly
   forward in time from registration, and the last new email is the current one. On any
   inconsistency it builds no window: the tickets section answers `unavailable`, the reader is

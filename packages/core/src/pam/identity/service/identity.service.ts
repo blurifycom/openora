@@ -2764,6 +2764,7 @@ export class IdentityService {
         playerId,
         previousEmail: before.email,
         newEmail,
+        changedAt,
         ip,
         userAgent,
       });

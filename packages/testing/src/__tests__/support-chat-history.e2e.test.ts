@@ -128,7 +128,7 @@ async function changeEmail(client: TestClient, newEmail: string) {
 const emailChangeAuditedAt = (resourceType: 'player' | 'user', resourceId: string) =>
   vi.waitFor(async () => {
     const [row] = await drizzle()
-      .select({ createdAt: auditLog.createdAt })
+      .select({ after: auditLog.after, createdAt: auditLog.createdAt })
       .from(auditLog)
       .where(
         and(
@@ -141,7 +141,11 @@ const emailChangeAuditedAt = (resourceType: 'player' | 'user', resourceId: strin
     if (!row) {
       throw new Error('email change not audited yet');
     }
-    return row.createdAt.toISOString();
+    const changedAt = row.after?.['changedAt'];
+    if (typeof changedAt !== 'string') {
+      throw new Error('email change audited without its change time');
+    }
+    return { changedAt, writtenAt: row.createdAt.getTime() };
   }, WAIT);
 
 async function registeredAt(userId: string) {
@@ -218,11 +222,12 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     ]);
   });
 
-  it('asks for the old email up to the change and the new one after it', async () => {
+  it('asks for the old email up to the change time the event carried and the new one after it', async () => {
     const p = await newPlayer();
     const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
     await changeEmail(p.client, newEmail);
-    const changedAt = await emailChangeAuditedAt('player', p.playerId);
+    const { changedAt, writtenAt } = await emailChangeAuditedAt('player', p.playerId);
+    expect(Date.parse(changedAt)).toBeLessThanOrEqual(writtenAt);
 
     await history(admin, p.userId);
 
@@ -237,7 +242,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     await drizzle().delete(player).where(eq(player.id, p.playerId));
     const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
     await changeEmail(p.client, newEmail);
-    const changedAt = await emailChangeAuditedAt('user', p.userId);
+    const { changedAt } = await emailChangeAuditedAt('user', p.userId);
     const signedInAgain = await asPlayer(testApp.app, { email: newEmail, password: PASSWORD });
     expect((await signedInAgain.get('/profile')).status).toBe(200);
 

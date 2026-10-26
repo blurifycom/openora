@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { and, asc, eq, or } from 'drizzle-orm';
 import { cached, createDomainError, createLogger, type DrizzleService } from '@openora/core/server';
 import {
+  TimestampSchema,
   SUPPORT_CHAT_STATUSES,
   SUPPORT_TICKET_STATUSES,
   SupportHistoryItemSchema,
@@ -84,6 +85,13 @@ const reasonOf = (err: unknown): string =>
     ? err.reason
     : `adapter threw ${err instanceof Error ? err.name : typeof err}`;
 
+// The change time the event carried, when it is a valid timestamp; rows from before it fall back
+// to their write time.
+const changedAtOf = (after: Record<string, unknown> | null) => {
+  const parsed = TimestampSchema.safeParse(after?.['changedAt']);
+  return parsed.success ? new Date(parsed.data) : null;
+};
+
 const emailOf = (side: Record<string, unknown> | null) =>
   typeof side?.['email'] === 'string' && side['email'] ? side['email'] : null;
 
@@ -155,9 +163,10 @@ export class SupportHistoryService {
   }
 
   /**
-   * The player's email changes from the audit log, in the order they were written. The audit
-   * subscriber writes each row shortly after its change (the event is not on the outbox), so a
-   * row can be lost or land out of order; `buildEmailWindows` drops what that leaves unknown.
+   * The player's email changes from the audit log, in the order they were written, each timed by
+   * the change the event carried. The audit subscriber writes each row after its change (the
+   * event is not on the outbox), so a row can be lost or land out of order; `buildEmailWindows`
+   * then trusts none of them.
    */
   private async emailChanges(userId: User['id'], playerId: Player['id']) {
     // The audit subject is the player when the account has one, the user otherwise.
@@ -178,7 +187,7 @@ export class SupportHistoryService {
       ({ before, after, at }): EmailChange => ({
         before: emailOf(before),
         after: emailOf(after),
-        at,
+        at: changedAtOf(after) ?? at,
       }),
     );
   }

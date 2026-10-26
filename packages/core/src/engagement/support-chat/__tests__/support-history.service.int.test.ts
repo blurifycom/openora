@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { inspect } from 'node:util';
 import {
   SupportHistoryProviderError,
@@ -9,6 +10,7 @@ import {
 import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
 import { AuditService } from '@openora/core/audit/server';
+import { auditLog } from '@openora/core/audit/schema';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeCache, makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
@@ -60,7 +62,34 @@ async function linkedPlayer() {
   await db.drizzle.db
     .insert(supportChatCustomer)
     .values({ playerId: player.id, providerCustomerId: `customer-${randomUUID()}` });
-  return { userId: account.id, playerId: player.id, email: account.email };
+  return {
+    userId: account.id,
+    playerId: player.id,
+    email: account.email,
+    registeredAt: account.createdAt,
+  };
+}
+
+/** Records one email change onto the player's current email; `after` extends the row's `after`. */
+async function recordEmailChange(
+  p: Awaited<ReturnType<typeof linkedPlayer>>,
+  after: Record<string, unknown> = {},
+) {
+  const previous = `previous-${randomUUID()}@test.dev`;
+  await new AuditService(db.drizzle, makeEventBus(), makeIdentityReader()).record({
+    actorType: 'player',
+    actorId: p.playerId,
+    action: 'identity.email.changed',
+    resourceType: 'player',
+    resourceId: p.playerId,
+    before: { email: previous },
+    after: { email: p.email, ...after },
+  });
+  const [row] = await db.drizzle.db
+    .select({ createdAt: auditLog.createdAt })
+    .from(auditLog)
+    .where(eq(auditLog.resourceId, p.playerId));
+  return { previous, writtenAt: row?.createdAt.toISOString() };
 }
 
 const warned = () => log.warn.mock.calls.map(([fields]) => fields as unknown);
@@ -118,4 +147,40 @@ describe('SupportHistoryService logging (real PG)', () => {
     expect(warned()).toEqual([{ userId: p.userId }]);
     expect(inspect(log.warn.mock.calls, { depth: null })).not.toContain('@test.dev');
   });
+
+  it('ends a window at the change time the row carries, not when the row was written', async () => {
+    const p = await linkedPlayer();
+    const changedAt = new Date(p.registeredAt.getTime() + 1_000).toISOString();
+    const { previous } = await recordEmailChange(p, { changedAt });
+    const listTickets = vi.fn(async () => []);
+
+    await service({ listTickets }).getHistory(p.userId, false);
+
+    expect(listTickets).toHaveBeenCalledWith({
+      windows: [
+        { email: previous, from: p.registeredAt.toISOString(), to: changedAt },
+        { email: p.email, from: changedAt, to: null },
+      ],
+      includeResolved: false,
+    });
+  });
+
+  it.each([{}, { changedAt: 'not a time' }])(
+    'falls back to the write time for a row without a valid change time (%o)',
+    async (after) => {
+      const p = await linkedPlayer();
+      const { previous, writtenAt } = await recordEmailChange(p, after);
+      const listTickets = vi.fn(async () => []);
+
+      await service({ listTickets }).getHistory(p.userId, false);
+
+      expect(listTickets).toHaveBeenCalledWith({
+        windows: [
+          { email: previous, from: p.registeredAt.toISOString(), to: writtenAt },
+          { email: p.email, from: writtenAt, to: null },
+        ],
+        includeResolved: false,
+      });
+    },
+  );
 });

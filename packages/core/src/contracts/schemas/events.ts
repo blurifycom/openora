@@ -371,6 +371,9 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     previousEmail: z.email(),
     newEmail: z.email(),
+    // When the swap committed, which the audit row's own write time can trail. Optional so a
+    // payload from before this field still parses.
+    changedAt: TimestampSchema.optional(),
   }),
   'identity.phone.verified': authContextBase.extend({
     userId: UuidSchema,
