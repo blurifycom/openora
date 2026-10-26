@@ -113,15 +113,22 @@ Core works out which identities belong to the player and hands them to the reade
   opened.
 - **The email trail is trusted only when fully consistent.** The audit rows are written
   shortly after each change, outside the change's transaction, so one can be lost, duplicated,
-  land out of order or carry a skewed time. Each row carries the time the change committed, so a
-  slow or redelivered write does not move a window's bounds; a row written before that field
-  existed is timed by when it was written. Core builds windows only when every change names
-  both emails, each replaced email is the previous change's new one, the changes run strictly
-  forward in time from registration, and the last new email is the current one. On any
-  inconsistency it builds no window: the tickets section answers `unavailable`, the reader is
-  not asked, and a warning naming the user goes to the log. A tickets section that is `ok` was
-  therefore read with the whole trail. Nothing records the email an account registered with, so
-  a lost first change cannot be noticed: the next email is then taken as held from registration.
+  land out of order or carry a skewed time. Each row carries the time stamped right after the
+  change, so a slow write does not move a window's bounds; a row written before that field
+  existed is timed by when it was written. A redelivered event writes its row again: a row that
+  repeats the one before it, change time included, counts once, but a repeated row without a
+  change time cannot be told from a real repeat and breaks the trail. Core builds windows only
+  when every change names both emails, each replaced email is the previous change's new one, the
+  changes run strictly forward in time from registration, and the last new email is the current
+  one. On any inconsistency it builds no window: the tickets section answers `unavailable`, the
+  reader is not asked, and a warning naming the user goes to the log. The rows are append-only,
+  so a broken trail stays `unavailable` until an operator acts on it.
+- **What the trail cannot notice.** Nothing records the email an account registered with, so a
+  lost first change goes unseen: the next email is then taken as held from registration. Two lost
+  changes that return to the same address (A to B recorded, B to C and C to B lost, B to D
+  recorded) also leave a trail that looks consistent, so B's window spans the gap. Both follow
+  from the email-change event being emitted best-effort rather than through the outbox; moving
+  that emit to the outbox is the fix, and is not part of this port.
 - **Chats** are matched by the vendor customer the player is linked to. A player who never
   opened the chat has no link, and the reader is not asked.
 
@@ -135,8 +142,9 @@ What a reader must guarantee:
   `active` or `ended`. Core validates every item against the strict item schema and these
   statuses; one item off-contract makes that whole section unavailable.
 - **UTC timestamps ending in `Z`.** The schema accepts nothing else, such as an offset.
-- **https links.** An item's link opens in the back office, so the schema accepts only an https
-  URL: an http, `javascript:` or `data:` link makes the section unavailable.
+- **Absolute https links.** An item's link opens in the back office, so the schema accepts only a
+  URL starting `https://`: an http, `javascript:` or `data:` link, or a slash-less `https:` form
+  a browser would resolve against the back office's own origin, makes the section unavailable.
 - **Errors follow the chat provider's rules.** Throw the port's support-history provider error
   with a short reason: no token, no request body, emails masked. Any other error that escapes is
   reduced to its class name.
