@@ -1996,12 +1996,14 @@ describe('IdentityService security controls', () => {
     });
     const events = makeEventBus();
     const svc = buildService({ events });
+    const calledAt = Date.now();
 
     await svc.confirmEmailChange(
       { newEmail: 'new-address@test.dev', otp: '123456' },
       {},
       new Headers(),
     );
+    const returnedAt = Date.now();
 
     expect((await readUser(account.id))?.loginWithdrawalAlertsEnabled).toBe(false);
     expect(events.emit).toHaveBeenCalledWith(
@@ -2010,8 +2012,14 @@ describe('IdentityService security controls', () => {
         userId: account.id,
         previousEmail: EMAIL,
         newEmail: 'new-address@test.dev',
+        changedAt: expect.any(String),
       }),
     );
+    const [, changed] =
+      vi.mocked(events.emit).mock.calls.find(([topic]) => topic === 'identity.email.changed') ?? [];
+    const changedAt = Date.parse(String((changed as { changedAt?: unknown })?.changedAt));
+    expect(changedAt).toBeGreaterThanOrEqual(calledAt);
+    expect(changedAt).toBeLessThanOrEqual(returnedAt);
     expect(events.emit).toHaveBeenCalledWith(
       'identity.security.login_withdrawal_alerts.updated',
       expect.objectContaining({
