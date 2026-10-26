@@ -66,12 +66,9 @@ const OFFSET_TIMESTAMP_ITEM: SupportHistoryItem = {
   url: 'https://agent.example.test/ticket/offset-timestamp',
 };
 
-/** `method` answers its items plus `item` (by default one with an offset timestamp) from now on. */
-export const malformSupportHistory = (
-  method: Method,
-  item: SupportHistoryItem = OFFSET_TIMESTAMP_ITEM,
-) => {
-  state().malformed[method] = item;
+/** `method` answers its items plus one with an offset timestamp from now on. */
+export const malformSupportHistory = (method: Method) => {
+  state().malformed[method] = OFFSET_TIMESTAMP_ITEM;
 };
 
 /** Every call each method got, in order. */

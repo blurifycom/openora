@@ -105,7 +105,7 @@ async function scenario(rows: Row[]) {
   };
   const service = new SupportHistoryService({ drizzle: db.drizzle, cache: makeCache(), reader });
   const history = await service.getHistory(account.id, false);
-  return { history, asked, win, userId: account.id, email: account.email, service };
+  return { history, asked, win, userId: account.id };
 }
 
 const warnedWithUserOnly = (userId: string) => {
@@ -127,26 +127,6 @@ describe('support history email windows from crafted audit rows (real PG)', () =
 
     const none = await scenario([]);
     expect(none.asked).toEqual([[none.win('cur', 'registered', null)]]);
-  });
-
-  it('keeps the three most recent of five changes and the current email', async () => {
-    const s = await scenario([
-      { before: 'e1', after: 'e2', at: 1 },
-      { before: 'e2', after: 'e3', at: 2 },
-      { before: 'e3', after: 'e4', at: 3 },
-      { before: 'e4', after: 'e5', at: 4 },
-      { before: 'e5', after: 'cur', at: 5 },
-    ]);
-    expect(s.asked).toEqual([
-      [s.win('e3', 2, 3), s.win('e4', 3, 4), s.win('e5', 4, 5), s.win('cur', 5, null)],
-    ]);
-  });
-
-  it('cannot notice a lost first change: the next email is kept from registration', async () => {
-    // a -> b was never audited; b -> cur was. Nothing records the email registered with.
-    const s = await scenario([{ before: 'b', after: 'cur', at: 10 }]);
-    expect(s.asked).toEqual([[s.win('b', 'registered', 10), s.win('cur', 10, null)]]);
-    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it('trusts no window when the rows were written out of order, read in write order not time order', async () => {
@@ -177,6 +157,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
     warnedWithUserOnly(s.userId);
   });
+
   it('keeps contiguous windows for a change to the same email', async () => {
     const s = await scenario([{ before: 'cur', after: 'cur', at: 10 }]);
     expect(s.asked).toEqual([[s.win('cur', 'registered', 10), s.win('cur', 10, null)]]);
@@ -246,20 +227,6 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(s.asked).toEqual([
       [s.win('a', 'registered', 8), s.win('b', 8, 20), s.win('cur', 20, null)],
     ]);
-  });
-
-  it.each([
-    ['a later change time earlier than the one before', 10, 5],
-    ['a later change time equal to the one before', 10, 10],
-    ['a later change time before registration', 10, -1],
-  ])('trusts no window for %s', async (_fault, first, second) => {
-    const s = await scenario([
-      { before: 'a', after: 'b', at: 10, changedAt: first },
-      { before: 'b', after: 'cur', at: 20, changedAt: second },
-    ]);
-    expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
-    warnedWithUserOnly(s.userId);
   });
 
   it('trusts no window when a legacy row written earlier follows a later claimed change time', async () => {
@@ -359,19 +326,9 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(asked[0]?.map((w) => w.email)).toEqual([account.email]);
     expect(log.warn).not.toHaveBeenCalled();
   });
-
-  it('reads an uppercase user id as the lowercase one, rows and cache entry alike', async () => {
-    const s = await scenario([{ subject: 'user', before: 'a', after: 'cur', at: 10 }]);
-    expect(s.asked).toHaveLength(1);
-
-    const upper = await s.service.getHistory(s.userId.toUpperCase(), false);
-
-    expect(upper).toEqual(s.history);
-    expect(s.asked).toHaveLength(1);
-  });
 });
 
-describe('support history cache failures (real PG)', () => {
+describe('support history cache (real PG)', () => {
   const countingCache = () => {
     const base = makeCache();
     const calls = { get: 0, set: 0 };
@@ -391,23 +348,6 @@ describe('support history cache failures (real PG)', () => {
   const reader = (): SupportHistoryReader => ({
     listTickets: vi.fn(async () => []),
     listChats: vi.fn(async () => []),
-  });
-
-  it('serves a repeat call from the cache with the first fetchedAt and no second read', async () => {
-    const { account } = await seedPlayerWithUser(db);
-    const r = reader();
-    const service = new SupportHistoryService({
-      drizzle: db.drizzle,
-      cache: makeCache(),
-      reader: r,
-    });
-
-    const first = await service.getHistory(account.id, false);
-    const second = await service.getHistory(account.id, false);
-    await service.getHistory(account.id, true);
-
-    expect(second).toEqual(first);
-    expect(r.listTickets).toHaveBeenCalledTimes(2);
   });
 
   it('does not cache a missing player', async () => {

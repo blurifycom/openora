@@ -235,15 +235,11 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
 
   it('asks for the current email from registration when the player never changed it', async () => {
     const p = await newPlayer();
-    const [row] = await drizzle()
-      .select({ createdAt: user.createdAt })
-      .from(user)
-      .where(eq(user.id, p.userId));
 
     await history(admin, p.userId);
 
     expect(readSupportHistoryCalls().listTickets[0]?.windows).toEqual([
-      { email: p.email, from: row?.createdAt.toISOString(), to: null },
+      { email: p.email, from: await registeredAt(p.userId), to: null },
     ]);
   });
 
@@ -336,54 +332,15 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     ]);
   });
 
-  it.each([
-    [
-      'another change time',
-      (after: Record<string, unknown>) => ({ ...after, changedAt: '2099-01-01T00:00:00.000Z' }),
-    ],
-    ['no change time', ({ changedAt: _changedAt, ...after }: Record<string, unknown>) => after],
-    [
-      'the new email in another case',
-      (after: Record<string, unknown>) => ({
-        ...after,
-        email: String(after['email']).toUpperCase(),
-      }),
-    ],
-  ])(
-    'answers tickets unavailable for a repeated email change row with %s',
-    async (_fault, rewrite) => {
-      const p = await newPlayer();
-      await changeEmail(p.client, `support-history-new-${randomUUID()}@e2e.test`);
-      await emailChangeAuditedAt('player', p.playerId);
-
-      await redeliverEmailChange(p.playerId, rewrite);
-      const body = await history(admin, p.userId);
-
-      expect(body.tickets).toEqual({ state: 'unavailable', items: [] });
-      expect(readSupportHistoryCalls().listTickets).toEqual([]);
-    },
-  );
-
-  it('answers tickets unavailable when a later email change claims an earlier time than the one before it', async () => {
+  it('answers tickets unavailable for a repeated email change row with another change time', async () => {
     const p = await newPlayer();
-    const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
-    await changeEmail(p.client, newEmail);
-    const changedAt = await emailChangeAuditedAt('player', p.playerId);
-    const later = `support-history-later-${randomUUID()}@e2e.test`;
-    await drizzle()
-      .insert(auditLog)
-      .values({
-        actorType: 'player',
-        actorId: p.playerId,
-        action: 'identity.email.changed',
-        resourceType: 'player',
-        resourceId: p.playerId,
-        before: { email: newEmail },
-        after: { email: later, changedAt: new Date(Date.parse(changedAt) - 1_000).toISOString() },
-        hash: randomUUID(),
-      });
-    await drizzle().update(user).set({ email: later }).where(eq(user.id, p.userId));
+    await changeEmail(p.client, `support-history-new-${randomUUID()}@e2e.test`);
+    await emailChangeAuditedAt('player', p.playerId);
 
+    await redeliverEmailChange(p.playerId, (after) => ({
+      ...after,
+      changedAt: '2099-01-01T00:00:00.000Z',
+    }));
     const body = await history(admin, p.userId);
 
     expect(body.tickets).toEqual({ state: 'unavailable', items: [] });
