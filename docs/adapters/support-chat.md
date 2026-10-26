@@ -111,15 +111,15 @@ Core works out which identities belong to the player and hands them to the reade
   registered by another player, so a ticket counts only when it was created inside its email's
   window: the reader must filter by creation date, never return every ticket an address ever
   opened.
-- **A gap in the email trail drops windows, never widens them.** The audit rows are written
-  shortly after each change, outside the change's transaction, so one can be lost or land out of
-  order, or carry a skewed time. Core keeps a window only when the rows at both its ends agree on
-  the email and run forward in time; where they do not, it drops the window whose start is
-  unknown and logs a warning, so the player shows fewer tickets rather than someone else's. The
-  tickets section can then be `ok` and still incomplete: the gap shows in the log only. When no
-  window survives, it answers `unavailable`. Nothing records the email an account registered
-  with, so a lost first change cannot be noticed: the window from registration is kept while the
-  rest of the trail agrees, and dropped once anything contradicts it.
+- **The email trail is trusted only when fully consistent.** The audit rows are written
+  shortly after each change, outside the change's transaction, so one can be lost, duplicated,
+  land out of order or carry a skewed time. Core builds windows only when every change names
+  both emails, each replaced email is the previous change's new one, the changes run strictly
+  forward in time from registration, and the last new email is the current one. On any
+  inconsistency it builds no window: the tickets section answers `unavailable`, the reader is
+  not asked, and a warning naming the user goes to the log. A tickets section that is `ok` was
+  therefore read with the whole trail. Nothing records the email an account registered with, so
+  a lost first change cannot be noticed: the next email is then taken as held from registration.
 - **Chats** are matched by the vendor customer the player is linked to. A player who never
   opened the chat has no link, and the reader is not asked.
 
@@ -138,9 +138,8 @@ What a reader must guarantee:
   reduced to its class name.
 
 The answer has a tickets and a chats section, each `ok` with its items newest first, or
-`unavailable` when its read failed or a gap in the email trail left no window to ask with, or
-`no_email` (the account has no email and its trail has no gap) / `not_linked` when there was
-nothing to ask.
+`unavailable` when its read failed or the email trail was not consistent, or `no_email` (the
+account has no email and no email change) / `not_linked` when there was nothing to ask.
 One section failing never hides the other; the reason goes to the log only. Core caches the whole
 answer for 60 seconds per player and `includeResolved` value, keeping its original `fetchedAt`,
 and limits each admin to 30 calls a minute, cache hits included, so staff clicking around do not

@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { inspect } from 'node:util';
 import {
   SupportHistoryProviderError,
-  type CacheAdapter,
   type SupportHistoryItem,
   type SupportHistoryReader,
 } from '@openora/core/contracts';
@@ -49,10 +48,10 @@ beforeEach(() => {
   log.warn.mockClear();
 });
 
-const service = (reader: Partial<SupportHistoryReader>, cache: CacheAdapter = makeCache()) =>
+const service = (reader: Partial<SupportHistoryReader>) =>
   new SupportHistoryService({
     drizzle: db.drizzle,
-    cache,
+    cache: makeCache(),
     reader: { listTickets: async () => [TICKET], listChats: async () => [], ...reader },
   });
 

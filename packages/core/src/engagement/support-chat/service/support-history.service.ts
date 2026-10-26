@@ -37,17 +37,14 @@ const SupportHistoryItemsSchema = z.array(SupportHistoryItemSchema);
 type EmailChange = { before: string | null; after: string | null; at: Date };
 
 /**
- * The emails a player held and when, oldest first, the current one last and open-ended. Changes
- * come in the order the audit log wrote them. A window is kept only when the rows on both of
- * its ends agree on the email and run forward in time: each change's replaced email must be the
- * previous change's new one, and the current email the last change's new one. Where they do
- * not, an event was lost, written out of order or stamped by a skewed clock, and the window
- * whose start is unknown is dropped rather than widened, so a player is shown fewer tickets,
- * never another player's. Nothing records the email an account registered with, so the first
- * window, from registration, is the one link that cannot be checked: it is kept while the chain
- * holds and dropped once anything contradicts it. Only the most recent previous emails are
- * kept. `complete` is false when a window was dropped; an account with no current email drops
- * nothing.
+ * The emails a player held and when, oldest first, the current one last and open-ended. The
+ * audit trail is trusted only when fully consistent: every change names both emails, each
+ * replaced email is the previous change's new one, the changes run strictly forward in time from
+ * registration, and the last new email is the current one. Anything else means an event was
+ * lost, duplicated, reordered or mis-stamped, and no window is returned (`complete: false`), so a
+ * player is shown no tickets rather than another player's. Nothing records the email an account
+ * registered with, so a lost first change cannot be noticed. Only the most recent previous
+ * emails are kept.
  */
 export function buildEmailWindows({
   currentEmail,
@@ -57,41 +54,27 @@ export function buildEmailWindows({
   currentEmail: User['email'];
   registeredAt: Date;
   changes: readonly EmailChange[];
-}) {
+}): { windows: SupportHistoryEmailWindow[]; complete: boolean } {
+  const untrusted = { windows: [], complete: false };
   const closed: SupportHistoryEmailWindow[] = [];
-  let recordedEmail: string | null = null;
-  let heldSince: Date | null = registeredAt;
-  let registrationKept = false;
-  let dropped = false;
-  let contradicted = false;
-  const contradicts = (email: string | null) =>
-    recordedEmail !== null && email !== null && recordedEmail !== email;
-
+  let from = registeredAt;
+  let lastNewEmail: string | null = null;
   for (const { before, after, at } of changes) {
-    const skewed: boolean = heldSince !== null && at < heldSince;
-    if (heldSince && before && !skewed && (recordedEmail === null || recordedEmail === before)) {
-      registrationKept ||= recordedEmail === null;
-      closed.push({ email: before, from: heldSince.toISOString(), to: at.toISOString() });
-    } else {
-      dropped = true;
-      contradicted ||= skewed || contradicts(before);
+    if (!before || !after || at <= from || (lastNewEmail !== null && before !== lastNewEmail)) {
+      return untrusted;
     }
-    recordedEmail = after;
-    heldSince = after && !skewed ? at : null;
+    closed.push({ email: before, from: from.toISOString(), to: at.toISOString() });
+    lastNewEmail = after;
+    from = at;
   }
-
-  const current =
-    currentEmail && heldSince && (recordedEmail === null || recordedEmail === currentEmail)
-      ? { email: currentEmail, from: heldSince.toISOString(), to: null }
-      : null;
-  if (currentEmail && !current) {
-    dropped = true;
-    contradicted ||= contradicts(currentEmail);
+  if ((lastNewEmail ?? currentEmail) !== currentEmail) {
+    return untrusted;
   }
-  const previous = closed
-    .slice(contradicted && registrationKept ? 1 : 0)
-    .slice(-MAX_PREVIOUS_EMAILS);
-  return { windows: current ? [...previous, current] : previous, complete: !dropped };
+  if (!currentEmail) {
+    return { windows: [], complete: true };
+  }
+  const current = { email: currentEmail, from: from.toISOString(), to: null };
+  return { windows: [...closed.slice(-MAX_PREVIOUS_EMAILS), current], complete: true };
 }
 
 // An adapter may throw anything, such as an HTTP client error holding the vendor API key or an

@@ -145,7 +145,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     warnedWithUserOnly(s.userId);
   });
 
-  it('drops the windows a lost middle change leaves unknown and keeps the confirmed ones', async () => {
+  it('trusts no window when a lost middle change breaks the trail', async () => {
     // e3 -> e4 lost.
     const s = await scenario([
       { before: 'e1', after: 'e2', at: 1 },
@@ -153,7 +153,8 @@ describe('support history email windows from crafted audit rows (real PG)', () =
       { before: 'e4', after: 'e5', at: 3 },
       { before: 'e5', after: 'cur', at: 4 },
     ]);
-    expect(s.asked).toEqual([[s.win('e2', 1, 2), s.win('e5', 3, 4), s.win('cur', 4, null)]]);
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
     warnedWithUserOnly(s.userId);
   });
 
@@ -167,12 +168,13 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     warnedWithUserOnly(s.userId);
   });
 
-  it('shows a duplicated row as the later window only, never an earlier start', async () => {
+  it('trusts no window for a duplicated row', async () => {
     const s = await scenario([
       { before: 'a', after: 'cur', at: 10 },
       { before: 'a', after: 'cur', at: 11 },
     ]);
-    expect(s.asked).toEqual([[s.win('cur', 11, null)]]);
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
     warnedWithUserOnly(s.userId);
   });
 
@@ -181,18 +183,20 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(s.asked).toEqual([[s.win('cur', 'registered', 10), s.win('cur', 10, null)]]);
   });
 
-  it('starts the new email at its change when the replaced one is missing', async () => {
+  it('trusts no window when the replaced email is missing', async () => {
     const s = await scenario([{ after: 'cur', at: 10 }]);
-    expect(s.asked).toEqual([[s.win('cur', 10, null)]]);
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
     warnedWithUserOnly(s.userId);
   });
 
-  it('closes the replaced email but gives the unknown next one no window when after is missing', async () => {
+  it('trusts no window when the new email is missing', async () => {
     const s = await scenario([
       { before: 'a', at: 10 },
       { before: 'b', after: 'cur', at: 20 },
     ]);
-    expect(s.asked).toEqual([[s.win('a', 'registered', 10), s.win('cur', 20, null)]]);
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
     warnedWithUserOnly(s.userId);
   });
 
