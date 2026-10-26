@@ -31,8 +31,10 @@ A changed behaviour with no test is a review `[WARN]`, never a `[BLOCK]`, except
 A test that still passes when the code it covers is broken checks nothing. On a money, KYC,
 responsible-gambling or authz path, break each changed check on purpose (flip a condition, move a
 boundary by one, drop an owner check, change the sign of an amount) and run the tests: at least one
-must fail. A break no test catches on those paths holds the merge until a test catches it. Where the
-repo has a `test:mutation` script, it does this for you; its score is shown, not a gate.
+must fail. The tester does this in its pass and lists each break as a mutation row in its verdict
+table; a break no test catches on those paths holds the PR until a test catches it. Where the repo
+has a `test:mutation` script, it does the breaking for you; the repo-wide mutation score is shown,
+not a gate.
 
 ## Pick the tier
 
