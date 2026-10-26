@@ -16,7 +16,14 @@ const REDIS_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6380';
 // The split is what lets both integration suites run concurrently without flushing
 // each other's keys - do not widen it without moving the other tier too.
 const REDIS_LOGICAL_DATABASE_COUNT = 8;
-const REDIS_DATABASE = Number(process.env['VITEST_POOL_ID'] ?? 1) % REDIS_LOGICAL_DATABASE_COUNT;
+// Stryker runs one vitest per mutation worker (STRYKER_MUTATOR_WORKER, 0-based), each with its
+// own VITEST_POOL_ID 1..n, so the worker index offsets the pool id by the pool size (the
+// integration config sizes the pool from the same env). Outside Stryker the offset is 0.
+const POOL_SIZE = Number(process.env['OPENORA_TEST_POOL_SIZE'] ?? REDIS_LOGICAL_DATABASE_COUNT);
+const STRYKER_WORKER = Number(process.env['STRYKER_MUTATOR_WORKER'] ?? 0);
+const REDIS_DATABASE =
+  (STRYKER_WORKER * POOL_SIZE + Number(process.env['VITEST_POOL_ID'] ?? 1)) %
+  REDIS_LOGICAL_DATABASE_COUNT;
 
 function withRedisDatabase(baseUrl: string, database: number): string {
   const url = new URL(baseUrl);
