@@ -183,4 +183,20 @@ describe('SupportHistoryService logging (real PG)', () => {
       });
     },
   );
+
+  it.each([
+    'javascript:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'http://agent.example.test/1',
+  ])('answers a section unavailable for an item linking to %s', async (url) => {
+    const p = await linkedPlayer();
+
+    const history = await service({ listTickets: async () => [{ ...TICKET, url }] }).getHistory(
+      p.userId,
+      false,
+    );
+
+    expect(history.tickets).toEqual({ state: 'unavailable', items: [] });
+    expect(warned()).toEqual([{ userId: p.userId, section: 'ticket', reason: 'malformed answer' }]);
+  });
 });

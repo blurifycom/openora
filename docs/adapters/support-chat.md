@@ -135,6 +135,8 @@ What a reader must guarantee:
   `active` or `ended`. Core validates every item against the strict item schema and these
   statuses; one item off-contract makes that whole section unavailable.
 - **UTC timestamps ending in `Z`.** The schema accepts nothing else, such as an offset.
+- **https links.** An item's link opens in the back office, so the schema accepts only an https
+  URL: an http, `javascript:` or `data:` link makes the section unavailable.
 - **Errors follow the chat provider's rules.** Throw the port's support-history provider error
   with a short reason: no token, no request body, emails masked. Any other error that escapes is
   reduced to its class name.

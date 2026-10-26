@@ -1,8 +1,8 @@
 /**
  * Bind a concrete `SupportHistoryReader` to `SUPPORT_HISTORY_READER` in an overlay; core never
  * binds one. A separate token from `SUPPORT_CHAT_PROVIDER`: an operator may bind either without
- * the other. Timestamps the adapter answers are UTC ISO strings ending in `Z`; anything else
- * fails validation. See docs/adapters/support-chat.md for the binding guide.
+ * the other. Timestamps the adapter answers are UTC ISO strings ending in `Z`, and item links are
+ * https URLs; anything else fails validation. See docs/adapters/support-chat.md for the binding guide.
  */
 import * as z from 'zod';
 import { TimestampSchema } from '../schemas/common.js';
@@ -30,8 +30,8 @@ export const SupportHistoryItemSchema = z
     assignee: z.string().nullable(),
     createdAt: TimestampSchema,
     updatedAt: TimestampSchema,
-    // Opens the item in the vendor's agent app.
-    url: z.url(),
+    // Opens the item in the vendor's agent app; https only, so a link can never run script.
+    url: z.url({ protocol: /^https$/ }),
   })
   .strict();
 export type SupportHistoryItem = z.infer<typeof SupportHistoryItemSchema>;
