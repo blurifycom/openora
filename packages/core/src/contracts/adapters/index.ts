@@ -290,6 +290,20 @@ export {
   OnRampVendorUnavailableError,
 } from './on-ramp.js';
 
+export type {
+  SupportChatCustomerToken,
+  SupportCustomerContext,
+  SupportChatProvider,
+} from './support-chat.js';
+export {
+  SUPPORT_CHAT_PROVIDER,
+  SupportChatCustomerTokenSchema,
+  SupportCustomerContextSchema,
+  SupportChatProviderError,
+} from './support-chat.js';
+export type { RgExclusionReader } from './rg-exclusion-reader.js';
+export { RG_EXCLUSION_READER } from './rg-exclusion-reader.js';
+
 export type { GeoIpAdapter } from './geo-ip.js';
 export { GEO_IP_ADAPTER, normalizeCountryCode } from './geo-ip.js';
 export type { GeoCheckCommands } from './geo-check-commands.js';

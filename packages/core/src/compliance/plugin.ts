@@ -27,6 +27,7 @@ import {
   PLAY_ELIGIBILITY,
   RATE_LIMITER,
   REALTIME_TRANSPORT,
+  RG_EXCLUSION_READER,
   RG_LIMITS,
   RG_STANDING_READER,
   UuidSchema,
@@ -160,6 +161,23 @@ export default {
         directory: c.has(ADMIN_USER_DIRECTORY) ? c.get(ADMIN_USER_DIRECTORY) : null,
         rates: c.get(EXCHANGE_RATE_READER),
       }));
+    // Backs the router and RG_EXCLUSION_READER; either may build it first.
+    const rgService = (c: TypedContainer<CoreTokenCatalog>) =>
+      (rgRef ??= new RgService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        loginEnforcement: c.get(LOGIN_ENFORCEMENT),
+        identityReader: c.get(IDENTITY_READER),
+        mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null,
+        audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
+        rates: c.get(EXCHANGE_RATE_READER),
+      }));
+    ctx.provide(RG_EXCLUSION_READER, (c) => ({
+      getExclusionState: async (userId) => {
+        const { selfExclusion, coolingOff } = await rgService(c).getActiveExclusions(userId);
+        return { isSelfExcluded: selfExclusion !== null, isCoolingOff: coolingOff !== null };
+      },
+    }));
     // One instance backs the router, its event/job hooks and the agent tools; either factory
     // may build it first.
     const kycVerification = (c: TypedContainer<CoreTokenCatalog>) =>
@@ -385,16 +403,7 @@ export default {
       const compliance = makeComplianceService(c);
       complianceRef = compliance;
 
-      const rg = new RgService({
-        drizzle: c.get(DRIZZLE),
-        events: c.get(EVENT_BUS),
-        loginEnforcement: c.get(LOGIN_ENFORCEMENT),
-        identityReader: c.get(IDENTITY_READER),
-        mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null,
-        audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
-        rates: c.get(EXCHANGE_RATE_READER),
-      });
-      rgRef = rg;
+      const rg = rgService(c);
       const rgMonitoring = monitoring(c);
       const rgSelfService = new RgSelfServiceService({
         drizzle: c.get(DRIZZLE),
