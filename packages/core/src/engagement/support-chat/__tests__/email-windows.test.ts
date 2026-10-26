@@ -93,6 +93,61 @@ describe('buildEmailWindows', () => {
     expect(windowsOf('b', changes)).toEqual(UNTRUSTED);
   });
 
+  it('counts three redeliveries once and keeps the windows of the changes around them', () => {
+    const timed = (before: string, after: string, n: number) => ({
+      ...change(before, after, n),
+      timedByChange: true,
+    });
+    const first = timed('a', 'b', 10);
+
+    expect(windowsOf('c', [first, { ...first }, { ...first }, timed('b', 'c', 20)])).toEqual({
+      windows: [
+        { email: 'a@example.test', from: REGISTERED.toISOString(), to: iso(10) },
+        { email: 'b@example.test', from: iso(10), to: iso(20) },
+        { email: 'c@example.test', from: iso(20), to: null },
+      ],
+      complete: true,
+    });
+  });
+
+  it.each([
+    [
+      'a repeat that is not adjacent',
+      'c',
+      [
+        { ...change('a', 'b', 10), timedByChange: true },
+        { ...change('b', 'c', 20), timedByChange: true },
+        { ...change('a', 'b', 10), timedByChange: true },
+      ],
+    ],
+    [
+      'a collapsed repeat that leaves the current email unexplained',
+      'c',
+      [
+        { ...change('a', 'b', 10), timedByChange: true },
+        { ...change('a', 'b', 10), timedByChange: true },
+      ],
+    ],
+    [
+      'a repeat whose emails differ only in case',
+      'b',
+      [
+        { ...change('a', 'b', 10), timedByChange: true },
+        { before: 'A@example.test', after: 'b@example.test', at: day(10), timedByChange: true },
+      ],
+    ],
+    [
+      'a repeat whose new email differs only in case',
+      'b',
+      [
+        { ...change('a', 'b', 10), timedByChange: true },
+        { before: 'a@example.test', after: 'B@example.test', at: day(10), timedByChange: true },
+      ],
+    ],
+  ])('trusts no window for %s', (_fault, current, changes) => {
+    expect(windowsOf(current, changes)).toEqual(UNTRUSTED);
+  });
+
   it('answers no window and no gap for an account with no email and no change', () => {
     expect(windowsOf('', [])).toEqual({ windows: [], complete: true });
   });
