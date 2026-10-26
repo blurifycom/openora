@@ -95,10 +95,10 @@ hour, and every failed one logs an error, until a provider is bound or the modul
 
 A second port, `SUPPORT_HISTORY_READER`
 ([`packages/core/src/contracts/adapters/support-history.ts`](../../packages/core/src/contracts/adapters/support-history.ts)),
-lets the back office list a player's vendor tickets and chat threads on
-`GET /support-chat/admin/players/{userId}/history`. It is a separate token from the chat
-provider: an operator may bind either without the other. Only an admin holding `support-chat`
-`view` reaches it. No predefined role carries that grant except the super admin; an operator
+lets the back office list a player's vendor tickets and chat threads through the player-history
+route (the catalog and the contract name it). It is a separate token from the chat provider: an
+operator may bind either without the other. Only an admin holding the support-chat view
+permission reaches it. No predefined role carries that grant except the super admin; an operator
 gives it through a role it assigns, which needs the iam module loaded. Without iam, the static
 fallback roles decide, and none of them grants it.
 
@@ -120,9 +120,9 @@ Core works out which identities belong to the player and hands them to the reade
   change time cannot be told from a real repeat and breaks the trail. Core builds windows only
   when every change names both emails, each replaced email is the previous change's new one, the
   changes run strictly forward in time from registration, and the last new email is the current
-  one. On any inconsistency it builds no window: the tickets section answers `unavailable`, the
+  one. On any inconsistency it builds no window: the tickets section is reported unavailable, the
   reader is not asked, and a warning naming the user goes to the log. The rows are append-only and
-  nothing repairs them, so a broken trail stays `unavailable` for good.
+  nothing repairs them, so a broken trail stays unavailable for good.
 - **What the trail cannot notice.** Nothing records the email an account registered with, so a
   lost first change goes unseen: the next email is then taken as held from registration. A lost run of
   changes returning to the address it left (A to B recorded, B to C and C to B lost, B to D
@@ -134,13 +134,13 @@ Core works out which identities belong to the player and hands them to the reade
 
 What a reader must guarantee:
 
-- **`includeResolved: false` must not touch the vendor's resolved archive.** Resolved tickets
-  cost their own calls; the back office asks for them only when staff opt in.
+- **A request that leaves resolved items out must not touch the vendor's resolved archive.**
+  Resolved tickets cost their own calls; the back office asks for them only when staff opt in.
 - **One item per chat thread.** The vendor's agent app links each thread on its own, so the item
   id is the thread id.
-- **Statuses per kind.** A ticket is `open`, `waiting`, `on_hold`, `solved` or `closed`; a chat is
-  `active` or `ended`. Core validates every item against the strict item schema and these
-  statuses; one item off-contract makes that whole section unavailable.
+- **Statuses per kind.** A ticket carries one of the five ticket states the contract lists, and a
+  chat one of its two. Core validates every item against the strict item schema and those
+  per-kind states; one item off-contract makes that whole section unavailable.
 - **UTC timestamps ending in `Z`.** The schema accepts nothing else, such as an offset.
 - **Absolute https links.** An item's link opens in the back office, so the schema accepts only a
   URL starting `https://`: an http, `javascript:` or `data:` link, or a slash-less `https:` form
@@ -149,12 +149,13 @@ What a reader must guarantee:
   with a short reason: no token, no request body, emails masked. Any other error that escapes is
   reduced to its class name.
 
-The answer has a tickets and a chats section, each `ok` with its items newest first, or
-`unavailable` when its read failed or the email trail was not consistent, or `no_email` (the
-account has no email and no email change) / `not_linked` when there was nothing to ask.
-One section failing never hides the other; the reason goes to the log only. Core caches the whole
-answer for 60 seconds per player and `includeResolved` value, keeping its original `fetchedAt`,
-and limits each admin to 30 calls a minute, cache hits included, so staff clicking around do not
+The answer has a tickets and a chats section. Each one either carries its items, most recently
+updated first, or says it is unavailable: its read failed, or the email trail was not consistent.
+The tickets section also says there is no email to match when the account has neither an email
+nor an email change, and the chats section says the player is not linked when there was nothing
+to ask. One section failing never hides the other; the reason goes to the log only. Core caches
+the whole answer for 60 seconds per player and per resolved setting, keeping its original fetch
+time, and limits each admin to 30 calls a minute, cache hits included, so staff clicking around do not
 spend the vendor's API quota. The default cache is in-process, so each replica fetches on its
 own; binding the Redis cache shares it.
 
