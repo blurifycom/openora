@@ -282,3 +282,61 @@ describe('WalletService.summarizeWithdrawals (real PG)', () => {
     ).toEqual(empty);
   });
 });
+
+describe('WalletService.listWithdrawals ordering and rows (real PG)', () => {
+  it('lists newest first by default and oldest first when asked for ascending', async () => {
+    const w = await seedWallet();
+    const oldest = await seedTx(w.id, { createdAt: new Date('2026-01-01T00:00:00.000Z') });
+    const middle = await seedTx(w.id, { createdAt: new Date('2026-01-02T00:00:00.000Z') });
+    const newest = await seedTx(w.id, { createdAt: new Date('2026-01-03T00:00:00.000Z') });
+    const svc = makeService();
+    const order = (items: { transactionId: string }[]) => items.map((i) => i.transactionId);
+
+    expect(order((await svc.listWithdrawals(page)).items)).toEqual([
+      newest.id,
+      middle.id,
+      oldest.id,
+    ]);
+    expect(order((await svc.listWithdrawals({ ...page, sortOrder: 'desc' })).items)).toEqual([
+      newest.id,
+      middle.id,
+      oldest.id,
+    ]);
+    expect(order((await svc.listWithdrawals({ ...page, sortOrder: 'asc' })).items)).toEqual([
+      oldest.id,
+      middle.id,
+      newest.id,
+    ]);
+  });
+
+  it('reports the rail each withdrawal went out on', async () => {
+    const w = await seedWallet();
+    await seedTx(w.id, { rail: 'crypto', currency: 'BTC' });
+    await seedTx(w.id, { rail: 'fiat' });
+    const svc = makeService();
+
+    const { items } = await svc.listWithdrawals(page);
+
+    expect(items.map((i) => i.rail).sort()).toEqual(['crypto', 'fiat']);
+  });
+});
+
+describe('WalletService.summarizeWithdrawals totals order (real PG)', () => {
+  it('lists the queued totals by currency code whatever order the rows arrived in', async () => {
+    const w = await seedWallet();
+    for (const currency of ['XRP', 'BTC', 'USD', 'ETH', 'LTC', 'DOGE']) {
+      await seedTx(w.id, { currency, amount: '1' });
+    }
+
+    const summary = await makeService().summarizeWithdrawals({});
+
+    expect(summary.queuedTotals.map((t) => t.currency)).toEqual([
+      'BTC',
+      'DOGE',
+      'ETH',
+      'LTC',
+      'USD',
+      'XRP',
+    ]);
+  });
+});

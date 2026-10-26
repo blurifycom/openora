@@ -1519,3 +1519,71 @@ describe('WalletService.withdraw network fee (real PG)', () => {
     expect(rows).toHaveLength(0);
   });
 });
+
+describe('WalletService.withdraw auto-approval edges (real PG)', () => {
+  it('auto-approves a withdrawal that lands exactly on the threshold', async () => {
+    const { svc, psp } = await makeService({ autoWithdrawal: {}, fiatThreshold: '40' });
+    const w = await seedWallet();
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(psp.processWithdrawal).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts withdrawals from earlier in the default 24h window toward the velocity flag', async () => {
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+    const w = await seedWallet();
+    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    await db.drizzle.db.insert(walletTransaction).values(
+      [1, 2].map(() => ({
+        walletId: w.id,
+        type: 'withdrawal' as const,
+        amount: '1',
+        currency: 'USD',
+        status: 'completed' as const,
+        createdAt: twelveHoursAgo,
+      })),
+    );
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('never auto-approves the replay of a withdrawal that was left for a human', async () => {
+    const idempotencyKey = randomUUID();
+    const queued = await makeService();
+    const w = await seedWallet();
+    const first = await queued.svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      idempotencyKey,
+      ...NO_CLIENT_META,
+    });
+    const auto = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+
+    const replay = await auto.svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      idempotencyKey,
+      ...NO_CLIENT_META,
+    });
+
+    expect(replay).toEqual({ transactionId: first.transactionId, status: 'pending' });
+    expect(auto.psp.processWithdrawal).not.toHaveBeenCalled();
+    expect((await txById(first.transactionId)).status).toBe('pending');
+  });
+});
