@@ -224,6 +224,7 @@ export class WalletReaderService implements WalletReader {
     return {
       completed: await pricedIn(['completed']),
       open: await pricedIn(IN_FLIGHT_TRANSACTION_STATUSES),
+      pivotCurrency: this.pivotCurrency,
     };
   }
 
@@ -250,7 +251,7 @@ export class WalletReaderService implements WalletReader {
       return null;
     }
     const pivotAmount = await this.priced([{ currency: last.currency, total: last.amount }]);
-    return { ...last, pivotAmount };
+    return { ...last, pivotAmount, pivotCurrency: this.pivotCurrency };
   }
 
   async getLastDepositAts(userIds: readonly string[]): Promise<Map<string, Date>> {
@@ -279,7 +280,7 @@ export class WalletReaderService implements WalletReader {
     const rows = await this.drizzle.db
       .select({
         currency: walletTransaction.currency,
-        total: sql<string>`sum(case when ${walletTransaction.type} = 'bet' then ${walletTransaction.amount} else -${walletTransaction.amount} end)`,
+        total: sql<string>`greatest(sum(case when ${walletTransaction.type} = 'bet' then ${walletTransaction.amount} else -${walletTransaction.amount} end), 0)`,
       })
       .from(walletTransaction)
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
@@ -316,6 +317,7 @@ export class WalletReaderService implements WalletReader {
     return {
       count: rows.reduce((total, row) => total + row.requests, 0),
       pivotAmount: await this.priced(rows),
+      pivotCurrency: this.pivotCurrency,
     };
   }
 

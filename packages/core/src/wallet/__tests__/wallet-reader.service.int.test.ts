@@ -338,7 +338,11 @@ describe('WalletReaderService.getLifetimeWithdrawals (real PG)', () => {
   });
 
   it('reports zero for a player who never withdrew', async () => {
-    expect(await svc.getLifetimeWithdrawals(randomUUID())).toEqual({ completed: '0', open: '0' });
+    expect(await svc.getLifetimeWithdrawals(randomUUID())).toEqual({
+      completed: '0',
+      open: '0',
+      pivotCurrency: 'USD',
+    });
   });
 });
 
@@ -367,6 +371,7 @@ describe('WalletReaderService.getLastDeposit (real PG)', () => {
       transactionId: released.id,
       at: released.reviewedAt,
       currency: 'BTC',
+      pivotCurrency: 'USD',
     });
     expect(Number(last?.amount)).toBe(0.01);
     expect(Number(last?.pivotAmount)).toBe(600);
@@ -446,6 +451,16 @@ describe('WalletReaderService.getTurnoverSince (real PG)', () => {
 
     expect(Number(await pricedReader(['DOGE']).getTurnoverSince(w.userId, daysAgo(7)))).toBe(30);
   });
+
+  it('stops a currency at zero when a stake placed before the window is reversed inside it', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'bet', amount: '50', createdAt: daysAgo(10) });
+    await seedTxn(w.id, { type: 'bet_reversal', amount: '50', createdAt: daysAgo(2) });
+    await seedTxn(w.id, { type: 'bet', amount: '10' });
+    await seedTxn(w.id, { type: 'bet', amount: '0.001', currency: 'BTC' });
+
+    expect(Number(await pricedReader().getTurnoverSince(w.userId, daysAgo(7)))).toBe(60);
+  });
 });
 
 describe('WalletReaderService.getWithdrawalRequestsSince (real PG)', () => {
@@ -479,6 +494,7 @@ describe('WalletReaderService.getWithdrawalRequestsSince (real PG)', () => {
     expect(await pricedReader(['DOGE']).getWithdrawalRequestsSince(w.userId, daysAgo(1))).toEqual({
       count: 2,
       pivotAmount: null,
+      pivotCurrency: 'USD',
     });
   });
 });
