@@ -1,5 +1,5 @@
-import type { DrizzleDb } from '@openora/core/server';
-import { and, asc, eq, gte, inArray, sql } from 'drizzle-orm';
+import type { DrizzleTx } from '@openora/core/server';
+import { and, asc, eq, gte, inArray, sql, type SQLWrapper } from 'drizzle-orm';
 import {
   LimitTypeSchema,
   type RgStanding,
@@ -17,6 +17,7 @@ import {
   type RgExclusion,
   type UserLimit,
 } from '../schema/index.js';
+import { pendingChangeStatus } from './rg-eval.js';
 
 export type RgMoneyMetric = keyof NonNullable<RgStandingWindow['totals']>;
 
@@ -42,10 +43,10 @@ type ExclusionRow = Pick<
 
 /** Null when the user has no player profile. */
 export async function readPlayerCurrency(
-  db: DrizzleDb,
+  tx: DrizzleTx,
   userId: User['id'],
 ): Promise<string | null> {
-  const [row] = await db
+  const [row] = await tx
     .select({ currency: player.currency })
     .from(player)
     .where(eq(player.userId, userId))
@@ -55,14 +56,15 @@ export async function readPlayerCurrency(
 
 /**
  * A cooling-off whose end has passed is over even while the sweep has not yet marked it
- * expired; a self-exclusion stays in force, past its term too, until it is lifted.
+ * expired, so one lifted after that ended when it ran out; a self-exclusion stays in force,
+ * past its term too, until it is lifted.
  */
 export async function readExclusionFacts(
-  db: DrizzleDb,
+  tx: DrizzleTx,
   userId: User['id'],
   now: Date,
 ): Promise<ExclusionFacts> {
-  const rows = await db
+  const rows = await tx
     .select({
       kind: rgExclusion.kind,
       status: rgExclusion.status,
@@ -97,7 +99,7 @@ function isInForce(row: ExclusionRow, now: Date): boolean {
 
 function endedAt(row: ExclusionRow, now: Date): Date | null {
   if (row.status === 'lifted') {
-    return row.liftedAt;
+    return ranOutBeforeLift(row) ? row.expiresAt : row.liftedAt;
   }
   if (row.status === 'expired') {
     return row.expiresAt;
@@ -106,6 +108,15 @@ function endedAt(row: ExclusionRow, now: Date): Date | null {
     return row.expiresAt;
   }
   return null;
+}
+
+function ranOutBeforeLift(row: ExclusionRow): boolean {
+  return (
+    row.kind === 'cooling_off' &&
+    row.liftedAt !== null &&
+    row.expiresAt !== null &&
+    row.expiresAt < row.liftedAt
+  );
 }
 
 function latestEnd(rows: readonly ExclusionRow[], kind: ExclusionRow['kind'], now: Date) {
@@ -120,10 +131,10 @@ function latestEnd(rows: readonly ExclusionRow[], kind: ExclusionRow['kind'], no
 }
 
 export async function readActiveFlags(
-  db: DrizzleDb,
+  tx: DrizzleTx,
   userId: User['id'],
 ): Promise<RgStandingFlag[]> {
-  const rows = await db
+  const rows = await tx
     .select({
       flagType: rgFlag.flagType,
       limitType: rgFlag.limitType,
@@ -143,11 +154,12 @@ export async function readActiveFlags(
  * the write that fills it in belongs to the limit's own lock (`resolveLimitCurrencyInTx`).
  */
 export async function readLimits(
-  db: DrizzleDb,
+  tx: DrizzleTx,
   userId: User['id'],
   playerCurrency: string,
+  now: Date,
 ): Promise<RgStandingLimit[]> {
-  const rows = await db
+  const rows = await tx
     .select({
       id: userLimit.id,
       type: userLimit.type,
@@ -155,22 +167,38 @@ export async function readLimits(
       amount: userLimit.amount,
       minutes: userLimit.minutes,
       currency: userLimit.currency,
+      pendingKind: userLimit.pendingKind,
+      pendingRequestedAt: userLimit.pendingRequestedAt,
+      pendingEffectiveAt: userLimit.pendingEffectiveAt,
+      pendingExpiresAt: userLimit.pendingExpiresAt,
     })
     .from(userLimit)
     .where(eq(userLimit.userId, userId))
     .orderBy(asc(userLimit.type), asc(userLimit.period));
-  return rows.map((row) => toStandingLimit(row, playerCurrency));
+  return rows.map((row) => toStandingLimit(row, playerCurrency, now));
 }
 
-function toStandingLimit(
-  row: Pick<UserLimit, 'id' | 'type' | 'period' | 'amount' | 'minutes' | 'currency'>,
-  playerCurrency: string,
-): RgStandingLimit {
+type LimitRow = Pick<
+  UserLimit,
+  | 'id'
+  | 'type'
+  | 'period'
+  | 'amount'
+  | 'minutes'
+  | 'currency'
+  | 'pendingKind'
+  | 'pendingRequestedAt'
+  | 'pendingEffectiveAt'
+  | 'pendingExpiresAt'
+>;
+
+function toStandingLimit(row: LimitRow, playerCurrency: string, now: Date): RgStandingLimit {
+  const pending = pendingWeakening(row, now);
   if (row.type === 'session') {
     if (row.minutes === null) {
       throw new Error(`user_limit ${row.id} is a session limit without minutes`);
     }
-    return { type: row.type, period: row.period, minutes: row.minutes };
+    return { type: row.type, period: row.period, minutes: row.minutes, ...pending };
   }
   if (row.amount === null) {
     throw new Error(`user_limit ${row.id} is a money limit without an amount`);
@@ -180,15 +208,29 @@ function toStandingLimit(
     period: row.period,
     amount: row.amount,
     currency: row.currency ?? playerCurrency,
+    ...pending,
   };
+}
+
+function pendingWeakening(
+  row: LimitRow,
+  now: Date,
+): Pick<RgStandingLimit, 'pendingKind' | 'pendingRequestedAt'> {
+  const status = pendingChangeStatus(row, now);
+  if (row.pendingKind === null || status === null || status === 'expired') {
+    return { pendingKind: null, pendingRequestedAt: null };
+  }
+  return { pendingKind: row.pendingKind, pendingRequestedAt: row.pendingRequestedAt };
 }
 
 /**
  * Completed deposits, stakes net of reversals, and wins per currency, one total per window start.
- * A deposit counts from when it reached the balance: a held deposit from its release.
+ * A deposit counts from when it reached the balance: a held deposit from its release. A stake
+ * placed before a window and reversed inside it lowers that window's stakes, so a currency's
+ * total stops at zero instead of going below it.
  */
 export async function readMoneyByWindow(
-  db: DrizzleDb,
+  tx: DrizzleTx,
   userId: User['id'],
   windowStarts: readonly Date[],
 ): Promise<RgMoneyRow[]> {
@@ -199,17 +241,59 @@ export async function readMoneyByWindow(
   if (earliest === null) {
     return [];
   }
-  const settledAt = sql`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`;
-  const metric = sql<RgMoneyMetric>`case ${walletTransaction.type} when 'deposit' then 'deposits' when 'win' then 'wins' else 'bets' end`;
-  const signedAmount = sql`case when ${walletTransaction.type} = 'bet_reversal' then -${walletTransaction.amount} else ${walletTransaction.amount} end`;
+  const deposits = await readDepositsByWindow(tx, userId, windowStarts, earliest);
+  const play = await readPlayByWindow(tx, userId, windowStarts, earliest);
+  return [...deposits, ...play];
+}
+
+function totalsSince(amount: SQLWrapper, countedAt: SQLWrapper, windowStarts: readonly Date[]) {
   const totals = windowStarts.map(
-    (start) => sql`coalesce(sum(${signedAmount}) filter (where ${settledAt} >= ${start}), 0)::text`,
+    (start) =>
+      sql`greatest(coalesce(sum(${amount}) filter (where ${countedAt} >= ${start}), 0), 0)::text`,
   );
-  return db
+  return sql<string[]>`array[${sql.join(totals, sql`, `)}]`;
+}
+
+async function readDepositsByWindow(
+  tx: DrizzleTx,
+  userId: User['id'],
+  windowStarts: readonly Date[],
+  earliest: Date,
+): Promise<RgMoneyRow[]> {
+  const depositedAt = sql`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`;
+  const rows = await tx
+    .select({
+      currency: walletTransaction.currency,
+      totals: totalsSince(walletTransaction.amount, depositedAt, windowStarts),
+    })
+    .from(walletTransaction)
+    .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+    .where(
+      and(
+        eq(wallet.userId, userId),
+        eq(walletTransaction.type, 'deposit'),
+        eq(walletTransaction.status, 'completed'),
+        gte(depositedAt, earliest),
+      ),
+    )
+    .groupBy(walletTransaction.currency);
+  return rows.map((row) => ({ ...row, metric: 'deposits' }));
+}
+
+// A stake, a reversal or a win is never reviewed: it moved when it was created.
+async function readPlayByWindow(
+  tx: DrizzleTx,
+  userId: User['id'],
+  windowStarts: readonly Date[],
+  earliest: Date,
+): Promise<RgMoneyRow[]> {
+  const metric = sql<RgMoneyMetric>`case ${walletTransaction.type} when 'win' then 'wins' else 'bets' end`;
+  const signedAmount = sql`case when ${walletTransaction.type} = 'bet_reversal' then -${walletTransaction.amount} else ${walletTransaction.amount} end`;
+  return tx
     .select({
       metric,
       currency: walletTransaction.currency,
-      totals: sql<string[]>`array[${sql.join(totals, sql`, `)}]`,
+      totals: totalsSince(signedAmount, walletTransaction.createdAt, windowStarts),
     })
     .from(walletTransaction)
     .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
@@ -217,8 +301,8 @@ export async function readMoneyByWindow(
       and(
         eq(wallet.userId, userId),
         eq(walletTransaction.status, 'completed'),
-        inArray(walletTransaction.type, ['deposit', 'bet', 'bet_reversal', 'win']),
-        gte(settledAt, earliest),
+        inArray(walletTransaction.type, ['bet', 'bet_reversal', 'win']),
+        gte(walletTransaction.createdAt, earliest),
       ),
     )
     .groupBy(metric, walletTransaction.currency);

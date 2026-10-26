@@ -2,7 +2,14 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE, type Container, type CoreTokenCatalog } from '@openora/core/server';
-import { JOB_QUEUE, PLAY_ELIGIBILITY, queue } from '@openora/core/contracts';
+import {
+  JOB_QUEUE,
+  PLATFORM_CONFIG,
+  PLAY_ELIGIBILITY,
+  RG_STANDING_READER,
+  queue,
+  resolveExchangeRatePivot,
+} from '@openora/core/contracts';
 import { rgExclusion } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { assignRoleByKey } from '@openora/core/iam/seed';
@@ -448,6 +455,30 @@ describe('RG cooling-off lift', () => {
       expect(body.items[0].resourceType).toBe('player');
       expect(body.items[0].before).toMatchObject({ status: 'active' });
       expect(body.items[0].after).toMatchObject({ reason: 'player changed their mind' });
+    });
+  });
+});
+
+describe('RG standing read by code outside compliance', () => {
+  it('reports a player on a cooling-off as the play gate restricts them, priced into the configured pivot', async () => {
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `rg-standing-${randomUUID()}@e2e.test`,
+    });
+    const res = await admin.post(`/compliance/players/${userId}/cooling-off`, {
+      durationHours: 24,
+      reason: 'player requested a break',
+    });
+    expect(res.status).toBe(200);
+
+    const standing = await app.container
+      .get(RG_STANDING_READER)
+      .getStanding(userId, { windowDays: [7] });
+
+    expect(standing).toMatchObject({
+      restricted: true,
+      activeExclusions: [expect.objectContaining({ kind: 'cooling_off' })],
+      pivotCurrency: resolveExchangeRatePivot(app.container.get(PLATFORM_CONFIG).exchangeRate),
+      windows: [{ days: 7, totals: expect.any(Object) }],
     });
   });
 });

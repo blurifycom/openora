@@ -1,7 +1,21 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import type { ExchangeRateReader, PlayEligibilityPort } from '@openora/core/contracts';
+import {
+  Container,
+  DRIZZLE,
+  ModuleRegistryImpl,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
+import {
+  EXCHANGE_RATE_READER,
+  PLATFORM_CONFIG,
+  PLAY_ELIGIBILITY,
+  RG_STANDING_READER,
+  definePlatformConfig,
+  type ExchangeRateReader,
+  type PlayEligibilityPort,
+} from '@openora/core/contracts';
 import { createTestDb, seedCompletedDeposit, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -11,6 +25,7 @@ import { mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { rgExclusion, rgFlag, userLimit } from '../schema/index.js';
 import { RgStandingReaderService } from '../adapters/rg-standing-reader.service.js';
+import compliancePlugin from '../plugin.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS);
@@ -189,6 +204,23 @@ describe('RgStandingReaderService.getStanding (real PG)', () => {
     });
   });
 
+  it('ends a cooling-off lifted after it ran out when it ran out', async () => {
+    const userId = await seedPlayer();
+    const expiresAt = daysAgo(6);
+    await seedExclusion(userId, {
+      kind: 'cooling_off',
+      status: 'lifted',
+      startsAt: daysAgo(8),
+      expiresAt,
+      liftedAt: daysAgo(1),
+    });
+
+    expect(await reader().getStanding(userId, { windowDays: [] })).toMatchObject({
+      activeExclusions: [],
+      lastCoolingOffEndedAt: expiresAt,
+    });
+  });
+
   it('reports a permanent self-exclusion in force with no end', async () => {
     const userId = await seedPlayer();
     const startsAt = daysAgo(3);
@@ -235,7 +267,13 @@ describe('RgStandingReaderService.getStanding (real PG)', () => {
       expect.arrayContaining([
         expect.objectContaining({ type: 'deposit', period: 'daily', currency: 'EUR' }),
         expect.objectContaining({ type: 'wager', period: 'weekly', currency: 'BTC' }),
-        { type: 'session', period: 'session', minutes: 60 },
+        {
+          type: 'session',
+          period: 'session',
+          minutes: 60,
+          pendingKind: null,
+          pendingRequestedAt: null,
+        },
       ]),
     );
     const [stored] = await db.drizzle.db
@@ -244,6 +282,59 @@ describe('RgStandingReaderService.getStanding (real PG)', () => {
       .where(eq(userLimit.userId, userId))
       .orderBy(userLimit.type);
     expect(stored?.currency).toBeNull();
+  });
+
+  it('reports a raise or removal still waiting beside the limit, and drops one that lapsed', async () => {
+    const userId = await seedPlayer();
+    const requestedAt = daysAgo(1);
+    await db.drizzle.db.insert(userLimit).values([
+      {
+        userId,
+        type: 'deposit',
+        period: 'daily',
+        amount: '100',
+        currency: 'USD',
+        pendingKind: 'increase',
+        pendingAmount: '500',
+        pendingCurrency: 'USD',
+        pendingRequestedAt: requestedAt,
+        pendingEffectiveAt: daysAhead(1),
+        pendingExpiresAt: daysAhead(2),
+      },
+      {
+        userId,
+        type: 'session',
+        period: 'session',
+        minutes: 60,
+        currency: 'SESSION',
+        pendingKind: 'removal',
+        pendingRequestedAt: daysAgo(10),
+        pendingEffectiveAt: daysAgo(9),
+        pendingExpiresAt: daysAgo(2),
+      },
+    ]);
+
+    const standing = await reader().getStanding(userId, { windowDays: [] });
+
+    expect(standing?.limits).toEqual(
+      expect.arrayContaining([
+        {
+          type: 'deposit',
+          period: 'daily',
+          amount: expect.stringMatching(/^100(\.0+)?$/),
+          currency: 'USD',
+          pendingKind: 'increase',
+          pendingRequestedAt: requestedAt,
+        },
+        {
+          type: 'session',
+          period: 'session',
+          minutes: 60,
+          pendingKind: null,
+          pendingRequestedAt: null,
+        },
+      ]),
+    );
   });
 
   it('prices every currency of each window into the pivot', async () => {
@@ -278,6 +369,23 @@ describe('RgStandingReaderService.getStanding (real PG)', () => {
     ]);
   });
 
+  it('stops stakes at zero in a currency when a stake placed before the window is reversed in it', async () => {
+    const userId = await seedPlayer();
+    await seedMoney(userId, { type: 'bet', amount: '50', createdAt: daysAgo(10) });
+    await seedMoney(userId, { type: 'bet_reversal', amount: '50', createdAt: daysAgo(2) });
+    await seedMoney(userId, { type: 'bet', amount: '10' });
+    await seedMoney(userId, { type: 'bet', amount: '0.001', currency: 'BTC' });
+
+    const standing = await reader().getStanding(userId, { windowDays: [7, 30] });
+
+    expect(
+      standing?.windows.map(({ days, totals }) => ({ days, bets: Number(totals?.bets) })),
+    ).toEqual([
+      { days: 7, bets: 60 },
+      { days: 30, bets: 70 },
+    ]);
+  });
+
   it('answers a null window, never a partial one, when a currency in it cannot be priced', async () => {
     const userId = await seedPlayer();
     await seedMoney(userId, { amount: '100' });
@@ -303,5 +411,39 @@ describe('RgStandingReaderService.getStanding (real PG)', () => {
     const userId = await seedPlayer();
 
     await expect(reader().getStanding(userId, { windowDays })).rejects.toThrow(RangeError);
+  });
+});
+
+describe('RG_STANDING_READER as the compliance plugin binds it (real PG)', () => {
+  const USD_IN_EUR = '0.9';
+
+  async function boundReader() {
+    const container = new Container<CoreTokenCatalog>();
+    container.register(DRIZZLE, () => db.drizzle);
+    container.register(PLATFORM_CONFIG, () =>
+      definePlatformConfig({ exchangeRate: { pivot: 'EUR' } }),
+    );
+    container.register(EXCHANGE_RATE_READER, () =>
+      mock<ExchangeRateReader>({
+        convert: vi.fn(async (amount: string, from: string, to: string) =>
+          from === 'USD' && to === 'EUR' ? String(Number(amount) * Number(USD_IN_EUR)) : null,
+        ),
+      }),
+    );
+    container.register(PLAY_ELIGIBILITY, () =>
+      mock<PlayEligibilityPort>({ isRestricted: vi.fn(async () => true) }),
+    );
+    await compliancePlugin.register(new ModuleRegistryImpl<CoreTokenCatalog>(container));
+    return container.get(RG_STANDING_READER);
+  }
+
+  it('prices the windows into the pivot the platform config names', async () => {
+    const userId = await seedPlayer();
+    await seedMoney(userId, { amount: '100' });
+
+    const standing = await (await boundReader()).getStanding(userId, { windowDays: [7] });
+
+    expect(standing).toMatchObject({ restricted: true, pivotCurrency: 'EUR' });
+    expect(Number(standing?.windows[0]?.totals?.deposits)).toBe(90);
   });
 });

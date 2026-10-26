@@ -9,7 +9,13 @@
  * an overlay could rebind it; one that reports less than compliance holds weakens every harm
  * check built on it, so rebind it only to add facts.
  */
-import type { ExclusionKind, LimitPeriod, LimitType, RgFlagType } from '../schemas/compliance.js';
+import type {
+  ExclusionKind,
+  LimitChangeKind,
+  LimitPeriod,
+  LimitType,
+  RgFlagType,
+} from '../schemas/compliance.js';
 import type { User } from '../schemas/identity.js';
 import { createToken, type Token } from './token.js';
 
@@ -33,8 +39,18 @@ export type RgStandingFlag = {
   flaggedAt: Date;
 };
 
-/** A limit as it applies now; a requested raise or removal still waiting is not shown. */
-export type RgStandingLimit =
+type RgStandingLimitChange = {
+  /**
+   * A raise or removal the player asked for that has not applied yet: it waits out the
+   * cool-down and then the player's confirmation. Null when none is waiting.
+   */
+  pendingKind: LimitChangeKind | null;
+  /** When the player asked for it; null when none is waiting. */
+  pendingRequestedAt: Date | null;
+};
+
+/** A limit as it applies now: a raise or removal still waiting never shows in its value. */
+export type RgStandingLimit = (
   | {
       type: Exclude<LimitType, 'session'>;
       period: LimitPeriod;
@@ -42,11 +58,17 @@ export type RgStandingLimit =
       /** A limit set before limits carried a currency is in the player's own currency. */
       currency: string;
     }
-  | { type: 'session'; period: LimitPeriod; minutes: number };
+  | { type: 'session'; period: LimitPeriod; minutes: number }
+) &
+  RgStandingLimitChange;
 
 /**
- * Completed money movement in the last `days` days, priced into `pivotCurrency`: deposits by
- * when they reached the balance, stakes less the stakes reversed, and wins.
+ * Completed money movement in the last `days` days, priced into `pivotCurrency` at today's
+ * rates: deposits by when they reached the balance, ledger stakes less the stakes reversed, and
+ * wins. A stake placed before the window and reversed inside it still comes off, so stakes can
+ * read low at the window's edge, never below zero in a currency. These are not the figures a
+ * limit is enforced against: `RG_LIMITS` counts each limit over its own period, in its own
+ * currency.
  */
 export type RgStandingWindow = {
   days: number;
@@ -80,7 +102,11 @@ export type RgStandingQuery = {
 };
 
 export type RgStandingReader = {
-  /** Null when the user has no player profile. */
+  /**
+   * Null when the user has no player profile. Reads compliance and wallet facts from one
+   * snapshot on a connection of its own, so call it outside a transaction: taking a second pool
+   * connection while holding the first is how the pool deadlocks under a burst.
+   */
   getStanding(userId: User['id'], query: RgStandingQuery): Promise<RgStanding | null>;
 };
 

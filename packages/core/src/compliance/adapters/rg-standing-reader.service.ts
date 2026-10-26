@@ -1,4 +1,9 @@
-import { moneyCompare, sumInPivot, type DrizzleService } from '@openora/core/server';
+import {
+  moneyCompare,
+  sumInPivot,
+  type DrizzleService,
+  type DrizzleTx,
+} from '@openora/core/server';
 import {
   MAX_RG_STANDING_WINDOWS,
   MAX_RG_STANDING_WINDOW_DAYS,
@@ -43,6 +48,28 @@ function assertWindowDays(windowDays: readonly number[]): void {
   }
 }
 
+type StandingFacts = Omit<RgStanding, 'restricted' | 'pivotCurrency' | 'windows'> & {
+  money: RgMoneyRow[];
+};
+
+async function readStandingFacts(
+  tx: DrizzleTx,
+  userId: User['id'],
+  now: Date,
+  windowStarts: readonly Date[],
+): Promise<StandingFacts | null> {
+  const playerCurrency = await readPlayerCurrency(tx, userId);
+  if (playerCurrency === null) {
+    return null;
+  }
+  return {
+    ...(await readExclusionFacts(tx, userId, now)),
+    activeFlags: await readActiveFlags(tx, userId),
+    limits: await readLimits(tx, userId, playerCurrency, now),
+    money: await readMoneyByWindow(tx, userId, windowStarts),
+  };
+}
+
 /**
  * The compliance-owned `RG_STANDING_READER`. Reads only: a limit stored without a currency is
  * read in the player's currency and left as it is.
@@ -55,30 +82,22 @@ export class RgStandingReaderService implements RgStandingReader {
     { windowDays }: RgStandingQuery,
   ): Promise<RgStanding | null> {
     assertWindowDays(windowDays);
-    const db = this.deps.drizzle.db;
-    const playerCurrency = await readPlayerCurrency(db, userId);
-    if (playerCurrency === null) {
+    const now = new Date();
+    const windowStarts = windowDays.map((days) => new Date(now.getTime() - days * DAY_MS));
+    const facts = await this.deps.drizzle.db.transaction(
+      (tx) => readStandingFacts(tx, userId, now, windowStarts),
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
+    if (facts === null) {
       return null;
     }
-    const now = new Date();
+    const { money, ...standing } = facts;
     const restricted = await this.deps.eligibility.isRestricted(userId);
-    const exclusions = await readExclusionFacts(db, userId, now);
-    const activeFlags = await readActiveFlags(db, userId);
-    const limits = await readLimits(db, userId, playerCurrency);
-    const windowStarts = windowDays.map((days) => new Date(now.getTime() - days * DAY_MS));
-    const money = await readMoneyByWindow(db, userId, windowStarts);
     const windows: RgStandingWindow[] = [];
     for (const [index, days] of windowDays.entries()) {
       windows.push({ days, totals: await this.windowTotals(money, index) });
     }
-    return {
-      restricted,
-      ...exclusions,
-      activeFlags,
-      limits,
-      pivotCurrency: this.deps.pivotCurrency,
-      windows,
-    };
+    return { restricted, ...standing, pivotCurrency: this.deps.pivotCurrency, windows };
   }
 
   private async windowTotals(
