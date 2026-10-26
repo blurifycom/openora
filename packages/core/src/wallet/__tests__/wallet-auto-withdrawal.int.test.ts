@@ -992,6 +992,81 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(result.status).toBe('completed');
   });
 
+  it('counts an auto-approved payout from just inside the 24h window and ignores one just outside it', async () => {
+    const HOUR = 60 * 60 * 1000;
+    const MINUTE = 60 * 1000;
+    const { svc } = await makeService({
+      autoWithdrawal: { dailyCapCount: 1 },
+      fiatThreshold: '1000',
+    });
+    const inside = await seedWallet();
+    const outside = await seedWallet();
+    const prior = (walletId: string, ageMs: number) =>
+      db.drizzle.db.insert(walletTransaction).values({
+        walletId,
+        type: 'withdrawal',
+        amount: '10',
+        currency: 'USD',
+        status: 'completed',
+        reviewReason: 'auto-approved',
+        createdAt: new Date(Date.now() - ageMs),
+      });
+    await prior(inside.id, 24 * HOUR - MINUTE);
+    await prior(outside.id, 24 * HOUR + MINUTE);
+
+    const capped = await svc.withdraw({
+      userId: inside.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    const free = await svc.withdraw({
+      userId: outside.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(capped.status).toBe('pending');
+    expect(free.status).toBe('completed');
+  });
+
+  it('auto-approves a payout that lands exactly on the daily amount cap and queues one cent over', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: { dailyCapAmount: '50' },
+      fiatThreshold: '1000',
+    });
+    const exact = await seedWallet();
+    const over = await seedWallet();
+    for (const w of [exact, over]) {
+      await db.drizzle.db.insert(walletTransaction).values({
+        walletId: w.id,
+        type: 'withdrawal',
+        amount: '10',
+        currency: 'USD',
+        status: 'completed',
+        reviewReason: 'auto-approved',
+        autoApprovalPivotAmount: '10',
+      });
+    }
+
+    const atCap = await svc.withdraw({
+      userId: exact.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    const overCap = await svc.withdraw({
+      userId: over.userId,
+      amount: '40.01',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(atCap.status).toBe('completed');
+    expect(overCap.status).toBe('pending');
+  });
+
   it('serializes concurrent withdrawals so a count cap of one cannot be bypassed', async () => {
     const { svc } = await makeService({
       autoWithdrawal: { dailyCapCount: 1 },

@@ -86,6 +86,12 @@ describe('WalletService - rate limiting (real Redis + real PG)', () => {
       code: 'TOO_MANY_REQUESTS',
       data: { retryAfterMs: expect.any(Number) },
     });
+    const blocked = await svc.deposit({ userId: w.userId, amount: '1', currency: 'USD' }).then(
+      () => null,
+      (err: unknown) => err as { data: { retryAfterMs: number } },
+    );
+    expect(blocked?.data.retryAfterMs).toBeGreaterThan(30_000);
+    expect(blocked?.data.retryAfterMs).toBeLessThanOrEqual(60_000);
     const rows = await db.drizzle.db.select().from(walletTransaction);
     expect(rows).toHaveLength(30);
   });
