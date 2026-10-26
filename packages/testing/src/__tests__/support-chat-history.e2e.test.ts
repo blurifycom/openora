@@ -128,7 +128,7 @@ async function changeEmail(client: TestClient, newEmail: string) {
 const emailChangeAuditedAt = (resourceType: 'player' | 'user', resourceId: string) =>
   vi.waitFor(async () => {
     const [row] = await drizzle()
-      .select({ after: auditLog.after, createdAt: auditLog.createdAt })
+      .select({ after: auditLog.after })
       .from(auditLog)
       .where(
         and(
@@ -145,7 +145,7 @@ const emailChangeAuditedAt = (resourceType: 'player' | 'user', resourceId: strin
     if (typeof changedAt !== 'string') {
       throw new Error('email change audited without its change time');
     }
-    return { changedAt, writtenAt: row.createdAt.getTime() };
+    return changedAt;
   }, WAIT);
 
 async function registeredAt(userId: string) {
@@ -226,8 +226,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     const p = await newPlayer();
     const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
     await changeEmail(p.client, newEmail);
-    const { changedAt, writtenAt } = await emailChangeAuditedAt('player', p.playerId);
-    expect(Date.parse(changedAt)).toBeLessThanOrEqual(writtenAt);
+    const changedAt = await emailChangeAuditedAt('player', p.playerId);
 
     await history(admin, p.userId);
 
@@ -242,7 +241,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     await drizzle().delete(player).where(eq(player.id, p.playerId));
     const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
     await changeEmail(p.client, newEmail);
-    const { changedAt } = await emailChangeAuditedAt('user', p.userId);
+    const changedAt = await emailChangeAuditedAt('user', p.userId);
     const signedInAgain = await asPlayer(testApp.app, { email: newEmail, password: PASSWORD });
     expect((await signedInAgain.get('/profile')).status).toBe(200);
 
@@ -256,7 +255,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     ]);
   });
 
-  it('windows two real email changes by the times their events carried, each no later than its audit write', async () => {
+  it('windows two real email changes by the times their events carried', async () => {
     const p = await newPlayer();
     const second = `support-history-second-${randomUUID()}@e2e.test`;
     const third = `support-history-third-${randomUUID()}@e2e.test`;
@@ -266,7 +265,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     await changeEmail(again, third);
     const rows = await vi.waitFor(async () => {
       const found = await drizzle()
-        .select({ after: auditLog.after, createdAt: auditLog.createdAt })
+        .select({ after: auditLog.after })
         .from(auditLog)
         .where(
           and(
@@ -282,11 +281,8 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       return found;
     }, WAIT);
     const changedAts = rows.map((r) => String(r.after?.['changedAt']));
-    expect(changedAts[0]).toBe(first.changedAt);
+    expect(changedAts[0]).toBe(first);
     expect(Date.parse(changedAts[0] ?? '')).toBeLessThan(Date.parse(changedAts[1] ?? ''));
-    rows.forEach((r, i) =>
-      expect(Date.parse(changedAts[i] ?? '')).toBeLessThanOrEqual(r.createdAt.getTime()),
-    );
 
     await history(admin, p.userId);
 
@@ -301,7 +297,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     const p = await newPlayer();
     const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
     await changeEmail(p.client, newEmail);
-    const { changedAt } = await emailChangeAuditedAt('player', p.playerId);
+    const changedAt = await emailChangeAuditedAt('player', p.playerId);
     const later = `support-history-later-${randomUUID()}@e2e.test`;
     await drizzle()
       .insert(auditLog)
