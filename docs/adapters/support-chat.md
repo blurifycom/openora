@@ -116,17 +116,17 @@ Core works out which identities belong to the player and hands them to the reade
   land out of order or carry a skewed time. Each row carries the time stamped right after the
   change, so a slow write does not move a window's bounds; a row written before that field
   existed is timed by when it was written. A redelivered event writes its row again: a row that
-  repeats the one before it, change time included, counts once, but a repeated row without a
+  repeats any earlier one, change time included, counts once, but a repeated row without a
   change time cannot be told from a real repeat and breaks the trail. Core builds windows only
   when every change names both emails, each replaced email is the previous change's new one, the
   changes run strictly forward in time from registration, and the last new email is the current
   one. On any inconsistency it builds no window: the tickets section answers `unavailable`, the
-  reader is not asked, and a warning naming the user goes to the log. The rows are append-only,
-  so a broken trail stays `unavailable` until an operator acts on it.
+  reader is not asked, and a warning naming the user goes to the log. The rows are append-only and
+  nothing repairs them, so a broken trail stays `unavailable` for good.
 - **What the trail cannot notice.** Nothing records the email an account registered with, so a
-  lost first change goes unseen: the next email is then taken as held from registration. Two lost
-  changes that return to the same address (A to B recorded, B to C and C to B lost, B to D
-  recorded) also leave a trail that looks consistent, so B's window spans the gap. Both follow
+  lost first change goes unseen: the next email is then taken as held from registration. A lost run of
+  changes returning to the address it left (A to B recorded, B to C and C to B lost, B to D
+  recorded) also leaves a trail that looks consistent, so B's window spans the gap. Both follow
   from the email-change event being emitted best-effort rather than through the outbox; moving
   that emit to the outbox is the fix, and is not part of this port.
 - **Chats** are matched by the vendor customer the player is linked to. A player who never

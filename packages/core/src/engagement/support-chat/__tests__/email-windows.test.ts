@@ -5,10 +5,11 @@ import { buildEmailWindows } from '../service/support-history.service.js';
 const REGISTERED = new Date('2026-01-01T00:00:00.000Z');
 const day = (n: number) => new Date(Date.UTC(2026, 0, 1 + n));
 const iso = (n: number) => day(n).toISOString();
-const change = (before: string | null, after: string | null, n: number) => ({
+const change = (before: string | null, after: string | null, n: number, timedByChange = false) => ({
   before: before && `${before}@example.test`,
   after: after && `${after}@example.test`,
   at: day(n),
+  timedByChange,
 });
 const windowsOf = (currentEmail: string, changes: ReturnType<typeof change>[]) =>
   buildEmailWindows({
@@ -65,7 +66,7 @@ describe('buildEmailWindows', () => {
   });
 
   it('counts a redelivered row, same emails and same carried change time, once', () => {
-    const redelivered = { ...change('a', 'b', 10), timedByChange: true };
+    const redelivered = change('a', 'b', 10, true);
 
     expect(windowsOf('b', [redelivered, { ...redelivered }])).toEqual({
       windows: [
@@ -80,59 +81,47 @@ describe('buildEmailWindows', () => {
     ['a repeated row timed by its write time', [change('a', 'b', 10), change('a', 'b', 10)]],
     [
       'a repeated row with another change time',
-      [
-        { ...change('a', 'b', 10), timedByChange: true },
-        { ...change('a', 'b', 11), timedByChange: true },
-      ],
+      [change('a', 'b', 10, true), change('a', 'b', 11, true)],
     ],
     [
       'a repeat of a row timed by its write time',
-      [change('a', 'b', 10), { ...change('a', 'b', 10), timedByChange: true }],
+      [change('a', 'b', 10), change('a', 'b', 10, true)],
     ],
   ])('trusts no window for %s', (_fault, changes) => {
     expect(windowsOf('b', changes)).toEqual(UNTRUSTED);
   });
 
   it('counts three redeliveries once and keeps the windows of the changes around them', () => {
-    const timed = (before: string, after: string, n: number) => ({
-      ...change(before, after, n),
-      timedByChange: true,
-    });
-    const first = timed('a', 'b', 10);
+    const first = change('a', 'b', 10, true);
 
-    expect(windowsOf('c', [first, { ...first }, { ...first }, timed('b', 'c', 20)])).toEqual({
-      windows: [
-        { email: 'a@example.test', from: REGISTERED.toISOString(), to: iso(10) },
-        { email: 'b@example.test', from: iso(10), to: iso(20) },
-        { email: 'c@example.test', from: iso(20), to: null },
-      ],
-      complete: true,
-    });
+    expect(windowsOf('c', [first, { ...first }, { ...first }, change('b', 'c', 20, true)])).toEqual(
+      {
+        windows: [
+          { email: 'a@example.test', from: REGISTERED.toISOString(), to: iso(10) },
+          { email: 'b@example.test', from: iso(10), to: iso(20) },
+          { email: 'c@example.test', from: iso(20), to: null },
+        ],
+        complete: true,
+      },
+    );
   });
 
   it.each([
     [
-      'a repeat that is not adjacent',
+      'a later repeat with another change time',
       'c',
-      [
-        { ...change('a', 'b', 10), timedByChange: true },
-        { ...change('b', 'c', 20), timedByChange: true },
-        { ...change('a', 'b', 10), timedByChange: true },
-      ],
+      [change('a', 'b', 10, true), change('b', 'c', 20, true), change('a', 'b', 11, true)],
     ],
     [
-      'a collapsed repeat that leaves the current email unexplained',
+      'a later repeat timed by its write time',
       'c',
-      [
-        { ...change('a', 'b', 10), timedByChange: true },
-        { ...change('a', 'b', 10), timedByChange: true },
-      ],
+      [change('a', 'b', 10, true), change('b', 'c', 20, true), change('a', 'b', 10)],
     ],
     [
       'a repeat whose emails differ only in case',
       'b',
       [
-        { ...change('a', 'b', 10), timedByChange: true },
+        change('a', 'b', 10, true),
         { before: 'A@example.test', after: 'b@example.test', at: day(10), timedByChange: true },
       ],
     ],
@@ -140,12 +129,29 @@ describe('buildEmailWindows', () => {
       'a repeat whose new email differs only in case',
       'b',
       [
-        { ...change('a', 'b', 10), timedByChange: true },
+        change('a', 'b', 10, true),
         { before: 'a@example.test', after: 'B@example.test', at: day(10), timedByChange: true },
       ],
     ],
   ])('trusts no window for %s', (_fault, current, changes) => {
     expect(windowsOf(current, changes)).toEqual(UNTRUSTED);
+  });
+
+  it('counts a redelivery landing after a later change once, keeping the first in place', () => {
+    expect(
+      windowsOf('c', [
+        change('a', 'b', 10, true),
+        change('b', 'c', 20, true),
+        change('a', 'b', 10, true),
+      ]),
+    ).toEqual({
+      windows: [
+        { email: 'a@example.test', from: REGISTERED.toISOString(), to: iso(10) },
+        { email: 'b@example.test', from: iso(10), to: iso(20) },
+        { email: 'c@example.test', from: iso(20), to: null },
+      ],
+      complete: true,
+    });
   });
 
   it('answers no window and no gap for an account with no email and no change', () => {

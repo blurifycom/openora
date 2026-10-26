@@ -21,7 +21,12 @@ describe('buildEmailWindows against corrupted change times', () => {
       const days = Array.from({ length: count }, (_, i) =>
         random() < 0.4 ? pick(12) - 2 : 10 * (i + 1),
       );
-      const changes = days.map((d, i) => ({ before: email(i), after: email(i + 1), at: day(d) }));
+      const changes = days.map((d, i) => ({
+        before: email(i),
+        after: email(i + 1),
+        at: day(d),
+        timedByChange: false,
+      }));
       const sound = days.every((d, i) => d > (i === 0 ? 0 : days[i - 1]!));
 
       const result = buildEmailWindows({

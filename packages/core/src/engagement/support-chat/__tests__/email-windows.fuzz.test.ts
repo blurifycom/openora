@@ -10,7 +10,7 @@ const rng = (seed: number) => () => {
   return seed / 2 ** 32;
 };
 
-type Row = { before: string | null; after: string | null; at: Date };
+type Row = { before: string | null; after: string | null; at: Date; timedByChange: boolean };
 
 describe('buildEmailWindows against corrupted audit trails', () => {
   it('trusts no window for a corrupted trail, and none wider than the truth for an intact one', () => {
@@ -24,7 +24,7 @@ describe('buildEmailWindows against corrupted audit trails', () => {
       for (let i = 0; i < count; i++) {
         const at = day(10 * (i + 1));
         held.set(email(i), { from: i === 0 ? REGISTERED : day(10 * i), to: at });
-        rows.push({ before: email(i), after: email(i + 1), at });
+        rows.push({ before: email(i), after: email(i + 1), at, timedByChange: false });
       }
       held.set(email(count), { from: day(10 * count), to: null });
 

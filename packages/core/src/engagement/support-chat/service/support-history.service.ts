@@ -40,18 +40,26 @@ type EmailChange = {
   before: string | null;
   after: string | null;
   at: Date;
-  timedByChange?: boolean;
+  timedByChange: boolean;
 };
 
-// A redelivered event writes its row again: the same emails and the same carried change time.
-// A row timed by its write time cannot be told from a real repeat, so it is never collapsed.
-const isRedelivery = (change: EmailChange, previous: EmailChange | undefined) =>
-  previous !== undefined &&
-  change.timedByChange === true &&
-  previous.timedByChange === true &&
-  change.before === previous.before &&
-  change.after === previous.after &&
-  change.at.getTime() === previous.at.getTime();
+// A redelivered event writes its row again, wherever it lands: the same emails and the same
+// carried change time as an earlier row. The first stays in place and the repeats are dropped. A
+// row timed by its write time cannot be told from a real repeat, so it is never dropped.
+function withoutRedeliveries(changes: readonly EmailChange[]) {
+  const seen = new Set<string>();
+  return changes.filter((change) => {
+    if (!change.timedByChange) {
+      return true;
+    }
+    const key = JSON.stringify([change.before, change.after, change.at.getTime()]);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
 
 /**
  * The emails a player held and when, oldest first, the current one last and open-ended. The
@@ -60,7 +68,7 @@ const isRedelivery = (change: EmailChange, previous: EmailChange | undefined) =>
  * registration, and the last new email is the current one. Anything else means an event was
  * lost, duplicated, reordered or mis-stamped, and no window is returned (`complete: false`), so a
  * player is shown no tickets rather than another player's. Nothing records the email an account
- * registered with, so a lost first change cannot be noticed. A row repeating the one before it,
+ * registered with, so a lost first change cannot be noticed. A row repeating an earlier one,
  * change time included, is a redelivery and counts once. Only the most recent previous emails are
  * kept.
  */
@@ -77,8 +85,7 @@ export function buildEmailWindows({
   const closed: SupportHistoryEmailWindow[] = [];
   let from = registeredAt;
   let lastNewEmail: string | null = null;
-  const distinct = changes.filter((change, i) => !isRedelivery(change, changes[i - 1]));
-  for (const { before, after, at } of distinct) {
+  for (const { before, after, at } of withoutRedeliveries(changes)) {
     if (!before || !after || at <= from || (lastNewEmail !== null && before !== lastNewEmail)) {
       return untrusted;
     }
