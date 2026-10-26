@@ -206,7 +206,7 @@ async function txById(id: string) {
 }
 
 const emittedTopics = (events: ReturnType<typeof makeEventBus>) =>
-  events.emit.mock.calls.map(([topic]) => topic);
+  events.emitInTransaction.mock.calls.map(([, topic]) => topic);
 
 beforeAll(async () => {
   db = await createTestDb([migrate, migrateProfile]);
@@ -248,7 +248,8 @@ describe('WalletService.deposit (real PG)', () => {
       providerName: 'stripe',
       providerRefId: externalId,
     });
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'wallet.deposit.completed',
       expect.objectContaining({ userId, amount: '40', transactionId: result.transactionId }),
     );
@@ -466,7 +467,8 @@ describe('WalletService.withdraw (real PG)', () => {
       status: 'pending',
       rail: 'fiat',
     });
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'wallet.withdrawal.requested',
       expect.objectContaining({ userId: w.userId, amount: '40', ip: null, userAgent: null }),
     );
@@ -639,7 +641,7 @@ describe('WalletService.withdraw (real PG)', () => {
 
     expect(await balanceOf(w.userId)).toBe(30);
     expect(await txRows(w.id)).toHaveLength(0);
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
   });
 
   it('lets two concurrent withdrawals share a balance without overdrawing it', async () => {
@@ -705,7 +707,7 @@ describe('WalletService.withdraw - synchronous tag evaluation (TAG_EVALUATION_CO
       svc.withdraw({ userId: w.userId, amount: '40', currency: 'USD', ...NO_CLIENT_META }),
     ).rejects.toBe(dbError);
     // The transaction rolled back before the requested event/auto-approval step ran.
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
     expect(psp.processWithdrawal).not.toHaveBeenCalled();
     expect(await balanceOf(w.userId)).toBe(100);
   });
@@ -1456,7 +1458,8 @@ describe('WalletService.rejectWithdrawal (real PG)', () => {
       reviewedBy: adminId,
       reviewReason: 'suspicious',
     });
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'wallet.withdrawal.rejected',
       expect.objectContaining({ userId: w.userId, reason: 'suspicious', adminId }),
     );
@@ -1708,7 +1711,8 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
 
     expect(await txById(tx.id)).toMatchObject({ status: 'failed' });
     expect(await balanceOf(w.userId)).toBe(40);
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'wallet.withdrawal.failed',
       expect.objectContaining({ userId: w.userId, playerId, transactionId: tx.id, adminId: null }),
     );
@@ -1743,7 +1747,7 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
 
     expect(await txById(tx.id)).toMatchObject({ status: 'completed' });
     expect(await balanceOf(w.userId)).toBe(0);
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
   });
 
   it('no-ops when no transaction carries the providerRefId', async () => {
@@ -1755,7 +1759,7 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
       status: 'completed',
     });
 
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
   });
 });
 
@@ -1979,7 +1983,7 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
       'default',
     );
 
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
     const findings = await db.drizzle.db
       .select()
       .from(walletReconciliationFinding)
@@ -2337,7 +2341,7 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
       txHash: '0xmismatch',
     });
 
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
     expect(await balanceOf(w.userId)).toBe(0);
     const findings = await db.drizzle.db
       .select()

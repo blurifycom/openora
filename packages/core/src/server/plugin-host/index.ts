@@ -11,6 +11,7 @@ export type {
   RegisteredTriggerListener,
   EventHandler,
   TriggerListener,
+  RegisteredEventHandler,
   TypedContainer,
 } from './define-plugin.js';
 export { ModuleRegistryImpl } from './module-registry.js';

@@ -215,7 +215,7 @@ describe('notificationEventMap', () => {
       reason: 'internal case note',
     } as const;
 
-    it('carries the limit as codes and raw values, never the admin reason', () => {
+    it('carries the limit as codes and raw values with its currency, never the admin reason', () => {
       const input = buildRgLimitAdminUpdatedNotification({
         ...limitSet,
         type: 'deposit',
@@ -224,6 +224,7 @@ describe('notificationEventMap', () => {
         minutes: null,
         previousAmount: '100.000000000000000000',
         previousMinutes: null,
+        currency: 'USDT',
       });
 
       expect(input).toEqual({
@@ -234,6 +235,7 @@ describe('notificationEventMap', () => {
           limitType: 'deposit',
           previousAmount: '100.000000000000000000',
           amount: '50.000000000000000000',
+          currency: 'USDT',
         },
         data: null,
       });
@@ -249,6 +251,7 @@ describe('notificationEventMap', () => {
         minutes: 90,
         previousAmount: null,
         previousMinutes: null,
+        currency: null,
       });
 
       expect(input.params).toEqual({ period: 'session', limitType: 'session', minutes: '90' });
@@ -576,6 +579,23 @@ describe('notificationEventMap', () => {
     expect(entry.securityAlert).toBe(false);
   });
 
+  it('tells the player a streak reward is waiting to be claimed', () => {
+    const userId = randomUUID();
+
+    const input = entryFor('promo.streak.milestone.reached').buildNotification({
+      userId,
+      day: 7,
+      grantId: null,
+    });
+
+    expect(input).toEqual({
+      userId,
+      type: 'promo.streak.milestone.reached',
+      params: { day: '7' },
+      data: { day: '7' },
+    });
+  });
+
   describe('promo.rank.changed', () => {
     const rankChanged = (bonuses: {
       dailyBonus: string | null;
@@ -747,6 +767,7 @@ describe('notificationEventMap', () => {
         weeklyBonus: '5',
         monthlyBonus: '20',
       },
+      'promo.streak.milestone.reached': { userId: id(), day: 7, grantId: null },
       'chat.user.mentioned': {
         mentionedUserId: id(),
         byUserId: id(),
@@ -799,6 +820,7 @@ describe('notificationEventMap', () => {
         minutes: null,
         previousAmount: '20',
         previousMinutes: null,
+        currency: 'USD',
         initiatedBy: 'admin',
         reason: 'note',
       }),

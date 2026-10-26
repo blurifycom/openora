@@ -341,10 +341,10 @@ export const promoStreakRoundWager = pgTable(
 );
 
 /**
- * A milestone a player has reached and the payout job has yet to settle, one row per player per
- * milestone day. Deleted whenever `promo_player_streak.current` resets to zero - a missed day or
- * the milestone at `resetAfterDay` completing - so the same day can be earned again on the next
- * run without a second dimension threading every query that reads this table.
+ * A milestone a player has reached, one row per player per milestone day. An unsettled row is a
+ * reward waiting for the player to claim it; it outlives a reset of `promo_player_streak.current`
+ * and never expires. A settled row is reactivated when the same day is reached again on a later
+ * run, so the table needs no per-run dimension.
  */
 export const promoStreakMilestoneGrant = pgTable(
   'promo_streak_milestone_grant',
@@ -355,10 +355,13 @@ export const promoStreakMilestoneGrant = pgTable(
     reachedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     settledAt: timestamp({ withTimezone: true }),
     /**
-     * `granted`, or why nothing was: `restricted` for a player under an RG block, `reversed` when
-     * a rollback took the day that reached it back under the minimum before it paid.
+     * `granted`, or why nothing was: `restricted` for a player under an RG block, settled when
+     * the block starts or when the reward is announced or claimed during it, `reversed` when a
+     * rollback took the day that reached it back under the minimum before it was claimed.
      */
     outcome: text(),
+    /** When the player was told the reward is waiting to be claimed. */
+    announcedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     uniqueIndex('promo_streak_milestone_grant_user_id_day_idx').on(t.userId, t.day),

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { PlayerStatus, TagKey } from '@openora/core/contracts';
+import { MAX_PLAYER_SEGMENT_TAGS, type PlayerStatus, type TagKey } from '@openora/core/contracts';
 import { createTestDb, seedPlayerWithUser, seedUser, type TestDb } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import { user } from '@openora/core/pam/schema/identity';
@@ -24,6 +24,17 @@ async function tagIdFor(key: TagKey) {
   return created!.id;
 }
 
+async function assignTag(playerId: string, key: TagKey, { removed = false } = {}) {
+  await db.drizzle.db.insert(playerTag).values({
+    playerId,
+    tagId: await tagIdFor(key),
+    assignReason: 'seed',
+    assignActor: 'manual',
+    assignActorUserId: randomUUID(),
+    removedAt: removed ? new Date() : null,
+  });
+}
+
 async function seedPlayer({
   status = 'active',
   deactivated = false,
@@ -40,14 +51,7 @@ async function seedPlayer({
     await db.drizzle.db.update(user).set({ isActive: false }).where(eq(user.id, seeded.account.id));
   }
   for (const key of [...tags, ...removedTags]) {
-    await db.drizzle.db.insert(playerTag).values({
-      playerId: seeded.player.id,
-      tagId: await tagIdFor(key),
-      assignReason: 'seed',
-      assignActor: 'manual',
-      assignActorUserId: randomUUID(),
-      removedAt: removedTags.includes(key) ? new Date() : null,
-    });
+    await assignTag(seeded.player.id, key, { removed: removedTags.includes(key) });
   }
   return { playerId: seeded.player.id, userId: seeded.account.id };
 }
@@ -142,7 +146,7 @@ describe('PlayerSegmentReaderService.page (real PG)', () => {
     await seedPlayer();
 
     await expect(reader.page({ tags: [], limit: 10 })).rejects.toThrow(
-      new RangeError('tags must name at least one tag; omit tags for every player'),
+      new RangeError('tags must name at least one tag'),
     );
   });
 
@@ -200,5 +204,64 @@ describe('PlayerSegmentReaderService.resolve (real PG)', () => {
     await expect(
       reader.resolve({ playerIds: Array.from({ length: 1001 }, () => randomUUID()) }),
     ).rejects.toThrow(RangeError);
+  });
+});
+
+describe('PlayerSegmentReaderService.describe (real PG)', () => {
+  it('counts the population holding each tag, leaving out deactivated, closed, staff and removed holders', async () => {
+    await seedPlayer({ tags: ['vip'] });
+    await seedPlayer({ status: 'suspended', tags: ['vip', 'high_roller'] });
+    await seedPlayer({ deactivated: true, tags: ['vip', 'high_roller'] });
+    await seedPlayer({ status: 'closed', tags: ['vip'] });
+    await seedPlayer({ removedTags: ['vip'] });
+    const staff = await seedStaffWithProfile();
+    await assignTag(staff.playerId, 'vip');
+
+    expect(await reader.describe(['vip', 'high_roller'])).toEqual([
+      { tag: 'vip', name: 'vip', playerCount: 2 },
+      { tag: 'high_roller', name: 'high_roller', playerCount: 1 },
+    ]);
+  });
+
+  it('answers each tag once, in the order asked', async () => {
+    await seedPlayer({ tags: ['vip', 'inactive', 'high_roller'] });
+
+    const described = await reader.describe(['inactive', 'vip', 'inactive', 'high_roller']);
+
+    expect(described.map((entry) => entry.tag)).toEqual(['inactive', 'vip', 'high_roller']);
+  });
+
+  it('counts zero for a tag no player of the population holds and for a tag key with no tag row', async () => {
+    await seedPlayer({ deactivated: true, tags: ['inactive'] });
+    await seedPlayer({ removedTags: ['vip'] });
+
+    expect(await reader.describe(['inactive', 'vip', 'kyc_pending'])).toEqual([
+      { tag: 'inactive', name: 'inactive', playerCount: 0 },
+      { tag: 'vip', name: 'vip', playerCount: 0 },
+      { tag: 'kyc_pending', name: 'kyc_pending', playerCount: 0 },
+    ]);
+  });
+
+  it('refuses an empty tag list', async () => {
+    await expect(reader.describe([])).rejects.toThrow(
+      new RangeError('tags must name at least one tag'),
+    );
+  });
+
+  it('refuses a key that is not a tag key', async () => {
+    await expect(reader.describe(['vip', 'whale'])).rejects.toThrow(
+      new RangeError('tags must hold only tag keys'),
+    );
+  });
+
+  it(`takes up to ${MAX_PLAYER_SEGMENT_TAGS} entries and refuses more`, async () => {
+    const tooMany = Array.from({ length: MAX_PLAYER_SEGMENT_TAGS + 1 }, () => 'vip');
+
+    expect(await reader.describe(tooMany.slice(1))).toEqual([
+      { tag: 'vip', name: 'vip', playerCount: 0 },
+    ]);
+    await expect(reader.describe(tooMany)).rejects.toThrow(
+      new RangeError(`describe takes at most ${MAX_PLAYER_SEGMENT_TAGS} tags`),
+    );
   });
 });

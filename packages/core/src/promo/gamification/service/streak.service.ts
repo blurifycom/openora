@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import type {
   ExchangeRateReader,
@@ -55,8 +55,9 @@ type Logger = { warn: (context: object, message: string) => void };
  *
  * A provider rollback takes the round's stake back out of the day it counted on
  * (`reverseWager`); if that drops today back under the minimum, today's advance is undone too -
- * unless the milestone it reached has already paid out, since nothing here can take a paid
+ * unless the milestone it reached has already been claimed, since nothing here can take a paid
  * reward back. A day that has already ended is final: a late rollback only corrects its total.
+ * A missed day or a completed run never touches a reward waiting to be claimed.
  *
  * Own-money only, the same rule `RaceService`/`RankChallengeService` apply: `args.realAmount`
  * already excludes whatever part of a stake a bonus grant covered, so wagering a bonus never
@@ -168,13 +169,14 @@ export class StreakService implements WagerTrackingCommands {
     if (config.milestones.some((milestone) => milestone.day === advanced.current)) {
       // `onConflictDoUpdate` rather than `onConflictDoNothing`: a milestone day reached on an
       // earlier streak, already settled, is reactivated rather than refused - the unique index
-      // is per player and day, not per streak attempt.
+      // is per player and day, not per streak attempt. One still waiting to be claimed is left
+      // as it is.
       await tx
         .insert(promoStreakMilestoneGrant)
         .values({ userId: args.userId, day: advanced.current })
         .onConflictDoUpdate({
           target: [promoStreakMilestoneGrant.userId, promoStreakMilestoneGrant.day],
-          set: { reachedAt: sql`now()`, settledAt: null, outcome: null },
+          set: { reachedAt: sql`now()`, settledAt: null, outcome: null, announcedAt: null },
           setWhere: sql`${promoStreakMilestoneGrant.settledAt} is not null`,
         });
     }
@@ -285,10 +287,12 @@ export class StreakService implements WagerTrackingCommands {
         ),
       )
       .for('update');
-    if (milestone?.outcome === 'granted' && isoDate(milestone.reachedAt) === today) {
+    // A row reached on an earlier run is not today's to undo: it stays waiting to be claimed.
+    const reachedToday = milestone !== undefined && isoDate(milestone.reachedAt) === today;
+    if (reachedToday && milestone.outcome === 'granted') {
       return;
     }
-    if (milestone && !milestone.settledAt) {
+    if (reachedToday && !milestone.settledAt) {
       // Settled rather than deleted, so reaching the same day again reactivates it the way a
       // re-reached milestone always is, and the row still says why it never paid.
       await tx
@@ -326,6 +330,20 @@ export class StreakService implements WagerTrackingCommands {
       .select({ wagered: promoStreakDailyWager.wagered })
       .from(promoStreakDailyWager)
       .where(and(eq(promoStreakDailyWager.userId, userId), eq(promoStreakDailyWager.day, today)));
+    const claimable = await this.drizzle.db
+      .select({ id: promoStreakMilestoneGrant.id, day: promoStreakMilestoneGrant.day })
+      .from(promoStreakMilestoneGrant)
+      .where(
+        and(
+          eq(promoStreakMilestoneGrant.userId, userId),
+          isNull(promoStreakMilestoneGrant.settledAt),
+          inArray(
+            promoStreakMilestoneGrant.day,
+            config.milestones.map((milestone) => milestone.day),
+          ),
+        ),
+      )
+      .orderBy(asc(promoStreakMilestoneGrant.day));
     return {
       current: streak?.current ?? 0,
       best: streak?.best ?? 0,
@@ -333,6 +351,7 @@ export class StreakService implements WagerTrackingCommands {
       dailyMinWager: config.dailyMinWager,
       currency: config.currency,
       milestones: config.milestones,
+      claimable,
     };
   }
 

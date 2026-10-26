@@ -243,30 +243,33 @@ export class KycVerificationService {
     return this.platformConfig?.kyc?.provider ?? DEFAULT_PROVIDER;
   }
 
-  private async emitUpdated(params: {
-    userId: User['id'];
-    playerId?: Player['id'];
-    tier: KycTier;
-    status: KycStatus;
-    previousStatus: KycStatus | null;
-    playerTransition: KycStatusTransition | null;
-    actorId: User['id'] | null;
-    reason: string | null;
-    source: 'vendor' | 'manual' | 'webhook' | 'reverify' | 'exemption';
-    auditRecorded?: true;
-  }) {
+  private async emitUpdated(
+    trx: DrizzleTx,
+    params: {
+      userId: User['id'];
+      playerId?: Player['id'];
+      tier: KycTier;
+      status: KycStatus;
+      previousStatus: KycStatus | null;
+      playerTransition: KycStatusTransition | null;
+      actorId: User['id'] | null;
+      reason: string | null;
+      source: 'vendor' | 'manual' | 'webhook' | 'reverify' | 'exemption';
+      auditRecorded?: true;
+    },
+  ) {
     if (params.tier === 'basic' && !params.playerTransition && !params.playerId) {
       return;
     }
     if (params.tier === 'advanced' && params.previousStatus === params.status) {
       return;
     }
-    this.events.emit('compliance.kyc.updated', {
+    await this.events.emitInTransaction(trx, 'compliance.kyc.updated', {
       userId: params.userId,
       playerId:
         params.playerTransition?.playerId ??
         params.playerId ??
-        (await this.identityReader.getPlayerIdByUserIdSafe(params.userId)),
+        (await this.identityReader.getPlayerIdByUserId(params.userId, trx)),
       actorId: params.actorId,
       status: params.status,
       previousStatus:
@@ -366,9 +369,9 @@ export class KycVerificationService {
               )
             : null;
         // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-        // compliance.md): emitted here, inside the transaction, so it can never be dropped
-        // by a crash between commit and a post-commit emit.
-        await this.emitUpdated({
+        // compliance.md): written to the outbox inside the transaction, so it can never be
+        // dropped by a crash between commit and publish.
+        await this.emitUpdated(trx, {
           userId,
           tier: input.tier,
           status,
@@ -377,6 +380,17 @@ export class KycVerificationService {
           actorId: null,
           reason: decisionReason,
           source: 'vendor',
+        });
+        await this.events.emitInTransaction(trx, 'compliance.kyc.submitted', {
+          userId,
+          playerId:
+            playerTransition?.playerId ??
+            (await this.identityReader.getPlayerIdByUserId(userId, trx)),
+          referenceId: result.referenceId,
+          provider: this.provider,
+          tier: input.tier,
+          ip: meta?.ip ?? null,
+          userAgent: meta?.userAgent ?? null,
         });
         return {
           duplicate: false as const,
@@ -391,15 +405,6 @@ export class KycVerificationService {
       return { ...toDto(outcome.row), verificationUrl: undefined };
     }
 
-    this.events.emit('compliance.kyc.submitted', {
-      userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      referenceId: outcome.referenceId,
-      provider: this.provider,
-      tier: input.tier,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    });
     return { ...toDto(outcome.row), verificationUrl: outcome.verificationUrl };
   }
 
@@ -528,9 +533,9 @@ export class KycVerificationService {
               )
             : null;
         // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-        // compliance.md): emitted here, inside the transaction, so it can never be dropped
-        // by a crash between commit and a post-commit emit.
-        await this.emitUpdated({
+        // compliance.md): written to the outbox inside the transaction, so it can never be
+        // dropped by a crash between commit and publish.
+        await this.emitUpdated(trx, {
           userId: row.userId,
           tier: row.tier,
           status,
@@ -549,23 +554,20 @@ export class KycVerificationService {
         });
       }
 
-      return reconciled;
-    });
-
-    if (outcomes.length === 0) {
-      return null;
-    }
-
-    // Emitted once per reconcile() call, not once per row: the signal describes the
-    // vendor SESSION (referenceId), not a tier - a shared-workflow decision touching
-    // both tiers is still exactly one real signal.
-    const anyChanged = outcomes.some((outcome) => outcome.changed);
-    if (anyChanged && opts.riskSignals && warrantsHighRiskTag(opts.riskSignals)) {
-      const [primaryOutcome] = outcomes;
-      if (primaryOutcome) {
-        this.events.emit('compliance.kyc.high_risk_signal_detected', {
+      // Emitted once per reconcile() call, not once per row: the signal describes the
+      // vendor SESSION (referenceId), not a tier - a shared-workflow decision touching
+      // both tiers is still exactly one real signal.
+      const anyChanged = reconciled.some((outcome) => outcome.changed);
+      const [primaryOutcome] = reconciled;
+      if (
+        primaryOutcome &&
+        anyChanged &&
+        opts.riskSignals &&
+        warrantsHighRiskTag(opts.riskSignals)
+      ) {
+        await this.events.emitInTransaction(trx, 'compliance.kyc.high_risk_signal_detected', {
           userId: primaryOutcome.row.userId,
-          playerId: await this.identityReader.getPlayerIdByUserIdSafe(primaryOutcome.row.userId),
+          playerId: await this.identityReader.getPlayerIdByUserId(primaryOutcome.row.userId, trx),
           referenceId,
           tier: primaryOutcome.row.tier,
           vpnOrTorDetected: opts.riskSignals.vpnOrTorDetected,
@@ -574,6 +576,12 @@ export class KycVerificationService {
           highRiskCountryDetected: opts.riskSignals.highRiskCountryDetected,
         });
       }
+
+      return reconciled;
+    });
+
+    if (outcomes.length === 0) {
+      return null;
     }
 
     const primary = outcomes.find((outcome) => outcome.changed) ?? outcomes[0];
@@ -784,9 +792,9 @@ export class KycVerificationService {
         trx,
       );
       // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-      // compliance.md): emitted here, inside the transaction, so it can never be dropped
-      // by a crash between commit and a post-commit emit.
-      await this.emitUpdated({
+      // compliance.md): written to the outbox inside the transaction, so it can never be
+      // dropped by a crash between commit and publish.
+      await this.emitUpdated(trx, {
         userId,
         tier: 'basic',
         status: 'resubmission_requested',
@@ -796,12 +804,12 @@ export class KycVerificationService {
         reason,
         source: 'reverify',
       });
-    });
-    this.events.emit('compliance.kyc.reverify_required', {
-      userId,
-      playerId: current.id,
-      reason,
-      tier: 'basic',
+      await this.events.emitInTransaction(trx, 'compliance.kyc.reverify_required', {
+        userId,
+        playerId: current.id,
+        reason,
+        tier: 'basic',
+      });
     });
   }
 
@@ -954,9 +962,9 @@ export class KycVerificationService {
       decidedAt: null,
     });
     // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-    // compliance.md): emitted here, inside the transaction, so it can never be dropped
-    // by a crash between commit and a post-commit emit.
-    await this.emitUpdated({
+    // compliance.md): written to the outbox inside the transaction, so it can never be
+    // dropped by a crash between commit and publish.
+    await this.emitUpdated(trx, {
       userId,
       tier,
       status: 'resubmission_requested',
@@ -1008,9 +1016,9 @@ export class KycVerificationService {
         decidedAt: isDecided(resolvedStatus) ? new Date() : null,
       });
       // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-      // compliance.md): emitted here, inside the transaction, so it can never be dropped
-      // by a crash between commit and a post-commit emit.
-      await this.emitUpdated({
+      // compliance.md): written to the outbox inside the transaction, so it can never be
+      // dropped by a crash between commit and publish.
+      await this.emitUpdated(trx, {
         userId,
         tier,
         status: resolvedStatus,
@@ -1069,12 +1077,12 @@ export class KycVerificationService {
     userId: User['id'],
     params: { countryCode: string | null; reason: 'global_disabled' | 'country_exempt' },
   ): Promise<void> {
-    const outcome = await this.drizzle.db.transaction((trx) =>
+    await this.drizzle.db.transaction((trx) =>
       withAdvisoryXactLock(trx, `kyc-submit:${userId}:basic`, async () => {
         const current = await this.requirePlayerRowForUpdate(userId, trx);
         const existing = await this.latestVerification(userId, 'basic', trx);
         if (existing) {
-          return null;
+          return;
         }
 
         const decisionReason =
@@ -1117,32 +1125,23 @@ export class KycVerificationService {
             source: 'exemption',
           },
         });
-        return {
-          decisionReason,
+        // The audit record above already covers this change for the regulator; the event
+        // still serves realtime/tag consumers, and auditRecorded keeps its subscriber from
+        // appending a duplicate audit row.
+        await this.emitUpdated(trx, {
+          userId,
           playerId: playerTransition?.playerId ?? current.id,
+          tier: 'basic',
+          status: 'approved',
           previousStatus: current.kycStatus,
           playerTransition,
-        };
+          actorId: null,
+          reason: decisionReason,
+          source: 'exemption',
+          auditRecorded: true,
+        });
       }),
     );
-    if (!outcome) {
-      return;
-    }
-    // The audit record above committed with the KYC state. This post-commit event remains
-    // available to realtime/tag consumers; auditRecorded prevents its subscriber from
-    // appending a duplicate audit row.
-    await this.emitUpdated({
-      userId,
-      playerId: outcome.playerId,
-      tier: 'basic',
-      status: 'approved',
-      previousStatus: outcome.previousStatus,
-      playerTransition: outcome.playerTransition,
-      actorId: null,
-      reason: outcome.decisionReason,
-      source: 'exemption',
-      auditRecorded: true,
-    });
   }
 
   private async requirePlayerRowForUpdate(userId: User['id'], tx: DrizzleTx) {

@@ -10,11 +10,13 @@ verification pass that proves the change works. There is no separate test PR.
 Before the PR opens:
 
 1. Drive the change against the running stack. Reach for the **Playwright CLI** first
-   (`npx playwright screenshot <url> <file>`, or a throwaway spec that clicks through the flow) -
-   it costs a fraction of the tokens a browser MCP does. Use a browser MCP only for a live console
-   or network read the CLI cannot give you.
-2. Capture the evidence: one screenshot per changed screen, and the before/after pair when you
-   fixed something. An API-only change attaches the request/response trace instead.
+   (`playwright-cli` with `video-start` / `video-stop`, or a throwaway spec with
+   `test.use({ video: 'on' })` that clicks through the flow) - it costs a fraction of the tokens a
+   browser MCP does. Use a browser MCP only for a live console or network read the CLI cannot give
+   you.
+2. Capture the evidence: one short video per acceptance criterion, ending on the outcome it names,
+   and the before/after pair when you fixed something. A screenshot only where a video adds
+   nothing, such as a second theme. An API-only change attaches the request/response trace instead.
 3. Attach that evidence **to the PR description**, not only to your report - a reviewer confirms a
    change by looking at it.
 4. Write the tests that pass exercised, in this branch, at the tier the table below names. Include

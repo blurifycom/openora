@@ -1486,9 +1486,10 @@ export class WalletService {
       throw err;
     }
 
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     // The status guard is the settle-once lock: only the update that moves the row out of
     // `pending` credits the balance, so a retry that races here reads a replay instead.
-    const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {
+    const { transactionId } = await this.drizzle.db.transaction(async (txn) => {
       const [settled] = await txn
         .update(walletTransaction)
         .set({ status: 'completed', providerRefId: psp.externalId })
@@ -1500,21 +1501,18 @@ export class WalletService {
         )
         .returning();
       if (!settled) {
-        return { transactionId: reservation.row.id, replayed: true };
+        return { transactionId: reservation.row.id };
       }
       await creditWalletBalance(txn, reservation.walletRecord.id, currency, amount);
-      return { transactionId: settled.id, replayed: false };
-    });
-
-    if (!replayed) {
-      this.events.emit('wallet.deposit.completed', {
+      await this.events.emitInTransaction(txn, 'wallet.deposit.completed', {
         userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        playerId,
         amount,
         currency,
-        transactionId,
+        transactionId: settled.id,
       });
-    }
+      return { transactionId: settled.id };
+    });
 
     return { transactionId, status: 'completed' };
   }
@@ -1543,7 +1541,7 @@ export class WalletService {
       throw new PlayerNotFoundError(userId);
     }
 
-    const { result, emitted } = await this.drizzle.db.transaction(async (txn) => {
+    return this.drizzle.db.transaction(async (txn) => {
       let walletRecord = (
         await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update')
       ).at(0);
@@ -1577,7 +1575,7 @@ export class WalletService {
           currency,
           reason,
         });
-        return { result: { transactionId: existing.id, status: existing.status }, emitted: false };
+        return { transactionId: existing.id, status: existing.status };
       }
 
       const { row, replayed } = await this.insertIdempotentTransaction(txn, {
@@ -1607,7 +1605,7 @@ export class WalletService {
           currency,
           reason,
         });
-        return { result: { transactionId: row.id, status: row.status }, emitted: false };
+        return { transactionId: row.id, status: row.status };
       }
 
       const balances =
@@ -1648,27 +1646,23 @@ export class WalletService {
         ip,
         userAgent,
       });
-      return { result: { transactionId: row.id, status: row.status }, emitted: true };
-    });
-
-    // Every other balance-mutating path on this service emits; without this one an admin
-    // correction moves a real balance while responsible-gaming monitoring, analytics and
-    // any operator subscriber see nothing at all.
-    if (emitted) {
-      this.events.emit('wallet.manual_adjustment.created', {
+      // Every other balance-mutating path on this service emits; without this one an admin
+      // correction moves a real balance while responsible-gaming monitoring, analytics and
+      // any operator subscriber see nothing at all.
+      await this.events.emitInTransaction(txn, 'wallet.manual_adjustment.created', {
         userId,
         playerId,
         adminId,
         amount,
         currency,
-        transactionId: result.transactionId,
+        transactionId: row.id,
         direction,
         reason,
         ip,
         userAgent,
       });
-    }
-    return result;
+      return { transactionId: row.id, status: row.status };
+    });
   }
 
   // Pre-PSP replay check for deposit; also returns the resolved wallet so the transaction
@@ -1875,9 +1869,10 @@ export class WalletService {
       destinationAddress,
       destinationTag,
     );
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
-    const { transactionId, status, replayed, walletId, rail, forfeited } =
-      await this.drizzle.db.transaction(async (txn) => {
+    const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
+      async (txn) => {
         // FOR UPDATE serializes concurrent withdrawals against a double-debit TOCTOU under READ COMMITTED.
         const current = findOneOrThrow(
           await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
@@ -1898,7 +1893,6 @@ export class WalletService {
               replayed: true,
               walletId: current.id,
               rail: this.resolveRail(currency),
-              forfeited: [],
             };
           }
         }
@@ -1933,7 +1927,6 @@ export class WalletService {
             replayed,
             walletId: current.id,
             rail: this.resolveRail(currency),
-            forfeited: [],
           };
         }
 
@@ -1951,18 +1944,27 @@ export class WalletService {
         // On this transaction, after the balance lock, so a bet cannot convert the bonus between
         // the request and the forfeit, and the lock order matches a bet's. A rejected withdrawal
         // does not bring the bonus back.
-        const forfeited =
-          (await this.bonusLifecycle?.forfeitHeld(txn, {
-            userId,
-            reason: 'withdrawal_while_active',
-            actor: { id: userId, isAdmin: false },
-            note: `withdrawal ${row.id}`,
-            meta: { ip: ip ?? null, userAgent: userAgent ?? null },
-          })) ?? [];
+        await this.bonusLifecycle?.forfeitHeld(txn, {
+          userId,
+          reason: 'withdrawal_while_active',
+          actor: { id: userId, isAdmin: false },
+          note: `withdrawal ${row.id}`,
+          meta: { ip: ip ?? null, userAgent: userAgent ?? null },
+        });
 
         if (this.tagEvaluationCommands) {
           await this.tagEvaluationCommands.evaluateWithdrawalRequested(txn, { userId, amount });
         }
+
+        await this.events.emitInTransaction(txn, 'wallet.withdrawal.requested', {
+          userId,
+          playerId,
+          amount,
+          currency,
+          transactionId: row.id,
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
 
         return {
           transactionId: row.id,
@@ -1970,29 +1972,12 @@ export class WalletService {
           replayed,
           walletId: current.id,
           rail: this.resolveRail(currency),
-          forfeited,
         };
-      });
+      },
+    );
 
     if (replayed) {
       return { transactionId, status };
-    }
-
-    this.events.emit('wallet.withdrawal.requested', {
-      userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      amount,
-      currency,
-      transactionId,
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
-    for (const grant of forfeited) {
-      this.events.emit('promo.bonus.forfeited', {
-        ...grant,
-        reason: 'withdrawal_while_active',
-        actorId: null,
-      });
     }
 
     // Fail-closed post-step: decides who approves (system vs manual queue), never throws out of withdraw() - failure leaves the row pending.
@@ -2276,19 +2261,32 @@ export class WalletService {
     await this.assertWithdrawalsNotLocked(ownerId);
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
-    const { queued, flipped } = await this.drizzle.db.transaction((txn) =>
-      this.flipToProcessing({
+    // `approved` is admin-attributed and committed with the flip; the system auto path skips
+    // it - its trail is the AUDIT_WRITER entry plus the shared `completed` event.
+    const { queued, flipped } = await this.drizzle.db.transaction(async (txn) => {
+      const decided = await this.flipToProcessing({
         txn,
         withdrawalId,
         adminId,
         from: QUEUED_WITHDRAWAL_STATUSES,
         reviewReason: null,
-      }),
-    );
+      });
+      await this.events.emitInTransaction(txn, 'wallet.withdrawal.approved', {
+        userId: ownerId,
+        playerId: await this.identityReader.getPlayerIdByUserId(ownerId, txn),
+        amount: decided.flipped.amount,
+        currency: decided.flipped.currency,
+        transactionId: decided.flipped.id,
+        adminId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+      return decided;
+    });
     if (await this.revertFlipIfLocked(ownerId, queued)) {
       throw new WithdrawalLockedError();
     }
-    return this.settleApproved(flipped, adminId, meta);
+    return this.settleApproved(flipped, adminId);
   }
 
   // Phase one: the flip to processing under a FOR UPDATE lock. Extracted so the auto path can run it
@@ -2362,25 +2360,10 @@ export class WalletService {
   private async settleApproved(
     tx: WalletTransaction,
     adminId: User['id'] | null,
-    meta?: ClientMeta,
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const amount = tx.amount;
-    // `approved` is admin-attributed; the system auto path skips it - its trail is the
-    // AUDIT_WRITER entry plus the shared `completed` event below.
-    if (adminId) {
-      this.events.emit('wallet.withdrawal.approved', {
-        userId,
-        playerId,
-        amount,
-        currency: tx.currency,
-        transactionId: tx.id,
-        adminId,
-        ip: meta?.ip ?? null,
-        userAgent: meta?.userAgent ?? null,
-      });
-    }
 
     const { providerName, adapter } = await this.paymentAdapterFor(tx.currency, tx.network);
     // Stamped before the call: if its response is lost, reconciliation must ask THIS vendor,
@@ -2453,29 +2436,35 @@ export class WalletService {
 
     // Guarded on `processing`: a vendor webhook can settle the row before this line runs, and
     // overwriting a webhook-driven `failed` would leave the refund standing next to a payout.
-    const completed = await this.drizzle.db
-      .update(walletTransaction)
-      .set({
-        status: 'completed',
-        providerName,
-        providerRefId: result.externalId,
-      })
-      .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
-      .returning({ id: walletTransaction.id });
-    if (completed.length === 0) {
+    const completed = await this.drizzle.db.transaction(async (txn) => {
+      const updated = await txn
+        .update(walletTransaction)
+        .set({
+          status: 'completed',
+          providerName,
+          providerRefId: result.externalId,
+        })
+        .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
+        .returning({ id: walletTransaction.id });
+      if (updated.length === 0) {
+        return false;
+      }
+      await this.events.emitInTransaction(txn, 'wallet.withdrawal.completed', {
+        userId,
+        playerId,
+        amount,
+        currency: tx.currency,
+        transactionId: tx.id,
+      });
+      return true;
+    });
+    if (!completed) {
       const [current] = await this.drizzle.db
         .select({ status: walletTransaction.status })
         .from(walletTransaction)
         .where(eq(walletTransaction.id, tx.id));
       return { transactionId: tx.id, status: current?.status ?? 'processing' };
     }
-    this.events.emit('wallet.withdrawal.completed', {
-      userId,
-      playerId,
-      amount,
-      currency: tx.currency,
-      transactionId: tx.id,
-    });
 
     return { transactionId: tx.id, status: 'completed' };
   }
@@ -2493,14 +2482,14 @@ export class WalletService {
     playerId: Player['id'] | null;
     amount: string;
   }): Promise<void> {
-    const transitioned = await this.drizzle.db.transaction(async (txn) => {
+    await this.drizzle.db.transaction(async (txn) => {
       const updated = await txn
         .update(walletTransaction)
         .set({ status: 'failed' })
         .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
         .returning({ id: walletTransaction.id });
       if (updated.length === 0) {
-        return false;
+        return;
       }
       await creditWalletBalance(txn, tx.walletId, tx.currency, amount);
       // In the same transaction as the credit, not left to the `wallet.withdrawal.failed`
@@ -2513,13 +2502,8 @@ export class WalletService {
         ...withdrawalAuditSubject(playerId, tx.id),
         after: { userId, transactionId: tx.id, amount, currency: tx.currency, reason: null },
       });
-      return true;
-    });
-    // Emitted on every path that returns held funds, not just the admin-reviewed one.
-    // Notification-only now - the audit plugin no longer subscribes this topic, see
-    // the recordInTransaction call above.
-    if (transitioned) {
-      this.events.emit('wallet.withdrawal.failed', {
+      // Emitted on every path that returns held funds, not just the admin-reviewed one.
+      await this.events.emitInTransaction(txn, 'wallet.withdrawal.failed', {
         userId,
         playerId,
         amount,
@@ -2527,7 +2511,7 @@ export class WalletService {
         transactionId: tx.id,
         adminId,
       });
-    }
+    });
   }
 
   async reconcileWithdrawalStatus(
@@ -2559,20 +2543,22 @@ export class WalletService {
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
     if (status === 'completed') {
-      const updated = await this.drizzle.db
-        .update(walletTransaction)
-        .set({ status: 'completed', txHash: txHash ?? tx.txHash })
-        .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
-        .returning({ id: walletTransaction.id });
-      if (updated.length === 0) {
-        return;
-      }
-      this.events.emit('wallet.withdrawal.completed', {
-        userId,
-        playerId,
-        amount: tx.amount,
-        currency: tx.currency,
-        transactionId: tx.id,
+      await this.drizzle.db.transaction(async (txn) => {
+        const updated = await txn
+          .update(walletTransaction)
+          .set({ status: 'completed', txHash: txHash ?? tx.txHash })
+          .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
+          .returning({ id: walletTransaction.id });
+        if (updated.length === 0) {
+          return;
+        }
+        await this.events.emitInTransaction(txn, 'wallet.withdrawal.completed', {
+          userId,
+          playerId,
+          amount: tx.amount,
+          currency: tx.currency,
+          transactionId: tx.id,
+        });
       });
       return;
     }
@@ -3307,20 +3293,20 @@ export class WalletService {
 
       await creditWalletBalance(txn, updated.walletId, updated.currency, updated.amount);
 
-      return updated;
-    });
+      const userId = await this.userIdForWallet(updated.walletId, txn);
+      await this.events.emitInTransaction(txn, 'wallet.withdrawal.rejected', {
+        userId,
+        playerId: await this.identityReader.getPlayerIdByUserId(userId, txn),
+        amount: updated.amount,
+        currency: updated.currency,
+        transactionId: updated.id,
+        adminId,
+        reason,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
 
-    const userId = await this.userIdForWallet(tx.walletId);
-    this.events.emit('wallet.withdrawal.rejected', {
-      userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      amount: tx.amount,
-      currency: tx.currency,
-      transactionId: tx.id,
-      adminId,
-      reason,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
+      return updated;
     });
 
     return { transactionId: tx.id, status: 'rejected' };
@@ -3668,6 +3654,7 @@ export class WalletService {
       return;
     }
 
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId);
     const credit = await this.drizzle.db.transaction(async (txn) => {
       await lockVendorDeposit(txn, depositAddress.providerName, event.externalId);
       // Refunded from a finding before this delivery: settled, never a credit. Read under the
@@ -3692,7 +3679,6 @@ export class WalletService {
       if (credited) {
         return {
           transactionId: credited.id,
-          replayed: true,
           holdReason: heldReason(credited),
           refunded: credited.status === 'refunded',
         };
@@ -3731,8 +3717,16 @@ export class WalletService {
         .returning();
 
       if (inserted) {
+        const payload = {
+          userId: depositAddress.userId,
+          playerId,
+          amount: event.amount,
+          currency: event.currency,
+          transactionId: inserted.id,
+        };
         if (holdReason === null) {
           await creditWalletBalance(txn, walletRecord.id, event.currency, event.amount);
+          await this.events.emitInTransaction(txn, 'wallet.deposit.completed', payload);
         } else {
           await recordReconciliationFindingInTransaction(
             txn,
@@ -3753,8 +3747,9 @@ export class WalletService {
             },
             this.audit,
           );
+          await this.events.emitInTransaction(txn, 'wallet.deposit.held', payload);
         }
-        return { transactionId: inserted.id, replayed: false, holdReason, refunded: false };
+        return { transactionId: inserted.id, holdReason, refunded: false };
       }
 
       const [winner] = await this.findDepositByProviderRef(
@@ -3769,7 +3764,6 @@ export class WalletService {
       }
       return {
         transactionId: winner.id,
-        replayed: true,
         holdReason: heldReason(winner),
         refunded: winner.status === 'refunded',
       };
@@ -3781,7 +3775,7 @@ export class WalletService {
       );
       return;
     }
-    const { transactionId, replayed, holdReason, refunded } = credit;
+    const { transactionId, holdReason, refunded } = credit;
 
     // An admin refunded this deposit on chain from its finding; the redelivery is not money
     // the player still has coming, and not a credit the deposit limit should be asked about.
@@ -3798,26 +3792,7 @@ export class WalletService {
         { userId: depositAddress.userId, transactionId, externalId: event.externalId },
         'payment webhook: on-chain deposit held for review, not credited',
       );
-      if (!replayed) {
-        this.events.emit('wallet.deposit.held', {
-          userId: depositAddress.userId,
-          playerId: await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId),
-          amount: event.amount,
-          currency: event.currency,
-          transactionId,
-        });
-      }
       return;
-    }
-
-    if (!replayed) {
-      this.events.emit('wallet.deposit.completed', {
-        userId: depositAddress.userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId),
-        amount: event.amount,
-        currency: event.currency,
-        transactionId,
-      });
     }
 
     // The funds are already on chain, so the player's deposit limit cannot refuse this
@@ -3831,7 +3806,7 @@ export class WalletService {
     // committed deposit row is already inside the window, so asking with `event.amount`
     // would count this deposit twice.
     //
-    // Deliberately NOT guarded by `replayed`: this write failing is what makes the vendor
+    // Deliberately run on a replay too: this write failing is what makes the vendor
     // retry the webhook, and the retry sees the credit as a replay. The (kind, providerName, externalId)
     // unique index is what keeps a replay from filing the finding twice, so the retry
     // fills a gap instead of duplicating a row.
@@ -3868,7 +3843,7 @@ export class WalletService {
    * the deposit policy again: the player must no longer be restricted and the deposit must fit
    * their limit window now, and with no policy bound it is not released at all. The row itself turns `completed`, so the deposit window counts it
    * from `reviewedAt` (the moment it reached the balance), not from when it landed on chain.
-   * The caller announces it with `announceDepositCompleted` once the transaction commits.
+   * The caller announces it with `announceDepositCompleted` in the same transaction.
    */
   async releaseHeldDeposit(
     txn: DrizzleTx,
@@ -3920,7 +3895,7 @@ export class WalletService {
    * it would hold gets nothing and the caller's transaction rolls back clean. The row is a
    * `deposit`, not a `manual_credit`: the player's deposit-limit window counts it, and when
    * it is keyed on the vendor id a later webhook redelivery replays it instead of crediting.
-   * The caller announces it with `announceDepositCompleted` once the transaction commits.
+   * The caller announces it with `announceDepositCompleted` in the same transaction.
    */
   async creditDepositByHand(
     txn: DrizzleTx,
@@ -4008,15 +3983,18 @@ export class WalletService {
     return row;
   }
 
-  async announceDepositCompleted(deposit: {
-    userId: User['id'];
-    amount: string;
-    currency: string;
-    transactionId: WalletTransaction['id'];
-  }): Promise<void> {
-    this.events.emit('wallet.deposit.completed', {
+  async announceDepositCompleted(
+    txn: DrizzleTx,
+    deposit: {
+      userId: User['id'];
+      amount: string;
+      currency: string;
+      transactionId: WalletTransaction['id'];
+    },
+  ): Promise<void> {
+    await this.events.emitInTransaction(txn, 'wallet.deposit.completed', {
       ...deposit,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(deposit.userId),
+      playerId: await this.identityReader.getPlayerIdByUserId(deposit.userId, txn),
     });
   }
 
@@ -4059,12 +4037,12 @@ export class WalletService {
       );
   }
 
-  private async userIdForWallet(walletId: Wallet['id']) {
+  private async userIdForWallet(
+    walletId: Wallet['id'],
+    txn: DrizzleDb | DrizzleTx = this.drizzle.db,
+  ) {
     const record = findOneOrThrow(
-      await this.drizzle.db
-        .select({ userId: wallet.userId })
-        .from(wallet)
-        .where(eq(wallet.id, walletId)),
+      await txn.select({ userId: wallet.userId }).from(wallet).where(eq(wallet.id, walletId)),
       new WalletNotFoundError(walletId),
     );
     return record.userId;

@@ -97,8 +97,8 @@ above) if this repo has no UI apps.
 - **Pin exact dependency versions** (no `^`/`~`); add a dependency deliberately - std lib or a few
   lines often beat a tree.
 - **A feature or fix PR ships its own tests** - no separate test PR. It ships the change, the
-  manual verification pass that proves it (drive the running stack by hand, attach a screenshot
-  per changed screen, or the request/response trace for an API-only change, to the PR
+  manual verification pass that proves it (drive the running stack by hand, attach a short video
+  per acceptance criterion, or the request/response trace for an API-only change, to the PR
   description), and the tests that pass exercised, listed in the description's "Tests" list.
   Which tier each one belongs to, and how to run the manual pass: `docs/standards/testing.md`.
 - **Green before review:** `/check` (typecheck + lint + unit tests) while iterating, `pnpm verify`
@@ -106,8 +106,8 @@ above) if this repo has no UI apps.
   HEAD). Conventional commits, lowercase subject (PR
   title too - a squash merge turns it into the commit), one PR per concern. Never push without
   explicit confirmation. The description carries what / why / acceptance criteria / bare ticket
-  key, the manual-verification evidence (screenshots of each changed screen, before and after on a
-  fix) and the "Tests" list - but no CI checklist the pipeline already shows, no URLs,
+  key, the manual-verification evidence (a short video per acceptance criterion, before and after on
+  a fix) and the "Tests" list - but no CI checklist the pipeline already shows, no URLs,
   hostnames, secrets, or PII. Detail: `docs/standards/git-delivery.md`.
 - **Fix the import, never work around a lint or boundary violation.** Agent rules are generated
   from `.rulesync/` via `pnpm gen:agents` - never hand-edit a generated file. Detail:

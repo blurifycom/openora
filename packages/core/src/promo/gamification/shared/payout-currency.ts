@@ -1,4 +1,11 @@
 import type { ExchangeRateReader } from '@openora/core/contracts';
+import { createDomainError } from '@openora/core/server';
+
+/** No rate to price a payout yet: a transient condition, so the caller retries later. */
+export const PayoutRateUnavailableError = createDomainError<[from: string, to: string]>(
+  'PayoutRateUnavailableError',
+  (from, to) => `no exchange rate from ${from} to ${to} - retry once available`,
+);
 
 /**
  * Prices a cash prize or cashback credit into the operator's payout currency - `RankPayoutService`
@@ -28,9 +35,7 @@ export async function priceForPayout(
   }
   const converted = await rates.convert(amount, currency, payoutCurrency, tx);
   if (converted === null) {
-    throw new Error(
-      `no exchange rate from ${currency} to ${payoutCurrency} - retry once available`,
-    );
+    throw new PayoutRateUnavailableError(currency, payoutCurrency);
   }
   return { amount: converted, currency: payoutCurrency };
 }

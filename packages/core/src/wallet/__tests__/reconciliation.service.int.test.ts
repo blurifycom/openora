@@ -134,6 +134,20 @@ async function findingRows() {
   return db.drizzle.db.select().from(walletReconciliationFinding);
 }
 
+function missingDepositEvent(
+  overrides: Partial<Extract<PaymentWebhookEvent, { kind: 'deposit' }>> = {},
+): PaymentWebhookEvent {
+  return {
+    kind: 'deposit',
+    address: 'bc1qmissing',
+    amount: '1',
+    currency: 'BTC',
+    txHash: '0xmissing',
+    externalId: randomUUID(),
+    ...overrides,
+  };
+}
+
 function listTransactionsReturning(events: PaymentWebhookEvent[]): PaymentAdapter {
   return mock<PaymentAdapter>({ listTransactions: vi.fn(async () => events) });
 }
@@ -178,14 +192,12 @@ describe('ReconciliationService.runCycle - internal transfer exclusion', () => {
     // row on our side - exactly the shape that would file a false missing_deposit if
     // the exclusion were skipped.
     const payment = listTransactionsReturning([
-      {
-        kind: 'deposit',
+      missingDepositEvent({
         address: 'pool-address',
         amount: '5',
-        currency: 'BTC',
         txHash: '0xsweep',
         externalId: sweepExternalId,
-      },
+      }),
     ]);
     const { reconciliation } = makeServices(payment);
 
@@ -201,14 +213,7 @@ describe('ReconciliationService.runCycle - missing deposit', () => {
     const w = await seedWallet('BTC', '2');
     const externalId = randomUUID();
     const payment = listTransactionsReturning([
-      {
-        kind: 'deposit',
-        address: 'bc1qmissing',
-        amount: '1',
-        currency: 'BTC',
-        txHash: '0xmissing',
-        externalId,
-      },
+      missingDepositEvent({ address: 'bc1qmissing', txHash: '0xmissing', externalId }),
     ]);
     const { reconciliation } = makeServices(payment);
 
@@ -224,14 +229,7 @@ describe('ReconciliationService.runCycle - missing deposit', () => {
   it('does not duplicate the finding when the same window is reconciled again', async () => {
     const externalId = randomUUID();
     const payment = listTransactionsReturning([
-      {
-        kind: 'deposit',
-        address: 'bc1qmissing',
-        amount: '1',
-        currency: 'BTC',
-        txHash: '0xmissing',
-        externalId,
-      },
+      missingDepositEvent({ address: 'bc1qmissing', txHash: '0xmissing', externalId }),
     ]);
     const { reconciliation } = makeServices(payment);
 
@@ -298,14 +296,7 @@ describe('ReconciliationService.runCycle - amount and currency mismatch', () => 
     );
 
     const payment = listTransactionsReturning([
-      {
-        kind: 'deposit',
-        address: 'bc1qamount',
-        amount: '2',
-        currency: 'BTC',
-        txHash: '0xamount',
-        externalId,
-      },
+      missingDepositEvent({ address: 'bc1qamount', amount: '2', txHash: '0xamount', externalId }),
     ]);
     const { reconciliation } = makeServices(payment);
 
@@ -708,22 +699,18 @@ describe('ReconciliationService.runCycle - audit', () => {
   it('audits the run and each finding, with no address or tx hash in either payload', async () => {
     const externalId = randomUUID();
     const payment = listTransactionsReturning([
-      {
-        kind: 'deposit',
-        address: 'bc1qaudited',
-        amount: '1',
-        currency: 'BTC',
-        txHash: '0xaudited',
-        externalId,
-      },
+      missingDepositEvent({ address: 'bc1qaudited', txHash: '0xaudited', externalId }),
     ]);
     const { reconciliation, audit } = makeServices(payment);
 
     await reconciliation.runCycle();
 
-    const entries = (audit.record as ReturnType<typeof vi.fn>).mock.calls.map(
-      ([entry]) => entry as Record<string, unknown>,
-    );
+    const entries = [
+      ...(audit.record as ReturnType<typeof vi.fn>).mock.calls.map(([entry]) => entry),
+      ...(audit.recordInTransaction as ReturnType<typeof vi.fn>).mock.calls.map(
+        ([, entry]) => entry,
+      ),
+    ] as Record<string, unknown>[];
     expect(entries.map((e) => e.action)).toEqual([
       'wallet.reconciliation_finding.recorded',
       'wallet.reconciliation_run.completed',
@@ -731,6 +718,25 @@ describe('ReconciliationService.runCycle - audit', () => {
     const payload = JSON.stringify(entries);
     expect(payload).not.toContain('bc1qaudited');
     expect(payload).not.toContain('0xaudited');
+  });
+
+  it('never leaves a run completed without its audit entry', async () => {
+    const { reconciliation, audit } = makeServices(listTransactionsReturning([]));
+    (audit.recordInTransaction as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('audit store down'),
+    );
+    const runId = randomUUID();
+
+    await expect(reconciliation.runCycle(runId)).rejects.toThrow('audit store down');
+
+    const runs = await db.drizzle.db
+      .select()
+      .from(walletJobRun)
+      .where(eq(walletJobRun.runId, runId));
+    expect(runs.map((r) => r.status)).toEqual(['failed']);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'wallet.reconciliation_run.failed', resourceId: runId }),
+    );
   });
 });
 

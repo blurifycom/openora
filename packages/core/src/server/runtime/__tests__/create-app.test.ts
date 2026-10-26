@@ -17,13 +17,20 @@ import {
   type EventEnvelope,
   type McpKernel,
   type MessageBrokerAdapter,
+  type OutboxWriter,
 } from '@openora/core/contracts';
 import { redisUrlForWorker } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import { AUTH_SESSION, type SessionResolver } from '../../auth/index.js';
 import { createApp } from '../create-app.js';
 import { getCurrentClientMeta } from '../../kernel/request-context.js';
-import { EVENT_BUS, createEventBus, type EventBus, type EventHandler } from '../../kernel/index.js';
+import {
+  EVENT_BUS,
+  createEventBus,
+  type EventBus,
+  type EventHandler,
+  type ProcessedEventLog,
+} from '../../kernel/index.js';
 import type { PluginEntry } from '../../plugin-host/index.js';
 import { heardTriggers } from './fixtures/trigger-listener-plugin.js';
 
@@ -157,12 +164,20 @@ describe('createApp - agent trigger listeners', () => {
       },
     });
     const logger = mock<Logger>({ error: vi.fn() });
+    // Like the Redis broker: every handler runs even when a sibling throws, and a failure
+    // leaves the entry pending for redelivery instead of reaching the caller.
     const deliver = async (envelope: EventEnvelope) => {
-      for (const handler of subscribed.get(envelope.topic) ?? []) {
-        await handler(envelope);
-      }
+      await Promise.allSettled(
+        (subscribed.get(envelope.topic) ?? []).map((handler) => handler(envelope)),
+      );
     };
-    return { bus: createEventBus(broker, logger), logger, deliver };
+    const bus = createEventBus({
+      broker,
+      outbox: mock<OutboxWriter>(),
+      processedEvents: mock<ProcessedEventLog>(),
+      logger,
+    });
+    return { bus, logger, deliver };
   }
 
   const loginEnvelope = (): EventEnvelope => ({

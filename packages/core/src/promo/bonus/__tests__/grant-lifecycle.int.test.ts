@@ -4,7 +4,7 @@ import { eq, sql } from 'drizzle-orm';
 import { findOneOrThrow, type DrizzleTx } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { BonusGrantArgs, Uuid } from '@openora/core/contracts';
-import { makeAuditWriter } from '../../../testing/mock.js';
+import { makeAuditWriter, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { promoGrant, promoGrantEntry, promoWeight, promoWeightProfile } from '../schema/index.js';
 import { GrantLifecycleService } from '../service/grant-lifecycle.service.js';
@@ -71,7 +71,7 @@ beforeAll(async () => {
   db = await createTestDb([migrate]);
   audit = makeAuditWriter();
   grants = new GrantService(audit);
-  lifecycle = new GrantLifecycleService(db.drizzle, audit);
+  lifecycle = new GrantLifecycleService(db.drizzle, audit, makeEventBus());
 });
 
 afterAll(async () => {

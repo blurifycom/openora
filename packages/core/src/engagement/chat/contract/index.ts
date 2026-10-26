@@ -202,11 +202,15 @@ export const ChatRoomBanSchema = z.object({
   liftedAt: TimestampSchema.nullable(),
 });
 
+export const ChatAvatarUrlSchema = z.url().nullable();
+
 const UserChatMessageSchema = z.object({
   id: UuidSchema,
   roomId: UuidSchema.nullable(),
   userId: UuidSchema,
   username: z.string(),
+  // Read live from the author's account, so it is current on every message, old ones included.
+  avatarUrl: ChatAvatarUrlSchema,
   // UNTRUSTED user text: profanity-gated and URL-defanged server-side but NOT HTML-escaped.
   // Consumers MUST render as text or escape before injecting into HTML.
   content: z.string(),

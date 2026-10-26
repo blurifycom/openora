@@ -14,7 +14,13 @@ import {
 import { RankLadderNotConfiguredError, RankService } from '../service/rank.service.js';
 import { StreakAdminService } from '../service/streak-admin.service.js';
 import { StreakConfigNotSetError, StreakService } from '../service/streak.service.js';
+import {
+  StreakMilestoneNotClaimableError,
+  type StreakClaimOutcome,
+  type StreakPayoutService,
+} from '../service/streak-payout.service.js';
 import { RaceNotFoundError, RaceService } from '../service/race.service.js';
+import { PayoutRateUnavailableError } from '../shared/payout-currency.js';
 import {
   RaceAdminService,
   RaceClosedError,
@@ -31,6 +37,8 @@ export function createGamificationRouter({
   ranks,
   admin,
   streaks,
+  streakPayouts,
+  onStreakClaimed,
   streakAdmin,
   races,
   raceAdmin,
@@ -41,6 +49,9 @@ export function createGamificationRouter({
   ranks: RankService;
   admin: RankAdminService;
   streaks: StreakService;
+  streakPayouts: StreakPayoutService;
+  /** Runs after the claim's transaction has committed. */
+  onStreakClaimed: (claimed: StreakClaimOutcome) => Promise<void>;
   streakAdmin: StreakAdminService;
   races: RaceService;
   raceAdmin: RaceAdminService;
@@ -76,6 +87,18 @@ export function createGamificationRouter({
           streaks.getForPlayer(getUserId(context)),
         ),
       ),
+
+      claim: os.streaks.claim.handler(async ({ input, context }) => {
+        const claimed = await mapErrors(
+          {
+            NOT_FOUND: StreakMilestoneNotClaimableError,
+            SERVICE_UNAVAILABLE: PayoutRateUnavailableError,
+          },
+          () => streakPayouts.claim(getUserId(context), input.milestoneGrantId),
+        );
+        await onStreakClaimed(claimed);
+        return { outcome: claimed.outcome };
+      }),
 
       leaderboard: os.streaks.leaderboard.handler(({ context }) =>
         streaks.leaderboard(getUserId(context)),

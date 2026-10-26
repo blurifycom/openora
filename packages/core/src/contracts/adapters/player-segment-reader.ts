@@ -13,6 +13,8 @@ import type { TagKey } from '../schemas/tag.js';
 
 export const MAX_PLAYER_SEGMENT_PAGE = 1000;
 
+export const MAX_PLAYER_SEGMENT_TAGS = 100;
+
 export type PlayerSegmentQuery = {
   /**
    * Only players holding at least one of these tags; omit it for every player. An empty list
@@ -32,6 +34,14 @@ export type PlayerSegmentPage = {
   next: Player['id'] | null;
 };
 
+export type PlayerSegmentTag = {
+  tag: TagKey;
+  /** The tag's display name; the tag module keeps none, so it is the key. */
+  name: string;
+  /** Players in the population holding the tag now. */
+  playerCount: number;
+};
+
 export type PlayerSegmentReader = {
   page(query: PlayerSegmentQuery): Promise<PlayerSegmentPage>;
   /**
@@ -42,6 +52,13 @@ export type PlayerSegmentReader = {
   resolve(
     ref: { playerIds: readonly string[] } | { userIds: readonly string[] },
   ): Promise<Map<string, Player['id']>>;
+  /**
+   * Each given tag once, in the order given, with how many players of the population hold it:
+   * the names and sizes a segment picker shows, no player data. A tag key with no tag row counts
+   * zero. An empty list, more than `MAX_PLAYER_SEGMENT_TAGS` entries or a key that is not a tag
+   * key throws a `RangeError`, as `page` does.
+   */
+  describe(tags: readonly string[]): Promise<PlayerSegmentTag[]>;
 };
 
 export const PLAYER_SEGMENT_READER: Token<PlayerSegmentReader> =

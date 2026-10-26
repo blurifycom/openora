@@ -17,10 +17,12 @@ import {
   asPlayer,
   bootTestApp,
   seedMinimal,
-  setupTestDb,
   type TestApp,
   type TestClient,
   type TestDb,
+  bootE2e,
+  closeE2e,
+  readJson,
 } from '../index.js';
 
 const providers = (...providerIds: string[]) => ({ key: 'providers', params: { providerIds } });
@@ -30,11 +32,6 @@ let db: TestDb;
 let app: TestApp;
 let admin: TestClient;
 let player: TestClient;
-
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
-}
 
 function drizzle() {
   return app.container.get(DRIZZLE).db;
@@ -104,21 +101,13 @@ async function waitForCategoryGames(categoryId: string, expectedIds: string[]) {
 }
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(app.container, { playerCount: 1 });
+  ({ db, app } = await bootE2e({ seed: { playerCount: 1 } }));
   admin = await asAdmin(app.app);
   player = await asPlayer(app.app, { email: 'player.1@demo.igaming.dev' });
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await db?.dispose();
+  await closeE2e({ app, db });
 });
 
 describe('rule-based category membership e2e', () => {

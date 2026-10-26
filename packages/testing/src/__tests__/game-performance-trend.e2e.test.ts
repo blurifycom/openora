@@ -1,17 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
 import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
 import { GamePerformanceTrendSchema } from '@openora/core/admin-console/contract';
 import {
   asAdmin,
   asPlayer,
-  bootTestApp,
-  seedMinimal,
-  setupTestDb,
   type TestApp,
   type TestClient,
   type TestDb,
+  bootE2e,
+  closeE2e,
 } from '../index.js';
 
 let db: TestDb;
@@ -24,14 +23,7 @@ const RANGE = 'dateFrom=2026-01-05T00:00:00.000Z&dateTo=2026-01-18T23:59:59.999Z
 const trendPath = (id: string, query: string) => `/backoffice/analytics/games/${id}/trend?${query}`;
 
 beforeAll(async () => {
-  process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
-  process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
-  process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
-  process.env['NODE_ENV'] ??= 'test';
-
-  db = await setupTestDb();
-  testApp = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
-  await seedMinimal(testApp.container, { playerCount: 1 });
+  ({ db, app: testApp } = await bootE2e({ seed: { playerCount: 1 } }));
   admin = await asAdmin(testApp.app);
   player = await asPlayer(testApp.app, { email: 'player.1@demo.igaming.dev' });
 
@@ -74,8 +66,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await testApp?.close();
-  await db?.dispose();
+  await closeE2e({ app: testApp, db });
 });
 
 describe('game performance trend API', () => {

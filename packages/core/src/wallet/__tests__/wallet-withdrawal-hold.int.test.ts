@@ -169,7 +169,7 @@ describe('WalletService.holdWithdrawal (real PG)', () => {
     });
     expect((await txById(pending.id)).reviewedAt).toBeInstanceOf(Date);
     expect(await balanceOf(w.id)).toBe(60);
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
   });
 
   it('writes the held audit record before the status change commits', async () => {
@@ -349,7 +349,7 @@ describe('WalletService review of a held withdrawal (real PG)', () => {
       reviewReason: null,
     });
     expect(await balanceOf(w.id)).toBe(20);
-    expect(events.emit.mock.calls.map(([topic]) => topic)).toEqual([
+    expect(events.emitInTransaction.mock.calls.map(([, topic]) => topic)).toEqual([
       'wallet.withdrawal.approved',
       'wallet.withdrawal.completed',
     ]);
@@ -371,7 +371,8 @@ describe('WalletService review of a held withdrawal (real PG)', () => {
       reviewedBy: reviewer,
       reviewReason: 'source of funds unclear',
     });
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'wallet.withdrawal.rejected',
       expect.objectContaining({ transactionId: pending.id, adminId: reviewer }),
     );

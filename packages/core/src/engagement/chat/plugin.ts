@@ -176,67 +176,59 @@ export default {
     let purgeRef: ChatRoomPurgeService | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
 
-    const onAccountClosed = (userId: string) => {
+    // Awaited and thrown: a failed enqueue leaves the event pending for redelivery (ADR-0045).
+    const requireJobQueue = (): JobQueueAdapter => {
       if (!jobQueueRef) {
-        logger.error({ userId }, 'chat account-closed dropped: job queue not bound yet');
-        return;
+        throw new Error('chat job queue not bound yet');
       }
+      return jobQueueRef;
+    };
+
+    const onAccountClosed = async (userId: string) => {
       const closedAt = new Date();
-      jobQueueRef
-        .enqueue(
-          CHAT_ACCOUNT_CLOSED_QUEUE,
-          { userId, closedAt: closedAt.toISOString() },
-          { idempotencyKey: accountJobKey('chat-account-closed', userId, closedAt), ...RETRY },
-        )
-        .catch((err: unknown) =>
-          logger.error({ err, userId }, 'chat account-closed enqueue failed'),
-        );
+      await requireJobQueue().enqueue(
+        CHAT_ACCOUNT_CLOSED_QUEUE,
+        { userId, closedAt: closedAt.toISOString() },
+        { idempotencyKey: accountJobKey('chat-account-closed', userId, closedAt), ...RETRY },
+      );
     };
 
-    const onAccountReopened = (userId: string) => {
-      if (!jobQueueRef) {
-        logger.error({ userId }, 'chat account-reopened dropped: job queue not bound yet');
-        return;
-      }
-      jobQueueRef
-        .enqueue(
-          CHAT_ACCOUNT_REOPENED_QUEUE,
-          { userId },
-          {
-            idempotencyKey: accountJobKey('chat-account-reopened', userId, new Date()),
-            ...RETRY,
-          },
-        )
-        .catch((err: unknown) =>
-          logger.error({ err, userId }, 'chat account-reopened enqueue failed'),
-        );
+    const onAccountReopened = async (userId: string) => {
+      await requireJobQueue().enqueue(
+        CHAT_ACCOUNT_REOPENED_QUEUE,
+        { userId },
+        {
+          idempotencyKey: accountJobKey('chat-account-reopened', userId, new Date()),
+          ...RETRY,
+        },
+      );
     };
 
-    ctx.events.on('player.account.closed', (payload) => {
+    ctx.events.on('player.account.closed', async (payload) => {
       const parsed = domainEventSchemas['player.account.closed'].safeParse(payload);
       if (parsed.success) {
-        onAccountClosed(parsed.data.userId);
+        await onAccountClosed(parsed.data.userId);
       }
     });
 
-    ctx.events.on('identity.user.deactivated', (payload) => {
+    ctx.events.on('identity.user.deactivated', async (payload) => {
       const parsed = domainEventSchemas['identity.user.deactivated'].safeParse(payload);
       if (parsed.success) {
-        onAccountClosed(parsed.data.userId);
+        await onAccountClosed(parsed.data.userId);
       }
     });
 
-    ctx.events.on('player.account.reopened', (payload) => {
+    ctx.events.on('player.account.reopened', async (payload) => {
       const parsed = domainEventSchemas['player.account.reopened'].safeParse(payload);
       if (parsed.success) {
-        onAccountReopened(parsed.data.userId);
+        await onAccountReopened(parsed.data.userId);
       }
     });
 
-    ctx.events.on('identity.user.reactivated', (payload) => {
+    ctx.events.on('identity.user.reactivated', async (payload) => {
       const parsed = domainEventSchemas['identity.user.reactivated'].safeParse(payload);
       if (parsed.success) {
-        onAccountReopened(parsed.data.userId);
+        await onAccountReopened(parsed.data.userId);
       }
     });
 
