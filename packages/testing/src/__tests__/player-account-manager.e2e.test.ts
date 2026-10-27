@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { and, eq, sql } from 'drizzle-orm';
 import { PLAYER_ACCOUNT_MANAGER_READER } from '@openora/core/contracts';
-import { DRIZZLE, eventOutbox } from '@openora/core/server';
+import { ADMIN_GUARD, DRIZZLE, eventOutbox } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import {
@@ -666,5 +666,96 @@ describe('account-manager deactivation race', () => {
 
     expect((await setManager(admin, p.playerId, null)).status).toBe(200);
     expect(await managerOf(p.playerId)).toBeNull();
+  });
+});
+
+describe('account manager precedence and exposure', () => {
+  it.each([
+    ['an unknown user', async () => randomUUID()],
+    ['a player', async () => (await newPlayer()).userId],
+    ['staff without player:view', async () => (await newStaff('marketing-banners')).userId],
+  ])('answers 404 for an unknown player before judging %s', async (_label, candidate) => {
+    const res = await setManager(admin, randomUUID(), await candidate());
+    expect(res.status).toBe(404);
+  });
+
+  it('never carries the manager email in any response that shows the manager', async () => {
+    const p = await newPlayer();
+    const manager = await newStaff('vip-manager');
+    const [{ email } = { email: '' }] = await drizzle()
+      .select({ email: user.email })
+      .from(user)
+      .where(eq(user.id, manager.userId));
+    expect(email).toContain('@');
+
+    const responses = [
+      await setManager(admin, p.playerId, manager.userId),
+      await admin.get(`/players/${p.playerId}`),
+      await admin.get(`/players?accountManagerId=${manager.userId}`),
+      await admin.patch(`/players/${p.playerId}`, { status: 'suspended' }),
+      await admin.get(`/players/account-managers?search=${encodeURIComponent(manager.name)}`),
+    ];
+    for (const res of responses) {
+      expect(res.status).toBe(200);
+      const raw = await res.text();
+      expect(raw).not.toContain(email);
+      expect(raw).not.toContain('"email":"' + email);
+    }
+    expect(
+      await testApp.container.get(PLAYER_ACCOUNT_MANAGER_READER).getByPlayerUserId(p.userId),
+    ).not.toHaveProperty('email');
+  });
+
+  it('leaves out a user whose role is not a static admin role, however its grants look', async () => {
+    const token = randomUUID().slice(0, 8);
+    const custom = await newStaff('vip-manager', `${token} custom`);
+    await drizzle().update(user).set({ role: 'custom-ops' }).where(eq(user.id, custom.userId));
+    const staff = await newStaff('vip-manager', `${token} staff`);
+
+    const listed = await admin.get(`/players/account-managers?search=${token}`);
+    expect(await listed.json()).toEqual([{ userId: staff.userId, name: staff.name }]);
+
+    const p = await newPlayer();
+    const res = await setManager(admin, p.playerId, custom.userId);
+    expect(res.status).toBe(422);
+    expect(await json(res)).toMatchObject({ data: { reason: 'not_eligible' } });
+  });
+});
+
+describe('AdminGuard.filterGrantedUsers beside filterGranted', () => {
+  it('answers a mixed batch exactly as filterGranted answers each user', async () => {
+    const guard = testApp.container.get(ADMIN_GUARD);
+    const requirements = [{ resource: 'player', action: 'view' }] as const;
+    const withView = await newStaff('vip-manager');
+    const viewOnly = await newStaff('customer-support-agent');
+    const withoutView = await newStaff('marketing-banners');
+    const inactive = await newStaff('vip-manager');
+    await deactivate(inactive.userId);
+    const staticSupport = await newPlayer();
+    await drizzle().update(user).set({ role: 'support' }).where(eq(user.id, staticSupport.userId));
+    const custom = await newStaff('vip-manager');
+    await drizzle().update(user).set({ role: 'custom-ops' }).where(eq(user.id, custom.userId));
+    const playerAccount = await newPlayer();
+    const unknown = randomUUID();
+
+    const ids = [
+      withView.userId,
+      viewOnly.userId,
+      withoutView.userId,
+      inactive.userId,
+      staticSupport.userId,
+      custom.userId,
+      playerAccount.userId,
+      unknown,
+      withView.userId,
+      unknown,
+    ];
+    const batch = await guard.filterGrantedUsers(ids, requirements);
+
+    for (const id of new Set(ids)) {
+      expect(batch.get(id) ?? [], id).toEqual(await guard.filterGranted(id, requirements));
+    }
+    expect([...batch.keys()].sort()).toEqual([withView.userId, viewOnly.userId].sort());
+    expect(await guard.filterGrantedUsers([], requirements)).toEqual(new Map());
   });
 });
