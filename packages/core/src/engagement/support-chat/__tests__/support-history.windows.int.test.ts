@@ -221,13 +221,13 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     ]);
   });
 
-  it('trusts a later change once past the write of an earlier one claiming a time beyond it', async () => {
+  it('trusts no window when a legacy row written earlier follows a later claimed change time', async () => {
     const s = await scenario([
       { before: 'a', after: 'b', at: 10, changedAt: 30 },
       { before: 'b', after: 'cur', at: 20 },
     ]);
-    expect(s.asked).toEqual([[s.win('cur', 20, null)]]);
-    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: false });
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 

@@ -199,6 +199,11 @@ describe('buildEmailWindows', () => {
       [change('a', 'b', 10), change('b', 'c', 5), change('c', 'd', 7)],
     ],
     [
+      'later changes after one claiming a time far beyond its audit write',
+      'd',
+      [change('a', 'b', 10), change('b', 'c', 900, true, 20), change('c', 'd', 30)],
+    ],
+    [
       'a run stamped before an earlier change that is not its neighbour',
       'e',
       [change('a', 'b', 10), change('b', 'c', 20), change('c', 'd', 5), change('d', 'e', 6)],
@@ -269,12 +274,6 @@ describe('buildEmailWindows', () => {
       'b',
       [change('a', 'b', 10, true), change('a', 'b', 11, true)],
       [held('b', 11, null)],
-    ],
-    [
-      'a change claiming a time far beyond its audit write',
-      'd',
-      [change('a', 'b', 10), change('b', 'c', 900, true, 20), change('c', 'd', 30)],
-      [held('d', 30, null)],
     ],
     [
       'a missing new email beside a reordering',

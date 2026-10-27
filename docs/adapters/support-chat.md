@@ -121,14 +121,15 @@ Core works out which identities belong to the player and hands them to the reade
   name the current email as its new one, each change must name as its new email the one the next
   change replaced, and each change's time must be later than every earlier change and registration,
   and no more than 5 seconds later than its own audit row was written (a change always comes before
-  its write; the margin allows for clocks that disagree). An earlier change counts as no later than
-  its own write plus that margin, whatever time it claims. At the first break walking back it stops:
+  its write; the margin allows for clocks that disagree). At the first break walking back it stops:
   the windows after the break are kept, everything from the break back is dropped, the window opened
   by a change with a wrong time included, and a warning naming the user goes to the log. When even
   the last change cannot be trusted, there is no window at all: the tickets section is reported
   unavailable and the reader is not asked. The rows are append-only and nothing repairs them; the
-  player's next email change, made more than 5 seconds after the last email-change row was written,
-  heals that state, even when an earlier row claims a time far ahead.
+  player's next email change heals that state, unless an earlier row claims a time ahead of the real
+  clock: every later change then reads as falling back, and the section stays unavailable until real
+  time passes that stamp, which with realistic clock skew takes seconds. Core fails closed rather
+  than trust it.
 - **What the trail cannot notice.** Nothing records the email an account registered with, so a lost
   first change goes unseen: the next email is then taken as held from registration. A lost run of
   changes returning to the address it left (A to B recorded, B to C and C to B lost, B to D

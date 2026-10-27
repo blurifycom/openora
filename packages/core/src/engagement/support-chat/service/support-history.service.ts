@@ -70,9 +70,9 @@ function withoutRedeliveries(changes: readonly EmailChange[]) {
  * audit trail is trusted from its end back to its first break, walking back from the current
  * email: each change must name as its new email the one the next change replaced (the last change
  * the current email), and its time must be later than every earlier change and registration, and
- * not later than its own audit write allowing for clock skew; an earlier change counts as no later
- * than its own audit write plus that skew, whatever time it claims. Everything from the first break
- * walking back is dropped, the window opened by a change with a wrong time included. When even
+ * not later than its own audit write allowing for clock skew. A change claiming a time ahead of
+ * the real clock thus breaks every later one until real time passes it. Everything from the first
+ * break walking back is dropped, the window opened by a change with a wrong time included. When even
  * the last change cannot be trusted there is no window at all. `complete` is false when a break or
  * the cap on previous emails left an older email out; `broken` tells a break from the cap. A row
  * repeating an earlier one, change time included, is a redelivery and counts once. Nothing in the
@@ -95,13 +95,12 @@ export function buildEmailWindows({
   if (!currentEmail) {
     return { windows: [], complete: rows.length === 0, broken: rows.length > 0 };
   }
-  // floors[k]: the latest time a change before row k can have happened, registration included.
-  // A change happened by its audit write, allowing for clock skew, whatever later time it claims.
+  // floors[k]: the latest time stamped before row k, registration included.
   const floors: number[] = [];
   let latest = registeredAt.getTime();
-  for (const { at, writtenAt } of rows) {
+  for (const { at } of rows) {
     floors.push(latest);
-    latest = Math.max(latest, Math.min(at.getTime(), writtenAt.getTime() + MAX_CLOCK_SKEW_MS));
+    latest = Math.max(latest, at.getTime());
   }
   // Newest first while walking back.
   const found: SupportHistoryEmailWindow[] = [];

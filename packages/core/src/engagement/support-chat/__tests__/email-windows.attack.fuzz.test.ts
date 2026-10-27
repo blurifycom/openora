@@ -4,7 +4,6 @@ import { buildEmailWindows } from '../service/support-history.service.js';
 const REGISTERED = new Date('2026-01-01T00:00:00.000Z');
 const day = (n: number) => new Date(Date.UTC(2026, 0, 1 + n));
 const FAR_FUTURE = new Date('2099-01-01T00:00:00.000Z');
-const CLOCK_SKEW_MS = 5_000;
 const END_OF_TIME = 8.64e15;
 
 // Seeded, so a failure replays.
@@ -33,9 +32,6 @@ const collapseRedeliveries = (changes: Change[]) => {
     return seen.has(key) ? false : (seen.add(key), true);
   });
 };
-
-const latestTrueTime = (c: Change) =>
-  Math.min(c.at.getTime(), c.writtenAt.getTime() + CLOCK_SKEW_MS);
 
 describe('buildEmailWindows against every corruption at once', () => {
   it('answers a window wider than the truth only where the wrong time cannot be noticed', () => {
@@ -126,9 +122,11 @@ describe('buildEmailWindows against every corruption at once', () => {
 
       const unnoticeable = (c: Change) => {
         const at = final.indexOf(c);
-        const previous = final[at - 1];
+        const before = Math.max(
+          REGISTERED.getTime(),
+          ...final.slice(0, at).map((p) => p.at.getTime()),
+        );
         const after = final[at + 1]?.at.getTime() ?? END_OF_TIME;
-        const before = previous ? latestTrueTime(previous) : REGISTERED.getTime();
         return c.at.getTime() > before && c.at.getTime() < after;
       };
       for (const w of result.windows) {
