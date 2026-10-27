@@ -27,6 +27,7 @@ export { bootE2e, closeE2e, type E2e, type BootE2eOptions } from './e2e.js';
 export {
   assignIamRoleByKey,
   assignTag,
+  deactivateUser,
   newPlayer,
   newStaff,
   readJson,

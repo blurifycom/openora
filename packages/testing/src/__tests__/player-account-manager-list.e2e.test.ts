@@ -2,13 +2,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
-import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import {
   asAdmin,
   assignIamRoleByKey,
   bootE2e,
   closeE2e,
+  deactivateUser,
   newPlayer,
   newStaff,
   roleIdByKey,
@@ -34,9 +34,6 @@ async function setManager(playerId: string, accountManagerId: string | null) {
   const res = await admin.put(`/players/${playerId}/account-manager`, { accountManagerId });
   expect(res.status, await res.clone().text()).toBe(200);
 }
-
-const deactivate = (userId: string) =>
-  drizzle().update(user).set({ isActive: false }).where(eq(user.id, userId));
 
 async function assigned(client: TestClient = admin): Promise<Manager[]> {
   const res = await client.get(ROUTE);
@@ -81,7 +78,7 @@ describe('GET /players/account-managers/assigned', () => {
     const p = await newPlayer(testApp, EMAIL_PREFIX);
     const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     await setManager(p.playerId, manager.userId);
-    await deactivate(manager.userId);
+    await deactivateUser(testApp, manager.userId);
 
     expect((await assigned()).find(({ userId }) => userId === manager.userId)).toEqual({
       userId: manager.userId,

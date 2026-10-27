@@ -10,6 +10,7 @@ import {
   asAdmin,
   bootE2e,
   closeE2e,
+  deactivateUser,
   newPlayer,
   newStaff,
   type NamedAccount,
@@ -60,9 +61,6 @@ const outboxRows = (playerId: string) =>
       and(eq(eventOutbox.topic, TOPIC), sql`${eventOutbox.payload}->>'playerId' = ${playerId}`),
     )
     .orderBy(eventOutbox.createdAt);
-
-const deactivate = (userId: string) =>
-  drizzle().update(user).set({ isActive: false }).where(eq(user.id, userId));
 
 beforeAll(async () => {
   ({ db, app: testApp } = await bootE2e());
@@ -194,7 +192,7 @@ describe('PUT /players/{playerId}/account-manager', () => {
       'inactive',
       async () => {
         const staff = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
-        await deactivate(staff.userId);
+        await deactivateUser(testApp, staff.userId);
         return staff.userId;
       },
     ],
@@ -218,7 +216,7 @@ describe('PUT /players/{playerId}/account-manager', () => {
     const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     const replacement = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
-    await deactivate(manager.userId);
+    await deactivateUser(testApp, manager.userId);
 
     expect(await managerOf(p.playerId)).toMatchObject({ userId: manager.userId, isActive: false });
     const reassigned = await setManager(admin, p.playerId, manager.userId);
@@ -317,7 +315,7 @@ describe('GET /players/account-managers', () => {
     );
     await newStaff(testApp, EMAIL_PREFIX, 'marketing-banners', `${token} marketing`);
     const inactive = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager', `${token} inactive`);
-    await deactivate(inactive.userId);
+    await deactivateUser(testApp, inactive.userId);
     const p = await newPlayer(testApp, EMAIL_PREFIX);
     await drizzle()
       .update(user)
@@ -378,7 +376,7 @@ describe('PLAYER_ACCOUNT_MANAGER_READER', () => {
     const p = await newPlayer(testApp, EMAIL_PREFIX);
     const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
-    await deactivate(manager.userId);
+    await deactivateUser(testApp, manager.userId);
 
     expect(await reader.getByPlayerUserId(p.userId)).toEqual({
       userId: manager.userId,
@@ -600,7 +598,7 @@ describe('account-manager deactivation race', () => {
         },
         { timeout: 15_000, interval: 25 },
       );
-      await deactivate(manager.userId);
+      await deactivateUser(testApp, manager.userId);
       await holder.query('COMMIT');
 
       const res = await pending;
@@ -664,7 +662,7 @@ describe('account-manager deactivation race', () => {
     const p = await newPlayer(testApp, EMAIL_PREFIX);
     const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
-    await deactivate(manager.userId);
+    await deactivateUser(testApp, manager.userId);
 
     const again = await setManager(admin, p.playerId, manager.userId);
     expect(again.status).toBe(422);
@@ -740,7 +738,7 @@ describe('AdminGuard.filterGrantedUsers beside filterGranted', () => {
     const viewOnly = await newStaff(testApp, EMAIL_PREFIX, 'customer-support-agent');
     const withoutView = await newStaff(testApp, EMAIL_PREFIX, 'marketing-banners');
     const inactive = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
-    await deactivate(inactive.userId);
+    await deactivateUser(testApp, inactive.userId);
     const staticSupport = await newPlayer(testApp, EMAIL_PREFIX);
     await drizzle().update(user).set({ role: 'support' }).where(eq(user.id, staticSupport.userId));
     const custom = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
@@ -774,7 +772,7 @@ describe('AdminGuard.filterGrantedUsers beside filterGranted', () => {
     const requirements = [{ resource: 'player', action: 'view' }] as const;
     const holder = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     const inactive = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
-    await deactivate(inactive.userId);
+    await deactivateUser(testApp, inactive.userId);
 
     expect(await guard.filterGranted(holder.userId, requirements)).toEqual([...requirements]);
     expect(await guard.filterGranted(holder.userId, [])).toEqual([]);

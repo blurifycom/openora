@@ -41,6 +41,15 @@ export async function newStaff(
   return account;
 }
 
+/** Sets the account's `user.isActive` to false. */
+export async function deactivateUser(app: TestApp, userId: string) {
+  await app.container
+    .get(DRIZZLE)
+    .db.update(user)
+    .set({ isActive: false })
+    .where(eq(user.id, userId));
+}
+
 export type Chatter = Awaited<ReturnType<typeof registerAndMaterializePlayer>> & {
   username: string;
 };
