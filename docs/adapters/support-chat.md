@@ -111,34 +111,34 @@ Core works out which identities belong to the player and hands them to the reade
   registered by another player, so a ticket counts only when it was created inside its email's
   window: the reader must filter by creation date, never return every ticket an address ever
   opened.
-- **The email trail is trusted from its end back to its first break.** The audit rows are
-  written shortly after each change, outside the change's transaction, so one can be lost,
-  duplicated, land out of order or carry a skewed time. Each row carries the time stamped right
-  after the change, so a slow write does not move a window's bounds; a row written before that
-  field existed is timed by when it was written. A redelivered event writes its row again: a row
-  that repeats any earlier one, change time included, counts once, but a repeated row without a
-  change time cannot be told from a real repeat and breaks the trail. Core walks back from the
-  current email: the last change must name the current email as its new one, each change must
-  name as its new email the one the next change replaced, and each change's time must be later
-  than every earlier change and registration, and no more than 5 seconds later than its own
-  audit row was written (a change always comes before its write; the margin allows for clocks
-  that disagree). At the first break walking back it stops: the windows after the break are
-  kept, everything from the break back is dropped, the window opened by a change with a wrong
-  time included, and a warning naming the user goes to the log. When even the last change
-  cannot be trusted, there is no window at all: the tickets section is reported unavailable and
-  the reader is not asked. The rows are append-only and nothing repairs them; the next email
-  change heals that state, unless an earlier row carries a time ahead of the real clock: every
-  later change then reads as falling back, and the section stays unavailable until real time
-  passes that stamp. Core fails closed rather than trust it.
-- **What the trail cannot notice.** Nothing records the email an account registered with, so a
-  lost first change goes unseen: the next email is then taken as held from registration. A lost
-  run of changes returning to the address it left (A to B recorded, B to C and C to B lost, B to
-  D recorded) also leaves a trail that looks consistent, so B's window spans the gap. A clock
-  running ahead by less than the 5-second margin shifts a window's bound by at most that much,
-  and a clock running behind goes unseen for as long as each time it stamps is still later than
-  every earlier one, shifting the bounds by the lag. The lost rows follow from the email-change
-  event being emitted best-effort rather than through the outbox; moving that emit to the outbox
-  is the fix, and is not part of this port.
+- **The email trail is trusted from its end back to its first break.** The audit rows are written
+  shortly after each change, outside the change's transaction, so one can be lost, duplicated, land
+  out of order or carry a skewed time. Each row carries the time stamped right after the change, so
+  a slow write does not move a window's bounds; a row written before that field existed is timed by
+  when it was written. A redelivered event writes its row again: a row that repeats any earlier one,
+  change time included, counts once, but a repeated row without a change time cannot be told from a
+  real repeat and breaks the trail. Core walks back from the current email: the last change must
+  name the current email as its new one, each change must name as its new email the one the next
+  change replaced, and each change's time must be later than every earlier change and registration,
+  and no more than 5 seconds later than its own audit row was written (a change always comes before
+  its write; the margin allows for clocks that disagree). An earlier change counts as no later than
+  its own write plus that margin, whatever time it claims. At the first break walking back it stops:
+  the windows after the break are kept, everything from the break back is dropped, the window opened
+  by a change with a wrong time included, and a warning naming the user goes to the log. When even
+  the last change cannot be trusted, there is no window at all: the tickets section is reported
+  unavailable and the reader is not asked. The rows are append-only and nothing repairs them; the
+  player's next email change, made more than 5 seconds after the last email-change row was written,
+  heals that state, even when an earlier row claims a time far ahead.
+- **What the trail cannot notice.** Nothing records the email an account registered with, so a lost
+  first change goes unseen: the next email is then taken as held from registration. A lost run of
+  changes returning to the address it left (A to B recorded, B to C and C to B lost, B to D
+  recorded) also leaves a trail that looks consistent, so B's window spans the gap. A change time
+  later than the real change by no more than its audit write's own delay plus the 5-second margin
+  also goes unseen: a fast clock with a delayed or redelivered write, or a legacy row timed by its
+  write. It widens the earlier email's window by that much. A clock running behind goes unseen for
+  as long as each time it stamps is still later than every earlier one, shifting the bounds by the
+  lag. The lost rows follow from the email-change event being emitted best-effort rather than
+  through the outbox; moving that emit to the outbox is the fix, and is not part of this port.
 - **Chats** are matched by the vendor customer the player is linked to. A player who never
   opened the chat has no link, and the reader is not asked.
 

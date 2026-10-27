@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import type { SupportHistoryEmailWindow } from '@openora/core/contracts';
 import { buildEmailWindows } from '../service/support-history.service.js';
 
 const REGISTERED = new Date('2026-01-01T00:00:00.000Z');
 const day = (n: number) => new Date(Date.UTC(2026, 0, 1 + n));
 const FAR_FUTURE = new Date('2099-01-01T00:00:00.000Z');
+const CLOCK_SKEW_MS = 5_000;
+const END_OF_TIME = 8.64e15;
 
 // Seeded, so a failure replays.
 const rng = (seed: number) => () => {
@@ -19,27 +20,23 @@ type Row = {
   at: Date;
   timedByChange: boolean;
 };
+type Change = Row & { writtenAt: Date };
 
-// Same rule as the service: a row carrying its change time that repeats an earlier row is dropped.
-const deduped = (rows: Row[]) => {
+// The oracle's own copy of the redelivery rule, so a bug in the service's cannot hide here.
+const collapseRedeliveries = (changes: Change[]) => {
   const seen = new Set<string>();
-  return rows.filter((r) => {
-    if (!r.timedByChange) {
+  return changes.filter((c) => {
+    if (!c.timedByChange) {
       return true;
     }
-    const key = JSON.stringify([r.before, r.after, r.at.getTime()]);
+    const key = JSON.stringify([c.before, c.after, c.at.getTime()]);
     return seen.has(key) ? false : (seen.add(key), true);
   });
 };
 
-/**
- * Mixes every corruption of the trail at once: wrong times (earlier, later, forward-dated,
- * before registration, equal to a neighbour), lost, swapped and duplicated rows, a redelivery that
- * lands anywhere, an empty `before` or `after`, and a mix of rows with a change time and legacy
- * rows. A window may be wider than the time the player truly held the email only when a row that
- * bounds it carries a wrong time that still sits strictly between the rows around it: nothing in
- * the trail can tell that one apart.
- */
+const latestTrueTime = (c: Change) =>
+  Math.min(c.at.getTime(), c.writtenAt.getTime() + CLOCK_SKEW_MS);
+
 describe('buildEmailWindows against every corruption at once', () => {
   it('answers a window wider than the truth only where the wrong time cannot be noticed', () => {
     const random = rng(20260103);
@@ -77,7 +74,6 @@ describe('buildEmailWindows against every corruption at once', () => {
             }
             break;
           case 2:
-            // A redelivery landing anywhere.
             rows.splice(pick(rows.length + 1), 0, { ...row });
             break;
           case 3:
@@ -100,17 +96,20 @@ describe('buildEmailWindows against every corruption at once', () => {
         }
       }
 
-      // A lost first change cannot be noticed: nothing records the email registered with.
-      if (!rows.some((r) => r.before === email(0) || r.after === email(1))) {
+      const lostFirstChange = !rows.some((r) => r.before === email(0) || r.after === email(1));
+      if (lostFirstChange) {
         continue;
       }
       checked++;
-      const final = deduped(rows);
+      const changes: Change[] = rows.map((r) => ({
+        ...r,
+        writtenAt: r.timedByChange ? trueAt(r.id) : r.at,
+      }));
+      const final = collapseRedeliveries(changes);
       const result = buildEmailWindows({
         currentEmail: email(count),
         registeredAt: REGISTERED,
-        // A legacy row is timed by its write; any other row was written at its true change time.
-        changes: rows.map((r) => ({ ...r, writtenAt: r.timedByChange ? trueAt(r.id) : r.at })),
+        changes,
       });
       const note = JSON.stringify({ trial, rows, result });
 
@@ -125,46 +124,35 @@ describe('buildEmailWindows against every corruption at once', () => {
         expect(result.windows[0]?.from, note).toBe(REGISTERED.toISOString());
       }
 
-      // No window wider than the truth, unless a bounding row's wrong time is unnoticeable.
-      const locallyOrdered = (row: Row) => {
-        const at = final.indexOf(row);
-        const before = final[at - 1]?.at ?? REGISTERED;
-        const after = final[at + 1]?.at ?? new Date(8.64e15);
-        return row.at > before && row.at < after;
+      const unnoticeable = (c: Change) => {
+        const at = final.indexOf(c);
+        const previous = final[at - 1];
+        const after = final[at + 1]?.at.getTime() ?? END_OF_TIME;
+        const before = previous ? latestTrueTime(previous) : REGISTERED.getTime();
+        return c.at.getTime() > before && c.at.getTime() < after;
       };
-      for (const w of result.windows as SupportHistoryEmailWindow[]) {
-        const j = Number(/^e(\d+)@/.exec(w.email)![1]);
+      for (const w of result.windows) {
+        const j = Number(/^e(\d+)@/.exec(w.email)?.[1]);
         const wideFrom = Date.parse(w.from) < truthFrom(j).getTime();
         const wideTo = (w.to === null ? Infinity : Date.parse(w.to)) > truthTo(j);
         if (!wideFrom && !wideTo) {
           continue;
         }
         widened++;
-        // A copy of a row may sit elsewhere in the list; the window rests on one that fits.
-        const openers = final.filter((r) => r.after === w.email && r.at.toISOString() === w.from);
+        const openers = final.filter((c) => c.after === w.email && c.at.toISOString() === w.from);
         const closers =
           w.to === null
             ? []
-            : final.filter((r) => r.before === w.email && r.at.toISOString() === w.to);
+            : final.filter((c) => c.before === w.email && c.at.toISOString() === w.to);
         if (wideFrom) {
-          expect(
-            openers.length,
-            `${note} no opener for a window widened at its start`,
-          ).toBeGreaterThan(0);
-          expect(openers.some(locallyOrdered), `${note} widened start, opener noticeable`).toBe(
-            true,
-          );
+          expect(openers.some(unnoticeable), `${note} widened start, opener noticeable`).toBe(true);
         }
         if (wideTo) {
-          expect(
-            closers.length,
-            `${note} no closer for a window widened at its end`,
-          ).toBeGreaterThan(0);
-          expect(closers.some(locallyOrdered), `${note} widened end, closer noticeable`).toBe(true);
+          expect(closers.some(unnoticeable), `${note} widened end, closer noticeable`).toBe(true);
         }
       }
 
-      if (JSON.stringify(rows) === original && rows.every((r) => r.before && r.after)) {
+      if (JSON.stringify(rows) === original) {
         expect(result.windows, note).toEqual(
           Array.from({ length: count + 1 }, (_, i) => ({
             email: email(i),
@@ -175,7 +163,6 @@ describe('buildEmailWindows against every corruption at once', () => {
         expect(result.complete, note).toBe(count <= 3);
       }
     }
-    // The attack must really have exercised the unnoticeable case and the plain one.
     expect(checked).toBeGreaterThan(10000);
     expect(widened).toBeGreaterThan(0);
   });

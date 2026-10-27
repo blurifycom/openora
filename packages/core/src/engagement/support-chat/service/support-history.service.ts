@@ -70,14 +70,17 @@ function withoutRedeliveries(changes: readonly EmailChange[]) {
  * audit trail is trusted from its end back to its first break, walking back from the current
  * email: each change must name as its new email the one the next change replaced (the last change
  * the current email), and its time must be later than every earlier change and registration, and
- * not later than its own audit write allowing for clock skew. Everything from the first break
+ * not later than its own audit write allowing for clock skew; an earlier change counts as no later
+ * than its own audit write plus that skew, whatever time it claims. Everything from the first break
  * walking back is dropped, the window opened by a change with a wrong time included. When even
  * the last change cannot be trusted there is no window at all. `complete` is false when a break or
  * the cap on previous emails left an older email out; `broken` tells a break from the cap. A row
  * repeating an earlier one, change time included, is a redelivery and counts once. Nothing in the
- * trail can notice a lost first change, a lost run returning to the address it left, a clock
- * running ahead by less than the skew tolerance, or a clock running behind whose stamps still
- * follow every earlier one; each shifts a bound by the gap or the skew.
+ * trail can notice a lost first change, a lost run returning to the address it left, a time later
+ * than the real change by no more than its audit write's own delay plus the skew (a fast clock with
+ * a delayed or redelivered write, or a legacy row timed by its write), which widens the earlier
+ * email's window by that much, or a clock running behind whose stamps still follow every earlier
+ * one, which shifts the bounds by the lag.
  */
 export function buildEmailWindows({
   currentEmail,
@@ -92,12 +95,13 @@ export function buildEmailWindows({
   if (!currentEmail) {
     return { windows: [], complete: rows.length === 0, broken: rows.length > 0 };
   }
-  // floors[k]: the latest time stamped before row k, registration included.
+  // floors[k]: the latest time a change before row k can have happened, registration included.
+  // A change happened by its audit write, allowing for clock skew, whatever later time it claims.
   const floors: number[] = [];
   let latest = registeredAt.getTime();
-  for (const { at } of rows) {
+  for (const { at, writtenAt } of rows) {
     floors.push(latest);
-    latest = Math.max(latest, at.getTime());
+    latest = Math.max(latest, Math.min(at.getTime(), writtenAt.getTime() + MAX_CLOCK_SKEW_MS));
   }
   // Newest first while walking back.
   const found: SupportHistoryEmailWindow[] = [];

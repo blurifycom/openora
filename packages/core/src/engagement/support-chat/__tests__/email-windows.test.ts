@@ -221,12 +221,6 @@ describe('buildEmailWindows', () => {
       [change('a', 'b', -800), change('b', 'c', -700)],
     ],
     ['a change time later than its own audit write', 'b', [change('a', 'b', 10, true, 9)]],
-    // Fails closed until real time passes the wrong stamp.
-    [
-      'later changes after a forward-dated one',
-      'd',
-      [change('a', 'b', 10), change('b', 'c', 900, true, 20), change('c', 'd', 30)],
-    ],
     [
       'a later repeat with another change time',
       'c',
@@ -288,6 +282,12 @@ describe('buildEmailWindows', () => {
       'b',
       [change('a', 'b', 10, true), change('a', 'b', 11, true)],
       [held('b', 11, null)],
+    ],
+    [
+      'a change claiming a time far beyond its audit write',
+      'd',
+      [change('a', 'b', 10), change('b', 'c', 900, true, 20), change('c', 'd', 30)],
+      [held('d', 30, null)],
     ],
     [
       'a missing new email beside a reordering',
