@@ -2363,14 +2363,10 @@ export class WalletService {
       });
       return decided;
     });
-    const blocked = await this.revertFlipIfBlocked(ownerId, queued);
-    if (blocked === 'withdrawal_lock') {
+    if (await this.revertFlipIfLocked(ownerId, queued)) {
       throw new WithdrawalLockedError();
     }
-    if (blocked === 'withdrawal_hold') {
-      throw new WithdrawalHeldError();
-    }
-    return this.settleApproved(flipped, adminId);
+    return this.settleApproved(flipped, queued, adminId);
   }
 
   // Phase one: the flip to processing under a FOR UPDATE lock. Extracted so the auto path can run it
@@ -2426,22 +2422,21 @@ export class WalletService {
     return this.isWithdrawalHeld(txn, userId);
   }
 
-  // The lock is read before the flip's transaction and a hold can commit right after it, so either
-  // would otherwise reach the PSP. Re-read both once the flip has committed and, if one landed, put
-  // the row back exactly as it was queued. Only the gap between this read and the vendor call remains.
-  private async revertFlipIfBlocked(
+  // The lock is read before the flip's transaction, so one placed right after it would otherwise
+  // reach the PSP. Re-read it once the flip has committed. Holds are re-checked at dispatch instead.
+  private async revertFlipIfLocked(
     userId: User['id'],
     queued: WalletTransaction,
-  ): Promise<'withdrawal_lock' | 'withdrawal_hold' | null> {
-    const blocked = (await this.isWithdrawalLocked(userId))
-      ? 'withdrawal_lock'
-      : (await this.isWithdrawalHeld(this.drizzle.db, userId))
-        ? 'withdrawal_hold'
-        : null;
-    if (!blocked) {
-      return null;
+  ): Promise<boolean> {
+    if (!(await this.isWithdrawalLocked(userId))) {
+      return false;
     }
-    await this.drizzle.db
+    await this.restoreQueued(this.drizzle.db, queued);
+    return true;
+  }
+
+  private async restoreQueued(db: DrizzleDb, queued: WalletTransaction): Promise<void> {
+    await db
       .update(walletTransaction)
       .set({
         status: queued.status,
@@ -2451,13 +2446,13 @@ export class WalletService {
         autoApprovalPivotAmount: queued.autoApprovalPivotAmount,
       })
       .where(and(eq(walletTransaction.id, queued.id), eq(walletTransaction.status, 'processing')));
-    return blocked;
   }
 
   // Phase two: settle a `processing` withdrawal via the vendor (see approveWithdrawal for the outcomes).
   // Runs OUTSIDE the hold/flip transaction so the external PSP call never holds a DB lock.
   private async settleApproved(
     tx: WalletTransaction,
+    queued: WalletTransaction,
     adminId: User['id'] | null,
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
@@ -2467,10 +2462,22 @@ export class WalletService {
     const { providerName, adapter } = await this.paymentAdapterFor(tx.currency, tx.network);
     // Stamped before the call: if its response is lost, reconciliation must ask THIS vendor,
     // not the default one, or "no record there" could be mistaken for "never paid".
-    await this.drizzle.db
-      .update(walletTransaction)
-      .set({ providerName })
-      .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')));
+    // The stamp is the dispatch point: a hold commits before it and puts the row back as queued,
+    // or waits on the wallet lock until it has committed and applies from the next withdrawal.
+    const held = await this.drizzle.db.transaction(async (txn) => {
+      if (await this.isWithdrawalHeldLocked(txn, userId)) {
+        await this.restoreQueued(txn, queued);
+        return true;
+      }
+      await txn
+        .update(walletTransaction)
+        .set({ providerName })
+        .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')));
+      return false;
+    });
+    if (held) {
+      throw new WithdrawalHeldError();
+    }
 
     let result: Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
     try {
@@ -2735,10 +2742,9 @@ export class WalletService {
       if (!decided) {
         return undefined;
       }
-      const blocked = await this.revertFlipIfBlocked(args.userId, decided.queued);
-      if (blocked) {
+      if (await this.revertFlipIfLocked(args.userId, decided.queued)) {
         logger.info(
-          { userId: args.userId, walletId: args.walletId, gate: blocked },
+          { userId: args.userId, walletId: args.walletId, gate: 'withdrawal_lock' },
           'auto-withdrawal skipped',
         );
         return undefined;
@@ -2786,12 +2792,19 @@ export class WalletService {
       }
 
       try {
-        return await this.settleApproved(decided.tx, null);
+        return await this.settleApproved(decided.tx, decided.queued, null);
       } catch (err) {
         // Refused by the vendor: settleApproved already failed and refunded the row, so report
         // that instead of falling through to `pending` for a withdrawal nobody can approve now.
         if (err instanceof PaymentRejectedError) {
           return { transactionId: args.transactionId, status: 'failed' };
+        }
+        if (err instanceof WithdrawalHeldError) {
+          logger.info(
+            { userId: args.userId, walletId: args.walletId, gate: 'withdrawal_hold' },
+            'auto-withdrawal skipped',
+          );
+          return undefined;
         }
         throw err;
       }

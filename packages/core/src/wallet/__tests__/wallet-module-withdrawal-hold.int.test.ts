@@ -141,6 +141,39 @@ const holdOnceFlipped = (w: { id: string; userId: string }) =>
     }),
   });
 
+// Opens a hold after the post-flip lock read and commits it only once dispatch waits on its lock.
+function holdAcrossDispatch(w: { id: string; userId: string }) {
+  let holding: Promise<void> | undefined;
+  const riskTags = mock<PlayerTags>({
+    getActiveTagKeys: vi.fn(async () => {
+      const rows = await withdrawalsOf(w.id);
+      if (!holding && rows.some((r) => r.status === 'processing')) {
+        let commitHold = () => {};
+        const holdCommitted = new Promise<void>((resolve) => {
+          commitHold = resolve;
+        });
+        let holdPlaced = () => {};
+        const placed = new Promise<void>((resolve) => {
+          holdPlaced = resolve;
+        });
+        holding = db.drizzle.db.transaction(async (tx) => {
+          await commands.placeWithdrawalHold(tx, {
+            userId: w.userId,
+            source: 'sportsbook',
+            reason: 'debt',
+          });
+          holdPlaced();
+          await holdCommitted;
+        });
+        await placed;
+        void waitForRowLockWaiter(db).then(commitHold, commitHold);
+      }
+      return new Map();
+    }),
+  });
+  return { riskTags, held: () => holding };
+}
+
 beforeAll(async () => {
   db = await createTestDb([migrate, migrateProfile]);
 });
@@ -410,6 +443,42 @@ describe('WalletService withdrawals under a module hold (real PG)', () => {
       status: 'pending',
       reviewReason: null,
       autoApprovalPivotAmount: null,
+    });
+  });
+
+  it('puts an approval back as queued when dispatch waited on a hold being placed', async () => {
+    const w = await seedWallet();
+    const { riskTags, held } = holdAcrossDispatch(w);
+    const { svc, psp } = makeService({ riskTags });
+    const { transactionId } = await withdraw(svc, w.userId);
+
+    await expect(svc.approveWithdrawal(randomUUID(), transactionId)).rejects.toBeInstanceOf(
+      WithdrawalHeldError,
+    );
+    await held();
+    expect(await txById(transactionId)).toMatchObject({
+      status: 'pending',
+      reviewedBy: null,
+      providerName: null,
+    });
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+  });
+
+  it('leaves an auto-approval for a human when dispatch waited on a hold being placed', async () => {
+    await seedAutoApprovalConfig();
+    const w = await seedWallet();
+    const { riskTags, held } = holdAcrossDispatch(w);
+    const { svc, psp } = makeAutoService({ riskTags });
+
+    const result = await withdraw(svc, w.userId);
+    await held();
+
+    expect(result.status).toBe('pending');
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(await txById(result.transactionId)).toMatchObject({
+      status: 'pending',
+      autoApprovalPivotAmount: null,
+      providerName: null,
     });
   });
 
