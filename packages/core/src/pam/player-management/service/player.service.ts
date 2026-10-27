@@ -26,6 +26,7 @@ import {
   type ExchangeRateReader,
 } from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, asc, desc, sql, inArray, isNull, lt } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
@@ -40,12 +41,20 @@ const logger = createLogger('player-management');
 export const PlayerNotFoundError = makeNotFoundError('Player');
 const BLOCKING_PLAYER_STATUSES = new Set<PlayerStatus>(['suspended', 'closed']);
 
+const accountManager = alias(user, 'account_manager');
+
 const playersWithTags = (db: DrizzleDb) =>
   db
     .select({
       player,
       email: user.email,
       username: user.username,
+      accountManager: {
+        userId: accountManager.id,
+        name: accountManager.name,
+        email: accountManager.email,
+        isActive: accountManager.isActive,
+      },
       // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
       tags: sql<
         string[]
@@ -55,11 +64,21 @@ const playersWithTags = (db: DrizzleDb) =>
     .leftJoin(user, eq(user.id, player.userId))
     .leftJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
     .leftJoin(tag, eq(tag.id, playerTag.tagId))
-    .groupBy(player.id, user.email, user.username);
+    .leftJoin(accountManager, eq(accountManager.id, player.accountManagerId))
+    .groupBy(
+      player.id,
+      user.email,
+      user.username,
+      accountManager.id,
+      accountManager.name,
+      accountManager.email,
+      accountManager.isActive,
+    );
 
 const toTaggedPlayer = (row: Awaited<ReturnType<typeof playersWithTags>>[number]) => ({
   ...toPlayer(row.player, row.email ?? '', row.username ?? ''),
   tags: row.tags as TagKey[],
+  accountManager: row.accountManager,
 });
 
 function toDateKey(d: Date): string {
@@ -137,6 +156,7 @@ export class PlayerService implements PlayerActivityTracker {
     status,
     kycStatus,
     tags,
+    accountManagerId,
     sortBy,
     sortOrder,
   }: PaginationOptions<
@@ -145,6 +165,7 @@ export class PlayerService implements PlayerActivityTracker {
       status?: PlayerStatus;
       kycStatus?: KycStatus;
       tags?: TagKey[];
+      accountManagerId?: User['id'];
     },
     PlayerSortBy
   >) {
@@ -175,6 +196,9 @@ export class PlayerService implements PlayerActivityTracker {
           ilike(user.email, `%${search}%`),
         ),
       );
+    }
+    if (accountManagerId) {
+      conditions.push(eq(player.accountManagerId, accountManagerId));
     }
     if (tags && tags.length > 0) {
       conditions.push(

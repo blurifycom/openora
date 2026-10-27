@@ -90,6 +90,7 @@ export const PlayerSearchArgsSchema = z.object({
   status: PlayerStatusSchema.optional(),
   kycStatus: KycStatusSchema.optional(),
   tags: z.array(TagKeySchema).optional(),
+  accountManagerId: UuidSchema.optional(),
 });
 
 export const PLAYER_SORT_BY_VALUES = [
@@ -113,6 +114,19 @@ export const PaginatedPlayerSearchArgsSchema = z.object({
 });
 
 export type Player = z.infer<typeof PlayerSchema>;
+
+/** The backoffice staff member a player is assigned to. `isActive` false once their account is deactivated. */
+export const AccountManagerSchema = z.object({
+  userId: UuidSchema,
+  name: z.string(),
+  email: z.string(),
+  isActive: z.boolean(),
+});
+export type AccountManager = z.infer<typeof AccountManagerSchema>;
+
+export const ACCOUNT_MANAGER_INELIGIBLE_REASONS = ['unknown', 'inactive', 'not_eligible'] as const;
+export const AccountManagerIneligibleReasonSchema = z.enum(ACCOUNT_MANAGER_INELIGIBLE_REASONS);
+export type AccountManagerIneligibleReason = z.infer<typeof AccountManagerIneligibleReasonSchema>;
 export type PlayerStatus = z.infer<typeof PlayerStatusSchema>;
 export type KycStatus = z.infer<typeof KycStatusSchema>;
 

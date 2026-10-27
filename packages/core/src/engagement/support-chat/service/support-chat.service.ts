@@ -14,6 +14,7 @@ import {
   type AuditWritePort,
   type ClientMeta,
   type IdentityReader,
+  type PlayerAccountManagerReader,
   type PlayerStatus,
   type RgExclusionReader,
   type SupportChatCustomerToken,
@@ -75,6 +76,7 @@ export function toSupportCustomerContext(
     isCoolingOff: reading.isCoolingOff,
     kycStatus: normalizeKycStatus(reading.kycStatus),
     rankName: reading.rankName,
+    accountManagerName: reading.accountManagerName,
     activeCurrency: reading.activeCurrency,
     syncedAt: now.toISOString(),
   };
@@ -151,6 +153,7 @@ type SupportChatDeps = {
   identityReader: IdentityReader;
   walletReader: WalletReader;
   rgExclusionReader: RgExclusionReader;
+  accountManagerReader: PlayerAccountManagerReader | null;
   provider: SupportChatProvider;
   scheduleSync: (userId: User['id']) => Promise<void>;
 };
@@ -234,13 +237,22 @@ export class SupportChatService {
       return null;
     }
     const { customerId, ...reading } = row;
-    const [exclusions, { activeCurrency }] = await Promise.all([
+    const [exclusions, { activeCurrency }, accountManager] = await Promise.all([
       this.deps.rgExclusionReader.getExclusionState(userId),
       this.deps.walletReader.getBalances(userId),
+      this.deps.accountManagerReader?.getByPlayerUserId(userId) ?? null,
     ]);
     return {
       customerId,
-      context: toSupportCustomerContext({ ...reading, ...exclusions, activeCurrency }, new Date()),
+      context: toSupportCustomerContext(
+        {
+          ...reading,
+          ...exclusions,
+          activeCurrency,
+          accountManagerName: accountManager?.name ?? null,
+        },
+        new Date(),
+      ),
     };
   }
 
