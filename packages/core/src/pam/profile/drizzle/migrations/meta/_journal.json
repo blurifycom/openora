@@ -85,6 +85,13 @@
       "when": 1793096774823,
       "tag": "0011_lyrical_puff_adder",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793179322671,
+      "tag": "0012_goofy_archangel",
+      "breakpoints": true
     }
   ]
 }

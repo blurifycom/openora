@@ -1,6 +1,6 @@
 {
-  "id": "086efd6b-0fa6-4055-9b98-1141bd1eec33",
-  "prevId": "f78bf70d-8741-4cb0-8433-eafa82e5ffa3",
+  "id": "111802c6-a33a-4c59-bf63-e7bb7c569727",
+  "prevId": "94a00663-6a0c-4532-82a1-916d1da047b1",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -182,6 +182,12 @@
           "notNull": true,
           "default": true
         },
+        "account_manager_id": {
+          "name": "account_manager_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -232,6 +238,21 @@
           "columns": [
             {
               "expression": "last_seen_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "player_account_manager_id_idx": {
+          "name": "player_account_manager_id_idx",
+          "columns": [
+            {
+              "expression": "account_manager_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
