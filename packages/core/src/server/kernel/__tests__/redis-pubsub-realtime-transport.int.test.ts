@@ -123,7 +123,7 @@ describe('RedisPubSubRealtimeTransport', () => {
     });
 
     // Cut locally before the call returns; the origin ignores its own loopback.
-    transport.revokeUserFromChannel('user-a', 'c');
+    await transport.revokeUserFromChannel('user-a', 'c');
 
     await transport.publish('c', 2);
     await vi.waitFor(() => expect(kept).toEqual([true, true]));
