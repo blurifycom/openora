@@ -122,8 +122,8 @@ describe('RedisPubSubRealtimeTransport', () => {
       expect(kept).toEqual([true]);
     });
 
+    // Cut locally before the call returns; the origin ignores its own loopback.
     transport.revokeUserFromChannel('user-a', 'c');
-    await settle();
 
     await transport.publish('c', 2);
     await vi.waitFor(() => expect(kept).toEqual([true, true]));
@@ -181,9 +181,8 @@ describe('RedisPubSubRealtimeTransport', () => {
     const received: unknown[] = [];
     transport.subscribe(channel, (event) => received.push(event), 'rejoined-user');
     await revocation;
+    // One subscriber connection delivers in publish order, so the revocation loops back first.
     await subscribed({ [lane('svc', channel)]: 1 });
-    // Lets the revocation loop back before the publish.
-    await settle();
 
     await transport.publish(channel, 'after-rejoin');
     await vi.waitFor(() => expect(received).toEqual(['after-rejoin']));
@@ -216,8 +215,10 @@ describe('RedisPubSubRealtimeTransport', () => {
         const channel = `chat:room:${randomUUID()}`;
         const signals: RealtimeSignal[] = [];
         const messages: unknown[] = [];
+        const otherMessages: unknown[] = [];
         instanceB.subscribeSignal(channel, (signal) => signals.push(signal), 'revoked-user');
         instanceB.subscribe(channel, (event) => messages.push(event), 'revoked-user');
+        instanceB.subscribe(channel, (event) => otherMessages.push(event), 'other-user');
         await subscribed({
           [lane('chat', channel)]: 1,
           [signalLane('chat', channel)]: 1,
@@ -231,7 +232,7 @@ describe('RedisPubSubRealtimeTransport', () => {
         );
 
         await instanceA.publish(channel, 'after-revoke');
-        await settle();
+        await vi.waitFor(() => expect(otherMessages).toEqual(['after-revoke']));
         expect(messages).toEqual([]);
       } finally {
         await Promise.allSettled([instanceA.close(), instanceB.close()]);
