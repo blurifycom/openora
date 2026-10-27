@@ -1268,3 +1268,23 @@ describe('AuditService.listMyRgHistory() (real PG)', () => {
     });
   });
 });
+
+describe('audit migrate (real PG)', () => {
+  it('builds the email-change indexes valid and partial, and migrating again keeps them', async () => {
+    await migrate(db.url);
+
+    const { rows } = await db.drizzle.db.execute<{ name: string; valid: boolean; def: string }>(sql`
+      SELECT c.relname AS name, i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS def
+      FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+      WHERE c.relname IN ('audit_log_before_email_idx', 'audit_log_after_email_idx')
+      ORDER BY c.relname`);
+
+    expect(rows.map(({ name, valid }) => ({ name, valid }))).toEqual([
+      { name: 'audit_log_after_email_idx', valid: true },
+      { name: 'audit_log_before_email_idx', valid: true },
+    ]);
+    expect(
+      rows.every(({ def }) => def.includes("WHERE (action = 'identity.email.changed'::text)")),
+    ).toBe(true);
+  });
+});

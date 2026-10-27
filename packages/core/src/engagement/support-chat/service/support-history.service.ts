@@ -328,8 +328,8 @@ export class SupportHistoryService {
       .from(auditLog)
       .where(
         and(
-          // A literal, not a bound parameter, and the email expressions as the audit indexes
-          // declare them: only then can a generic plan prove it may use those partial indexes.
+          // A literal, not a bound parameter, and the email expressions as the audit migration
+          // declares its partial indexes: only then can a generic plan prove it may use them.
           sql`${auditLog.action} = 'identity.email.changed'`,
           or(
             sql`lower(${auditLog.before}->>'email') = lower(${email})`,

@@ -15,13 +15,6 @@
       "when": 1792137000604,
       "tag": "0001_conscious_tigra",
       "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1793101870179,
-      "tag": "0002_parched_skaar",
-      "breakpoints": true
     }
   ]
 }
