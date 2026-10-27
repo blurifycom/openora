@@ -772,3 +772,38 @@ describe('AdminGuard.filterGrantedUsers beside filterGranted', () => {
     await expect(guard.filterGranted('not-a-uuid', requirements)).rejects.toThrow();
   });
 });
+
+describe('account-manager ids in another letter case', () => {
+  it('assigns an eligible manager sent as an uppercase uuid, storing and auditing it lowercase', async () => {
+    const p = await newPlayer();
+    const manager = await newStaff('vip-manager');
+    const upper = manager.userId.toUpperCase();
+
+    const res = await setManager(admin, p.playerId, upper);
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await json(res)).toMatchObject({ accountManager: { userId: manager.userId } });
+    expect(await managerOf(p.playerId)).toMatchObject({ userId: manager.userId });
+    expect((await setManager(admin, p.playerId, upper)).status).toBe(200);
+
+    const audits = await auditRows(p.playerId);
+    expect(audits.map(({ after }) => after)).toEqual([{ accountManagerId: manager.userId }]);
+    expect((await outboxRows(p.playerId)).map(({ payload }) => payload)).toEqual([
+      expect.objectContaining({ accountManagerId: manager.userId }),
+    ]);
+  });
+
+  it('answers filterGranted the same for an uppercase id', async () => {
+    const manager = await newStaff('vip-manager');
+    const guard = testApp.container.get(ADMIN_GUARD);
+    const view = [{ resource: 'player', action: 'view' }] as const;
+    expect(await guard.filterGranted(manager.userId.toUpperCase(), view)).toEqual(view);
+  });
+
+  it('lets assertUser pass an uppercase id on its database grants, answering the lowercase id', async () => {
+    const manager = await newStaff('vip-manager');
+    const guard = testApp.container.get(ADMIN_GUARD);
+    await expect(
+      guard.assertUser(manager.userId.toUpperCase(), 'player', 'view'),
+    ).resolves.toMatchObject({ userId: manager.userId });
+  });
+});

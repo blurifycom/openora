@@ -27,6 +27,10 @@ type GrantRequirement = { resource: string; action: string };
 
 const GRANT_RESOLVE_CONCURRENCY = 10;
 
+// Postgres matches a uuid in any letter case but prints it lowercase, and grants are keyed by
+// the printed form, so an id is looked up the way the database answers it.
+const canonicalUserId = (userId: string) => userId.toLowerCase();
+
 const heldRequirements = <T extends GrantRequirement>(
   role: string,
   grants: AdminGrant[] | null,
@@ -135,13 +139,16 @@ export class AdminGuard {
     userId: string,
     requirements: readonly T[],
   ): Promise<T[]> {
-    return (await this.filterGrantedUsers([userId], requirements)).get(userId) ?? [];
+    return (
+      (await this.filterGrantedUsers([userId], requirements)).get(canonicalUserId(userId)) ?? []
+    );
   }
 
   /**
    * `filterGranted` for many users: their accounts are read in one query, then each active
    * admin's grants through the permission resolver (and its cache). A user missing from the
-   * map holds none of `requirements`. A non-uuid id fails the query, as it does for `assert`.
+   * map holds none of `requirements`. The map is keyed by the lowercase id. A non-uuid id fails
+   * the query, as it does for `assert`.
    */
   async filterGrantedUsers<T extends GrantRequirement>(
     userIds: readonly string[],
@@ -189,7 +196,7 @@ export class AdminGuard {
   }
 
   private async enforce<R extends ResourceName>({
-    userId,
+    userId: rawUserId,
     clientMeta: { ip, userAgent },
     permission,
     session,
@@ -201,6 +208,7 @@ export class AdminGuard {
     session?: { sessionId: string | null };
     requireActive?: boolean;
   }): Promise<AdminCaller> {
+    const userId = canonicalUserId(rawUserId);
     const deniedResource = permission?.resource ?? 'admin';
     const deniedAction = permission?.action ?? 'access';
 

@@ -6,6 +6,7 @@ import {
   type AdminCaller,
   type AdminGuard,
   type DrizzleService,
+  type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
 import type {
@@ -41,14 +42,12 @@ const managerColumns = {
   isActive: user.isActive,
 };
 
-const accountColumns = { role: user.role, isActive: user.isActive };
+const accountColumns = { id: user.id, role: user.role, isActive: user.isActive };
 
-function accountIneligibility(
-  account: { role: string; isActive: boolean } | undefined,
-): AccountManagerIneligibleReason | null {
-  if (!account) {
-    return 'unknown';
-  }
+function accountIneligibility(account: {
+  role: string;
+  isActive: boolean;
+}): AccountManagerIneligibleReason | null {
   if (account.role === 'player') {
     return 'not_eligible';
   }
@@ -89,23 +88,14 @@ export class AccountManagerService implements PlayerAccountManagerReader {
           .for('update'),
         new PlayerNotFoundError(playerId),
       );
-      if (accountManagerId !== null) {
-        // A read lock on identity's row across the module boundary; it becomes a port call
-        // when identity is extracted.
-        const [account] = await tx
-          .select(accountColumns)
-          .from(user)
-          .where(eq(user.id, accountManagerId))
-          .for('share');
-        const reason = accountIneligibility(account) ?? (holdsView ? null : 'not_eligible');
-        if (reason) {
-          throw new AccountManagerIneligibleError(reason);
-        }
-      }
-      if (locked.accountManagerId === accountManagerId) {
+      const nextId =
+        accountManagerId === null
+          ? null
+          : await this.lockEligibleManager(tx, accountManagerId, holdsView);
+      if (locked.accountManagerId === nextId) {
         return;
       }
-      await tx.update(player).set({ accountManagerId }).where(eq(player.id, playerId));
+      await tx.update(player).set({ accountManagerId: nextId }).where(eq(player.id, playerId));
       await this.deps.audit.recordInTransaction(tx, {
         actorType: 'admin',
         actorId: caller.userId,
@@ -113,7 +103,7 @@ export class AccountManagerService implements PlayerAccountManagerReader {
         resourceType: 'player',
         resourceId: playerId,
         before: { accountManagerId: locked.accountManagerId },
-        after: { accountManagerId },
+        after: { accountManagerId: nextId },
         ip: caller.ip,
         userAgent: caller.userAgent,
       });
@@ -121,7 +111,7 @@ export class AccountManagerService implements PlayerAccountManagerReader {
         playerId,
         userId: locked.userId,
         previousAccountManagerId: locked.accountManagerId,
-        accountManagerId,
+        accountManagerId: nextId,
         actorId: caller.userId,
       });
     });
@@ -160,6 +150,32 @@ export class AccountManagerService implements PlayerAccountManagerReader {
       }
     }
     return eligible.slice(0, limit);
+  }
+
+  /**
+   * Locks the manager's account against a concurrent deactivation and answers its id as the
+   * database stores it, whatever letter case the caller sent; throws when it is ineligible.
+   */
+  private async lockEligibleManager(
+    tx: DrizzleTx,
+    userId: User['id'],
+    holdsView: boolean,
+  ): Promise<User['id']> {
+    // A read lock on identity's row across the module boundary; it becomes a port call when
+    // identity is extracted.
+    const [account] = await tx
+      .select(accountColumns)
+      .from(user)
+      .where(eq(user.id, userId))
+      .for('share');
+    if (!account) {
+      throw new AccountManagerIneligibleError('unknown');
+    }
+    const reason = accountIneligibility(account) ?? (holdsView ? null : 'not_eligible');
+    if (reason) {
+      throw new AccountManagerIneligibleError(reason);
+    }
+    return account.id;
   }
 
   async getByPlayerUserId(userId: User['id']): Promise<AccountManager | null> {
