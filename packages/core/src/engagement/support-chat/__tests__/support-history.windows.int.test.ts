@@ -39,9 +39,12 @@ beforeEach(() => {
 
 const HOUR = 3_600_000;
 
-type Subject = 'player' | 'user' | 'other';
+type Subject = 'player' | 'user' | 'other' | 'otherUser';
 type Row = {
-  /** Which resource the row was audited under, `other` another account. Default: the player. */
+  /**
+   * Which resource the row was audited under, `other` another account's player and `otherUser`
+   * another account's user. Default: the player.
+   */
   subject?: Subject;
   /** An email, `undefined` for no `before` column, or a raw `before` object. */
   before?: string | Record<string, unknown>;
@@ -64,7 +67,7 @@ async function scenario(rows: Row[]) {
   const name = (tag: string) => `${tag}-${account.id}@test.dev`;
   const resolve = (value: string) =>
     value === 'cur' ? account.email : value === 'CUR' ? account.email.toUpperCase() : name(value);
-  const otherPlayerId = randomUUID();
+  const otherId = randomUUID();
   const side = (value: Row['before']) =>
     typeof value === 'string' ? { email: resolve(value) } : value;
   const withChangedAt = (after: ReturnType<typeof side>, changedAt: Row['changedAt']) => {
@@ -83,8 +86,10 @@ async function scenario(rows: Row[]) {
       actorType: 'player',
       actorId: player.id,
       action: row.action ?? 'identity.email.changed',
-      resourceType: subject === 'user' ? 'user' : 'player',
-      resourceId: { player: player.id, user: account.id, other: otherPlayerId }[subject],
+      resourceType: subject === 'user' || subject === 'otherUser' ? 'user' : 'player',
+      resourceId: { player: player.id, user: account.id, other: otherId, otherUser: otherId }[
+        subject
+      ],
       before: side(row.before) ?? null,
       after: withChangedAt(side(row.after), row.changedAt),
       hash: randomUUID(),
@@ -268,12 +273,19 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     warnedWithUserOnly(s.userId);
   });
 
-  it('opens the oldest window when another account left the address, not at registration', async () => {
-    const s = await scenario([{ subject: 'other', before: 'cur', after: 'q', at: 5 }]);
-    expect(s.asked).toEqual([[s.win('cur', 5, null)]]);
-    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: false });
-    warnedWithUserOnly(s.userId);
-  });
+  it.each([
+    ['player', 'lower', 'other', 'cur'],
+    ['user', 'lower', 'otherUser', 'cur'],
+    ['player', 'upper', 'other', 'CUR'],
+  ] as const)(
+    'opens the oldest window when another account (%s subject) left the address in %s case, not at registration',
+    async (_kind, _case, subject, before) => {
+      const s = await scenario([{ subject, before, after: 'q', at: 5 }]);
+      expect(s.asked).toEqual([[s.win('cur', 5, null)]]);
+      expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: false });
+      warnedWithUserOnly(s.userId);
+    },
+  );
 
   it('trusts no window when another account took the address, whatever its case', async () => {
     const s = await scenario([{ subject: 'other', before: 'q', after: 'CUR', at: 5 }]);

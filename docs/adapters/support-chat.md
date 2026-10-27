@@ -141,7 +141,9 @@ Core works out which identities belong to the player and hands them to the reade
   log, and when no window is left the section is unavailable.
 - **What the trail cannot notice.** A lost first change stays unseen only when the other account's
   change of that address was lost too, or the address was freed another way, such as the account
-  being deleted. A lost run of changes returning to the address it left (A to B recorded, B to C and
+  being deleted. That account's audit row is written best-effort after its change, so while it is
+  still in flight, and for the 60-second cache after a read, the window can still start at
+  registration. A lost run of changes returning to the address it left (A to B recorded, B to C and
   C to B lost, B to D recorded) also leaves a trail that looks consistent, so B's window spans the
   gap. A change time later than the real change by no more than its audit write's own delay plus the
   5-second margin also goes unseen: a fast clock with a delayed or redelivered write, or a legacy

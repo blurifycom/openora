@@ -329,6 +329,9 @@ export class SupportHistoryService {
             sql`lower(${auditLog.before}->>'email') = lower(${email})`,
             sql`lower(${auditLog.after}->>'email') = lower(${email})`,
           ),
+          // Defense in depth: the player's own rows of a complete trail fall at or after the oldest
+          // window's `to` and are ignored anyway. Both clauses stay, since excluding by subject
+          // type alone would drop other accounts.
           or(ne(auditLog.resourceType, 'player'), ne(auditLog.resourceId, playerId)),
           or(ne(auditLog.resourceType, 'user'), ne(auditLog.resourceId, userId)),
         ),
