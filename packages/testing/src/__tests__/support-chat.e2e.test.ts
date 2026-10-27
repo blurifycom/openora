@@ -947,6 +947,35 @@ describe('support context refresh', () => {
     await refreshedBy(p, setManager(null), { accountManagerName: null });
   });
 
+  it('never shows the player their account manager through the session route', async () => {
+    const p = await linkedPlayer();
+    const manager = await newPlayer();
+    const managerName = `Manager ${randomUUID()}`;
+    await assignIamRoleByKey(testApp.container, manager.userId, 'vip-manager');
+    await testApp.container
+      .get(DRIZZLE)
+      .db.update(user)
+      .set({ name: managerName })
+      .where(eq(user.id, manager.userId));
+    await ok(
+      await admin.put(`/players/${p.playerId}/account-manager`, {
+        accountManagerId: manager.userId,
+      }),
+    );
+
+    const res = await p.client.post(SESSION);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(Object.keys(JSON.parse(text)).sort()).toEqual([
+      'accessToken',
+      'customerId',
+      'expiresInMs',
+      'tokenType',
+    ]);
+    expect(text).not.toContain(managerName);
+    expect(text).not.toContain(manager.userId);
+  });
+
   it('with no provider and no linked player, handles an RG event without enqueuing a sync', async () => {
     const enqueues = watchEnqueues(unconfiguredApp);
     const p = await newPlayer(unconfiguredApp);

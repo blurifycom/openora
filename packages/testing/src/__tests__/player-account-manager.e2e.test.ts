@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { PLAYER_ACCOUNT_MANAGER_READER } from '@openora/core/contracts';
@@ -375,5 +375,193 @@ describe('PLAYER_ACCOUNT_MANAGER_READER', () => {
       isActive: true,
     });
     expect(await reader.getByPlayerUserId(randomUUID())).toBeNull();
+  });
+});
+
+describe('account-manager permissions and input', () => {
+  it('names player:update in the 403, records the denial, and still lets the same session read', async () => {
+    const p = await newPlayer();
+    const manager = await newStaff('vip-manager');
+    const viewer = await newStaff('customer-support-agent');
+    expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
+
+    const denied = await setManager(viewer.client, p.playerId, null);
+    expect(denied.status).toBe(403);
+    expect(await json(denied)).toMatchObject({
+      data: { reason: 'permission_denied', resource: 'player', action: 'update' },
+    });
+    await vi.waitFor(
+      async () => {
+        const rows = await drizzle()
+          .select({ actorId: auditLog.actorId, result: auditLog.result })
+          .from(auditLog)
+          .where(
+            and(
+              eq(auditLog.action, 'identity.user.unauthorized_access'),
+              eq(auditLog.resourceId, 'player:update'),
+            ),
+          );
+        expect(rows).toContainEqual(
+          expect.objectContaining({ actorId: viewer.userId, result: 'failure' }),
+        );
+      },
+      { timeout: 15_000, interval: 100 },
+    );
+
+    const read = await viewer.client.get(`/players/${p.playerId}`);
+    expect(read.status).toBe(200);
+    expect(await json(read)).toMatchObject({ accountManager: { userId: manager.userId } });
+    expect((await viewer.client.get('/players/account-managers')).status).toBe(200);
+  });
+
+  it('refuses staff without player:view on every account-manager route, even for their own id', async () => {
+    const p = await newPlayer();
+    const outsider = await newStaff('marketing-banners');
+    expect((await setManager(outsider.client, p.playerId, outsider.userId)).status).toBe(403);
+    expect((await outsider.client.get('/players/account-managers')).status).toBe(403);
+    expect(await managerOf(p.playerId)).toBeNull();
+    expect(await auditRows(p.playerId)).toHaveLength(0);
+  });
+
+  it('answers 401 with no session', async () => {
+    const p = await newPlayer();
+    const anonymous = (path: string, init: RequestInit) => testApp.app.request(path, init);
+    const put = await anonymous(`/players/${p.playerId}/account-manager`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accountManagerId: null }),
+    });
+    expect(put.status).toBe(401);
+    expect((await anonymous('/players/account-managers', { method: 'GET' })).status).toBe(401);
+    expect(
+      (await anonymous(`/players?accountManagerId=${randomUUID()}`, { method: 'GET' })).status,
+    ).toBe(401);
+  });
+
+  it('lets an admin assign themselves when they hold player:view', async () => {
+    const p = await newPlayer();
+    const res = await setManager(admin, p.playerId, adminUserId);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toMatchObject({ accountManager: { userId: adminUserId } });
+  });
+
+  it.each([
+    [
+      'a non-uuid player id',
+      () => `/players/not-a-uuid/account-manager`,
+      { accountManagerId: null },
+    ],
+    [
+      'a non-uuid manager id',
+      (p: Account) => `/players/${p.playerId}/account-manager`,
+      { accountManagerId: 'nope' },
+    ],
+    ['a missing manager id', (p: Account) => `/players/${p.playerId}/account-manager`, {}],
+    [
+      'an empty-string manager id',
+      (p: Account) => `/players/${p.playerId}/account-manager`,
+      { accountManagerId: '' },
+    ],
+  ])('answers 400 for %s and changes nothing', async (_label, path, body) => {
+    const p = await newPlayer();
+    const manager = await newStaff('vip-manager');
+    expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
+    expect((await admin.put(path(p), body)).status).toBe(400);
+    expect(await managerOf(p.playerId)).toMatchObject({ userId: manager.userId });
+    expect(await auditRows(p.playerId)).toHaveLength(1);
+  });
+
+  it.each(['0', '-1', '51', 'abc', '1.5'])('answers 400 for candidate limit %s', async (limit) => {
+    expect((await admin.get(`/players/account-managers?limit=${limit}`)).status).toBe(400);
+  });
+
+  it('answers 400 for a non-uuid accountManagerId filter and an empty list for an unknown one', async () => {
+    expect((await admin.get('/players?accountManagerId=nope')).status).toBe(400);
+    const none = await admin.get(`/players?accountManagerId=${randomUUID()}`);
+    expect(none.status).toBe(200);
+    expect(await json(none)).toMatchObject({ total: 0, items: [] });
+  });
+});
+
+describe('account-manager concurrency', () => {
+  it('serializes two parallel assignments: one final manager, each audit row chained to the last', async () => {
+    const p = await newPlayer();
+    const a = await newStaff('vip-manager');
+    const b = await newStaff('support-manager');
+
+    const [resA, resB] = await Promise.all([
+      setManager(admin, p.playerId, a.userId),
+      setManager(admin, p.playerId, b.userId),
+    ]);
+    expect([resA.status, resB.status]).toEqual([200, 200]);
+
+    const audits = await auditRows(p.playerId);
+    expect(audits).toHaveLength(2);
+    expect(audits[0]?.before).toEqual({ accountManagerId: null });
+    expect(audits[1]?.before).toEqual(audits[0]?.after);
+    const current = await managerOf(p.playerId);
+    expect([a.userId, b.userId]).toContain((current as { userId: string }).userId);
+    expect(audits[1]?.after).toEqual({
+      accountManagerId: (current as { userId: string }).userId,
+    });
+    expect(await outboxRows(p.playerId)).toHaveLength(2);
+  });
+
+  it('writes one audit row when the same assignment is sent twice in parallel', async () => {
+    const p = await newPlayer();
+    const a = await newStaff('vip-manager');
+    const results = await Promise.all([
+      setManager(admin, p.playerId, a.userId),
+      setManager(admin, p.playerId, a.userId),
+    ]);
+    expect(results.map((r) => r.status)).toEqual([200, 200]);
+    expect(await auditRows(p.playerId)).toHaveLength(1);
+    expect(await outboxRows(p.playerId)).toHaveLength(1);
+  });
+});
+
+describe('account-manager reads beside the player record', () => {
+  it('returns accountManager null for an unmanaged player and the manager from PATCH', async () => {
+    const p = await newPlayer();
+    const manager = await newStaff('vip-manager');
+    const listed = await admin.get('/players?limit=100&sortOrder=desc');
+    expect(listed.status).toBe(200);
+    expect(await managerOf(p.playerId)).toBeNull();
+
+    expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
+    const patched = await admin.patch(`/players/${p.playerId}`, { status: 'suspended' });
+    expect(patched.status).toBe(200);
+    expect(await json(patched)).toMatchObject({
+      status: 'suspended',
+      accountManager: { userId: manager.userId, isActive: true },
+    });
+  });
+
+  it('leaves the unfiltered total unchanged by assigning managers', async () => {
+    const p = await newPlayer();
+    const manager = await newStaff('vip-manager');
+    const before = (await json(await admin.get('/players?limit=1')))['total'];
+    expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
+    expect((await json(await admin.get('/players?limit=1')))['total']).toBe(before);
+  });
+});
+
+describe('GET /players/account-managers batch scan', () => {
+  it('still finds an eligible manager behind more than two batches of ineligible staff', async () => {
+    const token = randomUUID().slice(0, 8);
+    const ineligible = Array.from({ length: 230 }, (_, i) => ({
+      name: `${token} a${String(i).padStart(3, '0')}`,
+      username: `u${token}${i}`,
+      email: `${token}-${i}@scan.e2e.test`,
+      role: 'admin',
+    }));
+    await drizzle().insert(user).values(ineligible);
+    const eligible = await newStaff('vip-manager', `${token} z eligible`);
+
+    const res = await admin.get(`/players/account-managers?search=${token}&limit=5`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([
+      { userId: eligible.userId, name: eligible.name, email: expect.any(String) },
+    ]);
   });
 });
