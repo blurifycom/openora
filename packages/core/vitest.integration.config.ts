@@ -20,6 +20,7 @@ export default defineConfig({
     // This tier partitions Redis by `VITEST_POOL_ID % 8` (real-infra.ts), leaving 8-15
     // to `@openora/testing` so both integration suites can run concurrently. More than
     // 8 workers would wrap that modulo and let two workers flush each other's keys.
-    maxWorkers: 8,
+    // Stryker overrides this (with OPENORA_TEST_POOL_SIZE) so concurrency x pool size stays <= 8.
+    maxWorkers: Number(process.env['OPENORA_TEST_POOL_SIZE'] ?? 8),
   },
 });
