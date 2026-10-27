@@ -85,17 +85,51 @@ describe('registration acquisition', () => {
 
   it.each([
     ['no parameters', { params: {} }],
-    ['too many parameters', { params: paramsOf(ACQUISITION_MAX_PARAMS + 1) }],
-    ['a key outside the allowed characters', { params: { 'bad key': 'v' } }],
-    ['an over-long key', { params: { ['k'.repeat(65)]: 'v' } }],
-    ['an empty value', { params: { aff_id: '' } }],
-    ['an over-long value', { params: { aff_id: 'v'.repeat(257) } }],
-    ['a value with a control character', { params: { aff_id: 'a\u0000b' } }],
-    ['a value that is not well-formed Unicode', { params: { aff_id: 'a\ud800b' } }],
-    ['a landing host that is not a host name', { params: { aff_id: 'v' }, landingHost: 'a b/c' }],
-    ['a first-seen time that is not ISO', { params: { aff_id: 'v' }, firstSeenAt: 'yesterday' }],
+    ['only a key outside the allowed characters', { params: { 'bad key': 'v' } }],
+    ['only an over-long key', { params: { ['k'.repeat(65)]: 'v' } }],
+    ['only an empty value', { params: { aff_id: '' } }],
+    ['only an over-long value', { params: { aff_id: 'v'.repeat(257) } }],
+    ['only a value with a control character', { params: { aff_id: 'a\u0000b' } }],
+    ['only a value that is not well-formed Unicode', { params: { aff_id: 'a\ud800b' } }],
+    ['only a value that is not a string', { params: { aff_id: 7 } }],
   ])('rejects %s', (_case, input) => {
     expect(RegistrationAcquisitionSchema.safeParse(input).success).toBe(false);
+  });
+
+  it('drops an invalid parameter and keeps the rest', () => {
+    expect(
+      RegistrationAcquisitionSchema.parse({
+        params: { aff_id: 'a_1', 'bad key': 'v', utm_source: 'a\u0000b', utm_medium: 'email' },
+      }).params,
+    ).toEqual({ aff_id: 'a_1', utm_medium: 'email' });
+  });
+
+  it('keeps the first parameters up to the cap', () => {
+    expect(
+      Object.keys(
+        RegistrationAcquisitionSchema.parse({ params: paramsOf(ACQUISITION_MAX_PARAMS + 3) })
+          .params,
+      ),
+    ).toEqual(Object.keys(paramsOf(ACQUISITION_MAX_PARAMS)));
+  });
+
+  it('drops an invalid landing host or first-seen time and keeps the parameters', () => {
+    expect(
+      RegistrationAcquisitionSchema.parse({
+        params: { aff_id: 'v' },
+        firstSeenAt: 'yesterday',
+        landingHost: '[::1]:3000',
+      }),
+    ).toEqual({ params: { aff_id: 'v' } });
+  });
+
+  it('accepts a first-seen time with a UTC offset', () => {
+    expect(
+      RegistrationAcquisitionSchema.parse({
+        params: { aff_id: 'v' },
+        firstSeenAt: '2026-10-01T14:00:00+02:00',
+      }).firstSeenAt,
+    ).toBe('2026-10-01T14:00:00+02:00');
   });
 
   it('accepts a value at the maximum length', () => {
@@ -108,10 +142,10 @@ describe('registration acquisition', () => {
     expect(RegisterInputSchema.safeParse(registerInput('password1234')).success).toBe(true);
   });
 
-  it('drops a malformed acquisition instead of refusing the sign-up', () => {
+  it('drops an acquisition with no valid parameter instead of refusing the sign-up', () => {
     const result = RegisterInputSchema.safeParse({
       ...registerInput('password1234'),
-      acquisition: { params: { aff_id: 'v' }, landingHost: '[::1]:3000' },
+      acquisition: { params: { 'bad key': 'v' } },
     });
 
     expect(result.success).toBe(true);
