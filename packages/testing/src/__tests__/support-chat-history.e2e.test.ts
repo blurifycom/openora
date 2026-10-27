@@ -332,23 +332,22 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     ]);
   });
 
-  it('searches only the current email, from the later time, for a repeated email change row with another change time', async () => {
+  it('answers tickets unavailable for a repeated email change row whose change time is later than its audit write', async () => {
     const p = await newPlayer();
-    const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
-    await changeEmail(p.client, newEmail);
+    await changeEmail(p.client, `support-history-new-${randomUUID()}@e2e.test`);
     await emailChangeAuditedAt('player', p.playerId);
-    const later = '2099-01-01T00:00:00.000Z';
 
-    await redeliverEmailChange(p.playerId, (after) => ({ ...after, changedAt: later }));
+    await redeliverEmailChange(p.playerId, (after) => ({
+      ...after,
+      changedAt: '2099-01-01T00:00:00.000Z',
+    }));
     const body = await history(admin, p.userId);
 
-    expect(body.tickets).toEqual({ state: 'ok', items: [], complete: false });
-    expect(readSupportHistoryCalls().listTickets.map((c) => c.windows)).toEqual([
-      [{ email: newEmail, from: later, to: null }],
-    ]);
+    expect(body.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(readSupportHistoryCalls().listTickets).toEqual([]);
   });
 
-  it('answers tickets unavailable without asking the vendor when the email change trail contradicts itself', async () => {
+  it('answers tickets unavailable without asking the vendor when the last email change does not name the current email', async () => {
     const p = await newPlayer();
     await drizzle()
       .insert(auditLog)

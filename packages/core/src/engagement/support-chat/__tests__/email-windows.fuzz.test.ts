@@ -11,7 +11,13 @@ const rng = (seed: number) => () => {
   return seed / 2 ** 32;
 };
 
-type Row = { before: string | null; after: string | null; at: Date; timedByChange: boolean };
+type Row = {
+  before: string | null;
+  after: string | null;
+  at: Date;
+  writtenAt: Date;
+  timedByChange: boolean;
+};
 
 describe('buildEmailWindows against corrupted audit trails', () => {
   it('answers no window wider than the truth, and the whole truth only when complete', () => {
@@ -29,7 +35,13 @@ describe('buildEmailWindows against corrupted audit trails', () => {
           from: (i === 0 ? REGISTERED : day(10 * i)).toISOString(),
           to: at.toISOString(),
         });
-        rows.push({ before: email(i), after: email(i + 1), at, timedByChange: false });
+        rows.push({
+          before: email(i),
+          after: email(i + 1),
+          at,
+          writtenAt: at,
+          timedByChange: false,
+        });
       }
       truth.push({ email: email(count), from: day(10 * count).toISOString(), to: null });
       const held = new Map(truth.map((w) => [w.email, w]));
@@ -76,7 +88,17 @@ describe('buildEmailWindows against corrupted audit trails', () => {
         );
         expect(Date.parse(w.from), note).toBeLessThan(w.to === null ? Infinity : Date.parse(w.to));
       }
+      // The last change naming the current email and stamped after every other one is trusted.
+      const last = rows.at(-1);
+      if (last?.after === email(count) && rows.slice(0, -1).every((r) => r.at < last.at)) {
+        expect(result.windows.at(-1), note).toEqual({
+          email: email(count),
+          from: last.at.toISOString(),
+          to: null,
+        });
+      }
       if (JSON.stringify(rows) !== original) {
+        expect(result.broken, note).toBe(true);
         expect(result.complete, note).toBe(false);
         continue;
       }

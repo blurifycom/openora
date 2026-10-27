@@ -18,12 +18,22 @@ describe('buildEmailWindows against corrupted change times', () => {
     for (let trial = 0; trial < 5000; trial++) {
       const count = 1 + pick(6);
       const email = (i: number) => `e${i}@example.test`;
-      // The true change on day 10 * (i + 1); some rows are stamped wrong instead: at or before
-      // the row before them, or at or before registration for the first. A wrong time that still
-      // runs forward cannot be noticed by anyone, so it is not generated.
+      // The true change on day 10 * (i + 1). Either some rows are stamped wrong, at or before
+      // the row before them (registration for the first), or a lagging clock stamps a run of at
+      // least two last rows a constant offset early, far enough that its last stamp falls at or
+      // before one stamped before the run, possibly before registration. A wrong time still later
+      // than every earlier stamp cannot be noticed by anyone, so it is not generated.
       const days: number[] = [];
-      for (let i = 0; i < count; i++) {
-        days.push(random() < 0.3 ? (days[i - 1] ?? 0) - pick(3) : 10 * (i + 1));
+      if (count >= 2 && random() < 0.5) {
+        const start = pick(count - 1);
+        const offset = 10 * (count - start) + pick(10 * count + 20);
+        for (let i = 0; i < count; i++) {
+          days.push(10 * (i + 1) - (i >= start ? offset : 0));
+        }
+      } else {
+        for (let i = 0; i < count; i++) {
+          days.push(random() < 0.3 ? (days[i - 1] ?? 0) - pick(3) : 10 * (i + 1));
+        }
       }
       const wrong = days.some((d, i) => d !== 10 * (i + 1));
       const truth: SupportHistoryEmailWindow[] = days.map((_, i) => ({
@@ -41,6 +51,7 @@ describe('buildEmailWindows against corrupted change times', () => {
           before: email(i),
           after: email(i + 1),
           at: day(d),
+          writtenAt: day(d),
           timedByChange: false,
         })),
       });

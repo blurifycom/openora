@@ -22,6 +22,8 @@ const logger = createLogger('support-chat');
 
 const HISTORY_CACHE_TTL_MS = 60_000;
 const MAX_PREVIOUS_EMAILS = 3;
+// How far the clock stamping a change may run ahead of the one stamping its audit row.
+const MAX_CLOCK_SKEW_MS = 5_000;
 
 export const SupportHistoryNotConfiguredError = createDomainError<[]>(
   'SupportHistoryNotConfiguredError',
@@ -40,6 +42,8 @@ type EmailChange = {
   before: string | null;
   after: string | null;
   at: Date;
+  // When the audit row was written, which always follows the change.
+  writtenAt: Date;
   timedByChange: boolean;
 };
 
@@ -63,16 +67,17 @@ function withoutRedeliveries(changes: readonly EmailChange[]) {
 
 /**
  * The emails a player held and when, oldest first, the current one last and open-ended. The
- * audit trail is trusted from its end back to its first break: walking back from the current
- * email, each change must name the email the next one replaced (the last change the current
- * email) and run strictly after the change before it, or after registration for the first one. A
- * break means an event was lost, duplicated, reordered or mis-stamped: everything before it is
- * dropped, together with the window starting at a change whose time is out of order, so no window
- * is wider than the truth. When the current email itself cannot be trusted there is no window at
- * all, until the next email change. `complete` is false when a break or the cap on previous emails
- * left an older email out; `broken` tells a break from the cap. Nothing records the email an
- * account registered with, so a lost first change cannot be noticed. A row repeating an earlier
- * one, change time included, is a redelivery and counts once.
+ * audit trail is trusted from its end back to its first break, walking back from the current
+ * email: each change must name as its new email the one the next change replaced (the last change
+ * the current email), and its time must be later than every earlier change and registration, and
+ * not later than its own audit write allowing for clock skew. Everything from the first break
+ * walking back is dropped, the window opened by a change with a wrong time included. When even
+ * the last change cannot be trusted there is no window at all. `complete` is false when a break or
+ * the cap on previous emails left an older email out; `broken` tells a break from the cap. A row
+ * repeating an earlier one, change time included, is a redelivery and counts once. Nothing in the
+ * trail can notice a lost first change, a lost run returning to the address it left, a clock
+ * running ahead by less than the skew tolerance, or a clock running behind whose stamps still
+ * follow every earlier one; each shifts a bound by the gap or the skew.
  */
 export function buildEmailWindows({
   currentEmail,
@@ -84,31 +89,45 @@ export function buildEmailWindows({
   changes: readonly EmailChange[];
 }): { windows: SupportHistoryEmailWindow[]; complete: boolean; broken: boolean } {
   const rows = withoutRedeliveries(changes);
+  if (!currentEmail) {
+    return { windows: [], complete: rows.length === 0, broken: rows.length > 0 };
+  }
+  // floors[k]: the latest time stamped before row k, registration included.
+  const floors: number[] = [];
+  let latest = registeredAt.getTime();
+  for (const { at } of rows) {
+    floors.push(latest);
+    latest = Math.max(latest, at.getTime());
+  }
   // Newest first while walking back.
   const found: SupportHistoryEmailWindow[] = [];
-  const done = (broken: boolean) => ({
+  let email = currentEmail;
+  let to: string | null = null;
+  let broken = false;
+  for (let k = rows.length - 1; k >= 0; k--) {
+    const { before, after, at, writtenAt } = rows[k];
+    const wrongTime =
+      at.getTime() <= floors[k] || at.getTime() > writtenAt.getTime() + MAX_CLOCK_SKEW_MS;
+    if (after !== email || wrongTime) {
+      broken = true;
+      break;
+    }
+    found.push({ email, from: at.toISOString(), to });
+    if (!before) {
+      broken = true;
+      break;
+    }
+    email = before;
+    to = at.toISOString();
+  }
+  if (!broken) {
+    found.push({ email, from: registeredAt.toISOString(), to });
+  }
+  return {
     windows: found.slice(0, MAX_PREVIOUS_EMAILS + 1).reverse(),
     complete: !broken && found.length <= MAX_PREVIOUS_EMAILS + 1,
     broken,
-  });
-  if (!currentEmail) {
-    return done(rows.length > 0);
-  }
-  let email = currentEmail;
-  let to: Date | null = null;
-  for (const [k, { before, after, at }] of [...rows.entries()].reverse()) {
-    if (after !== email || at <= (rows[k - 1]?.at ?? registeredAt)) {
-      return done(true);
-    }
-    found.push({ email, from: at.toISOString(), to: to?.toISOString() ?? null });
-    if (!before) {
-      return done(true);
-    }
-    email = before;
-    to = at;
-  }
-  found.push({ email, from: registeredAt.toISOString(), to: to?.toISOString() ?? null });
-  return done(false);
+  };
 }
 
 // An adapter may throw anything, such as an HTTP client error holding the vendor API key or an
@@ -176,10 +195,7 @@ export class SupportHistoryService {
       changes: await this.emailChanges(userId, row.playerId),
     });
     if (broken) {
-      logger.warn(
-        { userId },
-        'support history email trail inconsistent - older emails not searched',
-      );
+      logger.warn({ userId }, 'support history email trail inconsistent');
     }
     const { customerId } = row;
     const [tickets, chats] = await Promise.all([
@@ -203,7 +219,7 @@ export class SupportHistoryService {
    * The player's email changes from the audit log, in the order they were written, each timed by
    * the change the event carried. The audit subscriber writes each row after its change (the
    * event is not on the outbox), so a row can be lost or land out of order; `buildEmailWindows`
-   * then trusts only the rows after the last break.
+   * then drops everything from the first break walking back.
    */
   private async emailChanges(userId: User['id'], playerId: Player['id']) {
     // The audit subject is the player when the account has one, the user otherwise.
@@ -226,6 +242,7 @@ export class SupportHistoryService {
         before: emailOf(before),
         after: emailOf(after),
         at: changedAt ?? at,
+        writtenAt: at,
         timedByChange: changedAt !== null,
       };
     });

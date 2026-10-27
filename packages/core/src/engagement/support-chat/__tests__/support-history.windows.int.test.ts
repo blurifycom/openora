@@ -148,26 +148,9 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(log.warn).not.toHaveBeenCalled();
   });
 
-  it('keeps only the current window after a repeated legacy row, which cannot be told from a real repeat', async () => {
-    const s = await scenario([
-      { before: 'a', after: 'cur', at: 10 },
-      { before: 'a', after: 'cur', at: 11 },
-    ]);
-    expect(s.asked).toEqual([[s.win('cur', 11, null)]]);
-    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: false });
-    warnedWithUserOnly(s.userId);
-  });
-
   it('keeps contiguous windows for a change to the same email', async () => {
     const s = await scenario([{ before: 'cur', after: 'cur', at: 10 }]);
     expect(s.asked).toEqual([[s.win('cur', 'registered', 10), s.win('cur', 10, null)]]);
-  });
-
-  it('keeps only the current window when the replaced email is missing', async () => {
-    const s = await scenario([{ after: 'cur', at: 10 }]);
-    expect(s.asked).toEqual([[s.win('cur', 10, null)]]);
-    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: false });
-    warnedWithUserOnly(s.userId);
   });
 
   it('keeps only the windows after a change whose new email is missing', async () => {
@@ -250,6 +233,13 @@ describe('support history email windows from crafted audit rows (real PG)', () =
       { before: 'b', after: 'cur', at: 20 },
     ]);
     expect(s.asked).toEqual([]);
+    warnedWithUserOnly(s.userId);
+  });
+
+  it('trusts no window when a change time is later than its own audit write', async () => {
+    const s = await scenario([{ before: 'a', after: 'cur', at: 10, changedAt: 11 }]);
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 

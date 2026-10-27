@@ -119,21 +119,26 @@ Core works out which identities belong to the player and hands them to the reade
   that repeats any earlier one, change time included, counts once, but a repeated row without a
   change time cannot be told from a real repeat and breaks the trail. Core walks back from the
   current email: the last change must name the current email as its new one, each change must
-  name as its new email the one the next change replaced, and each must run strictly after the
-  change before it, or after registration for the first. At the first break it stops: the windows
-  after the break are kept, everything before it is dropped, and a warning naming the user goes
-  to the log. A change whose time falls back loses the window it would open as well, since either
-  side of the break may carry the wrong time. When even the last change cannot be trusted, there
-  is no window at all: the tickets section is reported unavailable and the reader is not asked.
-  The rows are append-only and nothing repairs them, but that state heals on the player's next
-  email change, which starts a trustworthy current window (on the one after it, when the
-  untrusted row's time ran ahead of the real clock).
+  name as its new email the one the next change replaced, and each change's time must be later
+  than every earlier change and registration, and no more than 5 seconds later than its own
+  audit row was written (a change always comes before its write; the margin allows for clocks
+  that disagree). At the first break walking back it stops: the windows after the break are
+  kept, everything from the break back is dropped, the window opened by a change with a wrong
+  time included, and a warning naming the user goes to the log. When even the last change
+  cannot be trusted, there is no window at all: the tickets section is reported unavailable and
+  the reader is not asked. The rows are append-only and nothing repairs them; the next email
+  change heals that state, unless an earlier row carries a time ahead of the real clock: every
+  later change then reads as falling back, and the section stays unavailable until real time
+  passes that stamp. Core fails closed rather than trust it.
 - **What the trail cannot notice.** Nothing records the email an account registered with, so a
-  lost first change goes unseen: the next email is then taken as held from registration. A lost run of
-  changes returning to the address it left (A to B recorded, B to C and C to B lost, B to D
-  recorded) also leaves a trail that looks consistent, so B's window spans the gap. Both follow
-  from the email-change event being emitted best-effort rather than through the outbox; moving
-  that emit to the outbox is the fix, and is not part of this port.
+  lost first change goes unseen: the next email is then taken as held from registration. A lost
+  run of changes returning to the address it left (A to B recorded, B to C and C to B lost, B to
+  D recorded) also leaves a trail that looks consistent, so B's window spans the gap. A clock
+  running ahead by less than the 5-second margin shifts a window's bound by at most that much,
+  and a clock running behind goes unseen for as long as each time it stamps is still later than
+  every earlier one, shifting the bounds by the lag. The lost rows follow from the email-change
+  event being emitted best-effort rather than through the outbox; moving that emit to the outbox
+  is the fix, and is not part of this port.
 - **Chats** are matched by the vendor customer the player is linked to. A player who never
   opened the chat has no link, and the reader is not asked.
 

@@ -5,10 +5,18 @@ import { buildEmailWindows } from '../service/support-history.service.js';
 const REGISTERED = new Date('2026-01-01T00:00:00.000Z');
 const day = (n: number) => new Date(Date.UTC(2026, 0, 1 + n));
 const iso = (n: number) => day(n).toISOString();
-const change = (before: string | null, after: string | null, n: number, timedByChange = false) => ({
+// A change stamped on day `n` whose audit row was written on day `written`.
+const change = (
+  before: string | null,
+  after: string | null,
+  n: number,
+  timedByChange = false,
+  written = n,
+) => ({
   before: before && `${before}@example.test`,
   after: after && `${after}@example.test`,
   at: day(n),
+  writtenAt: day(written),
   timedByChange,
 });
 // A window for `email` from day `from` (null: registration) to day `to` (null: still held).
@@ -75,6 +83,15 @@ describe('buildEmailWindows', () => {
     );
   });
 
+  it('cannot tell a lagging clock whose stamps still run after every earlier one', () => {
+    // The true changes were on days 20 and 30; the clock stamping them ran five days behind.
+    const changes = [change('a', 'b', 10), change('b', 'c', 15), change('c', 'd', 25)];
+
+    expect(windowsOf('d', changes)).toEqual(
+      whole(held('a', null, 10), held('b', 10, 15), held('c', 15, 25), held('d', 25, null)),
+    );
+  });
+
   it('keeps the windows after a break in the middle of the trail', () => {
     const changes = [
       change('a', 'b', 10),
@@ -103,6 +120,15 @@ describe('buildEmailWindows', () => {
     expect(windowsOf('e7', changes)).toEqual(
       afterBreak(held('e4', 3, 4), held('e5', 4, 5), held('e6', 5, 6), held('e7', 6, null)),
     );
+  });
+
+  it('trusts a change time ahead of its audit write by no more than the clock skew', () => {
+    const skewed = {
+      ...change('a', 'b', 10, true),
+      writtenAt: new Date(day(10).getTime() - 5_000),
+    };
+
+    expect(windowsOf('b', [skewed])).toEqual(whole(held('a', null, 10), held('b', 10, null)));
   });
 
   it('counts a redelivered row, same emails and same carried change time, once', () => {
@@ -154,6 +180,29 @@ describe('buildEmailWindows', () => {
     ],
     ['two changes at the same time', 'c', [change('a', 'b', 10), change('b', 'c', 10)]],
     ['a change at registration', 'b', [change('a', 'b', 0)]],
+    // Day 7 is later than day 5 but not than day 10: a lagging clock after an inversion.
+    [
+      'a run of times that falls back',
+      'd',
+      [change('a', 'b', 10), change('b', 'c', 5), change('c', 'd', 7)],
+    ],
+    [
+      'a lagging clock after an inversion',
+      'e',
+      [change('a', 'b', 10), change('b', 'c', 20), change('c', 'd', 5), change('d', 'e', 6)],
+    ],
+    [
+      'a run of changes stamped before registration',
+      'c',
+      [change('a', 'b', -800), change('b', 'c', -700)],
+    ],
+    ['a change time later than its own audit write', 'b', [change('a', 'b', 10, true, 9)]],
+    // Fails closed until real time passes the wrong stamp.
+    [
+      'later changes after a forward-dated one',
+      'd',
+      [change('a', 'b', 10), change('b', 'c', 900, true, 20), change('c', 'd', 30)],
+    ],
     [
       'a later repeat with another change time',
       'c',
@@ -169,7 +218,13 @@ describe('buildEmailWindows', () => {
       'b',
       [
         change('a', 'b', 10, true),
-        { before: 'A@example.test', after: 'b@example.test', at: day(10), timedByChange: true },
+        {
+          before: 'A@example.test',
+          after: 'b@example.test',
+          at: day(10),
+          writtenAt: day(10),
+          timedByChange: true,
+        },
       ],
     ],
     [
@@ -177,7 +232,13 @@ describe('buildEmailWindows', () => {
       'b',
       [
         change('a', 'b', 10, true),
-        { before: 'a@example.test', after: 'B@example.test', at: day(10), timedByChange: true },
+        {
+          before: 'a@example.test',
+          after: 'B@example.test',
+          at: day(10),
+          writtenAt: day(10),
+          timedByChange: true,
+        },
       ],
     ],
   ])('trusts no window, not even the current one, for %s', (_fault, current, changes) => {
@@ -203,13 +264,6 @@ describe('buildEmailWindows', () => {
       'b',
       [change('a', 'b', 10, true), change('a', 'b', 11, true)],
       [held('b', 11, null)],
-    ],
-    // The change at day 5 falls back, so the window it would open is dropped with it.
-    [
-      'a time that falls back',
-      'd',
-      [change('a', 'b', 10), change('b', 'c', 5), change('c', 'd', 7)],
-      [held('d', 7, null)],
     ],
     [
       'a missing new email beside a reordering',
