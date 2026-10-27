@@ -63,14 +63,16 @@ function withoutRedeliveries(changes: readonly EmailChange[]) {
 
 /**
  * The emails a player held and when, oldest first, the current one last and open-ended. The
- * audit trail is trusted only when fully consistent: every change names both emails, each
- * replaced email is the previous change's new one, the changes run strictly forward in time from
- * registration, and the last new email is the current one. Anything else means an event was
- * lost, duplicated, reordered or mis-stamped, and no window is returned (`complete: false`), so a
- * player is shown no tickets rather than another player's. Nothing records the email an account
- * registered with, so a lost first change cannot be noticed. A row repeating an earlier one,
- * change time included, is a redelivery and counts once. Only the most recent previous emails are
- * kept.
+ * audit trail is trusted from its end back to its first break: walking back from the current
+ * email, each change must name the email the next one replaced (the last change the current
+ * email) and run strictly after the change before it, or after registration for the first one. A
+ * break means an event was lost, duplicated, reordered or mis-stamped: everything before it is
+ * dropped, together with the window starting at a change whose time is out of order, so no window
+ * is wider than the truth. When the current email itself cannot be trusted there is no window at
+ * all, until the next email change. `complete` is false when a break or the cap on previous emails
+ * left an older email out; `broken` tells a break from the cap. Nothing records the email an
+ * account registered with, so a lost first change cannot be noticed. A row repeating an earlier
+ * one, change time included, is a redelivery and counts once.
  */
 export function buildEmailWindows({
   currentEmail,
@@ -80,27 +82,33 @@ export function buildEmailWindows({
   currentEmail: User['email'];
   registeredAt: Date;
   changes: readonly EmailChange[];
-}): { windows: SupportHistoryEmailWindow[]; complete: boolean } {
-  const untrusted = { windows: [], complete: false };
-  const closed: SupportHistoryEmailWindow[] = [];
-  let from = registeredAt;
-  let lastNewEmail: string | null = null;
-  for (const { before, after, at } of withoutRedeliveries(changes)) {
-    if (!before || !after || at <= from || (lastNewEmail !== null && before !== lastNewEmail)) {
-      return untrusted;
-    }
-    closed.push({ email: before, from: from.toISOString(), to: at.toISOString() });
-    lastNewEmail = after;
-    from = at;
-  }
-  if (lastNewEmail !== null && lastNewEmail !== currentEmail) {
-    return untrusted;
-  }
+}): { windows: SupportHistoryEmailWindow[]; complete: boolean; broken: boolean } {
+  const rows = withoutRedeliveries(changes);
+  // Newest first while walking back.
+  const found: SupportHistoryEmailWindow[] = [];
+  const done = (broken: boolean) => ({
+    windows: found.slice(0, MAX_PREVIOUS_EMAILS + 1).reverse(),
+    complete: !broken && found.length <= MAX_PREVIOUS_EMAILS + 1,
+    broken,
+  });
   if (!currentEmail) {
-    return { windows: [], complete: true };
+    return done(rows.length > 0);
   }
-  const current = { email: currentEmail, from: from.toISOString(), to: null };
-  return { windows: [...closed.slice(-MAX_PREVIOUS_EMAILS), current], complete: true };
+  let email = currentEmail;
+  let to: Date | null = null;
+  for (const [k, { before, after, at }] of [...rows.entries()].reverse()) {
+    if (after !== email || at <= (rows[k - 1]?.at ?? registeredAt)) {
+      return done(true);
+    }
+    found.push({ email, from: at.toISOString(), to: to?.toISOString() ?? null });
+    if (!before) {
+      return done(true);
+    }
+    email = before;
+    to = at;
+  }
+  found.push({ email, from: registeredAt.toISOString(), to: to?.toISOString() ?? null });
+  return done(false);
 }
 
 // An adapter may throw anything, such as an HTTP client error holding the vendor API key or an
@@ -162,21 +170,28 @@ export class SupportHistoryService {
     if (!row) {
       throw new SupportChatPlayerNotFoundError(userId);
     }
-    const { windows, complete } = buildEmailWindows({
+    const { windows, complete, broken } = buildEmailWindows({
       currentEmail: row.email,
       registeredAt: row.registeredAt,
       changes: await this.emailChanges(userId, row.playerId),
     });
-    if (!complete) {
-      logger.warn({ userId }, 'support history email trail inconsistent - no window built');
+    if (broken) {
+      logger.warn(
+        { userId },
+        'support history email trail inconsistent - older emails not searched',
+      );
     }
     const { customerId } = row;
     const [tickets, chats] = await Promise.all([
       windows.length === 0
-        ? { state: complete ? ('no_email' as const) : ('unavailable' as const), items: [] }
+        ? {
+            state: broken ? ('unavailable' as const) : ('no_email' as const),
+            items: [],
+            complete: !broken,
+          }
         : this.section(userId, 'ticket', () =>
             this.deps.reader.listTickets({ windows, includeResolved }),
-          ),
+          ).then((section) => ({ ...section, complete: section.state === 'ok' && complete })),
       customerId === null
         ? { state: 'not_linked' as const, items: [] }
         : this.section(userId, 'chat', () => this.deps.reader.listChats({ customerId })),
@@ -188,7 +203,7 @@ export class SupportHistoryService {
    * The player's email changes from the audit log, in the order they were written, each timed by
    * the change the event carried. The audit subscriber writes each row after its change (the
    * event is not on the outbox), so a row can be lost or land out of order; `buildEmailWindows`
-   * then trusts none of them.
+   * then trusts only the rows after the last break.
    */
   private async emailChanges(userId: User['id'], playerId: Player['id']) {
     // The audit subject is the player when the account has one, the user otherwise.

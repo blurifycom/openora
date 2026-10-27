@@ -122,7 +122,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(two.asked).toEqual([
       [two.win('a', 'registered', 10), two.win('b', 10, 20), two.win('cur', 20, null)],
     ]);
-    expect(two.history.tickets.state).toBe('ok');
+    expect(two.history.tickets).toEqual({ state: 'ok', items: [], complete: true });
     expect(log.warn).not.toHaveBeenCalled();
 
     const none = await scenario([]);
@@ -135,7 +135,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
       { before: 'a', after: 'b', at: 10 },
     ]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
@@ -148,13 +148,13 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(log.warn).not.toHaveBeenCalled();
   });
 
-  it('trusts no window for a repeated legacy row, which cannot be told from a real repeat', async () => {
+  it('keeps only the current window after a repeated legacy row, which cannot be told from a real repeat', async () => {
     const s = await scenario([
       { before: 'a', after: 'cur', at: 10 },
       { before: 'a', after: 'cur', at: 11 },
     ]);
-    expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
+    expect(s.asked).toEqual([[s.win('cur', 11, null)]]);
+    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
@@ -163,31 +163,31 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     expect(s.asked).toEqual([[s.win('cur', 'registered', 10), s.win('cur', 10, null)]]);
   });
 
-  it('trusts no window when the replaced email is missing', async () => {
+  it('keeps only the current window when the replaced email is missing', async () => {
     const s = await scenario([{ after: 'cur', at: 10 }]);
-    expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
+    expect(s.asked).toEqual([[s.win('cur', 10, null)]]);
+    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
-  it('trusts no window when the new email is missing', async () => {
+  it('keeps only the windows after a change whose new email is missing', async () => {
     const s = await scenario([
       { before: 'a', at: 10 },
       { before: 'b', after: 'cur', at: 20 },
     ]);
-    expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
+    expect(s.asked).toEqual([[s.win('cur', 20, null)]]);
+    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
-  it('trusts no window when no row holds a usable email', async () => {
+  it('trusts no window, not even the current one, when no row holds a usable email', async () => {
     const s = await scenario([
       { before: {}, after: {}, at: 10 },
       { before: { email: 5 }, after: { email: null }, at: 11 },
       { before: { email: '' }, after: { email: '' }, at: 12 },
     ]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [] });
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
@@ -203,8 +203,22 @@ describe('support history email windows from crafted audit rows (real PG)', () =
 
     const history = await service.getHistory(account.id, false);
 
-    expect(history.tickets).toEqual({ state: 'no_email', items: [] });
+    expect(history.tickets).toEqual({ state: 'no_email', items: [], complete: true });
     expect(listTickets).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('searches only the three most recent previous emails, saying so without a warning', async () => {
+    const s = await scenario([
+      { before: 'a', after: 'b', at: 10 },
+      { before: 'b', after: 'c', at: 20 },
+      { before: 'c', after: 'd', at: 30 },
+      { before: 'd', after: 'cur', at: 40 },
+    ]);
+    expect(s.asked).toEqual([
+      [s.win('b', 10, 20), s.win('c', 20, 30), s.win('d', 30, 40), s.win('cur', 40, null)],
+    ]);
+    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: false });
     expect(log.warn).not.toHaveBeenCalled();
   });
 

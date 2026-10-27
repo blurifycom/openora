@@ -221,7 +221,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
 
     const body = await history(admin, p.userId);
 
-    expect(body.tickets).toEqual({ state: 'ok', items: [newer, older, oldest] });
+    expect(body.tickets).toEqual({ state: 'ok', items: [newer, older, oldest], complete: true });
     expect(body.chats).toEqual({ state: 'ok', items: [chatNew, chatOld] });
     expect(readSupportHistoryCalls().listTickets.map((c) => c.includeResolved)).toEqual([false]);
     expect(readSupportHistoryCalls().listChats).toEqual([{ customerId: p.customerId }]);
@@ -325,26 +325,27 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     await redeliverEmailChange(p.playerId);
     const body = await history(admin, p.userId);
 
-    expect(body.tickets).toEqual({ state: 'ok', items: [ticket] });
+    expect(body.tickets).toEqual({ state: 'ok', items: [ticket], complete: true });
     expect(readSupportHistoryCalls().listTickets[0]?.windows).toEqual([
       { email: p.email, from: await registeredAt(p.userId), to: changedAt },
       { email: newEmail, from: changedAt, to: null },
     ]);
   });
 
-  it('answers tickets unavailable for a repeated email change row with another change time', async () => {
+  it('searches only the current email, from the later time, for a repeated email change row with another change time', async () => {
     const p = await newPlayer();
-    await changeEmail(p.client, `support-history-new-${randomUUID()}@e2e.test`);
+    const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
+    await changeEmail(p.client, newEmail);
     await emailChangeAuditedAt('player', p.playerId);
+    const later = '2099-01-01T00:00:00.000Z';
 
-    await redeliverEmailChange(p.playerId, (after) => ({
-      ...after,
-      changedAt: '2099-01-01T00:00:00.000Z',
-    }));
+    await redeliverEmailChange(p.playerId, (after) => ({ ...after, changedAt: later }));
     const body = await history(admin, p.userId);
 
-    expect(body.tickets).toEqual({ state: 'unavailable', items: [] });
-    expect(readSupportHistoryCalls().listTickets).toEqual([]);
+    expect(body.tickets).toEqual({ state: 'ok', items: [], complete: false });
+    expect(readSupportHistoryCalls().listTickets.map((c) => c.windows)).toEqual([
+      [{ email: newEmail, from: later, to: null }],
+    ]);
   });
 
   it('answers tickets unavailable without asking the vendor when the email change trail contradicts itself', async () => {
@@ -364,8 +365,38 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
 
     const body = await history(admin, p.userId);
 
-    expect(body.tickets).toEqual({ state: 'unavailable', items: [] });
+    expect(body.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
     expect(readSupportHistoryCalls().listTickets).toEqual([]);
+  });
+
+  it('searches the emails after an old contradicting row and says the history is not complete', async () => {
+    const p = await newPlayer();
+    // Audited under the user, which the history reads too, so the real change below stays the
+    // player's first row.
+    await drizzle()
+      .insert(auditLog)
+      .values({
+        actorType: 'player',
+        actorId: p.playerId,
+        action: 'identity.email.changed',
+        resourceType: 'user',
+        resourceId: p.userId,
+        before: { email: `support-history-old-${randomUUID()}@e2e.test` },
+        after: { email: `support-history-not-current-${randomUUID()}@e2e.test` },
+        hash: randomUUID(),
+      });
+    const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
+    await changeEmail(p.client, newEmail);
+    const changedAt = await emailChangeAuditedAt('player', p.playerId);
+    const ticket = item('ticket', '2026-03-01T00:00:00Z');
+    answerSupportHistoryWith({ tickets: [ticket] });
+
+    const body = await history(admin, p.userId);
+
+    expect(body.tickets).toEqual({ state: 'ok', items: [ticket], complete: false });
+    expect(readSupportHistoryCalls().listTickets.map((c) => c.windows)).toEqual([
+      [{ email: newEmail, from: changedAt, to: null }],
+    ]);
   });
 
   it('answers chats not linked without asking the vendor for an unlinked player', async () => {
@@ -390,7 +421,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       const text = await res.clone().text();
       const body = SupportHistorySchema.parse(await res.json());
 
-      expect(body.tickets).toEqual({ state: 'unavailable', items: [] });
+      expect(body.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
       expect(body.chats).toEqual({ state: 'ok', items: [chat] });
       expect(text).not.toContain('vendor answered 503');
     });
@@ -414,7 +445,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
         const body = SupportHistorySchema.parse(await res.json());
 
         expect(body.chats).toEqual({ state: 'unavailable', items: [] });
-        expect(body.tickets).toEqual({ state: 'ok', items: [ticket] });
+        expect(body.tickets).toEqual({ state: 'ok', items: [ticket], complete: true });
         expect(text).not.toContain(secret);
         expect(inspect(reported, { depth: null })).not.toContain(secret);
       } finally {
@@ -427,7 +458,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       answerSupportHistoryWith({ chats: [item('chat', '2026-03-01T00:00:00Z')] });
       malformSupportHistory('listTickets');
       const first = await history(admin, malformed.userId);
-      expect(first.tickets).toEqual({ state: 'unavailable', items: [] });
+      expect(first.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
       expect(first.chats.state).toBe('ok');
 
       resetSupportHistory();
@@ -437,7 +468,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
         chats: [item('chat', '2026-03-01T00:00:00Z')],
       });
       const second = await history(admin, wrongStatus.userId);
-      expect(second.tickets).toEqual({ state: 'unavailable', items: [] });
+      expect(second.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
       expect(second.chats.state).toBe('ok');
 
       resetSupportHistory();
@@ -465,7 +496,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
 
       const body = await history(admin, p.userId);
 
-      expect(body.tickets).toEqual({ state: 'unavailable', items: [] });
+      expect(body.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
       expect(body.chats.state).toBe('ok');
       expect(body.chats.items).toHaveLength(1);
       expect(JSON.stringify(body)).not.toContain(url);

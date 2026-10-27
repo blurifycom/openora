@@ -111,18 +111,23 @@ Core works out which identities belong to the player and hands them to the reade
   registered by another player, so a ticket counts only when it was created inside its email's
   window: the reader must filter by creation date, never return every ticket an address ever
   opened.
-- **The email trail is trusted only when fully consistent.** The audit rows are written
-  shortly after each change, outside the change's transaction, so one can be lost, duplicated,
-  land out of order or carry a skewed time. Each row carries the time stamped right after the
-  change, so a slow write does not move a window's bounds; a row written before that field
-  existed is timed by when it was written. A redelivered event writes its row again: a row that
-  repeats any earlier one, change time included, counts once, but a repeated row without a
-  change time cannot be told from a real repeat and breaks the trail. Core builds windows only
-  when every change names both emails, each replaced email is the previous change's new one, the
-  changes run strictly forward in time from registration, and the last new email is the current
-  one. On any inconsistency it builds no window: the tickets section is reported unavailable, the
-  reader is not asked, and a warning naming the user goes to the log. The rows are append-only and
-  nothing repairs them, so a broken trail stays unavailable for good.
+- **The email trail is trusted from its end back to its first break.** The audit rows are
+  written shortly after each change, outside the change's transaction, so one can be lost,
+  duplicated, land out of order or carry a skewed time. Each row carries the time stamped right
+  after the change, so a slow write does not move a window's bounds; a row written before that
+  field existed is timed by when it was written. A redelivered event writes its row again: a row
+  that repeats any earlier one, change time included, counts once, but a repeated row without a
+  change time cannot be told from a real repeat and breaks the trail. Core walks back from the
+  current email: the last change must name the current email as its new one, each change must
+  name as its new email the one the next change replaced, and each must run strictly after the
+  change before it, or after registration for the first. At the first break it stops: the windows
+  after the break are kept, everything before it is dropped, and a warning naming the user goes
+  to the log. A change whose time falls back loses the window it would open as well, since either
+  side of the break may carry the wrong time. When even the last change cannot be trusted, there
+  is no window at all: the tickets section is reported unavailable and the reader is not asked.
+  The rows are append-only and nothing repairs them, but that state heals on the player's next
+  email change, which starts a trustworthy current window (on the one after it, when the
+  untrusted row's time ran ahead of the real clock).
 - **What the trail cannot notice.** Nothing records the email an account registered with, so a
   lost first change goes unseen: the next email is then taken as held from registration. A lost run of
   changes returning to the address it left (A to B recorded, B to C and C to B lost, B to D
@@ -150,7 +155,10 @@ What a reader must guarantee:
   reduced to its class name.
 
 The answer has a tickets and a chats section. Each one either carries its items, most recently
-updated first, or says it is unavailable: its read failed, or the email trail was not consistent.
+updated first, or says it is unavailable: its read failed, or the current email could not be
+trusted. The tickets section also says whether it is complete: true only when every email the
+player held was searched, false when a break in the trail or the cap of three previous emails
+left older ones out, so staff know an older ticket may exist that the list does not show.
 The tickets section also says there is no email to match when the account has neither an email
 nor an email change, and the chats section says the player is not linked when there was nothing
 to ask. One section failing never hides the other; the reason goes to the log only. Core caches

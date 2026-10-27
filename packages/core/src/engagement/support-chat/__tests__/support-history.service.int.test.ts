@@ -73,7 +73,7 @@ describe('SupportHistoryService logging (real PG)', () => {
       },
     }).getHistory(p.userId, false);
 
-    expect(history.tickets).toEqual({ state: 'unavailable', items: [] });
+    expect(history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
     expect(warned()).toEqual([
       { userId: p.userId, section: 'ticket', reason: 'vendor answered 503' },
     ]);
@@ -111,7 +111,7 @@ describe('SupportHistoryService logging (real PG)', () => {
       false,
     );
 
-    expect(history.tickets).toEqual({ state: 'unavailable', items: [] });
+    expect(history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
     expect(warned()).toEqual([{ userId: p.userId, section: 'ticket', reason: 'malformed answer' }]);
   });
 
@@ -125,7 +125,7 @@ describe('SupportHistoryService logging (real PG)', () => {
         false,
       );
 
-      expect(history.tickets).toEqual({ state: 'ok', items: [{ ...TICKET, url }] });
+      expect(history.tickets).toEqual({ state: 'ok', items: [{ ...TICKET, url }], complete: true });
     },
   );
 });

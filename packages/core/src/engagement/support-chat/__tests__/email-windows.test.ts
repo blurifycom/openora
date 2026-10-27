@@ -11,102 +11,149 @@ const change = (before: string | null, after: string | null, n: number, timedByC
   at: day(n),
   timedByChange,
 });
+// A window for `email` from day `from` (null: registration) to day `to` (null: still held).
+const held = (email: string, from: number | null, to: number | null) => ({
+  email: `${email}@example.test`,
+  from: from === null ? REGISTERED.toISOString() : iso(from),
+  to: to === null ? null : iso(to),
+});
 const windowsOf = (currentEmail: string, changes: ReturnType<typeof change>[]) =>
   buildEmailWindows({
     currentEmail: currentEmail && `${currentEmail}@example.test`,
     registeredAt: REGISTERED,
     changes,
   });
-const UNTRUSTED = { windows: [], complete: false };
+const whole = (...windows: ReturnType<typeof held>[]) => ({
+  windows,
+  complete: true,
+  broken: false,
+});
+const afterBreak = (...windows: ReturnType<typeof held>[]) => ({
+  windows,
+  complete: false,
+  broken: true,
+});
+const UNTRUSTED = afterBreak();
 
 describe('buildEmailWindows', () => {
   it('opens one window from registration for a player who never changed email', () => {
-    const { windows, complete } = windowsOf('now', []);
+    const result = windowsOf('now', []);
 
-    expect(windows).toEqual([
-      { email: 'now@example.test', from: REGISTERED.toISOString(), to: null },
-    ]);
-    expect(complete).toBe(true);
-    expect(windows.every((w) => SupportHistoryEmailWindowSchema.safeParse(w).success)).toBe(true);
+    expect(result).toEqual(whole(held('now', null, null)));
+    expect(result.windows.every((w) => SupportHistoryEmailWindowSchema.safeParse(w).success)).toBe(
+      true,
+    );
   });
 
   it('closes each previous email at its change and opens the current one at the last', () => {
-    expect(windowsOf('c', [change('a', 'b', 10), change('b', 'c', 20)])).toEqual({
-      windows: [
-        { email: 'a@example.test', from: REGISTERED.toISOString(), to: iso(10) },
-        { email: 'b@example.test', from: iso(10), to: iso(20) },
-        { email: 'c@example.test', from: iso(20), to: null },
-      ],
-      complete: true,
-    });
+    expect(windowsOf('c', [change('a', 'b', 10), change('b', 'c', 20)])).toEqual(
+      whole(held('a', null, 10), held('b', 10, 20), held('c', 20, null)),
+    );
   });
 
-  it('keeps only the three most recent previous emails', () => {
+  it('searches every email of an intact trail of three changes', () => {
+    const changes = [change('a', 'b', 1), change('b', 'c', 2), change('c', 'now', 3)];
+
+    expect(windowsOf('now', changes)).toEqual(
+      whole(held('a', null, 1), held('b', 1, 2), held('c', 2, 3), held('now', 3, null)),
+    );
+  });
+
+  it('keeps the three most recent previous emails of an intact trail and says it is not complete', () => {
     const changes = [1, 2, 3, 4, 5].map((n) => change(`e${n}`, n === 5 ? 'now' : `e${n + 1}`, n));
 
     expect(windowsOf('now', changes)).toEqual({
-      windows: [
-        { email: 'e3@example.test', from: iso(2), to: iso(3) },
-        { email: 'e4@example.test', from: iso(3), to: iso(4) },
-        { email: 'e5@example.test', from: iso(4), to: iso(5) },
-        { email: 'now@example.test', from: iso(5), to: null },
-      ],
-      complete: true,
+      windows: [held('e3', 2, 3), held('e4', 3, 4), held('e5', 4, 5), held('now', 5, null)],
+      complete: false,
+      broken: false,
     });
   });
 
   it('cannot tell a lost first change, since nothing records the email registered with', () => {
-    expect(windowsOf('c', [change('b', 'c', 20)])).toEqual({
-      windows: [
-        { email: 'b@example.test', from: REGISTERED.toISOString(), to: iso(20) },
-        { email: 'c@example.test', from: iso(20), to: null },
-      ],
-      complete: true,
-    });
+    expect(windowsOf('c', [change('b', 'c', 20)])).toEqual(
+      whole(held('b', null, 20), held('c', 20, null)),
+    );
+  });
+
+  it('keeps the windows after a break in the middle of the trail', () => {
+    const changes = [
+      change('a', 'b', 10),
+      change('x', 'c', 20),
+      change('c', 'd', 30),
+      change('d', 'e', 40),
+    ];
+
+    expect(windowsOf('e', changes)).toEqual(
+      afterBreak(held('c', 20, 30), held('d', 30, 40), held('e', 40, null)),
+    );
+  });
+
+  it('keeps only the current window after a break right before the last change', () => {
+    const changes = [change('a', 'b', 10), change('b', 'c', 20), change('x', 'd', 30)];
+
+    expect(windowsOf('d', changes)).toEqual(afterBreak(held('d', 30, null)));
+  });
+
+  it('caps the windows kept after a break', () => {
+    const changes = [
+      change('a', 'x', 1),
+      ...[2, 3, 4, 5, 6].map((n) => change(`e${n}`, `e${n + 1}`, n)),
+    ];
+
+    expect(windowsOf('e7', changes)).toEqual(
+      afterBreak(held('e4', 3, 4), held('e5', 4, 5), held('e6', 5, 6), held('e7', 6, null)),
+    );
   });
 
   it('counts a redelivered row, same emails and same carried change time, once', () => {
     const redelivered = change('a', 'b', 10, true);
 
-    expect(windowsOf('b', [redelivered, { ...redelivered }])).toEqual({
-      windows: [
-        { email: 'a@example.test', from: REGISTERED.toISOString(), to: iso(10) },
-        { email: 'b@example.test', from: iso(10), to: null },
-      ],
-      complete: true,
-    });
-  });
-
-  it.each([
-    ['a repeated row timed by its write time', [change('a', 'b', 10), change('a', 'b', 10)]],
-    [
-      'a repeated row with another change time',
-      [change('a', 'b', 10, true), change('a', 'b', 11, true)],
-    ],
-    [
-      'a repeat of a row timed by its write time',
-      [change('a', 'b', 10), change('a', 'b', 10, true)],
-    ],
-  ])('trusts no window for %s', (_fault, changes) => {
-    expect(windowsOf('b', changes)).toEqual(UNTRUSTED);
+    expect(windowsOf('b', [redelivered, { ...redelivered }])).toEqual(
+      whole(held('a', null, 10), held('b', 10, null)),
+    );
   });
 
   it('counts three redeliveries once and keeps the windows of the changes around them', () => {
     const first = change('a', 'b', 10, true);
 
     expect(windowsOf('c', [first, { ...first }, { ...first }, change('b', 'c', 20, true)])).toEqual(
-      {
-        windows: [
-          { email: 'a@example.test', from: REGISTERED.toISOString(), to: iso(10) },
-          { email: 'b@example.test', from: iso(10), to: iso(20) },
-          { email: 'c@example.test', from: iso(20), to: null },
-        ],
-        complete: true,
-      },
+      whole(held('a', null, 10), held('b', 10, 20), held('c', 20, null)),
     );
   });
 
+  it('counts a redelivery landing after a later change once, keeping the first in place', () => {
+    expect(
+      windowsOf('c', [
+        change('a', 'b', 10, true),
+        change('b', 'c', 20, true),
+        change('a', 'b', 10, true),
+      ]),
+    ).toEqual(whole(held('a', null, 10), held('b', 10, 20), held('c', 20, null)));
+  });
+
+  it('answers no window and no gap for an account with no email and no change', () => {
+    expect(windowsOf('', [])).toEqual(whole());
+  });
+
   it.each([
+    ['a lost last change', 'c', [change('a', 'b', 10)]],
+    ['a change without the new email', 'c', [change('a', null, 10)]],
+    ['rows written out of order', 'c', [change('b', 'c', 20), change('a', 'b', 21)]],
+    ['changes on an account with no email', '', [change('a', 'b', 10)]],
+    // The last change's time falls back, so the current email's start cannot be trusted either.
+    ['a repeated row timed by its write time', 'b', [change('a', 'b', 10), change('a', 'b', 10)]],
+    [
+      'a repeat of a row timed by its write time',
+      'b',
+      [change('a', 'b', 10), change('a', 'b', 10, true)],
+    ],
+    [
+      'a time that jumps ahead',
+      'c',
+      [change('x', 'a', 10), change('a', 'b', 30), change('b', 'c', 20)],
+    ],
+    ['two changes at the same time', 'c', [change('a', 'b', 10), change('b', 'c', 10)]],
+    ['a change at registration', 'b', [change('a', 'b', 0)]],
     [
       'a later repeat with another change time',
       'c',
@@ -133,57 +180,44 @@ describe('buildEmailWindows', () => {
         { before: 'a@example.test', after: 'B@example.test', at: day(10), timedByChange: true },
       ],
     ],
-  ])('trusts no window for %s', (_fault, current, changes) => {
+  ])('trusts no window, not even the current one, for %s', (_fault, current, changes) => {
     expect(windowsOf(current, changes)).toEqual(UNTRUSTED);
   });
 
-  it('counts a redelivery landing after a later change once, keeping the first in place', () => {
-    expect(
-      windowsOf('c', [
-        change('a', 'b', 10, true),
-        change('b', 'c', 20, true),
-        change('a', 'b', 10, true),
-      ]),
-    ).toEqual({
-      windows: [
-        { email: 'a@example.test', from: REGISTERED.toISOString(), to: iso(10) },
-        { email: 'b@example.test', from: iso(10), to: iso(20) },
-        { email: 'c@example.test', from: iso(20), to: null },
-      ],
-      complete: true,
-    });
-  });
-
-  it('answers no window and no gap for an account with no email and no change', () => {
-    expect(windowsOf('', [])).toEqual({ windows: [], complete: true });
-  });
-
   it.each([
-    ['a change without the replaced email', 'c', [change('a', 'b', 10), change(null, 'c', 20)]],
-    ['a change without the new email', 'c', [change('a', null, 10)]],
-    ['a lost middle change', 'd', [change('a', 'b', 10), change('c', 'd', 30)]],
-    ['a lost last change', 'c', [change('a', 'b', 10)]],
-    ['a duplicated row', 'b', [change('a', 'b', 10), change('a', 'b', 11)]],
-    ['rows written out of order', 'c', [change('b', 'c', 20), change('a', 'b', 21)]],
+    [
+      'a change without the replaced email',
+      'c',
+      [change('a', 'b', 10), change(null, 'c', 20)],
+      [held('c', 20, null)],
+    ],
+    [
+      'a lost middle change',
+      'd',
+      [change('a', 'b', 10), change('c', 'd', 30)],
+      [held('d', 30, null)],
+    ],
+    ['a duplicated row', 'b', [change('a', 'b', 10), change('a', 'b', 11)], [held('b', 11, null)]],
+    [
+      'a repeated row with another change time',
+      'b',
+      [change('a', 'b', 10, true), change('a', 'b', 11, true)],
+      [held('b', 11, null)],
+    ],
+    // The change at day 5 falls back, so the window it would open is dropped with it.
     [
       'a time that falls back',
       'd',
       [change('a', 'b', 10), change('b', 'c', 5), change('c', 'd', 7)],
+      [held('d', 7, null)],
     ],
-    [
-      'a time that jumps ahead',
-      'c',
-      [change('x', 'a', 10), change('a', 'b', 30), change('b', 'c', 20)],
-    ],
-    ['two changes at the same time', 'c', [change('a', 'b', 10), change('b', 'c', 10)]],
-    ['a change at registration', 'b', [change('a', 'b', 0)]],
     [
       'a missing new email beside a reordering',
       'c',
       [change('b', 'c', 20), change('a', null, 21), change('b', 'c', 22)],
+      [held('c', 22, null)],
     ],
-    ['changes on an account with no email', '', [change('a', 'b', 10)]],
-  ])('trusts no window for %s', (_fault, current, changes) => {
-    expect(windowsOf(current, changes)).toEqual(UNTRUSTED);
+  ])('keeps only the windows after %s', (_fault, current, changes, windows) => {
+    expect(windowsOf(current, changes)).toEqual(afterBreak(...windows));
   });
 });

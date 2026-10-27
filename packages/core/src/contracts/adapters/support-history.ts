@@ -2,8 +2,9 @@
  * Bind a concrete `SupportHistoryReader` to `SUPPORT_HISTORY_READER` in an overlay; core never
  * binds one. A separate token from `SUPPORT_CHAT_PROVIDER`: an operator may bind either without
  * the other. Timestamps the adapter answers are UTC ISO strings ending in `Z`, and item links are
- * absolute `https://` URLs; anything else fails validation. See docs/adapters/support-chat.md for
- * the binding guide.
+ * absolute `https://` URLs; anything else fails validation. `listTickets` gets only the email
+ * windows core trusts, so it may cover fewer than all the player's emails. See
+ * docs/adapters/support-chat.md for the binding guide.
  */
 import * as z from 'zod';
 import { TimestampSchema } from '../schemas/common.js';
@@ -50,11 +51,16 @@ export const SupportHistoryEmailWindowSchema = z.object({
 });
 export type SupportHistoryEmailWindow = z.infer<typeof SupportHistoryEmailWindowSchema>;
 
-/** A player's support history as the back office reads it; each section fails on its own. */
+/**
+ * A player's support history as the back office reads it; each section fails on its own.
+ * `tickets.complete` is true only when every email the player held was searched: an early break
+ * in the email-change trail, or the cap on previous emails, leaves the older ones out.
+ */
 export const SupportHistorySchema = z.object({
   tickets: z.object({
     state: z.enum(['ok', 'unavailable', 'no_email']),
     items: z.array(SupportHistoryItemSchema),
+    complete: z.boolean(),
   }),
   chats: z.object({
     state: z.enum(['ok', 'unavailable', 'not_linked']),
