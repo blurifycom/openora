@@ -372,6 +372,20 @@ describe('PLAYER_ACCOUNT_MANAGER_READER', () => {
     });
     expect(await reader.getByPlayerUserId(randomUUID())).toBeNull();
   });
+
+  it('reads a deactivated manager as inactive', async () => {
+    const reader = testApp.container.get(PLAYER_ACCOUNT_MANAGER_READER);
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
+    await deactivate(manager.userId);
+
+    expect(await reader.getByPlayerUserId(p.userId)).toEqual({
+      userId: manager.userId,
+      name: manager.name,
+      isActive: false,
+    });
+  });
 });
 
 describe('account-manager permissions and input', () => {
