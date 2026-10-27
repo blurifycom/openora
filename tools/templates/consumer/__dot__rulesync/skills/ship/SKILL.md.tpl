@@ -100,14 +100,15 @@ Start `tester` in the worktree with the plan's test cases. It returns an AC tabl
 
 - Every row PASS -> 4.
 - Any FAIL -> back to `builder` with the failing rows only, then `tester` again.
-- UNCHECKED rows ride along to the MR description; they do not block, except a case on a money, KYC or responsible-gambling path: back to `tester` once to run it, still UNCHECKED -> blocker comment, report it, stop.
+- UNCHECKED rows ride along to the MR description; they do not block, except a case or a mutation row on a money, KYC, responsible-gambling or authz path: back to `tester` once to run it, still UNCHECKED -> blocker comment, report it, stop.
+- A SURVIVED mutation row is a FAIL: back to `builder` with the row (the test that catches it, or the code that makes it testable), then `tester` again. A money, KYC, responsible-gambling or authz change with no mutation rows goes back to `tester` once to add them.
 - A failing spec called pre-existing without its run on the base commit -> back to `tester` once to run it there. Still unrun: it is a FAIL.
 
 ### 4. Review
 
-Start `quality-reviewer`, `security-reviewer` and `compliance-reviewer` in parallel on the branch diff against `{{mrTarget}}`, with the tester's AC table so they dig where testing could not reach.
+Run the **review** skill on the branch against `{{mrTarget}}`, without `--post`: its precheck, risk tier, request trace and evidence gate run before any reviewer reads the diff. Hand its reviewers the tester's AC table, mutation rows included, so they dig where testing could not reach. This is the self-review the MR is opened on: people reviewing the MR later read it by hand and do not run an AI review again, so nothing goes out that this step has not passed.
 
-Every finding with a fix gets fixed, whatever its severity, but only once it holds. Dedupe across reviewers, then check each yourself before anything changes: open its `file:line` and confirm the evidence on this branch. One that doesn't hold (wrong line, the code already handles it, a claim the code doesn't show) is dropped and goes to the MR description with why. A product call the ticket doesn't settle goes to `expert`, then is fixed or rides along as an open question. Send the rest to `builder` in one go, then 3 for the cases they touch and 4 again. A later round of 4 reviews only the commits since the last one and whether each sent finding is fixed. Clean means no finding left that holds.
+Every finding with a fix gets fixed, whatever its severity, but only once it holds. Dedupe across reviewers, then check each yourself before anything changes: open its `file:line` and confirm the evidence on this branch. One that doesn't hold (wrong line, the code already handles it, a claim the code doesn't show) is dropped and goes to the MR description with why. A product call the ticket doesn't settle goes to `expert`, then is fixed or rides along as an open question. Send the rest to `builder` in one go, then 3 for the cases they touch and 4 again. A later round of 4 reviews only the commits since the last one and whether each sent finding is fixed. Clean means the review skill says **APPROVED** and no finding is left that holds; only then 5.
 
 Rounds of 3 and 4 share one budget: three. After the third with anything still failing, post a blocker comment naming what is left, report it, stop.
 
@@ -131,13 +132,13 @@ Then 7.
 Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` as a background command, never a sleep loop in the session. It prints one line and exits when there is work:
 
 - `failed` or `conflicts` -> 6, then watch again. Still red after three fixes -> blocker comment, report, stop.
-- `threads <ids>` (unanswered for two checks in a row, from a person or a bot) -> 6 for those, then watch again.
+- `threads <ids>` (unanswered for two checks in a row, from a person or a bot) -> 6 for those, then watch again. A thread the forge's AI review opens is a blocker it found on this head: it counts like a person's.
 - `green` -> check the MR is ready (below), report "Ready for review:" and the MR URL, then watch again without `--until-green`.
 - `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `error ...` -> report it, stop.
 
-Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, no money, KYC or responsible-gambling case is UNCHECKED, and the description holds the AC table, the screenshots and the UNCHECKED rows.
+Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table, the screenshots and the UNCHECKED rows.
 
-Keep watching until the MR merges or closes, for as long as the session lives. A caller that says it watches the MR itself (a headless run) gets the report at `green`, and you stop there; it brings the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
+Keep watching until the MR merges or closes, for as long as the session lives. You never merge it: who approves and who merges is in `docs/agents/forge.md`. A caller that says it watches the MR itself (a headless run) gets the report at `green`, and you stop there; it brings the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
 
 ## Rules
 

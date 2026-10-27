@@ -61,6 +61,9 @@ if (existsSync(appDir)) {
 }
 
 const pkgName = `@openora/${name}-service`;
+const rootPackage: { devDependencies: Record<string, string> } = JSON.parse(
+  readFileSync(join(repoRoot, 'package.json'), 'utf8'),
+);
 
 const files: Record<string, string> = {
   'package.json':
@@ -80,8 +83,8 @@ const files: Record<string, string> = {
           '@openora/core': 'workspace:*',
         },
         devDependencies: {
-          tsx: '4.23.1',
-          typescript: '6.0.3',
+          tsx: rootPackage.devDependencies['tsx'],
+          typescript: rootPackage.devDependencies['typescript'],
         },
       },
       null,

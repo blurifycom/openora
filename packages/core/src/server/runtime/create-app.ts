@@ -236,7 +236,6 @@ const ADMIN_GUARD_CONTROLS = [
 
 const MCP_MAX_BODY_BYTES = 1_048_576;
 const MCP_SDK_PACKAGE = '@modelcontextprotocol/sdk';
-const MCP_SDK_VERSION = '^1.29.0';
 
 type MountedMcpTransport = { path: string; transport: McpHttpTransport };
 
@@ -270,8 +269,8 @@ async function importMcpHttpTransport() {
     }
     throw new Error(
       `[create-app] agents.mcp.enabled is on, but ${MCP_SDK_PACKAGE} is not installed. ` +
-        `@openora/core declares it as an optional peer dependency: install ` +
-        `${MCP_SDK_PACKAGE}@${MCP_SDK_VERSION}, or turn agents.mcp.enabled off.`,
+        `@openora/core declares it as an optional peer dependency: install it, ` +
+        `or turn agents.mcp.enabled off.`,
       { cause: err },
     );
   }
