@@ -5,6 +5,7 @@ import { buildEmailWindows } from '../service/support-history.service.js';
 const REGISTERED = new Date('2026-01-01T00:00:00.000Z');
 const day = (n: number) => new Date(Date.UTC(2026, 0, 1 + n));
 const iso = (n: number) => day(n).toISOString();
+const CLOCK_SKEW_MS = 5_000;
 // A change stamped on day `n` whose audit row was written on day `written`.
 const change = (
   before: string | null,
@@ -83,9 +84,13 @@ describe('buildEmailWindows', () => {
     );
   });
 
-  it('cannot tell a lagging clock whose stamps still run after every earlier one', () => {
-    // The true changes were on days 20 and 30; the clock stamping them ran five days behind.
-    const changes = [change('a', 'b', 10), change('b', 'c', 15), change('c', 'd', 25)];
+  it('cannot tell a clock running behind whose stamps still follow every earlier one', () => {
+    const lagDays = 5;
+    const changes = [
+      change('a', 'b', 10),
+      change('b', 'c', 20 - lagDays),
+      change('c', 'd', 30 - lagDays),
+    ];
 
     expect(windowsOf('d', changes)).toEqual(
       whole(held('a', null, 10), held('b', 10, 15), held('c', 15, 25), held('d', 25, null)),
@@ -125,7 +130,7 @@ describe('buildEmailWindows', () => {
   it('trusts a change time ahead of its audit write by no more than the clock skew', () => {
     const skewed = {
       ...change('a', 'b', 10, true),
-      writtenAt: new Date(day(10).getTime() - 5_000),
+      writtenAt: new Date(day(10).getTime() - CLOCK_SKEW_MS),
     };
 
     expect(windowsOf('b', [skewed])).toEqual(whole(held('a', null, 10), held('b', 10, null)));
@@ -134,25 +139,10 @@ describe('buildEmailWindows', () => {
   it('trusts no window for a change time more than the clock skew ahead of its audit write', () => {
     const ahead = {
       ...change('a', 'b', 10, true),
-      writtenAt: new Date(day(10).getTime() - 5_001),
+      writtenAt: new Date(day(10).getTime() - CLOCK_SKEW_MS - 1),
     };
 
     expect(windowsOf('b', [ahead])).toEqual(UNTRUSTED);
-  });
-
-  it('trusts no window when a later change is stamped before an earlier one that is not its neighbour', () => {
-    const changes = [
-      change('a', 'b', 10),
-      change('b', 'c', 20),
-      change('c', 'd', 5),
-      change('d', 'e', 6),
-    ];
-
-    expect(windowsOf('e', changes)).toEqual(UNTRUSTED);
-  });
-
-  it('trusts no window when every change is stamped before registration', () => {
-    expect(windowsOf('c', [change('a', 'b', -800), change('b', 'c', -700)])).toEqual(UNTRUSTED);
   });
 
   it('counts a redelivered row, same emails and same carried change time, once', () => {
@@ -190,7 +180,6 @@ describe('buildEmailWindows', () => {
     ['a change without the new email', 'c', [change('a', null, 10)]],
     ['rows written out of order', 'c', [change('b', 'c', 20), change('a', 'b', 21)]],
     ['changes on an account with no email', '', [change('a', 'b', 10)]],
-    // The last change's time falls back, so the current email's start cannot be trusted either.
     ['a repeated row timed by its write time', 'b', [change('a', 'b', 10), change('a', 'b', 10)]],
     [
       'a repeat of a row timed by its write time',
@@ -204,14 +193,13 @@ describe('buildEmailWindows', () => {
     ],
     ['two changes at the same time', 'c', [change('a', 'b', 10), change('b', 'c', 10)]],
     ['a change at registration', 'b', [change('a', 'b', 0)]],
-    // Day 7 is later than day 5 but not than day 10: a lagging clock after an inversion.
     [
-      'a run of times that falls back',
+      'a time later than the change before it but not than an earlier one',
       'd',
       [change('a', 'b', 10), change('b', 'c', 5), change('c', 'd', 7)],
     ],
     [
-      'a lagging clock after an inversion',
+      'a run stamped before an earlier change that is not its neighbour',
       'e',
       [change('a', 'b', 10), change('b', 'c', 20), change('c', 'd', 5), change('d', 'e', 6)],
     ],
@@ -220,7 +208,6 @@ describe('buildEmailWindows', () => {
       'c',
       [change('a', 'b', -800), change('b', 'c', -700)],
     ],
-    ['a change time later than its own audit write', 'b', [change('a', 'b', 10, true, 9)]],
     [
       'a later repeat with another change time',
       'c',
