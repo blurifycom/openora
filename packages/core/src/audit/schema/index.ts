@@ -39,6 +39,14 @@ export const auditLog = pgTable(
     index('audit_log_actor_id_idx').on(t.actorId),
     index('audit_log_resource_id_idx').on(t.resourceId),
     index('audit_log_after_user_id_idx').on(sql`(${t.after}->>'userId')`),
+    // The emails an email change names, matched case-insensitively. Partial, so the rest of the
+    // log does not grow them; a query uses them only with this action as a literal in its filter.
+    index('audit_log_before_email_idx')
+      .on(sql`lower(${t.before}->>'email')`)
+      .where(sql`${t.action} = 'identity.email.changed'`),
+    index('audit_log_after_email_idx')
+      .on(sql`lower(${t.after}->>'email')`)
+      .where(sql`${t.action} = 'identity.email.changed'`),
     index('audit_log_action_idx').on(t.action),
     index('audit_log_resource_type_idx').on(t.resourceType),
     index('audit_log_created_at_idx').on(t.createdAt),

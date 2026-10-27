@@ -1,0 +1,2 @@
+CREATE INDEX "audit_log_before_email_idx" ON "audit_log" USING btree (lower("before"->>'email')) WHERE "audit_log"."action" = 'identity.email.changed';--> statement-breakpoint
+CREATE INDEX "audit_log_after_email_idx" ON "audit_log" USING btree (lower("after"->>'email')) WHERE "audit_log"."action" = 'identity.email.changed';

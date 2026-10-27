@@ -323,14 +323,14 @@ export class SupportHistoryService {
    * like the player's own. The player's own rows, under either subject, are left out.
    */
   private async othersEmailChanges(email: string, userId: User['id'], playerId: Player['id']) {
-    // ponytail: the action index narrows to email-change rows and the email match scans them; an
-    // expression index on lower(before->>'email') and lower(after->>'email') when that grows.
     const rows = await this.deps.drizzle.db
       .select({ before: auditLog.before, after: auditLog.after, at: auditLog.createdAt })
       .from(auditLog)
       .where(
         and(
-          eq(auditLog.action, 'identity.email.changed'),
+          // A literal, not a bound parameter, and the email expressions as the audit indexes
+          // declare them: only then can a generic plan prove it may use those partial indexes.
+          sql`${auditLog.action} = 'identity.email.changed'`,
           or(
             sql`lower(${auditLog.before}->>'email') = lower(${email})`,
             sql`lower(${auditLog.after}->>'email') = lower(${email})`,
