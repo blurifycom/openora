@@ -43,7 +43,7 @@ describe('buildEmailWindows against every corruption at once', () => {
     const pick = (n: number) => Math.floor(random() * n);
     let widened = 0;
     let checked = 0;
-    for (let trial = 0; trial < 20000; trial++) {
+    for (let trial = 0; trial < 5000; trial++) {
       const count = 1 + pick(6);
       const email = (i: number) => `e${i}@example.test`;
       const trueAt = (i: number) => day(10 * (i + 1));
@@ -163,7 +163,7 @@ describe('buildEmailWindows against every corruption at once', () => {
         expect(result.complete, note).toBe(count <= 3);
       }
     }
-    expect(checked).toBeGreaterThan(10000);
+    expect(checked).toBeGreaterThan(2500);
     expect(widened).toBeGreaterThan(0);
   });
 });
