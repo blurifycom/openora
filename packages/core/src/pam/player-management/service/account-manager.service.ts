@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, isNotNull, sql, type SQL } from 'drizzle-orm';
 import {
   findOneOrThrow,
   likeContains,
@@ -25,6 +25,7 @@ import type { AccountManagerCandidate } from '../contract/index.js';
 const PLAYER_VIEW = [{ resource: 'player', action: 'view' }] as const;
 const CANDIDATE_BATCH_SIZE = 100;
 const STAFF_ROLES = Object.keys(roles);
+const MANAGER_COLUMNS = { userId: user.id, name: user.name, isActive: user.isActive };
 
 export class AccountManagerIneligibleError extends Error {
   readonly data: { reason: AccountManagerIneligibleReason };
@@ -146,16 +147,24 @@ export class AccountManagerService implements PlayerAccountManagerReader {
 
   /**
    * Every staff account managing at least one player of any status, deactivated ones included,
-   * ordered by name then id. A manager id with no user row is dropped by the join.
+   * ordered by name then id. A manager id with no user row is left out.
    */
   async assigned(): Promise<AccountManager[]> {
     // ponytail: unpaged, bounded by staff headcount; add an optional search/limit (non-breaking)
     // if a deployment's manager list outgrows one response.
     const db = this.deps.drizzle.db;
     return db
-      .select({ userId: user.id, name: user.name, isActive: user.isActive })
+      .select(MANAGER_COLUMNS)
       .from(user)
-      .where(inArray(user.id, db.selectDistinct({ id: player.accountManagerId }).from(player)))
+      .where(
+        inArray(
+          user.id,
+          db
+            .select({ id: player.accountManagerId })
+            .from(player)
+            .where(isNotNull(player.accountManagerId)),
+        ),
+      )
       .orderBy(asc(user.name), asc(user.id));
   }
 
@@ -191,7 +200,7 @@ export class AccountManagerService implements PlayerAccountManagerReader {
 
   private async readManager(where: SQL): Promise<AccountManager | null> {
     const [row] = await this.deps.drizzle.db
-      .select({ userId: user.id, name: user.name, isActive: user.isActive })
+      .select(MANAGER_COLUMNS)
       .from(player)
       .innerJoin(user, eq(user.id, player.accountManagerId))
       .where(where)
