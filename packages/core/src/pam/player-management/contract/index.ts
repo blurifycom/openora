@@ -61,7 +61,6 @@ export type PlayerProfileCard = z.infer<typeof PlayerProfileCardSchema>;
 export const AccountManagerCandidateSchema = AccountManagerSchema.pick({
   userId: true,
   name: true,
-  email: true,
 });
 export type AccountManagerCandidate = z.infer<typeof AccountManagerCandidateSchema>;
 

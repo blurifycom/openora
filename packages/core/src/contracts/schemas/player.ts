@@ -119,7 +119,6 @@ export type Player = z.infer<typeof PlayerSchema>;
 export const AccountManagerSchema = z.object({
   userId: UuidSchema,
   name: z.string(),
-  email: z.string(),
   isActive: z.boolean(),
 });
 export type AccountManager = z.infer<typeof AccountManagerSchema>;

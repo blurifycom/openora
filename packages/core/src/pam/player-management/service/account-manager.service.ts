@@ -1,8 +1,8 @@
-import { and, asc, eq, ilike, ne, or } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, sql, type SQL } from 'drizzle-orm';
 import {
   findOneOrThrow,
   likeContains,
-  mapConcurrent,
+  roles,
   type AdminCaller,
   type AdminGuard,
   type DrizzleService,
@@ -19,10 +19,11 @@ import type {
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { PlayerNotFoundError } from './player.service.js';
+import type { AccountManagerCandidate } from '../contract/index.js';
 
 const PLAYER_VIEW = [{ resource: 'player', action: 'view' }] as const;
 const CANDIDATE_BATCH_SIZE = 100;
-const GRANT_CHECK_CONCURRENCY = 10;
+const STAFF_ROLES = Object.keys(roles);
 
 export class AccountManagerIneligibleError extends Error {
   readonly data: { reason: AccountManagerIneligibleReason };
@@ -37,7 +38,6 @@ export class AccountManagerIneligibleError extends Error {
 const managerColumns = {
   userId: user.id,
   name: user.name,
-  email: user.email,
   isActive: user.isActive,
 };
 
@@ -77,12 +77,9 @@ export class AccountManagerService implements PlayerAccountManagerReader {
     accountManagerId: User['id'] | null,
     caller: AdminCaller,
   ): Promise<{ accountManager: AccountManager | null }> {
-    if (accountManagerId !== null) {
-      const reason = await this.ineligibility(accountManagerId);
-      if (reason) {
-        throw new AccountManagerIneligibleError(reason);
-      }
-    }
+    // ponytail: the player:view grant is checked before the transaction, so a role revoked in
+    // that gap still assigns; lock the grant rows inside it if that window ever matters.
+    const holdsView = accountManagerId !== null && (await this.holdsPlayerView(accountManagerId));
     await this.deps.drizzle.db.transaction(async (tx) => {
       const locked = findOneOrThrow(
         await tx
@@ -93,12 +90,14 @@ export class AccountManagerService implements PlayerAccountManagerReader {
         new PlayerNotFoundError(playerId),
       );
       if (accountManagerId !== null) {
+        // A read lock on identity's row across the module boundary; it becomes a port call
+        // when identity is extracted.
         const [account] = await tx
           .select(accountColumns)
           .from(user)
           .where(eq(user.id, accountManagerId))
           .for('share');
-        const reason = accountIneligibility(account);
+        const reason = accountIneligibility(account) ?? (holdsView ? null : 'not_eligible');
         if (reason) {
           throw new AccountManagerIneligibleError(reason);
         }
@@ -126,35 +125,36 @@ export class AccountManagerService implements PlayerAccountManagerReader {
         actorId: caller.userId,
       });
     });
-    return { accountManager: await this.findManager(playerId) };
+    return { accountManager: await this.readManager(eq(player.id, playerId)) };
   }
 
   /**
-   * Up to `limit` active staff holding `player:view` whose name or email contains `search`,
-   * ordered by name. Staff are read in batches and checked against their grants until `limit`
+   * Up to `limit` active staff holding `player:view` whose name contains `search`, ordered by
+   * name. Staff are read in batches, each checked against its grants in one call, until `limit`
    * are found or none are left, so staff without the grant never crowd out eligible ones.
    */
   async candidates(search: string | undefined, limit: number) {
     const where = and(
-      ne(user.role, 'player'),
+      // Matches user_staff_name_idx's predicate, so the planner can scan that partial index.
+      sql`${user.role} <> 'player'`,
+      inArray(user.role, STAFF_ROLES),
       eq(user.isActive, true),
-      search
-        ? or(ilike(user.name, likeContains(search)), ilike(user.email, likeContains(search)))
-        : undefined,
+      search ? ilike(user.name, likeContains(search)) : undefined,
     );
-    const eligible: { userId: User['id']; name: string; email: string }[] = [];
+    const eligible: AccountManagerCandidate[] = [];
     for (let offset = 0; eligible.length < limit; offset += CANDIDATE_BATCH_SIZE) {
       const batch = await this.deps.drizzle.db
-        .select({ userId: user.id, name: user.name, email: user.email })
+        .select({ userId: user.id, name: user.name })
         .from(user)
         .where(where)
         .orderBy(asc(user.name), asc(user.id))
         .limit(CANDIDATE_BATCH_SIZE)
         .offset(offset);
-      const granted = await mapConcurrent(batch, GRANT_CHECK_CONCURRENCY, async ({ userId }) =>
-        this.holdsPlayerView(userId),
+      const granted = await this.deps.adminGuard.filterGrantedUsers(
+        batch.map(({ userId }) => userId),
+        PLAYER_VIEW,
       );
-      eligible.push(...batch.filter((_, index) => granted[index]));
+      eligible.push(...batch.filter(({ userId }) => granted.has(userId)));
       if (batch.length < CANDIDATE_BATCH_SIZE) {
         break;
       }
@@ -163,38 +163,17 @@ export class AccountManagerService implements PlayerAccountManagerReader {
   }
 
   async getByPlayerUserId(userId: User['id']): Promise<AccountManager | null> {
+    return this.readManager(eq(player.userId, userId));
+  }
+
+  private async readManager(where: SQL): Promise<AccountManager | null> {
     const [row] = await this.deps.drizzle.db
       .select(managerColumns)
       .from(player)
       .innerJoin(user, eq(user.id, player.accountManagerId))
-      .where(eq(player.userId, userId))
+      .where(where)
       .limit(1);
     return row ?? null;
-  }
-
-  private async findManager(playerId: Player['id']): Promise<AccountManager | null> {
-    const [row] = await this.deps.drizzle.db
-      .select(managerColumns)
-      .from(player)
-      .innerJoin(user, eq(user.id, player.accountManagerId))
-      .where(eq(player.id, playerId))
-      .limit(1);
-    return row ?? null;
-  }
-
-  private async ineligibility(userId: User['id']): Promise<AccountManagerIneligibleReason | null> {
-    const [account] = await this.deps.drizzle.db
-      .select(accountColumns)
-      .from(user)
-      .where(eq(user.id, userId))
-      .limit(1);
-    const reason = accountIneligibility(account);
-    if (reason) {
-      return reason;
-    }
-    // ponytail: the player:view grant is checked before the transaction, so a role revoked in
-    // that gap still assigns; lock the grant rows inside it if that window ever matters.
-    return (await this.holdsPlayerView(userId)) ? null : 'not_eligible';
   }
 
   private async holdsPlayerView(userId: User['id']): Promise<boolean> {

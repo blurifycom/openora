@@ -116,6 +116,18 @@ async function waitForSyncs(customerId: string, count: number) {
   await vi.waitFor(() => expect(syncsFor(customerId).length).toBeGreaterThanOrEqual(count), WAIT);
 }
 
+async function newManager() {
+  const manager = await newPlayer();
+  const managerName = `Manager ${randomUUID()}`;
+  await assignIamRoleByKey(testApp.container, manager.userId, 'vip-manager');
+  await testApp.container
+    .get(DRIZZLE)
+    .db.update(user)
+    .set({ name: managerName })
+    .where(eq(user.id, manager.userId));
+  return { manager, managerName };
+}
+
 /** Opens the chat and waits for the open's own sync, the only one it enqueues. */
 async function linkedPlayer(): Promise<LinkedPlayer> {
   const p = await newPlayer();
@@ -932,14 +944,7 @@ describe('support context refresh', () => {
 
   it('an account manager change writes the manager name and a removal clears it', async () => {
     const p = await linkedPlayer();
-    const manager = await newPlayer();
-    const managerName = `Manager ${randomUUID()}`;
-    await assignIamRoleByKey(testApp.container, manager.userId, 'vip-manager');
-    await testApp.container
-      .get(DRIZZLE)
-      .db.update(user)
-      .set({ name: managerName })
-      .where(eq(user.id, manager.userId));
+    const { manager, managerName } = await newManager();
     const setManager = (accountManagerId: string | null) => async () =>
       ok(await admin.put(`/players/${p.playerId}/account-manager`, { accountManagerId }));
 
@@ -949,14 +954,7 @@ describe('support context refresh', () => {
 
   it('never shows the player their account manager through the session route', async () => {
     const p = await linkedPlayer();
-    const manager = await newPlayer();
-    const managerName = `Manager ${randomUUID()}`;
-    await assignIamRoleByKey(testApp.container, manager.userId, 'vip-manager');
-    await testApp.container
-      .get(DRIZZLE)
-      .db.update(user)
-      .set({ name: managerName })
-      .where(eq(user.id, manager.userId));
+    const { manager, managerName } = await newManager();
     await ok(
       await admin.put(`/players/${p.playerId}/account-manager`, {
         accountManagerId: manager.userId,

@@ -116,7 +116,6 @@ describe('PUT /players/{playerId}/account-manager', () => {
       accountManager: {
         userId: first.userId,
         name: first.name,
-        email: expect.any(String),
         isActive: true,
       },
     });
@@ -305,7 +304,6 @@ describe('GET /players?accountManagerId=', () => {
           accountManager: {
             userId: manager.userId,
             name: manager.name,
-            email: expect.any(String),
             isActive: true,
           },
         }),
@@ -319,7 +317,7 @@ describe('GET /players?accountManagerId=', () => {
 });
 
 describe('GET /players/account-managers', () => {
-  it('lists only active staff holding player:view whose name or email matches', async () => {
+  it('lists only active staff holding player:view whose name matches, never by email', async () => {
     const token = randomUUID().slice(0, 8);
     const eligible = await newStaff('vip-manager', `${token} eligible`);
     const viewer = await newStaff('customer-support-agent', `${token} viewer`);
@@ -335,11 +333,15 @@ describe('GET /players/account-managers', () => {
     const res = await admin.get(`/players/account-managers?search=${token}`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([
-      { userId: eligible.userId, name: eligible.name, email: expect.any(String) },
-      { userId: viewer.userId, name: viewer.name, email: expect.any(String) },
+      { userId: eligible.userId, name: eligible.name },
+      { userId: viewer.userId, name: viewer.name },
     ]);
     const limited = await admin.get(`/players/account-managers?search=${token}&limit=1`);
     expect(await limited.json()).toHaveLength(1);
+    const byEmail = await admin.get(
+      `/players/account-managers?search=${encodeURIComponent('@e2e.test')}`,
+    );
+    expect(await byEmail.json()).toEqual([]);
   });
 
   it('matches % and _ in the search literally', async () => {
@@ -372,7 +374,6 @@ describe('PLAYER_ACCOUNT_MANAGER_READER', () => {
     expect(await reader.getByPlayerUserId(p.userId)).toEqual({
       userId: manager.userId,
       name: manager.name,
-      email: expect.any(String),
       isActive: true,
     });
     expect(await reader.getByPlayerUserId(randomUUID())).toBeNull();
@@ -527,6 +528,8 @@ describe('account-manager reads beside the player record', () => {
     const manager = await newStaff('vip-manager');
     const listed = await admin.get('/players?limit=100&sortOrder=desc');
     expect(listed.status).toBe(200);
+    const items = (await json(listed))['items'] as { id: string; accountManager: unknown }[];
+    expect(items.find(({ id }) => id === p.playerId)).toMatchObject({ accountManager: null });
     expect(await managerOf(p.playerId)).toBeNull();
 
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
@@ -561,9 +564,7 @@ describe('GET /players/account-managers batch scan', () => {
 
     const res = await admin.get(`/players/account-managers?search=${token}&limit=5`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([
-      { userId: eligible.userId, name: eligible.name, email: expect.any(String) },
-    ]);
+    expect(await res.json()).toEqual([{ userId: eligible.userId, name: eligible.name }]);
   });
 });
 

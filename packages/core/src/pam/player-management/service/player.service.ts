@@ -52,7 +52,6 @@ const playersWithTags = (db: DrizzleDb) =>
       accountManager: {
         userId: accountManager.id,
         name: accountManager.name,
-        email: accountManager.email,
         isActive: accountManager.isActive,
       },
       // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
@@ -71,7 +70,6 @@ const playersWithTags = (db: DrizzleDb) =>
       user.username,
       accountManager.id,
       accountManager.name,
-      accountManager.email,
       accountManager.isActive,
     );
 
