@@ -135,14 +135,13 @@ export class AdminGuard {
     userId: string,
     requirements: readonly T[],
   ): Promise<T[]> {
-    const { account, granted } = await this.resolveAccess(userId, requirements);
-    return account?.isActive && account.isAdmin ? granted : [];
+    return (await this.filterGrantedUsers([userId], requirements)).get(userId) ?? [];
   }
 
   /**
    * `filterGranted` for many users: their accounts are read in one query, then each active
    * admin's grants through the permission resolver (and its cache). A user missing from the
-   * map holds none of `requirements`.
+   * map holds none of `requirements`. A non-uuid id fails the query, as it does for `assert`.
    */
   async filterGrantedUsers<T extends GrantRequirement>(
     userIds: readonly string[],
@@ -152,12 +151,11 @@ export class AdminGuard {
       return new Map();
     }
     const result = await this.drizzle.db.execute<{ id: string; role: string }>(
-      sql`SELECT id, role FROM "user" WHERE is_active AND id IN (${sql.join(
-        userIds.map((id) => sql`${id}`),
-        sql`, `,
-      )})`,
+      sql`SELECT id, role FROM "user" WHERE is_active AND id = ANY(${sql.param([...userIds])}::uuid[])`,
     );
     const admins = result.rows.filter(({ role }) => isRoleName(role));
+    // ponytail: one grants read per admin on a cold cache, since the resolver port resolves a
+    // single user; a batched `getGrantsMany` on AdminPermissionResolver lifts that ceiling.
     const entries = await mapConcurrent(
       admins,
       GRANT_RESOLVE_CONCURRENCY,

@@ -699,7 +699,6 @@ describe('account manager precedence and exposure', () => {
       expect(res.status).toBe(200);
       const raw = await res.text();
       expect(raw).not.toContain(email);
-      expect(raw).not.toContain('"email":"' + email);
     }
     expect(
       await testApp.container.get(PLAYER_ACCOUNT_MANAGER_READER).getByPlayerUserId(p.userId),
