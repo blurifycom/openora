@@ -39,7 +39,6 @@ import { TagKeySchema } from './tag.js';
 import { PermissionLevelSchema } from './iam.js';
 import {
   AutoLogoutDurationSchema,
-  RegistrationAcquisitionSchema,
   RegistrationFailureReasonSchema,
   UsernameSchema,
 } from './identity.js';
@@ -222,8 +221,6 @@ export const domainEventSchemas = {
     termsVersion: z.string().optional(),
     acceptedTerms: z.literal(true).optional(),
     acceptedAge: z.literal(true).optional(),
-    // Present only when the acquisition row was stored alongside the consent.
-    acquisition: RegistrationAcquisitionSchema.optional(),
   }),
   // No `userId`: registration is unauthenticated, so the address is the only subject
   // there is - the same shape `identity.user.login.failed` settled on below.

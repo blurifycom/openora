@@ -152,6 +152,20 @@ export class ProfileService implements PlayerProvisioning {
           firstSeenAt: acquisition.firstSeenAt ? new Date(acquisition.firstSeenAt) : null,
           landingHost: acquisition.landingHost ?? null,
         });
+        await this.audit.recordInTransaction(tx, {
+          actorId: userId,
+          actorType: 'player',
+          action: 'player.acquisition.recorded',
+          resourceType: 'player',
+          resourceId: inserted.id,
+          after: {
+            paramKeys: Object.keys(acquisition.params).sort(),
+            firstSeenAt: acquisition.firstSeenAt ?? null,
+            landingHost: acquisition.landingHost ?? null,
+          },
+          ip: consent.registrationIp,
+          userAgent: consent.registrationUserAgent,
+        });
       }
       return { created: true, playerId: inserted.id };
     });

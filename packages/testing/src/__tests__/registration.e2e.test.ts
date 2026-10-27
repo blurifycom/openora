@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { user, session } from '@openora/core/pam/schema/identity';
 import { player, playerAcquisition } from '@openora/core/pam/schema/profile';
@@ -318,20 +318,56 @@ describe('registration email verification', () => {
       });
     });
 
-    it('carries the stored parameters on the registration audit record', async () => {
+    it('audits the stored parameter names in the same transaction, never their values', async () => {
       const userId = await registerPlayer(app, {
         email: `reg-acq-audit-${randomUUID()}@e2e.test`,
         acquisition,
       });
+      const db = app.container.get(DRIZZLE).db;
+      const [owner] = await db
+        .select({ id: player.id })
+        .from(player)
+        .where(eq(player.userId, userId));
+
+      const [recorded] = await db
+        .select()
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.resourceId, owner?.id ?? ''),
+            eq(auditLog.action, 'player.acquisition.recorded'),
+          ),
+        );
+      expect(recorded).toMatchObject({
+        actorId: userId,
+        after: {
+          paramKeys: ['aff_id', 'utm_source'],
+          firstSeenAt: acquisition.firstSeenAt,
+          landingHost: acquisition.landingHost,
+        },
+      });
+      expect(JSON.stringify(recorded?.after)).not.toContain(acquisition.params.aff_id);
 
       await vi.waitFor(async () => {
-        const rows = await app.container
-          .get(DRIZZLE)
-          .db.select()
+        const rows = await db
+          .select()
           .from(auditLog)
           .where(eq(auditLog.action, 'identity.user.registered'));
         const row = rows.find((r) => (r.after as { userId?: string })?.userId === userId);
-        expect(row?.after).toMatchObject({ acquisition });
+        expect(row).toBeDefined();
+        expect(row?.after).not.toHaveProperty('acquisition');
+      });
+    });
+
+    it('stores the valid parameters when one of them is malformed', async () => {
+      const userId = await registerPlayer(app, {
+        email: `reg-acq-partial-${randomUUID()}@e2e.test`,
+        acquisition: { params: { aff_id: 'a_1', 'bad key!': 'x' }, landingHost: '[::1]:3000' },
+      });
+
+      expect(await acquisitionFor(userId)).toMatchObject({
+        params: { aff_id: 'a_1' },
+        landingHost: null,
       });
     });
 

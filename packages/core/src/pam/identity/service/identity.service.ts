@@ -822,7 +822,6 @@ export class IdentityService {
             termsVersion: registration.termsVersion,
             acceptedTerms: input.acceptedTerms,
             acceptedAge: input.acceptedAge,
-            ...(input.acquisition ? { acquisition: input.acquisition } : {}),
           }
         : {}),
       ip,
