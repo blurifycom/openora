@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { and, asc, eq, or } from 'drizzle-orm';
+import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
 import { cached, createDomainError, createLogger, type DrizzleService } from '@openora/core/server';
 import {
   TimestampSchema,
@@ -66,21 +66,22 @@ function withoutRedeliveries(changes: readonly EmailChange[]) {
 }
 
 /**
- * The emails a player held and when, oldest first, the current one last and open-ended. The
- * audit trail is trusted from its end back to its first break, walking back from the current
- * email: each change must name as its new email the one the next change replaced (the last change
- * the current email), and its time must be later than every earlier change and registration, and
- * not later than its own audit write allowing for clock skew. A change claiming a time ahead of
- * the real clock thus breaks every later one until real time passes it. Everything from the first
- * break walking back is dropped, the window opened by a change with a wrong time included. When even
- * the last change cannot be trusted there is no window at all. `complete` is false when a break or
- * the cap on previous emails left an older email out; `broken` tells a break from the cap. A row
- * repeating an earlier one, change time included, is a redelivery and counts once. Nothing in the
- * trail can notice a lost first change, a lost run returning to the address it left, a time later
- * than the real change by no more than its audit write's own delay plus the skew (a fast clock with
- * a delayed or redelivered write, or a legacy row timed by its write), which widens the earlier
- * email's window by that much, or a clock running behind whose stamps still follow every earlier
- * one, which shifts the bounds by the lag.
+ * The emails a player held and when, oldest first, the current one last and open-ended. The audit
+ * trail is trusted from its end back to its first break, walking back from the current email: each
+ * change must name as its new email the one the next change replaced (the last change the current
+ * email), and its time must be later than every earlier change and registration, and not later than
+ * its own audit write allowing for clock skew. A change claiming a time ahead of the real clock
+ * thus breaks every later one until real time passes it. Everything from the first break walking
+ * back is dropped, the window opened by a change with a wrong time included. When even the last
+ * change cannot be trusted there is no window at all. `complete` is false when a break or the cap
+ * on previous emails left an older email out; `broken` tells a break from the cap. A row repeating
+ * an earlier one, change time included, is a redelivery and counts once. The oldest window of an
+ * intact trail is only assumed to start at registration; `boundFirstWindow` checks it against other
+ * accounts. Nothing in the trail can notice a lost first change, a lost run returning to the
+ * address it left, a time later than the real change by no more than its audit write's own delay
+ * plus the skew (a fast clock with a delayed or redelivered write, or a legacy row timed by its
+ * write), which widens the earlier email's window by that much, or a clock running behind whose
+ * stamps still follow every earlier one, which shifts the bounds by the lag.
  */
 export function buildEmailWindows({
   currentEmail,
@@ -133,6 +134,50 @@ export function buildEmailWindows({
   };
 }
 
+/**
+ * Checks the one window `buildEmailWindows` only assumes: the oldest of a complete trail, opened
+ * at registration. A lost first change would leave the player's later email held from
+ * registration, over the time another account held it. `others` are other accounts' changes
+ * naming that email, compared case-insensitively. The latest one strictly after registration and
+ * before the window closes decides: another account leaving the address opens the window then,
+ * and another account taking it drops the window, as nothing places when that account let it go.
+ * Either way the trail is reported broken. An incomplete result, which has no registration window,
+ * is returned as it is.
+ */
+export function boundFirstWindow(
+  built: ReturnType<typeof buildEmailWindows>,
+  registeredAt: Date,
+  others: readonly Pick<EmailChange, 'before' | 'after' | 'at'>[],
+): ReturnType<typeof buildEmailWindows> {
+  const [first, ...rest] = built.windows;
+  if (!built.complete || !first) {
+    return built;
+  }
+  const email = first.email.toLowerCase();
+  const until = first.to === null ? Infinity : Date.parse(first.to);
+  let latest: { at: Date; took: boolean } | null = null;
+  for (const { before, after, at } of others) {
+    const took = after?.toLowerCase() === email;
+    const inside = at.getTime() > registeredAt.getTime() && at.getTime() < until;
+    // A tie goes to the account taking the address, which fails closed.
+    if (
+      inside &&
+      (took || before?.toLowerCase() === email) &&
+      (!latest || at > latest.at || (at.getTime() === latest.at.getTime() && took))
+    ) {
+      latest = { at, took };
+    }
+  }
+  if (!latest) {
+    return built;
+  }
+  return {
+    windows: latest.took ? rest : [{ ...first, from: latest.at.toISOString() }, ...rest],
+    complete: false,
+    broken: true,
+  };
+}
+
 // An adapter may throw anything, such as an HTTP client error holding the vendor API key or an
 // email: only its class name survives.
 const reasonOf = (err: unknown): string =>
@@ -149,6 +194,25 @@ const changedAtOf = (after: Record<string, unknown> | null) => {
 
 const emailOf = (side: Record<string, unknown> | null) =>
   typeof side?.['email'] === 'string' && side['email'] ? side['email'] : null;
+
+const toEmailChange = ({
+  before,
+  after,
+  at,
+}: {
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  at: Date;
+}): EmailChange => {
+  const changedAt = changedAtOf(after);
+  return {
+    before: emailOf(before),
+    after: emailOf(after),
+    at: changedAt ?? at,
+    writtenAt: at,
+    timedByChange: changedAt !== null,
+  };
+};
 
 type Section = { state: 'ok' | 'unavailable'; items: SupportHistoryItem[] };
 
@@ -192,11 +256,17 @@ export class SupportHistoryService {
     if (!row) {
       throw new SupportChatPlayerNotFoundError(userId);
     }
-    const { windows, complete, broken } = buildEmailWindows({
+    const built = buildEmailWindows({
       currentEmail: row.email,
       registeredAt: row.registeredAt,
       changes: await this.emailChanges(userId, row.playerId),
     });
+    const first = built.complete ? built.windows[0] : undefined;
+    const { windows, complete, broken } = boundFirstWindow(
+      built,
+      row.registeredAt,
+      first ? await this.othersEmailChanges(first.email, userId, row.playerId) : [],
+    );
     if (broken) {
       logger.warn({ userId }, 'support history email trail inconsistent');
     }
@@ -239,16 +309,31 @@ export class SupportHistoryService {
         ),
       )
       .orderBy(asc(auditLog.seq));
-    return rows.map(({ before, after, at }): EmailChange => {
-      const changedAt = changedAtOf(after);
-      return {
-        before: emailOf(before),
-        after: emailOf(after),
-        at: changedAt ?? at,
-        writtenAt: at,
-        timedByChange: changedAt !== null,
-      };
-    });
+    return rows.map(toEmailChange);
+  }
+
+  /**
+   * Email changes of every other account that left or took `email`, case-insensitively, timed
+   * like the player's own. The player's own rows, under either subject, are left out.
+   */
+  private async othersEmailChanges(email: string, userId: User['id'], playerId: Player['id']) {
+    // ponytail: the action index narrows to email-change rows and the email match scans them; an
+    // expression index on lower(before->>'email') and lower(after->>'email') when that grows.
+    const rows = await this.deps.drizzle.db
+      .select({ before: auditLog.before, after: auditLog.after, at: auditLog.createdAt })
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.action, 'identity.email.changed'),
+          or(
+            sql`lower(${auditLog.before}->>'email') = lower(${email})`,
+            sql`lower(${auditLog.after}->>'email') = lower(${email})`,
+          ),
+          or(ne(auditLog.resourceType, 'player'), ne(auditLog.resourceId, playerId)),
+          or(ne(auditLog.resourceType, 'user'), ne(auditLog.resourceId, userId)),
+        ),
+      );
+    return rows.map(toEmailChange);
   }
 
   private async section(

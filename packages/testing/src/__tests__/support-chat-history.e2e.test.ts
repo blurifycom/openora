@@ -473,6 +473,37 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       },
     );
 
+    it("opens the current email's window when another account left it, not at registration", async () => {
+      const p = await newPlayer();
+      const q = await newPlayer();
+      // Q gave up P's address after P registered, so P's change to it was lost.
+      const [left] = await drizzle()
+        .insert(auditLog)
+        .values({
+          actorType: 'player',
+          actorId: q.playerId,
+          action: 'identity.email.changed',
+          resourceType: 'player',
+          resourceId: q.playerId,
+          before: { email: p.email },
+          after: { email: q.email },
+          hash: randomUUID(),
+        })
+        .returning({ at: auditLog.createdAt });
+      const ticket = item('ticket', '2026-03-01T00:00:00Z');
+      answerSupportHistoryWith({ tickets: [ticket] });
+
+      const body = await history(admin, p.userId);
+
+      expect(Date.parse((await registeredAt(p.userId)) ?? '')).toBeLessThan(
+        left?.at.getTime() ?? 0,
+      );
+      expect(body.tickets).toEqual({ state: 'ok', items: [ticket], complete: false });
+      expect(readSupportHistoryCalls().listTickets.map((c) => c.windows)).toEqual([
+        [{ email: p.email, from: left?.at.toISOString(), to: null }],
+      ]);
+    });
+
     it('answers no_email, complete, asking nobody, for an account with no email and no change', async () => {
       const p = await newPlayer();
       await drizzle().update(user).set({ email: '' }).where(eq(user.id, p.userId));

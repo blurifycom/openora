@@ -39,9 +39,9 @@ beforeEach(() => {
 
 const HOUR = 3_600_000;
 
-type Subject = 'player' | 'user';
+type Subject = 'player' | 'user' | 'other';
 type Row = {
-  /** Which resource the row was audited under. Default: the player. */
+  /** Which resource the row was audited under, `other` another account. Default: the player. */
   subject?: Subject;
   /** An email, `undefined` for no `before` column, or a raw `before` object. */
   before?: string | Record<string, unknown>;
@@ -62,7 +62,9 @@ async function scenario(rows: Row[]) {
     .where(eq(user.id, account.id));
   const registeredAt = registered?.createdAt as Date;
   const name = (tag: string) => `${tag}-${account.id}@test.dev`;
-  const resolve = (value: string) => (value === 'cur' ? account.email : name(value));
+  const resolve = (value: string) =>
+    value === 'cur' ? account.email : value === 'CUR' ? account.email.toUpperCase() : name(value);
+  const otherPlayerId = randomUUID();
   const side = (value: Row['before']) =>
     typeof value === 'string' ? { email: resolve(value) } : value;
   const withChangedAt = (after: ReturnType<typeof side>, changedAt: Row['changedAt']) => {
@@ -81,8 +83,8 @@ async function scenario(rows: Row[]) {
       actorType: 'player',
       actorId: player.id,
       action: row.action ?? 'identity.email.changed',
-      resourceType: subject,
-      resourceId: subject === 'player' ? player.id : account.id,
+      resourceType: subject === 'user' ? 'user' : 'player',
+      resourceId: { player: player.id, user: account.id, other: otherPlayerId }[subject],
       before: side(row.before) ?? null,
       after: withChangedAt(side(row.after), row.changedAt),
       hash: randomUUID(),
@@ -266,10 +268,35 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     warnedWithUserOnly(s.userId);
   });
 
+  it('opens the oldest window when another account left the address, not at registration', async () => {
+    const s = await scenario([{ subject: 'other', before: 'cur', after: 'q', at: 5 }]);
+    expect(s.asked).toEqual([[s.win('cur', 5, null)]]);
+    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: false });
+    warnedWithUserOnly(s.userId);
+  });
+
+  it('trusts no window when another account took the address, whatever its case', async () => {
+    const s = await scenario([{ subject: 'other', before: 'q', after: 'CUR', at: 5 }]);
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    warnedWithUserOnly(s.userId);
+  });
+
   it('reads no row of another subject, another player or another action', async () => {
     const other = await seedPlayerWithUser(db);
-    const strange = { actorType: 'player' as const, hash: randomUUID() };
     const { account, player } = await seedPlayerWithUser(db);
+    const [registered] = await db.drizzle.db
+      .select({ createdAt: user.createdAt })
+      .from(user)
+      .where(eq(user.id, account.id));
+    const registeredAt = registered?.createdAt as Date;
+    // Written before registration: another account's change is checked only after it, while one
+    // read into this trail would break it.
+    const strange = {
+      actorType: 'player' as const,
+      hash: randomUUID(),
+      createdAt: new Date(registeredAt.getTime() - HOUR),
+    };
     await db.drizzle.db.insert(auditLog).values([
       // Another player's change, a player id carried by a user subject, a user id carried by a
       // player subject, and a request that never took effect.

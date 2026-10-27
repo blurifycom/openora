@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SupportHistoryEmailWindowSchema } from '@openora/core/contracts';
-import { buildEmailWindows } from '../service/support-history.service.js';
+import { boundFirstWindow, buildEmailWindows } from '../service/support-history.service.js';
 
 const REGISTERED = new Date('2026-01-01T00:00:00.000Z');
 const day = (n: number) => new Date(Date.UTC(2026, 0, 1 + n));
@@ -283,5 +283,81 @@ describe('buildEmailWindows', () => {
     ],
   ])('keeps only the windows after %s', (_fault, current, changes, windows) => {
     expect(windowsOf(current, changes)).toEqual(afterBreak(...windows));
+  });
+});
+
+describe('boundFirstWindow', () => {
+  // Another account's change on day `n`.
+  const other = (before: string | null, after: string | null, n: number) => ({
+    before: before && `${before}@example.test`,
+    after: after && `${after}@example.test`,
+    at: day(n),
+  });
+  const bound = (
+    currentEmail: string,
+    changes: ReturnType<typeof change>[],
+    others: ReturnType<typeof other>[],
+  ) => boundFirstWindow(windowsOf(currentEmail, changes), REGISTERED, others);
+
+  it('keeps the result when no other account named the address', () => {
+    const changes = [change('a', 'b', 10)];
+
+    expect(bound('b', changes, [other('x', 'y', 5), other('b', 'z', 20)])).toEqual(
+      whole(held('a', null, 10), held('b', 10, null)),
+    );
+  });
+
+  it('opens the window when another account left the address inside it', () => {
+    expect(bound('b', [], [other('b', 'q', 5)])).toEqual(afterBreak(held('b', 5, null)));
+    expect(bound('b', [change('a', 'b', 10)], [other('a', 'q', 4)])).toEqual(
+      afterBreak(held('a', 4, 10), held('b', 10, null)),
+    );
+  });
+
+  it('drops the window when another account took the address inside it', () => {
+    expect(bound('b', [], [other('q', 'b', 5)])).toEqual(UNTRUSTED);
+    expect(bound('b', [change('a', 'b', 10)], [other('q', 'a', 4)])).toEqual(
+      afterBreak(held('b', 10, null)),
+    );
+  });
+
+  it('decides by the latest change, a tie going to the one taking the address', () => {
+    expect(bound('b', [], [other('b', 'q', 7), other('q', 'b', 3)])).toEqual(
+      afterBreak(held('b', 7, null)),
+    );
+    expect(bound('b', [], [other('b', 'q', 3), other('q', 'b', 7)])).toEqual(UNTRUSTED);
+    expect(bound('b', [], [other('b', 'q', 5), other('q', 'b', 5)])).toEqual(UNTRUSTED);
+  });
+
+  it('ignores a change at or before registration and at or after the window closes', () => {
+    const changes = [change('a', 'b', 10)];
+    const others = [
+      other('q', 'a', -3),
+      other('q', 'a', 0),
+      other('a', 'q', 10),
+      other('q', 'a', 11),
+    ];
+
+    expect(bound('b', changes, others)).toEqual(whole(held('a', null, 10), held('b', 10, null)));
+  });
+
+  it('matches the address whatever its case', () => {
+    const shouting = { before: null, after: 'B@EXAMPLE.TEST', at: day(5) };
+
+    expect(bound('b', [], [shouting])).toEqual(UNTRUSTED);
+  });
+
+  it("never moves a window for the player's own changes", () => {
+    const changes = [change('a', 'b', 10), change('b', 'a', 20), change('a', 'c', 30)];
+
+    expect(bound('c', changes, changes)).toEqual(windowsOf('c', changes));
+  });
+
+  it('leaves a result without a registration window as it is', () => {
+    const capped = [1, 2, 3, 4, 5].map((n) => change(`e${n}`, n === 5 ? 'now' : `e${n + 1}`, n));
+    const broken = [change('a', 'b', 10), change('x', 'c', 20)];
+
+    expect(bound('now', capped, [other('q', 'e3', 1)])).toEqual(windowsOf('now', capped));
+    expect(bound('c', broken, [other('q', 'c', 21)])).toEqual(afterBreak(held('c', 20, null)));
   });
 });
