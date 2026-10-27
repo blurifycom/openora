@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type {
   BonusGrantCommands,
+  BonusWageringCommands,
   PlayEligibilityPort,
   RgLimitsPort,
 } from '@openora/core/contracts';
@@ -11,6 +12,7 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock, makeAuditWriter } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
+import { MaxBetExceededError } from '@openora/core/contracts';
 import {
   WalletCommandsService,
   WalletRgRestrictedError,
@@ -684,5 +686,404 @@ describe('WalletCommandsService outcome moved/transactionId (real PG)', () => {
     expect(first).toMatchObject({ ok: true, moved: true, transactionId: expect.any(String) });
     expect(second).toMatchObject({ ok: true, moved: false });
     expect(second).not.toHaveProperty('transactionId');
+  });
+});
+
+describe('WalletCommandsService.debit without a wallet (real PG)', () => {
+  it('reports nothing available and writes nothing for a player with no wallet', async () => {
+    const userId = randomUUID();
+
+    const res = await svc.debit(db.drizzle.db, { userId, amount: '10', type: 'bet' });
+
+    expect(res).toEqual({ ok: false, available: '0' });
+    expect(await db.drizzle.db.select().from(walletTransaction)).toHaveLength(0);
+    expect(await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId))).toEqual([]);
+  });
+});
+
+describe('WalletCommandsService.credit currency guard (real PG)', () => {
+  it('refuses a credit in a currency other than the wallet one, moving nothing', async () => {
+    const w = await seedWallet({ balance: '10', currency: 'USD' });
+
+    const res = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '5',
+      currency: 'EUR',
+      type: 'win',
+    });
+
+    expect(res).toEqual({ ok: false, reason: 'currency mismatch' });
+    expect(await balanceOf(w.userId)).toBe(10);
+    expect(await txRows(w.id)).toHaveLength(0);
+  });
+
+  it('accepts the wallet currency whatever its case', async () => {
+    const w = await seedWallet({ balance: '10', currency: 'USD' });
+
+    const res = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '5',
+      currency: 'usd',
+      type: 'win',
+    });
+
+    expect(res).toMatchObject({ ok: true, moved: true });
+    expect(await balanceOf(w.userId)).toBe(15);
+  });
+
+  it('credits a second currency into its own balance only when allowNewCurrency is set', async () => {
+    const w = await seedWallet({ balance: '10', currency: 'USD' });
+
+    const res = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '5',
+      currency: 'EUR',
+      type: 'cashback',
+      allowNewCurrency: true,
+    });
+
+    expect(res).toMatchObject({ ok: true, moved: true });
+    expect(await balanceOf(w.userId)).toBe(10);
+    const [eur] = await db.drizzle.db
+      .select()
+      .from(walletBalance)
+      .where(eq(walletBalance.currency, 'EUR'));
+    expect(Number(eur?.amount)).toBe(5);
+  });
+});
+
+describe('WalletCommandsService.credit bonus settlement (real PG)', () => {
+  const settling = (realShare: string) => {
+    const settle = vi.fn().mockResolvedValue({ bonusShare: '0', realShare });
+    const bonusWagering = mock<BonusWageringCommands>({ settle });
+    return { settle, svc: new WalletCommandsService(eligibility(false), audit, { bonusWagering }) };
+  };
+  const ref = { providerName: 'agg', providerRefId: 'r1', externalRoundId: 'round-1' };
+
+  it('refuses a bonus-era reversal that names no round, writing and moving nothing', async () => {
+    const { settle, svc: engine } = settling('10');
+    const w = await seedWallet({ balance: '0' });
+
+    const res = await engine.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      currency: 'USD',
+      type: 'bet_reversal',
+      providerRef: { providerName: 'agg', providerRefId: 'r1' },
+    });
+
+    expect(res).toEqual({ ok: false, reason: 'bonus-funded reversal is missing a round id' });
+    expect(settle).not.toHaveBeenCalled();
+    expect(await balanceOf(w.userId)).toBe(0);
+    expect(await txRows(w.id)).toHaveLength(0);
+  });
+
+  it('credits only the real share of a win or reversal the engine settled', async () => {
+    const { settle, svc: engine } = settling('4');
+    const w = await seedWallet({ balance: '0' });
+
+    await engine.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      currency: 'usd',
+      type: 'win',
+      providerRef: ref,
+    });
+    await engine.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      currency: 'USD',
+      type: 'bet_reversal',
+      providerRef: { ...ref, providerRefId: 'r2' },
+    });
+
+    expect(settle).toHaveBeenCalledTimes(2);
+    expect(settle).toHaveBeenNthCalledWith(1, db.drizzle.db, {
+      userId: w.userId,
+      currency: 'USD',
+      amount: '10',
+      providerName: 'agg',
+      externalRoundId: 'round-1',
+      kind: 'win',
+    });
+    expect(settle).toHaveBeenNthCalledWith(
+      2,
+      db.drizzle.db,
+      expect.objectContaining({ kind: 'bet_reversal' }),
+    );
+    expect(await balanceOf(w.userId)).toBe(8);
+  });
+
+  it('credits a reversal fully when no engine is bound, round id or not', async () => {
+    const w = await seedWallet({ balance: '0' });
+
+    await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      currency: 'USD',
+      type: 'bet_reversal',
+      providerRef: { providerName: 'agg', providerRefId: 'r1' },
+    });
+
+    expect(await balanceOf(w.userId)).toBe(10);
+  });
+
+  it('skips the engine for other credit types and for a win with no round id', async () => {
+    const { settle, svc: engine } = settling('0');
+    const w = await seedWallet({ balance: '0' });
+
+    await engine.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      currency: 'USD',
+      type: 'cashback',
+      providerRef: ref,
+    });
+    await engine.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      currency: 'USD',
+      type: 'win',
+      providerRef: { providerName: 'agg', providerRefId: 'r3' },
+    });
+
+    expect(settle).not.toHaveBeenCalled();
+    expect(await balanceOf(w.userId)).toBe(20);
+  });
+});
+
+describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
+  const context = { provider: 'agg', product: 'casino' } as const;
+  const ref = { providerName: 'agg', providerRefId: 'b1', externalRoundId: 'round-1' };
+  const wagerOk = {
+    ok: true,
+    grantId: randomUUID(),
+    bonusSpent: '0',
+    weightedAmount: '10',
+    bonusBalanceAfter: '0',
+    completed: null,
+    walletCredits: [],
+  };
+  const engineWith = (wager: ReturnType<typeof vi.fn>) =>
+    new WalletCommandsService(eligibility(false), audit, {
+      bonusWagering: mock<BonusWageringCommands>({ wager }),
+    });
+
+  it('draws the shortfall from bonus and debits only what the real balance holds', async () => {
+    const wager = vi.fn().mockResolvedValue({ ...wagerOk, bonusSpent: '6' });
+    const w = await seedWallet({ balance: '4' });
+
+    const res = await engineWith(wager).debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      context,
+      providerRef: ref,
+    });
+
+    expect(res).toMatchObject({ ok: true, moved: true, bonusSpent: '6' });
+    expect(wager).toHaveBeenCalledWith(
+      db.drizzle.db,
+      expect.objectContaining({
+        stake: '10',
+        fromBonus: '6.000000000000000000',
+        externalRoundId: 'round-1',
+      }),
+    );
+    expect(await balanceOf(w.userId)).toBe(0);
+    const [row] = await txRows(w.id);
+    expect(Number(row?.amount)).toBe(10);
+  });
+
+  it('reports real plus bonus funds as available when the bonus cannot cover the rest', async () => {
+    const wager = vi
+      .fn()
+      .mockResolvedValue({ ok: false, reason: 'insufficient_bonus', bonusAvailable: '2' });
+    const w = await seedWallet({ balance: '4' });
+
+    const res = await engineWith(wager).debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      context,
+      providerRef: ref,
+    });
+
+    expect(res).toEqual({ ok: false, available: '6.000000000000000000' });
+    expect(await balanceOf(w.userId)).toBe(4);
+    expect(await txRows(w.id)).toHaveLength(0);
+  });
+
+  it('refuses a stake over the grant max bet as such, not as a short balance', async () => {
+    const wager = vi.fn().mockResolvedValue({ ok: false, reason: 'max_bet_exceeded', maxBet: '5' });
+    const w = await seedWallet({ balance: '100' });
+
+    await expect(
+      engineWith(wager).debit(db.drizzle.db, {
+        userId: w.userId,
+        amount: '10',
+        type: 'bet',
+        context,
+        providerRef: ref,
+      }),
+    ).rejects.toBeInstanceOf(MaxBetExceededError);
+    expect(await balanceOf(w.userId)).toBe(100);
+  });
+
+  it('is a plain real-money debit for a bet with no context or no round id, and refuses a shortfall', async () => {
+    const wager = vi.fn();
+    const engine = engineWith(wager);
+    const w = await seedWallet({ balance: '4' });
+
+    const noContext = await engine.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      providerRef: ref,
+    });
+    const noRound = await engine.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      context,
+      providerRef: { providerName: 'agg', providerRefId: 'b2' },
+    });
+    const covered = await engine.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '4',
+      type: 'bet',
+      context,
+      providerRef: { providerName: 'agg', providerRefId: 'b3' },
+    });
+
+    expect(noContext).toEqual({ ok: false, available: '4.000000000000000000' });
+    expect(noRound).toEqual({ ok: false, available: '4.000000000000000000' });
+    expect(covered).toMatchObject({ ok: true, moved: true });
+    expect(wager).not.toHaveBeenCalled();
+  });
+
+  it('settles a bet paid wholly from bonus without touching the real balance', async () => {
+    const wager = vi.fn().mockResolvedValue({ ...wagerOk, bonusSpent: '10' });
+    const w = await seedWallet({ balance: '0' });
+
+    const res = await engineWith(wager).debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      context,
+      providerRef: ref,
+    });
+
+    expect(res).toMatchObject({ ok: true, moved: true, bonusSpent: '10' });
+    expect(await balanceOf(w.userId)).toBe(0);
+  });
+
+  it('converts a completed grant into the real balance with its own ledger row and audit entry', async () => {
+    const grantId = randomUUID();
+    const wager = vi.fn().mockResolvedValue({
+      ...wagerOk,
+      completed: { grantId, convertedAmount: '25' },
+    });
+    const recordInTransaction = vi.fn(async () => undefined);
+    const engine = new WalletCommandsService(
+      eligibility(false),
+      { ...makeAuditWriter(), recordInTransaction },
+      { bonusWagering: mock<BonusWageringCommands>({ wager }) },
+    );
+    const w = await seedWallet({ balance: '100' });
+
+    const res = await engine.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      context,
+      providerRef: ref,
+    });
+
+    expect(res).toMatchObject({ ok: true, completed: { grantId, convertedAmount: '25' } });
+    expect(Number((res as { newBalance: string }).newBalance)).toBe(115);
+    expect(await balanceOf(w.userId)).toBe(115);
+    const bonusRow = (await txRows(w.id)).find((r) => r.type === 'bonus');
+    expect(bonusRow).toMatchObject({ direction: 'credit', status: 'completed' });
+    expect(Number(bonusRow?.amount)).toBe(25);
+    expect(recordInTransaction).toHaveBeenCalledWith(
+      db.drizzle.db,
+      expect.objectContaining({
+        action: 'promo.bonus.converted',
+        resourceId: grantId,
+        before: { currency: 'USD', balance: '90.000000000000000000' },
+        after: { currency: 'USD', balance: '115.000000000000000000', convertedAmount: '25' },
+      }),
+    );
+  });
+});
+
+describe('WalletCommandsService.debit of a non-bet type (real PG)', () => {
+  const context = { provider: 'agg', product: 'casino' } as const;
+  const ref = { providerName: 'agg', providerRefId: 'tip-1', externalRoundId: 'round-1' };
+
+  it('is neither wager-gated nor wagered, whatever context and round id it carries', async () => {
+    const limits = refusingLimits();
+    const wager = vi.fn();
+    const engine = new WalletCommandsService(eligibility(false), audit, {
+      rgLimits: limits,
+      bonusWagering: mock<BonusWageringCommands>({ wager }),
+    });
+    const w = await seedWallet({ balance: '100' });
+
+    const res = await engine.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'tip',
+      context,
+      providerRef: ref,
+    });
+
+    expect(res).toMatchObject({ ok: true, moved: true });
+    expect(limits.checkWager).not.toHaveBeenCalled();
+    expect(wager).not.toHaveBeenCalled();
+    expect(await balanceOf(w.userId)).toBe(90);
+  });
+
+  it('reports the shortfall and moves nothing when the balance cannot cover it', async () => {
+    const w = await seedWallet({ balance: '5' });
+
+    const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'tip' });
+
+    expect(res).toEqual({ ok: false, available: '5.000000000000000000' });
+    expect(await balanceOf(w.userId)).toBe(5);
+    expect(await txRows(w.id)).toHaveLength(0);
+  });
+});
+
+describe('WalletCommandsService.debit of a bet paid wholly from bonus with no balance row (real PG)', () => {
+  it('settles against the bonus instead of refusing for a real row to take zero from', async () => {
+    const wager = vi.fn().mockResolvedValue({
+      ok: true,
+      grantId: randomUUID(),
+      bonusSpent: '10',
+      weightedAmount: '10',
+      bonusBalanceAfter: '0',
+      completed: null,
+      walletCredits: [],
+    });
+    const engine = new WalletCommandsService(eligibility(false), audit, {
+      bonusWagering: mock<BonusWageringCommands>({ wager }),
+    });
+    const [w] = await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), currency: 'USD' })
+      .returning();
+
+    const res = await engine.debit(db.drizzle.db, {
+      userId: w!.userId,
+      amount: '10',
+      type: 'bet',
+      context: { provider: 'agg', product: 'casino' },
+      providerRef: { providerName: 'agg', providerRefId: 'b1', externalRoundId: 'round-1' },
+    });
+
+    expect(res).toMatchObject({ ok: true, moved: true, bonusSpent: '10' });
+    expect(await txRows(w!.id)).toHaveLength(1);
   });
 });

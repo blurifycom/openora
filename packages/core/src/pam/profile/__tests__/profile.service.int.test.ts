@@ -449,6 +449,8 @@ describe('ProfileService.recordTimezone (real PG)', () => {
     await seedPlayer(account.id);
     await svc.recordTimezone(account.id, 'Europe/Warsaw');
     const [first] = await playersFor(account.id);
+    // Millisecond stamps: without a gap the refresh can land on the same tick and read as unchanged.
+    await new Promise((resolve) => setTimeout(resolve, 5));
 
     // Neither is a move, but both are a device confirming the zone now.
     await svc.recordTimezone(account.id, 'Europe/Warsaw');
