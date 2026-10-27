@@ -9,7 +9,7 @@ import {
   type IdentityReader,
   type ClientMeta,
 } from '@openora/core/contracts';
-import { DrizzleService } from '../db/index.js';
+import { DrizzleService, mapConcurrent } from '../db/index.js';
 import { sql } from 'drizzle-orm';
 import { SessionResolver } from './session-resolver.js';
 import { holdsGrant, isRoleName, type ResourceName, type ActionOf } from './permissions.js';
@@ -24,6 +24,18 @@ const logger = createLogger('admin-guard');
 export type AdminCaller = { userId: string; role: string } & ClientMeta;
 
 type GrantRequirement = { resource: string; action: string };
+
+const GRANT_RESOLVE_CONCURRENCY = 10;
+
+// Postgres matches a uuid in any letter case but prints it lowercase, and grants are keyed by
+// the printed form, so an id is looked up the way the database answers it.
+const canonicalUserId = (userId: string) => userId.toLowerCase();
+
+const heldRequirements = <T extends GrantRequirement>(
+  role: string,
+  grants: AdminGrant[] | null,
+  requirements: readonly T[],
+) => requirements.filter(({ resource, action }) => holdsGrant({ role, grants }, resource, action));
 
 /**
  * The single admin-enforcement point - every admin route calls `assert()` as its
@@ -127,8 +139,37 @@ export class AdminGuard {
     userId: string,
     requirements: readonly T[],
   ): Promise<T[]> {
-    const { account, granted } = await this.resolveAccess(userId, requirements);
-    return account?.isActive && account.isAdmin ? granted : [];
+    return (
+      (await this.filterGrantedUsers([userId], requirements)).get(canonicalUserId(userId)) ?? []
+    );
+  }
+
+  /**
+   * `filterGranted` for many users: their accounts are read in one query, then each active
+   * admin's grants through the permission resolver (and its cache). A user missing from the
+   * map holds none of `requirements`. The map is keyed by the lowercase id. A non-uuid id fails
+   * the query, as it does for `assert`.
+   */
+  async filterGrantedUsers<T extends GrantRequirement>(
+    userIds: readonly string[],
+    requirements: readonly T[],
+  ): Promise<Map<string, T[]>> {
+    if (userIds.length === 0 || requirements.length === 0) {
+      return new Map();
+    }
+    const result = await this.drizzle.db.execute<{ id: string; role: string }>(
+      sql`SELECT id, role FROM "user" WHERE is_active AND id = ANY(${sql.param([...userIds])}::uuid[])`,
+    );
+    const admins = result.rows.filter(({ role }) => isRoleName(role));
+    // ponytail: one grants read per admin on a cold cache, since the resolver port resolves a
+    // single user; a batched `getGrantsMany` on AdminPermissionResolver lifts that ceiling.
+    const entries = await mapConcurrent(
+      admins,
+      GRANT_RESOLVE_CONCURRENCY,
+      async ({ id, role }) =>
+        [id, heldRequirements(role, await this.resolveGrants(id), requirements)] as const,
+    );
+    return new Map(entries.filter(([, held]) => held.length > 0));
   }
 
   async assertSuperAdmin(context: unknown): Promise<AdminCaller> {
@@ -155,7 +196,7 @@ export class AdminGuard {
   }
 
   private async enforce<R extends ResourceName>({
-    userId,
+    userId: rawUserId,
     clientMeta: { ip, userAgent },
     permission,
     session,
@@ -167,6 +208,7 @@ export class AdminGuard {
     session?: { sessionId: string | null };
     requireActive?: boolean;
   }): Promise<AdminCaller> {
+    const userId = canonicalUserId(rawUserId);
     const deniedResource = permission?.resource ?? 'admin';
     const deniedAction = permission?.action ?? 'access';
 
@@ -217,12 +259,7 @@ export class AdminGuard {
       return { account, granted: [] };
     }
     const grants = await this.resolveGrants(userId);
-    return {
-      account,
-      granted: requirements.filter(({ resource, action }) =>
-        holdsGrant({ role: account.role, grants }, resource, action),
-      ),
-    };
+    return { account, granted: heldRequirements(account.role, grants, requirements) };
   }
 
   private async findAccount(userId: string) {

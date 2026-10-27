@@ -39,6 +39,7 @@ export const SupportCustomerContextSchema = z
     isCoolingOff: z.boolean(),
     kycStatus: KycStatusSchema,
     rankName: z.string().nullable(),
+    accountManagerName: z.string().nullable(),
     activeCurrency: z.string(),
     syncedAt: TimestampSchema,
   })

@@ -8,6 +8,7 @@ import {
   SESSION_COMMANDS,
   USER_COMMANDS,
   PLAYER_ACTIVITY_TRACKER,
+  PLAYER_ACCOUNT_MANAGER_READER,
   McpToolError,
   EXCHANGE_RATE_READER,
   JOB_QUEUE,
@@ -20,6 +21,7 @@ import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/ser
 import * as z from 'zod';
 import { PlayerService, PlayerNotFoundError } from './service/player.service.js';
 import { PlayerKycStatusWriter } from './service/kyc-status-writer.js';
+import { AccountManagerService } from './service/account-manager.service.js';
 import { createPlayerRouter } from './router/index.js';
 import { playerSummaryTool } from './contract/agent-tools.js';
 
@@ -50,6 +52,14 @@ export default {
       jobQueue ??= c.get(JOB_QUEUE);
       return (svc ??= makePlayerService(c));
     };
+    let accountManagers: AccountManagerService | null = null;
+    const accountManagerService = (c: TypedContainer<CoreTokenCatalog>) =>
+      (accountManagers ??= new AccountManagerService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        audit: c.get(AUDIT_WRITER),
+        adminGuard: c.get(ADMIN_GUARD),
+      }));
 
     // The refresh recomputes from the ledger, so it runs as a retryable job: a failed read or
     // an unpriced currency retries instead of leaving totalDeposits stale until the next deposit.
@@ -89,8 +99,14 @@ export default {
 
     ctx.provide(KYC_STATUS_WRITER, (c) => new PlayerKycStatusWriter(c.get(DRIZZLE)));
     ctx.provide(PLAYER_ACTIVITY_TRACKER, playerService);
+    ctx.provide(PLAYER_ACCOUNT_MANAGER_READER, accountManagerService);
     ctx.routers.add('player', (c) =>
-      createPlayerRouter(playerService(c), c.get(ADMIN_GUARD), c.get(AUDIT_WRITER)),
+      createPlayerRouter({
+        player: playerService(c),
+        accountManagers: accountManagerService(c),
+        adminGuard: c.get(ADMIN_GUARD),
+        audit: c.get(AUDIT_WRITER),
+      }),
     );
     ctx.mcp.tool(playerSummaryTool, (c) => {
       const players = makePlayerService(c);

@@ -7,6 +7,7 @@ import {
   AUDIT_WRITER,
   IDENTITY_READER,
   JOB_QUEUE,
+  PLAYER_ACCOUNT_MANAGER_READER,
   RG_EXCLUSION_READER,
   SUPPORT_CHAT_PROVIDER,
   SupportChatProviderError,
@@ -32,6 +33,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { promoPlayerRank } from '@openora/core/promo/schema/gamification';
 import {
   asAdmin,
+  assignIamRoleByKey,
   bootE2e,
   clearCapturedEmails,
   closeE2e,
@@ -63,6 +65,7 @@ const SESSION = '/support-chat/session';
 const SYNC_QUEUE = 'support-chat.sync-customer';
 const PASSWORD = 'password1234';
 const CONTEXT_KEYS = [
+  'accountManagerName',
   'accountStatus',
   'activeCurrency',
   'email',
@@ -111,6 +114,18 @@ const lastSyncFor = (customerId: string) => syncsFor(customerId).at(-1);
 
 async function waitForSyncs(customerId: string, count: number) {
   await vi.waitFor(() => expect(syncsFor(customerId).length).toBeGreaterThanOrEqual(count), WAIT);
+}
+
+async function newManager() {
+  const manager = await newPlayer();
+  const managerName = `Manager ${randomUUID()}`;
+  await assignIamRoleByKey(testApp.container, manager.userId, 'vip-manager');
+  await testApp.container
+    .get(DRIZZLE)
+    .db.update(user)
+    .set({ name: managerName })
+    .where(eq(user.id, manager.userId));
+  return { manager, managerName };
 }
 
 /** Opens the chat and waits for the open's own sync, the only one it enqueues. */
@@ -263,6 +278,7 @@ describe('POST /support-chat/session', () => {
       accountStatus: 'active',
       isSelfExcluded: false,
       isCoolingOff: false,
+      accountManagerName: null,
       activeCurrency,
     });
     expect(Math.abs(Date.now() - Date.parse(String(context?.syncedAt)))).toBeLessThan(60_000);
@@ -583,7 +599,7 @@ describe('POST /support-chat/session', () => {
     );
   });
 
-  it('sends a funded player with a phone and date of birth only the eleven context keys', async () => {
+  it('sends a funded player with a phone and date of birth only the twelve context keys', async () => {
     const p = await linkedPlayer();
     await ok(
       await p.client.post('/wallet/deposit', {
@@ -926,6 +942,38 @@ describe('support context refresh', () => {
     );
   });
 
+  it('an account manager change writes the manager name and a removal clears it', async () => {
+    const p = await linkedPlayer();
+    const { manager, managerName } = await newManager();
+    const setManager = (accountManagerId: string | null) => async () =>
+      ok(await admin.put(`/players/${p.playerId}/account-manager`, { accountManagerId }));
+
+    await refreshedBy(p, setManager(manager.userId), { accountManagerName: managerName });
+    await refreshedBy(p, setManager(null), { accountManagerName: null });
+  });
+
+  it('never shows the player their account manager through the session route', async () => {
+    const p = await linkedPlayer();
+    const { manager, managerName } = await newManager();
+    await ok(
+      await admin.put(`/players/${p.playerId}/account-manager`, {
+        accountManagerId: manager.userId,
+      }),
+    );
+
+    const res = await p.client.post(SESSION);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(Object.keys(JSON.parse(text)).sort()).toEqual([
+      'accessToken',
+      'customerId',
+      'expiresInMs',
+      'tokenType',
+    ]);
+    expect(text).not.toContain(managerName);
+    expect(text).not.toContain(manager.userId);
+  });
+
   it('with no provider and no linked player, handles an RG event without enqueuing a sync', async () => {
     const enqueues = watchEnqueues(unconfiguredApp);
     const p = await newPlayer(unconfiguredApp);
@@ -988,6 +1036,7 @@ describe('support context refresh', () => {
       identityReader: c.get(IDENTITY_READER),
       walletReader: c.get(WALLET_READER),
       rgExclusionReader: c.get(RG_EXCLUSION_READER),
+      accountManagerReader: c.get(PLAYER_ACCOUNT_MANAGER_READER),
       provider: c.get(SUPPORT_CHAT_PROVIDER),
       scheduleSync: async () => {},
     });

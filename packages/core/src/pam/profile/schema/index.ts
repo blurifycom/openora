@@ -61,6 +61,7 @@ export const player = pgTable(
     allowFriendRequests: boolean().notNull().default(true),
     /** Off hides this player's online status and last-seen time from their friends. */
     showOnlineStatusToFriends: boolean().notNull().default(true),
+    accountManagerId: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -70,6 +71,7 @@ export const player = pgTable(
     index('player_status_idx').on(t.status),
     index('player_created_at_idx').on(t.createdAt),
     index('player_last_seen_at_idx').on(t.lastSeenAt),
+    index('player_account_manager_id_idx').on(t.accountManagerId),
     check(
       'player_display_decimal_places_range',
       sql`${t.displayDecimalPlaces} BETWEEN 0 AND ${sql.raw(String(MAX_DISPLAY_DECIMAL_PLACES))}`,
