@@ -531,7 +531,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       const p = await linkedPlayer();
       const chat = item('chat', '2026-03-01T00:00:00Z');
       answerSupportHistoryWith({ chats: [chat] });
-      failSupportHistory('listTickets', 'vendor answered 503');
+      failSupportHistory('listTickets', 'rate_limited');
 
       const res = await admin.get(historyPath(p.userId));
       const text = await res.clone().text();
@@ -539,7 +539,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
 
       expect(body.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
       expect(body.chats).toEqual({ state: 'ok', items: [chat] });
-      expect(text).not.toContain('vendor answered 503');
+      expect(text).not.toContain('rate_limited');
     });
 
     it('keeps a raw adapter error and its secret out of the response and the error reporter', async () => {

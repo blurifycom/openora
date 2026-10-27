@@ -5,6 +5,7 @@ import {
   TimestampSchema,
   SUPPORT_CHAT_STATUSES,
   SUPPORT_TICKET_STATUSES,
+  SupportHistoryFailureReasonSchema,
   SupportHistoryItemSchema,
   SupportHistoryProviderError,
   type CacheAdapter,
@@ -179,11 +180,16 @@ export function boundFirstWindow(
 }
 
 // An adapter may throw anything, such as an HTTP client error holding the vendor API key or an
-// email: only its class name survives.
-const reasonOf = (err: unknown): string =>
-  err instanceof SupportHistoryProviderError
+// email: only its class name survives. A provider error keeps its reason only when it is a listed
+// code, since a JavaScript adapter can pass any text.
+const reasonOf = (err: unknown): string => {
+  if (!(err instanceof SupportHistoryProviderError)) {
+    return `adapter threw ${err instanceof Error ? err.name : typeof err}`;
+  }
+  return SupportHistoryFailureReasonSchema.safeParse(err.reason).success
     ? err.reason
-    : `adapter threw ${err instanceof Error ? err.name : typeof err}`;
+    : 'unlisted reason';
+};
 
 // The change time the event carried, when it is a valid timestamp; rows from before it fall back
 // to their write time.

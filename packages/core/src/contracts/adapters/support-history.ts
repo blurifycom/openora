@@ -87,14 +87,32 @@ export const SUPPORT_HISTORY_READER: Token<SupportHistoryReader> =
   createToken<SupportHistoryReader>('SUPPORT_HISTORY_READER');
 
 /**
+ * Why a support-history read failed: the vendor refused the credentials (`unauthorized`), throttled
+ * the call (`rate_limited`), did not answer in time (`timeout`), was down or unreachable
+ * (`unavailable`), did not know the customer or requester (`not_found`), or answered something
+ * unexpected (`bad_response`). A fixed set, so no free text an adapter writes reaches the log.
+ */
+export const SUPPORT_HISTORY_FAILURE_REASONS = [
+  'unauthorized',
+  'rate_limited',
+  'timeout',
+  'unavailable',
+  'not_found',
+  'bad_response',
+] as const;
+export const SupportHistoryFailureReasonSchema = z.enum(SUPPORT_HISTORY_FAILURE_REASONS);
+export type SupportHistoryFailureReason = z.infer<typeof SupportHistoryFailureReasonSchema>;
+
+/**
  * Thrown by an adapter when the vendor refuses, is unreachable or answers something unexpected.
- * `reason` is short and goes to the log only, never to the response: no token, no request body,
- * no unmasked email.
+ * `reason` is one of `SUPPORT_HISTORY_FAILURE_REASONS` and goes to the log only, never to the
+ * response; core logs any other value, which a JavaScript adapter can still pass, as
+ * `unlisted reason`.
  */
 export class SupportHistoryProviderError extends Error {
-  readonly reason: string;
+  readonly reason: SupportHistoryFailureReason;
 
-  constructor(reason: string, options?: ErrorOptions) {
+  constructor(reason: SupportHistoryFailureReason, options?: ErrorOptions) {
     super(`support-history provider failed: ${reason}`, options);
     this.name = 'SupportHistoryProviderError';
     this.reason = reason;

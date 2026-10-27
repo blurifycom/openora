@@ -2,6 +2,7 @@ import { type CoreTokenCatalog, type Plugin } from '@openora/core/server';
 import {
   SUPPORT_HISTORY_READER,
   SupportHistoryProviderError,
+  type SupportHistoryFailureReason,
   type SupportHistoryItem,
   type SupportHistoryReader,
 } from '@openora/core/contracts';
@@ -12,7 +13,7 @@ type ChatsInput = Parameters<SupportHistoryReader['listChats']>[0];
 
 type SupportHistoryState = {
   answers: Record<Method, SupportHistoryItem[]>;
-  failures: Partial<Record<Method, string | Error>>;
+  failures: Partial<Record<Method, SupportHistoryFailureReason | Error>>;
   malformed: Partial<Record<Method, SupportHistoryItem>>;
   calls: { listTickets: TicketsInput[]; listChats: ChatsInput[] };
 };
@@ -50,7 +51,7 @@ export const answerSupportHistoryWith = (answers: {
  * `method` throws a provider error carrying `reason` from now on, or, given an `Error`, throws
  * that error as is - an adapter that let a raw client error escape.
  */
-export const failSupportHistory = (method: Method, reason: string | Error) => {
+export const failSupportHistory = (method: Method, reason: SupportHistoryFailureReason | Error) => {
   state().failures[method] = reason;
 };
 

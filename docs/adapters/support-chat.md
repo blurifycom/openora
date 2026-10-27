@@ -168,9 +168,18 @@ What a reader must guarantee:
 - **Absolute https links.** An item's link opens in the back office, so the schema accepts only a
   URL starting `https://`: an http, `javascript:` or `data:` link, or a slash-less `https:` form
   a browser would resolve against the back office's own origin, makes the section unavailable.
-- **Errors follow the chat provider's rules.** Throw the port's support-history provider error
-  with a short reason: no token, no request body, emails masked. Any other error that escapes is
-  reduced to its class name.
+- **Errors carry a listed reason code.** Throw the port's support-history provider error with one
+  of the codes in `SUPPORT_HISTORY_FAILURE_REASONS`, never free text, and do not attach a raw HTTP
+  error as its `cause`:
+  - `unauthorized`: the vendor refused the credentials.
+  - `rate_limited`: the vendor throttled the call.
+  - `timeout`: the vendor did not answer in time.
+  - `unavailable`: the vendor was down or unreachable.
+  - `not_found`: the vendor did not know the customer or requester.
+  - `bad_response`: the vendor answered something unexpected.
+
+  The code goes to the log only. A JavaScript adapter can still pass any text; core logs it as
+  `unlisted reason`. Any other error that escapes is reduced to its class name.
 
 The answer has a tickets and a chats section. Each one either carries its items, most recently
 updated first, or says it is unavailable: its read failed, or the current email could not be

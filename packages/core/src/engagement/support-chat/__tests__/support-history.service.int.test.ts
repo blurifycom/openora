@@ -69,14 +69,29 @@ describe('SupportHistoryService logging (real PG)', () => {
     const p = await linkedPlayer();
     const history = await service({
       listTickets: async () => {
-        throw new SupportHistoryProviderError('vendor answered 503');
+        throw new SupportHistoryProviderError('rate_limited');
       },
     }).getHistory(p.userId, false);
 
     expect(history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
-    expect(warned()).toEqual([
-      { userId: p.userId, section: 'ticket', reason: 'vendor answered 503' },
-    ]);
+    expect(warned()).toEqual([{ userId: p.userId, section: 'ticket', reason: 'rate_limited' }]);
+  });
+
+  it('logs a reason outside the listed codes as unlisted, its text kept out of the log and the answer', async () => {
+    const p = await linkedPlayer();
+    const leak = `player jane.doe@example.test token sk_live_${randomUUID()}`;
+    const history = await service({
+      listTickets: async () => {
+        // What a JavaScript adapter can pass past the reason type.
+        throw Reflect.construct(SupportHistoryProviderError, [leak]);
+      },
+    }).getHistory(p.userId, false);
+
+    expect(history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(warned()).toEqual([{ userId: p.userId, section: 'ticket', reason: 'unlisted reason' }]);
+    expect(inspect([log.warn.mock.calls, history], { depth: null })).not.toMatch(
+      /jane\.doe|sk_live_/,
+    );
   });
 
   it('reduces a raw adapter error to its class name and keeps its secret out of the log', async () => {
