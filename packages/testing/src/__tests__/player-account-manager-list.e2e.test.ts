@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { adminRole } from '@openora/core/iam/schema';
 import { user } from '@openora/core/pam/schema/identity';
+import { player } from '@openora/core/pam/schema/profile';
 import {
   asAdmin,
   assignIamRoleByKey,
@@ -85,6 +86,13 @@ afterAll(async () => {
 });
 
 describe('GET /players/account-managers/assigned', () => {
+  // First on purpose: this suite's database has no manager assigned until a later test makes one.
+  it('answers an empty list while no player has a manager', async () => {
+    const res = await admin.get(ROUTE);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
   it('lists an assigned manager as exactly userId, name and isActive', async () => {
     const p = await newPlayer();
     const manager = await newStaff('vip-manager');
@@ -133,17 +141,22 @@ describe('GET /players/account-managers/assigned', () => {
     const staff = [
       await newStaff('vip-manager', `${token} b`),
       await newStaff('vip-manager', `${token} a`),
-      await newStaff('vip-manager', `${token} c`),
-      await newStaff('vip-manager', `${token} c`),
+      // Six namesakes: a name-only ordering would leave their ids sorted by luck 1 in 720.
+      ...(await Promise.all(
+        Array.from({ length: 6 }, () => newStaff('vip-manager', `${token} c`)),
+      )),
     ];
     for (const s of staff) {
       await setManager((await newPlayer()).playerId, s.userId);
     }
-    const [b, a, c1, c2] = staff as [Account, Account, Account, Account];
-    const cs = [c1.userId, c2.userId].sort();
+    const [b, a, ...cs] = staff as [Account, Account, ...Account[]];
 
     const mine = (await assigned()).filter(({ name }) => name.startsWith(token));
-    expect(mine.map(({ userId }) => userId)).toEqual([a.userId, b.userId, ...cs]);
+    expect(mine.map(({ userId }) => userId)).toEqual([
+      a.userId,
+      b.userId,
+      ...cs.map(({ userId }) => userId).sort(),
+    ]);
   });
 
   it('lists a manager of several players once', async () => {
@@ -217,5 +230,29 @@ describe('GET /players/account-managers/assigned', () => {
     const detail = await admin.get(`/players/${p.playerId}`);
     expect(detail.status).toBe(200);
     expect(await detail.json()).toMatchObject({ accountManager: { userId: manager.userId } });
+  });
+
+  it.each(['active', 'dormant', 'self_excluded', 'suspended', 'closed'] as const)(
+    'lists the manager of a %s player, as the accountManagerId filter does',
+    async (status) => {
+      const p = await newPlayer();
+      const manager = await newStaff('vip-manager');
+      await setManager(p.playerId, manager.userId);
+      await drizzle().update(player).set({ status }).where(eq(player.id, p.playerId));
+
+      expect(await assignedIds()).toContain(manager.userId);
+      expect(await managedTotal(manager.userId)).toBeGreaterThanOrEqual(1);
+    },
+  );
+
+  it('is a read-only GET: other methods are not routed, and a trailing slash is', async () => {
+    const json = { 'content-type': 'application/json' };
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const res = await admin.request(ROUTE, { method, headers: json, body: '{}' });
+      expect(res.status, method).toBe(404);
+    }
+    const slashed = await admin.get(`${ROUTE}/`);
+    expect(slashed.status).toBe(200);
+    expect(await slashed.json()).toEqual(await assigned());
   });
 });
