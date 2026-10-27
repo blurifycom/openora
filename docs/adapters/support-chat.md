@@ -179,7 +179,8 @@ What a reader must guarantee:
   - `bad_response`: the vendor answered something unexpected.
 
   The code goes to the log only. A JavaScript adapter can still pass any text; core logs it as
-  `unlisted reason`. Any other error that escapes is reduced to its class name.
+  `unlisted reason`. Any other error that escapes is logged as `unexpected adapter error`, nothing
+  of it kept, not even its name.
 
 The answer has a tickets and a chats section. Each one either carries its items, most recently
 updated first, or says it is unavailable: its read failed, or the current email could not be

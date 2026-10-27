@@ -180,11 +180,11 @@ export function boundFirstWindow(
 }
 
 // An adapter may throw anything, such as an HTTP client error holding the vendor API key or an
-// email: only its class name survives. A provider error keeps its reason only when it is a listed
-// code, since a JavaScript adapter can pass any text.
+// email, in its message or even its writable `name`: nothing of it survives. A provider error keeps
+// its reason only when it is a listed code, since a JavaScript adapter can pass any text.
 const reasonOf = (err: unknown): string => {
   if (!(err instanceof SupportHistoryProviderError)) {
-    return `adapter threw ${err instanceof Error ? err.name : typeof err}`;
+    return 'unexpected adapter error';
   }
   return SupportHistoryFailureReasonSchema.safeParse(err.reason).success
     ? err.reason

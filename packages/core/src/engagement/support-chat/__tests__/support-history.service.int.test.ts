@@ -94,12 +94,14 @@ describe('SupportHistoryService logging (real PG)', () => {
     );
   });
 
-  it('reduces a raw adapter error to its class name and keeps its secret out of the log', async () => {
+  it('logs a raw adapter error as unexpected, its secret kept out of the log and the answer', async () => {
     const p = await linkedPlayer();
     const secret = `sk_live_${randomUUID()}`;
     const history = await service({
       listChats: async () => {
         throw Object.assign(new TypeError(`GET https://vendor.example/chats?key=${secret}`), {
+          // A writable name can hold anything too.
+          name: `jane.doe@example.test ${secret}`,
           config: { headers: { Authorization: `Bearer ${secret}` } },
         });
       },
@@ -107,9 +109,11 @@ describe('SupportHistoryService logging (real PG)', () => {
 
     expect(history.chats).toEqual({ state: 'unavailable', items: [] });
     expect(warned()).toEqual([
-      { userId: p.userId, section: 'chat', reason: 'adapter threw TypeError' },
+      { userId: p.userId, section: 'chat', reason: 'unexpected adapter error' },
     ]);
-    expect(inspect(log.warn.mock.calls, { depth: null })).not.toContain(secret);
+    expect(inspect([log.warn.mock.calls, history], { depth: null })).not.toMatch(
+      /jane\.doe|sk_live_/,
+    );
   });
 
   it.each([
