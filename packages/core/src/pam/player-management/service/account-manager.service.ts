@@ -145,6 +145,21 @@ export class AccountManagerService implements PlayerAccountManagerReader {
   }
 
   /**
+   * Every staff account managing at least one player of any status, deactivated ones included,
+   * ordered by name then id. A manager id with no user row is dropped by the join.
+   */
+  async assigned(): Promise<AccountManager[]> {
+    // ponytail: unpaged, bounded by staff headcount; add an optional search/limit (non-breaking)
+    // if a deployment's manager list outgrows one response.
+    const db = this.deps.drizzle.db;
+    return db
+      .select({ userId: user.id, name: user.name, isActive: user.isActive })
+      .from(user)
+      .where(inArray(user.id, db.selectDistinct({ id: player.accountManagerId }).from(player)))
+      .orderBy(asc(user.name), asc(user.id));
+  }
+
+  /**
    * Locks the manager's account against a concurrent deactivation and answers its id as the
    * database stores it, whatever letter case the caller sent; throws when it is ineligible.
    */

@@ -114,6 +114,11 @@ export const playerContract = populateContractRouterPaths({
     )
     .output(z.array(AccountManagerCandidateSchema)),
 
+  // Staff managing at least one player, deactivated included; feeds GET /players' accountManagerId filter.
+  assignedAccountManagers: oc
+    .route({ method: 'GET', path: '/players/account-managers/assigned' })
+    .output(z.array(AccountManagerSchema)),
+
   remove: oc
     .route({ method: 'DELETE', path: '/players/{playerId}' })
     .input(z.object({ playerId: UuidSchema }))
