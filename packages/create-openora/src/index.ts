@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { arch, platform, version as nodeVersion } from 'node:process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { CORE_VERSION } from './generated/core-version.js';
+import { VERSIONS } from './generated/versions.js';
 import {
   buildVars,
   emitTree,
@@ -21,7 +21,7 @@ const TELEMETRY_URL = 'https://telemetry.openora.ai/api/send';
 const TELEMETRY_DOCS_URL = 'https://openora.ai/documentation/telemetry';
 const UMAMI_WEBSITE_ID = '6c0c7f10-66e1-4100-a9b4-b5640982674d';
 const PING_TIMEOUT_MS = 2000;
-const CORE_RELEASE = CORE_VERSION.replace(/^[\^~]/, '');
+const CORE_RELEASE = VERSIONS.coreVersion.replace(/^[\^~]/, '');
 
 function die(message: string): never {
   console.error(`\n  error: ${message}\n`);
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
     die(`template missing at ${templateRoot}`);
   }
 
-  const vars = buildVars(name, CORE_VERSION);
+  const vars = buildVars(name, VERSIONS);
 
   console.log(`\n  Creating ${name} at ${targetDir}`);
   console.log(`  headless api-only consumer (frontend lives in your own repo)`);

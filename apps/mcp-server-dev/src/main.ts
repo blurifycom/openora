@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const ownPackage: { version: string } = JSON.parse(
+  readFileSync(join(here, '..', 'package.json'), 'utf8'),
+);
 const repoRoot = join(here, '..', '..', '..');
 
 function repoPath(...parts: string[]): string {
@@ -352,7 +355,7 @@ const REQUIREMENTS_INTERVIEW = [
 
 const server = new McpServer({
   name: 'oss-dev',
-  version: '0.1.0',
+  version: ownPackage.version,
 });
 
 server.registerTool(

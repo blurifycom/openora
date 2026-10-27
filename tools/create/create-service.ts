@@ -52,6 +52,9 @@ if (existsSync(appDir)) {
 }
 
 const pkgName = `@openora/${name}-service`;
+const rootPackage: { devDependencies: Record<string, string> } = JSON.parse(
+  readFileSync(join(repoRoot, 'package.json'), 'utf8'),
+);
 
 const files: Record<string, string> = {
   'package.json':
@@ -68,15 +71,11 @@ const files: Record<string, string> = {
           typecheck: 'tsc --noEmit',
         },
         dependencies: {
-          '@orpc/server': '1.14.3',
           '@openora/core': 'workspace:*',
-          amqplib: '^2.0.1',
-          bullmq: '^5.77.6',
-          zod: '4.4.3',
         },
         devDependencies: {
-          tsx: '4.22.2',
-          typescript: '6.0.3',
+          tsx: rootPackage.devDependencies['tsx'],
+          typescript: rootPackage.devDependencies['typescript'],
         },
       },
       null,

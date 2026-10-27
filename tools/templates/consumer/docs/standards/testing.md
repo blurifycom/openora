@@ -24,7 +24,17 @@ Before the PR opens:
 5. End the description with a **"Tests"** list: one line per test added, naming its tier
    (unit / API E2E / browser E2E) and path.
 
-A changed behaviour with no test is a review `[WARN]`, never a `[BLOCK]`.
+A changed behaviour with no test is a review `[WARN]`, never a `[BLOCK]`, except on the paths below.
+
+## Tests that catch the bug
+
+A test that still passes when the code it covers is broken checks nothing. On a money, KYC,
+responsible-gambling or authz path, break each changed check on purpose (flip a condition, move a
+boundary by one, drop an owner check, change the sign of an amount) and run the tests: at least one
+must fail. The tester does this in its pass and lists each break as a mutation row in its verdict
+table; a break no test catches on those paths holds the PR until a test catches it. Where the repo
+has a `test:mutation` script, it does the breaking for you; the repo-wide mutation score is shown,
+not a gate.
 
 ## Pick the tier
 
