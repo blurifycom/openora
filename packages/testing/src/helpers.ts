@@ -29,7 +29,6 @@ export async function newPlayer(
   return { ...account, name };
 }
 
-/** `newPlayer` holding the seeded IAM role `roleKey`. */
 export async function newStaff(
   app: TestApp,
   emailPrefix: string,
@@ -41,7 +40,6 @@ export async function newStaff(
   return account;
 }
 
-/** Sets the account's `user.isActive` to false. */
 export async function deactivateUser(app: TestApp, userId: string) {
   await app.container
     .get(DRIZZLE)
