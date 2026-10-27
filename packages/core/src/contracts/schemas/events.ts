@@ -1316,6 +1316,13 @@ export const domainEventSchemas = {
     previousStatus: PlayerStatusSchema,
     newStatus: PlayerStatusSchema,
   }),
+  'player.account_manager.changed': authContextBase.extend({
+    playerId: UuidSchema,
+    userId: UuidSchema,
+    previousAccountManagerId: UuidSchema.nullable(),
+    accountManagerId: UuidSchema.nullable(),
+    actorId: UuidSchema,
+  }),
 
   'social.friend_request.sent': authContextBase.extend({
     friendshipId: UuidSchema,

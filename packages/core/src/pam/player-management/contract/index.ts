@@ -10,6 +10,7 @@ import {
   PaginatedPlayerSearchArgsSchema,
   MoneyAmountSchema,
   UsernameSchema,
+  AccountManagerSchema,
 } from '@openora/core/contracts';
 import { paginated } from '@openora/core/contracts/kit';
 
@@ -19,6 +20,7 @@ export * from './agent-tools.js';
 /** Player row enriched with their active tags - used only by the admin list endpoint. */
 export const PlayerWithTagsSchema = PlayerSchema.extend({
   tags: z.array(TagKeySchema),
+  accountManager: AccountManagerSchema.nullable(),
 });
 export type PlayerWithTags = z.infer<typeof PlayerWithTagsSchema>;
 
@@ -56,6 +58,12 @@ export const PlayerProfileCardSchema = z.object({
 });
 export type PlayerProfileCard = z.infer<typeof PlayerProfileCardSchema>;
 
+export const AccountManagerCandidateSchema = AccountManagerSchema.pick({
+  userId: true,
+  name: true,
+});
+export type AccountManagerCandidate = z.infer<typeof AccountManagerCandidateSchema>;
+
 export const playerContract = populateContractRouterPaths({
   list: oc
     .route({ method: 'GET', path: '/players' })
@@ -89,6 +97,22 @@ export const playerContract = populateContractRouterPaths({
       }),
     )
     .output(PlayerWithTagsSchema),
+
+  // 422 `data.reason` is an AccountManagerIneligibleReason; a null id removes the manager.
+  setAccountManager: oc
+    .route({ method: 'PUT', path: '/players/{playerId}/account-manager' })
+    .input(z.object({ playerId: UuidSchema, accountManagerId: UuidSchema.nullable() }))
+    .output(z.object({ accountManager: AccountManagerSchema.nullable() })),
+
+  accountManagerCandidates: oc
+    .route({ method: 'GET', path: '/players/account-managers' })
+    .input(
+      z.object({
+        search: z.string().max(100).optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(20),
+      }),
+    )
+    .output(z.array(AccountManagerCandidateSchema)),
 
   remove: oc
     .route({ method: 'DELETE', path: '/players/{playerId}' })

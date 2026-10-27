@@ -4,6 +4,7 @@ import {
   CACHE,
   IDENTITY_READER,
   JOB_QUEUE,
+  PLAYER_ACCOUNT_MANAGER_READER,
   RATE_LIMITER,
   RG_EXCLUSION_READER,
   SUPPORT_CHAT_PROVIDER,
@@ -58,6 +59,7 @@ const SYNC_TOPICS = [
   'compliance.kyc.updated',
   'promo.rank.changed',
   'identity.email.changed',
+  'player.account_manager.changed',
 ] as const satisfies readonly DomainEventName[];
 
 export default {
@@ -182,6 +184,9 @@ export default {
           identityReader: c.get(IDENTITY_READER),
           walletReader: c.get(WALLET_READER),
           rgExclusionReader: c.get(RG_EXCLUSION_READER),
+          accountManagerReader: c.has(PLAYER_ACCOUNT_MANAGER_READER)
+            ? c.get(PLAYER_ACCOUNT_MANAGER_READER)
+            : null,
           provider: c.get(SUPPORT_CHAT_PROVIDER),
           scheduleSync,
         });

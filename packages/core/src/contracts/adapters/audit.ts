@@ -17,6 +17,7 @@ export type DirectAuditAction =
   | 'admin.user.updated'
   | 'admin.player.updated'
   | 'admin.player.removed'
+  | 'admin.player.account_manager_changed'
   | 'admin.player_note.created'
   | 'audit.export'
   | 'mail.regulatory_delivery.sent'

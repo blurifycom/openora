@@ -16,8 +16,9 @@ session route takes no input: it always answers for the caller's own player.
 
 Next to the chat, support staff see a context core writes server-to-server, so the player cannot
 edit it: the player and user ids, username and email, the account status, whether a
-self-exclusion or a cooling-off is in force, the KYC status, the rank name and the active wallet
-currency, plus when it was read. The account status shows an active self-exclusion as
+self-exclusion or a cooling-off is in force, the KYC status, the rank name, the active wallet
+currency and the full name of the player's account manager (null when they have none), plus when
+it was read. The account status shows an active self-exclusion as
 self-excluded, except that a suspended or closed account keeps its own status; the self-exclusion
 flag is set whenever one is active either way. Responsible gambling is read the way compliance
 reads it: a self-exclusion binds until it is lifted, even past its end date; a cooling-off ends at
@@ -70,10 +71,12 @@ strict, so a field reaches the vendor only when it is added to the contract on p
    player and their context waits for their next refresh.
 5. Besides every chat open, a linked player's context is refreshed when a self-exclusion starts
    or is lifted, when a cooling-off starts, ends or is lifted, when the account status changes or
-   the account is closed or reopened, when the KYC status or rank changes, and when the email
-   changes. A player who never opened the chat gets no sync. A username change has no event today,
-   so it reaches the vendor on the player's next chat open; the same holds for an active-currency
-   change.
+   the account is closed or reopened, when the KYC status or rank changes, when the email
+   changes, and when the account manager is assigned, changed or removed. The manager's name is
+   read when player-management is loaded and stays null otherwise; a rename of the manager has no
+   event, so it reaches the vendor on the player's next refresh. A player who never opened the
+   chat gets no sync. A username change has no event today, so it reaches the vendor on the
+   player's next chat open; the same holds for an active-currency change.
 
 ## Unbound
 
@@ -202,6 +205,5 @@ Scaffold it with `/scaffold-plugin` and register it after the support-chat modul
 
 ## Not built yet
 
-An account-manager field in the context, erasing the vendor customer and its history under a
-data-rights request, and pushing history updates instead of the cache wait for those features to
-land in core.
+Erasing the vendor customer and its history under a data-rights request, and pushing history
+updates instead of the cache, wait for those features to land in core.
