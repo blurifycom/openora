@@ -757,4 +757,18 @@ describe('AdminGuard.filterGrantedUsers beside filterGranted', () => {
     expect([...batch.keys()].sort()).toEqual([withView.userId, viewOnly.userId].sort());
     expect(await guard.filterGrantedUsers([], requirements)).toEqual(new Map());
   });
+
+  it('answers no grants for empty requirements, an inactive admin and an unknown id, and rejects a non-uuid id', async () => {
+    const guard = testApp.container.get(ADMIN_GUARD);
+    const requirements = [{ resource: 'player', action: 'view' }] as const;
+    const holder = await newStaff('vip-manager');
+    const inactive = await newStaff('vip-manager');
+    await deactivate(inactive.userId);
+
+    expect(await guard.filterGranted(holder.userId, requirements)).toEqual([...requirements]);
+    expect(await guard.filterGranted(holder.userId, [])).toEqual([]);
+    expect(await guard.filterGranted(inactive.userId, requirements)).toEqual([]);
+    expect(await guard.filterGranted(randomUUID(), requirements)).toEqual([]);
+    await expect(guard.filterGranted('not-a-uuid', requirements)).rejects.toThrow();
+  });
 });
