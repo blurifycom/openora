@@ -236,6 +236,18 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     warnedWithUserOnly(s.userId);
   });
 
+  it('trusts no window when a change is stamped before one that is not its neighbour', async () => {
+    const s = await scenario([
+      { before: 'a', after: 'b', at: 10 },
+      { before: 'b', after: 'c', at: 20 },
+      { before: 'c', after: 'd', at: 5 },
+      { before: 'd', after: 'cur', at: 6 },
+    ]);
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    warnedWithUserOnly(s.userId);
+  });
+
   it('trusts no window when a change time is later than its own audit write', async () => {
     const s = await scenario([{ before: 'a', after: 'cur', at: 10, changedAt: 11 }]);
     expect(s.asked).toEqual([]);

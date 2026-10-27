@@ -131,6 +131,30 @@ describe('buildEmailWindows', () => {
     expect(windowsOf('b', [skewed])).toEqual(whole(held('a', null, 10), held('b', 10, null)));
   });
 
+  it('trusts no window for a change time more than the clock skew ahead of its audit write', () => {
+    const ahead = {
+      ...change('a', 'b', 10, true),
+      writtenAt: new Date(day(10).getTime() - 5_001),
+    };
+
+    expect(windowsOf('b', [ahead])).toEqual(UNTRUSTED);
+  });
+
+  it('trusts no window when a later change is stamped before an earlier one that is not its neighbour', () => {
+    const changes = [
+      change('a', 'b', 10),
+      change('b', 'c', 20),
+      change('c', 'd', 5),
+      change('d', 'e', 6),
+    ];
+
+    expect(windowsOf('e', changes)).toEqual(UNTRUSTED);
+  });
+
+  it('trusts no window when every change is stamped before registration', () => {
+    expect(windowsOf('c', [change('a', 'b', -800), change('b', 'c', -700)])).toEqual(UNTRUSTED);
+  });
+
   it('counts a redelivered row, same emails and same carried change time, once', () => {
     const redelivered = change('a', 'b', 10, true);
 

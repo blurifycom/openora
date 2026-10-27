@@ -443,6 +443,36 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       ]);
     });
 
+    it.each([
+      [
+        'a later change stamped before an earlier one that is not its neighbour',
+        [
+          ['a', 'b', 10],
+          ['b', 'c', 20],
+          ['c', 'd', 5],
+          ['d', 'cur', 6],
+        ],
+      ],
+      [
+        'every change stamped before registration',
+        [
+          ['a', 'b', -800],
+          ['b', 'cur', -700],
+        ],
+      ],
+    ] as [string, [string, string, number][]][])(
+      'answers tickets unavailable without asking the vendor for %s',
+      async (_name, rows) => {
+        const p = await newPlayer();
+        await trail(p, rows);
+
+        const body = await history(admin, p.userId);
+
+        expect(body.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+        expect(readSupportHistoryCalls().listTickets).toEqual([]);
+      },
+    );
+
     it('answers no_email, complete, asking nobody, for an account with no email and no change', async () => {
       const p = await newPlayer();
       await drizzle().update(user).set({ email: '' }).where(eq(user.id, p.userId));
