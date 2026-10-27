@@ -41,6 +41,20 @@ const managerColumns = {
   isActive: user.isActive,
 };
 
+const accountColumns = { role: user.role, isActive: user.isActive };
+
+function accountIneligibility(
+  account: { role: string; isActive: boolean } | undefined,
+): AccountManagerIneligibleReason | null {
+  if (!account) {
+    return 'unknown';
+  }
+  if (account.role === 'player') {
+    return 'not_eligible';
+  }
+  return account.isActive ? null : 'inactive';
+}
+
 type AccountManagerDeps = {
   drizzle: DrizzleService;
   events: EventBus;
@@ -54,7 +68,9 @@ export class AccountManagerService implements PlayerAccountManagerReader {
   /**
    * Assigns, changes or, with null, removes the player's account manager. A new manager must be
    * active staff holding `player:view`; removing is always allowed. Setting the current value
-   * again writes nothing, so it leaves no audit record and emits no event.
+   * again writes nothing, so it leaves no audit record and emits no event. The manager's account
+   * is re-read under a share lock with the player row, so a deactivation racing the assignment
+   * is refused instead of stored.
    */
   async set(
     playerId: Player['id'],
@@ -76,6 +92,17 @@ export class AccountManagerService implements PlayerAccountManagerReader {
           .for('update'),
         new PlayerNotFoundError(playerId),
       );
+      if (accountManagerId !== null) {
+        const [account] = await tx
+          .select(accountColumns)
+          .from(user)
+          .where(eq(user.id, accountManagerId))
+          .for('share');
+        const reason = accountIneligibility(account);
+        if (reason) {
+          throw new AccountManagerIneligibleError(reason);
+        }
+      }
       if (locked.accountManagerId === accountManagerId) {
         return;
       }
@@ -157,19 +184,16 @@ export class AccountManagerService implements PlayerAccountManagerReader {
 
   private async ineligibility(userId: User['id']): Promise<AccountManagerIneligibleReason | null> {
     const [account] = await this.deps.drizzle.db
-      .select({ role: user.role, isActive: user.isActive })
+      .select(accountColumns)
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
-    if (!account) {
-      return 'unknown';
+    const reason = accountIneligibility(account);
+    if (reason) {
+      return reason;
     }
-    if (account.role === 'player') {
-      return 'not_eligible';
-    }
-    if (!account.isActive) {
-      return 'inactive';
-    }
+    // ponytail: the player:view grant is checked before the transaction, so a role revoked in
+    // that gap still assigns; lock the grant rows inside it if that window ever matters.
     return (await this.holdsPlayerView(userId)) ? null : 'not_eligible';
   }
 

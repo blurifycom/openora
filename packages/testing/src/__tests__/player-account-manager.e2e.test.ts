@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { Client } from 'pg';
 import { and, eq, sql } from 'drizzle-orm';
 import { PLAYER_ACCOUNT_MANAGER_READER } from '@openora/core/contracts';
 import { DRIZZLE, eventOutbox } from '@openora/core/server';
@@ -563,5 +564,43 @@ describe('GET /players/account-managers batch scan', () => {
     expect(await res.json()).toEqual([
       { userId: eligible.userId, name: eligible.name, email: expect.any(String) },
     ]);
+  });
+});
+
+describe('account-manager deactivation race', () => {
+  it('refuses a manager deactivated while the assignment waits on the player row lock', async () => {
+    const p = await newPlayer();
+    const manager = await newStaff('vip-manager');
+    const holder = new Client({ connectionString: db.url });
+    await holder.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM player WHERE id = $1 FOR UPDATE', [p.playerId]);
+      const {
+        rows: [{ pid: holderPid } = { pid: 0 }],
+      } = await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+
+      const pending = setManager(admin, p.playerId, manager.userId);
+      await vi.waitFor(
+        async () => {
+          const { rows } = await holder.query<{ waiting: number }>(
+            'SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))',
+            [holderPid],
+          );
+          expect(rows[0]?.waiting).toBe(1);
+        },
+        { timeout: 15_000, interval: 25 },
+      );
+      await deactivate(manager.userId);
+      await holder.query('COMMIT');
+
+      const res = await pending;
+      expect(res.status).toBe(422);
+      expect(await json(res)).toMatchObject({ data: { reason: 'inactive' } });
+    } finally {
+      await holder.end();
+    }
+    expect(await managerOf(p.playerId)).toBeNull();
+    expect(await auditRows(p.playerId)).toHaveLength(0);
   });
 });
