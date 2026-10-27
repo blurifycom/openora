@@ -992,6 +992,81 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(result.status).toBe('completed');
   });
 
+  it('counts an auto-approved payout from just inside the 24h window and ignores one just outside it', async () => {
+    const HOUR = 60 * 60 * 1000;
+    const MINUTE = 60 * 1000;
+    const { svc } = await makeService({
+      autoWithdrawal: { dailyCapCount: 1 },
+      fiatThreshold: '1000',
+    });
+    const inside = await seedWallet();
+    const outside = await seedWallet();
+    const prior = (walletId: string, ageMs: number) =>
+      db.drizzle.db.insert(walletTransaction).values({
+        walletId,
+        type: 'withdrawal',
+        amount: '10',
+        currency: 'USD',
+        status: 'completed',
+        reviewReason: 'auto-approved',
+        createdAt: new Date(Date.now() - ageMs),
+      });
+    await prior(inside.id, 24 * HOUR - MINUTE);
+    await prior(outside.id, 24 * HOUR + MINUTE);
+
+    const capped = await svc.withdraw({
+      userId: inside.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    const free = await svc.withdraw({
+      userId: outside.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(capped.status).toBe('pending');
+    expect(free.status).toBe('completed');
+  });
+
+  it('auto-approves a payout that lands exactly on the daily amount cap and queues one cent over', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: { dailyCapAmount: '50' },
+      fiatThreshold: '1000',
+    });
+    const exact = await seedWallet();
+    const over = await seedWallet();
+    for (const w of [exact, over]) {
+      await db.drizzle.db.insert(walletTransaction).values({
+        walletId: w.id,
+        type: 'withdrawal',
+        amount: '10',
+        currency: 'USD',
+        status: 'completed',
+        reviewReason: 'auto-approved',
+        autoApprovalPivotAmount: '10',
+      });
+    }
+
+    const atCap = await svc.withdraw({
+      userId: exact.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    const overCap = await svc.withdraw({
+      userId: over.userId,
+      amount: '40.01',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(atCap.status).toBe('completed');
+    expect(overCap.status).toBe('pending');
+  });
+
   it('serializes concurrent withdrawals so a count cap of one cannot be bypassed', async () => {
     const { svc } = await makeService({
       autoWithdrawal: { dailyCapCount: 1 },
@@ -1442,5 +1517,73 @@ describe('WalletService.withdraw network fee (real PG)', () => {
       .from(walletTransaction)
       .where(eq(walletTransaction.walletId, w.id));
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe('WalletService.withdraw auto-approval edges (real PG)', () => {
+  it('auto-approves a withdrawal that lands exactly on the threshold', async () => {
+    const { svc, psp } = await makeService({ autoWithdrawal: {}, fiatThreshold: '40' });
+    const w = await seedWallet();
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(psp.processWithdrawal).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts withdrawals from earlier in the default 24h window toward the velocity flag', async () => {
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+    const w = await seedWallet();
+    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    await db.drizzle.db.insert(walletTransaction).values(
+      [1, 2].map(() => ({
+        walletId: w.id,
+        type: 'withdrawal' as const,
+        amount: '1',
+        currency: 'USD',
+        status: 'completed' as const,
+        createdAt: twelveHoursAgo,
+      })),
+    );
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('never auto-approves the replay of a withdrawal that was left for a human', async () => {
+    const idempotencyKey = randomUUID();
+    const queued = await makeService();
+    const w = await seedWallet();
+    const first = await queued.svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      idempotencyKey,
+      ...NO_CLIENT_META,
+    });
+    const auto = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+
+    const replay = await auto.svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      idempotencyKey,
+      ...NO_CLIENT_META,
+    });
+
+    expect(replay).toEqual({ transactionId: first.transactionId, status: 'pending' });
+    expect(auto.psp.processWithdrawal).not.toHaveBeenCalled();
+    expect((await txById(first.transactionId)).status).toBe('pending');
   });
 });

@@ -498,3 +498,78 @@ describe('WalletReaderService.getWithdrawalRequestsSince (real PG)', () => {
     });
   });
 });
+
+describe('WalletReaderService on a caller transaction (real PG)', () => {
+  it('reads inside the passed transaction, seeing its uncommitted rows', async () => {
+    const w = await seedWallet();
+
+    await db.drizzle.db.transaction(async (tx) => {
+      await tx.insert(walletTransaction).values({
+        walletId: w.id,
+        type: 'deposit',
+        amount: '40',
+        currency: 'USD',
+        status: 'completed',
+        direction: 'credit',
+        rail: 'fiat',
+      });
+
+      expect(await svc.getLifetimeDeposit(w.userId, tx)).toBe('40.000000000000000000');
+      expect(await svc.getLifetimeDeposit(w.userId)).toBe('0');
+    });
+  });
+});
+
+describe('WalletReaderService withdrawal counts (real PG)', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const withdrawal = (
+    walletId: string,
+    overrides: Partial<typeof walletTransaction.$inferInsert> = {},
+  ) =>
+    db.drizzle.db.insert(walletTransaction).values({
+      walletId,
+      type: 'withdrawal',
+      amount: '10',
+      currency: 'USD',
+      status: 'completed',
+      direction: 'debit',
+      rail: 'fiat',
+      ...overrides,
+    });
+
+  it('counts completed withdrawals inside the window only', async () => {
+    const w = await seedWallet();
+    await withdrawal(w.id, { createdAt: new Date(Date.now() - 2 * day) });
+    await withdrawal(w.id, { createdAt: new Date(Date.now() - 6 * day) });
+    await withdrawal(w.id, { createdAt: new Date(Date.now() - 8 * day) });
+    await withdrawal(w.id, { status: 'pending' });
+    await withdrawal(w.id, { type: 'deposit' });
+
+    expect(await svc.getWithdrawalCountInWindow(w.userId, 7)).toBe(2);
+    expect(await svc.getWithdrawalCountInWindow(w.userId, 1)).toBe(0);
+    expect(await svc.getWithdrawalCountInWindow(randomUUID(), 7)).toBe(0);
+  });
+
+  it('counts per player for a batch and omits players with none', async () => {
+    const a = await seedWallet();
+    const b = await seedWallet();
+    const none = await seedWallet();
+    await withdrawal(a.id, { createdAt: new Date(Date.now() - 2 * day) });
+    await withdrawal(a.id);
+    await withdrawal(b.id);
+    await withdrawal(b.id, { createdAt: new Date(Date.now() - 8 * day) });
+
+    const counts = await svc.getWithdrawalCountsInWindow([a.userId, b.userId, none.userId], 7);
+
+    expect(counts).toEqual(
+      new Map([
+        [a.userId, 2],
+        [b.userId, 1],
+      ]),
+    );
+  });
+
+  it('returns an empty map for no players without querying', async () => {
+    expect(await svc.getWithdrawalCountsInWindow([], 7)).toEqual(new Map());
+  });
+});
