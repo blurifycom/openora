@@ -769,7 +769,12 @@ describe('AdminGuard.filterGrantedUsers beside filterGranted', () => {
     expect(await guard.filterGranted(holder.userId, [])).toEqual([]);
     expect(await guard.filterGranted(inactive.userId, requirements)).toEqual([]);
     expect(await guard.filterGranted(randomUUID(), requirements)).toEqual([]);
-    await expect(guard.filterGranted('not-a-uuid', requirements)).rejects.toThrow();
+    await expect(guard.filterGranted('not-a-uuid', requirements)).rejects.toMatchObject({
+      cause: {
+        code: '22P02',
+        message: expect.stringMatching(/invalid input syntax for type uuid/),
+      },
+    });
   });
 });
 
