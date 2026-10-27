@@ -603,4 +603,67 @@ describe('account-manager deactivation race', () => {
     expect(await managerOf(p.playerId)).toBeNull();
     expect(await auditRows(p.playerId)).toHaveLength(0);
   });
+
+  it.each([
+    ['commits', 'COMMIT', 422, null],
+    ['rolls back', 'ROLLBACK', 200, 'manager'],
+  ])(
+    'waits behind a deactivation that holds the user row lock first, then %s',
+    async (_label, finish, status, stored) => {
+      const p = await newPlayer();
+      const manager = await newStaff('vip-manager');
+      const holder = new Client({ connectionString: db.url });
+      await holder.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('UPDATE "user" SET is_active = false WHERE id = $1', [manager.userId]);
+        const {
+          rows: [{ pid: holderPid } = { pid: 0 }],
+        } = await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+
+        const pending = setManager(admin, p.playerId, manager.userId);
+        await vi.waitFor(
+          async () => {
+            const { rows } = await holder.query<{ waiting: number }>(
+              'SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))',
+              [holderPid],
+            );
+            expect(rows[0]?.waiting).toBe(1);
+          },
+          { timeout: 15_000, interval: 25 },
+        );
+        await holder.query(finish);
+
+        const res = await pending;
+        expect(res.status).toBe(status);
+        if (status === 422) {
+          expect(await json(res)).toMatchObject({ data: { reason: 'inactive' } });
+        }
+      } finally {
+        await holder.end();
+      }
+      expect(await auditRows(p.playerId)).toHaveLength(stored ? 1 : 0);
+      if (stored) {
+        expect(await managerOf(p.playerId)).toMatchObject({ userId: manager.userId });
+      } else {
+        expect(await managerOf(p.playerId)).toBeNull();
+      }
+    },
+  );
+
+  it('answers 422 inactive when the current manager is deactivated and set again, and still lets it be removed', async () => {
+    const p = await newPlayer();
+    const manager = await newStaff('vip-manager');
+    expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
+    await deactivate(manager.userId);
+
+    const again = await setManager(admin, p.playerId, manager.userId);
+    expect(again.status).toBe(422);
+    expect(await json(again)).toMatchObject({ data: { reason: 'inactive' } });
+    expect(await managerOf(p.playerId)).toMatchObject({ userId: manager.userId, isActive: false });
+    expect(await auditRows(p.playerId)).toHaveLength(1);
+
+    expect((await setManager(admin, p.playerId, null)).status).toBe(200);
+    expect(await managerOf(p.playerId)).toBeNull();
+  });
 });
