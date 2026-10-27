@@ -18,6 +18,25 @@ async function settle(ms = 200): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const lane = (service: string, channel: string) => `oss:rt:${service}:${channel}`;
+const signalLane = (service: string, channel: string) => `oss:rt:${service}:signal:${channel}`;
+const revocations = (service: string) => `oss:rt-revoke:${service}`;
+
+// The transport sends SUBSCRIBE only once its own connection opens, so a publish right after
+// subscribe() can reach Redis first and be lost: wait until Redis counts `count` subscribers on
+// each channel.
+async function subscribed(counts: Record<string, number>): Promise<void> {
+  await vi.waitFor(
+    async () => {
+      const live = await redis.client.pubSubNumSub(Object.keys(counts));
+      for (const [key, count] of Object.entries(counts)) {
+        expect(live[key] ?? 0, key).toBeGreaterThanOrEqual(count);
+      }
+    },
+    { timeout: 5000, interval: 10 },
+  );
+}
+
 beforeAll(async () => {
   redis = await createTestRedis();
 });
@@ -40,6 +59,13 @@ runRealtimeTransportConformanceSuite({
       transport.presence?.join(channel, userId, connectionId);
     }
   },
+  untilSubscribed: (channel, lanes) =>
+    subscribed({
+      [revocations('svc')]: transports.length,
+      ...Object.fromEntries(
+        lanes.map((l) => [l === 'signal' ? signalLane('svc', channel) : lane('svc', channel), 1]),
+      ),
+    }),
 });
 
 describe('RedisPubSubRealtimeTransport', () => {
@@ -47,7 +73,7 @@ describe('RedisPubSubRealtimeTransport', () => {
     const transport = makeTransport();
     const got: Array<{ id: string; isDeleted: boolean }> = [];
     transport.subscribe('c', (event: { id: string; isDeleted: boolean }) => got.push(event));
-    await settle();
+    await subscribed({ [lane('svc', 'c')]: 1 });
 
     await transport.remove('c', { id: 'message-1', isDeleted: true });
     await vi.waitFor(() => expect(got).toEqual([{ id: 'message-1', isDeleted: true }]));
@@ -60,7 +86,7 @@ describe('RedisPubSubRealtimeTransport', () => {
       throw new Error('bad subscriber');
     });
     transport.subscribe<number>('c', (e) => got.push(e));
-    await settle();
+    await subscribed({ [lane('svc', 'c')]: 1 });
 
     await expect(transport.publish('c', 7)).resolves.toBeUndefined();
     await vi.waitFor(() => expect(got).toEqual([7]));
@@ -88,7 +114,7 @@ describe('RedisPubSubRealtimeTransport', () => {
     const kept: unknown[] = [];
     transport.subscribe('c', () => kicked.push(true), 'user-a');
     transport.subscribe('c', () => kept.push(true), 'user-b');
-    await settle();
+    await subscribed({ [lane('svc', 'c')]: 1 });
 
     await transport.publish('c', 1);
     await vi.waitFor(() => {
@@ -100,9 +126,8 @@ describe('RedisPubSubRealtimeTransport', () => {
     await settle();
 
     await transport.publish('c', 2);
-    await settle();
+    await vi.waitFor(() => expect(kept).toEqual([true, true]));
     expect(kicked).toEqual([true]);
-    expect(kept).toEqual([true, true]);
   });
 
   it('signals only the revoked user before cutting both of their lanes', async () => {
@@ -126,7 +151,7 @@ describe('RedisPubSubRealtimeTransport', () => {
     );
     transport.subscribeSignal(channel, (signal) => revokedSignals.push(signal), 'revoked-user');
     transport.subscribeSignal(channel, (signal) => otherSignals.push(signal), 'other-user');
-    await settle();
+    await subscribed({ [lane('svc', channel)]: 1, [signalLane('svc', channel)]: 1 });
 
     const revocation = { name: 'chat:access-revoked', payload: { channel } };
     expect(() => transport.revokeUserFromChannel('revoked-user', channel)).not.toThrow();
@@ -150,12 +175,14 @@ describe('RedisPubSubRealtimeTransport', () => {
   it('a replica revoking a user does not cut the subscription that user opens right after', async () => {
     const transport = makeTransport();
     const channel = `chat:room:${randomUUID()}`;
-    await settle();
+    await subscribed({ [revocations('svc')]: 1 });
 
     const revocation = transport.revokeUserFromChannel('rejoined-user', channel);
     const received: unknown[] = [];
     transport.subscribe(channel, (event) => received.push(event), 'rejoined-user');
     await revocation;
+    await subscribed({ [lane('svc', channel)]: 1 });
+    // Lets the revocation loop back before the publish.
     await settle();
 
     await transport.publish(channel, 'after-rejoin');
@@ -168,7 +195,7 @@ describe('RedisPubSubRealtimeTransport', () => {
     const channel = `chat:room:${randomUUID()}`;
     const signals: RealtimeSignal[] = [];
     otherService.subscribeSignal(channel, (signal) => signals.push(signal), 'user-a');
-    await settle();
+    await subscribed({ [signalLane('svc-b', channel)]: 1 });
 
     await origin.revokeUserFromChannel('user-a', channel);
     await settle();
@@ -191,7 +218,11 @@ describe('RedisPubSubRealtimeTransport', () => {
         const messages: unknown[] = [];
         instanceB.subscribeSignal(channel, (signal) => signals.push(signal), 'revoked-user');
         instanceB.subscribe(channel, (event) => messages.push(event), 'revoked-user');
-        await settle();
+        await subscribed({
+          [lane('chat', channel)]: 1,
+          [signalLane('chat', channel)]: 1,
+          [revocations('chat')]: 2,
+        });
 
         await instanceA.revokeUserFromChannel('revoked-user', channel);
         await vi.waitFor(
@@ -217,7 +248,10 @@ describe('RedisPubSubRealtimeTransport', () => {
     const seenB: unknown[] = [];
     a.subscribe('shared-channel', (e) => seenA.push(e));
     b.subscribe('shared-channel', (e) => seenB.push(e));
-    await settle();
+    await subscribed({
+      [lane('svc-a', 'shared-channel')]: 1,
+      [lane('svc-b', 'shared-channel')]: 1,
+    });
 
     await a.publish('shared-channel', 'from-a');
     await vi.waitFor(() => expect(seenA).toEqual(['from-a']));
@@ -235,7 +269,7 @@ describe('RedisPubSubRealtimeTransport', () => {
         const channel = `wallet:balance:${randomUUID()}`;
         const received: unknown[] = [];
         instanceB.subscribe(channel, (event) => received.push(event));
-        await settle();
+        await subscribed({ [lane('wallet', channel)]: 1 });
 
         const signal = {
           eventId: randomUUID(),
