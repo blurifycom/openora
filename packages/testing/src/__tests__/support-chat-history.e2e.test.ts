@@ -398,6 +398,62 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     ]);
   });
 
+  describe('a crafted email change trail', () => {
+    const HOUR = 3_600_000;
+    /** Audits `before -> after` under the user, written `hours` after registration. */
+    async function trail(p: Player, rows: [string, string, number][]) {
+      const start = Date.parse((await registeredAt(p.userId)) ?? '');
+      const name = (tag: string) => (tag === 'cur' ? p.email : `${tag}-${p.userId}@e2e.test`);
+      await drizzle()
+        .insert(auditLog)
+        .values(
+          rows.map(([before, after, hours]) => ({
+            actorType: 'player' as const,
+            actorId: p.playerId,
+            action: 'identity.email.changed',
+            resourceType: 'user' as const,
+            resourceId: p.userId,
+            before: { email: name(before) },
+            after: { email: name(after) },
+            hash: randomUUID(),
+            createdAt: new Date(start + hours * HOUR),
+          })),
+        );
+      return (from: number, to: number | null, tag: string) => ({
+        email: name(tag),
+        from: new Date(start + from * HOUR).toISOString(),
+        to: to === null ? null : new Date(start + to * HOUR).toISOString(),
+      });
+    }
+
+    it('searches only the four most recent of five emails and says the history is not complete', async () => {
+      const p = await newPlayer();
+      const win = await trail(p, [
+        ['a', 'b', 10],
+        ['b', 'c', 20],
+        ['c', 'd', 30],
+        ['d', 'cur', 40],
+      ]);
+
+      const body = await history(admin, p.userId);
+
+      expect(body.tickets).toEqual({ state: 'ok', items: [], complete: false });
+      expect(readSupportHistoryCalls().listTickets.map((c) => c.windows)).toEqual([
+        [win(10, 20, 'b'), win(20, 30, 'c'), win(30, 40, 'd'), win(40, null, 'cur')],
+      ]);
+    });
+
+    it('answers no_email, complete, asking nobody, for an account with no email and no change', async () => {
+      const p = await newPlayer();
+      await drizzle().update(user).set({ email: '' }).where(eq(user.id, p.userId));
+
+      const body = await history(admin, p.userId);
+
+      expect(body.tickets).toEqual({ state: 'no_email', items: [], complete: true });
+      expect(readSupportHistoryCalls().listTickets).toEqual([]);
+    });
+  });
+
   it('answers chats not linked without asking the vendor for an unlinked player', async () => {
     const p = await newPlayer();
     answerSupportHistoryWith({ tickets: [item('ticket', '2026-03-01T00:00:00Z')] });
