@@ -74,9 +74,9 @@ strict, so a field reaches the vendor only when it is added to the contract on p
    the account is closed or reopened, when the KYC status or rank changes, when the email
    changes, and when the account manager is assigned, changed or removed. The manager's name is
    read when player-management is loaded and stays null otherwise; a rename of the manager has no
-   event, so it reaches the vendor on the player's next refresh. A player who never opened the chat gets no sync. A username change has no event today,
-   so it reaches the vendor on the player's next chat open; the same holds for an active-currency
-   change.
+   event, so it reaches the vendor on the player's next refresh. A player who never opened the
+   chat gets no sync. A username change has no event today, so it reaches the vendor on the
+   player's next chat open; the same holds for an active-currency change.
 
 ## Unbound
 
