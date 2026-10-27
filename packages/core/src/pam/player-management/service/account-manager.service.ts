@@ -36,14 +36,6 @@ export class AccountManagerIneligibleError extends Error {
   }
 }
 
-const managerColumns = {
-  userId: user.id,
-  name: user.name,
-  isActive: user.isActive,
-};
-
-const accountColumns = { id: user.id, role: user.role, isActive: user.isActive };
-
 function accountIneligibility(account: {
   role: string;
   isActive: boolean;
@@ -164,7 +156,7 @@ export class AccountManagerService implements PlayerAccountManagerReader {
     // A read lock on identity's row across the module boundary; it becomes a port call when
     // identity is extracted.
     const [account] = await tx
-      .select(accountColumns)
+      .select({ id: user.id, role: user.role, isActive: user.isActive })
       .from(user)
       .where(eq(user.id, userId))
       .for('share');
@@ -184,7 +176,7 @@ export class AccountManagerService implements PlayerAccountManagerReader {
 
   private async readManager(where: SQL): Promise<AccountManager | null> {
     const [row] = await this.deps.drizzle.db
-      .select(managerColumns)
+      .select({ userId: user.id, name: user.name, isActive: user.isActive })
       .from(player)
       .innerJoin(user, eq(user.id, player.accountManagerId))
       .where(where)
