@@ -10,9 +10,15 @@ import {
   index,
   boolean,
   check,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import { PLAYER_STATUSES, KYC_STATUSES, MAX_DISPLAY_DECIMAL_PLACES } from '@openora/core/contracts';
+import {
+  PLAYER_STATUSES,
+  KYC_STATUSES,
+  MAX_DISPLAY_DECIMAL_PLACES,
+  type RegistrationAcquisition,
+} from '@openora/core/contracts';
 
 export const playerStatusEnum = pgEnum('player_status', PLAYER_STATUSES);
 export const kycStatusEnum = pgEnum('kyc_status', KYC_STATUSES);
@@ -80,3 +86,18 @@ export const player = pgTable(
 );
 
 export type Player = typeof player.$inferSelect;
+
+/** Written once, with the registration consent; never updated. */
+export const playerAcquisition = pgTable('player_acquisition', {
+  id: uuid().primaryKey().defaultRandom(),
+  playerId: uuid()
+    .notNull()
+    .unique('player_acquisition_player_id_unique')
+    .references(() => player.id, { onDelete: 'cascade' }),
+  params: jsonb().$type<RegistrationAcquisition['params']>().notNull(),
+  firstSeenAt: timestamp({ withTimezone: true }),
+  landingHost: text(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+export type PlayerAcquisition = typeof playerAcquisition.$inferSelect;

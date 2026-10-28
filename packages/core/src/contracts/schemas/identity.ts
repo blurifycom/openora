@@ -121,12 +121,57 @@ export const LoginSecurityStateSchema = z.object({
   lockoutUntil: TimestampSchema.nullable(),
 });
 
+export const ACQUISITION_MAX_PARAMS = 10;
+
+const AcquisitionParamKeySchema = z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/);
+// Postgres rejects NUL and lone surrogates in jsonb.
+const AcquisitionParamValueSchema = z
+  .string()
+  .max(256)
+  .regex(/^[^\p{Cc}\p{Cs}]+$/u);
+
+const AcquisitionParamsSchema = z
+  .record(z.string(), z.unknown())
+  .transform((params) =>
+    Object.fromEntries(
+      Object.entries(params)
+        .flatMap(([key, value]) => {
+          const parsed = AcquisitionParamValueSchema.safeParse(value);
+          return AcquisitionParamKeySchema.safeParse(key).success && parsed.success
+            ? [[key, parsed.data] as const]
+            : [];
+        })
+        .slice(0, ACQUISITION_MAX_PARAMS),
+    ),
+  )
+  .refine((params) => Object.keys(params).length > 0);
+
+/**
+ * The marketing parameters a visitor arrived with (an affiliate tag, a referral code, UTM
+ * values), as the client captured them. Stored verbatim and never interpreted by the
+ * platform: which parameter means what is the operator's decision. Client-supplied, so
+ * nothing here is evidence of anything on its own. An invalid entry, a parameter past
+ * the cap, or an invalid landing context is dropped on its own, keeping the rest.
+ */
+export const RegistrationAcquisitionSchema = z.object({
+  params: AcquisitionParamsSchema,
+  firstSeenAt: z.iso.datetime({ offset: true }).optional().catch(undefined),
+  landingHost: z
+    .string()
+    .max(253)
+    .regex(/^[A-Za-z0-9.-]+(:\d{1,5})?$/)
+    .optional()
+    .catch(undefined),
+});
+export type RegistrationAcquisition = z.infer<typeof RegistrationAcquisitionSchema>;
+
 export const RegisterInputSchema = credentialsBase.extend({
   password: PasswordSchema,
   username: UsernameSchema,
   acceptedTerms: z.literal(true),
   acceptedAge: z.literal(true),
   timezone: TimezoneSchema.optional(),
+  acquisition: RegistrationAcquisitionSchema.optional().catch(undefined),
 });
 
 export const RegisterOutputSchema = z.object({ status: z.literal('check-email') });
