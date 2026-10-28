@@ -7,6 +7,7 @@ import {
   TimestampSchema,
   UuidSchema,
   WAGER_PRODUCTS,
+  WagerProductSchema,
   type WagerProduct,
 } from '@openora/core/contracts';
 
@@ -371,7 +372,7 @@ export const RaceEligibleProductsSchema = z.array(z.string().trim().min(1).max(6
 export type RaceEligibleProducts = z.infer<typeof RaceEligibleProductsSchema>;
 
 const RaceEligibleProductsInputSchema = z
-  .array(z.enum(WAGER_PRODUCTS))
+  .array(WagerProductSchema)
   .min(1, 'select at least one product')
   .refine((products) => new Set(products).size === products.length, 'products must not repeat');
 
