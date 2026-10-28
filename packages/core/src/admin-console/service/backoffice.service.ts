@@ -15,7 +15,12 @@ import type {
   ClientMeta,
 } from '@openora/core/contracts';
 import { countGranularityBuckets } from '@openora/core/contracts';
-import { createDomainError, makeNotFoundError, serializeRow } from '@openora/core/server';
+import {
+  createDomainError,
+  makeConflictError,
+  makeNotFoundError,
+  serializeRow,
+} from '@openora/core/server';
 import type {
   GamePerformanceFilter,
   GamePerformanceTrendFilter,
@@ -26,6 +31,16 @@ import type {
 export const UserNotFoundError = makeNotFoundError('User');
 export const TransactionNotFoundError = makeNotFoundError('Transaction');
 export const GameNotFoundError = makeNotFoundError('Game');
+export const SelfAccountLockoutError = makeConflictError(
+  'User',
+  'You cannot disable your own account or change your own role',
+  { reason: 'self_lockout' },
+);
+export const LastActiveSuperAdminError = makeConflictError(
+  'User',
+  'The last active super-admin cannot be disabled or demoted',
+  { reason: 'last_active_super_admin' },
+);
 export const GamePerformanceTrendRangeError = createDomainError<[message: string]>(
   'GamePerformanceTrendRangeError',
   (message) => message,
@@ -115,12 +130,47 @@ export class BackofficeService {
     actorId: User['id'],
     meta?: ClientMeta,
   ) {
+    await this.assertKeepsAdminAccess(userId, data, actorId);
     const row = await this.users.update(userId, data, actorId, meta);
     if (!row) {
       throw new UserNotFoundError(userId);
     }
     const assignedRoles = await this.roleAssignments.listByUserIds([userId]);
     return toAdminUser(row, assignedRoles);
+  }
+
+  /**
+   * Refuses a change that would lock admin management out: an admin disabling or re-roling
+   * themselves, or the last active super-admin being disabled or demoted. Best effort - the
+   * read and the write are not one transaction, so two super-admins disabling each other at
+   * the same instant can both pass.
+   */
+  private async assertKeepsAdminAccess(
+    userId: User['id'],
+    data: { isActive?: boolean; role?: UserRole },
+    actorId: User['id'],
+  ) {
+    const target = await this.users.get(userId);
+    if (!target) {
+      return;
+    }
+    const disables = data.isActive === false && target.isActive;
+    const demotes = data.role !== undefined && data.role !== target.role;
+    if (!disables && !demotes) {
+      return;
+    }
+    if (userId === actorId) {
+      throw new SelfAccountLockoutError();
+    }
+    const superAdminIds = await this.roleAssignments.listSuperAdminUserIds();
+    if (!superAdminIds.includes(userId)) {
+      return;
+    }
+    const others = superAdminIds.filter((id) => id !== userId);
+    const remaining = others.length > 0 ? await this.users.lookupUsers(others) : [];
+    if (!remaining.some((u) => u.isActive && u.role === 'admin')) {
+      throw new LastActiveSuperAdminError();
+    }
   }
 
   async listTransactions(filters: TransactionFilter) {

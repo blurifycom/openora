@@ -23,4 +23,13 @@ export class DrizzleAdminRoleAssignmentDirectory implements AdminRoleAssignmentD
       .innerJoin(adminRole, eq(adminRole.id, adminRoleAssignment.roleId))
       .where(inArray(adminRoleAssignment.userId, userIds));
   }
+
+  async listSuperAdminUserIds(): Promise<string[]> {
+    const rows = await this.drizzle.db
+      .selectDistinct({ userId: adminRoleAssignment.userId })
+      .from(adminRoleAssignment)
+      .innerJoin(adminRole, eq(adminRole.id, adminRoleAssignment.roleId))
+      .where(eq(adminRole.isSuperAdmin, true));
+    return rows.map((r) => r.userId);
+  }
 }

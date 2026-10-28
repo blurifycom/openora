@@ -87,10 +87,10 @@ export const ProtectedRoleError = makeConflictError(
   'AdminRole',
   'This role is protected and cannot be modified or deleted',
 );
-// Removing the final super-admin assignment would lock out admin management.
+// Removing the final active super-admin's assignment would lock out admin management.
 export const LastSuperAdminError = makeConflictError(
   'AdminRole',
-  'Cannot remove the last super-admin',
+  'Cannot remove the last active super-admin',
 );
 
 type Caller = { userId: User['id']; role: string } & ClientMeta;
@@ -653,12 +653,23 @@ export class IamService {
           .where(eq(adminRole.isSuperAdmin, true));
         const superRoleIds = superRoleRows.map((r) => r.id);
         const holders = await txn
-          .select({ userId: adminRoleAssignment.userId, roleId: adminRoleAssignment.roleId })
+          .select({
+            userId: adminRoleAssignment.userId,
+            roleId: adminRoleAssignment.roleId,
+            isActive: user.isActive,
+            accountRole: user.role,
+          })
           .from(adminRoleAssignment)
+          .leftJoin(user, eq(user.id, adminRoleAssignment.userId))
           .where(inArray(adminRoleAssignment.roleId, superRoleIds))
-          .for('update');
+          .for('update', { of: adminRoleAssignment });
+        // Only a holder who can still sign in to the back office keeps admin management
+        // reachable: a disabled or demoted account holding the role does not count.
         const remaining = holders.filter(
-          (h) => !(h.userId === input.userId && h.roleId === input.roleId),
+          (h) =>
+            !(h.userId === input.userId && h.roleId === input.roleId) &&
+            h.isActive === true &&
+            h.accountRole === 'admin',
         );
         if (remaining.length === 0) {
           throw new LastSuperAdminError();

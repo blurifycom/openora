@@ -27,7 +27,13 @@ function userRow(over: Partial<AdminUserRow> = {}): AdminUserRow {
   });
 }
 
-function realService(over: { directory?: Partial<AdminUserDirectory> } = {}) {
+function realService(
+  over: {
+    directory?: Partial<AdminUserDirectory>;
+    superAdminIds?: string[];
+    otherAccounts?: AdminUserRow[];
+  } = {},
+) {
   const stored = { row: userRow() };
   const users = mock<AdminUserDirectory>({
     count: vi.fn().mockResolvedValue(0),
@@ -40,6 +46,9 @@ function realService(over: { directory?: Partial<AdminUserDirectory> } = {}) {
     }),
     lookupPlayers: vi.fn().mockResolvedValue([]),
     findPlayerIds: vi.fn().mockResolvedValue([]),
+    lookupUsers: vi.fn(async (ids: readonly string[]) =>
+      (over.otherAccounts ?? []).filter((u) => ids.includes(u.id)),
+    ),
     ...over.directory,
   });
   const reporting = mock<AdminWalletReporting>({
@@ -57,6 +66,7 @@ function realService(over: { directory?: Partial<AdminUserDirectory> } = {}) {
   });
   const roleAssignments = mock<AdminRoleAssignmentDirectory>({
     listByUserIds: vi.fn().mockResolvedValue([]),
+    listSuperAdminUserIds: vi.fn().mockResolvedValue(over.superAdminIds ?? []),
   });
   return {
     service: new BackofficeService(
@@ -246,6 +256,89 @@ describe('backoffice router updateUser authz', () => {
     );
 
     expect(result.createdAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+});
+
+describe('backoffice router updateUser keeps admin management reachable', () => {
+  const OTHER_SUPER = '0b9e5f7e-6f43-4d6c-9a41-1f0c3c1d2a10';
+  const superGuard = (userId: string) =>
+    makeAdminGuard({ superAdmin: true, caller: { userId, role: 'admin' } });
+
+  async function refusal(
+    patch: { isActive?: boolean; role?: 'admin' | 'player' },
+    setup: Parameters<typeof realService>[0],
+    callerId = 'caller-1',
+  ) {
+    const { service, users, stored } = realService(setup);
+    stored.row = userRow({ role: 'admin' });
+    const writer = audit();
+    const router = createBackofficeRouter(service, superGuard(callerId), writer);
+    const error = await call(
+      router.updateUser,
+      { userId: USER_ID, ...patch },
+      { context: CTX },
+    ).catch((err: unknown) => err);
+    return { error, users, writer };
+  }
+
+  it.each([
+    ['disable', { isActive: false }],
+    ['demote', { role: 'player' as const }],
+  ])('refuses a super-admin who tries to %s their own account', async (_verb, patch) => {
+    const { error, users, writer } = await refusal(
+      patch,
+      { superAdminIds: [USER_ID, OTHER_SUPER] },
+      USER_ID,
+    );
+
+    expect(error).toMatchObject({ code: 'CONFLICT', data: { reason: 'self_lockout' } });
+    expect(users.update).not.toHaveBeenCalled();
+    expect(writer.record).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['disabled', { isActive: false }],
+    ['demoted', { role: 'player' as const }],
+  ])('refuses the last active super-admin being %s', async (_verb, patch) => {
+    const { error, users } = await refusal(patch, { superAdminIds: [USER_ID] });
+
+    expect(error).toMatchObject({
+      code: 'CONFLICT',
+      data: { reason: 'last_active_super_admin' },
+    });
+    expect(users.update).not.toHaveBeenCalled();
+  });
+
+  it('does not count a disabled super-admin as the one left', async () => {
+    const { error } = await refusal(
+      { isActive: false },
+      {
+        superAdminIds: [USER_ID, OTHER_SUPER],
+        otherAccounts: [userRow({ id: OTHER_SUPER, role: 'admin', isActive: false })],
+      },
+    );
+
+    expect(error).toMatchObject({ data: { reason: 'last_active_super_admin' } });
+  });
+
+  it('lets a super-admin disable another super-admin while an active one remains', async () => {
+    const { error, users } = await refusal(
+      { isActive: false },
+      {
+        superAdminIds: [USER_ID, OTHER_SUPER],
+        otherAccounts: [userRow({ id: OTHER_SUPER, role: 'admin', isActive: true })],
+      },
+    );
+
+    expect(error).not.toBeInstanceOf(Error);
+    expect(users.update).toHaveBeenCalledOnce();
+  });
+
+  it('lets an admin re-enable or keep their own account as it is', async () => {
+    const { error, users } = await refusal({ isActive: true, role: 'admin' }, {}, USER_ID);
+
+    expect(error).not.toBeInstanceOf(Error);
+    expect(users.update).toHaveBeenCalledOnce();
   });
 });
 

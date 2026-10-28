@@ -89,6 +89,31 @@ describe('PATCH /backoffice/users/{userId} on a staff account', () => {
     expect(await isActiveOf(playerId)).toBe(false);
   });
 
+  it('refuses a super-admin disabling or demoting their own account, with a readable conflict', async () => {
+    const disable = await setActive(superAdmin, superAdminId, false);
+    const demote = await superAdmin.patch(`/backoffice/users/${superAdminId}`, { role: 'player' });
+
+    for (const res of [disable, demote]) {
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        message: 'You cannot disable your own account or change your own role',
+        data: { reason: 'self_lockout' },
+      });
+    }
+    const [self] = await drizzle()
+      .select({ isActive: user.isActive, role: user.role })
+      .from(user)
+      .where(eq(user.id, superAdminId));
+    expect(self).toEqual({ isActive: true, role: 'admin' });
+  });
+
+  it('lets a super-admin disable another super-admin while they stay active themselves', async () => {
+    const { userId: otherSuper } = await staffWithRole('super-admin');
+
+    expect((await setActive(superAdmin, otherSuper, false)).status).toBe(200);
+    expect(await isActiveOf(otherSuper)).toBe(false);
+  });
+
   it('lets a super-admin disable and re-enable a staff account, auditing each change', async () => {
     const { userId: staffId } = await staffWithRole('customer-support-agent');
 

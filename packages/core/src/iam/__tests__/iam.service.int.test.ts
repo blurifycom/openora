@@ -55,6 +55,7 @@ import {
   NotAnAdminUserError,
 } from '../service/iam.service.js';
 import { McpTokenService } from '../service/mcp-token.service.js';
+import { DrizzleAdminRoleAssignmentDirectory } from '../adapters/admin-role-assignment-directory.js';
 import { seedRoles } from '../seed/seed-default-roles.js';
 import { hashInvitationToken } from '../shared/invitation-token.js';
 
@@ -141,6 +142,19 @@ async function seedAssignment(userId: string, roleId: string) {
   await db.drizzle.db.insert(adminRoleAssignment).values({ userId, roleId });
 }
 
+// The back-office account behind an assignment; the last-super-admin guard reads it.
+async function seedAdminAccount(
+  id: string,
+  over: { isActive?: boolean; role?: 'admin' | 'player' } = {},
+) {
+  await seedUser(db, {
+    id,
+    email: `${id}@admin.test`,
+    role: over.role ?? 'admin',
+    isActive: over.isActive ?? true,
+  });
+}
+
 async function seedSuperCaller() {
   const role = await seedRole({ name: 'Root', isSuperAdmin: true, isSystem: true });
   await seedAssignment(ADMIN_CALLER.userId, role.id);
@@ -170,6 +184,25 @@ beforeEach(async () => {
     sql`TRUNCATE ${adminRole}, ${adminRolePermission}, ${adminRoleAssignment}, ${adminInvitation}, ${mcpToken}, ${user} RESTART IDENTITY CASCADE`,
   );
   await redis.flush();
+});
+
+describe('DrizzleAdminRoleAssignmentDirectory.listSuperAdminUserIds (real PG)', () => {
+  it('lists each super-admin holder once and nobody else', async () => {
+    const root = await seedRole({ name: 'Root', isSuperAdmin: true });
+    const otherRoot = await seedRole({ name: 'Root 2', isSuperAdmin: true });
+    const ops = await seedRole({ name: 'Ops' });
+    const both = randomUUID();
+    const one = randomUUID();
+    const scoped = randomUUID();
+    await seedAssignment(both, root.id);
+    await seedAssignment(both, otherRoot.id);
+    await seedAssignment(one, otherRoot.id);
+    await seedAssignment(scoped, ops.id);
+
+    const ids = await new DrizzleAdminRoleAssignmentDirectory(db.drizzle).listSuperAdminUserIds();
+
+    expect(ids.sort()).toEqual([both, one].sort());
+  });
 });
 
 describe('IamService.listCatalog', () => {
@@ -581,6 +614,49 @@ describe('IamService.unassignRole', () => {
     expect(await db.drizzle.db.select().from(adminRoleAssignment)).toHaveLength(1);
   });
 
+  it.each([
+    ['disabled', { isActive: false }],
+    ['demoted to a player account', { role: 'player' as const }],
+  ])(
+    'rejects removing the last active super-admin while the other holder is %s',
+    async (_state, otherAccount) => {
+      const superRole = findOneOrThrow(
+        await db.drizzle.db.select().from(adminRole).where(eq(adminRole.isSuperAdmin, true)),
+        new Error('expected the caller super role'),
+      );
+      const otherHolder = randomUUID();
+      await seedAssignment(otherHolder, superRole.id);
+      await seedAdminAccount(otherHolder, otherAccount);
+      await seedAdminAccount(ADMIN_CALLER.userId);
+      const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
+
+      await expect(
+        svc.unassignRole({
+          userId: ADMIN_CALLER.userId,
+          roleId: superRole.id,
+          caller: ADMIN_CALLER,
+        }),
+      ).rejects.toBeInstanceOf(LastSuperAdminError);
+      expect(await db.drizzle.db.select().from(adminRoleAssignment)).toHaveLength(2);
+    },
+  );
+
+  it('lets a super-admin step down while another active super-admin remains', async () => {
+    const superRole = findOneOrThrow(
+      await db.drizzle.db.select().from(adminRole).where(eq(adminRole.isSuperAdmin, true)),
+      new Error('expected the caller super role'),
+    );
+    const otherHolder = randomUUID();
+    await seedAssignment(otherHolder, superRole.id);
+    await seedAdminAccount(otherHolder);
+    await seedAdminAccount(ADMIN_CALLER.userId);
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
+
+    await expect(
+      svc.unassignRole({ userId: ADMIN_CALLER.userId, roleId: superRole.id, caller: ADMIN_CALLER }),
+    ).resolves.toEqual({ success: true });
+  });
+
   it('returns success but emits no revoked event when nothing was deleted', async () => {
     const role = await seedRole();
     const events = makeEventBus();
@@ -621,6 +697,8 @@ describe('IamService.unassignRole', () => {
     );
     const otherHolder = randomUUID();
     await seedAssignment(otherHolder, superRole.id);
+    await seedAdminAccount(otherHolder);
+    await seedAdminAccount(ADMIN_CALLER.userId);
     const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
 
     const results = await Promise.allSettled([

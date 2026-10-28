@@ -6,6 +6,8 @@ import {
   BackofficeService,
   GameNotFoundError,
   GamePerformanceTrendRangeError,
+  LastActiveSuperAdminError,
+  SelfAccountLockoutError,
   TransactionNotFoundError,
   UserNotFoundError,
 } from '../service/backoffice.service.js';
@@ -53,13 +55,18 @@ export function createBackofficeRouter(
       if (before.role !== 'player' || input.role !== undefined) {
         await adminGuard.assertSuperAdmin(context);
       }
-      const updated = await mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
-        backofficeService.updateUser(
-          input.userId,
-          { isActive: input.isActive, role: input.role },
-          caller.userId,
-          { ip: caller.ip, userAgent: caller.userAgent },
-        ),
+      const updated = await mapErrors(
+        {
+          NOT_FOUND: UserNotFoundError,
+          CONFLICT: [SelfAccountLockoutError, LastActiveSuperAdminError],
+        },
+        () =>
+          backofficeService.updateUser(
+            input.userId,
+            { isActive: input.isActive, role: input.role },
+            caller.userId,
+            { ip: caller.ip, userAgent: caller.userAgent },
+          ),
       );
       await audit.record({
         actorId: caller.userId,
