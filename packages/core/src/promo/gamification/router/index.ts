@@ -1,5 +1,17 @@
 import { implement } from '@orpc/server';
-import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
+import {
+  RATE_LIMIT_KEYS,
+  makeRateLimitKey,
+  type RateLimiterAdapter,
+  type RateLimitKey,
+} from '@openora/core/contracts';
+import {
+  assertRateLimit,
+  getUserId,
+  mapErrors,
+  type AdminGuard,
+  type OssContext,
+} from '@openora/core/server';
 import { gamificationContract } from '../contract/index.js';
 import {
   RankAdminService,
@@ -32,6 +44,21 @@ import {
   RankChallengeLadderCurrencyHeldError,
   RankChallengeLadderVersionConflictError,
 } from '../service/rank-challenge-admin.service.js';
+import {
+  RakebackAccountBlockedError,
+  RakebackBelowMinimumError,
+  RakebackClaimConflictError,
+  RakebackClaimRestrictedError,
+  RakebackNothingToClaimError,
+  type RakebackClaimService,
+} from '../service/rakeback-claim.service.js';
+import {
+  RakebackAccrualNotFoundError,
+  RakebackAccrualNotVoidableError,
+  type RakebackAdminService,
+} from '../service/rakeback-admin.service.js';
+
+const RAKEBACK_CLAIM_RATE_LIMIT = { limit: 5, windowMs: 60_000 } as const;
 
 export function createGamificationRouter({
   ranks,
@@ -44,6 +71,9 @@ export function createGamificationRouter({
   raceAdmin,
   rankChallenge,
   rankChallengeAdmin,
+  rakebackClaims,
+  rakebackAdmin,
+  rateLimiter,
   adminGuard,
 }: {
   ranks: RankService;
@@ -57,6 +87,9 @@ export function createGamificationRouter({
   raceAdmin: RaceAdminService;
   rankChallenge: RankChallengeService;
   rankChallengeAdmin: RankChallengeAdminService;
+  rakebackClaims: RakebackClaimService;
+  rakebackAdmin: RakebackAdminService;
+  rateLimiter: RateLimiterAdapter<RateLimitKey> | undefined;
   adminGuard: AdminGuard;
 }) {
   const os = implement(gamificationContract).$context<OssContext>();
@@ -124,7 +157,66 @@ export function createGamificationRouter({
       ladder: os.rankChallenge.ladder.handler(() => rankChallenge.getLadder()),
     },
 
+    rakeback: {
+      summary: os.rakeback.summary.handler(({ context }) =>
+        rakebackClaims.summary(getUserId(context)),
+      ),
+
+      claim: os.rakeback.claim.handler(async ({ input, context }) => {
+        const userId = getUserId(context);
+        await assertRateLimit(
+          rateLimiter,
+          makeRateLimitKey(RATE_LIMIT_KEYS.RAKEBACK_CLAIM, userId),
+          RAKEBACK_CLAIM_RATE_LIMIT,
+        );
+        const claimed = await mapErrors(
+          {
+            FORBIDDEN: [RakebackClaimRestrictedError, RakebackAccountBlockedError],
+            CONFLICT: [
+              RakebackNothingToClaimError,
+              RakebackBelowMinimumError,
+              RakebackClaimConflictError,
+            ],
+          },
+          () => rakebackClaims.claim(userId, input.idempotencyKey),
+        );
+        return {
+          claimId: claimed.claimId,
+          paid: claimed.paid.map(({ currency, amount }) => ({ currency, amount })),
+        };
+      }),
+    },
+
     admin: {
+      rakeback: {
+        listAccruals: os.admin.rakeback.listAccruals.handler(async ({ input, context }) => {
+          await adminGuard.assert(context, 'bonus', 'view');
+          return rakebackAdmin.listAccruals(input);
+        }),
+
+        playerSummary: os.admin.rakeback.playerSummary.handler(async ({ input, context }) => {
+          await adminGuard.assert(context, 'bonus', 'view');
+          return rakebackAdmin.playerSummary(input.userId);
+        }),
+
+        liability: os.admin.rakeback.liability.handler(async ({ context }) => {
+          await adminGuard.assert(context, 'bonus', 'view');
+          return rakebackAdmin.liability();
+        }),
+
+        // The same permission a manual balance adjustment needs.
+        void: os.admin.rakeback.void.handler(async ({ input, context }) => {
+          const { userId, ip, userAgent } = await adminGuard.assertSuperAdmin(context);
+          return mapErrors(
+            {
+              NOT_FOUND: RakebackAccrualNotFoundError,
+              CONFLICT: RakebackAccrualNotVoidableError,
+            },
+            () => rakebackAdmin.void(userId, input.accrualId, input.reason, { ip, userAgent }),
+          );
+        }),
+      },
+
       streaks: {
         config: {
           get: os.admin.streaks.config.get.handler(async ({ context }) => {

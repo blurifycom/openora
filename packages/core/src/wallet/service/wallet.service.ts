@@ -836,7 +836,23 @@ type TransactionHistoryRow = {
   fee: string | null;
   balance_after: string | null;
   provider_name: string | null;
+  metadata: string | null;
 };
+
+// Every writer stores a JSON object; anything else is shown as no metadata rather than failing the page.
+function parseTransactionMetadata(raw: string | null): Record<string, unknown> | null {
+  if (raw === null) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 const TX_SORT_COLUMNS = {
   createdAt: 'created_at',
@@ -3832,7 +3848,7 @@ export class WalletService {
         ${t.referenceAmount} as reference_amount, ${t.referenceRate} as reference_rate,
         ${t.referenceRateAsOf} as reference_rate_as_of, ${t.providerRefId} as provider_ref_id,
         ${t.txHash} as tx_hash, ${t.fee} as fee, ${t.providerName} as provider_name,
-        ${t.balanceAfter} as balance_after
+        ${t.balanceAfter} as balance_after, ${t.metadata} as metadata
       from ${t}
       where ${t.walletId} in (select ${wallet.id} from ${wallet} where ${wallet.userId} = ${userId})`;
     // The port hands back a Drizzle SQL fragment typed `unknown` (contracts cannot import drizzle).
@@ -3844,7 +3860,7 @@ export class WalletService {
       ? sql`
       union all
       select g.id, g.type, g.amount, g.currency, null, g.status, 'credit', g.created_at, null,
-        null, null, null, null, null, null, null, null, null, null, null, null
+        null, null, null, null, null, null, null, null, null, null, null, null, null
       from (${grantQuery}) g`
       : sql``;
     const history = sql`(${ledgerRows} ${grantRows}) as history`;
@@ -3923,6 +3939,8 @@ export class WalletService {
               referenceRateAsOf: tx.reference_rate_as_of ? new Date(tx.reference_rate_as_of) : null,
             })
           : null,
+        // Internal only: it can carry a provider's raw response.
+        metadata: includeInternal ? parseTransactionMetadata(tx.metadata) : null,
       })),
       total: counted[0]?.n ?? 0,
       page,

@@ -229,6 +229,8 @@ export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
   balanceAfter: MoneyAmountSchema.nullable(),
   // Null on row types that carry no conversion, and on rows written before it was recorded.
   reference: WalletReferenceConversionSchema.nullable(),
+  // A provider's bet response, or the rakeback claim a `cashback` credit paid.
+  metadata: z.record(z.string(), z.unknown()).nullable(),
 });
 export type AdminWalletTransaction = z.infer<typeof AdminWalletTransactionSchema>;
 
