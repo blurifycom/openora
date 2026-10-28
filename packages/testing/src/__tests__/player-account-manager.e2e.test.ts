@@ -174,10 +174,14 @@ describe('PUT /players/{playerId}/account-manager', () => {
 
     const profile = await p.client.get('/profile');
     expect(profile.status).toBe(200);
-    expect(await json(profile)).not.toHaveProperty('accountManager');
+    const profileRaw = await profile.text();
+    expect(JSON.parse(profileRaw)).not.toHaveProperty('accountManager');
+    expect(profileRaw).not.toContain(manager.email);
     const card = await p.client.get(`/players/${p.userId}/profile-card`);
     expect(card.status).toBe(200);
-    expect(await json(card)).not.toHaveProperty('accountManager');
+    const cardRaw = await card.text();
+    expect(JSON.parse(cardRaw)).not.toHaveProperty('accountManager');
+    expect(cardRaw).not.toContain(manager.email);
   });
 
   it('answers 404 for an unknown player', async () => {
@@ -325,8 +329,8 @@ describe('GET /players/account-managers', () => {
     const res = await admin.get(`/players/account-managers?search=${token}`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([
-      { userId: eligible.userId, name: eligible.name },
-      { userId: viewer.userId, name: viewer.name },
+      { userId: eligible.userId, name: eligible.name, email: eligible.email },
+      { userId: viewer.userId, name: viewer.name, email: viewer.email },
     ]);
     const limited = await admin.get(`/players/account-managers?search=${token}&limit=1`);
     expect(await limited.json()).toHaveLength(1);
@@ -570,7 +574,9 @@ describe('GET /players/account-managers batch scan', () => {
 
     const res = await admin.get(`/players/account-managers?search=${token}&limit=5`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([{ userId: eligible.userId, name: eligible.name }]);
+    expect(await res.json()).toEqual([
+      { userId: eligible.userId, name: eligible.name, email: eligible.email },
+    ]);
   });
 });
 
@@ -688,7 +694,7 @@ describe('account manager precedence and exposure', () => {
     expect(res.status).toBe(404);
   });
 
-  it('never carries the manager email in any response that shows the manager', async () => {
+  it('never carries the manager email in a player-record response that shows the manager', async () => {
     const p = await newPlayer(testApp, EMAIL_PREFIX);
     const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     const [{ email } = { email: '' }] = await drizzle()
@@ -702,7 +708,6 @@ describe('account manager precedence and exposure', () => {
       await admin.get(`/players/${p.playerId}`),
       await admin.get(`/players?accountManagerId=${manager.userId}`),
       await admin.patch(`/players/${p.playerId}`, { status: 'suspended' }),
-      await admin.get(`/players/account-managers?search=${encodeURIComponent(manager.name)}`),
     ];
     for (const res of responses) {
       expect(res.status).toBe(200);
@@ -721,7 +726,9 @@ describe('account manager precedence and exposure', () => {
     const staff = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager', `${token} staff`);
 
     const listed = await admin.get(`/players/account-managers?search=${token}`);
-    expect(await listed.json()).toEqual([{ userId: staff.userId, name: staff.name }]);
+    expect(await listed.json()).toEqual([
+      { userId: staff.userId, name: staff.name, email: staff.email },
+    ]);
 
     const p = await newPlayer(testApp, EMAIL_PREFIX);
     const res = await setManager(admin, p.playerId, custom.userId);

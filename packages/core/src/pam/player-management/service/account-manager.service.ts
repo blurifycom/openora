@@ -20,7 +20,7 @@ import type {
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { PlayerNotFoundError } from './player.service.js';
-import type { AccountManagerCandidate } from '../contract/index.js';
+import type { AccountManagerCandidate, AssignedAccountManager } from '../contract/index.js';
 
 const PLAYER_VIEW = [{ resource: 'player', action: 'view' }] as const;
 const CANDIDATE_BATCH_SIZE = 100;
@@ -127,7 +127,7 @@ export class AccountManagerService implements PlayerAccountManagerReader {
     const eligible: AccountManagerCandidate[] = [];
     for (let offset = 0; eligible.length < limit; offset += CANDIDATE_BATCH_SIZE) {
       const batch = await this.deps.drizzle.db
-        .select({ userId: user.id, name: user.name })
+        .select({ userId: user.id, name: user.name, email: user.email })
         .from(user)
         .where(where)
         .orderBy(asc(user.name), asc(user.id))
@@ -149,12 +149,12 @@ export class AccountManagerService implements PlayerAccountManagerReader {
    * Every staff account managing at least one player of any status, deactivated ones included,
    * ordered by name then id. A manager id with no user row is left out.
    */
-  async assigned(): Promise<AccountManager[]> {
+  async assigned(): Promise<AssignedAccountManager[]> {
     // ponytail: unpaged, bounded by staff headcount; add an optional search/limit (non-breaking)
     // if a deployment's manager list outgrows one response.
     const db = this.deps.drizzle.db;
     return db
-      .select(MANAGER_COLUMNS)
+      .select({ ...MANAGER_COLUMNS, email: user.email })
       .from(user)
       .where(
         inArray(

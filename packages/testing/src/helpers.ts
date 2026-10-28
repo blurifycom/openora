@@ -14,6 +14,7 @@ export async function readJson(res: Response): Promise<any> {
 
 export type NamedAccount = Awaited<ReturnType<typeof registerAndMaterializePlayer>> & {
   name: string;
+  email: string;
 };
 
 /** A registered player whose `user.name` is set to `name`; the email starts with `emailPrefix`. */
@@ -22,11 +23,10 @@ export async function newPlayer(
   emailPrefix: string,
   name = `player ${randomUUID()}`,
 ): Promise<NamedAccount> {
-  const account = await registerAndMaterializePlayer(app, {
-    email: `${emailPrefix}-${randomUUID()}@e2e.test`,
-  });
+  const email = `${emailPrefix}-${randomUUID()}@e2e.test`;
+  const account = await registerAndMaterializePlayer(app, { email });
   await app.container.get(DRIZZLE).db.update(user).set({ name }).where(eq(user.id, account.userId));
-  return { ...account, name };
+  return { ...account, name, email };
 }
 
 export async function newStaff(

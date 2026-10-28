@@ -58,10 +58,10 @@ export const PlayerProfileCardSchema = z.object({
 });
 export type PlayerProfileCard = z.infer<typeof PlayerProfileCardSchema>;
 
-export const AccountManagerCandidateSchema = AccountManagerSchema.pick({
-  userId: true,
-  name: true,
-});
+export const AssignedAccountManagerSchema = AccountManagerSchema.extend({ email: z.string() });
+export type AssignedAccountManager = z.infer<typeof AssignedAccountManagerSchema>;
+
+export const AccountManagerCandidateSchema = AssignedAccountManagerSchema.omit({ isActive: true });
 export type AccountManagerCandidate = z.infer<typeof AccountManagerCandidateSchema>;
 
 export const playerContract = populateContractRouterPaths({
@@ -117,7 +117,7 @@ export const playerContract = populateContractRouterPaths({
   // Staff managing at least one player, deactivated included; feeds GET /players' accountManagerId filter.
   assignedAccountManagers: oc
     .route({ method: 'GET', path: '/players/account-managers/assigned' })
-    .output(z.array(AccountManagerSchema)),
+    .output(z.array(AssignedAccountManagerSchema)),
 
   remove: oc
     .route({ method: 'DELETE', path: '/players/{playerId}' })

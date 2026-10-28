@@ -22,7 +22,7 @@ const ROUTE = '/players/account-managers/assigned';
 const EMAIL_PREFIX = 'account-manager-list';
 const NAMESAKE_COUNT = 6;
 
-type Manager = { userId: string; name: string; isActive: boolean };
+type Manager = { userId: string; name: string; isActive: boolean; email: string };
 
 let db: TestDb;
 let testApp: TestApp;
@@ -65,13 +65,15 @@ describe('GET /players/account-managers/assigned', () => {
     expect(await res.json()).toEqual([]);
   });
 
-  it('lists an assigned manager as exactly userId, name and isActive', async () => {
+  it('lists an assigned manager as exactly userId, name, isActive and email', async () => {
     const p = await newPlayer(testApp, EMAIL_PREFIX);
     const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     await setManager(p.playerId, manager.userId);
 
     const entries = (await assigned()).filter(({ userId }) => userId === manager.userId);
-    expect(entries).toEqual([{ userId: manager.userId, name: manager.name, isActive: true }]);
+    expect(entries).toEqual([
+      { userId: manager.userId, name: manager.name, isActive: true, email: manager.email },
+    ]);
   });
 
   it('keeps a deactivated manager who still has players, as inactive', async () => {
@@ -84,6 +86,7 @@ describe('GET /players/account-managers/assigned', () => {
       userId: manager.userId,
       name: manager.name,
       isActive: false,
+      email: manager.email,
     });
   });
 
@@ -125,11 +128,10 @@ describe('GET /players/account-managers/assigned', () => {
     const [b, a, ...cs] = staff as [NamedAccount, NamedAccount, ...NamedAccount[]];
 
     const mine = (await assigned()).filter(({ name }) => name.startsWith(token));
-    expect(mine.map(({ userId }) => userId)).toEqual([
-      a.userId,
-      b.userId,
-      ...cs.map(({ userId }) => userId).sort(),
-    ]);
+    const ordered = [a, b, ...cs.sort((x, y) => (x.userId < y.userId ? -1 : 1))];
+    expect(mine.map(({ userId, email }) => ({ userId, email }))).toEqual(
+      ordered.map(({ userId, email }) => ({ userId, email })),
+    );
   });
 
   it('lists a manager of several players once', async () => {
@@ -176,6 +178,7 @@ describe('GET /players/account-managers/assigned', () => {
       userId: manager.userId,
       name: manager.name,
       isActive: true,
+      email: manager.email,
     });
   });
 
