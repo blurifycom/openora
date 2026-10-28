@@ -363,7 +363,7 @@ describe('GET /players/account-managers', () => {
   it('orders same-named candidates by user id', async () => {
     const token = randomUUID().slice(0, 8);
     const name = `${token} namesake`;
-    // Email and insertion order both run against id order, so neither can pass for it.
+    // Emails, inserts and grants all run against id order, so only the id tie-break passes.
     const ids = Array.from({ length: 4 }, () => randomUUID()).sort();
     const staff = ids.map((userId, i) => ({
       userId,
@@ -381,7 +381,7 @@ describe('GET /players/account-managers', () => {
           role: 'admin',
         })),
       );
-    for (const { userId } of staff) {
+    for (const { userId } of [...staff].reverse()) {
       await assignIamRoleByKey(testApp.container, userId, 'vip-manager');
     }
 
