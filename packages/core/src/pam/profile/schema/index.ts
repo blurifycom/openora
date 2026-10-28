@@ -88,20 +88,16 @@ export const player = pgTable(
 export type Player = typeof player.$inferSelect;
 
 /** Written once, with the registration consent; never updated. */
-export const playerAcquisition = pgTable(
-  'player_acquisition',
-  {
-    id: uuid().primaryKey().defaultRandom(),
-    playerId: uuid()
-      .notNull()
-      .unique('player_acquisition_player_id_unique')
-      .references(() => player.id, { onDelete: 'cascade' }),
-    params: jsonb().$type<RegistrationAcquisition['params']>().notNull(),
-    firstSeenAt: timestamp({ withTimezone: true }),
-    landingHost: text(),
-    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index('player_acquisition_params_idx').using('gin', t.params)],
-);
+export const playerAcquisition = pgTable('player_acquisition', {
+  id: uuid().primaryKey().defaultRandom(),
+  playerId: uuid()
+    .notNull()
+    .unique('player_acquisition_player_id_unique')
+    .references(() => player.id, { onDelete: 'cascade' }),
+  params: jsonb().$type<RegistrationAcquisition['params']>().notNull(),
+  firstSeenAt: timestamp({ withTimezone: true }),
+  landingHost: text(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
 
 export type PlayerAcquisition = typeof playerAcquisition.$inferSelect;
