@@ -1281,6 +1281,7 @@ export const domainEventSchemas = {
   'chat.user.mentioned': z.object({
     mentionedUserId: UuidSchema,
     byUserId: UuidSchema,
+    byUsername: z.string().optional(),
     roomId: UuidSchema.nullable(),
     messageId: z.string(),
   }),
