@@ -120,16 +120,12 @@ describe('mentionSearch: authorization', () => {
 });
 
 describe('mention notification', () => {
-  async function mentionRows(player: Chatter) {
-    const res = await player.client.get('/notifications');
-    expect(res.status).toBe(200);
-    const { items } = paginated(NotificationSchema).parse(await res.json());
-    return items.filter((n) => n.type === 'chat.mention');
-  }
-
   async function waitForMentions(player: Chatter, count: number) {
     return vi.waitFor(async () => {
-      const rows = await mentionRows(player);
+      const res = await player.client.get('/notifications');
+      expect(res.status).toBe(200);
+      const { items } = paginated(NotificationSchema).parse(await res.json());
+      const rows = items.filter((n) => n.type === 'chat.mention');
       expect(rows).toHaveLength(count);
       return rows;
     }, WAIT);
