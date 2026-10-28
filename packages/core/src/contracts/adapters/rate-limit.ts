@@ -40,6 +40,7 @@ export const RATE_LIMIT_KEYS = {
   MCP_TOKEN_DAY: 'mcp-token-day',
   MCP_IP_MINUTE: 'mcp-ip-min',
   MCP_TOKEN_CREATE: 'mcp-token-create',
+  ADMIN_INVITATION_ACCEPT_IP: 'admin-invitation-accept-ip',
 } as const;
 
 export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];

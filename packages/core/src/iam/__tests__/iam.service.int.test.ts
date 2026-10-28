@@ -56,6 +56,7 @@ import {
 } from '../service/iam.service.js';
 import { McpTokenService } from '../service/mcp-token.service.js';
 import { seedRoles } from '../seed/seed-default-roles.js';
+import { hashInvitationToken } from '../shared/invitation-token.js';
 
 let db: TestDb;
 let redis: TestRedis;
@@ -679,14 +680,17 @@ describe('IamService.acceptInvitation', () => {
     await db.drizzle.db.insert(adminInvitation).values({
       email: 'who@admin.com',
       roleId: role.id,
-      token,
+      tokenHash: hashInvitationToken(token),
       status: 'pending',
       expiresAt: new Date(Date.now() + 60_000),
     });
     return { token, roleId: role.id };
   }
 
-  function makeAcceptService(userCommands = makeUserCommands()) {
+  function makeAcceptService(
+    userCommands = makeUserCommands(),
+    rateLimiter?: RateLimiterAdapter<RateLimitKey>,
+  ) {
     const events = makeEventBus();
     const svc = new IamService({
       drizzle: db.drizzle,
@@ -695,9 +699,16 @@ describe('IamService.acceptInvitation', () => {
       identityReader,
       mcpTokens: makeMcpTokens().mcpTokens,
       userCommands,
+      rateLimiter,
     });
     return { svc, events, userCommands };
   }
+
+  const invitationRow = (token: string) =>
+    db.drizzle.db
+      .select()
+      .from(adminInvitation)
+      .where(eq(adminInvitation.tokenHash, hashInvitationToken(token)));
 
   const assignmentsOf = (roleId: string) =>
     db.drizzle.db.select().from(adminRoleAssignment).where(eq(adminRoleAssignment.roleId, roleId));
@@ -740,7 +751,7 @@ describe('IamService.acceptInvitation', () => {
     await db.drizzle.db
       .update(adminInvitation)
       .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(eq(adminInvitation.token, token));
+      .where(eq(adminInvitation.tokenHash, hashInvitationToken(token)));
     const { svc, userCommands } = makeAcceptService();
 
     await expect(svc.acceptInvitation({ token, ...ACCEPT })).rejects.toBeInstanceOf(
@@ -758,10 +769,7 @@ describe('IamService.acceptInvitation', () => {
 
     await expect(svc.acceptInvitation({ token, ...ACCEPT })).rejects.toBe(emailTaken);
 
-    const [row] = await db.drizzle.db
-      .select()
-      .from(adminInvitation)
-      .where(eq(adminInvitation.token, token));
+    const [row] = await invitationRow(token);
     expect(row?.status).toBe('pending');
     expect(await assignmentsOf(roleId)).toHaveLength(0);
     expect(events.emit).not.toHaveBeenCalled();
@@ -782,6 +790,88 @@ describe('IamService.acceptInvitation', () => {
     expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(InvitationConflictError);
     expect(userCommands.createAdmin).toHaveBeenCalledTimes(1);
     expect(events.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('cannot be redeemed with the stored value - only the plaintext from the mail opens it', async () => {
+    const { token } = await seedInvitation();
+    const [row] = await invitationRow(token);
+    const { svc, userCommands } = makeAcceptService();
+
+    await expect(
+      svc.acceptInvitation({ token: row?.tokenHash ?? '', ...ACCEPT }),
+    ).rejects.toBeInstanceOf(InvitationConflictError);
+    expect(userCommands.createAdmin).not.toHaveBeenCalled();
+  });
+
+  describe('throttling wrong attempts per client address (real Redis)', () => {
+    const FROM_ATTACKER = { ip: '203.0.113.7', userAgent: null };
+    const FROM_ELSEWHERE = { ip: '198.51.100.20', userAgent: null };
+
+    async function guessFiveTimes(svc: IamService) {
+      for (let i = 0; i < 5; i++) {
+        await expect(
+          svc.acceptInvitation({ token: randomUUID(), ...ACCEPT }, FROM_ATTACKER),
+        ).rejects.toBeInstanceOf(InvitationConflictError);
+      }
+    }
+
+    it('refuses the sixth attempt within the hour, even with the right token', async () => {
+      const { token } = await seedInvitation();
+      const { svc, userCommands } = makeAcceptService(
+        makeUserCommands(),
+        new RedisRateLimiter(redis.client),
+      );
+      await guessFiveTimes(svc);
+
+      await expect(svc.acceptInvitation({ token, ...ACCEPT }, FROM_ATTACKER)).rejects.toMatchObject(
+        { code: 'TOO_MANY_REQUESTS' },
+      );
+      expect(userCommands.createAdmin).not.toHaveBeenCalled();
+      expect((await invitationRow(token))[0]?.status).toBe('pending');
+    });
+
+    it('keeps another address free to redeem its own invitation', async () => {
+      const { token } = await seedInvitation();
+      const { svc } = makeAcceptService(makeUserCommands(), new RedisRateLimiter(redis.client));
+      await guessFiveTimes(svc);
+
+      await expect(svc.acceptInvitation({ token, ...ACCEPT }, FROM_ELSEWHERE)).resolves.toEqual({
+        success: true,
+        email: 'who@admin.com',
+      });
+    });
+
+    it('does not count a successful redemption against the address', async () => {
+      const limiter = new RedisRateLimiter(redis.client);
+      const { svc } = makeAcceptService(makeUserCommands(), limiter);
+      for (let i = 0; i < 4; i++) {
+        await expect(
+          svc.acceptInvitation({ token: randomUUID(), ...ACCEPT }, FROM_ATTACKER),
+        ).rejects.toBeInstanceOf(InvitationConflictError);
+      }
+      const { token } = await seedInvitation();
+      await svc.acceptInvitation({ token, ...ACCEPT }, FROM_ATTACKER);
+
+      await guessFiveTimes(svc);
+    });
+
+    it('fails closed when the throttle store is unreachable', async () => {
+      const { token } = await seedInvitation();
+      const unreachable = mock<RateLimiterAdapter<RateLimitKey>>({
+        consume: vi.fn(async (_key, opts) => ({
+          allowed: opts.onUnavailable === 'allow',
+          retryAfterMs: 0,
+          unavailable: true,
+        })),
+        reset: vi.fn(async () => undefined),
+      });
+      const { svc, userCommands } = makeAcceptService(makeUserCommands(), unreachable);
+
+      await expect(svc.acceptInvitation({ token, ...ACCEPT }, FROM_ATTACKER)).rejects.toMatchObject(
+        { code: 'TOO_MANY_REQUESTS' },
+      );
+      expect(userCommands.createAdmin).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -812,6 +902,13 @@ describe('IamService.inviteAdmin', () => {
     const rows = await db.drizzle.db.select().from(adminInvitation);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ email: 'new@admin.com', status: 'pending' });
+    expect(result).not.toHaveProperty('token');
+    expect(result).not.toHaveProperty('tokenHash');
+    const mail = vi.mocked(mailDispatch.toAddress).mock.calls[0]?.[0];
+    const mailedToken = mail?.template.key === 'adminInvitation' ? mail.template.data.token : '';
+    expect(mailedToken).not.toBe('');
+    expect(rows[0]?.tokenHash).toBe(hashInvitationToken(mailedToken));
+    expect(rows[0]?.tokenHash).not.toBe(mailedToken);
     expect(events.emit).toHaveBeenCalledWith(
       'iam.invitation.created',
       expect.objectContaining({
@@ -851,7 +948,7 @@ describe('IamService paginated lists', () => {
     await db.drizzle.db.insert(adminInvitation).values({
       email: 'a@b.com',
       roleId: role.id,
-      token: randomUUID(),
+      tokenHash: hashInvitationToken(randomUUID()),
       status: 'pending',
       expiresAt: new Date(Date.now() + 60_000),
     });
@@ -860,6 +957,30 @@ describe('IamService paginated lists', () => {
     expect(result.total).toBe(1);
     expect(result.items).toHaveLength(1);
     expect(findOneOrThrow(result.items, new Error('expected an item')).email).toBe('a@b.com');
+  });
+
+  it('listInvitations exposes no token or token hash, for any role invited', async () => {
+    const superRole = await seedRole({ name: 'Root', isSuperAdmin: true });
+    const scoped = await seedRole();
+    for (const roleId of [superRole.id, scoped.id]) {
+      await db.drizzle.db.insert(adminInvitation).values({
+        email: `${roleId}@b.com`,
+        roleId,
+        tokenHash: hashInvitationToken(randomUUID()),
+        status: 'pending',
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+    }
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
+
+    const { items } = await svc.listInvitations({ page: 1, limit: 20 });
+
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(Object.keys(item).sort()).toEqual(
+        ['acceptedAt', 'createdAt', 'email', 'expiresAt', 'id', 'roleId', 'status'].sort(),
+      );
+    }
   });
 
   it('listAssignments returns the paginated wrapper with joined role fields', async () => {

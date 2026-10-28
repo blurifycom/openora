@@ -22,6 +22,27 @@
       "when": 1791365938800,
       "tag": "0002_aspiring_red_ghost",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793104016102,
+      "tag": "0003_add_invitation_token_hash",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793104019216,
+      "tag": "0004_backfill_invitation_token_hash",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793104034775,
+      "tag": "0005_drop_invitation_plaintext_token",
+      "breakpoints": true
     }
   ]
 }

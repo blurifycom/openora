@@ -74,8 +74,13 @@ function realService(over: { directory?: Partial<AdminUserDirectory> } = {}) {
 const guardWhereOnlySuperAdminClearsAdmin = (isSuper: boolean) =>
   makeAdminGuard({
     deny: isSuper ? [] : ['admin'],
+    superAdmin: isSuper,
     caller: { userId: 'caller-1', role: isSuper ? 'admin' : 'support' },
   });
+
+// The seeded `admin` role in miniature: full player rights, not a super-admin.
+const playerEditorGuard = () =>
+  makeAdminGuard({ superAdmin: false, caller: { userId: 'caller-1', role: 'admin' } });
 
 const transactionDenyingGuard = () =>
   makeAdminGuard({ deny: ['transaction'], caller: { userId: 'caller-1', role: 'support' } });
@@ -142,6 +147,75 @@ describe('backoffice router updateUser authz', () => {
 
     expect(result.isActive).toBe(false);
     expect(writer.record).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['disable', false],
+    ['re-enable', true],
+  ])(
+    'refuses a player editor who tries to %s a staff account and leaves it untouched',
+    async (_verb, isActive) => {
+      const { service, users, stored } = realService();
+      stored.row = userRow({ role: 'admin', isActive: !isActive });
+      const writer = audit();
+      const router = createBackofficeRouter(service, playerEditorGuard(), writer);
+
+      await expect(
+        call(router.updateUser, { userId: USER_ID, isActive }, { context: CTX }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(users.update).not.toHaveBeenCalled();
+      expect(writer.record).not.toHaveBeenCalled();
+    },
+  );
+
+  it('lets a player editor disable a player', async () => {
+    const { service } = realService();
+    const router = createBackofficeRouter(service, playerEditorGuard(), audit());
+
+    const result = await call(
+      router.updateUser,
+      { userId: USER_ID, isActive: false },
+      { context: CTX },
+    );
+
+    expect(result.isActive).toBe(false);
+  });
+
+  it('lets a super-admin disable and re-enable a staff account, auditing each change', async () => {
+    const { service, stored } = realService();
+    stored.row = userRow({ role: 'admin' });
+    const writer = audit();
+    const router = createBackofficeRouter(
+      service,
+      guardWhereOnlySuperAdminClearsAdmin(true),
+      writer,
+    );
+
+    await call(router.updateUser, { userId: USER_ID, isActive: false }, { context: CTX });
+    const result = await call(
+      router.updateUser,
+      { userId: USER_ID, isActive: true },
+      { context: CTX },
+    );
+
+    expect(result.isActive).toBe(true);
+    expect(writer.record).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        actorId: 'caller-1',
+        action: 'admin.user.updated',
+        resourceId: USER_ID,
+        before: { isActive: true, role: 'admin' },
+        after: { isActive: false, role: 'admin' },
+      }),
+    );
+    expect(writer.record).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        before: { isActive: false, role: 'admin' },
+        after: { isActive: true, role: 'admin' },
+      }),
+    );
   });
 
   it('maps an unknown user to NOT_FOUND rather than a raw throw', async () => {

@@ -15,6 +15,7 @@ import {
   cached,
   invalidate,
   createLogger,
+  assertRateLimit,
   type DrizzleTx,
   type ResourceName,
   type PermissionLevel,
@@ -52,6 +53,7 @@ import type {
   IamInvitationSortBy,
 } from '../contract/index.js';
 import { loadAdminGrants, usersWithoutMcpAccess } from '../shared/admin-grants.js';
+import { generateInvitationToken, hashInvitationToken } from '../shared/invitation-token.js';
 import type { McpTokenService } from './mcp-token.service.js';
 
 const logger = createLogger('iam-service');
@@ -157,9 +159,20 @@ function toAssignmentDto(row: typeof adminRoleAssignment.$inferSelect) {
   return serializeRow(row, { dateFields: ['createdAt'] });
 }
 
-function toInvitationDto(row: typeof adminInvitation.$inferSelect) {
+// The token hash never leaves the service: the only copy of a redeemable link is the
+// invitee's mail, so no list or create response can hand one to another staff member.
+function toInvitationDto({ tokenHash: _tokenHash, ...row }: typeof adminInvitation.$inferSelect) {
   return serializeRow(row, { dateFields: ['expiresAt', 'acceptedAt', 'createdAt'] });
 }
+
+// Every redemption attempt from one client address spends this budget; a successful one
+// refunds it, so in effect it counts wrong attempts. Fails closed: an unthrottled window is
+// worse than a 429 on a route that turns a guessed token into an admin account.
+const ACCEPT_INVITATION_RATE_LIMIT = {
+  limit: 5,
+  windowMs: 60 * 60 * 1000,
+  onUnavailable: 'deny',
+} as const;
 
 // Short TTL: grants are cached only to spare the DB on the per-request guard path,
 // so a stale entry means a revoked admin keeps access for at most this window. The
@@ -804,7 +817,7 @@ export class IamService {
       new RoleNotFoundError(input.roleId),
     );
 
-    const token = crypto.randomUUID();
+    const token = generateInvitationToken();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     const row = findOneOrThrow(
@@ -813,7 +826,7 @@ export class IamService {
         .values({
           email: input.email,
           roleId: input.roleId,
-          token,
+          tokenHash: hashInvitationToken(token),
           status: 'pending',
           expiresAt,
         })
@@ -847,12 +860,20 @@ export class IamService {
    * Redeems a pending invitation: creates the invitee's back-office account with the password
    * they chose and assigns the invited role, all in one transaction. A spent, expired or unknown
    * token throws `InvitationConflictError`; an email that already has an account rolls back
-   * with a `CONFLICT` whose `data.reason` is `email_taken`.
+   * with a `CONFLICT` whose `data.reason` is `email_taken`. Attempts are throttled per client
+   * address (`ACCEPT_INVITATION_RATE_LIMIT`), refunded on success; a missing address shares one
+   * `unknown` bucket so omitting it cannot switch the throttle off.
    */
   async acceptInvitation(
     input: { token: string; name: string; password: string },
     meta?: ClientMeta,
   ): Promise<{ success: true; email: string }> {
+    const rateLimitKey = makeRateLimitKey(
+      RATE_LIMIT_KEYS.ADMIN_INVITATION_ACCEPT_IP,
+      meta?.ip ?? 'unknown',
+    );
+    await assertRateLimit(this.rateLimiter, rateLimitKey, ACCEPT_INVITATION_RATE_LIMIT);
+
     // Atomic conditional UPDATE: the DB evaluates pending + not-expired under row lock,
     // so two concurrent accepts cannot both succeed. Public path - tenant is derived
     // from the row, not the request, so no tenant predicate is needed.
@@ -864,7 +885,7 @@ export class IamService {
           .set({ status: 'accepted', acceptedAt: now })
           .where(
             and(
-              eq(adminInvitation.token, input.token),
+              eq(adminInvitation.tokenHash, hashInvitationToken(input.token)),
               eq(adminInvitation.status, 'pending'),
               gt(adminInvitation.expiresAt, now),
             ),
@@ -879,6 +900,7 @@ export class IamService {
       await tx.insert(adminRoleAssignment).values({ userId, roleId: row.roleId });
       return { row, userId };
     });
+    await this.rateLimiter?.reset(rateLimitKey);
 
     this.events.emit('iam.invitation.accepted', {
       email: row.email,
