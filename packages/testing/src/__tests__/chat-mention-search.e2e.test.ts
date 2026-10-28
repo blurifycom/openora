@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+import { DRIZZLE } from '@openora/core/server';
+import { user } from '@openora/core/pam/schema/identity';
 import { GLOBAL_CHAT_ROOM_ID, MESSAGE_BROKER } from '@openora/core/contracts';
 import { MentionResultSchema } from '@openora/core/engagement/contracts/chat-commands';
 import { ChatMessageSchema, ChatRoomSchema } from '@openora/core/engagement/contracts/chat';
@@ -272,5 +275,74 @@ describe('mention notification', () => {
     expect(await waitForMentions(target, 1)).toEqual([
       expect.objectContaining({ params: null, data: { messageId } }),
     ]);
+  });
+
+  it('names the author, not the other target, on each row of a two-target message', async () => {
+    const author = await registerPlayer('tauthor');
+    const first = await registerPlayer('tfirst');
+    const second = await registerPlayer('tsecond');
+
+    await postGlobal(author, `@${first.username} @${second.username}`);
+
+    for (const target of [first, second]) {
+      expect((await waitForMentions(target, 1))[0]?.params).toEqual({
+        byUsername: author.username,
+      });
+    }
+  });
+
+  it('ignores an author username sent in the request body and names the stored one', async () => {
+    const author = await registerPlayer('fauthor');
+    const target = await registerPlayer('ftarget');
+    const room = await publicRoomWith(author, target);
+
+    const sent = await author.client.post(`/chat/rooms/${room.id}/messages`, {
+      content: `@${target.username}`,
+      username: 'spoofed_name',
+      byUsername: 'spoofed_name',
+    });
+    expect(sent.status).toBe(200);
+
+    expect((await waitForMentions(target, 1))[0]?.params).toEqual({
+      byUsername: author.username,
+    });
+  });
+
+  it('names the stored username verbatim when it holds unusual characters', async () => {
+    const author = await registerPlayer('uauthor');
+    const target = await registerPlayer('utarget');
+    const odd = `Zoë "O'Neil" <b>&%;--\u{1F600}`;
+    await app.container
+      .get(DRIZZLE)
+      .db.update(user)
+      .set({ username: odd })
+      .where(eq(user.id, author.userId));
+
+    await postGlobal(author, `@${target.username}`);
+
+    expect((await waitForMentions(target, 1))[0]?.params).toEqual({ byUsername: odd });
+  });
+
+  it('creates no row for a player outside the private room the mention was sent in', async () => {
+    const author = await registerPlayer('nauthor');
+    const member = await registerPlayer('nmember');
+    const outsider = await registerPlayer('noutsider');
+    const created = await author.client.post('/chat/rooms/private', {
+      name: `private-${randomUUID()}`,
+    });
+    expect(created.status).toBe(200);
+    const room = ChatRoomSchema.parse(await created.json());
+    const joined = await member.client.post('/chat/rooms/join', { joinCode: room.joinCode });
+    expect(joined.status).toBe(200);
+
+    const sent = await author.client.post(`/chat/rooms/${room.id}/messages`, {
+      content: `@${outsider.username} @${member.username}`,
+    });
+    expect(sent.status).toBe(200);
+
+    expect((await waitForMentions(member, 1))[0]?.params).toEqual({
+      byUsername: author.username,
+    });
+    expect(await mentionRows(outsider)).toEqual([]);
   });
 });
