@@ -6,6 +6,7 @@
  */
 import type { BonusGrantSource } from '../schemas/promo.js';
 import { createToken, type Token } from './token.js';
+import type { WagerProduct } from './wager-context.js';
 
 /**
  * The terms a grant is created under. The grant row stores a snapshot of them, with the weight
@@ -36,6 +37,11 @@ export type BonusGrantTerms = {
    * never priced.
    */
   maxWinMultiplier?: string | null;
+  /**
+   * Products bonus funds cannot pay for while this grant is active. Absent or empty allows every
+   * product. A stake on an excluded product is paid from real funds only.
+   */
+  excludedProducts?: WagerProduct[];
 };
 
 /**

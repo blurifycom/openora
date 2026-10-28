@@ -47,7 +47,7 @@ export type {
 export { WALLET_COMMANDS } from './wallet-commands.js';
 
 export type { WagerContext, WagerProduct } from './wager-context.js';
-export { WAGER_PRODUCTS, isWagerProduct } from './wager-context.js';
+export { WAGER_PRODUCTS, WagerProductSchema, isWagerProduct } from './wager-context.js';
 
 export type {
   BonusGrantCommands,

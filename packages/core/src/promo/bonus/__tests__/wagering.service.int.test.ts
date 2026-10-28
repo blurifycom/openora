@@ -108,8 +108,10 @@ describe('wager() with no attributed bonus grant', () => {
   });
 });
 
-describe('wager() on a product bonus funds cannot pay for', () => {
-  const grantFor = async (userId: string) => {
+describe('wager() on a product the grant excludes from bonus funds', () => {
+  const EXCLUDED = ['pvp', 'live-casino', 'sportsbook'] as const satisfies WagerProduct[];
+
+  const grantFor = async (userId: string, excludedProducts?: WagerProduct[]) => {
     const profileId = findOneOrThrow(
       await db.drizzle.db
         .insert(promoWeightProfile)
@@ -131,7 +133,12 @@ describe('wager() on a product bonus funds cannot pay for', () => {
         source: 'deposit',
         sourceRef: randomUUID(),
         actor: { type: 'system' },
-        terms: { wageringMultiplier: '5', expiryDays: 30, weightProfileId: profileId },
+        terms: {
+          wageringMultiplier: '5',
+          expiryDays: 30,
+          weightProfileId: profileId,
+          ...(excludedProducts ? { excludedProducts } : {}),
+        },
       }),
     );
     if (!outcome.ok) {
@@ -165,11 +172,11 @@ describe('wager() on a product bonus funds cannot pay for', () => {
   const stakesOf = (grantId: string) =>
     db.drizzle.db.select().from(promoGrantEntry).where(eq(promoGrantEntry.grantId, grantId));
 
-  it.each(['pvp', 'live-casino', 'sportsbook'] as const)(
+  it.each(EXCLUDED)(
     'refuses a %s bet that needs bonus funds and leaves the grant untouched',
     async (product) => {
       const userId = randomUUID();
-      const grantId = await grantFor(userId);
+      const grantId = await grantFor(userId, [...EXCLUDED]);
 
       const outcome = await bet(userId, product, '10');
 
@@ -181,7 +188,7 @@ describe('wager() on a product bonus funds cannot pay for', () => {
 
   it('accepts a pvp bet the real balance pays in full while a bonus is active', async () => {
     const userId = randomUUID();
-    const grantId = await grantFor(userId);
+    const grantId = await grantFor(userId, [...EXCLUDED]);
 
     const outcome = await bet(userId, 'pvp', '0');
 
@@ -191,9 +198,19 @@ describe('wager() on a product bonus funds cannot pay for', () => {
 
   it('still pays a casino bet from bonus funds', async () => {
     const userId = randomUUID();
-    const grantId = await grantFor(userId);
+    const grantId = await grantFor(userId, [...EXCLUDED]);
 
     const outcome = await bet(userId, 'casino', '10');
+
+    expect(outcome).toMatchObject({ ok: true, grantId, bonusSpent: '10' });
+    expect(Number(await bonusBalanceOf(grantId))).toBe(90);
+  });
+
+  it('pays a live-casino bet from bonus funds when the grant excludes no product', async () => {
+    const userId = randomUUID();
+    const grantId = await grantFor(userId);
+
+    const outcome = await bet(userId, 'live-casino', '10');
 
     expect(outcome).toMatchObject({ ok: true, grantId, bonusSpent: '10' });
     expect(Number(await bonusBalanceOf(grantId))).toBe(90);

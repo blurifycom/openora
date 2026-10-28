@@ -6,7 +6,6 @@ import {
   type BonusWagerOutcome,
   type BonusWageringCommands,
   type Uuid,
-  type WagerProduct,
   type WagerTrackingCommands,
 } from '@openora/core/contracts';
 import {
@@ -27,12 +26,6 @@ import {
 import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
 
 const ZERO = '0';
-
-const BONUS_EXCLUDED_PRODUCTS: ReadonlySet<WagerProduct> = new Set([
-  'pvp',
-  'live-casino',
-  'sportsbook',
-]);
 
 /**
  * What a completing grant is allowed to turn into real money. Absent multiplier means uncapped;
@@ -108,7 +101,7 @@ export class WageringService implements BonusWageringCommands {
 
     if (
       moneyCompare(args.fromBonus, ZERO) > 0 &&
-      BONUS_EXCLUDED_PRODUCTS.has(args.context.product)
+      grant.terms.excludedProducts?.includes(args.context.product) === true
     ) {
       return { ok: false, reason: 'insufficient_bonus', bonusAvailable: ZERO };
     }
