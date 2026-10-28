@@ -18,8 +18,11 @@ import {
   CONTRIBUTION_PERCENT_SCALE,
   MONEY_PRECISION,
   MONEY_SCALE,
+  type RakebackBasis,
 } from '@openora/core/contracts';
 import type {
+  RakebackAccrualStatus,
+  RakebackClaimOutcome,
   RaceEligibleProducts,
   RacePositions,
   RankConfig,
@@ -98,6 +101,7 @@ export const promoPlayerRank = pgTable(
       scale: CONTRIBUTION_PERCENT_SCALE,
     }),
     rakebackBoostExpiresAt: timestamp({ withTimezone: true }),
+    lastClaimableNotifiedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -614,3 +618,84 @@ export const promoRankChallengeClaim = pgTable(
 );
 
 export type PromoRankChallengeClaim = typeof promoRankChallengeClaim.$inferSelect;
+
+const percent = () =>
+  decimal({ precision: CONTRIBUTION_PERCENT_PRECISION, scale: CONTRIBUTION_PERCENT_SCALE });
+
+/**
+ * One bet's rakeback under the claim payout, in the bet's own currency. Nothing reaches the
+ * balance until a claim flips the row to `claimed`. The rate, boost and rtp it was priced at are
+ * kept so the amount can be reproduced after the ladder changes.
+ */
+export const promoRakebackAccrual = pgTable(
+  'promo_rakeback_accrual',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    currency: text().notNull(),
+    amount: money().notNull(),
+    stake: money().notNull(),
+    rolledBackStake: money().notNull().default('0'),
+    basis: text().$type<RakebackBasis>().notNull(),
+    rtp: decimal({ precision: 19, scale: 18 }),
+    ratePercent: percent().notNull(),
+    boostPercent: percent().notNull(),
+    gameId: text(),
+    providerGameKey: text(),
+    providerName: text(),
+    externalRoundId: text(),
+    status: text().$type<RakebackAccrualStatus>().notNull().default('accrued'),
+    claimId: uuid().references(() => promoRakebackClaim.id),
+    voidedBy: uuid(),
+    voidReason: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    settledAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    index('promo_rakeback_accrual_user_id_status_idx').on(t.userId, t.status),
+    index('promo_rakeback_accrual_round_idx').on(
+      t.userId,
+      t.providerName,
+      t.currency,
+      t.externalRoundId,
+    ),
+    index('promo_rakeback_accrual_claim_id_idx').on(t.claimId),
+    index('promo_rakeback_accrual_unclaimed_idx')
+      .on(t.currency, t.userId)
+      .where(sql`${t.status} = 'accrued'`),
+    index('promo_rakeback_accrual_created_at_idx').on(t.createdAt, t.id),
+    check(
+      'promo_rakeback_accrual_bounds',
+      sql`${t.amount} > 0 AND ${t.stake} >= 0 AND ${t.rolledBackStake} >= 0 AND ${t.rolledBackStake} <= ${t.stake} AND (${t.rtp} is null OR (${t.rtp} >= 0 AND ${t.rtp} <= 1))`,
+    ),
+    check(
+      'promo_rakeback_accrual_status',
+      sql`${t.status} in ('accrued', 'claimed', 'reversed', 'voided')
+        AND (${t.status} = 'claimed') = (${t.claimId} is not null)
+        AND (${t.status} = 'voided') = (${t.voidReason} is not null)`,
+    ),
+  ],
+);
+
+export type PromoRakebackAccrual = typeof promoRakebackAccrual.$inferSelect;
+
+/**
+ * One payout of a player's accrued rakeback. `(userId, idempotencyKey)` makes a retried claim
+ * return the first one's result instead of paying again.
+ */
+export const promoRakebackClaim = pgTable(
+  'promo_rakeback_claim',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    idempotencyKey: text().notNull(),
+    outcome: text().$type<RakebackClaimOutcome>().notNull(),
+    settledAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('promo_rakeback_claim_user_id_idempotency_key_idx').on(t.userId, t.idempotencyKey),
+    check('promo_rakeback_claim_outcome', sql`${t.outcome} in ('claimed', 'auto_paid')`),
+  ],
+);
+
+export type PromoRakebackClaim = typeof promoRakebackClaim.$inferSelect;

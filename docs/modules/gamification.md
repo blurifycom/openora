@@ -147,9 +147,32 @@ The bonus module's own grant path does not check this. It is checked here, befor
 - **A missing exchange rate.** Wagering in that currency is not counted, and a payout that needs
   the rate is retried rather than approximated.
 
-## Not built yet
+## Rakeback
 
-- **Rakeback.** The percentage is on every rank and an operator can already set it, but nothing
-  accrues or pays it. It is a share of the house edge - the stake times the game's margin times
-  the rank's percentage - so it needs the game's RTP on the bet, and the bonus-funded part of the
-  stake to exclude it. Both arrive from the wagering engine's side of the seam.
+Every rank carries a rakeback percentage, paid on a qualifying bet's own-money stake: the part a
+bonus grant funded never earns real money. Two platform-config switches under `promo.rakeback`
+shape it, and both default to the original behaviour.
+
+- **`basis`**. `stake` pays the percentage of the stake. `margin` pays it of the house edge, the
+  stake times `1 - rtp`, where `rtp` is the fraction the game provider's adapter reports on the
+  bet's `WagerContext`. A bet with no rtp, or one outside `[0, 1]`, pays nothing rather than a
+  guess.
+- **`payout`**. `instant` credits it in the bet's own currency, in the bet's own transaction.
+  `claim` writes each bet's rakeback to `promo_rakeback_accrual` and moves no money until the
+  player claims it, with `claimMinimum` in the wallet reference currency.
+
+A claim pays every unclaimed row in one transaction, one `cashback` credit per currency. The
+`(userId, idempotencyKey)` claim row makes a retry replay the first result, and a second claim
+racing the first finds its rows already taken and rolls back. A rollback of the round reduces or
+reverses rows that are still unclaimed. A claimed or voided row keeps the stake and amount it was
+priced on, because paid rakeback is corrected only by a manual adjustment, and absorbs its share
+into `rolledBackStake` so a later rollback does not absorb the same share again. A claim and an
+automatic payout are audited, and each credit's balance event is written in the claim's
+transaction.
+
+A claim is refused while a responsible-gambling block is active or the account is suspended or
+closed. A player who self-excludes or closes the account is paid what is left automatically,
+even below the minimum, with a daily sweep catching a missed event. A cooling-off keeps the
+rakeback for when it ends. An hourly job reminds a player at most once a day, and only when a claim
+would succeed. An admin can void an unclaimed row with a reason. The void is audited. See
+[ADR-0046](../adr/0046-claimable-rakeback-on-the-house-edge.md).

@@ -772,6 +772,13 @@ export const domainEventSchemas = {
     // Absent when the milestone's reward is not a bonus grant.
     grantId: UuidSchema.nullable(),
   }),
+  // Unclaimed rakeback has reached the claim minimum; `amount` is its total in `currency`, the
+  // operator's reference currency. Emitted at most once a day per player.
+  'promo.rakeback.claimable': z.object({
+    userId: UuidSchema,
+    amount: MoneyAmountSchema,
+    currency: CurrencyTickerSchema,
+  }),
   'promo.rank.changed': z.object({
     userId: UuidSchema,
     tierId: UuidSchema,

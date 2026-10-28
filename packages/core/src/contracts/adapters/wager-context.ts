@@ -36,4 +36,9 @@ export type WagerContext = {
   gameId?: string;
   /** Lobby category, once the catalogue can resolve `providerGameKey`. */
   categorySlug?: string;
+  /**
+   * Return to player of the game variant actually played, as a decimal fraction (`'0.96'`).
+   * Margin-basis rakeback pays nothing when it is absent or outside [0, 1].
+   */
+  rtp?: string;
 };

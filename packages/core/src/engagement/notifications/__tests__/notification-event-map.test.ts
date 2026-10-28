@@ -616,6 +616,23 @@ describe('notificationEventMap', () => {
     });
   });
 
+  it('tells the player how much rakeback is waiting to be claimed', () => {
+    const userId = randomUUID();
+
+    const input = entryFor('promo.rakeback.claimable').buildNotification({
+      userId,
+      amount: '12.5',
+      currency: 'USDT',
+    });
+
+    expect(input).toEqual({
+      userId,
+      type: 'rakeback.claimable',
+      params: { amount: '12.5', currency: 'USDT' },
+      data: null,
+    });
+  });
+
   describe('promo.rank.changed', () => {
     const rankChanged = (bonuses: {
       dailyBonus: string | null;
@@ -788,6 +805,7 @@ describe('notificationEventMap', () => {
         monthlyBonus: '20',
       },
       'promo.streak.milestone.reached': { userId: id(), day: 7, grantId: null },
+      'promo.rakeback.claimable': { userId: id(), amount: '12.5', currency: 'USDT' },
       'chat.user.mentioned': {
         mentionedUserId: id(),
         byUserId: id(),
