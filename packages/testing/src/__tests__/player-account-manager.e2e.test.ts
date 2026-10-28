@@ -363,18 +363,24 @@ describe('GET /players/account-managers', () => {
   it('orders same-named candidates by user id', async () => {
     const token = randomUUID().slice(0, 8);
     const name = `${token} namesake`;
+    // Email and insertion order both run against id order, so neither can pass for it.
+    const ids = Array.from({ length: 4 }, () => randomUUID()).sort();
+    const staff = ids.map((userId, i) => ({
+      userId,
+      email: `${token}-${ids.length - i}@namesake.e2e.test`,
+    }));
     // Inserted, not newStaff: each newStaff logs in, and this suite sits at the per-IP login cap.
-    const staff = await drizzle()
+    await drizzle()
       .insert(user)
       .values(
-        Array.from({ length: 4 }, (_, i) => ({
+        [...staff].reverse().map(({ userId, email }, i) => ({
+          id: userId,
           name,
           username: `n${token}${i}`,
-          email: `${token}-${i}@namesake.e2e.test`,
+          email,
           role: 'admin',
         })),
-      )
-      .returning({ userId: user.id, email: user.email });
+      );
     for (const { userId } of staff) {
       await assignIamRoleByKey(testApp.container, userId, 'vip-manager');
     }
@@ -382,9 +388,7 @@ describe('GET /players/account-managers', () => {
     const res = await admin.get(`/players/account-managers?search=${encodeURIComponent(name)}`);
     expect(res.status).toBe(200);
     const listed = (await res.json()) as { userId: string; email: string }[];
-    expect(listed.map(({ userId, email }) => ({ userId, email }))).toEqual(
-      staff.sort((x, y) => (x.userId < y.userId ? -1 : 1)),
-    );
+    expect(listed.map(({ userId, email }) => ({ userId, email }))).toEqual(staff);
   });
 });
 
