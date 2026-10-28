@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { player } from '@openora/core/pam/schema/profile';
+import { user } from '@openora/core/pam/schema/identity';
 import {
   asAdmin,
   assignIamRoleByKey,
@@ -132,6 +133,17 @@ describe('GET /players/account-managers/assigned', () => {
     expect(mine.map(({ userId, email }) => ({ userId, email }))).toEqual(
       ordered.map(({ userId, email }) => ({ userId, email })),
     );
+  });
+
+  it('leaves out an assigned manager whose user is now a player', async () => {
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    await setManager(p.playerId, manager.userId);
+    expect(await assignedIds()).toContain(manager.userId);
+
+    await drizzle().update(user).set({ role: 'player' }).where(eq(user.id, manager.userId));
+
+    expect(await assignedIds()).not.toContain(manager.userId);
   });
 
   it('lists a manager of several players once', async () => {

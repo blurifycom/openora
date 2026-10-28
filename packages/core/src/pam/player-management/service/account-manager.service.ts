@@ -147,7 +147,8 @@ export class AccountManagerService implements PlayerAccountManagerReader {
 
   /**
    * Every staff account managing at least one player of any status, deactivated ones included,
-   * ordered by name then id. A manager id with no user row is left out.
+   * ordered by name then id. A manager id with no user row, or whose user is now a player, is
+   * left out.
    */
   async assigned(): Promise<AssignedAccountManager[]> {
     // ponytail: unpaged, bounded by staff headcount; add an optional search/limit (non-breaking)
@@ -157,12 +158,15 @@ export class AccountManagerService implements PlayerAccountManagerReader {
       .select({ ...MANAGER_COLUMNS, email: user.email })
       .from(user)
       .where(
-        inArray(
-          user.id,
-          db
-            .select({ id: player.accountManagerId })
-            .from(player)
-            .where(isNotNull(player.accountManagerId)),
+        and(
+          sql`${user.role} <> 'player'`,
+          inArray(
+            user.id,
+            db
+              .select({ id: player.accountManagerId })
+              .from(player)
+              .where(isNotNull(player.accountManagerId)),
+          ),
         ),
       )
       .orderBy(asc(user.name), asc(user.id));
