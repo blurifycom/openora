@@ -8,6 +8,7 @@ import { auditLog } from '@openora/core/audit/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import {
   asAdmin,
+  assignIamRoleByKey,
   bootE2e,
   closeE2e,
   deactivateUser,
@@ -358,6 +359,33 @@ describe('GET /players/account-managers', () => {
       400,
     );
   });
+
+  it('orders same-named candidates by user id', async () => {
+    const token = randomUUID().slice(0, 8);
+    const name = `${token} namesake`;
+    // Inserted, not newStaff: each newStaff logs in, and this suite sits at the per-IP login cap.
+    const staff = await drizzle()
+      .insert(user)
+      .values(
+        Array.from({ length: 4 }, (_, i) => ({
+          name,
+          username: `n${token}${i}`,
+          email: `${token}-${i}@namesake.e2e.test`,
+          role: 'admin',
+        })),
+      )
+      .returning({ userId: user.id, email: user.email });
+    for (const { userId } of staff) {
+      await assignIamRoleByKey(testApp.container, userId, 'vip-manager');
+    }
+
+    const res = await admin.get(`/players/account-managers?search=${encodeURIComponent(name)}`);
+    expect(res.status).toBe(200);
+    const listed = (await res.json()) as { userId: string; email: string }[];
+    expect(listed.map(({ userId, email }) => ({ userId, email }))).toEqual(
+      staff.sort((x, y) => (x.userId < y.userId ? -1 : 1)),
+    );
+  });
 });
 
 describe('PLAYER_ACCOUNT_MANAGER_READER', () => {
@@ -697,11 +725,6 @@ describe('account manager precedence and exposure', () => {
   it('never carries the manager email in a player-record response that shows the manager', async () => {
     const p = await newPlayer(testApp, EMAIL_PREFIX);
     const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
-    const [{ email } = { email: '' }] = await drizzle()
-      .select({ email: user.email })
-      .from(user)
-      .where(eq(user.id, manager.userId));
-    expect(email).toContain('@');
 
     const responses = [
       await setManager(admin, p.playerId, manager.userId),
@@ -712,7 +735,7 @@ describe('account manager precedence and exposure', () => {
     for (const res of responses) {
       expect(res.status).toBe(200);
       const raw = await res.text();
-      expect(raw).not.toContain(email);
+      expect(raw).not.toContain(manager.email);
     }
     expect(
       await testApp.container.get(PLAYER_ACCOUNT_MANAGER_READER).getByPlayerUserId(p.userId),
