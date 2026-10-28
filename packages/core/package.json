@@ -728,6 +728,26 @@
       "types": "./dist/promo/gamification/seed/index.d.ts",
       "import": "./dist/promo/gamification/seed/index.js",
       "default": "./dist/promo/gamification/seed/index.js"
+    },
+    "./engagement/contracts/support-chat": {
+      "types": "./dist/engagement/support-chat/contract/index.d.ts",
+      "import": "./dist/engagement/support-chat/contract/index.js",
+      "default": "./dist/engagement/support-chat/contract/index.js"
+    },
+    "./engagement/schema/support-chat": {
+      "types": "./dist/engagement/support-chat/schema/index.d.ts",
+      "import": "./dist/engagement/support-chat/schema/index.js",
+      "default": "./dist/engagement/support-chat/schema/index.js"
+    },
+    "./engagement/plugins/support-chat": {
+      "types": "./dist/engagement/support-chat/plugin.d.ts",
+      "import": "./dist/engagement/support-chat/plugin.js",
+      "default": "./dist/engagement/support-chat/plugin.js"
+    },
+    "./engagement/migrate/support-chat": {
+      "types": "./dist/engagement/support-chat/migrate.d.ts",
+      "import": "./dist/engagement/support-chat/migrate.js",
+      "default": "./dist/engagement/support-chat/migrate.js"
     }
   },
   "publishConfig": {
@@ -740,6 +760,7 @@
     "clean": "rm -rf dist",
     "test:unit": "vitest run --passWithNoTests",
     "test:integration": "vitest run --config vitest.integration.config.ts --passWithNoTests",
+    "test:mutation": "OPENORA_TEST_POOL_SIZE=2 stryker run",
     "gen:drizzle": "node scripts/generate-all.mjs"
   },
   "dependencies": {
@@ -767,6 +788,9 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/typescript-checker": "10.1.1",
+    "@stryker-mutator/vitest-runner": "10.1.1",
     "@tanstack/react-query": "5.104.4",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",
@@ -782,7 +806,7 @@
     "vitest": "4.1.12"
   },
   "peerDependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@tanstack/react-query": ">=5",
     "react": ">=19.2.7",
     "react-dom": ">=19.2.7"

@@ -378,13 +378,18 @@ describe('ExchangeRateReaderService.getRate - single-flight', () => {
 
     await reader.getRate('EUR', 'USD');
     await wait(80);
+    const secondFetchAt = Date.now();
     await reader.getRate('EUR', 'USD');
 
     expect(fiatProvider.getRate).toHaveBeenCalledTimes(2);
 
-    // The quote is persisted in the background; let it land before the next test truncates.
+    // Both fetches persist in the background with the same rate, so wait for the second one's
+    // stamp: the first write alone would pass, and the second would land after the next test's
+    // truncate.
     await vi.waitFor(async () =>
-      expect((await getRow('EUR', 'USD'))?.rate).toBe('1.200000000000000000'),
+      expect((await getRow('EUR', 'USD'))?.providerAsOf.getTime()).toBeGreaterThanOrEqual(
+        secondFetchAt,
+      ),
     );
   });
 });

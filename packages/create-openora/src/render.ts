@@ -126,10 +126,10 @@ export function emitTree(srcRoot: string, vars: Record<string, string>, targetDi
 // Operator coordinates the agent files reference. A fresh scaffold gets placeholders;
 // the consumer fills them in once in .rulesync/sync.json and `pnpm sync:agents`
 // re-renders every template-owned file from them.
-export function buildVars(name: string, coreVersion: string): Record<string, string> {
+export function buildVars(name: string, versions: Record<string, string>): Record<string, string> {
   return {
     name,
-    coreVersion,
+    ...versions,
     mcpCommand: MCP_COMMAND,
     mcpArgsJson: JSON.stringify(MCP_ARGS),
     scope: `@${name}`,

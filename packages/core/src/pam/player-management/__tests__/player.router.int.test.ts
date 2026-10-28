@@ -26,6 +26,7 @@ import {
 } from '../../../testing/mock.js';
 import { createPlayerRouter } from '../router/index.js';
 import { PlayerService } from '../service/player.service.js';
+import { AccountManagerService } from '../service/account-manager.service.js';
 
 const CTX = testContext();
 const CALLER = '44444444-4444-4444-8444-444444444444';
@@ -74,7 +75,17 @@ function build(
     }),
   );
   const audit = makeAuditWriter();
-  return { router: createPlayerRouter(service, adminGuard, audit), audit };
+  const events = makeEventBus();
+  const accountManagers = new AccountManagerService({
+    drizzle: db.drizzle,
+    events,
+    audit,
+    adminGuard,
+  });
+  return {
+    router: createPlayerRouter({ player: service, accountManagers, adminGuard, audit }),
+    audit,
+  };
 }
 
 async function seedPlayer() {

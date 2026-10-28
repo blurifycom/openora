@@ -17,6 +17,7 @@ export type DirectAuditAction =
   | 'admin.user.updated'
   | 'admin.player.updated'
   | 'admin.player.removed'
+  | 'admin.player.account_manager_changed'
   | 'admin.player_note.created'
   | 'audit.export'
   | 'mail.regulatory_delivery.sent'
@@ -88,7 +89,8 @@ export type DirectAuditAction =
   | 'wallet.withdrawal.held'
   | 'chat.cooldown.created'
   | 'chat.cooldown.lifted'
-  | 'chat.cooldown.expired';
+  | 'chat.cooldown.expired'
+  | 'support_chat.customer.linked';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain

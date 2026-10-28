@@ -35,8 +35,9 @@ A feature or fix PR carries its own tests (`docs/standards/testing.md`). Your de
 3. **Try to break it** (below).
 4. Evidence per the section below.
 5. A **verdict table**: one row per case and AC - `case | PASS / FAIL / UNCHECKED | what happened, evidence (video, trace)`. Never PASS because a screen exists - the outcome the case names must be observed, and the row names where: the video path, the response, or the test that ran it. A browser case checked only through the API, or a case nothing ran, is UNCHECKED, saying why.
-6. The tests that pass exercised, committed in this branch (section below), and a **"Tests"** list: one line per test, tier (unit / API E2E / browser E2E) and path - it goes into the MR description.
-7. Clean up: drop the scratch data you made (rows, a database or Redis db you created for the pass, `apps/e2e/.auth` files you regenerated) and stop what you started. Say what you could not remove.
+6. **Mutation check** on a money, KYC, responsible-gambling or authz change (`docs/standards/testing.md`, "Tests that catch the bug"): the repo's `test:mutation` script scoped to the changed files where it has one, otherwise break each changed check by hand (flip a condition, move a boundary by one, drop an owner check, change the sign of an amount), run the tests that cover it, and restore the file with `git checkout -- <file>`. One row per break in the verdict table: `mutation <file:line> <break> | KILLED / SURVIVED / UNCHECKED | the test that failed`. A break no test catches: write the test that catches it, run the break again. Still SURVIVED, or a break you could not run, stays in the table as such.
+7. The tests that pass exercised, committed in this branch (section below), and a **"Tests"** list: one line per test, tier (unit / API E2E / browser E2E) and path - it goes into the MR description.
+8. Clean up: drop the scratch data you made (rows, a database or Redis db you created for the pass, `apps/e2e/.auth` files you regenerated) and stop what you started. Say what you could not remove.
 
 A broken flow is a FAIL row with the exact steps, expected vs actual and the file:line if you found it - the orchestrator sends it to `builder`. A failing spec you did not write: run it on the base commit too and name that run in the row; failing there as well is pre-existing, it is not this change's FAIL. Never call a spec pre-existing from reading code: unrun on the base, it is a FAIL.
 
@@ -82,7 +83,7 @@ Severity: P0 blocks money/auth/game loop; P1 wrong business logic (wrong balance
 
 ## Rules
 
-- Never modify platform or overlay code - a test that fails on app code is a FAIL row, not a fix.
+- Never modify platform or overlay code - a test that fails on app code is a FAIL row, not a fix. The one exception is a mutation-check break, restored before you run anything else; `git status` shows no app file changed when you report.
 - Assert on user-visible outcomes, not component internals.
 - Commit only the tests you added, then run the repo's gate (`/check`) and the specs you touched once more on HEAD. Never push.
 - Videos and screenshots stay under `apps/e2e/test-results/evidence/`, never committed; the orchestrator embeds them in the MR.

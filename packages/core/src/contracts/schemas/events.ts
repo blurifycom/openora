@@ -1313,6 +1313,13 @@ export const domainEventSchemas = {
     previousStatus: PlayerStatusSchema,
     newStatus: PlayerStatusSchema,
   }),
+  'player.account_manager.changed': authContextBase.extend({
+    playerId: UuidSchema,
+    userId: UuidSchema,
+    previousAccountManagerId: UuidSchema.nullable(),
+    accountManagerId: UuidSchema.nullable(),
+    actorId: UuidSchema,
+  }),
 
   'social.friend_request.sent': authContextBase.extend({
     friendshipId: UuidSchema,
@@ -1344,6 +1351,10 @@ export const domainEventSchemas = {
     requesterId: UuidSchema,
     addresseeId: UuidSchema,
   }),
+
+  // A player opened the support chat for the first time and is now linked to a vendor
+  // customer. Written with the link, so the first support-context sync survives a queue outage.
+  'support_chat.customer.linked': z.object({ userId: UuidSchema, playerId: UuidSchema }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;

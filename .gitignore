@@ -57,3 +57,7 @@ docs/agents/*.local.md
 
 # Git worktrees for paired consumer changes (`pnpm oss:worktree` in a consumer repo)
 /.worktrees/
+
+# Stryker mutation testing
+reports/
+.stryker-tmp/

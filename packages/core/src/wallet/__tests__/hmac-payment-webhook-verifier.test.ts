@@ -29,4 +29,34 @@ describe('HmacPaymentWebhookVerifier (fail closed)', () => {
       }),
     ).toBe(false);
   });
+
+  it('rejects a signature whose length differs from the expected digest', () => {
+    const v = new HmacPaymentWebhookVerifier(SECRET);
+    const good = sign(BODY);
+    expect(v.verify(BODY, { 'x-payment-signature': good.slice(0, -2) })).toBe(false);
+    expect(v.verify(BODY, { 'x-payment-signature': `${good}00` })).toBe(false);
+    expect(v.verify(BODY, { 'x-payment-signature': 'sha256=' })).toBe(false);
+  });
+
+  it('reads only x-payment-signature, ignoring other headers and taking the first array value', () => {
+    const v = new HmacPaymentWebhookVerifier(SECRET);
+    expect(v.verify(BODY, { 'x-other': sign(BODY) })).toBe(false);
+    expect(v.verify(BODY, { 'x-other': 'junk', 'x-payment-signature': sign(BODY) })).toBe(true);
+    expect(v.verify(BODY, { 'x-other': sign(BODY), 'x-payment-signature': 'junk' })).toBe(false);
+    expect(v.verify(BODY, { 'x-payment-signature': [sign(BODY), 'junk'] })).toBe(true);
+    expect(v.verify(BODY, { 'x-payment-signature': ['junk', sign(BODY)] })).toBe(false);
+    expect(v.verify(BODY, { 'x-payment-signature': [] })).toBe(false);
+    expect(v.verify(BODY, { 'x-payment-signature': '' })).toBe(false);
+  });
+
+  it('rejects a signature made with another secret or over another body, and an empty secret', () => {
+    expect(
+      new HmacPaymentWebhookVerifier(SECRET).verify(BODY, {
+        'x-payment-signature': sign(BODY, 'other'),
+      }),
+    ).toBe(false);
+    expect(
+      new HmacPaymentWebhookVerifier('').verify(BODY, { 'x-payment-signature': sign(BODY, '') }),
+    ).toBe(false);
+  });
 });
