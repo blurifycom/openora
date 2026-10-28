@@ -1281,7 +1281,8 @@ export const domainEventSchemas = {
   'chat.user.mentioned': z.object({
     mentionedUserId: UuidSchema,
     byUserId: UuidSchema,
-    byUsername: z.string().optional(),
+    // Optional: events queued before this field existed still deliver.
+    byUsername: z.string().min(1).optional(),
     roomId: UuidSchema.nullable(),
     messageId: z.string(),
   }),

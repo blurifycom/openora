@@ -464,3 +464,22 @@ describe('gaming provider autoApproveNewGames forward-compat', () => {
     }
   });
 });
+
+describe('chat.user.mentioned author username', () => {
+  const mention = {
+    mentionedUserId: randomUUID(),
+    byUserId: randomUUID(),
+    roomId: null,
+    messageId: randomUUID(),
+  };
+
+  it('accepts a mention queued before the author username existed', () => {
+    expect(domainEventSchemas['chat.user.mentioned'].safeParse(mention).success).toBe(true);
+  });
+
+  it('rejects an empty author username', () => {
+    expect(
+      domainEventSchemas['chat.user.mentioned'].safeParse({ ...mention, byUsername: '' }).success,
+    ).toBe(false);
+  });
+});
