@@ -105,6 +105,16 @@ export function createIdentityRouter(
   adminSecurity: AdminSecurityService,
   withdrawalPin: WithdrawalPinService,
 ) {
+  // `player:update` covers players only: acting on a staff account - a super-admin's included -
+  // is super-admin-only, so a junior staffer cannot clear a senior one's brute-force lockout
+  // or trigger resets on it. An unknown user falls through to the service's NOT_FOUND.
+  const assertMayActOnAccount = async (context: OssContext, userId: User['id']) => {
+    const role = await identity.findAccountRole(userId);
+    if (role !== null && role !== 'player') {
+      await adminGuard.assertSuperAdmin(context);
+    }
+  };
+
   const os = implement(identityContract)
     .$context<OssContext>()
     .use(({ context, path, next }) => {
@@ -327,6 +337,7 @@ export function createIdentityRouter(
 
     unlockUser: os.unlockUser.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'player', 'update');
+      await assertMayActOnAccount(context, input.userId);
       return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
         identity.unlockUser(input.userId, caller.userId, {
           ip: caller.ip,
@@ -337,6 +348,7 @@ export function createIdentityRouter(
 
     adminRequestPasswordReset: os.adminRequestPasswordReset.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'player', 'update');
+      await assertMayActOnAccount(context, input.userId);
       return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
         identity.adminRequestPasswordReset(input.userId, caller.userId, {
           ip: caller.ip,
