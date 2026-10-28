@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { findOneOrThrow } from '@openora/core/server';
+import { findOneOrThrow, type DrizzleTx } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { BonusGrantArgs, Uuid } from '@openora/core/contracts';
 import { makeAuditWriter, makeEventBus } from '../../../testing/mock.js';
@@ -14,6 +14,7 @@ let db: TestDb;
 let grants: GrantService;
 let lifecycle: GrantLifecycleService;
 let audit: ReturnType<typeof makeAuditWriter>;
+let events: ReturnType<typeof makeEventBus>;
 let weightProfileId: Uuid;
 
 const args = (over: Partial<BonusGrantArgs> = {}): BonusGrantArgs => ({
@@ -71,7 +72,8 @@ beforeAll(async () => {
   db = await createTestDb([migrate]);
   audit = makeAuditWriter();
   grants = new GrantService(audit);
-  lifecycle = new GrantLifecycleService(db.drizzle, audit, makeEventBus());
+  events = makeEventBus();
+  lifecycle = new GrantLifecycleService(db.drizzle, audit, events);
 });
 
 afterAll(async () => {
@@ -273,6 +275,164 @@ describe('forfeiting every grant a player holds', () => {
       expect.objectContaining({ actorType: 'system' }),
     );
     expect(closed[0]?.actorId).toBeNull();
+  });
+});
+
+const backendPid = async (tx: DrizzleTx) => {
+  const result = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+  const pid = result.rows[0]?.pid;
+  if (pid === undefined) {
+    throw new Error('no backend pid');
+  }
+  return pid;
+};
+
+const waitUntilBlockedBy = async (blockerPid: number) => {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const result = await db.drizzle.db.execute<{ waiting: number }>(
+      sql`select count(*)::int as waiting from pg_stat_activity where ${blockerPid} = any(pg_blocking_pids(pid))`,
+    );
+    if ((result.rows[0]?.waiting ?? 0) > 0) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`no session ever waited on backend ${blockerPid}`);
+};
+
+describe('forfeiting what a player held, on the caller’s transaction', () => {
+  const held = (userId: Uuid) => ({
+    userId,
+    reason: 'withdrawal_while_active' as const,
+    actor: { id: userId, isAdmin: false },
+    note: 'withdrawal 1',
+    meta: { ip: '203.0.113.7', userAgent: 'test-agent' },
+  });
+
+  it('takes every live grant in every currency as the player', async () => {
+    const userId = randomUUID();
+    const usd = await grant({ userId, currency: 'USD', amount: '10' });
+    const eur = await grant({ userId, currency: 'EUR', amount: '20' });
+
+    const closed = await db.drizzle.db.transaction((tx) => lifecycle.forfeitHeld(tx, held(userId)));
+
+    expect(closed.map((c) => c.grantId).sort()).toEqual([usd, eur].sort());
+    expect(await rowOf(usd)).toMatchObject({
+      status: 'forfeited',
+      forfeitReason: 'withdrawal_while_active',
+      forfeitedBy: userId,
+      forfeitNote: 'withdrawal 1',
+    });
+    expect((await rowOf(eur)).status).toBe('forfeited');
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'promo.bonus.forfeited',
+        actorType: 'player',
+        actorId: userId,
+        ip: '203.0.113.7',
+        userAgent: 'test-agent',
+      }),
+    );
+  });
+
+  it('announces each forfeited grant once, on the caller’s transaction', async () => {
+    const userId = randomUUID();
+    const usd = await grant({ userId, currency: 'USD', amount: '10' });
+    const eur = await grant({ userId, currency: 'EUR', amount: '20' });
+
+    await db.drizzle.db.transaction((tx) => lifecycle.forfeitHeld(tx, held(userId)));
+
+    const announced = events.emitInTransaction.mock.calls.filter(
+      ([, topic]) => topic === 'promo.bonus.forfeited',
+    );
+    expect(announced.map(([, , payload]) => payload)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ grantId: usd, reason: 'withdrawal_while_active', actorId: null }),
+        expect.objectContaining({ grantId: eur, reason: 'withdrawal_while_active', actorId: null }),
+      ]),
+    );
+    expect(announced).toHaveLength(2);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('rolls back with the caller’s transaction', async () => {
+    const userId = randomUUID();
+    const grantId = await grant({ userId });
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await lifecycle.forfeitHeld(tx, held(userId));
+        throw new Error('the withdrawal failed');
+      }),
+    ).rejects.toThrow('the withdrawal failed');
+
+    expect(await rowOf(grantId)).toMatchObject({ status: 'active' });
+    expect(await entriesOf(grantId)).toHaveLength(1);
+  });
+
+  it('leaves a grant created after the transaction began', async () => {
+    const userId = randomUUID();
+    const later = await grant({ userId });
+    await db.drizzle.db
+      .update(promoGrant)
+      .set({ createdAt: new Date(Date.now() + 60_000) })
+      .where(eq(promoGrant.id, later));
+
+    const closed = await db.drizzle.db.transaction((tx) => lifecycle.forfeitHeld(tx, held(userId)));
+
+    expect(closed).toEqual([]);
+    expect((await rowOf(later)).status).toBe('active');
+  });
+
+  it('skips a grant another path closed first and records no refusal for it', async () => {
+    const userId = randomUUID();
+    const grantId = await grant({ userId });
+    let locked!: (pid: number) => void;
+    const lockTaken = new Promise<number>((resolve) => {
+      locked = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const racer = db.drizzle.db.transaction(async (tx) => {
+      await tx.select().from(promoGrant).where(eq(promoGrant.id, grantId)).for('update');
+      await tx
+        .update(promoGrant)
+        .set({
+          status: 'forfeited',
+          forfeitReason: 'admin',
+          closedAt: new Date(),
+          bonusBalance: '0',
+          wageringProgress: '0',
+        })
+        .where(eq(promoGrant.id, grantId));
+      await tx.insert(promoGrantEntry).values({
+        grantId,
+        userId,
+        currency: 'USD',
+        type: 'forfeit',
+        bonusAmount: '-100',
+        balanceAfter: '0',
+      });
+      locked(await backendPid(tx));
+      await released;
+    });
+    const racerPid = await lockTaken;
+
+    const forfeiting = db.drizzle.db.transaction((tx) => lifecycle.forfeitHeld(tx, held(userId)));
+    await waitUntilBlockedBy(racerPid);
+    release();
+    await racer;
+
+    expect(await forfeiting).toEqual([]);
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'promo.bonus.forfeited', actorId: userId }),
+    );
   });
 });
 

@@ -18,6 +18,7 @@ import {
   SignedMoneyAmountSchema,
   TimestampSchema,
   UuidSchema,
+  WagerProductSchema,
 } from '@openora/core/contracts';
 
 /**
@@ -124,6 +125,8 @@ export const BonusGrantTermsSchema = z.object({
   maxBet: MoneyAmountSchema.nullable().optional(),
   /** Cap on conversion as a multiple of the granted amount. Absent or null for no cap. */
   maxWinMultiplier: MoneyAmountSchema.nullable().optional(),
+  /** Products bonus funds cannot pay for. Absent or empty allows every product. */
+  excludedProducts: z.array(WagerProductSchema).optional(),
 });
 
 /** An offer as an admin configures it. */

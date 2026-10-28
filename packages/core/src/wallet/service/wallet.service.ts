@@ -60,6 +60,7 @@ import {
   type WalletTransactionType,
   type WalletTransactionStatus,
   type BonusGrantLedgerReader,
+  type BonusLifecycleCommands,
 } from '@openora/core/contracts';
 import {
   eq,
@@ -929,6 +930,8 @@ export type WalletServiceDeps = {
   depositHold?: DepositHoldPolicy;
   // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
   grantLedger?: BonusGrantLedgerReader;
+  // Optional: bound by the bonus module. Absent = there is no bonus a withdrawal could forfeit.
+  bonusLifecycle?: BonusLifecycleCommands;
 };
 
 /**
@@ -957,6 +960,7 @@ export class WalletService {
   private readonly depositHold?: DepositHoldPolicy;
 
   private readonly grantLedger?: BonusGrantLedgerReader;
+  private readonly bonusLifecycle?: BonusLifecycleCommands;
 
   constructor({
     drizzle,
@@ -975,6 +979,7 @@ export class WalletService {
     kycPolicy,
     depositHold,
     grantLedger,
+    bonusLifecycle,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -992,6 +997,7 @@ export class WalletService {
     this.kycPolicy = kycPolicy;
     this.depositHold = depositHold;
     this.grantLedger = grantLedger;
+    this.bonusLifecycle = bonusLifecycle;
   }
 
   // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
@@ -1933,6 +1939,18 @@ export class WalletService {
             amount,
           );
         }
+
+        // A player may not cash out while a bonus is live, and the rule holds in every currency.
+        // On this transaction, after the balance lock, so a bet cannot convert the bonus between
+        // the request and the forfeit, and the lock order matches a bet's. A rejected withdrawal
+        // does not bring the bonus back.
+        await this.bonusLifecycle?.forfeitHeld(txn, {
+          userId,
+          reason: 'withdrawal_while_active',
+          actor: { id: userId, isAdmin: false },
+          note: `withdrawal ${row.id}`,
+          meta: { ip: ip ?? null, userAgent: userAgent ?? null },
+        });
 
         if (this.tagEvaluationCommands) {
           await this.tagEvaluationCommands.evaluateWithdrawalRequested(txn, { userId, amount });
