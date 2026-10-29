@@ -60,6 +60,8 @@ E2E specs live in `apps/e2e/tests/<app>/<domain>/<scenario>.spec.ts` (Playwright
 
 Debug and verify with the **Playwright CLI** first (`pnpm -F {{scope}}/e2e test <spec>`, `npx playwright screenshot <url> <file>`, or a throwaway spec with `page.screenshot`) - it costs a fraction of the tokens a browser MCP does. Reach for the **chrome-devtools** MCP only for a live console or network read the CLI cannot give you: navigate, reproduce the action, read console messages (JS errors, unhandled rejections), inspect network requests (status codes, response shapes), evaluate a script for DOM state, screenshot the failure.
 
+**Screenshot review on every changed screen**, part of the verify pass. Nobody reads a video back, so layout defects are caught on stills, by you. Read `.claude/skills/ui-verify/SKILL.md` and follow its "Screenshot review" yourself - do not invoke the skill, it forks a subagent: four shots per screen, `layout-check.js` in each, then read each shot. Every shot gets a verdict-table row `screen <name> <viewport> <theme> | PASS / FAIL | <png path>, what you saw`; a defect is a FAIL for `builder`. A UI change with no screenshot rows is not verified.
+
 ## Evidence pass: videos, once
 
 Only when the orchestrator asks for it: after the verify pass is green and review is clean, on the final commit. Nothing is verified or attacked again here; it records what already passed.
@@ -70,7 +72,7 @@ Only when the orchestrator asks for it: after the verify pass is green and revie
 2. `playwright-cli` (`video-start`, `video-chapter "AC<n>: ..."`, drive it, `video-stop`) only for an AC no spec drives.
 3. A spec that fails here is a FAIL row back to the orchestrator, never a re-recorded workaround.
 
-A screenshot only where a clip adds nothing, such as a second theme. API-only changes attach the request/response trace instead. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey. After a fix to an open MR, record again only the ACs that fix touched.
+API-only changes attach the request/response trace instead. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey. After a fix to an open MR, record again only the ACs that fix touched.
 
 ## Triage - the key question
 
