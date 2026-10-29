@@ -35,6 +35,12 @@ export type RealtimeTransportHarness = {
    * graceful degradation (never throws/rejects, returns a safe default).
    */
   simulateFailure?: (transport: RealtimeTransport) => void;
+  /**
+   * Resolves once the backend delivers to the subscriptions just opened on `channel`'s payload
+   * and signal `lanes`, and a revocation reaches every open instance. Without it the suite waits
+   * a fixed time, which a slow backend can outrun.
+   */
+  untilSubscribed?: (channel: string, lanes: readonly ('payload' | 'signal')[]) => Promise<void>;
 };
 
 const SUBSCRIBE_SETTLE_MS = 200;
@@ -48,6 +54,10 @@ function settle(ms = SUBSCRIBE_SETTLE_MS): Promise<void> {
  * doesn't replace those) - it only proves the two satisfy the SAME contract.
  */
 export function runRealtimeTransportConformanceSuite(harness: RealtimeTransportHarness): void {
+  const untilSubscribed = (
+    channel: string,
+    lanes: readonly ('payload' | 'signal')[] = ['payload'],
+  ) => harness.untilSubscribed?.(channel, lanes) ?? settle();
   describe(`RealtimeTransport conformance: ${harness.name}`, () => {
     it('publish never throws or rejects, even to a channel with no subscribers', async () => {
       const transport = harness.create();
@@ -78,7 +88,7 @@ export function runRealtimeTransportConformanceSuite(harness: RealtimeTransportH
         const b: number[] = [];
         transport.subscribe<number>('c', (event) => a.push(event));
         transport.subscribe<number>('c', (event) => b.push(event));
-        await settle();
+        await untilSubscribed('c');
 
         await transport.publish('c', 1);
         await vi.waitFor(() => {
@@ -91,7 +101,7 @@ export function runRealtimeTransportConformanceSuite(harness: RealtimeTransportH
         const transport = harness.create();
         const got: number[] = [];
         transport.subscribe<number>('one', (event) => got.push(event));
-        await settle();
+        await untilSubscribed('one');
 
         await transport.publish('two', 99);
         await settle();
@@ -102,7 +112,7 @@ export function runRealtimeTransportConformanceSuite(harness: RealtimeTransportH
         const transport = harness.create();
         const got: number[] = [];
         const unsubscribe = transport.subscribe<number>('c', (event) => got.push(event));
-        await settle();
+        await untilSubscribed('c');
 
         await transport.publish('c', 1);
         await vi.waitFor(() => expect(got).toEqual([1]));
@@ -144,7 +154,7 @@ export function runRealtimeTransportConformanceSuite(harness: RealtimeTransportH
         sibling.subscribeSignal(channel, (signal) => revokedSignals.push(signal), 'revoked-user');
         sibling.subscribe(channel, (event) => otherMessages.push(event), 'other-user');
         sibling.subscribeSignal(channel, (signal) => otherSignals.push(signal), 'other-user');
-        await settle();
+        await untilSubscribed(channel, ['payload', 'signal']);
 
         await origin.revokeUserFromChannel('revoked-user', channel);
         const revocation = { name: ACCESS_REVOKED_SIGNAL, payload: { channel } };

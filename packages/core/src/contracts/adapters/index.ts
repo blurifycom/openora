@@ -306,6 +306,24 @@ export {
   SupportCustomerContextSchema,
   SupportChatProviderError,
 } from './support-chat.js';
+export type {
+  SupportHistory,
+  SupportHistoryEmailWindow,
+  SupportHistoryFailureReason,
+  SupportHistoryItem,
+  SupportHistoryReader,
+} from './support-history.js';
+export {
+  SUPPORT_CHAT_STATUSES,
+  SUPPORT_HISTORY_FAILURE_REASONS,
+  SUPPORT_HISTORY_READER,
+  SUPPORT_TICKET_STATUSES,
+  SupportHistoryEmailWindowSchema,
+  SupportHistoryFailureReasonSchema,
+  SupportHistoryItemSchema,
+  SupportHistoryProviderError,
+  SupportHistorySchema,
+} from './support-history.js';
 export type { RgExclusionReader } from './rg-exclusion-reader.js';
 export { RG_EXCLUSION_READER } from './rg-exclusion-reader.js';
 
