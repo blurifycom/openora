@@ -948,7 +948,10 @@ describe('support context refresh', () => {
     const setManager = (accountManagerId: string | null) => async () =>
       ok(await admin.put(`/players/${p.playerId}/account-manager`, { accountManagerId }));
 
-    await refreshedBy(p, setManager(manager.userId), { accountManagerName: managerName });
+    const context = await refreshedBy(p, setManager(manager.userId), {
+      accountManagerName: managerName,
+    });
+    expect(JSON.stringify(context)).not.toContain(manager.email);
     await refreshedBy(p, setManager(null), { accountManagerName: null });
   });
 
