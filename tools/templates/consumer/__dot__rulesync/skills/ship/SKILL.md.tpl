@@ -2,8 +2,8 @@
 name: ship
 targets: ['*']
 description: >
-  Take one {{trackerKey}} ticket from plan to a green, reviewed MR with nobody in the loop: planner
-  plans it with test cases, builder builds it, tester attacks it, the reviewers review it, then it
+  Take one {{trackerKey}} ticket from plan to a green, reviewed MR with nobody in the loop: it plans
+  it with test cases and builds it itself, tester attacks it, the reviewers review it, then it
   pushes the ticket branch, opens the MR, moves the ticket and watches the MR until it is ready for a
   person to review. Resumable: every run reads the ticket,
   branch, MR and CI and does the next step, including fixing a red pipeline or new review comments.
@@ -13,7 +13,7 @@ description: >
 
 # ship ({{name}})
 
-The orchestrator: one ticket key in, a green MR in Code Review out. You own the ticket's whole delivery, plan to review: you are done when the MR is ready for a person to review it (step 7), not when it is opened. You run in the main session and are the only one who delegates. You hand each step to its subagent, read its verdict, and pick the next step yourself - never wait for a person between steps. Every subagent you start is told it starts no subagents of its own; a domain question one of them returns comes back to you, you ask `expert`, and you pass the answer on.
+The orchestrator: one ticket key in, a green MR in Code Review out. You own the ticket's whole delivery, plan to review: you are done when the MR is ready for a person to review it (step 7), not when it is opened. You run in the main session and are the only one who delegates. You plan and build yourself, so the ticket, the plan, the code and every test result stay in one context; you delegate only what needs fresh eyes - `tester` attacks the change, the review skill's reviewers read the diff, `expert` settles domain questions - read each verdict and pick the next step yourself. Never wait for a person between steps. Every subagent you start is told it starts no subagents of its own; a domain question one of them returns comes back to you, you ask `expert`, and you act on the answer.
 
 ## Coordinates
 
@@ -81,7 +81,7 @@ A comment added to the ticket after the Plan comment that changes scope sends yo
 
 ### 1. Plan
 
-Start `planner` with the ticket key. It returns either `Asked:` with questions, or the plan.
+Plan it yourself, following `.rulesync/subagents/planner.md` (Read first, Grill it, Reply). It ends in either `Asked:` with questions, or the plan.
 
 - `Asked:` -> post the questions as one comment on the ticket, report them, stop.
 - A plan -> post it, without its Core-only section, as one comment titled "Plan" (test cases where the repo's `test-plan` skill keeps them, if it has one), move the ticket to In Progress. `--ask`: show it and stop for approval.
@@ -89,26 +89,26 @@ Start `planner` with the ticket key. It returns either `Asked:` with questions, 
 
 ### 2. Build
 
-Add a worktree for the ticket branch off the freshly fetched `{{mrTarget}}`, per the repo's worktree rules (its own database and Redis db). Start `builder` in it with the plan. Run the **create-plugin** skill's steps through it for each overlay, adapter or page slice.
+Add a worktree for the ticket branch off the freshly fetched `{{mrTarget}}`, per the repo's worktree rules (its own database and Redis db). Build the plan in it yourself, following `.rulesync/subagents/builder.md` (Ground first, Tests, Done means, Rules), and the **create-plugin** skill's steps for each overlay, adapter or page slice.
 
-- `Blocked:` -> post the reason as one comment on the ticket, report it, stop.
-- Done -> check its reply holds the gate output from HEAD and `git status` is clean. Missing either: send it back once to run the gate, then treat it as blocked.
+- Can't finish -> post the reason as one comment on the ticket, report it, stop.
+- Done -> the gate passes on HEAD and `git status` is clean, both shown by their output, before 3.
 
 ### 3. Test
 
 Start `tester` in the worktree with the plan's test cases, for its verify pass: no videos yet. It returns an AC table.
 
 - Every row PASS -> 4.
-- Any FAIL -> back to `builder` with the failing rows only, then `tester` again.
+- Any FAIL -> fix the failing rows, then `tester` again on those rows.
 - UNCHECKED rows ride along to the MR description; they do not block, except a case or a mutation row on a money, KYC, responsible-gambling or authz path: back to `tester` once to run it, still UNCHECKED -> blocker comment, report it, stop.
-- A SURVIVED mutation row is a FAIL: back to `builder` with the row (the test that catches it, or the code that makes it testable), then `tester` again. A money, KYC, responsible-gambling or authz change with no mutation rows goes back to `tester` once to add them.
+- A SURVIVED mutation row is a FAIL: add the test that catches it, or make the code testable, then `tester` again. A money, KYC, responsible-gambling or authz change with no mutation rows goes back to `tester` once to add them.
 - A failing spec called pre-existing without its run on the base commit -> back to `tester` once to run it there. Still unrun: it is a FAIL.
 
 ### 4. Review
 
 Run the **review** skill on the branch against `{{mrTarget}}`, without `--post`: its precheck, risk tier, request trace and evidence gate run before any reviewer reads the diff. Hand its reviewers the tester's AC table, mutation rows included, so they dig where testing could not reach. This is the self-review the MR is opened on: people reviewing the MR later read it by hand and do not run an AI review again, so nothing goes out that this step has not passed.
 
-Every finding with a fix gets fixed, whatever its severity, but only once it holds. Dedupe across reviewers, then check each yourself before anything changes: open its `file:line` and confirm the evidence on this branch. One that doesn't hold (wrong line, the code already handles it, a claim the code doesn't show) is dropped and goes to the MR description with why. A product call the ticket doesn't settle goes to `expert`, then is fixed or rides along as an open question. Send the rest to `builder` in one go, then 3 for the cases they touch and 4 again. A later round of 4 reviews only the commits since the last one and whether each sent finding is fixed. Clean means the review skill says **APPROVED** and no finding is left that holds; only then 4b.
+Every finding with a fix gets fixed, whatever its severity, but only once it holds. Dedupe across reviewers, then check each yourself before anything changes: open its `file:line` and confirm the evidence on this branch. One that doesn't hold (wrong line, the code already handles it, a claim the code doesn't show) is dropped and goes to the MR description with why. A product call the ticket doesn't settle goes to `expert`, then is fixed or rides along as an open question. Fix the rest in one go, then 3 for the cases they touch and 4 again. A later round of 4 reviews only the commits since the last one and whether each sent finding is fixed. Clean means the review skill says **APPROVED** and no finding is left that holds; only then 4b.
 
 Rounds of 3 and 4 share one budget: three. After the third with anything still failing, post a blocker comment naming what is left, report it, stop.
 
@@ -116,7 +116,7 @@ Rounds of 3 and 4 share one budget: three. After the third with anything still f
 
 The code is final now, so the videos are recorded once, here, never in an earlier round. Start `tester` for its evidence pass on HEAD: every browser spec that drives an AC, new or existing, runs once with video on, `playwright-cli` only for an AC no spec drives. It returns the clip paths per AC.
 
-- A spec that fails here -> back to `builder` with it, then 3 for the cases it touches, 4 on the new commits, 4b again. That round counts against the same budget of three.
+- A spec that fails here -> fix it, then 3 for the cases it touches, 4 on the new commits, 4b again. That round counts against the same budget of three.
 - Every AC that needs a clip has one -> 5.
 
 ### 5. Open the MR
@@ -128,8 +128,8 @@ The code is final now, so the videos are recorded once, here, never in an earlie
 Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-comments` on unanswered threads from a person or a bot. No such skill in this repo: do the same per `docs/agents/forge.md`. Under `/ship` they run like this:
 
 - Each thread is checked against the code on this branch first: correct | already handled | wrong on this branch | out of scope. Only a correct one changes code; the rest get an answer.
-- A red job is reproduced locally first; `builder` fixes its cause. Never skip or loosen a test.
-- Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched, and their clips replace the old ones in the MR description. Nothing is pushed untested.
+- A red job is reproduced locally first; fix its cause. Never skip or loosen a test.
+- After every fix, the gate on HEAD, then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched, and their clips replace the old ones in the MR description. Nothing is pushed untested.
 - Push the ticket branch without asking (a force-push only as above). Reply per thread, in the thread itself, with what changed and the test that proves it, or why nothing changed. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer.
 
 Then 7.
@@ -150,8 +150,8 @@ Keep watching until the MR merges or closes, for as long as the session lives. Y
 ## Rules
 
 - One ticket, one branch, one MR.
-- You edit no code, commit nothing and run no gate yourself, however small the fix: every fix goes to `builder`. Code changed after 3 means 3 runs again for the cases it touches, and 4 for the new commits.
-- A subagent that stops short (no gate output, uncommitted work) goes back to it once, never finished by you.
+- You never grade your own work: the AC table comes from `tester`, the verdict from the review skill. Code changed after 3 means 3 runs again for the cases it touches, and 4 for the new commits.
+- A subagent that stops short (no AC table, no verdict) goes back to it once, never finished by you.
 - Never claim a step passed without its output: the gate from HEAD, the AC table, the review findings.
 - A run you resume with a branch but no MR re-runs 3 and 4: verdicts from a dead run are gone.
 - Clean up what the run started: worktree databases and Redis dbs stay for the next round until the MR merges; processes you started stop before you report.
