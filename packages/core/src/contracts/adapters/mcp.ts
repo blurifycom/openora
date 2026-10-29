@@ -161,9 +161,35 @@ export type ActionTypeContract<P extends z.ZodObject = z.ZodObject> = {
    * Absent reads as false.
    */
   benefitsPlayer?: boolean;
+  /**
+   * The payloads that give the player something of value, for an action type whose benefit
+   * depends on its payload: `add_tag` grants one with `tagKey` `vip` and protects the player and
+   * the operator with its other tags, so flagging the whole type would refuse protective tagging
+   * of a player at risk. A proposal store treats a proposal whose `field` holds one of `values` as
+   * it treats a `benefitsPlayer` type. Leave it out where `benefitsPlayer` is true, which covers
+   * every payload.
+   */
+  benefitsPlayerWhen?: ActionPayloadMatch;
+  /**
+   * The payload field that tells two proposals of this type for one player apart: proposals that
+   * differ in it change different things - two tags, two withdrawals - so a proposal store that
+   * keeps one open proposal of a kind per player keeps one per value of this field. A string or
+   * number field every payload carries. Absent, every proposal of the type for a player is the
+   * same kind.
+   */
+  distinctBy?: string;
   payloadSchema: P;
   /** Codes the precondition may refuse with and the executor may fail with. */
   errors: readonly string[];
+};
+
+/**
+ * Payloads whose top-level `field` holds one of `values`. Boot refuses a field the payload schema
+ * does not declare and a value it does not accept for that field.
+ */
+export type ActionPayloadMatch = {
+  field: string;
+  values: readonly string[];
 };
 
 export const ActionPreconditionOutcomeSchema = z.discriminatedUnion('ok', [
@@ -219,9 +245,13 @@ export type McpToolDescriptor = McpToolContract & {
   outputJsonSchema: Record<string, unknown>;
 };
 
-export type ActionTypeDescriptor = ActionTypeContract & {
+export type ActionTypeDescriptor = Omit<ActionTypeContract, 'benefitsPlayerWhen' | 'distinctBy'> & {
   /** False for an action type that leaves it out. */
   benefitsPlayer: boolean;
+  /** Null for an action type that leaves it out. */
+  benefitsPlayerWhen: ActionPayloadMatch | null;
+  /** Null for an action type that leaves it out. */
+  distinctBy: string | null;
   owner: string;
   payloadJsonSchema: Record<string, unknown>;
 };
@@ -323,8 +353,8 @@ export type McpKernel = {
   /**
    * Changes when a tool or action type is added, removed or bumps its schema version, and when
    * an allowed trigger is added or removed or changes its version or subject field. An action
-   * type's flags (`reversible`, `benefitsPlayer`) do not change it: a consumer reads them from
-   * the descriptor when it acts.
+   * type's flags (`reversible`, `benefitsPlayer`, `benefitsPlayerWhen`, `distinctBy`) do not
+   * change it: a consumer reads them from the descriptor when it acts.
    */
   readonly catalogVersion: string;
   listTools(): readonly McpToolDescriptor[];

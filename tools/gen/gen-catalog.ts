@@ -288,7 +288,12 @@ type AgentActionInfo = {
   iam: AgentIam | null;
   reversible: boolean | null;
   benefitsPlayer: boolean | null;
+  // Null where the action type leaves it out, as the kernel's descriptor reads.
+  benefitsPlayerWhen: AgentPayloadMatch | null;
+  distinctBy: string | null;
 };
+
+type AgentPayloadMatch = { field: string; values: string[] };
 
 // A '/' after one of these characters or words starts a regex literal, not a division.
 const REGEX_PRECEDERS = '(,=:[!&|?{};>';
@@ -547,6 +552,47 @@ function booleanLiteral(value: string | undefined): boolean | null {
   return value === 'true' ? true : value === 'false' ? false : null;
 }
 
+function stringArrayLiteral(value: string | undefined): string[] | null {
+  const body = value?.match(/^\[([\s\S]*)\]$/)?.[1];
+  if (body === undefined) {
+    return null;
+  }
+  const items = body
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .map((item) => stringLiteral(item));
+  return items.every((item): item is string => item !== null) ? items : null;
+}
+
+function payloadMatchLiteral(value: string | undefined): AgentPayloadMatch | null {
+  const body = value?.match(/^\{([\s\S]*)\}$/)?.[1];
+  if (body === undefined) {
+    return null;
+  }
+  const entries = objectEntries(body);
+  const field = stringLiteral(entries.get('field'));
+  const values = stringArrayLiteral(entries.get('values'));
+  return field && values && values.length > 0 ? { field, values } : null;
+}
+
+/** A literal the kernel can serve, or null; a value given but not literal is warned about. */
+function optionalLiteral<T>(
+  entries: Map<string, string>,
+  key: string,
+  parse: (value: string | undefined) => T | null,
+  where: string,
+): T | null {
+  if (!entries.has(key)) {
+    return null;
+  }
+  const parsed = parse(entries.get(key));
+  if (parsed === null) {
+    console.warn(`[catalog] ${where}: ${key} is not a literal - catalogued as absent`);
+  }
+  return parsed;
+}
+
 function iamLiteral(value: string | undefined): AgentIam | null {
   const body = value?.match(/^\{([\s\S]*)\}$/)?.[1];
   if (body === undefined) {
@@ -597,6 +643,13 @@ function collectAgentSurface(): { tools: AgentToolInfo[]; actions: AgentActionIn
               benefitsPlayer: entries.has('benefitsPlayer')
                 ? booleanLiteral(entries.get('benefitsPlayer'))
                 : false,
+              benefitsPlayerWhen: optionalLiteral(
+                entries,
+                'benefitsPlayerWhen',
+                payloadMatchLiteral,
+                `${file} ${id}`,
+              ),
+              distinctBy: optionalLiteral(entries, 'distinctBy', stringLiteral, `${file} ${id}`),
             });
           }
         }

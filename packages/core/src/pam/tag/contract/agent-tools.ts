@@ -24,6 +24,10 @@ export const addTagAction = defineActionType({
   schemaVersion: 1,
   iam: { resource: 'tag', action: 'create' },
   reversible: true,
+  // vip is marketing treatment, a benefit; the risk tags protect the player and the operator.
+  benefitsPlayerWhen: { field: 'tagKey', values: ['vip'] },
+  // Each tag is its own change: a pending vip does not stand in for a pending high_risk.
+  distinctBy: 'tagKey',
   payloadSchema: z.object({
     playerId: UuidSchema,
     tagKey: z.enum(AGENT_ASSIGNABLE_TAG_KEYS),

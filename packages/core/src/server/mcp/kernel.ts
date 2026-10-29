@@ -171,6 +171,8 @@ function serveAction<C extends TokenCatalog>(
     descriptor: {
       ...contract,
       benefitsPlayer: contract.benefitsPlayer ?? false,
+      benefitsPlayerWhen: contract.benefitsPlayerWhen ?? null,
+      distinctBy: contract.distinctBy ?? null,
       owner,
       payloadJsonSchema: z.toJSONSchema(contract.payloadSchema, {
         target: 'draft-7',
