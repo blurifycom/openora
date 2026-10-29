@@ -15,8 +15,8 @@ claudecode:
 
 # ui-verify ({{name}})
 
-Global `playwright-cli` (`@playwright/cli`), never a browser MCP: it costs a fraction of the
-tokens. Do not spawn subagents. Return text only. A subagent (`tester`, `builder`) does not
+Global `playwright-cli` (`npm i -g @playwright/cli` if missing), never a browser MCP: it costs a
+fraction of the tokens. Do not spawn subagents. Return text only. A subagent (`tester`, `builder`) does not
 invoke this skill, which forks one of its own: it reads this file and follows it itself.
 
 ## Stack
@@ -88,10 +88,16 @@ In the PR, after the Videos section, collapsed per screen (upload as in `docs/ag
 
 ## Video evidence
 
-After the screenshot review: one clip per acceptance criterion (`docs/standards/testing.md`),
-recorded on the local stack, one at mobile size (`resize 390 844`) and one at desktop
-(`resize 1440 900`), each switching theme with the app's toggle partway through. A fix: that pair
-failing before, and passing after. Never read a video back.
+Last, once, on the final commit after the tests are green and review is clean (`ship` step 4b):
+a clip taken earlier is thrown away by the next fix round. One clip per acceptance criterion
+(`docs/standards/testing.md`), recorded on the local stack. The one early clip is a fix's
+"before", taken when the bug is reproduced; its "after" twin comes here. Never read a video back.
+
+ACs a spec drives come first: every spec that drives one, new or existing, in one run with video
+on (the repo's record switch, or `test.use({ video: 'on' })`); copy each
+`test-results/<test>/video.webm` to `<ac>-<slug>-{desktop,mobile}.webm`. Only an AC no spec
+drives gets `playwright-cli`, one at mobile size (`resize 390 844`) and one at desktop
+(`resize 1440 900`), each switching theme with the app's toggle partway through:
 
 ```bash
 playwright-cli -s=v video-start /tmp/ui-verify/ac1-<slug>-mobile.webm
