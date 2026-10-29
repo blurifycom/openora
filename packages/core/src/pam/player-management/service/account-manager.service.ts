@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, isNotNull, sql, type SQL } from 'drizzle-orm';
 import {
   findOneOrThrow,
   likeContains,
@@ -20,11 +20,12 @@ import type {
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { PlayerNotFoundError } from './player.service.js';
-import type { AccountManagerCandidate } from '../contract/index.js';
+import type { AccountManagerCandidate, AssignedAccountManager } from '../contract/index.js';
 
 const PLAYER_VIEW = [{ resource: 'player', action: 'view' }] as const;
 const CANDIDATE_BATCH_SIZE = 100;
 const STAFF_ROLES = Object.keys(roles);
+const MANAGER_COLUMNS = { userId: user.id, name: user.name, isActive: user.isActive };
 
 export class AccountManagerIneligibleError extends Error {
   readonly data: { reason: AccountManagerIneligibleReason };
@@ -126,7 +127,7 @@ export class AccountManagerService implements PlayerAccountManagerReader {
     const eligible: AccountManagerCandidate[] = [];
     for (let offset = 0; eligible.length < limit; offset += CANDIDATE_BATCH_SIZE) {
       const batch = await this.deps.drizzle.db
-        .select({ userId: user.id, name: user.name })
+        .select({ userId: user.id, name: user.name, email: user.email })
         .from(user)
         .where(where)
         .orderBy(asc(user.name), asc(user.id))
@@ -142,6 +143,33 @@ export class AccountManagerService implements PlayerAccountManagerReader {
       }
     }
     return eligible.slice(0, limit);
+  }
+
+  /**
+   * Every staff account managing at least one player of any status, deactivated ones included,
+   * ordered by name then id. A manager id with no user row, or whose user is now a player, is
+   * left out.
+   */
+  async assigned(): Promise<AssignedAccountManager[]> {
+    // ponytail: unpaged, bounded by staff headcount; add an optional search/limit (non-breaking)
+    // if a deployment's manager list outgrows one response.
+    const db = this.deps.drizzle.db;
+    return db
+      .select({ ...MANAGER_COLUMNS, email: user.email })
+      .from(user)
+      .where(
+        and(
+          sql`${user.role} <> 'player'`,
+          inArray(
+            user.id,
+            db
+              .select({ id: player.accountManagerId })
+              .from(player)
+              .where(isNotNull(player.accountManagerId)),
+          ),
+        ),
+      )
+      .orderBy(asc(user.name), asc(user.id));
   }
 
   /**
@@ -176,7 +204,7 @@ export class AccountManagerService implements PlayerAccountManagerReader {
 
   private async readManager(where: SQL): Promise<AccountManager | null> {
     const [row] = await this.deps.drizzle.db
-      .select({ userId: user.id, name: user.name, isActive: user.isActive })
+      .select(MANAGER_COLUMNS)
       .from(player)
       .innerJoin(user, eq(user.id, player.accountManagerId))
       .where(where)

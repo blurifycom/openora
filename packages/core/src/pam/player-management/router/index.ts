@@ -102,6 +102,11 @@ export function createPlayerRouter({
       return accountManagers.candidates(input.search, input.limit);
     }),
 
+    assignedAccountManagers: os.assignedAccountManagers.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'player', 'view');
+      return accountManagers.assigned();
+    }),
+
     registrationsOverTime: os.registrationsOverTime.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'analytics', 'view');
       return player.registrationsOverTime(input.days ?? 30);

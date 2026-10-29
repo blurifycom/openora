@@ -11,7 +11,10 @@ import {
   assignIamRoleByKey,
   bootE2e,
   closeE2e,
-  registerAndMaterializePlayer,
+  deactivateUser,
+  newPlayer,
+  newStaff,
+  type NamedAccount,
   type TestApp,
   type TestClient,
   type TestDb,
@@ -22,7 +25,7 @@ const TOPIC = 'player.account_manager.changed';
 const CLIENT_IP = '198.51.100.7';
 const CLIENT_AGENT = 'account-manager-e2e';
 
-type Account = { client: TestClient; userId: string; playerId: string; name: string };
+const EMAIL_PREFIX = 'account-manager';
 
 let db: TestDb;
 let testApp: TestApp;
@@ -30,22 +33,6 @@ let admin: TestClient;
 let adminUserId: string;
 
 const drizzle = () => testApp.container.get(DRIZZLE).db;
-
-async function newPlayer(): Promise<Account> {
-  const name = `player ${randomUUID()}`;
-  const account = await registerAndMaterializePlayer(testApp, {
-    email: `account-manager-${randomUUID()}@e2e.test`,
-  });
-  await drizzle().update(user).set({ name }).where(eq(user.id, account.userId));
-  return { ...account, name };
-}
-
-async function newStaff(roleKey: string, name = `staff ${randomUUID()}`): Promise<Account> {
-  const account = await newPlayer();
-  await assignIamRoleByKey(testApp.container, account.userId, roleKey);
-  await drizzle().update(user).set({ name }).where(eq(user.id, account.userId));
-  return { ...account, name };
-}
 
 const setManager = (client: TestClient, playerId: string, accountManagerId: string | null) =>
   client.put(`/players/${playerId}/account-manager`, { accountManagerId });
@@ -76,9 +63,6 @@ const outboxRows = (playerId: string) =>
     )
     .orderBy(eventOutbox.createdAt);
 
-const deactivate = (userId: string) =>
-  drizzle().update(user).set({ isActive: false }).where(eq(user.id, userId));
-
 beforeAll(async () => {
   ({ db, app: testApp } = await bootE2e());
   admin = await asAdmin(testApp.app);
@@ -98,9 +82,9 @@ afterAll(async () => {
 
 describe('PUT /players/{playerId}/account-manager', () => {
   it('assigns, changes and removes the manager, auditing and emitting each change', async () => {
-    const p = await newPlayer();
-    const first = await newStaff('vip-manager');
-    const second = await newStaff('support-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const first = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    const second = await newStaff(testApp, EMAIL_PREFIX, 'support-manager');
 
     const assigned = await admin.request(`/players/${p.playerId}/account-manager`, {
       method: 'PUT',
@@ -157,8 +141,8 @@ describe('PUT /players/{playerId}/account-manager', () => {
   });
 
   it('writes one audit row and one event when the same manager is set twice', async () => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
     const again = await setManager(admin, p.playerId, manager.userId);
     expect(again.status).toBe(200);
@@ -168,9 +152,9 @@ describe('PUT /players/{playerId}/account-manager', () => {
   });
 
   it('refuses view-only staff with 403 and leaves the manager unchanged', async () => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
-    const viewer = await newStaff('customer-support-agent');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    const viewer = await newStaff(testApp, EMAIL_PREFIX, 'customer-support-agent');
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
 
     expect((await setManager(viewer.client, p.playerId, viewer.userId)).status).toBe(403);
@@ -180,8 +164,8 @@ describe('PUT /players/{playerId}/account-manager', () => {
   });
 
   it('refuses a player session on every account-manager route and never shows the manager to the player', async () => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
 
     expect((await setManager(p.client, p.playerId, null)).status).toBe(403);
@@ -191,14 +175,18 @@ describe('PUT /players/{playerId}/account-manager', () => {
 
     const profile = await p.client.get('/profile');
     expect(profile.status).toBe(200);
-    expect(await json(profile)).not.toHaveProperty('accountManager');
+    const profileRaw = await profile.text();
+    expect(JSON.parse(profileRaw)).not.toHaveProperty('accountManager');
+    expect(profileRaw).not.toContain(manager.email);
     const card = await p.client.get(`/players/${p.userId}/profile-card`);
     expect(card.status).toBe(200);
-    expect(await json(card)).not.toHaveProperty('accountManager');
+    const cardRaw = await card.text();
+    expect(JSON.parse(cardRaw)).not.toHaveProperty('accountManager');
+    expect(cardRaw).not.toContain(manager.email);
   });
 
   it('answers 404 for an unknown player', async () => {
-    const manager = await newStaff('vip-manager');
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     expect((await setManager(admin, randomUUID(), manager.userId)).status).toBe(404);
   });
 
@@ -208,19 +196,19 @@ describe('PUT /players/{playerId}/account-manager', () => {
       'an inactive staff member',
       'inactive',
       async () => {
-        const staff = await newStaff('vip-manager');
-        await deactivate(staff.userId);
+        const staff = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+        await deactivateUser(testApp, staff.userId);
         return staff.userId;
       },
     ],
-    ['a player', 'not_eligible', async () => (await newPlayer()).userId],
+    ['a player', 'not_eligible', async () => (await newPlayer(testApp, EMAIL_PREFIX)).userId],
     [
       'staff without player:view',
       'not_eligible',
-      async () => (await newStaff('marketing-banners')).userId,
+      async () => (await newStaff(testApp, EMAIL_PREFIX, 'marketing-banners')).userId,
     ],
   ])('answers 422 for %s with reason %s', async (_label, reason, candidate) => {
-    const p = await newPlayer();
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
     const res = await setManager(admin, p.playerId, await candidate());
     expect(res.status).toBe(422);
     expect(await json(res)).toMatchObject({ data: { reason } });
@@ -229,11 +217,11 @@ describe('PUT /players/{playerId}/account-manager', () => {
   });
 
   it('keeps a deactivated manager as inactive, lets it be replaced but never re-assigned', async () => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
-    const replacement = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    const replacement = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
-    await deactivate(manager.userId);
+    await deactivateUser(testApp, manager.userId);
 
     expect(await managerOf(p.playerId)).toMatchObject({ userId: manager.userId, isActive: false });
     const reassigned = await setManager(admin, p.playerId, manager.userId);
@@ -247,12 +235,12 @@ describe('PUT /players/{playerId}/account-manager', () => {
   it.each([
     [
       'a status change',
-      (p: Account) => admin.patch(`/players/${p.playerId}`, { status: 'suspended' }),
+      (p: NamedAccount) => admin.patch(`/players/${p.playerId}`, { status: 'suspended' }),
     ],
-    ['a closure', (p: Account) => admin.del(`/players/${p.playerId}`)],
+    ['a closure', (p: NamedAccount) => admin.del(`/players/${p.playerId}`)],
     [
       'a self-exclusion',
-      (p: Account) =>
+      (p: NamedAccount) =>
         admin.post(`/compliance/players/${p.userId}/self-exclusion`, {
           isPermanent: true,
           reason: 'account manager e2e',
@@ -261,15 +249,15 @@ describe('PUT /players/{playerId}/account-manager', () => {
     ],
     [
       'a cooling-off',
-      (p: Account) =>
+      (p: NamedAccount) =>
         admin.post(`/compliance/players/${p.userId}/cooling-off`, {
           durationHours: 24,
           reason: 'account manager e2e',
         }),
     ],
   ])('keeps the manager through %s', async (_label, change) => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
     const res = await change(p);
     expect(res.status, await res.clone().text()).toBeLessThan(300);
@@ -279,9 +267,13 @@ describe('PUT /players/{playerId}/account-manager', () => {
 
 describe('GET /players?accountManagerId=', () => {
   it("filters and pages a manager's players, and serves a manager their own", async () => {
-    const manager = await newStaff('vip-manager');
-    const players = [await newPlayer(), await newPlayer(), await newPlayer()];
-    await newPlayer();
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    const players = [
+      await newPlayer(testApp, EMAIL_PREFIX),
+      await newPlayer(testApp, EMAIL_PREFIX),
+      await newPlayer(testApp, EMAIL_PREFIX),
+    ];
+    await newPlayer(testApp, EMAIL_PREFIX);
     for (const p of players) {
       expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
     }
@@ -319,12 +311,17 @@ describe('GET /players?accountManagerId=', () => {
 describe('GET /players/account-managers', () => {
   it('lists only active staff holding player:view whose name matches, never by email', async () => {
     const token = randomUUID().slice(0, 8);
-    const eligible = await newStaff('vip-manager', `${token} eligible`);
-    const viewer = await newStaff('customer-support-agent', `${token} viewer`);
-    await newStaff('marketing-banners', `${token} marketing`);
-    const inactive = await newStaff('vip-manager', `${token} inactive`);
-    await deactivate(inactive.userId);
-    const p = await newPlayer();
+    const eligible = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager', `${token} eligible`);
+    const viewer = await newStaff(
+      testApp,
+      EMAIL_PREFIX,
+      'customer-support-agent',
+      `${token} viewer`,
+    );
+    await newStaff(testApp, EMAIL_PREFIX, 'marketing-banners', `${token} marketing`);
+    const inactive = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager', `${token} inactive`);
+    await deactivateUser(testApp, inactive.userId);
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
     await drizzle()
       .update(user)
       .set({ name: `${token} player` })
@@ -333,8 +330,8 @@ describe('GET /players/account-managers', () => {
     const res = await admin.get(`/players/account-managers?search=${token}`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([
-      { userId: eligible.userId, name: eligible.name },
-      { userId: viewer.userId, name: viewer.name },
+      { userId: eligible.userId, name: eligible.name, email: eligible.email },
+      { userId: viewer.userId, name: viewer.name, email: viewer.email },
     ]);
     const limited = await admin.get(`/players/account-managers?search=${token}&limit=1`);
     expect(await limited.json()).toHaveLength(1);
@@ -346,8 +343,8 @@ describe('GET /players/account-managers', () => {
 
   it('matches % and _ in the search literally', async () => {
     const token = randomUUID().slice(0, 8);
-    const literal = await newStaff('vip-manager', `${token} 50%_x`);
-    await newStaff('vip-manager', `${token} 50ab x`);
+    const literal = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager', `${token} 50%_x`);
+    await newStaff(testApp, EMAIL_PREFIX, 'vip-manager', `${token} 50ab x`);
     const res = await admin.get(
       `/players/account-managers?search=${encodeURIComponent(`${token} 50%_`)}`,
     );
@@ -362,13 +359,44 @@ describe('GET /players/account-managers', () => {
       400,
     );
   });
+
+  it('orders same-named candidates by user id', async () => {
+    const token = randomUUID().slice(0, 8);
+    const name = `${token} namesake`;
+    // Emails, inserts and grants all run against id order, so only the id tie-break passes.
+    const ids = Array.from({ length: 4 }, () => randomUUID()).sort();
+    const staff = ids.map((userId, i) => ({
+      userId,
+      email: `${token}-${ids.length - i}@namesake.e2e.test`,
+    }));
+    // Inserted, not newStaff: each newStaff logs in, and this suite sits at the per-IP login cap.
+    await drizzle()
+      .insert(user)
+      .values(
+        [...staff].reverse().map(({ userId, email }, i) => ({
+          id: userId,
+          name,
+          username: `n${token}${i}`,
+          email,
+          role: 'admin',
+        })),
+      );
+    for (const { userId } of [...staff].reverse()) {
+      await assignIamRoleByKey(testApp.container, userId, 'vip-manager');
+    }
+
+    const res = await admin.get(`/players/account-managers?search=${encodeURIComponent(name)}`);
+    expect(res.status).toBe(200);
+    const listed = (await res.json()) as { userId: string; email: string }[];
+    expect(listed.map(({ userId, email }) => ({ userId, email }))).toEqual(staff);
+  });
 });
 
 describe('PLAYER_ACCOUNT_MANAGER_READER', () => {
   it("reads a player's manager by their user id, and null for none or an unknown player", async () => {
     const reader = testApp.container.get(PLAYER_ACCOUNT_MANAGER_READER);
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     expect(await reader.getByPlayerUserId(p.userId)).toBeNull();
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
     expect(await reader.getByPlayerUserId(p.userId)).toEqual({
@@ -378,13 +406,27 @@ describe('PLAYER_ACCOUNT_MANAGER_READER', () => {
     });
     expect(await reader.getByPlayerUserId(randomUUID())).toBeNull();
   });
+
+  it('reads a deactivated manager as inactive', async () => {
+    const reader = testApp.container.get(PLAYER_ACCOUNT_MANAGER_READER);
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
+    await deactivateUser(testApp, manager.userId);
+
+    expect(await reader.getByPlayerUserId(p.userId)).toEqual({
+      userId: manager.userId,
+      name: manager.name,
+      isActive: false,
+    });
+  });
 });
 
 describe('account-manager permissions and input', () => {
   it('names player:update in the 403, records the denial, and still lets the same session read', async () => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
-    const viewer = await newStaff('customer-support-agent');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    const viewer = await newStaff(testApp, EMAIL_PREFIX, 'customer-support-agent');
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
 
     const denied = await setManager(viewer.client, p.playerId, null);
@@ -417,8 +459,8 @@ describe('account-manager permissions and input', () => {
   });
 
   it('refuses staff without player:view on every account-manager route, even for their own id', async () => {
-    const p = await newPlayer();
-    const outsider = await newStaff('marketing-banners');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const outsider = await newStaff(testApp, EMAIL_PREFIX, 'marketing-banners');
     expect((await setManager(outsider.client, p.playerId, outsider.userId)).status).toBe(403);
     expect((await outsider.client.get('/players/account-managers')).status).toBe(403);
     expect(await managerOf(p.playerId)).toBeNull();
@@ -426,7 +468,7 @@ describe('account-manager permissions and input', () => {
   });
 
   it('answers 401 with no session', async () => {
-    const p = await newPlayer();
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
     const anonymous = (path: string, init: RequestInit) => testApp.app.request(path, init);
     const put = await anonymous(`/players/${p.playerId}/account-manager`, {
       method: 'PUT',
@@ -441,7 +483,7 @@ describe('account-manager permissions and input', () => {
   });
 
   it('lets an admin assign themselves when they hold player:view', async () => {
-    const p = await newPlayer();
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
     const res = await setManager(admin, p.playerId, adminUserId);
     expect(res.status).toBe(200);
     expect(await json(res)).toMatchObject({ accountManager: { userId: adminUserId } });
@@ -455,18 +497,18 @@ describe('account-manager permissions and input', () => {
     ],
     [
       'a non-uuid manager id',
-      (p: Account) => `/players/${p.playerId}/account-manager`,
+      (p: NamedAccount) => `/players/${p.playerId}/account-manager`,
       { accountManagerId: 'nope' },
     ],
-    ['a missing manager id', (p: Account) => `/players/${p.playerId}/account-manager`, {}],
+    ['a missing manager id', (p: NamedAccount) => `/players/${p.playerId}/account-manager`, {}],
     [
       'an empty-string manager id',
-      (p: Account) => `/players/${p.playerId}/account-manager`,
+      (p: NamedAccount) => `/players/${p.playerId}/account-manager`,
       { accountManagerId: '' },
     ],
   ])('answers 400 for %s and changes nothing', async (_label, path, body) => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
     expect((await admin.put(path(p), body)).status).toBe(400);
     expect(await managerOf(p.playerId)).toMatchObject({ userId: manager.userId });
@@ -487,9 +529,9 @@ describe('account-manager permissions and input', () => {
 
 describe('account-manager concurrency', () => {
   it('serializes two parallel assignments: one final manager, each audit row chained to the last', async () => {
-    const p = await newPlayer();
-    const a = await newStaff('vip-manager');
-    const b = await newStaff('support-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const a = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    const b = await newStaff(testApp, EMAIL_PREFIX, 'support-manager');
 
     const [resA, resB] = await Promise.all([
       setManager(admin, p.playerId, a.userId),
@@ -510,8 +552,8 @@ describe('account-manager concurrency', () => {
   });
 
   it('writes one audit row when the same assignment is sent twice in parallel', async () => {
-    const p = await newPlayer();
-    const a = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const a = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     const results = await Promise.all([
       setManager(admin, p.playerId, a.userId),
       setManager(admin, p.playerId, a.userId),
@@ -524,8 +566,8 @@ describe('account-manager concurrency', () => {
 
 describe('account-manager reads beside the player record', () => {
   it('returns accountManager null for an unmanaged player and the manager from PATCH', async () => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     const listed = await admin.get('/players?limit=100&sortOrder=desc');
     expect(listed.status).toBe(200);
     const items = (await json(listed))['items'] as { id: string; accountManager: unknown }[];
@@ -542,8 +584,8 @@ describe('account-manager reads beside the player record', () => {
   });
 
   it('leaves the unfiltered total unchanged by assigning managers', async () => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     const before = (await json(await admin.get('/players?limit=1')))['total'];
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
     expect((await json(await admin.get('/players?limit=1')))['total']).toBe(before);
@@ -560,18 +602,20 @@ describe('GET /players/account-managers batch scan', () => {
       role: 'admin',
     }));
     await drizzle().insert(user).values(ineligible);
-    const eligible = await newStaff('vip-manager', `${token} z eligible`);
+    const eligible = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager', `${token} z eligible`);
 
     const res = await admin.get(`/players/account-managers?search=${token}&limit=5`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([{ userId: eligible.userId, name: eligible.name }]);
+    expect(await res.json()).toEqual([
+      { userId: eligible.userId, name: eligible.name, email: eligible.email },
+    ]);
   });
 });
 
 describe('account-manager deactivation race', () => {
   it('refuses a manager deactivated while the assignment waits on the player row lock', async () => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     const holder = new Client({ connectionString: db.url });
     await holder.connect();
     try {
@@ -592,7 +636,7 @@ describe('account-manager deactivation race', () => {
         },
         { timeout: 15_000, interval: 25 },
       );
-      await deactivate(manager.userId);
+      await deactivateUser(testApp, manager.userId);
       await holder.query('COMMIT');
 
       const res = await pending;
@@ -611,8 +655,8 @@ describe('account-manager deactivation race', () => {
   ])(
     'waits behind a deactivation that holds the user row lock first, then %s',
     async (_label, finish, status, stored) => {
-      const p = await newPlayer();
-      const manager = await newStaff('vip-manager');
+      const p = await newPlayer(testApp, EMAIL_PREFIX);
+      const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
       const holder = new Client({ connectionString: db.url });
       await holder.connect();
       try {
@@ -653,10 +697,10 @@ describe('account-manager deactivation race', () => {
   );
 
   it('answers 422 inactive when the current manager is deactivated and set again, and still lets it be removed', async () => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     expect((await setManager(admin, p.playerId, manager.userId)).status).toBe(200);
-    await deactivate(manager.userId);
+    await deactivateUser(testApp, manager.userId);
 
     const again = await setManager(admin, p.playerId, manager.userId);
     expect(again.status).toBe(422);
@@ -672,33 +716,30 @@ describe('account-manager deactivation race', () => {
 describe('account manager precedence and exposure', () => {
   it.each([
     ['an unknown user', async () => randomUUID()],
-    ['a player', async () => (await newPlayer()).userId],
-    ['staff without player:view', async () => (await newStaff('marketing-banners')).userId],
+    ['a player', async () => (await newPlayer(testApp, EMAIL_PREFIX)).userId],
+    [
+      'staff without player:view',
+      async () => (await newStaff(testApp, EMAIL_PREFIX, 'marketing-banners')).userId,
+    ],
   ])('answers 404 for an unknown player before judging %s', async (_label, candidate) => {
     const res = await setManager(admin, randomUUID(), await candidate());
     expect(res.status).toBe(404);
   });
 
-  it('never carries the manager email in any response that shows the manager', async () => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
-    const [{ email } = { email: '' }] = await drizzle()
-      .select({ email: user.email })
-      .from(user)
-      .where(eq(user.id, manager.userId));
-    expect(email).toContain('@');
+  it('never carries the manager email in a player-record response that shows the manager', async () => {
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
 
     const responses = [
       await setManager(admin, p.playerId, manager.userId),
       await admin.get(`/players/${p.playerId}`),
       await admin.get(`/players?accountManagerId=${manager.userId}`),
       await admin.patch(`/players/${p.playerId}`, { status: 'suspended' }),
-      await admin.get(`/players/account-managers?search=${encodeURIComponent(manager.name)}`),
     ];
     for (const res of responses) {
       expect(res.status).toBe(200);
       const raw = await res.text();
-      expect(raw).not.toContain(email);
+      expect(raw).not.toContain(manager.email);
     }
     expect(
       await testApp.container.get(PLAYER_ACCOUNT_MANAGER_READER).getByPlayerUserId(p.userId),
@@ -707,14 +748,16 @@ describe('account manager precedence and exposure', () => {
 
   it('leaves out a user whose role is not a static admin role, however its grants look', async () => {
     const token = randomUUID().slice(0, 8);
-    const custom = await newStaff('vip-manager', `${token} custom`);
+    const custom = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager', `${token} custom`);
     await drizzle().update(user).set({ role: 'custom-ops' }).where(eq(user.id, custom.userId));
-    const staff = await newStaff('vip-manager', `${token} staff`);
+    const staff = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager', `${token} staff`);
 
     const listed = await admin.get(`/players/account-managers?search=${token}`);
-    expect(await listed.json()).toEqual([{ userId: staff.userId, name: staff.name }]);
+    expect(await listed.json()).toEqual([
+      { userId: staff.userId, name: staff.name, email: staff.email },
+    ]);
 
-    const p = await newPlayer();
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
     const res = await setManager(admin, p.playerId, custom.userId);
     expect(res.status).toBe(422);
     expect(await json(res)).toMatchObject({ data: { reason: 'not_eligible' } });
@@ -725,16 +768,16 @@ describe('AdminGuard.filterGrantedUsers beside filterGranted', () => {
   it('answers a mixed batch exactly as filterGranted answers each user', async () => {
     const guard = testApp.container.get(ADMIN_GUARD);
     const requirements = [{ resource: 'player', action: 'view' }] as const;
-    const withView = await newStaff('vip-manager');
-    const viewOnly = await newStaff('customer-support-agent');
-    const withoutView = await newStaff('marketing-banners');
-    const inactive = await newStaff('vip-manager');
-    await deactivate(inactive.userId);
-    const staticSupport = await newPlayer();
+    const withView = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    const viewOnly = await newStaff(testApp, EMAIL_PREFIX, 'customer-support-agent');
+    const withoutView = await newStaff(testApp, EMAIL_PREFIX, 'marketing-banners');
+    const inactive = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    await deactivateUser(testApp, inactive.userId);
+    const staticSupport = await newPlayer(testApp, EMAIL_PREFIX);
     await drizzle().update(user).set({ role: 'support' }).where(eq(user.id, staticSupport.userId));
-    const custom = await newStaff('vip-manager');
+    const custom = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     await drizzle().update(user).set({ role: 'custom-ops' }).where(eq(user.id, custom.userId));
-    const playerAccount = await newPlayer();
+    const playerAccount = await newPlayer(testApp, EMAIL_PREFIX);
     const unknown = randomUUID();
 
     const ids = [
@@ -761,9 +804,9 @@ describe('AdminGuard.filterGrantedUsers beside filterGranted', () => {
   it('answers no grants for empty requirements, an inactive admin and an unknown id, and rejects a non-uuid id', async () => {
     const guard = testApp.container.get(ADMIN_GUARD);
     const requirements = [{ resource: 'player', action: 'view' }] as const;
-    const holder = await newStaff('vip-manager');
-    const inactive = await newStaff('vip-manager');
-    await deactivate(inactive.userId);
+    const holder = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    const inactive = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
+    await deactivateUser(testApp, inactive.userId);
 
     expect(await guard.filterGranted(holder.userId, requirements)).toEqual([...requirements]);
     expect(await guard.filterGranted(holder.userId, [])).toEqual([]);
@@ -780,8 +823,8 @@ describe('AdminGuard.filterGrantedUsers beside filterGranted', () => {
 
 describe('account-manager ids in another letter case', () => {
   it('assigns an eligible manager sent as an uppercase uuid, storing and auditing it lowercase', async () => {
-    const p = await newPlayer();
-    const manager = await newStaff('vip-manager');
+    const p = await newPlayer(testApp, EMAIL_PREFIX);
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     const upper = manager.userId.toUpperCase();
 
     const res = await setManager(admin, p.playerId, upper);
@@ -798,14 +841,14 @@ describe('account-manager ids in another letter case', () => {
   });
 
   it('answers filterGranted the same for an uppercase id', async () => {
-    const manager = await newStaff('vip-manager');
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     const guard = testApp.container.get(ADMIN_GUARD);
     const view = [{ resource: 'player', action: 'view' }] as const;
     expect(await guard.filterGranted(manager.userId.toUpperCase(), view)).toEqual(view);
   });
 
   it('lets assertUser pass an uppercase id on its database grants, answering the lowercase id', async () => {
-    const manager = await newStaff('vip-manager');
+    const manager = await newStaff(testApp, EMAIL_PREFIX, 'vip-manager');
     const guard = testApp.container.get(ADMIN_GUARD);
     await expect(
       guard.assertUser(manager.userId.toUpperCase(), 'player', 'view'),
