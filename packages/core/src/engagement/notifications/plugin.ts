@@ -457,7 +457,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
     notification({
       userId: p.mentionedUserId,
       type: 'chat.mention',
-      params: {},
+      params: { byUsername: p.byUsername },
       data: compactData({ roomId: p.roomId, messageId: p.messageId }),
     }),
   ),
