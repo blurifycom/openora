@@ -114,6 +114,46 @@ describe('PATCH /backoffice/users/{userId} on a staff account', () => {
     expect(await isActiveOf(otherSuper)).toBe(false);
   });
 
+  it('lets exactly one of two super-admins disabling each other at once win', async () => {
+    const one = await staffWithRole('super-admin');
+    const two = await staffWithRole('super-admin');
+    // Make these two the only active super-admins for the duration of the race.
+    const others = (
+      await drizzle()
+        .select({ userId: adminRoleAssignment.userId, isActive: user.isActive })
+        .from(adminRoleAssignment)
+        .innerJoin(adminRole, eq(adminRole.id, adminRoleAssignment.roleId))
+        .innerJoin(user, eq(user.id, adminRoleAssignment.userId))
+        .where(eq(adminRole.isSuperAdmin, true))
+    ).filter((h) => h.userId !== one.userId && h.userId !== two.userId && h.isActive);
+    const setActiveDirect = (ids: string[], isActive: boolean) =>
+      Promise.all(ids.map((id) => drizzle().update(user).set({ isActive }).where(eq(user.id, id))));
+    await setActiveDirect(
+      others.map((o) => o.userId),
+      false,
+    );
+    try {
+      const results = await Promise.all([
+        setActive(one.client, two.userId, false),
+        setActive(two.client, one.userId, false),
+      ]);
+
+      const statuses = results.map((r) => r.status).sort();
+      expect(statuses).toEqual([200, 409]);
+      const refused = results.find((r) => r.status === 409);
+      expect(await refused?.json()).toMatchObject({
+        data: { reason: 'last_active_super_admin' },
+      });
+      const active = [await isActiveOf(one.userId), await isActiveOf(two.userId)];
+      expect(active.filter(Boolean)).toHaveLength(1);
+    } finally {
+      await setActiveDirect(
+        others.map((o) => o.userId),
+        true,
+      );
+    }
+  });
+
   it('lets a super-admin disable and re-enable a staff account, auditing each change', async () => {
     const { userId: staffId } = await staffWithRole('customer-support-agent');
 

@@ -158,7 +158,13 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return rows.map(toRow);
   }
 
-  async update(id: string, patch: AdminUserPatch, actorId: string, meta?: ClientMeta) {
+  async update(
+    id: string,
+    patch: AdminUserPatch,
+    actorId: string,
+    meta?: ClientMeta,
+    options: Parameters<AdminUserDirectory['update']>[4] = {},
+  ) {
     const set: Partial<typeof user.$inferInsert> = {};
     if (patch.isActive !== undefined) {
       set.isActive = patch.isActive;
@@ -172,13 +178,14 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
 
     const written = await this.drizzle.db.transaction(async (tx) => {
       const [existing] = await tx
-        .select({ isActive: user.isActive })
+        .select({ isActive: user.isActive, role: user.role })
         .from(user)
         .where(eq(user.id, id))
         .for('update');
       if (!existing) {
         return null;
       }
+      await options.beforeWrite?.(tx, existing);
       const [updated] = await tx.update(user).set(set).where(eq(user.id, id)).returning();
       if (!updated) {
         return null;

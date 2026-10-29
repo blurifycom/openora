@@ -130,8 +130,10 @@ export class BackofficeService {
     actorId: User['id'],
     meta?: ClientMeta,
   ) {
-    await this.assertKeepsAdminAccess(userId, data, actorId);
-    const row = await this.users.update(userId, data, actorId, meta);
+    const row = await this.users.update(userId, data, actorId, meta, {
+      beforeWrite: (tx, current) =>
+        this.assertKeepsAdminAccess({ userId, data, actorId, current, tx }),
+    });
     if (!row) {
       throw new UserNotFoundError(userId);
     }
@@ -141,34 +143,33 @@ export class BackofficeService {
 
   /**
    * Refuses a change that would lock admin management out: an admin disabling or re-roling
-   * themselves, or the last active super-admin being disabled or demoted. Best effort - the
-   * read and the write are not one transaction, so two super-admins disabling each other at
-   * the same instant can both pass.
+   * themselves, or the last active super-admin being disabled or demoted. Runs inside the
+   * update's transaction, against the locked row; the super-admin check takes the shared
+   * super-admin management lock, so concurrent changes that each remove a different
+   * super-admin are decided one after the other and the write commits under that lock.
    */
-  private async assertKeepsAdminAccess(
-    userId: User['id'],
-    data: { isActive?: boolean; role?: UserRole },
-    actorId: User['id'],
-  ) {
-    const target = await this.users.get(userId);
-    if (!target) {
-      return;
-    }
-    const disables = data.isActive === false && target.isActive;
-    const demotes = data.role !== undefined && data.role !== target.role;
+  private async assertKeepsAdminAccess({
+    userId,
+    data,
+    actorId,
+    current,
+    tx,
+  }: {
+    userId: User['id'];
+    data: { isActive?: boolean; role?: UserRole };
+    actorId: User['id'];
+    current: { isActive: boolean; role: string };
+    tx: unknown;
+  }) {
+    const disables = data.isActive === false && current.isActive;
+    const demotes = data.role !== undefined && data.role !== current.role;
     if (!disables && !demotes) {
       return;
     }
     if (userId === actorId) {
       throw new SelfAccountLockoutError();
     }
-    const superAdminIds = await this.roleAssignments.listSuperAdminUserIds();
-    if (!superAdminIds.includes(userId)) {
-      return;
-    }
-    const others = superAdminIds.filter((id) => id !== userId);
-    const remaining = others.length > 0 ? await this.users.lookupUsers(others) : [];
-    if (!remaining.some((u) => u.isActive && u.role === 'admin')) {
+    if (!(await this.roleAssignments.keepsAnotherActiveSuperAdmin(userId, tx))) {
       throw new LastActiveSuperAdminError();
     }
   }

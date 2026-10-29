@@ -2,9 +2,13 @@ import type {
   AdminRoleAssignmentDirectory,
   AdminRoleAssignmentSummary,
 } from '@openora/core/contracts';
-import { DrizzleService } from '@openora/core/server';
-import { eq, inArray } from 'drizzle-orm';
+import { DrizzleService, type DrizzleTx } from '@openora/core/server';
+import { and, eq, inArray } from 'drizzle-orm';
 import { adminRole, adminRoleAssignment } from '../schema/index.js';
+import {
+  activeSuperAdminHoldings,
+  lockSuperAdminManagement,
+} from '../shared/super-admin-retention.js';
 
 export class DrizzleAdminRoleAssignmentDirectory implements AdminRoleAssignmentDirectory {
   constructor(private readonly drizzle: DrizzleService) {}
@@ -24,12 +28,21 @@ export class DrizzleAdminRoleAssignmentDirectory implements AdminRoleAssignmentD
       .where(inArray(adminRoleAssignment.userId, userIds));
   }
 
-  async listSuperAdminUserIds(): Promise<string[]> {
-    const rows = await this.drizzle.db
-      .selectDistinct({ userId: adminRoleAssignment.userId })
+  async keepsAnotherActiveSuperAdmin(userId: string, tx: unknown): Promise<boolean> {
+    const txn = tx as DrizzleTx;
+    await lockSuperAdminManagement(txn);
+    // Read after the lock: under READ COMMITTED each statement sees every change committed
+    // before it began, so a competing change that held the lock is already visible here.
+    const [held] = await txn
+      .select({ id: adminRoleAssignment.id })
       .from(adminRoleAssignment)
       .innerJoin(adminRole, eq(adminRole.id, adminRoleAssignment.roleId))
-      .where(eq(adminRole.isSuperAdmin, true));
-    return rows.map((r) => r.userId);
+      .where(and(eq(adminRoleAssignment.userId, userId), eq(adminRole.isSuperAdmin, true)))
+      .limit(1);
+    if (!held) {
+      return true;
+    }
+    const holdings = await activeSuperAdminHoldings(txn);
+    return holdings.some((h) => h.userId !== userId);
   }
 }

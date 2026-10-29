@@ -54,6 +54,10 @@ import type {
 } from '../contract/index.js';
 import { loadAdminGrants, usersWithoutMcpAccess } from '../shared/admin-grants.js';
 import { generateInvitationToken, hashInvitationToken } from '../shared/invitation-token.js';
+import {
+  activeSuperAdminHoldings,
+  lockSuperAdminManagement,
+} from '../shared/super-admin-retention.js';
 import type { McpTokenService } from './mcp-token.service.js';
 
 const logger = createLogger('iam-service');
@@ -283,8 +287,14 @@ export class IamService {
   private changeGrants<T>(
     caller: Caller,
     change: (tx: DrizzleTx) => Promise<{ result: T; affectedUserIds: readonly User['id'][] }>,
+    { superAdminManagement = false }: { superAdminManagement?: boolean } = {},
   ) {
     return this.drizzle.db.transaction(async (tx) => {
+      // Lock order: super-admin management first, then the revocation table lock - the
+      // same order the account-update path takes them in, so the two cannot deadlock.
+      if (superAdminManagement) {
+        await lockSuperAdminManagement(tx);
+      }
       await this.mcpTokens.lockForRevocation(tx);
       const { result, affectedUserIds } = await change(tx);
       if (affectedUserIds.length > 0) {
@@ -643,51 +653,38 @@ export class IamService {
       new RoleNotFoundError(input.roleId),
     );
 
-    // Count-then-delete must be atomic (TOCTOU). Lock super-admin holder rows FOR UPDATE
-    // so a concurrent unassign blocks until after the first commits.
-    const deleted = await this.changeGrants(input.caller, async (txn) => {
-      if (role.isSuperAdmin) {
-        const superRoleRows = await txn
-          .select({ id: adminRole.id })
-          .from(adminRole)
-          .where(eq(adminRole.isSuperAdmin, true));
-        const superRoleIds = superRoleRows.map((r) => r.id);
-        const holders = await txn
-          .select({
-            userId: adminRoleAssignment.userId,
-            roleId: adminRoleAssignment.roleId,
-            isActive: user.isActive,
-            accountRole: user.role,
-          })
-          .from(adminRoleAssignment)
-          .leftJoin(user, eq(user.id, adminRoleAssignment.userId))
-          .where(inArray(adminRoleAssignment.roleId, superRoleIds))
-          .for('update', { of: adminRoleAssignment });
-        // Only a holder who can still sign in to the back office keeps admin management
-        // reachable: a disabled or demoted account holding the role does not count.
-        const remaining = holders.filter(
-          (h) =>
-            !(h.userId === input.userId && h.roleId === input.roleId) &&
-            h.isActive === true &&
-            h.accountRole === 'admin',
-        );
-        if (remaining.length === 0) {
-          throw new LastSuperAdminError();
+    // Count-then-delete must be atomic (TOCTOU). A super-admin role change takes the shared
+    // super-admin management lock, so it serialises with a concurrent unassign AND with a
+    // back-office disable or demotion of another super-admin - each reads who is left only
+    // after the other has committed.
+    const deleted = await this.changeGrants(
+      input.caller,
+      async (txn) => {
+        if (role.isSuperAdmin) {
+          // Only a holder who can still sign in to the back office keeps admin management
+          // reachable: a disabled or demoted account holding the role does not count.
+          const remaining = (await activeSuperAdminHoldings(txn)).filter(
+            (h) => !(h.userId === input.userId && h.roleId === input.roleId),
+          );
+          if (remaining.length === 0) {
+            throw new LastSuperAdminError();
+          }
         }
-      }
 
-      const removed = await txn
-        .delete(adminRoleAssignment)
-        .where(
-          and(
-            eq(adminRoleAssignment.userId, input.userId),
-            eq(adminRoleAssignment.roleId, input.roleId),
-          ),
-        )
-        .returning({ id: adminRoleAssignment.id });
-      const wasAssigned = removed.length > 0;
-      return { result: wasAssigned, affectedUserIds: wasAssigned ? [input.userId] : [] };
-    });
+        const removed = await txn
+          .delete(adminRoleAssignment)
+          .where(
+            and(
+              eq(adminRoleAssignment.userId, input.userId),
+              eq(adminRoleAssignment.roleId, input.roleId),
+            ),
+          )
+          .returning({ id: adminRoleAssignment.id });
+        const wasAssigned = removed.length > 0;
+        return { result: wasAssigned, affectedUserIds: wasAssigned ? [input.userId] : [] };
+      },
+      { superAdminManagement: role.isSuperAdmin },
+    );
 
     // No-op unassign returns success but emits nothing - no ghost revocation in the audit log.
     if (deleted) {

@@ -155,6 +155,15 @@ async function seedAdminAccount(
   });
 }
 
+// A promise to settle from outside, for holding one transaction open while another runs.
+function deferred() {
+  let resolve = () => {};
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 async function seedSuperCaller() {
   const role = await seedRole({ name: 'Root', isSuperAdmin: true, isSystem: true });
   await seedAssignment(ADMIN_CALLER.userId, role.id);
@@ -186,22 +195,123 @@ beforeEach(async () => {
   await redis.flush();
 });
 
-describe('DrizzleAdminRoleAssignmentDirectory.listSuperAdminUserIds (real PG)', () => {
-  it('lists each super-admin holder once and nobody else', async () => {
+describe('DrizzleAdminRoleAssignmentDirectory.keepsAnotherActiveSuperAdmin (real PG)', () => {
+  const directory = () => new DrizzleAdminRoleAssignmentDirectory(db.drizzle);
+  const ask = (userId: string) =>
+    db.drizzle.db.transaction((tx) => directory().keepsAnotherActiveSuperAdmin(userId, tx));
+
+  async function seedSuperAdmins(count: number) {
     const root = await seedRole({ name: 'Root', isSuperAdmin: true });
-    const otherRoot = await seedRole({ name: 'Root 2', isSuperAdmin: true });
+    const ids = Array.from({ length: count }, () => randomUUID());
+    for (const id of ids) {
+      await seedAssignment(id, root.id);
+      await seedAdminAccount(id);
+    }
+    return ids;
+  }
+
+  it('answers true for an account that holds no super-admin role', async () => {
     const ops = await seedRole({ name: 'Ops' });
-    const both = randomUUID();
-    const one = randomUUID();
     const scoped = randomUUID();
-    await seedAssignment(both, root.id);
-    await seedAssignment(both, otherRoot.id);
-    await seedAssignment(one, otherRoot.id);
     await seedAssignment(scoped, ops.id);
+    await seedAdminAccount(scoped);
 
-    const ids = await new DrizzleAdminRoleAssignmentDirectory(db.drizzle).listSuperAdminUserIds();
+    expect(await ask(scoped)).toBe(true);
+  });
 
-    expect(ids.sort()).toEqual([both, one].sort());
+  it('answers false for the only super-admin and true while a second active one exists', async () => {
+    const [only] = await seedSuperAdmins(1);
+    expect(await ask(only ?? '')).toBe(false);
+
+    const [first, second] = await seedSuperAdmins(2);
+    expect(await ask(first ?? '')).toBe(true);
+    expect(await ask(second ?? '')).toBe(true);
+  });
+
+  it.each([
+    ['disabled', { isActive: false }],
+    ['demoted to a player account', { role: 'player' as const }],
+  ])('does not count a super-admin whose account is %s', async (_state, over) => {
+    const [target, other] = await seedSuperAdmins(2);
+    await db.drizzle.db
+      .update(user)
+      .set(over)
+      .where(eq(user.id, other ?? ''));
+
+    expect(await ask(target ?? '')).toBe(false);
+  });
+
+  it('makes a concurrent check wait for the lock holder and read its committed write', async () => {
+    const [first, second] = await seedSuperAdmins(2);
+    const aHoldsLock = deferred();
+    const aMayCommit = deferred();
+
+    // A: the check for disabling `second` passes (`first` remains), A writes the disable and
+    // holds its transaction - and with it the lock - open.
+    const a = db.drizzle.db.transaction(async (tx) => {
+      const keeps = await directory().keepsAnotherActiveSuperAdmin(second ?? '', tx);
+      await tx
+        .update(user)
+        .set({ isActive: false })
+        .where(eq(user.id, second ?? ''));
+      aHoldsLock.resolve();
+      await aMayCommit.promise;
+      return keeps;
+    });
+    await aHoldsLock.promise;
+    // B: the check for disabling `first`. Without the lock it would still see `second`
+    // active (A has not committed) and pass, leaving no active super-admin.
+    let bAnswered = false;
+    const b = db.drizzle.db
+      .transaction((tx) => directory().keepsAnotherActiveSuperAdmin(first ?? '', tx))
+      .then((keeps) => {
+        bAnswered = true;
+        return keeps;
+      });
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const answeredWhileLocked = bAnswered;
+    // Released before any assertion, so a failure never leaves A's transaction open.
+    aMayCommit.resolve();
+
+    expect(answeredWhileLocked).toBe(false);
+    expect(await a).toBe(true);
+    expect(await b).toBe(false);
+  });
+
+  it('serialises a super-admin role removal with an in-flight disable of the other super-admin', async () => {
+    const root = await seedSuperCaller();
+    await seedAdminAccount(ADMIN_CALLER.userId);
+    const other = randomUUID();
+    await seedAssignment(other, root.id);
+    await seedAdminAccount(other);
+    const aHoldsLock = deferred();
+    const aMayCommit = deferred();
+
+    const disableOther = db.drizzle.db.transaction(async (tx) => {
+      const keeps = await directory().keepsAnotherActiveSuperAdmin(other, tx);
+      await tx.update(user).set({ isActive: false }).where(eq(user.id, other));
+      aHoldsLock.resolve();
+      await aMayCommit.promise;
+      return keeps;
+    });
+    await aHoldsLock.promise;
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
+    const stepDown = svc
+      .unassignRole({ userId: ADMIN_CALLER.userId, roleId: root.id, caller: ADMIN_CALLER })
+      .catch((err: unknown) => err);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    aMayCommit.resolve();
+
+    expect(await disableOther).toBe(true);
+    expect(await stepDown).toBeInstanceOf(LastSuperAdminError);
+    expect(
+      await db.drizzle.db
+        .select()
+        .from(adminRoleAssignment)
+        .where(eq(adminRoleAssignment.userId, ADMIN_CALLER.userId)),
+    ).toHaveLength(1);
   });
 });
 
