@@ -34,6 +34,7 @@ export type DirectAuditAction =
   | 'chat.context_room.closed'
   | 'player.display_currency.set'
   | 'player.profile.updated'
+  | 'player.acquisition.recorded'
   | 'player.display_decimal_places.set'
   | 'compliance.kyc.bulk_approve'
   | 'compliance.country_rule.created'

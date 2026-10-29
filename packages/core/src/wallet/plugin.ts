@@ -5,6 +5,7 @@ import {
   ADMIN_USER_DIRECTORY,
   BONUS_GRANTS,
   BONUS_GRANT_LEDGER,
+  BONUS_LIFECYCLE,
   BONUS_WAGERING,
   IDENTITY_READER,
   ADMIN_WALLET_REPORTING,
@@ -253,6 +254,7 @@ export default {
         kycPolicy: c.has(KYC_WITHDRAWAL_POLICY) ? c.get(KYC_WITHDRAWAL_POLICY) : undefined,
         depositHold: c.has(DEPOSIT_HOLD_POLICY) ? c.get(DEPOSIT_HOLD_POLICY) : undefined,
         grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
+        bonusLifecycle: c.has(BONUS_LIFECYCLE) ? c.get(BONUS_LIFECYCLE) : undefined,
       }));
 
     ctx.mcp.tool(walletActivityTool, (c) => {

@@ -93,6 +93,7 @@ export function assertValidActionType(
     duplicateIdRejection(contract.id, registered) ??
     describedRejection(contract) ??
     reversibleRejection(contract.reversible) ??
+    benefitsPlayerRejection(contract.benefitsPlayer) ??
     iamRejection(contract.iam, {
       problem: 'every action type must name the IAM resource its executor needs',
       fix: 'add iam: { resource, action } from adminStatement, eg { resource: "withdrawal", action: "hold" }',
@@ -193,6 +194,16 @@ function reversibleRejection(reversible: unknown): Rejection | null {
   return {
     problem: 'reversible must be a boolean',
     fix: 'state whether an approved action can be undone',
+  };
+}
+
+function benefitsPlayerRejection(benefitsPlayer: unknown): Rejection | null {
+  if (benefitsPlayer === undefined || typeof benefitsPlayer === 'boolean') {
+    return null;
+  }
+  return {
+    problem: 'benefitsPlayer must be a boolean when present',
+    fix: 'set true when an approved action grants the player a benefit, or leave it out',
   };
 }
 

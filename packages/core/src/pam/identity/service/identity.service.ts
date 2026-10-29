@@ -34,6 +34,7 @@ import type {
   MailDispatchPort,
   LoginInput,
   RegisterInput,
+  RegistrationAcquisition,
   Enable2faInput,
   Enable2faResult,
   Verify2faInput,
@@ -800,6 +801,7 @@ export class IdentityService {
         body.user.id,
         registration.termsVersion,
         { ip, userAgent },
+        input.acquisition,
       );
     } catch (err) {
       this.emitRegistrationFailed('error', input, meta);
@@ -872,6 +874,7 @@ export class IdentityService {
     userId: User['id'],
     termsVersion: string,
     { ip, userAgent }: ClientMeta,
+    acquisition: RegistrationAcquisition | undefined,
   ) {
     const now = new Date();
     let outcome: Awaited<ReturnType<PlayerProvisioning['createForRegistration']>>;
@@ -883,6 +886,7 @@ export class IdentityService {
         ageAcceptedAt: now,
         registrationIp: ip,
         registrationUserAgent: userAgent,
+        ...(acquisition ? { acquisition } : {}),
       });
     } catch (err) {
       identityLogger.error(

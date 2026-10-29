@@ -47,7 +47,7 @@ export type {
 export { WALLET_COMMANDS } from './wallet-commands.js';
 
 export type { WagerContext, WagerProduct } from './wager-context.js';
-export { WAGER_PRODUCTS, isWagerProduct } from './wager-context.js';
+export { WAGER_PRODUCTS, WagerProductSchema, isWagerProduct } from './wager-context.js';
 
 export type {
   BonusGrantCommands,
@@ -61,7 +61,12 @@ export { BONUS_GRANTS } from './bonus-grants.js';
 export type { BonusGrantLedgerReader } from './bonus-grant-ledger.js';
 export { BONUS_GRANT_LEDGER } from './bonus-grant-ledger.js';
 
-export type { BonusLifecycleCommands, BonusForfeitOutcome } from './bonus-lifecycle.js';
+export type {
+  BonusLifecycleCommands,
+  BonusForfeitOutcome,
+  BonusForfeitHeldArgs,
+  BonusForfeitedGrant,
+} from './bonus-lifecycle.js';
 export { BONUS_LIFECYCLE } from './bonus-lifecycle.js';
 
 export type {
@@ -105,6 +110,9 @@ export type {
   WalletBalanceReading,
   WalletBalancesReading,
   WalletProviderTransaction,
+  WalletLifetimeWithdrawals,
+  WalletLastDeposit,
+  WalletWithdrawalRequests,
 } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
@@ -461,6 +469,20 @@ export type { PlayEligibilityPort } from './play-eligibility.js';
 export { PLAY_ELIGIBILITY } from './play-eligibility.js';
 export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
 export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
+export type {
+  RgStanding,
+  RgStandingExclusion,
+  RgStandingFlag,
+  RgStandingLimit,
+  RgStandingQuery,
+  RgStandingReader,
+  RgStandingWindow,
+} from './rg-standing-reader.js';
+export {
+  MAX_RG_STANDING_WINDOWS,
+  MAX_RG_STANDING_WINDOW_DAYS,
+  RG_STANDING_READER,
+} from './rg-standing-reader.js';
 export type { DepositHoldPolicy } from './deposit-hold.js';
 export { DEPOSIT_HOLD_POLICY } from './deposit-hold.js';
 

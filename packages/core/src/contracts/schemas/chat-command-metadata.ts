@@ -19,7 +19,8 @@ export const GiftCommandMetadataSchema = z.object({
   currency: z.string(),
   // Optional for compatibility with gift messages persisted before claim state
   // was included in command metadata. New gift messages always populate these.
-  status: z.enum(['available', 'claimed']).optional(),
+  // `expired`: the gift was refunded to its sender and can no longer be claimed.
+  status: z.enum(['available', 'claimed', 'expired']).optional(),
   claimedBy: UuidSchema.nullable().optional(),
   claimedByUsername: z.string().nullable().optional(),
   claimedAt: z.string().nullable().optional(),

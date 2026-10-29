@@ -78,7 +78,7 @@ export const tagRule = pgTable('tag_rule', {
   isEnabled: boolean().notNull().default(false),
   /** Amount threshold matching wallet money columns (high_roller: lifetime deposits; large_depositor: single deposit; high_risk: single withdrawal). */
   threshold: decimal({ precision: 18, scale: 2 }),
-  /** Days threshold (inactive: days since last login; high_risk: rolling window for withdrawal count). */
+  /** Days threshold (inactive, dormant_high_roller: days since last login; high_risk: rolling window for withdrawal count; recent_depositor: days since the last completed deposit). */
   thresholdDays: integer(),
   /** Count threshold (high_risk: number of withdrawals within thresholdDays). */
   thresholdCount: integer(),
