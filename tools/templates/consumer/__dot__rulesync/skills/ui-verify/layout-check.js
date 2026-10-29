@@ -3,6 +3,7 @@
 // Run: playwright-cli -s=v eval "$(cat .claude/skills/ui-verify/layout-check.js)"
 // Returns one line per finding; [] is clean. Findings are leads for the screenshot
 // review, not verdicts: a carousel peek or a deliberate ellipsis can show up here.
+// A finding names a selector and a position, never the text: a screen can show player data.
 // playwright-cli eval takes a bare function expression.
 // oxlint-disable-next-line no-unused-expressions
 () => {
@@ -50,16 +51,17 @@
   };
 
   const findings = [];
-  const report = (kind, el, text, detail) =>
-    findings.push(`${kind} - ${describe(el)} - "${text}" - ${detail}`);
+  const at = (r) =>
+    `at ${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`;
+  const report = (kind, el, box, detail) =>
+    findings.push(`${kind} - ${describe(el)} ${at(box)} - ${detail}`);
 
   const texts = [];
   const range = document.createRange();
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node && texts.length < MAX_TEXTS; node = walker.nextNode()) {
     const el = node.parentElement;
-    const text = node.textContent.trim().slice(0, 40);
-    if (!text || !el || el.closest('script,style,noscript,template')) {continue;}
+    if (!node.textContent.trim() || !el || el.closest('script,style,noscript,template')) {continue;}
     if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) {continue;}
     range.selectNodeContents(node);
     const lines = [...range.getClientRects()].filter((r) => r.width >= 1 && r.height >= 1);
@@ -101,7 +103,7 @@
       const isEllipsis =
         clippedBy.style.textOverflow === 'ellipsis' || clippedBy.style.webkitLineClamp !== 'none';
       const kind = isEllipsis ? 'TRUNCATED' : 'CLIPPED';
-      report(kind, el, text, `cut by ${describe(clippedBy.a)} at ${edges.join(', ')}`);
+      report(kind, el, box, `cut by ${describe(clippedBy.a)} at ${edges.join(', ')}`);
     }
     if (
       !clippedBy &&
@@ -111,7 +113,7 @@
       report(
         'OFFSCREEN',
         el,
-        text,
+        box,
         `x ${Math.round(box.left)}..${Math.round(box.right)}, viewport ${innerWidth}`,
       );
     }
@@ -126,7 +128,7 @@
           }))
           .filter((r) => r.right > r.left && r.bottom > r.top)
       : lines;
-    texts.push({ el, text, lines: shownLines });
+    texts.push({ el, box, lines: shownLines });
   }
 
   const overlapOf = (ra, rb) => {
@@ -145,7 +147,7 @@
       const b = texts[j];
       const point = a.lines.flatMap((ra) => b.lines.map((rb) => overlapOf(ra, rb))).find(Boolean);
       if (point && !isLayerBetween(a.el, b.el, point.x, point.y)) {
-        report('OVERLAP', a.el, a.text, `with ${describe(b.el)} "${b.text}"`);
+        report('OVERLAP', a.el, a.box, `with ${describe(b.el)} ${at(b.box)}`);
       }
     }
   }

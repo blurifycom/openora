@@ -48,9 +48,11 @@ playwright-cli -s=layout-check open "$url" >/dev/null 2>&1
 playwright-cli -s=layout-check resize 390 844 >/dev/null
 out=$(playwright-cli -s=layout-check eval "$(cat "$dir/layout-check.js")")
 playwright-cli -s=layout-check close >/dev/null
-for expected in PAGE-SCROLLS-X 'CLIPPED.*Line two' 'TRUNCATED.*game title' 'OFFSCREEN.*too wide' 'OVERLAP.*Balance.*USDT'; do
+for expected in PAGE-SCROLLS-X 'CLIPPED.*clip-box' 'TRUNCATED.*ellipsis' 'OFFSCREEN.*wide' 'OVERLAP.*overlap-card.*with.*overlap-card'; do
   echo "$out" | grep -q "$expected" || { echo "FAIL: missing $expected"; echo "$out"; exit 1; }
 done
+# Findings never carry page text: a real screen can show player data.
+! echo "$out" | grep -qE 'Balance|USDT|Line two|game title|too wide' || { echo "FAIL: page text in findings"; echo "$out"; exit 1; }
 count=$(echo "$out" | grep -cE '^  "(PAGE|CLIPPED|TRUNCATED|OFFSCREEN|OVERLAP)')
 [ "$count" -eq 5 ] || { echo "FAIL: $count findings, expected 5"; echo "$out"; exit 1; }
 echo PASS
