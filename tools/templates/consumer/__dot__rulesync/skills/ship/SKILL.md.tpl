@@ -114,7 +114,7 @@ Rounds of 3 and 4 share one budget: three. After the third with anything still f
 
 ### 4b. Record evidence
 
-The code is final now, so the videos are recorded once, here, never in an earlier round. Start `tester` for its evidence pass on HEAD: the branch's browser specs run once with video on, `playwright-cli` only for an AC no spec drives. It returns the clip paths per AC.
+The code is final now, so the videos are recorded once, here, never in an earlier round. Start `tester` for its evidence pass on HEAD: every browser spec that drives an AC, new or existing, runs once with video on, `playwright-cli` only for an AC no spec drives. It returns the clip paths per AC.
 
 - A spec that fails here -> back to `builder` with it, then 3 for the cases it touches, 4 on the new commits, 4b again. That round counts against the same budget of three.
 - Every AC that needs a clip has one -> 5.

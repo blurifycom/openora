@@ -66,7 +66,7 @@ Only when the orchestrator asks for it: after the verify pass is green and revie
 
 **Evidence is mandatory** before the MR: one short video per acceptance criterion (aim under 30 s, ending on the outcome the AC names; the "after" twin of a fix's "before" clip), saved under `apps/e2e/test-results/evidence/<ac>-<slug>.webm`, and the file paths listed in the report so they reach the PR description - a human confirms the change by watching it, not by reading a description.
 
-1. Specs first: run the browser specs the branch added or changed in one command with video on (the repo's record switch where it has one, otherwise `test.use({ video: 'on' })`), and copy each `test-results/<test>/video.webm` to its evidence name. One run films every AC a spec drives, at no token cost per step.
+1. Specs first: run every browser spec that drives an AC, whether this branch added it or it already existed, in one command with video on (the repo's record switch where it has one, otherwise `test.use({ video: 'on' })`), and copy each `test-results/<test>/video.webm` to its evidence name. One run films every AC a spec drives, at no token cost per step.
 2. `playwright-cli` (`video-start`, `video-chapter "AC<n>: ..."`, drive it, `video-stop`) only for an AC no spec drives.
 3. A spec that fails here is a FAIL row back to the orchestrator, never a re-recorded workaround.
 
