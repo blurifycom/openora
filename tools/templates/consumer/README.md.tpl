@@ -60,7 +60,7 @@ a DI token wins).
 - `planner` - plan a ticket: the blocking questions, or a plan with risk-driven test cases
 - `builder` - configure extensions, swap adapters, write overlays, customize UI
 - `expert` - turn product asks into requirements + acceptance criteria
-- `tester` - attack a built change against the running stack, return a verdict table with a video per AC, add the tests, triage bugs
+- `tester` - attack a built change against the running stack, return a verdict table, add the tests, triage bugs; once tests and review pass, record a video per AC on the final commit
 - `debugger`, `deployer`, `quality-reviewer`, `security-reviewer`, `compliance-reviewer` - root-cause, packaging, review
 
 The `oss` MCP server (`.mcp.json`) gives them read-only inspection of the platform surface.
