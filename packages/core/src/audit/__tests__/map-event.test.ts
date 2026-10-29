@@ -825,6 +825,26 @@ describe('mapEventToRecord: identity.email.changed', () => {
       after: { email: 'new@example.com' },
     });
   });
+
+  it('carries the change time into after, and leaves it out for a payload without one', async () => {
+    const changedAt = '2026-03-01T10:00:00.000Z';
+    const payload = {
+      userId,
+      playerId,
+      previousEmail: 'old@example.com',
+      newEmail: 'new@example.com',
+    };
+
+    expect(
+      (await mapEventToRecord('identity.email.changed', { ...payload, changedAt })).after,
+    ).toEqual({
+      email: 'new@example.com',
+      changedAt,
+    });
+    expect((await mapEventToRecord('identity.email.changed', payload)).after).toEqual({
+      email: 'new@example.com',
+    });
+  });
 });
 
 describe('mapEventToRecord: player account closed and reopened', () => {

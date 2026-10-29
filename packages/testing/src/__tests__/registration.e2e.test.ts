@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { user, session } from '@openora/core/pam/schema/identity';
-import { player } from '@openora/core/pam/schema/profile';
+import { player, playerAcquisition } from '@openora/core/pam/schema/profile';
 import { auditLog } from '@openora/core/audit/schema';
 import {
   verificationOtpFor,
@@ -280,6 +280,111 @@ describe('registration email verification', () => {
     expect(row?.termsAcceptedAt).toBeInstanceOf(Date);
     expect(row?.ageAcceptedAt).toBeInstanceOf(Date);
     expect(row?.registrationIp).not.toBeNull();
+  });
+
+  describe('acquisition parameters', () => {
+    const acquisition = {
+      params: { aff_id: 'a_1234b_56c_', utm_source: 'review-site' },
+      firstSeenAt: '2026-10-01T12:00:00.000Z',
+      landingHost: 'casino.example',
+    };
+
+    const acquisitionFor = async (userId: string) => {
+      const db = app.container.get(DRIZZLE).db;
+      const [owner] = await db
+        .select({ id: player.id })
+        .from(player)
+        .where(eq(player.userId, userId));
+      if (!owner) {
+        return undefined;
+      }
+      const [row] = await db
+        .select()
+        .from(playerAcquisition)
+        .where(eq(playerAcquisition.playerId, owner.id));
+      return row;
+    };
+
+    it('stores the parameters the visitor arrived with alongside the new player', async () => {
+      const userId = await registerPlayer(app, {
+        email: `reg-acq-${randomUUID()}@e2e.test`,
+        acquisition,
+      });
+
+      expect(await acquisitionFor(userId)).toMatchObject({
+        params: acquisition.params,
+        firstSeenAt: new Date(acquisition.firstSeenAt),
+        landingHost: acquisition.landingHost,
+      });
+    });
+
+    it('audits the stored parameter names in the same transaction, never their values', async () => {
+      const userId = await registerPlayer(app, {
+        email: `reg-acq-audit-${randomUUID()}@e2e.test`,
+        acquisition,
+      });
+      const db = app.container.get(DRIZZLE).db;
+      const [owner] = await db
+        .select({ id: player.id })
+        .from(player)
+        .where(eq(player.userId, userId));
+
+      const [recorded] = await db
+        .select()
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.resourceId, owner?.id ?? ''),
+            eq(auditLog.action, 'player.acquisition.recorded'),
+          ),
+        );
+      expect(recorded).toMatchObject({
+        actorId: userId,
+        after: {
+          paramKeys: ['aff_id', 'utm_source'],
+          firstSeenAt: acquisition.firstSeenAt,
+          landingHost: acquisition.landingHost,
+        },
+      });
+      expect(JSON.stringify(recorded?.after)).not.toContain(acquisition.params.aff_id);
+
+      await vi.waitFor(async () => {
+        const rows = await db
+          .select()
+          .from(auditLog)
+          .where(eq(auditLog.action, 'identity.user.registered'));
+        const row = rows.find((r) => (r.after as { userId?: string })?.userId === userId);
+        expect(row).toBeDefined();
+        expect(row?.after).not.toHaveProperty('acquisition');
+      });
+    });
+
+    it('stores the valid parameters when one of them is malformed', async () => {
+      const userId = await registerPlayer(app, {
+        email: `reg-acq-partial-${randomUUID()}@e2e.test`,
+        acquisition: { params: { aff_id: 'a_1', 'bad key!': 'x' }, landingHost: '[::1]:3000' },
+      });
+
+      expect(await acquisitionFor(userId)).toMatchObject({
+        params: { aff_id: 'a_1' },
+        landingHost: null,
+      });
+    });
+
+    it('stores nothing for a player who arrived without parameters', async () => {
+      const userId = await registerPlayer(app, { email: `reg-acq-none-${randomUUID()}@e2e.test` });
+
+      expect(await acquisitionFor(userId)).toBeUndefined();
+    });
+
+    it('registers the player and stores nothing when the parameters are malformed', async () => {
+      const userId = await registerPlayer(app, {
+        email: `reg-acq-bad-${randomUUID()}@e2e.test`,
+        acquisition: { params: { 'bad key!': 'x' } },
+      });
+
+      expect(await acquisitionFor(userId)).toBeUndefined();
+    });
   });
 
   it('rejects a username that is already taken, case-insensitively', async () => {

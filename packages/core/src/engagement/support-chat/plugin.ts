@@ -1,12 +1,14 @@
 import * as z from 'zod';
 import {
   AUDIT_WRITER,
+  CACHE,
   IDENTITY_READER,
   JOB_QUEUE,
   PLAYER_ACCOUNT_MANAGER_READER,
   RATE_LIMITER,
   RG_EXCLUSION_READER,
   SUPPORT_CHAT_PROVIDER,
+  SUPPORT_HISTORY_READER,
   UuidSchema,
   WALLET_READER,
   SupportChatProviderError,
@@ -17,6 +19,7 @@ import {
   type Uuid,
 } from '@openora/core/contracts';
 import {
+  ADMIN_GUARD,
   DRIZZLE,
   EVENT_BUS,
   createLogger,
@@ -25,6 +28,7 @@ import {
   type Plugin,
 } from '@openora/core/server';
 import { SupportChatService, hasLinkedCustomer } from './service/support-chat.service.js';
+import { SupportHistoryService } from './service/support-history.service.js';
 import { createSupportChatRouter } from './router/index.js';
 
 const logger = createLogger('support-chat');
@@ -172,27 +176,43 @@ export default {
     ctx.routers.add('supportChat', (c) => {
       jobQueue = c.get(JOB_QUEUE);
       drizzle = c.get(DRIZZLE);
-      const limiter = c.get(RATE_LIMITER);
-      if (!c.has(SUPPORT_CHAT_PROVIDER)) {
+      if (c.has(SUPPORT_CHAT_PROVIDER)) {
+        service = new SupportChatService({
+          drizzle,
+          audit: c.get(AUDIT_WRITER),
+          events: c.get(EVENT_BUS),
+          identityReader: c.get(IDENTITY_READER),
+          walletReader: c.get(WALLET_READER),
+          rgExclusionReader: c.get(RG_EXCLUSION_READER),
+          accountManagerReader: c.has(PLAYER_ACCOUNT_MANAGER_READER)
+            ? c.get(PLAYER_ACCOUNT_MANAGER_READER)
+            : null,
+          provider: c.get(SUPPORT_CHAT_PROVIDER),
+          scheduleSync,
+        });
+      } else {
         logger.warn(
           'no SUPPORT_CHAT_PROVIDER bound - /support-chat/session answers not configured',
         );
-        return createSupportChatRouter(null, limiter);
       }
-      service = new SupportChatService({
-        drizzle,
-        audit: c.get(AUDIT_WRITER),
-        events: c.get(EVENT_BUS),
-        identityReader: c.get(IDENTITY_READER),
-        walletReader: c.get(WALLET_READER),
-        rgExclusionReader: c.get(RG_EXCLUSION_READER),
-        accountManagerReader: c.has(PLAYER_ACCOUNT_MANAGER_READER)
-          ? c.get(PLAYER_ACCOUNT_MANAGER_READER)
-          : null,
-        provider: c.get(SUPPORT_CHAT_PROVIDER),
-        scheduleSync,
+      const history = c.has(SUPPORT_HISTORY_READER)
+        ? new SupportHistoryService({
+            drizzle,
+            cache: c.get(CACHE),
+            reader: c.get(SUPPORT_HISTORY_READER),
+          })
+        : null;
+      if (!history) {
+        logger.warn(
+          'no SUPPORT_HISTORY_READER bound - /support-chat/admin/players/{userId}/history answers not configured',
+        );
+      }
+      return createSupportChatRouter({
+        session: service,
+        history,
+        limiter: c.get(RATE_LIMITER),
+        adminGuard: c.get(ADMIN_GUARD),
       });
-      return createSupportChatRouter(service, limiter);
     });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

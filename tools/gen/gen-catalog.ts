@@ -287,6 +287,7 @@ type AgentActionInfo = {
   schemaVersion: number | null;
   iam: AgentIam | null;
   reversible: boolean | null;
+  benefitsPlayer: boolean | null;
 };
 
 // A '/' after one of these characters or words starts a regex literal, not a division.
@@ -590,7 +591,13 @@ function collectAgentSurface(): { tools: AgentToolInfo[]; actions: AgentActionIn
           if (kind === 'tool') {
             tools.push({ ...common, class: stringLiteral(entries.get('class')) });
           } else {
-            actions.push({ ...common, reversible: booleanLiteral(entries.get('reversible')) });
+            actions.push({
+              ...common,
+              reversible: booleanLiteral(entries.get('reversible')),
+              benefitsPlayer: entries.has('benefitsPlayer')
+                ? booleanLiteral(entries.get('benefitsPlayer'))
+                : false,
+            });
           }
         }
       }
