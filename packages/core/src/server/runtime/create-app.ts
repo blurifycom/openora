@@ -743,14 +743,17 @@ export async function createApp(
     // query blips - the client should see "not signed in", the same honest answer an
     // actually-idle session gets, not "server broken".
     if (sessionId && container.has(SESSION_IDLE_POLICY)) {
-      let state: 'active' | 'expired';
+      let state: 'active' | 'expired' | 'idle';
       try {
         state = await container.get(SESSION_IDLE_POLICY).touch(userId, sessionId);
       } catch (err) {
         createLogger('session-idle').error({ err }, 'touch failed');
         state = 'expired';
       }
-      if (state === 'expired') {
+      if (state !== 'active') {
+        if (state === 'idle') {
+          context.sessionEndedReason = 'idle_timeout';
+        }
         return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
       }
     }

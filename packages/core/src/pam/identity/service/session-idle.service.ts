@@ -1,6 +1,7 @@
 import { type EventBus, DrizzleService, createLogger } from '@openora/core/server';
 import { and, eq, gt, sql } from 'drizzle-orm';
 import {
+  ADMIN_IDLE_MINUTES,
   AUTO_LOGOUT_MINUTES,
   type IdentityReader,
   type SessionIdlePolicy,
@@ -22,9 +23,10 @@ export type SessionIdleServiceDeps = {
 };
 
 /**
- * Enforces the player's "Auto-logout when inactive" choice. Runs on every authenticated
- * request, so it does the cheapest thing that works: one joined read, and a write only
- * when the throttle has lapsed or the session has to go.
+ * Enforces the idle window on every authenticated request: the player's "Auto-logout when
+ * inactive" choice, a fixed window for backoffice staff, and the end of any session on a
+ * deactivated account. Runs on every request, so it does the cheapest thing that works: one
+ * joined read, and a write only when the throttle has lapsed or the session has to go.
  */
 export class SessionIdleService implements SessionIdlePolicy {
   private readonly drizzle: DrizzleService;
@@ -37,7 +39,10 @@ export class SessionIdleService implements SessionIdlePolicy {
     this.identityReader = identityReader;
   }
 
-  async touch(userId: User['id'], sessionId: Session['id']): Promise<'active' | 'expired'> {
+  async touch(
+    userId: User['id'],
+    sessionId: Session['id'],
+  ): Promise<'active' | 'expired' | 'idle'> {
     const [row] = await this.drizzle.db
       .select({
         lastSeenAt: session.lastSeenAt,
@@ -56,16 +61,12 @@ export class SessionIdleService implements SessionIdlePolicy {
       return 'expired';
     }
 
-    // The setting is player-only - `assertPlayerPreferenceCaller` never lets an admin set
-    // it, so every admin row is stuck at the column default. Admin sessions already have
-    // their own idle tracking through `AdminGuard`/`AdminSecurityService.touchLastSeen`;
-    // enforcing a second, un-configurable mechanism here would idle out backoffice staff
-    // on a window they have no way to see or change.
-    if (row.role !== 'player') {
-      return 'active';
+    // Staff get a fixed window they cannot change; the per-player setting only ever applies
+    // to players. Both use the same throttled write, so `lastSeenAt` is the single idle clock.
+    let windowMinutes: number | undefined = ADMIN_IDLE_MINUTES;
+    if (row.role === 'player') {
+      windowMinutes = AUTO_LOGOUT_MINUTES[row.autoLogoutDuration];
     }
-
-    const windowMinutes = AUTO_LOGOUT_MINUTES[row.autoLogoutDuration];
     if (windowMinutes === undefined) {
       // Only reachable if the enum and this map ever disagree (a bad migration or a
       // partial deploy). Failing open on a security control has no visible symptom, so
@@ -85,7 +86,7 @@ export class SessionIdleService implements SessionIdlePolicy {
     // "idle since the beginning of time" would cut every standing session on deploy.
     if (idleForMs !== null && idleForMs > windowMs) {
       await this.expire(userId, sessionId);
-      return 'expired';
+      return 'idle';
     }
 
     if (idleForMs === null || idleForMs >= LAST_SEEN_THROTTLE_MS) {

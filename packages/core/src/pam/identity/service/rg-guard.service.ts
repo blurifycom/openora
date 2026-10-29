@@ -9,7 +9,12 @@ export function isRgBlocked(u: { rgBlocked: boolean; rgBlockedUntil: Date | null
   return u.rgBlocked && (u.rgBlockedUntil === null || u.rgBlockedUntil > new Date());
 }
 
-type BlockedAccount = { id: User['id']; rgBlocked: boolean; rgBlockedUntil: Date | null };
+type BlockedAccount = {
+  id: User['id'];
+  isActive: boolean;
+  rgBlocked: boolean;
+  rgBlockedUntil: Date | null;
+};
 
 type AccountBlockGateOptions = {
   /**
@@ -19,7 +24,11 @@ type AccountBlockGateOptions = {
    */
   revokeSessions: boolean;
   /** `ORPCError.data` for each block, so each surface keeps its own error vocabulary. */
-  errorData: { rgBlocked: Record<string, string>; suspended: Record<string, string> };
+  errorData: {
+    rgBlocked: Record<string, string>;
+    suspended: Record<string, string>;
+    inactive: Record<string, string>;
+  };
 };
 
 /**
@@ -61,6 +70,17 @@ export async function assertAccountNotBlocked(
     throw new ORPCError('FORBIDDEN', {
       message: 'Account access is currently restricted (responsible gambling).',
       data: errorData.rgBlocked,
+    });
+  }
+
+  // A deactivated account (a back-office ban, or a staff member taken off the roster) cannot
+  // sign in, whatever its role. Checked with the other blocks so a probe still learns nothing
+  // about the account before the credential has been proven.
+  if (!account.isActive) {
+    await revoke();
+    throw new ORPCError('FORBIDDEN', {
+      message: 'Your account is inactive. Contact your administrator.',
+      data: errorData.inactive,
     });
   }
 

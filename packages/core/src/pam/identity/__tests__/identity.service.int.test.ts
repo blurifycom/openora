@@ -722,6 +722,37 @@ describe('IdentityService - player-status login gate (real PG)', () => {
   });
 });
 
+describe('IdentityService - deactivated account login gate (real PG)', () => {
+  it('refuses a deactivated staff login AFTER credentials verify, expires the session, and says why', async () => {
+    const account = await seedUser({ role: 'admin', isActive: false });
+    const live = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await db.drizzle.db
+      .insert(session)
+      .values({ userId: account.id, token: randomUUID(), expiresAt: live });
+    const events = makeEventBus();
+    signInEmailMock.mockResolvedValue(signInSuccess(account.id));
+    const svc = buildService({ events });
+
+    await expect(
+      svc.login({ email: EMAIL, password: 'rightpass1' }, {}, new Headers()),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Your account is inactive. Contact your administrator.',
+      data: { code: 'ACCOUNT_INACTIVE' },
+    });
+
+    expect(signInEmailMock).toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalledWith('identity.user.login', expect.anything());
+    expect(events.emit).not.toHaveBeenCalledWith('identity.user.login.failed', expect.anything());
+
+    const [revoked] = await db.drizzle.db
+      .select()
+      .from(session)
+      .where(eq(session.userId, account.id));
+    expect(revoked.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+});
+
 describe('IdentityService - trusted device login (real PG)', () => {
   const TRUSTED_UA =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';

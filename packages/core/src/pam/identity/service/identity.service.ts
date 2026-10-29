@@ -696,12 +696,16 @@ export class IdentityService {
 
   // Same gate as password login and phone login, from the one shared implementation.
   private assertAccountNotBlocked(
-    account: { id: User['id']; rgBlocked: boolean; rgBlockedUntil: Date | null },
+    account: { id: User['id']; isActive: boolean; rgBlocked: boolean; rgBlockedUntil: Date | null },
     meta: ClientMeta,
   ): Promise<string | null> {
     return assertAccountNotBlocked({ drizzle: this.drizzle, events: this.events }, account, meta, {
       revokeSessions: true,
-      errorData: { rgBlocked: { code: 'RG_BLOCKED' }, suspended: { code: 'ACCOUNT_SUSPENDED' } },
+      errorData: {
+        rgBlocked: { code: 'RG_BLOCKED' },
+        suspended: { code: 'ACCOUNT_SUSPENDED' },
+        inactive: { code: 'ACCOUNT_INACTIVE' },
+      },
     });
   }
 
@@ -997,6 +1001,7 @@ export class IdentityService {
     const [existingUserRow] = await this.drizzle.db
       .select({
         id: user.id,
+        isActive: user.isActive,
         failedLoginAttempts: user.failedLoginAttempts,
         lockoutUntil: user.lockoutUntil,
         lockoutCount: user.lockoutCount,
@@ -1014,6 +1019,7 @@ export class IdentityService {
       | Pick<
           typeof user.$inferSelect,
           | 'id'
+          | 'isActive'
           | 'failedLoginAttempts'
           | 'lockoutUntil'
           | 'lockoutCount'
@@ -1198,6 +1204,7 @@ export class IdentityService {
         error.code === 'FORBIDDEN' &&
         (hasErrorCode(error, 'RG_BLOCKED') ||
           hasErrorCode(error, 'ACCOUNT_SUSPENDED') ||
+          hasErrorCode(error, 'ACCOUNT_INACTIVE') ||
           hasErrorCode(error, 'GEO_BLOCKED'))
       ) {
         throw error;
@@ -2621,6 +2628,7 @@ export class IdentityService {
     const [account] = await this.drizzle.db
       .select({
         id: user.id,
+        isActive: user.isActive,
         rgBlocked: user.rgBlocked,
         rgBlockedUntil: user.rgBlockedUntil,
         twoFactorEnabled: user.twoFactorEnabled,
