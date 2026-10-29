@@ -10,15 +10,19 @@ verification pass that proves the change works. There is no separate test PR.
 Before the PR opens:
 
 1. Drive the change against the running stack. Reach for the **Playwright CLI** first
-   (`playwright-cli` with `video-start` / `video-stop`, or a throwaway spec with
-   `test.use({ video: 'on' })` that clicks through the flow) - it costs a fraction of the tokens a
-   browser MCP does. Use a browser MCP only for a live console or network read the CLI cannot give
-   you.
-2. Capture the evidence: one short video per acceptance criterion, ending on the outcome it names,
-   and the before/after pair when you fixed something. Every changed screen also gets the
+   (`playwright-cli`, or a throwaway spec that clicks through the flow) - it costs a fraction of
+   the tokens a browser MCP does. Use a browser MCP only for a live console or network read the CLI
+   cannot give you. No videos in this pass, except a fix's "before" clip, taken when you reproduce
+   the bug: the code can still change before review is clean. Every changed screen gets the
    `ui-verify` skill's screenshot review: four shots (mobile and desktop, light and dark), each
-   read for layout defects and given a PASS or FAIL line. Videos are for the reviewer, screenshots
-   for the agent. An API-only change attaches the request/response trace instead.
+   read for layout defects and given a PASS or FAIL line. Screenshots are for the agent, videos
+   for the reviewer.
+2. Capture the evidence once, on the final commit, after the tests are green and review is clean:
+   one short video per acceptance criterion, ending on the outcome it names, and the "after" twin
+   of a fix's "before" clip. Run every browser spec that drives an AC in one command with video on
+   (`test.use({ video: 'on' })` or the repo's record switch); `playwright-cli` with `video-start` /
+   `video-stop` only for an AC no spec drives. An API-only change attaches the request/response
+   trace instead.
 3. Attach that evidence **to the PR description**, not only to your report - a reviewer confirms a
    change by looking at it.
 4. Write the tests that pass exercised, in this branch, at the tier the table below names. Include

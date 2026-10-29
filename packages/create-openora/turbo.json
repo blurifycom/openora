@@ -1,0 +1,17 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tools/templates/consumer/**",
+        "$TURBO_ROOT$/packages/*/package.json"
+      ],
+      "outputs": ["dist/**", "template/**", "src/generated/**"]
+    },
+    "test:unit": {
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/tools/templates/consumer/**"]
+    }
+  }
+}

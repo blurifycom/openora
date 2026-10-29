@@ -72,7 +72,27 @@ describe('notificationEventMap', () => {
     });
   });
 
-  it('maps chat.user.mentioned to the mentioned user, not the author, carrying room and message ids', () => {
+  it('maps chat.user.mentioned to the mentioned user, naming the author in params', () => {
+    const mentionedUserId = randomUUID();
+    const roomId = randomUUID();
+    const messageId = randomUUID();
+    const input = entryFor('chat.user.mentioned').buildNotification({
+      mentionedUserId,
+      byUserId: randomUUID(),
+      byUsername: 'alice',
+      roomId,
+      messageId,
+    });
+
+    expect(input).toEqual({
+      userId: mentionedUserId,
+      type: 'chat.mention',
+      params: { byUsername: 'alice' },
+      data: { roomId, messageId },
+    });
+  });
+
+  it('maps a chat.user.mentioned without the author username (queued before it existed) to null params', () => {
     const byUserId = randomUUID();
     const mentionedUserId = randomUUID();
     const roomId = randomUUID();
@@ -771,6 +791,7 @@ describe('notificationEventMap', () => {
       'chat.user.mentioned': {
         mentionedUserId: id(),
         byUserId: id(),
+        byUsername: 'alice',
         roomId: id(),
         messageId: id(),
       },
