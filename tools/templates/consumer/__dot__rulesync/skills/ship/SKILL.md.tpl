@@ -71,7 +71,7 @@ Every run starts here, so a run that died midway resumes where it stopped. Read 
 | ------------------------------------------- | ------------------------------------------- |
 | No Plan comment on the ticket               | 1. Plan                                     |
 | Plan, no branch                             | 2. Build                                    |
-| Branch, no MR                               | 3. Test, then 4. Review, then 5. Open the MR |
+| Branch, no MR                               | 3. Test, 4. Review, 4b. Evidence, 5. Open the MR |
 | MR open, CI red or conflicts                | 6. `fix-pipeline` skill                     |
 | MR open, review threads with no reply       | 6. `fix-review-comments` skill              |
 | MR open, CI running, or green and answered  | 7. Ready for review                         |
@@ -96,7 +96,7 @@ Add a worktree for the ticket branch off the freshly fetched `{{mrTarget}}`, per
 
 ### 3. Test
 
-Start `tester` in the worktree with the plan's test cases. It returns an AC table.
+Start `tester` in the worktree with the plan's test cases, for its verify pass: no videos yet. It returns an AC table.
 
 - Every row PASS -> 4.
 - Any FAIL -> back to `builder` with the failing rows only, then `tester` again.
@@ -108,13 +108,20 @@ Start `tester` in the worktree with the plan's test cases. It returns an AC tabl
 
 Run the **review** skill on the branch against `{{mrTarget}}`, without `--post`: its precheck, risk tier, request trace and evidence gate run before any reviewer reads the diff. Hand its reviewers the tester's AC table, mutation rows included, so they dig where testing could not reach. This is the self-review the MR is opened on: people reviewing the MR later read it by hand and do not run an AI review again, so nothing goes out that this step has not passed.
 
-Every finding with a fix gets fixed, whatever its severity, but only once it holds. Dedupe across reviewers, then check each yourself before anything changes: open its `file:line` and confirm the evidence on this branch. One that doesn't hold (wrong line, the code already handles it, a claim the code doesn't show) is dropped and goes to the MR description with why. A product call the ticket doesn't settle goes to `expert`, then is fixed or rides along as an open question. Send the rest to `builder` in one go, then 3 for the cases they touch and 4 again. A later round of 4 reviews only the commits since the last one and whether each sent finding is fixed. Clean means the review skill says **APPROVED** and no finding is left that holds; only then 5.
+Every finding with a fix gets fixed, whatever its severity, but only once it holds. Dedupe across reviewers, then check each yourself before anything changes: open its `file:line` and confirm the evidence on this branch. One that doesn't hold (wrong line, the code already handles it, a claim the code doesn't show) is dropped and goes to the MR description with why. A product call the ticket doesn't settle goes to `expert`, then is fixed or rides along as an open question. Send the rest to `builder` in one go, then 3 for the cases they touch and 4 again. A later round of 4 reviews only the commits since the last one and whether each sent finding is fixed. Clean means the review skill says **APPROVED** and no finding is left that holds; only then 4b.
 
 Rounds of 3 and 4 share one budget: three. After the third with anything still failing, post a blocker comment naming what is left, report it, stop.
 
+### 4b. Record evidence
+
+The code is final now, so the videos are recorded once, here, never in an earlier round. Start `tester` for its evidence pass on HEAD: every browser spec that drives an AC, new or existing, runs once with video on, `playwright-cli` only for an AC no spec drives. It returns the clip paths per AC.
+
+- A spec that fails here -> back to `builder` with it, then 3 for the cases it touches, 4 on the new commits, 4b again. That round counts against the same budget of three.
+- Every AC that needs a clip has one -> 5.
+
 ### 5. Open the MR
 
-`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table, its videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Draft the one-line Slack notice to `{{teamChannel}}`: emoji + MR title as a link. Then 7.
+`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table, the 4b videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Draft the one-line Slack notice to `{{teamChannel}}`: emoji + MR title as a link. Then 7.
 
 ### 6. Red CI and review comments
 
@@ -122,7 +129,7 @@ Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-
 
 - Each thread is checked against the code on this branch first: correct | already handled | wrong on this branch | out of scope. Only a correct one changes code; the rest get an answer.
 - A red job is reproduced locally first; `builder` fixes its cause. Never skip or loosen a test.
-- Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Nothing is pushed untested.
+- Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched, and their clips replace the old ones in the MR description. Nothing is pushed untested.
 - Push the ticket branch without asking (a force-push only as above). Reply per thread, in the thread itself, with what changed and the test that proves it, or why nothing changed. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer.
 
 Then 7.

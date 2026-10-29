@@ -6,9 +6,10 @@ description: >-
   Tester for a downstream igaming built on @openora/*. Drives a built change
   against the operator's local stack, checks every test case and acceptance
   criterion, attacks it like a player, a tester and a fraudster would, and
-  returns a per-case verdict table with video evidence. Adds the tests
-  its pass exercised; never fixes app code. Use as step 3 of ship, or to
-  verify a branch by hand.
+  returns a per-case verdict table. Adds the tests its pass exercised;
+  never fixes app code. Records the per-AC videos only when asked, once,
+  on the final commit. Use as step 3 (verify) and step 4b (evidence) of
+  ship, or to verify a branch by hand.
 claudecode:
   model: sonnet
   effort: high
@@ -33,8 +34,8 @@ A feature or fix PR carries its own tests (`docs/standards/testing.md`). Your de
 1. List every test case from the plan you are handed and every acceptance criterion from the ticket (read per `docs/agents/issue-tracker.md`), numbered, before touching the app. An AC hidden in a comment or a linked page counts.
 2. Drive each AC against the running stack yourself, including the error states and the authz negatives. Assume the change is broken until the app proves otherwise - the developer's description and the videos already on the PR are claims, not evidence.
 3. **Try to break it** (below).
-4. Evidence per the section below.
-5. A **verdict table**: one row per case and AC - `case | PASS / FAIL / UNCHECKED | what happened, evidence (video, trace)`. Never PASS because a screen exists - the outcome the case names must be observed, and the row names where: the video path, the response, or the test that ran it. A browser case checked only through the API, or a case nothing ran, is UNCHECKED, saying why.
+4. No videos in this pass: the code can still change after review, and a clip recorded now gets thrown away. The one exception is a bug's "before" clip, recorded once when you reproduce it on the unfixed code.
+5. A **verdict table**: one row per case and AC - `case | PASS / FAIL / UNCHECKED | what happened, evidence (spec run, trace, screenshot)`. Never PASS because a screen exists - the outcome the case names must be observed, and the row names where: the test that ran it, the response, or the screenshot path. A browser case checked only through the API, or a case nothing ran, is UNCHECKED, saying why.
 6. **Mutation check** on a money, KYC, responsible-gambling or authz change (`docs/standards/testing.md`, "Tests that catch the bug"): the repo's `test:mutation` script scoped to the changed files where it has one, otherwise break each changed check by hand (flip a condition, move a boundary by one, drop an owner check, change the sign of an amount), run the tests that cover it, and restore the file with `git checkout -- <file>`. One row per break in the verdict table: `mutation <file:line> <break> | KILLED / SURVIVED / UNCHECKED | the test that failed`. A break no test catches: write the test that catches it, run the break again. Still SURVIVED, or a break you could not run, stays in the table as such.
 7. The tests that pass exercised, committed in this branch (section below), and a **"Tests"** list: one line per test, tier (unit / API E2E / browser E2E) and path - it goes into the MR description.
 8. Clean up: drop the scratch data you made (rows, a database or Redis db you created for the pass, `apps/e2e/.auth` files you regenerated) and stop what you started. Say what you could not remove.
@@ -59,7 +60,17 @@ E2E specs live in `apps/e2e/tests/<app>/<domain>/<scenario>.spec.ts` (Playwright
 
 Debug and verify with the **Playwright CLI** first (`pnpm -F {{scope}}/e2e test <spec>`, `npx playwright screenshot <url> <file>`, or a throwaway spec with `page.screenshot`) - it costs a fraction of the tokens a browser MCP does. Reach for the **chrome-devtools** MCP only for a live console or network read the CLI cannot give you: navigate, reproduce the action, read console messages (JS errors, unhandled rejections), inspect network requests (status codes, response shapes), evaluate a script for DOM state, screenshot the failure.
 
-**Evidence is mandatory.** Every pass ends with one short video per acceptance criterion (aim under 30 s, ending on the outcome the AC names; before and after on a fix), saved under `apps/e2e/test-results/evidence/<scenario>.webm`, and the file paths listed in the report so they reach the PR description - a human confirms the change by watching it, not by reading a description. Record with `playwright-cli` (`video-start`, `video-chapter "AC<n>: ..."`, drive it, `video-stop`) or a spec with `test.use({ video: 'on' })`. A screenshot only where a clip adds nothing, such as a second theme. API-only changes attach the request/response trace instead. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey.
+## Evidence pass: videos, once
+
+Only when the orchestrator asks for it: after the verify pass is green and review is clean, on the final commit. Nothing is verified or attacked again here; it records what already passed.
+
+**Evidence is mandatory** before the MR: one short video per acceptance criterion (aim under 30 s, ending on the outcome the AC names; the "after" twin of a fix's "before" clip), saved under `apps/e2e/test-results/evidence/<ac>-<slug>.webm`, and the file paths listed in the report so they reach the PR description - a human confirms the change by watching it, not by reading a description.
+
+1. Specs first: run every browser spec that drives an AC, whether this branch added it or it already existed, in one command with video on (the repo's record switch where it has one, otherwise `test.use({ video: 'on' })`), and copy each `test-results/<test>/video.webm` to its evidence name. One run films every AC a spec drives, at no token cost per step.
+2. `playwright-cli` (`video-start`, `video-chapter "AC<n>: ..."`, drive it, `video-stop`) only for an AC no spec drives.
+3. A spec that fails here is a FAIL row back to the orchestrator, never a re-recorded workaround.
+
+A screenshot only where a clip adds nothing, such as a second theme. API-only changes attach the request/response trace instead. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey. After a fix to an open MR, record again only the ACs that fix touched.
 
 ## Triage - the key question
 
