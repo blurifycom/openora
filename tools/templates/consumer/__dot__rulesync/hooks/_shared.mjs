@@ -2,7 +2,9 @@
 //
 // One script serves Claude Code, Copilot CLI, Codex CLI, and Gemini CLI. Each
 // passes the tool call as JSON on stdin but with a slightly different shape:
-//   Claude / Codex : { tool_name, tool_input: { command?, file_path? } }
+//   Claude         : { tool_name, tool_input: { command?, file_path? } }
+//   Codex          : same, except an edit is apply_patch: { tool_input: { command: "<patch>" } },
+//                    the paths only in its "*** Add File: <path>" style headers
 //   Copilot        : { toolName,  toolArgs: "<json-string>" | object }
 //   Gemini         : { toolName/tool_name, ... } (best-effort)
 //
@@ -35,27 +37,32 @@ function toolArgsObject(payload) {
   return a && typeof a === 'object' ? a : {};
 }
 
-/** The shell command string for this tool call, across tool shapes ('' if none). */
-export function extractCommand(payload) {
+const PATCH_START = /^\*\*\* Begin Patch$/m;
+const PATCH_PATH = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm;
+
+function rawCommand(payload) {
   const ti = payload.tool_input ?? {};
   const ca = toolArgsObject(payload);
   return String(ti.command ?? ca.command ?? '');
 }
 
-/** The target file path for an edit/write tool call, across tool shapes ('' if none). */
-export function extractFilePath(payload) {
+/** The shell command string for this tool call, across tool shapes ('' if none or a patch). */
+export function extractCommand(payload) {
+  const command = rawCommand(payload);
+  return PATCH_START.test(command) ? '' : command;
+}
+
+/** Every file an edit/write tool call touches, across tool shapes ([] if none). */
+export function extractFilePaths(payload) {
+  const command = rawCommand(payload);
+  if (PATCH_START.test(command)) {
+    return [...command.matchAll(PATCH_PATH)].map((match) => match[1].trim());
+  }
   const ti = payload.tool_input ?? {};
   const ca = toolArgsObject(payload);
-  return String(
-    ti.file_path ??
-      ti.path ??
-      ca.path ??
-      ca.filePath ??
-      ca.file ??
-      ca.targetFile ??
-      ca.target_file ??
-      '',
-  );
+  const filePath =
+    ti.file_path ?? ti.path ?? ca.path ?? ca.filePath ?? ca.file ?? ca.targetFile ?? ca.target_file;
+  return filePath ? [String(filePath)] : [];
 }
 
 /** Deny the tool call (works on Claude, Copilot, Codex, Gemini). */

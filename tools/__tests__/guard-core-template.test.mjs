@@ -144,3 +144,29 @@ test('the guard still finds the OSS checkout when the consumer is a git worktree
   assert.equal(fromWorktree({ file_path: join(oss, 'packages/core/src/a.ts') }), DENIED);
   assert.equal(fromWorktree({ file_path: join(oss, '.worktrees/feat+x/packages/a.ts') }), ALLOWED);
 });
+
+// Codex edits through apply_patch: the paths live only in the patch headers of tool_input.command.
+const patch = (...lines) => ['*** Begin Patch', ...lines, '+x', '*** End Patch'].join('\n');
+
+test('a codex patch is judged by every path it touches, never as a shell command', () => {
+  assert.equal(exitCode({ command: patch('*** Add File: apps/api/src/a.ts') }), ALLOWED);
+  assert.equal(
+    exitCode({ command: patch('*** Update File: apps/api/src/a.ts', '-rm -rf ../oss/packages') }),
+    ALLOWED,
+  );
+  assert.equal(
+    exitCode({
+      command: patch('*** Update File: apps/api/src/a.ts', '*** Update File: ../oss/packages/a.ts'),
+    }),
+    DENIED,
+  );
+  assert.equal(exitCode({ command: patch('*** Delete File: node_modules/pkg/index.js') }), DENIED);
+  assert.equal(
+    exitCode({ command: patch('*** Update File: apps/a.ts', '*** Move to: ../oss/packages/a.ts') }),
+    DENIED,
+  );
+  assert.equal(
+    exitCode({ command: patch(`*** Add File: ${join(oss, '.worktrees/feat+x/a.ts')}`) }),
+    ALLOWED,
+  );
+});
