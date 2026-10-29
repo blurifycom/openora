@@ -283,6 +283,222 @@ describe('WalletReaderService.getLifetimeDeposit (real PG)', () => {
   });
 });
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS);
+
+async function seedTxn(
+  walletId: string,
+  values: Pick<typeof walletTransaction.$inferInsert, 'type' | 'amount'> &
+    Partial<typeof walletTransaction.$inferInsert>,
+) {
+  return findOneOrThrow(
+    await db.drizzle.db
+      .insert(walletTransaction)
+      .values({ walletId, currency: 'USD', status: 'completed', ...values })
+      .returning(),
+    new Error('seedTxn: query returned no row'),
+  );
+}
+
+const pricedReader = (unpriced: string[] = []) =>
+  new WalletReaderService({
+    drizzle: db.drizzle,
+    pivotCurrency: 'USD',
+    exchangeRateReader: makeRates({ BTC: '60000', DOGE: '0.1' }, unpriced),
+  });
+
+describe('WalletReaderService.getLifetimeWithdrawals (real PG)', () => {
+  it('prices paid-out and still-open withdrawals apart, leaving out the ones that went nowhere', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'withdrawal', amount: '100' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '0.001', currency: 'BTC' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '20', status: 'pending' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '30', status: 'on_hold' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '10', status: 'processing' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '500', status: 'failed' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '500', status: 'rejected' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '500', status: 'cancelled' });
+    await seedTxn(w.id, { type: 'deposit', amount: '900' });
+
+    const withdrawals = await pricedReader().getLifetimeWithdrawals(w.userId);
+
+    expect(Number(withdrawals.completed)).toBe(160);
+    expect(Number(withdrawals.open)).toBe(60);
+  });
+
+  it('answers null for the total holding a currency it cannot price, and only that one', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'withdrawal', amount: '100' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '50', currency: 'DOGE', status: 'pending' });
+
+    const withdrawals = await pricedReader(['DOGE']).getLifetimeWithdrawals(w.userId);
+
+    expect(Number(withdrawals.completed)).toBe(100);
+    expect(withdrawals.open).toBeNull();
+  });
+
+  it('reports zero for a player who never withdrew', async () => {
+    expect(await svc.getLifetimeWithdrawals(randomUUID())).toEqual({
+      completed: '0',
+      open: '0',
+      pivotCurrency: 'USD',
+    });
+  });
+});
+
+describe('WalletReaderService.getLastDeposit (real PG)', () => {
+  it('is null for a player without a completed deposit', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'deposit', amount: '10', status: 'pending' });
+
+    expect(await svc.getLastDeposit(w.userId)).toBeNull();
+  });
+
+  it('dates a held deposit from its release, so it can be the latest one', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'deposit', amount: '10', createdAt: daysAgo(1) });
+    const released = await seedTxn(w.id, {
+      type: 'deposit',
+      amount: '0.01',
+      currency: 'BTC',
+      createdAt: daysAgo(10),
+      reviewedAt: daysAgo(0),
+    });
+
+    const last = await pricedReader().getLastDeposit(w.userId);
+
+    expect(last).toMatchObject({
+      transactionId: released.id,
+      at: released.reviewedAt,
+      currency: 'BTC',
+      pivotCurrency: 'USD',
+    });
+    expect(Number(last?.amount)).toBe(0.01);
+    expect(Number(last?.pivotAmount)).toBe(600);
+  });
+
+  it('keeps the deposit but answers a null pivot amount when its currency cannot be priced', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'deposit', amount: '5', currency: 'DOGE' });
+
+    const last = await pricedReader(['DOGE']).getLastDeposit(w.userId);
+
+    expect(last).toMatchObject({ currency: 'DOGE', pivotAmount: null });
+  });
+});
+
+describe('WalletReaderService.getLastDepositAts (real PG)', () => {
+  it('maps each player to their latest completed deposit and leaves out who never deposited', async () => {
+    const first = await seedWallet();
+    const second = await seedWallet();
+    const neverDeposited = await seedWallet();
+    await seedTxn(first.id, { type: 'deposit', amount: '10', createdAt: daysAgo(9) });
+    const latest = await seedTxn(first.id, {
+      type: 'deposit',
+      amount: '10',
+      createdAt: daysAgo(3),
+    });
+    await seedTxn(first.id, { type: 'deposit', amount: '10', status: 'pending' });
+    const released = await seedTxn(second.id, {
+      type: 'deposit',
+      amount: '10',
+      createdAt: daysAgo(30),
+      reviewedAt: daysAgo(2),
+    });
+    await seedTxn(neverDeposited.id, { type: 'withdrawal', amount: '10' });
+
+    const ats = await svc.getLastDepositAts([first.userId, second.userId, neverDeposited.userId]);
+
+    expect(ats).toEqual(
+      new Map([
+        [first.userId, latest.createdAt],
+        [second.userId, released.reviewedAt],
+      ]),
+    );
+  });
+
+  it('answers an empty map for no players', async () => {
+    expect(await svc.getLastDepositAts([])).toEqual(new Map());
+  });
+});
+
+describe('WalletReaderService.getTurnoverSince (real PG)', () => {
+  it('prices the stakes since the given time less the stakes reversed since then', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'bet', amount: '30' });
+    await seedTxn(w.id, { type: 'bet_reversal', amount: '10' });
+    await seedTxn(w.id, { type: 'bet', amount: '0.001', currency: 'BTC' });
+    await seedTxn(w.id, { type: 'bet', amount: '1000', createdAt: daysAgo(10) });
+    await seedTxn(w.id, { type: 'bet', amount: '1000', status: 'failed' });
+    await seedTxn(w.id, { type: 'win', amount: '1000' });
+
+    expect(Number(await pricedReader().getTurnoverSince(w.userId, daysAgo(7)))).toBe(80);
+  });
+
+  it('is null when a stake in an unpriced currency counts, never a partial total', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'bet', amount: '30' });
+    await seedTxn(w.id, { type: 'bet', amount: '100', currency: 'DOGE' });
+
+    expect(await pricedReader(['DOGE']).getTurnoverSince(w.userId, daysAgo(7))).toBeNull();
+  });
+
+  it('needs no rate for a currency whose stakes were all reversed', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'bet', amount: '30' });
+    await seedTxn(w.id, { type: 'bet', amount: '100', currency: 'DOGE' });
+    await seedTxn(w.id, { type: 'bet_reversal', amount: '100', currency: 'DOGE' });
+
+    expect(Number(await pricedReader(['DOGE']).getTurnoverSince(w.userId, daysAgo(7)))).toBe(30);
+  });
+
+  it('stops a currency at zero when a stake placed before the window is reversed inside it', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'bet', amount: '50', createdAt: daysAgo(10) });
+    await seedTxn(w.id, { type: 'bet_reversal', amount: '50', createdAt: daysAgo(2) });
+    await seedTxn(w.id, { type: 'bet', amount: '10' });
+    await seedTxn(w.id, { type: 'bet', amount: '0.001', currency: 'BTC' });
+
+    expect(Number(await pricedReader().getTurnoverSince(w.userId, daysAgo(7)))).toBe(60);
+  });
+});
+
+describe('WalletReaderService.getWithdrawalRequestsSince (real PG)', () => {
+  it('counts and prices the requests the velocity check counts', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'withdrawal', amount: '100' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '20', status: 'pending' });
+    await seedTxn(w.id, {
+      type: 'withdrawal',
+      amount: '0.001',
+      currency: 'BTC',
+      status: 'on_hold',
+    });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '5', status: 'rejected' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '500', status: 'failed' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '500', status: 'cancelled' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '500', createdAt: daysAgo(3) });
+    await seedTxn(w.id, { type: 'deposit', amount: '500' });
+
+    const requests = await pricedReader().getWithdrawalRequestsSince(w.userId, daysAgo(1));
+
+    expect(requests.count).toBe(4);
+    expect(Number(requests.pivotAmount)).toBe(185);
+  });
+
+  it('keeps the count but answers a null amount when a currency cannot be priced', async () => {
+    const w = await seedWallet();
+    await seedTxn(w.id, { type: 'withdrawal', amount: '100' });
+    await seedTxn(w.id, { type: 'withdrawal', amount: '50', currency: 'DOGE' });
+
+    expect(await pricedReader(['DOGE']).getWithdrawalRequestsSince(w.userId, daysAgo(1))).toEqual({
+      count: 2,
+      pivotAmount: null,
+      pivotCurrency: 'USD',
+    });
+  });
+});
+
 describe('WalletReaderService on a caller transaction (real PG)', () => {
   it('reads inside the passed transaction, seeing its uncommitted rows', async () => {
     const w = await seedWallet();

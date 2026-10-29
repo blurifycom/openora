@@ -80,8 +80,9 @@ strict, so a field reaches the vendor only when it is added to the contract on p
 
 ## Unbound
 
-Core binds no provider. Without one, the session route answers service-unavailable as not
-configured and boot logs one warning. Whether a player is linked is read from the database, not
+Core binds no provider and no history reader. Without a provider, the session route answers
+service-unavailable as not configured and boot logs one warning; without a reader, the history
+route does the same with its own warning. Whether a player is linked is read from the database, not
 from the process, so a refresh still enqueues a sync for a player another process linked. A
 process without a provider fails that job, logging a warning per attempt, and the queue retries
 it, so in a fleet where only some processes have the provider bound the sync lands on one that
@@ -93,13 +94,116 @@ plugin that depends on it. Keeping the module loaded with no provider bound whil
 still linked is treated as a misconfiguration: each refreshed player keeps getting one try an
 hour, and every failed one logs an error, until a provider is bound or the module is removed.
 
+## Support history
+
+A second port, `SUPPORT_HISTORY_READER`
+([`packages/core/src/contracts/adapters/support-history.ts`](../../packages/core/src/contracts/adapters/support-history.ts)),
+lets the back office list a player's vendor tickets and chat threads through the player-history
+route (the catalog and the contract name it). It is a separate token from the chat provider: an
+operator may bind either without the other. Only an admin holding the support-chat view
+permission reaches it. No predefined role carries that grant except the super admin; an operator
+gives it through a role it assigns, which needs the iam module loaded. Without iam, the static
+fallback roles decide, and none of them grants it.
+
+Core works out which identities belong to the player and hands them to the reader:
+
+- **Tickets** are matched by the requester's email, inside email windows. Each window is one
+  email the player held, from when it became theirs (registration or an email change) to when it
+  stopped being theirs; the current email's window is open-ended. Previous emails come from the
+  audit log's email-change rows, and only the three most recent are kept. A freed address can be
+  registered by another player, so a ticket counts only when it was created inside its email's
+  window: the reader must filter by creation date, never return every ticket an address ever
+  opened.
+- **The email trail is trusted from its end back to its first break.** The audit rows are written
+  shortly after each change, outside the change's transaction, so one can be lost, duplicated, land
+  out of order or carry a skewed time. Each row carries the time stamped right after the change, so
+  a slow write does not move a window's bounds; a row written before that field existed is timed by
+  when it was written. A redelivered event writes its row again: a row that repeats any earlier one,
+  change time included, counts once, but a repeated row without a change time cannot be told from a
+  real repeat and breaks the trail. Core walks back from the current email: the last change must
+  name the current email as its new one, each change must name as its new email the one the next
+  change replaced, and each change's time must be later than every earlier change and registration,
+  and no more than 5 seconds later than its own audit row was written (a change always comes before
+  its write; the margin allows for clocks that disagree). At the first break walking back it stops:
+  the windows after the break are kept, everything from the break back is dropped, the window opened
+  by a change with a wrong time included, and a warning naming the user goes to the log. When even
+  the last change cannot be trusted, there is no window at all: the tickets section is reported
+  unavailable and the reader is not asked. The rows are append-only and nothing repairs them; the
+  player's next email change heals that state, unless an earlier row claims a time ahead of the real
+  clock: every later change then reads as falling back, and the section stays unavailable until real
+  time passes that stamp, which with realistic clock skew takes seconds. Core fails closed rather
+  than trust it.
+- **Another account's changes bound the oldest window.** Nothing records the email an account
+  registered with, so a lost first change would leave the next email taken as held from
+  registration, over the time another account held it. When the trail is intact and its oldest
+  window starts at registration, core looks for another account's email change naming that
+  address, compared case-insensitively, after registration and before the window closes. The
+  latest one decides: another account leaving the address opens the window then, and another
+  account taking it drops the window, since nothing places when that account let it go. Either
+  way the trail counts as broken: the tickets section is not complete, the warning goes to the
+  log, and when no window is left the section is unavailable.
+- **What the trail cannot notice.** A lost first change stays unseen only when the other account's
+  change of that address was lost too, or the address was freed another way, such as the account
+  being deleted. That account's audit row is written best-effort after its change, so while it is
+  still in flight, and for the 60-second cache after a read, the window can still start at
+  registration. A lost run of changes returning to the address it left (A to B recorded, B to C and
+  C to B lost, B to D recorded) also leaves a trail that looks consistent, so B's window spans the
+  gap. A change time later than the real change by no more than its audit write's own delay plus the
+  5-second margin also goes unseen: a fast clock with a delayed or redelivered write, or a legacy
+  row timed by its write. It widens the earlier email's window by that much. A clock running behind
+  goes unseen for as long as each time it stamps is still later than every earlier one, shifting the
+  bounds by the lag. The lost rows follow from the email-change event being emitted best-effort
+  rather than through the outbox; moving that emit to the outbox is the fix, and is not part of this
+  port.
+- **Chats** are matched by the vendor customer the player is linked to. A player who never
+  opened the chat has no link, and the reader is not asked.
+
+What a reader must guarantee:
+
+- **A request that leaves resolved items out must not touch the vendor's resolved archive.**
+  Resolved tickets cost their own calls; the back office asks for them only when staff opt in.
+- **One item per chat thread.** The vendor's agent app links each thread on its own, so the item
+  id is the thread id.
+- **Statuses per kind.** A ticket carries one of the five ticket states the contract lists, and a
+  chat one of its two. Core validates every item against the strict item schema and those
+  per-kind states; one item off-contract makes that whole section unavailable.
+- **UTC timestamps ending in `Z`.** The schema accepts nothing else, such as an offset.
+- **Absolute https links.** An item's link opens in the back office, so the schema accepts only a
+  URL starting `https://`: an http, `javascript:` or `data:` link, or a slash-less `https:` form
+  a browser would resolve against the back office's own origin, makes the section unavailable.
+- **Errors carry a listed reason code.** Throw the port's support-history provider error with one
+  of the codes in `SUPPORT_HISTORY_FAILURE_REASONS`, never free text, and do not attach a raw HTTP
+  error as its `cause`:
+  - `unauthorized`: the vendor refused the credentials.
+  - `rate_limited`: the vendor throttled the call.
+  - `timeout`: the vendor did not answer in time.
+  - `unavailable`: the vendor was down or unreachable.
+  - `not_found`: the vendor did not know the customer or requester.
+  - `bad_response`: the vendor answered something unexpected.
+
+  The code goes to the log only. A JavaScript adapter can still pass any text; core logs it as
+  `unlisted reason`. Any other error that escapes is logged as `unexpected adapter error`, nothing
+  of it kept, not even its name.
+
+The answer has a tickets and a chats section. Each one either carries its items, most recently
+updated first, or says it is unavailable: its read failed, or the current email could not be
+trusted. The tickets section also says whether it is complete: true only when every email the
+player held was searched, false when a break in the trail or the cap of three previous emails
+left older ones out, so staff know an older ticket may exist that the list does not show.
+The tickets section also says there is no email to match when the account has neither an email
+nor an email change, and the chats section says the player is not linked when there was nothing
+to ask. One section failing never hides the other; the reason goes to the log only. Core caches
+the whole answer for 60 seconds per player and per resolved setting, keeping its original fetch
+time, and limits each admin to 30 calls a minute, cache hits included, so staff clicking around do not
+spend the vendor's API quota. The default cache is in-process, so each replica fetches on its
+own; binding the Redis cache shares it.
+
 ## Binding a vendor
 
-An overlay plugin in the consumer's repo binds the provider. Scaffold it with `/scaffold-plugin`
-and register it after the support-chat module.
+An overlay plugin in the consumer's repo binds the provider, the history reader, or both.
+Scaffold it with `/scaffold-plugin` and register it after the support-chat module.
 
 ## Not built yet
 
-Listing a player's vendor chats or tickets for the back office will be a further read method on
-this port. Erasing the vendor customer under a data-rights request waits for that feature to land
-in core.
+Erasing the vendor customer and its history under a data-rights request, and pushing history
+updates instead of the cache, wait for those features to land in core.

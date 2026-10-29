@@ -188,23 +188,29 @@ export class TagService implements PlayerTags {
   }
 
   /**
-   * Active holders (auth `userId`, not `player.id`) of tagKey, each with the
+   * Active holders of tagKey, by auth `userId` and `player.id`, each with the
    * assignMetadata recorded at assignment time. Internal to this module - used only by
-   * TagEvaluationService for the daily high_risk resweep to gate removal on WHICH breach
+   * TagEvaluationService's daily sweeps: the high_risk resweep gates removal on WHICH breach
    * condition originally fired (an amount breach, or a null/legacy row, must never be
-   * auto-cleared); deliberately not exposed on the PLAYER_TAGS port since no other module
-   * needs "list holders of tag X" today.
+   * auto-cleared), and the recent_depositor sweep removes by player id. Deliberately not
+   * exposed on the PLAYER_TAGS port since no other module needs "list holders of tag X" today.
    */
   public async listActiveHoldersByTagKey(
     tagKey: TagKey,
-  ): Promise<{ userId: string; assignMetadata: PlayerTagAssignMetadata | null }[]> {
+  ): Promise<
+    { userId: string; playerId: string; assignMetadata: PlayerTagAssignMetadata | null }[]
+  > {
     const rows = await this.drizzle.db
-      .select({ userId: player.userId, assignMetadata: playerTag.assignMetadata })
+      .select({
+        userId: player.userId,
+        playerId: playerTag.playerId,
+        assignMetadata: playerTag.assignMetadata,
+      })
       .from(playerTag)
       .innerJoin(tag, eq(playerTag.tagId, tag.id))
       .innerJoin(player, eq(player.id, playerTag.playerId))
       .where(and(eq(tag.key, tagKey), isNull(playerTag.removedAt)));
-    return rows.map((r) => ({ userId: r.userId, assignMetadata: r.assignMetadata ?? null }));
+    return rows.map((r) => ({ ...r, assignMetadata: r.assignMetadata ?? null }));
   }
 
   private async _findTagByKeyOrThrow(tagKey: TagKey, trx: DrizzleTx) {

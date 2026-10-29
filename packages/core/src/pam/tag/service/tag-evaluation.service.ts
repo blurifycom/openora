@@ -6,6 +6,7 @@ import {
   type KycStatus,
   type KycTier,
   type AdminUserDirectory,
+  type Player,
   type TagKey,
   type TagRule,
   type User,
@@ -21,9 +22,14 @@ import {
 } from '@openora/core/pam/contracts/tag';
 
 const EVAL_CHUNK_SIZE = 100;
+const LAST_DEPOSIT_LOOKUP_CHUNK = 1000;
 const MULTI_ACCOUNT_REASON = 'identity signal matched another player account';
 const BONUS_ABUSER_REASON = 'multi-account risk rule matched';
+const RECENT_DEPOSIT_REASON = 'completed a deposit';
 const logger = createLogger('pam-tag-evaluation');
+
+type TagHolder = Awaited<ReturnType<TagService['listActiveHoldersByTagKey']>>[number];
+type LastDepositAts = NonNullable<WalletReader['getLastDepositAts']>;
 
 function isPendingKycStatus(status: KycStatus): boolean {
   return status === 'pending' || status === 'resubmission_requested';
@@ -43,6 +49,7 @@ export class TagEvaluationService {
   private readonly walletReader: WalletReader;
   private readonly identityReader: IdentityReader;
   private readonly adminUserDirectory: AdminUserDirectory;
+  private warnedNoLastDepositAts = false;
 
   constructor(deps: TagEvaluationServiceDeps) {
     this.tag = deps.tag;
@@ -75,11 +82,21 @@ export class TagEvaluationService {
     reason: string;
     assignMetadata?: PlayerTagAssignMetadata | null;
   }) {
-    const { userId, tagKey, reason, assignMetadata } = args;
+    const { userId, ...assignment } = args;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
     if (!playerId) {
       return;
     }
+    await this.tryAssignPlayerTag({ playerId, ...assignment });
+  }
+
+  private async tryAssignPlayerTag(args: {
+    playerId: Player['id'];
+    tagKey: TagKey;
+    reason: string;
+    assignMetadata?: PlayerTagAssignMetadata | null;
+  }) {
+    const { playerId, tagKey, reason, assignMetadata } = args;
     try {
       await this.tag.assignPlayerTag({
         playerId,
@@ -99,11 +116,20 @@ export class TagEvaluationService {
 
   /** Idempotently removes a tag; swallows TagAssignmentNotFoundError. */
   private async tryRemoveTag(args: { userId: User['id']; tagKey: TagKey; reason: string }) {
-    const { userId, tagKey, reason } = args;
+    const { userId, ...removal } = args;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
     if (!playerId) {
       return;
     }
+    await this.tryRemovePlayerTag({ playerId, ...removal });
+  }
+
+  private async tryRemovePlayerTag(args: {
+    playerId: Player['id'];
+    tagKey: TagKey;
+    reason: string;
+  }) {
+    const { playerId, tagKey, reason } = args;
     try {
       await this.tag.removePlayerTag({
         playerId,
@@ -121,7 +147,7 @@ export class TagEvaluationService {
   }
 
   /**
-   * Evaluates high_roller and large_depositor rules.
+   * Evaluates high_roller, large_depositor and recent_depositor rules.
    * Called on wallet.deposit.completed.
    */
   async onDepositCompleted(payload: unknown) {
@@ -131,10 +157,19 @@ export class TagEvaluationService {
     }
     const { userId, amount } = parsed.data;
 
-    const [highRoller, largeDepositor] = await Promise.all([
+    const [highRoller, largeDepositor, recentDepositor] = await Promise.all([
       this.getEnabledRule('high_roller'),
       this.getEnabledRule('large_depositor'),
+      this.getEnabledRule('recent_depositor'),
     ]);
+
+    if (recentDepositor && recentDepositor.thresholdDays !== null && this.lastDepositAts()) {
+      await this.tryAssignTag({
+        userId,
+        tagKey: 'recent_depositor',
+        reason: RECENT_DEPOSIT_REASON,
+      });
+    }
 
     // Tag-threshold comparisons are evaluation decisions, not ledger writes -
     // moneyToNumber is the documented single conversion point.
@@ -606,7 +641,7 @@ export class TagEvaluationService {
   }
 
   /**
-   * Daily scheduled evaluation, three independent sweeps:
+   * Daily scheduled evaluation, four independent sweeps:
    *  - inactive: assigns to players who have not logged in for rule.thresholdDays
    *    days. Removal is handled by onUserLogin on next login.
    *  - dormant_high_roller: a co-occurrence check, not a history lookup - high_roller
@@ -628,11 +663,17 @@ export class TagEvaluationService {
    *    "do not auto-remove". Skipped entirely when thresholdDays or thresholdCount is
    *    null - an amount-only high_risk rule isn't resweepable by the cron; it stays
    *    until an admin clears it or a future withdrawal re-triggers assignment.
+   *  - recent_depositor: removal-only. A deposit assigns it (onDepositCompleted), and no
+   *    event marks the day it stops being true, so a holder whose last completed deposit
+   *    reached the balance more than rule.thresholdDays days ago, or who has none, loses
+   *    it here. A wallet reader without getLastDepositAts cannot say who that is, so then the
+   *    tag is neither swept nor assigned: one nothing removes would outlive its window.
    */
   async runDailyEvaluation() {
     await this._runInactiveSweep();
     await this._runDormantHighRollerSweep();
     await this._runHighRiskResweep();
+    await this._runRecentDepositorSweep();
   }
 
   private async _runInactiveSweep() {
@@ -735,5 +776,74 @@ export class TagEvaluationService {
         });
       }
     });
+  }
+
+  private async _runRecentDepositorSweep() {
+    const rule = await this.getEnabledRule('recent_depositor');
+    if (!rule || rule.thresholdDays === null) {
+      return;
+    }
+    const lastDepositAts = this.lastDepositAts();
+    if (!lastDepositAts) {
+      return;
+    }
+    const cutoff = Date.now() - rule.thresholdDays * 24 * 60 * 60 * 1000;
+    const holders = await this.tag.listActiveHoldersByTagKey('recent_depositor');
+    for (let start = 0; start < holders.length; start += LAST_DEPOSIT_LOOKUP_CHUNK) {
+      const chunk = holders.slice(start, start + LAST_DEPOSIT_LOOKUP_CHUNK);
+      await this.sweepRecentDepositors(chunk, cutoff, lastDepositAts);
+    }
+  }
+
+  /**
+   * Removes the tag from each holder with no deposit since `cutoff`, then reads again and gives
+   * it back to anyone who deposited meanwhile: a deposit that landed between the first read and
+   * the removal found the tag still held, so its own assignment did nothing.
+   */
+  private async sweepRecentDepositors(
+    holders: readonly TagHolder[],
+    cutoff: number,
+    lastDepositAts: LastDepositAts,
+  ) {
+    const lapsed = await this.withoutDepositSince(holders, cutoff, lastDepositAts);
+    await mapConcurrent(lapsed, EVAL_CHUNK_SIZE, ({ playerId }) =>
+      this.tryRemovePlayerTag({
+        playerId,
+        tagKey: 'recent_depositor',
+        reason: 'no completed deposit within the configured window',
+      }),
+    );
+    const stillLapsed = new Set(await this.withoutDepositSince(lapsed, cutoff, lastDepositAts));
+    const depositedMeanwhile = lapsed.filter((holder) => !stillLapsed.has(holder));
+    await mapConcurrent(depositedMeanwhile, EVAL_CHUNK_SIZE, ({ playerId }) =>
+      this.tryAssignPlayerTag({
+        playerId,
+        tagKey: 'recent_depositor',
+        reason: RECENT_DEPOSIT_REASON,
+      }),
+    );
+  }
+
+  private async withoutDepositSince(
+    holders: readonly TagHolder[],
+    cutoff: number,
+    lastDepositAts: LastDepositAts,
+  ): Promise<TagHolder[]> {
+    if (holders.length === 0) {
+      return [];
+    }
+    const ats = await lastDepositAts(holders.map((holder) => holder.userId));
+    return holders.filter((holder) => (ats.get(holder.userId)?.getTime() ?? 0) < cutoff);
+  }
+
+  private lastDepositAts(): LastDepositAts | undefined {
+    const read = this.walletReader.getLastDepositAts?.bind(this.walletReader);
+    if (!read && !this.warnedNoLastDepositAts) {
+      this.warnedNoLastDepositAts = true;
+      logger.warn(
+        'the bound WALLET_READER has no getLastDepositAts - recent_depositor is neither assigned nor swept',
+      );
+    }
+    return read;
   }
 }

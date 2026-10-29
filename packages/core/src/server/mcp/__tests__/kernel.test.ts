@@ -775,6 +775,22 @@ describe('McpKernel catalog', () => {
     expect(bumped).not.toBe(toolFirst);
   });
 
+  it('lists whether an action type benefits the player without changing the catalog version', () => {
+    const plain = kernelOf((registry) => {
+      registry.actions.register(holdWithdrawal, idempotentHold);
+    }).kernel;
+    const benefiting = kernelOf((registry) => {
+      registry.actions.register(
+        defineActionType({ ...holdWithdrawal, benefitsPlayer: true }),
+        idempotentHold,
+      );
+    }).kernel;
+
+    expect(plain.listActionTypes().map((action) => action.benefitsPlayer)).toEqual([false]);
+    expect(benefiting.listActionTypes().map((action) => action.benefitsPlayer)).toEqual([true]);
+    expect(benefiting.catalogVersion).toBe(plain.catalogVersion);
+  });
+
   it('versions the catalog by the allowed trigger topics, not by their order', () => {
     const versionWith = (triggerTopics?: DomainEventName[]) =>
       createMcpKernel({

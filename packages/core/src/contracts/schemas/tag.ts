@@ -23,6 +23,7 @@ export const tagKeys = [
   'multi_account',
   'level',
   'withdrawal_lock',
+  'recent_depositor',
 ] as const;
 export const TagKeySchema = z.enum(tagKeys);
 export type TagKey = z.infer<typeof TagKeySchema>;
@@ -99,7 +100,7 @@ export const tagRuleSchema = z.object({
   isEnabled: z.boolean(),
   /** Amount threshold as a decimal string - same unit as wallet.balance and wallet_transaction.amount (high_roller: lifetime deposits; large_depositor: single deposit; high_risk: single withdrawal). */
   threshold: MoneyAmountSchema.nullable(),
-  /** Inactivity or rolling-window length in days (inactive, high_risk). */
+  /** Inactivity or rolling-window length in days (inactive, high_risk, recent_depositor). */
   thresholdDays: z.number().int().nullable(),
   /** Minimum event count within the window (high_risk withdrawal frequency). */
   thresholdCount: z.number().int().nullable(),

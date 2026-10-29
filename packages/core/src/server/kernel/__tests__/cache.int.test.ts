@@ -38,6 +38,26 @@ describe('cached', () => {
     expect(result).toBe('loaded');
     expect(loader).toHaveBeenCalledOnce();
   });
+
+  it.each(['get', 'set'] as const)(
+    'loads instead of throwing when the backend fails on %s',
+    async (method) => {
+      const failing: CacheAdapter = {
+        get: async () => undefined,
+        set: async () => {},
+        setIfAbsent: async () => false,
+        delete: async () => {},
+        [method]: async () => {
+          throw new Error('backend down');
+        },
+      };
+      const loader = vi.fn().mockResolvedValue('loaded');
+
+      expect(await cached(failing, 'k', 5000, loader)).toBe('loaded');
+      expect(await cached(failing, 'k', 5000, loader)).toBe('loaded');
+      expect(loader).toHaveBeenCalledTimes(2);
+    },
+  );
 });
 
 describe('invalidate', () => {

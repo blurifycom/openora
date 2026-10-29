@@ -19,6 +19,12 @@ does not repeat it.
 - **Its agent surface.** A read tool over a player's balances, recent money movement and
   withdrawals still awaiting a decision, and an action type that holds a player's waiting
   withdrawal for manual review. Both are served only through the MCP kernel (ADR-0042).
+- **Read-only money facts for other modules.** Lifetime deposits and withdrawals, the last
+  deposit, turnover and recent withdrawal requests, read through the wallet's read port rather
+  than its tables. Every total is priced into the fx pivot at today's rates and reads as
+  unknown, never as a partial sum, when one of its currencies has no rate. A deposit counts from
+  when it reached the balance, so a held one counts from its release, and a withdrawal request
+  counts exactly when the auto-approval velocity check would count it.
 
 ## Rules that are easy to get wrong here
 
