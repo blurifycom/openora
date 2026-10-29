@@ -88,7 +88,7 @@ export const NOTIFICATION_PARAM_KEYS = {
     ],
   },
   'promo.streak.milestone.reached': { required: ['day'], optional: [] },
-  'chat.mention': { required: [], optional: [] },
+  'chat.mention': { required: [], optional: ['byUsername'] },
   'chat.room_invite.received': { required: ['inviterUsername', 'roomName'], optional: [] },
   'social.friend_request.received': { required: ['requesterUsername'], optional: [] },
   'social.friend_request.accepted': { required: ['accepterUsername'], optional: [] },

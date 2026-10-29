@@ -887,6 +887,7 @@ describe('ChatService @mention detection (real PG)', () => {
     expect(events.emit).toHaveBeenCalledWith('chat.user.mentioned', {
       mentionedUserId: bobId,
       byUserId: msg.userId,
+      byUsername: 'alice',
       roomId: room.id,
       messageId: msg.id,
     });
@@ -909,6 +910,7 @@ describe('ChatService @mention detection (real PG)', () => {
     expect(events.emit).toHaveBeenCalledWith('chat.user.mentioned', {
       mentionedUserId: bobId,
       byUserId: authorId,
+      byUsername: 'alice',
       roomId: null,
       messageId: msg.id,
     });
@@ -1059,6 +1061,7 @@ describe('ChatService @mention detection (real PG)', () => {
     expect(events.emit).toHaveBeenCalledWith('chat.user.mentioned', {
       mentionedUserId: bobId,
       byUserId: authorId,
+      byUsername: 'alice',
       roomId: room.id,
       messageId: msg.id,
     });
@@ -1099,7 +1102,13 @@ describe('ChatService @mention detection (real PG)', () => {
     expect(mentionCalls).toEqual([
       [
         'chat.user.mentioned',
-        { mentionedUserId: carolId, byUserId: authorId, roomId: room.id, messageId: msg.id },
+        {
+          mentionedUserId: carolId,
+          byUserId: authorId,
+          byUsername: 'alice',
+          roomId: room.id,
+          messageId: msg.id,
+        },
       ],
     ]);
   });

@@ -164,6 +164,7 @@ function emitMentions({
   isMentionSuppressed,
   content,
   byUserId,
+  byUsername,
   roomId,
   messageId,
 }: {
@@ -172,6 +173,7 @@ function emitMentions({
   isMentionSuppressed: (mentionedUserId: User['id']) => Promise<boolean>;
   content: string;
   byUserId: User['id'];
+  byUsername: string;
   roomId: ChatRoom['id'] | null;
   messageId: ChatMessage['id'];
 }): void {
@@ -195,7 +197,13 @@ function emitMentions({
     if (suppressed) {
       return;
     }
-    events.emit('chat.user.mentioned', { mentionedUserId, byUserId, roomId, messageId });
+    events.emit('chat.user.mentioned', {
+      mentionedUserId,
+      byUserId,
+      byUsername,
+      roomId,
+      messageId,
+    });
   }).catch((err: unknown) => {
     logger.error({ err, messageId }, 'chat mention resolution failed');
   });
@@ -1947,6 +1955,7 @@ export class ChatService {
         this.isMentionSuppressed(mentionedUserId, userId, roomId),
       content: safeContent,
       byUserId: userId,
+      byUsername: author.username,
       roomId,
       messageId: record.id,
     });
@@ -2050,6 +2059,7 @@ export class ChatService {
         this.isMentionSuppressed(mentionedUserId, userId, null),
       content: safeContent,
       byUserId: userId,
+      byUsername: author.username,
       roomId: null,
       messageId: record.id,
     });
