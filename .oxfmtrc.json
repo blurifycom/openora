@@ -15,6 +15,7 @@
     "**/catalog.json",
     "docs/openapi.json",
     "packages/core/tsconfig.json",
-    "pnpm-lock.yaml"
+    "pnpm-lock.yaml",
+    "tools/templates/consumer/__dot__rulesync/skills/ui-verify/layout-check.js"
   ]
 }

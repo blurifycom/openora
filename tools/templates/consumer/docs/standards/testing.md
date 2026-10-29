@@ -15,8 +15,10 @@ Before the PR opens:
    browser MCP does. Use a browser MCP only for a live console or network read the CLI cannot give
    you.
 2. Capture the evidence: one short video per acceptance criterion, ending on the outcome it names,
-   and the before/after pair when you fixed something. A screenshot only where a video adds
-   nothing, such as a second theme. An API-only change attaches the request/response trace instead.
+   and the before/after pair when you fixed something. Every changed screen also gets the
+   `ui-verify` skill's screenshot review: four shots (mobile and desktop, light and dark), each
+   read for layout defects and given a PASS or FAIL line. Videos are for the reviewer, screenshots
+   for the agent. An API-only change attaches the request/response trace instead.
 3. Attach that evidence **to the PR description**, not only to your report - a reviewer confirms a
    change by looking at it.
 4. Write the tests that pass exercised, in this branch, at the tier the table below names. Include
