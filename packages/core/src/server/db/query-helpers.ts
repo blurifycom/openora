@@ -99,6 +99,15 @@ export function moneyScaleBy(amount: string, factor: string): string {
   return fromMinorUnits(product);
 }
 
+/** Multiplies before dividing, truncating only the final result to money precision. */
+export function moneyMultiplyDivide(amount: string, multiplier: string, divisor: string): string {
+  const units = toMinorUnits(divisor);
+  if (units === 0n) {
+    throw new RangeError('moneyMultiplyDivide: division by zero');
+  }
+  return fromMinorUnits((toMinorUnits(amount) * toMinorUnits(multiplier)) / units);
+}
+
 export function moneyDivide(dividend: string, divisor: string): string {
   const divisorUnits = toMinorUnits(divisor);
   if (divisorUnits === 0n) {

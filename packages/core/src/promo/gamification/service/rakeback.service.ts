@@ -1,8 +1,10 @@
 import { and, desc, eq, gt, inArray } from 'drizzle-orm';
 import {
+  CONTRIBUTION_PERCENT_SCALE,
   isUsableRtp,
   type RakebackBasis,
   type RakebackPayout,
+  type RankPeriodicBasis,
   type WagerReversalArgs,
   type WagerTrackingArgs,
   type WagerTrackingCommands,
@@ -13,6 +15,8 @@ import {
   moneyAdd,
   moneyCompare,
   moneyDivide,
+  moneyFloorToScale,
+  moneyMultiplyDivide,
   moneyScaleBy,
   moneySubtract,
   houseEdge,
@@ -109,6 +113,7 @@ export class RakebackService implements WagerTrackingCommands {
     private readonly getWallet: () => WalletCommands | undefined,
     private readonly logger: { warn: (context: object, message: string) => void },
     private readonly settings: RakebackSettings = DEFAULT_SETTINGS,
+    private readonly periodicBasis: RankPeriodicBasis = 'flat',
   ) {}
 
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
@@ -269,17 +274,52 @@ export class RakebackService implements WagerTrackingCommands {
       return null;
     }
     const [tier] = await tx
-      .select({ rakebackPercent: promoRankTier.rakebackPercent })
+      .select({
+        rakebackPercent: promoRankTier.rakebackPercent,
+        dailyBonusPercent: promoRankTier.dailyBonusPercent,
+        weeklyBonusPercent: promoRankTier.weeklyBonusPercent,
+        monthlyBonusPercent: promoRankTier.monthlyBonusPercent,
+      })
       .from(promoRankTier)
       .where(eq(promoRankTier.id, rank.tierId));
     if (!tier) {
       return null;
     }
+    const uplift = streak?.rankedUpliftPercent ?? ZERO;
     return {
       mode: 'ranked',
       ratePercent: tier.rakebackPercent,
-      upliftPercent: streak?.rankedUpliftPercent ?? ZERO,
+      upliftPercent:
+        this.settings.basis === 'margin' ? this.upliftWithinEdge(tier, uplift) : uplift,
     };
+  }
+
+  /** Trims the streak uplift so rakeback and the margin bonuses one bet funds pay at most its whole edge. */
+  private upliftWithinEdge(
+    tier: {
+      rakebackPercent: string;
+      dailyBonusPercent: string | null;
+      weeklyBonusPercent: string | null;
+      monthlyBonusPercent: string | null;
+    },
+    uplift: string,
+  ): string {
+    const bonuses =
+      this.periodicBasis === 'margin'
+        ? [tier.dailyBonusPercent, tier.weeklyBonusPercent, tier.monthlyBonusPercent]
+        : [];
+    const headroom = bonuses.reduce<string>(
+      (left, percent) => moneySubtract(left, percent ?? ZERO),
+      moneySubtract('100', tier.rakebackPercent),
+    );
+    if (moneyCompare(headroom, ZERO) <= 0 || moneyCompare(tier.rakebackPercent, ZERO) <= 0) {
+      return ZERO;
+    }
+    const ceiling = moneyFloorToScale(
+      moneyMultiplyDivide(headroom, '100', tier.rakebackPercent),
+      CONTRIBUTION_PERCENT_SCALE,
+    );
+    return moneyCompare(uplift, ceiling) > 0 ? ceiling : uplift;
   }
 
   private async streakRateFor(tx: DrizzleTx, args: WagerTrackingArgs): Promise<StreakRate | null> {
