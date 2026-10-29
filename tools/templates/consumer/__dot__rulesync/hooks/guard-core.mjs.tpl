@@ -8,7 +8,7 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractCommand, extractFilePath, readPayload, deny } from './_shared.mjs';
+import { extractCommand, extractFilePaths, readPayload, deny } from './_shared.mjs';
 
 const payload = readPayload();
 
@@ -78,11 +78,10 @@ const physical = (path) => {
 };
 
 // 2) Direct file edit/write whose target resolves inside a protected path.
-const filePath = extractFilePath(payload);
-if (filePath) {
+const oss = physical(OSS);
+for (const filePath of extractFilePaths(payload)) {
   const written = resolve(payload.cwd ?? process.cwd(), filePath);
   const target = physical(written);
-  const oss = physical(OSS);
   const isInside = (dir) => target.startsWith(dir + sep);
   const inNodeModules = [written, target].some((path) => /(?:^|[\\/])node_modules(?:[\\/]|$)/.test(path));
   if (inNodeModules || (isInside(oss) && !isInside(join(oss, '.worktrees')))) {

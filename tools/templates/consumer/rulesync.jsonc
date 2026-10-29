@@ -8,13 +8,13 @@
   // AGENTS.md stays a clean human brief (no simulated-command boilerplate).
   // Hooks + permissions are NOT managed here - .claude/settings.json is hand-maintained
   // (it holds the guard hooks), so rulesync never clobbers it.
-  // codexcli: rules (AGENTS.md) + mcp (.codex/config.toml) only - its commands/
-  // subagents are simulation-only (kept off) and it has no hooks system.
+  // codexcli: rules (AGENTS.md), mcp (.codex/config.toml) and hooks (.codex/hooks.json, so
+  // the guards judge its apply_patch edits) - its commands/subagents are simulation-only (kept off).
   "targets": {
     "agentsmd": ["rules"],
     "claudecode": ["rules", "mcp", "subagents", "commands", "skills"],
     "copilot": ["rules", "mcp", "subagents", "commands", "hooks"],
-    "codexcli": ["rules", "mcp"],
+    "codexcli": ["rules", "mcp", "hooks"],
   },
 
   // rulesync emits Copilot agents/prompts natively - no simulation needed.
