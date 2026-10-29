@@ -464,3 +464,17 @@ describe('gaming provider autoApproveNewGames forward-compat', () => {
     }
   });
 });
+
+describe('chat.user.mentioned author username', () => {
+  it('rejects an empty author username', () => {
+    const result = domainEventSchemas['chat.user.mentioned'].safeParse({
+      mentionedUserId: randomUUID(),
+      byUserId: randomUUID(),
+      byUsername: '',
+      roomId: null,
+      messageId: randomUUID(),
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
