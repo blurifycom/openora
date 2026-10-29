@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import type {
+  RankPeriodicBasis,
   WagerContext,
   WagerProduct,
   WalletCommands,
@@ -65,8 +66,8 @@ const wager = (
 const wagerOn = (userId: string, product: WagerProduct) =>
   wager(userId, '100', '100', { provider: 'aggregator', product });
 
-const serviceWith = (settings: RakebackSettings) =>
-  new RakebackService(() => mock<WalletCommands>({ credit }), logger, settings);
+const serviceWith = (settings: RakebackSettings, periodicBasis?: RankPeriodicBasis) =>
+  new RakebackService(() => mock<WalletCommands>({ credit }), logger, settings, periodicBasis);
 
 const betOn = (
   service: RakebackService,
@@ -308,6 +309,71 @@ describe('rakeback on the house edge', () => {
     await betOn(margin(), userId, '100', { rtp: '0.96' });
 
     expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '0.240000000000000000' });
+  });
+
+  describe('a streak boost on a tier whose bonus percents leave 2 points of the edge', () => {
+    const boostBy = async (userId: string, boostPercent: string) => {
+      await givePlayerTier(userId, 'gold');
+      await db.drizzle.db
+        .update(promoRankTier)
+        .set({ dailyBonusPercent: '50', weeklyBonusPercent: '30', monthlyBonusPercent: '13' })
+        .where(eq(promoRankTier.key, 'gold'));
+      await db.drizzle.db
+        .update(promoPlayerRank)
+        .set({
+          rakebackBoostPercent: boostPercent,
+          rakebackBoostExpiresAt: new Date(Date.now() + 86_400_000),
+        })
+        .where(eq(promoPlayerRank.userId, userId));
+    };
+
+    it('is trimmed so rakeback and the margin bonuses pay at most the whole edge', async () => {
+      const userId = randomUUID();
+      await boostBy(userId, '5');
+
+      await betOn(serviceWith({ basis: 'margin', payout: 'instant' }, 'margin'), userId, '100', {
+        rtp: '0.96',
+      });
+
+      expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '0.280000000000000000' });
+    });
+
+    it('records the trimmed boost on a claimable accrual', async () => {
+      const userId = randomUUID();
+      await boostBy(userId, '5');
+
+      await betOn(serviceWith({ basis: 'margin', payout: 'claim' }, 'margin'), userId, '100', {
+        rtp: '0.96',
+      });
+
+      expect(await accrualsOf(userId)).toEqual([
+        expect.objectContaining({
+          amount: '0.280000000000000000',
+          ratePercent: '5.00',
+          boostPercent: '2.00',
+        }),
+      ]);
+    });
+
+    it('is paid in full under the flat periodic basis, where the bonus percents pay nothing', async () => {
+      const userId = randomUUID();
+      await boostBy(userId, '5');
+
+      await betOn(serviceWith({ basis: 'margin', payout: 'instant' }, 'flat'), userId, '100', {
+        rtp: '0.96',
+      });
+
+      expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '0.400000000000000000' });
+    });
+
+    it('is paid in full on the stake basis, which pays on turnover', async () => {
+      const userId = randomUUID();
+      await boostBy(userId, '5');
+
+      await betOn(serviceWith({ basis: 'stake', payout: 'instant' }, 'margin'), userId, '100');
+
+      expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '10.000000000000000000' });
+    });
   });
 
   it.each([
