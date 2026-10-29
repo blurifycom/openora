@@ -3,8 +3,9 @@
 // One script serves Claude Code, Copilot CLI, Codex CLI, and Gemini CLI. Each
 // passes the tool call as JSON on stdin but with a slightly different shape:
 //   Claude         : { tool_name, tool_input: { command?, file_path? } }
-//   Codex          : same, except an edit is apply_patch: { tool_input: { command: "<patch>" } },
-//                    the paths only in its "*** Add File: <path>" style headers
+//   Codex          : same, except an edit is { tool_name: "apply_patch", tool_input: { command: "<patch>" } },
+//                    the paths only in its "*** Add File: <path>" style headers; an Edit|Write
+//                    matcher matches apply_patch
 //   Copilot        : { toolName,  toolArgs: "<json-string>" | object }
 //   Gemini         : { toolName/tool_name, ... } (best-effort)
 //
@@ -37,7 +38,6 @@ function toolArgsObject(payload) {
   return a && typeof a === 'object' ? a : {};
 }
 
-const PATCH_START = /^\*\*\* Begin Patch$/m;
 const PATCH_PATH = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm;
 
 function rawCommand(payload) {
@@ -46,17 +46,18 @@ function rawCommand(payload) {
   return String(ti.command ?? ca.command ?? '');
 }
 
+// Only the tool name tells a patch from a shell command: a Bash command can carry patch text too.
+const isPatch = (payload) => (payload.tool_name ?? payload.toolName) === 'apply_patch';
+
 /** The shell command string for this tool call, across tool shapes ('' if none or a patch). */
 export function extractCommand(payload) {
-  const command = rawCommand(payload);
-  return PATCH_START.test(command) ? '' : command;
+  return isPatch(payload) ? '' : rawCommand(payload);
 }
 
 /** Every file an edit/write tool call touches, across tool shapes ([] if none). */
 export function extractFilePaths(payload) {
-  const command = rawCommand(payload);
-  if (PATCH_START.test(command)) {
-    return [...command.matchAll(PATCH_PATH)].map((match) => match[1].trim());
+  if (isPatch(payload)) {
+    return [...rawCommand(payload).matchAll(PATCH_PATH)].map((match) => match[1].trim());
   }
   const ti = payload.tool_input ?? {};
   const ca = toolArgsObject(payload);
