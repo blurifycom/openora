@@ -6,6 +6,7 @@ import { loadExtensions, DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import { WAGER_TRACKING } from '@openora/core/contracts';
 import { walletTransaction } from '@openora/core/wallet/schema';
 import { user } from '@openora/core/pam/schema/identity';
+import { player } from '@openora/core/pam/schema/profile';
 import {
   asAdmin,
   bootE2e,
@@ -56,6 +57,19 @@ const claimCredits = (claimId: string) =>
     .select({ amount: walletTransaction.amount, type: walletTransaction.type })
     .from(walletTransaction)
     .where(like(walletTransaction.providerRefId, `${claimId}:%`));
+
+const selfExclusionActivated = (userId: string) =>
+  app.container.get(EVENT_BUS).emit('rg.self_exclusion.activated', {
+    userId,
+    playerId: null,
+    exclusionId: randomUUID(),
+    isPermanent: true,
+    durationMonths: null,
+    expiresAt: null,
+    initiatedBy: 'system',
+    actorId: randomUUID(),
+    reason: 'rg rule triggered',
+  });
 
 const accrualsOf = async (userId: string) =>
   (await readJson(await admin.get(`/backoffice/promo/rakeback/accruals?userId=${userId}`))).items;
@@ -205,8 +219,9 @@ describe('the claim id on a wallet transaction', () => {
     const ownCashback = own.items.find((tx: { type: string }) => tx.type === 'cashback');
     const adminCashback = adminView.items.find((tx: { type: string }) => tx.type === 'cashback');
     expect(ownCashback).toBeDefined();
-    expect(ownCashback).not.toHaveProperty('metadata');
-    expect(adminCashback.metadata).toMatchObject({ claimId });
+    expect(ownCashback).not.toHaveProperty('claimId');
+    expect(adminCashback.claimId).toBe(claimId);
+    expect(adminView.items.every((tx: object) => !('metadata' in tx))).toBe(true);
   });
 });
 
@@ -263,10 +278,12 @@ describe('an admin voiding unclaimed rakeback', () => {
     await bet(userId, '1000');
 
     const liability = await admin.get('/backoffice/promo/rakeback/liability');
-    const player = await readJson(await admin.get(`/backoffice/promo/rakeback/players/${userId}`));
+    const breakdown = await readJson(
+      await admin.get(`/backoffice/promo/rakeback/players/${userId}`),
+    );
 
     expect(liability.status).toBe(200);
-    expect(player).toMatchObject({
+    expect(breakdown).toMatchObject({
       userId,
       unclaimed: [{ currency: 'USDT', amount: '0.400000000000000000' }],
     });
@@ -274,28 +291,30 @@ describe('an admin voiding unclaimed rakeback', () => {
 });
 
 describe('rakeback auto-payout on self-exclusion', () => {
+  it('pays nothing when the player is no longer self-excluded as the job runs', async () => {
+    const { userId } = await newPlayer();
+    await bet(userId, '100');
+
+    selfExclusionActivated(userId);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    expect(await accrualsOf(userId)).toEqual([expect.objectContaining({ status: 'accrued' })]);
+  });
+
   it('pays out below the minimum, once', async () => {
     const { userId } = await newPlayer();
     await bet(userId, '100');
-    const selfExcluded = () =>
-      app.container.get(EVENT_BUS).emit('rg.self_exclusion.activated', {
-        userId,
-        playerId: null,
-        exclusionId: randomUUID(),
-        isPermanent: true,
-        durationMonths: null,
-        expiresAt: null,
-        initiatedBy: 'system',
-        actorId: randomUUID(),
-        reason: 'rg rule triggered',
-      });
 
-    selfExcluded();
+    await drizzle()
+      .update(player)
+      .set({ status: 'self_excluded' })
+      .where(eq(player.userId, userId));
+    selfExclusionActivated(userId);
     await vi.waitFor(async () => {
       expect(await accrualsOf(userId)).toEqual([expect.objectContaining({ status: 'claimed' })]);
     }, JOB_WAIT);
     const [paid] = await accrualsOf(userId);
-    selfExcluded();
+    selfExclusionActivated(userId);
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     expect(await claimCredits(paid.claimId)).toEqual([

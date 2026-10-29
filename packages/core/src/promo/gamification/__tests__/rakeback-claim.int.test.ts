@@ -447,6 +447,30 @@ describe('rakeback auto-payout', () => {
     );
   });
 
+  it('pays nothing to a player who is no longer closed or self-excluded when it runs', async () => {
+    const userId = await newPlayer();
+    await accrue(userId, '0.2');
+
+    const result = await claimsWith('10').autoPay(userId);
+
+    expect(result).toBeNull();
+    expect(credit).not.toHaveBeenCalled();
+    expect(await accrualsOf(userId)).toEqual([expect.objectContaining({ status: 'accrued' })]);
+    expect(await db.drizzle.db.select().from(promoRakebackClaim)).toHaveLength(0);
+  });
+
+  it('pays a player self-excluded through the RG module rather than the account status', async () => {
+    const userId = await newPlayer();
+    await accrue(userId, '0.2');
+    getExclusionState.mockResolvedValue({ isSelfExcluded: true, isCoolingOff: false });
+
+    const result = await claimsWith('10').autoPay(userId);
+
+    expect(result?.paid).toEqual([
+      expect.objectContaining({ currency: 'USDT', amount: '0.200000000000000000' }),
+    ]);
+  });
+
   it('pays once when two auto-payouts for the same player race', async () => {
     const userId = await newPlayer('closed');
     await accrue(userId, '3');
