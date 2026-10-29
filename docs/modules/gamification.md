@@ -172,7 +172,8 @@ transaction.
 
 A claim is refused while a responsible-gambling block is active or the account is suspended or
 closed. A player who self-excludes or closes the account is paid what is left automatically,
-even below the minimum, with a daily sweep catching a missed event. A cooling-off keeps the
+even below the minimum, with a daily sweep catching a missed event. The payout checks the account
+again when it runs, so one reopened in between is not paid. A cooling-off keeps the
 rakeback for when it ends. An hourly job reminds a player at most once a day, and only when a claim
 would succeed. An admin can void an unclaimed row with a reason. The void is audited. See
 [ADR-0046](../adr/0046-claimable-rakeback-on-the-house-edge.md).

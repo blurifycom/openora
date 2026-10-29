@@ -722,16 +722,16 @@ type TransactionHistoryRow = {
   metadata: string | null;
 };
 
-// Every writer stores a JSON object; anything else is shown as no metadata rather than failing the page.
-function parseTransactionMetadata(raw: string | null): Record<string, unknown> | null {
+function claimIdOf(raw: string | null): Uuid | null {
   if (raw === null) {
     return null;
   }
   try {
     const parsed: unknown = JSON.parse(raw);
-    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
+    const claimId =
+      typeof parsed === 'object' && parsed !== null && 'claimId' in parsed ? parsed.claimId : null;
+    const checked = UuidSchema.safeParse(claimId);
+    return checked.success ? checked.data : null;
   } catch {
     return null;
   }
@@ -3530,8 +3530,8 @@ export class WalletService {
               referenceRateAsOf: tx.reference_rate_as_of ? new Date(tx.reference_rate_as_of) : null,
             })
           : null,
-        // Internal only: it can carry a provider's raw response.
-        metadata: includeInternal ? parseTransactionMetadata(tx.metadata) : null,
+        // Only the claim id leaves the row: the metadata can carry a provider's raw response.
+        claimId: includeInternal && tx.type === 'cashback' ? claimIdOf(tx.metadata) : null,
       })),
       total: counted[0]?.n ?? 0,
       page,

@@ -117,12 +117,15 @@ export class RakebackClaimService {
   /**
    * Pays everything a player has accrued once they can no longer claim it themselves - a
    * self-exclusion or a closed account - below the minimum and past every block. Null when
-   * nothing was left, so running it twice pays once.
+   * nothing was left, so running it twice pays once, and when the player is no longer due, such
+   * as an account reopened before the job ran.
    */
   async autoPay(userId: Uuid): Promise<RakebackClaimed | null> {
     try {
-      return await this.deps.drizzle.db.transaction((tx) =>
-        this.settle(tx, userId, `auto:${randomUUID()}`, 'auto_paid'),
+      return await this.deps.drizzle.db.transaction(async (tx) =>
+        (await this.isDue(tx, userId))
+          ? this.settle(tx, userId, `auto:${randomUUID()}`, 'auto_paid')
+          : null,
       );
     } catch (err) {
       if (err instanceof RakebackNothingToClaimError) {
@@ -150,17 +153,29 @@ export class RakebackClaimService {
       );
     const due: Uuid[] = [];
     for (const row of rows) {
-      if (row.status === 'closed' || row.status === 'self_excluded') {
-        due.push(row.userId);
-        continue;
-      }
-      // An RG block is also a cooling-off, which keeps the rakeback for the player to claim later.
-      const state = await this.deps.exclusions?.getExclusionState(row.userId);
-      if (state?.isSelfExcluded) {
+      if (await this.dueOn(row.userId, row.status)) {
         due.push(row.userId);
       }
     }
     return due;
+  }
+
+  private async isDue(tx: DrizzleTx, userId: Uuid): Promise<boolean> {
+    const [account] = await tx
+      .select({ status: player.status })
+      .from(player)
+      .where(eq(player.userId, userId))
+      .for('share');
+    return this.dueOn(userId, account?.status ?? null);
+  }
+
+  private async dueOn(userId: Uuid, status: string | null): Promise<boolean> {
+    if (status === 'closed' || status === 'self_excluded') {
+      return true;
+    }
+    // An RG block is also a cooling-off, which keeps the rakeback for the player to claim later.
+    const state = await this.deps.exclusions?.getExclusionState(userId);
+    return state?.isSelfExcluded === true;
   }
 
   /**
