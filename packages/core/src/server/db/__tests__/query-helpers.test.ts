@@ -13,6 +13,7 @@ import {
   moneyScaleBy,
   houseEdge,
   moneyDivide,
+  moneyMultiplyDivide,
   moneyAdd,
   moneySubtract,
   moneyFloorToScale,
@@ -342,5 +343,19 @@ describe('moneyCeilToScale', () => {
 
   it('leaves a zero amount at zero, never rounding up from nothing', () => {
     expect(moneyCeilToScale('0', 2)).toBe('0.00');
+  });
+});
+
+describe('moneyMultiplyDivide', () => {
+  it('retains precision until division', () => {
+    expect(moneyMultiplyDivide('0.0000000003', '0.0000000001', '0.00000001')).toBe(
+      '0.000000000003000000',
+    );
+    expect(moneyMultiplyDivide('11', '25', '200')).toBe('1.375000000000000000');
+    expect(moneyMultiplyDivide('1', '1', '3')).toBe('0.333333333333333333');
+    expect(moneyMultiplyDivide('0', '1', '2')).toBe('0.000000000000000000');
+  });
+  it('rejects division by zero', () => {
+    expect(() => moneyMultiplyDivide('1', '2', '0')).toThrow(RangeError);
   });
 });

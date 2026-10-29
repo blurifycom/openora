@@ -32,6 +32,8 @@ import type {
 } from '../contract/index.js';
 
 const money = () => decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE });
+const percent = () =>
+  decimal({ precision: CONTRIBUTION_PERCENT_PRECISION, scale: CONTRIBUTION_PERCENT_SCALE });
 
 export const promoRankTier = pgTable(
   'promo_rank_tier',
@@ -50,6 +52,11 @@ export const promoRankTier = pgTable(
     weeklyBonus: money(),
     monthlyBonus: money(),
     levelUpBonus: money(),
+    // Under the `margin` periodic basis: the share of the period's margin paid, capped by the
+    // matching `*Bonus` amount. Null pays nothing of that kind.
+    dailyBonusPercent: percent(),
+    weeklyBonusPercent: percent(),
+    monthlyBonusPercent: percent(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -65,6 +72,17 @@ export const promoRankTier = pgTable(
         AND (${t.weeklyBonus} is null OR ${t.weeklyBonus} > 0)
         AND (${t.monthlyBonus} is null OR ${t.monthlyBonus} > 0)
         AND (${t.levelUpBonus} is null OR ${t.levelUpBonus} > 0)`,
+    ),
+    check(
+      'promo_rank_tier_bonus_percent_bounds',
+      sql`(${t.dailyBonusPercent} is null OR (${t.dailyBonusPercent} > 0 AND ${t.dailyBonusPercent} <= 100))
+        AND (${t.weeklyBonusPercent} is null OR (${t.weeklyBonusPercent} > 0 AND ${t.weeklyBonusPercent} <= 100))
+        AND (${t.monthlyBonusPercent} is null OR (${t.monthlyBonusPercent} > 0 AND ${t.monthlyBonusPercent} <= 100))`,
+    ),
+    check(
+      'promo_rank_tier_total_percent',
+      sql`${t.rakebackPercent} + coalesce(${t.dailyBonusPercent}, 0)
+        + coalesce(${t.weeklyBonusPercent}, 0) + coalesce(${t.monthlyBonusPercent}, 0) <= 100`,
     ),
   ],
 );
@@ -183,6 +201,8 @@ export const promoRankPeriodWager = pgTable(
     periodKey: text().notNull(),
     currency: text().notNull(),
     wagered: money().notNull().default('0'),
+    /** Own-money stake × (1 − rtp) inside the period, the base of a `margin` periodic bonus. */
+    margin: money().notNull().default('0'),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .defaultNow()
@@ -199,10 +219,40 @@ export const promoRankPeriodWager = pgTable(
     index('promo_rank_period_wager_kind_period_key_idx').on(t.kind, t.periodKey),
     index('promo_rank_period_wager_kind_updated_at_idx').on(t.kind, t.updatedAt),
     check('promo_rank_period_wager_non_negative', sql`${t.wagered} >= 0`),
+    check('promo_rank_period_wager_margin_non_negative', sql`${t.margin} >= 0`),
   ],
 );
 
 export type PromoRankPeriodWager = typeof promoRankPeriodWager.$inferSelect;
+
+/**
+ * Remaining native stake and ladder-currency margin, retained to bound round reversals. One row
+ * per staked round under either basis and for ineligible products too, kept until fully reversed.
+ */
+export const promoRankRoundWager = pgTable(
+  'promo_rank_round_wager',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    providerName: text().notNull(),
+    externalRoundId: text().notNull(),
+    currency: text().notNull(),
+    ladderCurrency: text().notNull(),
+    stake: money().notNull(),
+    margin: money().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('promo_rank_round_wager_round_idx').on(
+      t.userId,
+      t.providerName,
+      t.currency,
+      t.externalRoundId,
+      t.ladderCurrency,
+    ),
+    check('promo_rank_round_wager_non_negative', sql`${t.stake} >= 0 AND ${t.margin} >= 0`),
+  ],
+);
 
 /**
  * A level-up bonus a player has earned and the payout job has yet to settle. Written in the bet's
@@ -620,9 +670,6 @@ export const promoRankChallengeClaim = pgTable(
 );
 
 export type PromoRankChallengeClaim = typeof promoRankChallengeClaim.$inferSelect;
-
-const percent = () =>
-  decimal({ precision: CONTRIBUTION_PERCENT_PRECISION, scale: CONTRIBUTION_PERCENT_SCALE });
 
 export const promoRakebackBasisEnum = pgEnum('promo_rakeback_basis', RAKEBACK_BASES);
 export const promoRakebackAccrualStatusEnum = pgEnum(

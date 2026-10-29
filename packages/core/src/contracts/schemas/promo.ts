@@ -71,6 +71,10 @@ export type BonusForfeitReason = z.infer<typeof BonusForfeitReasonSchema>;
 export type BonusGrantEntryType = z.infer<typeof BonusGrantEntryTypeSchema>;
 export type PromoOfferStatus = z.infer<typeof PromoOfferStatusSchema>;
 
+/** How the rank daily, weekly and monthly bonuses are sized; see `promo.rankPeriodic.basis`. */
+export const RANK_PERIODIC_BASES = ['flat', 'margin'] as const;
+export type RankPeriodicBasis = (typeof RANK_PERIODIC_BASES)[number];
+
 // A weight as a percentage of the stake, `numeric(5,2)` in the database. Zero excludes a product
 // or game from wagering; above 100 would count a bet for more than it was worth.
 export const CONTRIBUTION_PERCENT_PRECISION = 5;

@@ -9,6 +9,7 @@ import { CurrencyTickerInputSchema, MoneyAmountSchema } from './common.js';
 import { AgentsConfigSchema } from './agents.js';
 import { HostAllowlistEntrySchema, UrlPrefixAllowlistEntrySchema } from './host-allowlist.js';
 import { createToken } from '../adapters/token.js';
+import { RANK_PERIODIC_BASES } from './promo.js';
 
 /**
  * Platform-wide T0 configuration consumed by the slot evaluation context and
@@ -307,6 +308,16 @@ export const PromoConfigSchema = z
         payout: z.enum(RAKEBACK_PAYOUTS).default('instant'),
         /** Smallest claim, priced in `wallet.defaultReferenceCurrency`. */
         claimMinimum: MoneyAmountSchema.default('0'),
+      })
+      .strict()
+      .prefault({}),
+    rankPeriodic: z
+      .object({
+        /**
+         * `flat` pays each tier's daily, weekly and monthly bonus amount; `margin` pays the tier's
+         * percent of the period's own-money stake × (1 − rtp), capped by that amount.
+         */
+        basis: z.enum(RANK_PERIODIC_BASES).default('flat'),
       })
       .strict()
       .prefault({}),

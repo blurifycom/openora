@@ -134,6 +134,13 @@
       "when": 1793354023650,
       "tag": "0018_rakeback_claim",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793361793433,
+      "tag": "0019_rank_periodic_margin",
+      "breakpoints": true
     }
   ]
 }

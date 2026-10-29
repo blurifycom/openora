@@ -6,6 +6,7 @@ import {
   CurrencyTickerSchema,
   MoneyAmountSchema,
   RAKEBACK_BASES,
+  RANK_PERIODIC_BASES,
   TimestampSchema,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -21,12 +22,23 @@ export const RankTierSchema = z.object({
   weeklyBonus: MoneyAmountSchema.nullable(),
   monthlyBonus: MoneyAmountSchema.nullable(),
   levelUpBonus: MoneyAmountSchema.nullable(),
+  /**
+   * Under the `margin` periodic basis, the percent of the period's margin each bonus pays, capped
+   * by the matching amount above (no cap when that is null). Null pays nothing of that kind.
+   */
+  dailyBonusPercent: ContributionPercentSchema.nullable(),
+  weeklyBonusPercent: ContributionPercentSchema.nullable(),
+  monthlyBonusPercent: ContributionPercentSchema.nullable(),
 });
 
 export type RankTier = z.infer<typeof RankTierSchema>;
 
+/** `flat` pays the daily, weekly and monthly amounts; `margin` pays their percents of the margin. */
+const RankPeriodicBasisSchema = z.enum(RANK_PERIODIC_BASES);
+
 export const PlayerRankSchema = z.object({
   currency: CurrencyTickerSchema,
+  periodicBasis: RankPeriodicBasisSchema,
   lifetimeWagered: MoneyAmountSchema,
   tierId: UuidSchema.nullable(),
   tiers: z.array(RankTierSchema),
@@ -36,6 +48,7 @@ export type PlayerRank = z.infer<typeof PlayerRankSchema>;
 
 export const RankLadderSchema = z.object({
   currency: CurrencyTickerSchema,
+  periodicBasis: RankPeriodicBasisSchema,
   tiers: z.array(RankTierSchema),
 });
 
@@ -45,10 +58,14 @@ const MAX_TIERS = 50;
 
 /**
  * A tier as an operator submits it. No `id` means a tier to create; position is the entry's place
- * in the array, so a ladder is reordered by reordering it.
+ * in the array, so a ladder is reordered by reordering it. A percent left out keeps what the tier
+ * holds, and is null on a new tier.
  */
 const SubmittedTierSchema = RankTierSchema.omit({ id: true, position: true }).extend({
   id: UuidSchema.optional(),
+  dailyBonusPercent: ContributionPercentSchema.nullable().optional(),
+  weeklyBonusPercent: ContributionPercentSchema.nullable().optional(),
+  monthlyBonusPercent: ContributionPercentSchema.nullable().optional(),
 });
 
 export type SubmittedRankTier = z.infer<typeof SubmittedTierSchema>;
@@ -75,16 +92,49 @@ export const SetRankLadderInputSchema = z.object({
       (tiers) =>
         tiers.every((tier) => BONUS_FIELDS.every((field) => isAbsentOrPositive(tier[field]))),
       'a bonus amount is either absent or above zero',
+    )
+    .refine(
+      (tiers) =>
+        tiers.every((tier) =>
+          PERCENT_FIELDS.every((field) => isAbsentOrPositive(tier[field] ?? null)),
+        ),
+      'a bonus percent is either absent or above zero',
+    )
+    .refine(
+      (tiers) => !tiers.some(paysOverHouseEdge),
+      'rakeback and the bonus percents of a tier add up to at most 100',
     ),
 });
 
 export type SetRankLadderInput = z.infer<typeof SetRankLadderInputSchema>;
 
 const BONUS_FIELDS = ['dailyBonus', 'weeklyBonus', 'monthlyBonus', 'levelUpBonus'] as const;
+const PERCENT_FIELDS = ['dailyBonusPercent', 'weeklyBonusPercent', 'monthlyBonusPercent'] as const;
 
 // MoneyAmountSchema has already rejected anything negative or malformed, so a single non-zero
 // digit is the exact test for "above zero" - and it never rounds the way a float would.
 const isAbsentOrPositive = (amount: string | null) => amount === null || /[1-9]/.test(amount);
+
+// ContributionPercentSchema allows at most two decimals, so hundredths add exactly as integers.
+const hundredths = (percent: string | null | undefined) => {
+  const [whole = '0', fraction = ''] = (percent ?? '0').split('.');
+  return Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+};
+
+/**
+ * One bet can pay rakeback and all three periodic bonuses, so their percents together stay at or
+ * under 100. That bounds the payout by the house edge only when rakeback is on the `margin` basis
+ * and no streak boost raises it. A percent not set counts as zero.
+ */
+export const paysOverHouseEdge = (tier: {
+  rakebackPercent: string;
+  dailyBonusPercent?: string | null | undefined;
+  weeklyBonusPercent?: string | null | undefined;
+  monthlyBonusPercent?: string | null | undefined;
+}) =>
+  hundredths(tier.rakebackPercent) +
+    PERCENT_FIELDS.reduce((sum, field) => sum + hundredths(tier[field]), 0) >
+  100 * 100;
 
 /** What a rank pays out on a schedule: the level-up bonuses owed, and each periodic bonus. */
 export const RANK_PAYOUT_KINDS = ['levelUp', 'daily', 'weekly', 'monthly'] as const;
