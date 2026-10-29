@@ -32,7 +32,7 @@ The orchestrator: one ticket key in, a green MR in Code Review out. You own the 
 - Force-push: only `git push --force-with-lease` on the ticket branch, and only while every commit on the remote branch past `{{mrTarget}}` is your own (`git log --format=%ae origin/{{mrTarget}}..origin/<branch>` shows only your `git config user.email`). Someone else's commit there: merge, never push over it. Never a plain `--force`.
 - Merging: into a feature branch only (`{{mrTarget}}` merged into the ticket branch to clear conflicts, a stacked MR into its parent ticket branch). Never into `{{mrTarget}}`, `dev`, `develop`, `stage`, `staging`, `prod`, `production`, `main` or `master`.
 - The forge: opening the MR for that branch and replying on its review threads. Every comment you leave starts with `Agent:`, so `watch-pr.mjs` and other tools never take it for one to answer.
-- Slack: a one-line draft only, never sent.
+- Slack: nothing. Announcing the MR is the forge integration's job, so ship never drafts a notice.
 
 ## Do what the work needs, inside the worktree
 
@@ -121,7 +121,7 @@ The code is final now, so the videos are recorded once, here, never in an earlie
 
 ### 5. Open the MR
 
-`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table, the 4b videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Draft the one-line Slack notice to `{{teamChannel}}`: emoji + MR title as a link. Then 7.
+`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table, the 4b videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
 
 ### 6. Red CI and review comments
 
