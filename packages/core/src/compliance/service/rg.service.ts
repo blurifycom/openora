@@ -774,13 +774,16 @@ export class RgService {
    */
   async getActiveExclusions(
     userId: User['id'],
+    tx?: unknown,
   ): Promise<{ coolingOff: RgExclusion | null; selfExclusion: RgExclusion | null }> {
     const now = new Date();
-    const exclusions = await this.drizzle.db
+    const db = (tx as Tx | undefined) ?? this.drizzle.db;
+    const query = db
       .select()
       .from(rgExclusion)
       .where(and(eq(rgExclusion.userId, userId), eq(rgExclusion.status, 'active')))
       .orderBy(desc(rgExclusion.createdAt));
+    const exclusions = tx ? await query.for('share') : await query;
     const coolingOff =
       exclusions.find((e) => e.kind === 'cooling_off' && e.expiresAt && e.expiresAt > now) ?? null;
     const selfExclusion = exclusions.find((e) => e.kind === 'self_exclusion') ?? null;

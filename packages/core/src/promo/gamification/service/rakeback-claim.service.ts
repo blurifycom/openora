@@ -166,15 +166,15 @@ export class RakebackClaimService {
       .from(player)
       .where(eq(player.userId, userId))
       .for('share');
-    return this.dueOn(userId, account?.status ?? null);
+    return this.dueOn(userId, account?.status ?? null, tx);
   }
 
-  private async dueOn(userId: Uuid, status: string | null): Promise<boolean> {
+  private async dueOn(userId: Uuid, status: string | null, tx?: DrizzleTx): Promise<boolean> {
     if (status === 'closed' || status === 'self_excluded') {
       return true;
     }
     // An RG block is also a cooling-off, which keeps the rakeback for the player to claim later.
-    const state = await this.deps.exclusions?.getExclusionState(userId);
+    const state = await this.deps.exclusions?.getExclusionState(userId, tx);
     return state?.isSelfExcluded === true;
   }
 

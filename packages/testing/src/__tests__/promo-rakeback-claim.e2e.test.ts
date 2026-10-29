@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { eq, like } from 'drizzle-orm';
+import { and, eq, like, sql } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import { WAGER_TRACKING } from '@openora/core/contracts';
-import { walletTransaction } from '@openora/core/wallet/schema';
+import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { rgExclusion } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import {
@@ -299,6 +300,91 @@ describe('rakeback auto-payout on self-exclusion', () => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     expect(await accrualsOf(userId)).toEqual([expect.objectContaining({ status: 'accrued' })]);
+  });
+
+  it('serializes a stale auto-payout with a concurrent exclusion lift', async () => {
+    const { client, userId } = await newPlayer();
+    await bet(userId, '100');
+    const [exclusion] = await drizzle()
+      .insert(rgExclusion)
+      .values({
+        userId,
+        kind: 'self_exclusion',
+        status: 'active',
+        isPermanent: false,
+        startsAt: new Date('2020-01-01'),
+        expiresAt: new Date('2020-07-01'),
+        reason: 'elapsed exclusion',
+        createdBy: userId,
+      })
+      .returning();
+    let release!: () => void;
+    let locked!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holder = drizzle().transaction(async (tx) => {
+      await tx.select().from(rgExclusion).where(eq(rgExclusion.id, exclusion!.id)).for('update');
+      locked();
+      await gate;
+    });
+    await ready;
+    const lift = admin.post(`/compliance/players/${userId}/self-exclusion/lift`, {
+      reason: 'minimum period elapsed',
+      confirm: true,
+    });
+    const waitingQueries = async () => {
+      const result = await drizzle().execute<{ query: string }>(sql`
+        select query from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock'
+          and query like '%rg_exclusion%'
+      `);
+      return result.rows.map((row) => row.query);
+    };
+    try {
+      await vi.waitFor(async () => {
+        expect((await waitingQueries()).some((query) => query.startsWith('update'))).toBe(true);
+      }, JOB_WAIT);
+      selfExclusionActivated(userId);
+      await vi.waitFor(async () => {
+        const blocked = (await waitingQueries()).some((query) => query.includes('for share'));
+        const paid = (await accrualsOf(userId)).some(
+          (row: { status: string }) => row.status === 'claimed',
+        );
+        expect(blocked || paid).toBe(true);
+      }, JOB_WAIT);
+      expect(await accrualsOf(userId)).toEqual([expect.objectContaining({ status: 'accrued' })]);
+    } finally {
+      release();
+      await holder;
+    }
+    const response = await lift;
+    expect(response.status).toBe(200);
+    expect(await readJson(response)).toMatchObject({ id: exclusion!.id, status: 'lifted' });
+    const [stored] = await drizzle()
+      .select()
+      .from(rgExclusion)
+      .where(eq(rgExclusion.id, exclusion!.id));
+    expect(stored?.status).toBe('lifted');
+    await vi.waitFor(async () => {
+      expect((await waitingQueries()).some((query) => query.includes('for share'))).toBe(false);
+    }, JOB_WAIT);
+    expect(
+      await drizzle()
+        .select()
+        .from(walletTransaction)
+        .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+        .where(and(eq(wallet.userId, userId), eq(walletTransaction.type, 'cashback'))),
+    ).toEqual([]);
+    expect(await accrualsOf(userId)).toEqual([expect.objectContaining({ status: 'accrued' })]);
+    const summary = await readJson(await client.get('/promo/rakeback'));
+    expect(summary.lifetimeClaimed).toEqual([]);
+    expect(summary.unclaimed).toEqual([
+      { currency: 'USDT', amount: '0.040000000000000000', referenceAmount: '0.040000000000000000' },
+    ]);
   });
 
   it('pays out below the minimum, once', async () => {
