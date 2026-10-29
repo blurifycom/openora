@@ -24,14 +24,17 @@ import {
   MAIL_DISPATCH,
   McpToolError,
   PLATFORM_CONFIG,
+  PLAY_ELIGIBILITY,
   RATE_LIMITER,
   REALTIME_TRANSPORT,
   RG_EXCLUSION_READER,
   RG_LIMITS,
+  RG_STANDING_READER,
   UuidSchema,
   defaultResponsibleGamingConfig,
   domainEventSchemas,
   queue,
+  resolveExchangeRatePivot,
   runActorAdminId,
   userIdOfPlayer,
   type JobQueueAdapter,
@@ -56,6 +59,7 @@ import { createComplianceRouter, kycStatusChannel } from './router/index.js';
 import { HmacKycWebhookVerifier } from './adapters/hmac-kyc-webhook-verifier.js';
 import { RgLimitGate } from './adapters/rg-limit-gate.js';
 import { KycWithdrawalGate } from './adapters/kyc-withdrawal-gate.js';
+import { RgStandingReaderService } from './adapters/rg-standing-reader.service.js';
 
 const logger = createLogger('compliance');
 
@@ -120,6 +124,18 @@ export default {
     ctx.provide(
       KYC_WITHDRAWAL_POLICY,
       (c) => new KycWithdrawalGate(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER)),
+    );
+    ctx.provide(
+      RG_STANDING_READER,
+      (c) =>
+        new RgStandingReaderService({
+          drizzle: c.get(DRIZZLE),
+          eligibility: c.get(PLAY_ELIGIBILITY),
+          rates: c.get(EXCHANGE_RATE_READER),
+          pivotCurrency: resolveExchangeRatePivot(
+            c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).exchangeRate : undefined,
+          ),
+        }),
     );
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;

@@ -154,6 +154,13 @@ export type ActionTypeContract<P extends z.ZodObject = z.ZodObject> = {
   schemaVersion: number;
   iam: McpIamRequirement;
   reversible: boolean;
+  /**
+   * Whether an approved proposal gives the player something of value, such as a bonus, a
+   * higher tier or a reward. A proposal store may refuse such an action for a player at risk
+   * of harm; the flag tells it which action types grant a benefit without naming them.
+   * Absent reads as false.
+   */
+  benefitsPlayer?: boolean;
   payloadSchema: P;
   /** Codes the precondition may refuse with and the executor may fail with. */
   errors: readonly string[];
@@ -213,6 +220,8 @@ export type McpToolDescriptor = McpToolContract & {
 };
 
 export type ActionTypeDescriptor = ActionTypeContract & {
+  /** False for an action type that leaves it out. */
+  benefitsPlayer: boolean;
   owner: string;
   payloadJsonSchema: Record<string, unknown>;
 };
@@ -313,7 +322,9 @@ export type ActionExecutionResult = ({ ok: true } & ActionExecutionOutcome) | Mc
 export type McpKernel = {
   /**
    * Changes when a tool or action type is added, removed or bumps its schema version, and when
-   * an allowed trigger is added or removed or changes its version or subject field.
+   * an allowed trigger is added or removed or changes its version or subject field. An action
+   * type's flags (`reversible`, `benefitsPlayer`) do not change it: a consumer reads them from
+   * the descriptor when it acts.
    */
   readonly catalogVersion: string;
   listTools(): readonly McpToolDescriptor[];

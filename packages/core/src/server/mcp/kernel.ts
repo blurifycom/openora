@@ -170,6 +170,7 @@ function serveAction<C extends TokenCatalog>(
     implementation,
     descriptor: {
       ...contract,
+      benefitsPlayer: contract.benefitsPlayer ?? false,
       owner,
       payloadJsonSchema: z.toJSONSchema(contract.payloadSchema, {
         target: 'draft-7',

@@ -277,6 +277,45 @@ describe('TagEvaluationService.onDepositCompleted (real PG)', () => {
     expect(await activeTagKeys(userId)).toEqual([]);
     expect(walletReader.getLifetimeDeposit).not.toHaveBeenCalled();
   });
+
+  const sweepableWalletReader = () => ({
+    getLastDepositAts: vi.fn().mockResolvedValue(new Map()),
+  });
+
+  it('assigns recent_depositor on any completed deposit while its rule is enabled', async () => {
+    const userId = randomUUID();
+    const { service } = makeServices({ walletReader: sweepableWalletReader() });
+    await seedRule('recent_depositor', { thresholdDays: 7 });
+
+    await service.onDepositCompleted(depositPayload(userId, 1));
+    await service.onDepositCompleted(depositPayload(userId, 1));
+
+    expect(await activeTagKeys(userId)).toEqual(['recent_depositor']);
+  });
+
+  it.each<[string, RuleOverrides]>([
+    ['disabled', { isEnabled: false, thresholdDays: 7 }],
+    ['without a window', { thresholdDays: null }],
+  ])('does not assign recent_depositor while its rule is %s', async (_label, overrides) => {
+    const userId = randomUUID();
+    const { service } = makeServices({ walletReader: sweepableWalletReader() });
+    await seedRule('recent_depositor', overrides);
+
+    await service.onDepositCompleted(depositPayload(userId, 100));
+
+    expect(await activeTagKeys(userId)).toEqual([]);
+  });
+
+  it('does not assign recent_depositor when the bound wallet reader cannot tell the sweep who lapsed', async () => {
+    const userId = randomUUID();
+    const { service } = makeServices();
+    await seedRule('recent_depositor', { thresholdDays: 7 });
+
+    await service.onDepositCompleted(depositPayload(userId, 100));
+    await service.onDepositCompleted(depositPayload(userId, 100));
+
+    expect(await activeTagKeys(userId)).toEqual([]);
+  });
 });
 
 describe('TagEvaluationService.onWithdrawalCompleted (real PG)', () => {
@@ -1125,6 +1164,131 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
       await service.runDailyEvaluation();
 
       expect(await activeTagKeys(seededPlayer.id)).toContain('high_risk');
+    });
+  });
+
+  describe('recent_depositor sweep (real PG)', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS);
+
+    async function seedRecentDepositor(recentDepositorTag: { id: string }) {
+      const { account, player: seededPlayer } = await seedPlayerWithUser(db);
+      await seedActiveAssignment(seededPlayer.id, recentDepositorTag);
+      return { account, player: seededPlayer };
+    }
+
+    async function seedRecentDepositorHolders(recentDepositorTag: { id: string }, count: number) {
+      const holders = await db.drizzle.db
+        .insert(player)
+        .values(Array.from({ length: count }, () => ({ userId: randomUUID() })))
+        .returning({ id: player.id, userId: player.userId });
+      await db.drizzle.db.insert(playerTag).values(
+        holders.map((holder) => ({
+          playerId: holder.id,
+          tagId: recentDepositorTag.id,
+          assignReason: 'seed fixture',
+          assignActor: 'manual' as const,
+        })),
+      );
+      return holders;
+    }
+
+    async function activeHolderCount(tagRow: { id: string }) {
+      const rows = await db.drizzle.db
+        .select({ playerId: playerTag.playerId })
+        .from(playerTag)
+        .where(and(eq(playerTag.tagId, tagRow.id), isNull(playerTag.removedAt)));
+      return rows.length;
+    }
+
+    it('removes holders whose last deposit is older than the window, or who have none', async () => {
+      const recentDepositor = await seedRule('recent_depositor', { thresholdDays: 7 });
+      const recent = await seedRecentDepositor(recentDepositor);
+      const lapsed = await seedRecentDepositor(recentDepositor);
+      const neverDeposited = await seedRecentDepositor(recentDepositor);
+      const getLastDepositAts = vi.fn().mockResolvedValue(
+        new Map([
+          [recent.account.id, daysAgo(6)],
+          [lapsed.account.id, daysAgo(8)],
+        ]),
+      );
+      const { service, identityReader } = makeServices({ walletReader: { getLastDepositAts } });
+
+      await service.runDailyEvaluation();
+
+      expect(getLastDepositAts).toHaveBeenCalledWith(
+        expect.arrayContaining([recent.account.id, lapsed.account.id, neverDeposited.account.id]),
+      );
+      expect(await activeTagKeys(recent.player.id)).toEqual(['recent_depositor']);
+      expect(await activeTagKeys(lapsed.player.id)).toEqual([]);
+      expect(await activeTagKeys(neverDeposited.player.id)).toEqual([]);
+      expect(await assignmentRow(lapsed.player.id, recentDepositor)).toMatchObject({
+        removalActor: 'scheduled',
+        removalActorUserId: SYSTEM_ACTOR_ID,
+      });
+      expect(identityReader.getPlayerIdByUserId).not.toHaveBeenCalled();
+    });
+
+    it('gives the tag back to a holder whose deposit landed while the sweep removed it', async () => {
+      const recentDepositor = await seedRule('recent_depositor', { thresholdDays: 7 });
+      const holder = await seedRecentDepositor(recentDepositor);
+      const getLastDepositAts = vi
+        .fn()
+        .mockResolvedValueOnce(new Map([[holder.account.id, daysAgo(8)]]))
+        .mockResolvedValue(new Map([[holder.account.id, daysAgo(0)]]));
+      const { service } = makeServices({ walletReader: { getLastDepositAts } });
+
+      await service.runDailyEvaluation();
+
+      expect(getLastDepositAts).toHaveBeenCalledTimes(2);
+      expect(await activeAssignmentRow(holder.player.id, recentDepositor)).toMatchObject({
+        assignActor: 'scheduled',
+        assignReason: 'completed a deposit',
+      });
+    });
+
+    it('reads the last deposits of at most a thousand holders at a time', async () => {
+      const recentDepositor = await seedRule('recent_depositor', { thresholdDays: 7 });
+      const holders = await seedRecentDepositorHolders(recentDepositor, 1001);
+      const lapsed = holders[holders.length - 1]!;
+      const getLastDepositAts = vi.fn(async (userIds: readonly string[]) => {
+        const recent = userIds.filter((userId) => userId !== lapsed.userId);
+        return new Map(recent.map((userId) => [userId, daysAgo(1)]));
+      });
+      const { service } = makeServices({ walletReader: { getLastDepositAts } });
+
+      await service.runDailyEvaluation();
+
+      const lookups = getLastDepositAts.mock.calls.map(([userIds]) => userIds);
+      expect(Math.max(...lookups.map((userIds) => userIds.length))).toBe(1000);
+      expect(new Set(lookups.flat()).size).toBe(1001);
+      expect(await activeTagKeys(lapsed.id)).toEqual([]);
+      expect(await activeHolderCount(recentDepositor)).toBe(1000);
+    });
+
+    it('keeps every holder when the bound wallet reader cannot say when anyone deposited', async () => {
+      const recentDepositor = await seedRule('recent_depositor', { thresholdDays: 7 });
+      const holder = await seedRecentDepositor(recentDepositor);
+      const { service } = makeServices();
+
+      await service.runDailyEvaluation();
+
+      expect(await activeTagKeys(holder.player.id)).toEqual(['recent_depositor']);
+    });
+
+    it('leaves holders alone while the rule is disabled', async () => {
+      const recentDepositor = await seedRule('recent_depositor', {
+        isEnabled: false,
+        thresholdDays: 7,
+      });
+      const holder = await seedRecentDepositor(recentDepositor);
+      const getLastDepositAts = vi.fn().mockResolvedValue(new Map());
+      const { service } = makeServices({ walletReader: { getLastDepositAts } });
+
+      await service.runDailyEvaluation();
+
+      expect(getLastDepositAts).not.toHaveBeenCalled();
+      expect(await activeTagKeys(holder.player.id)).toEqual(['recent_depositor']);
     });
   });
 });

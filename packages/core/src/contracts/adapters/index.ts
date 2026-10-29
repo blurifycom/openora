@@ -110,6 +110,9 @@ export type {
   WalletBalanceReading,
   WalletBalancesReading,
   WalletProviderTransaction,
+  WalletLifetimeWithdrawals,
+  WalletLastDeposit,
+  WalletWithdrawalRequests,
 } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
@@ -448,6 +451,20 @@ export type { PlayEligibilityPort } from './play-eligibility.js';
 export { PLAY_ELIGIBILITY } from './play-eligibility.js';
 export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
 export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
+export type {
+  RgStanding,
+  RgStandingExclusion,
+  RgStandingFlag,
+  RgStandingLimit,
+  RgStandingQuery,
+  RgStandingReader,
+  RgStandingWindow,
+} from './rg-standing-reader.js';
+export {
+  MAX_RG_STANDING_WINDOWS,
+  MAX_RG_STANDING_WINDOW_DAYS,
+  RG_STANDING_READER,
+} from './rg-standing-reader.js';
 export type { DepositHoldPolicy } from './deposit-hold.js';
 export { DEPOSIT_HOLD_POLICY } from './deposit-hold.js';
 

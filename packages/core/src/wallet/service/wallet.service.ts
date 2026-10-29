@@ -751,14 +751,23 @@ const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 
 // A withdrawal that paid nothing out is not a cash-out, so a vendor failure or a cancellation
 // must not send the player's next small withdrawal to the manual queue. An admin rejection
-// still counts: it is a human judgement on this player and leaves no risk tag behind.
-const VELOCITY_IGNORED_STATUSES = ['failed', 'cancelled'] as const;
+// still counts: it is a human judgement on this player and leaves no risk tag behind. The
+// wallet reader counts a player's withdrawal requests by the same rule, so a reader of that
+// count sees what the velocity check sees.
+export const VELOCITY_IGNORED_STATUSES = [
+  'failed',
+  'cancelled',
+] as const satisfies readonly WalletTransactionStatus[];
 
 // A withdrawal still waiting on a decision: the queue summary counts and totals only these, and
 // an admin may approve or reject only these.
 const QUEUED_WITHDRAWAL_STATUSES = ['pending', 'on_hold'] as const;
 
-const IN_FLIGHT_TRANSACTION_STATUSES = ['pending', 'on_hold', 'processing'] as const;
+export const IN_FLIGHT_TRANSACTION_STATUSES = [
+  'pending',
+  'on_hold',
+  'processing',
+] as const satisfies readonly WalletTransactionStatus[];
 
 const ACTIVITY_TRANSACTION_TYPES = ['deposit', 'withdrawal', 'bet', 'win'] as const;
 
