@@ -10,7 +10,7 @@ import type {
 
 type Db = DrizzleDb | DrizzleTx;
 
-export async function rakebackByCurrency(
+async function rakebackByCurrency(
   db: Db,
   status: RakebackAccrualStatus,
   userId?: string,
