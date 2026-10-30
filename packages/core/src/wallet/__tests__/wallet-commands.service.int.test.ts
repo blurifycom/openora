@@ -9,7 +9,7 @@ import type {
   RgLimitsPort,
 } from '@openora/core/contracts';
 import { createTestDb, waitForRowLockWaiter, type TestDb } from '@openora/core/testing';
-import { mock, makeAuditWriter } from '../../testing/mock.js';
+import { mock, makeAuditWriter, makeIdentityReader } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import { MaxBetExceededError } from '@openora/core/contracts';
@@ -1616,7 +1616,10 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
 
   it('audits each row it writes in the caller transaction, and nothing on a replay or refusal', async () => {
     const auditor = makeAuditWriter();
-    const audited = new WalletCommandsService(eligibility(false), auditor);
+    const playerId = randomUUID();
+    const identityReader = makeIdentityReader();
+    vi.mocked(identityReader.getPlayerIdByUserId).mockResolvedValue(playerId);
+    const audited = new WalletCommandsService(eligibility(false), auditor, { identityReader });
     const w = await seedPaidWallet({ balance: '20' });
     const correct = (amount: string, providerRefId: string) =>
       audited.correctionDebit(db.drizzle.db, {
@@ -1646,11 +1649,21 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
       {
         actorType: 'system',
         action: 'wallet.correction.debited',
-        resourceType: 'wallet_transaction',
-        resourceId: rowOf(short),
-        after: { userId: w.userId, type: 'win_reversal', requested: '50', providerRefId: short },
+        resourceType: 'player',
+        resourceId: playerId,
+        after: {
+          transactionId: rowOf(short),
+          userId: w.userId,
+          type: 'win_reversal',
+          requested: '50',
+          providerRefId: short,
+        },
       },
-      { action: 'wallet.correction.debited', resourceId: rowOf(empty), after: { requested: '40' } },
+      {
+        action: 'wallet.correction.debited',
+        resourceId: playerId,
+        after: { transactionId: rowOf(empty), requested: '40' },
+      },
     ]);
     const amounts = records.map(({ before, after }) =>
       [before.balance, after.balance, after.collected, after.shortfall].map(Number),
@@ -1749,6 +1762,43 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
         available: '0.000000000000000000',
       });
       expect(await balanceOf(w.userId)).toBe(250);
+    });
+
+    it('caps a payout reversal of a bonus-funded round at the real share it paid', async () => {
+      const settle = vi.fn().mockResolvedValue({ bonusShare: '120', realShare: '80' });
+      const engine = new WalletCommandsService(eligibility(false), audit, {
+        bonusWagering: mock<BonusWageringCommands>({ settle }),
+      });
+      const w = await seedWallet({ balance: '0' });
+      await engine.credit(db.drizzle.db, {
+        userId: w.userId,
+        amount: '200',
+        currency: 'USD',
+        type: 'win',
+        providerRef: round('r'),
+      });
+      const [paid] = await txRows(w.id);
+      expect([paid?.amount, paid?.realShare].map(Number)).toEqual([200, 80]);
+
+      await expect(correct(w.userId, 'win_reversal', '80.01')).rejects.toMatchObject({
+        name: 'WalletCorrectionExceedsRoundError',
+        available: '80.000000000000000000',
+      });
+      expect(Number((await correct(w.userId, 'win_reversal', '80')).collected)).toBe(80);
+      expect(await balanceOf(w.userId)).toBe(0);
+    });
+
+    it('refuses a reference replayed for another round, collecting nothing', async () => {
+      const w = await seedWallet({ balance: '100' });
+      await pay(w.userId, 'win', '30');
+      await pay(w.userId, 'win', '30', round('other'));
+      const ref = round('r');
+      await correct(w.userId, 'win_reversal', '30', ref);
+
+      await expect(
+        correct(w.userId, 'win_reversal', '30', { ...ref, externalRoundId: 'other' }),
+      ).rejects.toMatchObject({ name: 'WalletCorrectionRefConflictError' });
+      expect(await balanceOf(w.userId)).toBe(130);
     });
 
     it('replays a reference whose round is already used up', async () => {

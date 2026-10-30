@@ -25,6 +25,7 @@ import {
   type WalletTransactionType,
   type BonusGrantCommands,
   type BonusWageringCommands,
+  type IdentityReader,
 } from '@openora/core/contracts';
 import {
   createDomainError,
@@ -108,6 +109,7 @@ export type WalletCommandsPorts = {
   rgLimits?: RgLimitsPort;
   bonusWagering?: BonusWageringCommands;
   bonusGrants?: BonusGrantCommands;
+  identityReader?: IdentityReader;
 };
 
 export class WalletCommandsService implements WalletCommands {
@@ -470,6 +472,13 @@ export class WalletCommandsService implements WalletCommands {
     if (!credited) {
       throw new WalletCreditFailedError(row.id, currency);
     }
+    // A correction of this round can only take back what reached the real balance.
+    if (moneyCompare(settlement.realShare, amount) !== 0) {
+      await txn
+        .update(walletTransaction)
+        .set({ realShare: settlement.realShare })
+        .where(eq(walletTransaction.id, ledgerRow.id));
+    }
 
     return { ok: true, moved: true, transactionId: ledgerRow.id, newBalance: credited.amount };
   }
@@ -510,6 +519,7 @@ export class WalletCommandsService implements WalletCommands {
         replayed.type !== type ||
         replayed.direction !== 'debit' ||
         replayed.currency !== key ||
+        replayed.externalRoundId !== providerRef.externalRoundId ||
         moneyCompare(amount, replayed.correctionRequestedAmount) !== 0
       ) {
         throw new WalletCorrectionRefConflictError(
@@ -581,10 +591,10 @@ export class WalletCommandsService implements WalletCommands {
     await this.audit.recordInTransaction(txn, {
       actorType: 'system',
       action: 'wallet.correction.debited',
-      resourceType: 'wallet_transaction',
-      resourceId: ledgerRowId,
+      ...(await this.auditSubject(txn, userId, 'wallet_transaction', ledgerRowId)),
       before: { balance: moneyAdd(outcome.newBalance, outcome.collected), currency: key },
       after: {
+        transactionId: ledgerRowId,
         balance: outcome.newBalance,
         currency: key,
         userId,
@@ -629,10 +639,9 @@ export class WalletCommandsService implements WalletCommands {
     await this.audit.recordInTransaction(txn, {
       actorType: 'system',
       action: 'wallet.withdrawal_hold.placed',
-      resourceType: 'wallet_withdrawal_hold',
-      resourceId: held.id,
+      ...(await this.auditSubject(txn, userId, 'wallet_withdrawal_hold', held.id)),
       before: existing ? { userId, source, reason: existing.reason } : null,
-      after: { userId, source, reason },
+      after: { holdId: held.id, userId, source, reason },
     });
     return { placed: !existing };
   }
@@ -653,12 +662,25 @@ export class WalletCommandsService implements WalletCommands {
     await this.audit.recordInTransaction(txn, {
       actorType: 'system',
       action: 'wallet.withdrawal_hold.released',
-      resourceType: 'wallet_withdrawal_hold',
-      resourceId: released.id,
-      before: { userId, source, reason: released.reason },
+      ...(await this.auditSubject(txn, userId, 'wallet_withdrawal_hold', released.id)),
+      before: { holdId: released.id, userId, source, reason: released.reason },
       after: null,
     });
     return { released: true };
+  }
+
+  // Filed under the player so the player-scoped audit view finds it; the row's own id stays in the
+  // entry. Falls back to that row when no player backs the user.
+  private async auditSubject(
+    txn: DrizzleDb,
+    userId: Uuid,
+    resourceType: string,
+    resourceId: Uuid,
+  ): Promise<{ resourceType: string; resourceId: string }> {
+    const playerId = await this.ports.identityReader?.getPlayerIdByUserId(userId, txn);
+    return playerId
+      ? { resourceType: 'player', resourceId: playerId }
+      : { resourceType, resourceId };
   }
 
   // Read under the wallet lock every correction takes, so two corrections of one round cannot both fit.
@@ -673,7 +695,7 @@ export class WalletCommandsService implements WalletCommands {
     const t = walletTransaction;
     const [round] = await txn
       .select({
-        paid: sql<string>`coalesce(sum(${t.amount}) filter (where ${t.type} = ${paid} and ${t.direction} = 'credit'), 0)`,
+        paid: sql<string>`coalesce(sum(coalesce(${t.realShare}, ${t.amount})) filter (where ${t.type} = ${paid} and ${t.direction} = 'credit'), 0)`,
         taken: sql<string>`coalesce(sum(${t.amount}) filter (where ${t.type} = ${type} and ${t.direction} = 'debit' and ${isNotNull(t.correctionRequestedAmount)}), 0)`,
       })
       .from(t)

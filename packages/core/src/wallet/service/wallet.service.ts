@@ -59,6 +59,7 @@ import {
   type ActionExecutionContext,
   type WalletTransactionType,
   type WalletTransactionStatus,
+  type WithdrawalRequeueReason,
   type BonusGrantLedgerReader,
   type BonusLifecycleCommands,
 } from '@openora/core/contracts';
@@ -2431,12 +2432,24 @@ export class WalletService {
     if (!(await this.isWithdrawalLocked(userId))) {
       return false;
     }
-    await this.restoreQueued(this.drizzle.db, queued);
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    await this.drizzle.db.transaction((txn) =>
+      this.restoreQueued(txn, queued, { userId, playerId, reason: 'withdrawal_lock' }),
+    );
     return true;
   }
 
-  private async restoreQueued(db: DrizzleDb, queued: WalletTransaction): Promise<void> {
-    await db
+  // The approval's audit row and event already went out, so the way back to the queue leaves its own.
+  private async restoreQueued(
+    txn: DrizzleTx,
+    queued: WalletTransaction,
+    {
+      userId,
+      playerId,
+      reason,
+    }: { userId: User['id']; playerId: Player['id'] | null; reason: WithdrawalRequeueReason },
+  ): Promise<void> {
+    const [restored] = await txn
       .update(walletTransaction)
       .set({
         status: queued.status,
@@ -2445,7 +2458,26 @@ export class WalletService {
         reviewReason: queued.reviewReason,
         autoApprovalPivotAmount: queued.autoApprovalPivotAmount,
       })
-      .where(and(eq(walletTransaction.id, queued.id), eq(walletTransaction.status, 'processing')));
+      .where(and(eq(walletTransaction.id, queued.id), eq(walletTransaction.status, 'processing')))
+      .returning({ id: walletTransaction.id });
+    if (!restored) {
+      return;
+    }
+    await this.audit.recordInTransaction(txn, {
+      actorType: 'system',
+      action: 'wallet.withdrawal.requeued',
+      ...withdrawalAuditSubject(playerId, queued.id),
+      before: { status: 'processing' },
+      after: { userId, transactionId: queued.id, status: queued.status, reason },
+    });
+    await this.events.emitInTransaction(txn, 'wallet.withdrawal.requeued', {
+      userId,
+      playerId,
+      amount: queued.amount,
+      currency: queued.currency,
+      transactionId: queued.id,
+      reason,
+    });
   }
 
   // Phase two: settle a `processing` withdrawal via the vendor (see approveWithdrawal for the outcomes).
@@ -2466,7 +2498,7 @@ export class WalletService {
     // or waits on the wallet lock until it has committed and applies from the next withdrawal.
     const held = await this.drizzle.db.transaction(async (txn) => {
       if (await this.isWithdrawalHeldLocked(txn, userId)) {
-        await this.restoreQueued(txn, queued);
+        await this.restoreQueued(txn, queued, { userId, playerId, reason: 'withdrawal_hold' });
         return true;
       }
       await txn

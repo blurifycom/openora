@@ -21,26 +21,16 @@ import { resolveLimitCurrency, RgLimitCurrencyUnresolvedError } from './rg.servi
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { session } from '@openora/core/pam/schema/identity';
 import type { RgFlagListItem, ListRgFlagsInput, RgFlagDetail } from '../contract/index.js';
-import { periodWindow, isAtThreshold, thresholdPct } from './rg-eval.js';
+import {
+  periodWindow,
+  isAtThreshold,
+  thresholdPct,
+  LOSS_LEGS,
+  WAGER_LEGS,
+  type PlayLeg,
+} from './rg-eval.js';
 
 const logger = createLogger('compliance-rg-monitoring');
-
-type LedgerRow = typeof walletTransaction.$inferSelect;
-type PlayLeg = {
-  type: Extract<LedgerRow['type'], 'bet' | 'bet_reversal' | 'win' | 'win_reversal'>;
-  direction: NonNullable<LedgerRow['direction']>;
-};
-
-const WAGER_LEGS = [
-  { type: 'bet', direction: 'debit' },
-  { type: 'bet_reversal', direction: 'credit' },
-] as const satisfies readonly PlayLeg[];
-
-const LOSS_LEGS = [
-  ...WAGER_LEGS,
-  { type: 'win', direction: 'credit' },
-  { type: 'win_reversal', direction: 'debit' },
-] as const satisfies readonly PlayLeg[];
 
 export class RgRateUnavailableError extends Error {
   constructor(
@@ -359,8 +349,10 @@ export class RgMonitoringService {
   /**
    * Play from the wallet ledger, whatever product it was on, netted per round. The ledger does not
    * say which bet a reversal reverses, so a round's reversals, wins and win reversals count only
-   * when every bet of it was placed inside the window; a round that started before it adds only its
-   * stakes. A round's stake never nets below 0, and a leg without a round id never offsets one.
+   * when every bet of it was placed inside the window. A round that started before it adds its
+   * stakes plus whatever its win reversals here take back beyond its wins here, so a resettled
+   * payout lands in the period it is collected (ADR-0046). A round's stake never nets below 0, and
+   * a leg without a round id never offsets one.
    */
   private async playByCurrency(
     db: DrizzleDb | DrizzleTx,
@@ -388,6 +380,8 @@ export class RgMonitoringService {
           coalesce(sum(signed) filter (where type = 'bet'), 0) as stake,
           coalesce(sum(signed) filter (where type in ('bet', 'bet_reversal')), 0) as net_stake,
           coalesce(sum(signed) filter (where type not in ('bet', 'bet_reversal')), 0) as net_win,
+          coalesce(sum(signed) filter (where type = 'win_reversal'), 0) as reclaimed,
+          coalesce(sum(signed) filter (where type = 'win'), 0) as paid,
           external_round_id is not null
             and count(*) filter (where type = 'bet') > 0
             and count(*) filter (where type <> 'bet') > 0 as nets
@@ -410,7 +404,7 @@ export class RgMonitoringService {
       select r.currency,
         greatest(sum(
           case when r.nets and o.wallet_id is null then greatest(r.net_stake, 0) + r.net_win
-          else r.stake end
+          else r.stake + greatest(r.reclaimed + r.paid, 0) end
         ), 0) as total
       from rounds r
       left join opened_before o on o.wallet_id = r.wallet_id

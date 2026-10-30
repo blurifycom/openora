@@ -39,9 +39,18 @@ import { WalletCommandsService } from '../service/wallet-commands.service.js';
 let db: TestDb;
 
 const audit = makeAuditWriter();
+const playerIdOf = new Map<string, string>();
+const identityReader = makeIdentityReader();
+vi.mocked(identityReader.getPlayerIdByUserId).mockImplementation(
+  async (userId) => playerIdOf.get(userId) ?? null,
+);
+vi.mocked(identityReader.getPlayerIdByUserIdSafe).mockImplementation(
+  async (userId) => playerIdOf.get(userId) ?? null,
+);
 const commands = new WalletCommandsService(
   mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(false) }),
   audit,
+  { identityReader },
 );
 
 function makeService(overrides: Partial<WalletServiceDeps> = {}) {
@@ -52,16 +61,47 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
       status: 'completed' as const,
     })),
   };
+  const events = makeEventBus();
+  const svcAudit = makeAuditWriter();
   const svc = new WalletService({
     drizzle: db.drizzle,
-    events: makeEventBus(),
+    events,
     payment: mock<PaymentAdapter>(psp),
     paymentProviders: makePaymentProviderRegistry(),
-    audit: makeAuditWriter(),
-    identityReader: makeIdentityReader(),
+    audit: svcAudit,
+    identityReader,
     ...overrides,
   });
-  return { svc, psp };
+  return { svc, psp, events, audit: svcAudit };
+}
+
+// The trail a hold leaves when it sends an approved withdrawal back to the queue.
+function expectRequeued(
+  { audit: svcAudit, events }: Pick<ReturnType<typeof makeService>, 'audit' | 'events'>,
+  w: { userId: string },
+  tx: { id: string; amount: string; currency: string },
+) {
+  const playerId = playerIdOf.get(w.userId);
+  expect(svcAudit.recordInTransaction).toHaveBeenCalledWith(expect.anything(), {
+    actorType: 'system',
+    action: 'wallet.withdrawal.requeued',
+    resourceType: 'player',
+    resourceId: playerId,
+    before: { status: 'processing' },
+    after: { userId: w.userId, transactionId: tx.id, status: 'pending', reason: 'withdrawal_hold' },
+  });
+  expect(events.emitInTransaction).toHaveBeenCalledWith(
+    expect.anything(),
+    'wallet.withdrawal.requeued',
+    {
+      userId: w.userId,
+      playerId,
+      amount: tx.amount,
+      currency: tx.currency,
+      transactionId: tx.id,
+      reason: 'withdrawal_hold',
+    },
+  );
 }
 
 function makeAutoService(overrides: Partial<WalletServiceDeps> = {}) {
@@ -95,6 +135,7 @@ async function seedWallet(balance = '100') {
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
+  playerIdOf.set(row.userId, randomUUID());
   await db.drizzle.db
     .insert(walletBalance)
     .values({ walletId: row.id, currency: row.currency, amount: balance });
@@ -212,6 +253,8 @@ describe('WALLET_COMMANDS withdrawal holds (real PG)', () => {
     await release();
     await release();
 
+    const holdId = expect.any(String);
+    const player = { resourceType: 'player', resourceId: playerIdOf.get(w.userId) };
     const subject = { userId: w.userId, source: 'sportsbook' };
     expect(audit.recordInTransaction.mock.calls.map(([tx, entry]) => [tx, entry])).toEqual([
       [
@@ -219,24 +262,26 @@ describe('WALLET_COMMANDS withdrawal holds (real PG)', () => {
         expect.objectContaining({
           actorType: 'system',
           action: 'wallet.withdrawal_hold.placed',
-          resourceType: 'wallet_withdrawal_hold',
+          ...player,
           before: null,
-          after: { ...subject, reason: 'first' },
+          after: { holdId, ...subject, reason: 'first' },
         }),
       ],
       [
         db.drizzle.db,
         expect.objectContaining({
           action: 'wallet.withdrawal_hold.placed',
+          ...player,
           before: { ...subject, reason: 'first' },
-          after: { ...subject, reason: 'second' },
+          after: { holdId, ...subject, reason: 'second' },
         }),
       ],
       [
         db.drizzle.db,
         expect.objectContaining({
           action: 'wallet.withdrawal_hold.released',
-          before: { ...subject, reason: 'second' },
+          ...player,
+          before: { holdId, ...subject, reason: 'second' },
           after: null,
         }),
       ],
@@ -416,18 +461,21 @@ describe('WalletService withdrawals under a module hold (real PG)', () => {
 
   it('puts an approval back as queued when a hold commits after the flip, before any PSP call', async () => {
     const w = await seedWallet();
-    const { svc, psp } = makeService({ riskTags: holdOnceFlipped(w) });
+    const service = makeService({ riskTags: holdOnceFlipped(w) });
+    const { svc, psp } = service;
     const { transactionId } = await withdraw(svc, w.userId);
 
     await expect(svc.approveWithdrawal(randomUUID(), transactionId)).rejects.toBeInstanceOf(
       WithdrawalHeldError,
     );
-    expect(await txById(transactionId)).toMatchObject({
+    const requeued = await txById(transactionId);
+    expect(requeued).toMatchObject({
       status: 'pending',
       reviewedBy: null,
       reviewedAt: null,
     });
     expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expectRequeued(service, w, requeued);
   });
 
   it('puts an auto-approval back for a human when a hold commits after the flip', async () => {
@@ -449,19 +497,22 @@ describe('WalletService withdrawals under a module hold (real PG)', () => {
   it('puts an approval back as queued when dispatch waited on a hold being placed', async () => {
     const w = await seedWallet();
     const { riskTags, held } = holdAcrossDispatch(w);
-    const { svc, psp } = makeService({ riskTags });
+    const service = makeService({ riskTags });
+    const { svc, psp } = service;
     const { transactionId } = await withdraw(svc, w.userId);
 
     await expect(svc.approveWithdrawal(randomUUID(), transactionId)).rejects.toBeInstanceOf(
       WithdrawalHeldError,
     );
     await held();
-    expect(await txById(transactionId)).toMatchObject({
+    const requeued = await txById(transactionId);
+    expect(requeued).toMatchObject({
       status: 'pending',
       reviewedBy: null,
       providerName: null,
     });
     expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expectRequeued(service, w, requeued);
   });
 
   it('leaves an auto-approval for a human when dispatch waited on a hold being placed', async () => {

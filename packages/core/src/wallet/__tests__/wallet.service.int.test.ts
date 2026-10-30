@@ -2525,7 +2525,11 @@ describe('WalletService withdrawal lock (real PG)', () => {
       .fn<PlayerTags['getActiveTagKeys']>()
       .mockResolvedValueOnce(new Map())
       .mockResolvedValue(new Map([[w.userId, ['withdrawal_lock']]]));
-    const { svc, psp } = makeService({ riskTags: mock<PlayerTags>({ getActiveTagKeys }) });
+    const playerId = randomUUID();
+    const { svc, psp, audit, events } = makeService({
+      riskTags: mock<PlayerTags>({ getActiveTagKeys }),
+      identityReader: playerIdentityReader(playerId),
+    });
 
     await expect(svc.approveWithdrawal(randomUUID(), queued.id)).rejects.toBeInstanceOf(
       WithdrawalLockedError,
@@ -2542,6 +2546,31 @@ describe('WalletService withdrawal lock (real PG)', () => {
       reviewReason: 'held for source of funds',
     });
     expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(expect.anything(), {
+      actorType: 'system',
+      action: 'wallet.withdrawal.requeued',
+      resourceType: 'player',
+      resourceId: playerId,
+      before: { status: 'processing' },
+      after: {
+        userId: w.userId,
+        transactionId: queued.id,
+        status: 'on_hold',
+        reason: 'withdrawal_lock',
+      },
+    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'wallet.withdrawal.requeued',
+      {
+        userId: w.userId,
+        playerId,
+        amount: queued.amount,
+        currency: queued.currency,
+        transactionId: queued.id,
+        reason: 'withdrawal_lock',
+      },
+    );
   });
 
   it("still lets an admin reject a locked player's queued withdrawal, refunding it", async () => {

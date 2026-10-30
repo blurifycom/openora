@@ -418,6 +418,44 @@ describe('RgMonitoringService.spendFor - play from the wallet ledger (real PG)',
     expect(await spend(userId, 'loss')).toBe('10.000000000000000000');
   });
 
+  it('adds a win reversal to the window it is collected in, past the bet and win before it', async () => {
+    const userId = randomUUID();
+    const earlier = { at: before() };
+    await sportsbookLeg(userId, 'resettled', {
+      type: 'bet',
+      amount: '10',
+      direction: 'debit',
+      ...earlier,
+    });
+    await sportsbookLeg(userId, 'resettled', {
+      type: 'win',
+      amount: '1000',
+      direction: 'credit',
+      ...earlier,
+    });
+    await sportsbookLeg(userId, 'resettled', {
+      type: 'win_reversal',
+      amount: '1000',
+      direction: 'debit',
+      correction: true,
+    });
+    await sportsbookLeg(userId, 'netted', {
+      type: 'bet',
+      amount: '5',
+      direction: 'debit',
+      ...earlier,
+    });
+    await sportsbookLeg(userId, 'netted', { type: 'win', amount: '200', direction: 'credit' });
+    await sportsbookLeg(userId, 'netted', {
+      type: 'win_reversal',
+      amount: '200',
+      direction: 'debit',
+      correction: true,
+    });
+
+    expect(await spend(userId, 'loss')).toBe('1000.000000000000000000');
+  });
+
   it('counts only the in-window stake of a round that started before the window', async () => {
     const userId = randomUUID();
     await sportsbookLeg(userId, 'r', {

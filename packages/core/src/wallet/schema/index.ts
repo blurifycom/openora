@@ -166,6 +166,9 @@ export const walletTransaction = pgTable(
     // What a correction debit asked to collect; `amount` is what it took, zero included. NULL on
     // every other row, so a correction's replay never matches the stake debit it re-collects.
     correctionRequestedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    // What a bonus-funded round's win or stake reversal put into the real balance, the rest having
+    // gone to the grant. NULL when all of `amount` was real.
+    realShare: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
