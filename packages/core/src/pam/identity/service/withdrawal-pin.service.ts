@@ -1,5 +1,6 @@
+import { timingSafeEqual } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import {
   type Auth,
   type EventBus,
@@ -30,6 +31,11 @@ import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
 import { nodeHeadersToHeaders } from '../../shared/headers-mapper.js';
 
 const logger = createLogger('withdrawal-pin');
+
+// Constant-time, though both sides are HMACs under a server secret.
+const pinMatches = (candidate: string, stored: string): boolean =>
+  candidate.length === stored.length &&
+  timingSafeEqual(Buffer.from(candidate), Buffer.from(stored));
 
 const MINUTE_MS = 60 * 1000;
 // Five wrong PINs in a row lock withdrawals for half an hour. Fixed, not configurable: the
@@ -224,7 +230,6 @@ export class WithdrawalPinService implements WithdrawalSecurity {
         withdrawalPinHash: null,
         withdrawalPinSetAt: null,
         withdrawalPinFailedAttempts: 0,
-        withdrawalPinLockedUntil: null,
       })
       .where(eq(user.id, userId));
     this.events.emit('identity.security.withdrawal_pin.removed', {
@@ -264,73 +269,74 @@ export class WithdrawalPinService implements WithdrawalSecurity {
     });
   }
 
+  /**
+   * Reads, compares and counts under a row lock on the user, so a burst of parallel guesses is
+   * judged one at a time: each sees the lock the one before it set, and none can be evaluated
+   * after the fifth wrong one has tripped it. The mail and the event go out after the commit.
+   */
   async verifyPin({
     userId,
     pin,
     meta,
   }: Parameters<WithdrawalSecurity['verifyPin']>[0]): Promise<WithdrawalPinVerdict> {
-    const [row] = await this.drizzle.db
-      .select({
-        hash: user.withdrawalPinHash,
-        lockedUntil: user.withdrawalPinLockedUntil,
-      })
-      .from(user)
-      .where(eq(user.id, userId))
-      .limit(1);
-    if (!row || row.hash === null) {
-      return { status: 'not_set' };
-    }
-    // Before the comparison: a right guess must not lift a lock a wrong one set.
-    if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) {
-      return { status: 'locked', lockedUntil: row.lockedUntil };
-    }
-    // Withdrawing without a PIN is not a guess; it is a client that never asked for one.
-    if (pin === undefined) {
-      return { status: 'missing' };
-    }
-    if (hashWithdrawalPin(pin, this.hmacSecret) === row.hash) {
-      await this.drizzle.db
-        .update(user)
-        .set({ withdrawalPinFailedAttempts: 0 })
-        .where(eq(user.id, userId));
-      return { status: 'ok' };
-    }
-    return this.recordWrongPin(userId, meta);
-  }
-
-  /**
-   * One statement, so two wrong guesses sent at once each count: a read-then-write would let a
-   * burst of parallel requests share one increment and walk past the limit. The fifth wrong PIN
-   * starts the lock and zeroes the count, so the first guess after it expires starts a new run.
-   */
-  private async recordWrongPin(
-    userId: User['id'],
-    meta: Partial<ClientMeta> | undefined,
-  ): Promise<WithdrawalPinVerdict> {
-    const next = sql`${user.withdrawalPinFailedAttempts} + 1`;
-    const tripped = sql`${next} >= ${WITHDRAWAL_PIN_MAX_FAILED_ATTEMPTS}`;
-    const [updated] = await this.drizzle.db
-      .update(user)
-      .set({
-        withdrawalPinFailedAttempts: sql`case when ${tripped} then 0 else ${next} end`,
-        withdrawalPinLockedUntil: sql`case when ${tripped} then now() + interval '${sql.raw(String(WITHDRAWAL_PIN_LOCK_MS / 1000))} seconds' else ${user.withdrawalPinLockedUntil} end`,
-      })
-      .where(eq(user.id, userId))
-      .returning({
-        attempts: user.withdrawalPinFailedAttempts,
-        lockedUntil: user.withdrawalPinLockedUntil,
+    const { verdict, justLocked } = await this.drizzle.db.transaction(async (txn) => {
+      const settle = (v: WithdrawalPinVerdict, locked = false) => ({
+        verdict: v,
+        justLocked: locked,
       });
-    if (!updated) {
-      return { status: 'not_set' };
+      const [row] = await txn
+        .select({
+          hash: user.withdrawalPinHash,
+          attempts: user.withdrawalPinFailedAttempts,
+          lockedUntil: user.withdrawalPinLockedUntil,
+        })
+        .from(user)
+        .where(eq(user.id, userId))
+        .for('update')
+        .limit(1);
+      if (!row) {
+        return settle({ status: 'not_set' });
+      }
+      // Before the comparison and before the no-PIN shortcut: a right guess must not lift a lock
+      // a wrong one set, and removing the PIN must not either.
+      if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) {
+        return settle({ status: 'locked', lockedUntil: row.lockedUntil });
+      }
+      if (row.hash === null) {
+        return settle({ status: 'not_set' });
+      }
+      // Withdrawing without a PIN is not a guess; it is a client that never asked for one.
+      if (pin === undefined) {
+        return settle({ status: 'missing' });
+      }
+      if (pinMatches(hashWithdrawalPin(pin, this.hmacSecret), row.hash)) {
+        if (row.attempts !== 0) {
+          await txn.update(user).set({ withdrawalPinFailedAttempts: 0 }).where(eq(user.id, userId));
+        }
+        return settle({ status: 'ok' });
+      }
+      const attempts = row.attempts + 1;
+      if (attempts < WITHDRAWAL_PIN_MAX_FAILED_ATTEMPTS) {
+        await txn
+          .update(user)
+          .set({ withdrawalPinFailedAttempts: attempts })
+          .where(eq(user.id, userId));
+        return settle({
+          status: 'incorrect',
+          attemptsLeft: WITHDRAWAL_PIN_MAX_FAILED_ATTEMPTS - attempts,
+        });
+      }
+      const lockedUntil = new Date(Date.now() + WITHDRAWAL_PIN_LOCK_MS);
+      await txn
+        .update(user)
+        .set({ withdrawalPinFailedAttempts: 0, withdrawalPinLockedUntil: lockedUntil })
+        .where(eq(user.id, userId));
+      return settle({ status: 'locked', lockedUntil }, true);
+    });
+    if (justLocked && verdict.status === 'locked') {
+      await this.announceLock(userId, verdict.lockedUntil, meta);
     }
-    if (updated.attempts === 0 && updated.lockedUntil) {
-      await this.announceLock(userId, updated.lockedUntil, meta);
-      return { status: 'locked', lockedUntil: updated.lockedUntil };
-    }
-    return {
-      status: 'incorrect',
-      attemptsLeft: WITHDRAWAL_PIN_MAX_FAILED_ATTEMPTS - updated.attempts,
-    };
+    return verdict;
   }
 
   private async announceLock(
