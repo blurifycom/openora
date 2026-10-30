@@ -223,6 +223,8 @@ export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
   reviewedAt: TimestampSchema.nullable(),
   // Null on row types that carry no conversion, and on rows written before it was recorded.
   reference: WalletReferenceConversionSchema.nullable(),
+  // The rakeback claim a `cashback` credit paid.
+  claimId: UuidSchema.nullable(),
 });
 export type AdminWalletTransaction = z.infer<typeof AdminWalletTransactionSchema>;
 

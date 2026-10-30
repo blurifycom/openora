@@ -15,6 +15,8 @@ import {
   type WalletTransactionType,
   type BonusGrantCommands,
   type BonusWageringCommands,
+  type WagerContext,
+  isWagerRtp,
 } from '@openora/core/contracts';
 import {
   createDomainError,
@@ -111,6 +113,7 @@ export class WalletCommandsService implements WalletCommands {
     amount: string,
     direction: ManualAdjustmentDirection,
     providerRef?: WalletProviderRef,
+    wager?: WagerContext,
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const insertQuery = txn.insert(walletTransaction).values({
       walletId: row.id,
@@ -123,6 +126,8 @@ export class WalletCommandsService implements WalletCommands {
       providerName: providerRef?.providerName,
       providerRefId: providerRef?.providerRefId,
       externalRoundId: providerRef?.externalRoundId,
+      wagerProduct: wager?.product,
+      wagerRtp: wager?.rtp !== undefined && isWagerRtp(wager.rtp) ? wager.rtp : undefined,
       metadata:
         providerRef?.responseSnapshot !== undefined
           ? JSON.stringify(providerRef.responseSnapshot)
@@ -263,6 +268,7 @@ export class WalletCommandsService implements WalletCommands {
       amount,
       'debit',
       providerRef,
+      type === 'bet' ? context : undefined,
     );
 
     if (!wagered) {

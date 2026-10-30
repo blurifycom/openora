@@ -127,6 +127,13 @@
       "when": 1792073855986,
       "tag": "0017_streak_milestone_announced",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793354023650,
+      "tag": "0018_rakeback_claim",
+      "breakpoints": true
     }
   ]
 }

@@ -1,9 +1,11 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 import {
   ContributionPercentSchema,
   CurrencyTickerSchema,
   MoneyAmountSchema,
+  RAKEBACK_BASES,
   TimestampSchema,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -512,6 +514,109 @@ export const MarkRankChallengeFulfilledInputSchema = z.object({
 });
 export type MarkRankChallengeFulfilledInput = z.infer<typeof MarkRankChallengeFulfilledInputSchema>;
 
+export const RAKEBACK_ACCRUAL_STATUSES = ['accrued', 'claimed', 'reversed', 'voided'] as const;
+export const RakebackAccrualStatusSchema = z.enum(RAKEBACK_ACCRUAL_STATUSES);
+export type RakebackAccrualStatus = z.infer<typeof RakebackAccrualStatusSchema>;
+
+/** `auto_paid`: paid without a claim, on self-exclusion, account closure or the daily sweep. */
+export const RAKEBACK_CLAIM_OUTCOMES = ['claimed', 'auto_paid'] as const;
+export const RakebackClaimOutcomeSchema = z.enum(RAKEBACK_CLAIM_OUTCOMES);
+export type RakebackClaimOutcome = z.infer<typeof RakebackClaimOutcomeSchema>;
+
+export const RAKEBACK_CLAIM_BLOCKERS = [
+  'nothing_to_claim',
+  'below_minimum',
+  'restricted',
+  'account_blocked',
+] as const;
+export const RakebackClaimBlockerSchema = z.enum(RAKEBACK_CLAIM_BLOCKERS);
+export type RakebackClaimBlocker = z.infer<typeof RakebackClaimBlockerSchema>;
+
+export const RakebackCurrencyAmountSchema = z.object({
+  currency: CurrencyTickerSchema,
+  amount: MoneyAmountSchema,
+});
+export type RakebackCurrencyAmount = z.infer<typeof RakebackCurrencyAmountSchema>;
+
+export const RakebackUnclaimedSchema = RakebackCurrencyAmountSchema.extend({
+  /** Null when there is no rate into the reference currency; it then counts 0 toward the minimum. */
+  referenceAmount: MoneyAmountSchema.nullable(),
+});
+export type RakebackUnclaimed = z.infer<typeof RakebackUnclaimedSchema>;
+
+const RakebackTotalsShape = {
+  unclaimed: z.array(RakebackUnclaimedSchema),
+  referenceCurrency: CurrencyTickerSchema,
+  referenceTotal: MoneyAmountSchema,
+} as const;
+
+export const RakebackSummarySchema = z.object({
+  ...RakebackTotalsShape,
+  claimMinimum: MoneyAmountSchema,
+  /** Why a claim would be refused right now; null when it would pay. */
+  claimBlockedBy: RakebackClaimBlockerSchema.nullable(),
+  lifetimeClaimed: z.array(RakebackCurrencyAmountSchema),
+});
+export type RakebackSummary = z.infer<typeof RakebackSummarySchema>;
+
+export const ClaimRakebackInputSchema = z.object({ idempotencyKey: UuidSchema });
+
+export const RakebackClaimResultSchema = z.object({
+  claimId: UuidSchema,
+  paid: z.array(RakebackCurrencyAmountSchema),
+});
+export type RakebackClaimResult = z.infer<typeof RakebackClaimResultSchema>;
+
+export const RakebackAccrualSchema = z.object({
+  id: UuidSchema,
+  userId: UuidSchema,
+  currency: CurrencyTickerSchema,
+  amount: MoneyAmountSchema,
+  /** The own-money stake the amount was computed from, net of any partial rollback. */
+  stake: MoneyAmountSchema,
+  /** Stake of a claimed or voided row taken back by a later rollback; its amount is not reduced. */
+  rolledBackStake: MoneyAmountSchema,
+  basis: z.enum(RAKEBACK_BASES),
+  /** Null under the stake basis. */
+  rtp: z.string().nullable(),
+  ratePercent: ContributionPercentSchema,
+  boostPercent: ContributionPercentSchema,
+  gameId: z.string().nullable(),
+  providerGameKey: z.string().nullable(),
+  providerName: z.string().nullable(),
+  externalRoundId: z.string().nullable(),
+  status: RakebackAccrualStatusSchema,
+  claimId: UuidSchema.nullable(),
+  voidedBy: UuidSchema.nullable(),
+  voidReason: z.string().nullable(),
+  createdAt: TimestampSchema,
+  /** When the row left `accrued`. */
+  settledAt: TimestampSchema.nullable(),
+});
+export type RakebackAccrual = z.infer<typeof RakebackAccrualSchema>;
+
+export const ListRakebackAccrualsInputSchema = PageQuerySchema.extend({
+  userId: UuidSchema.optional(),
+  status: RakebackAccrualStatusSchema.optional(),
+});
+export type ListRakebackAccrualsInput = z.infer<typeof ListRakebackAccrualsInputSchema>;
+
+export const RakebackPlayerSummarySchema = z.object({
+  userId: UuidSchema,
+  ...RakebackTotalsShape,
+  lifetimeClaimed: z.array(RakebackCurrencyAmountSchema),
+});
+export type RakebackPlayerSummary = z.infer<typeof RakebackPlayerSummarySchema>;
+
+export const RakebackLiabilitySchema = z.object(RakebackTotalsShape);
+export type RakebackLiability = z.infer<typeof RakebackLiabilitySchema>;
+
+export const VoidRakebackAccrualInputSchema = z.object({
+  accrualId: UuidSchema,
+  reason: z.string().trim().min(1).max(500),
+});
+export type VoidRakebackAccrualInput = z.infer<typeof VoidRakebackAccrualInputSchema>;
+
 export const gamificationContract = {
   ranks: {
     get: oc.route({ method: 'GET', path: '/promo/ranks' }).output(PlayerRankSchema),
@@ -570,7 +675,41 @@ export const gamificationContract = {
       .output(RankChallengeLadderSchema),
   },
 
+  rakeback: {
+    /** What the player has accrued and not claimed, per currency, and whether a claim would pay. */
+    summary: oc.route({ method: 'GET', path: '/promo/rakeback' }).output(RakebackSummarySchema),
+
+    /** Pays every unclaimed accrual, each currency to its own real balance. */
+    claim: oc
+      .route({ method: 'POST', path: '/promo/rakeback/claim' })
+      .input(ClaimRakebackInputSchema)
+      .output(RakebackClaimResultSchema),
+  },
+
   admin: {
+    rakeback: {
+      listAccruals: oc
+        .route({ method: 'GET', path: '/backoffice/promo/rakeback/accruals' })
+        .input(ListRakebackAccrualsInputSchema)
+        .output(paginated(RakebackAccrualSchema)),
+
+      playerSummary: oc
+        .route({ method: 'GET', path: '/backoffice/promo/rakeback/players/{userId}' })
+        .input(z.object({ userId: UuidSchema }))
+        .output(RakebackPlayerSummarySchema),
+
+      /** Unclaimed rakeback across every player: what the operator owes. */
+      liability: oc
+        .route({ method: 'GET', path: '/backoffice/promo/rakeback/liability' })
+        .output(RakebackLiabilitySchema),
+
+      /** Cancels an unclaimed accrual. A claimed one is corrected by a manual adjustment. */
+      void: oc
+        .route({ method: 'POST', path: '/backoffice/promo/rakeback/accruals/{accrualId}/void' })
+        .input(VoidRakebackAccrualInputSchema)
+        .output(RakebackAccrualSchema),
+    },
+
     streaks: {
       config: {
         get: oc

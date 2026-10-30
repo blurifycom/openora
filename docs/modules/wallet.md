@@ -38,6 +38,9 @@ does not repeat it.
   else `wallet.defaultReferenceCurrency`. The rate and its timestamp are stored with it and never
   recalculated. With no fresh rate the row is not written: a request fails with a typed error, and a
   deposit webhook fails so the vendor redelivers it.
+- **A bet row records what the bet was placed on.** `wager_product` comes from its `WagerContext`,
+  and so does `wager_rtp` when it is a fraction in [0, 1]. A malformed rtp is stored as NULL rather
+  than refusing the bet. `houseEdge` in `@openora/core/server` prices it.
 - **A withdrawal's network fee comes out of the amount the player entered.** The player is debited
   the full amount, the row records the fee, and the provider pays out the amount minus the fee. An
   amount that does not exceed the fee is refused. A refund returns the full debited amount.

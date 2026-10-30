@@ -453,6 +453,14 @@ export const notificationEventMap: NotificationMapEntry[] = [
     }),
   ),
 
+  mapEvent('promo.rakeback.claimable', (p) =>
+    notification({
+      userId: p.userId,
+      type: 'rakeback.claimable',
+      params: { amount: p.amount, currency: p.currency },
+    }),
+  ),
+
   mapEvent('chat.user.mentioned', (p) =>
     notification({
       userId: p.mentionedUserId,

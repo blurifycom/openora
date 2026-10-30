@@ -27,3 +27,22 @@ export {
   type RankChallengeWon,
 } from './service/rank-challenge-payout.service.js';
 export { createGamificationRouter } from './router/index.js';
+export {
+  RakebackService,
+  rakebackBase,
+  type RakebackSettings,
+} from './service/rakeback.service.js';
+export {
+  RakebackAccountBlockedError,
+  RakebackBelowMinimumError,
+  RakebackClaimConflictError,
+  RakebackClaimRestrictedError,
+  RakebackClaimService,
+  RakebackNothingToClaimError,
+  type RakebackClaimed,
+} from './service/rakeback-claim.service.js';
+export {
+  RakebackAccrualNotFoundError,
+  RakebackAccrualNotVoidableError,
+  RakebackAdminService,
+} from './service/rakeback-admin.service.js';

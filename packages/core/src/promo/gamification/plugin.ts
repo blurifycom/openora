@@ -7,6 +7,8 @@ import {
   JOB_QUEUE,
   PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
+  RATE_LIMITER,
+  RG_EXCLUSION_READER,
   WALLET_COMMANDS,
   WALLET_READER,
   PromoConfigSchema,
@@ -15,6 +17,7 @@ import {
   domainEventSchemas,
   queue,
   resolveWalletDefaultCurrency,
+  resolveWalletReferenceCurrency,
   type IdentityReader,
   type JobQueueAdapter,
   type WagerReversalArgs,
@@ -34,6 +37,11 @@ import {
   type TypedContainer,
 } from '@openora/core/server';
 import { RakebackService } from './service/rakeback.service.js';
+import {
+  RakebackClaimConflictError,
+  RakebackClaimService,
+} from './service/rakeback-claim.service.js';
+import { RakebackAdminService } from './service/rakeback-admin.service.js';
 import { RankAdminService } from './service/rank-admin.service.js';
 import { RankPayoutService } from './service/rank-payout.service.js';
 import { RankService } from './service/rank.service.js';
@@ -64,6 +72,9 @@ const RACE_PAYOUT_QUEUE = queue('promo-race-payout');
 const RANK_CHALLENGE_PAYOUT_QUEUE = queue('promo-rank-challenge-payout');
 const RANK_ANNOUNCE_QUEUE = queue('promo-rank-announce');
 const RANK_PERIOD_PRUNE_QUEUE = queue('promo-rank-period-prune');
+const RAKEBACK_AUTO_PAYOUT_QUEUE = queue('promo-rakeback-auto-payout');
+const RAKEBACK_SWEEP_QUEUE = queue('promo-rakeback-sweep');
+const RAKEBACK_NOTIFY_QUEUE = queue('promo-rakeback-notify');
 // Races close at whatever timestamp the operator configured, not a shared daily/weekly/monthly
 // anchor - a short recurring tick is what makes "closed within a minute of endAt" true.
 const RACE_PAYOUT_CRON = '*/1 * * * *';
@@ -73,6 +84,8 @@ const RANK_CHALLENGE_PAYOUT_CRON = '*/1 * * * *';
 const RANK_ANNOUNCE_CRON = '*/1 * * * *';
 const STREAK_ANNOUNCE_CRON = '*/1 * * * *';
 const RANK_PERIOD_PRUNE_CRON = '30 3 * * *';
+const RAKEBACK_SWEEP_CRON = '25 4 * * *';
+const RAKEBACK_NOTIFY_CRON = '11 * * * *';
 
 // The cron tick carries only which payout to run; what is owed is read from the database.
 const RankPayoutJobSchema = z.object({ kind: RankPayoutKindSchema });
@@ -90,6 +103,8 @@ const StreakForfeitJobSchema = z.object({
   actorIsAdmin: z.boolean(),
 });
 const FORFEIT_JOB_RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
+
+const RakebackAutoPayoutJobSchema = z.object({ userId: UuidSchema });
 
 /** Fans a bet out to every wager-tracking consumer this module owns, on the one sealed port. */
 class CompositeWagerTracking implements WagerTrackingCommands {
@@ -119,8 +134,15 @@ const streakService = (c: TypedContainer<CoreTokenCatalog>) =>
 const raceService = (c: TypedContainer<CoreTokenCatalog>) =>
   new RaceService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
 
+const promoConfig = (c: TypedContainer<CoreTokenCatalog>) =>
+  PromoConfigSchema.parse(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).promo : {});
+
 const rakebackService = (c: TypedContainer<CoreTokenCatalog>) =>
-  new RakebackService(() => (c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined), logger);
+  new RakebackService(
+    () => (c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined),
+    logger,
+    promoConfig(c).rakeback,
+  );
 
 const rankChallengeService = (c: TypedContainer<CoreTokenCatalog>) =>
   new RankChallengeService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
@@ -145,6 +167,7 @@ export default {
     let streakPayouts: StreakPayoutService | null = null;
     let racePayouts: RacePayoutService | null = null;
     let rankChallengePayouts: RankChallengePayoutService | null = null;
+    let rakebackClaims: RakebackClaimService | null = null;
     let streaks: StreakService | null = null;
     let events: EventBus | null = null;
     let identityReader: IdentityReader | null = null;
@@ -171,6 +194,75 @@ export default {
         direction: 'credit',
       });
     };
+
+    ctx.jobs.worker({
+      queue: RAKEBACK_AUTO_PAYOUT_QUEUE,
+      schema: RakebackAutoPayoutJobSchema,
+      handler: async ({ payload }) => {
+        if (!rakebackClaims) {
+          throw new Error('promo-rakeback-auto-payout: service not constructed');
+        }
+        await rakebackClaims.autoPay(payload.userId);
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: RAKEBACK_SWEEP_QUEUE,
+      schema: EmptyJobSchema,
+      handler: async () => {
+        if (!rakebackClaims) {
+          logger.warn({}, 'rakeback sweep skipped - service not constructed');
+          return;
+        }
+        const failures: unknown[] = [];
+        for (const userId of await rakebackClaims.dueForAutoPayout()) {
+          await rakebackClaims.autoPay(userId).catch((err: unknown) => {
+            if (err instanceof RakebackClaimConflictError) {
+              logger.info({ userId }, 'rakeback sweep payout raced another payout');
+              return;
+            }
+            logger.error({ err, userId }, 'rakeback sweep payout failed');
+            failures.push(err);
+          });
+        }
+        if (failures.length > 0) {
+          throw new AggregateError(failures, `rakeback sweep: ${failures.length} payouts failed`);
+        }
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: RAKEBACK_NOTIFY_QUEUE,
+      schema: EmptyJobSchema,
+      handler: async () => {
+        if (!rakebackClaims) {
+          logger.warn({}, 'rakeback reminder skipped - service not constructed');
+          return;
+        }
+        await rakebackClaims.notifyClaimable((claimable) =>
+          events?.emit('promo.rakeback.claimable', claimable),
+        );
+      },
+    });
+
+    const autoPayRakeback =
+      (topic: 'rg.self_exclusion.activated' | 'player.account.closed') => (payload: unknown) => {
+        const parsed = domainEventSchemas[topic].safeParse(payload);
+        if (!parsed.success) {
+          logger.error({ topic }, 'rakeback auto-payout skipped - event payload failed validation');
+          return;
+        }
+        if (!jobs) {
+          logger.error({ topic }, 'rakeback auto-payout dropped - job queue not bound yet');
+          return;
+        }
+        const { userId } = parsed.data;
+        void jobs
+          .enqueue(RAKEBACK_AUTO_PAYOUT_QUEUE, { userId }, FORFEIT_JOB_RETRY)
+          .catch((err: unknown) =>
+            logger.error({ err, userId }, 'rakeback auto-payout enqueue failed'),
+          );
+      };
 
     ctx.jobs.worker({
       queue: RANK_PAYOUT_QUEUE,
@@ -302,6 +394,8 @@ export default {
       'rg.cooling_off.activated',
       forfeitUnclaimedStreakRewards('rg.cooling_off.activated', 'cooling_off'),
     );
+    ctx.events.on('rg.self_exclusion.activated', autoPayRakeback('rg.self_exclusion.activated'));
+    ctx.events.on('player.account.closed', autoPayRakeback('player.account.closed'));
 
     ctx.jobs.worker({
       queue: STREAK_CLOSE_QUEUE,
@@ -407,9 +501,22 @@ export default {
       streaks = streakService(c);
       events = c.get(EVENT_BUS);
       identityReader = c.get(IDENTITY_READER);
-      const schedule = PromoConfigSchema.parse(
-        c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).promo : {},
+      const schedule = promoConfig(c);
+      const referenceCurrency = resolveWalletReferenceCurrency(
+        c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).wallet : undefined,
       );
+      rakebackClaims = new RakebackClaimService({
+        drizzle: c.get(DRIZZLE),
+        wallet: c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
+        eligibility: c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        exclusions: c.has(RG_EXCLUSION_READER) ? c.get(RG_EXCLUSION_READER) : undefined,
+        rates: c.get(EXCHANGE_RATE_READER),
+        referenceCurrency,
+        claimMinimum: schedule.rakeback.claimMinimum,
+        audit: c.get(AUDIT_WRITER),
+        events: c.get(EVENT_BUS),
+        logger,
+      });
       const jobQueue = c.get(JOB_QUEUE);
       jobs = jobQueue;
       // The periodic kinds share one tick: each run pays only a period that has closed since
@@ -466,6 +573,22 @@ export default {
           { cron: RANK_PERIOD_PRUNE_CRON },
         )
         .catch((err: unknown) => logger.error({ err }, 'rank period prune schedule failed'));
+      void jobQueue
+        .schedule(
+          RAKEBACK_SWEEP_QUEUE,
+          'promo-rakeback-sweep.cron',
+          {},
+          { cron: RAKEBACK_SWEEP_CRON },
+        )
+        .catch((err: unknown) => logger.error({ err }, 'rakeback sweep schedule failed'));
+      void jobQueue
+        .schedule(
+          RAKEBACK_NOTIFY_QUEUE,
+          'promo-rakeback-notify.cron',
+          {},
+          { cron: RAKEBACK_NOTIFY_CRON },
+        )
+        .catch((err: unknown) => logger.error({ err }, 'rakeback reminder schedule failed'));
 
       return createGamificationRouter({
         ranks: rankService(c),
@@ -489,6 +612,14 @@ export default {
         raceAdmin: new RaceAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         rankChallenge: rankChallengeService(c),
         rankChallengeAdmin: new RankChallengeAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
+        rakebackClaims,
+        rakebackAdmin: new RakebackAdminService({
+          drizzle: c.get(DRIZZLE),
+          rates: c.get(EXCHANGE_RATE_READER),
+          audit: c.get(AUDIT_WRITER),
+          referenceCurrency,
+        }),
+        rateLimiter: c.has(RATE_LIMITER) ? c.get(RATE_LIMITER) : undefined,
         adminGuard: c.get(ADMIN_GUARD),
       });
     });

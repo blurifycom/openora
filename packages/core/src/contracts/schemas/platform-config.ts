@@ -274,6 +274,11 @@ export const STREAK_PAYOUT_DEFAULT_CRON = '7,27,47 * * * *';
 /** Once, shortly after the UTC day turns over - the boundary the streak's own "day" is defined by. */
 export const STREAK_CLOSE_DEFAULT_CRON = '5 0 * * *';
 
+export const RAKEBACK_BASES = ['stake', 'margin'] as const;
+export const RAKEBACK_PAYOUTS = ['instant', 'claim'] as const;
+export type RakebackBasis = (typeof RAKEBACK_BASES)[number];
+export type RakebackPayout = (typeof RAKEBACK_PAYOUTS)[number];
+
 export const PromoConfigSchema = z
   .object({
     ranks: z
@@ -291,6 +296,17 @@ export const PromoConfigSchema = z
         payoutCron: CronExpressionSchema.default(STREAK_PAYOUT_DEFAULT_CRON),
         /** How often a UTC day is closed out, resetting anyone who missed it. */
         closeCron: CronExpressionSchema.default(STREAK_CLOSE_DEFAULT_CRON),
+      })
+      .strict()
+      .prefault({}),
+    rakeback: z
+      .object({
+        /** `stake` pays the rate on the own-money stake; `margin` on stake × (1 − rtp). */
+        basis: z.enum(RAKEBACK_BASES).default('stake'),
+        /** `instant` credits each bet's rakeback with the bet; `claim` accrues it until claimed. */
+        payout: z.enum(RAKEBACK_PAYOUTS).default('instant'),
+        /** Smallest claim, priced in `wallet.defaultReferenceCurrency`. */
+        claimMinimum: MoneyAmountSchema.default('0'),
       })
       .strict()
       .prefault({}),

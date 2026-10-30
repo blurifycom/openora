@@ -11,6 +11,7 @@ import {
   moneyEquals,
   moneyCompare,
   moneyScaleBy,
+  houseEdge,
   moneyDivide,
   moneyAdd,
   moneySubtract,
@@ -174,6 +175,19 @@ describe('moneyScaleBy', () => {
 
   it('truncates past MONEY_SCALE rather than rounding up', () => {
     expect(moneyScaleBy('1.000000000000000001', '0.5')).toBe('0.500000000000000000');
+  });
+});
+
+describe('houseEdge', () => {
+  it('is the stake times one minus the rtp', () => {
+    expect(houseEdge('100', '0.96')).toBe('4.000000000000000000');
+    expect(houseEdge('100', '1')).toBe('0.000000000000000000');
+  });
+
+  it('is zero for a missing, zero or malformed rtp', () => {
+    for (const rtp of [undefined, null, '0', '0.000', '96', '1.01', '-0.5', '']) {
+      expect(houseEdge('100', rtp)).toBe('0');
+    }
   });
 });
 
