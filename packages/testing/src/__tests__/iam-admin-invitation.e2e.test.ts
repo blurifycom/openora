@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
@@ -29,8 +29,8 @@ let superAdminId: string;
 
 const drizzle = () => app.container.get(DRIZZLE).db;
 
-async function invite(email: string) {
-  const res = await superAdmin.post('/iam/invitations', { email, roleId });
+async function invite(email: string, invitedRoleId = roleId) {
+  const res = await superAdmin.post('/iam/invitations', { email, roleId: invitedRoleId });
   expect(res.status).toBe(200);
   const mail = await waitForEmail(email, (m) => UUID_PATTERN.test(m.text));
   const token = UUID_PATTERN.exec(mail.text)?.[0];
@@ -40,19 +40,26 @@ async function invite(email: string) {
   return token;
 }
 
-const accept = (body: { token: string; name: string; password: string }) =>
+// Every call comes from its own address by default, so the per-address accept throttle never
+// carries one test's attempts into another.
+let nextAddress = 1;
+const freshAddress = () => `192.0.2.${nextAddress++}`;
+
+const accept = (body: { token: string; name: string; password: string }, ip = freshAddress()) =>
   app.app.request('/iam/invitations/accept', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-real-ip': ip },
     body: JSON.stringify(body),
   });
+
+const tokenHash = (token: string) => createHash('sha256').update(token, 'utf8').digest('hex');
 
 const invitationStatus = async (token: string) =>
   (
     await drizzle()
       .select({ status: adminInvitation.status })
       .from(adminInvitation)
-      .where(eq(adminInvitation.token, token))
+      .where(eq(adminInvitation.tokenHash, tokenHash(token)))
   )[0]?.status;
 
 beforeAll(async () => {
@@ -104,7 +111,7 @@ describe('admin invitation', () => {
     const [invitation] = await drizzle()
       .select({ id: adminInvitation.id })
       .from(adminInvitation)
-      .where(eq(adminInvitation.token, token));
+      .where(eq(adminInvitation.tokenHash, tokenHash(token)));
     await vi.waitFor(async () => {
       const rows = await drizzle()
         .select({ action: auditLog.action, actorId: auditLog.actorId })
@@ -147,6 +154,41 @@ describe('admin invitation', () => {
     const res = await accept({ token, name: 'Weak', password: 'short' });
 
     expect(res.status).toBe(400);
+    expect(await invitationStatus(token)).toBe('pending');
+  });
+
+  it('lists a pending super-admin invitation without its token or token hash', async () => {
+    const [superRole] = await drizzle()
+      .select({ id: adminRole.id })
+      .from(adminRole)
+      .where(eq(adminRole.key, 'super-admin'));
+    const email = `listed-${randomUUID()}@example.test`;
+    const token = await invite(email, superRole?.id ?? '');
+
+    const list = await superAdmin.get('/iam/invitations?limit=100');
+
+    expect(list.status).toBe(200);
+    const body = await list.text();
+    expect(body).toContain(email);
+    expect(body).not.toContain(token);
+    expect(body).not.toContain(tokenHash(token));
+    expect(body).not.toMatch(/"token/i);
+  });
+
+  it('refuses a sixth attempt from one address within the hour, even with the mailed token', async () => {
+    const token = await invite(`throttled-${randomUUID()}@example.test`);
+    const ip = freshAddress();
+    for (let i = 0; i < 5; i++) {
+      const guess = await accept(
+        { token: randomUUID(), name: 'Guess', password: INVITEE_PASSWORD },
+        ip,
+      );
+      expect(guess.status).toBe(409);
+    }
+
+    const sixth = await accept({ token, name: 'Late', password: INVITEE_PASSWORD }, ip);
+
+    expect(sixth.status).toBe(429);
     expect(await invitationStatus(token)).toBe('pending');
   });
 });

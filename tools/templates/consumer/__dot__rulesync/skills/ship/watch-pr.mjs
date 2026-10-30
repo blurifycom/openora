@@ -5,6 +5,8 @@
 // (anyone can type the prefix); it is reported once it stayed the same for two checks, so a review with
 // ten comments is one line. Run it in the background:
 //   node watch-pr.mjs <branch> [--until-green]        WATCH_DEBUG=1 prints every check to stderr
+// --once checks one time, for a caller that polls on its own (a scheduler): threads are reported at
+// once, and `none` means nothing to do.
 import { execFileSync } from 'node:child_process';
 
 const EVERY_MS = 120_000;
@@ -25,10 +27,11 @@ const FAILED = [
 
 const [branch, ...flags] = process.argv.slice(2);
 if (!branch) {
-  console.error('usage: watch-pr.mjs <branch> [--until-green]');
+  console.error('usage: watch-pr.mjs <branch> [--until-green | --once]');
   process.exit(2);
 }
 const untilGreen = flags.includes('--until-green');
+const once = flags.includes('--once');
 
 const run = (cmd, args) =>
   execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -156,12 +159,13 @@ for (;;) {
     if (now.conflicts) say('conflicts');
     if (now.ci === 'failed') say('failed');
     const ids = now.unanswered.join(' ');
-    if (ids && ids === seen) say(`threads ${ids}`);
+    if (ids && (once || ids === seen)) say(`threads ${ids}`);
     seen = ids;
     const green = now.ci === 'passed' || (now.ci === null && Date.now() - started >= NO_CI_MS);
     if (untilGreen && green && !ids) say('green');
+    if (once) say('none');
   } catch (reason) {
-    if (++errors >= MAX_ERRORS)
+    if (once || ++errors >= MAX_ERRORS)
       say(`error ${reason instanceof Error ? reason.message.split('\n')[0] : reason}`);
   }
   await new Promise((resolve) => setTimeout(resolve, EVERY_MS));

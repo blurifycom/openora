@@ -46,11 +46,11 @@ export const AdminRoleAssignmentDetailSchema = AdminRoleAssignmentSchema.extend(
   roleKey: z.string().nullable(),
 });
 
+// Carries no token: the redeemable link goes only to the invitee, by mail, once.
 export const AdminInvitationSchema = z.object({
   id: UuidSchema,
   email: z.email(),
   roleId: UuidSchema,
-  token: z.string(),
   status: InvitationStatusSchema,
   expiresAt: TimestampSchema,
   acceptedAt: z.string().nullable(),

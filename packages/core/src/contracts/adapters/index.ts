@@ -420,7 +420,10 @@ export type {
   AdminRoleAssignmentSummary,
   AdminRoleAssignmentDirectory,
 } from './admin-role-assignment-directory.js';
-export { ADMIN_ROLE_ASSIGNMENT_DIRECTORY } from './admin-role-assignment-directory.js';
+export {
+  ADMIN_ROLE_ASSIGNMENT_DIRECTORY,
+  SUPER_ADMIN_MANAGEMENT_LOCK_KEY,
+} from './admin-role-assignment-directory.js';
 
 export type {
   AdminTxRow,

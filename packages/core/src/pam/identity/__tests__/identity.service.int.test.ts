@@ -868,6 +868,18 @@ describe('IdentityService.unlockUser (real PG)', () => {
   });
 });
 
+describe('IdentityService.findAccountRole (real PG)', () => {
+  it('tells a player from a staff account, and an unknown user from both', async () => {
+    const player = await seedUser();
+    const staff = await seedUser({ email: `staff-${randomUUID()}@test.dev`, role: 'admin' });
+    const svc = buildService();
+
+    expect(await svc.findAccountRole(player.id)).toBe('player');
+    expect(await svc.findAccountRole(staff.id)).toBe('admin');
+    expect(await svc.findAccountRole(randomUUID())).toBeNull();
+  });
+});
+
 describe('IdentityService.adminRequestPasswordReset (real PG)', () => {
   it('requests an OTP for the user email, sets the admin-marker in cache, and emits the audit event', async () => {
     requestPasswordResetEmailOTPMock.mockResolvedValue(jsonResponse({ success: true }, 200));
