@@ -9,7 +9,7 @@ import {
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
-import { walletAutoWithdrawalConfig } from '@openora/core/wallet/schema';
+import { walletAutoWithdrawalConfig, walletWithdrawalAddress } from '@openora/core/wallet/schema';
 import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 import {
   bootTestApp,
@@ -284,6 +284,18 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       amount: '0.1',
       currency: 'BTC',
     });
+    // A withdrawal pays only a saved address that has waited out its first 24 hours.
+    await appGated.container
+      .get(DRIZZLE)
+      .db.insert(walletWithdrawalAddress)
+      .values({
+        userId,
+        label: 'Seeded',
+        currency: 'BTC',
+        network: 'BITCOIN',
+        address: 'bc1qe2e-crypto-rail-test-address',
+        createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+      });
     const res = await client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '0.01',

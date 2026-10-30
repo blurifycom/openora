@@ -12,6 +12,7 @@ import {
   makeEventBus,
   testContext,
   makeAuditWriter,
+  makeWithdrawalSecurity,
   makeAdminGuard,
   makeIdentityReader,
   makeJobQueue,
@@ -50,6 +51,7 @@ function realWalletService() {
     payment: mock<PaymentAdapter>({}),
     paymentProviders: makePaymentProviderRegistry(),
     audit: makeAuditWriter(),
+    withdrawalSecurity: makeWithdrawalSecurity(),
     identityReader: makeIdentityReader(),
   });
 }
@@ -59,6 +61,7 @@ function routerWith(adminGuard: AdminGuard) {
     wallet: realWalletService(),
     adminGuard,
     audit: makeAuditWriter(),
+    withdrawalSecurity: makeWithdrawalSecurity(),
     paymentProviders: makePaymentProviderRegistry(),
     reconciliation: mock<ReconciliationService>({}),
     jobQueue: makeJobQueue(),
