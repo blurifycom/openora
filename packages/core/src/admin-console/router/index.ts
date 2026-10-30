@@ -6,6 +6,8 @@ import {
   BackofficeService,
   GameNotFoundError,
   GamePerformanceTrendRangeError,
+  LastActiveSuperAdminError,
+  SelfAccountLockoutError,
   TransactionNotFoundError,
   UserNotFoundError,
 } from '../service/backoffice.service.js';
@@ -44,22 +46,27 @@ export function createBackofficeRouter(
 
     updateUser: os.updateUser.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'player', 'update');
-      // Writing `user.role` grants staff status, and with no permission resolver bound
-      // the static 'admin' role is full access, so a role change is super-admin-only -
-      // the `admin` resource is held only by super-admins.
-      if (input.role !== undefined) {
-        await adminGuard.assert(context, 'admin', 'update');
-      }
       const before = await mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
         backofficeService.getUser(input.userId),
       );
-      const updated = await mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
-        backofficeService.updateUser(
-          input.userId,
-          { isActive: input.isActive, role: input.role },
-          caller.userId,
-          { ip: caller.ip, userAgent: caller.userAgent },
-        ),
+      // `player:update` covers players only. Disabling, re-enabling or changing a staff
+      // account - a super-admin's included - and writing `user.role` (which grants staff
+      // status) are super-admin-only, or a junior staffer could lock out or promote others.
+      if (before.role !== 'player' || input.role !== undefined) {
+        await adminGuard.assertSuperAdmin(context);
+      }
+      const updated = await mapErrors(
+        {
+          NOT_FOUND: UserNotFoundError,
+          CONFLICT: [SelfAccountLockoutError, LastActiveSuperAdminError],
+        },
+        () =>
+          backofficeService.updateUser(
+            input.userId,
+            { isActive: input.isActive, role: input.role },
+            caller.userId,
+            { ip: caller.ip, userAgent: caller.userAgent },
+          ),
       );
       await audit.record({
         actorId: caller.userId,

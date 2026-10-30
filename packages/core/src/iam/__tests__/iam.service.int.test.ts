@@ -55,7 +55,9 @@ import {
   NotAnAdminUserError,
 } from '../service/iam.service.js';
 import { McpTokenService } from '../service/mcp-token.service.js';
+import { DrizzleAdminRoleAssignmentDirectory } from '../adapters/admin-role-assignment-directory.js';
 import { seedRoles } from '../seed/seed-default-roles.js';
+import { hashInvitationToken } from '../shared/invitation-token.js';
 
 let db: TestDb;
 let redis: TestRedis;
@@ -140,6 +142,28 @@ async function seedAssignment(userId: string, roleId: string) {
   await db.drizzle.db.insert(adminRoleAssignment).values({ userId, roleId });
 }
 
+// The back-office account behind an assignment; the last-super-admin guard reads it.
+async function seedAdminAccount(
+  id: string,
+  over: { isActive?: boolean; role?: 'admin' | 'player' } = {},
+) {
+  await seedUser(db, {
+    id,
+    email: `${id}@admin.test`,
+    role: over.role ?? 'admin',
+    isActive: over.isActive ?? true,
+  });
+}
+
+// A promise to settle from outside, for holding one transaction open while another runs.
+function deferred() {
+  let resolve = () => {};
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 async function seedSuperCaller() {
   const role = await seedRole({ name: 'Root', isSuperAdmin: true, isSystem: true });
   await seedAssignment(ADMIN_CALLER.userId, role.id);
@@ -169,6 +193,126 @@ beforeEach(async () => {
     sql`TRUNCATE ${adminRole}, ${adminRolePermission}, ${adminRoleAssignment}, ${adminInvitation}, ${mcpToken}, ${user} RESTART IDENTITY CASCADE`,
   );
   await redis.flush();
+});
+
+describe('DrizzleAdminRoleAssignmentDirectory.keepsAnotherActiveSuperAdmin (real PG)', () => {
+  const directory = () => new DrizzleAdminRoleAssignmentDirectory(db.drizzle);
+  const ask = (userId: string) =>
+    db.drizzle.db.transaction((tx) => directory().keepsAnotherActiveSuperAdmin(userId, tx));
+
+  async function seedSuperAdmins(count: number) {
+    const root = await seedRole({ name: 'Root', isSuperAdmin: true });
+    const ids = Array.from({ length: count }, () => randomUUID());
+    for (const id of ids) {
+      await seedAssignment(id, root.id);
+      await seedAdminAccount(id);
+    }
+    return ids;
+  }
+
+  it('answers true for an account that holds no super-admin role', async () => {
+    const ops = await seedRole({ name: 'Ops' });
+    const scoped = randomUUID();
+    await seedAssignment(scoped, ops.id);
+    await seedAdminAccount(scoped);
+
+    expect(await ask(scoped)).toBe(true);
+  });
+
+  it('answers false for the only super-admin and true while a second active one exists', async () => {
+    const [only] = await seedSuperAdmins(1);
+    expect(await ask(only ?? '')).toBe(false);
+
+    const [first, second] = await seedSuperAdmins(2);
+    expect(await ask(first ?? '')).toBe(true);
+    expect(await ask(second ?? '')).toBe(true);
+  });
+
+  it.each([
+    ['disabled', { isActive: false }],
+    ['demoted to a player account', { role: 'player' as const }],
+  ])('does not count a super-admin whose account is %s', async (_state, over) => {
+    const [target, other] = await seedSuperAdmins(2);
+    await db.drizzle.db
+      .update(user)
+      .set(over)
+      .where(eq(user.id, other ?? ''));
+
+    expect(await ask(target ?? '')).toBe(false);
+  });
+
+  it('makes a concurrent check wait for the lock holder and read its committed write', async () => {
+    const [first, second] = await seedSuperAdmins(2);
+    const aHoldsLock = deferred();
+    const aMayCommit = deferred();
+
+    // A: the check for disabling `second` passes (`first` remains), A writes the disable and
+    // holds its transaction - and with it the lock - open.
+    const a = db.drizzle.db.transaction(async (tx) => {
+      const keeps = await directory().keepsAnotherActiveSuperAdmin(second ?? '', tx);
+      await tx
+        .update(user)
+        .set({ isActive: false })
+        .where(eq(user.id, second ?? ''));
+      aHoldsLock.resolve();
+      await aMayCommit.promise;
+      return keeps;
+    });
+    await aHoldsLock.promise;
+    // B: the check for disabling `first`. Without the lock it would still see `second`
+    // active (A has not committed) and pass, leaving no active super-admin.
+    let bAnswered = false;
+    const b = db.drizzle.db
+      .transaction((tx) => directory().keepsAnotherActiveSuperAdmin(first ?? '', tx))
+      .then((keeps) => {
+        bAnswered = true;
+        return keeps;
+      });
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const answeredWhileLocked = bAnswered;
+    // Released before any assertion, so a failure never leaves A's transaction open.
+    aMayCommit.resolve();
+
+    expect(answeredWhileLocked).toBe(false);
+    expect(await a).toBe(true);
+    expect(await b).toBe(false);
+  });
+
+  it('serialises a super-admin role removal with an in-flight disable of the other super-admin', async () => {
+    const root = await seedSuperCaller();
+    await seedAdminAccount(ADMIN_CALLER.userId);
+    const other = randomUUID();
+    await seedAssignment(other, root.id);
+    await seedAdminAccount(other);
+    const aHoldsLock = deferred();
+    const aMayCommit = deferred();
+
+    const disableOther = db.drizzle.db.transaction(async (tx) => {
+      const keeps = await directory().keepsAnotherActiveSuperAdmin(other, tx);
+      await tx.update(user).set({ isActive: false }).where(eq(user.id, other));
+      aHoldsLock.resolve();
+      await aMayCommit.promise;
+      return keeps;
+    });
+    await aHoldsLock.promise;
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
+    const stepDown = svc
+      .unassignRole({ userId: ADMIN_CALLER.userId, roleId: root.id, caller: ADMIN_CALLER })
+      .catch((err: unknown) => err);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    aMayCommit.resolve();
+
+    expect(await disableOther).toBe(true);
+    expect(await stepDown).toBeInstanceOf(LastSuperAdminError);
+    expect(
+      await db.drizzle.db
+        .select()
+        .from(adminRoleAssignment)
+        .where(eq(adminRoleAssignment.userId, ADMIN_CALLER.userId)),
+    ).toHaveLength(1);
+  });
 });
 
 describe('IamService.listCatalog', () => {
@@ -580,6 +724,49 @@ describe('IamService.unassignRole', () => {
     expect(await db.drizzle.db.select().from(adminRoleAssignment)).toHaveLength(1);
   });
 
+  it.each([
+    ['disabled', { isActive: false }],
+    ['demoted to a player account', { role: 'player' as const }],
+  ])(
+    'rejects removing the last active super-admin while the other holder is %s',
+    async (_state, otherAccount) => {
+      const superRole = findOneOrThrow(
+        await db.drizzle.db.select().from(adminRole).where(eq(adminRole.isSuperAdmin, true)),
+        new Error('expected the caller super role'),
+      );
+      const otherHolder = randomUUID();
+      await seedAssignment(otherHolder, superRole.id);
+      await seedAdminAccount(otherHolder, otherAccount);
+      await seedAdminAccount(ADMIN_CALLER.userId);
+      const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
+
+      await expect(
+        svc.unassignRole({
+          userId: ADMIN_CALLER.userId,
+          roleId: superRole.id,
+          caller: ADMIN_CALLER,
+        }),
+      ).rejects.toBeInstanceOf(LastSuperAdminError);
+      expect(await db.drizzle.db.select().from(adminRoleAssignment)).toHaveLength(2);
+    },
+  );
+
+  it('lets a super-admin step down while another active super-admin remains', async () => {
+    const superRole = findOneOrThrow(
+      await db.drizzle.db.select().from(adminRole).where(eq(adminRole.isSuperAdmin, true)),
+      new Error('expected the caller super role'),
+    );
+    const otherHolder = randomUUID();
+    await seedAssignment(otherHolder, superRole.id);
+    await seedAdminAccount(otherHolder);
+    await seedAdminAccount(ADMIN_CALLER.userId);
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
+
+    await expect(
+      svc.unassignRole({ userId: ADMIN_CALLER.userId, roleId: superRole.id, caller: ADMIN_CALLER }),
+    ).resolves.toEqual({ success: true });
+  });
+
   it('returns success but emits no revoked event when nothing was deleted', async () => {
     const role = await seedRole();
     const events = makeEventBus();
@@ -620,6 +807,8 @@ describe('IamService.unassignRole', () => {
     );
     const otherHolder = randomUUID();
     await seedAssignment(otherHolder, superRole.id);
+    await seedAdminAccount(otherHolder);
+    await seedAdminAccount(ADMIN_CALLER.userId);
     const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
 
     const results = await Promise.allSettled([
@@ -679,14 +868,17 @@ describe('IamService.acceptInvitation', () => {
     await db.drizzle.db.insert(adminInvitation).values({
       email: 'who@admin.com',
       roleId: role.id,
-      token,
+      tokenHash: hashInvitationToken(token),
       status: 'pending',
       expiresAt: new Date(Date.now() + 60_000),
     });
     return { token, roleId: role.id };
   }
 
-  function makeAcceptService(userCommands = makeUserCommands()) {
+  function makeAcceptService(
+    userCommands = makeUserCommands(),
+    rateLimiter?: RateLimiterAdapter<RateLimitKey>,
+  ) {
     const events = makeEventBus();
     const svc = new IamService({
       drizzle: db.drizzle,
@@ -695,9 +887,16 @@ describe('IamService.acceptInvitation', () => {
       identityReader,
       mcpTokens: makeMcpTokens().mcpTokens,
       userCommands,
+      rateLimiter,
     });
     return { svc, events, userCommands };
   }
+
+  const invitationRow = (token: string) =>
+    db.drizzle.db
+      .select()
+      .from(adminInvitation)
+      .where(eq(adminInvitation.tokenHash, hashInvitationToken(token)));
 
   const assignmentsOf = (roleId: string) =>
     db.drizzle.db.select().from(adminRoleAssignment).where(eq(adminRoleAssignment.roleId, roleId));
@@ -740,7 +939,7 @@ describe('IamService.acceptInvitation', () => {
     await db.drizzle.db
       .update(adminInvitation)
       .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(eq(adminInvitation.token, token));
+      .where(eq(adminInvitation.tokenHash, hashInvitationToken(token)));
     const { svc, userCommands } = makeAcceptService();
 
     await expect(svc.acceptInvitation({ token, ...ACCEPT })).rejects.toBeInstanceOf(
@@ -758,10 +957,7 @@ describe('IamService.acceptInvitation', () => {
 
     await expect(svc.acceptInvitation({ token, ...ACCEPT })).rejects.toBe(emailTaken);
 
-    const [row] = await db.drizzle.db
-      .select()
-      .from(adminInvitation)
-      .where(eq(adminInvitation.token, token));
+    const [row] = await invitationRow(token);
     expect(row?.status).toBe('pending');
     expect(await assignmentsOf(roleId)).toHaveLength(0);
     expect(events.emit).not.toHaveBeenCalled();
@@ -782,6 +978,88 @@ describe('IamService.acceptInvitation', () => {
     expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(InvitationConflictError);
     expect(userCommands.createAdmin).toHaveBeenCalledTimes(1);
     expect(events.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('cannot be redeemed with the stored value - only the plaintext from the mail opens it', async () => {
+    const { token } = await seedInvitation();
+    const [row] = await invitationRow(token);
+    const { svc, userCommands } = makeAcceptService();
+
+    await expect(
+      svc.acceptInvitation({ token: row?.tokenHash ?? '', ...ACCEPT }),
+    ).rejects.toBeInstanceOf(InvitationConflictError);
+    expect(userCommands.createAdmin).not.toHaveBeenCalled();
+  });
+
+  describe('throttling wrong attempts per client address (real Redis)', () => {
+    const FROM_ATTACKER = { ip: '203.0.113.7', userAgent: null };
+    const FROM_ELSEWHERE = { ip: '198.51.100.20', userAgent: null };
+
+    async function guessFiveTimes(svc: IamService) {
+      for (let i = 0; i < 5; i++) {
+        await expect(
+          svc.acceptInvitation({ token: randomUUID(), ...ACCEPT }, FROM_ATTACKER),
+        ).rejects.toBeInstanceOf(InvitationConflictError);
+      }
+    }
+
+    it('refuses the sixth attempt within the hour, even with the right token', async () => {
+      const { token } = await seedInvitation();
+      const { svc, userCommands } = makeAcceptService(
+        makeUserCommands(),
+        new RedisRateLimiter(redis.client),
+      );
+      await guessFiveTimes(svc);
+
+      await expect(svc.acceptInvitation({ token, ...ACCEPT }, FROM_ATTACKER)).rejects.toMatchObject(
+        { code: 'TOO_MANY_REQUESTS' },
+      );
+      expect(userCommands.createAdmin).not.toHaveBeenCalled();
+      expect((await invitationRow(token))[0]?.status).toBe('pending');
+    });
+
+    it('keeps another address free to redeem its own invitation', async () => {
+      const { token } = await seedInvitation();
+      const { svc } = makeAcceptService(makeUserCommands(), new RedisRateLimiter(redis.client));
+      await guessFiveTimes(svc);
+
+      await expect(svc.acceptInvitation({ token, ...ACCEPT }, FROM_ELSEWHERE)).resolves.toEqual({
+        success: true,
+        email: 'who@admin.com',
+      });
+    });
+
+    it('does not count a successful redemption against the address', async () => {
+      const limiter = new RedisRateLimiter(redis.client);
+      const { svc } = makeAcceptService(makeUserCommands(), limiter);
+      for (let i = 0; i < 4; i++) {
+        await expect(
+          svc.acceptInvitation({ token: randomUUID(), ...ACCEPT }, FROM_ATTACKER),
+        ).rejects.toBeInstanceOf(InvitationConflictError);
+      }
+      const { token } = await seedInvitation();
+      await svc.acceptInvitation({ token, ...ACCEPT }, FROM_ATTACKER);
+
+      await guessFiveTimes(svc);
+    });
+
+    it('fails closed when the throttle store is unreachable', async () => {
+      const { token } = await seedInvitation();
+      const unreachable = mock<RateLimiterAdapter<RateLimitKey>>({
+        consume: vi.fn(async (_key, opts) => ({
+          allowed: opts.onUnavailable === 'allow',
+          retryAfterMs: 0,
+          unavailable: true,
+        })),
+        reset: vi.fn(async () => undefined),
+      });
+      const { svc, userCommands } = makeAcceptService(makeUserCommands(), unreachable);
+
+      await expect(svc.acceptInvitation({ token, ...ACCEPT }, FROM_ATTACKER)).rejects.toMatchObject(
+        { code: 'TOO_MANY_REQUESTS' },
+      );
+      expect(userCommands.createAdmin).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -812,6 +1090,13 @@ describe('IamService.inviteAdmin', () => {
     const rows = await db.drizzle.db.select().from(adminInvitation);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ email: 'new@admin.com', status: 'pending' });
+    expect(result).not.toHaveProperty('token');
+    expect(result).not.toHaveProperty('tokenHash');
+    const mail = vi.mocked(mailDispatch.toAddress).mock.calls[0]?.[0];
+    const mailedToken = mail?.template.key === 'adminInvitation' ? mail.template.data.token : '';
+    expect(mailedToken).not.toBe('');
+    expect(rows[0]?.tokenHash).toBe(hashInvitationToken(mailedToken));
+    expect(rows[0]?.tokenHash).not.toBe(mailedToken);
     expect(events.emit).toHaveBeenCalledWith(
       'iam.invitation.created',
       expect.objectContaining({
@@ -851,7 +1136,7 @@ describe('IamService paginated lists', () => {
     await db.drizzle.db.insert(adminInvitation).values({
       email: 'a@b.com',
       roleId: role.id,
-      token: randomUUID(),
+      tokenHash: hashInvitationToken(randomUUID()),
       status: 'pending',
       expiresAt: new Date(Date.now() + 60_000),
     });
@@ -860,6 +1145,30 @@ describe('IamService paginated lists', () => {
     expect(result.total).toBe(1);
     expect(result.items).toHaveLength(1);
     expect(findOneOrThrow(result.items, new Error('expected an item')).email).toBe('a@b.com');
+  });
+
+  it('listInvitations exposes no token or token hash, for any role invited', async () => {
+    const superRole = await seedRole({ name: 'Root', isSuperAdmin: true });
+    const scoped = await seedRole();
+    for (const roleId of [superRole.id, scoped.id]) {
+      await db.drizzle.db.insert(adminInvitation).values({
+        email: `${roleId}@b.com`,
+        roleId,
+        tokenHash: hashInvitationToken(randomUUID()),
+        status: 'pending',
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+    }
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
+
+    const { items } = await svc.listInvitations({ page: 1, limit: 20 });
+
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(Object.keys(item).sort()).toEqual(
+        ['acceptedAt', 'createdAt', 'email', 'expiresAt', 'id', 'roleId', 'status'].sort(),
+      );
+    }
   });
 
   it('listAssignments returns the paginated wrapper with joined role fields', async () => {

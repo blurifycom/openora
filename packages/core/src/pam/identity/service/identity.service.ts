@@ -1432,6 +1432,19 @@ export class IdentityService {
     return SUCCESS;
   }
 
+  /**
+   * The account's role, or null when there is no such user. Admin routes that act on another
+   * account read it to tell a player (`player:update` is enough) from staff (super-admin only).
+   */
+  async findAccountRole(userId: User['id']) {
+    const [row] = await this.drizzle.db
+      .select({ role: user.role })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row?.role ?? null;
+  }
+
   async unlockUser(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
     const existingUser = findOneOrThrow(
       await this.drizzle.db
