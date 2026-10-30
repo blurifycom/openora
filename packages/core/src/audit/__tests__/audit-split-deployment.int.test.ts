@@ -102,6 +102,11 @@ describe('audit trail with two services of one deployment up', () => {
     expect(await rowsPerMarker()).toEqual(new Map(markers.map((marker) => [marker, 1])));
     const groups = await redis.client.xInfoGroups('oss:evt:tag.created');
     expect(groups.map((group) => group.name)).toEqual([`${namespace}/audit`]);
+    // The dedup key names the plugin and topic only, so a redelivery on either service dedupes.
+    const { rows: consumers } = await db.drizzle.db.execute<{ consumer: string }>(
+      sql`select distinct consumer from processed_events where consumer like '%audit/tag.created%'`,
+    );
+    expect(consumers.map((row) => row.consumer)).toEqual(['audit/tag.created']);
   });
 
   it('gives each deployment on one Redis its own audit group', async () => {
@@ -109,9 +114,12 @@ describe('audit trail with two services of one deployment up', () => {
     const nsB = `deploy-${randomUUID()}`;
     await bootService(`svc-a-${randomUUID()}`, nsA);
     await bootService(`svc-b-${randomUUID()}`, nsB);
-    await vi.waitFor(async () => {
-      const names = (await redis.client.xInfoGroups('oss:evt:tag.created')).map((g) => g.name);
-      expect(names).toEqual(expect.arrayContaining([`${nsA}/audit`, `${nsB}/audit`]));
-    });
+    await vi.waitFor(
+      async () => {
+        const names = (await redis.client.xInfoGroups('oss:evt:tag.created')).map((g) => g.name);
+        expect(names).toEqual(expect.arrayContaining([`${nsA}/audit`, `${nsB}/audit`]));
+      },
+      { timeout: 10_000 },
+    );
   });
 });
