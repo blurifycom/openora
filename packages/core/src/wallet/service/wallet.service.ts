@@ -2023,7 +2023,6 @@ export class WalletService {
     withdrawalPin?: string;
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
-    await this.assertWithdrawalsNotLocked(userId);
     // A retry of a withdrawal that already committed answers with it: the original request passed
     // the PIN and the address wait, and a retry must not be refused by a lock or a deleted
     // address that came after, or the player resubmits under a new key and is paid twice.
@@ -2036,9 +2035,10 @@ export class WalletService {
     if (committed) {
       return committed;
     }
-    // Before anything that could reject for another reason, so every guess is counted and a
+    // Ahead of every other check, the operator hold included, so every guess is counted and a
     // client cannot probe the PIN through the errors of a request that was never going to pass.
     await this.assertWithdrawalPin(userId, withdrawalPin, { ip, userAgent });
+    await this.assertWithdrawalsNotLocked(userId);
     await this.assertKycForWithdrawal(userId, amount, currency);
     if (this.resolveRail(currency) === 'crypto' && !destinationAddress) {
       throw new DestinationAddressRequiredError();

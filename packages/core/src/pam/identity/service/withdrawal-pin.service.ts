@@ -272,13 +272,15 @@ export class WithdrawalPinService implements WithdrawalSecurity {
   /**
    * Reads, compares and counts under a row lock on the user, so a burst of parallel guesses is
    * judged one at a time: each sees the lock the one before it set, and none can be evaluated
-   * after the fifth wrong one has tripped it. The mail and the event go out after the commit.
+   * after the fifth wrong one has tripped it. The lock event is written in that transaction; the
+   * mail goes out after the commit.
    */
   async verifyPin({
     userId,
     pin,
     meta,
   }: Parameters<WithdrawalSecurity['verifyPin']>[0]): Promise<WithdrawalPinVerdict> {
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const { verdict, justLocked } = await this.drizzle.db.transaction(async (txn) => {
       const settle = (v: WithdrawalPinVerdict, locked = false) => ({
         verdict: v,
@@ -331,26 +333,22 @@ export class WithdrawalPinService implements WithdrawalSecurity {
         .update(user)
         .set({ withdrawalPinFailedAttempts: 0, withdrawalPinLockedUntil: lockedUntil })
         .where(eq(user.id, userId));
+      await this.events.emitInTransaction(txn, 'identity.security.withdrawal_pin.locked', {
+        userId,
+        playerId,
+        lockedUntil: lockedUntil.toISOString(),
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
       return settle({ status: 'locked', lockedUntil }, true);
     });
     if (justLocked && verdict.status === 'locked') {
-      await this.announceLock(userId, verdict.lockedUntil, meta);
+      await this.announceLock(userId, verdict.lockedUntil);
     }
     return verdict;
   }
 
-  private async announceLock(
-    userId: User['id'],
-    lockedUntil: Date,
-    meta: Partial<ClientMeta> | undefined,
-  ): Promise<void> {
-    this.events.emit('identity.security.withdrawal_pin.locked', {
-      userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      lockedUntil: lockedUntil.toISOString(),
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    });
+  private async announceLock(userId: User['id'], lockedUntil: Date): Promise<void> {
     // The lock has committed, so a failed enqueue must not turn the refusal into an error.
     // Keyed on the lock's end, so retries of one lock mail once and the next lock mails again.
     try {

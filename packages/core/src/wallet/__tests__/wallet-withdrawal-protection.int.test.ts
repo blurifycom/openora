@@ -6,6 +6,8 @@ import { findOneOrThrow } from '@openora/core/server';
 import {
   queue,
   type PaymentAdapter,
+  type PlayerTags,
+  WITHDRAWAL_LOCK_TAG,
   type WithdrawalPinVerdict,
   type WithdrawalSecurity,
 } from '@openora/core/contracts';
@@ -39,6 +41,8 @@ import {
   DestinationAddressCoolingDownError,
   WITHDRAWAL_ADDRESS_COOLDOWN_MS,
   WalletService,
+  type WalletServiceDeps,
+  WithdrawalLockedError,
   WithdrawalPinIncorrectError,
   WithdrawalPinLockedError,
   WithdrawalPinRequiredError,
@@ -63,10 +67,17 @@ beforeEach(async () => {
   );
 });
 
+const lockedByOperator: PlayerTags = {
+  getActiveTagKeys: async (userIds) => new Map(userIds.map((id) => [id, [WITHDRAWAL_LOCK_TAG]])),
+};
+
 const pinVerdict = (verdict: WithdrawalPinVerdict) =>
   makeWithdrawalSecurity({ verifyPin: vi.fn(async () => verdict) });
 
-function makeService(security: WithdrawalSecurity = makeWithdrawalSecurity()) {
+function makeService(
+  security: WithdrawalSecurity = makeWithdrawalSecurity(),
+  extra: Partial<WalletServiceDeps> = {},
+) {
   const psp = {
     processDeposit: vi.fn(),
     processWithdrawal: vi.fn(async () => ({ externalId: randomUUID(), status: 'completed' })),
@@ -80,6 +91,7 @@ function makeService(security: WithdrawalSecurity = makeWithdrawalSecurity()) {
     identityReader: makeIdentityReader(),
     rates: makeExchangeRateReader(),
     withdrawalSecurity: security,
+    ...extra,
   });
   return { svc, security };
 }
@@ -209,6 +221,26 @@ describe('WalletService.withdraw - Withdrawal PIN (real PG)', () => {
     expect(retry.transactionId).toBe(first.transactionId);
     expect(security.verifyPin).toHaveBeenCalledTimes(1);
     expect(await withdrawalRows()).toHaveLength(1);
+  });
+
+  it('counts a wrong PIN even when the operator hold would refuse the withdrawal anyway', async () => {
+    const security = pinVerdict({ status: 'incorrect', attemptsLeft: 2 });
+    const { svc } = makeService(security, {
+      riskTags: lockedByOperator,
+    });
+    const w = await seedWallet('BTC');
+
+    await expect(
+      svc.withdraw(btcWithdrawal(w.userId, { withdrawalPin: '0000' })),
+    ).rejects.toBeInstanceOf(WithdrawalPinIncorrectError);
+    expect(security.verifyPin).toHaveBeenCalledTimes(1);
+
+    const held = makeService(pinVerdict({ status: 'ok' }), {
+      riskTags: lockedByOperator,
+    });
+    await expect(
+      held.svc.withdraw(btcWithdrawal(w.userId, { withdrawalPin: '1234' })),
+    ).rejects.toBeInstanceOf(WithdrawalLockedError);
   });
 
   it('asks for the PIN on a fiat withdrawal too', async () => {

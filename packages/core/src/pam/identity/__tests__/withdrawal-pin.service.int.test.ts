@@ -362,7 +362,8 @@ describe('WithdrawalPinService.verifyPin (real PG)', () => {
     const lockedUntil = (fifth as { lockedUntil: Date }).lockedUntil.getTime();
     expect(lockedUntil - Date.now()).toBeGreaterThan(29 * 60 * 1000);
     expect(lockedUntil - Date.now()).toBeLessThanOrEqual(30 * 60 * 1000);
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'identity.security.withdrawal_pin.locked',
       expect.objectContaining({ userId: accountUser.id }),
     );
