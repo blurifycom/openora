@@ -30,6 +30,7 @@ import {
   type SwapWebhookEvent,
   type OnRampWebhookEvent,
   type User,
+  type WithdrawalSecurity,
 } from '@openora/core/contracts';
 import { walletContract, type WalletBalanceUpdate } from '../contract/index.js';
 import { CUSTODY_SWEEP_QUEUE } from '../service/custody-sweep.service.js';
@@ -41,6 +42,10 @@ import {
   InsufficientBalanceError,
   KycRequiredError,
   WithdrawalLockedError,
+  WithdrawalPinRequiredError,
+  WithdrawalPinIncorrectError,
+  WithdrawalPinLockedError,
+  DestinationAddressCoolingDownError,
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
@@ -160,6 +165,8 @@ export type WalletRouterDeps = {
   wallet: WalletService;
   adminGuard: AdminGuard;
   audit: AuditWritePort;
+  /** Identity's password and second-factor check, for the actions that must be the owner. */
+  withdrawalSecurity: WithdrawalSecurity;
   paymentProviders: PaymentProviderRegistry;
   reconciliation: ReconciliationService;
   jobQueue: JobQueueAdapter;
@@ -203,6 +210,7 @@ export function createWalletRouter({
   wallet,
   adminGuard,
   audit,
+  withdrawalSecurity,
   paymentProviders,
   reconciliation,
   jobQueue,
@@ -307,6 +315,10 @@ export function createWalletRouter({
             IdempotencyKeyReuseError,
             DestinationAddressRequiredError,
             DestinationAddressNotWhitelistedError,
+            DestinationAddressCoolingDownError,
+            WithdrawalPinRequiredError,
+            WithdrawalPinIncorrectError,
+            WithdrawalPinLockedError,
             WithdrawalDisabledError,
           ],
           SERVICE_UNAVAILABLE: WalletReferenceRateUnavailableError,
@@ -320,6 +332,7 @@ export function createWalletRouter({
             idempotencyKey: input.idempotencyKey,
             destinationAddress: input.destinationAddress,
             destinationTag: input.destinationTag,
+            withdrawalPin: input.withdrawalPin,
             ...context.clientMeta,
           }),
       );
@@ -534,14 +547,24 @@ export function createWalletRouter({
         wallet.listWithdrawalAddresses(getUserId(context), input.currency),
       ),
 
-      create: os.withdrawalAddresses.create.handler(({ input, context }) =>
-        mapErrors(
+      create: os.withdrawalAddresses.create.handler(async ({ input, context }) => {
+        const userId = getUserId(context);
+        const { currentPassword, totpCode, ...address } = input;
+        // Before the save, so a refused proof leaves no row and no vendor call behind.
+        await withdrawalSecurity.assertReauthentication({
+          userId,
+          headers: context.request.headers,
+          currentPassword,
+          totpCode,
+          meta: context.clientMeta,
+        });
+        return mapErrors(
           {
             CONFLICT: [WithdrawalAddressAlreadyExistsError, WithdrawalAddressLimitReachedError],
           },
-          () => wallet.createWithdrawalAddress(getUserId(context), input, context.clientMeta),
-        ),
-      ),
+          () => wallet.createWithdrawalAddress(userId, address, context.clientMeta),
+        );
+      }),
 
       delete: os.withdrawalAddresses.delete.handler(({ input, context }) =>
         wallet.deleteWithdrawalAddress(getUserId(context), input.id, context.clientMeta),

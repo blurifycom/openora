@@ -32,6 +32,8 @@ export const MAIL_TEMPLATE_KEYS = [
   'bonusUnlocked',
   'bonusCredited',
   'twoFactorReset',
+  'withdrawalAddressAdded',
+  'withdrawalsLocked',
 ] as const;
 
 export type EmailTemplateKey = (typeof MAIL_TEMPLATE_KEYS)[number];
@@ -104,6 +106,15 @@ export const EmailTemplateDataSchemas = {
   // one up again. No token: enrolment happens in the signed-in account, so the link is
   // the operator's own settings page, which the template knows.
   twoFactorReset: z.object({ occurredAt: TimestampSchema }),
+  // The address is in the mail on purpose: the owner has to recognise it to know whether a
+  // stolen session added it. The label is not - it is free text the one who added it chose.
+  withdrawalAddressAdded: z.object({
+    address: z.string(),
+    network: z.string(),
+    occurredAt: TimestampSchema,
+  }),
+  // The fixed 30 minutes is part of the copy, so the data carries only when it happened.
+  withdrawalsLocked: z.object({ occurredAt: TimestampSchema }),
   raceWon: z.object({
     raceName: z.string(),
     position: z.number().int().positive(),
@@ -165,6 +176,8 @@ export const MailTemplateSchema = z.discriminatedUnion('key', [
   templateVariant('bonusUnlocked'),
   templateVariant('bonusCredited'),
   templateVariant('twoFactorReset'),
+  templateVariant('withdrawalAddressAdded'),
+  templateVariant('withdrawalsLocked'),
 ]);
 
 export type MailTemplate = {

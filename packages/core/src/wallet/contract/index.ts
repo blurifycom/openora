@@ -12,8 +12,10 @@ import {
   MONEY_SCALE,
   TagKeySchema,
   TimestampSchema,
+  TotpStepUpCodeSchema,
   UuidSchema,
   WalletNetworkSchema,
+  WithdrawalPinSchema,
   WalletRailSchema,
   WalletTransactionStatusSchema,
   WalletTransactionTypeSchema,
@@ -248,6 +250,9 @@ export const WithdrawInputSchema = z
     idempotencyKey: UuidSchema,
     destinationAddress: WalletAddressInputSchema.optional(),
     destinationTag: DestinationTagInputSchema.optional(),
+    // Required when the account has a Withdrawal PIN; the service refuses a missing one, so
+    // a client that skips the field cannot skip the check.
+    withdrawalPin: WithdrawalPinSchema.optional(),
   })
   .superRefine((data, ctx) => {
     if (
@@ -712,26 +717,47 @@ export const WithdrawalAddressSchema = z.object({
   address: z.string(),
   destinationTag: z.string().nullable(),
   createdAt: TimestampSchema,
+  /** When the address may first be paid to: 24 hours after it was saved. */
+  usableFrom: TimestampSchema,
 });
 export type WithdrawalAddress = z.infer<typeof WithdrawalAddressSchema>;
 
+const CreateWithdrawalAddressFields = {
+  label: z.string().trim().min(1).max(50),
+  currency: WalletCurrencyInputSchema,
+  network: WalletNetworkInputSchema,
+  address: WalletAddressInputSchema,
+  destinationTag: DestinationTagInputSchema.optional(),
+};
+
+const refineWithdrawalAddress = (
+  data: { address: string; network: string },
+  ctx: z.core.$RefinementCtx,
+) => {
+  if (!isWalletAddressValidForNetwork(data.address, data.network)) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `not a valid ${data.network} address`,
+      path: ['address'],
+    });
+  }
+};
+
+// What the service stores. The proof below never reaches it: the router checks it first.
 export const CreateWithdrawalAddressInputSchema = z
+  .object(CreateWithdrawalAddressFields)
+  .superRefine(refineWithdrawalAddress);
+
+// What the client sends: the same proof as setting a Withdrawal PIN - the password, plus the
+// 2FA code when the account has 2FA. A stolen session otherwise adds its own payout address.
+export const CreateWithdrawalAddressRequestSchema = z
   .object({
-    label: z.string().trim().min(1).max(50),
-    currency: WalletCurrencyInputSchema,
-    network: WalletNetworkInputSchema,
-    address: WalletAddressInputSchema,
-    destinationTag: DestinationTagInputSchema.optional(),
+    ...CreateWithdrawalAddressFields,
+    currentPassword: z.string().min(8),
+    totpCode: TotpStepUpCodeSchema.optional(),
   })
-  .superRefine((data, ctx) => {
-    if (!isWalletAddressValidForNetwork(data.address, data.network)) {
-      ctx.addIssue({
-        code: 'custom',
-        message: `not a valid ${data.network} address`,
-        path: ['address'],
-      });
-    }
-  });
+  .superRefine(refineWithdrawalAddress);
+export type CreateWithdrawalAddressRequest = z.infer<typeof CreateWithdrawalAddressRequestSchema>;
 export type CreateWithdrawalAddressInput = z.infer<typeof CreateWithdrawalAddressInputSchema>;
 
 export const ListWithdrawalAddressesInputSchema = z.object({
@@ -865,7 +891,7 @@ export const walletContract = {
 
     create: oc
       .route({ method: 'POST', path: '/wallet/withdrawal-addresses' })
-      .input(CreateWithdrawalAddressInputSchema)
+      .input(CreateWithdrawalAddressRequestSchema)
       .output(WithdrawalAddressSchema),
 
     delete: oc

@@ -1301,6 +1301,17 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'identity.security.withdrawal_pin.locked') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      ...identitySubject(p),
+      after: { withdrawalPinLockedUntil: p['lockedUntil'] ?? null },
+    };
+  }
+
   if (topic === 'identity.security.anti_phishing_code.set') {
     const playerId = p['playerId'];
     return {
@@ -1385,6 +1396,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.security.require_two_factor.updated',
   'identity.security.withdrawal_pin.set',
   'identity.security.withdrawal_pin.removed',
+  'identity.security.withdrawal_pin.locked',
   'identity.security.anti_phishing_code.set',
   'identity.profile.updated',
   'identity.user.deactivated',
