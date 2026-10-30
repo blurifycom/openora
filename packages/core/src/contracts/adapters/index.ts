@@ -539,6 +539,7 @@ export type {
   ActionTypeImplementation,
   McpToolDescriptor,
   ActionTypeDescriptor,
+  ActionPayloadMatch,
   TriggerDescriptor,
   TriggerSubjectField,
   McpInputIssue,

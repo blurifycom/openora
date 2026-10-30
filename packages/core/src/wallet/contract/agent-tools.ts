@@ -84,6 +84,8 @@ export const holdWithdrawalAction = defineActionType({
   schemaVersion: 1,
   iam: { resource: 'withdrawal', action: 'hold' },
   reversible: true,
+  // Each withdrawal is held on its own: a pending hold on one does not cover another.
+  distinctBy: 'withdrawalId',
   payloadSchema: HoldWithdrawalPayloadSchema,
   errors: ['player_not_found', 'withdrawal_not_found', 'withdrawal_not_pending'],
 });

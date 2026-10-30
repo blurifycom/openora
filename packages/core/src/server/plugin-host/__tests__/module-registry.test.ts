@@ -136,6 +136,13 @@ const validAction = defineActionType({
   errors: ['withdrawal_not_pending'],
 });
 
+// A payload whose benefit depends on a field, as add_tag's does on its tag.
+const TAG_KEYS = ['vip', 'high_risk'] as const;
+const taggingPayload = {
+  payloadSchema: z.object({ playerId: UuidSchema, tagKey: z.enum(TAG_KEYS) }),
+};
+const vipOnly = { field: 'tagKey', values: ['vip'] };
+
 const actionFactory = () => ({
   precondition: async () => ({ ok: true as const }),
   execute: async () => ({ outcome: 'applied' as const }),
@@ -442,6 +449,59 @@ describe('ModuleRegistryImpl - MCP tools and action types', () => {
     ],
     ['a null benefitsPlayer flag', { benefitsPlayer: null }, /benefitsPlayer must be a boolean/],
     [
+      'benefitsPlayerWhen beside benefitsPlayer: true',
+      { ...taggingPayload, benefitsPlayer: true, benefitsPlayerWhen: vipOnly },
+      /benefitsPlayerWhen conflicts with benefitsPlayer: true/,
+    ],
+    [
+      'a benefitsPlayerWhen that is not { field, values }',
+      { ...taggingPayload, benefitsPlayerWhen: 'vip' },
+      /benefitsPlayerWhen must be \{ field, values \}/,
+    ],
+    [
+      'a benefitsPlayerWhen without values',
+      { ...taggingPayload, benefitsPlayerWhen: { field: 'tagKey', values: [] } },
+      /benefitsPlayerWhen must be \{ field, values \}/,
+    ],
+    [
+      'a benefitsPlayerWhen naming a field the payload lacks',
+      { ...taggingPayload, benefitsPlayerWhen: { field: 'tier', values: ['vip'] } },
+      /benefitsPlayerWhen\.field "tier" is not a top-level field of payloadSchema/,
+    ],
+    [
+      'a benefitsPlayerWhen value the field refuses',
+      { ...taggingPayload, benefitsPlayerWhen: { field: 'tagKey', values: ['gold'] } },
+      /benefitsPlayerWhen\.values holds "gold", which payloadSchema refuses for tagKey/,
+    ],
+    ['a distinctBy that is not a name', { distinctBy: 1 }, /distinctBy must name a payload field/],
+    [
+      'a distinctBy naming a field the payload lacks',
+      { distinctBy: 'playerId' },
+      /distinctBy "playerId" is not a top-level field of payloadSchema/,
+    ],
+    [
+      'a distinctBy naming an optional field',
+      {
+        payloadSchema: z.object({
+          withdrawalId: UuidSchema.optional(),
+          reason: z.string().max(500),
+        }),
+        distinctBy: 'withdrawalId',
+      },
+      /distinctBy "withdrawalId" is optional in payloadSchema/,
+    ],
+    [
+      'a distinctBy naming an object field',
+      {
+        payloadSchema: z.object({
+          target: z.object({ id: UuidSchema }),
+          reason: z.string().max(500),
+        }),
+        distinctBy: 'target',
+      },
+      /distinctBy "target" must be a string or number field/,
+    ],
+    [
       'a payload whose top level is a union',
       {
         payloadSchema: z.union([
@@ -475,6 +535,22 @@ describe('ModuleRegistryImpl - MCP tools and action types', () => {
     reg.actions.register(contract, actionFactory);
 
     expect(reg.actions.getAll().map((entry) => entry.contract.benefitsPlayer)).toEqual([flag]);
+  });
+
+  it('accepts an action type whose benefit and kind depend on a payload field', () => {
+    const { reg } = newRegistry();
+    const contract = defineActionType({
+      ...validAction,
+      ...taggingPayload,
+      benefitsPlayerWhen: vipOnly,
+      distinctBy: 'tagKey',
+    });
+
+    reg.actions.register(contract, actionFactory);
+
+    expect(
+      reg.actions.getAll().map(({ contract: c }) => [c.benefitsPlayerWhen, c.distinctBy]),
+    ).toEqual([[vipOnly, 'tagKey']]);
   });
 
   it('rejects a tool id an action type already holds', () => {

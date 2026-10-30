@@ -100,12 +100,103 @@ export function assertValidActionType(
     }) ??
     errorCodesRejection(contract.errors) ??
     factoryRejection(factory, '(c) => ({ precondition, execute })') ??
-    inputSchemaRejection(contract.payloadSchema, 'payloadSchema');
+    inputSchemaRejection(contract.payloadSchema, 'payloadSchema') ??
+    benefitsPlayerWhenRejection(contract) ??
+    distinctByRejection(contract);
   if (rejection) {
     throw new Error(
       `[mcp] action type "${String(contract.id)}" (plugin "${owner}"): ${rejection.problem} - ${rejection.fix}`,
     );
   }
+}
+
+/** The payload schema's own top-level field, or null; the schema is a validated z.object. */
+function payloadField(contract: ActionTypeContract, field: string): z.ZodType | null {
+  const shape = contract.payloadSchema.shape as Record<string, z.ZodType>;
+  return Object.hasOwn(shape, field) ? (shape[field] ?? null) : null;
+}
+
+function benefitsPlayerWhenRejection(contract: ActionTypeContract): Rejection | null {
+  const when: unknown = contract.benefitsPlayerWhen;
+  if (when === undefined) {
+    return null;
+  }
+  if (contract.benefitsPlayer === true) {
+    return {
+      problem: 'benefitsPlayerWhen conflicts with benefitsPlayer: true, which covers every payload',
+      fix: 'keep benefitsPlayer: true when every payload benefits the player, or benefitsPlayerWhen alone',
+    };
+  }
+  const shapeFix = 'eg benefitsPlayerWhen: { field: "tagKey", values: ["vip"] }';
+  if (
+    typeof when !== 'object' ||
+    when === null ||
+    Object.keys(when).some((key) => key !== 'field' && key !== 'values') ||
+    !('field' in when) ||
+    typeof when.field !== 'string' ||
+    !('values' in when) ||
+    !Array.isArray(when.values) ||
+    when.values.length === 0 ||
+    !when.values.every((value) => typeof value === 'string' && value.length > 0)
+  ) {
+    return {
+      problem: 'benefitsPlayerWhen must be { field, values } with at least one string value',
+      fix: shapeFix,
+    };
+  }
+  const fieldSchema = payloadField(contract, when.field);
+  if (!fieldSchema) {
+    return {
+      problem: `benefitsPlayerWhen.field "${when.field}" is not a top-level field of payloadSchema`,
+      fix: 'name a field the payload schema declares',
+    };
+  }
+  const refused = when.values.find((value: unknown) => !fieldSchema.safeParse(value).success);
+  if (refused !== undefined) {
+    return {
+      problem: `benefitsPlayerWhen.values holds "${String(refused)}", which payloadSchema refuses for ${when.field}`,
+      fix: 'list values the field accepts, so a payload can match them',
+    };
+  }
+  return null;
+}
+
+function distinctByRejection(contract: ActionTypeContract): Rejection | null {
+  const field: unknown = contract.distinctBy;
+  if (field === undefined) {
+    return null;
+  }
+  if (typeof field !== 'string') {
+    return {
+      problem: 'distinctBy must name a payload field',
+      fix: 'eg distinctBy: "tagKey", or leave it out',
+    };
+  }
+  const fieldSchema = payloadField(contract, field);
+  if (!fieldSchema) {
+    return {
+      problem: `distinctBy "${field}" is not a top-level field of payloadSchema`,
+      fix: 'name a field the payload schema declares',
+    };
+  }
+  const jsonType = (
+    z.toJSONSchema(contract.payloadSchema, { target: 'draft-7', io: 'input' }).properties?.[
+      field
+    ] as { type?: unknown } | undefined
+  )?.type;
+  if (jsonType !== 'string' && jsonType !== 'number' && jsonType !== 'integer') {
+    return {
+      problem: `distinctBy "${field}" must be a string or number field`,
+      fix: 'tell proposals apart by a scalar field, such as an enum key or an id',
+    };
+  }
+  if (fieldSchema.safeParse(undefined).success) {
+    return {
+      problem: `distinctBy "${field}" is optional in payloadSchema`,
+      fix: 'tell proposals apart by a field every payload carries',
+    };
+  }
+  return null;
 }
 
 function idRejection(id: unknown, pattern: RegExp, example: string): Rejection | null {

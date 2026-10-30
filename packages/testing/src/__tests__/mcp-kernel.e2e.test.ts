@@ -77,6 +77,8 @@ const GeneratedAgentSurfaceSchema = z.object({
       iam: CatalogIamSchema,
       reversible: z.boolean().nullable(),
       benefitsPlayer: z.boolean().nullable(),
+      benefitsPlayerWhen: z.object({ field: z.string(), values: z.array(z.string()) }).nullable(),
+      distinctBy: z.string().nullable(),
     }),
   ),
 });
@@ -328,6 +330,11 @@ describe('MCP kernel registries match the generated catalog', () => {
       iam: { resource: action.iam.resource, action: action.iam.action },
       reversible: action.reversible,
       benefitsPlayer: action.benefitsPlayer,
+      benefitsPlayerWhen: action.benefitsPlayerWhen && {
+        field: action.benefitsPlayerWhen.field,
+        values: [...action.benefitsPlayerWhen.values],
+      },
+      distinctBy: action.distinctBy,
     }));
 
     expect(byId(generated.agentTools).map((entry) => entry.id)).toEqual(
@@ -338,6 +345,16 @@ describe('MCP kernel registries match the generated catalog', () => {
     );
     expect(byId(generated.agentTools)).toEqual(byId(servedTools));
     expect(byId(generated.agentActions)).toEqual(byId(servedActions));
+  });
+
+  it('declares the vip tag a benefit and tells tags and withdrawals apart', () => {
+    const declared = (id: string) => {
+      const action = kernel.listActionTypes().find((entry) => entry.id === id);
+      return action && [action.benefitsPlayer, action.benefitsPlayerWhen, action.distinctBy];
+    };
+
+    expect(declared('add_tag')).toEqual([false, { field: 'tagKey', values: ['vip'] }, 'tagKey']);
+    expect(declared('hold_withdrawal')).toEqual([false, null, 'withdrawalId']);
   });
 
   it('keeps serving the kernel createApp bound and refuses to rebind it', () => {

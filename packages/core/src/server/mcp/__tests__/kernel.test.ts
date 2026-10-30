@@ -791,6 +791,38 @@ describe('McpKernel catalog', () => {
     expect(benefiting.catalogVersion).toBe(plain.catalogVersion);
   });
 
+  it('lists which payloads benefit the player and what tells proposals apart, without changing the catalog version', () => {
+    const plain = kernelOf((registry) => {
+      registry.actions.register(holdWithdrawal, idempotentHold);
+    }).kernel;
+    const declaring = kernelOf((registry) => {
+      registry.actions.register(
+        defineActionType({
+          ...holdWithdrawal,
+          benefitsPlayerWhen: { field: 'reason', values: ['goodwill'] },
+          distinctBy: 'withdrawalId',
+        }),
+        idempotentHold,
+      );
+    }).kernel;
+
+    expect(
+      plain
+        .listActionTypes()
+        .map(({ benefitsPlayerWhen, distinctBy }) => [benefitsPlayerWhen, distinctBy]),
+    ).toEqual([[null, null]]);
+    expect(
+      declaring
+        .listActionTypes()
+        .map(({ benefitsPlayer, benefitsPlayerWhen, distinctBy }) => [
+          benefitsPlayer,
+          benefitsPlayerWhen,
+          distinctBy,
+        ]),
+    ).toEqual([[false, { field: 'reason', values: ['goodwill'] }, 'withdrawalId']]);
+    expect(declaring.catalogVersion).toBe(plain.catalogVersion);
+  });
+
   it('versions the catalog by the allowed trigger topics, not by their order', () => {
     const versionWith = (triggerTopics?: DomainEventName[]) =>
       createMcpKernel({
