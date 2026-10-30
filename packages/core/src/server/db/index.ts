@@ -17,6 +17,7 @@ export {
   isPositiveMoney,
   moneyScaleBy,
   moneyDivide,
+  moneyMultiplyDivide,
   moneyAdd,
   moneySubtract,
   moneyFloorToScale,

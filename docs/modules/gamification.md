@@ -114,6 +114,30 @@ ends when the next period closes and the stuck one is left behind. A retry re-co
 of the moment, so a player already paid no longer matches their grant; that conflict, and a grant
 the bonus engine refuses outright, count as settled and do not hold the watermark.
 
+## What a periodic bonus is worth
+
+`promo.rankPeriodic.basis` in platform config decides it, and defaults to `flat`.
+
+- **`flat`** pays the tier's `dailyBonus`, `weeklyBonus` or `monthlyBonus` as is.
+- **`margin`** pays the tier's `dailyBonusPercent`, `weeklyBonusPercent` or `monthlyBonusPercent`
+  of the house edge the player gave up in the period: the own-money stake times `1 - rtp`, summed
+  on the period counter as the bets happen, priced by the shared `houseEdge` rakeback uses. The flat amount
+  becomes a cap, and a null amount leaves the bonus uncapped. A tier with no percent for a kind
+  pays nothing of that kind. A bet whose rtp is missing, zero or malformed adds nothing.
+
+A tier's `rakebackPercent` and its three bonus percents may total at most 100, under either basis,
+since one bet can fund all four. That keeps the payout within the edge only while rakeback runs on
+its `margin` basis and no streak boost raises it.
+
+Under `margin` a player with no counter for the period is never paid, whatever the activity
+setting, and the minimum is still measured on the stake wagered, not on the margin. A rollback
+removes a proportional share of the round's recorded margin under a row lock, bounded by its
+remaining own-money stake. The round retains its converted contribution, so differing RTPs,
+changed rates, and repeated callbacks cannot remove another round's margin. Partial reversals
+use the round's blended margin. Open period counters are clamped at zero; lifetime wagered stays
+monotonic. A rollback after its period closes still reduces the new period. The round's row is
+kept until it is fully reversed, under either basis and for ineligible products too.
+
 ## What a reward is paid in
 
 A ladder can be priced in a unit the wallet cannot hold - a fiat ticker on a crypto-only operator

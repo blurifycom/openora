@@ -5,11 +5,13 @@ import type {
   ExchangeRateReader,
   DomainEventPayload,
   PlayEligibilityPort,
+  RankPeriodicBasis,
   Uuid,
   WalletReader,
 } from '@openora/core/contracts';
 import {
   moneyCompare,
+  moneyDivide,
   moneyScaleBy,
   type DrizzleService,
   type DrizzleTx,
@@ -47,10 +49,19 @@ const BATCH = 500;
 const SETTLED_COUNTER_AGE_MS = 35 * 24 * 60 * 60 * 1000;
 
 const PERIOD_BONUS = {
-  daily: promoRankTier.dailyBonus,
-  weekly: promoRankTier.weeklyBonus,
-  monthly: promoRankTier.monthlyBonus,
+  daily: { amount: promoRankTier.dailyBonus, percent: promoRankTier.dailyBonusPercent },
+  weekly: { amount: promoRankTier.weeklyBonus, percent: promoRankTier.weeklyBonusPercent },
+  monthly: { amount: promoRankTier.monthlyBonus, percent: promoRankTier.monthlyBonusPercent },
 } as const;
+
+/** `margin × percent / 100`, capped at `cap` when there is one; null when it rounds to nothing. */
+function marginBonus(margin: string, percent: string, cap: string | null): string | null {
+  const earned = moneyDivide(moneyScaleBy(margin, percent), '100');
+  if (moneyCompare(earned, '0') <= 0) {
+    return null;
+  }
+  return cap !== null && moneyCompare(earned, cap) > 0 ? cap : earned;
+}
 
 /**
  * Pays what a rank earns: the level-up bonuses `RankService.recordWager` recorded, and the
@@ -74,6 +85,7 @@ export class RankPayoutService {
     private readonly rates: ExchangeRateReader,
     private readonly wallet: WalletReader,
     private readonly logger: Logger,
+    private readonly periodicBasis: RankPeriodicBasis = 'flat',
   ) {}
 
   /**
@@ -143,6 +155,9 @@ export class RankPayoutService {
           dailyBonus: promoRankTier.dailyBonus,
           weeklyBonus: promoRankTier.weeklyBonus,
           monthlyBonus: promoRankTier.monthlyBonus,
+          dailyBonusPercent: promoRankTier.dailyBonusPercent,
+          weeklyBonusPercent: promoRankTier.weeklyBonusPercent,
+          monthlyBonusPercent: promoRankTier.monthlyBonusPercent,
         })
         .from(promoPlayerRank)
         .innerJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
@@ -183,7 +198,7 @@ export class RankPayoutService {
             )
             .returning({ userId: promoPlayerRank.userId });
           if (caughtUp && !silent) {
-            announced.push(change);
+            announced.push({ ...change, periodicBasis: this.periodicBasis });
           }
         } catch (err) {
           this.logger.error({ err, userId: change.userId }, 'rank change announcement failed');
@@ -226,10 +241,16 @@ export class RankPayoutService {
       });
 
       for (const player of due) {
-        if (player.amount === null || (await this.isBlocked(player.userId))) {
+        const amount =
+          this.periodicBasis === 'flat'
+            ? player.amount
+            : player.percent === null || player.margin === null
+              ? null
+              : marginBonus(player.margin, player.percent, player.amount);
+        if (amount === null || (await this.isBlocked(player.userId))) {
           continue;
         }
-        const owed = { ...player, amount: player.amount };
+        const owed = { userId: player.userId, currency: player.currency, amount };
         try {
           const paid = await this.drizzle.db.transaction((tx) =>
             this.grant(tx, owed, period.sourceRef, terms, payout),
@@ -266,8 +287,10 @@ export class RankPayoutService {
   }
 
   /**
-   * Everyone a period owes: the players holding a rank that carries an amount and, when the
-   * operator asks for it, who wagered enough inside the period the payout is settling.
+   * Everyone a period owes: the players holding a rank that carries an amount (a percent, under
+   * the `margin` basis) and, when the operator asks for it, who wagered enough inside the period
+   * the payout is settling. A margin bonus is a share of what the period counted, so it always
+   * needs the period's counter.
    */
   private playersOwed(
     kind: RankPeriodKind,
@@ -276,18 +299,22 @@ export class RankPayoutService {
     after: string,
     activity: { requiresActivity: boolean; minimumWager: string | null },
   ) {
-    const ranked = this.drizzle.db
-      .select({
-        userId: promoPlayerRank.userId,
-        amount: bonus,
-        currency: promoRankTier.currency,
-      })
-      .from(promoPlayerRank)
-      .innerJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId));
-    const holdsAnAmount = [gt(promoPlayerRank.userId, after), isNotNull(bonus)];
+    const columns = {
+      userId: promoPlayerRank.userId,
+      amount: bonus.amount,
+      percent: bonus.percent,
+      currency: promoRankTier.currency,
+    };
+    const holdsAnAmount = [
+      gt(promoPlayerRank.userId, after),
+      isNotNull(this.periodicBasis === 'flat' ? bonus.amount : bonus.percent),
+    ];
 
-    if (!activity.requiresActivity) {
-      return ranked
+    if (this.periodicBasis === 'flat' && !activity.requiresActivity) {
+      return this.drizzle.db
+        .select({ ...columns, margin: sql<string | null>`null` })
+        .from(promoPlayerRank)
+        .innerJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
         .where(and(...holdsAnAmount))
         .orderBy(asc(promoPlayerRank.userId))
         .limit(BATCH);
@@ -295,7 +322,10 @@ export class RankPayoutService {
 
     // "Played in the period" is a question about the window that closed, answered by what the
     // player wagered inside it - not by whether they have played since.
-    return ranked
+    return this.drizzle.db
+      .select({ ...columns, margin: promoRankPeriodWager.margin })
+      .from(promoPlayerRank)
+      .innerJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
       .innerJoin(
         promoRankPeriodWager,
         and(

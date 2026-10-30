@@ -53,6 +53,7 @@ import {
   BonusForfeitReasonSchema,
   BonusGrantSourceSchema,
   ContributionPercentSchema,
+  RANK_PERIODIC_BASES,
 } from './promo.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
@@ -791,6 +792,11 @@ export const domainEventSchemas = {
     dailyBonus: MoneyAmountSchema.nullable().optional(),
     weeklyBonus: MoneyAmountSchema.nullable().optional(),
     monthlyBonus: MoneyAmountSchema.nullable().optional(),
+    dailyBonusPercent: ContributionPercentSchema.nullable().optional(),
+    weeklyBonusPercent: ContributionPercentSchema.nullable().optional(),
+    monthlyBonusPercent: ContributionPercentSchema.nullable().optional(),
+    // Under `margin` the bonuses above are caps on a percent of the house edge, not flat amounts.
+    periodicBasis: z.enum(RANK_PERIODIC_BASES).optional(),
   }),
   // Standings frozen and prizes granted. Emitted once, after the settlement transaction.
   'promo.race.settled': z.object({

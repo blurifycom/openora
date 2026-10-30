@@ -7,6 +7,7 @@ import type {
   BonusGrantCommands,
   ExchangeRateReader,
   PlayEligibilityPort,
+  RankPeriodicBasis,
   WalletReader,
 } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
@@ -34,7 +35,7 @@ const NOW = new Date('2026-09-22T00:00:00Z');
 const YESTERDAY_NOON = new Date('2026-09-21T12:00:00Z');
 const TWO_DAYS_AGO = new Date('2026-09-20T12:00:00Z');
 
-const service = () =>
+const service = (periodicBasis: RankPeriodicBasis = 'flat') =>
   new RankPayoutService(
     db.drizzle,
     mock<BonusGrantCommands>({ grant }),
@@ -42,6 +43,7 @@ const service = () =>
     mock<ExchangeRateReader>({ convert }),
     mock<WalletReader>({ getBalances }),
     logger,
+    periodicBasis,
   );
 
 const tierId = async (key: string) => {
@@ -78,10 +80,15 @@ const levelUp = async (id: string) => {
 const DAILY_PERIOD_KEY = 'rank-daily:2026-09-21T00';
 
 /** What the player wagered inside the period the daily payout settles. */
-const wageredInPeriod = (userId: string, wagered: string, periodKey = DAILY_PERIOD_KEY) =>
+const wageredInPeriod = (
+  userId: string,
+  wagered: string,
+  periodKey = DAILY_PERIOD_KEY,
+  margin = '0',
+) =>
   db.drizzle.db
     .insert(promoRankPeriodWager)
-    .values({ userId, kind: 'daily', periodKey, currency: 'USD', wagered });
+    .values({ userId, kind: 'daily', periodKey, currency: 'USD', wagered, margin });
 
 const holding = async (key: string, lastWageredAt: Date | null) => {
   const userId = randomUUID();
@@ -588,6 +595,116 @@ describe('paying a periodic bonus', () => {
   });
 });
 
+describe('paying a periodic bonus on the house edge', () => {
+  /** Holds silver and wagered `wagered` yesterday, of which the house edge was `margin`. */
+  const playedWithMargin = async (margin: string, wagered = '100') => {
+    const userId = await holding('silver', YESTERDAY_NOON);
+    await wageredInPeriod(userId, wagered, DAILY_PERIOD_KEY, margin);
+    return userId;
+  };
+
+  const silverPays = (dailyBonusPercent: string | null, dailyBonus: string | null) =>
+    db.drizzle.db
+      .update(promoRankTier)
+      .set({ dailyBonusPercent, dailyBonus })
+      .where(eq(promoRankTier.key, 'silver'));
+
+  it('pays the tier percent of the house edge the player gave up in the period', async () => {
+    await silverPays('10', null);
+    const userId = await playedWithMargin('4');
+
+    const granted = await service('margin').payPeriodic('daily', NOW);
+
+    expect(granted).toHaveLength(1);
+    expect(grant).toHaveBeenCalledWith(expect.anything(), {
+      userId,
+      currency: 'USD',
+      amount: '0.400000000000000000',
+      source: 'rank',
+      sourceRef: DAILY_PERIOD_KEY,
+      actor: { type: 'system' },
+      terms: DAILY_TERMS,
+    });
+  });
+
+  it('caps the bonus at the tier amount', async () => {
+    await silverPays('50', '0.5');
+    await playedWithMargin('4');
+
+    await service('margin').payPeriodic('daily', NOW);
+
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ amount: '0.500000000000000000' }),
+    );
+  });
+
+  it('pays below the cap uncapped', async () => {
+    await silverPays('5', '0.5');
+    await playedWithMargin('4');
+
+    await service('margin').payPeriodic('daily', NOW);
+
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ amount: '0.200000000000000000' }),
+    );
+  });
+
+  it('pays nothing for a tier without a percent, whatever its flat amount', async () => {
+    await silverPays(null, '0.5');
+    await playedWithMargin('4');
+
+    expect(await service('margin').payPeriodic('daily', NOW)).toEqual([]);
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it('pays nothing on a zero margin, or one too small to survive the percent', async () => {
+    await silverPays('10', null);
+    await playedWithMargin('0');
+    await playedWithMargin('0.000000000000000001');
+
+    expect(await service('margin').payPeriodic('daily', NOW)).toEqual([]);
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it('needs a counter for the period even when the operator does not require activity', async () => {
+    await silverPays('10', null);
+    await db.drizzle.db.update(promoRankConfig).set({ periodicRequiresActivity: false });
+    await holding('silver', TWO_DAYS_AGO);
+    const userId = await playedWithMargin('4');
+
+    const granted = await service('margin').payPeriodic('daily', NOW);
+
+    expect(granted.map((g) => g.userId)).toEqual([userId]);
+  });
+
+  it('still holds the minimum to the stake wagered, not the margin', async () => {
+    await silverPays('10', null);
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ periodicMinimumWager: '25', periodicRequiresActivity: false });
+    const enough = await playedWithMargin('1', '25');
+    await playedWithMargin('4', '24');
+
+    const granted = await service('margin').payPeriodic('daily', NOW);
+
+    expect(granted.map((g) => g.userId)).toEqual([enough]);
+  });
+
+  it('leaves the flat amounts untouched when the basis is flat', async () => {
+    await silverPays('10', '0.5');
+    await playedWithMargin('4');
+
+    await service().payPeriodic('daily', NOW);
+
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ amount: '0.500000000000000000' }),
+    );
+  });
+});
+
 describe('announcing a promotion', () => {
   /** A player the bet has promoted to `to`, last told about `from` (null: never told anything). */
   const promoted = async (from: string | null, to: string) => {
@@ -628,6 +745,10 @@ describe('announcing a promotion', () => {
         dailyBonus: '0.500000000000000000',
         weeklyBonus: null,
         monthlyBonus: null,
+        dailyBonusPercent: null,
+        weeklyBonusPercent: null,
+        monthlyBonusPercent: null,
+        periodicBasis: 'flat',
       },
     ]);
     expect(await announcedTier(userId)).toBe(await tierId('silver'));

@@ -1,3 +1,4 @@
+import type { RankPeriodicBasis } from '@openora/core/contracts';
 import type { RankLadder } from '../contract/index.js';
 import { promoRankTier, type PromoRankTier } from '../schema/index.js';
 
@@ -12,11 +13,19 @@ export const TIER_COLUMNS = {
   weeklyBonus: promoRankTier.weeklyBonus,
   monthlyBonus: promoRankTier.monthlyBonus,
   levelUpBonus: promoRankTier.levelUpBonus,
+  dailyBonusPercent: promoRankTier.dailyBonusPercent,
+  weeklyBonusPercent: promoRankTier.weeklyBonusPercent,
+  monthlyBonusPercent: promoRankTier.monthlyBonusPercent,
 };
 
 type LadderRow = Pick<PromoRankTier, keyof typeof TIER_COLUMNS | 'currency'>;
 
-export const toLadder = (currency: string, tiers: readonly LadderRow[]): RankLadder => ({
+export const toLadder = (
+  currency: string,
+  tiers: readonly LadderRow[],
+  periodicBasis: RankPeriodicBasis,
+): RankLadder => ({
   currency,
+  periodicBasis,
   tiers: tiers.map(({ currency: _currency, ...tier }) => tier),
 });

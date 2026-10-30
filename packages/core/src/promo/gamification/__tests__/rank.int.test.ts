@@ -10,6 +10,7 @@ import {
   promoRankConfig,
   promoRankLevelUp,
   promoRankPeriodWager,
+  promoRankRoundWager,
   promoRankTier,
 } from '../schema/index.js';
 import { DEFAULT_PAYOUT_ANCHORS } from '../contract/index.js';
@@ -90,12 +91,35 @@ afterAll(() => db.drop());
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  await db.drizzle.db.delete(promoRankRoundWager);
   await db.drizzle.db.delete(promoRankLevelUp);
   await db.drizzle.db.delete(promoRankPeriodWager);
   await db.drizzle.db.delete(promoPlayerRank);
   await db.drizzle.db.delete(promoRankTier);
   await db.drizzle.db.delete(promoRankConfig);
   await seedRankLadder(db.drizzle.db, LADDER);
+});
+
+describe('seeding rank percentages', () => {
+  it('refuses a seeded tier whose combined percentages exceed 100', async () => {
+    await expect(
+      seedRankLadder(db.drizzle.db, {
+        ...LADDER,
+        tiers: [
+          {
+            key: 'excess',
+            name: 'Excess',
+            wagerThreshold: '1',
+            rakebackPercent: '60',
+            dailyBonusPercent: '50',
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ cause: { code: '23514' } });
+    expect(
+      await db.drizzle.db.select().from(promoRankTier).where(eq(promoRankTier.key, 'excess')),
+    ).toEqual([]);
+  });
 });
 
 describe('recording a wager toward the rank ladder', () => {
@@ -309,6 +333,219 @@ describe('recording a wager toward the rank ladder', () => {
     await db.drizzle.db.transaction((tx) => ranks.recordWager(tx, partlyBonusFunded));
 
     expect((await rankOf(userId))?.lifetimeWagered).toBe('100.000000000000000000');
+  });
+});
+
+describe('counting the house edge toward the periodic bonus', () => {
+  const SLOT = { ...CASINO, rtp: '0.96' };
+
+  const counters = (userId: string) =>
+    db.drizzle.db
+      .select({
+        kind: promoRankPeriodWager.kind,
+        wagered: promoRankPeriodWager.wagered,
+        margin: promoRankPeriodWager.margin,
+      })
+      .from(promoRankPeriodWager)
+      .where(eq(promoRankPeriodWager.userId, userId))
+      .orderBy(promoRankPeriodWager.kind);
+
+  const marginOf = async (userId: string) => {
+    const rows = await counters(userId);
+    expect(new Set(rows.map((row) => row.margin)).size).toBe(1);
+    return rows[0]?.margin;
+  };
+
+  const bet = (userId: string, args: { amount: string; realAmount?: string; currency?: string }) =>
+    db.drizzle.db.transaction((tx) =>
+      ranks.recordWager(tx, {
+        userId,
+        currency: args.currency ?? 'USDT',
+        amount: args.amount,
+        weightedAmount: args.amount,
+        realAmount: args.realAmount ?? args.amount,
+        context: SLOT,
+        round: { providerName: 'aggregator', externalRoundId: userId },
+      }),
+    );
+
+  const rollback = (userId: string, realAmount: string) =>
+    db.drizzle.db.transaction((tx) =>
+      ranks.reverseWager(tx, {
+        userId,
+        currency: 'USDT',
+        round: { providerName: 'aggregator', externalRoundId: userId },
+        realAmount,
+      }),
+    );
+
+  it('sums own-money stake × (1 − rtp) into every open period', async () => {
+    const userId = randomUUID();
+
+    await bet(userId, { amount: '100' });
+    await bet(userId, { amount: '50' });
+
+    expect(await counters(userId)).toEqual(
+      ['daily', 'monthly', 'weekly'].map((kind) => ({
+        kind,
+        wagered: '150.000000000000000000',
+        margin: '6.000000000000000000',
+      })),
+    );
+  });
+
+  it('adds nothing for a bet with no rtp, or one outside zero to one', async () => {
+    const userId = randomUUID();
+
+    await wager(userId, '100');
+    await wager(userId, '100', 'USDT', { ...CASINO, rtp: '96' });
+
+    expect(await marginOf(userId)).toBe('0.000000000000000000');
+    expect((await rankOf(userId))?.lifetimeWagered).toBe('200.000000000000000000');
+  });
+
+  it('adds nothing for the bonus-funded part of a stake', async () => {
+    const userId = randomUUID();
+
+    await bet(userId, { amount: '100', realAmount: '25' });
+    await bet(userId, { amount: '100', realAmount: '0' });
+
+    expect(await marginOf(userId)).toBe('1.000000000000000000');
+  });
+
+  it('converts the margin at the rate the stake converted at', async () => {
+    const userId = randomUUID();
+    convert.mockResolvedValue('200');
+
+    await bet(userId, { amount: '0.002', currency: 'BTC' });
+
+    expect(await marginOf(userId)).toBe('8.000000000000000000');
+  });
+
+  it('skips conversion for excluded products while preserving mixed-round reversal proportions', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db.update(promoRankConfig).set({ eligibleProducts: ['casino'] });
+    await bet(userId, { amount: '100' });
+    await db.drizzle.db.transaction((tx) =>
+      ranks.recordWager(tx, {
+        userId,
+        currency: 'USDT',
+        amount: '100',
+        weightedAmount: '100',
+        realAmount: '100',
+        context: { ...SLOT, product: 'pvp' },
+        round: { providerName: 'aggregator', externalRoundId: userId },
+      }),
+    );
+    await db.drizzle.db.transaction((tx) =>
+      ranks.recordWager(tx, {
+        userId: randomUUID(),
+        currency: 'BTC',
+        amount: '1',
+        weightedAmount: '1',
+        realAmount: '1',
+        context: { ...SLOT, product: 'pvp' },
+        round: { providerName: 'aggregator', externalRoundId: randomUUID() },
+      }),
+    );
+    expect(convert).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
+    await rollback(userId, '100');
+    expect(await marginOf(userId)).toBe('2.000000000000000000');
+  });
+
+  it('takes a rolled-back stake back out of the margin, and leaves the wagered counters', async () => {
+    const userId = randomUUID();
+    await bet(userId, { amount: '100' });
+
+    await rollback(userId, '25');
+
+    expect(await marginOf(userId)).toBe('3.000000000000000000');
+    expect((await counters(userId)).map((row) => row.wagered)).toEqual(
+      Array(3).fill('100.000000000000000000'),
+    );
+    expect((await rankOf(userId))?.lifetimeWagered).toBe('100.000000000000000000');
+  });
+
+  it('never takes the margin below zero', async () => {
+    const userId = randomUUID();
+    await bet(userId, { amount: '10' });
+
+    await rollback(userId, '1000');
+
+    expect(await marginOf(userId)).toBe('0.000000000000000000');
+  });
+
+  it('preserves small converted margins without intermediate truncation', async () => {
+    const userId = randomUUID();
+    convert.mockResolvedValue('0.0000000003');
+    await bet(userId, { amount: '0.00000001', currency: 'ETH' });
+    expect(await marginOf(userId)).toBe('0.000000000012000000');
+  });
+
+  it('reverses every contribution in a round with different RTP values', async () => {
+    const userId = randomUUID();
+    for (const rtp of ['0.90', '0.99']) {
+      await db.drizzle.db.transaction((tx) =>
+        ranks.recordWager(tx, {
+          userId,
+          currency: 'USDT',
+          amount: '100',
+          realAmount: '100',
+          weightedAmount: '100',
+          context: { ...CASINO, rtp },
+          round: { providerName: 'aggregator', externalRoundId: userId },
+        }),
+      );
+    }
+    expect(await marginOf(userId)).toBe('11.000000000000000000');
+    await rollback(userId, '200');
+    expect(await marginOf(userId)).toBe('0.000000000000000000');
+  });
+
+  it('bounds repeated and concurrent reversals by the round contribution', async () => {
+    const userId = randomUUID();
+    await bet(userId, { amount: '100' });
+    await wager(userId, '100', 'USDT', SLOT);
+    await Promise.all([rollback(userId, '100'), rollback(userId, '100')]);
+    expect(await marginOf(userId)).toBe('4.000000000000000000');
+    expect(
+      await db.drizzle.db
+        .select()
+        .from(promoRankRoundWager)
+        .where(eq(promoRankRoundWager.userId, userId)),
+    ).toEqual([]);
+  });
+
+  it('retains tiny partial reversals and caps their total at the recorded margin', async () => {
+    const userId = randomUUID();
+    await bet(userId, { amount: '0.00000001' });
+    await rollback(userId, '0.000000005');
+    expect(await marginOf(userId)).toBe('0.000000000200000000');
+    await rollback(userId, '0.000000005');
+    expect(await marginOf(userId)).toBe('0.000000000000000000');
+  });
+
+  it('ignores an unknown round and another provider with the same round id', async () => {
+    const userId = randomUUID();
+    await bet(userId, { amount: '100' });
+    await db.drizzle.db.transaction((tx) =>
+      ranks.reverseWager(tx, {
+        userId,
+        currency: 'USDT',
+        realAmount: '100',
+        round: { providerName: 'other', externalRoundId: userId },
+      }),
+    );
+    expect(await marginOf(userId)).toBe('4.000000000000000000');
+  });
+
+  it('reverses the recorded margin after the product stops being eligible', async () => {
+    const userId = randomUUID();
+    await bet(userId, { amount: '100' });
+    await db.drizzle.db.update(promoRankConfig).set({ eligibleProducts: ['pvp'] });
+    await rollback(userId, '50');
+    expect(await marginOf(userId)).toBe('2.000000000000000000');
   });
 });
 

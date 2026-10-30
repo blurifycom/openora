@@ -28,8 +28,8 @@ export type WagerTrackingArgs = {
   weightedAmount: string;
   /**
    * The part of `amount` staked out of the player's own funds - `amount` minus whatever a bonus
-   * grant covered. `RankService`'s lifetime-wagering counter intentionally ignores this and
-   * counts the full stake (see its own doc comment); every other consumer here - rakeback,
+   * grant covered. `RankService`'s wagered counters intentionally ignore this and count the full
+   * stake (see its own doc comment); every other counter here - the rank margin, rakeback,
    * streak, races, the rank challenge - counts only this, since none of them may reward money
    * the player never risked.
    */
@@ -73,7 +73,7 @@ export type WagerTrackingCommands = {
   recordWager(tx: unknown, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]>;
   /**
    * Takes a rolled-back stake back out of whatever counter it advanced. Optional: a consumer whose
-   * counter is deliberately monotonic (the rank ladder) has nothing to undo.
+   * counter is deliberately monotonic has nothing to undo.
    */
   reverseWager?(tx: unknown, args: WagerReversalArgs): Promise<void>;
 };
