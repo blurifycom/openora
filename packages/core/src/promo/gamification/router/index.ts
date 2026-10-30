@@ -212,7 +212,13 @@ export function createGamificationRouter({
               NOT_FOUND: RakebackAccrualNotFoundError,
               CONFLICT: RakebackAccrualNotVoidableError,
             },
-            () => rakebackAdmin.void(userId, input.accrualId, input.reason, { ip, userAgent }),
+            () =>
+              rakebackAdmin.void({
+                adminId: userId,
+                accrualId: input.accrualId,
+                reason: input.reason,
+                meta: { ip, userAgent },
+              }),
           );
         }),
       },

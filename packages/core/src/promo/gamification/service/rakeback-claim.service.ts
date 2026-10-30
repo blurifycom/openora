@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import type {
@@ -20,14 +20,19 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { promoPlayerRank, promoRakebackAccrual, promoRakebackClaim } from '../schema/index.js';
+import {
+  promoPlayerRank,
+  promoRakebackAccrual,
+  promoRakebackClaim,
+  promoRakebackClaimPayout,
+} from '../schema/index.js';
 import type {
   RakebackClaimBlocker,
   RakebackClaimOutcome,
   RakebackCurrencyAmount,
   RakebackSummary,
 } from '../contract/index.js';
-import { priceRakeback, rakebackByCurrency, unclaimedRakeback } from '../shared/rakeback-totals.js';
+import { claimedByCurrency, priceRakeback, unclaimedRakeback } from '../shared/rakeback-totals.js';
 
 export const RakebackNothingToClaimError = makeConflictError(
   'RakebackNothingToClaimError',
@@ -104,7 +109,7 @@ export class RakebackClaimService {
       ...totals,
       claimMinimum: this.deps.claimMinimum,
       claimBlockedBy: await this.blocker(userId, totals),
-      lifetimeClaimed: await rakebackByCurrency(db, 'claimed', userId),
+      lifetimeClaimed: await claimedByCurrency(db, userId),
     };
   }
 
@@ -181,7 +186,8 @@ export class RakebackClaimService {
   /**
    * Tells each player whose unclaimed rakeback has reached the minimum, at most once a day and
    * never one who could not claim it. The timestamp is written before `announce` runs, so a crash
-   * between them drops one reminder rather than repeating it.
+   * between them drops one reminder rather than repeating it. A player found below the minimum is
+   * priced again only once newer rakeback accrues.
    */
   async notifyClaimable(
     announce: (claimable: DomainEventPayload<'promo.rakeback.claimable'>) => void,
@@ -189,12 +195,8 @@ export class RakebackClaimService {
   ): Promise<number> {
     const db = this.deps.drizzle.db;
     const cutoff = new Date(now.getTime() - NOTIFY_INTERVAL_MS);
-    const rows = await db
-      .select({
-        userId: promoRakebackAccrual.userId,
-        currency: promoRakebackAccrual.currency,
-        amount: sql<string>`sum(${promoRakebackAccrual.amount})::text`,
-      })
+    const candidates = db
+      .selectDistinct({ userId: promoRakebackAccrual.userId })
       .from(promoRakebackAccrual)
       .innerJoin(promoPlayerRank, eq(promoPlayerRank.userId, promoRakebackAccrual.userId))
       .where(
@@ -204,6 +206,23 @@ export class RakebackClaimService {
             isNull(promoPlayerRank.lastClaimableNotifiedAt),
             lt(promoPlayerRank.lastClaimableNotifiedAt, cutoff),
           ),
+          or(
+            isNull(promoPlayerRank.rakebackReminderCheckedAt),
+            gt(promoRakebackAccrual.createdAt, promoPlayerRank.rakebackReminderCheckedAt),
+          ),
+        ),
+      );
+    const rows = await db
+      .select({
+        userId: promoRakebackAccrual.userId,
+        currency: promoRakebackAccrual.currency,
+        amount: sql<string>`sum(${promoRakebackAccrual.amount})::text`,
+      })
+      .from(promoRakebackAccrual)
+      .where(
+        and(
+          eq(promoRakebackAccrual.status, 'accrued'),
+          inArray(promoRakebackAccrual.userId, candidates),
         ),
       )
       .groupBy(promoRakebackAccrual.userId, promoRakebackAccrual.currency)
@@ -218,6 +237,10 @@ export class RakebackClaimService {
     for (const [userId, amounts] of byUser) {
       const totals = await priceRakeback(db, this.deps.rates, this.deps.referenceCurrency, amounts);
       if (moneyCompare(totals.referenceTotal, this.deps.claimMinimum) < 0) {
+        await db
+          .update(promoPlayerRank)
+          .set({ rakebackReminderCheckedAt: now })
+          .where(eq(promoPlayerRank.userId, userId));
         continue;
       }
       if ((await this.blocker(userId, totals)) !== null) {
@@ -333,6 +356,13 @@ export class RakebackClaimService {
       if (flipped.length !== ids.length || !moneyEquals(flippedTotal, amount)) {
         throw new RakebackClaimConflictError();
       }
+      await tx.insert(promoRakebackClaimPayout).values({
+        claimId: claim.id,
+        userId,
+        currency,
+        amount,
+        transactionId: credited.transactionId,
+      });
       paid.push({ currency, amount, transactionId: credited.transactionId });
     }
     await this.deps.audit.recordInTransaction(tx, {
@@ -388,13 +418,12 @@ export class RakebackClaimService {
     }
     const paid = await tx
       .select({
-        currency: promoRakebackAccrual.currency,
-        amount: sql<string>`sum(${promoRakebackAccrual.amount})::text`,
+        currency: promoRakebackClaimPayout.currency,
+        amount: promoRakebackClaimPayout.amount,
       })
-      .from(promoRakebackAccrual)
-      .where(eq(promoRakebackAccrual.claimId, claim.id))
-      .groupBy(promoRakebackAccrual.currency)
-      .orderBy(asc(promoRakebackAccrual.currency));
+      .from(promoRakebackClaimPayout)
+      .where(eq(promoRakebackClaimPayout.claimId, claim.id))
+      .orderBy(asc(promoRakebackClaimPayout.currency));
     return {
       userId,
       claimId: claim.id,

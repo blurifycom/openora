@@ -16,7 +16,12 @@ import { user } from '@openora/core/pam/schema/identity';
 import { migrate } from '../migrate.js';
 import { migrate as identityMigrate } from '@openora/core/pam/migrate/identity';
 import { migrate as profileMigrate } from '@openora/core/pam/migrate/profile';
-import { promoPlayerRank, promoRakebackAccrual, promoRakebackClaim } from '../schema/index.js';
+import {
+  promoPlayerRank,
+  promoRakebackAccrual,
+  promoRakebackClaim,
+  promoRakebackClaimPayout,
+} from '../schema/index.js';
 import {
   RakebackAccountBlockedError,
   RakebackBelowMinimumError,
@@ -58,12 +63,12 @@ const claimsWith = (claimMinimum = '1') =>
   });
 
 const admin = () =>
-  new RakebackAdminService(
-    db.drizzle,
+  new RakebackAdminService({
+    drizzle: db.drizzle,
     rates,
-    mock<AuditWritePort>({ recordInTransaction }),
-    'USDT',
-  );
+    audit: mock<AuditWritePort>({ recordInTransaction }),
+    referenceCurrency: 'USDT',
+  });
 
 const newPlayer = async (status: 'active' | 'self_excluded' | 'suspended' | 'closed' = 'active') =>
   (await seedPlayerWithUser(db, { status })).account.id;
@@ -108,6 +113,7 @@ beforeEach(async () => {
   isRestricted.mockResolvedValue(false);
   getExclusionState.mockResolvedValue({ isSelfExcluded: false, isCoolingOff: false });
   await db.drizzle.db.delete(promoRakebackAccrual);
+  await db.drizzle.db.delete(promoRakebackClaimPayout);
   await db.drizzle.db.delete(promoRakebackClaim);
   await db.drizzle.db.delete(promoPlayerRank);
 });
@@ -146,6 +152,29 @@ describe('a player claiming their rakeback', () => {
     expect(rows.every((row) => row.status === 'claimed' && row.claimId === result.claimId)).toBe(
       true,
     );
+  });
+
+  it('records what the claim paid in each currency against its wallet transaction', async () => {
+    const userId = await newPlayer();
+    await accrue(userId, '0.6');
+    await accrue(userId, '0.25', 'EUR');
+
+    const result = await claimsWith().claim(userId, randomUUID());
+
+    const payouts = await db.drizzle.db
+      .select()
+      .from(promoRakebackClaimPayout)
+      .where(eq(promoRakebackClaimPayout.claimId, result.claimId));
+    expect(
+      payouts
+        .map(({ userId, currency, amount, transactionId }) => ({
+          userId,
+          currency,
+          amount,
+          transactionId,
+        }))
+        .sort((a, b) => a.currency.localeCompare(b.currency)),
+    ).toEqual(result.paid.map((paid) => ({ userId, ...paid })));
   });
 
   it("audits the claim and writes each credit's balance event in its transaction", async () => {
@@ -544,6 +573,32 @@ describe('the claimable-rakeback reminder', () => {
     expect(notified).toBe(0);
     expect(announce).not.toHaveBeenCalled();
   });
+
+  it('prices a player below the minimum again only once new rakeback accrues', async () => {
+    const userId = await newPlayer();
+    await rankFor(userId);
+    const accrueAt = async (amount: string, createdAt: string) => {
+      const row = await accrue(userId, amount, 'EUR');
+      await db.drizzle.db
+        .update(promoRakebackAccrual)
+        .set({ createdAt: new Date(createdAt) })
+        .where(eq(promoRakebackAccrual.id, row.id));
+    };
+    await accrueAt('0.2', '2026-10-01T08:00:00Z');
+    const announce = vi.fn();
+
+    await claimsWith('1').notifyClaimable(announce, new Date('2026-10-01T10:00:00Z'));
+    convert.mockClear();
+    await claimsWith('1').notifyClaimable(announce, new Date('2026-10-02T11:00:00Z'));
+    expect(convert).not.toHaveBeenCalled();
+
+    await accrueAt('0.3', '2026-10-02T12:00:00Z');
+    await claimsWith('1').notifyClaimable(announce, new Date('2026-10-03T13:00:00Z'));
+
+    expect(announce.mock.calls).toEqual([
+      [{ userId, amount: '1.000000000000000000', currency: 'USDT' }],
+    ]);
+  });
 });
 
 describe('an admin voiding unclaimed rakeback', () => {
@@ -553,7 +608,12 @@ describe('an admin voiding unclaimed rakeback', () => {
     const userId = await newPlayer();
     const row = await accrue(userId, '2');
 
-    const voided = await admin().void(adminId, row.id, 'bonus abuse', { ip: '10.0.0.1' });
+    const voided = await admin().void({
+      adminId,
+      accrualId: row.id,
+      reason: 'bonus abuse',
+      meta: { ip: '10.0.0.1' },
+    });
 
     expect(voided).toMatchObject({
       status: 'voided',
@@ -583,16 +643,16 @@ describe('an admin voiding unclaimed rakeback', () => {
     const row = await accrue(userId, '2');
     await claimsWith().claim(userId, randomUUID());
 
-    await expect(admin().void(adminId, row.id, 'too late')).rejects.toBeInstanceOf(
-      RakebackAccrualNotVoidableError,
-    );
+    await expect(
+      admin().void({ adminId, accrualId: row.id, reason: 'too late' }),
+    ).rejects.toBeInstanceOf(RakebackAccrualNotVoidableError);
     expect(recordInTransaction).not.toHaveBeenCalled();
   });
 
   it('reports an unknown accrual as not found', async () => {
-    await expect(admin().void(adminId, randomUUID(), 'nothing')).rejects.toBeInstanceOf(
-      RakebackAccrualNotFoundError,
-    );
+    await expect(
+      admin().void({ adminId, accrualId: randomUUID(), reason: 'nothing' }),
+    ).rejects.toBeInstanceOf(RakebackAccrualNotFoundError);
   });
 
   it('keeps the row unvoided when the audit write fails', async () => {
@@ -600,7 +660,9 @@ describe('an admin voiding unclaimed rakeback', () => {
     const row = await accrue(userId, '2');
     recordInTransaction.mockRejectedValueOnce(new Error('audit down'));
 
-    await expect(admin().void(adminId, row.id, 'reason')).rejects.toThrow('audit down');
+    await expect(admin().void({ adminId, accrualId: row.id, reason: 'reason' })).rejects.toThrow(
+      'audit down',
+    );
     expect(await accrualsOf(userId)).toEqual([expect.objectContaining({ status: 'accrued' })]);
   });
 });

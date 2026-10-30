@@ -1,5 +1,5 @@
 {
-  "id": "4f01edf1-dbd3-4e52-bfe4-0fcd4b2a7c5a",
+  "id": "e10bfaf8-7b13-4d92-9d6e-472b75a604ae",
   "prevId": "91005298-f084-4014-8029-672b8c537064",
   "version": "7",
   "dialect": "postgresql",
@@ -66,6 +66,12 @@
         },
         "last_claimable_notified_at": {
           "name": "last_claimable_notified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rakeback_reminder_checked_at": {
+          "name": "rakeback_reminder_checked_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -746,7 +752,8 @@
         },
         "basis": {
           "name": "basis",
-          "type": "text",
+          "type": "promo_rakeback_basis",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
@@ -794,7 +801,8 @@
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "promo_rakeback_accrual_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'accrued'"
@@ -962,11 +970,11 @@
       "checkConstraints": {
         "promo_rakeback_accrual_bounds": {
           "name": "promo_rakeback_accrual_bounds",
-          "value": "\"promo_rakeback_accrual\".\"amount\" > 0 AND \"promo_rakeback_accrual\".\"stake\" >= 0 AND \"promo_rakeback_accrual\".\"rolled_back_stake\" >= 0 AND \"promo_rakeback_accrual\".\"rolled_back_stake\" <= \"promo_rakeback_accrual\".\"stake\" AND (\"promo_rakeback_accrual\".\"rtp\" is null OR (\"promo_rakeback_accrual\".\"rtp\" >= 0 AND \"promo_rakeback_accrual\".\"rtp\" <= 1))"
+          "value": "\"promo_rakeback_accrual\".\"amount\" > 0 AND \"promo_rakeback_accrual\".\"stake\" >= 0 AND \"promo_rakeback_accrual\".\"rolled_back_stake\" >= 0 AND \"promo_rakeback_accrual\".\"rolled_back_stake\" <= \"promo_rakeback_accrual\".\"stake\" AND (\"promo_rakeback_accrual\".\"rtp\" is null OR (\"promo_rakeback_accrual\".\"rtp\" > 0 AND \"promo_rakeback_accrual\".\"rtp\" <= 1))"
         },
-        "promo_rakeback_accrual_status": {
-          "name": "promo_rakeback_accrual_status",
-          "value": "\"promo_rakeback_accrual\".\"status\" in ('accrued', 'claimed', 'reversed', 'voided')\n        AND (\"promo_rakeback_accrual\".\"status\" = 'claimed') = (\"promo_rakeback_accrual\".\"claim_id\" is not null)\n        AND (\"promo_rakeback_accrual\".\"status\" = 'voided') = (\"promo_rakeback_accrual\".\"void_reason\" is not null)"
+        "promo_rakeback_accrual_settlement": {
+          "name": "promo_rakeback_accrual_settlement",
+          "value": "(\"promo_rakeback_accrual\".\"status\" = 'claimed') = (\"promo_rakeback_accrual\".\"claim_id\" is not null)\n        AND (\"promo_rakeback_accrual\".\"status\" = 'voided') = (\"promo_rakeback_accrual\".\"void_reason\" is not null)"
         }
       },
       "isRLSEnabled": false
@@ -996,7 +1004,8 @@
         },
         "outcome": {
           "name": "outcome",
-          "type": "text",
+          "type": "promo_rakeback_claim_outcome",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
@@ -1035,10 +1044,113 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.promo_rakeback_claim_payout": {
+      "name": "promo_rakeback_claim_payout",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "claim_id": {
+          "name": "claim_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "transaction_id": {
+          "name": "transaction_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "promo_rakeback_claim_payout_claim_id_currency_idx": {
+          "name": "promo_rakeback_claim_payout_claim_id_currency_idx",
+          "columns": [
+            {
+              "expression": "claim_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "currency",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "promo_rakeback_claim_payout_user_id_currency_idx": {
+          "name": "promo_rakeback_claim_payout_user_id_currency_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "currency",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "promo_rakeback_claim_payout_claim_id_promo_rakeback_claim_id_fk": {
+          "name": "promo_rakeback_claim_payout_claim_id_promo_rakeback_claim_id_fk",
+          "tableFrom": "promo_rakeback_claim_payout",
+          "tableTo": "promo_rakeback_claim",
+          "columnsFrom": ["claim_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
       "checkConstraints": {
-        "promo_rakeback_claim_outcome": {
-          "name": "promo_rakeback_claim_outcome",
-          "value": "\"promo_rakeback_claim\".\"outcome\" in ('claimed', 'auto_paid')"
+        "promo_rakeback_claim_payout_amount_positive": {
+          "name": "promo_rakeback_claim_payout_amount_positive",
+          "value": "\"promo_rakeback_claim_payout\".\"amount\" > 0"
         }
       },
       "isRLSEnabled": false
@@ -2178,7 +2290,23 @@
       "isRLSEnabled": false
     }
   },
-  "enums": {},
+  "enums": {
+    "public.promo_rakeback_accrual_status": {
+      "name": "promo_rakeback_accrual_status",
+      "schema": "public",
+      "values": ["accrued", "claimed", "reversed", "voided"]
+    },
+    "public.promo_rakeback_basis": {
+      "name": "promo_rakeback_basis",
+      "schema": "public",
+      "values": ["stake", "margin"]
+    },
+    "public.promo_rakeback_claim_outcome": {
+      "name": "promo_rakeback_claim_outcome",
+      "schema": "public",
+      "values": ["claimed", "auto_paid"]
+    }
+  },
   "schemas": {},
   "sequences": {},
   "roles": {},

@@ -13,7 +13,7 @@ import type {
   RakebackLiability,
   RakebackPlayerSummary,
 } from '../contract/index.js';
-import { rakebackByCurrency, unclaimedRakeback } from '../shared/rakeback-totals.js';
+import { claimedByCurrency, unclaimedRakeback } from '../shared/rakeback-totals.js';
 
 export const RakebackAccrualNotFoundError = makeNotFoundError('RakebackAccrual');
 export const RakebackAccrualNotVoidableError = makeConflictError(
@@ -44,13 +44,22 @@ const toAccrual = (row: PromoRakebackAccrual): RakebackAccrual => ({
   settledAt: row.settledAt?.toISOString() ?? null,
 });
 
+type RakebackAdminDeps = {
+  drizzle: DrizzleService;
+  rates: ExchangeRateReader;
+  audit: AuditWritePort;
+  referenceCurrency: string;
+};
+
+type VoidRakebackArgs = {
+  adminId: Uuid;
+  accrualId: Uuid;
+  reason: string;
+  meta?: Partial<ClientMeta>;
+};
+
 export class RakebackAdminService {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly rates: ExchangeRateReader,
-    private readonly audit: AuditWritePort,
-    private readonly referenceCurrency: string,
-  ) {}
+  constructor(private readonly deps: RakebackAdminDeps) {}
 
   async listAccruals(input: ListRakebackAccrualsInput) {
     const conditions: SQL[] = [];
@@ -61,7 +70,7 @@ export class RakebackAdminService {
       conditions.push(eq(promoRakebackAccrual.status, input.status));
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
-    const db = this.drizzle.db;
+    const db = this.deps.drizzle.db;
     const [rows, [total]] = await Promise.all([
       db
         .select()
@@ -81,25 +90,25 @@ export class RakebackAdminService {
   }
 
   async playerSummary(userId: Uuid): Promise<RakebackPlayerSummary> {
-    const db = this.drizzle.db;
+    const db = this.deps.drizzle.db;
     return {
       userId,
-      ...(await unclaimedRakeback(db, this.rates, this.referenceCurrency, userId)),
-      lifetimeClaimed: await rakebackByCurrency(db, 'claimed', userId),
+      ...(await unclaimedRakeback(db, this.deps.rates, this.deps.referenceCurrency, userId)),
+      lifetimeClaimed: await claimedByCurrency(db, userId),
     };
   }
 
   async liability(): Promise<RakebackLiability> {
-    return unclaimedRakeback(this.drizzle.db, this.rates, this.referenceCurrency);
+    return unclaimedRakeback(this.deps.drizzle.db, this.deps.rates, this.deps.referenceCurrency);
   }
 
-  async void(
-    adminId: Uuid,
-    accrualId: Uuid,
-    reason: string,
-    meta: Partial<ClientMeta> = {},
-  ): Promise<RakebackAccrual> {
-    return this.drizzle.db.transaction(async (tx) => {
+  async void({
+    adminId,
+    accrualId,
+    reason,
+    meta = {},
+  }: VoidRakebackArgs): Promise<RakebackAccrual> {
+    return this.deps.drizzle.db.transaction(async (tx) => {
       const [voided] = await tx
         .update(promoRakebackAccrual)
         .set({ status: 'voided', voidedBy: adminId, voidReason: reason, settledAt: new Date() })
@@ -116,7 +125,7 @@ export class RakebackAdminService {
           ? new RakebackAccrualNotVoidableError()
           : new RakebackAccrualNotFoundError(accrualId);
       }
-      await this.audit.recordInTransaction(tx, {
+      await this.deps.audit.recordInTransaction(tx, {
         actorId: adminId,
         actorType: 'admin',
         action: 'promo.rakeback.voided',

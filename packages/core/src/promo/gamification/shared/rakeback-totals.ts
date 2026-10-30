@@ -1,7 +1,7 @@
 import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
 import type { ExchangeRateReader } from '@openora/core/contracts';
 import { moneyAdd, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
-import { promoRakebackAccrual } from '../schema/index.js';
+import { promoRakebackAccrual, promoRakebackClaimPayout } from '../schema/index.js';
 import type {
   RakebackAccrualStatus,
   RakebackCurrencyAmount,
@@ -28,6 +28,18 @@ export async function rakebackByCurrency(
     .where(and(...conditions))
     .groupBy(promoRakebackAccrual.currency)
     .orderBy(asc(promoRakebackAccrual.currency));
+}
+
+export async function claimedByCurrency(db: Db, userId: string): Promise<RakebackCurrencyAmount[]> {
+  return db
+    .select({
+      currency: promoRakebackClaimPayout.currency,
+      amount: sql<string>`sum(${promoRakebackClaimPayout.amount})::text`,
+    })
+    .from(promoRakebackClaimPayout)
+    .where(eq(promoRakebackClaimPayout.userId, userId))
+    .groupBy(promoRakebackClaimPayout.currency)
+    .orderBy(asc(promoRakebackClaimPayout.currency));
 }
 
 /**

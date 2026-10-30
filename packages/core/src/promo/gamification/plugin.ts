@@ -613,12 +613,12 @@ export default {
         rankChallenge: rankChallengeService(c),
         rankChallengeAdmin: new RankChallengeAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         rakebackClaims,
-        rakebackAdmin: new RakebackAdminService(
-          c.get(DRIZZLE),
-          c.get(EXCHANGE_RATE_READER),
-          c.get(AUDIT_WRITER),
+        rakebackAdmin: new RakebackAdminService({
+          drizzle: c.get(DRIZZLE),
+          rates: c.get(EXCHANGE_RATE_READER),
+          audit: c.get(AUDIT_WRITER),
           referenceCurrency,
-        ),
+        }),
         rateLimiter: c.has(RATE_LIMITER) ? c.get(RATE_LIMITER) : undefined,
         adminGuard: c.get(ADMIN_GUARD),
       });

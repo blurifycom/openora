@@ -155,8 +155,8 @@ shape it, and both default to the original behaviour.
 
 - **`basis`**. `stake` pays the percentage of the stake. `margin` pays it of the house edge, the
   stake times `1 - rtp`, where `rtp` is the fraction the game provider's adapter reports on the
-  bet's `WagerContext`. A bet with no rtp, or one outside `[0, 1]`, pays nothing rather than a
-  guess.
+  bet's `WagerContext`. A bet with a missing or zero rtp, or one above 1, pays nothing rather
+  than a guess, and logs a warning.
 - **`payout`**. `instant` credits it in the bet's own currency, in the bet's own transaction.
   `claim` writes each bet's rakeback to `promo_rakeback_accrual` and moves no money until the
   player claims it, with `claimMinimum` in the wallet reference currency.
@@ -168,7 +168,8 @@ reverses rows that are still unclaimed. A claimed or voided row keeps the stake 
 priced on, because paid rakeback is corrected only by a manual adjustment, and absorbs its share
 into `rolledBackStake` so a later rollback does not absorb the same share again. A claim and an
 automatic payout are audited, and each credit's balance event is written in the claim's
-transaction.
+transaction. Each credit also writes a `promo_rakeback_claim_payout` row, which is the player's
+lifetime claimed total.
 
 A claim is refused while a responsible-gambling block is active or the account is suspended or
 closed. A player who self-excludes or closes the account is paid what is left automatically,
@@ -176,5 +177,5 @@ even below the minimum, with a daily sweep catching a missed event. The payout c
 again when it runs, so one reopened in between is not paid. Its exclusion read holds a shared
 lock until payout commits, serializing a concurrent exclusion lift with settlement. A cooling-off keeps the
 rakeback for when it ends. An hourly job reminds a player at most once a day, and only when a claim
-would succeed. An admin can void an unclaimed row with a reason. The void is audited. See
+would succeed. A player found below the minimum is checked again only once new rakeback accrues. An admin can void an unclaimed row with a reason. The void is audited. See
 [ADR-0046](../adr/0046-claimable-rakeback-on-the-house-edge.md).

@@ -29,6 +29,10 @@ const ZERO = '0';
 // A percent value (`'96'`) fails it and pays nothing rather than being guessed at.
 const RTP_PATTERN = /^(0(\.\d{1,18})?|1(\.0{1,18})?)$/;
 
+// A zero rtp is a game that never pays back, which in practice is a missing value, not a real game.
+const isUsableRtp = (rtp?: string): rtp is string =>
+  rtp !== undefined && RTP_PATTERN.test(rtp) && moneyCompare(rtp, ZERO) > 0;
+
 export type RakebackSettings = { basis: RakebackBasis; payout: RakebackPayout };
 
 const DEFAULT_SETTINGS: RakebackSettings = { basis: 'stake', payout: 'instant' };
@@ -44,7 +48,7 @@ export function rakebackBase(realAmount: string, basis: RakebackBasis, rtp?: str
   if (basis === 'stake') {
     return realAmount;
   }
-  if (rtp === undefined || !RTP_PATTERN.test(rtp)) {
+  if (!isUsableRtp(rtp)) {
     return ZERO;
   }
   return moneyScaleBy(realAmount, moneySubtract('1', rtp));
@@ -89,6 +93,18 @@ export class RakebackService implements WagerTrackingCommands {
     }
     const rate = await this.rateFor(tx, args);
     if (!rate) {
+      return [];
+    }
+    if (this.settings.basis === 'margin' && !isUsableRtp(args.context.rtp)) {
+      this.logger.warn(
+        {
+          userId: args.userId,
+          provider: args.context.provider,
+          gameId: args.context.gameId ?? null,
+          rtp: args.context.rtp ?? null,
+        },
+        'margin rakeback skipped: bet has no usable rtp',
+      );
       return [];
     }
     const base = rakebackBase(args.realAmount, this.settings.basis, args.context.rtp);

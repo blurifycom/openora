@@ -258,6 +258,7 @@ describe('rakeback on the house edge', () => {
     ['out of range', '1.2'],
     ['a percent', '96'],
     ['one', '1'],
+    ['zero', '0'],
   ])('pays nothing when the rtp is %s', async (_label, rtp) => {
     const userId = randomUUID();
     await givePlayerTier(userId, 'gold');
@@ -266,6 +267,18 @@ describe('rakeback on the house edge', () => {
 
     expect(credits).toEqual([]);
     expect(credit).not.toHaveBeenCalled();
+  });
+
+  it('warns when a margin bet arrives without a usable rtp', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+
+    await betOn(margin(), userId, '100', { rtp: '0' });
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ userId, gameId: 'game-1', rtp: '0' }),
+      'margin rakeback skipped: bet has no usable rtp',
+    );
   });
 });
 
