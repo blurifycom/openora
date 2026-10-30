@@ -40,8 +40,8 @@ const pinMatches = (candidate: string, stored: string): boolean =>
 const MINUTE_MS = 60 * 1000;
 // Five wrong PINs in a row lock withdrawals for half an hour. Fixed, not configurable: the
 // mail the player gets states the same 30 minutes, and a PIN is only 10,000 guesses wide.
-export const WITHDRAWAL_PIN_MAX_FAILED_ATTEMPTS = 5;
-export const WITHDRAWAL_PIN_LOCK_MS = 30 * MINUTE_MS;
+const WITHDRAWAL_PIN_MAX_FAILED_ATTEMPTS = 5;
+const WITHDRAWAL_PIN_LOCK_MS = 30 * MINUTE_MS;
 const WITHDRAWAL_PIN_RATE_LIMIT = {
   limit: 5,
   windowMs: 5 * MINUTE_MS,
