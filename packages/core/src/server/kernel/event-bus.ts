@@ -27,6 +27,10 @@ export type SubscribeHandlerOptions = {
   // Stable identity of this handler across restarts and replicas. When set, a
   // redelivered event skips the handler once it has succeeded for that event.
   consumer?: string;
+  // Broker consumer group to subscribe in. Omitted: the broker's own default, one group per
+  // service. Services sharing a name compete for each event, so it is how a subscription
+  // runs once per deployment instead of once per service.
+  consumerGroup?: string;
 };
 
 // Records which (eventId, consumer) pairs already ran to completion. A port so the
@@ -135,7 +139,8 @@ export function createEventBus({
 
     on(event: string, handler: EventHandler, options?: SubscribeHandlerOptions): () => void {
       const consumer = options?.consumer;
-      return broker.subscribe(event, async (envelope: EventEnvelope) => {
+      const consumerGroup = options?.consumerGroup;
+      const onEnvelope = async (envelope: EventEnvelope) => {
         if (consumer && (await processedEvents.has(envelope.eventId, consumer))) {
           return;
         }
@@ -153,7 +158,10 @@ export function createEventBus({
         if (consumer) {
           await processedEvents.record(envelope.eventId, consumer);
         }
-      });
+      };
+      return consumerGroup
+        ? broker.subscribe(event, onEnvelope, { consumerGroup })
+        : broker.subscribe(event, onEnvelope);
     },
   };
 }

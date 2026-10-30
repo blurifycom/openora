@@ -116,7 +116,8 @@ function resolveCorsOrigins(cors: CreateAppConfig['cors']): string[] | undefined
   return origins;
 }
 
-// Redis Streams consumer group name for MESSAGE_BROKER. Distinct deployments/services
+// Redis Streams consumer group name for MESSAGE_BROKER (the realtime key prefix is separate,
+// see resolveRealtimeNamespace). Distinct deployments/services
 // sharing one Redis MUST use distinct names so their subscribers don't compete for
 // each other's events. The name is a durable identity: renaming it strands the old
 // group's pending (delivered-but-unacked) entries and starts the new one at `$`, so
@@ -137,6 +138,14 @@ function resolveServiceName(): string {
     );
   }
   return 'monolith';
+}
+
+// Prefix of every realtime key (channels, signals, presence, revocation). The opposite
+// requirement to the consumer group: services that push to the same clients must share
+// it, or one never sees the other's publishes and presence. Defaults to the service
+// name, so a deployment that sets neither variable keeps its keys unchanged.
+function resolveRealtimeNamespace(serviceName: string): string {
+  return process.env['REALTIME_NAMESPACE'] || serviceName;
 }
 
 export type CreateAppConfig = {
@@ -402,6 +411,7 @@ export async function createApp(
   // Resolved eagerly: a misconfigured service name is a boot error, not a surprise on
   // whichever code path resolves the broker first. It also namespaces handler dedup.
   const serviceName = resolveServiceName();
+  const realtimeNamespace = resolveRealtimeNamespace(serviceName);
   const redisUrl = process.env['REDIS_URL'];
   if (redisUrl) {
     container.register(JOB_QUEUE, () => {
@@ -419,7 +429,7 @@ export async function createApp(
       return broker;
     });
     container.register(REALTIME_TRANSPORT, () => {
-      const transport = new RedisPubSubRealtimeTransport(redis, serviceName);
+      const transport = new RedisPubSubRealtimeTransport(redis, realtimeNamespace);
       container.onDispose(() => transport.close());
       return transport;
     });
@@ -482,10 +492,16 @@ export async function createApp(
 
   const bus = container.get(EVENT_BUS);
   for (const [event, handlers] of registry.events.getAll()) {
-    for (const { handler, consumer } of handlers) {
+    for (const { handler, consumer, consumerGroup } of handlers) {
       // Prefixed with the service: an infra overlay loads in every split service, and
-      // each service's copy of the handler must run.
-      bus.on(event, handler, { consumer: `${serviceName}/${consumer}` });
+      // each service's copy of the handler must run. A handler in a shared consumer
+      // group runs once per deployment instead, and a redelivery can land on any
+      // service, so its dedup identity must not name one.
+      bus.on(
+        event,
+        handler,
+        consumerGroup ? { consumer, consumerGroup } : { consumer: `${serviceName}/${consumer}` },
+      );
     }
   }
   // The same topics MCP_KERNEL lists, read from the config rather than the kernel so its

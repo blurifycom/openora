@@ -66,7 +66,16 @@ export type RegisteredTriggerListener = {
 // n-th (n >= 1) further handler the same plugin registers on the same topic. Plugin ids and
 // topics are fixed by code, so it survives restarts, replica changes and plugin reordering;
 // it shifts only when a plugin reorders its own handlers for one topic.
-export type RegisteredEventHandler = { handler: EventHandler; consumer: string };
+//
+// `consumerGroup`, when set, joins the handler to that broker consumer group instead of the
+// service's own: every service subscribing with the same name competes for each event, so the
+// handler runs once per deployment however many services load its plugin.
+export type EventSubscriptionOptions = { consumerGroup?: string };
+export type RegisteredEventHandler = {
+  handler: EventHandler;
+  consumer: string;
+  consumerGroup?: string;
+};
 
 // Tool and action-type factories run once, when MCP_KERNEL is built after every provider is
 // bound - never at registration.
@@ -113,7 +122,7 @@ export type ModuleRegistry<C extends TokenCatalog> = {
     getAll(): Map<string, RouterFactory<C>>;
   };
   events: {
-    on(event: string, handler: EventHandler): void;
+    on(event: string, handler: EventHandler, options?: EventSubscriptionOptions): void;
     getAll(): Map<string, RegisteredEventHandler[]>;
   };
   // Subscribed at boot to the allow-listed trigger topics, which register() cannot read.

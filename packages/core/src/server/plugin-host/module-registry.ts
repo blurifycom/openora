@@ -21,6 +21,7 @@ import type {
   TypedContainer,
   EventHandler,
   RegisteredEventHandler,
+  EventSubscriptionOptions,
 } from './define-plugin.js';
 import { assertValidActionType, assertValidMcpTool } from '../mcp/contract-validation.js';
 
@@ -94,12 +95,16 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
   };
 
   events = {
-    on: (event: string, handler: EventHandler) => {
+    on: (event: string, handler: EventHandler, options?: EventSubscriptionOptions) => {
       const handlers = this._events.get(event) ?? [];
       const consumer = `${this._owner}/${event}`;
       const ordinal = this._consumerOrdinals.get(consumer) ?? 0;
       this._consumerOrdinals.set(consumer, ordinal + 1);
-      handlers.push({ handler, consumer: ordinal === 0 ? consumer : `${consumer}#${ordinal}` });
+      handlers.push({
+        handler,
+        consumer: ordinal === 0 ? consumer : `${consumer}#${ordinal}`,
+        ...(options?.consumerGroup ? { consumerGroup: options.consumerGroup } : {}),
+      });
       this._events.set(event, handlers);
     },
     getAll: () => this._events,
