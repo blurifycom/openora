@@ -24,8 +24,8 @@ player who can no longer claim.
 They change what the platform owes, so they ship with a deploy rather than a backoffice edit.
 
 **RTP rides on `WagerContext`.** An optional `rtp` decimal fraction is set by whoever reports the
-bet. The margin basis pays `realAmount × (1 − rtp) × (tier + boost) / 100`. A missing rtp, or one
-outside `[0, 1]` such as a percent, pays nothing rather than a guess.
+bet. The margin basis pays `realAmount × (1 − rtp) × (tier + boost) / 100`. A missing or zero rtp,
+or one above 1 such as a percent, pays nothing rather than a guess.
 
 **Accrual rows are the ledger.** In claim mode each bet writes a `promo_rakeback_accrual` row with
 the stake, rate, boost and rtp that priced it. The rows are the single source of the unclaimed

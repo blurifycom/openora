@@ -10,7 +10,6 @@ describe('rakebackBase', () => {
   it('is the house edge of the stake under the margin basis', () => {
     expect(rakebackBase('100', 'margin', '0.96')).toBe('4.000000000000000000');
     expect(rakebackBase('100', 'margin', '0.99')).toBe('1.000000000000000000');
-    expect(rakebackBase('100', 'margin', '0')).toBe('100.000000000000000000');
   });
 
   it('is zero for a game that returns the whole stake', () => {
@@ -20,6 +19,8 @@ describe('rakebackBase', () => {
 
   it.each([
     ['missing', undefined],
+    ['zero', '0'],
+    ['zero with decimals', '0.000'],
     ['a percent instead of a fraction', '96'],
     ['above one', '1.01'],
     ['negative', '-0.5'],
