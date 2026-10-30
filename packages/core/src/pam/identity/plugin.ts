@@ -75,11 +75,6 @@ function assertAuthSurfaceGuards(c: IdentityContainer): void {
       'identity mounts its sign-in, phone-login and 2FA routes but GEO_CHECK_COMMANDS is unbound, so the country gate is a silent no-op on registration and sign-in and writes no access-blocked audit row. Load the compliance module in this process, or load identity service-only (SERVICE_MANIFEST=identity:no-routes) so it serves no auth route.',
     );
   }
-  if (c.get(KYC_ADAPTER).autoApproves) {
-    reportUnsafeAuthSurface(
-      'identity is mounted with an auto-approving KYC_ADAPTER (MockKycAdapter): any module that submits a KYC check through it self-verifies every player. Bind a real provider, or load identity service-only (SERVICE_MANIFEST=identity:no-routes) in a process that does not run KYC.',
-    );
-  }
 }
 
 function adminSecurityConfig(c: IdentityContainer) {

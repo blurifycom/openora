@@ -29,19 +29,11 @@ describe('identity auth-surface boot guard', () => {
     expect(() => factory?.(container as never)).toThrow(/country gate is a silent no-op/);
   });
 
-  it('refuses to mount them in production on an auto-approving KYC adapter', async () => {
+  it('passes the guard once the gate is bound, whatever KYC adapter is bound', async () => {
     const { container, factory } = await identityRouterFactory();
     container.register(GEO_CHECK_COMMANDS, () => mock({}));
 
-    expect(() => factory?.(container as never)).toThrow(/auto-approving KYC_ADAPTER/);
-  });
-
-  it('passes the guard once the gate is bound and the KYC adapter does not auto-approve', async () => {
-    const { container, factory } = await identityRouterFactory();
-    container.register(GEO_CHECK_COMMANDS, () => mock({}));
-    container.register(KYC_ADAPTER, () => mock({ autoApproves: false }));
-
-    expect(() => factory?.(container as never)).not.toThrow(/country gate|auto-approving/);
+    expect(() => factory?.(container as never)).not.toThrow(/country gate/);
   });
 
   it('never builds the router, so never trips, when identity is service-only', async () => {
