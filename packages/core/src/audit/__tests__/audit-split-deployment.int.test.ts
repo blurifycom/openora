@@ -20,13 +20,19 @@ type Service = Awaited<ReturnType<typeof createApp>>;
 let db: TestDb;
 let redis: TestRedis;
 const services: Service[] = [];
-const savedEnv = { redis: process.env['REDIS_URL'], name: process.env['SERVICE_NAME'] };
+const savedEnv = {
+  redis: process.env['REDIS_URL'],
+  name: process.env['SERVICE_NAME'],
+  namespace: process.env['REALTIME_NAMESPACE'],
+};
 
 // One service of a split deployment: its own createApp, so its own Redis connections and its
-// own default consumer group, over the shared Redis and database.
-async function bootService(serviceName: string): Promise<Service> {
+// own default consumer group, over the shared Redis and database. Services of one deployment
+// share a realtime namespace; another deployment on the same Redis uses its own.
+async function bootService(serviceName: string, namespace: string): Promise<Service> {
   process.env['REDIS_URL'] = redisUrlForWorker();
   process.env['SERVICE_NAME'] = serviceName;
+  process.env['REALTIME_NAMESPACE'] = namespace;
   const service = await createApp(
     {
       plugins: [{ id: 'audit', path: fileURLToPath(new URL('../plugin.ts', import.meta.url)) }],
@@ -49,6 +55,7 @@ afterAll(async () => {
   for (const [key, value] of [
     ['REDIS_URL', savedEnv.redis],
     ['SERVICE_NAME', savedEnv.name],
+    ['REALTIME_NAMESPACE', savedEnv.namespace],
   ] as const) {
     if (value === undefined) {
       delete process.env[key];
@@ -62,8 +69,9 @@ afterAll(async () => {
 
 describe('audit trail with two services of one deployment up', () => {
   it('writes exactly one audit row per event', async () => {
-    const first = await bootService(`svc-a-${randomUUID()}`);
-    await bootService(`svc-b-${randomUUID()}`);
+    const namespace = `deploy-${randomUUID()}`;
+    const first = await bootService(`svc-a-${randomUUID()}`, namespace);
+    await bootService(`svc-b-${randomUUID()}`, namespace);
     // Each service creates its group when it starts reading; events published before that
     // are missed, so wait until every group the deployment will have exists.
     await vi.waitFor(async () =>
@@ -93,6 +101,17 @@ describe('audit trail with two services of one deployment up', () => {
 
     expect(await rowsPerMarker()).toEqual(new Map(markers.map((marker) => [marker, 1])));
     const groups = await redis.client.xInfoGroups('oss:evt:tag.created');
-    expect(groups.map((group) => group.name)).toEqual(['audit']);
+    expect(groups.map((group) => group.name)).toEqual([`${namespace}/audit`]);
+  });
+
+  it('gives each deployment on one Redis its own audit group', async () => {
+    const nsA = `deploy-${randomUUID()}`;
+    const nsB = `deploy-${randomUUID()}`;
+    await bootService(`svc-a-${randomUUID()}`, nsA);
+    await bootService(`svc-b-${randomUUID()}`, nsB);
+    await vi.waitFor(async () => {
+      const names = (await redis.client.xInfoGroups('oss:evt:tag.created')).map((g) => g.name);
+      expect(names).toEqual(expect.arrayContaining([`${nsA}/audit`, `${nsB}/audit`]));
+    });
   });
 });

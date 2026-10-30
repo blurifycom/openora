@@ -358,7 +358,12 @@ describe('createApp - httpCache.additionalPaths', () => {
 });
 
 describe('createApp - service name for the Redis Streams consumer group', () => {
-  const saved = { redis: process.env['REDIS_URL'], manifest: process.env['SERVICE_MANIFEST'] };
+  const saved = {
+    redis: process.env['REDIS_URL'],
+    manifest: process.env['SERVICE_MANIFEST'],
+    name: process.env['SERVICE_NAME'],
+    namespace: process.env['REALTIME_NAMESPACE'],
+  };
 
   afterEach(() => {
     // Restore rather than delete: a bare delete would strip a REDIS_URL the rest of
@@ -366,6 +371,8 @@ describe('createApp - service name for the Redis Streams consumer group', () => 
     for (const [key, value] of [
       ['REDIS_URL', saved.redis],
       ['SERVICE_MANIFEST', saved.manifest],
+      ['SERVICE_NAME', saved.name],
+      ['REALTIME_NAMESPACE', saved.namespace],
     ] as const) {
       if (value === undefined) {
         delete process.env[key];
@@ -385,6 +392,19 @@ describe('createApp - service name for the Redis Streams consumer group', () => 
 
     await expect(createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL })).rejects.toThrow(
       /SERVICE_MANIFEST is set but SERVICE_NAME is not/,
+    );
+  });
+
+  it('refuses to boot a split service that has no REALTIME_NAMESPACE of its own', async () => {
+    // Falling back to the service name would silently split its realtime keys, presence and
+    // session revocation from the rest of the deployment.
+    process.env['REDIS_URL'] = 'redis://127.0.0.1:1';
+    process.env['SERVICE_MANIFEST'] = 'chat';
+    process.env['SERVICE_NAME'] = 'chat';
+    delete process.env['REALTIME_NAMESPACE'];
+
+    await expect(createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL })).rejects.toThrow(
+      /SERVICE_MANIFEST is set but REALTIME_NAMESPACE is not/,
     );
   });
 });

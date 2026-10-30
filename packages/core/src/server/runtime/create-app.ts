@@ -145,7 +145,19 @@ function resolveServiceName(): string {
 // it, or one never sees the other's publishes and presence. Defaults to the service
 // name, so a deployment that sets neither variable keeps its keys unchanged.
 function resolveRealtimeNamespace(serviceName: string): string {
-  return process.env['REALTIME_NAMESPACE'] || serviceName;
+  const namespace = process.env['REALTIME_NAMESPACE'];
+  if (namespace) {
+    return namespace;
+  }
+  if (process.env['SERVICE_MANIFEST']) {
+    throw new Error(
+      '[create-app] SERVICE_MANIFEST is set but REALTIME_NAMESPACE is not. A split service would ' +
+        'fall back to its own name, so its channels, signals, presence and session revocation ' +
+        'would silently diverge from the other services of the deployment. Set REALTIME_NAMESPACE ' +
+        'to the identity shared by every service of this deployment (eg REALTIME_NAMESPACE=casino).',
+    );
+  }
+  return serviceName;
 }
 
 export type CreateAppConfig = {
@@ -496,11 +508,15 @@ export async function createApp(
       // Prefixed with the service: an infra overlay loads in every split service, and
       // each service's copy of the handler must run. A handler in a shared consumer
       // group runs once per deployment instead, and a redelivery can land on any
-      // service, so its dedup identity must not name one.
+      // service, so its dedup identity must not name one. Stream keys carry no deployment
+      // part, so the group is what keeps two deployments sharing one Redis apart: the
+      // plugin's local name is scoped by the deployment's namespace.
       bus.on(
         event,
         handler,
-        consumerGroup ? { consumer, consumerGroup } : { consumer: `${serviceName}/${consumer}` },
+        consumerGroup
+          ? { consumer, consumerGroup: `${realtimeNamespace}/${consumerGroup}` }
+          : { consumer: `${serviceName}/${consumer}` },
       );
     }
   }

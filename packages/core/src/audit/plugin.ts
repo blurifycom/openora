@@ -1352,8 +1352,10 @@ export async function mapEventToRecord(
 
 // One broker consumer group for the whole deployment, not one per service: every service that
 // loads this plugin would otherwise get its own copy of each event and write a second audit
-// row (the table has no unique key on the event id). Renaming it strands the old group's
-// pending entries and starts the new one at the stream tail.
+// row (the table has no unique key on the event id). This is only the local part: createApp
+// scopes it to `<REALTIME_NAMESPACE>/audit`, so two deployments sharing one Redis do not
+// compete for each other's events. Renaming it, or changing the namespace, strands the old
+// group's pending entries and starts the new one at the stream tail.
 const AUDIT_CONSUMER_GROUP = 'audit';
 
 const SUBSCRIBED_TOPICS: DomainEventName[] = [
