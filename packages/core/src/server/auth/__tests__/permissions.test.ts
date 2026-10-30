@@ -10,8 +10,10 @@ describe('admin permission catalog', () => {
   // The built-in `admin` role is the AdminGuard fallback when the iam module is
   // absent, and it mirrors the catalog by hand on purpose: a new resource must
   // be granted deliberately, not inherited. This catches the drift instead.
-  it('grants the built-in admin role every action in the catalog', () => {
-    expect(adminRole.statements).toEqual(adminStatement);
+  it('grants the built-in admin role every action in the catalog but support history, which only an assigned role grants', () => {
+    const { 'support-chat': _supportChat, ...rest } = adminStatement;
+    expect(adminRole.statements).toEqual(rest);
+    expect(adminRole.authorize({ 'support-chat': ['view'] }).success).toBe(false);
   });
 
   it('declares the agent resources and grants them to the built-in admin role', () => {

@@ -36,9 +36,11 @@ writeFileSync(
 );
 after(() => rmSync(sandbox, { recursive: true, force: true }));
 
-const exitCode = (toolInput) =>
-  spawnSync('node', [guard], { cwd: consumer, input: JSON.stringify({ tool_input: toolInput }) })
-    .status;
+const exitCode = (toolInput, toolName = 'Bash') =>
+  spawnSync('node', [guard], {
+    cwd: consumer,
+    input: JSON.stringify({ tool_name: toolName, tool_input: toolInput }),
+  }).status;
 const DENIED = 2;
 const ALLOWED = 0;
 
@@ -143,4 +145,32 @@ test('the guard still finds the OSS checkout when the consumer is a git worktree
 
   assert.equal(fromWorktree({ file_path: join(oss, 'packages/core/src/a.ts') }), DENIED);
   assert.equal(fromWorktree({ file_path: join(oss, '.worktrees/feat+x/packages/a.ts') }), ALLOWED);
+});
+
+// Codex edits through apply_patch: the paths live only in the patch headers of tool_input.command.
+const patch = (...lines) => ['*** Begin Patch', ...lines, '+x', '*** End Patch'].join('\n');
+const applyPatch = (...lines) => exitCode({ command: patch(...lines) }, 'apply_patch');
+
+test('a codex patch is judged by every path it touches, never as a shell command', () => {
+  assert.equal(applyPatch('*** Add File: apps/api/src/a.ts'), ALLOWED);
+  assert.equal(
+    applyPatch('*** Update File: apps/api/src/a.ts', '-rm -rf ../oss/packages'),
+    ALLOWED,
+  );
+  assert.equal(
+    applyPatch('*** Update File: apps/api/src/a.ts', '*** Update File: ../oss/packages/a.ts'),
+    DENIED,
+  );
+  assert.equal(applyPatch('*** Delete File: node_modules/pkg/index.js'), DENIED);
+  assert.equal(
+    applyPatch('*** Update File: apps/a.ts', '*** Move to: ../oss/packages/a.ts'),
+    DENIED,
+  );
+  assert.equal(applyPatch(`*** Add File: ${join(oss, '.worktrees/feat+x/a.ts')}`), ALLOWED);
+});
+
+test('a shell command carrying patch text is still judged as a shell command', () => {
+  const heredoc = `cat > ../oss/packages/a.ts <<'EOF'\n${patch('*** Add File: apps/a.ts')}\nEOF`;
+  assert.equal(exitCode({ command: heredoc }), DENIED);
+  assert.equal(exitCode({ command: `printf '%s' '${patch()}' && rm -rf ../oss/packages` }), DENIED);
 });

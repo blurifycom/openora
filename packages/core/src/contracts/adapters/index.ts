@@ -47,7 +47,7 @@ export type {
 export { WALLET_COMMANDS } from './wallet-commands.js';
 
 export type { WagerContext, WagerProduct } from './wager-context.js';
-export { WAGER_PRODUCTS, isWagerProduct } from './wager-context.js';
+export { WAGER_PRODUCTS, WagerProductSchema, isWagerProduct } from './wager-context.js';
 
 export type {
   BonusGrantCommands,
@@ -61,7 +61,12 @@ export { BONUS_GRANTS } from './bonus-grants.js';
 export type { BonusGrantLedgerReader } from './bonus-grant-ledger.js';
 export { BONUS_GRANT_LEDGER } from './bonus-grant-ledger.js';
 
-export type { BonusLifecycleCommands, BonusForfeitOutcome } from './bonus-lifecycle.js';
+export type {
+  BonusLifecycleCommands,
+  BonusForfeitOutcome,
+  BonusForfeitHeldArgs,
+  BonusForfeitedGrant,
+} from './bonus-lifecycle.js';
 export { BONUS_LIFECYCLE } from './bonus-lifecycle.js';
 
 export type {
@@ -105,6 +110,9 @@ export type {
   WalletBalanceReading,
   WalletBalancesReading,
   WalletProviderTransaction,
+  WalletLifetimeWithdrawals,
+  WalletLastDeposit,
+  WalletWithdrawalRequests,
 } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
@@ -298,6 +306,24 @@ export {
   SupportCustomerContextSchema,
   SupportChatProviderError,
 } from './support-chat.js';
+export type {
+  SupportHistory,
+  SupportHistoryEmailWindow,
+  SupportHistoryFailureReason,
+  SupportHistoryItem,
+  SupportHistoryReader,
+} from './support-history.js';
+export {
+  SUPPORT_CHAT_STATUSES,
+  SUPPORT_HISTORY_FAILURE_REASONS,
+  SUPPORT_HISTORY_READER,
+  SUPPORT_TICKET_STATUSES,
+  SupportHistoryEmailWindowSchema,
+  SupportHistoryFailureReasonSchema,
+  SupportHistoryItemSchema,
+  SupportHistoryProviderError,
+  SupportHistorySchema,
+} from './support-history.js';
 export type { RgExclusionReader } from './rg-exclusion-reader.js';
 export { RG_EXCLUSION_READER } from './rg-exclusion-reader.js';
 
@@ -394,7 +420,10 @@ export type {
   AdminRoleAssignmentSummary,
   AdminRoleAssignmentDirectory,
 } from './admin-role-assignment-directory.js';
-export { ADMIN_ROLE_ASSIGNMENT_DIRECTORY } from './admin-role-assignment-directory.js';
+export {
+  ADMIN_ROLE_ASSIGNMENT_DIRECTORY,
+  SUPER_ADMIN_MANAGEMENT_LOCK_KEY,
+} from './admin-role-assignment-directory.js';
 
 export type {
   AdminTxRow,
@@ -443,6 +472,20 @@ export type { PlayEligibilityPort } from './play-eligibility.js';
 export { PLAY_ELIGIBILITY } from './play-eligibility.js';
 export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
 export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
+export type {
+  RgStanding,
+  RgStandingExclusion,
+  RgStandingFlag,
+  RgStandingLimit,
+  RgStandingQuery,
+  RgStandingReader,
+  RgStandingWindow,
+} from './rg-standing-reader.js';
+export {
+  MAX_RG_STANDING_WINDOWS,
+  MAX_RG_STANDING_WINDOW_DAYS,
+  RG_STANDING_READER,
+} from './rg-standing-reader.js';
 export type { DepositHoldPolicy } from './deposit-hold.js';
 export { DEPOSIT_HOLD_POLICY } from './deposit-hold.js';
 
@@ -467,6 +510,8 @@ export {
 
 export type { PlayerActivityTracker } from './player-activity.js';
 export { PLAYER_ACTIVITY_TRACKER } from './player-activity.js';
+export type { PlayerAccountManagerReader } from './player-account-manager-reader.js';
+export { PLAYER_ACCOUNT_MANAGER_READER } from './player-account-manager-reader.js';
 export { SESSION_IDLE_POLICY, type SessionIdlePolicy } from './session-idle-policy.js';
 export { MIRROR_TARGET_POLICY, type MirrorTargetPolicy } from './mirror-target-policy.js';
 export { TWO_FACTOR_SETUP_POLICY, type TwoFactorSetupPolicy } from './two-factor-setup-policy.js';
@@ -494,6 +539,7 @@ export type {
   ActionTypeImplementation,
   McpToolDescriptor,
   ActionTypeDescriptor,
+  ActionPayloadMatch,
   TriggerDescriptor,
   TriggerSubjectField,
   McpInputIssue,

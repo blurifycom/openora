@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm';
 import {
   type AuditWritePort,
+  type BonusForfeitHeldArgs,
   type BonusForfeitReason,
   type ClientMeta,
   type Uuid,
@@ -99,6 +100,44 @@ export class GrantLifecycleService {
           ...(actor === undefined ? {} : { actor }),
         }),
       );
+      if (row) {
+        closed.push(row);
+      }
+    }
+    return closed;
+  }
+
+  /**
+   * Every live grant the player held when `tx` began, closed on `tx`. A grant created after that
+   * is not the one the rule was about, and a grant another path closed first comes back from
+   * `close` as null and is skipped - no refusal row, since nobody attempted it.
+   */
+  async forfeitHeld(
+    tx: DrizzleTx,
+    { userId, reason, actor, note, meta }: BonusForfeitHeldArgs,
+  ): Promise<ClosedGrant[]> {
+    const held = await tx
+      .select({ id: promoGrant.id })
+      .from(promoGrant)
+      .where(
+        and(
+          eq(promoGrant.userId, userId),
+          inArray(promoGrant.status, LIVE_STATUSES),
+          lte(promoGrant.createdAt, sql`now()`),
+        ),
+      )
+      .orderBy(asc(promoGrant.createdAt));
+
+    const closed: ClosedGrant[] = [];
+    for (const { id } of held) {
+      const row = await this.close(tx, id, {
+        status: 'forfeited',
+        action: 'promo.bonus.forfeited',
+        reason,
+        actor,
+        note,
+        ...(meta === undefined ? {} : { meta }),
+      });
       if (row) {
         closed.push(row);
       }

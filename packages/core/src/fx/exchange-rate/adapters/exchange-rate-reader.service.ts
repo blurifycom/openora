@@ -11,7 +11,7 @@ import type {
   ExchangeRateReader,
 } from '@openora/core/contracts';
 import { railFor } from '@openora/core/contracts';
-import { and, eq, lte } from 'drizzle-orm';
+import { and, eq, inArray, lte } from 'drizzle-orm';
 import { exchangeRateQuote } from '../schema/index.js';
 
 const logger = createLogger('exchange-rate-reader');
@@ -22,6 +22,8 @@ const MAX_PROVIDER_CLOCK_SKEW_MS = 60_000;
 const MAX_PLAUSIBLE_RATE = 1e12;
 /** Hard cap on the failure-cooldown map, so an unbounded code space cannot grow it. */
 const MAX_FAILURE_ENTRIES = 512;
+
+type StoredQuote = { rate: string; providerAsOf: Date };
 
 export function selectProvider(
   currency: string,
@@ -95,6 +97,10 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
   private readonly inFlight = new Map<string, Promise<ExchangeRateQuote>>();
   private readonly legResolution = new Map<string, Promise<ExchangeRateQuote | null>>();
   private readonly failedUntil = new Map<string, number>();
+  private pendingRowReads: {
+    currencies: Set<string>;
+    rows: Promise<Map<string, StoredQuote>>;
+  } | null = null;
 
   constructor(deps: ExchangeRateReaderServiceDeps) {
     this.drizzle = deps.drizzle;
@@ -165,7 +171,10 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     currency: string,
     db: DrizzleDb,
   ): Promise<ExchangeRateQuote | null> {
-    const row = await this.readRow(db, currency);
+    const row =
+      db === this.drizzle.db
+        ? await this.readPooledRow(currency)
+        : await this.readRow(db, currency);
     // A clock ahead of ours only ever makes a quote look newer, never older, so clamp at 0.
     const ageMs = row
       ? Math.max(0, Date.now() - row.providerAsOf.getTime())
@@ -222,10 +231,42 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     this.failedUntil.set(currency, now + this.failureCooldownMs);
   }
 
-  private async readRow(
-    db: DrizzleDb,
-    currency: string,
-  ): Promise<{ rate: string; providerAsOf: Date } | null> {
+  /**
+   * Pool reads requested in the same tick share one query, so a batch of N currencies costs one
+   * round trip instead of N.
+   */
+  private async readPooledRow(currency: string): Promise<StoredQuote | null> {
+    if (!this.pendingRowReads) {
+      const currencies = new Set<string>();
+      const rows = Promise.resolve().then(() => {
+        this.pendingRowReads = null;
+        return this.readRows([...currencies]);
+      });
+      this.pendingRowReads = { currencies, rows };
+    }
+    this.pendingRowReads.currencies.add(currency);
+    const rows = await this.pendingRowReads.rows;
+    return rows.get(currency) ?? null;
+  }
+
+  private async readRows(currencies: readonly string[]): Promise<Map<string, StoredQuote>> {
+    const rows = await this.drizzle.db
+      .select({
+        currency: exchangeRateQuote.baseCurrency,
+        rate: exchangeRateQuote.rate,
+        providerAsOf: exchangeRateQuote.providerAsOf,
+      })
+      .from(exchangeRateQuote)
+      .where(
+        and(
+          inArray(exchangeRateQuote.baseCurrency, currencies),
+          eq(exchangeRateQuote.quoteCurrency, this.pivot),
+        ),
+      );
+    return new Map(rows.map(({ currency, ...row }) => [currency, row]));
+  }
+
+  private async readRow(db: DrizzleDb, currency: string): Promise<StoredQuote | null> {
     const [row] = await db
       .select({
         rate: exchangeRateQuote.rate,

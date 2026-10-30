@@ -62,6 +62,51 @@ export const apply = defineActionType({
   errors: [],
 });
 
+export const reward = defineActionType({
+  id: 'demo_reward',
+  title: 'Reward demo',
+  description: 'Grants the player something.',
+  schemaVersion: 1,
+  iam: { resource: 'tag', action: 'create' },
+  reversible: true,
+  benefitsPlayer: true,
+  payloadSchema: z.object({ playerId: UuidSchema }),
+  errors: [],
+});
+
+export const tagging = defineActionType({
+  id: 'demo_tag',
+  title: 'Tag demo',
+  description: 'Tags the player.',
+  schemaVersion: 1,
+  iam: { resource: 'tag', action: 'create' },
+  reversible: true,
+  // The first tags are a benefit, the last a protection.
+  benefitsPlayerWhen: {
+    field: 'tagKey',
+    values: [
+      'vip', // a comment, between two values
+      "gold,plus",
+    ],
+  },
+  distinctBy: 'tagKey',
+  payloadSchema: z.object({ playerId: UuidSchema, tagKey: z.enum(['vip', 'gold,plus', 'high_risk']) }),
+  errors: [],
+});
+
+export const computed = defineActionType({
+  id: 'demo_computed',
+  title: 'Computed demo',
+  description: 'Declares its fields from constants.',
+  schemaVersion: 1,
+  iam: { resource: 'tag', action: 'create' },
+  reversible: true,
+  benefitsPlayerWhen: VIP_ONLY,
+  distinctBy: TAG_FIELD,
+  payloadSchema: z.object({ playerId: UuidSchema, tagKey: z.enum(['vip']) }),
+  errors: [],
+});
+
 export const dynamic = defineMcpTool({ id: TOOL_ID, title: 'x' });
 `,
   'packages/core/src/demo/__tests__/fake.test.ts': `
@@ -93,8 +138,60 @@ test('catalogues tool and action-type literals with their IAM and flags', () => 
       schemaVersion: 1,
       iam: { resource: 'tag', action: 'create' },
       reversible: false,
+      benefitsPlayer: false,
+      benefitsPlayerWhen: null,
+      distinctBy: null,
+    },
+    {
+      id: 'demo_computed',
+      module: 'demo',
+      file: 'packages/core/src/demo/contract/agent-tools.ts',
+      title: 'Computed demo',
+      description: 'Declares its fields from constants.',
+      schemaVersion: 1,
+      iam: { resource: 'tag', action: 'create' },
+      reversible: true,
+      benefitsPlayer: false,
+      benefitsPlayerWhen: null,
+      distinctBy: null,
+    },
+    {
+      id: 'demo_reward',
+      module: 'demo',
+      file: 'packages/core/src/demo/contract/agent-tools.ts',
+      title: 'Reward demo',
+      description: 'Grants the player something.',
+      schemaVersion: 1,
+      iam: { resource: 'tag', action: 'create' },
+      reversible: true,
+      benefitsPlayer: true,
+      benefitsPlayerWhen: null,
+      distinctBy: null,
+    },
+    {
+      id: 'demo_tag',
+      module: 'demo',
+      file: 'packages/core/src/demo/contract/agent-tools.ts',
+      title: 'Tag demo',
+      description: 'Tags the player.',
+      schemaVersion: 1,
+      iam: { resource: 'tag', action: 'create' },
+      reversible: true,
+      benefitsPlayer: false,
+      // A comma inside a value is the value's, as the kernel serves it.
+      benefitsPlayerWhen: { field: 'tagKey', values: ['vip', 'gold,plus'] },
+      distinctBy: 'tagKey',
     },
   ]);
+});
+
+test('catalogues a payload declaration that is not a literal as absent, and says so', () => {
+  const { catalog, stderr } = generate(moduleFiles);
+  const computed = catalog.agentActions.find((action) => action.id === 'demo_computed');
+  assert.equal(computed?.benefitsPlayerWhen, null);
+  assert.equal(computed?.distinctBy, null);
+  assert.match(stderr, /demo_computed: benefitsPlayerWhen is not a literal - catalogued as absent/);
+  assert.match(stderr, /demo_computed: distinctBy is not a literal - catalogued as absent/);
 });
 
 test('skips a definition whose id is not a literal, and says so', () => {

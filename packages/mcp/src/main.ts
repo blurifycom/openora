@@ -66,6 +66,11 @@ type CatalogAgentAction = {
   schemaVersion: number | null;
   iam: CatalogAgentIam | null;
   reversible: boolean | null;
+  // Absent in a catalog generated before action types could declare it.
+  benefitsPlayer?: boolean | null;
+  // Absent in a catalog generated before action types could declare them.
+  benefitsPlayerWhen?: { field: string; values: string[] } | null;
+  distinctBy?: string | null;
 };
 
 type Catalog = {
@@ -95,8 +100,17 @@ function formatAgentTool(t: CatalogAgentTool): string[] {
 function formatAgentAction(a: CatalogAgentAction): string[] {
   const reversibility =
     a.reversible === null ? 'reversible ?' : a.reversible ? 'reversible' : 'irreversible';
+  const benefit =
+    a.benefitsPlayer === null
+      ? ', benefits player ?'
+      : a.benefitsPlayer
+        ? ', benefits player'
+        : a.benefitsPlayerWhen
+          ? `, benefits player when ${a.benefitsPlayerWhen.field} is ${a.benefitsPlayerWhen.values.join(' or ')}`
+          : '';
+  const distinct = a.distinctBy ? `, distinct by ${a.distinctBy}` : '';
   return [
-    `- ${a.id}  [${reversibility}, v${a.schemaVersion ?? '?'}, iam ${formatIam(a.iam)}, module ${a.module}]`,
+    `- ${a.id}  [${reversibility}${benefit}${distinct}, v${a.schemaVersion ?? '?'}, iam ${formatIam(a.iam)}, module ${a.module}]`,
     ...(a.title || a.description
       ? [`    ${[a.title, a.description].filter(Boolean).join(' - ')}`]
       : []),

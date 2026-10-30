@@ -65,4 +65,18 @@ describe('CreateNotificationInputSchema params', () => {
 
     expect(result.error?.issues.map((issue) => issue.path)).toEqual([['params', 'note']]);
   });
+
+  it('accepts the mention author on chat.mention and still rejects an undeclared key', () => {
+    const mention = { userId: base.userId, type: 'chat.mention' } as const;
+    expect(
+      CreateNotificationInputSchema.safeParse({ ...mention, params: { byUsername: 'alice' } })
+        .success,
+    ).toBe(true);
+    const result = CreateNotificationInputSchema.safeParse({
+      ...mention,
+      params: { byUsername: 'alice', foo: 'bar' },
+    });
+
+    expect(result.error?.issues.map((issue) => issue.path)).toEqual([['params', 'foo']]);
+  });
 });

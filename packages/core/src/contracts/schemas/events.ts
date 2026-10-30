@@ -371,6 +371,9 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     previousEmail: z.email(),
     newEmail: z.email(),
+    // Stamped right after the swap returns; the audit row's own write time can trail it.
+    // Optional so a payload from before this field still parses.
+    changedAt: TimestampSchema.optional(),
   }),
   'identity.phone.verified': authContextBase.extend({
     userId: UuidSchema,
@@ -1281,6 +1284,8 @@ export const domainEventSchemas = {
   'chat.user.mentioned': z.object({
     mentionedUserId: UuidSchema,
     byUserId: UuidSchema,
+    // Optional: events queued before this field existed still deliver.
+    byUsername: z.string().min(1).optional(),
     roomId: UuidSchema.nullable(),
     messageId: z.string(),
   }),
@@ -1312,6 +1317,13 @@ export const domainEventSchemas = {
     actorId: UuidSchema,
     previousStatus: PlayerStatusSchema,
     newStatus: PlayerStatusSchema,
+  }),
+  'player.account_manager.changed': authContextBase.extend({
+    playerId: UuidSchema,
+    userId: UuidSchema,
+    previousAccountManagerId: UuidSchema.nullable(),
+    accountManagerId: UuidSchema.nullable(),
+    actorId: UuidSchema,
   }),
 
   'social.friend_request.sent': authContextBase.extend({

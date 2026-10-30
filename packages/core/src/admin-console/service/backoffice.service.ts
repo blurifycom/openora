@@ -15,7 +15,12 @@ import type {
   ClientMeta,
 } from '@openora/core/contracts';
 import { countGranularityBuckets } from '@openora/core/contracts';
-import { createDomainError, makeNotFoundError, serializeRow } from '@openora/core/server';
+import {
+  createDomainError,
+  makeConflictError,
+  makeNotFoundError,
+  serializeRow,
+} from '@openora/core/server';
 import type {
   GamePerformanceFilter,
   GamePerformanceTrendFilter,
@@ -26,6 +31,16 @@ import type {
 export const UserNotFoundError = makeNotFoundError('User');
 export const TransactionNotFoundError = makeNotFoundError('Transaction');
 export const GameNotFoundError = makeNotFoundError('Game');
+export const SelfAccountLockoutError = makeConflictError(
+  'User',
+  'You cannot disable your own account or change your own role',
+  { reason: 'self_lockout' },
+);
+export const LastActiveSuperAdminError = makeConflictError(
+  'User',
+  'The last active super-admin cannot be disabled or demoted',
+  { reason: 'last_active_super_admin' },
+);
 export const GamePerformanceTrendRangeError = createDomainError<[message: string]>(
   'GamePerformanceTrendRangeError',
   (message) => message,
@@ -115,12 +130,48 @@ export class BackofficeService {
     actorId: User['id'],
     meta?: ClientMeta,
   ) {
-    const row = await this.users.update(userId, data, actorId, meta);
+    const row = await this.users.update(userId, data, actorId, meta, {
+      beforeWrite: (tx, current) =>
+        this.assertKeepsAdminAccess({ userId, data, actorId, current, tx }),
+    });
     if (!row) {
       throw new UserNotFoundError(userId);
     }
     const assignedRoles = await this.roleAssignments.listByUserIds([userId]);
     return toAdminUser(row, assignedRoles);
+  }
+
+  /**
+   * Refuses a change that would lock admin management out: an admin disabling or re-roling
+   * themselves, or the last active super-admin being disabled or demoted. Runs inside the
+   * update's transaction, against the locked row; the super-admin check takes the shared
+   * super-admin management lock, so concurrent changes that each remove a different
+   * super-admin are decided one after the other and the write commits under that lock.
+   */
+  private async assertKeepsAdminAccess({
+    userId,
+    data,
+    actorId,
+    current,
+    tx,
+  }: {
+    userId: User['id'];
+    data: { isActive?: boolean; role?: UserRole };
+    actorId: User['id'];
+    current: { isActive: boolean; role: string };
+    tx: unknown;
+  }) {
+    const disables = data.isActive === false && current.isActive;
+    const demotes = data.role !== undefined && data.role !== current.role;
+    if (!disables && !demotes) {
+      return;
+    }
+    if (userId === actorId) {
+      throw new SelfAccountLockoutError();
+    }
+    if (!(await this.roleAssignments.keepsAnotherActiveSuperAdmin(userId, tx))) {
+      throw new LastActiveSuperAdminError();
+    }
   }
 
   async listTransactions(filters: TransactionFilter) {

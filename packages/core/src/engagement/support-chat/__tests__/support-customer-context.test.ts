@@ -18,6 +18,7 @@ const reading = (overrides: Partial<SupportCustomerReading> = {}): SupportCustom
   playerStatus: 'active',
   kycStatus: 'pending',
   rankName: 'Bronze',
+  accountManagerName: 'Account Manager',
   isSelfExcluded: false,
   isCoolingOff: false,
   activeCurrency: 'USD',
@@ -36,6 +37,7 @@ describe('toSupportCustomerContext', () => {
       isCoolingOff: false,
       kycStatus: 'pending',
       rankName: 'Bronze',
+      accountManagerName: 'Account Manager',
       activeCurrency: 'USD',
       syncedAt: '2026-01-02T03:04:05.000Z',
     });
@@ -79,6 +81,12 @@ describe('toSupportCustomerContext', () => {
 
   it('passes a missing rank through as null', () => {
     expect(toSupportCustomerContext(reading({ rankName: null }), NOW).rankName).toBeNull();
+  });
+
+  it('passes a missing account manager through as null', () => {
+    expect(
+      toSupportCustomerContext(reading({ accountManagerName: null }), NOW).accountManagerName,
+    ).toBeNull();
   });
 
   it('produces a context the strict schema accepts', () => {

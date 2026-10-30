@@ -99,6 +99,13 @@ export class WageringService implements BonusWageringCommands {
       };
     }
 
+    if (
+      moneyCompare(args.fromBonus, ZERO) > 0 &&
+      grant.terms.excludedProducts?.includes(args.context.product) === true
+    ) {
+      return { ok: false, reason: 'insufficient_bonus', bonusAvailable: ZERO };
+    }
+
     // Against the terms snapshot, inside the transaction that moves the money. It is an
     // anti-abuse control - a player who can stake the whole bonus on one spin turns a wagering
     // requirement into a coin flip - so a preflight read the client could skip is not enough.
