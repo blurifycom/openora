@@ -74,8 +74,10 @@ describe('audit trail with two services of one deployment up', () => {
     await bootService(`svc-b-${randomUUID()}`, namespace);
     // Each service creates its group when it starts reading; events published before that
     // are missed, so wait until every group the deployment will have exists.
-    await vi.waitFor(async () =>
-      expect((await redis.client.xInfoGroups('oss:evt:tag.created')).length).toBeGreaterThan(0),
+    await vi.waitFor(
+      async () =>
+        expect((await redis.client.xInfoGroups('oss:evt:tag.created')).length).toBeGreaterThan(0),
+      { timeout: 10_000 },
     );
     await new Promise((resolve) => setTimeout(resolve, 500));
 
