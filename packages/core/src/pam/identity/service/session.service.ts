@@ -285,11 +285,21 @@ export class SessionService {
   }
 }
 
-function expireActiveSessions(db: DrizzleDb | DrizzleTx, userId: User['id']) {
-  return db
+/**
+ * Ends every live session of the account: each expires now, so the next request with its cookie
+ * is signed out and better-auth drops the row. A later reactivation or password change revives
+ * none. Answers how many it ended.
+ */
+export async function expireActiveSessions(
+  db: DrizzleDb | DrizzleTx,
+  userId: User['id'],
+): Promise<number> {
+  const ended = await db
     .update(session)
     .set({ expiresAt: sql`now()`, updatedAt: session.updatedAt })
-    .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)));
+    .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)))
+    .returning({ id: session.id });
+  return ended.length;
 }
 
 function sessionsRevoked({

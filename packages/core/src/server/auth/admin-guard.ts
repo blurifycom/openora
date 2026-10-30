@@ -112,9 +112,8 @@ export class AdminGuard {
 
   /**
    * `assert` for a caller that is not an HTTP request (an agent run, an MCP token): the same
-   * user, role, grant and 2FA-enrolment checks and the same denial event, without a session -
-   * so no session-integrity check, and `ip`/`userAgent` are null. A deactivated account is
-   * refused too: with no session to revoke, nothing else stops a credential it issued.
+   * user, role, grant, active-account and 2FA-enrolment checks and the same denial event, without
+   * a session - so no session-integrity check, and `ip`/`userAgent` are null.
    */
   async assertUser<R extends ResourceName>(
     userId: string,
@@ -125,7 +124,6 @@ export class AdminGuard {
       userId,
       clientMeta: { ip: null, userAgent: null },
       permission: { resource, action },
-      requireActive: true,
     });
   }
 
@@ -200,20 +198,20 @@ export class AdminGuard {
     clientMeta: { ip, userAgent },
     permission,
     session,
-    requireActive = false,
   }: {
     userId: string;
     clientMeta: ClientMeta;
     permission: { resource: R; action: ActionOf<R> } | undefined;
     session?: { sessionId: string | null };
-    requireActive?: boolean;
   }): Promise<AdminCaller> {
     const userId = canonicalUserId(rawUserId);
     const deniedResource = permission?.resource ?? 'admin';
     const deniedAction = permission?.action ?? 'access';
 
     const { account, granted } = await this.resolveAccess(userId, permission ? [permission] : []);
-    if (!account || (requireActive && !account.isActive) || !account.isAdmin) {
+    // A deactivated account is refused on every path, read fresh on every call: deactivation also
+    // ends its sessions, but sign-in does not check the flag, and a token it issued has no session.
+    if (!account || !account.isActive || !account.isAdmin) {
       this.emitUnauthorized(userId, account?.role, deniedResource, deniedAction, ip, userAgent);
       throw new ORPCError('FORBIDDEN', {
         message: 'Admin access required',
