@@ -6,6 +6,7 @@ import type {
   McpToolContract,
   McpToolHandler,
   SealedToken,
+  SubscribeOptions,
   Token,
   TokenCatalog,
   TokenValue,
@@ -68,9 +69,10 @@ export type RegisteredTriggerListener = {
 // it shifts only when a plugin reorders its own handlers for one topic.
 //
 // `consumerGroup`, when set, joins the handler to that broker consumer group instead of the
-// service's own: every service subscribing with the same name competes for each event, so the
-// handler runs once per deployment however many services load its plugin.
-export type EventSubscriptionOptions = { consumerGroup?: string };
+// service's own: every service of one deployment subscribing with the same name competes for
+// each event, so the handler runs once per deployment however many services load its plugin.
+// The name is local to the deployment: createApp scopes it with the realtime namespace.
+export type EventSubscriptionOptions = Pick<SubscribeOptions, 'consumerGroup'>;
 export type RegisteredEventHandler = {
   handler: EventHandler;
   consumer: string;
