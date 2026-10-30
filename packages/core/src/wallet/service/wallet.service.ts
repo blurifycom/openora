@@ -1327,6 +1327,39 @@ export class WalletService {
     }
   }
 
+  private async findCommittedWithdrawal({
+    userId,
+    idempotencyKey,
+    amount,
+    currency,
+  }: {
+    userId: User['id'];
+    idempotencyKey: string | undefined;
+    amount: string;
+    currency: string;
+  }): Promise<TransactionResult | null> {
+    if (!idempotencyKey) {
+      return null;
+    }
+    const [owned] = await this.drizzle.db
+      .select({ id: wallet.id })
+      .from(wallet)
+      .where(eq(wallet.userId, userId));
+    if (!owned) {
+      return null;
+    }
+    const existing = await this.findByIdempotencyKey(
+      this.drizzle.db,
+      owned.id,
+      namespacedIdempotencyKey(WITHDRAW_IDEMPOTENCY_NAMESPACE, idempotencyKey),
+    );
+    if (!existing) {
+      return null;
+    }
+    this.assertReplayMatches(existing, amount, currency);
+    return { transactionId: existing.id, status: existing.status };
+  }
+
   private async assertWithdrawalPin(
     userId: User['id'],
     pin: string | undefined,
@@ -1991,6 +2024,18 @@ export class WalletService {
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertWithdrawalsNotLocked(userId);
+    // A retry of a withdrawal that already committed answers with it: the original request passed
+    // the PIN and the address wait, and a retry must not be refused by a lock or a deleted
+    // address that came after, or the player resubmits under a new key and is paid twice.
+    const committed = await this.findCommittedWithdrawal({
+      userId,
+      idempotencyKey,
+      amount,
+      currency,
+    });
+    if (committed) {
+      return committed;
+    }
     // Before anything that could reject for another reason, so every guess is counted and a
     // client cannot probe the PIN through the errors of a request that was never going to pass.
     await this.assertWithdrawalPin(userId, withdrawalPin, { ip, userAgent });

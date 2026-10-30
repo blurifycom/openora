@@ -436,6 +436,39 @@ describe('WithdrawalPinService.verifyPin (real PG)', () => {
     });
   });
 
+  it('judges a parallel burst one guess at a time: at most 5 are counted and the right one is refused after the lock', async () => {
+    const toUser = vi.fn(async () => undefined);
+    const { accountUser, svc } = await withPin({ mailDispatch: { toUser, toAddress: vi.fn() } });
+
+    const verdicts = await Promise.all([
+      ...Array.from({ length: 12 }, () =>
+        svc.verifyPin({ userId: accountUser.id, pin: WRONG_PIN }),
+      ),
+      svc.verifyPin({ userId: accountUser.id, pin: PIN }),
+    ]);
+
+    expect(verdicts.filter((v) => v.status === 'incorrect')).toHaveLength(4);
+    expect(verdicts.filter((v) => v.status === 'ok').length).toBeLessThanOrEqual(1);
+    expect(verdicts.filter((v) => v.status === 'locked').length).toBeGreaterThanOrEqual(8);
+    expect(toUser).toHaveBeenCalledTimes(1);
+    await expect(svc.verifyPin({ userId: accountUser.id, pin: PIN })).resolves.toMatchObject({
+      status: 'locked',
+    });
+  });
+
+  it('keeps an active lock when the PIN is removed', async () => {
+    const { accountUser, svc } = await withPin();
+    for (let i = 0; i < 5; i++) {
+      await svc.verifyPin({ userId: accountUser.id, pin: WRONG_PIN });
+    }
+
+    await svc.remove(accountUser.id, REMOVE_PROOF, {}, NO_CLIENT_META);
+
+    await expect(svc.verifyPin({ userId: accountUser.id, pin: undefined })).resolves.toMatchObject({
+      status: 'locked',
+    });
+  });
+
   it('a failed mail enqueue does not turn the lock into an error', async () => {
     const toUser = vi.fn(async () => {
       throw new Error('queue down');

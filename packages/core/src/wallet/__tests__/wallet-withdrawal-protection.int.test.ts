@@ -191,6 +191,26 @@ describe('WalletService.withdraw - Withdrawal PIN (real PG)', () => {
     expect(await withdrawalRows()).toHaveLength(0);
   });
 
+  it('answers a retry of a committed withdrawal with it, without asking the PIN again', async () => {
+    const security = makeWithdrawalSecurity();
+    const { svc } = makeService(security);
+    const w = await seedWallet('BTC');
+    await seedMatureWithdrawalAddress(db, { userId: w.userId, currency: 'BTC', address: ADDRESS });
+    const idempotencyKey = randomUUID();
+    const first = await svc.withdraw(btcWithdrawal(w.userId, { idempotencyKey }));
+
+    vi.mocked(security.verifyPin).mockResolvedValue({
+      status: 'locked',
+      lockedUntil: new Date(Date.now() + 60_000),
+    });
+    await db.drizzle.db.delete(walletWithdrawalAddress);
+    const retry = await svc.withdraw(btcWithdrawal(w.userId, { idempotencyKey }));
+
+    expect(retry.transactionId).toBe(first.transactionId);
+    expect(security.verifyPin).toHaveBeenCalledTimes(1);
+    expect(await withdrawalRows()).toHaveLength(1);
+  });
+
   it('asks for the PIN on a fiat withdrawal too', async () => {
     const { svc } = makeService(pinVerdict({ status: 'missing' }));
     const w = await seedWallet('USD', '100');
