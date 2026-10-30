@@ -38,8 +38,15 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
   private _actions: RegisteredActionType<C>[] = [];
   private _sealedBound = new Set<symbol>();
   private _owner = UNKNOWN_OWNER;
+  private _routerless = new Set<string>();
 
   constructor(private readonly container: Container<C>) {}
+
+  // The module still binds every port, handles every event and runs every job; only its
+  // routers.add calls are dropped. Narrowest point that keeps its HTTP surface off the process.
+  withholdRouters(pluginId: string): void {
+    this._routerless.add(pluginId);
+  }
 
   setOwner(pluginId: string | null): void {
     this._owner = pluginId ?? UNKNOWN_OWNER;
@@ -86,6 +93,9 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
 
   routers = {
     add: (namespace: string, factory: RouterFactory<C>) => {
+      if (this._routerless.has(this._owner)) {
+        return;
+      }
       if (this._routers.has(namespace)) {
         throw new Error(`Router namespace "${namespace}" is already registered`);
       }
