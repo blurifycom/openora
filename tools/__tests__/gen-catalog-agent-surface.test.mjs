@@ -81,10 +81,16 @@ export const tagging = defineActionType({
   schemaVersion: 1,
   iam: { resource: 'tag', action: 'create' },
   reversible: true,
-  // The first tag is a benefit, the second a protection.
-  benefitsPlayerWhen: { field: 'tagKey', values: ['vip', "gold"] },
+  // The first tags are a benefit, the last a protection.
+  benefitsPlayerWhen: {
+    field: 'tagKey',
+    values: [
+      'vip', // a comment, between two values
+      "gold,plus",
+    ],
+  },
   distinctBy: 'tagKey',
-  payloadSchema: z.object({ playerId: UuidSchema, tagKey: z.enum(['vip', 'gold', 'high_risk']) }),
+  payloadSchema: z.object({ playerId: UuidSchema, tagKey: z.enum(['vip', 'gold,plus', 'high_risk']) }),
   errors: [],
 });
 
@@ -172,7 +178,8 @@ test('catalogues tool and action-type literals with their IAM and flags', () => 
       iam: { resource: 'tag', action: 'create' },
       reversible: true,
       benefitsPlayer: false,
-      benefitsPlayerWhen: { field: 'tagKey', values: ['vip', 'gold'] },
+      // A comma inside a value is the value's, as the kernel serves it.
+      benefitsPlayerWhen: { field: 'tagKey', values: ['vip', 'gold,plus'] },
       distinctBy: 'tagKey',
     },
   ]);

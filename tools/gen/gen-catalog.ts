@@ -510,7 +510,11 @@ function callObjectArguments(src: string, fnName: string, file: string): string[
   return out;
 }
 
-function objectEntries(body: string): Map<string, string> {
+// Comments and whitespace ahead of an entry or an element.
+const LEADING_COMMENTS = /^(?:\s*(?:\/\/[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/))*\s*/;
+
+/** `body` split on its top-level commas: never one inside a string, a comment or brackets. */
+function topLevelSegments(body: string): string[] {
   const segments: string[] = [];
   let start = 0;
   scanTopLevel(body, 0, (ch, i) => {
@@ -520,9 +524,13 @@ function objectEntries(body: string): Map<string, string> {
     }
   });
   segments.push(body.slice(start));
+  return segments;
+}
+
+function objectEntries(body: string): Map<string, string> {
   const entries = new Map<string, string>();
-  for (const raw of segments) {
-    const segment = raw.replace(/^(?:\s*(?:\/\/[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/))*\s*/, '').trim();
+  for (const raw of topLevelSegments(body)) {
+    const segment = raw.replace(LEADING_COMMENTS, '').trim();
     const m = segment.match(/^(?:'([^']+)'|"([^"]+)"|([A-Za-z_$][\w$]*))\s*:\s*([\s\S]*)$/);
     if (m) {
       entries.set(m[1] ?? m[2] ?? m[3] ?? '', (m[4] ?? '').trim());
@@ -557,9 +565,8 @@ function stringArrayLiteral(value: string | undefined): string[] | null {
   if (body === undefined) {
     return null;
   }
-  const items = body
-    .split(',')
-    .map((item) => item.trim())
+  const items = topLevelSegments(body)
+    .map((item) => item.replace(LEADING_COMMENTS, '').trim())
     .filter((item) => item.length > 0)
     .map((item) => stringLiteral(item));
   return items.every((item): item is string => item !== null) ? items : null;
