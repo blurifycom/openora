@@ -12,10 +12,9 @@ The first is paying on the house edge. A percentage of the stake costs the same 
 as on a 90% one, so rakeback becomes a loss on low-edge games. Paying on the edge needs the
 game's RTP on the bet, and the wagering seam did not carry it.
 
-The second is letting the player collect rakeback when they choose. That turns rakeback into a
-balance the platform holds for the player. It needs a ledger of what is owed, a payout that
-cannot pay twice, an answer for a round rolled back after the money moved, and an answer for a
-player who can no longer claim.
+The second is letting the player collect rakeback when they choose, which makes it a balance the
+platform holds. That needs a ledger of what is owed, a payout that cannot pay twice, and answers
+for a round rolled back after the money moved and for a player who can no longer claim.
 
 ## Decision
 
@@ -23,9 +22,11 @@ player who can no longer claim.
 `promo.rakeback.payout` (`instant` | `claim`) live in platform config, not on the rank-config row.
 They change what the platform owes, so they ship with a deploy rather than a backoffice edit.
 
-**RTP rides on `WagerContext`.** An optional `rtp` decimal fraction is set by whoever reports the
-bet. The margin basis pays `realAmount × (1 − rtp) × (tier + boost) / 100`. A missing or zero rtp,
-or one above 1 such as a percent, pays nothing rather than a guess.
+**RTP rides on `WagerContext` and lands on the ledger.** An optional `rtp` decimal fraction is set
+by whoever reports the bet, and the wallet records it with the product on the bet's row.
+`houseEdge(realAmount, rtp)` in `@openora/core/server` is the one pricing rule: a missing or zero
+rtp, or one above 1 such as a percent, prices at zero rather than a guess. The margin basis pays
+`houseEdge × (tier + boost) / 100`.
 
 **Accrual rows are the ledger.** In claim mode each bet writes a `promo_rakeback_accrual` row with
 the stake, rate, boost and rtp that priced it. The rows are the single source of the unclaimed

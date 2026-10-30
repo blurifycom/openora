@@ -21,6 +21,7 @@ import {
   WALLET_RECONCILIATION_FINDING_KINDS,
   WALLET_RECONCILIATION_FINDING_STATUSES,
   ON_RAMP_STATUSES,
+  WAGER_PRODUCTS,
   type OnRampStatus,
   type WalletRail,
   type WalletTransactionStatus,
@@ -75,6 +76,8 @@ export const walletTransactionDirectionEnum = pgEnum(
   'wallet_transaction_direction',
   MANUAL_ADJUSTMENT_DIRECTIONS,
 );
+
+export const walletWagerProductEnum = pgEnum('wallet_wager_product', WAGER_PRODUCTS);
 
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
@@ -153,6 +156,10 @@ export const walletTransaction = pgTable(
     providerName: text(),
     providerRefId: text(),
     externalRoundId: text(),
+    // Bet rows: the bet's `WagerContext.product`, and its `rtp` when `isWagerRtp` held, so the
+    // ledger can price a bet's house edge. NULL on every other row type and on older bets.
+    wagerProduct: walletWagerProductEnum(),
+    wagerRtp: decimal({ precision: 19, scale: 18 }),
     destinationAddress: text(),
     destinationTag: text(),
     destinationWalletId: text(),

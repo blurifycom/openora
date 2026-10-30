@@ -155,8 +155,8 @@ shape it, and both default to the original behaviour.
 
 - **`basis`**. `stake` pays the percentage of the stake. `margin` pays it of the house edge, the
   stake times `1 - rtp`, where `rtp` is the fraction the game provider's adapter reports on the
-  bet's `WagerContext`. A bet with a missing or zero rtp, or one above 1, pays nothing rather
-  than a guess, and logs a warning.
+  bet's `WagerContext`, priced by the shared `houseEdge`. A bet with a missing or zero rtp, or one
+  above 1, pays nothing rather than a guess, and logs a warning.
 - **`payout`**. `instant` credits it in the bet's own currency, in the bet's own transaction.
   `claim` writes each bet's rakeback to `promo_rakeback_accrual` and moves no money until the
   player claims it, with `claimMinimum` in the wallet reference currency.

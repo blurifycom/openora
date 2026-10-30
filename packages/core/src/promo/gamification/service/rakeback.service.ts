@@ -1,12 +1,13 @@
 import { and, desc, eq, gt, inArray } from 'drizzle-orm';
-import type {
-  RakebackBasis,
-  RakebackPayout,
-  WagerReversalArgs,
-  WagerTrackingArgs,
-  WagerTrackingCommands,
-  WagerTrackingWalletCredit,
-  WalletCommands,
+import {
+  isUsableRtp,
+  type RakebackBasis,
+  type RakebackPayout,
+  type WagerReversalArgs,
+  type WagerTrackingArgs,
+  type WagerTrackingCommands,
+  type WagerTrackingWalletCredit,
+  type WalletCommands,
 } from '@openora/core/contracts';
 import {
   moneyAdd,
@@ -14,6 +15,7 @@ import {
   moneyDivide,
   moneyScaleBy,
   moneySubtract,
+  houseEdge,
   type DrizzleTx,
 } from '@openora/core/server';
 import {
@@ -25,13 +27,6 @@ import {
 import { roundReversal } from '../shared/round-reversal.js';
 
 const ZERO = '0';
-
-// A percent value (`'96'`) fails it and pays nothing rather than being guessed at.
-const RTP_PATTERN = /^(0(\.\d{1,18})?|1(\.0{1,18})?)$/;
-
-// A zero rtp is a game that never pays back, which in practice is a missing value, not a real game.
-const isUsableRtp = (rtp?: string): rtp is string =>
-  rtp !== undefined && RTP_PATTERN.test(rtp) && moneyCompare(rtp, ZERO) > 0;
 
 export type RakebackSettings = { basis: RakebackBasis; payout: RakebackPayout };
 
@@ -45,13 +40,7 @@ const countsToward = (eligibleProducts: readonly string[], product: string) =>
 
 /** The part of a bet's own-money stake rakeback is a share of; zero when it cannot be priced. */
 export function rakebackBase(realAmount: string, basis: RakebackBasis, rtp?: string): string {
-  if (basis === 'stake') {
-    return realAmount;
-  }
-  if (!isUsableRtp(rtp)) {
-    return ZERO;
-  }
-  return moneyScaleBy(realAmount, moneySubtract('1', rtp));
+  return basis === 'stake' ? realAmount : houseEdge(realAmount, rtp);
 }
 
 /**
