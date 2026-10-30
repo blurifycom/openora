@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, like, sql } from 'drizzle-orm';
 import { auditLog } from '@openora/core/audit/schema';
 import { MESSAGE_BROKER, type SportsbookConfirmArgs } from '@openora/core/contracts';
+import { betting } from '@openora/core/sportsbook/contracts';
 import { DRIZZLE, eventOutbox, processedEvents } from '@openora/core/server';
+import { player as playerProfile } from '@openora/core/pam/schema/profile';
 import {
   sportsbookBet,
   sportsbookBetTransaction,
@@ -1155,18 +1157,36 @@ describe('provider disagreement', () => {
       expect(entry.before ?? {}).not.toHaveProperty('holdActive');
       expect(entry.after).not.toHaveProperty('holdActive');
     }
-    const holdEntries = await db
+    const [profile] = await db
+      .select({ id: playerProfile.id })
+      .from(playerProfile)
+      .where(eq(playerProfile.userId, player.userId));
+    const [placed, released, ...rest] = await db
       .select({ action: auditLog.action, before: auditLog.before, after: auditLog.after })
       .from(auditLog)
-      .where(eq(auditLog.resourceType, 'wallet_withdrawal_hold'))
+      .where(
+        and(
+          eq(auditLog.resourceType, 'player'),
+          eq(auditLog.resourceId, profile!.id),
+          like(auditLog.action, 'wallet.withdrawal_hold.%'),
+        ),
+      )
       .orderBy(auditLog.createdAt);
-    const playerHold = holdEntries.filter(
-      (e) => (e.after ?? e.before)?.['userId'] === player.userId,
-    );
-    expect(playerHold.map((e) => e.action)).toEqual([
-      'wallet.withdrawal_hold.placed',
-      'wallet.withdrawal_hold.released',
-    ]);
+    expect(rest).toEqual([]);
+    expect(placed).toMatchObject({
+      action: 'wallet.withdrawal_hold.placed',
+      before: null,
+      after: { userId: player.userId, source: betting.SPORTSBOOK_HOLD_SOURCE },
+    });
+    expect(released).toMatchObject({
+      action: 'wallet.withdrawal_hold.released',
+      before: {
+        holdId: placed!.after!['holdId'],
+        userId: player.userId,
+        source: betting.SPORTSBOOK_HOLD_SOURCE,
+      },
+      after: null,
+    });
   });
 });
 
