@@ -371,6 +371,13 @@ export const SetWithdrawalPinInputSchema = z
     path: ['confirmPin'],
   });
 
+// Removing the PIN asks for the same fresh proof as setting it: without it a stolen session
+// could drop the PIN and then withdraw.
+export const RemoveWithdrawalPinInputSchema = z.object({
+  currentPassword: z.string().min(8),
+  totpCode: TotpStepUpCodeSchema.optional(),
+});
+
 export const PhoneVerificationRequestInputSchema = z.object({
   phone: E164PhoneSchema,
   currentPassword: z.string().min(8),
@@ -495,6 +502,7 @@ export type SetLoginWithdrawalAlertsInput = z.infer<typeof SetLoginWithdrawalAle
 export type SetAutoLogoutInput = z.infer<typeof SetAutoLogoutInputSchema>;
 export type SetRequireTwoFactorOnLoginInput = z.infer<typeof SetRequireTwoFactorOnLoginInputSchema>;
 export type SetWithdrawalPinInput = z.infer<typeof SetWithdrawalPinInputSchema>;
+export type RemoveWithdrawalPinInput = z.infer<typeof RemoveWithdrawalPinInputSchema>;
 export type SetAntiPhishingCodeInput = z.infer<typeof SetAntiPhishingCodeInputSchema>;
 export type PhoneVerificationRequestInput = z.infer<typeof PhoneVerificationRequestInputSchema>;
 export type PhoneVerificationRequestOutput = z.infer<typeof PhoneVerificationRequestOutputSchema>;

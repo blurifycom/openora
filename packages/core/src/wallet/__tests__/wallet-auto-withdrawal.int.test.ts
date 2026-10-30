@@ -27,6 +27,7 @@ import {
   makeAuditWriter,
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
+import { seedMatureWithdrawalAddress } from '../../testing/seed-wallet.js';
 import { migrate } from '../migrate.js';
 import {
   wallet,
@@ -1089,6 +1090,11 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -1104,6 +1110,11 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '2000' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -1124,6 +1135,11 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '500' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -1139,6 +1155,11 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '1000' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '2',
@@ -1158,6 +1179,11 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+    });
     await expect(
       svc.withdraw({
         userId: w.userId,
@@ -1177,6 +1203,11 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     });
     const w = await seedWallet({ currency: 'ETH', balance: '10' });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'ETH',
+      address: '0xexample',
+    });
     await expect(
       svc.withdraw({
         userId: w.userId,
@@ -1205,6 +1236,11 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
       autoApprovalPivotAmount: '1400',
     });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '0.2',
@@ -1224,6 +1260,11 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -1316,6 +1357,11 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
       createdBy: randomUUID(),
     });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '1',

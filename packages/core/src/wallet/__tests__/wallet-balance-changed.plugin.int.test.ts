@@ -12,6 +12,7 @@ import {
   ADMIN_USER_DIRECTORY,
   AUDIT_WRITER,
   IDENTITY_READER,
+  WITHDRAWAL_SECURITY,
   JOB_QUEUE,
   RATE_LIMITER,
   REALTIME_TRANSPORT,
@@ -24,6 +25,7 @@ import {
   makeDrizzle,
   makeEventBus,
   makeIdentityReader,
+  makeWithdrawalSecurity,
   makeJobQueue,
   makeRealtimeTransport,
   mock,
@@ -41,6 +43,7 @@ function boot() {
   container.register(ADMIN_GUARD, () => makeAdminGuard());
   container.register(AUDIT_WRITER, () => makeAuditWriter());
   container.register(IDENTITY_READER, () => makeIdentityReader());
+  container.register(WITHDRAWAL_SECURITY, () => makeWithdrawalSecurity());
   container.register(ADMIN_USER_DIRECTORY, () => mock<AdminUserDirectory>({}));
   container.register(RATE_LIMITER, () => mock<RateLimiterAdapter<string>>({}));
   container.register(JOB_QUEUE, () => makeJobQueue());

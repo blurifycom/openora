@@ -409,6 +409,12 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
+  // The wrong PINs that tripped the lock, not the PINs themselves.
+  'identity.security.withdrawal_pin.locked': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    lockedUntil: TimestampSchema,
+  }),
   // The code itself never travels here - audit/event streams are broader-read than
   // security.me, which is the only place the raw value is returned.
   'identity.security.anti_phishing_code.set': authContextBase.extend({

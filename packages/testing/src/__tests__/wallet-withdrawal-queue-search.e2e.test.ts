@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { loadExtensions } from '@openora/core/server';
+import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { walletWithdrawalAddress } from '@openora/core/wallet/schema';
 import {
   asAdmin,
   registerAndMaterializePlayer,
@@ -88,6 +89,20 @@ describe('withdrawal queue search', () => {
       amount: '0.1',
       currency: 'BTC',
     });
+    // A withdrawal pays only a saved address that has waited out its first 24 hours.
+    await testApp.container
+      .get(DRIZZLE)
+      .db.insert(walletWithdrawalAddress)
+      .values(
+        [evmAddress, caseSensitiveAddress].map((address) => ({
+          userId: searchedUserId,
+          label: 'Seeded',
+          currency: 'BTC',
+          network: 'BITCOIN',
+          address,
+          createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+        })),
+      );
     const evmWithdrawalId = await withdraw(searched, {
       amount: '0.01',
       currency: 'BTC',

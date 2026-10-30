@@ -18,6 +18,7 @@ import {
   SESSION_COMMANDS,
   SESSION_IDLE_POLICY,
   TWO_FACTOR_SETUP_POLICY,
+  WITHDRAWAL_SECURITY,
   USER_COMMANDS,
   SMS_ADAPTER,
   REALTIME_TRANSPORT,
@@ -90,6 +91,21 @@ function makeTwoFactorLockout(c: IdentityContainer) {
     events: c.get(EVENT_BUS),
     identityReader: c.get(IDENTITY_READER),
     config: adminSecurityConfig(c).twoFactorLockout,
+  });
+}
+
+// Stateless over the database, so the router and the `WITHDRAWAL_SECURITY` port each build one.
+function makeWithdrawalPin(c: IdentityContainer, hmacSecret: string) {
+  return new WithdrawalPinService({
+    drizzle: c.get(DRIZZLE),
+    events: c.get(EVENT_BUS),
+    limiter: c.get(RATE_LIMITER),
+    auth: c.get(AUTH_SESSION).auth,
+    identityReader: c.get(IDENTITY_READER),
+    twoFactorLockout: makeTwoFactorLockout(c),
+    mailDispatch: c.get(MAIL_DISPATCH),
+    hmacSecret,
+    trustedDeviceDays: adminSecurityConfig(c).trustedDeviceDays,
   });
 }
 
@@ -207,6 +223,7 @@ export default {
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
     // Holds an account that owes a second-factor enrolment (a support reset of a player who
     // required 2FA on login) to the enrolment flow until it is done.
+    ctx.provide(WITHDRAWAL_SECURITY, (c) => makeWithdrawalPin(c, withdrawalPinHmacSecret));
     ctx.provide(TWO_FACTOR_SETUP_POLICY, (c) => new TwoFactorSetupPolicyService(c.get(DRIZZLE)));
     // Mandatory-2FA + session-fingerprint enforcement. AdminGuard resolves this on every
     // admin request; leaving it unbound turns both checks off, which is why it is bound
@@ -268,16 +285,7 @@ export default {
         c.get(ADMIN_GUARD),
         realtimeTransport,
         resolveAdminSecurity(c),
-        new WithdrawalPinService({
-          drizzle: c.get(DRIZZLE),
-          events: c.get(EVENT_BUS),
-          limiter: c.get(RATE_LIMITER),
-          auth: c.get(AUTH_SESSION).auth,
-          identityReader: c.get(IDENTITY_READER),
-          twoFactorLockout: makeTwoFactorLockout(c),
-          hmacSecret: withdrawalPinHmacSecret,
-          trustedDeviceDays: adminSecurityConfig(c).trustedDeviceDays,
-        }),
+        makeWithdrawalPin(c, withdrawalPinHmacSecret),
       );
     });
   },

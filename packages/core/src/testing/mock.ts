@@ -25,6 +25,7 @@ import {
   type RateLimiterAdapter,
   type RealtimeTransport,
   type UserCommands,
+  type WithdrawalSecurity,
 } from '@openora/core/contracts';
 
 // The one sanctioned home for test-double type assertions. A unit test standing in
@@ -124,6 +125,20 @@ export const makeAuditWriter = (): AuditWritePort & {
   record: vi.fn(async () => undefined),
   recordInTransaction: vi.fn(async () => undefined),
   recordManyInTransaction: vi.fn(async () => undefined),
+});
+
+/**
+ * WithdrawalSecurity double: no PIN set, and every reauthentication passes. A test of the PIN or
+ * of a refused proof passes the verdict it wants instead.
+ */
+export const makeWithdrawalSecurity = (
+  overrides: Partial<WithdrawalSecurity> = {},
+): WithdrawalSecurity => ({
+  verifyPin: vi.fn<WithdrawalSecurity['verifyPin']>(async () => ({ status: 'not_set' })),
+  assertReauthentication: vi.fn<WithdrawalSecurity['assertReauthentication']>(
+    async () => undefined,
+  ),
+  ...overrides,
 });
 
 /**

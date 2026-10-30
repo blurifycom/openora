@@ -44,6 +44,8 @@ import {
   type PlayerTags,
   type RgLimitsPort,
   type KycWithdrawalPolicy,
+  type MailDispatchPort,
+  type WithdrawalSecurity,
   type DepositHoldPolicy,
   type ExchangeRateReader,
   type AuditWritePort,
@@ -180,6 +182,52 @@ export const WithdrawalLockedError = makeConflictError(
   'Withdrawals are on hold for this account. Please contact support',
   { reason: 'withdrawal_locked' },
 );
+
+// The four below carry per-request data (attempts left, the end of a lock), which the
+// static-data `createDomainError` cannot, so the client reads `data` to say how long to wait.
+export class WithdrawalPinRequiredError extends Error {
+  readonly data = { reason: 'withdrawal_pin_required' };
+  constructor() {
+    super('Enter your Withdrawal PIN to confirm');
+    this.name = 'WithdrawalPinRequiredError';
+  }
+}
+
+export class WithdrawalPinIncorrectError extends Error {
+  readonly data: { reason: string; attemptsLeft: number };
+  constructor(attemptsLeft: number) {
+    super(`Incorrect PIN. ${attemptsLeft} attempts left`);
+    this.name = 'WithdrawalPinIncorrectError';
+    this.data = { reason: 'withdrawal_pin_incorrect', attemptsLeft };
+  }
+}
+
+export class WithdrawalPinLockedError extends Error {
+  readonly data: { reason: string; lockedUntil: string };
+  constructor(lockedUntil: Date) {
+    super('Too many incorrect attempts. Withdrawals are locked for 30 minutes');
+    this.name = 'WithdrawalPinLockedError';
+    this.data = { reason: 'withdrawal_pin_locked', lockedUntil: lockedUntil.toISOString() };
+  }
+}
+
+// A saved address is usable from `createdAt + 24h`. One that was never saved has no such date:
+// it is refused the same way, because a destination the player can name at withdrawal time
+// would walk around the wait.
+export class DestinationAddressCoolingDownError extends Error {
+  readonly data: { reason: string; usableFrom?: string };
+  constructor(usableFrom: Date | null) {
+    super(
+      usableFrom
+        ? `This address can be used for withdrawals from ${usableFrom.toISOString()}`
+        : 'Save this address first. A new address can be used for withdrawals after 24 hours',
+    );
+    this.name = 'DestinationAddressCoolingDownError';
+    this.data = usableFrom
+      ? { reason: 'withdrawal_address_cooling_down', usableFrom: usableFrom.toISOString() }
+      : { reason: 'withdrawal_address_not_saved' };
+  }
+}
 
 export const WithdrawalAmountNotAboveFeeError = createDomainError<
   [amount: string, fee: string, currency: string]
@@ -332,6 +380,10 @@ export const AmbiguousDepositAddressError = createDomainError(
 // the table into unbounded free storage. Not operator-configurable until someone asks.
 const WITHDRAWAL_ADDRESS_LIMIT = 50;
 
+// A new payout address cannot be paid to for this long, so a stolen session cannot add its own
+// address and empty the wallet before the owner sees the mail.
+export const WITHDRAWAL_ADDRESS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
 function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddress {
   return {
     id: row.id,
@@ -341,6 +393,7 @@ function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddr
     address: row.address,
     destinationTag: row.destinationTag,
     createdAt: row.createdAt.toISOString(),
+    usableFrom: new Date(row.createdAt.getTime() + WITHDRAWAL_ADDRESS_COOLDOWN_MS).toISOString(),
   };
 }
 
@@ -935,6 +988,10 @@ export type WalletServiceDeps = {
   rates?: ExchangeRateReader;
   // Optional: bound by compliance. Absent = every gated withdrawal requires KYC (fail closed).
   kycPolicy?: KycWithdrawalPolicy;
+  // Optional: bound by identity. Absent = no PIN can exist, so no withdrawal is asked for one.
+  withdrawalSecurity?: WithdrawalSecurity;
+  // Optional: bound by mail. Absent = the new-address notice is skipped, never the address.
+  mailDispatch?: MailDispatchPort;
   // Optional: bound by an operator. Absent = every attributed on-chain deposit is credited.
   depositHold?: DepositHoldPolicy;
   // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
@@ -966,6 +1023,8 @@ export class WalletService {
   private readonly rgLimits?: RgLimitsPort;
   private readonly rates?: ExchangeRateReader;
   private readonly kycPolicy?: KycWithdrawalPolicy;
+  private readonly withdrawalSecurity?: WithdrawalSecurity;
+  private readonly mailDispatch?: MailDispatchPort;
   private readonly depositHold?: DepositHoldPolicy;
 
   private readonly grantLedger?: BonusGrantLedgerReader;
@@ -986,6 +1045,8 @@ export class WalletService {
     rgLimits,
     rates,
     kycPolicy,
+    withdrawalSecurity,
+    mailDispatch,
     depositHold,
     grantLedger,
     bonusLifecycle,
@@ -1004,6 +1065,8 @@ export class WalletService {
     this.rgLimits = rgLimits;
     this.rates = rates;
     this.kycPolicy = kycPolicy;
+    this.withdrawalSecurity = withdrawalSecurity;
+    this.mailDispatch = mailDispatch;
     this.depositHold = depositHold;
     this.grantLedger = grantLedger;
     this.bonusLifecycle = bonusLifecycle;
@@ -1261,6 +1324,77 @@ export class WalletService {
   private async assertWithdrawalsNotLocked(userId: User['id']) {
     if (await this.isWithdrawalLocked(userId)) {
       throw new WithdrawalLockedError();
+    }
+  }
+
+  private async assertWithdrawalPin(
+    userId: User['id'],
+    pin: string | undefined,
+    meta: Partial<ClientMeta>,
+  ) {
+    const verdict = await this.withdrawalSecurity?.verifyPin({ userId, pin, meta });
+    switch (verdict?.status) {
+      case 'missing':
+        throw new WithdrawalPinRequiredError();
+      case 'incorrect':
+        throw new WithdrawalPinIncorrectError(verdict.attemptsLeft);
+      case 'locked':
+        throw new WithdrawalPinLockedError(verdict.lockedUntil);
+      default:
+        return;
+    }
+  }
+
+  /**
+   * The saved row for this destination, or null when the player never saved it. Matched on
+   * address and tag exactly as the whitelist is, and on the network when one is known.
+   */
+  private async findSavedWithdrawalAddress(
+    userId: User['id'],
+    currency: string,
+    network: string | null,
+    address: string,
+    destinationTag: string | null | undefined,
+  ) {
+    const [row] = await this.drizzle.db
+      .select({ createdAt: walletWithdrawalAddress.createdAt })
+      .from(walletWithdrawalAddress)
+      .where(
+        and(
+          eq(walletWithdrawalAddress.userId, userId),
+          eq(walletWithdrawalAddress.currency, currency),
+          eq(walletWithdrawalAddress.address, address),
+          destinationTag
+            ? eq(walletWithdrawalAddress.destinationTag, destinationTag)
+            : isNull(walletWithdrawalAddress.destinationTag),
+          ...(network ? [eq(walletWithdrawalAddress.network, network)] : []),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  }
+
+  // Refuses a destination that is not saved, or was saved less than 24 hours ago.
+  private async assertDestinationAddressMatured(
+    userId: User['id'],
+    currency: string,
+    network: string | null,
+    address: string,
+    destinationTag: string | null | undefined,
+  ) {
+    const saved = await this.findSavedWithdrawalAddress(
+      userId,
+      currency,
+      network,
+      address,
+      destinationTag,
+    );
+    if (!saved) {
+      throw new DestinationAddressCoolingDownError(null);
+    }
+    const usableFrom = new Date(saved.createdAt.getTime() + WITHDRAWAL_ADDRESS_COOLDOWN_MS);
+    if (usableFrom.getTime() > Date.now()) {
+      throw new DestinationAddressCoolingDownError(usableFrom);
     }
   }
 
@@ -1842,6 +1976,7 @@ export class WalletService {
     idempotencyKey,
     destinationAddress,
     destinationTag,
+    withdrawalPin,
     ip,
     userAgent,
   }: {
@@ -1852,9 +1987,13 @@ export class WalletService {
     idempotencyKey?: string;
     destinationAddress?: string;
     destinationTag?: string;
+    withdrawalPin?: string;
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertWithdrawalsNotLocked(userId);
+    // Before anything that could reject for another reason, so every guess is counted and a
+    // client cannot probe the PIN through the errors of a request that was never going to pass.
+    await this.assertWithdrawalPin(userId, withdrawalPin, { ip, userAgent });
     await this.assertKycForWithdrawal(userId, amount, currency);
     if (this.resolveRail(currency) === 'crypto' && !destinationAddress) {
       throw new DestinationAddressRequiredError();
@@ -1878,6 +2017,15 @@ export class WalletService {
       destinationAddress,
       destinationTag,
     );
+    if (destinationAddress) {
+      await this.assertDestinationAddressMatured(
+        userId,
+        currency,
+        settlementNetwork,
+        destinationAddress,
+        destinationTag,
+      );
+    }
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
     const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
@@ -2710,12 +2858,14 @@ export class WalletService {
     userId,
     amount,
     currency,
+    transactionId,
     walletId,
     rail,
   }: {
     userId: User['id'];
     amount: string;
     currency: string;
+    transactionId: WalletTransaction['id'];
     walletId: Wallet['id'];
     rail: WalletRail;
   }): Promise<AutoApprovalGates | null> {
@@ -2759,6 +2909,11 @@ export class WalletService {
     // still keeps the payout for a human.
     if (riskTags.includes(WITHDRAWAL_LOCK_TAG)) {
       return skip('withdrawal_lock');
+    }
+    // A request cannot name an address inside its first 24 hours, so this only catches one that
+    // slipped past `withdraw()`; it keeps the payout for a human whatever path created the row.
+    if (await this.destinationIsUnmatured(transactionId, userId, currency)) {
+      return skip('new_address');
     }
     if (riskTags.some((t) => effectiveExcludeTags.includes(t))) {
       return skip('risk_tag');
@@ -3101,6 +3256,34 @@ export class WalletService {
       });
       return true;
     });
+  }
+
+  // True when the withdrawal pays an address saved less than 24 hours ago, or one never saved.
+  // A fiat withdrawal has no address and is never held by this.
+  private async destinationIsUnmatured(
+    transactionId: WalletTransaction['id'],
+    userId: User['id'],
+    currency: string,
+  ): Promise<boolean> {
+    const [tx] = await this.drizzle.db
+      .select({
+        address: walletTransaction.destinationAddress,
+        tag: walletTransaction.destinationTag,
+        network: walletTransaction.network,
+      })
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, transactionId));
+    if (!tx?.address) {
+      return false;
+    }
+    const saved = await this.findSavedWithdrawalAddress(
+      userId,
+      currency,
+      tx.network,
+      tx.address,
+      tx.tag,
+    );
+    return !saved || saved.createdAt.getTime() + WITHDRAWAL_ADDRESS_COOLDOWN_MS > Date.now();
   }
 
   private async autoApprovalKycStatus(userId: User['id']): Promise<KycStatus | null> {
@@ -4201,6 +4384,25 @@ export class WalletService {
       after: { label: row.label, currency: row.currency, network: row.network },
       ...meta,
     });
+    // The row is committed, so a failed enqueue must not fail the save: a retry would meet
+    // WithdrawalAddressAlreadyExistsError and the owner would never be told. Keyed on the row,
+    // so a re-run mails once.
+    try {
+      await this.mailDispatch?.toUser({
+        userId,
+        template: {
+          key: 'withdrawalAddressAdded',
+          data: {
+            address: row.address,
+            network: row.network,
+            occurredAt: row.createdAt.toISOString(),
+          },
+        },
+        idempotencyKey: `withdrawal-address-added:${row.id}`,
+      });
+    } catch (err) {
+      logger.error({ err, withdrawalAddressId: row.id }, 'new withdrawal address notice failed');
+    }
     return toWithdrawalAddressDto(row);
   }
 
