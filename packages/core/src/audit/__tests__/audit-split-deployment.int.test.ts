@@ -75,9 +75,11 @@ afterAll(async () => {
 
 describe('audit trail with two services of one deployment up', () => {
   it('still writes the audit row when the module is loaded without its routes', async () => {
-    // Runs first and stops its service, and clears the stream, so its deployment leaves no group or row-writer for the tests below.
+    // Runs first and stops its service and drops its group, so its deployment leaves no group or
+    // row-writer behind for the tests below.
     // The audit service is built inside its router factory; withholding the routes must not skip it.
-    const service = await bootService(`svc-a-${randomUUID()}`, `deploy-${randomUUID()}`, true);
+    const namespace = `deploy-${randomUUID()}`;
+    const service = await bootService(`svc-a-${randomUUID()}`, namespace, true);
     await vi.waitFor(
       async () =>
         expect((await redis.client.xInfoGroups('oss:evt:tag.created')).length).toBeGreaterThan(0),
@@ -101,7 +103,7 @@ describe('audit trail with two services of one deployment up', () => {
       { timeout: 10_000 },
     );
     await service.close();
-    await redis.flush();
+    await redis.client.xGroupDestroy('oss:evt:tag.created', `${namespace}/audit`);
   });
 
   it('writes exactly one audit row per event', async () => {
