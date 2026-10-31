@@ -34,7 +34,13 @@ export type TypedContainer<C extends TokenCatalog> = {
 };
 
 // Runs once at boot, after every plugin has registered its providers, so adapter overrides (last registration wins) are in effect.
-export type RouterFactory<C extends TokenCatalog> = (c: TypedContainer<C>) => unknown;
+// `mounted: false` (a `:no-routes` module): the factory still runs, because several modules
+// build their service and schedule their jobs here, but its router is discarded. Skip only
+// what guards the HTTP surface.
+export type RouterFactory<C extends TokenCatalog> = (
+  c: TypedContainer<C>,
+  options?: { mounted: boolean },
+) => unknown;
 
 export type EventHandler = (payload: unknown, envelope?: EventEnvelope) => void | Promise<void>;
 

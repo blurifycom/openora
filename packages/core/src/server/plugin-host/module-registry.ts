@@ -42,8 +42,9 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
 
   constructor(private readonly container: Container<C>) {}
 
-  // The module still binds every port, handles every event and runs every job; only its
-  // routers.add calls are dropped. Narrowest point that keeps its HTTP surface off the process.
+  // The module still binds every port, handles every event and runs every job. Its router
+  // factories still run too (they build the services and schedules its handlers and workers
+  // read), but each router is swapped for an empty one, so no route is served.
   withholdRouters(pluginId: string): void {
     this._routerless.add(pluginId);
   }
@@ -93,13 +94,18 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
 
   routers = {
     add: (namespace: string, factory: RouterFactory<C>) => {
-      if (this._routerless.has(this._owner)) {
-        return;
-      }
       if (this._routers.has(namespace)) {
         throw new Error(`Router namespace "${namespace}" is already registered`);
       }
-      this._routers.set(namespace, factory);
+      this._routers.set(
+        namespace,
+        this._routerless.has(this._owner)
+          ? (c) => {
+              factory(c, { mounted: false });
+              return {};
+            }
+          : factory,
+      );
     },
     getAll: () => this._routers,
   };

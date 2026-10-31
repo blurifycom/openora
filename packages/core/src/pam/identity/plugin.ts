@@ -239,8 +239,10 @@ export default {
         revokeAll: (userId, actorId) => sessionSvc.revokeAllSessions(userId, actorId),
       };
     });
-    ctx.routers.add('identity', (c) => {
-      assertAuthSurfaceGuards(c);
+    ctx.routers.add('identity', (c, options) => {
+      if (options?.mounted !== false) {
+        assertAuthSurfaceGuards(c);
+      }
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       const sessions = makeSessionService(c);
       return createIdentityRouter(

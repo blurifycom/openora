@@ -36,10 +36,10 @@ describe('identity auth-surface boot guard', () => {
     expect(() => factory?.(container as never)).not.toThrow(/country gate/);
   });
 
-  it('never builds the router, so never trips, when identity is service-only', async () => {
+  it('never trips when identity is service-only, its router being discarded', async () => {
     const { container, factory } = await identityRouterFactory({ noRoutes: true });
 
-    expect(factory).toBeUndefined();
+    expect(() => factory?.(container as never)).not.toThrow(/country gate/);
     expect(container.has(KYC_ADAPTER)).toBe(true);
   });
 });

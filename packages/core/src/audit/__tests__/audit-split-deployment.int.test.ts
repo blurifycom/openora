@@ -29,13 +29,19 @@ const savedEnv = {
 // One service of a split deployment: its own createApp, so its own Redis connections and its
 // own default consumer group, over the shared Redis and database. Services of one deployment
 // share a realtime namespace; another deployment on the same Redis uses its own.
-async function bootService(serviceName: string, namespace: string): Promise<Service> {
+async function bootService(
+  serviceName: string,
+  namespace: string,
+  noRoutes = false,
+): Promise<Service> {
   process.env['REDIS_URL'] = redisUrlForWorker();
   process.env['SERVICE_NAME'] = serviceName;
   process.env['REALTIME_NAMESPACE'] = namespace;
   const service = await createApp(
     {
-      plugins: [{ id: 'audit', path: fileURLToPath(new URL('../plugin.ts', import.meta.url)) }],
+      plugins: [
+        { id: 'audit', path: fileURLToPath(new URL('../plugin.ts', import.meta.url)), noRoutes },
+      ],
       databaseUrl: db.url,
     },
     (container) => {
@@ -68,6 +74,36 @@ afterAll(async () => {
 });
 
 describe('audit trail with two services of one deployment up', () => {
+  it('still writes the audit row when the module is loaded without its routes', async () => {
+    // Runs first and stops its service, and clears the stream, so its deployment leaves no group or row-writer for the tests below.
+    // The audit service is built inside its router factory; withholding the routes must not skip it.
+    const service = await bootService(`svc-a-${randomUUID()}`, `deploy-${randomUUID()}`, true);
+    await vi.waitFor(
+      async () =>
+        expect((await redis.client.xInfoGroups('oss:evt:tag.created')).length).toBeGreaterThan(0),
+      { timeout: 10_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const marker = randomUUID();
+    service.container
+      .get(EVENT_BUS)
+      .emit('tag.created', { key: 'vip', isSticky: false, actorId: marker });
+
+    await vi.waitFor(
+      async () => {
+        const { rows } = await db.drizzle.db.execute<{ rows: number }>(
+          sql`select count(*)::int as rows from audit_log
+              where action = 'tag.created' and after->>'actorId' = ${marker}`,
+        );
+        expect(rows[0]?.rows).toBe(1);
+      },
+      { timeout: 10_000 },
+    );
+    await service.close();
+    await redis.flush();
+  });
+
   it('writes exactly one audit row per event', async () => {
     const namespace = `deploy-${randomUUID()}`;
     const first = await bootService(`svc-a-${randomUUID()}`, namespace);
@@ -93,7 +129,9 @@ describe('audit trail with two services of one deployment up', () => {
         sql`select after->>'actorId' as marker, count(*)::int as rows
             from audit_log where action = 'tag.created' group by 1`,
       );
-      return new Map(rows.map((row) => [row.marker, row.rows]));
+      return new Map(
+        rows.filter((row) => markers.includes(row.marker)).map((row) => [row.marker, row.rows]),
+      );
     };
     await vi.waitFor(async () => expect((await rowsPerMarker()).size).toBe(markers.length), {
       timeout: 10_000,
