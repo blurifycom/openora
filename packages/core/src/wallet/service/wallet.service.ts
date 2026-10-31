@@ -3617,7 +3617,7 @@ export class WalletService {
       ? sql`
       union all
       select g.id, g.type, g.amount, g.currency, null, g.status, 'credit', g.created_at, null,
-        null, null, null, null, null, null, null, null, null, null, null
+        null, null, null, null, null, null, null, null, null, null, null, null
       from (${grantQuery}) g`
       : sql``;
     const history = sql`(${ledgerRows} ${grantRows}) as history`;

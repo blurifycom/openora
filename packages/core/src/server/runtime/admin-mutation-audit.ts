@@ -49,8 +49,9 @@ function errorCodeOf(error: unknown): string {
  * intervention goes unrecorded whichever route (core or overlay) carries it. Runs around every
  * procedure; acts only when an admin guard granted a permission and the route is not a read.
  *
- * - Success with nothing audit-worthy noted (an audit row for the granted admin, or a topic
- *   published in a transaction that the audit module covers): one `admin.<resource>.<action>` row holding the route, the input's field names and its hash.
+ * - Success with nothing audit-worthy noted (an audit row for the granted admin, or a published
+ *   topic the audit module covers): one `admin.<resource>.<action>` row holding the route, the
+ *   input's field names and its hash.
  * - A handler error other than an authorization denial: a failure row, even if something
  *   audit-worthy was noted, since a row written inside the rolled-back transaction is gone.
  *

@@ -7,7 +7,7 @@ export type RequestAuditTrail = {
   grant?: { userId: string; resource: string; action: string } & ClientMeta;
   /** The actors an audit row was appended for. */
   writtenFor: Set<string>;
-  /** Topics published durably, through `emitInTransaction`: a best-effort `emit` can be lost. */
+  /** Topics published, `emit` and `emitInTransaction` alike. A best-effort `emit` can be lost with the broker, an accepted gap: counting it only would double-record every route audited through one. */
   published: Set<string>;
 };
 
