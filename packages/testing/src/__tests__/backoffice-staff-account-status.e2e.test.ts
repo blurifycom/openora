@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
+import { player } from '@openora/core/pam/schema/profile';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { auditLog } from '@openora/core/audit/schema';
 import {
@@ -24,16 +25,43 @@ const drizzle = () => app.container.get(DRIZZLE).db;
 
 // A staff account holding one seeded role, signed in.
 async function staffWithRole(roleKey: string) {
-  const { client, userId } = await registerAndMaterializePlayer(app, {
-    email: `staff-${roleKey}-${randomUUID()}@example.test`,
-  });
+  const email = `staff-${roleKey}-${randomUUID()}@example.test`;
+  const { client, userId } = await registerAndMaterializePlayer(app, { email });
   await drizzle().update(user).set({ role: 'admin' }).where(eq(user.id, userId));
   const [role] = await drizzle().select().from(adminRole).where(eq(adminRole.key, roleKey));
   if (!role) {
     throw new Error(`no seeded ${roleKey} role`);
   }
   await drizzle().insert(adminRoleAssignment).values({ userId, roleId: role.id });
-  return { client, userId };
+  return { client, userId, email };
+}
+
+/** Settles with 'revoked' once the session stream tells this tab it was signed out. */
+function watchForRevoked(res: Response) {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  return new Promise<'revoked' | null>((settle) => {
+    void (async () => {
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) {
+            settle(null);
+            return;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          if (/"type"\s*:\s*"revoked"/.test(buffer)) {
+            settle('revoked');
+            await reader.cancel();
+            return;
+          }
+        }
+      } catch {
+        settle(null);
+      }
+    })();
+  });
 }
 
 const setActive = (client: TestClient, userId: string, isActive: boolean) =>
@@ -138,12 +166,17 @@ describe('PATCH /backoffice/users/{userId} on a staff account', () => {
         setActive(two.client, one.userId, false),
       ]);
 
-      const statuses = results.map((r) => r.status).sort();
-      expect(statuses).toEqual([200, 409]);
-      const refused = results.find((r) => r.status === 409);
-      expect(await refused?.json()).toMatchObject({
-        data: { reason: 'last_active_super_admin' },
-      });
+      // The loser is refused either way: as the last active super-admin when its request locked
+      // the row first, or signed out (401) when the winner's deactivation ended its session first.
+      const statuses = results.map((r) => r.status);
+      expect(statuses.filter((status) => status === 200)).toHaveLength(1);
+      const refused = results.find((r) => r.status !== 200);
+      expect([401, 409]).toContain(refused?.status);
+      if (refused?.status === 409) {
+        expect(await refused.json()).toMatchObject({
+          data: { reason: 'last_active_super_admin' },
+        });
+      }
       const active = [await isActiveOf(one.userId), await isActiveOf(two.userId)];
       expect(active.filter(Boolean)).toHaveLength(1);
     } finally {
@@ -181,6 +214,44 @@ describe('PATCH /backoffice/users/{userId} on a staff account', () => {
           },
         ]),
       );
+    });
+  });
+});
+
+describe('disabling a staff account', () => {
+  it('signs it out at once - its open tab too - and reactivating it revives no session', async () => {
+    const { client: staff, userId: staffId, email } = await staffWithRole('customer-support-agent');
+    expect((await staff.get('/backoffice/users')).status).toBe(200);
+    const signedOut = watchForRevoked(await staff.request('/identity/session/stream'));
+    // Let the stream attach its listener before the change.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect((await setActive(superAdmin, staffId, false)).status).toBe(200);
+
+    expect(await signedOut).toBe('revoked');
+    expect((await staff.get('/backoffice/users')).status).toBe(401);
+    // Signing in again gets a session, but not past the guard while the account is disabled.
+    const again = await asAdmin(app.app, { email, password: 'password1234' });
+    expect((await again.get('/backoffice/users')).status).toBe(403);
+
+    expect((await setActive(superAdmin, staffId, true)).status).toBe(200);
+    expect((await staff.get('/backoffice/users')).status).toBe(401);
+
+    const [profile] = await drizzle()
+      .select({ id: player.id })
+      .from(player)
+      .where(eq(player.userId, staffId));
+    await vi.waitFor(async () => {
+      const rows = await drizzle()
+        .select({ actorType: auditLog.actorType, actorId: auditLog.actorId })
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.action, 'identity.sessions.revoked_all'),
+            eq(auditLog.resourceId, profile?.id ?? ''),
+          ),
+        );
+      expect(rows).toEqual([{ actorType: 'admin', actorId: superAdminId }]);
     });
   });
 });

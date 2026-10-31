@@ -1367,6 +1367,14 @@ export async function mapEventToRecord(
   return base;
 }
 
+// One broker consumer group for the whole deployment, not one per service: every service that
+// loads this plugin would otherwise get its own copy of each event and write a second audit
+// row (the table has no unique key on the event id). This is only the local part: createApp
+// scopes it to `<REALTIME_NAMESPACE>/audit`, so two deployments sharing one Redis do not
+// compete for each other's events. Renaming it, or changing the namespace, strands the old
+// group's pending entries and starts the new one at the stream tail.
+const AUDIT_CONSUMER_GROUP = 'audit';
+
 // A published topic is audited when the subscriber records it or its writer already did at source;
 // an exempt one is not, so publishing it leaves the request's trail as bare as before.
 const AUDITED_TOPICS: ReadonlySet<string> = new Set([
@@ -1398,20 +1406,24 @@ export default {
     for (const topic of SUBSCRIBED_TOPICS) {
       // Awaited and thrown, never swallowed: a failed write leaves the event pending, so the
       // broker redelivers it instead of the change going unaudited (ADR-0045).
-      ctx.events.on(topic, async (payload) => {
-        if (!isRecord(payload)) {
-          return;
-        }
-        // KYC exemptions and game geo rule syncs append their audit record inside the state
-        // transaction, then publish this event for realtime and other consumers after commit.
-        if (payload['auditRecorded'] === true) {
-          return;
-        }
-        if (!svcRef) {
-          throw new Error(`audit record for '${topic}' skipped - service not constructed`);
-        }
-        await svcRef.record(await mapEventToRecord(topic, payload));
-      });
+      ctx.events.on(
+        topic,
+        async (payload) => {
+          if (!isRecord(payload)) {
+            return;
+          }
+          // KYC exemptions and game geo rule syncs append their audit record inside the state
+          // transaction, then publish this event for realtime and other consumers after commit.
+          if (payload['auditRecorded'] === true) {
+            return;
+          }
+          if (!svcRef) {
+            throw new Error(`audit record for '${topic}' skipped - service not constructed`);
+          }
+          await svcRef.record(await mapEventToRecord(topic, payload));
+        },
+        { consumerGroup: AUDIT_CONSUMER_GROUP },
+      );
     }
 
     ctx.routers.add('audit', (c) => {

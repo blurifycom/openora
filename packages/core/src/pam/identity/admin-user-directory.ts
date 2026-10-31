@@ -26,6 +26,7 @@ import {
   and,
 } from 'drizzle-orm';
 import { user } from './schema/index.js';
+import { expireActiveSessions } from './service/session.service.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
 // username + KYC without leaking the schema to the consumer module.
@@ -190,13 +191,25 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       if (!updated) {
         return null;
       }
+      // A deactivated account keeps no session: its sessions end with the change, so no open
+      // Backoffice or player tab outlives it. Keyed on the state written, as the tokens are.
+      const sessionsEnded = patch.isActive === false ? await expireActiveSessions(tx, id) : 0;
       if (mcpRevokeReason) {
         await this.mcpTokens?.revokeAllForUser(
           { userId: id, reason: mcpRevokeReason, actorId, ip, userAgent },
           tx,
         );
       }
-      return { wasActive: existing.isActive, updated };
+      const [account] =
+        sessionsEnded > 0
+          ? await tx.select({ playerId: player.id }).from(player).where(eq(player.userId, id))
+          : [];
+      return {
+        wasActive: existing.isActive,
+        updated,
+        sessionsEnded,
+        playerId: account?.playerId ?? null,
+      };
     });
     if (!written) {
       return null;
@@ -210,6 +223,16 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       } else {
         this.events.emit('identity.user.deactivated', { userId: id, actorId, ip, userAgent });
       }
+    }
+    // Signs the account's open tabs out (the realtime session stream) and audits the revocation.
+    if (written.sessionsEnded > 0) {
+      this.events.emit('identity.sessions.revoked_all', {
+        userId: id,
+        playerId: written.playerId,
+        actorId,
+        ip,
+        userAgent,
+      });
     }
     return toRow(written.updated);
   }

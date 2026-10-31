@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { TokenCatalog } from '@openora/core/contracts';
 import { Container } from '../../kernel/index.js';
 import type { Plugin } from '../define-plugin.js';
+import { PORTED, built } from './fixtures/ported-plugin.js';
 import {
   assertEntryMatchesPlugin,
   loadPlugins,
@@ -60,5 +61,32 @@ describe('loadPlugins', () => {
 
     expect(registry.mcp.getTools().map(({ owner }) => owner)).toEqual(['agent-surface']);
     expect(registry.actions.getAll().map(({ owner }) => owner)).toEqual(['agent-surface']);
+  });
+
+  describe('a module marked noRoutes', () => {
+    const path = fileURLToPath(new URL('./fixtures/ported-plugin.ts', import.meta.url));
+
+    it('binds its ports, still runs its router factory and serves an empty router', async () => {
+      const container = new Container();
+      built.length = 0;
+
+      const registry = await loadPlugins([{ id: 'ported', path, noRoutes: true }], container);
+      const factory = registry.routers.getAll().get('ported');
+
+      expect(container.get(PORTED)).toBe('bound');
+      expect(factory?.(container as never)).toEqual({});
+      expect(built).toEqual(['ported']);
+    });
+
+    it('mounts its router when not marked', async () => {
+      const container = new Container();
+
+      const registry = await loadPlugins([{ id: 'ported', path }], container);
+
+      expect(container.get(PORTED)).toBe('bound');
+      expect(registry.routers.getAll().get('ported')?.(container as never)).toEqual({
+        route: 'real',
+      });
+    });
   });
 });

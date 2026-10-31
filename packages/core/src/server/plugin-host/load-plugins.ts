@@ -15,6 +15,9 @@ export type PluginEntry = {
   // single-module service, because a standalone process still needs its
   // durable transport. See applyServiceManifest.
   kind?: 'module' | 'infra';
+  // Set by a service manifest (`id:no-routes`): the module binds its ports, handles its events and
+  // runs its jobs, but mounts no router. See applyServiceManifest.
+  noRoutes?: boolean;
 };
 
 function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
@@ -109,6 +112,11 @@ export async function loadPlugins<C extends TokenCatalog>(
 
   const ordered = topoSort(plugins);
   const registry = new ModuleRegistryImpl<C>(container);
+  for (const entry of entries) {
+    if (entry.noRoutes) {
+      registry.withholdRouters(entry.id);
+    }
+  }
 
   for (const plugin of ordered) {
     registry.setOwner(plugin.id);

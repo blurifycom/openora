@@ -177,3 +177,9 @@ Rejected alternatives:
 - A deactivated admin keeps a live Backoffice session until it expires, because the session-based
   `assert` does not check the active flag. That gap predates this decision and is left to a
   separate change.
+
+> **Update (2026-10-30)**: the gap is closed. Deactivating an account ends its sessions in the
+> transaction that deactivates it and then emits `identity.sessions.revoked_all`, which signs its
+> open tabs out and is audited; a reactivation revives none of them. `AdminGuard.assert` refuses a
+> deactivated account as `assertUser` does, read fresh on every call, since sign-in does not check
+> the flag.
