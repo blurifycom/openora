@@ -16,7 +16,8 @@ import { adminDatabaseUrl, testDatabasePrefix } from './real-infra.js';
  * databases behind, which `pnpm db:clean:test` clears.
  */
 export default async function setup(): Promise<() => Promise<void>> {
-  process.env['OPENORA_TEST_RUN_ID'] = randomUUID().replaceAll('-', '').slice(0, 8);
+  // Kept if already set: the mutation config runs both tiers' global setups in one process.
+  process.env['OPENORA_TEST_RUN_ID'] ??= randomUUID().replaceAll('-', '').slice(0, 8);
   const prefix = testDatabasePrefix();
   const admin = new Pool({ connectionString: adminDatabaseUrl(), connectionTimeoutMillis: 5000 });
 

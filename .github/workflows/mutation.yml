@@ -1,8 +1,9 @@
 name: Mutation
 
-# Nightly StrykerJS over the wallet module (packages/core `stryker.config.json`) against the
-# core unit and integration tiers. Incremental: the cached result means only mutants in code or tests
-# that changed since the last run are re-tested. A report, not a gate.
+# Nightly StrykerJS (packages/core `stryker.config.mjs`), one job per shard of the high-risk modules,
+# against the core unit and integration tiers and the e2e tier in packages/testing. Incremental: the
+# cached result means only mutants in code or tests that changed since the last run are re-tested. A
+# report, not a gate.
 on:
   schedule:
     - cron: '0 1 * * 2-6'
@@ -21,7 +22,23 @@ env:
 jobs:
   mutation:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - wallet-service-a
+          - wallet-service-b
+          - wallet-rails
+          - wallet-rest
+          - compliance-core
+          - compliance-rest
+          - audit-plugin
+          - audit-rest
+          - identity-service
+          - identity-rest
+          - promo-gamification
+          - promo-bonus
     services:
       postgres:
         image: postgres:16-alpine
@@ -55,12 +72,14 @@ jobs:
       - uses: ./.github/actions/test-infra
       - uses: actions/cache@v4
         with:
-          path: packages/core/reports/stryker-incremental.json
-          key: stryker-incremental-${{ github.run_id }}
-          restore-keys: stryker-incremental-
+          path: packages/core/reports/${{ matrix.shard }}/stryker-incremental.json
+          key: stryker-incremental-${{ matrix.shard }}-${{ github.run_id }}
+          restore-keys: stryker-incremental-${{ matrix.shard }}-
       - run: pnpm --filter @openora/core test:mutation
+        env:
+          MUTATION_SHARD: ${{ matrix.shard }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mutation-report
-          path: packages/core/reports/mutation/
+          name: mutation-report-${{ matrix.shard }}
+          path: packages/core/reports/${{ matrix.shard }}/
