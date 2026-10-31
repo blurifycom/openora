@@ -795,7 +795,7 @@
     "clean": "rm -rf dist",
     "test:unit": "vitest run --passWithNoTests",
     "test:integration": "vitest run --config vitest.integration.config.ts --passWithNoTests",
-    "test:mutation": "OPENORA_TEST_POOL_SIZE=2 stryker run",
+    "test:mutation": "cd ../.. && OPENORA_TEST_POOL_SIZE=2 packages/core/node_modules/.bin/stryker run packages/core/stryker.config.mjs",
     "gen:drizzle": "node scripts/generate-all.mjs"
   },
   "dependencies": {

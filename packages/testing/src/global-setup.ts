@@ -20,7 +20,8 @@ import { TRACE_RESULTS_DIR } from './trace-recorder.js';
 export default async function setup(): Promise<() => Promise<void>> {
   // Workers append to these files, so a run starts from none.
   rmSync(TRACE_RESULTS_DIR, { recursive: true, force: true });
-  process.env['OPENORA_TEST_RUN_ID'] = randomUUID().replaceAll('-', '').slice(0, 8);
+  // Kept if already set: the mutation config runs both tiers' global setups in one process.
+  process.env['OPENORA_TEST_RUN_ID'] ??= randomUUID().replaceAll('-', '').slice(0, 8);
   const template = templateDatabase();
   const admin = new Pool({ connectionString: adminUrl(), connectionTimeoutMillis: 5000 });
 

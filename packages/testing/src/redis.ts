@@ -18,7 +18,15 @@ const HIGHEST_DATABASE = 15;
 const LOWEST_DATABASE = 8;
 const DATABASES_PER_WORKER = 4;
 
-const workerSlice = Math.max(0, Number(process.env['VITEST_POOL_ID'] ?? 1) - 1);
+// Stryker runs one single-worker vitest per mutation worker (STRYKER_MUTATOR_WORKER, 0-based),
+// each with VITEST_POOL_ID 1, so its worker index picks the slice. Two slices cap the
+// `concurrency` in packages/core/stryker.config.mjs at 2.
+const workerSlice = Math.max(
+  0,
+  Number(process.env['STRYKER_MUTATOR_WORKER'] ?? 0) +
+    Number(process.env['VITEST_POOL_ID'] ?? 1) -
+    1,
+);
 const sliceTop =
   HIGHEST_DATABASE -
   ((workerSlice * DATABASES_PER_WORKER) % (HIGHEST_DATABASE - LOWEST_DATABASE + 1));
