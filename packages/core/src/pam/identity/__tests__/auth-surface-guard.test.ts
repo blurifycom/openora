@@ -4,6 +4,17 @@ import { GEO_CHECK_COMMANDS, KYC_ADAPTER, MAIL_DISPATCH } from '@openora/core/co
 import { Container, loadPlugins } from '@openora/core/server';
 import { mock } from '../../../testing/mock.js';
 
+const { warn } = vi.hoisted(() => ({ warn: vi.fn() }));
+
+vi.mock('../../../server/kernel/logger.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../../server/kernel/logger.js')>();
+  return {
+    ...original,
+    createLogger: (name: string) =>
+      name === 'identity' ? { ...original.createLogger(name), warn } : original.createLogger(name),
+  };
+});
+
 const pluginPath = fileURLToPath(new URL('../plugin.ts', import.meta.url));
 
 async function identityRouterFactory(options: { noRoutes?: boolean } = {}) {
@@ -27,6 +38,15 @@ describe('identity auth-surface boot guard', () => {
     const { container, factory } = await identityRouterFactory();
 
     expect(() => factory?.(container as never)).toThrow(/country gate is a silent no-op/);
+  });
+
+  it('warns instead of refusing outside production when the country gate is unbound', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    warn.mockClear();
+    const { container, factory } = await identityRouterFactory();
+
+    expect(() => factory?.(container as never)).not.toThrow(/country gate/);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/country gate is a silent no-op/));
   });
 
   it('passes the guard once the gate is bound, whatever KYC adapter is bound', async () => {

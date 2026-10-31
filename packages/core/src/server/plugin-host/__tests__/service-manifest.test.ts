@@ -64,17 +64,19 @@ describe('applyServiceManifest', () => {
 
   it('throws on the flag for an unknown id', () => {
     expect(() => applyServiceManifest(entries, [{ id: 'nope', noRoutes: true }])).toThrow(
-      /unknown module id/,
+      /unknown module id\(s\): nope/,
     );
   });
 
   it('throws on the flag for an infra overlay', () => {
     expect(() => applyServiceManifest(entries, [{ id: 'rabbitmq', noRoutes: true }])).toThrow(
-      /infra overlay/,
+      /infra overlay\(s\) ":no-routes": rabbitmq/,
     );
   });
 
   it('throws on an unknown id', () => {
-    expect(() => applyServiceManifest(entries, [plain('nope')])).toThrow(/unknown module id/);
+    expect(() => applyServiceManifest(entries, [plain('nope')])).toThrow(
+      /unknown module id\(s\): nope/,
+    );
   });
 });
