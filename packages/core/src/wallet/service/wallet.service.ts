@@ -62,6 +62,8 @@ import {
   type WithdrawalRequeueReason,
   type BonusGrantLedgerReader,
   type BonusLifecycleCommands,
+  wagerProductOfProviderName,
+  wagerProductProviderPrefix,
 } from '@openora/core/contracts';
 import {
   eq,
@@ -754,6 +756,7 @@ type TransactionHistoryRow = {
   provider_ref_id: string | null;
   tx_hash: string | null;
   fee: string | null;
+  provider_name: string | null;
 };
 
 const TX_SORT_COLUMNS = {
@@ -3555,6 +3558,7 @@ export class WalletService {
     from,
     to,
     search,
+    products,
     includeInternal = false,
     includeGrants = false,
   }: PaginationOptions<
@@ -3573,7 +3577,7 @@ export class WalletService {
         ${t.reviewReason} as review_reason, ${t.referenceCurrency} as reference_currency,
         ${t.referenceAmount} as reference_amount, ${t.referenceRate} as reference_rate,
         ${t.referenceRateAsOf} as reference_rate_as_of, ${t.providerRefId} as provider_ref_id,
-        ${t.txHash} as tx_hash, ${t.fee} as fee
+        ${t.txHash} as tx_hash, ${t.fee} as fee, ${t.providerName} as provider_name
       from ${t}
       where ${t.walletId} in (select ${wallet.id} from ${wallet} where ${wallet.userId} = ${userId})`;
     // The port hands back a Drizzle SQL fragment typed `unknown` (contracts cannot import drizzle).
@@ -3585,7 +3589,7 @@ export class WalletService {
       ? sql`
       union all
       select g.id, g.type, g.amount, g.currency, null, g.status, 'credit', g.created_at, null,
-        null, null, null, null, null, null, null, null, null, null
+        null, null, null, null, null, null, null, null, null, null, null
       from (${grantQuery}) g`
       : sql``;
     const history = sql`(${ledgerRows} ${grantRows}) as history`;
@@ -3605,6 +3609,10 @@ export class WalletService {
     }
     if (to) {
       conditions.push(sql`created_at <= ${to}::timestamptz`);
+    }
+    if (products?.length) {
+      const prefixes = products.map((p) => `${escapeLike(wagerProductProviderPrefix(p))}%`);
+      conditions.push(sql`provider_name like any(${sql.param(prefixes)}::text[])`);
     }
     if (search) {
       conditions.push(
@@ -3648,6 +3656,7 @@ export class WalletService {
           includeInternal && tx.reviewed_at ? new Date(tx.reviewed_at).toISOString() : null,
         reviewReason:
           includeInternal || MANUAL_ADJUSTMENT_TYPES.has(tx.type) ? tx.review_reason : null,
+        product: wagerProductOfProviderName(tx.provider_name),
         // Internal only: a reference currency is never shown to the player.
         reference: includeInternal
           ? toReferenceDto({

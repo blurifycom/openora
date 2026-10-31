@@ -11,6 +11,10 @@ does not repeat it.
 
 - **The ledger.** A player's balance is a row here, and its transaction history is immutable. No
   chain and no vendor holds a per-player balance.
+- **The product on a history row.** A row whose provider name starts with a product and a colon,
+  as `sportsbook:<provider>` does, reports that product; any other row reports `product: null`.
+  The `products` filter matches those prefixes in SQL before paging, so `total` agrees with it. The
+  wallet knows only the product names, never what a product's rows mean.
 - **The asset catalog.** The currency-and-network pairs the operator accepts, and for each pair the
   vendor's own asset identifier, the minimums, the fee, and independent switches for deposit and
   withdrawal. Which pairs exist is operator configuration, not code.

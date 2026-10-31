@@ -68,7 +68,7 @@ import type { SportsbookConfigService } from './config.service.js';
 import type { DebtChange, SportsbookDebtService } from './debt.service.js';
 import { fileFinding, type SportsbookFindingArgs } from './finding.service.js';
 import { lockBet, lockConfig, lockPlayer } from './locks.service.js';
-import { isPlayerRestricted } from './restriction-check.service.js';
+import { isPlayerRestricted, playRefusal } from './restriction-check.service.js';
 import { isLiveSession, type SportsbookSessionService } from './session.service.js';
 
 const logger = createLogger('sportsbook');
@@ -836,8 +836,11 @@ export class SportsbookLedgerService {
       }
       const config = await this.config.get(tx);
       const offered = config.currencies.find((c) => c.currency === args.currency);
-      if (!config.enabled || config.suspended || !offered) {
+      if (!config.enabled || config.suspended) {
         throw new LedgerRefusal('suspended');
+      }
+      if (!offered) {
+        throw new LedgerRefusal('currency_not_offered');
       }
       const [live] = await tx
         .select()
@@ -892,11 +895,12 @@ export class SportsbookLedgerService {
         throw new LedgerRefusal('promotion_not_allowed');
       }
       // The only eligibility gate for a promotion-paid stake: no wallet debit runs to re-check it.
-      if (
-        (await isPlayerRestricted(tx, userId)) ||
-        (await this.playEligibility.isRestricted(userId, tx))
-      ) {
-        throw new LedgerRefusal('player_blocked');
+      const refusal = await playRefusal(this.playEligibility, userId, tx);
+      if (refusal) {
+        throw new LedgerRefusal(refusal);
+      }
+      if (await isPlayerRestricted(tx, userId)) {
+        throw new LedgerRefusal('sportsbook_restricted');
       }
 
       const lastLegStartsAt = new Date(

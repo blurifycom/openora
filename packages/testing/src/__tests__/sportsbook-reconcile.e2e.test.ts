@@ -548,10 +548,10 @@ describe('responsible gambling ends sportsbook play', () => {
 
     expect(
       await ledgerOf(app).session({ provider: PROVIDER, sessionId: player.sessionId }),
-    ).toEqual({ status: 'refused', reason: 'session_invalid' });
+    ).toEqual({ status: 'refused', reason: 'cooling_off' });
     expect(await ledgerOf(app).reserve(reserveArgs(player.sessionId))).toEqual({
       status: 'refused',
-      reason: 'player_blocked',
+      reason: 'cooling_off',
     });
     expect(await balanceOf(app, player.userId)).toBe('100.000000000000000000');
   });

@@ -61,7 +61,8 @@ export function createSportsbookRouter({
   restrictions,
   sessions,
 }: SportsbookRouterServices) {
-  const { issueSession, listBets, getBet } = sportsbookContract;
+  const { availability, issueSession, revokeSession, getBetByTransaction, listBets, getBet } =
+    sportsbookContract;
   const {
     adminListBets,
     adminGetBet,
@@ -82,7 +83,10 @@ export function createSportsbookRouter({
     promotionReport,
   } = sportsbookAdminContract;
   const os = implement({
+    availability,
     issueSession,
+    revokeSession,
+    getBetByTransaction,
     listBets,
     getBet,
     adminListBets,
@@ -105,6 +109,10 @@ export function createSportsbookRouter({
   }).$context<OssContext>();
 
   return os.router({
+    availability: os.availability.handler(({ context }) =>
+      sessions.availability(context.clientMeta.ip),
+    ),
+
     issueSession: os.issueSession.handler(({ input, context }) =>
       mapErrors(
         {
@@ -113,6 +121,16 @@ export function createSportsbookRouter({
           SERVICE_UNAVAILABLE: [SportsbookUnavailableError, SportsbookProviderUnavailableError],
         },
         () => sessions.issue(getUserId(context), input, context.clientMeta.ip),
+      ),
+    ),
+
+    revokeSession: os.revokeSession.handler(async ({ input, context }) => ({
+      revoked: (await sessions.revokeOwn(getUserId(context), input)).length,
+    })),
+
+    getBetByTransaction: os.getBetByTransaction.handler(({ input, context }) =>
+      mapErrors({ NOT_FOUND: SportsbookBetNotFoundError }, () =>
+        bets.getOwnByTransaction(getUserId(context), input.transactionId),
       ),
     ),
 
