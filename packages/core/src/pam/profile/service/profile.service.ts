@@ -135,7 +135,10 @@ export class ProfileService implements PlayerProvisioning {
    * Idempotent: a retried registration never overwrites the original consent record, and
    * the acquisition is stored only with the player row it was captured for.
    */
-  async createForRegistration({ userId, acquisition, ...consent }: PlayerRegistrationRecord) {
+  async createForRegistration(
+    { userId, acquisition, ...consent }: PlayerRegistrationRecord,
+    onCreated?: (tx: unknown, playerId: string) => Promise<void>,
+  ) {
     return this.drizzle.db.transaction(async (tx) => {
       const [inserted] = await tx
         .insert(player)
@@ -167,6 +170,7 @@ export class ProfileService implements PlayerProvisioning {
           userAgent: consent.registrationUserAgent,
         });
       }
+      await onCreated?.(tx, inserted.id);
       return { created: true, playerId: inserted.id };
     });
   }
