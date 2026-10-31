@@ -87,6 +87,54 @@ describe('wager() with no attributed bonus grant', () => {
     });
   });
 
+  it('reports a real-money-only stake at its full stake, all of it real, leaving an active grant untouched', async () => {
+    const wagerTracking: WagerTrackingCommands = { recordWager: vi.fn(async () => []) };
+    const wagering = new WageringService(wagerTracking);
+    const userId = randomUUID();
+    const [grant] = await db.drizzle.db
+      .insert(promoGrant)
+      .values({
+        userId,
+        currency: 'USD',
+        source: 'manual',
+        sourceRef: randomUUID(),
+        terms: { wageringMultiplier: '5', expiryDays: 30, maxBet: '5', weights: [] },
+        grantedAmount: '10',
+        bonusBalance: '10',
+        wageringRequired: '50',
+        expiresAt: new Date(Date.now() + 86_400_000),
+        activatedAt: new Date(),
+      })
+      .returning();
+
+    const outcome = await db.drizzle.db.transaction((tx) =>
+      wagering.wager(tx, {
+        userId,
+        currency: 'USD',
+        stake: '25',
+        fromBonus: '0',
+        context: { provider: 'sportsbook', product: 'sportsbook' },
+        providerName: 'sportsbook',
+        externalRoundId: randomUUID(),
+      }),
+    );
+
+    expect(outcome).toMatchObject({ ok: true, grantId: null, bonusSpent: '0' });
+    expect(wagerTracking.recordWager).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ amount: '25', weightedAmount: '25', realAmount: '25' }),
+    );
+    const [after] = await db.drizzle.db
+      .select()
+      .from(promoGrant)
+      .where(eq(promoGrant.id, grant!.id));
+    expect(after).toMatchObject({
+      bonusBalance: '10.000000000000000000',
+      wageringProgress: '0.000000000000000000',
+      status: 'active',
+    });
+  });
+
   it('does not report a bet requesting bonus funds it has no grant for', async () => {
     const wagerTracking: WagerTrackingCommands = { recordWager: vi.fn(async () => []) };
     const wagering = new WageringService(wagerTracking);

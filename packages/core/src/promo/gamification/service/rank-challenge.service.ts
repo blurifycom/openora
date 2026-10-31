@@ -13,10 +13,12 @@ import type {
   RankChallengeLadder,
   RankChallengeTier,
 } from '../contract/index.js';
+import { DEFAULT_RANK_PERK_PRODUCTS } from '../contract/index.js';
 import {
   promoRankChallengeClaim,
   promoRankChallengeTier,
   promoRankChallengeWager,
+  promoRankConfig,
 } from '../schema/index.js';
 import { TIER_COLUMNS, withWinners } from '../shared/rank-challenge-ladder.js';
 
@@ -50,9 +52,17 @@ export class RankChallengeService implements WagerTrackingCommands {
     if (moneyCompare(args.realAmount, '0') <= 0) {
       return [];
     }
+    const products = promoRankConfig.rankChallengeEligibleProducts;
+    const product = args.context.product;
+    const challengeCountsProduct = sql`coalesce(
+      (select cardinality(${products}) = 0 or ${product} = any(${products})
+        from ${promoRankConfig} where ${promoRankConfig.singletonKey} = 'global'),
+      ${DEFAULT_RANK_PERK_PRODUCTS.some((p) => p === product)}::boolean
+    )`;
     const ladder = await tx
       .select(TIER_COLUMNS)
       .from(promoRankChallengeTier)
+      .where(challengeCountsProduct)
       .orderBy(asc(promoRankChallengeTier.position));
     const [lowest] = ladder;
     if (!lowest) {

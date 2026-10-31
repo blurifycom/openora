@@ -14,10 +14,12 @@ import {
 const ANALYTICS_CACHE_TTL_MS = 60_000;
 const DEFAULT_GGR_RANGE_DAYS = 30;
 const COMPLETED_STATUS = 'completed';
-const SUMMARY_TYPES = ['deposit', 'withdrawal', 'bonus', 'bet', 'bet_reversal', 'win'] as const;
+const GGR_TYPES = ['bet', 'bet_reversal', 'win', 'win_reversal'] as const;
+const SUMMARY_TYPES = ['deposit', 'withdrawal', 'bonus', ...GGR_TYPES] as const;
 
 const sumOf = (type: (typeof SUMMARY_TYPES)[number]) =>
   sql`coalesce(sum(${walletTransaction.amount}) filter (where ${walletTransaction.type} = ${type}), 0)`;
+const GGR = sql`${sumOf('bet')} - ${sumOf('bet_reversal')} - ${sumOf('win')} + ${sumOf('win_reversal')}`;
 
 const GRANULARITY_INTERVALS: Record<Granularity, string> = {
   day: '1 day',
@@ -121,11 +123,9 @@ export class FinancialAnalyticsService {
           netDeposits: sql<string>`
             ${sumOf('deposit')} - ${sumOf('withdrawal')} - ${sumOf('bonus')}
           `,
-          ggr: sql<string>`${sumOf('bet')} - ${sumOf('bet_reversal')} - ${sumOf('win')}`,
+          ggr: sql<string>`${GGR}`,
           bonusCost: sql<string>`${sumOf('bonus')}`,
-          ngr: sql<string>`
-            ${sumOf('bet')} - ${sumOf('bet_reversal')} - ${sumOf('win')} - ${sumOf('bonus')}
-          `,
+          ngr: sql<string>`${GGR} - ${sumOf('bonus')}`,
         })
         .from(walletTransaction)
         .where(
@@ -175,7 +175,7 @@ export class FinancialAnalyticsService {
         select distinct currency
         from ${walletTransaction}
         where status = ${COMPLETED_STATUS}
-          and type in ('bet', 'win', 'bet_reversal')
+          and ${inArray(walletTransaction.type, GGR_TYPES)}
           and created_at between ${range.from} and ${range.to}
           ${currencyFilter}
         ${forceCurrency}
@@ -187,12 +187,10 @@ export class FinancialAnalyticsService {
         select
           currency,
           date_trunc(${granularity}, created_at) as bucket,
-          coalesce(sum(amount) filter (where type = 'bet'), 0)
-            - coalesce(sum(amount) filter (where type = 'bet_reversal'), 0)
-            - coalesce(sum(amount) filter (where type = 'win'), 0) as ggr
+          ${GGR} as ggr
         from ${walletTransaction}
         where status = ${COMPLETED_STATUS}
-          and type in ('bet', 'win', 'bet_reversal')
+          and ${inArray(walletTransaction.type, GGR_TYPES)}
           and created_at between ${range.from} and ${range.to}
           ${currencyFilter}
         group by 1, 2

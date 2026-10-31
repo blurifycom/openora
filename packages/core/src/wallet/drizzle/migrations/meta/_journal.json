@@ -246,6 +246,20 @@
       "when": 1792071263372,
       "tag": "0034_organic_network",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792574030020,
+      "tag": "0035_shiny_colonel_america",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1793358878070,
+      "tag": "0036_mighty_argent",
+      "breakpoints": true
     }
   ]
 }

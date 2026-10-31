@@ -18,7 +18,9 @@ import {
   CONTRIBUTION_PERCENT_SCALE,
   MONEY_PRECISION,
   MONEY_SCALE,
+  type WagerProduct,
 } from '@openora/core/contracts';
+import { DEFAULT_RANK_PERK_PRODUCTS } from '../contract/index.js';
 import type {
   RaceEligibleProducts,
   RacePositions,
@@ -119,7 +121,8 @@ export type RankRewardTerms = NonNullable<RankRewards[keyof RankRewards]>;
 
 /**
  * Ladder-wide settings, one row. Absent means the ladder pays nothing and counts nothing: an
- * operator who has not decided what counts toward a rank has not launched ranks.
+ * operator who has not decided what counts toward a rank has not launched ranks. The rank
+ * challenge is not part of the ladder: absent, it counts `DEFAULT_RANK_PERK_PRODUCTS`.
  */
 export const promoRankConfig = pgTable('promo_rank_config', {
   id: uuid().primaryKey().defaultRandom(),
@@ -127,6 +130,18 @@ export const promoRankConfig = pgTable('promo_rank_config', {
   singletonKey: text().notNull().unique().default('global'),
   /** Products whose stakes count toward a rank. Empty counts every product. */
   eligibleProducts: text().array().notNull().default([]),
+  /** Products whose stakes earn rakeback. A stake must count toward the rank as well. Empty counts every product. */
+  rakebackEligibleProducts: text()
+    .array()
+    .$type<WagerProduct[]>()
+    .notNull()
+    .default([...DEFAULT_RANK_PERK_PRODUCTS]),
+  /** Products whose stakes count toward the rank challenge. Empty counts every product. */
+  rankChallengeEligibleProducts: text()
+    .array()
+    .$type<WagerProduct[]>()
+    .notNull()
+    .default([...DEFAULT_RANK_PERK_PRODUCTS]),
   /** Terms each reward kind is granted under. A kind with no terms is not paid. */
   rewards: jsonb().$type<RankRewards>().notNull().default({}),
   /** What rewards are credited in, when that is not the ladder's own currency. */
@@ -554,8 +569,8 @@ export type PromoRankChallengeTier = typeof promoRankChallengeTier.$inferSelect;
 /**
  * A player's lifetime real-money wagering total toward the Rank Challenge - independent of
  * `promoPlayerRank.lifetimeWagered` (the rank ladder's own accumulator, filtered by that
- * ladder's `eligibleProducts`). Every real-money wager counts here, no eligibility filter, per
- * the challenge's own "lifetime real-money wagering" rule.
+ * ladder's `eligibleProducts`). Counts the real-money part of every stake on a product
+ * `promoRankConfig.rankChallengeEligibleProducts` admits.
  */
 export const promoRankChallengeWager = pgTable(
   'promo_rank_challenge_wager',

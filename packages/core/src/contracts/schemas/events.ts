@@ -156,6 +156,10 @@ const walletTxnBase = z.object({
   transactionId: UuidSchema,
 });
 
+// Why a withdrawal already flipped to `processing` went back to the queue before reaching the PSP.
+export const WITHDRAWAL_REQUEUE_REASONS = ['withdrawal_hold', 'withdrawal_lock'] as const;
+export type WithdrawalRequeueReason = (typeof WITHDRAWAL_REQUEUE_REASONS)[number];
+
 const limitChangeBase = authContextBase.extend({
   userId: UuidSchema,
   playerId: UuidSchema.nullable(),
@@ -481,6 +485,12 @@ export const domainEventSchemas = {
   'wallet.withdrawal.failed': walletTxnBase.extend({
     playerId: UuidSchema.nullable(),
     adminId: UuidSchema.nullable(),
+  }),
+  // A hold or `withdrawal_lock` landed after the approval flip, so the withdrawal went back to the
+  // status it was approved from before reaching the PSP. No money moved; it waits for a decision again.
+  'wallet.withdrawal.requeued': walletTxnBase.extend({
+    playerId: UuidSchema.nullable(),
+    reason: z.enum(WITHDRAWAL_REQUEUE_REASONS),
   }),
   // A super admin credited or debited a balance directly, outside the deposit and
   // withdrawal rails. Its own topic rather than a reuse of `wallet.deposit.completed`:
