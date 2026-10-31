@@ -28,11 +28,14 @@ import {
   SPORTSBOOK_DEBT_STATUSES,
   SPORTSBOOK_FINDING_KINDS,
   SPORTSBOOK_FINDING_STATUSES,
+  SPORTSBOOK_PROMOTION_FUNDERS,
   SPORTSBOOK_RECONCILE_MAX_ATTEMPTS,
   SPORTSBOOK_CONFIG_DEFAULTS,
+  SPORTSBOOK_PROMOTIONS_DEFAULTS,
   SPORTSBOOK_TRANSACTION_KINDS,
   type SportsbookCurrency,
   type SportsbookDebt,
+  type SportsbookPromotionsConfig,
 } from '../contract/index.js';
 
 const money = () => decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE });
@@ -60,6 +63,10 @@ export const sportsbookFindingKindEnum = pgEnum(
   'sportsbook_finding_kind',
   SPORTSBOOK_FINDING_KINDS,
 );
+export const sportsbookPromotionFunderEnum = pgEnum(
+  'sportsbook_promotion_funder',
+  SPORTSBOOK_PROMOTION_FUNDERS,
+);
 export const sportsbookFindingStatusEnum = pgEnum(
   'sportsbook_finding_status',
   SPORTSBOOK_FINDING_STATUSES,
@@ -83,6 +90,10 @@ export const sportsbookConfig = pgTable('sportsbook_config', {
     .notNull()
     .default(SPORTSBOOK_CONFIG_DEFAULTS.settlementGraceMinutes),
   sessionTtlMinutes: integer().notNull().default(SPORTSBOOK_CONFIG_DEFAULTS.sessionTtlMinutes),
+  promotions: jsonb()
+    .$type<SportsbookPromotionsConfig>()
+    .notNull()
+    .default(SPORTSBOOK_PROMOTIONS_DEFAULTS),
   // Cross-module (identity admin user), bare uuid.
   updatedBy: uuid(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -142,6 +153,17 @@ export const sportsbookBet = pgTable(
     potentialPayout: money().notNull(),
     // What the current settlement paid; zero while the bet is open.
     payoutTotal: money().notNull().default('0'),
+    // Resolved from the promotion declaration at reserve; every later step reads these, never the declaration.
+    cashStake: money().notNull(),
+    voidPayout: money().notNull(),
+    maxLossRefund: money().notNull().default('0'),
+    promotionType: text(),
+    promotionId: text(),
+    // Read from the funder map at reserve, so a later map change never moves a bet's cost.
+    promotionFunder: sportsbookPromotionFunderEnum(),
+    promotionPotential: money(),
+    // The part of payoutTotal a promotion funded.
+    promotionPaid: money().notNull().default('0'),
     version: integer().notNull().default(1),
     legs: jsonb().$type<SportsbookBetLeg[]>().notNull(),
     lastLegStartsAt: timestamp({ withTimezone: true }).notNull(),
@@ -170,6 +192,30 @@ export const sportsbookBet = pgTable(
       .where(sql`${t.status} = 'accepted'`),
     check('sportsbook_bet_stake_positive_check', sql`${t.stake} > 0`),
     check('sportsbook_bet_payout_total_non_negative_check', sql`${t.payoutTotal} >= 0`),
+    check(
+      'sportsbook_bet_cash_stake_check',
+      sql`${t.cashStake} IN (0, ${t.stake}) AND (${t.cashStake} = ${t.stake} OR ${t.promotionType} IS NOT NULL)`,
+    ),
+    check(
+      'sportsbook_bet_void_payout_check',
+      sql`${t.voidPayout} IN (0, ${t.stake}) AND (${t.cashStake} = 0 OR ${t.voidPayout} = ${t.stake})`,
+    ),
+    check(
+      'sportsbook_bet_max_loss_refund_check',
+      sql`${t.maxLossRefund} IN (0, ${t.cashStake}) AND (${t.maxLossRefund} = 0 OR ${t.promotionType} IS NOT NULL)`,
+    ),
+    check(
+      'sportsbook_bet_promotion_paid_check',
+      sql`${t.promotionPaid} >= 0 AND ${t.promotionPaid} <= ${t.payoutTotal} AND (${t.promotionPaid} = 0 OR ${t.promotionType} IS NOT NULL) AND (${t.cashStake} > 0 OR ${t.promotionPaid} = ${t.payoutTotal})`,
+    ),
+    check(
+      'sportsbook_bet_promotion_funder_check',
+      sql`(${t.promotionType} IS NULL) = (${t.promotionFunder} IS NULL)`,
+    ),
+    check(
+      'sportsbook_bet_result_payout_check',
+      sql`(${t.result} IS DISTINCT FROM 'void' OR ${t.payoutTotal} = ${t.voidPayout} OR (${t.cashStake} = 0 AND ${t.payoutTotal} = 0)) AND (${t.result} IS DISTINCT FROM 'lost' OR ${t.payoutTotal} <= ${t.maxLossRefund})`,
+    ),
   ],
 );
 
@@ -190,6 +236,7 @@ export const sportsbookBetTransaction = pgTable(
     // The terms a reserve placed or a confirm accepted at; null when the confirm kept them.
     potentialPayout: money(),
     legs: jsonb().$type<SportsbookBetLeg[]>(),
+    promotionPotential: money(),
     betVersion: integer().notNull().default(0),
     fingerprint: text().notNull(),
     result: sportsbookBetResultEnum(),
@@ -201,6 +248,7 @@ export const sportsbookBetTransaction = pgTable(
       .default(sql`'{}'::uuid[]`),
     balanceAfter: money(),
     currency: text(),
+    promotionAmount: money(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -213,6 +261,9 @@ export const sportsbookBetTransaction = pgTable(
       .on(t.provider, t.providerBetId)
       .where(sql`${t.kind} = 'reserve' OR ${t.betId} IS NULL`),
     index('sportsbook_bet_transaction_bet_id_created_at_idx').on(t.betId, t.createdAt),
+    index('sportsbook_bet_transaction_promotion_created_at_idx')
+      .on(t.createdAt)
+      .where(sql`${t.promotionAmount} > 0`),
   ],
 );
 

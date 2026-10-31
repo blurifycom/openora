@@ -35,7 +35,8 @@ export type SportsbookProvider = {
   issueSession(args: SportsbookProviderSessionArgs): Promise<SportsbookProviderSession>;
   /** Resolves for a session the provider never opened or already closed; a throw is retried. */
   revokeSession?(args: { sessionId: string; userId: string }): Promise<void>;
-  getBetStatus(args: { providerBetId: string }): Promise<SportsbookProviderBetStatus>;
+  /** Optional: without it, align refuses and reconciliation files the reserves it cannot resolve. */
+  getBetStatus?(args: { providerBetId: string }): Promise<SportsbookProviderBetStatus>;
 };
 
 export const SPORTSBOOK_PROVIDER: Token<SportsbookProvider> = createToken('SPORTSBOOK_PROVIDER');

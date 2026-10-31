@@ -59,16 +59,17 @@ export type SportsbookSessionOutcome =
 export type SportsbookLedger = {
   /** Resolves a live session the provider presents back: who plays, in which currency, with what balance. Refused once the player may not play. Read-only. */
   session(args: SportsbookSessionArgs): Promise<SportsbookSessionOutcome>;
-  /** Debits the stake and records the bet as reserved. Refused for a bet core already holds, and once the bet was cancelled before core saw it. */
+  /** Debits the cash stake, nothing for a promotion-paid stake, and records the bet as reserved. Refused for a bet core already holds, and once the bet was cancelled before core saw it. */
   reserve(args: SportsbookReserveArgs): Promise<SportsbookLedgerOutcome>;
   /**
    * The provider accepted the reserved bet, at changed odds when it passes the accepted terms.
    * Moves no money. Terms that come without their pair, break the currency decimals, pay less than
-   * the stake, change legs other than by their odds, or, with decimal odds, move the payout other
-   * than the way the odds product moved refuse as `invalid_amount`.
+   * the cash stake, change legs other than by their odds, with decimal odds move the payout other
+   * than the way the odds product moved, or change the promotion part while the odds held refuse as
+   * `invalid_amount`.
    */
   confirm(args: SportsbookConfirmArgs): Promise<SportsbookLedgerOutcome>;
-  /** Returns the stake of a reserved bet. For a bet core never saw it leaves a tombstone that refuses a later reserve. */
+  /** Returns the cash stake of a reserved bet. For a bet core never saw it leaves a tombstone that refuses a later reserve. */
   cancel(args: SportsbookCancelArgs): Promise<SportsbookLedgerOutcome>;
   /** Pays the total payout of an accepted bet, then offsets any sportsbook debt in its currency. Never gated by config, restriction or RG. */
   settle(args: SportsbookSettleArgs): Promise<SportsbookLedgerOutcome>;

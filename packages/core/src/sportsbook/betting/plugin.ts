@@ -2,6 +2,7 @@ import { ADMIN_GUARD, DRIZZLE, EVENT_BUS, createLogger } from '@openora/core/ser
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import {
   AUDIT_WRITER,
+  EXCHANGE_RATE_READER,
   GEO_CHECK_COMMANDS,
   IDENTITY_READER,
   JOB_QUEUE,
@@ -92,6 +93,7 @@ export default {
           identity,
           wallet,
           walletReader,
+          rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
         });
         const align = new SportsbookAlignService({ drizzle, ledger, audit, provider });
         ref = {

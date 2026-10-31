@@ -1,0 +1,1504 @@
+{
+  "id": "6a5382ff-b293-4dfe-ac82-61e669a84bd6",
+  "prevId": "bc1c1521-f976-4dfc-9ccf-78f7777c271d",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.sportsbook_bet": {
+      "name": "sportsbook_bet",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_bet_id": {
+          "name": "provider_bet_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency_decimals": {
+          "name": "currency_decimals",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "sportsbook_bet_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "result": {
+          "name": "result",
+          "type": "sportsbook_bet_result",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "stake": {
+          "name": "stake",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "potential_payout": {
+          "name": "potential_payout",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payout_total": {
+          "name": "payout_total",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "cash_stake": {
+          "name": "cash_stake",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "void_payout": {
+          "name": "void_payout",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_loss_refund": {
+          "name": "max_loss_refund",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "promotion_type": {
+          "name": "promotion_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "promotion_id": {
+          "name": "promotion_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "promotion_funder": {
+          "name": "promotion_funder",
+          "type": "sportsbook_promotion_funder",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "promotion_potential": {
+          "name": "promotion_potential",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "promotion_paid": {
+          "name": "promotion_paid",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "legs": {
+          "name": "legs",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_leg_starts_at": {
+          "name": "last_leg_starts_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reconcile_attempts": {
+          "name": "reconcile_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "accepted_at": {
+          "name": "accepted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "settled_at": {
+          "name": "settled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancelled_at": {
+          "name": "cancelled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sportsbook_bet_provider_provider_bet_id_idx": {
+          "name": "sportsbook_bet_provider_provider_bet_id_idx",
+          "columns": [
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_bet_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_bet_user_id_created_at_idx": {
+          "name": "sportsbook_bet_user_id_created_at_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_bet_created_at_idx": {
+          "name": "sportsbook_bet_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_bet_status_created_at_idx": {
+          "name": "sportsbook_bet_status_created_at_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_bet_reserved_created_at_idx": {
+          "name": "sportsbook_bet_reserved_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"sportsbook_bet\".\"status\" = 'reserved' and \"sportsbook_bet\".\"reconcile_attempts\" < 3",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_bet_accepted_last_leg_starts_at_idx": {
+          "name": "sportsbook_bet_accepted_last_leg_starts_at_idx",
+          "columns": [
+            {
+              "expression": "last_leg_starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"sportsbook_bet\".\"status\" = 'accepted'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sportsbook_bet_session_id_sportsbook_session_id_fk": {
+          "name": "sportsbook_bet_session_id_sportsbook_session_id_fk",
+          "tableFrom": "sportsbook_bet",
+          "tableTo": "sportsbook_session",
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "sportsbook_bet_stake_positive_check": {
+          "name": "sportsbook_bet_stake_positive_check",
+          "value": "\"sportsbook_bet\".\"stake\" > 0"
+        },
+        "sportsbook_bet_payout_total_non_negative_check": {
+          "name": "sportsbook_bet_payout_total_non_negative_check",
+          "value": "\"sportsbook_bet\".\"payout_total\" >= 0"
+        },
+        "sportsbook_bet_cash_stake_check": {
+          "name": "sportsbook_bet_cash_stake_check",
+          "value": "\"sportsbook_bet\".\"cash_stake\" IN (0, \"sportsbook_bet\".\"stake\") AND (\"sportsbook_bet\".\"cash_stake\" = \"sportsbook_bet\".\"stake\" OR \"sportsbook_bet\".\"promotion_type\" IS NOT NULL)"
+        },
+        "sportsbook_bet_void_payout_check": {
+          "name": "sportsbook_bet_void_payout_check",
+          "value": "\"sportsbook_bet\".\"void_payout\" IN (0, \"sportsbook_bet\".\"stake\") AND (\"sportsbook_bet\".\"cash_stake\" = 0 OR \"sportsbook_bet\".\"void_payout\" = \"sportsbook_bet\".\"stake\")"
+        },
+        "sportsbook_bet_max_loss_refund_check": {
+          "name": "sportsbook_bet_max_loss_refund_check",
+          "value": "\"sportsbook_bet\".\"max_loss_refund\" IN (0, \"sportsbook_bet\".\"cash_stake\") AND (\"sportsbook_bet\".\"max_loss_refund\" = 0 OR \"sportsbook_bet\".\"promotion_type\" IS NOT NULL)"
+        },
+        "sportsbook_bet_promotion_paid_check": {
+          "name": "sportsbook_bet_promotion_paid_check",
+          "value": "\"sportsbook_bet\".\"promotion_paid\" >= 0 AND \"sportsbook_bet\".\"promotion_paid\" <= \"sportsbook_bet\".\"payout_total\" AND (\"sportsbook_bet\".\"promotion_paid\" = 0 OR \"sportsbook_bet\".\"promotion_type\" IS NOT NULL) AND (\"sportsbook_bet\".\"cash_stake\" > 0 OR \"sportsbook_bet\".\"promotion_paid\" = \"sportsbook_bet\".\"payout_total\")"
+        },
+        "sportsbook_bet_promotion_funder_check": {
+          "name": "sportsbook_bet_promotion_funder_check",
+          "value": "(\"sportsbook_bet\".\"promotion_type\" IS NULL) = (\"sportsbook_bet\".\"promotion_funder\" IS NULL)"
+        },
+        "sportsbook_bet_result_payout_check": {
+          "name": "sportsbook_bet_result_payout_check",
+          "value": "(\"sportsbook_bet\".\"result\" IS DISTINCT FROM 'void' OR \"sportsbook_bet\".\"payout_total\" = \"sportsbook_bet\".\"void_payout\" OR (\"sportsbook_bet\".\"cash_stake\" = 0 AND \"sportsbook_bet\".\"payout_total\" = 0)) AND (\"sportsbook_bet\".\"result\" IS DISTINCT FROM 'lost' OR \"sportsbook_bet\".\"payout_total\" <= \"sportsbook_bet\".\"max_loss_refund\")"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.sportsbook_bet_transaction": {
+      "name": "sportsbook_bet_transaction",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_tx_id": {
+          "name": "provider_tx_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_bet_id": {
+          "name": "provider_bet_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bet_id": {
+          "name": "bet_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "sportsbook_transaction_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "potential_payout": {
+          "name": "potential_payout",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "legs": {
+          "name": "legs",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "promotion_potential": {
+          "name": "promotion_potential",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "bet_version": {
+          "name": "bet_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "result": {
+          "name": "result",
+          "type": "sportsbook_bet_result",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancel_reason": {
+          "name": "cancel_reason",
+          "type": "sportsbook_cancel_reason",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wallet_transaction_ids": {
+          "name": "wallet_transaction_ids",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::uuid[]"
+        },
+        "balance_after": {
+          "name": "balance_after",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "promotion_amount": {
+          "name": "promotion_amount",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sportsbook_bet_transaction_provider_provider_tx_id_idx": {
+          "name": "sportsbook_bet_transaction_provider_provider_tx_id_idx",
+          "columns": [
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_tx_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_bet_transaction_bet_origin_idx": {
+          "name": "sportsbook_bet_transaction_bet_origin_idx",
+          "columns": [
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_bet_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"sportsbook_bet_transaction\".\"kind\" = 'reserve' OR \"sportsbook_bet_transaction\".\"bet_id\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_bet_transaction_bet_id_created_at_idx": {
+          "name": "sportsbook_bet_transaction_bet_id_created_at_idx",
+          "columns": [
+            {
+              "expression": "bet_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_bet_transaction_promotion_created_at_idx": {
+          "name": "sportsbook_bet_transaction_promotion_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"sportsbook_bet_transaction\".\"promotion_amount\" > 0",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sportsbook_bet_transaction_bet_id_sportsbook_bet_id_fk": {
+          "name": "sportsbook_bet_transaction_bet_id_sportsbook_bet_id_fk",
+          "tableFrom": "sportsbook_bet_transaction",
+          "tableTo": "sportsbook_bet",
+          "columnsFrom": ["bet_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sportsbook_config": {
+      "name": "sportsbook_config",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "singleton_key": {
+          "name": "singleton_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'global'"
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "suspended": {
+          "name": "suspended",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "currencies": {
+          "name": "currencies",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "blocked_countries": {
+          "name": "blocked_countries",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "reserve_timeout_seconds": {
+          "name": "reserve_timeout_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 300
+        },
+        "settlement_grace_minutes": {
+          "name": "settlement_grace_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1440
+        },
+        "session_ttl_minutes": {
+          "name": "session_ttl_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 240
+        },
+        "promotions": {
+          "name": "promotions",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{\"enabled\":false,\"maxPromotionStakeUsd\":null,\"funder\":{}}'::jsonb"
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "sportsbook_config_singleton_key_unique": {
+          "name": "sportsbook_config_singleton_key_unique",
+          "nullsNotDistinct": false,
+          "columns": ["singleton_key"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sportsbook_debt_action": {
+      "name": "sportsbook_debt_action",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "debt_id": {
+          "name": "debt_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "sportsbook_debt_action_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "result": {
+          "name": "result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "sportsbook_debt_action_debt_id_sportsbook_player_debt_id_fk": {
+          "name": "sportsbook_debt_action_debt_id_sportsbook_player_debt_id_fk",
+          "tableFrom": "sportsbook_debt_action",
+          "tableTo": "sportsbook_player_debt",
+          "columnsFrom": ["debt_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "sportsbook_debt_action_idempotency_key_unique": {
+          "name": "sportsbook_debt_action_idempotency_key_unique",
+          "nullsNotDistinct": false,
+          "columns": ["idempotency_key"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sportsbook_debt_shortfall": {
+      "name": "sportsbook_debt_shortfall",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "seq": {
+          "name": "seq",
+          "type": "bigserial",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "debt_id": {
+          "name": "debt_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bet_id": {
+          "name": "bet_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "sportsbook_debt_shortfall_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sportsbook_debt_shortfall_debt_id_seq_idx": {
+          "name": "sportsbook_debt_shortfall_debt_id_seq_idx",
+          "columns": [
+            {
+              "expression": "debt_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sportsbook_debt_shortfall_debt_id_sportsbook_player_debt_id_fk": {
+          "name": "sportsbook_debt_shortfall_debt_id_sportsbook_player_debt_id_fk",
+          "tableFrom": "sportsbook_debt_shortfall",
+          "tableTo": "sportsbook_player_debt",
+          "columnsFrom": ["debt_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "sportsbook_debt_shortfall_bet_id_sportsbook_bet_id_fk": {
+          "name": "sportsbook_debt_shortfall_bet_id_sportsbook_bet_id_fk",
+          "tableFrom": "sportsbook_debt_shortfall",
+          "tableTo": "sportsbook_bet",
+          "columnsFrom": ["bet_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "sportsbook_debt_shortfall_amount_check": {
+          "name": "sportsbook_debt_shortfall_amount_check",
+          "value": "\"sportsbook_debt_shortfall\".\"amount\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.sportsbook_player_debt": {
+      "name": "sportsbook_player_debt",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "owed": {
+          "name": "owed",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "collected": {
+          "name": "collected",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "written_off": {
+          "name": "written_off",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "outstanding": {
+          "name": "outstanding",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "status": {
+          "name": "status",
+          "type": "sportsbook_debt_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "written_off_by": {
+          "name": "written_off_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "written_off_reason": {
+          "name": "written_off_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "written_off_at": {
+          "name": "written_off_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sportsbook_player_debt_user_id_currency_idx": {
+          "name": "sportsbook_player_debt_user_id_currency_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "currency",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_player_debt_status_updated_at_idx": {
+          "name": "sportsbook_player_debt_status_updated_at_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_player_debt_updated_at_idx": {
+          "name": "sportsbook_player_debt_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "sportsbook_player_debt_outstanding_check": {
+          "name": "sportsbook_player_debt_outstanding_check",
+          "value": "\"sportsbook_player_debt\".\"outstanding\" = \"sportsbook_player_debt\".\"owed\" - \"sportsbook_player_debt\".\"collected\" - \"sportsbook_player_debt\".\"written_off\" AND \"sportsbook_player_debt\".\"outstanding\" >= 0 AND \"sportsbook_player_debt\".\"owed\" >= 0 AND \"sportsbook_player_debt\".\"collected\" >= 0 AND \"sportsbook_player_debt\".\"written_off\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.sportsbook_player_restriction": {
+      "name": "sportsbook_player_restriction",
+      "schema": "",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "restricted_by": {
+          "name": "restricted_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sportsbook_reconciliation_finding": {
+      "name": "sportsbook_reconciliation_finding",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "kind": {
+          "name": "kind",
+          "type": "sportsbook_finding_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "bet_id": {
+          "name": "bet_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dedupe_key": {
+          "name": "dedupe_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "detail": {
+          "name": "detail",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "status": {
+          "name": "status",
+          "type": "sportsbook_finding_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "resolved_by": {
+          "name": "resolved_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_note": {
+          "name": "resolution_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sportsbook_reconciliation_finding_open_dedupe_key_idx": {
+          "name": "sportsbook_reconciliation_finding_open_dedupe_key_idx",
+          "columns": [
+            {
+              "expression": "dedupe_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"sportsbook_reconciliation_finding\".\"status\" = 'open'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_reconciliation_finding_status_created_at_idx": {
+          "name": "sportsbook_reconciliation_finding_status_created_at_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_reconciliation_finding_created_at_idx": {
+          "name": "sportsbook_reconciliation_finding_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_reconciliation_finding_bet_id_kind_idx": {
+          "name": "sportsbook_reconciliation_finding_bet_id_kind_idx",
+          "columns": [
+            {
+              "expression": "bet_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sportsbook_reconciliation_finding_bet_id_sportsbook_bet_id_fk": {
+          "name": "sportsbook_reconciliation_finding_bet_id_sportsbook_bet_id_fk",
+          "tableFrom": "sportsbook_reconciliation_finding",
+          "tableTo": "sportsbook_bet",
+          "columnsFrom": ["bet_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sportsbook_session": {
+      "name": "sportsbook_session",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_code": {
+          "name": "country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_revoked_at": {
+          "name": "provider_revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_opened_at": {
+          "name": "provider_opened_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_revoke_attempted_at": {
+          "name": "provider_revoke_attempted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sportsbook_session_user_id_live_idx": {
+          "name": "sportsbook_session_user_id_live_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"sportsbook_session\".\"revoked_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_session_expires_at_live_idx": {
+          "name": "sportsbook_session_expires_at_live_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"sportsbook_session\".\"revoked_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sportsbook_session_unacknowledged_expires_at_id_idx": {
+          "name": "sportsbook_session_unacknowledged_expires_at_id_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"sportsbook_session\".\"revoked_at\" IS NOT NULL AND \"sportsbook_session\".\"provider_revoked_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.sportsbook_bet_result": {
+      "name": "sportsbook_bet_result",
+      "schema": "public",
+      "values": ["won", "lost", "void", "half_won", "half_lost", "cashed_out"]
+    },
+    "public.sportsbook_bet_status": {
+      "name": "sportsbook_bet_status",
+      "schema": "public",
+      "values": ["reserved", "accepted", "cancelled", "settled"]
+    },
+    "public.sportsbook_cancel_reason": {
+      "name": "sportsbook_cancel_reason",
+      "schema": "public",
+      "values": ["rejected", "discarded"]
+    },
+    "public.sportsbook_debt_action_kind": {
+      "name": "sportsbook_debt_action_kind",
+      "schema": "public",
+      "values": ["collected", "written_off"]
+    },
+    "public.sportsbook_debt_shortfall_type": {
+      "name": "sportsbook_debt_shortfall_type",
+      "schema": "public",
+      "values": ["win_reversal", "bet"]
+    },
+    "public.sportsbook_debt_status": {
+      "name": "sportsbook_debt_status",
+      "schema": "public",
+      "values": ["open", "cleared", "written_off"]
+    },
+    "public.sportsbook_finding_kind": {
+      "name": "sportsbook_finding_kind",
+      "schema": "public",
+      "values": [
+        "fingerprint_mismatch",
+        "payout_above_potential",
+        "invalid_amount",
+        "debt_recorded",
+        "reserve_unresolved",
+        "settlement_overdue",
+        "provider_mismatch",
+        "promotion_payout_unusual"
+      ]
+    },
+    "public.sportsbook_finding_status": {
+      "name": "sportsbook_finding_status",
+      "schema": "public",
+      "values": ["open", "resolved"]
+    },
+    "public.sportsbook_promotion_funder": {
+      "name": "sportsbook_promotion_funder",
+      "schema": "public",
+      "values": ["operator", "provider"]
+    },
+    "public.sportsbook_transaction_kind": {
+      "name": "sportsbook_transaction_kind",
+      "schema": "public",
+      "values": ["reserve", "confirm", "cancel", "settle", "reopen"]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

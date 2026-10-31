@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { and, eq, isNull, or } from 'drizzle-orm';
 import {
+  createLogger,
   findOneOrThrow,
   isPositiveMoney,
   isUniqueConstraintViolation,
   moneyCompare,
+  moneyDivide,
   moneyEquals,
   moneyFloorToScale,
   type DrizzleDb,
@@ -24,6 +26,7 @@ import {
   WalletCorrectionRefConflictError,
   type AuditWritePort,
   type DomainEventPayload,
+  type ExchangeRateReader,
   type IdentityReader,
   type PlayEligibilityPort,
   type SportsbookBetLeg,
@@ -33,6 +36,7 @@ import {
   type SportsbookConfirmArgs,
   type SportsbookLedgerApplied,
   type SportsbookLedgerOutcome,
+  type SportsbookPromotion,
   type SportsbookRefusalReason,
   type SportsbookReopenArgs,
   type SportsbookReserveArgs,
@@ -48,6 +52,8 @@ import {
 import * as z from 'zod';
 import {
   SPORTSBOOK_WALLET_PROVIDER_PREFIX,
+  type SportsbookPromotionFunder,
+  type SportsbookPromotionsConfig,
   type SportsbookTransactionKind,
 } from '../contract/index.js';
 import {
@@ -57,12 +63,15 @@ import {
   type SportsbookBetRow,
   type SportsbookBetTransactionRow,
 } from '../schema/index.js';
+import { wallet } from '@openora/core/wallet/schema';
 import type { SportsbookConfigService } from './config.service.js';
 import type { DebtChange, SportsbookDebtService } from './debt.service.js';
 import { fileFinding, type SportsbookFindingArgs } from './finding.service.js';
 import { lockBet, lockConfig, lockPlayer } from './locks.service.js';
 import { isPlayerRestricted } from './restriction-check.service.js';
 import { isLiveSession, type SportsbookSessionService } from './session.service.js';
+
+const logger = createLogger('sportsbook');
 
 type ReserveArgs = z.output<typeof SportsbookReserveArgsSchema>;
 type ConfirmArgs = z.output<typeof SportsbookConfirmArgsSchema>;
@@ -136,6 +145,9 @@ type FingerprintParts = {
   cancelReason?: string;
   version?: number;
   legs?: SportsbookBetLeg[];
+  promotion?: SportsbookPromotion;
+  promotionAmount?: string;
+  promotionPotential?: string;
 };
 
 /** What identifies a leg: everything but its odds. */
@@ -149,56 +161,187 @@ function legIdentity(leg: SportsbookBetLeg): string {
   ]);
 }
 
-function requestFingerprint(parts: FingerprintParts): string {
+const canonicalMoney = (amount: string | undefined) =>
+  amount === undefined ? '' : moneyFloorToScale(amount, MONEY_SCALE);
+
+/** Parts added after the first release are appended only when present, so older requests keep their hash. */
+export function requestFingerprint(parts: FingerprintParts): string {
+  const { promotion, promotionAmount, promotionPotential } = parts;
   const canonical = JSON.stringify([
     parts.kind,
     parts.provider,
     parts.providerBetId,
     parts.userId ?? '',
-    parts.amount === undefined ? '' : moneyFloorToScale(parts.amount, MONEY_SCALE),
-    parts.potentialPayout === undefined
-      ? ''
-      : moneyFloorToScale(parts.potentialPayout, MONEY_SCALE),
+    canonicalMoney(parts.amount),
+    canonicalMoney(parts.potentialPayout),
     parts.currency ?? '',
     parts.result ?? '',
     parts.cancelReason ?? '',
     parts.version ?? '',
     parts.legs?.map((leg) => [legIdentity(leg), leg.odds ?? null]) ?? '',
+    ...(promotion
+      ? [
+          [
+            'promotion',
+            promotion.type,
+            promotion.id ?? '',
+            canonicalMoney(promotion.potentialAmount),
+            promotion.stake,
+            promotion.stake === 'promotion' ? promotion.voidReturnsStake : promotion.refundsLoss,
+          ],
+        ]
+      : []),
+    ...(promotionAmount === undefined
+      ? []
+      : [['promotionAmount', canonicalMoney(promotionAmount)]]),
+    ...(promotionPotential === undefined
+      ? []
+      : [['promotionPotential', canonicalMoney(promotionPotential)]]),
   ]);
   return createHash('sha256').update(canonical).digest('hex');
+}
+
+type ResolvedStake = Pick<SportsbookBetRow, 'cashStake' | 'voidPayout' | 'maxLossRefund'>;
+
+/** What the player paid, what a void returns and the most a loss may refund, fixed at reserve. */
+export function resolveStake(
+  stake: string,
+  promotion: SportsbookPromotion | undefined,
+): ResolvedStake {
+  if (promotion?.stake === 'promotion') {
+    return {
+      cashStake: '0',
+      voidPayout: promotion.voidReturnsStake ? stake : '0',
+      maxLossRefund: '0',
+    };
+  }
+  return {
+    cashStake: stake,
+    voidPayout: stake,
+    maxLossRefund: promotion?.refundsLoss ? stake : '0',
+  };
+}
+
+/** A type label the funder map leaves out is the operator's. */
+function promotionFunder(
+  promotions: Pick<SportsbookPromotionsConfig, 'funder'>,
+  type: string,
+): SportsbookPromotionFunder {
+  return (
+    (Object.hasOwn(promotions.funder, type) ? promotions.funder[type] : undefined) ?? 'operator'
+  );
+}
+
+const moneyMin = (a: string, b: string) => (moneyCompare(a, b) < 0 ? a : b);
+const moneyMax = (a: string, b: string) => (moneyCompare(a, b) < 0 ? b : a);
+
+/** The most of a player-paid stake's payout a promotion funds: none of a void, its loss refund, or its boost. */
+function cashPromotionCeiling(
+  bet: Pick<SportsbookBetRow, 'promotionPotential' | 'maxLossRefund'>,
+  result: SportsbookBetResult,
+  payout: string,
+): string {
+  const boost = bet.promotionPotential ?? '0';
+  switch (result) {
+    case 'void':
+      return '0';
+    case 'lost':
+      return moneyMin(bet.maxLossRefund, payout);
+    case 'half_lost':
+      return moneyMin(moneyMax(bet.maxLossRefund, boost), payout);
+    default:
+      return moneyMin(boost, payout);
+  }
+}
+
+/** The part of a payout a promotion funded, when the overlay leaves it out. */
+export function defaultPromotionAmount(
+  bet: Pick<SportsbookBetRow, 'cashStake' | 'promotionPotential' | 'maxLossRefund'>,
+  result: SportsbookBetResult,
+  payout: string,
+): string {
+  if (!isPositiveMoney(bet.cashStake) || result === 'lost') {
+    return payout;
+  }
+  // A half loss returns half the player's own stake; only the overlay knows what a refund added.
+  return result === 'half_lost' ? '0' : cashPromotionCeiling(bet, result, payout);
+}
+
+const DECIMAL_ODDS = /^\d+(?:\.\d+)?$/;
+
+type Exact = { digits: bigint; scale: number };
+
+const EXACT_ONE: Exact = { digits: 1n, scale: 0 };
+
+/** Exact, untruncated: `digits / 10^scale` times a decimal string. */
+function timesDecimal(product: Exact, decimal: string): Exact {
+  const [whole, fraction = ''] = decimal.split('.');
+  return {
+    digits: product.digits * BigInt(`${whole}${fraction}`),
+    scale: product.scale + fraction.length,
+  };
+}
+
+function compareExact(a: Exact, b: Exact): number {
+  const scale = Math.max(a.scale, b.scale);
+  const left = a.digits * 10n ** BigInt(scale - a.scale);
+  const right = b.digits * 10n ** BigInt(scale - b.scale);
+  return left === right ? 0 : left > right ? 1 : -1;
+}
+
+/** True when a promotion-paid payout beats the stake times every leg's decimal odds. */
+export function isUnusualPromotionPayout(
+  bet: Pick<SportsbookBetRow, 'cashStake' | 'stake' | 'legs'>,
+  payout: string,
+): boolean {
+  const odds = bet.legs.map((leg) => leg.odds);
+  if (
+    isPositiveMoney(bet.cashStake) ||
+    odds.length === 0 ||
+    !odds.every((o): o is string => o !== undefined && DECIMAL_ODDS.test(o))
+  ) {
+    return false;
+  }
+  const ceiling = odds.reduce(timesDecimal, timesDecimal(EXACT_ONE, bet.stake));
+  return compareExact(timesDecimal(EXACT_ONE, payout), ceiling) > 0;
 }
 
 function fitsDecimals(amount: string, decimals: number): boolean {
   return moneyEquals(moneyFloorToScale(amount, decimals), amount);
 }
 
-/** Decimals fit the currency, a void returns exactly the stake, and a loss pays nothing. */
+/** Decimals fit the currency, a void pays its fixed amount (or 0 on a promotion-paid stake), and a loss at most its cap. */
 export function isValidSettlement(
-  bet: Pick<SportsbookBetRow, 'stake' | 'currencyDecimals'>,
+  bet: Pick<SportsbookBetRow, 'cashStake' | 'voidPayout' | 'maxLossRefund' | 'currencyDecimals'>,
   result: SportsbookBetResult,
   payout: string,
 ): boolean {
   return (
     fitsDecimals(payout, bet.currencyDecimals) &&
-    (result !== 'void' || moneyEquals(payout, bet.stake)) &&
-    (result !== 'lost' || !isPositiveMoney(payout))
+    (result !== 'void' ||
+      moneyEquals(payout, bet.voidPayout) ||
+      (!isPositiveMoney(bet.cashStake) && !isPositiveMoney(payout))) &&
+    (result !== 'lost' || moneyCompare(payout, bet.maxLossRefund) <= 0)
   );
 }
 
-/** Fits the currency's decimals and pays back at least the stake. */
-function isValidPotentialPayout(payout: string, stake: string, decimals: number): boolean {
-  return fitsDecimals(payout, decimals) && moneyCompare(payout, stake) >= 0;
+/** Fits the currency's decimals and pays back at least what the player staked in cash. */
+function isValidPotentialPayout(payout: string, cashStake: string, decimals: number): boolean {
+  return fitsDecimals(payout, decimals) && moneyCompare(payout, cashStake) >= 0;
 }
 
-const DECIMAL_ODDS = /^\d+(?:\.\d+)?$/;
+/** A promotion's part of a potential payout fits the currency and the payout. */
+function isValidPromotionPotential(amount: string, payout: string, decimals: number): boolean {
+  return fitsDecimals(amount, decimals) && moneyCompare(amount, payout) <= 0;
+}
 
 /**
  * How the accepted odds move the combined odds of the legs that carry them: -1, 0 or 1. Null when
  * an odds is not a decimal, so its direction is unknown.
  */
 function oddsDirection(reserved: SportsbookBetLeg[], accepted: SportsbookBetLeg[]): number | null {
-  let before = { digits: 1n, scale: 0 };
-  let after = { digits: 1n, scale: 0 };
+  let before = EXACT_ONE;
+  let after = EXACT_ONE;
   for (const [i, leg] of reserved.entries()) {
     const was = leg.odds ?? null;
     const now = accepted[i]?.odds ?? null;
@@ -211,35 +354,34 @@ function oddsDirection(reserved: SportsbookBetLeg[], accepted: SportsbookBetLeg[
     before = timesDecimal(before, was);
     after = timesDecimal(after, now);
   }
-  const scale = Math.max(before.scale, after.scale);
-  const left = after.digits * 10n ** BigInt(scale - after.scale);
-  const right = before.digits * 10n ** BigInt(scale - before.scale);
-  return left === right ? 0 : left > right ? 1 : -1;
-}
-
-/** Exact, untruncated: `digits / 10^scale` times a decimal string. */
-function timesDecimal(
-  product: { digits: bigint; scale: number },
-  decimal: string,
-): { digits: bigint; scale: number } {
-  const [whole, fraction = ''] = decimal.split('.');
-  return {
-    digits: product.digits * BigInt(`${whole}${fraction}`),
-    scale: product.scale + fraction.length,
-  };
+  return compareExact(after, before);
 }
 
 /**
  * The fields of accepted terms that do not fit the reserved bet. The terms come as a pair, the legs
  * may change only their odds, and the payout moves with the combined odds: up when they rise, down
  * when they fall, not at all when they hold. Odds that are not decimals only let the payout change.
+ * A promotion part needs the pair and a promotion bet, may change only when the odds moved, and is
+ * required once the stored one no longer fits the new payout.
  */
 function invalidTerms(
-  bet: Pick<SportsbookBetRow, 'stake' | 'potentialPayout' | 'currencyDecimals' | 'legs'>,
-  { potentialPayout, legs }: Pick<ConfirmArgs, 'potentialPayout' | 'legs'>,
+  bet: Pick<
+    SportsbookBetRow,
+    | 'cashStake'
+    | 'potentialPayout'
+    | 'currencyDecimals'
+    | 'legs'
+    | 'promotionType'
+    | 'promotionPotential'
+  >,
+  {
+    potentialPayout,
+    legs,
+    promotionPotential,
+  }: Pick<ConfirmArgs, 'potentialPayout' | 'legs' | 'promotionPotential'>,
 ): string[] {
   if (potentialPayout === undefined && legs === undefined) {
-    return [];
+    return promotionPotential === undefined ? [] : ['promotionPotential'];
   }
   if (potentialPayout === undefined || legs === undefined) {
     return [potentialPayout === undefined ? 'potentialPayout' : 'legs'];
@@ -252,15 +394,29 @@ function invalidTerms(
   const oddsTextChanged = bet.legs.some((leg, i) => (leg.odds ?? null) !== (legs[i]?.odds ?? null));
   const payoutFollowsOdds =
     direction === null ? oddsTextChanged || payoutMove === 0 : payoutMove === direction;
+  const oddsMoved = direction === null ? oddsTextChanged : direction !== 0;
   const fields: string[] = [];
   if (
-    !isValidPotentialPayout(potentialPayout, bet.stake, bet.currencyDecimals) ||
+    !isValidPotentialPayout(potentialPayout, bet.cashStake, bet.currencyDecimals) ||
     (sameLegs && !payoutFollowsOdds)
   ) {
     fields.push('potentialPayout');
   }
   if (!sameLegs) {
     fields.push('legs');
+  }
+  const promotionPart = promotionPotential ?? bet.promotionPotential;
+  if (
+    (promotionPotential !== undefined &&
+      (bet.promotionType === null ||
+        (sameLegs &&
+          !oddsMoved &&
+          (bet.promotionPotential === null ||
+            !moneyEquals(promotionPotential, bet.promotionPotential))))) ||
+    (promotionPart !== null &&
+      !isValidPromotionPotential(promotionPart, potentialPayout, bet.currencyDecimals))
+  ) {
+    fields.push('promotionPotential');
   }
   return fields;
 }
@@ -294,6 +450,30 @@ function invalidAmount(
   });
 }
 
+/** A promotion part is nothing on a bet with no promotion, all of a promotion-paid payout, and within its ceiling otherwise. */
+export function isValidPromotionAmount(
+  bet: Pick<
+    SportsbookBetRow,
+    'cashStake' | 'promotionType' | 'promotionPotential' | 'maxLossRefund' | 'currencyDecimals'
+  >,
+  result: SportsbookBetResult,
+  payout: string,
+  promotionAmount: string,
+): boolean {
+  return (
+    fitsDecimals(promotionAmount, bet.currencyDecimals) &&
+    (bet.promotionType !== null || !isPositiveMoney(promotionAmount)) &&
+    (isPositiveMoney(bet.cashStake)
+      ? moneyCompare(promotionAmount, cashPromotionCeiling(bet, result, payout)) <= 0
+      : moneyEquals(promotionAmount, payout))
+  );
+}
+
+async function hasWallet(tx: DrizzleTx, userId: SportsbookBetRow['userId']): Promise<boolean> {
+  const [row] = await tx.select({ id: wallet.id }).from(wallet).where(eq(wallet.userId, userId));
+  return row !== undefined;
+}
+
 /** A provider callback for a bet core already moved past it, or dropped: refused and filed. */
 function transitionRefused(
   { provider, providerTxId }: TxKey,
@@ -322,7 +502,24 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
-const AMOUNT_FIELDS: ReadonlySet<PropertyKey> = new Set(['stake', 'potentialPayout', 'payout']);
+const AMOUNT_FIELDS: ReadonlySet<PropertyKey> = new Set([
+  'stake',
+  'potentialPayout',
+  'payout',
+  'promotionAmount',
+  'promotionPotential',
+  'legs.odds',
+  'promotion.potentialAmount',
+]);
+
+const issueField = ({ path }: z.core.$ZodIssue): PropertyKey | undefined => {
+  if (path[0] === 'legs' && path[2] === 'odds') {
+    return 'legs.odds';
+  }
+  return path[0] === 'promotion' && path[1] === 'potentialAmount'
+    ? 'promotion.potentialAmount'
+    : path[0];
+};
 const RequestTxKeySchema = SportsbookConfirmArgsSchema.pick({
   provider: true,
   providerTxId: true,
@@ -330,17 +527,23 @@ const RequestTxKeySchema = SportsbookConfirmArgsSchema.pick({
 });
 
 /**
- * A malformed amount refuses as `invalid_amount` and is filed; a malformed session id refuses as
- * `session_invalid`. Anything else malformed is the overlay's bug and throws the ZodError.
+ * A promotion declaration core does not fully understand refuses as `promotion_not_allowed`, never
+ * half-read. A malformed amount or leg odds refuse as `invalid_amount` and are filed; a malformed session id
+ * refuses as `session_invalid`. Anything else malformed is the overlay's bug and throws the ZodError.
  */
 function parseRequest<S extends z.ZodType>(schema: S, input: unknown): z.output<S> {
   const parsed = schema.safeParse(input);
   if (parsed.success) {
     return parsed.data;
   }
-  const fields = [...new Set(parsed.error.issues.map((issue) => issue.path[0]))];
-  if (!fields.every((field) => AMOUNT_FIELDS.has(field ?? '') || field === 'sessionId')) {
+  const fields = [...new Set(parsed.error.issues.map(issueField))];
+  const refusable = (field: PropertyKey | undefined) =>
+    AMOUNT_FIELDS.has(field ?? '') || field === 'sessionId' || field === 'promotion';
+  if (!fields.every(refusable)) {
     throw parsed.error;
+  }
+  if (fields.includes('promotion')) {
+    throw new LedgerRefusal('promotion_not_allowed');
   }
   if (fields.includes('sessionId')) {
     throw new LedgerRefusal('session_invalid');
@@ -413,6 +616,7 @@ export type SportsbookLedgerDeps = {
   identity: IdentityReader;
   wallet: WalletCommands;
   walletReader: WalletReader;
+  rates?: ExchangeRateReader | undefined;
 };
 
 export class SportsbookLedgerService {
@@ -426,6 +630,7 @@ export class SportsbookLedgerService {
   private readonly identity: IdentityReader;
   private readonly wallet: WalletCommands;
   private readonly walletReader: WalletReader;
+  private readonly rates: ExchangeRateReader | undefined;
 
   constructor(deps: SportsbookLedgerDeps) {
     this.drizzle = deps.drizzle;
@@ -438,6 +643,7 @@ export class SportsbookLedgerService {
     this.identity = deps.identity;
     this.wallet = deps.wallet;
     this.walletReader = deps.walletReader;
+    this.rates = deps.rates;
   }
 
   async session(args: SportsbookSessionArgs): Promise<SportsbookSessionOutcome> {
@@ -563,6 +769,30 @@ export class SportsbookLedgerService {
     }
   }
 
+  /**
+   * The stake currency's USD rate, read before the reserve transaction, which makes no network
+   * call. `null` when the cap cannot be checked: no usable rate, or a cap set after the read
+   * below. Never read without a cap.
+   */
+  private async promotionUsdRate(args: ReserveArgs): Promise<string | null> {
+    if (args.promotion?.stake !== 'promotion') {
+      return null;
+    }
+    const { promotions } = await this.config.get();
+    if (promotions.maxPromotionStakeUsd === null) {
+      return null;
+    }
+    const quote = this.rates ? await this.rates.getRate(args.currency, 'USD') : null;
+    if (!quote || !isPositiveMoney(quote.rate)) {
+      logger.warn(
+        { currency: args.currency, providerBetId: args.providerBetId },
+        'sportsbook: no USD rate for a promotion-paid stake, refusing it under the cap',
+      );
+      return null;
+    }
+    return quote.rate;
+  }
+
   private async reserveOnce(args: ReserveArgs): Promise<LedgerResult> {
     const db = this.drizzle.db;
     const [session] = await db
@@ -578,6 +808,7 @@ export class SportsbookLedgerService {
       currency: args.currency,
       potentialPayout: args.potentialPayout,
       legs: args.legs,
+      promotion: args.promotion,
     });
     const stored = await this.findStored(db, args);
     if (stored) {
@@ -587,6 +818,7 @@ export class SportsbookLedgerService {
       throw new LedgerRefusal('session_invalid');
     }
     const userId = session.userId;
+    const promotionUsdRate = await this.promotionUsdRate(args);
 
     return this.transaction(db, async (tx) => {
       await lockConfig(tx, 'shared');
@@ -621,7 +853,17 @@ export class SportsbookLedgerService {
       if (
         !isPositiveMoney(args.stake) ||
         !fitsDecimals(args.stake, offered.decimals) ||
-        !isValidPotentialPayout(args.potentialPayout, args.stake, offered.decimals)
+        !isValidPotentialPayout(
+          args.potentialPayout,
+          resolveStake(args.stake, args.promotion).cashStake,
+          offered.decimals,
+        ) ||
+        (args.promotion?.potentialAmount !== undefined &&
+          !isValidPromotionPotential(
+            args.promotion.potentialAmount,
+            args.potentialPayout,
+            offered.decimals,
+          ))
       ) {
         throw invalidAmount(
           args,
@@ -629,11 +871,26 @@ export class SportsbookLedgerService {
             providerBetId: args.providerBetId,
             stake: args.stake,
             potentialPayout: args.potentialPayout,
+            potentialAmount: args.promotion?.potentialAmount ?? null,
             decimals: offered.decimals,
           },
           { userId },
         );
       }
+      const { promotion } = args;
+      const promotionCap = config.promotions.maxPromotionStakeUsd;
+      if (
+        promotion &&
+        (!config.promotions.enabled ||
+          (promotion.stake === 'promotion' &&
+            promotionCap !== null &&
+            // Compared in the stake's currency: flooring the cap there is exact on the stake's grid.
+            (promotionUsdRate === null ||
+              moneyCompare(args.stake, moneyDivide(promotionCap, promotionUsdRate)) > 0)))
+      ) {
+        throw new LedgerRefusal('promotion_not_allowed');
+      }
+      // The only eligibility gate for a promotion-paid stake: no wallet debit runs to re-check it.
       if (
         (await isPlayerRestricted(tx, userId)) ||
         (await this.playEligibility.isRestricted(userId, tx))
@@ -656,6 +913,11 @@ export class SportsbookLedgerService {
             currencyDecimals: offered.decimals,
             status: 'reserved',
             stake: args.stake,
+            ...resolveStake(args.stake, promotion),
+            promotionType: promotion?.type ?? null,
+            promotionId: promotion?.id ?? null,
+            promotionFunder: promotion ? promotionFunder(config.promotions, promotion.type) : null,
+            promotionPotential: promotion?.potentialAmount ?? null,
             potentialPayout: args.potentialPayout,
             legs: args.legs,
             lastLegStartsAt,
@@ -664,28 +926,12 @@ export class SportsbookLedgerService {
         new Error('sportsbook reserve: bet insert returned no row'),
       );
 
-      let debit;
-      try {
-        debit = await this.wallet.debit(tx, {
-          userId,
-          amount: args.stake,
-          type: 'bet',
-          currency: args.currency,
-          providerRef: walletRef(args),
-          context: { provider: args.provider, product: 'sportsbook' },
-        });
-      } catch (err) {
-        if (err instanceof RgLimitExceededError) {
-          throw new LedgerRefusal('limit');
-        }
-        throw err;
-      }
-      if (!debit.ok) {
+      // Without a debit nothing else proves the wallet a later settle credits exists.
+      if (!isPositiveMoney(bet.cashStake) && !(await hasWallet(tx, userId))) {
         throw new LedgerRefusal('insufficient_funds');
       }
-      if (!debit.moved) {
-        throw new LedgerRaceLost('a stake');
-      }
+      const debit = isPositiveMoney(bet.cashStake) ? await this.debitStake(tx, bet, args) : null;
+      const balance = debit ? debit.newBalance : await this.balanceOf(tx, bet);
 
       await tx.insert(sportsbookBetTransaction).values({
         provider: args.provider,
@@ -694,30 +940,33 @@ export class SportsbookLedgerService {
         betId: bet.id,
         userId,
         kind: 'reserve',
-        amount: args.stake,
+        amount: bet.cashStake,
         potentialPayout: args.potentialPayout,
         legs: args.legs,
+        promotionPotential: bet.promotionPotential,
         betVersion: bet.version,
         fingerprint,
-        walletTransactionIds: [debit.transactionId],
-        balanceAfter: debit.newBalance,
+        walletTransactionIds: debit ? [debit.transactionId] : [],
+        balanceAfter: balance,
         currency: bet.currency,
       });
 
-      const moves: WalletMove[] = [
-        {
-          transactionId: debit.transactionId,
-          amount: args.stake,
-          currency: bet.currency,
-          type: 'bet',
-          direction: 'debit',
-        },
-        ...(debit.wagerTrackingCredits ?? []).map(
-          (credit): WalletMove => ({ ...credit, type: 'cashback', direction: 'credit' }),
-        ),
-      ];
+      const moves: WalletMove[] = debit
+        ? [
+            {
+              transactionId: debit.transactionId,
+              amount: bet.cashStake,
+              currency: bet.currency,
+              type: 'bet',
+              direction: 'debit',
+            },
+            ...(debit.wagerTrackingCredits ?? []).map(
+              (credit): WalletMove => ({ ...credit, type: 'cashback', direction: 'credit' }),
+            ),
+          ]
+        : [];
       return {
-        outcome: applied(bet, debit.newBalance),
+        outcome: applied(bet, balance),
         userId,
         moves,
         announce: (playerId) =>
@@ -727,11 +976,38 @@ export class SportsbookLedgerService {
             {
               ...betEvent({ bet: bet, providerTxId: args.providerTxId, playerId }),
               stake: bet.stake,
+              ...(promotion ? { promotion } : {}),
             },
             undefined,
           ),
       };
     });
+  }
+
+  private async debitStake(tx: DrizzleTx, bet: SportsbookBetRow, args: ReserveArgs) {
+    let debit;
+    try {
+      debit = await this.wallet.debit(tx, {
+        userId: bet.userId,
+        amount: bet.cashStake,
+        type: 'bet',
+        currency: bet.currency,
+        providerRef: walletRef(args),
+        context: { provider: args.provider, product: 'sportsbook' },
+      });
+    } catch (err) {
+      if (err instanceof RgLimitExceededError) {
+        throw new LedgerRefusal('limit');
+      }
+      throw err;
+    }
+    if (!debit.ok) {
+      throw new LedgerRefusal('insufficient_funds');
+    }
+    if (!debit.moved) {
+      throw new LedgerRaceLost('a stake');
+    }
+    return debit;
   }
 
   private async confirmOnce(args: ConfirmArgs, step?: StepHook): Promise<LedgerResult> {
@@ -744,6 +1020,7 @@ export class SportsbookLedgerService {
       userId: bet?.userId ?? null,
       potentialPayout: args.potentialPayout,
       legs: args.legs,
+      promotionPotential: args.promotionPotential,
     });
     const stored = await this.findStored(db, args);
     if (stored) {
@@ -774,6 +1051,7 @@ export class SportsbookLedgerService {
             fields: invalid,
             stake: current.stake,
             potentialPayout: args.potentialPayout ?? null,
+            promotionPotential: args.promotionPotential ?? null,
             decimals: current.currencyDecimals,
           },
           { betId: current.id, userId: current.userId },
@@ -786,6 +1064,9 @@ export class SportsbookLedgerService {
           acceptedAt: new Date(),
           ...(args.potentialPayout === undefined ? {} : { potentialPayout: args.potentialPayout }),
           ...(args.legs === undefined ? {} : { legs: args.legs }),
+          ...(args.promotionPotential === undefined
+            ? {}
+            : { promotionPotential: args.promotionPotential }),
         })
         .where(and(eq(sportsbookBet.id, current.id), eq(sportsbookBet.status, 'reserved')))
         .returning();
@@ -802,6 +1083,7 @@ export class SportsbookLedgerService {
         kind: 'confirm',
         potentialPayout: args.potentialPayout ?? null,
         legs: args.legs ?? null,
+        promotionPotential: args.promotionPotential ?? null,
         betVersion: accepted.version,
         fingerprint,
         balanceAfter: balance,
@@ -819,6 +1101,9 @@ export class SportsbookLedgerService {
               ...betEvent({ bet: accepted, providerTxId: args.providerTxId, playerId }),
               potentialPayout: accepted.potentialPayout,
               ...(args.legs === undefined ? {} : { legs: args.legs }),
+              ...(args.promotionPotential === undefined
+                ? {}
+                : { promotionPotential: args.promotionPotential }),
             },
             step,
           ),
@@ -874,19 +1159,34 @@ export class SportsbookLedgerService {
       if (!cancelled) {
         throw transitionRefused(args, 'cancel', bet);
       }
-      const credit = await this.wallet.credit(tx, {
-        userId: cancelled.userId,
-        amount: cancelled.stake,
-        currency: cancelled.currency,
-        type: 'bet_reversal',
-        allowNewCurrency: true,
-        providerRef: walletRef(args),
-      });
-      if (!credit.ok) {
-        throw new Error(`sportsbook cancel: stake refund did not move (${credit.reason})`);
-      }
-      if (!credit.moved) {
-        throw new LedgerRaceLost('a stake refund');
+      const refunded = cancelled.cashStake;
+      const moves: WalletMove[] = [];
+      let balance: string;
+      if (isPositiveMoney(refunded)) {
+        const credit = await this.wallet.credit(tx, {
+          userId: cancelled.userId,
+          amount: refunded,
+          currency: cancelled.currency,
+          type: 'bet_reversal',
+          allowNewCurrency: true,
+          providerRef: walletRef(args),
+        });
+        if (!credit.ok) {
+          throw new Error(`sportsbook cancel: stake refund did not move (${credit.reason})`);
+        }
+        if (!credit.moved) {
+          throw new LedgerRaceLost('a stake refund');
+        }
+        moves.push({
+          transactionId: credit.transactionId,
+          amount: refunded,
+          currency: cancelled.currency,
+          type: 'bet_reversal',
+          direction: 'credit',
+        });
+        balance = credit.newBalance;
+      } else {
+        balance = await this.balanceOf(tx, cancelled);
       }
       await tx.insert(sportsbookBetTransaction).values({
         provider: args.provider,
@@ -895,27 +1195,19 @@ export class SportsbookLedgerService {
         betId: cancelled.id,
         userId: cancelled.userId,
         kind: 'cancel',
-        amount: cancelled.stake,
+        amount: refunded,
         betVersion: cancelled.version,
         fingerprint,
         cancelReason: args.reason,
-        walletTransactionIds: [credit.transactionId],
-        balanceAfter: credit.newBalance,
+        walletTransactionIds: moves.map((m) => m.transactionId),
+        balanceAfter: balance,
         currency: cancelled.currency,
       });
       await step?.(tx, cancelled);
       return {
-        outcome: applied(cancelled, credit.newBalance),
+        outcome: applied(cancelled, balance),
         userId: cancelled.userId,
-        moves: [
-          {
-            transactionId: credit.transactionId,
-            amount: cancelled.stake,
-            currency: cancelled.currency,
-            type: 'bet_reversal',
-            direction: 'credit',
-          },
-        ],
+        moves,
         announce: (playerId) =>
           this.announceBet(
             tx,
@@ -923,7 +1215,7 @@ export class SportsbookLedgerService {
             {
               ...betEvent({ bet: cancelled, providerTxId: args.providerTxId, playerId }),
               reason: args.reason,
-              refunded: cancelled.stake,
+              refunded,
             },
             step,
           ),
@@ -991,6 +1283,7 @@ export class SportsbookLedgerService {
       amount: args.payout,
       result: args.result,
       version: args.expectedVersion,
+      promotionAmount: args.promotionAmount,
     });
     const stored = await this.findStored(db, args);
     if (stored) {
@@ -1010,10 +1303,15 @@ export class SportsbookLedgerService {
       }
       const current = await this.openVersion(tx, { bet, status: 'accepted', args, kind: 'settle' });
       const { payout, result } = args;
-      if (!isValidSettlement(current, result, payout)) {
+      const promotionAmount =
+        args.promotionAmount ?? defaultPromotionAmount(current, result, payout);
+      if (
+        !isValidSettlement(current, result, payout) ||
+        !isValidPromotionAmount(current, result, payout, promotionAmount)
+      ) {
         throw invalidAmount(
           args,
-          { result, payout, decimals: current.currencyDecimals },
+          { result, payout, promotionAmount, decimals: current.currencyDecimals },
           { betId: current.id, userId: current.userId },
         );
       }
@@ -1031,14 +1329,37 @@ export class SportsbookLedgerService {
           },
         });
       }
+      if (isUnusualPromotionPayout(current, payout)) {
+        await fileFinding(tx, {
+          kind: 'promotion_payout_unusual',
+          dedupeKey: `promotion_payout_unusual:${args.provider}:${args.providerTxId}`,
+          provider: args.provider,
+          betId: current.id,
+          userId: current.userId,
+          detail: {
+            providerTxId: args.providerTxId,
+            payout,
+            stake: current.stake,
+            odds: current.legs.map((leg) => leg.odds ?? null),
+          },
+        });
+      }
       const pays = isPositiveMoney(payout);
-      const creditType: WalletTransactionType = result === 'void' ? 'bet_reversal' : 'win';
+      // Only a stake the player paid comes back as a reversal; a promotion's void return is a win.
+      const creditType: WalletTransactionType =
+        result === 'void' && isPositiveMoney(current.cashStake) ? 'bet_reversal' : 'win';
       const debt =
         pays && creditType === 'win' ? await this.debts.lockOutstanding(tx, current) : undefined;
 
       const [settled] = await tx
         .update(sportsbookBet)
-        .set({ status: 'settled', result, payoutTotal: payout, settledAt: new Date() })
+        .set({
+          status: 'settled',
+          result,
+          payoutTotal: payout,
+          promotionPaid: promotionAmount,
+          settledAt: new Date(),
+        })
         .where(
           and(
             eq(sportsbookBet.id, current.id),
@@ -1107,6 +1428,7 @@ export class SportsbookLedgerService {
         userId: settled.userId,
         kind: 'settle',
         amount: payout,
+        promotionAmount,
         betVersion: settled.version,
         fingerprint,
         result,
@@ -1131,6 +1453,7 @@ export class SportsbookLedgerService {
               ...betEvent({ bet: settled, providerTxId: args.providerTxId, playerId }),
               result,
               payout,
+              promotionAmount,
             },
             step,
           ),
@@ -1172,6 +1495,7 @@ export class SportsbookLedgerService {
           version: current.version + 1,
           result: null,
           payoutTotal: '0',
+          promotionPaid: '0',
           settledAt: null,
         })
         .where(
@@ -1192,8 +1516,9 @@ export class SportsbookLedgerService {
       let balance: string;
       let debtChange: DebtChange | undefined;
       if (isPositiveMoney(current.payoutTotal)) {
-        // A void paid the stake back, so the reopen puts it back at stake; any other payout was a win.
-        const type = current.result === 'void' ? 'bet' : 'win_reversal';
+        // A void of a player-paid stake was a reversal, so the reopen re-stakes it; any other payout was a win.
+        const type =
+          current.result === 'void' && isPositiveMoney(current.cashStake) ? 'bet' : 'win_reversal';
         const correction = await this.wallet
           .correctionDebit(tx, {
             userId: current.userId,
@@ -1263,6 +1588,7 @@ export class SportsbookLedgerService {
         userId: reopened.userId,
         kind: 'reopen',
         amount: collected,
+        promotionAmount: current.promotionPaid,
         betVersion: reopened.version,
         fingerprint,
         walletTransactionIds: moves.map((m) => m.transactionId),

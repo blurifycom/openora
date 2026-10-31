@@ -77,6 +77,7 @@ export function createSportsbookRouter({
     listDebts,
     collectDebt,
     writeOffDebt,
+    promotionReport,
   } = sportsbookAdminContract;
   const os = implement({
     issueSession,
@@ -96,6 +97,7 @@ export function createSportsbookRouter({
     listDebts,
     collectDebt,
     writeOffDebt,
+    promotionReport,
   }).$context<OssContext>();
 
   return os.router({
@@ -226,6 +228,11 @@ export function createSportsbookRouter({
         },
         () => debts.writeOff(input.id, input, actor),
       );
+    }),
+
+    promotionReport: os.promotionReport.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'sportsbook', 'view');
+      return bets.promotionReport(input);
     }),
   });
 }

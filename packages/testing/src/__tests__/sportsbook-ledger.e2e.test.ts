@@ -119,6 +119,31 @@ describe('sportsbook ledger', () => {
     expect(expectApplied(await ledgerOf(app).reserve(args))).toEqual(again);
   });
 
+  it('answers a replayed reserve with what the first call got, after a later settle', async () => {
+    const player = await fundedPlayer(app, '100');
+    const args = reserveArgs(player.sessionId, { stake: '10', potentialPayout: '25' });
+    const first = expectApplied(await ledgerOf(app).reserve(args));
+    expectApplied(
+      await ledgerOf(app).confirm({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: args.providerBetId,
+      }),
+    );
+    expectApplied(
+      await ledgerOf(app).settle({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: args.providerBetId,
+        result: 'won',
+        payout: '25',
+      }),
+    );
+
+    expect(await ledgerOf(app).reserve(args)).toEqual({ ...first, status: 'replayed' });
+    expect(first).toMatchObject({ betStatus: 'reserved', balance: '90.000000000000000000' });
+  });
+
   it.each([
     { why: 'stake', change: { stake: '11' } },
     { why: 'potential payout', change: { potentialPayout: '26' } },
