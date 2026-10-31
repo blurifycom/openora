@@ -2,17 +2,18 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { findOneOrThrow, type DrizzleTx } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type {
-  BonusGrantCommands,
-  BonusWageringCommands,
-  PlayEligibilityPort,
-  RgLimitsPort,
+import {
+  definePlatformConfig,
+  MaxBetExceededError,
+  type BonusGrantCommands,
+  type BonusWageringCommands,
+  type PlayEligibilityPort,
+  type RgLimitsPort,
 } from '@openora/core/contracts';
 import { createTestDb, waitForRowLockWaiter, type TestDb } from '@openora/core/testing';
 import { mock, makeAuditWriter, makeIdentityReader } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
-import { MaxBetExceededError } from '@openora/core/contracts';
 import {
   WalletCommandsService,
   WalletRgRestrictedError,
@@ -723,6 +724,149 @@ describe('WalletCommandsService outcome moved/transactionId (real PG)', () => {
     expect(first).toMatchObject({ ok: true, moved: true, transactionId: expect.any(String) });
     expect(second).toMatchObject({ ok: true, moved: false });
     expect(second).not.toHaveProperty('transactionId');
+  });
+});
+
+describe('WalletCommandsService ledger balance_after (real PG)', () => {
+  it('stamps the balance a bet and a win leave behind', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    await svc.debit(db.drizzle.db, { userId: w.userId, amount: '30', type: 'bet' });
+    await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '50',
+      currency: 'USD',
+      type: 'win',
+    });
+
+    const rows = await txRows(w.id);
+    const byType = Object.fromEntries(rows.map((r) => [r.type, Number(r.balanceAfter)]));
+    expect(byType).toEqual({ bet: 70, win: 120 });
+  });
+});
+
+describe('WalletCommandsService bet reversal audit (real PG)', () => {
+  it('records the reversal in the credit transaction', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const writer = makeAuditWriter();
+    const reversing = new WalletCommandsService(eligibility(false), writer);
+
+    const outcome = await reversing.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '25',
+      currency: 'USD',
+      type: 'bet_reversal',
+    });
+
+    expect(outcome).toMatchObject({ ok: true, moved: true });
+    expect(writer.recordInTransaction).toHaveBeenCalledOnce();
+    expect(writer.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.bet.reversed',
+        resourceType: 'wallet_transaction',
+        resourceId: (await txRows(w.id))[0]?.id,
+        before: { balance: '100.000000000000000000' },
+        after: expect.objectContaining({ balance: '125.000000000000000000' }),
+      }),
+    );
+  });
+
+  it('rolls the credit and the ledger row back when the audit write fails', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const writer = makeAuditWriter();
+    writer.recordInTransaction.mockRejectedValueOnce(new Error('audit down'));
+    const reversing = new WalletCommandsService(eligibility(false), writer);
+
+    await expect(
+      db.drizzle.db.transaction((tx) =>
+        reversing.credit(tx, {
+          userId: w.userId,
+          amount: '25',
+          currency: 'USD',
+          type: 'bet_reversal',
+        }),
+      ),
+    ).rejects.toThrow('audit down');
+
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(0);
+  });
+});
+
+describe('WalletCommandsService significant bets and wins (real PG)', () => {
+  const thresholdConfig = () =>
+    definePlatformConfig({ wallet: { significantAmountThresholds: { USD: '100' } } });
+
+  const largeActions = (writer: ReturnType<typeof makeAuditWriter>) =>
+    writer.recordInTransaction.mock.calls
+      .map(([, entry]) => (entry as { action: string }).action)
+      .filter((action) => action.startsWith('wallet.large_'));
+
+  it.each(['99.99', '100', '250'])('win of %s against a 100 threshold', async (amount) => {
+    const w = await seedWallet({ balance: '0' });
+    const writer = makeAuditWriter();
+    const gated = new WalletCommandsService(eligibility(false), writer, {
+      platformConfig: thresholdConfig(),
+    });
+
+    await gated.credit(db.drizzle.db, { userId: w.userId, amount, currency: 'USD', type: 'win' });
+
+    expect(largeActions(writer)).toEqual(
+      Number(amount) >= 100 ? ['wallet.large_win.recorded'] : [],
+    );
+  });
+
+  it('records a bet at the threshold and not one below it', async () => {
+    const w = await seedWallet({ balance: '1000' });
+    const writer = makeAuditWriter();
+    const gated = new WalletCommandsService(eligibility(false), writer, {
+      platformConfig: thresholdConfig(),
+    });
+
+    await gated.debit(db.drizzle.db, { userId: w.userId, amount: '99', type: 'bet' });
+    await gated.debit(db.drizzle.db, { userId: w.userId, amount: '100', type: 'bet' });
+
+    expect(largeActions(writer)).toEqual(['wallet.large_bet.recorded']);
+    expect(writer.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        before: { balance: '901.000000000000000000' },
+        after: expect.objectContaining({ balance: '801.000000000000000000' }),
+      }),
+    );
+  });
+
+  it('writes nothing for a currency without a threshold', async () => {
+    const w = await seedWallet({ balance: '0', currency: 'EUR' });
+    const writer = makeAuditWriter();
+    const gated = new WalletCommandsService(eligibility(false), writer, {
+      platformConfig: thresholdConfig(),
+    });
+
+    await gated.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '100000',
+      currency: 'EUR',
+      type: 'win',
+    });
+
+    expect(largeActions(writer)).toEqual([]);
+  });
+
+  it('writes nothing when no threshold is configured', async () => {
+    const w = await seedWallet({ balance: '0' });
+    const writer = makeAuditWriter();
+    const open = new WalletCommandsService(eligibility(false), writer);
+
+    await open.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '100000',
+      currency: 'USD',
+      type: 'win',
+    });
+
+    expect(largeActions(writer)).toEqual([]);
   });
 });
 

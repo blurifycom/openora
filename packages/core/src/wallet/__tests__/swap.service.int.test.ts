@@ -203,6 +203,27 @@ describe('SwapService (real PG)', () => {
     );
   });
 
+  it('stamps the balance each leg of a filled swap left behind', async () => {
+    const w = await seedWallet();
+
+    await makeService(makeAdapter(), makeEventBus()).swap({
+      userId: w.userId,
+      fromCurrency: 'USD',
+      toCurrency: 'BTC',
+      fromAmount: '100',
+      idempotencyKey: randomUUID(),
+    });
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.walletId, w.id));
+    const balanceAfterByType = Object.fromEntries(
+      rows.map((r) => [r.type, Number(r.balanceAfter)]),
+    );
+    expect(balanceAfterByType).toEqual({ swap_out: 0, swap_in: 0.00152 });
+  });
+
   it('credits the filled amount, never the quoted one', async () => {
     const w = await seedWallet();
     const adapter = makeAdapter({

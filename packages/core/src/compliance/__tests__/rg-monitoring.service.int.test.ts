@@ -204,7 +204,7 @@ describe('RgMonitoringService.evaluateUser - deposit limits (real PG)', () => {
     await seedDepositLimit(userId, '100');
     await seedDeposit(userId, '80');
     await makeService().evaluateUser(userId, 'wallet.deposit.completed');
-    await db.drizzle.db.delete(walletTransaction);
+    await db.drizzle.db.execute(sql`TRUNCATE ${walletTransaction}`);
 
     await makeService().evaluateUser(userId, 'wallet.deposit.completed');
 

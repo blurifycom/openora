@@ -260,6 +260,13 @@
       "when": 1793358878070,
       "tag": "0036_mighty_argent",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793410692130,
+      "tag": "0037_demonic_colleen_wing",
+      "breakpoints": true
     }
   ]
 }

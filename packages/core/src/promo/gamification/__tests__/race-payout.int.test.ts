@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { makeAuditWriter, mock } from '../../../testing/mock.js';
 import type {
   ExchangeRateReader,
   PlayEligibilityPort,
@@ -17,6 +17,7 @@ let db: TestDb;
 const isRestricted = vi.fn<PlayEligibilityPort['isRestricted']>();
 const credit = vi.fn<WalletCommands['credit']>();
 const convert = vi.fn<ExchangeRateReader['convert']>();
+const audit = makeAuditWriter();
 const logger = { warn: vi.fn(), error: vi.fn() };
 
 const POSITIONS: RacePosition[] = [
@@ -33,6 +34,7 @@ const service = (payoutCurrency = 'USDT') =>
     mock<WalletCommands>({ credit }),
     mock<ExchangeRateReader>({ convert }),
     payoutCurrency,
+    audit,
     logger,
   );
 
@@ -130,6 +132,50 @@ describe('settling a closed race', () => {
     expect(race?.closedAt).not.toBeNull();
   });
 
+  it('records each prize in the settlement transaction, with the credit it describes', async () => {
+    const raceId = await insertRace();
+    const winner = randomUUID();
+    const transactionId = randomUUID();
+    credit.mockResolvedValue({ ok: true, moved: true, transactionId, newBalance: '500' });
+    await insertWager(raceId, winner, '500');
+
+    await service().closeDue(new Date());
+
+    expect(audit.recordManyInTransaction).toHaveBeenCalledWith(expect.anything(), [
+      {
+        actorType: 'system',
+        action: 'promo.race.payout.settled',
+        resourceType: 'promo_race',
+        resourceId: raceId,
+        before: { settledAt: null },
+        after: {
+          userId: winner,
+          position: 1,
+          amount: '500',
+          currency: 'USDT',
+          outcome: 'granted',
+          transactionId,
+        },
+      },
+    ]);
+  });
+
+  it('rolls the settlement back, paying and closing nothing, when the audit write fails', async () => {
+    const raceId = await insertRace();
+    await insertWager(raceId, randomUUID(), '500');
+    audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    const won = await service().closeDue(new Date());
+
+    expect(won).toHaveLength(0);
+    expect(await payoutsFor(raceId)).toHaveLength(0);
+    const [race] = await db.drizzle.db
+      .select({ closedAt: promoRace.closedAt })
+      .from(promoRace)
+      .where(eq(promoRace.id, raceId));
+    expect(race?.closedAt).toBeNull();
+  });
+
   it('ranks a tie by whoever reached the total first', async () => {
     const raceId = await insertRace();
     const early = randomUUID();
@@ -163,6 +209,16 @@ describe('settling a closed race', () => {
     expect(credit).not.toHaveBeenCalled();
     const payouts = await payoutsFor(raceId);
     expect(payouts).toEqual([expect.objectContaining({ userId: winner, outcome: 'restricted' })]);
+    expect(audit.recordManyInTransaction.mock.calls[0]?.[1]).toEqual([
+      expect.objectContaining({
+        action: 'promo.race.payout.settled',
+        after: expect.objectContaining({
+          userId: winner,
+          outcome: 'restricted',
+          transactionId: null,
+        }),
+      }),
+    ]);
   });
 
   it('is idempotent: a retried settle does not credit or re-rank twice', async () => {

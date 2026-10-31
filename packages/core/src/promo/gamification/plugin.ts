@@ -406,6 +406,7 @@ export default {
         c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
         c.get(EXCHANGE_RATE_READER),
         payoutCurrency,
+        c.get(AUDIT_WRITER),
         logger,
       );
       rankChallengePayouts = new RankChallengePayoutService(

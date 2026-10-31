@@ -12,7 +12,7 @@ import {
 import type { ZodType } from 'zod';
 import type { Logger } from 'pino';
 import { createLogger } from './logger.js';
-import { getCurrentTraceId } from './request-context.js';
+import { getCurrentTraceId, notePublishedTopic } from './request-context.js';
 
 // How long a published event stays redeliverable: the Redis Streams retention, and the
 // age past which outbox and processed_events rows are pruned. See ADR-0045.
@@ -117,6 +117,7 @@ export function createEventBus({
 }: EventBusDeps): EventBus {
   function publishEvent(event: string, payload: unknown): void {
     parseKnownPayload(event, payload);
+    notePublishedTopic(event);
     const envelope = buildEnvelope(event, payload);
     void Promise.resolve(broker.publish(envelope)).catch((err) =>
       logger.error({ event, err }, 'event publish failed'),
@@ -134,6 +135,7 @@ export function createEventBus({
 
     async emitInTransaction(tx: unknown, event: string, payload: unknown): Promise<void> {
       parseKnownPayload(event, payload);
+      notePublishedTopic(event);
       await outbox.write(tx, buildEnvelope(event, payload));
     },
 

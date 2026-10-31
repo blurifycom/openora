@@ -65,6 +65,7 @@ export const summaryHandler: SummaryHandler = async ({ playerId }) => ({
 
 function auditWriter() {
   return {
+    auditedTopics: new Set<string>(),
     record: vi.fn<AuditWritePort['record']>(async () => undefined),
     recordInTransaction: vi.fn<AuditWritePort['recordInTransaction']>(async () => undefined),
     recordManyInTransaction: vi.fn<AuditWritePort['recordManyInTransaction']>(

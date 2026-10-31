@@ -202,6 +202,42 @@ describe('claiming a streak reward', () => {
     await expect(milestoneGrant(id)).resolves.toMatchObject({ outcome: 'granted' });
   });
 
+  it('audits a cash claim with the credit it paid, in the claim transaction', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+    const transactionId = randomUUID();
+    credit.mockResolvedValue({ ok: true, moved: true, transactionId, newBalance: '5' });
+
+    await service().claim(userId, id);
+
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
+    expect(audit.recordInTransaction.mock.calls[0]?.[1]).toMatchObject({
+      actorType: 'player',
+      actorId: userId,
+      action: 'promo.streak.milestone.claimed',
+      resourceType: 'promo_streak_milestone_grant',
+      resourceId: id,
+      before: { settledAt: null, outcome: null },
+      after: {
+        userId,
+        day: 3,
+        outcome: 'granted',
+        cashPaid: [{ userId, amount: '5', currency: 'USD', transactionId }],
+      },
+    });
+  });
+
+  it('writes no claim audit row when the claim is refused', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+
+    await expect(service().claim(randomUUID(), id)).rejects.toBeInstanceOf(
+      StreakMilestoneNotClaimableError,
+    );
+
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+
   it('pays once: a second claim of the same milestone is refused and credits nothing', async () => {
     const userId = randomUUID();
     const id = await owe(userId, 3);
@@ -260,6 +296,10 @@ describe('claiming a streak reward', () => {
 
     expect(claimed.outcome).toBe('restricted');
     expect(credit).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction.mock.calls[0]?.[1]).toMatchObject({
+      action: 'promo.streak.milestone.claimed',
+      after: { outcome: 'restricted', cashPaid: [], grantIds: [] },
+    });
     await expect(milestoneGrant(id)).resolves.toMatchObject({ outcome: 'restricted' });
   });
 
@@ -371,6 +411,11 @@ describe('announcing a reward waiting to be claimed', () => {
     await expect(milestoneGrant(id)).resolves.toMatchObject({
       outcome: 'restricted',
       announcedAt: null,
+    });
+    expect(audit.recordInTransaction.mock.calls[0]?.[1]).toMatchObject({
+      action: 'promo.streak.milestone.claimed',
+      resourceId: id,
+      after: { userId, day: 3, outcome: 'restricted' },
     });
   });
 

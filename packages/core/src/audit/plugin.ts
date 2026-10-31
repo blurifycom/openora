@@ -1,8 +1,10 @@
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { AUDIT_WRITER, IDENTITY_READER, type DomainEventName } from '@openora/core/contracts';
+import { AUDIT_WRITER, IDENTITY_READER } from '@openora/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
+import { AUDIT_COVERAGE_GAPS } from './contract/coverage.js';
+import { SUBSCRIBED_TOPICS } from './contract/subscribed-topics.js';
 
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 
@@ -1151,6 +1153,21 @@ export async function mapEventToRecord(
     };
   }
 
+  // Catalogue rows an importer inserted or rewrote outside the admin update: no actor, and the
+  // event carries ids only. `before` is what the rewritten games were linked to.
+  if (topic === 'gaming.games.created') {
+    return { ...base, resourceType: 'game', before: null, after: { gameIds: p['gameIds'] ?? [] } };
+  }
+
+  if (topic === 'gaming.games.changed') {
+    return {
+      ...base,
+      resourceType: 'game',
+      before: { tagIds: p['tagIds'] ?? [], providerIds: p['providerIds'] ?? [] },
+      after: { gameIds: p['gameIds'] ?? [] },
+    };
+  }
+
   if (topic === 'gaming.game.availability_changed') {
     return {
       ...base,
@@ -1358,163 +1375,14 @@ export async function mapEventToRecord(
 // group's pending entries and starts the new one at the stream tail.
 const AUDIT_CONSUMER_GROUP = 'audit';
 
-const SUBSCRIBED_TOPICS: DomainEventName[] = [
-  'compliance.geo.access_blocked',
-  'compliance.geo.access_redirected',
-  'identity.user.registered',
-  'identity.user.registration.failed',
-  'identity.user.login',
-  'identity.user.login.failed',
-  'identity.user.lockout.triggered',
-  'identity.user.unlocked',
-  'identity.password.admin_reset_requested',
-  'identity.user.logout',
-  'identity.user.phone_login',
-  'identity.phone_otp.requested',
-  'identity.phone_otp.cancelled',
-  'identity.2fa.enabled',
-  'identity.2fa.disabled',
-  'identity.2fa.verified',
-  'identity.2fa.failed',
-  'identity.2fa.backup_codes_regenerated',
-  'identity.2fa.reset',
-  'identity.2fa.lockout.triggered',
-  'identity.2fa.enrollment_blocked',
-  'identity.session.fingerprint_mismatch',
-  'identity.trusted_device.added',
-  'identity.trusted_device.revoked',
-  'identity.password.reset',
-  'identity.password.changed',
-  'identity.email.verified',
-  'identity.email.changed',
-  'identity.phone.verified',
-  'identity.security.login_withdrawal_alerts.updated',
-  'identity.security.auto_logout.updated',
-  'identity.security.require_two_factor.updated',
-  'identity.security.withdrawal_pin.set',
-  'identity.security.withdrawal_pin.removed',
-  'identity.security.anti_phishing_code.set',
-  'identity.profile.updated',
-  'identity.user.deactivated',
-  'identity.user.reactivated',
-  'identity.session.revoked',
-  'identity.sessions.revoked_all',
-  'identity.user.unauthorized_access',
-  'wallet.deposit.completed',
-  'wallet.withdrawal.completed',
-  'wallet.withdrawal.requested',
-  'wallet.withdrawal.approved',
-  'wallet.withdrawal.rejected',
-  // wallet.withdrawal.failed: NOT subscribed - WalletService.finalizeFailedWithdrawal
-  // writes this audit row itself via recordInTransaction, atomically with the refund
-  // credit (docs/standards/money.md). Subscribing here too would double-record it,
-  // and worse, on the same best-effort/after-commit timing the direct write exists
-  // to avoid. mapEventToRecord keeps its 'wallet.withdrawal.failed' branch - it is
-  // still unit-tested directly - it is just never reached through this subscription.
-  'wallet.reconciliation.alert',
-  'gaming.round.started',
-  'gaming.round.ended',
-  'lobby.layout.updated',
-  'gaming.provider.created',
-  'gaming.provider.updated',
-  'gaming.category.created',
-  'gaming.category.updated',
-  'gaming.tag.created',
-  'gaming.tag.updated',
-  'gaming.tag.deleted',
-  'gaming.game.updated',
-  'gaming.games.bulk_updated',
-  'gaming.games.reviewed',
-  'gaming.games.auto_approved',
-  'gaming.category.games_reordered',
-  'gaming.category.pins_updated',
-  'gaming.category.membership_evaluated',
-  'gaming.category.membership_evaluation.failed',
-  'gaming.game.availability_changed',
-  'chat.user.blocked',
-  'chat.user.unblocked',
-  'chat.user.ignored',
-  'chat.user.unignored',
-  'chat.private_room.created',
-  'chat.private_room.deleted',
-  'chat.room.created',
-  'chat.room.updated',
-  'chat.room.deleted',
-  'chat.room.member.joined',
-  'chat.room.member.left',
-  'chat.room.invite.sent',
-  'chat.room.invite.withheld',
-  'chat.room.invite.accepted',
-  'chat.room.invite.declined',
-  'chat.room.invite.expired',
-  'chat.room.member.kicked',
-  'chat.room.member.banned',
-  // chat.gift.sent
-  // chat.rain.distributed
-  'chat.room.member.role-changed',
-  'chat.room.ownership.transferred',
-  'chat.room.scheduled_for_deletion',
-  'chat.room.deletion.cancelled',
-  'chat.user.mentioned',
-  'compliance.limit.upserted',
-  'compliance.limit.removed',
-  'rg.limit.set',
-  'rg.limit.change_requested',
-  'rg.limit.change_confirmed',
-  'rg.limit.change_cancelled',
-  'rg.limit.change_expired',
-  'rg.cooling_off.activated',
-  'rg.self_exclusion.activated',
-  'rg.self_exclusion.lifted',
-  'rg.cooling_off.lifted',
-  'rg.cooling_off.expired',
-  'rg.exclusion.login_blocked',
-  'compliance.kyc.updated',
-  'compliance.kyc.submitted',
-  'compliance.kyc.reverify_required',
-  'compliance.kyc.high_risk_signal_detected',
-  'compliance.geo-rule.added',
-  'compliance.game-geo-rule.upserted',
-  'compliance.game-geo-rule.deleted',
-  'compliance.provider-geo-rule.upserted',
-  'compliance.provider-geo-rule.deleted',
-  'cms.page.published',
-  'cms.page.created',
-  'cms.page.updated',
-  'cms.page.deleted',
-  'cms.banner.configuration.created',
-  'cms.banner.configuration.deleted',
-  'cms.banner.configuration.set_default',
-  'cms.banner.configuration.unset_default',
-  'cms.banner.image.set',
-  'cms.banner.image.deleted',
-  'cms.banner.schedule.created',
-  'cms.banner.schedule.updated',
-  'notifications.created',
-  'iam.invitation.created',
-  'iam.invitation.accepted',
-  'iam.role.created',
-  'iam.role.updated',
-  'iam.role.deleted',
-  'iam.role.permissions.changed',
-  'iam.role.assigned',
-  'iam.role.revoked',
-  'tag.created',
-  'tag.deleted',
-  'tag.player.assigned',
-  'tag.player.removed',
-  'tag.rule.upserted',
-  'player.level.changed',
-  'player.login_blocked',
-  'player.account.closed',
-  'player.account.reopened',
-  'player.status.changed',
-  'social.friend_request.sent',
-  'social.friend_request.accepted',
-  'social.friendship.removed',
-  'social.friend_request.declined',
-  'social.friend_request.cancelled',
-] as const;
+// A published topic is audited when the subscriber records it or its writer already did at source;
+// an exempt one is not, so publishing it leaves the request's trail as bare as before.
+const AUDITED_TOPICS: ReadonlySet<string> = new Set([
+  ...SUBSCRIBED_TOPICS,
+  ...Object.entries(AUDIT_COVERAGE_GAPS)
+    .filter(([, coverage]) => coverage.kind === 'atSource')
+    .map(([topic]) => topic),
+]);
 
 export default {
   id: 'audit',
@@ -1526,6 +1394,7 @@ export default {
     ctx.provideSealed(AUDIT_WRITER, (c) => {
       const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       return {
+        auditedTopics: AUDITED_TOPICS,
         record: (entry) => svc.record(entry).then(() => undefined),
         recordInTransaction: (tx, entry) =>
           svc.recordInTransaction(tx, entry).then(() => undefined),

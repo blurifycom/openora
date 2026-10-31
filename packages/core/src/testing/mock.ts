@@ -121,6 +121,7 @@ export const makeAuditWriter = (): AuditWritePort & {
   recordInTransaction: Mock;
   recordManyInTransaction: Mock;
 } => ({
+  auditedTopics: new Set<string>(),
   record: vi.fn(async () => undefined),
   recordInTransaction: vi.fn(async () => undefined),
   recordManyInTransaction: vi.fn(async () => undefined),

@@ -5,6 +5,7 @@ export {
   getCurrentTraceId,
   getCurrentClientMeta,
   withRequestContext,
+  noteAuditWrite,
 } from './request-context.js';
 
 export type {

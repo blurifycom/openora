@@ -400,6 +400,11 @@ export default {
           'wallet loaded without RG_LIMITS - deposit limits are not enforced on any route',
         );
       }
+      if (Object.keys(platformConfig?.wallet?.significantAmountThresholds ?? {}).length === 0) {
+        logger.warn(
+          'wallet.significantAmountThresholds is not configured - large bets and wins are not audited',
+        );
+      }
       const wallet = walletService(c);
 
       const reconciliation = new ReconciliationService({

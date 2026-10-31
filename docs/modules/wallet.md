@@ -10,7 +10,19 @@ does not repeat it.
 ## What this module owns
 
 - **The ledger.** A player's balance is a row here, and its transaction history is immutable. No
-  chain and no vendor holds a per-player balance.
+  chain and no vendor holds a per-player balance. A database trigger denies deleting a
+  `wallet_transaction` row and rewriting what defines it (amount, type, currency, time, idempotency
+  key, reference value); only the status, review and provider reference columns move, and
+  `balanceAfter` and `realShare` are filled once and then frozen. `balanceAfter` is the
+  player's balance in that currency after the row moved money, set in the same transaction as the
+  move; it is null on older rows, on a deposit that has not settled, and on a refund (which writes
+  no row of its own). A withdrawal request is stamped when it is made, since that is when the
+  balance is debited. For a stake partly funded by a bonus the ledger `amount` is the whole stake
+  while the balance moved by the real part only; a win or bet reversal on such a round likewise
+  writes the full `amount` but moves the balance by the real share. A row in a final status
+  (`completed`, `failed`, `rejected`, `cancelled`, `refunded`) cannot be reopened by the trigger.
+  Cleanup is TRUNCATE, which the trigger lets
+  through; a migration that has to repair rows disables the trigger itself.
 - **The product on a history row.** A row whose provider name starts with a product and a colon,
   as `sportsbook:<provider>` does, reports that product; any other row reports `product: null`.
   The `products` filter matches those prefixes in SQL before paging, so `total` agrees with it. The
@@ -31,6 +43,11 @@ does not repeat it.
   counts exactly when the auto-approval velocity check would count it.
 
 ## Rules that are easy to get wrong here
+
+- **A bet reversal always leaves an audit row, written in the credit's transaction.** A bet or win
+  at or above `wallet.significantAmountThresholds[currency]` does too (a decimal string per
+  currency; a currency without an entry, or no map, records nothing). The threshold is compared per
+  single bet or win in its own currency; aggregates over a window are not tracked.
 
 - **A currency does not identify a chain.** Anything that reconciles, prices, or limits works on
   the currency and the network together. Only a fiat rail and an internal movement have no network.

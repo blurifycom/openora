@@ -16,6 +16,7 @@ import { holdsGrant, isRoleName, type ResourceName, type ActionOf } from './perm
 import type { OssContext, EventBus } from '../kernel/index.js';
 import { createLogger } from '../kernel/logger.js';
 import { extractClientMeta } from '../kernel/router-utils.js';
+import { getCurrentClientMeta, noteGrantedPermission } from '../kernel/request-context.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
@@ -102,12 +103,16 @@ export class AdminGuard {
       });
     }
 
-    return this.enforce({
+    const caller = await this.enforce({
       userId,
       clientMeta: { ip, userAgent },
       permission: resource !== undefined && action !== undefined ? { resource, action } : undefined,
       session: { sessionId: resolvedSession?.sessionId ?? null },
     });
+    if (resource !== undefined && action !== undefined) {
+      noteGrantedPermission({ userId, resource, action, ip, userAgent });
+    }
+    return caller;
   }
 
   /**
@@ -137,9 +142,12 @@ export class AdminGuard {
     userId: string,
     requirements: readonly T[],
   ): Promise<T[]> {
-    return (
-      (await this.filterGrantedUsers([userId], requirements)).get(canonicalUserId(userId)) ?? []
-    );
+    const granted =
+      (await this.filterGrantedUsers([userId], requirements)).get(canonicalUserId(userId)) ?? [];
+    for (const { resource, action } of granted) {
+      noteGrantedPermission({ userId, resource, action, ...getCurrentClientMeta() });
+    }
+    return granted;
   }
 
   /**
@@ -170,7 +178,14 @@ export class AdminGuard {
     return new Map(entries.filter(([, held]) => held.length > 0));
   }
 
-  async assertSuperAdmin(context: unknown): Promise<AdminCaller> {
+  /**
+   * `subject` names the route for the audit trail only (`admin.<resource>.<action>`): the
+   * permission checked is always super-admin, which would label every such row `admin.admin`.
+   */
+  async assertSuperAdmin(
+    context: unknown,
+    subject: { resource: string; action: string } = { resource: 'admin', action: 'super-admin' },
+  ): Promise<AdminCaller> {
     const caller = await this.assert(context);
     const isSuper = this.permissionResolver
       ? await this.permissionResolver.isSuperAdmin(caller.userId)
@@ -190,6 +205,12 @@ export class AdminGuard {
         data: { reason: AuthGuardReasonSchema.enum.admin_required },
       });
     }
+    noteGrantedPermission({
+      userId: caller.userId,
+      ...subject,
+      ip: caller.ip,
+      userAgent: caller.userAgent,
+    });
     return caller;
   }
 

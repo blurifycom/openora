@@ -594,6 +594,32 @@ export function debitWalletBalance(
     .returning({ amount: walletBalance.amount });
 }
 
+/** Sets the balance a ledger row's money move left behind; the trigger lets balance_after be set once. */
+export async function stampBalanceAfter(
+  txn: DrizzleDb,
+  transactionId: WalletTransaction['id'],
+  balanceAfter: string,
+): Promise<void> {
+  await txn
+    .update(walletTransaction)
+    .set({ balanceAfter })
+    .where(eq(walletTransaction.id, transactionId));
+}
+
+/** `creditWalletBalance`, then stamps the resulting balance on the ledger row that records the credit. */
+async function creditAndStampBalance(
+  txn: DrizzleDb,
+  transactionId: WalletTransaction['id'],
+  walletId: Wallet['id'],
+  currency: string,
+  amount: string,
+): Promise<void> {
+  const [credited] = await creditWalletBalance(txn, walletId, currency, amount);
+  if (credited) {
+    await stampBalanceAfter(txn, transactionId, credited.amount);
+  }
+}
+
 /**
  * Takes min(balance, amount) in one statement and never overdraws. The CTE's row lock makes a
  * concurrent collection wait and then read the balance the first one left.
@@ -756,6 +782,7 @@ type TransactionHistoryRow = {
   provider_ref_id: string | null;
   tx_hash: string | null;
   fee: string | null;
+  balance_after: string | null;
   provider_name: string | null;
 };
 
@@ -1577,7 +1604,7 @@ export class WalletService {
       if (!settled) {
         return { transactionId: reservation.row.id };
       }
-      await creditWalletBalance(txn, reservation.walletRecord.id, currency, amount);
+      await creditAndStampBalance(txn, settled.id, reservation.walletRecord.id, currency, amount);
       await this.events.emitInTransaction(txn, 'wallet.deposit.completed', {
         userId,
         playerId,
@@ -1682,17 +1709,17 @@ export class WalletService {
         return { transactionId: row.id, status: row.status };
       }
 
-      const balances =
+      const [balance] =
         direction === 'credit'
           ? await creditWalletBalance(txn, walletRecord.id, currency, amount)
           : await debitWalletBalance(txn, walletRecord.id, currency, amount);
-      const [balance] = balances;
       if (!balance) {
         throw new InsufficientBalanceError(
           await readWalletBalance(txn, walletRecord.id, currency),
           amount,
         );
       }
+      await stampBalanceAfter(txn, row.id, balance.amount);
       // Derived from the row the update returned, never read separately beforehand. The
       // wallet row is locked here but the deposit credit path does not take that lock, so
       // a deposit can commit between a pre-read and this update - and `before` is going
@@ -2010,14 +2037,14 @@ export class WalletService {
 
         // No bonus-lock subtraction: bonus funds live on their grant and never enter
         // `wallet_balance`, so everything this row holds is the player's to withdraw.
-        const debited = await debitWalletBalance(txn, current.id, currency, amount);
-        if (debited.length !== 1) {
+        const [debited] = await debitWalletBalance(txn, current.id, currency, amount);
+        if (!debited) {
           throw new InsufficientBalanceError(
             await readWalletBalance(txn, current.id, currency),
             amount,
           );
         }
-
+        await stampBalanceAfter(txn, row.id, debited.amount);
         // A player may not cash out while a bonus is live, and the rule holds in every currency.
         // On this transaction, after the balance lock, so a bet cannot convert the bonus between
         // the request and the forfeit, and the lock order matches a bet's. A rejected withdrawal
@@ -3577,7 +3604,8 @@ export class WalletService {
         ${t.reviewReason} as review_reason, ${t.referenceCurrency} as reference_currency,
         ${t.referenceAmount} as reference_amount, ${t.referenceRate} as reference_rate,
         ${t.referenceRateAsOf} as reference_rate_as_of, ${t.providerRefId} as provider_ref_id,
-        ${t.txHash} as tx_hash, ${t.fee} as fee, ${t.providerName} as provider_name
+        ${t.txHash} as tx_hash, ${t.fee} as fee, ${t.providerName} as provider_name,
+        ${t.balanceAfter} as balance_after
       from ${t}
       where ${t.walletId} in (select ${wallet.id} from ${wallet} where ${wallet.userId} = ${userId})`;
     // The port hands back a Drizzle SQL fragment typed `unknown` (contracts cannot import drizzle).
@@ -3589,7 +3617,7 @@ export class WalletService {
       ? sql`
       union all
       select g.id, g.type, g.amount, g.currency, null, g.status, 'credit', g.created_at, null,
-        null, null, null, null, null, null, null, null, null, null, null
+        null, null, null, null, null, null, null, null, null, null, null, null
       from (${grantQuery}) g`
       : sql``;
     const history = sql`(${ledgerRows} ${grantRows}) as history`;
@@ -3650,6 +3678,8 @@ export class WalletService {
         status: tx.status,
         direction: tx.direction,
         fee: tx.fee,
+        // Internal only: the player's own statement is not the balance record.
+        balanceAfter: includeInternal ? tx.balance_after : null,
         createdAt: new Date(tx.created_at).toISOString(),
         reviewedBy: includeInternal ? tx.reviewed_by : null,
         reviewedAt:
@@ -3886,7 +3916,13 @@ export class WalletService {
           transactionId: inserted.id,
         };
         if (holdReason === null) {
-          await creditWalletBalance(txn, walletRecord.id, event.currency, event.amount);
+          await creditAndStampBalance(
+            txn,
+            inserted.id,
+            walletRecord.id,
+            event.currency,
+            event.amount,
+          );
           await this.events.emitInTransaction(txn, 'wallet.deposit.completed', payload);
         } else {
           await recordReconciliationFindingInTransaction(
@@ -4046,7 +4082,7 @@ export class WalletService {
       // running ahead would keep the released deposit out of the player's spend.
       .set({ status: 'completed', reviewedBy: adminId, reviewedAt: sql`now()` })
       .where(eq(walletTransaction.id, depositId));
-    await creditWalletBalance(txn, held.walletId, held.currency, held.amount);
+    await creditAndStampBalance(txn, depositId, held.walletId, held.currency, held.amount);
     return { userId: held.userId, amount: held.amount, currency: held.currency };
   }
 
@@ -4081,7 +4117,7 @@ export class WalletService {
       deposit.currency,
     );
     const row = await this.insertHandDeposit(txn, deposit, { ...reference, status: 'completed' });
-    await creditWalletBalance(txn, row.walletId, deposit.currency, deposit.amount);
+    await creditAndStampBalance(txn, row.id, row.walletId, deposit.currency, deposit.amount);
     return {
       transactionId: row.id,
       userId: deposit.userId,

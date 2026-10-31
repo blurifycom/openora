@@ -50,6 +50,96 @@ export type RunMigrationsOptions = {
   postSql?: string[];
 };
 
+const SQL_IDENTIFIER = /^[a-z][a-z0-9_]*$/;
+
+/**
+ * `postSql` that makes `table` a protected record: DELETE is denied for the whole statement (as
+ * the audit log does), and an UPDATE may change only `mutableColumns`, plus `setOnceColumns` while
+ * they are still NULL. A `terminal` column also freezes once it holds one of its `values`, and its
+ * `growOnly` columns can then only increase, so a finished row cannot be reopened or rewritten
+ * downwards. Every other column, one added later included, is immutable until named
+ * here. TRUNCATE is untouched, which keeps test and dev resets working. There is no bypass: a
+ * deliberate repair is a migration that disables the trigger itself. The UPDATE check runs per
+ * row, so an UPDATE that matches nothing passes.
+ *
+ * One string per table, re-runnable on every deploy: the functions are replaced in place (the
+ * update function carries the column list, so a changed list takes effect without touching the
+ * trigger) and a trigger is created only when missing, so the table is never left uncovered and
+ * no lock is taken after the first run.
+ */
+export function appendOnlyTableSql(
+  table: string,
+  {
+    mutableColumns,
+    setOnceColumns = [],
+    terminal,
+  }: {
+    mutableColumns: string[];
+    setOnceColumns?: string[];
+    terminal?: { column: string; values: string[]; growOnly?: string[] };
+  },
+): string {
+  const columns = [...mutableColumns, ...setOnceColumns];
+  for (const name of [
+    table,
+    ...columns,
+    ...(terminal ? [terminal.column, ...terminal.values, ...(terminal.growOnly ?? [])] : []),
+  ]) {
+    if (!SQL_IDENTIFIER.test(name)) {
+      throw new Error(`Invalid SQL identifier: ${name}`);
+    }
+  }
+  const exempt = `ARRAY[${columns.map((column) => `'${column}'`).join(', ')}]::text[]`;
+  const setOnceChecks = setOnceColumns
+    .map(
+      (
+        column,
+      ) => `IF OLD.${column} IS NOT NULL AND NEW.${column} IS DISTINCT FROM OLD.${column} THEN
+       RAISE EXCEPTION '${table} is append-only: ${column} cannot change once set';
+     END IF;`,
+    )
+    .join('\n     ');
+  const terminalChecks = terminal
+    ? `IF OLD.${terminal.column}::text = ANY(ARRAY[${terminal.values.map((value) => `'${value}'`).join(', ')}]) THEN
+       IF NEW.${terminal.column} IS DISTINCT FROM OLD.${terminal.column} THEN
+         RAISE EXCEPTION '${table} is append-only: ${terminal.column} cannot change once final';
+       END IF;
+       ${(terminal.growOnly ?? [])
+         .map(
+           (column) => `IF NEW.${column} < OLD.${column} THEN
+         RAISE EXCEPTION '${table} is append-only: ${column} cannot decrease once final';
+       END IF;`,
+         )
+         .join('\n       ')}
+     END IF;`
+    : '';
+  const createTriggerIfMissing = (name: string, timing: string, each: string, fn: string) =>
+    `IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '${table}'::regclass AND tgname = '${name}') THEN
+       CREATE TRIGGER ${name} BEFORE ${timing} ON ${table} FOR EACH ${each} EXECUTE FUNCTION ${fn}();
+     END IF;`;
+  return `CREATE OR REPLACE FUNCTION ${table}_deny_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+   BEGIN
+     RAISE EXCEPTION '${table} is append-only: % is not permitted', TG_OP;
+   END;
+   $$;
+   CREATE OR REPLACE FUNCTION ${table}_guard_update() RETURNS trigger LANGUAGE plpgsql AS $$
+   BEGIN
+     IF to_jsonb(NEW) - ${exempt} IS DISTINCT FROM to_jsonb(OLD) - ${exempt} THEN
+       RAISE EXCEPTION '${table} is append-only: UPDATE may change only ${columns.join(', ')}';
+     END IF;
+     ${setOnceChecks}
+     ${terminalChecks}
+     RETURN NEW;
+   END;
+   $$;
+   DO $$
+   BEGIN
+     ${createTriggerIfMissing(`${table}_append_only_delete`, 'DELETE', 'STATEMENT', `${table}_deny_delete`)}
+     ${createTriggerIfMissing(`${table}_append_only_update`, 'UPDATE', 'ROW', `${table}_guard_update`)}
+   END
+   $$`;
+}
+
 function migrateUrl(override?: string): string {
   const url = override ?? process.env['DATABASE_ADMIN_URL'] ?? process.env['DATABASE_URL'];
   if (!url) {

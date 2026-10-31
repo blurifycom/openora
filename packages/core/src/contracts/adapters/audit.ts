@@ -71,6 +71,8 @@ export type DirectAuditAction =
   | 'promo.bonus.forfeited'
   | 'promo.bonus.forfeit_refused'
   | 'promo.bonus.expired'
+  | 'promo.race.payout.settled'
+  | 'promo.streak.milestone.claimed'
   | 'promo.offer.claimed'
   | 'promo.offer.created'
   | 'promo.offer.updated'
@@ -88,6 +90,9 @@ export type DirectAuditAction =
   | 'iam.mcp_token.created'
   | 'iam.mcp_token.revoked'
   | 'wallet.withdrawal.held'
+  | 'wallet.bet.reversed'
+  | 'wallet.large_bet.recorded'
+  | 'wallet.large_win.recorded'
   | 'wallet.withdrawal_hold.placed'
   | 'wallet.withdrawal_hold.released'
   | 'wallet.correction.debited'
@@ -119,9 +124,16 @@ type AuditEntry = {
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
   correlationId?: string | null;
+  result?: string | null;
 } & Partial<ClientMeta>;
 
 export type AuditWritePort = {
+  /**
+   * Topics whose publication already leaves an audit record: the ones the audit module subscribes
+   * to, and the ones whose writer appends the row at the source. A topic outside the set is exempt.
+   * A writer that omits it covers none, so the admin-mutation fallback still records its routes.
+   */
+  readonly auditedTopics?: ReadonlySet<string>;
   record(entry: AuditEntry): Promise<void>;
   recordInTransaction(tx: unknown, entry: AuditEntry): Promise<void>;
   /**

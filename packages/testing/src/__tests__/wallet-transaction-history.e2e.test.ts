@@ -4,6 +4,7 @@ import { DRIZZLE } from '@openora/core/server';
 import { BONUS_GRANTS, WALLET_COMMANDS } from '@openora/core/contracts';
 import { exchangeRateQuote } from '@openora/core/fx/schema/exchange-rate';
 import {
+  asAdmin,
   registerAndMaterializePlayer,
   type TestDb,
   type TestApp,
@@ -23,6 +24,7 @@ type HistoryItem = {
   status: string;
   direction: string | null;
   createdAt: string;
+  balanceAfter?: string | null;
 };
 type History = { items: HistoryItem[]; total: number };
 
@@ -269,5 +271,21 @@ describe('player transaction history', () => {
 
     expect(inverted.status).toBe(400);
     expect(unknownType.status).toBe(400);
+  });
+});
+
+describe('admin transaction history', () => {
+  it('shows the balance a row left behind to an admin and not to the player', async () => {
+    const { client, userId, depositId } = await seededPlayer();
+    const admin = await asAdmin(app.app);
+
+    const adminRes = await admin.get(`/wallet/transactions/${userId}?page=1&limit=50`);
+    expect(adminRes.status).toBe(200);
+    // oxlint-disable-next-line no-unsafe-type-assertion -- the route's own output schema validated it
+    const adminHistory = (await adminRes.json()) as History;
+    const playerHistory = await history(client);
+
+    expect(Number(adminHistory.items.find((i) => i.id === depositId)?.balanceAfter)).toBe(100);
+    expect(playerHistory.items.find((i) => i.id === depositId)).not.toHaveProperty('balanceAfter');
   });
 });

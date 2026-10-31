@@ -224,6 +224,7 @@ export type WalletReferenceConversion = z.infer<typeof WalletReferenceConversion
 export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
   reviewedBy: UuidSchema.nullable(),
   reviewedAt: TimestampSchema.nullable(),
+  balanceAfter: MoneyAmountSchema.nullable(),
   // Null on row types that carry no conversion, and on rows written before it was recorded.
   reference: WalletReferenceConversionSchema.nullable(),
 });
