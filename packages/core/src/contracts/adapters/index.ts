@@ -43,11 +43,29 @@ export type {
   WalletCreditArgs,
   WalletCreditOutcome,
   WalletProviderRef,
+  WalletCorrectionDebitArgs,
+  WalletCorrectionDebitOutcome,
+  WalletCorrectionDebitType,
+  WalletWithdrawalHoldArgs,
 } from './wallet-commands.js';
-export { WALLET_COMMANDS } from './wallet-commands.js';
+export {
+  WALLET_COMMANDS,
+  WALLET_CORRECTION_DEBIT_TYPES,
+  WalletCorrectionExceedsRoundError,
+  WalletCorrectionRefConflictError,
+  WalletCorrectionRoundError,
+  WalletCorrectionTypeError,
+  WalletHoldWithoutWalletError,
+} from './wallet-commands.js';
 
 export type { WagerContext, WagerProduct } from './wager-context.js';
-export { WAGER_PRODUCTS, WagerProductSchema, isWagerProduct } from './wager-context.js';
+export {
+  WAGER_PRODUCTS,
+  WagerProductSchema,
+  isWagerProduct,
+  wagerProductOfProviderName,
+  wagerProductProviderPrefix,
+} from './wager-context.js';
 
 export type {
   BonusGrantCommands,
@@ -84,6 +102,7 @@ export type {
   WagerTrackingWalletCredit,
   WagerReversalArgs,
   WagerRound,
+  SettledWagerArgs,
 } from './wager-tracking.js';
 export { WAGER_TRACKING } from './wager-tracking.js';
 
@@ -468,8 +487,8 @@ export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js
 
 export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
-export type { PlayEligibilityPort } from './play-eligibility.js';
-export { PLAY_ELIGIBILITY } from './play-eligibility.js';
+export type { PlayEligibilityPort, PlayRefusal } from './play-eligibility.js';
+export { PLAY_ELIGIBILITY, PLAY_REFUSALS } from './play-eligibility.js';
 export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
 export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
 export type {
@@ -580,3 +599,18 @@ export type { McpTokenAuthentication, McpTokenAuthenticator } from './mcp-token-
 export { MCP_TOKEN_AUTHENTICATOR } from './mcp-token-authenticator.js';
 export type { McpTokenAutomaticRevokeReason, McpTokenRevocation } from './mcp-token-revocation.js';
 export { MCP_TOKEN_REVOCATION } from './mcp-token-revocation.js';
+
+export type {
+  SportsbookLedger,
+  SportsbookLedgerApplied,
+  SportsbookLedgerOutcome,
+  SportsbookLedgerRefused,
+  SportsbookSessionOutcome,
+} from './sportsbook-ledger.js';
+export { SPORTSBOOK_LEDGER } from './sportsbook-ledger.js';
+export type {
+  SportsbookProvider,
+  SportsbookProviderSession,
+  SportsbookProviderSessionArgs,
+} from './sportsbook-provider.js';
+export { SPORTSBOOK_PROVIDER, SportsbookProviderSessionSchema } from './sportsbook-provider.js';

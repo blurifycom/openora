@@ -31,6 +31,8 @@ import {
   type EventHandler,
   type ProcessedEventLog,
 } from '../../kernel/index.js';
+import { setErrorReporter } from '../../kernel/error-reporter.js';
+import { wireErrorResponse } from '../../kernel/wire-error-response.js';
 import type { PluginEntry } from '../../plugin-host/index.js';
 import { heardTriggers } from './fixtures/trigger-listener-plugin.js';
 
@@ -706,5 +708,101 @@ describe('createApp - request hardening', () => {
     expect(overLimit.status).toBe(413);
 
     await created.close();
+  });
+});
+
+describe('createApp - a route answering with its own error body', () => {
+  const probePath = fileURLToPath(new URL('./fixtures/wire-probe-plugin.ts', import.meta.url));
+
+  type App = Awaited<ReturnType<typeof createApp>>['app'];
+
+  const post = async (app: App, path: string, body: unknown = {}) =>
+    app.request(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  async function withProbe(run: (app: App, reported: unknown[]) => Promise<void>) {
+    const saved = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    const reported: unknown[] = [];
+    try {
+      const created = await createApp({
+        plugins: [{ id: 'wire-probe', path: probePath }],
+        databaseUrl: DUMMY_DATABASE_URL,
+      });
+      try {
+        setErrorReporter((error) => reported.push(error));
+        await run(created.app, reported);
+      } finally {
+        await created.close();
+      }
+    } finally {
+      setErrorReporter(undefined);
+      if (saved === undefined) {
+        delete process.env['REDIS_URL'];
+      } else {
+        process.env['REDIS_URL'] = saved;
+      }
+    }
+  }
+
+  it('renders exactly the status and body the route chose', async () => {
+    await withProbe(async (app, reported) => {
+      const refused = await post(app, '/wire-probe/400');
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ error: 'refused', detail: 'Over the limit' });
+
+      const retry = await post(app, '/wire-probe/500');
+      expect(retry.status).toBe(500);
+      expect(await retry.json()).toEqual({ error: 'retry' });
+      expect(reported).toEqual([]);
+    });
+  });
+
+  it('reports a 5xx reply through the cause it carries', async () => {
+    await withProbe(async (app, reported) => {
+      const retry = await post(app, '/wire-probe/500-cause');
+      expect(retry.status).toBe(500);
+      expect(await retry.json()).toEqual({ error: 'retry' });
+      expect(reported).toEqual([expect.objectContaining({ message: 'ledger unavailable' })]);
+    });
+  });
+
+  it('keeps the default envelope and reporting for every other error', async () => {
+    await withProbe(async (app, reported) => {
+      const notFound = await post(app, '/wire-probe/not-found');
+      expect(notFound.status).toBe(404);
+      expect(await notFound.json()).toMatchObject({
+        defined: false,
+        code: 'NOT_FOUND',
+        message: 'No such bet',
+      });
+
+      const invalid = await post(app, '/wire-probe/invalid', { amount: 'ten' });
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toMatchObject({ defined: false, code: 'BAD_REQUEST' });
+      expect(reported).toEqual([]);
+
+      const crash = await post(app, '/wire-probe/crash');
+      expect(crash.status).toBe(500);
+      expect(await crash.json()).toMatchObject({ defined: false, code: 'INTERNAL_SERVER_ERROR' });
+      expect(reported).toEqual([expect.objectContaining({ message: 'database went away' })]);
+    });
+  });
+
+  it('still generates the OpenAPI document', async () => {
+    await withProbe(async (app) => {
+      const spec = await app.request('/openapi.json');
+      expect(spec.status).toBe(200);
+      expect((await spec.json()).paths).toHaveProperty('/wire-probe/400');
+    });
+  });
+
+  it('refuses a status outside 400-599', () => {
+    expect(() => wireErrorResponse(200, {})).toThrow(RangeError);
+    expect(() => wireErrorResponse(302, {})).toThrow(RangeError);
+    expect(() => wireErrorResponse(600, {})).toThrow(RangeError);
   });
 });

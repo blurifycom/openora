@@ -4,6 +4,7 @@ import {
   CurrencyTickerInputSchema,
   CurrencyTickerSchema,
   DateRangeSchema,
+  GameTypeSchema,
   GranularitySchema,
   MoneyAmountSchema,
   SignedMoneyAmountSchema,
@@ -57,6 +58,19 @@ export const FinancialGgrQuerySchema = DateRangeSchema.extend({
 });
 export type FinancialGgrQuery = z.infer<typeof FinancialGgrQuerySchema>;
 
+/**
+ * Stakes and payouts per product. A sportsbook stake counts when the bet is accepted and only its
+ * cash part; a payout counts when the bet settles, and a reopen takes it back in the reopen's period.
+ */
+export const ProductRevenueSchema = z.object({
+  product: GameTypeSchema,
+  currency: CurrencyTickerSchema,
+  stakes: MoneyAmountSchema,
+  payouts: SignedMoneyAmountSchema,
+  ggr: SignedMoneyAmountSchema,
+});
+export type ProductRevenue = z.infer<typeof ProductRevenueSchema>;
+
 export const financialContract = {
   summary: oc
     .route({ method: 'GET', path: '/analytics/financial/summary' })
@@ -67,4 +81,9 @@ export const financialContract = {
     .route({ method: 'GET', path: '/analytics/financial/ggr' })
     .input(FinancialGgrQuerySchema)
     .output(z.array(GgrSeriesSchema)),
+
+  products: oc
+    .route({ method: 'GET', path: '/analytics/financial/products' })
+    .input(FinancialSummaryQuerySchema)
+    .output(z.array(ProductRevenueSchema)),
 };

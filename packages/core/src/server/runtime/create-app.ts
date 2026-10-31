@@ -70,6 +70,7 @@ import {
   type TrustedProxies,
 } from './client-address.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
+import { wireErrorBody } from '../kernel/wire-error-response.js';
 import type { CoreTokenCatalog } from './core-token-catalog.js';
 
 // Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
@@ -583,6 +584,7 @@ export async function createApp(
       }),
       new ResponseHeadersPlugin(),
     ],
+    customErrorResponseBodyEncoder: wireErrorBody,
     interceptors: [
       onError((error) => {
         // oRPC wraps a thrown native error (a DB failure, a bug) into an
@@ -590,8 +592,12 @@ export async function createApp(
         // server fault - a non-ORPCError, or an ORPCError with a 5xx status - and skip
         // expected client errors (4xx: not-found, conflict, validation, rate-limit).
         // Report the underlying `cause` so the tracker gets the real error + stack,
-        // not the generic wrapper.
-        if (error instanceof ORPCError && error.status < 500) {
+        // not the generic wrapper. A wire error reply the route chose is reported only
+        // when it carries the fault as its cause.
+        if (
+          error instanceof ORPCError &&
+          (error.status < 500 || (wireErrorBody(error) !== null && error.cause === undefined))
+        ) {
           return;
         }
         const err = error instanceof ORPCError ? (error.cause ?? error) : error;

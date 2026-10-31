@@ -88,10 +88,19 @@ export type DirectAuditAction =
   | 'iam.mcp_token.created'
   | 'iam.mcp_token.revoked'
   | 'wallet.withdrawal.held'
+  | 'wallet.withdrawal_hold.placed'
+  | 'wallet.withdrawal_hold.released'
+  | 'wallet.correction.debited'
   | 'chat.cooldown.created'
   | 'chat.cooldown.lifted'
   | 'chat.cooldown.expired'
-  | 'support_chat.customer.linked';
+  | 'support_chat.customer.linked'
+  | 'sportsbook.config.set'
+  | 'sportsbook.config.suspended'
+  | 'sportsbook.config.resumed'
+  | 'sportsbook.finding.resolved'
+  | 'sportsbook.bet.aligned'
+  | 'sportsbook.sessions.revoked';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain

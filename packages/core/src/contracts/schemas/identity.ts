@@ -9,6 +9,10 @@ export type Theme = z.infer<typeof ThemeSchema>;
 
 // BCP 47 upper bound - the longest real-world tags stay well under this.
 export const LanguageSchema = z.string().max(35);
+/** A well-formed BCP 47 tag; `LanguageSchema` alone only bounds the length. */
+export const LanguageTagSchema = LanguageSchema.regex(
+  /^[a-zA-Z]{2,8}(?:-(?:[a-zA-Z0-9]{2,8}|[a-zA-Z0-9](?=-)))*$/,
+);
 
 export const UsernameSchema = z
   .string()

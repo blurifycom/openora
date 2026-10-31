@@ -1,5 +1,5 @@
 import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
-import type { RankConfig, StreakConfig } from '../contract/index.js';
+import type { RankConfigInput, StreakConfig } from '../contract/index.js';
 import {
   promoRankChallengeTier,
   promoRankConfig,
@@ -23,7 +23,8 @@ export type RankLadderSeed = {
   currency: string;
   /** Lowest tier first; the first must start at zero. */
   tiers: RankTierSeed[];
-  config: RankConfig;
+  /** A setting left out takes its column default. */
+  config: RankConfigInput;
 };
 
 /**

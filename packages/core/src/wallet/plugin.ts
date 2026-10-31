@@ -366,6 +366,7 @@ export default {
           rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
           bonusWagering: c.has(BONUS_WAGERING) ? c.get(BONUS_WAGERING) : undefined,
           bonusGrants: c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
+          identityReader: c.get(IDENTITY_READER),
         }),
     );
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
