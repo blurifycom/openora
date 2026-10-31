@@ -180,6 +180,8 @@ export const sportsbookBet = pgTable(
   (t) => [
     uniqueIndex('sportsbook_bet_provider_provider_bet_id_idx').on(t.provider, t.providerBetId),
     index('sportsbook_bet_user_id_created_at_idx').on(t.userId, t.createdAt),
+    index('sportsbook_bet_user_id_accepted_at_idx').on(t.userId, t.acceptedAt),
+    index('sportsbook_bet_user_id_status_settled_at_idx').on(t.userId, t.status, t.settledAt),
     index('sportsbook_bet_created_at_idx').on(t.createdAt),
     index('sportsbook_bet_status_created_at_idx').on(t.status, t.createdAt, t.id),
     index('sportsbook_bet_reserved_created_at_idx')
@@ -373,6 +375,11 @@ export const sportsbookReconciliationFinding = pgTable(
     index('sportsbook_reconciliation_finding_status_created_at_idx').on(t.status, t.createdAt),
     index('sportsbook_reconciliation_finding_created_at_idx').on(t.createdAt, t.id),
     index('sportsbook_reconciliation_finding_bet_id_kind_idx').on(t.betId, t.kind),
+    index('sportsbook_reconciliation_finding_user_id_created_at_idx').on(
+      t.userId,
+      t.createdAt,
+      t.id,
+    ),
   ],
 );
 

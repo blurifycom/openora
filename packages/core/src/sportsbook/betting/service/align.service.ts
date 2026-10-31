@@ -187,6 +187,10 @@ export class SportsbookAlignService {
     this.provider = deps.provider;
   }
 
+  canLookUp(betProvider: SportsbookBetRow['provider']) {
+    return this.provider?.name === betProvider && this.provider.getBetStatus !== undefined;
+  }
+
   /** Asks the provider, outside any transaction. */
   async observe(bet: SportsbookBetRow): Promise<SportsbookProviderBetStatus> {
     const provider = this.provider;

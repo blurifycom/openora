@@ -19,6 +19,7 @@ import {
   SportsbookProviderNameSchema,
   SportsbookProviderIdSchema,
   SportsbookPromotionTypeSchema,
+  SignedMoneyAmountSchema,
   TimestampSchema,
   UserIdInputSchema,
   UuidSchema,
@@ -199,6 +200,8 @@ export type SportsbookBetTransaction = z.infer<typeof SportsbookBetTransactionSc
 
 export const AdminSportsbookBetDetailSchema = AdminSportsbookBetSchema.extend({
   transactions: z.array(SportsbookBetTransactionSchema),
+  /** Whether the bound provider can report this bet's status, which align needs. */
+  providerStatusLookup: z.boolean(),
 });
 export type AdminSportsbookBetDetail = z.infer<typeof AdminSportsbookBetDetailSchema>;
 
@@ -257,6 +260,11 @@ export const SportsbookFindingSchema = z.object({
   provider: SportsbookProviderNameSchema.nullable(),
   betId: UuidSchema.nullable(),
   userId: UuidSchema.nullable(),
+  /**
+   * The bet's currency, which any amount in `detail` is in; null when there is no bet, where a
+   * refused stake's `detail` names its own.
+   */
+  currency: CurrencyTickerSchema.nullable(),
   detail: z.record(z.string(), z.unknown()),
   status: SportsbookFindingStatusSchema,
   resolvedBy: UuidSchema.nullable(),
@@ -269,6 +277,7 @@ export type SportsbookFinding = z.infer<typeof SportsbookFindingSchema>;
 export const ListSportsbookFindingsInputSchema = PageQuerySchema.extend({
   status: SportsbookFindingStatusSchema.optional(),
   kind: SportsbookFindingKindSchema.optional(),
+  userId: UuidSchema.optional(),
 });
 export type ListSportsbookFindingsInput = z.infer<typeof ListSportsbookFindingsInputSchema>;
 
@@ -338,6 +347,33 @@ export const SportsbookPromotionReportRowSchema = z.object({
 });
 export type SportsbookPromotionReportRow = z.infer<typeof SportsbookPromotionReportRowSchema>;
 
+export const SportsbookPlayerSummaryInputSchema = DateRangeSchema.extend(UserIdInputSchema.shape);
+export type SportsbookPlayerSummaryInput = z.infer<typeof SportsbookPlayerSummaryInputSchema>;
+
+/**
+ * One currency of a player's accepted and settled bets, as each bet stands now. Stake-side fields
+ * count bets accepted in the range, payout-side fields bets settled in it, and `openExposure` is
+ * now, whatever the range.
+ */
+export const SportsbookPlayerSummaryRowSchema = z.object({
+  currency: CurrencyTickerSchema,
+  bets: z.int().nonnegative(),
+  stake: MoneyAmountSchema,
+  cashStake: MoneyAmountSchema,
+  promotionStake: MoneyAmountSchema,
+  /** Everything settlement paid back, a void's returned stake included. */
+  payout: MoneyAmountSchema,
+  cashPayout: MoneyAmountSchema,
+  promotionPayout: MoneyAmountSchema,
+  /**
+   * `cashStake - payout`: a promotion-paid stake earns nothing and a promotion payout costs in
+   * full, as on the wallet ledger. Bet-level, so a reopened bet's uncollected reversal is not in it.
+   */
+  ggr: SignedMoneyAmountSchema,
+  openExposure: MoneyAmountSchema,
+});
+export type SportsbookPlayerSummaryRow = z.infer<typeof SportsbookPlayerSummaryRowSchema>;
+
 export const sportsbookContract = {
   issueSession: oc
     .route({ method: 'POST', path: '/sportsbook/session' })
@@ -385,6 +421,10 @@ export const sportsbookAdminContract = {
     .route({ method: 'GET', path: '/backoffice/sportsbook/players/{userId}/restriction' })
     .input(UserIdInputSchema)
     .output(SportsbookRestrictionSchema),
+  playerSummary: oc
+    .route({ method: 'GET', path: '/backoffice/sportsbook/players/{userId}/summary' })
+    .input(SportsbookPlayerSummaryInputSchema)
+    .output(z.array(SportsbookPlayerSummaryRowSchema)),
   restrictPlayer: oc
     .route({ method: 'POST', path: '/backoffice/sportsbook/players/{userId}/restriction' })
     .input(SetSportsbookRestrictionInputSchema)

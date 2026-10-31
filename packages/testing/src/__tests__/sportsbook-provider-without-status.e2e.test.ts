@@ -38,9 +38,11 @@ async function betRow(betId: string) {
 }
 
 describe('a provider with no bet status lookup', () => {
-  it('refuses an align as provider-unavailable and moves nothing', async () => {
+  it('reports no status lookup on the bet and refuses an align as provider-unavailable', async () => {
     const player = await fundedPlayer(app, '100');
     const { betId } = await acceptedBet(app, player);
+    const detail = await admin.get(`/backoffice/sportsbook/bets/${betId}`);
+    expect(await detail.json()).toMatchObject({ providerStatusLookup: false });
     const res = await admin.post(`/backoffice/sportsbook/bets/${betId}/align`, {});
     expect(res.status).toBe(503);
     expect(await betRow(betId)).toMatchObject({ status: 'accepted', version: 1 });

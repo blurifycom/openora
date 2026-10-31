@@ -7,6 +7,7 @@ import type { betting } from '@openora/core/sportsbook/contracts';
 import { auditLog } from '@openora/core/audit/schema';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
+  sportsbookBet,
   sportsbookBetTransaction,
   sportsbookPlayerRestriction,
   sportsbookSession,
@@ -131,9 +132,7 @@ const putConfig = (overrides: Record<string, unknown> = {}) =>
 const adminBet = async (betId: string) => {
   const res = await admin.get(`/backoffice/sportsbook/bets/${betId}`);
   expect(res.status).toBe(200);
-  return json<betting.AdminSportsbookBet & { transactions: betting.SportsbookBetTransaction[] }>(
-    res,
-  );
+  return json<betting.AdminSportsbookBetDetail>(res);
 };
 
 const findingsFor = async (query: string) =>
@@ -506,8 +505,26 @@ describe('sportsbook backoffice bet routes', () => {
     expect(byProviderId.items.map((b) => b.id)).toEqual([bet.betId]);
 
     const detail = await adminBet(bet.betId);
-    expect(detail).toMatchObject({ id: bet.betId, userId: player.userId, status: 'accepted' });
+    expect(detail).toMatchObject({
+      id: bet.betId,
+      userId: player.userId,
+      status: 'accepted',
+      providerStatusLookup: true,
+    });
     expect(detail.transactions.map((t) => t.kind)).toEqual(['reserve', 'confirm']);
+  });
+
+  it('reports no status lookup for a bet whose provider is no longer bound', async () => {
+    const { betId } = await acceptedBet(app, await fundedPlayer(app, '100'));
+    await app.container
+      .get(DRIZZLE)
+      .db.update(sportsbookBet)
+      .set({ provider: 'retired' })
+      .where(eq(sportsbookBet.id, betId));
+    expect(await adminBet(betId)).toMatchObject({
+      provider: 'retired',
+      providerStatusLookup: false,
+    });
   });
 
   it('refuses a provider bet id filter without the provider', async () => {
@@ -1068,6 +1085,39 @@ describe('sportsbook player restriction routes', () => {
   });
 });
 
+describe('sportsbook player summary route', () => {
+  it('returns an empty list for a player with no bets, also to a view-only admin', async () => {
+    const player = await fundedPlayer(app, '100');
+    const path = `/backoffice/sportsbook/players/${player.userId}/summary`;
+    const res = await admin.get(path);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+
+    await acceptedBet(app, player, { stake: '10' });
+    const viewer = await staffWithRole('admin');
+    const viewed = await viewer.get(path);
+    expect(viewed.status).toBe(200);
+    expect(await json<betting.SportsbookPlayerSummaryRow[]>(viewed)).toEqual([
+      expect.objectContaining({ currency: 'USD', bets: 1, openExposure: money(10) }),
+    ]);
+  });
+
+  it('answers 404 for an unknown player, 400 for a bad range and refuses a player, staff without the sportsbook grant or anonymous reader', async () => {
+    expect((await admin.get(`/backoffice/sportsbook/players/${randomUUID()}/summary`)).status).toBe(
+      404,
+    );
+    const player = await fundedPlayer(app, '100');
+    const path = `/backoffice/sportsbook/players/${player.userId}/summary`;
+    expect(
+      (await admin.get(`${path}?dateFrom=2026-10-02T00:00:00Z&dateTo=2026-10-01T00:00:00Z`)).status,
+    ).toBe(400);
+    expect((await player.client.get(path)).status).toBe(403);
+    expect((await stranger.get(path)).status).toBe(403);
+    expect((await (await staffWithRole('casino-manager')).get(path)).status).toBe(403);
+    expect((await anonymous(path)).status).toBe(401);
+  });
+});
+
 describe('sportsbook findings routes', () => {
   it('lists a fingerprint mismatch finding and resolves it once with an audited note', async () => {
     const player = await fundedPlayer(app, '100');
@@ -1087,6 +1137,7 @@ describe('sportsbook findings routes', () => {
       kind: 'fingerprint_mismatch',
       status: 'open',
       userId: player.userId,
+      currency: 'USD',
       resolvedBy: null,
     });
 
@@ -1097,6 +1148,7 @@ describe('sportsbook findings routes', () => {
     expect(resolvedBody).toMatchObject({
       id: finding!.id,
       status: 'resolved',
+      currency: 'USD',
       resolutionNote: 'provider retried with a corrected stake',
     });
     expect(resolvedBody.resolvedBy).toBeTruthy();
@@ -1114,6 +1166,45 @@ describe('sportsbook findings routes', () => {
       'finding_resolved',
     );
     expect(await auditRows('sportsbook.finding.resolved', finding!.id)).toHaveLength(1);
+  });
+
+  it("filters findings by player and names the bet's currency, null when there is no bet", async () => {
+    const player = await fundedPlayer(app, '100');
+    const other = await fundedPlayer(app, '100');
+    const mismatch = async (who: SportsbookPlayer) => {
+      const args = reserveArgs(who.sessionId);
+      const betId = expectApplied(await ledgerOf(app).reserve(args)).betId!;
+      await ledgerOf(app).reserve({ ...args, stake: '11' });
+      return betId;
+    };
+    const betId = await mismatch(player);
+    await mismatch(other);
+    expect(await ledgerOf(app).reserve(reserveArgs(player.sessionId, { stake: '10.001' }))).toEqual(
+      { status: 'refused', reason: 'invalid_amount' },
+    );
+
+    const res = await admin.get(
+      `/backoffice/sportsbook/findings?userId=${player.userId}&limit=100`,
+    );
+    expect(res.status).toBe(200);
+    const page = await json<Page<Finding>>(res);
+    expect(page.total).toBe(2);
+    expect(page.items).toEqual([
+      expect.objectContaining({
+        kind: 'invalid_amount',
+        userId: player.userId,
+        betId: null,
+        currency: null,
+        detail: expect.objectContaining({ currency: 'USD', stake: '10.001' }),
+      }),
+      expect.objectContaining({
+        kind: 'fingerprint_mismatch',
+        userId: player.userId,
+        betId,
+        currency: 'USD',
+      }),
+    ]);
+    expect((await admin.get('/backoffice/sportsbook/findings?userId=not-a-uuid')).status).toBe(400);
   });
 
   it('answers 404 for an unknown finding and 400 for a missing note or bad filter', async () => {
