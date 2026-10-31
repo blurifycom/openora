@@ -102,6 +102,7 @@ export type {
   WagerTrackingWalletCredit,
   WagerReversalArgs,
   WagerRound,
+  SettledWagerArgs,
 } from './wager-tracking.js';
 export { WAGER_TRACKING } from './wager-tracking.js';
 

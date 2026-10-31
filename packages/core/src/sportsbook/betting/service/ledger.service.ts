@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, eq, isNull, or } from 'drizzle-orm';
+import { and, eq, isNull, min, ne, or } from 'drizzle-orm';
 import {
   createLogger,
   findOneOrThrow,
@@ -44,6 +44,7 @@ import {
   type SportsbookSessionOutcome,
   type SportsbookSettleArgs,
   type User,
+  type WagerTrackingCommands,
   type WalletCommands,
   type WalletCorrectionDebitArgs,
   type WalletReader,
@@ -617,6 +618,7 @@ export type SportsbookLedgerDeps = {
   wallet: WalletCommands;
   walletReader: WalletReader;
   rates?: ExchangeRateReader | undefined;
+  wagerTracking?: WagerTrackingCommands | undefined;
 };
 
 export class SportsbookLedgerService {
@@ -631,6 +633,7 @@ export class SportsbookLedgerService {
   private readonly wallet: WalletCommands;
   private readonly walletReader: WalletReader;
   private readonly rates: ExchangeRateReader | undefined;
+  private readonly wagerTracking: WagerTrackingCommands | undefined;
 
   constructor(deps: SportsbookLedgerDeps) {
     this.drizzle = deps.drizzle;
@@ -644,6 +647,7 @@ export class SportsbookLedgerService {
     this.wallet = deps.wallet;
     this.walletReader = deps.walletReader;
     this.rates = deps.rates;
+    this.wagerTracking = deps.wagerTracking;
   }
 
   async session(args: SportsbookSessionArgs): Promise<SportsbookSessionOutcome> {
@@ -1444,6 +1448,11 @@ export class SportsbookLedgerService {
       if (debtChange) {
         await this.debts.writeAudit(tx, debtChange);
       }
+      if (result === 'void') {
+        await this.reverseSettledStake(tx, settled, args);
+      } else {
+        await this.trackSettledStake(tx, settled, args);
+      }
       await step?.(tx, settled);
       return {
         outcome: applied(settled, balance),
@@ -1463,6 +1472,52 @@ export class SportsbookLedgerService {
             step,
           ),
       };
+    });
+  }
+
+  private async trackSettledStake(
+    tx: DrizzleTx,
+    bet: SportsbookBetRow,
+    args: SettleArgs,
+  ): Promise<void> {
+    if (!this.wagerTracking?.recordSettledWager) {
+      return;
+    }
+    const [first] = await tx
+      .select({ at: min(sportsbookBetTransaction.createdAt) })
+      .from(sportsbookBetTransaction)
+      .where(
+        and(
+          eq(sportsbookBetTransaction.betId, bet.id),
+          eq(sportsbookBetTransaction.kind, 'settle'),
+          ne(sportsbookBetTransaction.result, 'void'),
+        ),
+      );
+    const ref = walletRef(args);
+    await this.wagerTracking.recordSettledWager(tx, {
+      userId: bet.userId,
+      currency: bet.currency,
+      realAmount: bet.cashStake,
+      context: { provider: args.provider, product: 'sportsbook' },
+      round: { providerName: ref.providerName, externalRoundId: ref.externalRoundId },
+      qualifiedAt: first?.at ?? new Date(),
+    });
+  }
+
+  private async reverseSettledStake(
+    tx: DrizzleTx,
+    bet: SportsbookBetRow,
+    args: SettleArgs,
+  ): Promise<void> {
+    if (!this.wagerTracking?.reverseSettledWager || !isPositiveMoney(bet.cashStake)) {
+      return;
+    }
+    const ref = walletRef(args);
+    await this.wagerTracking.reverseSettledWager(tx, {
+      userId: bet.userId,
+      currency: bet.currency,
+      round: { providerName: ref.providerName, externalRoundId: ref.externalRoundId },
+      realAmount: bet.cashStake,
     });
   }
 

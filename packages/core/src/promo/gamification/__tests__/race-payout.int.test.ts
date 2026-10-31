@@ -48,7 +48,7 @@ const insertRace = async (overrides: Partial<typeof promoRace.$inferInsert> = {}
       endAt: hoursFromNow(-1),
       prizePool: '1000',
       positions: POSITIONS,
-      eligibleProducts: [],
+      eligibleProducts: ['casino'],
       ...overrides,
     })
     .returning({ id: promoRace.id });

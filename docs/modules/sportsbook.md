@@ -293,7 +293,8 @@ nothing else, so the provider may retry it or treat it as final.
   max-bet-checks them. They always count toward responsible-gambling spend. Rank level counts
   them as the operator's rank setting says. Rakeback and the rank challenge leave them out by
   default, until the operator adds them; a ladder upgraded from before those lists existed counts
-  every product, sportsbook included. A provider promotion is not a bonus-funded stake: a
+  every product, sportsbook included. A race counts a cash stake once, when the bet settles, not
+  at reserve. A provider promotion is not a bonus-funded stake: a
   promotion-paid stake writes no debit, so it is no wager, no spend and no rank, streak or race progress, and its
   payout never reduces a player's measured loss. Reopening it, and an offset or collect of the debt
   that left, land in its own round and are not netted either. A cash bet's shortfall nets in that
@@ -307,7 +308,11 @@ nothing else, so the provider may retry it or treat it as final.
   reopen counts in its own period, so a closed period never changes. The reversed part counts
   whether or not the player's balance covered it; what a reopen could not collect is in the
   sportsbook debts, and a written-off debt is a cost the report does not show. A month heavy in
-  promotion wins can push GGR negative in the shared totals, which have no product split.
+  promotion wins can push GGR negative in the shared totals. `GET /analytics/financial/products`
+  splits stakes, payouts and GGR by product: a sportsbook stake counts when the bet is accepted,
+  a payout when it settles, and a reopen takes the payout back in the reopen's period. While the
+  book is loaded, its ledger is the whole sportsbook row: catalog game rounds typed `sportsbook`
+  are left out.
 - **A promotion win is real money with no deposit behind it.** It is withdrawable at once. Read the
   promotion report alongside the withdrawal review as the anti-money-laundering control.
 - **Cooling-off and self-exclusion end play at once.** Either one queues a retried job that revokes

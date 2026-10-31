@@ -22,6 +22,11 @@ export function createAnalyticsRouter(
         await adminGuard.assert(context, 'analytics', 'view');
         return financial.ggr(input);
       }),
+
+      products: os.financial.products.handler(async ({ input, context }) => {
+        await adminGuard.assert(context, 'analytics', 'view');
+        return financial.products(input);
+      }),
     },
     funnel: {
       conversion: os.funnel.conversion.handler(async ({ input, context }) => {
