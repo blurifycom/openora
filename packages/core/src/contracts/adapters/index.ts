@@ -592,3 +592,18 @@ export type { McpTokenAuthentication, McpTokenAuthenticator } from './mcp-token-
 export { MCP_TOKEN_AUTHENTICATOR } from './mcp-token-authenticator.js';
 export type { McpTokenAutomaticRevokeReason, McpTokenRevocation } from './mcp-token-revocation.js';
 export { MCP_TOKEN_REVOCATION } from './mcp-token-revocation.js';
+
+export type {
+  SportsbookLedger,
+  SportsbookLedgerApplied,
+  SportsbookLedgerOutcome,
+  SportsbookLedgerRefused,
+  SportsbookSessionOutcome,
+} from './sportsbook-ledger.js';
+export { SPORTSBOOK_LEDGER } from './sportsbook-ledger.js';
+export type {
+  SportsbookProvider,
+  SportsbookProviderSession,
+  SportsbookProviderSessionArgs,
+} from './sportsbook-provider.js';
+export { SPORTSBOOK_PROVIDER, SportsbookProviderSessionSchema } from './sportsbook-provider.js';

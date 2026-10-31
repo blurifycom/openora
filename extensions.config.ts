@@ -21,6 +21,7 @@ export const extensions = [
   // Player - the player-facing igaming surface
   { id: 'wallet', path: './packages/core/dist/wallet/plugin.js' },
   { id: 'gaming', path: './packages/core/dist/casino/gaming/plugin.js' },
+  { id: 'betting', path: './packages/core/dist/sportsbook/betting/plugin.js' },
   { id: 'lobby', path: './packages/core/dist/casino/lobby/plugin.js' },
   { id: 'chat', path: './packages/core/dist/engagement/chat/plugin.js' },
   { id: 'chat-commands', path: './packages/core/dist/engagement/chat-commands/plugin.js' },

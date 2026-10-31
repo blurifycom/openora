@@ -36,8 +36,8 @@ reversal can find less on the balance than it has to take back.
   atomically to the debt row.
 - **The ledger is the source of truth for money metrics.** GGR, NGR and RG spend read the wallet
   ledger across products, with a `win_reversal` type for winnings taken back.
-- **Sportsbook stakes are real-money only.** They never touch a bonus grant, and rakeback and the
-  rank challenge leave sportsbook out until the operator adds it.
+- **Sportsbook stakes are real-money only.** They never touch a bonus grant, and a new ladder's
+  rakeback and rank challenge leave sportsbook out until the operator adds it.
 
 ## Consequences
 

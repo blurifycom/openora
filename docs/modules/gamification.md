@@ -42,13 +42,14 @@ belongs to a bonus a player happens to hold; a player's standing must not depend
 they are carrying. Which products count - casino, live casino, sportsbook - is the operator's
 setting, and an empty setting counts every bet.
 
-Rakeback and the rank challenge each have a product list of their own, and both leave sportsbook
-out until the operator adds it. Rakeback pays only on a stake both the rank's list and the
-rakeback list admit. The rank challenge does not need the ladder's settings row: without one it
-counts the default list. An empty list counts every product here too. Both lists are set on
-`PUT /backoffice/promo/ranks/config`, so changing one writes the ladder's settings row with it; a
-save that leaves a list or `periodicMinimumWager` out keeps the stored one, and only an explicit
-`null` clears the minimum.
+Rakeback and the rank challenge each have a product list of their own, and a new ladder's lists
+leave sportsbook out until the operator adds it. A ladder configured before these lists existed
+was upgraded to empty ones, so it keeps paying on every product it did. Rakeback pays only on a
+stake both the rank's list and the rakeback list admit. The rank challenge does not need the
+ladder's settings row: without one it counts the default list. An empty list counts every
+product here too. Both lists are set on `PUT /backoffice/promo/ranks/config`, so changing one
+writes the ladder's settings row with it; a save that leaves a list or `periodicMinimumWager` out
+keeps the stored one, and only an explicit `null` clears the minimum.
 
 ## The counter is safe only where it is called
 

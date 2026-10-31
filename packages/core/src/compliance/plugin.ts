@@ -53,6 +53,7 @@ import { RgSelfServiceService } from './service/rg-self-service.service.js';
 import {
   RgMonitoringService,
   RG_EVAL_TRIGGERS,
+  SPORTSBOOK_RG_EVAL_TOPICS,
   type RgEvalTrigger,
 } from './service/rg-monitoring.service.js';
 import { createComplianceRouter, kycStatusChannel } from './router/index.js';
@@ -298,8 +299,12 @@ export default {
       );
     });
 
-    const enqueueEval = (userId: string, trigger: RgEvalTrigger) =>
-      requireJobQueue().enqueue(RG_EVAL_QUEUE, { userId, trigger }, { orderingKey: userId });
+    const enqueueEval = (userId: string, trigger: RgEvalTrigger, idempotencyKey?: string) =>
+      requireJobQueue().enqueue(
+        RG_EVAL_QUEUE,
+        { userId, trigger },
+        { orderingKey: userId, ...(idempotencyKey ? { idempotencyKey } : {}) },
+      );
 
     ctx.events.on('wallet.deposit.completed', async (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
@@ -325,6 +330,14 @@ export default {
         await enqueueEval(parsed.data.userId, 'rg.limit.set');
       }
     });
+    for (const topic of SPORTSBOOK_RG_EVAL_TOPICS) {
+      ctx.events.on(topic, async (payload, envelope) => {
+        const parsed = domainEventSchemas[topic].safeParse(payload);
+        if (parsed.success) {
+          await enqueueEval(parsed.data.userId, topic, envelope && `rg-eval:${envelope.eventId}`);
+        }
+      });
+    }
 
     ctx.jobs.worker({
       queue: RG_EVAL_QUEUE,
