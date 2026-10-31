@@ -117,7 +117,7 @@ describe('audit trail with two services of one deployment up', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    const markers = Array.from({ length: 10 }, () => randomUUID());
+    const markers: string[] = Array.from({ length: 10 }, () => randomUUID());
     for (const marker of markers) {
       first.container
         .get(EVENT_BUS)
