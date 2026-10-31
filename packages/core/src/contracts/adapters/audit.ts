@@ -131,8 +131,9 @@ export type AuditWritePort = {
   /**
    * Topics whose publication already leaves an audit record: the ones the audit module subscribes
    * to, and the ones whose writer appends the row at the source. A topic outside the set is exempt.
+   * A writer that omits it covers none, so the admin-mutation fallback still records its routes.
    */
-  readonly auditedTopics: ReadonlySet<string>;
+  readonly auditedTopics?: ReadonlySet<string>;
   record(entry: AuditEntry): Promise<void>;
   recordInTransaction(tx: unknown, entry: AuditEntry): Promise<void>;
   /**

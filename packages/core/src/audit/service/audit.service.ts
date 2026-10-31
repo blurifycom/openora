@@ -259,7 +259,7 @@ export async function recordAuditInTransaction(
 
     return inserted;
   });
-  noteAuditWrite();
+  noteAuditWrite(input.actorId);
   return row;
 }
 
@@ -295,7 +295,9 @@ async function recordManyAuditInTransaction(
     }
     return inserted;
   });
-  noteAuditWrite();
+  for (const { actorId } of inputs) {
+    noteAuditWrite(actorId);
+  }
   return appended;
 }
 

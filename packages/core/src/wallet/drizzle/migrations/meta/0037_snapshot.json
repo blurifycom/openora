@@ -60,9 +60,7 @@
         "auto_withdrawal_rule_user_id_unique": {
           "name": "auto_withdrawal_rule_user_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
+          "columns": ["user_id"]
         }
       },
       "policies": {},
@@ -107,9 +105,7 @@
         "wallet_user_id_unique": {
           "name": "wallet_user_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
+          "columns": ["user_id"]
         }
       },
       "policies": {},
@@ -324,9 +320,7 @@
         "wallet_auto_withdrawal_config_singletonKey_unique": {
           "name": "wallet_auto_withdrawal_config_singletonKey_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "singleton_key"
-          ]
+          "columns": ["singleton_key"]
         }
       },
       "policies": {},
@@ -406,12 +400,8 @@
           "name": "wallet_balance_wallet_id_wallet_id_fk",
           "tableFrom": "wallet_balance",
           "tableTo": "wallet",
-          "columnsFrom": [
-            "wallet_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["wallet_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -554,12 +544,8 @@
           "name": "wallet_bonus_credit_wallet_id_wallet_id_fk",
           "tableFrom": "wallet_bonus_credit",
           "tableTo": "wallet",
-          "columnsFrom": [
-            "wallet_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["wallet_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -621,9 +607,7 @@
         "wallet_bonus_rollover_config_singletonKey_unique": {
           "name": "wallet_bonus_rollover_config_singletonKey_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "singleton_key"
-          ]
+          "columns": ["singleton_key"]
         }
       },
       "policies": {},
@@ -1637,12 +1621,8 @@
           "name": "wallet_refunded_deposit_finding_id_wallet_reconciliation_finding_id_fk",
           "tableFrom": "wallet_refunded_deposit",
           "tableTo": "wallet_reconciliation_finding",
-          "columnsFrom": [
-            "finding_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["finding_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2176,12 +2156,8 @@
           "name": "wallet_transaction_wallet_id_wallet_id_fk",
           "tableFrom": "wallet_transaction",
           "tableTo": "wallet",
-          "columnsFrom": [
-            "wallet_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["wallet_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2407,61 +2383,32 @@
     "public.wallet_bonus_credit_source_type": {
       "name": "wallet_bonus_credit_source_type",
       "schema": "public",
-      "values": [
-        "gift",
-        "rain"
-      ]
+      "values": ["gift", "rain"]
     },
     "public.wallet_bonus_credit_status": {
       "name": "wallet_bonus_credit_status",
       "schema": "public",
-      "values": [
-        "active",
-        "completed"
-      ]
+      "values": ["active", "completed"]
     },
     "public.wallet_custody_sweep_status": {
       "name": "wallet_custody_sweep_status",
       "schema": "public",
-      "values": [
-        "pending",
-        "processing",
-        "completed",
-        "failed",
-        "unknown"
-      ]
+      "values": ["pending", "processing", "completed", "failed", "unknown"]
     },
     "public.wallet_job_run_status": {
       "name": "wallet_job_run_status",
       "schema": "public",
-      "values": [
-        "running",
-        "completed",
-        "skipped",
-        "failed",
-        "abandoned"
-      ]
+      "values": ["running", "completed", "skipped", "failed", "abandoned"]
     },
     "public.wallet_on_ramp_order_status": {
       "name": "wallet_on_ramp_order_status",
       "schema": "public",
-      "values": [
-        "pending",
-        "processing",
-        "completed",
-        "failed",
-        "cancelled",
-        "expired",
-        "refunded"
-      ]
+      "values": ["pending", "processing", "completed", "failed", "cancelled", "expired", "refunded"]
     },
     "public.wallet_rail": {
       "name": "wallet_rail",
       "schema": "public",
-      "values": [
-        "crypto",
-        "fiat"
-      ]
+      "values": ["crypto", "fiat"]
     },
     "public.wallet_reconciliation_finding_kind": {
       "name": "wallet_reconciliation_finding_kind",
@@ -2483,18 +2430,12 @@
     "public.wallet_reconciliation_finding_status": {
       "name": "wallet_reconciliation_finding_status",
       "schema": "public",
-      "values": [
-        "open",
-        "resolved"
-      ]
+      "values": ["open", "resolved"]
     },
     "public.wallet_transaction_direction": {
       "name": "wallet_transaction_direction",
       "schema": "public",
-      "values": [
-        "credit",
-        "debit"
-      ]
+      "values": ["credit", "debit"]
     },
     "public.wallet_transaction_status": {
       "name": "wallet_transaction_status",

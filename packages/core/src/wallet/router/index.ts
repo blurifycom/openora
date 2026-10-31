@@ -328,7 +328,14 @@ export function createWalletRouter({
     }),
 
     manualAdjustment: os.manualAdjustment.handler(async ({ input, context }) => {
-      const { userId: adminId, ip, userAgent } = await adminGuard.assertSuperAdmin(context);
+      const {
+        userId: adminId,
+        ip,
+        userAgent,
+      } = await adminGuard.assertSuperAdmin(context, {
+        resource: 'wallet',
+        action: 'manualAdjustment',
+      });
       return mapErrors(
         {
           NOT_FOUND: PlayerNotFoundError,

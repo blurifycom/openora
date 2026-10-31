@@ -180,7 +180,14 @@ export class AdminGuard {
     return new Map(entries.filter(([, held]) => held.length > 0));
   }
 
-  async assertSuperAdmin(context: unknown): Promise<AdminCaller> {
+  /**
+   * `subject` names the route for the audit trail only (`admin.<resource>.<action>`): the
+   * permission checked is always super-admin, which would label every such row `admin.admin`.
+   */
+  async assertSuperAdmin(
+    context: unknown,
+    subject: { resource: string; action: string } = { resource: 'admin', action: 'super-admin' },
+  ): Promise<AdminCaller> {
     const caller = await this.assert(context);
     const isSuper = this.permissionResolver
       ? await this.permissionResolver.isSuperAdmin(caller.userId)
@@ -202,8 +209,7 @@ export class AdminGuard {
     }
     noteGrantedPermission({
       userId: caller.userId,
-      resource: 'admin',
-      action: 'super-admin',
+      ...subject,
       ip: caller.ip,
       userAgent: caller.userAgent,
     });

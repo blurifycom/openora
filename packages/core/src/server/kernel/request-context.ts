@@ -5,9 +5,9 @@ import type { ClientMeta } from '@openora/core/contracts';
 export type RequestAuditTrail = {
   /** The first permission an admin guard granted (a `view` grant yields to any later one), with the caller it granted it to. */
   grant?: { userId: string; resource: string; action: string } & ClientMeta;
-  /** An audit row was appended. */
-  written: boolean;
-  /** Topics published, `emit` and `emitInTransaction` alike. */
+  /** The actors an audit row was appended for. */
+  writtenFor: Set<string>;
+  /** Topics published durably, through `emitInTransaction`: a best-effort `emit` can be lost. */
   published: Set<string>;
 };
 
@@ -42,7 +42,7 @@ export function withRequestContext<T>(ctx: RequestContext, fn: () => T): T {
 
 function auditTrail(): RequestAuditTrail | undefined {
   const store = requestStorage.getStore();
-  return store && (store.audit ??= { written: false, published: new Set() });
+  return store && (store.audit ??= { writtenFor: new Set(), published: new Set() });
 }
 
 /** The active request's audit trail, or undefined on system/background paths. */
@@ -57,10 +57,9 @@ export function noteGrantedPermission(grant: NonNullable<RequestAuditTrail['gran
   }
 }
 
-export function noteAuditWrite(): void {
-  const trail = auditTrail();
-  if (trail) {
-    trail.written = true;
+export function noteAuditWrite(actorId: string | null | undefined): void {
+  if (actorId) {
+    auditTrail()?.writtenFor.add(actorId);
   }
 }
 

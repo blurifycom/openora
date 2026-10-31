@@ -116,32 +116,38 @@ export const AUDIT_COVERAGE_GAPS = {
   'sportsbook.bet.placed': {
     kind: 'atSource',
     writer: 'SportsbookLedger.announceBet via recordInTransaction',
-    reason: 'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
+    reason:
+      'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
   },
   'sportsbook.bet.accepted': {
     kind: 'atSource',
     writer: 'SportsbookLedger.announceBet via recordInTransaction',
-    reason: 'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
+    reason:
+      'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
   },
   'sportsbook.bet.cancelled': {
     kind: 'atSource',
     writer: 'SportsbookLedger.announceBet via recordInTransaction',
-    reason: 'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
+    reason:
+      'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
   },
   'sportsbook.bet.settled': {
     kind: 'atSource',
     writer: 'SportsbookLedger.announceBet via recordInTransaction',
-    reason: 'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
+    reason:
+      'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
   },
   'sportsbook.bet.reopened': {
     kind: 'atSource',
     writer: 'SportsbookLedger.announceBet via recordInTransaction',
-    reason: 'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
+    reason:
+      'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
   },
   'sportsbook.restriction.changed': {
     kind: 'atSource',
     writer: 'SportsbookRestriction via recordInTransaction',
-    reason: 'joins the restriction write and the sessions it revokes; the event carries auditRecorded',
+    reason:
+      'joins the restriction write and the sessions it revokes; the event carries auditRecorded',
   },
   'sportsbook.debt.changed': {
     kind: 'atSource',

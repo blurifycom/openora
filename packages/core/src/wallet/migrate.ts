@@ -14,7 +14,13 @@ const LEDGER_RECORD_SQL = appendOnlyTableSql('wallet_transaction', {
     'provider_ref_id',
     'tx_hash',
   ],
-  setOnceColumns: ['balance_after'],
+  setOnceColumns: ['balance_after', 'real_share'],
+  // A finished row cannot be reopened: a rejected withdrawal put back to `pending` would be
+  // rejected and refunded a second time.
+  terminal: {
+    column: 'status',
+    values: ['completed', 'failed', 'rejected', 'cancelled', 'refunded'],
+  },
 });
 
 export function migrate(databaseUrl?: string) {

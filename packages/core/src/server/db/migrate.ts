@@ -55,7 +55,9 @@ const SQL_IDENTIFIER = /^[a-z][a-z0-9_]*$/;
 /**
  * `postSql` that makes `table` a protected record: DELETE is denied for the whole statement (as
  * the audit log does), and an UPDATE may change only `mutableColumns`, plus `setOnceColumns` while
- * they are still NULL. Every other column, one added later included, is immutable until named
+ * they are still NULL. A `terminal` column also freezes once it holds one of its `values`, and its
+ * `growOnly` columns can then only increase, so a finished row cannot be reopened or rewritten
+ * downwards. Every other column, one added later included, is immutable until named
  * here. TRUNCATE is untouched, which keeps test and dev resets working. There is no bypass: a
  * deliberate repair is a migration that disables the trigger itself. The UPDATE check runs per
  * row, so an UPDATE that matches nothing passes.
@@ -67,10 +69,22 @@ const SQL_IDENTIFIER = /^[a-z][a-z0-9_]*$/;
  */
 export function appendOnlyTableSql(
   table: string,
-  { mutableColumns, setOnceColumns = [] }: { mutableColumns: string[]; setOnceColumns?: string[] },
+  {
+    mutableColumns,
+    setOnceColumns = [],
+    terminal,
+  }: {
+    mutableColumns: string[];
+    setOnceColumns?: string[];
+    terminal?: { column: string; values: string[]; growOnly?: string[] };
+  },
 ): string {
   const columns = [...mutableColumns, ...setOnceColumns];
-  for (const name of [table, ...columns]) {
+  for (const name of [
+    table,
+    ...columns,
+    ...(terminal ? [terminal.column, ...terminal.values, ...(terminal.growOnly ?? [])] : []),
+  ]) {
     if (!SQL_IDENTIFIER.test(name)) {
       throw new Error(`Invalid SQL identifier: ${name}`);
     }
@@ -85,6 +99,20 @@ export function appendOnlyTableSql(
      END IF;`,
     )
     .join('\n     ');
+  const terminalChecks = terminal
+    ? `IF OLD.${terminal.column}::text = ANY(ARRAY[${terminal.values.map((value) => `'${value}'`).join(', ')}]) THEN
+       IF NEW.${terminal.column} IS DISTINCT FROM OLD.${terminal.column} THEN
+         RAISE EXCEPTION '${table} is append-only: ${terminal.column} cannot change once final';
+       END IF;
+       ${(terminal.growOnly ?? [])
+         .map(
+           (column) => `IF NEW.${column} < OLD.${column} THEN
+         RAISE EXCEPTION '${table} is append-only: ${column} cannot decrease once final';
+       END IF;`,
+         )
+         .join('\n       ')}
+     END IF;`
+    : '';
   const createTriggerIfMissing = (name: string, timing: string, each: string, fn: string) =>
     `IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '${table}'::regclass AND tgname = '${name}') THEN
        CREATE TRIGGER ${name} BEFORE ${timing} ON ${table} FOR EACH ${each} EXECUTE FUNCTION ${fn}();
@@ -100,6 +128,7 @@ export function appendOnlyTableSql(
        RAISE EXCEPTION '${table} is append-only: UPDATE may change only ${columns.join(', ')}';
      END IF;
      ${setOnceChecks}
+     ${terminalChecks}
      RETURN NEW;
    END;
    $$;

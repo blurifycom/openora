@@ -6,6 +6,13 @@ import { appendOnlyTableSql, runMigrations } from '@openora/core/server/migrate'
 
 const GAME_ROUND_RECORD_SQL = appendOnlyTableSql('game_round', {
   mutableColumns: ['status', 'bet_amount', 'win_amount', 'ended_at'],
+  // A settled round still takes late aggregator deltas (`accumulateExternalRound`), so its totals
+  // stay writable but only upwards, and it cannot return to `active`.
+  terminal: {
+    column: 'status',
+    values: ['completed', 'cancelled'],
+    growOnly: ['bet_amount', 'win_amount'],
+  },
 });
 
 /** Apply the gaming module migrations (idempotent: drizzle skips already-recorded ones). */

@@ -115,7 +115,9 @@ export const walletTransaction = pgTable(
     currency: text().notNull(),
     // The wallet's real balance in `currency` right after this row's money moved, written in the
     // same transaction as the move. The balance before is this minus the signed `amount`, except
-    // for a stake bonus funds partly paid (they sit on the grant, not here). Set once, when the
+    // for a stake bonus funds partly paid (they sit on the grant, not here) and for a win or bet
+    // reversal on a bonus-funded round: those write the full `amount` but move the balance by
+    // the real share only. Set once, when the
     // balance moves: a deposit's at completion, a withdrawal's at the request. NULL on rows written
     // before this column existed and on rows that moved no balance (a pending deposit, a failed one).
     balanceAfter: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),

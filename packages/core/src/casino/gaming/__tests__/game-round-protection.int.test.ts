@@ -101,6 +101,15 @@ describe('game_round record protection (real PG)', () => {
     expect(Number(after?.winAmount)).toBe(25);
   });
 
+  it('keeps a settled round settled and its totals from shrinking, while late deltas still add', async () => {
+    const round = await seedRound();
+    await update(round.id, { status: 'completed', winAmount: '25' });
+
+    await rejectedWith(update(round.id, { status: 'active' }), /cannot change once final/);
+    await rejectedWith(update(round.id, { winAmount: '0' }), /cannot decrease once final/);
+    await expect(update(round.id, { winAmount: '30', betAmount: '6' })).resolves.toBeDefined();
+  });
+
   it('passes an update that matches no round', async () => {
     await expect(update(randomUUID(), { gameId: randomUUID() })).resolves.toBeDefined();
   });

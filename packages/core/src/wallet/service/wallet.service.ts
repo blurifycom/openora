@@ -607,7 +607,7 @@ export async function stampBalanceAfter(
 }
 
 /** `creditWalletBalance`, then stamps the resulting balance on the ledger row that records the credit. */
-export async function creditAndStampBalance(
+async function creditAndStampBalance(
   txn: DrizzleDb,
   transactionId: WalletTransaction['id'],
   walletId: Wallet['id'],
@@ -2058,8 +2058,8 @@ export class WalletService {
         });
 
         if (this.tagEvaluationCommands) {
-        await this.tagEvaluationCommands.evaluateWithdrawalRequested(txn, { userId, amount });
-      }
+          await this.tagEvaluationCommands.evaluateWithdrawalRequested(txn, { userId, amount });
+        }
 
         await this.events.emitInTransaction(txn, 'wallet.withdrawal.requested', {
           userId,

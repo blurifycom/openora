@@ -8,6 +8,7 @@ import { user } from '@openora/core/pam/schema/identity';
 import {
   asAdmin,
   registerAndMaterializePlayer,
+  registerPlayer,
   uniqueUsername,
   type TestApp,
   type TestClient,
@@ -82,7 +83,8 @@ describe('fallback audit for admin mutations', () => {
         result: 'success',
         after: {
           route: 'gaming.setGamesActive',
-          input: { gameIds: [activeGameId], isActive: true },
+          inputKeys: ['gameIds', 'isActive'],
+          inputHash: expect.any(String),
         },
       }),
     ]);
@@ -108,7 +110,7 @@ describe('fallback audit for admin mutations', () => {
     expect(await fallbackRows()).toHaveLength(before);
   });
 
-  it('records a failed mutation with its error code and the input, secrets redacted', async () => {
+  it('records a failed mutation with its error code and the input field names, never the values', async () => {
     const pageId = randomUUID();
     const res = await admin.put(`/cms/pages/${pageId}`, {
       title: 'Missing page',
@@ -127,11 +129,8 @@ describe('fallback audit for admin mutations', () => {
         after: {
           route: 'cms.updatePage',
           errorCode: 'NOT_FOUND',
-          input: {
-            id: pageId,
-            title: 'Missing page',
-            content: { body: 'visible', apiKey: '[redacted]', nested: { password: '[redacted]' } },
-          },
+          inputKeys: ['content', 'id', 'title'],
+          inputHash: expect.any(String),
         },
       }),
     ]);
@@ -139,7 +138,7 @@ describe('fallback audit for admin mutations', () => {
       .select({ id: auditLog.id })
       .from(auditLog)
       .where(
-        sql`${auditLog.after}::text LIKE '%sk_live_do_not_store%' OR ${auditLog.after}::text LIKE '%hunter2%'`,
+        sql`${auditLog.after}::text LIKE '%sk_live_do_not_store%' OR ${auditLog.after}::text LIKE '%hunter2%' OR ${auditLog.after}::text LIKE '%visible%'`,
       );
     expect(leaked).toEqual([]);
   });
@@ -165,5 +164,37 @@ describe('fallback audit for admin mutations', () => {
       .from(auditLog)
       .where(and(like(auditLog.action, 'admin.%'), eq(auditLog.actorType, 'player')));
     expect(byPlayer).toEqual([]);
+  });
+
+  it('writes nothing when a granted admin is then refused by the handler', async () => {
+    const email = `fallback-audit-staff-${randomUUID()}@e2e.test`;
+    const staffId = await registerPlayer(testApp, { email });
+    await drizzle().update(user).set({ role: 'admin' }).where(eq(user.id, staffId));
+    const role = (await (
+      await admin.post('/iam/roles', { name: `Fallback ${staffId}` })
+    ).json()) as {
+      id: string;
+    };
+    expect(
+      (
+        await admin.put(`/iam/roles/${role.id}/permissions`, {
+          grants: [{ resource: 'player', level: 'read_write' }],
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (await admin.post('/iam/assignments', { userId: staffId, roleId: role.id })).status,
+    ).toBe(200);
+    const staff = await asAdmin(testApp.app, { email });
+    const { userId: targetId } = await registerAndMaterializePlayer(testApp, {
+      email: `fallback-audit-${randomUUID()}@e2e.test`,
+    });
+    const before = (await fallbackRows()).length;
+
+    // `player:update` passes, then changing a role needs super admin and the handler refuses.
+    const res = await staff.patch(`/backoffice/users/${targetId}`, { role: 'admin' });
+    expect(res.status).toBe(403);
+
+    expect(await fallbackRows()).toHaveLength(before);
   });
 });

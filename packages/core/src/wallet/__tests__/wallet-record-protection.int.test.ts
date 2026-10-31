@@ -104,6 +104,16 @@ describe('wallet_transaction record protection (real PG)', () => {
     expect(after?.status).toBe('completed');
   });
 
+  it.each(['completed', 'failed', 'rejected'] as const)(
+    'rejects reopening a %s row, so a refund cannot run twice',
+    async (final) => {
+      const row = await seedLedgerRow({ status: final });
+
+      await rejectedWith(update(row.id, { status: 'pending' }), /cannot change once final/);
+      await expect(update(row.id, { reviewReason: 'noted' })).resolves.toBeDefined();
+    },
+  );
+
   it('fills balanceAfter once, then freezes it, while provider references stay updatable', async () => {
     const row = await seedLedgerRow();
 

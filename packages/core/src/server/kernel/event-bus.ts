@@ -113,7 +113,6 @@ export function createEventBus({
 }: EventBusDeps): EventBus {
   function publishEvent(event: string, payload: unknown): void {
     parseKnownPayload(event, payload);
-    notePublishedTopic(event);
     const envelope = buildEnvelope(event, payload);
     void Promise.resolve(broker.publish(envelope)).catch((err) =>
       logger.error({ event, err }, 'event publish failed'),

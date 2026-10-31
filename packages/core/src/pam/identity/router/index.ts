@@ -463,7 +463,10 @@ export function createIdentityRouter(
 
       resetUserTwoFactor: os.adminSecurity.resetUserTwoFactor.handler(
         async ({ input, context }) => {
-          const caller = await adminGuard.assertSuperAdmin(context);
+          const caller = await adminGuard.assertSuperAdmin(context, {
+            resource: 'player',
+            action: 'resetTwoFactor',
+          });
           return mapErrors(
             { NOT_FOUND: UserNotFoundError, CONFLICT: SelfTwoFactorResetError },
             () =>
@@ -491,7 +494,10 @@ export function createIdentityRouter(
 
       revokeUserTrustedDevice: os.adminSecurity.revokeUserTrustedDevice.handler(
         async ({ input, context }) => {
-          const caller = await adminGuard.assertSuperAdmin(context);
+          const caller = await adminGuard.assertSuperAdmin(context, {
+            resource: 'player',
+            action: 'revokeTrustedDevice',
+          });
           return mapErrors({ NOT_FOUND: TrustedDeviceNotFoundError }, () =>
             adminSecurity.revokeTrustedDevice(input.userId, input.id, caller.userId, {
               ip: caller.ip,

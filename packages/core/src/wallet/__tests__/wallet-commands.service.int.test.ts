@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import {
   definePlatformConfig,
+  MaxBetExceededError,
   type BonusGrantCommands,
   type BonusWageringCommands,
   type PlayEligibilityPort,
@@ -13,7 +14,6 @@ import { createTestDb, waitForRowLockWaiter, type TestDb } from '@openora/core/t
 import { mock, makeAuditWriter, makeIdentityReader } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
-import { MaxBetExceededError } from '@openora/core/contracts';
 import {
   WalletCommandsService,
   WalletRgRestrictedError,

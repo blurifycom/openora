@@ -95,7 +95,15 @@ export const WalletConfigSchema = z
      * currency without an entry is never flagged. Absent = disabled. One transaction only; a
      * player's total over a period is not summed.
      */
-    significantAmountThresholds: z.record(z.string(), MoneyAmountSchema).optional(),
+    significantAmountThresholds: z
+      .record(z.string(), MoneyAmountSchema)
+      .refine(
+        (thresholds) =>
+          new Set(Object.keys(thresholds).map((code) => code.toUpperCase())).size ===
+          Object.keys(thresholds).length,
+        'a currency appears twice, ignoring case',
+      )
+      .optional(),
     /**
      * Vendor-side account each provider's sweeps move player funds into, keyed by the
      * provider name in `wallet_asset.providerName` (`default` for the single bound
