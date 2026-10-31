@@ -19,6 +19,14 @@ const logger = createLogger('mail');
 
 export default {
   id: 'mail',
+  optionalPorts: [{ port: PLAY_ELIGIBILITY, without: 'welcome mails never offer promotions' }],
+  controlPorts: [
+    {
+      port: AUDIT_WRITER,
+      without: 'regulatory mails go out without an audit record',
+      boundBy: 'audit',
+    },
+  ],
   register(ctx) {
     const encryptionSecret = process.env['AUTH_SECRET'] ?? '';
     if (encryptionSecret.length < MIN_MAIL_ENCRYPTION_SECRET_LENGTH) {

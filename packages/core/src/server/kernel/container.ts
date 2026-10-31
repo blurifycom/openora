@@ -74,10 +74,14 @@ export class Container<C extends TokenCatalog> {
     }
 
     this.resolving.add(token);
-    const instance = factory(this) as TokenValue<T>;
-    this.resolving.delete(token);
-    this.instances.set(token, instance);
-    return instance;
+    try {
+      const instance = factory(this) as TokenValue<T>;
+      this.instances.set(token, instance);
+      return instance;
+    } finally {
+      // A factory that refuses keeps refusing with its own error, not a circular dependency.
+      this.resolving.delete(token);
+    }
   }
 
   onDispose(fn: () => void | Promise<void>): void {

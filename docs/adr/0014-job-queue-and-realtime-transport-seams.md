@@ -7,6 +7,8 @@
 > **Update (2026-07-25)**: [ADR-0039](./0039-tests-run-the-production-seams.md) deleted `InProcessJobQueue` - the test suite binds `BullMqJobQueue` too. `InProcessRealtimeTransport` stays, but as `createApp`'s production default rather than a test double, since core ships no realtime driver. The seam shapes are unchanged.
 >
 > **Update (2026-08-31)**: [ADR-0031](./0031-realtime-transport-sse-and-http-over-web-sockets.md) shipped `RedisPubSubRealtimeTransport` and deleted `InProcessRealtimeTransport` too - `REALTIME_TRANSPORT` now auto-binds on `REDIS_URL` exactly like `JOB_QUEUE`, with no in-process fallback either. Both seams from this ADR are now fully superseded on the production-default question; the seam shapes and the client-push-is-not-inter-module decision are still unchanged.
+>
+> **Update (2026-10-13)**: a worker still starts at boot against the resolved `JOB_QUEUE`, unless `JOB_WORKERS` leaves its queue to another process ([ADR-0046](./0046-per-process-job-worker-selection.md)).
 
 ## Context
 

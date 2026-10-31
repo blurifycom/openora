@@ -121,7 +121,7 @@ export type ModuleRegistry<C extends TokenCatalog> = {
     listen(listener: TriggerListener): void;
     getAll(): readonly RegisteredTriggerListener[];
   };
-  // Started at boot against the resolved JOB_QUEUE (after all providers, so an overlay's durable driver is in effect). See ADR-0014.
+  // Started at boot against the resolved JOB_QUEUE (after all providers, so an overlay's durable driver is in effect), unless JOB_WORKERS leaves the queue to another process. See ADR-0014, ADR-0046.
   jobs: {
     worker<T>(registration: WorkerRegistration<T>): void;
     getAll(): WorkerRegistration<unknown>[];
@@ -147,10 +147,39 @@ export type ModuleRegistry<C extends TokenCatalog> = {
 
 export type PluginContext<C extends TokenCatalog> = ModuleRegistry<C>;
 
+/** A port a plugin resolves with `c.has()`: it runs without one, minus what the port backs. */
+export type OptionalPort<C extends TokenCatalog> = {
+  port: C[keyof C];
+  /** What the plugin skips while the port is unbound, as the boot log states it. */
+  without: string;
+};
+
+/**
+ * An optional port behind a money, compliance, authorization or audit control. An install
+ * without the module that binds it has nothing to enforce, so a full boot runs without it. A
+ * split service runs beside a process that has that module, so it may not.
+ */
+export type ControlPort<C extends TokenCatalog> = OptionalPort<C> & {
+  /** The module that binds the port, named when a SERVICE_MANIFEST leaves the port unbound. */
+  boundBy: string;
+};
+
 export type Plugin<C extends TokenCatalog> = {
   id: string;
   dependsOn?: readonly string[];
   // Verified once after all plugins register - a missing port fails fast. See ADR-0024.
   requiresPorts?: readonly (C[keyof C] & Token<unknown>)[];
+  // Checked at the same point; an unbound one is logged, not fatal.
+  optionalPorts?: readonly OptionalPort<C>[];
+  // Logged like optionalPorts, but an unbound one fails a SERVICE_MANIFEST boot.
+  controlPorts?: readonly ControlPort<C>[];
+  /**
+   * Declares into `ctx` what the plugin contributes, and does nothing else: no timer, connection,
+   * file or network read, process listener, global, or `process.env` write. A SERVICE_MANIFEST
+   * boot that fails registers every plugin it has not registered yet, each into a container of
+   * its own that is then dropped, to learn which binds which port. Open a resource in a
+   * `provide()` or router factory, closing it with `c.onDispose()`: those run only for the
+   * container that serves. Reading configuration and throwing on a bad value is fine.
+   */
   register(ctx: PluginContext<C>): void | Promise<void>;
 };

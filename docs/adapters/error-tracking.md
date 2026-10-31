@@ -63,19 +63,25 @@ export default {
     if (!dsn) {
       return; // self-disabling: no DSN -> platform stays logs-only
     }
-    Sentry.init({ dsn });
-    ctx.provide(ERROR_TRACKING, () => ({
-      captureException(error, context) {
-        Sentry.captureException(error, {
-          ...(context?.userId ? { user: { id: context.userId } } : {}),
-          tags: { ...context?.tags, ...(context?.traceId ? { trace_id: context.traceId } : {}) },
-          ...(context?.extra ? { extra: context.extra } : {}),
-        });
-      },
-    }));
+    ctx.provide(ERROR_TRACKING, () => {
+      Sentry.init({ dsn });
+      return {
+        captureException(error, context) {
+          Sentry.captureException(error, {
+            ...(context?.userId ? { user: { id: context.userId } } : {}),
+            tags: { ...context?.tags, ...(context?.traceId ? { trace_id: context.traceId } : {}) },
+            ...(context?.extra ? { extra: context.extra } : {}),
+          });
+        },
+      };
+    });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;
 ```
+
+`Sentry.init` runs in the factory, which `createApp` resolves once for the container that serves,
+not in `register()`: a failed `SERVICE_MANIFEST` boot registers plugins into a container it then
+drops (ADR-0046). Initialising in a file preloaded with `node --import` works as well.
 
 Register it last in `extensions.config.ts` (a `kind: 'infra'` overlay). A PostHog/Rollbar shop
 writes the equivalent overlay against the same port - core is unchanged.

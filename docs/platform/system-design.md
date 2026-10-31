@@ -276,14 +276,23 @@ sequenceDiagram
 ```mermaid
 flowchart TB
   CODE["Single codebase · extensions.config.ts"]
-  CODE --> MONO["SERVICE_MANIFEST unset to MONOLITH<br/>all 15 modules, in-process seams"]
-  CODE --> SPLIT["SERVICE_MANIFEST=identity,wallet,...<br/>per-module thin host (pnpm create:service)"]
-  SPLIT --> S1["identity svc"]
-  SPLIT --> S2["wallet svc"]
-  SPLIT --> S3["casino svc"]
-  S1 & S2 & S3 ---|"durable broker (AMQP_URL)<br/>events cross process · outbox at-least-once"| RMQ[("RabbitMQ/Kafka")]
-  S1 & S2 & S3 --- PG[("PostgreSQL")]
+  CODE --> MONO["SERVICE_MANIFEST unset: every module<br/>API replicas: JOB_WORKERS=!reports.*"]
+  CODE --> WORKER["same plugins and SERVICE_NAME, no ingress<br/>JOB_WORKERS=reports.*"]
+  CODE --> SPLIT["SERVICE_MANIFEST=wallet,identity,audit,...<br/>own SERVICE_NAME (pnpm create:service)"]
+  MONO & WORKER & SPLIT ---|"Redis Streams events · BullMQ jobs (REDIS_URL)"| REDIS[("Redis")]
+  MONO & WORKER & SPLIT --- PG[("PostgreSQL")]
 ```
+
+A manifest lists every module its modules depend on and every module that binds a port they
+require; `createApp` applies it to any plugin list. It logs each optional port a manifest leaves
+unbound, with what the module skips without it, and refuses to boot over a control port - an RG
+limit, a geo check, an audit record, AdminGuard's database grants - whose module the plugin list
+has but the manifest leaves out. Whatever is missing fails the boot once, with one manifest line
+that adds it all. A split service
+needs a `SERVICE_NAME` of its own - its consumer group - while an instance that only takes a
+share of the queues keeps the replicas' `SERVICE_NAME`, so it competes for events rather than
+receiving a copy. `JOB_WORKERS` picks the queues a process consumes
+([ADR-0046](../adr/0046-per-process-job-worker-selection.md)).
 
 ## Reference - domain -> modules -> tables -> routes
 

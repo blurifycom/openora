@@ -62,6 +62,8 @@ await tags.evaluate(tx, { playerId });
 
 Canonical seams to copy: `wallet -> tag` via `TAG_EVALUATION_COMMANDS` (optional port, resolved lazily with `c.has(...)` in the router factory), `compliance -> pam` via the `kyc.status.changed` domain event.
 
+A port whose absence only degrades a feature, or already fails closed, goes in the plugin's `optionalPorts` with what the module skips without it; the boot logs each one left unbound. A port whose absence skips a money, compliance, authorization or audit control - an RG limit, a geo check, an audit record, a token revocation - goes in `controlPorts` instead, with the module that binds it (`wallet`, `gaming`, `identity`, `mail`). A full boot logs it the same way, since an install without that module has nothing to enforce; a `SERVICE_MANIFEST` boot refuses to start while it is unbound and the plugin list has that module, because another process of the install enforces the control.
+
 Money + any needed-now mutation stay synchronous/transactional, never over events - use a command port: caller passes its own `tx` (`WALLET_COMMANDS.debit(tx, ...)`), atomic in-process yet splittable later; declare `dependsOn: ['<owner>']`. Cross-module schema reads are sanctioned but each one is an extraction blocker. ADR-0017.
 
 **Never write a deep (`../../`+) relative import that leaves your own top-level dir under `packages/core/src/` - reach every other zone through the package's own `@openora/core/*` subpath.** A relative import is only for staying inside your own module/zone (`./schema/index.js`, `../db/index.js`). The moment a `..` would cross into another domain, slice, or engine zone, it's a `@openora/core/*` import instead:

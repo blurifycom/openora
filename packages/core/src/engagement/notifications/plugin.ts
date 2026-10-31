@@ -552,11 +552,18 @@ export function buildRgLimitAdminUpdatedNotification(
   });
 }
 
+const logger = createLogger('notifications');
+
 export default {
   id: 'notifications',
+  controlPorts: [
+    {
+      port: GEO_CHECK_COMMANDS,
+      without: 'welcome mails offer promotions without the country check',
+      boundBy: 'compliance',
+    },
+  ],
   register(ctx) {
-    const logger = createLogger('notifications');
-
     // Subscriptions are wired before router factories run (boot order), so these refs are
     // null at registration but set from the router factory before any real event arrives.
     let svcRef: NotificationsService | null = null;

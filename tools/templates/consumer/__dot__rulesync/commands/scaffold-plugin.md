@@ -7,7 +7,10 @@ Run `pnpm gen plugin $ARGUMENTS` in the repo root. For a vendor swap use
 `pnpm gen adapter <name> <TOKEN> <dependsOn>`; for a react-sdk page use `pnpm gen page <route>`.
 
 After the generator finishes, open `apps/api/src/extensions/<name>/plugin.ts` and implement
-`register(ctx)`:
+`register(ctx)`. It only declares: a timer, connection, file or network read, process listener,
+global or `process.env` write goes in a `provide()` or router factory, closed with
+`c.onDispose()`, because a failed `SERVICE_MANIFEST` boot registers plugins into a container it
+then drops.
 
 - `ctx.provide(TOKEN, factory)` - bind an adapter/service (sealed compliance tokens are rejected at
   compile + runtime).

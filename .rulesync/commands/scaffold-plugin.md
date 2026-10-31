@@ -6,7 +6,7 @@ description: 'Generate a new overlay extension plugin under extensions/<name>/. 
 
 Run `pnpm gen plugin $ARGUMENTS` in the repo root. Variants: `pnpm gen adapter <name> <TOKEN> <dependsOn>` for a vendor-adapter swap; `pnpm gen job-worker <name>` for a background-job worker.
 
-The generator creates `extensions/<name>/plugin.ts` and registers it in `extensions.config.ts`. Then implement `register(ctx)`:
+The generator creates `extensions/<name>/plugin.ts` and registers it in `extensions.config.ts`. Then implement `register(ctx)`. It only declares: a timer, connection, file or network read, process listener, global or `process.env` write goes in a `provide()` or router factory, closed with `c.onDispose()`, because a failed `SERVICE_MANIFEST` boot registers plugins into a container it then drops (ADR-0046).
 
 - `ctx.provide(TOKEN, factory)` - bind/override an adapter or service. Last registration wins, so an overlay loaded after the default-binding module replaces the default - keep the order in `extensions.config.ts` intentional. Sealed compliance tokens (`@openora/core/compliance`) are rejected at compile time + runtime.
 - `ctx.routers.add(namespace, (c) => router)` - mount oRPC routes.
