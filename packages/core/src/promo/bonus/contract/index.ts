@@ -18,7 +18,19 @@ import {
   SignedMoneyAmountSchema,
   TimestampSchema,
   UuidSchema,
+  WagerProductSchema,
+  type WagerProduct,
 } from '@openora/core/contracts';
+
+/**
+ * Products whose stakes only ever move real money. The engine never draws a grant's funds for one,
+ * never attributes it to a grant and never checks it against a grant's max bet; it still counts
+ * toward wager tracking at its full stake.
+ */
+const REAL_MONEY_ONLY_PRODUCTS = ['sportsbook'] as const satisfies readonly WagerProduct[];
+
+export const isRealMoneyOnlyProduct = (product: WagerProduct): boolean =>
+  REAL_MONEY_ONLY_PRODUCTS.some((p) => p === product);
 
 /**
  * What a weight row targets, most specific first. A bet resolves against a profile in this
@@ -124,6 +136,8 @@ export const BonusGrantTermsSchema = z.object({
   maxBet: MoneyAmountSchema.nullable().optional(),
   /** Cap on conversion as a multiple of the granted amount. Absent or null for no cap. */
   maxWinMultiplier: MoneyAmountSchema.nullable().optional(),
+  /** Products bonus funds cannot pay for. Absent or empty allows every product. */
+  excludedProducts: z.array(WagerProductSchema).optional(),
 });
 
 /** An offer as an admin configures it. */

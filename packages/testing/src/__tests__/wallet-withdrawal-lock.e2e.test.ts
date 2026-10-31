@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { DRIZZLE } from '@openora/core/server';
+import { WALLET_COMMANDS } from '@openora/core/contracts';
 import {
   registerAndMaterializePlayer,
   asAdmin,
@@ -124,5 +126,38 @@ describe('withdrawal_lock through the real tag and wallet routes', () => {
     expect(tagActions).toEqual(
       expect.arrayContaining(['tag.player.assigned', 'tag.player.removed']),
     );
+  });
+});
+
+describe('a module withdrawal hold through the real wallet routes', () => {
+  it('refuses new and queued withdrawals while held, and approves the queued one once released', async () => {
+    const { client, userId } = await fundedPlayer();
+    const queued = await readJson(await requestWithdrawal(client));
+    expect(queued.status).toBe('pending');
+    const db = app.container.get(DRIZZLE).db;
+    const commands = app.container.get(WALLET_COMMANDS);
+    await commands.placeWithdrawalHold(db, { userId, source: 'e2e', reason: 'E2E: debt' });
+
+    const refused = await requestWithdrawal(client);
+    expect(refused.status).toBe(409);
+    expect((await readJson(refused)).data).toEqual({ reason: 'withdrawal_held' });
+
+    const approveWhileHeld = await approve(queued.transactionId);
+    expect(approveWhileHeld.status).toBe(409);
+    expect((await readJson(approveWhileHeld)).data).toEqual({ reason: 'withdrawal_held' });
+    expect(await withdrawalStatus(queued.transactionId)).toBe('pending');
+
+    const queue = await readJson(await admin.get('/wallet/withdrawals?page=1&limit=100'));
+    expect(
+      queue.items.find(
+        (item: { transactionId: string }) => item.transactionId === queued.transactionId,
+      )?.withdrawalHeld,
+    ).toBe(true);
+
+    await commands.releaseWithdrawalHold(db, { userId, source: 'e2e' });
+
+    const approved = await approve(queued.transactionId);
+    expect(approved.status).toBe(200);
+    expect((await readJson(approved)).status).toBe('completed');
   });
 });

@@ -6,6 +6,9 @@ import {
   MoneyAmountSchema,
   TimestampSchema,
   UuidSchema,
+  WAGER_PRODUCTS,
+  WagerProductSchema,
+  type WagerProduct,
 } from '@openora/core/contracts';
 
 export const RankTierSchema = z.object({
@@ -141,6 +144,19 @@ export const DEFAULT_PAYOUT_ANCHORS: RankPayoutAnchors = {
   monthlyDay: 1,
 };
 
+/**
+ * What rakeback and the rank challenge count when the operator has set no list of their own:
+ * every product but sportsbook, whose stakes still count toward the rank itself.
+ */
+export const DEFAULT_RANK_PERK_PRODUCTS = [
+  'casino',
+  'live-casino',
+  'pvp',
+] as const satisfies readonly WagerProduct[];
+
+/** Empty counts every product. */
+const RankPerkProductsSchema = z.array(z.enum(WAGER_PRODUCTS)).max(WAGER_PRODUCTS.length);
+
 export const RankConfigSchema = z.object({
   /**
    * What a rank reward is actually credited in, when that differs from the ladder's own
@@ -166,8 +182,8 @@ export const RankConfigSchema = z.object({
   periodicRequiresActivity: z.boolean().prefault(true),
   /**
    * How much a player has to wager inside the period to qualify for its bonus, in the ladder's
-   * currency. Absent means any single bet qualifies, which is what "played" meant before there
-   * was a number to put on it.
+   * currency. `null` means any single bet qualifies, which is what "played" meant before there
+   * was a number to put on it. A save that leaves it out keeps the stored value.
    */
   periodicMinimumWager: MoneyAmountSchema.refine(
     isAbsentOrPositive,
@@ -175,6 +191,10 @@ export const RankConfigSchema = z.object({
   ).nullish(),
   /** Products whose stakes count toward a rank. Empty counts every product. */
   eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
+  /** Products whose stakes earn rakeback. A stake must count toward the rank as well. */
+  rakebackEligibleProducts: RankPerkProductsSchema,
+  /** Products whose stakes count toward the rank challenge. */
+  rankChallengeEligibleProducts: RankPerkProductsSchema,
   rewards: z
     .object({
       levelUp: RankRewardTermsSchema,
@@ -187,6 +207,17 @@ export const RankConfigSchema = z.object({
 });
 
 export type RankConfig = z.infer<typeof RankConfigSchema>;
+
+/**
+ * A list left out keeps what is stored, or `DEFAULT_RANK_PERK_PRODUCTS` on the first save. A
+ * `periodicMinimumWager` left out keeps what is stored, or `null`.
+ */
+export const SetRankConfigInputSchema = RankConfigSchema.extend({
+  rakebackEligibleProducts: RankPerkProductsSchema.optional(),
+  rankChallengeEligibleProducts: RankPerkProductsSchema.optional(),
+});
+export type SetRankConfigInput = z.infer<typeof SetRankConfigInputSchema>;
+export type RankConfigInput = z.input<typeof SetRankConfigInputSchema>;
 
 /**
  * A daily-streak milestone reward. `bonus` and `giftDrop` both credit through BONUS_GRANTS;
@@ -340,6 +371,11 @@ export type RacePositions = z.infer<typeof RacePositionsSchema>;
 export const RaceEligibleProductsSchema = z.array(z.string().trim().min(1).max(64)).max(50);
 export type RaceEligibleProducts = z.infer<typeof RaceEligibleProductsSchema>;
 
+const RaceEligibleProductsInputSchema = z
+  .array(WagerProductSchema)
+  .min(1, 'select at least one product')
+  .refine((products) => new Set(products).size === products.length, 'products must not repeat');
+
 const RaceFieldsShape = {
   name: z.string().min(1).max(200),
   currency: CurrencyTickerSchema,
@@ -347,20 +383,22 @@ const RaceFieldsShape = {
   endAt: TimestampSchema,
   prizePool: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
   positions: RacePositionsSchema,
-  /** Products whose stakes count toward this race. Empty counts every product. */
+  /** Products whose stakes count toward this race. */
   eligibleProducts: RaceEligibleProductsSchema,
 } as const;
+
+const RaceInputShape = { ...RaceFieldsShape, eligibleProducts: RaceEligibleProductsInputSchema };
 
 const raceDatesOrdered = (v: { startAt: string; endAt: string }) =>
   new Date(v.endAt).getTime() > new Date(v.startAt).getTime();
 
 export const CreateRaceInputSchema = z
-  .object(RaceFieldsShape)
+  .object(RaceInputShape)
   .refine(raceDatesOrdered, { message: 'endAt must be after startAt', path: ['endAt'] });
 export type CreateRaceInput = z.infer<typeof CreateRaceInputSchema>;
 
 export const UpdateRaceInputSchema = z
-  .object({ raceId: UuidSchema, ...RaceFieldsShape })
+  .object({ raceId: UuidSchema, ...RaceInputShape })
   .refine(raceDatesOrdered, { message: 'endAt must be after startAt', path: ['endAt'] });
 export type UpdateRaceInput = z.infer<typeof UpdateRaceInputSchema>;
 
@@ -599,7 +637,7 @@ export const gamificationContract = {
 
         set: oc
           .route({ method: 'PUT', path: '/backoffice/promo/ranks/config' })
-          .input(RankConfigSchema)
+          .input(SetRankConfigInputSchema)
           .output(RankConfigSchema),
       },
     },

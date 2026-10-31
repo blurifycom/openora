@@ -8,7 +8,7 @@ import { moneyEquals } from '@openora/core/server';
 import { migrate } from '../migrate.js';
 import { migrate as identityMigrate } from '@openora/core/pam/migrate/identity';
 import { migrate as profileMigrate } from '@openora/core/pam/migrate/profile';
-import { promoRace, promoRaceWager } from '../schema/index.js';
+import { promoRace, promoRaceRoundWager, promoRaceWager } from '../schema/index.js';
 import { RaceService } from '../service/race.service.js';
 import type { RacePosition } from '../contract/index.js';
 
@@ -18,6 +18,8 @@ const logger = { warn: vi.fn() };
 let races: RaceService;
 
 const CASINO: WagerContext = { provider: 'aggregator', product: 'casino' };
+const SPORTSBOOK: WagerContext = { provider: 'book', product: 'sportsbook' };
+const BOOK_ROUND = 'sportsbook:book';
 const POSITIONS: RacePosition[] = [
   { position: 1, prize: '500' },
   { position: 2, prize: '250' },
@@ -37,7 +39,7 @@ const insertRace = async (overrides: Partial<typeof promoRace.$inferInsert> = {}
       endAt: hoursFromNow(1),
       prizePool: '1000',
       positions: POSITIONS,
-      eligibleProducts: [],
+      eligibleProducts: ['casino'],
       ...overrides,
     })
     .returning({ id: promoRace.id });
@@ -77,6 +79,34 @@ const rollback = (userId: string, externalRoundId: string, realAmount: string) =
     }),
   );
 
+const settled = (
+  userId: string,
+  realAmount: string,
+  betId: string,
+  qualifiedAt = now(),
+  context: WagerContext = SPORTSBOOK,
+) =>
+  db.drizzle.db.transaction((tx) =>
+    races.recordSettledWager(tx, {
+      userId,
+      currency: 'USDT',
+      realAmount,
+      context,
+      round: { providerName: BOOK_ROUND, externalRoundId: betId },
+      qualifiedAt,
+    }),
+  );
+
+const voided = (userId: string, betId: string, realAmount: string) =>
+  db.drizzle.db.transaction((tx) =>
+    races.reverseWager(tx, {
+      userId,
+      currency: 'USDT',
+      round: { providerName: BOOK_ROUND, externalRoundId: betId },
+      realAmount,
+    }),
+  );
+
 const wageredOf = async (raceId: string, userId: string) => {
   const [row] = await db.drizzle.db
     .select({ wagered: promoRaceWager.wagered })
@@ -94,6 +124,7 @@ afterAll(() => db.drop());
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  await db.drizzle.db.delete(promoRaceRoundWager);
   await db.drizzle.db.delete(promoRaceWager);
   await db.drizzle.db.delete(promoRace);
 });
@@ -236,6 +267,116 @@ describe('rolling back a wager', () => {
     await rollback(userId, 'round-1', '30');
 
     expect(moneyEquals((await wageredOf(raceId, userId)) ?? '0', '30')).toBe(true);
+  });
+});
+
+describe('counting a sportsbook bet when it settles', () => {
+  it('counts nothing when the stake is reserved', async () => {
+    await insertRace({ eligibleProducts: ['sportsbook'] });
+    const userId = randomUUID();
+
+    await wager(userId, '50', '50', 'USDT', SPORTSBOOK, 'bet-1');
+
+    expect(await db.drizzle.db.select().from(promoRaceWager)).toHaveLength(0);
+  });
+
+  it('counts the cash stake once, however often the bet settles again', async () => {
+    const raceId = await insertRace({ eligibleProducts: ['sportsbook'] });
+    const userId = randomUUID();
+
+    await settled(userId, '50', 'bet-1');
+    await settled(userId, '50', 'bet-1');
+
+    expect(moneyEquals((await wageredOf(raceId, userId)) ?? '0', '50')).toBe(true);
+  });
+
+  it('counts a bet again after a void took it back out', async () => {
+    const raceId = await insertRace({ eligibleProducts: ['sportsbook'] });
+    const userId = randomUUID();
+
+    await settled(userId, '50', 'bet-1');
+    await voided(userId, 'bet-1', '50');
+    expect(moneyEquals((await wageredOf(raceId, userId)) ?? '0', '0')).toBe(true);
+
+    await settled(userId, '50', 'bet-1');
+    expect(moneyEquals((await wageredOf(raceId, userId)) ?? '0', '50')).toBe(true);
+  });
+
+  it('does not count a stake already counted when it was reserved', async () => {
+    const raceId = await insertRace({ eligibleProducts: ['sportsbook'] });
+    const userId = randomUUID();
+    await db.drizzle.db
+      .insert(promoRaceWager)
+      .values({ raceId, userId, currency: 'USDT', wagered: '50' });
+    await db.drizzle.db.insert(promoRaceRoundWager).values({
+      raceId,
+      userId,
+      providerName: BOOK_ROUND,
+      currency: 'USDT',
+      externalRoundId: 'bet-1',
+      stake: '50',
+      wagered: '50',
+    });
+
+    await settled(userId, '50', 'bet-1');
+
+    expect(moneyEquals((await wageredOf(raceId, userId)) ?? '0', '50')).toBe(true);
+  });
+
+  it('ignores a stake a promotion paid for', async () => {
+    await insertRace({ eligibleProducts: ['sportsbook'] });
+
+    await settled(randomUUID(), '0', 'bet-1');
+
+    expect(await db.drizzle.db.select().from(promoRaceWager)).toHaveLength(0);
+  });
+
+  it('counts only in the races open when the bet first settled', async () => {
+    const earlier = await insertRace({
+      eligibleProducts: ['sportsbook'],
+      startAt: hoursFromNow(-3),
+      endAt: hoursFromNow(-1),
+    });
+    const current = await insertRace({ eligibleProducts: ['sportsbook'] });
+    const userId = randomUUID();
+
+    await settled(userId, '50', 'bet-1', hoursFromNow(-2));
+
+    expect(moneyEquals((await wageredOf(earlier, userId)) ?? '0', '50')).toBe(true);
+    expect(await wageredOf(current, userId)).toBeNull();
+  });
+
+  it('leaves a closed race alone', async () => {
+    const raceId = await insertRace({ eligibleProducts: ['sportsbook'], closedAt: now() });
+    const userId = randomUUID();
+
+    await settled(userId, '50', 'bet-1');
+
+    expect(await wageredOf(raceId, userId)).toBeNull();
+  });
+
+  it('skips a race its payout is closing', async () => {
+    const raceId = await insertRace({ eligibleProducts: ['sportsbook'] });
+    const userId = randomUUID();
+
+    await db.drizzle.db.transaction(async (payout) => {
+      await payout.select().from(promoRace).where(eq(promoRace.id, raceId)).for('update');
+      await settled(userId, '50', 'bet-1');
+    });
+
+    expect(await wageredOf(raceId, userId)).toBeNull();
+  });
+
+  it('counts only the products a race names', async () => {
+    const casinoOnly = await insertRace({ eligibleProducts: ['casino'] });
+    const mixed = await insertRace({ eligibleProducts: ['casino', 'sportsbook'] });
+    const userId = randomUUID();
+
+    await settled(userId, '50', 'bet-1');
+    await wager(userId, '20', '20', 'USDT', { provider: 'arena', product: 'pvp' }, 'duel-1');
+
+    expect(await wageredOf(casinoOnly, userId)).toBeNull();
+    expect(moneyEquals((await wageredOf(mixed, userId)) ?? '0', '50')).toBe(true);
   });
 });
 

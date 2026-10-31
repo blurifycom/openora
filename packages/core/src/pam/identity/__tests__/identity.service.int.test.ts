@@ -868,6 +868,18 @@ describe('IdentityService.unlockUser (real PG)', () => {
   });
 });
 
+describe('IdentityService.findAccountRole (real PG)', () => {
+  it('tells a player from a staff account, and an unknown user from both', async () => {
+    const player = await seedUser();
+    const staff = await seedUser({ email: `staff-${randomUUID()}@test.dev`, role: 'admin' });
+    const svc = buildService();
+
+    expect(await svc.findAccountRole(player.id)).toBe('player');
+    expect(await svc.findAccountRole(staff.id)).toBe('admin');
+    expect(await svc.findAccountRole(randomUUID())).toBeNull();
+  });
+});
+
 describe('IdentityService.adminRequestPasswordReset (real PG)', () => {
   it('requests an OTP for the user email, sets the admin-marker in cache, and emits the audit event', async () => {
     requestPasswordResetEmailOTPMock.mockResolvedValue(jsonResponse({ success: true }, 200));
@@ -1996,12 +2008,14 @@ describe('IdentityService security controls', () => {
     });
     const events = makeEventBus();
     const svc = buildService({ events });
+    const calledAt = Date.now();
 
     await svc.confirmEmailChange(
       { newEmail: 'new-address@test.dev', otp: '123456' },
       {},
       new Headers(),
     );
+    const returnedAt = Date.now();
 
     expect((await readUser(account.id))?.loginWithdrawalAlertsEnabled).toBe(false);
     expect(events.emit).toHaveBeenCalledWith(
@@ -2010,8 +2024,14 @@ describe('IdentityService security controls', () => {
         userId: account.id,
         previousEmail: EMAIL,
         newEmail: 'new-address@test.dev',
+        changedAt: expect.any(String),
       }),
     );
+    const [, changed] =
+      vi.mocked(events.emit).mock.calls.find(([topic]) => topic === 'identity.email.changed') ?? [];
+    const changedAt = Date.parse(String((changed as { changedAt?: unknown })?.changedAt));
+    expect(changedAt).toBeGreaterThanOrEqual(calledAt);
+    expect(changedAt).toBeLessThanOrEqual(returnedAt);
     expect(events.emit).toHaveBeenCalledWith(
       'identity.security.login_withdrawal_alerts.updated',
       expect.objectContaining({

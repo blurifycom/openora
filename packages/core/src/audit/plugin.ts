@@ -1238,7 +1238,10 @@ export async function mapEventToRecord(
       actorId: playerId ? str(playerId) : str(p['userId']),
       ...identitySubject(p),
       before: { email: str(p['previousEmail']) },
-      after: { email: str(p['newEmail']) },
+      after: {
+        email: str(p['newEmail']),
+        ...(typeof p['changedAt'] === 'string' ? { changedAt: p['changedAt'] } : {}),
+      },
     };
   }
 

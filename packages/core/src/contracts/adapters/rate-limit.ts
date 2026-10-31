@@ -31,6 +31,8 @@ export const RATE_LIMIT_KEYS = {
   CHAT_ROOM_INVITE: 'chat-room-invite',
   CHAT_ROOM_INVITE_LOOKUP: 'chat-room-invite-lookup',
   CHAT_SEND: 'chat-send',
+  SUPPORT_CHAT_SESSION: 'support-chat-session',
+  SUPPORT_CHAT_HISTORY: 'support-chat-history',
   REPORT_ACCESS_DENIED: 'report-access-denied',
   GEO_CHECK_IP: 'geo-check-ip',
   PROMO_PUBLIC_OFFERS_IP: 'promo-public-offers-ip',
@@ -38,6 +40,7 @@ export const RATE_LIMIT_KEYS = {
   MCP_TOKEN_DAY: 'mcp-token-day',
   MCP_IP_MINUTE: 'mcp-ip-min',
   MCP_TOKEN_CREATE: 'mcp-token-create',
+  ADMIN_INVITATION_ACCEPT_IP: 'admin-invitation-accept-ip',
 } as const;
 
 export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];

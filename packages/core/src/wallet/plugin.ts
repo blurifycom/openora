@@ -5,6 +5,7 @@ import {
   ADMIN_USER_DIRECTORY,
   BONUS_GRANTS,
   BONUS_GRANT_LEDGER,
+  BONUS_LIFECYCLE,
   BONUS_WAGERING,
   IDENTITY_READER,
   ADMIN_WALLET_REPORTING,
@@ -253,6 +254,7 @@ export default {
         kycPolicy: c.has(KYC_WITHDRAWAL_POLICY) ? c.get(KYC_WITHDRAWAL_POLICY) : undefined,
         depositHold: c.has(DEPOSIT_HOLD_POLICY) ? c.get(DEPOSIT_HOLD_POLICY) : undefined,
         grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
+        bonusLifecycle: c.has(BONUS_LIFECYCLE) ? c.get(BONUS_LIFECYCLE) : undefined,
       }));
 
     ctx.mcp.tool(walletActivityTool, (c) => {
@@ -364,6 +366,7 @@ export default {
           rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
           bonusWagering: c.has(BONUS_WAGERING) ? c.get(BONUS_WAGERING) : undefined,
           bonusGrants: c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
+          identityReader: c.get(IDENTITY_READER),
         }),
     );
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.

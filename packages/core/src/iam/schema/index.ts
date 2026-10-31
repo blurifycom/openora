@@ -77,14 +77,16 @@ export const adminInvitation = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     email: text().notNull(),
     roleId: uuid().notNull(),
-    token: text().notNull().unique(),
+    // SHA-256 hex of the invitation token. The plaintext exists only in the invitee's mail,
+    // so neither an API response nor a database read can hand anyone a redeemable link.
+    tokenHash: text().notNull(),
     status: invitationStatusEnum('status').notNull().default('pending'),
     expiresAt: timestamp({ withTimezone: true }).notNull(),
     acceptedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index('admin_invitation_token_idx').on(t.token),
+    uniqueIndex('admin_invitation_token_hash_uq').on(t.tokenHash),
     foreignKey({ columns: [t.roleId], foreignColumns: [adminRole.id] }).onDelete('cascade'),
   ],
 );

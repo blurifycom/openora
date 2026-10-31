@@ -1,0 +1,66 @@
+name: Mutation
+
+# Nightly StrykerJS over the wallet module (packages/core `stryker.config.json`) against the
+# core unit and integration tiers. Incremental: the cached result means only mutants in code or tests
+# that changed since the last run are re-tested. A report, not a gate.
+on:
+  schedule:
+    - cron: '0 1 * * 2-6'
+  workflow_dispatch:
+
+concurrency:
+  group: mutation
+
+env:
+  DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
+  TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+  TEST_REDIS_URL: redis://localhost:6379
+  TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+      - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache: 'false'
+      - uses: ./.github/actions/test-infra
+      - uses: actions/cache@v4
+        with:
+          path: packages/core/reports/stryker-incremental.json
+          key: stryker-incremental-${{ github.run_id }}
+          restore-keys: stryker-incremental-
+      - run: pnpm --filter @openora/core test:mutation
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-report
+          path: packages/core/reports/mutation/

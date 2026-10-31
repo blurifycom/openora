@@ -1,13 +1,31 @@
+import * as z from 'zod';
+
 /**
  * The product buckets a wager can name. Closed on purpose: an adapter maps its vendor's own
  * bucket onto one of these, so a new or misspelled vendor value cannot slip past the product
  * weights onto the profile default.
  */
 export const WAGER_PRODUCTS = ['casino', 'live-casino', 'sportsbook', 'pvp'] as const;
-export type WagerProduct = (typeof WAGER_PRODUCTS)[number];
+export const WagerProductSchema = z.enum(WAGER_PRODUCTS);
+export type WagerProduct = z.infer<typeof WagerProductSchema>;
 
 export const isWagerProduct = (value: string): value is WagerProduct =>
   (WAGER_PRODUCTS as readonly string[]).includes(value);
+
+/**
+ * A ledger row's `providerName` names its product when it starts with `<product>:`, as the
+ * sportsbook's `sportsbook:<provider>` does. Any other provider name names no product.
+ */
+export const wagerProductProviderPrefix = (product: WagerProduct): string => `${product}:`;
+
+export function wagerProductOfProviderName(providerName: string | null): WagerProduct | null {
+  const separator = providerName?.indexOf(':') ?? -1;
+  if (!providerName || separator <= 0) {
+    return null;
+  }
+  const product = providerName.slice(0, separator);
+  return isWagerProduct(product) ? product : null;
+}
 
 /**
  * What a single bet was placed on. Threaded from the game provider seam through the wallet

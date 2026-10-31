@@ -41,6 +41,7 @@ import {
   InsufficientBalanceError,
   KycRequiredError,
   WithdrawalLockedError,
+  WithdrawalHeldError,
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
@@ -303,6 +304,7 @@ export function createWalletRouter({
           ],
           CONFLICT: [
             WithdrawalLockedError,
+            WithdrawalHeldError,
             KycRequiredError,
             IdempotencyKeyReuseError,
             DestinationAddressRequiredError,
@@ -371,7 +373,12 @@ export function createWalletRouter({
         return mapErrors(
           {
             NOT_FOUND: WithdrawalNotFoundError,
-            CONFLICT: [WithdrawalNotPendingError, WithdrawalLockedError, PaymentRejectedError],
+            CONFLICT: [
+              WithdrawalNotPendingError,
+              WithdrawalLockedError,
+              WithdrawalHeldError,
+              PaymentRejectedError,
+            ],
           },
           () => wallet.approveWithdrawal(adminId, input.withdrawalId, { ip, userAgent }),
         );

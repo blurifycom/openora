@@ -47,6 +47,7 @@ export {
   alreadyInUseError,
 } from './domain-error.js';
 export { mapErrors } from './orpc-error-map.js';
+export { wireErrorResponse, type WireErrorBody } from './wire-error-response.js';
 
 export { assertOwnership } from './ownership.js';
 export { serializeRow } from './serialize-row.js';

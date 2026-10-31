@@ -52,8 +52,9 @@ export const walletActivityTool = defineMcpTool({
   id: 'wallet.activity',
   title: 'Wallet activity',
   description:
-    "A player's balances, their completed deposits, withdrawals, bets and wins per currency " +
-    'over the last windowDays days, and the withdrawals still awaiting a decision (pending or ' +
+    "A player's balances, their completed deposits, withdrawals, bets and wins (net of reversed " +
+    'payouts) per currency over the last windowDays days, and the withdrawals still awaiting a ' +
+    'decision (pending or ' +
     'on hold, newest first). Use it to judge recent money movement, and to find the ' +
     'withdrawalId a hold_withdrawal proposal needs. Amounts are decimal strings.',
   class: 'read',
@@ -84,6 +85,8 @@ export const holdWithdrawalAction = defineActionType({
   schemaVersion: 1,
   iam: { resource: 'withdrawal', action: 'hold' },
   reversible: true,
+  // Each withdrawal is held on its own: a pending hold on one does not cover another.
+  distinctBy: 'withdrawalId',
   payloadSchema: HoldWithdrawalPayloadSchema,
   errors: ['player_not_found', 'withdrawal_not_found', 'withdrawal_not_pending'],
 });

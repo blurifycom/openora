@@ -461,3 +461,34 @@ describe('AdminGuard.filterGranted (real PG)', () => {
     expect(events.emit).not.toHaveBeenCalled();
   });
 });
+
+describe('AdminGuard.filterGrantedUsers (real PG)', () => {
+  const requirements = [{ resource: 'player', action: 'view' }] as const;
+
+  it('keeps only active admins holding a requirement', async () => {
+    const support = await seedUser('support');
+    const contentManager = await seedUser('content-manager');
+    const inactive = await seedUser('support', { isActive: false });
+    const playerUser = await seedUser('player');
+    const { guard, events } = makeGuard();
+
+    const granted = await guard.filterGrantedUsers(
+      [support, contentManager, inactive, playerUser, randomUUID()],
+      requirements,
+    );
+    expect([...granted]).toEqual([[support, [{ resource: 'player', action: 'view' }]]]);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('decides by the DB grants when a resolver is bound', async () => {
+    const userId = await seedUser('admin');
+    const { guard } = makeGuard({ grants: [{ resource: 'mcp-access', action: 'use' }] });
+
+    await expect(guard.filterGrantedUsers([userId], requirements)).resolves.toEqual(new Map());
+  });
+
+  it('answers an empty map for no users', async () => {
+    const { guard } = makeGuard();
+    await expect(guard.filterGrantedUsers([], requirements)).resolves.toEqual(new Map());
+  });
+});

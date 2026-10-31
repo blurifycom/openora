@@ -1,27 +1,29 @@
 #!/usr/bin/env node
 // PostToolUse hook (Claude / Copilot CLI / Codex CLI / Gemini CLI).
-// Lint-fixes the edited file, then typechecks the app that owns it and reports
-// (exit 2) only if the error is in the file just edited. Output is capped so a
+// Lint-fixes the edited files, then typechecks the apps that own them and reports
+// (exit 2) only if the error is in a file just edited. Output is capped so a
 // failure can't balloon the model context. Fail-open on anything unexpected.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { join, isAbsolute, relative } from 'node:path';
-import { extractFilePath, readPayload } from './_shared.mjs';
+import { basename, join, isAbsolute } from 'node:path';
+import { extractFilePaths, readPayload } from './_shared.mjs';
 
 const CAP_LINES = 40;
 const CAP_CHARS = 2000;
 
-const filePath = extractFilePath(readPayload());
-if (!filePath) {
+const filePaths = extractFilePaths(readPayload()).filter(
+  (filePath) =>
+    /\.(ts|tsx)$/.test(filePath) &&
+    !filePath.endsWith('.d.ts') &&
+    !filePath.includes('/templates/') &&
+    !filePath.includes('/generated/') &&
+    existsSync(filePath),
+);
+if (filePaths.length === 0) {
   process.exit(0);
 }
-if (!/\.(ts|tsx)$/.test(filePath) || filePath.endsWith('.d.ts')) {
-  process.exit(0);
-}
-if (filePath.includes('/templates/') || filePath.includes('/generated/')) {
-  process.exit(0);
-}
+const edited = filePaths.join(', ');
 
 /**
  * node_modules/.bin/<name> when it exists, else the bare name off PATH. `pnpm exec`
@@ -33,9 +35,14 @@ function bin(name) {
   return existsSync(local) ? local : name;
 }
 
+function cap(text) {
+  const out = text.split('\n').slice(0, CAP_LINES).join('\n').slice(0, CAP_CHARS);
+  return out.length < text.length ? `${out}\n... (truncated)` : out;
+}
+
 // Lint-fix (best effort - never block on the linter).
 try {
-  execFileSync(bin('oxlint'), ['--fix', filePath], { stdio: 'pipe' });
+  execFileSync(bin('oxlint'), ['--fix', ...filePaths], { stdio: 'pipe' });
 } catch {
   /* oxlint unavailable or errored - fall through to the re-lint / typecheck */
 }
@@ -44,15 +51,13 @@ try {
 // hand - import/no-cycle and the no-restricted-imports boundary rules (deep @openora
 // or {{scope}}/ui imports, app-to-app imports). oxlint exits non-zero on errors
 // only (warnings don't fail), so this blocks on a real boundary/cycle violation
-// in the edited file and feeds the message back. Fail-open on anything else.
+// in an edited file and feeds the message back. Fail-open on anything else.
 try {
-  execFileSync(bin('oxlint'), [filePath], { stdio: 'pipe' });
+  execFileSync(bin('oxlint'), filePaths, { stdio: 'pipe' });
 } catch (e) {
   const out = (e.stdout?.toString() ?? '') + (e.stderr?.toString() ?? '');
   if (/\berror\b/.test(out)) {
-    process.stderr.write(
-      `Boundary/lint error in ${filePath} - fix before continuing:\n${cap(out)}`,
-    );
+    process.stderr.write(`Boundary/lint error in ${edited} - fix before continuing:\n${cap(out)}`);
     process.exit(2);
   }
 }
@@ -74,31 +79,36 @@ function packageNameFor(fp) {
   }
 }
 
-const abs = isAbsolute(filePath) ? filePath : join(process.cwd(), filePath);
-const owner = packageNameFor(abs);
-if (!owner) {
+const owners = [
+  ...new Set(
+    filePaths
+      .map((filePath) => packageNameFor(isAbsolute(filePath) ? filePath : join(process.cwd(), filePath)))
+      .filter(Boolean),
+  ),
+];
+if (owners.length === 0) {
   process.exit(0);
-}
-
-function cap(text) {
-  const out = text.split('\n').slice(0, CAP_LINES).join('\n').slice(0, CAP_CHARS);
-  return out.length < text.length ? `${out}\n... (truncated)` : out;
 }
 
 try {
   execFileSync(
     bin('turbo'),
-    ['run', 'check:types', '--filter', owner, '--output-logs=errors-only', '--ui=stream'],
+    [
+      'run',
+      'check:types',
+      ...owners.flatMap((owner) => ['--filter', owner]),
+      '--output-logs=errors-only',
+      '--ui=stream',
+    ],
     { stdio: 'pipe' },
   );
   process.exit(0);
 } catch (e) {
   const output = (e.stdout?.toString() ?? '') + (e.stderr?.toString() ?? '');
-  const basename =
-    (isAbsolute(filePath) ? relative(process.cwd(), filePath) : filePath).split('/').pop() ?? '';
-  if (basename && output.includes(basename)) {
+  const failing = filePaths.map((filePath) => basename(filePath)).filter((name) => output.includes(name));
+  if (failing.length > 0) {
     process.stderr.write(
-      `Typecheck failed for ${owner} after editing ${basename}:\n${cap(output)}`,
+      `Typecheck failed for ${owners.join(', ')} after editing ${failing.join(', ')}:\n${cap(output)}`,
     );
     process.exit(2);
   }

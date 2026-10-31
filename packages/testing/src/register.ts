@@ -2,6 +2,7 @@ import { randomInt } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
+import type { RegistrationAcquisition } from '@openora/core/contracts';
 import type { TestApp } from './app.js';
 import { capturedEmailsFor, type CapturedEmail } from './captured-emails.js';
 import { asPlayer, registrationRequestHeaders, type TestClient } from './request.js';
@@ -10,6 +11,7 @@ export type RegisterPlayerInput = {
   email: string;
   password?: string;
   username?: string;
+  acquisition?: RegistrationAcquisition;
 };
 
 /**
@@ -31,6 +33,7 @@ export async function submitRegistration(app: TestApp, input: RegisterPlayerInpu
       username: input.username ?? uniqueUsername('player'),
       acceptedTerms: true,
       acceptedAge: true,
+      ...(input.acquisition ? { acquisition: input.acquisition } : {}),
     }),
   });
 }

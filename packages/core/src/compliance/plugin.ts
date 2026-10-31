@@ -24,13 +24,17 @@ import {
   MAIL_DISPATCH,
   McpToolError,
   PLATFORM_CONFIG,
+  PLAY_ELIGIBILITY,
   RATE_LIMITER,
   REALTIME_TRANSPORT,
+  RG_EXCLUSION_READER,
   RG_LIMITS,
+  RG_STANDING_READER,
   UuidSchema,
   defaultResponsibleGamingConfig,
   domainEventSchemas,
   queue,
+  resolveExchangeRatePivot,
   runActorAdminId,
   userIdOfPlayer,
   type JobQueueAdapter,
@@ -49,12 +53,14 @@ import { RgSelfServiceService } from './service/rg-self-service.service.js';
 import {
   RgMonitoringService,
   RG_EVAL_TRIGGERS,
+  SPORTSBOOK_RG_EVAL_TOPICS,
   type RgEvalTrigger,
 } from './service/rg-monitoring.service.js';
 import { createComplianceRouter, kycStatusChannel } from './router/index.js';
 import { HmacKycWebhookVerifier } from './adapters/hmac-kyc-webhook-verifier.js';
 import { RgLimitGate } from './adapters/rg-limit-gate.js';
 import { KycWithdrawalGate } from './adapters/kyc-withdrawal-gate.js';
+import { RgStandingReaderService } from './adapters/rg-standing-reader.service.js';
 
 const logger = createLogger('compliance');
 
@@ -120,6 +126,18 @@ export default {
       KYC_WITHDRAWAL_POLICY,
       (c) => new KycWithdrawalGate(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER)),
     );
+    ctx.provide(
+      RG_STANDING_READER,
+      (c) =>
+        new RgStandingReaderService({
+          drizzle: c.get(DRIZZLE),
+          eligibility: c.get(PLAY_ELIGIBILITY),
+          rates: c.get(EXCHANGE_RATE_READER),
+          pivotCurrency: resolveExchangeRatePivot(
+            c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).exchangeRate : undefined,
+          ),
+        }),
+    );
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const envName = cfg?.kyc?.webhookSecretEnv ?? 'KYC_WEBHOOK_SECRET';
@@ -144,6 +162,23 @@ export default {
         directory: c.has(ADMIN_USER_DIRECTORY) ? c.get(ADMIN_USER_DIRECTORY) : null,
         rates: c.get(EXCHANGE_RATE_READER),
       }));
+    // Backs the router and RG_EXCLUSION_READER; either may build it first.
+    const rgService = (c: TypedContainer<CoreTokenCatalog>) =>
+      (rgRef ??= new RgService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        loginEnforcement: c.get(LOGIN_ENFORCEMENT),
+        identityReader: c.get(IDENTITY_READER),
+        mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null,
+        audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
+        rates: c.get(EXCHANGE_RATE_READER),
+      }));
+    ctx.provide(RG_EXCLUSION_READER, (c) => ({
+      getExclusionState: async (userId) => {
+        const { selfExclusion, coolingOff } = await rgService(c).getActiveExclusions(userId);
+        return { isSelfExcluded: selfExclusion !== null, isCoolingOff: coolingOff !== null };
+      },
+    }));
     // One instance backs the router, its event/job hooks and the agent tools; either factory
     // may build it first.
     const kycVerification = (c: TypedContainer<CoreTokenCatalog>) =>
@@ -264,8 +299,12 @@ export default {
       );
     });
 
-    const enqueueEval = (userId: string, trigger: RgEvalTrigger) =>
-      requireJobQueue().enqueue(RG_EVAL_QUEUE, { userId, trigger }, { orderingKey: userId });
+    const enqueueEval = (userId: string, trigger: RgEvalTrigger, idempotencyKey?: string) =>
+      requireJobQueue().enqueue(
+        RG_EVAL_QUEUE,
+        { userId, trigger },
+        { orderingKey: userId, ...(idempotencyKey ? { idempotencyKey } : {}) },
+      );
 
     ctx.events.on('wallet.deposit.completed', async (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
@@ -291,6 +330,14 @@ export default {
         await enqueueEval(parsed.data.userId, 'rg.limit.set');
       }
     });
+    for (const topic of SPORTSBOOK_RG_EVAL_TOPICS) {
+      ctx.events.on(topic, async (payload, envelope) => {
+        const parsed = domainEventSchemas[topic].safeParse(payload);
+        if (parsed.success) {
+          await enqueueEval(parsed.data.userId, topic, envelope && `rg-eval:${envelope.eventId}`);
+        }
+      });
+    }
 
     ctx.jobs.worker({
       queue: RG_EVAL_QUEUE,
@@ -369,16 +416,7 @@ export default {
       const compliance = makeComplianceService(c);
       complianceRef = compliance;
 
-      const rg = new RgService({
-        drizzle: c.get(DRIZZLE),
-        events: c.get(EVENT_BUS),
-        loginEnforcement: c.get(LOGIN_ENFORCEMENT),
-        identityReader: c.get(IDENTITY_READER),
-        mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null,
-        audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
-        rates: c.get(EXCHANGE_RATE_READER),
-      });
-      rgRef = rg;
+      const rg = rgService(c);
       const rgMonitoring = monitoring(c);
       const rgSelfService = new RgSelfServiceService({
         drizzle: c.get(DRIZZLE),

@@ -1,0 +1,1 @@
+CREATE INDEX "user_staff_name_idx" ON "user" USING btree ("name","id") WHERE "user"."role" <> 'player';

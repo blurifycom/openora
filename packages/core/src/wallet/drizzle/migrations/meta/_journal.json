@@ -250,8 +250,22 @@
     {
       "idx": 35,
       "version": "7",
-      "when": 1792927026359,
-      "tag": "0035_nosy_pyro",
+      "when": 1792574030020,
+      "tag": "0035_shiny_colonel_america",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1793358878070,
+      "tag": "0036_mighty_argent",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793410692130,
+      "tag": "0037_demonic_colleen_wing",
       "breakpoints": true
     }
   ]

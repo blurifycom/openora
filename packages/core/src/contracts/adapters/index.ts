@@ -43,11 +43,29 @@ export type {
   WalletCreditArgs,
   WalletCreditOutcome,
   WalletProviderRef,
+  WalletCorrectionDebitArgs,
+  WalletCorrectionDebitOutcome,
+  WalletCorrectionDebitType,
+  WalletWithdrawalHoldArgs,
 } from './wallet-commands.js';
-export { WALLET_COMMANDS } from './wallet-commands.js';
+export {
+  WALLET_COMMANDS,
+  WALLET_CORRECTION_DEBIT_TYPES,
+  WalletCorrectionExceedsRoundError,
+  WalletCorrectionRefConflictError,
+  WalletCorrectionRoundError,
+  WalletCorrectionTypeError,
+  WalletHoldWithoutWalletError,
+} from './wallet-commands.js';
 
 export type { WagerContext, WagerProduct } from './wager-context.js';
-export { WAGER_PRODUCTS, isWagerProduct } from './wager-context.js';
+export {
+  WAGER_PRODUCTS,
+  WagerProductSchema,
+  isWagerProduct,
+  wagerProductOfProviderName,
+  wagerProductProviderPrefix,
+} from './wager-context.js';
 
 export type {
   BonusGrantCommands,
@@ -61,7 +79,12 @@ export { BONUS_GRANTS } from './bonus-grants.js';
 export type { BonusGrantLedgerReader } from './bonus-grant-ledger.js';
 export { BONUS_GRANT_LEDGER } from './bonus-grant-ledger.js';
 
-export type { BonusLifecycleCommands, BonusForfeitOutcome } from './bonus-lifecycle.js';
+export type {
+  BonusLifecycleCommands,
+  BonusForfeitOutcome,
+  BonusForfeitHeldArgs,
+  BonusForfeitedGrant,
+} from './bonus-lifecycle.js';
 export { BONUS_LIFECYCLE } from './bonus-lifecycle.js';
 
 export type {
@@ -79,6 +102,7 @@ export type {
   WagerTrackingWalletCredit,
   WagerReversalArgs,
   WagerRound,
+  SettledWagerArgs,
 } from './wager-tracking.js';
 export { WAGER_TRACKING } from './wager-tracking.js';
 
@@ -105,6 +129,9 @@ export type {
   WalletBalanceReading,
   WalletBalancesReading,
   WalletProviderTransaction,
+  WalletLifetimeWithdrawals,
+  WalletLastDeposit,
+  WalletWithdrawalRequests,
 } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
@@ -287,6 +314,38 @@ export {
   OnRampVendorUnavailableError,
 } from './on-ramp.js';
 
+export type {
+  SupportChatCustomerToken,
+  SupportCustomerContext,
+  SupportChatProvider,
+} from './support-chat.js';
+export {
+  SUPPORT_CHAT_PROVIDER,
+  SupportChatCustomerTokenSchema,
+  SupportCustomerContextSchema,
+  SupportChatProviderError,
+} from './support-chat.js';
+export type {
+  SupportHistory,
+  SupportHistoryEmailWindow,
+  SupportHistoryFailureReason,
+  SupportHistoryItem,
+  SupportHistoryReader,
+} from './support-history.js';
+export {
+  SUPPORT_CHAT_STATUSES,
+  SUPPORT_HISTORY_FAILURE_REASONS,
+  SUPPORT_HISTORY_READER,
+  SUPPORT_TICKET_STATUSES,
+  SupportHistoryEmailWindowSchema,
+  SupportHistoryFailureReasonSchema,
+  SupportHistoryItemSchema,
+  SupportHistoryProviderError,
+  SupportHistorySchema,
+} from './support-history.js';
+export type { RgExclusionReader } from './rg-exclusion-reader.js';
+export { RG_EXCLUSION_READER } from './rg-exclusion-reader.js';
+
 export type { GeoIpAdapter } from './geo-ip.js';
 export { GEO_IP_ADAPTER, normalizeCountryCode } from './geo-ip.js';
 export type { GeoCheckCommands } from './geo-check-commands.js';
@@ -380,7 +439,10 @@ export type {
   AdminRoleAssignmentSummary,
   AdminRoleAssignmentDirectory,
 } from './admin-role-assignment-directory.js';
-export { ADMIN_ROLE_ASSIGNMENT_DIRECTORY } from './admin-role-assignment-directory.js';
+export {
+  ADMIN_ROLE_ASSIGNMENT_DIRECTORY,
+  SUPER_ADMIN_MANAGEMENT_LOCK_KEY,
+} from './admin-role-assignment-directory.js';
 
 export type {
   AdminTxRow,
@@ -425,10 +487,24 @@ export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js
 
 export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
-export type { PlayEligibilityPort } from './play-eligibility.js';
-export { PLAY_ELIGIBILITY } from './play-eligibility.js';
+export type { PlayEligibilityPort, PlayRefusal } from './play-eligibility.js';
+export { PLAY_ELIGIBILITY, PLAY_REFUSALS } from './play-eligibility.js';
 export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
 export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
+export type {
+  RgStanding,
+  RgStandingExclusion,
+  RgStandingFlag,
+  RgStandingLimit,
+  RgStandingQuery,
+  RgStandingReader,
+  RgStandingWindow,
+} from './rg-standing-reader.js';
+export {
+  MAX_RG_STANDING_WINDOWS,
+  MAX_RG_STANDING_WINDOW_DAYS,
+  RG_STANDING_READER,
+} from './rg-standing-reader.js';
 export type { DepositHoldPolicy } from './deposit-hold.js';
 export { DEPOSIT_HOLD_POLICY } from './deposit-hold.js';
 
@@ -453,6 +529,8 @@ export {
 
 export type { PlayerActivityTracker } from './player-activity.js';
 export { PLAYER_ACTIVITY_TRACKER } from './player-activity.js';
+export type { PlayerAccountManagerReader } from './player-account-manager-reader.js';
+export { PLAYER_ACCOUNT_MANAGER_READER } from './player-account-manager-reader.js';
 export { SESSION_IDLE_POLICY, type SessionIdlePolicy } from './session-idle-policy.js';
 export { MIRROR_TARGET_POLICY, type MirrorTargetPolicy } from './mirror-target-policy.js';
 export { TWO_FACTOR_SETUP_POLICY, type TwoFactorSetupPolicy } from './two-factor-setup-policy.js';
@@ -480,6 +558,7 @@ export type {
   ActionTypeImplementation,
   McpToolDescriptor,
   ActionTypeDescriptor,
+  ActionPayloadMatch,
   TriggerDescriptor,
   TriggerSubjectField,
   McpInputIssue,
@@ -520,3 +599,18 @@ export type { McpTokenAuthentication, McpTokenAuthenticator } from './mcp-token-
 export { MCP_TOKEN_AUTHENTICATOR } from './mcp-token-authenticator.js';
 export type { McpTokenAutomaticRevokeReason, McpTokenRevocation } from './mcp-token-revocation.js';
 export { MCP_TOKEN_REVOCATION } from './mcp-token-revocation.js';
+
+export type {
+  SportsbookLedger,
+  SportsbookLedgerApplied,
+  SportsbookLedgerOutcome,
+  SportsbookLedgerRefused,
+  SportsbookSessionOutcome,
+} from './sportsbook-ledger.js';
+export { SPORTSBOOK_LEDGER } from './sportsbook-ledger.js';
+export type {
+  SportsbookProvider,
+  SportsbookProviderSession,
+  SportsbookProviderSessionArgs,
+} from './sportsbook-provider.js';
+export { SPORTSBOOK_PROVIDER, SportsbookProviderSessionSchema } from './sportsbook-provider.js';

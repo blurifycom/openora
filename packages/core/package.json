@@ -728,6 +728,61 @@
       "types": "./dist/promo/gamification/seed/index.d.ts",
       "import": "./dist/promo/gamification/seed/index.js",
       "default": "./dist/promo/gamification/seed/index.js"
+    },
+    "./engagement/contracts/support-chat": {
+      "types": "./dist/engagement/support-chat/contract/index.d.ts",
+      "import": "./dist/engagement/support-chat/contract/index.js",
+      "default": "./dist/engagement/support-chat/contract/index.js"
+    },
+    "./engagement/schema/support-chat": {
+      "types": "./dist/engagement/support-chat/schema/index.d.ts",
+      "import": "./dist/engagement/support-chat/schema/index.js",
+      "default": "./dist/engagement/support-chat/schema/index.js"
+    },
+    "./engagement/plugins/support-chat": {
+      "types": "./dist/engagement/support-chat/plugin.d.ts",
+      "import": "./dist/engagement/support-chat/plugin.js",
+      "default": "./dist/engagement/support-chat/plugin.js"
+    },
+    "./engagement/migrate/support-chat": {
+      "types": "./dist/engagement/support-chat/migrate.d.ts",
+      "import": "./dist/engagement/support-chat/migrate.js",
+      "default": "./dist/engagement/support-chat/migrate.js"
+    },
+    "./sportsbook": {
+      "types": "./dist/sportsbook/index.d.ts",
+      "import": "./dist/sportsbook/index.js",
+      "default": "./dist/sportsbook/index.js"
+    },
+    "./sportsbook/contracts": {
+      "types": "./dist/sportsbook/contracts.d.ts",
+      "import": "./dist/sportsbook/contracts.js",
+      "default": "./dist/sportsbook/contracts.js"
+    },
+    "./sportsbook/server": {
+      "types": "./dist/sportsbook/server.d.ts",
+      "import": "./dist/sportsbook/server.js",
+      "default": "./dist/sportsbook/server.js"
+    },
+    "./sportsbook/contracts/betting": {
+      "types": "./dist/sportsbook/betting/contract/index.d.ts",
+      "import": "./dist/sportsbook/betting/contract/index.js",
+      "default": "./dist/sportsbook/betting/contract/index.js"
+    },
+    "./sportsbook/schema/betting": {
+      "types": "./dist/sportsbook/betting/schema/index.d.ts",
+      "import": "./dist/sportsbook/betting/schema/index.js",
+      "default": "./dist/sportsbook/betting/schema/index.js"
+    },
+    "./sportsbook/plugins/betting": {
+      "types": "./dist/sportsbook/betting/plugin.d.ts",
+      "import": "./dist/sportsbook/betting/plugin.js",
+      "default": "./dist/sportsbook/betting/plugin.js"
+    },
+    "./sportsbook/migrate/betting": {
+      "types": "./dist/sportsbook/betting/migrate.d.ts",
+      "import": "./dist/sportsbook/betting/migrate.js",
+      "default": "./dist/sportsbook/betting/migrate.js"
     }
   },
   "publishConfig": {
@@ -740,6 +795,7 @@
     "clean": "rm -rf dist",
     "test:unit": "vitest run --passWithNoTests",
     "test:integration": "vitest run --config vitest.integration.config.ts --passWithNoTests",
+    "test:mutation": "OPENORA_TEST_POOL_SIZE=2 stryker run",
     "gen:drizzle": "node scripts/generate-all.mjs"
   },
   "dependencies": {
@@ -767,6 +823,9 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/typescript-checker": "10.1.1",
+    "@stryker-mutator/vitest-runner": "10.1.1",
     "@tanstack/react-query": "5.104.4",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",
@@ -782,7 +841,7 @@
     "vitest": "4.1.12"
   },
   "peerDependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@tanstack/react-query": ">=5",
     "react": ">=19.2.7",
     "react-dom": ">=19.2.7"

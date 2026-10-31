@@ -1,7 +1,5 @@
-import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import * as z from 'zod';
 import {
   AUDIT_WRITER,
   CACHE,
@@ -51,18 +49,6 @@ vi.mock('@modelcontextprotocol/sdk/validation/ajv', () => {
 const MCP_SDK_PACKAGE = '@modelcontextprotocol/sdk';
 const DUMMY_DATABASE_URL = 'postgres://test:test@127.0.0.1:1/mcp_sdk_missing_test';
 const BACKOFFICE_HOST = 'backoffice.example.com';
-
-const CorePackageSchema = z.object({
-  peerDependencies: z.object({ [MCP_SDK_PACKAGE]: z.string() }),
-  peerDependenciesMeta: z.object({ [MCP_SDK_PACKAGE]: z.object({ optional: z.literal(true) }) }),
-});
-
-function declaredSdkPeer() {
-  const corePackage = CorePackageSchema.parse(
-    JSON.parse(readFileSync(new URL('../../../../package.json', import.meta.url), 'utf8')),
-  );
-  return corePackage.peerDependencies[MCP_SDK_PACKAGE];
-}
 
 function bootApp(mcp: NonNullable<PlatformConfigInput['agents']>['mcp']) {
   return createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL }, (container) => {
@@ -119,9 +105,9 @@ describe('createApp without the optional MCP SDK installed', () => {
     await app.close();
   });
 
-  it('refuses to boot with the transport on, naming the optional peer and the version core declares', async () => {
+  it('refuses to boot with the transport on, naming the optional peer', async () => {
     await expect(bootApp({ enabled: true, allowedHosts: [BACKOFFICE_HOST] })).rejects.toThrow(
-      `${MCP_SDK_PACKAGE} is not installed. @openora/core declares it as an optional peer dependency: install ${MCP_SDK_PACKAGE}@${declaredSdkPeer()}, or turn agents.mcp.enabled off.`,
+      `${MCP_SDK_PACKAGE} is not installed. @openora/core declares it as an optional peer dependency: install it, or turn agents.mcp.enabled off.`,
     );
   });
 });

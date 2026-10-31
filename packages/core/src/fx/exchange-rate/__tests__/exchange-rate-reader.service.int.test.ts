@@ -133,6 +133,27 @@ describe('ExchangeRateReaderService.getRate - identity and cross-pair derivation
     expect(quote?.rate).toBe('1.100000000000000000');
   });
 
+  it('reads the stored legs of concurrent callers in one query, each getting its own rate', async () => {
+    await seedQuote('EUR', 'USD', '1.100000000000000000');
+    await seedQuote('GBP', 'USD', '1.250000000000000000');
+    await seedQuote('BTC', 'USD', '60000.000000000000000000');
+    const reader = new ExchangeRateReaderService(baseDeps());
+    const select = vi.spyOn(db.drizzle.db, 'select');
+
+    const quotes = await Promise.all(
+      ['EUR', 'GBP', 'BTC', 'JPY'].map((currency) => reader.getRate(currency, 'USD')),
+    );
+
+    expect(quotes.map((quote) => quote?.rate ?? null)).toEqual([
+      '1.100000000000000000',
+      '1.250000000000000000',
+      '60000.000000000000000000',
+      null,
+    ]);
+    expect(select).toHaveBeenCalledTimes(1);
+    select.mockRestore();
+  });
+
   it('convert() scales an amount by the derived rate', async () => {
     await seedQuote('EUR', 'USD', '2.000000000000000000');
     const reader = new ExchangeRateReaderService(baseDeps());
@@ -378,13 +399,18 @@ describe('ExchangeRateReaderService.getRate - single-flight', () => {
 
     await reader.getRate('EUR', 'USD');
     await wait(80);
+    const secondFetchAt = Date.now();
     await reader.getRate('EUR', 'USD');
 
     expect(fiatProvider.getRate).toHaveBeenCalledTimes(2);
 
-    // The quote is persisted in the background; let it land before the next test truncates.
+    // Both fetches persist in the background with the same rate, so wait for the second one's
+    // stamp: the first write alone would pass, and the second would land after the next test's
+    // truncate.
     await vi.waitFor(async () =>
-      expect((await getRow('EUR', 'USD'))?.rate).toBe('1.200000000000000000'),
+      expect((await getRow('EUR', 'USD'))?.providerAsOf.getTime()).toBeGreaterThanOrEqual(
+        secondFetchAt,
+      ),
     );
   });
 });

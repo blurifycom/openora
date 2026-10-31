@@ -50,6 +50,15 @@ import {
 } from './player.js';
 import { WalletTransactionTypeSchema } from './wallet-tx.js';
 import {
+  SportsbookBetLegSchema,
+  SportsbookBetResultSchema,
+  SportsbookCancelReasonSchema,
+  SportsbookDebtCauseSchema,
+  SportsbookProviderIdSchema,
+  SportsbookProviderNameSchema,
+  SportsbookPromotionSchema,
+} from './sportsbook.js';
+import {
   BonusForfeitReasonSchema,
   BonusGrantSourceSchema,
   ContributionPercentSchema,
@@ -156,6 +165,10 @@ const walletTxnBase = z.object({
   transactionId: UuidSchema,
 });
 
+// Why a withdrawal already flipped to `processing` went back to the queue before reaching the PSP.
+export const WITHDRAWAL_REQUEUE_REASONS = ['withdrawal_hold', 'withdrawal_lock'] as const;
+export type WithdrawalRequeueReason = (typeof WITHDRAWAL_REQUEUE_REASONS)[number];
+
 const limitChangeBase = authContextBase.extend({
   userId: UuidSchema,
   playerId: UuidSchema.nullable(),
@@ -206,6 +219,19 @@ export const AUTHENTICATION_METHODS = [
 ] as const;
 export const AuthenticationMethodSchema = z.enum(AUTHENTICATION_METHODS);
 export type AuthenticationMethod = z.infer<typeof AuthenticationMethodSchema>;
+
+const sportsbookBetBase = z.object({
+  betId: UuidSchema,
+  userId: UuidSchema,
+  playerId: UuidSchema.nullable(),
+  provider: SportsbookProviderNameSchema,
+  providerBetId: SportsbookProviderIdSchema,
+  providerTxId: SportsbookProviderIdSchema,
+  currency: CurrencyTickerSchema,
+  version: z.number().int().positive(),
+  // The bet's audit row is written in the step's own transaction.
+  auditRecorded: z.literal(true).optional(),
+});
 
 export const domainEventSchemas = {
   'identity.user.registered': authContextBase.extend({
@@ -371,6 +397,9 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     previousEmail: z.email(),
     newEmail: z.email(),
+    // Stamped right after the swap returns; the audit row's own write time can trail it.
+    // Optional so a payload from before this field still parses.
+    changedAt: TimestampSchema.optional(),
   }),
   'identity.phone.verified': authContextBase.extend({
     userId: UuidSchema,
@@ -479,6 +508,12 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     adminId: UuidSchema.nullable(),
   }),
+  // A hold or `withdrawal_lock` landed after the approval flip, so the withdrawal went back to the
+  // status it was approved from before reaching the PSP. No money moved; it waits for a decision again.
+  'wallet.withdrawal.requeued': walletTxnBase.extend({
+    playerId: UuidSchema.nullable(),
+    reason: z.enum(WITHDRAWAL_REQUEUE_REASONS),
+  }),
   // A super admin credited or debited a balance directly, outside the deposit and
   // withdrawal rails. Its own topic rather than a reuse of `wallet.deposit.completed`:
   // a correction is not a deposit, and reporting it as one would overstate deposits and
@@ -522,6 +557,51 @@ export const domainEventSchemas = {
     roundId: UuidSchema,
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+  }),
+
+  // Sportsbook ledger steps, emitted once the step's own transaction committed. The bet
+  // transaction row and the wallet ledger rows it wrote are the step's atomic record.
+  'sportsbook.bet.placed': sportsbookBetBase.extend({
+    stake: MoneyAmountSchema,
+    promotion: SportsbookPromotionSchema.optional(),
+  }),
+  // `legs` is set when the confirm carried the accepted terms.
+  'sportsbook.bet.accepted': sportsbookBetBase.extend({
+    potentialPayout: MoneyAmountSchema,
+    legs: z.array(SportsbookBetLegSchema).optional(),
+    promotionPotential: MoneyAmountSchema.optional(),
+  }),
+  'sportsbook.bet.cancelled': sportsbookBetBase.extend({
+    reason: SportsbookCancelReasonSchema,
+    refunded: MoneyAmountSchema,
+  }),
+  'sportsbook.bet.settled': sportsbookBetBase.extend({
+    result: SportsbookBetResultSchema,
+    payout: MoneyAmountSchema,
+    promotionAmount: MoneyAmountSchema.optional(),
+  }),
+  // `shortfall` is what the reopen could not take back and recorded as debt.
+  'sportsbook.bet.reopened': sportsbookBetBase.extend({
+    collected: MoneyAmountSchema,
+    shortfall: MoneyAmountSchema,
+  }),
+  'sportsbook.restriction.changed': authContextBase.extend({
+    userId: UuidSchema,
+    restricted: z.boolean(),
+    reason: z.string().nullable(),
+    actorId: UuidSchema,
+    auditRecorded: z.literal(true).optional(),
+  }),
+  // `actorId` is null when a ledger step changed the debt (a reopen or an offset).
+  'sportsbook.debt.changed': z.object({
+    debtId: UuidSchema,
+    userId: UuidSchema,
+    currency: CurrencyTickerSchema,
+    cause: SportsbookDebtCauseSchema,
+    amount: MoneyAmountSchema,
+    outstanding: MoneyAmountSchema,
+    actorId: UuidSchema.nullable(),
+    auditRecorded: z.literal(true).optional(),
   }),
 
   'lobby.layout.updated': authContextBase.extend({
@@ -1281,6 +1361,8 @@ export const domainEventSchemas = {
   'chat.user.mentioned': z.object({
     mentionedUserId: UuidSchema,
     byUserId: UuidSchema,
+    // Optional: events queued before this field existed still deliver.
+    byUsername: z.string().min(1).optional(),
     roomId: UuidSchema.nullable(),
     messageId: z.string(),
   }),
@@ -1313,6 +1395,13 @@ export const domainEventSchemas = {
     previousStatus: PlayerStatusSchema,
     newStatus: PlayerStatusSchema,
   }),
+  'player.account_manager.changed': authContextBase.extend({
+    playerId: UuidSchema,
+    userId: UuidSchema,
+    previousAccountManagerId: UuidSchema.nullable(),
+    accountManagerId: UuidSchema.nullable(),
+    actorId: UuidSchema,
+  }),
 
   'social.friend_request.sent': authContextBase.extend({
     friendshipId: UuidSchema,
@@ -1344,6 +1433,10 @@ export const domainEventSchemas = {
     requesterId: UuidSchema,
     addresseeId: UuidSchema,
   }),
+
+  // A player opened the support chat for the first time and is now linked to a vendor
+  // customer. Written with the link, so the first support-context sync survives a queue outage.
+  'support_chat.customer.linked': z.object({ userId: UuidSchema, playerId: UuidSchema }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;

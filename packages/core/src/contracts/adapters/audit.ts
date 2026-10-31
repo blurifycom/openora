@@ -17,6 +17,7 @@ export type DirectAuditAction =
   | 'admin.user.updated'
   | 'admin.player.updated'
   | 'admin.player.removed'
+  | 'admin.player.account_manager_changed'
   | 'admin.player_note.created'
   | 'audit.export'
   | 'mail.regulatory_delivery.sent'
@@ -33,6 +34,7 @@ export type DirectAuditAction =
   | 'chat.context_room.closed'
   | 'player.display_currency.set'
   | 'player.profile.updated'
+  | 'player.acquisition.recorded'
   | 'player.display_decimal_places.set'
   | 'compliance.kyc.bulk_approve'
   | 'compliance.country_rule.created'
@@ -91,9 +93,19 @@ export type DirectAuditAction =
   | 'wallet.bet.reversed'
   | 'wallet.large_bet.recorded'
   | 'wallet.large_win.recorded'
+  | 'wallet.withdrawal_hold.placed'
+  | 'wallet.withdrawal_hold.released'
+  | 'wallet.correction.debited'
   | 'chat.cooldown.created'
   | 'chat.cooldown.lifted'
-  | 'chat.cooldown.expired';
+  | 'chat.cooldown.expired'
+  | 'support_chat.customer.linked'
+  | 'sportsbook.config.set'
+  | 'sportsbook.config.suspended'
+  | 'sportsbook.config.resumed'
+  | 'sportsbook.finding.resolved'
+  | 'sportsbook.bet.aligned'
+  | 'sportsbook.sessions.revoked';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain

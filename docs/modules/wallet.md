@@ -20,6 +20,10 @@ does not repeat it.
   balance is debited. For a stake partly funded by a bonus the ledger `amount` is the whole stake
   while the balance moved by the real part only. Cleanup is TRUNCATE, which the trigger lets
   through; a migration that has to repair rows disables the trigger itself.
+- **The product on a history row.** A row whose provider name starts with a product and a colon,
+  as `sportsbook:<provider>` does, reports that product; any other row reports `product: null`.
+  The `products` filter matches those prefixes in SQL before paging, so `total` agrees with it. The
+  wallet knows only the product names, never what a product's rows mean.
 - **The asset catalog.** The currency-and-network pairs the operator accepts, and for each pair the
   vendor's own asset identifier, the minimums, the fee, and independent switches for deposit and
   withdrawal. Which pairs exist is operator configuration, not code.
@@ -28,6 +32,12 @@ does not repeat it.
 - **Its agent surface.** A read tool over a player's balances, recent money movement and
   withdrawals still awaiting a decision, and an action type that holds a player's waiting
   withdrawal for manual review. Both are served only through the MCP kernel (ADR-0042).
+- **Read-only money facts for other modules.** Lifetime deposits and withdrawals, the last
+  deposit, turnover and recent withdrawal requests, read through the wallet's read port rather
+  than its tables. Every total is priced into the fx pivot at today's rates and reads as
+  unknown, never as a partial sum, when one of its currencies has no rate. A deposit counts from
+  when it reached the balance, so a held one counts from its release, and a withdrawal request
+  counts exactly when the auto-approval velocity check would count it.
 
 ## Rules that are easy to get wrong here
 
@@ -56,6 +66,28 @@ does not repeat it.
   before any debit, and neither an admin nor auto-approval can approve a withdrawal that was
   already waiting when the lock landed; it stays queued and can still be rejected. The tag is
   read through `PLAYER_TAGS`; with no tag module bound, no player can be locked.
+- **A module's withdrawal hold blocks every withdrawal the same way, under its own reason.** A
+  module places and releases its hold through `WALLET_COMMANDS` in its own transaction, keyed by
+  (player, source), and releases only its own. The wallet audits each change in that transaction.
+  A player with no wallet row cannot be held. It is not the `withdrawal_lock` tag: that one is an
+  investigation an admin owns, and a hold lives exactly as long as the state the module keeps
+  (ADR-0046). A hold or lock that lands after an approval sends the withdrawal back to the queue
+  before the provider call, and that step writes its own audit row and
+  `wallet.withdrawal.requeued` event.
+- **A correction debit is never refused for a short balance.** It collects what the balance holds
+  and reports the rest as a shortfall the calling module records as debt. Its ledger row carries
+  what was collected and what was asked, a zero collection included, so a retry with the same
+  reference replays the first result and one asking a different amount is refused. Each row it
+  writes is audited as `wallet.correction.debited` in the caller's transaction. It never takes
+  back more than its round paid into the real balance: a payout reversal is capped by the real share
+  of the round's wins less its earlier reversals, and a re-collected stake by the real share of the
+  round's stake reversals less its earlier corrections. Correction and hold audit rows are filed
+  under the player.
+- **Every bet, win and reversal leg of a round carries its `externalRoundId`.** RG spend nets a
+  round's legs by it, and a leg without one never offsets a stake. A correction debit without one
+  is refused, since a reversal outside its round would drop out of loss spend, and a plain `debit`
+  or `credit` never writes a `win_reversal`. A round's payouts and reversals count only when all
+  its bets fall inside the limit window, and a round's stake never nets below zero.
 - **Cross-module money moves through the wallet's command port, inside the caller's transaction.**
   Another module never reads or writes wallet tables directly, and a transfer is never settled over
   an event.

@@ -108,4 +108,54 @@ export const AUDIT_COVERAGE_GAPS = {
     writer: 'ComplianceService via recordInTransaction',
     reason: 'joins the rule writes and keeps the removed rules in `before`',
   },
+  'wallet.withdrawal.requeued': {
+    kind: 'atSource',
+    writer: 'WalletService via recordInTransaction',
+    reason: 'joins the status flip back to pending; this topic is the announcement',
+  },
+  'sportsbook.bet.placed': {
+    kind: 'atSource',
+    writer: 'SportsbookLedger.announceBet via recordInTransaction',
+    reason: 'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
+  },
+  'sportsbook.bet.accepted': {
+    kind: 'atSource',
+    writer: 'SportsbookLedger.announceBet via recordInTransaction',
+    reason: 'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
+  },
+  'sportsbook.bet.cancelled': {
+    kind: 'atSource',
+    writer: 'SportsbookLedger.announceBet via recordInTransaction',
+    reason: 'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
+  },
+  'sportsbook.bet.settled': {
+    kind: 'atSource',
+    writer: 'SportsbookLedger.announceBet via recordInTransaction',
+    reason: 'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
+  },
+  'sportsbook.bet.reopened': {
+    kind: 'atSource',
+    writer: 'SportsbookLedger.announceBet via recordInTransaction',
+    reason: 'joins the bet state change and its event; an align step writes sportsbook.bet.aligned instead',
+  },
+  'sportsbook.restriction.changed': {
+    kind: 'atSource',
+    writer: 'SportsbookRestriction via recordInTransaction',
+    reason: 'joins the restriction write and the sessions it revokes; the event carries auditRecorded',
+  },
+  'sportsbook.debt.changed': {
+    kind: 'atSource',
+    writer: 'SportsbookDebt.writeAudit via recordInTransaction',
+    reason: 'joins the debt write, last in the transaction; the event carries auditRecorded',
+  },
+  'player.account_manager.changed': {
+    kind: 'atSource',
+    writer: 'AccountManagerService via recordInTransaction (admin.player.account_manager_changed)',
+    reason: 'joins the assignment write with the previous and next manager',
+  },
+  'support_chat.customer.linked': {
+    kind: 'atSource',
+    writer: 'SupportChat via recordInTransaction',
+    reason: 'joins the customer link row',
+  },
 } as const satisfies Record<NotSubscribedTopic, AuditCoverage>;

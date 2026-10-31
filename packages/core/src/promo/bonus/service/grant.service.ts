@@ -5,6 +5,7 @@ import {
   CurrencyTickerInputSchema,
   MoneyAmountSchema,
   UuidSchema,
+  WagerProductSchema,
   type AuditWritePort,
   type BonusGrantArgs,
   type BonusGrantCommands,
@@ -85,6 +86,7 @@ const grantArgsSchema = z
         maxWinMultiplier: MoneyAmountSchema.refine(isPositiveMoney, 'must be greater than zero')
           .nullable()
           .optional(),
+        excludedProducts: z.array(WagerProductSchema).optional(),
       })
       .default(DEFAULT_GRANT_TERMS),
   })

@@ -3,12 +3,22 @@ import { AdminGuard, mapErrors, getUserId, type OssContext } from '@openora/core
 import type { AuditWritePort } from '@openora/core/contracts';
 import { playerContract } from '../contract/index.js';
 import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
+import {
+  AccountManagerIneligibleError,
+  AccountManagerService,
+} from '../service/account-manager.service.js';
 
-export function createPlayerRouter(
-  player: PlayerService,
-  adminGuard: AdminGuard,
-  audit: AuditWritePort,
-) {
+export function createPlayerRouter({
+  player,
+  accountManagers,
+  adminGuard,
+  audit,
+}: {
+  player: PlayerService;
+  accountManagers: AccountManagerService;
+  adminGuard: AdminGuard;
+  audit: AuditWritePort;
+}) {
   const os = implement(playerContract).$context<OssContext>();
 
   return os.router({
@@ -77,6 +87,24 @@ export function createPlayerRouter(
         });
         return result;
       });
+    }),
+
+    setAccountManager: os.setAccountManager.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context, 'player', 'update');
+      return mapErrors(
+        { NOT_FOUND: PlayerNotFoundError, UNPROCESSABLE_CONTENT: AccountManagerIneligibleError },
+        () => accountManagers.set(input.playerId, input.accountManagerId, caller),
+      );
+    }),
+
+    accountManagerCandidates: os.accountManagerCandidates.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'player', 'view');
+      return accountManagers.candidates(input.search, input.limit);
+    }),
+
+    assignedAccountManagers: os.assignedAccountManagers.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'player', 'view');
+      return accountManagers.assigned();
     }),
 
     registrationsOverTime: os.registrationsOverTime.handler(async ({ input, context }) => {

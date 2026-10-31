@@ -71,6 +71,7 @@ import {
   type TrustedProxies,
 } from './client-address.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
+import { wireErrorBody } from '../kernel/wire-error-response.js';
 import type { CoreTokenCatalog } from './core-token-catalog.js';
 
 // Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
@@ -210,7 +211,6 @@ function requestMeta(c: Context, trustedProxies: TrustedProxies) {
 
 const MCP_MAX_BODY_BYTES = 1_048_576;
 const MCP_SDK_PACKAGE = '@modelcontextprotocol/sdk';
-const MCP_SDK_VERSION = '^1.29.0';
 
 type MountedMcpTransport = { path: string; transport: McpHttpTransport };
 
@@ -244,8 +244,8 @@ async function importMcpHttpTransport() {
     }
     throw new Error(
       `[create-app] agents.mcp.enabled is on, but ${MCP_SDK_PACKAGE} is not installed. ` +
-        `@openora/core declares it as an optional peer dependency: install ` +
-        `${MCP_SDK_PACKAGE}@${MCP_SDK_VERSION}, or turn agents.mcp.enabled off.`,
+        `@openora/core declares it as an optional peer dependency: install it, ` +
+        `or turn agents.mcp.enabled off.`,
       { cause: err },
     );
   }
@@ -556,6 +556,7 @@ export async function createApp(
     clientInterceptors: container.has(AUDIT_WRITER)
       ? [adminMutationAudit(container.get(AUDIT_WRITER))]
       : [],
+    customErrorResponseBodyEncoder: wireErrorBody,
     interceptors: [
       onError((error) => {
         // oRPC wraps a thrown native error (a DB failure, a bug) into an
@@ -563,8 +564,12 @@ export async function createApp(
         // server fault - a non-ORPCError, or an ORPCError with a 5xx status - and skip
         // expected client errors (4xx: not-found, conflict, validation, rate-limit).
         // Report the underlying `cause` so the tracker gets the real error + stack,
-        // not the generic wrapper.
-        if (error instanceof ORPCError && error.status < 500) {
+        // not the generic wrapper. A wire error reply the route chose is reported only
+        // when it carries the fault as its cause.
+        if (
+          error instanceof ORPCError &&
+          (error.status < 500 || (wireErrorBody(error) !== null && error.cause === undefined))
+        ) {
           return;
         }
         const err = error instanceof ORPCError ? (error.cause ?? error) : error;

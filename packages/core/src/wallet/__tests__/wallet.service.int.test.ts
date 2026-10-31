@@ -34,6 +34,7 @@ import {
   walletReconciliationFinding,
   walletWithdrawalAddress,
   walletAutoWithdrawalConfig,
+  walletRefundedDeposit,
 } from '../schema/index.js';
 import {
   WalletService,
@@ -590,6 +591,31 @@ describe('WalletService.withdraw (real PG)', () => {
       }),
     ).rejects.toBeInstanceOf(AmbiguousNetworkError);
     expect(await balanceOf(w.userId)).toBe(100);
+  });
+
+  it('names the payable networks in the error so the client can pick one', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USDT' });
+    await db.drizzle.db.insert(walletAsset).values(
+      ['ERC20', 'TRC20'].map((network) => ({
+        currency: 'USDT',
+        network,
+        providerAssetId: `USDT_${network}`,
+        minDeposit: '0',
+        minWithdrawal: '0',
+        withdrawalFee: '0',
+      })),
+    );
+
+    await expect(
+      svc.withdraw({
+        userId: w.userId,
+        amount: '10',
+        currency: 'USDT',
+        destinationAddress: '0xexample',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toThrow(/ERC20, TRC20/);
   });
 
   it('enforces the minimum of the chosen chain, not the currency', async () => {
@@ -2550,7 +2576,11 @@ describe('WalletService withdrawal lock (real PG)', () => {
       .fn<PlayerTags['getActiveTagKeys']>()
       .mockResolvedValueOnce(new Map())
       .mockResolvedValue(new Map([[w.userId, ['withdrawal_lock']]]));
-    const { svc, psp } = makeService({ riskTags: mock<PlayerTags>({ getActiveTagKeys }) });
+    const playerId = randomUUID();
+    const { svc, psp, audit, events } = makeService({
+      riskTags: mock<PlayerTags>({ getActiveTagKeys }),
+      identityReader: playerIdentityReader(playerId),
+    });
 
     await expect(svc.approveWithdrawal(randomUUID(), queued.id)).rejects.toBeInstanceOf(
       WithdrawalLockedError,
@@ -2567,6 +2597,31 @@ describe('WalletService withdrawal lock (real PG)', () => {
       reviewReason: 'held for source of funds',
     });
     expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(expect.anything(), {
+      actorType: 'system',
+      action: 'wallet.withdrawal.requeued',
+      resourceType: 'player',
+      resourceId: playerId,
+      before: { status: 'processing' },
+      after: {
+        userId: w.userId,
+        transactionId: queued.id,
+        status: 'on_hold',
+        reason: 'withdrawal_lock',
+      },
+    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'wallet.withdrawal.requeued',
+      {
+        userId: w.userId,
+        playerId,
+        amount: queued.amount,
+        currency: queued.currency,
+        transactionId: queued.id,
+        reason: 'withdrawal_lock',
+      },
+    );
   });
 
   it("still lets an admin reject a locked player's queued withdrawal, refunding it", async () => {
@@ -2611,5 +2666,379 @@ describe('WalletService withdrawal lock (real PG)', () => {
     const { items } = await svc.listWithdrawals({ page: 1, limit: 20 });
 
     expect(items[0]?.withdrawalLocked).toBe(false);
+  });
+});
+
+describe('WalletService.withdraw request event (real PG)', () => {
+  it('carries the client ip and user agent the request came from', async () => {
+    const { svc, events } = makeService();
+    const w = await seedWallet({ balance: '100' });
+
+    await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ip: '203.0.113.7',
+      userAgent: 'Mozilla/5.0 test',
+    });
+
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'wallet.withdrawal.requested',
+      expect.objectContaining({ ip: '203.0.113.7', userAgent: 'Mozilla/5.0 test' }),
+    );
+  });
+});
+
+describe('WalletService.deposit PSP hand-off and settlement (real PG)', () => {
+  it('tells the PSP who is paying and through which provider', async () => {
+    const { svc, psp } = makeService();
+    const w = await seedWallet();
+
+    await svc.deposit({ userId: w.userId, amount: '40', currency: 'USD', provider: 'stripe' });
+
+    expect(psp.processDeposit).toHaveBeenCalledWith('40', 'USD', {
+      userId: w.userId,
+      provider: 'stripe',
+    });
+  });
+
+  it('credits nothing when the pending row was settled elsewhere before the PSP answered', async () => {
+    const { svc, events, psp } = makeService();
+    const w = await seedWallet({ balance: '10' });
+    psp.processDeposit.mockImplementationOnce(async () => {
+      await db.drizzle.db
+        .update(walletTransaction)
+        .set({ status: 'completed' })
+        .where(eq(walletTransaction.walletId, w.id));
+      return { externalId: randomUUID(), status: 'completed' };
+    });
+
+    const result = await svc.deposit({ userId: w.userId, amount: '40', currency: 'USD' });
+
+    expect(await balanceOf(w.userId)).toBe(10);
+    expect(await txRows(w.id)).toHaveLength(1);
+    expect(result.transactionId).toBe((await txRows(w.id))[0]?.id);
+    expect(emittedTopics(events)).toEqual([]);
+  });
+
+  it('never charges the PSP twice for one idempotency key landing concurrently', async () => {
+    const { svc, psp } = makeService();
+    const w = await seedWallet();
+    const args = { userId: w.userId, amount: '25', currency: 'USD', idempotencyKey: randomUUID() };
+
+    const [a, b] = await Promise.all([svc.deposit(args), svc.deposit(args)]);
+
+    expect(a.transactionId).toBe(b.transactionId);
+    expect(psp.processDeposit).toHaveBeenCalledTimes(1);
+    expect(await txRows(w.id)).toHaveLength(1);
+    expect(await balanceOf(w.userId)).toBe(25);
+  });
+});
+
+describe('WalletService ledger reference value (real PG)', () => {
+  it('stamps a same-currency deposit with the reference currency at rate one', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet();
+
+    await svc.deposit({ userId: w.userId, amount: '40', currency: 'USD' });
+
+    const [row] = await txRows(w.id);
+    expect(row).toMatchObject({ referenceCurrency: 'USD' });
+    expect(Number(row?.referenceAmount)).toBe(40);
+    expect(Number(row?.referenceRate)).toBe(1);
+    expect(row?.referenceRateAsOf).toBeInstanceOf(Date);
+  });
+
+  it('values a foreign-currency deposit at the rate the reader quoted', async () => {
+    const { svc } = makeService({ rates: makeExchangeRateReader('1.1') });
+    const w = await seedWallet();
+
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
+
+    const [row] = await txRows(w.id);
+    expect(row).toMatchObject({ referenceCurrency: 'USD' });
+    expect(Number(row?.referenceAmount)).toBeCloseTo(11, 10);
+    expect(Number(row?.referenceRate)).toBeCloseTo(1.1, 10);
+  });
+});
+
+describe('WalletService.approveWithdrawal on a row that is not a withdrawal (real PG)', () => {
+  it('refuses a queued-looking deposit and leaves it and the PSP untouched', async () => {
+    const { svc, psp } = makeService();
+    const w = await seedWallet({ balance: '10' });
+    const deposit = await seedTx(w.id, { type: 'deposit', status: 'pending', direction: 'credit' });
+
+    await expect(svc.approveWithdrawal(randomUUID(), deposit.id)).rejects.toBeInstanceOf(
+      WithdrawalNotPendingError,
+    );
+
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect((await txById(deposit.id)).status).toBe('pending');
+  });
+});
+
+describe('WalletService.creditDepositByAddress redelivery of a held deposit under an RG limit (real PG)', () => {
+  it('files no limit-breach finding for money that was never credited', async () => {
+    const depositHold = { holdReason: vi.fn(async () => 'self_excluded') };
+    const rgLimits = mock<NonNullable<WalletServiceDeps['rgLimits']>>({
+      checkDeposit: vi.fn(async () => ({
+        allowed: false,
+        limitType: 'deposit',
+        period: 'daily',
+        limit: '1',
+        used: '2',
+        currency: 'BTC',
+      })),
+      referenceCurrency: vi.fn(async () => null),
+    });
+    const { svc } = makeService({ depositHold, rgLimits });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await db.drizzle.db.insert(walletDepositAddress).values({
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qheldlimit',
+      providerName: 'custody',
+    });
+    const event = {
+      kind: 'deposit' as const,
+      address: 'bc1qheldlimit',
+      amount: '2',
+      currency: 'BTC',
+      externalId: randomUUID(),
+      txHash: '0xheldlimit',
+    };
+
+    await svc.creditDepositByAddress(event);
+    await svc.creditDepositByAddress(event);
+
+    const findings = await db.drizzle.db
+      .select()
+      .from(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.externalId, event.externalId));
+    expect(findings.map((f) => f.kind)).toEqual(['held_deposit']);
+    expect(await balanceOf(w.userId)).toBe(0);
+  });
+});
+
+describe('WalletService.withdraw asset terms (real PG)', () => {
+  async function seedBtcAsset(minWithdrawal: string, withdrawalFee: string) {
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'BTC',
+      network: 'BITCOIN',
+      providerAssetId: 'BTC',
+      minDeposit: '0',
+      minWithdrawal,
+      withdrawalFee,
+    });
+  }
+
+  it('accepts an amount exactly at the minimum', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ currency: 'BTC', balance: '5' });
+    await seedBtcAsset('1', '0');
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      destinationAddress: 'bc1qmin',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.transactionId).toBeDefined();
+  });
+
+  it('records no fee for a network that charges none', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ currency: 'BTC', balance: '5' });
+    await seedBtcAsset('0', '0');
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      destinationAddress: 'bc1qfree',
+      ...NO_CLIENT_META,
+    });
+
+    expect((await txById(result.transactionId)).fee).toBeNull();
+  });
+});
+
+describe('WalletService.creditDepositByAddress edges (real PG)', () => {
+  async function seedAddress(
+    userId: string,
+    address: string,
+    over: Partial<typeof walletDepositAddress.$inferInsert> = {},
+  ) {
+    await db.drizzle.db
+      .insert(walletDepositAddress)
+      .values({ userId, currency: 'BTC', address, providerName: 'custody', ...over });
+  }
+
+  const breachingLimits = () =>
+    mock<NonNullable<WalletServiceDeps['rgLimits']>>({
+      checkDeposit: vi.fn(async () => ({
+        allowed: false,
+        limitType: 'deposit',
+        period: 'daily',
+        limit: '1',
+        used: '2',
+        currency: 'BTC',
+      })),
+      referenceCurrency: vi.fn(async () => null),
+    });
+
+  const findingKinds = async (externalId: string) =>
+    (
+      await db.drizzle.db
+        .select()
+        .from(walletReconciliationFinding)
+        .where(eq(walletReconciliationFinding.externalId, externalId))
+    ).map((f) => f.kind);
+
+  const event = (address: string, over: Record<string, string> = {}) => ({
+    kind: 'deposit' as const,
+    address,
+    amount: '2',
+    currency: 'BTC',
+    externalId: randomUUID(),
+    txHash: `0x${randomUUID()}`,
+    ...over,
+  });
+
+  it('never credits a deposit an admin already refunded from its finding', async () => {
+    const { svc, events } = makeService();
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qrefunded');
+    const ev = event('bc1qrefunded');
+    const [finding] = await db.drizzle.db
+      .insert(walletReconciliationFinding)
+      .values({ runId: randomUUID(), providerName: 'custody', kind: 'unattributed_deposit' })
+      .returning();
+    await db.drizzle.db.insert(walletRefundedDeposit).values({
+      providerName: 'custody',
+      externalId: ev.externalId,
+      findingId: finding!.id,
+    });
+
+    await svc.creditDepositByAddress(ev);
+
+    expect(await balanceOf(w.userId)).toBe(0);
+    expect(await txRows(w.id)).toHaveLength(0);
+    expect(emittedTopics(events)).toEqual([]);
+  });
+
+  it('answers a redelivery of a credited deposit without needing a rate', async () => {
+    const rates = makeExchangeRateReader();
+    const { svc } = makeService({ rates });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qnorate');
+    const ev = event('bc1qnorate');
+    await svc.creditDepositByAddress(ev);
+    vi.mocked(rates.getRate).mockResolvedValue(null);
+
+    await expect(svc.creditDepositByAddress(ev)).resolves.toBeUndefined();
+
+    expect(await balanceOf(w.userId)).toBe(2);
+    expect(await txRows(w.id)).toHaveLength(1);
+  });
+
+  it('files no limit finding when a refunded deposit is redelivered', async () => {
+    const { svc } = makeService({ rgLimits: breachingLimits() });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qrefundedrow');
+    const ev = event('bc1qrefundedrow');
+    await seedTx(w.id, {
+      type: 'deposit',
+      status: 'refunded',
+      direction: 'credit',
+      amount: '2',
+      currency: 'BTC',
+      providerName: 'custody',
+      providerRefId: ev.externalId,
+    });
+
+    await svc.creditDepositByAddress(ev);
+
+    expect(await findingKinds(ev.externalId)).toEqual([]);
+    expect(await balanceOf(w.userId)).toBe(0);
+  });
+
+  it('treats a held deposit with no recorded reason as still held on redelivery', async () => {
+    const { svc } = makeService({ rgLimits: breachingLimits() });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qheldnoreason');
+    const ev = event('bc1qheldnoreason');
+    await seedTx(w.id, {
+      type: 'deposit',
+      status: 'on_hold',
+      direction: 'credit',
+      amount: '2',
+      currency: 'BTC',
+      reviewReason: null,
+      providerName: 'custody',
+      providerRefId: ev.externalId,
+    });
+
+    await svc.creditDepositByAddress(ev);
+
+    expect(await findingKinds(ev.externalId)).toEqual([]);
+  });
+
+  it('stamps the ledger row with the vendor network, else the one the address was issued on', async () => {
+    const { svc } = makeService();
+    const issued = await seedWallet({ currency: 'BTC', balance: '0' });
+    const unissued = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(issued.userId, 'bc1qissued', { network: 'BITCOIN' });
+    await seedAddress(unissued.userId, 'bc1qunissued');
+
+    await svc.creditDepositByAddress(event('bc1qissued'));
+    await svc.creditDepositByAddress(event('bc1qunissued', { network: 'LIGHTNING' }));
+
+    expect((await txRows(issued.id))[0]?.network).toBe('BITCOIN');
+    expect((await txRows(unissued.id))[0]?.network).toBe('LIGHTNING');
+  });
+
+  it('prefers the address issued on the reported network over a network-less one', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qshared', { providerName: 'legacy' });
+    await seedAddress(w.userId, 'bc1qshared', {
+      currency: 'USDT',
+      network: 'ERC20',
+      providerName: 'custody',
+    });
+
+    await svc.creditDepositByAddress(event('bc1qshared', { network: 'ERC20' }));
+
+    expect((await txRows(w.id))[0]?.providerName).toBe('custody');
+  });
+
+  it('files the held finding with the network, memo tag and sender of the deposit', async () => {
+    const { svc } = makeService({
+      depositHold: { holdReason: vi.fn(async () => 'self_excluded') },
+    });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'rMemoAddress', { tag: 'memo-1' });
+    const ev = event('rMemoAddress', {
+      network: 'XRPL',
+      tag: 'memo-1',
+      sourceAddress: 'rSender',
+    });
+
+    await svc.creditDepositByAddress(ev);
+
+    const [finding] = await db.drizzle.db
+      .select()
+      .from(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.externalId, ev.externalId));
+    expect(finding).toMatchObject({
+      kind: 'held_deposit',
+      network: 'XRPL',
+      tag: 'memo-1',
+      sourceAddress: 'rSender',
+    });
   });
 });

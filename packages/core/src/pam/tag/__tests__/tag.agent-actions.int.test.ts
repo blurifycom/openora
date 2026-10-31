@@ -324,18 +324,21 @@ describe('add_tag action type (plugin wiring through the MCP kernel)', () => {
     expect(result).toEqual({ ok: false, error: 'player_not_eligible' });
   });
 
-  it('rejects a tag outside the agent-assignable set', async () => {
-    const kernel = bootKernel();
-    const target = await seedPlayer();
+  it.each(['withdrawal_review', 'recent_depositor'])(
+    'rejects %s, a tag outside the agent-assignable set',
+    async (tagKey) => {
+      const kernel = bootKernel();
+      const target = await seedPlayer();
 
-    const result = await kernel.checkPrecondition(
-      'add_tag',
-      { playerId: target.id, tagKey: 'withdrawal_review', reason: REASON },
-      runContext(),
-    );
+      const result = await kernel.checkPrecondition(
+        'add_tag',
+        { playerId: target.id, tagKey, reason: REASON },
+        runContext(),
+      );
 
-    expect(result).toMatchObject({ ok: false, error: 'invalid_input' });
-  });
+      expect(result).toMatchObject({ ok: false, error: 'invalid_input' });
+    },
+  );
 
   it('applies the tag in the name of the admin the agent acts for, once per proposal', async () => {
     const kernel = bootKernel();

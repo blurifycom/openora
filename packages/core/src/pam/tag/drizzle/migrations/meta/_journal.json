@@ -43,6 +43,13 @@
       "when": 1791797726505,
       "tag": "0005_flawless_ben_grimm",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792746439462,
+      "tag": "0006_wild_ironclad",
+      "breakpoints": true
     }
   ]
 }

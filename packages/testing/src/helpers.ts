@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE, type Container, type CoreTokenCatalog } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
@@ -9,6 +10,42 @@ import { registerAndMaterializePlayer, uniqueUsername } from './register.js';
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 export async function readJson(res: Response): Promise<any> {
   return res.json();
+}
+
+export type NamedAccount = Awaited<ReturnType<typeof registerAndMaterializePlayer>> & {
+  name: string;
+  email: string;
+};
+
+/** A registered player whose `user.name` is set to `name`; the email starts with `emailPrefix`. */
+export async function newPlayer(
+  app: TestApp,
+  emailPrefix: string,
+  name = `player ${randomUUID()}`,
+): Promise<NamedAccount> {
+  const email = `${emailPrefix}-${randomUUID()}@e2e.test`;
+  const account = await registerAndMaterializePlayer(app, { email });
+  await app.container.get(DRIZZLE).db.update(user).set({ name }).where(eq(user.id, account.userId));
+  return { ...account, name, email };
+}
+
+export async function newStaff(
+  app: TestApp,
+  emailPrefix: string,
+  roleKey: string,
+  name = `staff ${randomUUID()}`,
+): Promise<NamedAccount> {
+  const account = await newPlayer(app, emailPrefix, name);
+  await assignIamRoleByKey(app.container, account.userId, roleKey);
+  return account;
+}
+
+export async function deactivateUser(app: TestApp, userId: string) {
+  await app.container
+    .get(DRIZZLE)
+    .db.update(user)
+    .set({ isActive: false })
+    .where(eq(user.id, userId));
 }
 
 export type Chatter = Awaited<ReturnType<typeof registerAndMaterializePlayer>> & {
@@ -75,12 +112,22 @@ export async function assignIamRoleByKey(
 ) {
   const drizzle = container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
-  const [role] = await drizzle.select().from(adminRole).where(eq(adminRole.key, roleKey));
+  const roleId = await roleIdByKey(container, roleKey);
+  await drizzle.insert(adminRoleAssignment).values({ userId, roleId }).onConflictDoNothing();
+}
+
+/** The id of the seeded `admin_role` with key `roleKey`; throws when there is none. */
+export async function roleIdByKey(
+  container: Container<CoreTokenCatalog>,
+  roleKey: string,
+): Promise<string> {
+  const [role] = await container
+    .get(DRIZZLE)
+    .db.select({ id: adminRole.id })
+    .from(adminRole)
+    .where(eq(adminRole.key, roleKey));
   if (!role) {
-    throw new Error(`assignIamRoleByKey: no seeded admin_role with key='${roleKey}'`);
+    throw new Error(`no seeded admin_role with key='${roleKey}'`);
   }
-  await drizzle
-    .insert(adminRoleAssignment)
-    .values({ userId, roleId: role.id })
-    .onConflictDoNothing();
+  return role.id;
 }

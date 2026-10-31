@@ -70,12 +70,20 @@ export type AdminUserDirectory = {
   list(opts: AdminUserListOptions): Promise<{ rows: AdminUserRow[]; total: number }>;
   get(id: string): Promise<AdminUserRow | null>;
   lookupUsers(userIds: readonly string[]): Promise<AdminUserRow[]>;
-  /** actorId = the admin performing the change (for audit attribution on an isActive flip). */
+  /**
+   * actorId = the admin performing the change (for audit attribution on an isActive flip).
+   * `beforeWrite` runs inside the update's transaction, after the target row is locked and
+   * before it is written, with the row's current status; throwing from it rolls the update
+   * back. `tx` is the directory's transaction handle, to pass on to a port that joins it.
+   */
   update(
     id: string,
     patch: { isActive?: boolean; role?: UserRole },
     actorId: string,
     meta?: ClientMeta,
+    options?: {
+      beforeWrite?: (tx: unknown, current: { isActive: boolean; role: string }) => Promise<void>;
+    },
   ): Promise<AdminUserRow | null>;
   /**
    * Batch enrichment for back-office lists (eg the withdrawal queue). Returns one
