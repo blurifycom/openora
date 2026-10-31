@@ -381,6 +381,10 @@ export const sportsbookAdminContract = {
     .route({ method: 'POST', path: '/backoffice/sportsbook/resume' })
     .input(ReasonInputSchema)
     .output(SportsbookConfigSchema),
+  getRestriction: oc
+    .route({ method: 'GET', path: '/backoffice/sportsbook/players/{userId}/restriction' })
+    .input(UserIdInputSchema)
+    .output(SportsbookRestrictionSchema),
   restrictPlayer: oc
     .route({ method: 'POST', path: '/backoffice/sportsbook/players/{userId}/restriction' })
     .input(SetSportsbookRestrictionInputSchema)
