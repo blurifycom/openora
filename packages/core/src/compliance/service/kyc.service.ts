@@ -14,7 +14,9 @@ import {
   type EventBus,
 } from '@openora/core/server';
 import {
+  isAdultDateOfBirth,
   normalizeKycStatus,
+  resolveMinPlayerAge,
   type KycAdapter,
   type AuditWritePort,
   type ExchangeRateReader,
@@ -34,6 +36,7 @@ import {
   resolveExchangeRatePivot,
 } from '@openora/core/contracts';
 import { and, desc, eq, sql } from 'drizzle-orm';
+import * as z from 'zod';
 import { kycVerification, type KycVerification } from '../schema/index.js';
 // Cross-domain reads via public /schema subpaths (ADR-0020); the wallet ledger is the
 // source of truth for lifetime deposits (player.totalDeposits is a display copy in the
@@ -129,6 +132,16 @@ function resolveManualStatus(status: KycOverrideStatus): KycStatus {
   return status === 'approved' ? 'manually_overridden' : status;
 }
 
+const UNDERAGE_REASON = 'underage';
+
+const UNREADABLE_DATE_OF_BIRTH_REASON = 'date_of_birth_unreadable';
+
+const VendorDateOfBirthSchema = z
+  .union([z.iso.date(), z.iso.datetime({ offset: true })])
+  .transform((value) => value.slice(0, 10));
+
+type VendorDateOfBirth = { dateOfBirth?: string; underage: boolean; unreadable: boolean };
+
 const HIGH_RISK_SIGNAL_KEYS = [
   'duplicateDeviceDetected',
   'highRiskCountryDetected',
@@ -152,6 +165,28 @@ function findIncompleteCheck(checks?: KycCheckResult[]): KycCheckResult | undefi
 
 function describeIncompleteCheck(check: KycCheckResult): string {
   return `Vendor reported approved but "${check.step}" has not reached a successful state (status: ${check.status})`;
+}
+
+function gateVendorDecision(
+  vendorStatus: KycVendorStatus,
+  checks: KycCheckResult[] | undefined,
+  dob: VendorDateOfBirth,
+): { status: KycStatus; reason?: string } {
+  if (dob.underage) {
+    return { status: 'rejected', reason: UNDERAGE_REASON };
+  }
+  const status = mapVendorStatus(vendorStatus);
+  if (status !== 'approved') {
+    return { status };
+  }
+  const incompleteCheck = findIncompleteCheck(checks);
+  if (incompleteCheck) {
+    return { status: 'resubmission_requested', reason: describeIncompleteCheck(incompleteCheck) };
+  }
+  if (dob.unreadable) {
+    return { status: 'resubmission_requested', reason: UNREADABLE_DATE_OF_BIRTH_REASON };
+  }
+  return { status };
 }
 
 function toDto(row: KycVerification) {
@@ -319,11 +354,10 @@ export class KycVerificationService {
           input.documents.map((d) => ({ type: d.type, frontUrl: d.frontUrl, backUrl: d.backUrl })),
           input.tier,
         );
-        const mappedStatus = mapVendorStatus(result.status);
-        const incompleteCheck =
-          mappedStatus === 'approved' ? findIncompleteCheck(result.checks) : undefined;
-        const status = incompleteCheck ? 'resubmission_requested' : mappedStatus;
-        const decisionReason = incompleteCheck ? describeIncompleteCheck(incompleteCheck) : null;
+        const dob = this.readVendorDateOfBirth(result.referenceId, result.dateOfBirth);
+        const gated = gateVendorDecision(result.status, result.checks, dob);
+        const status = gated.status;
+        const decisionReason = gated.reason ?? null;
         const decided = isDecided(status);
 
         const inserted = findOneOrThrow(
@@ -381,16 +415,23 @@ export class KycVerificationService {
           reason: decisionReason,
           source: 'vendor',
         });
+        const playerId =
+          playerTransition?.playerId ??
+          (await this.identityReader.getPlayerIdByUserId(userId, trx));
         await this.events.emitInTransaction(trx, 'compliance.kyc.submitted', {
           userId,
-          playerId:
-            playerTransition?.playerId ??
-            (await this.identityReader.getPlayerIdByUserId(userId, trx)),
+          playerId,
           referenceId: result.referenceId,
           provider: this.provider,
           tier: input.tier,
           ip: meta?.ip ?? null,
           userAgent: meta?.userAgent ?? null,
+        });
+        await this.emitDateOfBirthSignal(trx, dob, {
+          userId,
+          playerId,
+          referenceId: result.referenceId,
+          tier: input.tier,
         });
         return {
           duplicate: false as const,
@@ -415,6 +456,13 @@ export class KycVerificationService {
    * actual decision, so a bare status reconcile never blanks out an earlier one. Emits
    * `compliance.kyc.high_risk_signal_detected` when the supplied `riskSignals` (never a
    * preserved prior value) trip `warrantsHighRiskTag`.
+   *
+   * A vendor `opts.dateOfBirth` under the configured minimum age forces the decision to
+   * `rejected` with reason `underage` and emits `compliance.kyc.underage_detected`; an adult
+   * one that differs from the player's declared date of birth emits
+   * `compliance.kyc.dob_mismatch_detected`. Both only on a decision that changed a row. A
+   * date that is not an ISO date or datetime turns a vendor `approved` into
+   * `resubmission_requested`.
    *
    * `opts.receivedAt` (when the caller has it - the `kyc-decision-sync` job path always
    * does, stamped at webhook-arrival time in the router, BEFORE the job queue can
@@ -450,8 +498,10 @@ export class KycVerificationService {
       riskSignals?: KycRiskSignals;
       checks?: KycCheckResult[];
       receivedAt?: Date;
+      dateOfBirth?: string;
     } = {},
   ) {
+    const dob = this.readVendorDateOfBirth(referenceId, opts.dateOfBirth);
     const outcomes = await this.drizzle.db.transaction(async (trx) => {
       const rows = await trx
         .select()
@@ -471,17 +521,17 @@ export class KycVerificationService {
       const reconciled: KycReconcileOutcome[] = [];
 
       for (const row of targetRows) {
-        const mappedStatus = mapVendorStatus(vendorStatus);
         const persistedChecks = opts.checks ?? row.checks ?? undefined;
-        const incompleteCheck =
-          mappedStatus === 'approved' ? findIncompleteCheck(persistedChecks) : undefined;
-        const status = incompleteCheck ? 'resubmission_requested' : mappedStatus;
-        const reasonFromThisReconcile = incompleteCheck
-          ? describeIncompleteCheck(incompleteCheck)
-          : opts.reason;
+        const gated = gateVendorDecision(vendorStatus, persistedChecks, dob);
+        const status = gated.status;
+        const reasonFromThisReconcile = gated.reason ?? opts.reason;
         const decisionReason = reasonFromThisReconcile ?? row.decisionReason;
 
-        if (row.status === status && row.decidedAt) {
+        if (
+          row.status === status &&
+          row.decidedAt &&
+          (!dob.underage || row.decisionReason === UNDERAGE_REASON)
+        ) {
           reconciled.push({
             row,
             playerTransition: null,
@@ -559,17 +609,20 @@ export class KycVerificationService {
       // both tiers is still exactly one real signal.
       const anyChanged = reconciled.some((outcome) => outcome.changed);
       const [primaryOutcome] = reconciled;
-      if (
-        primaryOutcome &&
-        anyChanged &&
-        opts.riskSignals &&
-        warrantsHighRiskTag(opts.riskSignals)
-      ) {
+      const highRisk = opts.riskSignals && warrantsHighRiskTag(opts.riskSignals);
+      if (!primaryOutcome || !anyChanged || (dob.dateOfBirth === undefined && !highRisk)) {
+        return reconciled;
+      }
+      const signal = {
+        userId: ownerUserId,
+        playerId: await this.identityReader.getPlayerIdByUserId(ownerUserId, trx),
+        referenceId,
+        tier: primaryOutcome.row.tier,
+      };
+      await this.emitDateOfBirthSignal(trx, dob, signal);
+      if (opts.riskSignals && highRisk) {
         await this.events.emitInTransaction(trx, 'compliance.kyc.high_risk_signal_detected', {
-          userId: primaryOutcome.row.userId,
-          playerId: await this.identityReader.getPlayerIdByUserId(primaryOutcome.row.userId, trx),
-          referenceId,
-          tier: primaryOutcome.row.tier,
+          ...signal,
           vpnOrTorDetected: opts.riskSignals.vpnOrTorDetected,
           dataCenterIpDetected: opts.riskSignals.dataCenterIpDetected,
           duplicateDeviceDetected: opts.riskSignals.duplicateDeviceDetected,
@@ -629,7 +682,58 @@ export class KycVerificationService {
       checks: decision.checks,
       riskSignals,
       receivedAt,
+      dateOfBirth: decision.dateOfBirth,
     });
+  }
+
+  private readVendorDateOfBirth(referenceId: string, raw: string | undefined): VendorDateOfBirth {
+    if (raw === undefined) {
+      return { underage: false, unreadable: false };
+    }
+    const parsed = VendorDateOfBirthSchema.safeParse(raw);
+    if (!parsed.success) {
+      logger.warn({ referenceId }, 'KYC vendor date of birth is not an ISO date');
+      return { underage: false, unreadable: true };
+    }
+    return {
+      dateOfBirth: parsed.data,
+      underage: !isAdultDateOfBirth(
+        parsed.data,
+        new Date(),
+        resolveMinPlayerAge(this.platformConfig),
+      ),
+      unreadable: false,
+    };
+  }
+
+  private async emitDateOfBirthSignal(
+    trx: DrizzleTx,
+    dob: VendorDateOfBirth,
+    signal: { userId: User['id']; playerId: string | null; referenceId: string; tier: KycTier },
+  ) {
+    if (dob.underage) {
+      await this.events.emitInTransaction(trx, 'compliance.kyc.underage_detected', signal);
+      return;
+    }
+    if (
+      dob.dateOfBirth !== undefined &&
+      (await this.declaredDateOfBirthDiffers(signal.userId, dob.dateOfBirth, trx))
+    ) {
+      await this.events.emitInTransaction(trx, 'compliance.kyc.dob_mismatch_detected', signal);
+    }
+  }
+
+  // A reader without the lookup cannot tell, so it reports no mismatch.
+  private async declaredDateOfBirthDiffers(
+    userId: User['id'],
+    verified: string,
+    trx: DrizzleTx,
+  ): Promise<boolean> {
+    if (!this.identityReader.getPlayerDateOfBirthByUserId) {
+      return false;
+    }
+    const declared = await this.identityReader.getPlayerDateOfBirthByUserId(userId, trx);
+    return declared !== verified;
   }
 
   async getForPlayer(userId: User['id']): Promise<PlayerKycView> {

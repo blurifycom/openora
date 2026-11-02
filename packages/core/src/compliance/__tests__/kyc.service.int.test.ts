@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { desc, eq, sql } from 'drizzle-orm';
 import type {
   ExchangeRateReader,
+  IdentityReader,
   KycAdapter,
   KycStatusWriter,
   KycVendorStatus,
@@ -20,13 +21,19 @@ import { KycVerificationService } from '../service/kyc.service.js';
 
 let db: TestDb;
 
-type AdapterResult = { referenceId: string; status: KycVendorStatus; verificationUrl?: string };
+type AdapterResult = {
+  referenceId: string;
+  status: KycVendorStatus;
+  verificationUrl?: string;
+  dateOfBirth?: string;
+};
 
 function makeService(
   options: {
     adapter?: Partial<AdapterResult>;
     config?: PlatformConfig;
     exchangeRateReader?: ExchangeRateReader;
+    identityReader?: IdentityReader;
   } = {},
 ) {
   const events = makeEventBus();
@@ -47,7 +54,7 @@ function makeService(
     audit,
     kycAdapter,
     statusWriter,
-    identityReader: makeIdentityReader(),
+    identityReader: options.identityReader ?? makeIdentityReader(),
     ...(options.config ? { platformConfig: options.config } : {}),
     ...(options.exchangeRateReader ? { exchangeRateReader: options.exchangeRateReader } : {}),
   });
@@ -399,6 +406,206 @@ describe('KycVerificationService.reconcile (real PG)', () => {
     await expect(
       svc.syncDecision(adapterResult.referenceId, 'approved', undefined, 'basic'),
     ).rejects.toThrow('disagree');
+  });
+});
+
+describe('KycVerificationService.reconcile - vendor date of birth (real PG)', () => {
+  const playerId = randomUUID();
+
+  function readerWith(storedDateOfBirth: string | null) {
+    return mock<IdentityReader>({
+      ...makeIdentityReader(),
+      getPlayerIdByUserId: vi.fn(async () => playerId),
+      getPlayerDateOfBirthByUserId: vi.fn(async () => storedDateOfBirth),
+    });
+  }
+
+  function emittedTopics(events: ReturnType<typeof makeService>['events']) {
+    return vi.mocked(events.emitInTransaction).mock.calls.map(([, topic]) => topic);
+  }
+
+  it('rejects an under-age player as underage and emits underage_detected without the date', async () => {
+    const { svc, events, adapterResult } = makeService({
+      adapter: { status: 'pending' },
+      identityReader: readerWith('1990-01-01'),
+    });
+    const userId = randomUUID();
+    await svc.submit(userId, passportSubmission);
+
+    const result = await svc.reconcile(adapterResult.referenceId, 'approved', {
+      dateOfBirth: '2015-06-01',
+    });
+
+    expect(result).toMatchObject({ status: 'rejected', decisionReason: 'underage' });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'compliance.kyc.underage_detected',
+      { userId, playerId, referenceId: adapterResult.referenceId, tier: 'basic' },
+    );
+    expect(emittedTopics(events)).not.toContain('compliance.kyc.dob_mismatch_detected');
+  });
+
+  it('applies the configured minimum age', async () => {
+    const { svc, events, adapterResult } = makeService({
+      adapter: { status: 'pending' },
+      identityReader: readerWith('2006-01-01'),
+      config: { registration: { minPlayerAge: 21 } } as PlatformConfig,
+    });
+    await svc.submit(randomUUID(), passportSubmission);
+    const twentyYearsAgo = new Date();
+    twentyYearsAgo.setUTCFullYear(twentyYearsAgo.getUTCFullYear() - 20);
+
+    const result = await svc.reconcile(adapterResult.referenceId, 'approved', {
+      dateOfBirth: twentyYearsAgo.toISOString().slice(0, 10),
+    });
+
+    expect(result?.status).toBe('rejected');
+    expect(emittedTopics(events)).toContain('compliance.kyc.underage_detected');
+  });
+
+  it('emits nothing more when the same under-age decision is synced again', async () => {
+    const { svc, events, adapterResult } = makeService({
+      adapter: { status: 'pending' },
+      identityReader: readerWith(null),
+    });
+    await svc.submit(randomUUID(), passportSubmission);
+    await svc.reconcile(adapterResult.referenceId, 'approved', { dateOfBirth: '2015-06-01' });
+    vi.mocked(events.emitInTransaction).mockClear();
+
+    const again = await svc.reconcile(adapterResult.referenceId, 'approved', {
+      dateOfBirth: '2015-06-01',
+    });
+
+    expect(again?.status).toBe('rejected');
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('emits dob_mismatch_detected when an adult verified date differs from the declared one', async () => {
+    const { svc, events, adapterResult } = makeService({
+      adapter: { status: 'pending' },
+      identityReader: readerWith('1990-01-01'),
+    });
+    const userId = randomUUID();
+    await svc.submit(userId, passportSubmission);
+
+    const result = await svc.reconcile(adapterResult.referenceId, 'approved', {
+      dateOfBirth: '1991-02-03',
+    });
+
+    expect(result?.status).toBe('approved');
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'compliance.kyc.dob_mismatch_detected',
+      { userId, playerId, referenceId: adapterResult.referenceId, tier: 'basic' },
+    );
+    expect(emittedTopics(events)).not.toContain('compliance.kyc.underage_detected');
+  });
+
+  it('treats a player with no declared date as a mismatch', async () => {
+    const { svc, events, adapterResult } = makeService({
+      adapter: { status: 'pending' },
+      identityReader: readerWith(null),
+    });
+    await svc.submit(randomUUID(), passportSubmission);
+
+    await svc.reconcile(adapterResult.referenceId, 'approved', { dateOfBirth: '1991-02-03' });
+
+    expect(emittedTopics(events)).toContain('compliance.kyc.dob_mismatch_detected');
+  });
+
+  it('emits no date-of-birth signal when the verified date matches the declared one', async () => {
+    const { svc, events, adapterResult } = makeService({
+      adapter: { status: 'pending' },
+      identityReader: readerWith('1990-01-01'),
+    });
+    await svc.submit(randomUUID(), passportSubmission);
+
+    const result = await svc.reconcile(adapterResult.referenceId, 'approved', {
+      dateOfBirth: '1990-01-01',
+    });
+
+    expect(result?.status).toBe('approved');
+    expect(emittedTopics(events)).not.toContain('compliance.kyc.dob_mismatch_detected');
+    expect(emittedTopics(events)).not.toContain('compliance.kyc.underage_detected');
+  });
+
+  it('sends a vendor approval with an unreadable date back for resubmission', async () => {
+    const { svc, events, adapterResult } = makeService({
+      adapter: { status: 'pending' },
+      identityReader: readerWith('1990-01-01'),
+    });
+    await svc.submit(randomUUID(), passportSubmission);
+
+    const result = await svc.reconcile(adapterResult.referenceId, 'approved', {
+      dateOfBirth: '01/02/2015',
+    });
+
+    expect(result).toMatchObject({
+      status: 'resubmission_requested',
+      decisionReason: 'date_of_birth_unreadable',
+    });
+    expect(emittedTopics(events)).not.toContain('compliance.kyc.underage_detected');
+  });
+
+  it('reads the date part of an ISO datetime', async () => {
+    const { svc, events, adapterResult } = makeService({
+      adapter: { status: 'pending' },
+      identityReader: readerWith('1990-01-01'),
+    });
+    await svc.submit(randomUUID(), passportSubmission);
+
+    const result = await svc.reconcile(adapterResult.referenceId, 'approved', {
+      dateOfBirth: '2015-06-01T00:00:00Z',
+    });
+
+    expect(result).toMatchObject({ status: 'rejected', decisionReason: 'underage' });
+    expect(emittedTopics(events)).toContain('compliance.kyc.underage_detected');
+  });
+
+  it('rejects an under-age decision returned by submit', async () => {
+    const { svc, events, adapterResult } = makeService({
+      adapter: { status: 'approved', dateOfBirth: '2015-06-01' },
+      identityReader: readerWith('1990-01-01'),
+    });
+    const userId = randomUUID();
+
+    const result = await svc.submit(userId, passportSubmission);
+
+    expect(result).toMatchObject({ status: 'rejected', decisionReason: 'underage' });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'compliance.kyc.underage_detected',
+      { userId, playerId, referenceId: adapterResult.referenceId, tier: 'basic' },
+    );
+  });
+
+  it('emits dob_mismatch_detected from a submit-time decision', async () => {
+    const { svc, events } = makeService({
+      adapter: { status: 'approved', dateOfBirth: '1991-02-03' },
+      identityReader: readerWith('1990-01-01'),
+    });
+
+    const result = await svc.submit(randomUUID(), passportSubmission);
+
+    expect(result.status).toBe('approved');
+    expect(emittedTopics(events)).toContain('compliance.kyc.dob_mismatch_detected');
+  });
+
+  it('carries the date from resolveDecision through syncDecision', async () => {
+    const { svc, kycAdapter, adapterResult } = makeService({
+      adapter: { status: 'pending' },
+      identityReader: readerWith('1990-01-01'),
+    });
+    await svc.submit(randomUUID(), passportSubmission);
+    kycAdapter.resolveDecision = vi.fn(async () => ({
+      referenceId: adapterResult.referenceId,
+      status: 'approved' as const,
+      dateOfBirth: '2015-06-01',
+    }));
+
+    const result = await svc.syncDecision(adapterResult.referenceId, 'approved');
+
+    expect(result?.status).toBe('rejected');
   });
 });
 

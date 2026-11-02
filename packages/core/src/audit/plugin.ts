@@ -110,6 +110,19 @@ export async function mapEventToRecord(
     };
   }
 
+  if (
+    topic === 'compliance.kyc.underage_detected' ||
+    topic === 'compliance.kyc.dob_mismatch_detected'
+  ) {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['playerId']),
+      after: { referenceId: p['referenceId'] ?? null, tier: p['tier'] ?? null },
+    };
+  }
+
   // No actor: the subject is the request's own origin, and there is no account yet on the
   // registration, login and page-gate paths that produce this.
   if (topic === 'compliance.geo.access_blocked') {
@@ -605,11 +618,11 @@ export async function mapEventToRecord(
     };
   }
 
-  // Only the admin player routes reach PlayerService.update / remove.
+  // The admin player routes, or a system suspension (null actorId) on an under-age KYC result.
   if (topic === 'player.status.changed') {
     return {
       ...base,
-      actorType: 'admin',
+      actorType: p['actorId'] ? 'admin' : 'system',
       actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),

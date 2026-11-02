@@ -22,7 +22,10 @@ import {
 let db: TestDb;
 
 const eligibility = (isRestricted: boolean) =>
-  mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(isRestricted) });
+  mock<PlayEligibilityPort>({
+    isRestricted: vi.fn().mockResolvedValue(isRestricted),
+    checkPlay: vi.fn().mockResolvedValue(isRestricted ? 'self_excluded' : null),
+  });
 
 const audit = makeAuditWriter();
 const svc = new WalletCommandsService(eligibility(false), audit);

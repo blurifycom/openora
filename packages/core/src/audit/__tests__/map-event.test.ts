@@ -936,6 +936,40 @@ describe('mapEventToRecord: player.status.changed', () => {
       after: { status: 'suspended' },
     });
   });
+
+  it('records a system suspension when no admin acted', async () => {
+    const row = await mapEventToRecord('player.status.changed', {
+      playerId,
+      userId,
+      actorId: null,
+      previousStatus: 'active',
+      newStatus: 'suspended',
+    });
+
+    expect(row).toMatchObject({ actorType: 'system', actorId: null, resourceId: playerId });
+  });
+});
+
+describe('mapEventToRecord: KYC date-of-birth signals', () => {
+  it.each(['compliance.kyc.underage_detected', 'compliance.kyc.dob_mismatch_detected'] as const)(
+    'files %s under the player as a system action without the date itself',
+    async (topic) => {
+      const row = await mapEventToRecord(topic, {
+        userId,
+        playerId,
+        referenceId: 'ref-1',
+        tier: 'basic',
+      });
+
+      expect(row).toMatchObject({
+        action: topic,
+        actorType: 'system',
+        resourceType: 'player',
+        resourceId: playerId,
+        after: { referenceId: 'ref-1', tier: 'basic' },
+      });
+    },
+  );
 });
 
 describe('mapEventToRecord: identity topics on a player-backed account', () => {

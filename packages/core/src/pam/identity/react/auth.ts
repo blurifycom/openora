@@ -9,6 +9,11 @@ export function useCurrentUser() {
   return useQuery({ ...utils.me.queryOptions(), retry: false });
 }
 
+export function useRegistrationPolicy() {
+  const utils = useOrpcQueryUtils(identityContract);
+  return useQuery({ ...utils.registrationPolicy.queryOptions(), staleTime: Infinity });
+}
+
 export function useLogin() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();

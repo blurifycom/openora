@@ -184,6 +184,8 @@ export const UsernameAvailabilityInputSchema = z.object({ username: UsernameSche
 
 export const UsernameAvailabilityOutputSchema = z.object({ available: z.boolean() });
 
+export const RegistrationPolicySchema = z.object({ minPlayerAge: z.number().int() });
+
 // How the account receives its second factor. All three share one enrolment - the
 // secret and backup codes better-auth mints on enable - and differ only in delivery:
 // `app` reads a TOTP off the shared secret, `email` and `sms` have a one-time code
@@ -469,6 +471,7 @@ export type RegisterInput = z.infer<typeof RegisterInputSchema>;
 export type RegisterOutput = z.infer<typeof RegisterOutputSchema>;
 export type UsernameAvailabilityInput = z.infer<typeof UsernameAvailabilityInputSchema>;
 export type UsernameAvailabilityOutput = z.infer<typeof UsernameAvailabilityOutputSchema>;
+export type RegistrationPolicy = z.infer<typeof RegistrationPolicySchema>;
 export type Enable2faInput = z.infer<typeof Enable2faInputSchema>;
 export type Enable2faResult = z.infer<typeof Enable2faResultSchema>;
 export type Verify2faInput = z.infer<typeof Verify2faInputSchema>;

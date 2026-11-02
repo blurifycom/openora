@@ -45,6 +45,8 @@ import {
   type RgLimitsPort,
   type KycWithdrawalPolicy,
   type DepositHoldPolicy,
+  type DepositAdmissionPolicy,
+  DepositRefusedError,
   type ExchangeRateReader,
   type AuditWritePort,
   type TagEvaluationCommands,
@@ -1002,6 +1004,8 @@ export type WalletServiceDeps = {
   kycPolicy?: KycWithdrawalPolicy;
   // Optional: bound by an operator. Absent = every attributed on-chain deposit is credited.
   depositHold?: DepositHoldPolicy;
+  // Optional: bound by an operator. Absent = every player PLAY_ELIGIBILITY admits may deposit.
+  depositAdmission?: DepositAdmissionPolicy;
   // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
   grantLedger?: BonusGrantLedgerReader;
   // Optional: bound by the bonus module. Absent = there is no bonus a withdrawal could forfeit.
@@ -1032,6 +1036,7 @@ export class WalletService {
   private readonly rates?: ExchangeRateReader;
   private readonly kycPolicy?: KycWithdrawalPolicy;
   private readonly depositHold?: DepositHoldPolicy;
+  private readonly depositAdmission?: DepositAdmissionPolicy;
 
   private readonly grantLedger?: BonusGrantLedgerReader;
   private readonly bonusLifecycle?: BonusLifecycleCommands;
@@ -1052,6 +1057,7 @@ export class WalletService {
     rates,
     kycPolicy,
     depositHold,
+    depositAdmission,
     grantLedger,
     bonusLifecycle,
   }: WalletServiceDeps) {
@@ -1070,6 +1076,7 @@ export class WalletService {
     this.rates = rates;
     this.kycPolicy = kycPolicy;
     this.depositHold = depositHold;
+    this.depositAdmission = depositAdmission;
     this.grantLedger = grantLedger;
     this.bonusLifecycle = bonusLifecycle;
   }
@@ -1507,6 +1514,7 @@ export class WalletService {
     idempotencyKey?: string;
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
+    await this.assertDepositAdmitted(userId);
     await this.assertDepositable(currency, amount);
 
     // Short-circuit a replay BEFORE the PSP call - the common retry case (client
@@ -3724,11 +3732,19 @@ export class WalletService {
     }));
   }
 
+  async assertDepositAdmitted(userId: User['id']): Promise<void> {
+    const reason = await this.depositAdmission?.refusalReason(userId);
+    if (typeof reason === 'string') {
+      throw new DepositRefusedError(reason);
+    }
+  }
+
   async getOrCreateDepositAddress(
     userId: User['id'],
     currency: string,
     network?: string,
   ): Promise<DepositAddressResult> {
+    await this.assertDepositAdmitted(userId);
     await this.assertDepositable(currency, undefined, network);
 
     const existing = await this.findDepositAddress(userId, currency, network);

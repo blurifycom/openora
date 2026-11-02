@@ -54,7 +54,10 @@ const noopEvents = makeEventBus();
 const ACTOR = { actorId: '00000000-0000-4000-8000-000000000001', ...NO_CLIENT_META };
 
 const eligibility = (isRestricted: boolean) =>
-  mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(isRestricted) });
+  mock<PlayEligibilityPort>({
+    isRestricted: vi.fn().mockResolvedValue(isRestricted),
+    checkPlay: vi.fn().mockResolvedValue(isRestricted ? 'self_excluded' : null),
+  });
 
 const unrestricted = eligibility(false);
 

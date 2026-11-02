@@ -5,6 +5,8 @@ import { call, ORPCError } from '@orpc/server';
 import type * as z from 'zod';
 import { RedisRateLimiter } from '@openora/core/server';
 import {
+  DepositRefusedError,
+  type DepositAdmissionPolicy,
   makeRateLimitKey,
   queue,
   OnRampVendorUnavailableError,
@@ -125,6 +127,7 @@ function makeService({
   rates,
   limiter,
   cache,
+  depositAdmission,
 }: {
   adapter?: ReturnType<typeof makeAdapter>;
   audit?: ReturnType<typeof makeAuditWriter>;
@@ -134,6 +137,7 @@ function makeService({
   rates?: ExchangeRateReader;
   limiter?: RateLimiterAdapter<RateLimitKey>;
   cache?: ReturnType<typeof makeCache>;
+  depositAdmission?: DepositAdmissionPolicy;
 } = {}) {
   const issueDepositAddress = vi.fn(async (userId: string) => ({ address: `T-${userId}` }));
   const wallet = new WalletService({
@@ -145,13 +149,16 @@ function makeService({
     identityReader: makeIdentityReader(),
     rgLimits,
     rates,
+    depositAdmission,
   });
   const service = new OnRampService({
     drizzle: db.drizzle,
     wallet,
     adapter: mock<OnRampAdapter>(adapter),
     audit,
-    playEligibility: mock<PlayEligibilityPort>({ isRestricted: vi.fn(async () => restricted) }),
+    playEligibility: mock<PlayEligibilityPort>({
+      checkPlay: vi.fn(async () => (restricted ? 'account_suspended' : null)),
+    }),
     geoCheck,
     limiter,
     cache,
@@ -260,6 +267,19 @@ beforeEach(async () => {
 });
 
 describe('OnRampService.checkout gates (real PG)', () => {
+  it('refuses a player the deposit admission policy refuses, with its reason', async () => {
+    const { service, adapter } = makeService({
+      depositAdmission: { refusalReason: vi.fn(async () => 'age_verification_review') },
+    });
+    await expect(
+      service.checkout({ ...PURCHASE, userId: randomUUID(), idempotencyKey: randomUUID() }),
+    ).rejects.toMatchObject({
+      constructor: DepositRefusedError,
+      data: { reason: 'age_verification_review' },
+    });
+    expect(adapter.createCheckout).not.toHaveBeenCalled();
+  });
+
   it('refuses a restricted player before the vendor is asked anything', async () => {
     const { service, adapter } = makeService({ restricted: true });
     await expect(
@@ -279,19 +299,19 @@ describe('OnRampService.checkout gates (real PG)', () => {
   });
 
   it('refuses to replay a checkout to a player restricted since the first attempt', async () => {
-    const isRestricted = vi.fn(async () => false);
+    const checkPlay = vi.fn<NonNullable<PlayEligibilityPort['checkPlay']>>(async () => null);
     const { wallet, adapter } = makeService();
     const restrictedLater = new OnRampService({
       drizzle: db.drizzle,
       wallet,
       adapter: mock<OnRampAdapter>(adapter),
       audit: makeAuditWriter(),
-      playEligibility: mock<PlayEligibilityPort>({ isRestricted }),
+      playEligibility: mock<PlayEligibilityPort>({ checkPlay }),
       geoCheck: geoAt(true, 'DE'),
     });
     const purchase = { ...PURCHASE, userId: randomUUID(), idempotencyKey: randomUUID() };
     await restrictedLater.checkout(purchase);
-    isRestricted.mockResolvedValue(true);
+    checkPlay.mockResolvedValue('account_suspended');
 
     await expect(restrictedLater.checkout(purchase)).rejects.toBeInstanceOf(OnRampRestrictedError);
     expect(adapter.createCheckout).toHaveBeenCalledOnce();

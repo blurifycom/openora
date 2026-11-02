@@ -45,6 +45,7 @@ import {
   type WalletCommands,
   type IdentityReader,
   type User,
+  isPlayRefused,
 } from '@openora/core/contracts';
 import {
   game,
@@ -602,7 +603,7 @@ export class GamingService {
   ) {
     await this.getGame(gameId, { activeOnly: true });
 
-    if (await this.playEligibility.isRestricted(userId)) {
+    if (await isPlayRefused(this.playEligibility, userId)) {
       throw new RgRestrictedError();
     }
     const decision = await this.rgLimits?.checkWager(this.drizzle.db, userId, betAmount, currency);
