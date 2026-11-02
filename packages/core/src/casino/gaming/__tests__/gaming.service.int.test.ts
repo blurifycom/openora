@@ -2051,6 +2051,31 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
     expect(rows).toHaveLength(0);
   });
 
+  it('records a negative betDelta as a reversal, also on a round that already ended', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b6', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000506';
+    const args = {
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-reversal',
+    };
+
+    await svc.accumulateExternalRound(db.drizzle.db, { ...args, betDelta: '10', winDelta: '0' });
+    await svc.accumulateExternalRound(db.drizzle.db, { ...args, isFinal: true });
+    const reversed = await svc.accumulateExternalRound(db.drizzle.db, { ...args, betDelta: '-4' });
+
+    expect(Number(reversed.betAmount)).toBe(6);
+    const [row] = await db.drizzle.db
+      .select()
+      .from(gameRound)
+      .where(eq(gameRound.externalRoundId, 'ext-round-reversal'));
+    expect(row).toMatchObject({ status: 'completed' });
+    expect(Number(row?.betAmount)).toBe(6);
+    expect(Number(row?.reversedAmount)).toBe(4);
+  });
+
   it('marks the round completed with endedAt set when the terminating callback passes isFinal', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b5', name: 'Aces' });
     const svc = makeService();

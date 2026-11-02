@@ -1,0 +1,1 @@
+ALTER TABLE "game_round" ADD COLUMN "reversed_amount" numeric(38, 18) DEFAULT '0' NOT NULL;
