@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
+import { domainEventSchemas } from '@openora/core/contracts';
 import { NOTIFICATION_PARAM_KEYS, NOTIFICATION_TYPES } from '../contract/index.js';
 import {
   buildChatRoomScheduledForDeletionNotification,
@@ -245,6 +246,7 @@ describe('notificationEventMap', () => {
         previousAmount: '100.000000000000000000',
         previousMinutes: null,
         currency: 'USDT',
+        previousCurrency: 'USDT',
       });
 
       expect(input).toEqual({
@@ -256,6 +258,7 @@ describe('notificationEventMap', () => {
           previousAmount: '100.000000000000000000',
           amount: '50.000000000000000000',
           currency: 'USDT',
+          previousCurrency: 'USDT',
         },
         data: null,
       });
@@ -272,9 +275,97 @@ describe('notificationEventMap', () => {
         previousAmount: null,
         previousMinutes: null,
         currency: null,
+        previousCurrency: null,
       });
 
       expect(input.params).toEqual({ period: 'session', limitType: 'session', minutes: '90' });
+    });
+
+    it('carries the old limit in its own currency when the new limit is in another', () => {
+      const input = buildRgLimitAdminUpdatedNotification({
+        ...limitSet,
+        type: 'deposit',
+        period: 'daily',
+        amount: '0.005',
+        minutes: null,
+        previousAmount: '1000',
+        previousMinutes: null,
+        currency: 'BTC',
+        previousCurrency: 'USDT',
+      });
+
+      expect(input.params).toEqual({
+        period: 'daily',
+        limitType: 'deposit',
+        previousAmount: '1000',
+        previousCurrency: 'USDT',
+        amount: '0.005',
+        currency: 'BTC',
+      });
+    });
+
+    it('gives a session limit change minutes only, with no currency keys', () => {
+      const input = buildRgLimitAdminUpdatedNotification({
+        ...limitSet,
+        type: 'session',
+        period: 'session',
+        amount: null,
+        minutes: 90,
+        previousAmount: null,
+        previousMinutes: 60,
+        currency: null,
+        previousCurrency: null,
+      });
+
+      expect(input.params).toEqual({
+        period: 'session',
+        limitType: 'session',
+        previousMinutes: '60',
+        minutes: '90',
+      });
+    });
+
+    it('omits previousAmount and previousCurrency on a first-ever money limit', () => {
+      const input = buildRgLimitAdminUpdatedNotification({
+        ...limitSet,
+        type: 'deposit',
+        period: 'daily',
+        amount: '50',
+        minutes: null,
+        previousAmount: null,
+        previousMinutes: null,
+        currency: 'USD',
+        previousCurrency: null,
+      });
+
+      expect(input.params).toEqual({
+        period: 'daily',
+        limitType: 'deposit',
+        amount: '50',
+        currency: 'USD',
+      });
+    });
+
+    it('parses a v5 payload written before previousCurrency as null and builds no previousCurrency', () => {
+      const parsed = domainEventSchemas['rg.limit.set'].safeParse({
+        ...limitSet,
+        type: 'deposit',
+        period: 'daily',
+        amount: '50',
+        minutes: null,
+        previousAmount: '100',
+        previousMinutes: null,
+        currency: 'USD',
+      });
+
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) {
+        return;
+      }
+      expect(parsed.data.previousCurrency).toBeNull();
+      expect(buildRgLimitAdminUpdatedNotification(parsed.data).params).not.toHaveProperty(
+        'previousCurrency',
+      );
     });
   });
 
@@ -842,6 +933,7 @@ describe('notificationEventMap', () => {
         previousAmount: '20',
         previousMinutes: null,
         currency: 'USD',
+        previousCurrency: 'USD',
         initiatedBy: 'admin',
         reason: 'note',
       }),

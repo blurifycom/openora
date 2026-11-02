@@ -159,8 +159,10 @@ export class RgSelfServiceService {
           )
           .limit(1);
 
-        if (existing) {
-          const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
+        const resolvedExisting = existing
+          ? await resolveLimitCurrencyInTx(tx, existing)
+          : undefined;
+        if (existing && resolvedExisting) {
           if (await isWeakening(resolvedExisting, input, this.rates, tx)) {
             // The pending amount is the effective one being validated - it's what
             // applies once the player confirms it.
@@ -191,6 +193,9 @@ export class RgSelfServiceService {
           previousAmount: existing?.amount ?? null,
           previousMinutes: existing?.minutes ?? null,
           currency: toWireCurrency(row.type, row.currency),
+          previousCurrency: resolvedExisting
+            ? toWireCurrency(resolvedExisting.type, resolvedExisting.currency)
+            : null,
           initiatedBy: 'player',
           reason: null,
           ip: meta?.ip ?? null,
@@ -311,6 +316,7 @@ export class RgSelfServiceService {
           previousAmount: current.amount,
           previousMinutes: current.minutes,
           currency: toWireCurrency(row.type, row.currency),
+          previousCurrency: toWireCurrency(current.type, current.currency),
           initiatedBy: 'player',
           reason: null,
           ip: meta?.ip ?? null,

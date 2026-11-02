@@ -251,6 +251,54 @@ describe('RgSelfServiceService.upsertLimit (real PG)', () => {
   });
 });
 
+describe('RgSelfServiceService rg.limit.set previousCurrency (real PG)', () => {
+  it('a lowering into another currency carries the old row currency', async () => {
+    const rates = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async (amount: string, from: string, to: string) => {
+        if (from === to) {
+          return amount;
+        }
+        return from === 'EUR' && to === 'USD' ? String(Number(amount) * 1.1) : null;
+      }),
+    });
+    const { svc, events } = makeService({}, rates);
+    const userId = randomUUID();
+    await svc.upsertLimit(userId, deposit100);
+
+    await svc.upsertLimit(userId, { ...deposit100, amount: '50', currency: 'EUR' });
+
+    expect(events.emitInTransaction).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'rg.limit.set',
+      expect.objectContaining({ currency: 'EUR', previousCurrency: 'USD' }),
+    );
+  });
+
+  it('a confirmed raise parked in another currency carries the old row currency', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
+    await svc.upsertLimit(userId, deposit100);
+    // No EUR rate: the cross-currency change fails closed to a raise and is parked.
+    await svc.upsertLimit(userId, { ...deposit100, amount: '500', currency: 'EUR' });
+    const row = await limitRow(userId);
+    await backdatePending(row.id, new Date(Date.now() - HOUR), new Date(Date.now() + DAY));
+
+    await svc.confirmPendingChange(row.id, userId);
+
+    expect(events.emitInTransaction).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'rg.limit.set',
+      expect.objectContaining({
+        amount: '500.000000000000000000',
+        currency: 'EUR',
+        previousAmount: '100.000000000000000000',
+        previousCurrency: 'USD',
+      }),
+    );
+  });
+});
+
 describe('RgSelfServiceService.upsertLimit ordering (real PG)', () => {
   it('refuses an immediate write (a lowering) that would cross an existing sibling bound', async () => {
     const { svc } = makeService();

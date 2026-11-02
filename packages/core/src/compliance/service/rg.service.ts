@@ -429,8 +429,10 @@ export class RgService {
             ),
           )
           .limit(1);
-        if (existing) {
-          const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
+        const resolvedExisting = existing
+          ? await resolveLimitCurrencyInTx(tx, existing)
+          : undefined;
+        if (existing && resolvedExisting) {
           if (await isWeakening(resolvedExisting, input, this.rates, tx)) {
             throw new LimitRaiseNotAllowedError(existing, input);
           }
@@ -478,6 +480,9 @@ export class RgService {
           previousAmount: existing?.amount ?? null,
           previousMinutes: existing?.minutes ?? null,
           currency: toWireCurrency(written.type, written.currency),
+          previousCurrency: resolvedExisting
+            ? toWireCurrency(resolvedExisting.type, resolvedExisting.currency)
+            : null,
           initiatedBy,
           reason: input.reason,
           ip: meta?.ip ?? null,
