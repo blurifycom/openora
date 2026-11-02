@@ -1771,7 +1771,16 @@ describe('GamingService.endRound (real PG)', () => {
 
     expect(walletCommands.credit).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ userId, amount: '42.50', currency: 'USD', type: 'win' }),
+      expect.objectContaining({
+        userId,
+        amount: '42.50',
+        currency: 'USD',
+        type: 'win',
+        providerRef: expect.objectContaining({
+          providerName: 'internal',
+          externalRoundId: round.id,
+        }),
+      }),
     );
     const [settled] = await db.drizzle.db.select().from(gameRound);
     expect(settled?.status).toBe('completed');

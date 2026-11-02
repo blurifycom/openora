@@ -6,6 +6,7 @@ import type {
   McpToolContract,
   McpToolHandler,
   SealedToken,
+  SubscribeOptions,
   Token,
   TokenCatalog,
   TokenValue,
@@ -33,7 +34,13 @@ export type TypedContainer<C extends TokenCatalog> = {
 };
 
 // Runs once at boot, after every plugin has registered its providers, so adapter overrides (last registration wins) are in effect.
-export type RouterFactory<C extends TokenCatalog> = (c: TypedContainer<C>) => unknown;
+// `mounted: false` (a `:no-routes` module): the factory still runs, because several modules
+// build their service and schedule their jobs here, but its router is discarded. Skip only
+// what guards the HTTP surface.
+export type RouterFactory<C extends TokenCatalog> = (
+  c: TypedContainer<C>,
+  options?: { mounted: boolean },
+) => unknown;
 
 export type EventHandler = (payload: unknown, envelope?: EventEnvelope) => void | Promise<void>;
 
@@ -66,7 +73,17 @@ export type RegisteredTriggerListener = {
 // n-th (n >= 1) further handler the same plugin registers on the same topic. Plugin ids and
 // topics are fixed by code, so it survives restarts, replica changes and plugin reordering;
 // it shifts only when a plugin reorders its own handlers for one topic.
-export type RegisteredEventHandler = { handler: EventHandler; consumer: string };
+//
+// `consumerGroup`, when set, joins the handler to that broker consumer group instead of the
+// service's own: every service of one deployment subscribing with the same name competes for
+// each event, so the handler runs once per deployment however many services load its plugin.
+// The name is local to the deployment: createApp scopes it with the realtime namespace.
+export type EventSubscriptionOptions = Pick<SubscribeOptions, 'consumerGroup'>;
+export type RegisteredEventHandler = {
+  handler: EventHandler;
+  consumer: string;
+  consumerGroup?: string;
+};
 
 // Tool and action-type factories run once, when MCP_KERNEL is built after every provider is
 // bound - never at registration.
@@ -113,7 +130,7 @@ export type ModuleRegistry<C extends TokenCatalog> = {
     getAll(): Map<string, RouterFactory<C>>;
   };
   events: {
-    on(event: string, handler: EventHandler): void;
+    on(event: string, handler: EventHandler, options?: EventSubscriptionOptions): void;
     getAll(): Map<string, RegisteredEventHandler[]>;
   };
   // Subscribed at boot to the allow-listed trigger topics, which register() cannot read.

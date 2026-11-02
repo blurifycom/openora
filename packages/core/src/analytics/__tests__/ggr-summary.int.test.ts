@@ -179,3 +179,35 @@ describe('FinancialAnalyticsService.ggrSummary (real PG)', () => {
     });
   });
 });
+
+describe('a payout taken back after a reopen (real PG)', () => {
+  beforeEach(async () => {
+    await seedRound('win_reversal', '20', '2026-03-11T12:00:00Z');
+  });
+
+  it('adds it back to the GGR series', async () => {
+    const service = new FinancialAnalyticsService(db.drizzle, makeCache());
+
+    const summary = await service.ggrSummary({
+      dateFrom: FIRST_WEEK,
+      dateTo: LAST_DAY,
+      currency: 'USD',
+      granularity: 'week',
+    });
+
+    expect(summary.series[0]?.points.map((p) => Number(p.ggr))).toEqual([60, -5]);
+  });
+
+  it('adds it back to summary GGR and NGR', async () => {
+    const service = new FinancialAnalyticsService(db.drizzle, makeCache());
+
+    const summary = await service.summary({
+      dateFrom: `${FIRST_WEEK}T00:00:00.000Z`,
+      dateTo: `${LAST_DAY}T23:59:59.999Z`,
+      currency: 'USD',
+    });
+
+    expect(Number(summary.ggr[0]?.total)).toBe(55);
+    expect(Number(summary.ngr[0]?.total)).toBe(55);
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, gt, sql } from 'drizzle-orm';
 import type { EventBus } from '@openora/core/server';
 import {
   McpTransportConfigSchema,
@@ -21,7 +21,7 @@ import {
   NO_CLIENT_META,
 } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { user } from '../schema/index.js';
+import { session, user } from '../schema/index.js';
 import { DrizzleAdminUserDirectory } from '../admin-user-directory.js';
 
 let db: TestDb;
@@ -99,6 +99,23 @@ async function isActive(userId: User['id']) {
   return row?.isActive;
 }
 
+async function seedSession(userId: User['id'], expiresInMs = DAY_MS) {
+  await db.drizzle.db.insert(session).values({
+    userId,
+    token: randomUUID(),
+    expiresAt: new Date(Date.now() + expiresInMs),
+    updatedAt: new Date(),
+  });
+}
+
+async function liveSessionsOf(userId: User['id']) {
+  const rows = await db.drizzle.db
+    .select({ id: session.id })
+    .from(session)
+    .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)));
+  return rows.length;
+}
+
 async function seedPlayer(
   userId: string,
   overrides: Partial<typeof player.$inferInsert> & { username?: string } = {},
@@ -122,7 +139,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${mcpToken}, ${player}, ${user} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${mcpToken}, ${session}, ${player}, ${user} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -285,6 +302,73 @@ describe('DrizzleAdminUserDirectory.update and MCP tokens (real PG)', () => {
       actorId,
       ...META,
     });
+  });
+});
+
+describe('DrizzleAdminUserDirectory.update and sessions (real PG)', () => {
+  it("ends the account's sessions with the deactivation, and signs its tabs out after the commit", async () => {
+    const { dir, emit } = makeDirectory();
+    const admin = await seedUser(db, { role: 'admin', isActive: true });
+    await seedSession(admin.id);
+    await seedSession(admin.id);
+    const other = await seedUser(db, { role: 'admin', isActive: true });
+    await seedSession(other.id);
+    const actorId = randomUUID();
+
+    await dir.update(admin.id, { isActive: false }, actorId, META);
+
+    expect(await liveSessionsOf(admin.id)).toBe(0);
+    expect(await liveSessionsOf(other.id)).toBe(1);
+    expect(emit).toHaveBeenCalledWith('identity.sessions.revoked_all', {
+      userId: admin.id,
+      playerId: null,
+      actorId,
+      ...META,
+    });
+  });
+
+  it("names the player a deactivated player account's sessions belonged to", async () => {
+    const { dir, emit } = makeDirectory();
+    const account = await seedUser(db, { isActive: true });
+    const profile = await seedPlayer(account.id);
+    await seedSession(account.id);
+
+    await dir.update(account.id, { isActive: false }, randomUUID(), META);
+
+    expect(await liveSessionsOf(account.id)).toBe(0);
+    expect(emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({ userId: account.id, playerId: profile.id }),
+    );
+  });
+
+  it('revives no session on reactivation, and signs nothing out when none was live', async () => {
+    const { dir, emit } = makeDirectory();
+    const admin = await seedUser(db, { role: 'admin', isActive: true });
+    await seedSession(admin.id);
+    await dir.update(admin.id, { isActive: false }, randomUUID(), META);
+    emit.mockClear();
+
+    await dir.update(admin.id, { isActive: true }, randomUUID(), META);
+    await dir.update(admin.id, { role: 'admin' }, randomUUID(), META);
+
+    expect(await liveSessionsOf(admin.id)).toBe(0);
+    expect(emit).not.toHaveBeenCalledWith('identity.sessions.revoked_all', expect.anything());
+  });
+
+  it('keeps the sessions when the deactivation rolls back', async () => {
+    const { dir, audit, emit } = makeDirectoryWithTokens();
+    audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
+    const admin = await seedUser(db, { role: 'admin', isActive: true });
+    await seedActiveToken(admin.id);
+    await seedSession(admin.id);
+
+    await expect(dir.update(admin.id, { isActive: false }, randomUUID(), META)).rejects.toThrow(
+      'audit store unavailable',
+    );
+
+    expect(await liveSessionsOf(admin.id)).toBe(1);
+    expect(emit).not.toHaveBeenCalled();
   });
 });
 

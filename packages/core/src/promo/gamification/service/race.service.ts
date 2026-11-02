@@ -3,6 +3,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import type {
   ExchangeRateReader,
+  SettledWagerArgs,
   Uuid,
   WagerReversalArgs,
   WagerTrackingArgs,
@@ -23,9 +24,33 @@ import { roundReversal } from '../shared/round-reversal.js';
 
 export const RaceNotFoundError = makeNotFoundError('Race');
 
-// An empty list counts every bet - the same convention RankService/StreakService use.
-const countsToward = (eligibleProducts: readonly string[], product: string) =>
-  eligibleProducts.length === 0 || eligibleProducts.includes(product);
+// Counted when the bet settles, through recordSettledWager, so a reserve never climbs a race.
+const SETTLED_PRODUCT = 'sportsbook';
+
+const ROUND_KEY = [
+  promoRaceRoundWager.raceId,
+  promoRaceRoundWager.userId,
+  promoRaceRoundWager.providerName,
+  promoRaceRoundWager.currency,
+  promoRaceRoundWager.externalRoundId,
+];
+
+type OpenRace = { id: string; currency: string; eligibleProducts: readonly string[] };
+
+// Race-id order, the order reverseWager locks standings in.
+const openRaceRows = (tx: DrizzleTx, at: Date) =>
+  tx
+    .select({
+      id: promoRace.id,
+      currency: promoRace.currency,
+      eligibleProducts: promoRace.eligibleProducts,
+    })
+    .from(promoRace)
+    .where(and(lte(promoRace.startAt, at), gt(promoRace.endAt, at), isNull(promoRace.closedAt)))
+    .orderBy(asc(promoRace.id));
+
+const countsProduct = (product: string) => (race: OpenRace) =>
+  race.eligibleProducts.includes(product);
 
 const INCOGNITO = 'Incognito';
 
@@ -69,48 +94,15 @@ export class RaceService implements WagerTrackingCommands {
   ) {}
 
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
-    if (moneyCompare(args.realAmount, '0') <= 0) {
+    if (args.context.product === SETTLED_PRODUCT || moneyCompare(args.realAmount, '0') <= 0) {
       return [];
     }
-    const now = new Date();
-    const open = await tx
-      .select({
-        id: promoRace.id,
-        currency: promoRace.currency,
-        eligibleProducts: promoRace.eligibleProducts,
-      })
-      .from(promoRace)
-      .where(
-        and(lte(promoRace.startAt, now), gt(promoRace.endAt, now), isNull(promoRace.closedAt)),
-      );
-
-    for (const race of open) {
-      if (!countsToward(race.eligibleProducts, args.context.product)) {
-        continue;
-      }
-      const amount =
-        args.currency === race.currency
-          ? args.realAmount
-          : await this.rates.convert(args.realAmount, args.currency, race.currency, tx);
+    for (const race of await this.openRaces(tx, new Date(), args.context.product)) {
+      const amount = await this.inRaceCurrency(tx, args, race);
       if (amount === null) {
-        // ponytail: a wager with no rate is not counted toward the race; revisit if this shows
-        // up in logs the way the equivalent rank-side skip would.
-        this.logger.warn(
-          { userId: args.userId, raceId: race.id, from: args.currency, to: race.currency },
-          'race wager skipped - no exchange rate',
-        );
         continue;
       }
-      await tx
-        .insert(promoRaceWager)
-        .values({ raceId: race.id, userId: args.userId, currency: race.currency, wagered: amount })
-        .onConflictDoUpdate({
-          target: [promoRaceWager.raceId, promoRaceWager.userId],
-          set: {
-            wagered: sql`${promoRaceWager.wagered} + ${amount}::numeric`,
-            updatedAt: sql`now()`,
-          },
-        });
+      await this.addToStanding(tx, race, args.userId, amount);
       if (args.round) {
         await tx
           .insert(promoRaceRoundWager)
@@ -124,13 +116,7 @@ export class RaceService implements WagerTrackingCommands {
             wagered: amount,
           })
           .onConflictDoUpdate({
-            target: [
-              promoRaceRoundWager.raceId,
-              promoRaceRoundWager.userId,
-              promoRaceRoundWager.providerName,
-              promoRaceRoundWager.currency,
-              promoRaceRoundWager.externalRoundId,
-            ],
+            target: ROUND_KEY,
             set: {
               stake: sql`${promoRaceRoundWager.stake} + ${args.realAmount}::numeric`,
               wagered: sql`${promoRaceRoundWager.wagered} + ${amount}::numeric`,
@@ -139,6 +125,104 @@ export class RaceService implements WagerTrackingCommands {
       }
     }
     return [];
+  }
+
+  /**
+   * Counts a sportsbook stake once, in the races open when the bet first settled other than void.
+   * A round already standing in a race was counted there, so a re-settle after a reopen adds
+   * nothing; a round a void took back to zero counts again.
+   */
+  async recordSettledWager(tx: DrizzleTx, args: SettledWagerArgs): Promise<void> {
+    if (moneyCompare(args.realAmount, '0') <= 0) {
+      return;
+    }
+    // Skips a race its payout is closing right now, so a closed race never changes.
+    const open = await openRaceRows(tx, args.qualifiedAt).for('key share', { skipLocked: true });
+    for (const race of open.filter(countsProduct(args.context.product))) {
+      const [counted] = await tx
+        .select({ stake: promoRaceRoundWager.stake })
+        .from(promoRaceRoundWager)
+        .where(
+          and(
+            eq(promoRaceRoundWager.raceId, race.id),
+            eq(promoRaceRoundWager.userId, args.userId),
+            eq(promoRaceRoundWager.providerName, args.round.providerName),
+            eq(promoRaceRoundWager.currency, args.currency),
+            eq(promoRaceRoundWager.externalRoundId, args.round.externalRoundId),
+          ),
+        )
+        .for('update');
+      if (counted && moneyCompare(counted.stake, '0') > 0) {
+        continue;
+      }
+      const amount = await this.inRaceCurrency(tx, args, race);
+      if (amount === null) {
+        continue;
+      }
+      await this.addToStanding(tx, race, args.userId, amount);
+      await tx
+        .insert(promoRaceRoundWager)
+        .values({
+          raceId: race.id,
+          userId: args.userId,
+          providerName: args.round.providerName,
+          currency: args.currency,
+          externalRoundId: args.round.externalRoundId,
+          stake: args.realAmount,
+          wagered: amount,
+        })
+        .onConflictDoUpdate({
+          target: ROUND_KEY,
+          set: { stake: args.realAmount, wagered: amount },
+        });
+    }
+  }
+
+  private async openRaces(tx: DrizzleTx, at: Date, product: string): Promise<OpenRace[]> {
+    return (await openRaceRows(tx, at)).filter(countsProduct(product));
+  }
+
+  private async inRaceCurrency(
+    tx: DrizzleTx,
+    args: Pick<SettledWagerArgs, 'userId' | 'currency' | 'realAmount'>,
+    race: OpenRace,
+  ): Promise<string | null> {
+    if (args.currency === race.currency) {
+      return args.realAmount;
+    }
+    const amount = await this.rates.convert(args.realAmount, args.currency, race.currency, tx);
+    if (amount === null) {
+      // ponytail: a wager with no rate is not counted toward the race; revisit if this shows
+      // up in logs the way the equivalent rank-side skip would.
+      this.logger.warn(
+        { userId: args.userId, raceId: race.id, from: args.currency, to: race.currency },
+        'race wager skipped - no exchange rate',
+      );
+    }
+    return amount;
+  }
+
+  private async addToStanding(
+    tx: DrizzleTx,
+    race: OpenRace,
+    userId: SettledWagerArgs['userId'],
+    amount: string,
+  ): Promise<void> {
+    await tx
+      .insert(promoRaceWager)
+      .values({ raceId: race.id, userId, currency: race.currency, wagered: amount })
+      .onConflictDoUpdate({
+        target: [promoRaceWager.raceId, promoRaceWager.userId],
+        set: {
+          wagered: sql`${promoRaceWager.wagered} + ${amount}::numeric`,
+          updatedAt: sql`now()`,
+        },
+      });
+  }
+
+  // A void reaches reverseWager too when the bonus engine is loaded; the second call finds no stake left.
+  async reverseSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
+    await this.reverseWager(tx, args);
   }
 
   /**

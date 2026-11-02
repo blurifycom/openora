@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
 import { mock, makeAuditWriter } from '../../../testing/mock.js';
 import type {
   ExchangeRateReader,
   PlayEligibilityPort,
   WagerContext,
+  WagerProduct,
   WalletCommands,
 } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
@@ -15,6 +17,7 @@ import {
   promoRankChallengeClaim,
   promoRankChallengeTier,
   promoRankChallengeWager,
+  promoRankConfig,
 } from '../schema/index.js';
 import { RankChallengeService } from '../service/rank-challenge.service.js';
 import {
@@ -58,7 +61,12 @@ const seedLadder = () =>
     .insert(promoRankChallengeTier)
     .values(TIERS.map((t) => ({ ...t, currency: 'USDT' })));
 
-const wager = (userId: string, realAmount: string, currency = 'USDT') =>
+const wager = (
+  userId: string,
+  realAmount: string,
+  currency = 'USDT',
+  context: WagerContext = CASINO,
+) =>
   db.drizzle.db.transaction((tx) =>
     service.recordWager(tx, {
       userId,
@@ -66,9 +74,20 @@ const wager = (userId: string, realAmount: string, currency = 'USDT') =>
       amount: realAmount,
       weightedAmount: realAmount,
       realAmount,
-      context: CASINO,
+      context,
     }),
   );
+
+const wagerOn = (userId: string, product: WagerProduct) =>
+  wager(userId, '1', 'USDT', { provider: 'aggregator', product });
+
+const wageredBy = async (userId: string) =>
+  (
+    await db.drizzle.db
+      .select({ lifetimeWagered: promoRankChallengeWager.lifetimeWagered })
+      .from(promoRankChallengeWager)
+      .where(eq(promoRankChallengeWager.userId, userId))
+  )[0]?.lifetimeWagered;
 
 const claimsOf = () =>
   db.drizzle.db
@@ -108,6 +127,7 @@ beforeEach(async () => {
   await db.drizzle.db.delete(promoRankChallengeClaim);
   await db.drizzle.db.delete(promoRankChallengeWager);
   await db.drizzle.db.delete(promoRankChallengeTier);
+  await db.drizzle.db.delete(promoRankConfig);
   await seedLadder();
 });
 
@@ -174,6 +194,55 @@ describe('recording a wager toward the Rank Challenge', () => {
     const claims = await claimsOf();
     expect(claims).toHaveLength(1);
     expect(claims[0]?.userId).toBe(first);
+  });
+});
+
+describe('which products count toward the Rank Challenge', () => {
+  it('leaves a sportsbook stake out when no rank config exists', async () => {
+    const { account } = await seedPlayerWithUser(db);
+
+    await wagerOn(account.id, 'sportsbook');
+
+    expect(await wageredBy(account.id)).toBeUndefined();
+    expect(await claimsOf()).toEqual([]);
+  });
+
+  it('counts a live-casino stake when no rank config exists', async () => {
+    const { account } = await seedPlayerWithUser(db);
+
+    await wagerOn(account.id, 'live-casino');
+
+    expect(await wageredBy(account.id)).toBe('1.000000000000000000');
+  });
+
+  it('counts a sportsbook stake once the operator adds it to the list', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    await db.drizzle.db
+      .insert(promoRankConfig)
+      .values({ rankChallengeEligibleProducts: ['casino', 'sportsbook'] });
+
+    await wagerOn(account.id, 'sportsbook');
+
+    expect(await wageredBy(account.id)).toBe('1.000000000000000000');
+    expect(await claimsOf()).toHaveLength(1);
+  });
+
+  it('leaves out a product the operator removed from the list', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    await db.drizzle.db.insert(promoRankConfig).values({ rankChallengeEligibleProducts: ['pvp'] });
+
+    await wagerOn(account.id, 'casino');
+
+    expect(await wageredBy(account.id)).toBeUndefined();
+  });
+
+  it('counts every product when the list is empty', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    await db.drizzle.db.insert(promoRankConfig).values({ rankChallengeEligibleProducts: [] });
+
+    await wagerOn(account.id, 'sportsbook');
+
+    expect(await wageredBy(account.id)).toBe('1.000000000000000000');
   });
 });
 

@@ -87,6 +87,7 @@ Lint-enforced by `oss-module-shape/no-relative-zone-escape` (folded domains AND 
 | ownership guard                              | `assertOwnership(row.userId, callerId, error)`                                                  | `@openora/core/server`    |
 | row -> DTO (Date/Decimal -> string)          | `serializeRow(row, { dateFields: [...], decimalFields: [...] })`                                | `@openora/core/server`    |
 | not-found / ownership / conflict error class | `makeNotFoundError('Entity')` / `makeOwnershipError('Entity')` / `makeConflictError(name, msg)` | `@openora/core/server`    |
+| a vendor protocol's own error reply          | `throw wireErrorResponse(status, body, { cause })` (400-599, JSON body, no oRPC envelope)       | `@openora/core/server`    |
 | push subscription -> SSE async generator     | `createEventStreamGenerator((push) => svc.subscribe(push), { signal, prime })`                  | `@openora/core/server`    |
 | canonical id/userId/pagination input         | `IdInputSchema` / `UserIdInputSchema` / `PageQuerySchema`                                       | `@openora/core/contracts` |
 

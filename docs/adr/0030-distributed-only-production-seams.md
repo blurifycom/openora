@@ -44,7 +44,10 @@ path entirely:
   exactly one replica per service. The consumer group defaults to `SERVICE_NAME`;
   because a group name is a durable identity (renaming it strands pending entries),
   `createApp` throws when `SERVICE_MANIFEST` is set without an explicit `SERVICE_NAME`
-  rather than deriving one from the module list.
+  rather than deriving one from the module list. The realtime key prefix is a
+  separate setting, `REALTIME_NAMESPACE` (default `SERVICE_NAME`): services of one
+  deployment need distinct group names but one shared prefix. A subscription that must
+  run once per deployment passes `{ consumerGroup }` through `ctx.events.on`.
   At-least-once holds from group creation onward; the group is created at `$` by
   default, so a service extracted after events were already flowing does not replay
   the backlog. `RedisStreamsBrokerOptions.startId: '0'` opts into replaying whatever

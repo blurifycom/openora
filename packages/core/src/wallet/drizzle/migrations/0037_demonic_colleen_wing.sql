@@ -1,0 +1,1 @@
+ALTER TABLE "wallet_transaction" ADD COLUMN "balance_after" numeric(38, 18);

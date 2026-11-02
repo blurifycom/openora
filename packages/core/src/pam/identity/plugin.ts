@@ -25,7 +25,7 @@ import {
   domainEventSchemas,
   type RealtimeTransport,
 } from '@openora/core/contracts';
-import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, AUTH_SESSION } from '@openora/core/server';
+import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, AUTH_SESSION, createLogger } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import { DrizzleUserCommands } from './service/user-commands.service.js';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
@@ -56,6 +56,26 @@ import { PlayEligibilityService } from './service/play-eligibility.service.js';
 import { TwoFactorSetupPolicyService } from './service/two-factor-setup-policy.service.js';
 
 type IdentityContainer = TypedContainer<CoreTokenCatalog>;
+
+const logger = createLogger('identity');
+
+// Fail loud, the way compliance does for its KYC gate: refuse to boot in production, warn
+// everywhere else. Reached only when identity's router is being mounted, so a process that
+// loads identity for its ports alone (`identity:no-routes`) never gets here.
+function reportUnsafeAuthSurface(message: string): void {
+  if (process.env['NODE_ENV'] === 'production') {
+    throw new Error(message);
+  }
+  logger.warn(message);
+}
+
+function assertAuthSurfaceGuards(c: IdentityContainer): void {
+  if (!c.has(GEO_CHECK_COMMANDS)) {
+    reportUnsafeAuthSurface(
+      'identity mounts its sign-in, phone-login and 2FA routes but GEO_CHECK_COMMANDS is unbound, so the country gate is a silent no-op on registration and sign-in and writes no access-blocked audit row. Load the compliance module in this process, or load identity service-only (SERVICE_MANIFEST=identity:no-routes) so it serves no auth route.',
+    );
+  }
+}
 
 function adminSecurityConfig(c: IdentityContainer) {
   const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
@@ -219,7 +239,10 @@ export default {
         revokeAll: (userId, actorId) => sessionSvc.revokeAllSessions(userId, actorId),
       };
     });
-    ctx.routers.add('identity', (c) => {
+    ctx.routers.add('identity', (c, options) => {
+      if (options?.mounted !== false) {
+        assertAuthSurfaceGuards(c);
+      }
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       const sessions = makeSessionService(c);
       return createIdentityRouter(

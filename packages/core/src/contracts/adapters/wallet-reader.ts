@@ -95,6 +95,11 @@ export type WalletReader = {
     providerName: string,
     providerRefId: string,
   ): Promise<WalletProviderTransaction | null>;
+  /** This player's own wallet_transaction row with a provider reference; null for another player's row or one without. Optional for the same reason as getWithdrawalCountsInWindow above. */
+  findOwnProviderTransaction?(
+    userId: string,
+    transactionId: string,
+  ): Promise<WalletProviderTransaction | null>;
   /** Current balance in the player's active wallet currency. Optional for the same reason as getWithdrawalCountsInWindow above. */
   getBalance?(userId: string): Promise<{ balance: string; currency: string }>;
   /**

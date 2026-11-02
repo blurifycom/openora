@@ -4,8 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { GAME_GEO_RULE_COMMANDS } from '@openora/core/contracts';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
-import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
-import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
+import { game, gameProvider } from '@openora/core/casino/schema/gaming';
 import { user } from '@openora/core/pam/schema/identity';
 import {
   asAdmin,
@@ -24,7 +23,6 @@ let db: TestDb;
 let app: TestApp;
 let admin: TestClient;
 let player: TestClient;
-const seededGames: SeededGame[] = [];
 
 async function deposit(amount: string) {
   const response = await player.post('/wallet/deposit', {
@@ -94,9 +92,7 @@ async function seedGame(label: string): Promise<SeededGame> {
   if (!created) {
     throw new Error(`failed to seed a game for the ${label} geo E2E flow`);
   }
-  const seeded = { gameId: created.id, providerId: provider.id };
-  seededGames.push(seeded);
-  return seeded;
+  return { gameId: created.id, providerId: provider.id };
 }
 
 beforeAll(async () => {
@@ -117,16 +113,6 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  if (app) {
-    const drizzle = app.container.get(DRIZZLE).db;
-    for (const { gameId, providerId } of seededGames) {
-      await drizzle.delete(gameRound).where(eq(gameRound.gameId, gameId));
-      await drizzle.delete(gameGeoRule).where(eq(gameGeoRule.gameId, gameId));
-      await drizzle.delete(game).where(eq(game.id, gameId));
-      await drizzle.delete(providerGeoRule).where(eq(providerGeoRule.providerId, providerId));
-      await drizzle.delete(gameProvider).where(eq(gameProvider.id, providerId));
-    }
-  }
   await closeE2e({ app, db });
 });
 

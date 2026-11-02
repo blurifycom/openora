@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
-import type { WagerContext, WalletCommands, WalletCreditArgs } from '@openora/core/contracts';
+import type {
+  WagerContext,
+  WagerProduct,
+  WalletCommands,
+  WalletCreditArgs,
+} from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import {
   promoPlayerRank,
@@ -37,7 +42,12 @@ const LADDER = {
   },
 };
 
-const wager = (userId: string, amount: string, realAmount: string = amount) =>
+const wager = (
+  userId: string,
+  amount: string,
+  realAmount: string = amount,
+  context: WagerContext = CASINO,
+) =>
   db.drizzle.db.transaction((tx) =>
     rakeback.recordWager(tx, {
       userId,
@@ -45,9 +55,12 @@ const wager = (userId: string, amount: string, realAmount: string = amount) =>
       amount,
       weightedAmount: amount,
       realAmount,
-      context: CASINO,
+      context,
     }),
   );
+
+const wagerOn = (userId: string, product: WagerProduct) =>
+  wager(userId, '100', '100', { provider: 'aggregator', product });
 
 const givePlayerTier = async (userId: string, tierKey: string) => {
   const [tier] = await db.drizzle.db
@@ -171,5 +184,49 @@ describe('instant rakeback on a qualifying bet', () => {
     const credits = await wager(userId, '100');
 
     expect(credits).toEqual([]);
+  });
+});
+
+describe('which products earn rakeback', () => {
+  it('pays nothing for a sportsbook stake by default, though the rank counts every product', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+
+    await wagerOn(userId, 'sportsbook');
+    await wagerOn(userId, 'live-casino');
+
+    expect(credit).toHaveBeenCalledTimes(1);
+  });
+
+  it('pays a sportsbook stake once the operator adds it to the rakeback list', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ rakebackEligibleProducts: ['casino', 'sportsbook'] });
+
+    await wagerOn(userId, 'sportsbook');
+
+    expect(credit).toHaveBeenCalledTimes(1);
+  });
+
+  it('pays nothing for a product the rakeback list admits but the rank does not count', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    await db.drizzle.db.update(promoRankConfig).set({ eligibleProducts: ['live-casino'] });
+
+    await wagerOn(userId, 'casino');
+
+    expect(credit).not.toHaveBeenCalled();
+  });
+
+  it('counts every product the rank counts when the rakeback list is empty', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    await db.drizzle.db.update(promoRankConfig).set({ rakebackEligibleProducts: [] });
+
+    await wagerOn(userId, 'sportsbook');
+
+    expect(credit).toHaveBeenCalledTimes(1);
   });
 });

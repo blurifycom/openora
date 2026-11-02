@@ -437,6 +437,57 @@ describe('a win on a bonus-funded round', () => {
   });
 });
 
+describe('a stake on a real-money-only product', () => {
+  const sportsbookBet = (userId: string, amount: string) =>
+    debit({
+      userId,
+      amount,
+      type: 'bet',
+      currency: 'USD',
+      context: { provider: 'sportsbook', product: 'sportsbook' },
+      providerRef: {
+        providerName: 'sportsbook',
+        providerRefId: randomUUID(),
+        externalRoundId: randomUUID(),
+      },
+    });
+
+  beforeEach(async () => {
+    await drizzle().insert(promoWeight).values({
+      profileId: weightProfileId,
+      scope: 'product',
+      scopeRef: 'sportsbook',
+      contributionPercent: '100',
+    });
+  });
+
+  it('leaves an active grant untouched, even when the stake is over its maximum bet', async () => {
+    const { userId } = await player('100');
+    const grantId = await grantBonus(userId, '100', '10', 'USD', { maxBet: '5' });
+
+    const outcome = await sportsbookBet(userId, '40');
+
+    expect(outcome).toMatchObject({ ok: true, bonusSpent: '0' });
+    expect(await realBalanceOf(userId)).toBe('60.000000000000000000');
+    const row = await grantRow(grantId);
+    expect(row.bonusBalance).toBe('100.000000000000000000');
+    expect(row.wageringProgress).toBe('0.000000000000000000');
+    expect(await stakeEntries(grantId)).toEqual([]);
+  });
+
+  it('refuses a stake the real balance cannot cover rather than drawing on the bonus', async () => {
+    const { userId } = await player('30');
+    const grantId = await grantBonus(userId, '100', '10');
+
+    const outcome = await sportsbookBet(userId, '50');
+
+    expect(outcome).toMatchObject({ ok: false });
+    expect(Number(outcome.ok ? 0 : outcome.available)).toBe(30);
+    expect(await realBalanceOf(userId)).toBe('30.000000000000000000');
+    expect((await grantRow(grantId)).bonusBalance).toBe('100.000000000000000000');
+  });
+});
+
 describe('the terms a grant was created under', () => {
   it('refuses a stake over the maximum bet, and leaves the bonus untouched', async () => {
     const { userId } = await player('0');

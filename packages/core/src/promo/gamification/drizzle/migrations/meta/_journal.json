@@ -127,6 +127,27 @@
       "when": 1792073855986,
       "tag": "0017_streak_milestone_announced",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792655526007,
+      "tag": "0018_aberrant_killer_shrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792683251433,
+      "tag": "0019_rank_perk_products_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792684179498,
+      "tag": "0020_race_eligible_products_required",
+      "breakpoints": true
     }
   ]
 }

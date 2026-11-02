@@ -82,4 +82,12 @@ describe('definePlatformConfig', () => {
       }),
     ).toThrow(/identity\.allowedAvatarHosts\.0/);
   });
+
+  it('rejects a significant-amount threshold set twice for one currency, ignoring case', () => {
+    expect(() =>
+      definePlatformConfig({
+        wallet: { significantAmountThresholds: { USD: '1000000', usd: '1' } },
+      }),
+    ).toThrow(/significantAmountThresholds/);
+  });
 });

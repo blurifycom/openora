@@ -59,8 +59,11 @@ import {
   type ActionExecutionContext,
   type WalletTransactionType,
   type WalletTransactionStatus,
+  type WithdrawalRequeueReason,
   type BonusGrantLedgerReader,
   type BonusLifecycleCommands,
+  wagerProductOfProviderName,
+  wagerProductProviderPrefix,
 } from '@openora/core/contracts';
 import {
   eq,
@@ -90,6 +93,7 @@ import {
   walletWithdrawalAddress,
   walletAsset,
   walletOnRampOrder,
+  walletWithdrawalHold,
   type Wallet,
   type WalletDepositAddress,
   type WalletTransaction,
@@ -179,6 +183,13 @@ export const WithdrawalLockedError = makeConflictError(
   'WithdrawalLockedError',
   'Withdrawals are on hold for this account. Please contact support',
   { reason: 'withdrawal_locked' },
+);
+
+// A module-owned hold (`wallet_withdrawal_hold`), e.g. while the player owes the platform money.
+export const WithdrawalHeldError = makeConflictError(
+  'WithdrawalHeldError',
+  'Withdrawals are on hold for this account. Please contact support',
+  { reason: 'withdrawal_held' },
 );
 
 export const WithdrawalAmountNotAboveFeeError = createDomainError<
@@ -583,6 +594,58 @@ export function debitWalletBalance(
     .returning({ amount: walletBalance.amount });
 }
 
+/** Sets the balance a ledger row's money move left behind; the trigger lets balance_after be set once. */
+export async function stampBalanceAfter(
+  txn: DrizzleDb,
+  transactionId: WalletTransaction['id'],
+  balanceAfter: string,
+): Promise<void> {
+  await txn
+    .update(walletTransaction)
+    .set({ balanceAfter })
+    .where(eq(walletTransaction.id, transactionId));
+}
+
+/** `creditWalletBalance`, then stamps the resulting balance on the ledger row that records the credit. */
+async function creditAndStampBalance(
+  txn: DrizzleDb,
+  transactionId: WalletTransaction['id'],
+  walletId: Wallet['id'],
+  currency: string,
+  amount: string,
+): Promise<void> {
+  const [credited] = await creditWalletBalance(txn, walletId, currency, amount);
+  if (credited) {
+    await stampBalanceAfter(txn, transactionId, credited.amount);
+  }
+}
+
+/**
+ * Takes min(balance, amount) in one statement and never overdraws. The CTE's row lock makes a
+ * concurrent collection wait and then read the balance the first one left.
+ */
+export async function collectWalletBalance(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+  amount: string,
+): Promise<{ balance: string; collected: string } | undefined> {
+  const key = balanceKey(currency);
+  const result = await txn.execute<{ balance: string; collected: string }>(sql`
+    with held as (
+      select amount from ${walletBalance}
+      where ${walletBalance.walletId} = ${walletId} and ${walletBalance.currency} = ${key}
+      for update
+    )
+    update ${walletBalance} wb
+    set amount = wb.amount - least(held.amount, ${amount}::numeric), updated_at = now()
+    from held
+    where wb.wallet_id = ${walletId} and wb.currency = ${key} and held.amount > 0
+    returning wb.amount::text as balance, least(held.amount, ${amount}::numeric)::text as collected
+  `);
+  return result.rows[0];
+}
+
 export async function readWalletBalance(
   txn: DrizzleDb,
   walletId: Wallet['id'],
@@ -719,6 +782,8 @@ type TransactionHistoryRow = {
   provider_ref_id: string | null;
   tx_hash: string | null;
   fee: string | null;
+  balance_after: string | null;
+  provider_name: string | null;
 };
 
 const TX_SORT_COLUMNS = {
@@ -769,7 +834,7 @@ export const IN_FLIGHT_TRANSACTION_STATUSES = [
   'processing',
 ] as const satisfies readonly WalletTransactionStatus[];
 
-const ACTIVITY_TRANSACTION_TYPES = ['deposit', 'withdrawal', 'bet', 'win'] as const;
+const ACTIVITY_TRANSACTION_TYPES = ['deposit', 'withdrawal', 'bet', 'win', 'win_reversal'] as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -1264,6 +1329,32 @@ export class WalletService {
     }
   }
 
+  // Every hold, whatever its source, blocks every withdrawal; the unique index's leading column serves it.
+  private async isWithdrawalHeld(db: DrizzleDb, userId: User['id']): Promise<boolean> {
+    return (await this.withdrawalHeldUserIds([userId], db)).has(userId);
+  }
+
+  private async withdrawalHeldUserIds(
+    userIds: readonly User['id'][],
+    db: DrizzleDb = this.drizzle.db,
+  ): Promise<Set<string>> {
+    if (userIds.length === 0) {
+      return new Set();
+    }
+    const rows = await db
+      .selectDistinct({ userId: walletWithdrawalHold.userId })
+      .from(walletWithdrawalHold)
+      .where(inArray(walletWithdrawalHold.userId, [...userIds]));
+    return new Set(rows.map((r) => r.userId));
+  }
+
+  private async assertWithdrawalsNotBlocked(userId: User['id']) {
+    await this.assertWithdrawalsNotLocked(userId);
+    if (await this.isWithdrawalHeld(this.drizzle.db, userId)) {
+      throw new WithdrawalHeldError();
+    }
+  }
+
   private async isWithdrawalLocked(userId: User['id']): Promise<boolean> {
     return (await this.withdrawalLockedUserIds([userId])).has(userId);
   }
@@ -1330,7 +1421,8 @@ export class WalletService {
         withdrawals: sumOf('withdrawal'),
         withdrawalCount: countOf('withdrawal'),
         bets: sumOf('bet'),
-        wins: sumOf('win'),
+        // A reversal can land in a later window than the win it takes back, so the net is floored.
+        wins: sql<string>`greatest(${sumOf('win')} - ${sumOf('win_reversal')}, 0)`,
       })
       .from(walletTransaction)
       .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
@@ -1512,7 +1604,7 @@ export class WalletService {
       if (!settled) {
         return { transactionId: reservation.row.id };
       }
-      await creditWalletBalance(txn, reservation.walletRecord.id, currency, amount);
+      await creditAndStampBalance(txn, settled.id, reservation.walletRecord.id, currency, amount);
       await this.events.emitInTransaction(txn, 'wallet.deposit.completed', {
         userId,
         playerId,
@@ -1617,17 +1709,17 @@ export class WalletService {
         return { transactionId: row.id, status: row.status };
       }
 
-      const balances =
+      const [balance] =
         direction === 'credit'
           ? await creditWalletBalance(txn, walletRecord.id, currency, amount)
           : await debitWalletBalance(txn, walletRecord.id, currency, amount);
-      const [balance] = balances;
       if (!balance) {
         throw new InsufficientBalanceError(
           await readWalletBalance(txn, walletRecord.id, currency),
           amount,
         );
       }
+      await stampBalanceAfter(txn, row.id, balance.amount);
       // Derived from the row the update returned, never read separately beforehand. The
       // wallet row is locked here but the deposit credit path does not take that lock, so
       // a deposit can commit between a pre-read and this update - and `before` is going
@@ -1905,6 +1997,10 @@ export class WalletService {
             };
           }
         }
+        // Read after the wallet row lock, which `placeWithdrawalHold` also takes.
+        if (await this.isWithdrawalHeld(txn, userId)) {
+          throw new WithdrawalHeldError();
+        }
 
         const { row, replayed } = await this.insertIdempotentTransaction(txn, {
           namespace: WITHDRAW_IDEMPOTENCY_NAMESPACE,
@@ -1941,14 +2037,14 @@ export class WalletService {
 
         // No bonus-lock subtraction: bonus funds live on their grant and never enter
         // `wallet_balance`, so everything this row holds is the player's to withdraw.
-        const debited = await debitWalletBalance(txn, current.id, currency, amount);
-        if (debited.length !== 1) {
+        const [debited] = await debitWalletBalance(txn, current.id, currency, amount);
+        if (!debited) {
           throw new InsufficientBalanceError(
             await readWalletBalance(txn, current.id, currency),
             amount,
           );
         }
-
+        await stampBalanceAfter(txn, row.id, debited.amount);
         // A player may not cash out while a bonus is live, and the rule holds in every currency.
         // On this transaction, after the balance lock, so a bet cannot convert the bonus between
         // the request and the forfeit, and the lock order matches a bet's. A rejected withdrawal
@@ -2215,8 +2311,10 @@ export class WalletService {
       await this.getAutoWithdrawalConfigOrNull(),
     );
     const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
-    const lockedUserIds = await this.withdrawalLockedUserIds([
-      ...new Set(pageRows.map((r) => r.userId)),
+    const pageUserIds = [...new Set(pageRows.map((r) => r.userId))];
+    const [lockedUserIds, heldUserIds] = await Promise.all([
+      this.withdrawalLockedUserIds(pageUserIds),
+      this.withdrawalHeldUserIds(pageUserIds),
     ]);
 
     const items: WithdrawalQueueItem[] = await mapConcurrent(pageRows, 5, async (r) => {
@@ -2246,6 +2344,7 @@ export class WalletService {
         kycStatus: summary?.kycStatus ?? null,
         riskTags,
         withdrawalLocked: lockedUserIds.has(r.userId),
+        withdrawalHeld: heldUserIds.has(r.userId),
         requestedAt: r.tx.createdAt.toISOString(),
         destinationAddress: r.tx.destinationAddress,
         destinationTag: r.tx.destinationTag,
@@ -2267,12 +2366,15 @@ export class WalletService {
     meta?: ClientMeta,
   ): Promise<TransactionResult> {
     const ownerId = await this.withdrawalOwnerId(withdrawalId);
-    await this.assertWithdrawalsNotLocked(ownerId);
+    await this.assertWithdrawalsNotBlocked(ownerId);
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
     // `approved` is admin-attributed and committed with the flip; the system auto path skips
     // it - its trail is the AUDIT_WRITER entry plus the shared `completed` event.
     const { queued, flipped } = await this.drizzle.db.transaction(async (txn) => {
+      if (await this.isWithdrawalHeldLocked(txn, ownerId)) {
+        throw new WithdrawalHeldError();
+      }
       const decided = await this.flipToProcessing({
         txn,
         withdrawalId,
@@ -2295,7 +2397,7 @@ export class WalletService {
     if (await this.revertFlipIfLocked(ownerId, queued)) {
       throw new WithdrawalLockedError();
     }
-    return this.settleApproved(flipped, adminId);
+    return this.settleApproved(flipped, queued, adminId);
   }
 
   // Phase one: the flip to processing under a FOR UPDATE lock. Extracted so the auto path can run it
@@ -2344,14 +2446,40 @@ export class WalletService {
     return { queued: current, flipped };
   }
 
-  // The lock is read before the flip's transaction, so one placed in between would otherwise
-  // reach the PSP. Re-read it once the flip has committed and, if it landed, put the row back
-  // exactly as it was queued. Only the gap between this read and the vendor call remains.
-  private async revertFlipIfLocked(userId: User['id'], queued: WalletTransaction) {
+  // A hold is placed under a wallet row lock that conflicts with this share lock, so a hold that
+  // has not committed yet is waited for and then seen, never paid through.
+  private async isWithdrawalHeldLocked(txn: DrizzleTx, userId: User['id']): Promise<boolean> {
+    await txn.select({ id: wallet.id }).from(wallet).where(eq(wallet.userId, userId)).for('share');
+    return this.isWithdrawalHeld(txn, userId);
+  }
+
+  // The lock is read before the flip's transaction, so one placed right after it would otherwise
+  // reach the PSP. Re-read it once the flip has committed. Holds are re-checked at dispatch instead.
+  private async revertFlipIfLocked(
+    userId: User['id'],
+    queued: WalletTransaction,
+  ): Promise<boolean> {
     if (!(await this.isWithdrawalLocked(userId))) {
       return false;
     }
-    await this.drizzle.db
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    await this.drizzle.db.transaction((txn) =>
+      this.restoreQueued(txn, queued, { userId, playerId, reason: 'withdrawal_lock' }),
+    );
+    return true;
+  }
+
+  // The approval's audit row and event already went out, so the way back to the queue leaves its own.
+  private async restoreQueued(
+    txn: DrizzleTx,
+    queued: WalletTransaction,
+    {
+      userId,
+      playerId,
+      reason,
+    }: { userId: User['id']; playerId: Player['id'] | null; reason: WithdrawalRequeueReason },
+  ): Promise<void> {
+    const [restored] = await txn
       .update(walletTransaction)
       .set({
         status: queued.status,
@@ -2360,14 +2488,33 @@ export class WalletService {
         reviewReason: queued.reviewReason,
         autoApprovalPivotAmount: queued.autoApprovalPivotAmount,
       })
-      .where(and(eq(walletTransaction.id, queued.id), eq(walletTransaction.status, 'processing')));
-    return true;
+      .where(and(eq(walletTransaction.id, queued.id), eq(walletTransaction.status, 'processing')))
+      .returning({ id: walletTransaction.id });
+    if (!restored) {
+      return;
+    }
+    await this.audit.recordInTransaction(txn, {
+      actorType: 'system',
+      action: 'wallet.withdrawal.requeued',
+      ...withdrawalAuditSubject(playerId, queued.id),
+      before: { status: 'processing' },
+      after: { userId, transactionId: queued.id, status: queued.status, reason },
+    });
+    await this.events.emitInTransaction(txn, 'wallet.withdrawal.requeued', {
+      userId,
+      playerId,
+      amount: queued.amount,
+      currency: queued.currency,
+      transactionId: queued.id,
+      reason,
+    });
   }
 
   // Phase two: settle a `processing` withdrawal via the vendor (see approveWithdrawal for the outcomes).
   // Runs OUTSIDE the hold/flip transaction so the external PSP call never holds a DB lock.
   private async settleApproved(
     tx: WalletTransaction,
+    queued: WalletTransaction,
     adminId: User['id'] | null,
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
@@ -2377,10 +2524,22 @@ export class WalletService {
     const { providerName, adapter } = await this.paymentAdapterFor(tx.currency, tx.network);
     // Stamped before the call: if its response is lost, reconciliation must ask THIS vendor,
     // not the default one, or "no record there" could be mistaken for "never paid".
-    await this.drizzle.db
-      .update(walletTransaction)
-      .set({ providerName })
-      .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')));
+    // The stamp is the dispatch point: a hold commits before it and puts the row back as queued,
+    // or waits on the wallet lock until it has committed and applies from the next withdrawal.
+    const held = await this.drizzle.db.transaction(async (txn) => {
+      if (await this.isWithdrawalHeldLocked(txn, userId)) {
+        await this.restoreQueued(txn, queued, { userId, playerId, reason: 'withdrawal_hold' });
+        return true;
+      }
+      await txn
+        .update(walletTransaction)
+        .set({ providerName })
+        .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')));
+      return false;
+    });
+    if (held) {
+      throw new WithdrawalHeldError();
+    }
 
     let result: Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
     try {
@@ -2624,6 +2783,13 @@ export class WalletService {
             );
             return null;
           }
+          if (await this.isWithdrawalHeldLocked(txn, args.userId)) {
+            logger.info(
+              { userId: args.userId, walletId: args.walletId, gate: 'withdrawal_hold' },
+              'auto-withdrawal skipped',
+            );
+            return null;
+          }
           const { queued, flipped } = await this.flipToProcessing({
             txn,
             withdrawalId: args.transactionId,
@@ -2688,12 +2854,19 @@ export class WalletService {
       }
 
       try {
-        return await this.settleApproved(decided.tx, null);
+        return await this.settleApproved(decided.tx, decided.queued, null);
       } catch (err) {
         // Refused by the vendor: settleApproved already failed and refunded the row, so report
         // that instead of falling through to `pending` for a withdrawal nobody can approve now.
         if (err instanceof PaymentRejectedError) {
           return { transactionId: args.transactionId, status: 'failed' };
+        }
+        if (err instanceof WithdrawalHeldError) {
+          logger.info(
+            { userId: args.userId, walletId: args.walletId, gate: 'withdrawal_hold' },
+            'auto-withdrawal skipped',
+          );
+          return undefined;
         }
         throw err;
       }
@@ -3412,6 +3585,7 @@ export class WalletService {
     from,
     to,
     search,
+    products,
     includeInternal = false,
     includeGrants = false,
   }: PaginationOptions<
@@ -3430,7 +3604,8 @@ export class WalletService {
         ${t.reviewReason} as review_reason, ${t.referenceCurrency} as reference_currency,
         ${t.referenceAmount} as reference_amount, ${t.referenceRate} as reference_rate,
         ${t.referenceRateAsOf} as reference_rate_as_of, ${t.providerRefId} as provider_ref_id,
-        ${t.txHash} as tx_hash, ${t.fee} as fee
+        ${t.txHash} as tx_hash, ${t.fee} as fee, ${t.providerName} as provider_name,
+        ${t.balanceAfter} as balance_after
       from ${t}
       where ${t.walletId} in (select ${wallet.id} from ${wallet} where ${wallet.userId} = ${userId})`;
     // The port hands back a Drizzle SQL fragment typed `unknown` (contracts cannot import drizzle).
@@ -3442,7 +3617,7 @@ export class WalletService {
       ? sql`
       union all
       select g.id, g.type, g.amount, g.currency, null, g.status, 'credit', g.created_at, null,
-        null, null, null, null, null, null, null, null, null, null
+        null, null, null, null, null, null, null, null, null, null, null, null
       from (${grantQuery}) g`
       : sql``;
     const history = sql`(${ledgerRows} ${grantRows}) as history`;
@@ -3462,6 +3637,10 @@ export class WalletService {
     }
     if (to) {
       conditions.push(sql`created_at <= ${to}::timestamptz`);
+    }
+    if (products?.length) {
+      const prefixes = products.map((p) => `${escapeLike(wagerProductProviderPrefix(p))}%`);
+      conditions.push(sql`provider_name like any(${sql.param(prefixes)}::text[])`);
     }
     if (search) {
       conditions.push(
@@ -3499,12 +3678,15 @@ export class WalletService {
         status: tx.status,
         direction: tx.direction,
         fee: tx.fee,
+        // Internal only: the player's own statement is not the balance record.
+        balanceAfter: includeInternal ? tx.balance_after : null,
         createdAt: new Date(tx.created_at).toISOString(),
         reviewedBy: includeInternal ? tx.reviewed_by : null,
         reviewedAt:
           includeInternal && tx.reviewed_at ? new Date(tx.reviewed_at).toISOString() : null,
         reviewReason:
           includeInternal || MANUAL_ADJUSTMENT_TYPES.has(tx.type) ? tx.review_reason : null,
+        product: wagerProductOfProviderName(tx.provider_name),
         // Internal only: a reference currency is never shown to the player.
         reference: includeInternal
           ? toReferenceDto({
@@ -3734,7 +3916,13 @@ export class WalletService {
           transactionId: inserted.id,
         };
         if (holdReason === null) {
-          await creditWalletBalance(txn, walletRecord.id, event.currency, event.amount);
+          await creditAndStampBalance(
+            txn,
+            inserted.id,
+            walletRecord.id,
+            event.currency,
+            event.amount,
+          );
           await this.events.emitInTransaction(txn, 'wallet.deposit.completed', payload);
         } else {
           await recordReconciliationFindingInTransaction(
@@ -3894,7 +4082,7 @@ export class WalletService {
       // running ahead would keep the released deposit out of the player's spend.
       .set({ status: 'completed', reviewedBy: adminId, reviewedAt: sql`now()` })
       .where(eq(walletTransaction.id, depositId));
-    await creditWalletBalance(txn, held.walletId, held.currency, held.amount);
+    await creditAndStampBalance(txn, depositId, held.walletId, held.currency, held.amount);
     return { userId: held.userId, amount: held.amount, currency: held.currency };
   }
 
@@ -3929,7 +4117,7 @@ export class WalletService {
       deposit.currency,
     );
     const row = await this.insertHandDeposit(txn, deposit, { ...reference, status: 'completed' });
-    await creditWalletBalance(txn, row.walletId, deposit.currency, deposit.amount);
+    await creditAndStampBalance(txn, row.id, row.walletId, deposit.currency, deposit.amount);
     return {
       transactionId: row.id,
       userId: deposit.userId,

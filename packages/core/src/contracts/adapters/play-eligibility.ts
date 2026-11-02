@@ -17,7 +17,22 @@ import { createToken, type Token } from './token.js';
  */
 export type PlayEligibilityPort = {
   isRestricted(userId: string, tx?: unknown): Promise<boolean>;
+  /**
+   * Why the player may not play now, on top of the RG block `isRestricted` reports: the account's
+   * own state too. `null` lets them play. Same `tx` rule as `isRestricted`. Optional: a caller
+   * without it falls back to `isRestricted` and cannot name the reason.
+   */
+  checkPlay?(userId: string, tx?: unknown): Promise<PlayRefusal | null>;
 };
+
+export const PLAY_REFUSALS = [
+  'self_excluded',
+  'cooling_off',
+  'account_suspended',
+  'account_closed',
+  'account_inactive',
+] as const;
+export type PlayRefusal = (typeof PLAY_REFUSALS)[number];
 
 export const PLAY_ELIGIBILITY: Token<PlayEligibilityPort> =
   createToken<PlayEligibilityPort>('PLAY_ELIGIBILITY');

@@ -120,6 +120,23 @@ describe('AdminGuard.assert - no permission resolver bound, static roles decide 
     expect(events.emit).not.toHaveBeenCalled();
   });
 
+  it('denies a deactivated admin whose session is still live, and emits the denial event', async () => {
+    const userId = await seedUser('admin', { isActive: false });
+    const { guard, events } = makeGuard({ userId });
+
+    await expect(
+      guard.assert(requestContext(ADMIN_HEADERS), 'admin', 'delete'),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', data: { reason: 'admin_required' } });
+    // So is the super-admin check, which asserts first.
+    await expect(guard.assertSuperAdmin(requestContext(ADMIN_HEADERS))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({ userId, resource: 'admin', action: 'delete', role: 'admin' }),
+    );
+  });
+
   it('passes the coarse check for an admin with no resource requested', async () => {
     const userId = await seedUser('admin');
     const { guard } = makeGuard({ userId });

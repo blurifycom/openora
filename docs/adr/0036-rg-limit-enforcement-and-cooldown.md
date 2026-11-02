@@ -9,6 +9,9 @@ refused server-side with a typed error. The paragraph below asserting the admin 
 this ADR (the enforcement points, the deposit/wager gates, the player-path cool-down,
 and the concurrency reasoning) is unchanged.
 
+> **Update (2026-10-15)**: RG spend now reads the wallet ledger for every product, and `loss`
+> stays unenforced for the reason in [ADR-0046](./0046-sportsbook-ledger-port.md).
+
 ## Context
 
 ADR-0032 closed the exclusion dimension of responsible gambling: a cooling-off or

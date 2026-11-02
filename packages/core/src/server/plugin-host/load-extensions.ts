@@ -33,7 +33,9 @@ export async function loadExtensions(
   const selected = applyServiceManifest(filtered, manifest);
   if (manifest !== null) {
     process.stdout.write(
-      `SERVICE_MANIFEST active: booting ${selected.map((e) => e.id).join(', ')}\n`,
+      `SERVICE_MANIFEST active: booting ${selected
+        .map((e) => (e.noRoutes ? `${e.id} (no routes)` : e.id))
+        .join(', ')}\n`,
     );
   }
   return selected;

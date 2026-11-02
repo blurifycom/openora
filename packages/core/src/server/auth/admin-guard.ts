@@ -16,6 +16,7 @@ import { holdsGrant, isRoleName, type ResourceName, type ActionOf } from './perm
 import type { OssContext, EventBus } from '../kernel/index.js';
 import { createLogger } from '../kernel/logger.js';
 import { extractClientMeta } from '../kernel/router-utils.js';
+import { getCurrentClientMeta, noteGrantedPermission } from '../kernel/request-context.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
@@ -102,19 +103,22 @@ export class AdminGuard {
       });
     }
 
-    return this.enforce({
+    const caller = await this.enforce({
       userId,
       clientMeta: { ip, userAgent },
       permission: resource !== undefined && action !== undefined ? { resource, action } : undefined,
       session: { sessionId: resolvedSession?.sessionId ?? null },
     });
+    if (resource !== undefined && action !== undefined) {
+      noteGrantedPermission({ userId, resource, action, ip, userAgent });
+    }
+    return caller;
   }
 
   /**
    * `assert` for a caller that is not an HTTP request (an agent run, an MCP token): the same
-   * user, role, grant and 2FA-enrolment checks and the same denial event, without a session -
-   * so no session-integrity check, and `ip`/`userAgent` are null. A deactivated account is
-   * refused too: with no session to revoke, nothing else stops a credential it issued.
+   * user, role, grant, active-account and 2FA-enrolment checks and the same denial event, without
+   * a session - so no session-integrity check, and `ip`/`userAgent` are null.
    */
   async assertUser<R extends ResourceName>(
     userId: string,
@@ -125,7 +129,6 @@ export class AdminGuard {
       userId,
       clientMeta: { ip: null, userAgent: null },
       permission: { resource, action },
-      requireActive: true,
     });
   }
 
@@ -139,9 +142,12 @@ export class AdminGuard {
     userId: string,
     requirements: readonly T[],
   ): Promise<T[]> {
-    return (
-      (await this.filterGrantedUsers([userId], requirements)).get(canonicalUserId(userId)) ?? []
-    );
+    const granted =
+      (await this.filterGrantedUsers([userId], requirements)).get(canonicalUserId(userId)) ?? [];
+    for (const { resource, action } of granted) {
+      noteGrantedPermission({ userId, resource, action, ...getCurrentClientMeta() });
+    }
+    return granted;
   }
 
   /**
@@ -172,7 +178,14 @@ export class AdminGuard {
     return new Map(entries.filter(([, held]) => held.length > 0));
   }
 
-  async assertSuperAdmin(context: unknown): Promise<AdminCaller> {
+  /**
+   * `subject` names the route for the audit trail only (`admin.<resource>.<action>`): the
+   * permission checked is always super-admin, which would label every such row `admin.admin`.
+   */
+  async assertSuperAdmin(
+    context: unknown,
+    subject: { resource: string; action: string } = { resource: 'admin', action: 'super-admin' },
+  ): Promise<AdminCaller> {
     const caller = await this.assert(context);
     const isSuper = this.permissionResolver
       ? await this.permissionResolver.isSuperAdmin(caller.userId)
@@ -192,6 +205,12 @@ export class AdminGuard {
         data: { reason: AuthGuardReasonSchema.enum.admin_required },
       });
     }
+    noteGrantedPermission({
+      userId: caller.userId,
+      ...subject,
+      ip: caller.ip,
+      userAgent: caller.userAgent,
+    });
     return caller;
   }
 
@@ -200,20 +219,20 @@ export class AdminGuard {
     clientMeta: { ip, userAgent },
     permission,
     session,
-    requireActive = false,
   }: {
     userId: string;
     clientMeta: ClientMeta;
     permission: { resource: R; action: ActionOf<R> } | undefined;
     session?: { sessionId: string | null };
-    requireActive?: boolean;
   }): Promise<AdminCaller> {
     const userId = canonicalUserId(rawUserId);
     const deniedResource = permission?.resource ?? 'admin';
     const deniedAction = permission?.action ?? 'access';
 
     const { account, granted } = await this.resolveAccess(userId, permission ? [permission] : []);
-    if (!account || (requireActive && !account.isActive) || !account.isAdmin) {
+    // A deactivated account is refused on every path, read fresh on every call: deactivation also
+    // ends its sessions, but sign-in does not check the flag, and a token it issued has no session.
+    if (!account || !account.isActive || !account.isAdmin) {
       this.emitUnauthorized(userId, account?.role, deniedResource, deniedAction, ip, userAgent);
       throw new ORPCError('FORBIDDEN', {
         message: 'Admin access required',

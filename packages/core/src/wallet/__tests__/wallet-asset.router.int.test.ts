@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { sql } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
@@ -54,7 +55,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.delete(walletTransaction);
+  await db.drizzle.db.execute(sql`TRUNCATE ${walletTransaction}`);
   await db.drizzle.db.delete(walletDepositAddress);
   await db.drizzle.db.delete(walletBalance);
   await db.drizzle.db.delete(wallet);

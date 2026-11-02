@@ -794,26 +794,9 @@ export class IdentityService {
       .update(user)
       .set({ passwordMeetsPolicy: true })
       .where(eq(user.id, body.user.id));
-    let consent: Awaited<ReturnType<IdentityService['recordRegistrationConsent']>>;
-    try {
-      consent = await this.recordRegistrationConsent(
-        provisioning,
-        body.user.id,
-        registration.termsVersion,
-        { ip, userAgent },
-        input.acquisition,
-      );
-    } catch (err) {
-      this.emitRegistrationFailed('error', input, meta);
-      throw err;
-    }
-    const { playerId, consentStored } = consent;
-    // After the consent write, which is what materialises the player row the zone lands on.
-    // No session yet, but the browser is here now and a first login may be days away.
-    await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
-    this.events.emit('identity.user.registered', {
+    const registered = (playerId: string | null, consentStored: boolean) => ({
       userId: body.user.id,
-      playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
+      playerId,
       countryCode: registrationGeo?.countryCode ?? null,
       // Only claimed when the consent row was actually written - a discarded capture
       // must not leave an audit trail implying evidence that does not exist.
@@ -827,6 +810,44 @@ export class IdentityService {
       ip,
       userAgent,
     });
+    // Written to the outbox with the player row: consumers attach records to the new
+    // player, so a broker outage at sign-up must delay the event, never lose it.
+    let registeredEmitted = false;
+    let consent: Awaited<ReturnType<IdentityService['recordRegistrationConsent']>>;
+    try {
+      consent = await this.recordRegistrationConsent(
+        provisioning,
+        body.user.id,
+        registration.termsVersion,
+        { ip, userAgent },
+        input.acquisition,
+        async (tx, playerId) => {
+          await this.events.emitInTransaction(
+            tx,
+            'identity.user.registered',
+            registered(playerId, true),
+          );
+          registeredEmitted = true;
+        },
+      );
+    } catch (err) {
+      this.emitRegistrationFailed('error', input, meta);
+      throw err;
+    }
+    const { playerId, consentStored } = consent;
+    // After the consent write, which is what materialises the player row the zone lands on.
+    // No session yet, but the browser is here now and a first login may be days away.
+    await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
+    // The player row already existed, or the provisioning adapter predates `onCreated`.
+    if (!registeredEmitted) {
+      this.events.emit(
+        'identity.user.registered',
+        registered(
+          playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
+          consentStored,
+        ),
+      );
+    }
     // Sent here rather than by better-auth's sendOnSignUp hook: that hook also fires on
     // the synthetic duplicate-email response, mailing a live code to an address whose
     // owner never asked for it - and `verifyEmail` signs that code's bearer in.
@@ -875,19 +896,23 @@ export class IdentityService {
     termsVersion: string,
     { ip, userAgent }: ClientMeta,
     acquisition: RegistrationAcquisition | undefined,
+    onCreated: (tx: unknown, playerId: string) => Promise<void>,
   ) {
     const now = new Date();
     let outcome: Awaited<ReturnType<PlayerProvisioning['createForRegistration']>>;
     try {
-      outcome = await provisioning.createForRegistration({
-        userId,
-        termsVersion,
-        termsAcceptedAt: now,
-        ageAcceptedAt: now,
-        registrationIp: ip,
-        registrationUserAgent: userAgent,
-        ...(acquisition ? { acquisition } : {}),
-      });
+      outcome = await provisioning.createForRegistration(
+        {
+          userId,
+          termsVersion,
+          termsAcceptedAt: now,
+          ageAcceptedAt: now,
+          registrationIp: ip,
+          registrationUserAgent: userAgent,
+          ...(acquisition ? { acquisition } : {}),
+        },
+        onCreated,
+      );
     } catch (err) {
       identityLogger.error(
         { err, userId },

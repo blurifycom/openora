@@ -1,0 +1,3 @@
+CREATE INDEX "sportsbook_bet_user_id_accepted_at_idx" ON "sportsbook_bet" USING btree ("user_id","accepted_at");--> statement-breakpoint
+CREATE INDEX "sportsbook_bet_user_id_status_settled_at_idx" ON "sportsbook_bet" USING btree ("user_id","status","settled_at");--> statement-breakpoint
+CREATE INDEX "sportsbook_reconciliation_finding_user_id_created_at_idx" ON "sportsbook_reconciliation_finding" USING btree ("user_id","created_at","id");
