@@ -110,6 +110,21 @@ describe('game_round record protection (real PG)', () => {
     await expect(update(round.id, { winAmount: '30', betAmount: '6' })).resolves.toBeDefined();
   });
 
+  it('lets a settled round shrink its stake only as far as the reversed amount grows', async () => {
+    const round = await seedRound();
+    await update(round.id, { status: 'completed' });
+
+    await rejectedWith(update(round.id, { betAmount: '3' }), /cannot decrease once final/);
+    await expect(update(round.id, { betAmount: '3', reversedAmount: '2' })).resolves.toBeDefined();
+    await rejectedWith(update(round.id, { betAmount: '0' }), /cannot decrease once final/);
+    await rejectedWith(update(round.id, { reversedAmount: '1' }), /cannot decrease once final/);
+    await expect(update(round.id, { betAmount: '0', reversedAmount: '5' })).resolves.toBeDefined();
+
+    const [after] = await db.drizzle.db.select().from(gameRound).where(eq(gameRound.id, round.id));
+    expect(Number(after?.betAmount)).toBe(0);
+    expect(Number(after?.reversedAmount)).toBe(5);
+  });
+
   it('passes an update that matches no round', async () => {
     await expect(update(randomUUID(), { gameId: randomUUID() })).resolves.toBeDefined();
   });

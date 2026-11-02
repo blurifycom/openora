@@ -57,7 +57,8 @@ const SQL_IDENTIFIER = /^[a-z][a-z0-9_]*$/;
  * the audit log does), and an UPDATE may change only `mutableColumns`, plus `setOnceColumns` while
  * they are still NULL. A `terminal` column also freezes once it holds one of its `values`, and its
  * `growOnly` columns can then only increase, so a finished row cannot be reopened or rewritten
- * downwards. Every other column, one added later included, is immutable until named
+ * downwards. A `growOnlyTotals` group lets its columns move against each other, but never lets
+ * their sum fall: a figure may shrink only by growing a column that records the shrink. Every other column, one added later included, is immutable until named
  * here. TRUNCATE is untouched, which keeps test and dev resets working. There is no bypass: a
  * deliberate repair is a migration that disables the trigger itself. The UPDATE check runs per
  * row, so an UPDATE that matches nothing passes.
@@ -76,14 +77,26 @@ export function appendOnlyTableSql(
   }: {
     mutableColumns: string[];
     setOnceColumns?: string[];
-    terminal?: { column: string; values: string[]; growOnly?: string[] };
+    terminal?: {
+      column: string;
+      values: string[];
+      growOnly?: string[];
+      growOnlyTotals?: string[][];
+    };
   },
 ): string {
   const columns = [...mutableColumns, ...setOnceColumns];
   for (const name of [
     table,
     ...columns,
-    ...(terminal ? [terminal.column, ...terminal.values, ...(terminal.growOnly ?? [])] : []),
+    ...(terminal
+      ? [
+          terminal.column,
+          ...terminal.values,
+          ...(terminal.growOnly ?? []),
+          ...(terminal.growOnlyTotals ?? []).flat(),
+        ]
+      : []),
   ]) {
     if (!SQL_IDENTIFIER.test(name)) {
       throw new Error(`Invalid SQL identifier: ${name}`);
@@ -110,6 +123,15 @@ export function appendOnlyTableSql(
          RAISE EXCEPTION '${table} is append-only: ${column} cannot decrease once final';
        END IF;`,
          )
+         .join('\n       ')}
+       ${(terminal.growOnlyTotals ?? [])
+         .map((group) => {
+           const sum = (row: 'NEW' | 'OLD') =>
+             group.map((column) => `${row}.${column}`).join(' + ');
+           return `IF ${sum('NEW')} < ${sum('OLD')} THEN
+         RAISE EXCEPTION '${table} is append-only: ${group.join(' + ')} cannot decrease once final';
+       END IF;`;
+         })
          .join('\n       ')}
      END IF;`
     : '';
