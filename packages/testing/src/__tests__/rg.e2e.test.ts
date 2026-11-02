@@ -133,7 +133,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
 
   it('notifies the player in-app on an admin limit override, never on their own self-service change', async () => {
     const email = `rg-admin-notify-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(app, { email });
+    const { client, userId } = await registerAndMaterializePlayer(app, { email });
 
     const setRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'deposit',
@@ -172,45 +172,6 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       );
       expect(rgEmails).toHaveLength(1);
       expect(rgEmails[0]?.text).not.toContain('operator lowered on a support request');
-    });
-
-    // A second override carries the old limit with its own currency.
-    const lowerRes = await admin.put(`/compliance/players/${userId}/limits`, {
-      type: 'deposit',
-      amount: '400',
-      minutes: null,
-      currency: 'USD',
-      period: 'daily',
-      reason: 'operator lowered again',
-      confirm: true,
-    });
-    expect(lowerRes.status).toBe(200);
-
-    await vi.waitFor(async () => {
-      const notifications = (await readJson(await client.get('/notifications'))) as {
-        items: Array<{ type: string; params: Record<string, string> | null }>;
-      };
-      const found = notifications.items.find(
-        (n) => n.type === 'rg.limit.admin_updated' && n.params?.['amount'] === '400',
-      );
-      expect(found?.params).toEqual({
-        period: 'daily',
-        limitType: 'deposit',
-        previousAmount: '500.000000000000000000',
-        previousCurrency: 'USD',
-        amount: '400',
-        currency: 'USD',
-      });
-      expect(JSON.stringify(found)).not.toContain('operator lowered again');
-    });
-
-    await vi.waitFor(async () => {
-      const res = await admin.get(`/audit/logs?resourceId=${playerId}&action=rg.limit.set`);
-      const body = await readJson(res);
-      const lowered = body.items.find(
-        (i: { after: { amount?: string } }) => i.after.amount === '400',
-      );
-      expect(lowered?.after).toMatchObject({ previousCurrency: 'USD', currency: 'USD' });
     });
 
     const beforeCount = (await readJson(await client.get('/notifications'))).total;

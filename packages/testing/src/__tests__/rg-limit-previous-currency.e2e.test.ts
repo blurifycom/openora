@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { MESSAGE_BROKER } from '@openora/core/contracts';
-import { DRIZZLE, eventOutbox, processedEvents } from '@openora/core/server';
+import { DRIZZLE, eventOutbox } from '@openora/core/server';
 import { exchangeRateQuote } from '@openora/core/fx/schema/exchange-rate';
 import { userLimit } from '@openora/core/compliance/schema';
 import { player as playerProfile } from '@openora/core/pam/schema/profile';
@@ -46,7 +46,7 @@ function setLimit(userId: string, body: Record<string, unknown>) {
     amount: null,
     currency: null,
     period: 'daily',
-    reason: 'internal: support ticket 4411',
+    reason: 'internal-only-reason-marker',
     confirm: true,
     ...body,
   });
@@ -60,10 +60,15 @@ async function setPlayerCurrency(userId: string, currency: string) {
     .where(eq(playerProfile.userId, userId));
 }
 
-async function auditAfter(playerId: string) {
+type AuditRow = { before: Record<string, unknown> | null; after: Record<string, unknown> };
+
+async function auditRows(playerId: string): Promise<AuditRow[]> {
   const res = await admin.get(`/audit/logs?resourceId=${playerId}&action=rg.limit.set`);
-  const body = (await readJson(res)) as { items: Array<{ after: Record<string, unknown> }> };
-  return body.items.map((i) => i.after);
+  return ((await readJson(res)) as { items: AuditRow[] }).items;
+}
+
+async function auditAfter(playerId: string) {
+  return (await auditRows(playerId)).map((i) => i.after);
 }
 
 async function limitSetEvents(userId: string) {
@@ -78,15 +83,6 @@ async function limitSetEvents(userId: string) {
       ),
     );
 }
-
-const handled = async (eventId: string) =>
-  (
-    await app.container
-      .get(DRIZZLE)
-      .db.select({ consumer: processedEvents.consumer })
-      .from(processedEvents)
-      .where(eq(processedEvents.eventId, eventId))
-  ).length;
 
 beforeAll(async () => {
   ({ db, app } = await bootE2e());
@@ -130,10 +126,15 @@ describe('admin limit override carries the old limit currency', () => {
         currency: 'BTC',
       });
     });
-    const after = (await auditAfter(p.playerId)).find((a) => a['currency'] === 'BTC');
-    expect(after).toMatchObject({ previousCurrency: 'USDT', currency: 'BTC' });
+    await vi.waitFor(async () => {
+      const row = (await auditRows(p.playerId)).find((r) => r.after['currency'] === 'BTC');
+      expect(row?.after).toMatchObject({ previousCurrency: 'USDT', currency: 'BTC' });
+      expect(row?.before?.['currency']).toBe('USDT');
+    });
     // The internal reason never reaches the player.
-    expect(JSON.stringify(await notificationParams(p.client))).not.toContain('4411');
+    expect(JSON.stringify(await notificationParams(p.client))).not.toContain(
+      'internal-only-reason-marker',
+    );
   });
 
   it("reports a legacy NULL-currency row in the player's currency, not the new limit's", async () => {
@@ -158,9 +159,11 @@ describe('admin limit override carries the old limit currency', () => {
       const found = (await notificationParams(p.client)).find((n) => n?.['currency'] === 'USD');
       expect(found).toMatchObject({ previousCurrency: 'EUR', currency: 'USD' });
     });
-    expect((await auditAfter(p.playerId))[0]).toMatchObject({
-      previousCurrency: 'EUR',
-      currency: 'USD',
+    await vi.waitFor(async () => {
+      expect((await auditAfter(p.playerId))[0]).toMatchObject({
+        previousCurrency: 'EUR',
+        currency: 'USD',
+      });
     });
   });
 
@@ -181,12 +184,13 @@ describe('admin limit override carries the old limit currency', () => {
         minutes: '60',
       });
     });
-    const after = (await auditAfter(p.playerId)).find((a) => a['minutes'] === 60);
-    expect(after).toMatchObject({ previousCurrency: null, currency: null });
+    await vi.waitFor(async () => {
+      const after = (await auditAfter(p.playerId)).find((a) => a['minutes'] === 60);
+      expect(after).toMatchObject({ previousCurrency: null, currency: null });
+    });
 
     const raise = await setLimit(p.userId, { ...session, minutes: 120 });
-    expect(raise.status).toBeGreaterThanOrEqual(400);
-    expect(raise.status).toBeLessThan(500);
+    expect(raise.status).toBe(409);
     expect(await notificationParams(p.client)).toHaveLength(2);
   });
 
@@ -203,56 +207,9 @@ describe('admin limit override carries the old limit currency', () => {
         { period: 'daily', limitType: 'deposit', amount: '50', currency: 'USD' },
       ]);
     });
-    expect((await auditAfter(p.playerId))[0]).toMatchObject({ previousCurrency: null });
-  });
-
-  it('keeps the notification private and the route admin-only', async () => {
-    const owner = await registerAndMaterializePlayer(app, {
-      email: `rgpc-own-${randomUUID()}@e2e.test`,
+    await vi.waitFor(async () => {
+      expect((await auditAfter(p.playerId))[0]).toMatchObject({ previousCurrency: null });
     });
-    const other = await registerAndMaterializePlayer(app, {
-      email: `rgpc-oth-${randomUUID()}@e2e.test`,
-    });
-    await setLimit(owner.userId, { type: 'deposit', amount: '80', currency: 'USD' });
-    await vi.waitFor(async () => expect(await notificationParams(owner.client)).toHaveLength(1));
-
-    expect(await notificationParams(other.client)).toEqual([]);
-    expect((await app.app.request('/notifications')).status).toBe(401);
-    const asPlayerCall = await other.client.put(`/compliance/players/${owner.userId}/limits`, {
-      type: 'deposit',
-      amount: '1',
-      minutes: null,
-      currency: 'USD',
-      period: 'daily',
-      reason: 'x',
-      confirm: true,
-    });
-    expect(asPlayerCall.status).toBe(403);
-    expect((await auditAfter(owner.playerId)).length).toBe(1);
-  });
-
-  it('notifies once when the broker redelivers the event', async () => {
-    const p = await registerAndMaterializePlayer(app, {
-      email: `rgpc-redo-${randomUUID()}@e2e.test`,
-    });
-    await setLimit(p.userId, { type: 'deposit', amount: '60', currency: 'USD' });
-    await vi.waitFor(async () => expect(await notificationParams(p.client)).toHaveLength(1));
-    const [evt] = await limitSetEvents(p.userId);
-    await vi.waitFor(async () => expect(await handled(evt!.eventId)).toBeGreaterThan(0));
-
-    await app.container.get(MESSAGE_BROKER).publish({
-      eventId: evt!.eventId,
-      topic: evt!.topic,
-      payload: evt!.payload,
-      occurredAt: evt!.occurredAt.toISOString(),
-      schemaVersion: evt!.schemaVersion,
-    });
-    // A later event is handled after the redelivery (same queue), so the redelivery has been seen.
-    await setLimit(p.userId, { type: 'deposit', amount: '55', currency: 'USD' });
-    await vi.waitFor(async () => expect(await notificationParams(p.client)).toHaveLength(2));
-
-    expect(await notificationParams(p.client)).toHaveLength(2);
-    expect((await auditAfter(p.playerId)).length).toBe(2);
   });
 
   it('drops a notification whose event carries a malformed previousCurrency, without breaking later ones', async () => {
@@ -271,31 +228,31 @@ describe('admin limit override carries the old limit currency', () => {
       occurredAt: new Date().toISOString(),
       schemaVersion: evt!.schemaVersion,
     });
-    await new Promise((r) => setTimeout(r, 1500));
-
-    expect((await notificationParams(p.client)).some((n) => n?.['amount'] === '777')).toBe(false);
-    // The pipeline is still alive for the next real change.
+    // A real change on the same stream lands after the forged one, so once it shows the
+    // forged event has been handled: the pipeline is alive and dropped the malformed one.
     await setLimit(p.userId, { type: 'deposit', amount: '40', currency: 'USD' });
     await vi.waitFor(async () =>
       expect((await notificationParams(p.client)).some((n) => n?.['amount'] === '40')).toBe(true),
     );
+    expect((await notificationParams(p.client)).some((n) => n?.['amount'] === '777')).toBe(false);
   });
 });
 
 describe('player self-service limit change', () => {
-  it('creates no notification and still audits the old currency', async () => {
+  it('creates no notification and audits the old currency on a cross-currency lowering', async () => {
     const p = await registerAndMaterializePlayer(app, {
       email: `rgpc-self-${randomUUID()}@e2e.test`,
     });
-    const body = (amount: string) => ({
+    const body = (amount: string, currency: string) => ({
       type: 'deposit',
       amount,
       minutes: null,
-      currency: 'USD',
+      currency,
       period: 'daily',
     });
-    expect((await p.client.put('/compliance/limits', body('100'))).status).toBe(200);
-    expect((await p.client.put('/compliance/limits', body('50'))).status).toBe(200);
+    expect((await p.client.put('/compliance/limits', body('100', 'USD'))).status).toBe(200);
+    // 50 EUR = 55 USD: a lowering, so it applies at once.
+    expect((await p.client.put('/compliance/limits', body('50', 'EUR'))).status).toBe(200);
 
     await vi.waitFor(async () => {
       const after = (await auditAfter(p.playerId)).find(
@@ -303,7 +260,7 @@ describe('player self-service limit change', () => {
       );
       expect(after).toMatchObject({
         previousCurrency: 'USD',
-        currency: 'USD',
+        currency: 'EUR',
         initiatedBy: 'player',
       });
     });

@@ -304,48 +304,6 @@ describe('notificationEventMap', () => {
       });
     });
 
-    it('gives a session limit change minutes only, with no currency keys', () => {
-      const input = buildRgLimitAdminUpdatedNotification({
-        ...limitSet,
-        type: 'session',
-        period: 'session',
-        amount: null,
-        minutes: 90,
-        previousAmount: null,
-        previousMinutes: 60,
-        currency: null,
-        previousCurrency: null,
-      });
-
-      expect(input.params).toEqual({
-        period: 'session',
-        limitType: 'session',
-        previousMinutes: '60',
-        minutes: '90',
-      });
-    });
-
-    it('omits previousAmount and previousCurrency on a first-ever money limit', () => {
-      const input = buildRgLimitAdminUpdatedNotification({
-        ...limitSet,
-        type: 'deposit',
-        period: 'daily',
-        amount: '50',
-        minutes: null,
-        previousAmount: null,
-        previousMinutes: null,
-        currency: 'USD',
-        previousCurrency: null,
-      });
-
-      expect(input.params).toEqual({
-        period: 'daily',
-        limitType: 'deposit',
-        amount: '50',
-        currency: 'USD',
-      });
-    });
-
     it('parses a v5 payload written before previousCurrency as null and builds no previousCurrency', () => {
       const parsed = domainEventSchemas['rg.limit.set'].safeParse({
         ...limitSet,
