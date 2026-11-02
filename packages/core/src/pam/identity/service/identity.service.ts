@@ -694,6 +694,23 @@ export class IdentityService {
     }
   }
 
+  /** Re-reads the account a pending 2FA login belongs to and applies the sign-in gate to it. */
+  private async assertChallengedAccountNotBlocked(userId: User['id'], meta: ClientMeta) {
+    const [account] = await this.drizzle.db
+      .select({
+        id: user.id,
+        isActive: user.isActive,
+        rgBlocked: user.rgBlocked,
+        rgBlockedUntil: user.rgBlockedUntil,
+      })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (account) {
+      await this.assertAccountNotBlocked(account, meta);
+    }
+  }
+
   // Same gate as password login and phone login, from the one shared implementation.
   private assertAccountNotBlocked(
     account: { id: User['id']; isActive: boolean; rgBlocked: boolean; rgBlockedUntil: Date | null },
@@ -1823,6 +1840,12 @@ export class IdentityService {
       });
     }
     await ensureOk(res);
+    // The challenge proves the password as it stood when the pending login began. An account
+    // deactivated or blocked since then must not get a session by completing it, so the gate
+    // runs here, on the session better-auth just minted, before its cookie is forwarded.
+    if (challengedUserId && !sessionUserId) {
+      await this.assertChallengedAccountNotBlocked(challengedUserId, { ip, userAgent });
+    }
     if (challengedUserId) {
       await this.twoFactorLockout?.reset(challengedUserId);
     }

@@ -163,6 +163,22 @@ describe('SessionIdleService', () => {
     );
   });
 
+  it("starts a new session's idle clock at sign-in, so a session never used cannot outlive the window", async () => {
+    const admin = await seedUser(db, { role: 'admin' });
+    const [created] = await db.drizzle.db
+      .insert(session)
+      .values({
+        userId: admin.id,
+        token: crypto.randomUUID(),
+        expiresAt: new Date(Date.now() + 86_400_000),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    expect(created!.lastSeenAt).not.toBeNull();
+    expect(created!.lastSeenAt!.getTime()).toBeGreaterThan(minutesAgo(1).getTime());
+  });
+
   it('fails closed when the session cannot be found', async () => {
     const account = await seedUser(db);
 

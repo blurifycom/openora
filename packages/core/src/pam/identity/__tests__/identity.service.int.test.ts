@@ -744,6 +744,10 @@ describe('IdentityService - deactivated account login gate (real PG)', () => {
     expect(signInEmailMock).toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalledWith('identity.user.login', expect.anything());
     expect(events.emit).not.toHaveBeenCalledWith('identity.user.login.failed', expect.anything());
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.login_blocked',
+      expect.objectContaining({ userId: account.id, reason: 'inactive' }),
+    );
 
     const [revoked] = await db.drizzle.db
       .select()
@@ -1436,6 +1440,36 @@ describe('IdentityService.verifyTwoFactor', () => {
       recordFailure: vi.fn(async () => undefined),
       reset: vi.fn(async () => undefined),
     });
+
+  it('refuses a pending 2FA completion for an account deactivated after its password was proven', async () => {
+    const account = await seedUser({ isActive: false });
+    const live = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await db.drizzle.db
+      .insert(session)
+      .values({ userId: account.id, token: randomUUID(), expiresAt: live });
+    verifyTotpMock.mockResolvedValue(okResponse());
+    const events = makeEventBus();
+    const svc = buildService({ events, twoFactorLockout: pendingChallenge(account.id) });
+
+    await expect(
+      svc.verifyTwoFactor(
+        { code: '123456', method: 'totp', trustDevice: false },
+        {},
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', data: { code: 'ACCOUNT_INACTIVE' } });
+
+    const [revoked] = await db.drizzle.db
+      .select()
+      .from(session)
+      .where(eq(session.userId, account.id));
+    expect(revoked.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(events.emit).not.toHaveBeenCalledWith('identity.2fa.verified', expect.anything());
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.authentication.succeeded',
+      expect.anything(),
+    );
+  });
 
   it('spends a backup code through better-auth instead of the authenticator', async () => {
     const account = await seedUser();

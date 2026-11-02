@@ -73,25 +73,48 @@ export async function assertAccountNotBlocked(
     });
   }
 
+  // The player status a suspended or closed account carries, if it is one. Distinct mechanism
+  // from RG (self_excluded is out of scope here) - such a player can never log back in.
+  const blockedPlayerStatus =
+    playerRow && (playerRow.status === 'suspended' || playerRow.status === 'closed')
+      ? playerRow.status
+      : null;
+
   // A deactivated account (a back-office ban, or a staff member taken off the roster) cannot
   // sign in, whatever its role. Checked with the other blocks so a probe still learns nothing
-  // about the account before the credential has been proven.
+  // about the account before the credential has been proven. Audited here, as a denial of the
+  // proven credential; both events fire when the account is also suspended, so neither hides
+  // the other.
   if (!account.isActive) {
     await revoke();
+    events.emit('identity.user.login_blocked', {
+      userId: account.id,
+      playerId: playerRow?.id ?? null,
+      reason: 'inactive',
+      ip,
+      userAgent,
+    });
+    if (playerRow && blockedPlayerStatus) {
+      events.emit('player.login_blocked', {
+        userId: account.id,
+        playerId: playerRow.id,
+        status: blockedPlayerStatus,
+        ip,
+        userAgent,
+      });
+    }
     throw new ORPCError('FORBIDDEN', {
       message: 'Your account is inactive. Contact your administrator.',
       data: errorData.inactive,
     });
   }
 
-  // Distinct mechanism from RG (self_excluded is out of scope here) - a suspended or
-  // closed player can never log back in.
-  if (playerRow && (playerRow.status === 'suspended' || playerRow.status === 'closed')) {
+  if (playerRow && blockedPlayerStatus) {
     await revoke();
     events.emit('player.login_blocked', {
       userId: account.id,
       playerId: playerRow.id,
-      status: playerRow.status,
+      status: blockedPlayerStatus,
       ip,
       userAgent,
     });
