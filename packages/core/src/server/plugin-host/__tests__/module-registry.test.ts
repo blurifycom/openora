@@ -53,6 +53,16 @@ describe('ModuleRegistryImpl', () => {
     expect(() => reg.provideSealed(SEALED, () => 'overlay-attempt')).toThrow(/already bound/i);
   });
 
+  it('provideSealed() seals the token in the container: no register on it rebinds it', () => {
+    const { container, reg } = newRegistry();
+    const SEALED = createSealedToken<string>('audit-log-writer');
+    reg.provideSealed(SEALED, () => 'canonical');
+
+    expect(() => container.registerUnsafe(SEALED, () => 'replacement')).toThrow(/is sealed/);
+    expect(() => container.registerSealedUnsafe(SEALED, () => 'replacement')).toThrow(/is sealed/);
+    expect(container.get(SEALED)).toBe('canonical');
+  });
+
   it('routers.add() rejects a duplicate namespace', () => {
     const { reg } = newRegistry();
     reg.routers.add('wallet', () => ({}) as never);

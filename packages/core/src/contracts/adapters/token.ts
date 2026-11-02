@@ -7,8 +7,8 @@
 
 /**
  * Common shape both Token and SealedToken share - what Container itself accepts.
- * Container is a type-erased-at-runtime symbol map; it doesn't care whether a
- * token is sealed, only ModuleRegistry.provide()/provideSealed() do.
+ * Container is a type-erased-at-runtime symbol map; it tells a sealed token by its
+ * description (`isSealedToken`), as ModuleRegistry.provide()/provideSealed() do.
  */
 export type AnyToken<T, K extends string = string> = symbol & {
   readonly __token?: T;
@@ -37,6 +37,8 @@ export function createToken<T, const K extends string = string>(key: K): Token<T
   return Symbol(key) as Token<T, K>;
 }
 
+const SEALED_PREFIX = 'sealed:';
+
 /**
  * A sealed token represents a regulator-mandated service operators must NEVER
  * override (self-exclusion enforcement, AML/SAR audit log writes, ledger writes,
@@ -49,7 +51,9 @@ export function createToken<T, const K extends string = string>(key: K): Token<T
  * reject a `SealedToken<T>` at the call site with a TypeScript error.
  *
  * Belt-and-braces: the plugin host also runtime-checks token identity against
- * the sealed list at registration time.
+ * the sealed list at registration time, and the container refuses to rebind one:
+ * `provideSealed` seals it there, and once `createApp` has booted no sealed token,
+ * bound or not, takes a registration.
  *
  * See `@openora/core/compliance` for the canonical list and the regulatory
  * citation per token.
@@ -59,7 +63,12 @@ export type SealedToken<T, K extends string = string> = AnyToken<T, K> & {
 };
 
 export function createSealedToken<T, const K extends string = string>(key: K): SealedToken<T, K> {
-  return Symbol(`sealed:${key}`) as SealedToken<T, K>;
+  return Symbol(`${SEALED_PREFIX}${key}`) as SealedToken<T, K>;
+}
+
+/** Whether `createSealedToken` made the token: its symbol's description says so at runtime. */
+export function isSealedToken(token: symbol): boolean {
+  return token.description?.startsWith(SEALED_PREFIX) === true;
 }
 
 /**

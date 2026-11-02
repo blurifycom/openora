@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import type { Logger } from 'pino';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
+  AUDIT_WRITER,
   MESSAGE_BROKER,
   JOB_QUEUE,
   CACHE,
@@ -15,10 +16,12 @@ import {
   type BrokerHandler,
   type DomainEventName,
   type EventEnvelope,
+  type AuditWritePort,
   type McpKernel,
   type MessageBrokerAdapter,
   type OutboxWriter,
 } from '@openora/core/contracts';
+import { SEALED_TOKENS } from '@openora/core/compliance';
 import { redisUrlForWorker } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import { AUTH_SESSION, type SessionResolver } from '../../auth/index.js';
@@ -111,6 +114,44 @@ describe('createApp - the MCP kernel binding', () => {
       }
     }
   });
+});
+
+describe('createApp - the sealed tokens', () => {
+  const booted = async (writer: AuditWritePort) => {
+    const saved = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    try {
+      // The composition root binds the audit writer here, as the audit module would.
+      return await createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL }, (container) => {
+        container.register(AUDIT_WRITER, () => writer);
+      });
+    } finally {
+      if (saved === undefined) {
+        delete process.env['REDIS_URL'];
+      } else {
+        process.env['REDIS_URL'] = saved;
+      }
+    }
+  };
+
+  for (const token of SEALED_TOKENS) {
+    it(`refuses a registration of ${token.description} once booted`, async () => {
+      const writer = mock<AuditWritePort>();
+      const created = await booted(writer);
+
+      expect(() => created.container.registerUnsafe(token, () => mock())).toThrow(
+        `[container] Token "${token.description}" is sealed: it is bound once and never rebound.`,
+      );
+      expect(() => created.container.registerSealedUnsafe(token, () => mock())).toThrow(
+        /is sealed/,
+      );
+      // The one bound keeps serving; one no module bound stays unbound.
+      expect(created.container.get(AUDIT_WRITER)).toBe(writer);
+      expect(created.container.has(token as typeof AUDIT_WRITER)).toBe(token === AUDIT_WRITER);
+
+      await created.close();
+    });
+  }
 });
 
 describe('createApp - agent trigger listeners', () => {

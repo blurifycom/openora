@@ -22,6 +22,7 @@ import type {
   EventHandler,
   RegisteredEventHandler,
 } from './define-plugin.js';
+import { isSealedToken } from '@openora/core/contracts';
 import { assertValidActionType, assertValidMcpTool } from '../mcp/contract-validation.js';
 
 const UNKNOWN_OWNER = 'unknown';
@@ -53,7 +54,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
     factory: (container: TypedContainer<C>) => TokenValue<T>,
   ): void => {
     const desc = token.description ?? '';
-    if (desc.startsWith('sealed:')) {
+    if (isSealedToken(token)) {
       throw new Error(
         `[plugin-host] Refusing to bind a sealed token (${desc}). ` +
           `Sealed services back regulatory invariants (RG enforcement, KYC writes, ` +
@@ -68,7 +69,8 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
   // Bind-once. The owning module calls this during its own register() to bind the
   // canonical implementation; a second call for the same token - an overlay trying
   // to slip past provide()'s rejection, or a duplicate registration - throws instead
-  // of silently rebinding (there is no "last-wins" for a sealed token).
+  // of silently rebinding (there is no "last-wins" for a sealed token). The container
+  // seals it too, so no later register on the container itself rebinds it either.
   provideSealed = <T extends SealedToken<unknown>>(
     token: T,
     factory: (container: TypedContainer<C>) => TokenValue<T>,
@@ -80,7 +82,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
       );
     }
     this._sealedBound.add(token);
-    this.container.registerUnsafe(token, factory);
+    this.container.registerSealedUnsafe(token, factory);
   };
 
   routers = {
