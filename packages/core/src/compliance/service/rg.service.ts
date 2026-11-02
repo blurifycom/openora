@@ -429,13 +429,9 @@ export class RgService {
             ),
           )
           .limit(1);
-        const resolvedExisting = existing
-          ? await resolveLimitCurrencyInTx(tx, existing)
-          : undefined;
-        if (existing && resolvedExisting) {
-          if (await isWeakening(resolvedExisting, input, this.rates, tx)) {
-            throw new LimitRaiseNotAllowedError(existing, input);
-          }
+        const resolvedExisting = existing && (await resolveLimitCurrencyInTx(tx, existing));
+        if (resolvedExisting && (await isWeakening(resolvedExisting, input, this.rates, tx))) {
+          throw new LimitRaiseNotAllowedError(resolvedExisting, input);
         }
         // Reduce-only doesn't exempt ordering: an admin can still drop e.g. weekly
         // below an existing daily.
@@ -480,9 +476,7 @@ export class RgService {
           previousAmount: existing?.amount ?? null,
           previousMinutes: existing?.minutes ?? null,
           currency: toWireCurrency(written.type, written.currency),
-          previousCurrency: resolvedExisting
-            ? toWireCurrency(resolvedExisting.type, resolvedExisting.currency)
-            : null,
+          previousCurrency: toWireCurrency(input.type, resolvedExisting?.currency ?? null),
           initiatedBy,
           reason: input.reason,
           ip: meta?.ip ?? null,

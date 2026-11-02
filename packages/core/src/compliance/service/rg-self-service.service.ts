@@ -159,18 +159,18 @@ export class RgSelfServiceService {
           )
           .limit(1);
 
-        const resolvedExisting = existing
-          ? await resolveLimitCurrencyInTx(tx, existing)
-          : undefined;
-        if (existing && resolvedExisting) {
-          if (await isWeakening(resolvedExisting, input, this.rates, tx)) {
-            // The pending amount is the effective one being validated - it's what
-            // applies once the player confirms it.
-            await this.assertOrdering(tx, userId, input);
-            const parked = await this.park(tx, existing, 'increase', input);
-            await this.emitRequested(tx, userId, playerId, existing, parked, meta);
-            return { applied: false as const, row: parked };
-          }
+        const resolvedExisting = existing && (await resolveLimitCurrencyInTx(tx, existing));
+        if (
+          existing &&
+          resolvedExisting &&
+          (await isWeakening(resolvedExisting, input, this.rates, tx))
+        ) {
+          // The pending amount is the effective one being validated - it's what
+          // applies once the player confirms it.
+          await this.assertOrdering(tx, userId, input);
+          const parked = await this.park(tx, existing, 'increase', input);
+          await this.emitRequested(tx, userId, playerId, existing, parked, meta);
+          return { applied: false as const, row: parked };
         }
         await this.assertOrdering(tx, userId, input);
         const row = await writeLimitRow(tx, userId, existing, input);
@@ -193,9 +193,7 @@ export class RgSelfServiceService {
           previousAmount: existing?.amount ?? null,
           previousMinutes: existing?.minutes ?? null,
           currency: toWireCurrency(row.type, row.currency),
-          previousCurrency: resolvedExisting
-            ? toWireCurrency(resolvedExisting.type, resolvedExisting.currency)
-            : null,
+          previousCurrency: toWireCurrency(row.type, resolvedExisting?.currency ?? null),
           initiatedBy: 'player',
           reason: null,
           ip: meta?.ip ?? null,
