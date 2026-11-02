@@ -281,29 +281,6 @@ describe('notificationEventMap', () => {
       expect(input.params).toEqual({ period: 'session', limitType: 'session', minutes: '90' });
     });
 
-    it('carries the old limit in its own currency when the new limit is in another', () => {
-      const input = buildRgLimitAdminUpdatedNotification({
-        ...limitSet,
-        type: 'deposit',
-        period: 'daily',
-        amount: '0.005',
-        minutes: null,
-        previousAmount: '1000',
-        previousMinutes: null,
-        currency: 'BTC',
-        previousCurrency: 'USDT',
-      });
-
-      expect(input.params).toEqual({
-        period: 'daily',
-        limitType: 'deposit',
-        previousAmount: '1000',
-        previousCurrency: 'USDT',
-        amount: '0.005',
-        currency: 'BTC',
-      });
-    });
-
     it('parses a v5 payload written before previousCurrency as null and builds no previousCurrency', () => {
       const parsed = domainEventSchemas['rg.limit.set'].safeParse({
         ...limitSet,

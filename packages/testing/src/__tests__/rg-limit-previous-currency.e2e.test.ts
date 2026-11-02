@@ -40,6 +40,25 @@ async function notificationParams(client: TestClient): Promise<Params[]> {
   return body.items.filter((n) => n.type === 'rg.limit.admin_updated').map((n) => n.params);
 }
 
+/**
+ * Proves the player's own change created no notification. An admin change in another slot
+ * is the barrier: it is the same `rg.limit.set` stream and consumer group, published after
+ * the player's event, so once its notification shows the player's event was handled too.
+ */
+async function expectNoPlayerChangeNotification(p: { userId: string; client: TestClient }) {
+  expect((await setLimit(p.userId, { type: 'wager', amount: '30', currency: 'USD' })).status).toBe(
+    200,
+  );
+  await vi.waitFor(async () => {
+    expect((await notificationParams(p.client)).some((n) => n?.['limitType'] === 'wager')).toBe(
+      true,
+    );
+  });
+  expect(await notificationParams(p.client)).toEqual([
+    { period: 'daily', limitType: 'wager', amount: '30', currency: 'USD' },
+  ]);
+}
+
 function setLimit(userId: string, body: Record<string, unknown>) {
   return admin.put(`/compliance/players/${userId}/limits`, {
     minutes: null,
@@ -62,8 +81,8 @@ async function setPlayerCurrency(userId: string, currency: string) {
 
 type AuditRow = { before: Record<string, unknown> | null; after: Record<string, unknown> };
 
-async function auditRows(playerId: string): Promise<AuditRow[]> {
-  const res = await admin.get(`/audit/logs?resourceId=${playerId}&action=rg.limit.set`);
+async function auditRows(playerId: string, action = 'rg.limit.set'): Promise<AuditRow[]> {
+  const res = await admin.get(`/audit/logs?resourceId=${playerId}&action=${action}`);
   return ((await readJson(res)) as { items: AuditRow[] }).items;
 }
 
@@ -264,7 +283,7 @@ describe('player self-service limit change', () => {
         initiatedBy: 'player',
       });
     });
-    expect(await notificationParams(p.client)).toEqual([]);
+    await expectNoPlayerChangeNotification(p);
   });
 
   it('audits the old currency when a parked cross-currency raise is confirmed, with no notification', async () => {
@@ -304,6 +323,12 @@ describe('player self-service limit change', () => {
         reason: null,
       });
     });
-    expect(await notificationParams(p.client)).toEqual([]);
+    // change_confirmed carries no currency, so its before-snapshot must not claim one.
+    await vi.waitFor(async () => {
+      const [confirmed] = await auditRows(p.playerId, 'rg.limit.change_confirmed');
+      expect(confirmed?.before).toBeTruthy();
+      expect(confirmed?.before).not.toHaveProperty('currency');
+    });
+    await expectNoPlayerChangeNotification(p);
   });
 });
