@@ -207,6 +207,8 @@ describe('admin limit override carries the old limit currency', () => {
       const after = (await auditAfter(p.playerId)).find((a) => a['minutes'] === 60);
       expect(after).toMatchObject({ previousCurrency: null, currency: null });
     });
+    const lowering = (await auditRows(p.playerId)).find((r) => r.after['minutes'] === 60);
+    expect(lowering?.before).toMatchObject({ currency: null });
 
     const raise = await setLimit(p.userId, { ...session, minutes: 120 });
     expect(raise.status).toBe(409);
@@ -229,6 +231,8 @@ describe('admin limit override carries the old limit currency', () => {
     await vi.waitFor(async () => {
       expect((await auditAfter(p.playerId))[0]).toMatchObject({ previousCurrency: null });
     });
+    const [first] = await auditRows(p.playerId);
+    expect(first?.before).toMatchObject({ currency: null });
   });
 
   it('drops a notification whose event carries a malformed previousCurrency, without breaking later ones', async () => {
