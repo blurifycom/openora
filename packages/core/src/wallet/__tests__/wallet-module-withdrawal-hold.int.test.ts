@@ -421,12 +421,14 @@ describe('WalletService withdrawals under a module hold (real PG)', () => {
     });
     await placed;
 
-    const approving = svc.approveWithdrawal(randomUUID(), transactionId);
+    const refused = expect(
+      svc.approveWithdrawal(randomUUID(), transactionId),
+    ).rejects.toBeInstanceOf(WithdrawalHeldError);
     await waitForRowLockWaiter(db);
     commitHold();
     await holding;
 
-    await expect(approving).rejects.toBeInstanceOf(WithdrawalHeldError);
+    await refused;
     expect(await txById(transactionId)).toMatchObject({
       status: 'pending',
       reviewedBy: null,
