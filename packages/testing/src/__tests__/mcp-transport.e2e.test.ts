@@ -17,6 +17,7 @@ import {
   registerAndMaterializePlayer,
   registerPlayer,
   asAdmin,
+  waitForEmail,
   type TestDb,
   type TestApp,
   type TestClient,
@@ -24,6 +25,7 @@ import {
   closeE2e,
 } from '../index.js';
 import { MCP_TEST_RATE_LIMIT } from './fixtures/test-mcp-transport-plugin.js';
+import { holdNextRevocation } from './fixtures/test-gated-mcp-token-revocation-plugin.js';
 
 const MCP_URL = 'http://localhost/mcp';
 const PING = { jsonrpc: '2.0', id: 1, method: 'ping' } as const;
@@ -208,8 +210,15 @@ beforeAll(async () => {
   const fixturePath = fileURLToPath(
     new URL('./fixtures/test-mcp-transport-plugin.ts', import.meta.url),
   );
+  const gatedRevocation = fileURLToPath(
+    new URL('./fixtures/test-gated-mcp-token-revocation-plugin.ts', import.meta.url),
+  );
   ({ db, app } = await bootE2e({
-    plugins: [...(await loadExtensions()), { id: 'test-mcp-transport', path: fixturePath }],
+    plugins: [
+      ...(await loadExtensions()),
+      { id: 'test-mcp-transport', path: fixturePath },
+      { id: 'test-gated-mcp-token-revocation', path: gatedRevocation },
+    ],
   }));
   admin = await asAdmin(app.app);
   moderator = await asAdmin(app.app, { email: 'moderator@oss.dev' });
@@ -653,5 +662,45 @@ describe('MCP tokens, issuing while the issuing session is revoked', () => {
     const signedInAgain = await asAdmin(app.app, { email });
     const { token } = await issueToken(signedInAgain, 'new session');
     expect((await rawPost({ token })).status).toBe(200);
+  });
+});
+
+describe('MCP tokens, issuing while a password reset is in flight', () => {
+  it('refuses an issue from a session the reset has not deleted yet, and leaves no token to survive it', async () => {
+    const { userId: staffId, client: staff, email } = await staffWithRole(WITH_MCP);
+    const existing = await issueToken(staff, 'before the reset');
+    const appDb = { drizzle: app.container.get(DRIZZLE) };
+    const post = (path: string, body: unknown) =>
+      Promise.resolve(
+        app.app.request(path, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+      );
+    expect((await post('/identity/password/forgot', { email })).status).toBe(200);
+    const mail = await waitForEmail(email, (sent) => sent.subject === 'Reset your password');
+    const otp = /\b(\d{6})\b/.exec(mail.text)?.[1];
+
+    // The reset hook is held right after its revocation: better-auth deletes the account's
+    // sessions only once the hook returns, the window an old session could issue a token in.
+    const revocation = holdNextRevocation();
+    const resetting = post('/identity/password/reset', {
+      email,
+      otp,
+      newPassword: NEW_MODERATOR_PASSWORD,
+    });
+    await revocation.reached;
+    const issuing = staff.post('/iam/my-mcp-tokens', { label: 'raced' });
+    // The issue queues behind the revocation's transaction, which ends the sessions too.
+    await waitForTableLockWaiter(appDb, mcpToken);
+    revocation.release();
+    const [reset, issued] = await Promise.all([resetting, issuing]);
+
+    expect(reset.status).toBe(200);
+    expect(issued.status).toBe(403);
+    expect(ErrorReasonSchema.parse(await issued.json()).data.reason).toBe('owner_ineligible');
+    expect(await tokenIdsOf(staffId)).toEqual([{ id: existing.id }]);
+    expect(await revokeReasonOf(existing.id)).toBe('sessions_revoked');
   });
 });

@@ -267,6 +267,41 @@ export class SessionService {
     return { success: true as const };
   }
 
+  /**
+   * After a password reset: ends the account's sessions and revokes its MCP tokens in one
+   * transaction, then signs its open tabs out. better-auth deletes the sessions only once its
+   * reset hook returns, so a session still live after the revocation could issue a token the
+   * revocation missed; expired first, before the revocation takes the token table's lock, none
+   * can. A failed revocation still ends the sessions, and is rethrown for the caller to log.
+   */
+  async endSessionsAfterPasswordReset(userId: User['id'], meta?: ClientMeta) {
+    const mcpTokens = await this.mcpTokensOf(userId);
+    let ended = 0;
+    let failure: unknown = null;
+    try {
+      ended = await this.drizzle.db.transaction(async (tx) => {
+        const count = await expireActiveSessions(tx, userId);
+        await mcpTokens?.revokeAllForUser(sessionsRevoked({ userId, actorId: userId, meta }), tx);
+        return count;
+      });
+    } catch (err) {
+      failure = err;
+      ended = await expireActiveSessions(this.drizzle.db, userId);
+    }
+    if (ended > 0) {
+      this.events.emit('identity.sessions.revoked_all', {
+        userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        actorId: userId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
+    if (failure !== null) {
+      throw failure;
+    }
+  }
+
   /** For a credential change that ends the user's sessions without `revokeAllSessions`. */
   async revokeMcpTokens(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
     const mcpTokens = await this.mcpTokensOf(userId);

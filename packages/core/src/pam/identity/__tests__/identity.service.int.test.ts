@@ -1259,7 +1259,7 @@ describe('IdentityService password changes and MCP tokens', () => {
     return { sessions, revokeAllForUser };
   }
 
-  it("revokes an admin's MCP tokens when better-auth reports a password reset", async () => {
+  it("revokes an admin's MCP tokens, in the transaction that ends its sessions, when better-auth reports a password reset", async () => {
     const admin = await seedUser({ role: 'admin' });
     const { sessions, revokeAllForUser } = sessionsRevokingTokens();
     buildService({ sessions });
@@ -1267,13 +1267,16 @@ describe('IdentityService password changes and MCP tokens', () => {
     await capturedAuthOptions.current?.onPasswordReset?.({ id: admin.id, email: EMAIL });
 
     expect(revokeAllForUser).toHaveBeenCalledTimes(1);
-    expect(revokeAllForUser).toHaveBeenCalledWith({
-      userId: admin.id,
-      reason: 'sessions_revoked',
-      actorId: admin.id,
-      ip: null,
-      userAgent: null,
-    });
+    expect(revokeAllForUser).toHaveBeenCalledWith(
+      {
+        userId: admin.id,
+        reason: 'sessions_revoked',
+        actorId: admin.id,
+        ip: null,
+        userAgent: null,
+      },
+      expect.anything(),
+    );
   });
 
   it('lets better-auth finish the password reset when the MCP token revocation fails', async () => {

@@ -316,6 +316,58 @@ describe('SessionService.revokeAllSessions and MCP tokens', () => {
   });
 });
 
+describe('SessionService.endSessionsAfterPasswordReset', () => {
+  it("ends an admin's sessions and revokes its tokens together, then signs its tabs out", async () => {
+    const { tokens } = makeMcpTokenService();
+    const events = makeEventBus();
+    const admin = await seedUser(db, { role: 'admin' });
+    await seedSession(admin.id);
+    const tokenId = await seedActiveToken(admin.id);
+
+    await service(tokens, events).endSessionsAfterPasswordReset(admin.id, META);
+
+    expect(await activeSessionCount(admin.id)).toBe(0);
+    expect(await revocationOf(tokenId)).toMatchObject({
+      revokedBy: admin.id,
+      revokeReason: 'sessions_revoked',
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({ userId: admin.id, actorId: admin.id, ...META }),
+    );
+  });
+
+  it('still ends the sessions when the token revocation fails, and rethrows the failure', async () => {
+    const { tokens, audit } = makeMcpTokenService();
+    audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
+    const events = makeEventBus();
+    const admin = await seedUser(db, { role: 'admin' });
+    await seedSession(admin.id);
+    const tokenId = await seedActiveToken(admin.id);
+
+    await expect(
+      service(tokens, events).endSessionsAfterPasswordReset(admin.id, META),
+    ).rejects.toThrow('audit store unavailable');
+
+    expect(await activeSessionCount(admin.id)).toBe(0);
+    expect(await revocationOf(tokenId)).toMatchObject({ revokedAt: null });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({ userId: admin.id }),
+    );
+  });
+
+  it('signs nothing out when the account had no live session', async () => {
+    const { port } = makeMcpTokenRevocation();
+    const events = makeEventBus();
+    const admin = await seedUser(db, { role: 'admin' });
+
+    await service(port, events).endSessionsAfterPasswordReset(admin.id, META);
+
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
 describe('SessionService.revokeMcpTokens', () => {
   it("revokes an admin's MCP tokens as sessions_revoked and leaves the sessions alone", async () => {
     const { tokens, revokeAllForUser } = makeMcpTokenService();
