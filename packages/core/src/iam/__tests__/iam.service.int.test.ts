@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { sql, eq } from 'drizzle-orm';
 import {
   makeAuditWriter,
+  makeFreshReauthentication,
   makeIdentityReader,
   makeRateLimiter,
   makeUserCommands,
@@ -77,6 +78,7 @@ function makeMcpTokens() {
     audit,
     events: makeEventBus(),
     rateLimiter: makeRateLimiter(),
+    reauthentication: makeFreshReauthentication(),
     config: McpTransportConfigSchema.parse({}),
   });
   return { mcpTokens, audit };

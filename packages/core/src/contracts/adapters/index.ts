@@ -604,6 +604,11 @@ export type { McpTokenAuthentication, McpTokenAuthenticator } from './mcp-token-
 export { MCP_TOKEN_AUTHENTICATOR } from './mcp-token-authenticator.js';
 export type { McpTokenAutomaticRevokeReason, McpTokenRevocation } from './mcp-token-revocation.js';
 export { MCP_TOKEN_REVOCATION } from './mcp-token-revocation.js';
+export {
+  FRESH_REAUTHENTICATION,
+  type FreshReauthentication,
+  type FreshReauthenticationVerdict,
+} from './fresh-reauthentication.js';
 
 export type {
   SportsbookLedger,

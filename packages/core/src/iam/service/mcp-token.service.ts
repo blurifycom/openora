@@ -1,4 +1,3 @@
-import { ORPCError } from '@orpc/server';
 import { DatabaseError } from 'pg';
 import {
   DrizzleService,
@@ -13,6 +12,7 @@ import {
   serializeRow,
   type DrizzleTx,
   type EventBus,
+  type NodeHeaders,
 } from '@openora/core/server';
 import {
   and,
@@ -35,6 +35,8 @@ import {
   makeRateLimitKey,
   type AuditWritePort,
   type ClientMeta,
+  type FreshReauthentication,
+  type FreshReauthenticationVerdict,
   type McpTokenRevocation,
   type McpTokenRevokeReason,
   type McpTransportConfig,
@@ -85,6 +87,40 @@ export const McpTokenLimitError = createDomainError<[maxActive: number]>(
   (maxActive) => `An admin may hold at most ${maxActive} active MCP tokens`,
   { reason: McpTokenErrorReasonSchema.enum.token_limit },
 );
+export class McpTokenReauthenticationRequiredError extends Error {
+  readonly data = { reason: McpTokenErrorReasonSchema.enum.reauthentication_required };
+  constructor() {
+    super('Enter a second-factor code to issue an MCP token');
+    this.name = 'McpTokenReauthenticationRequiredError';
+  }
+}
+
+// One refusal for a wrong password and a wrong code, so the answer does not say which was
+// right; `attemptsLeft` comes with a wrong code, which counts toward the second-factor lockout.
+export class McpTokenReauthenticationFailedError extends Error {
+  readonly data: { reason: string; attemptsLeft?: number };
+  constructor(attemptsLeft?: number) {
+    super('The password or second-factor code is incorrect');
+    this.name = 'McpTokenReauthenticationFailedError';
+    this.data = {
+      reason: McpTokenErrorReasonSchema.enum.reauthentication_failed,
+      ...(attemptsLeft === undefined ? {} : { attemptsLeft }),
+    };
+  }
+}
+
+export class McpTokenReauthenticationLockedError extends Error {
+  readonly data: { reason: string; lockedUntil: string };
+  constructor(lockedUntil: Date) {
+    super('Too many incorrect second-factor codes. Try again later');
+    this.name = 'McpTokenReauthenticationLockedError';
+    this.data = {
+      reason: McpTokenErrorReasonSchema.enum.reauthentication_locked,
+      lockedUntil: lockedUntil.toISOString(),
+    };
+  }
+}
+
 export const McpTokenIssueError = createDomainError(
   'McpTokenIssueError',
   () => 'The MCP token could not be issued',
@@ -107,16 +143,20 @@ const STATUS_FILTERS = {
   active: (now: Date) => and(isNull(mcpToken.revokedAt), gt(mcpToken.expiresAt, now)),
 } satisfies Record<McpTokenStatus, (now: Date) => SQL | undefined>;
 
-const ISSUANCE_REFUSALS = [McpTokenOwnerIneligibleError, McpTokenLimitError, ORPCError] as const;
+const ISSUANCE_REFUSALS = [McpTokenOwnerIneligibleError, McpTokenLimitError] as const;
 
 export type McpTokenServiceDeps = {
   drizzle: DrizzleService;
   audit: AuditWritePort;
   events: EventBus;
   rateLimiter: RateLimiterAdapter<RateLimitKey>;
+  reauthentication: FreshReauthentication;
   config: McpTransportConfig;
   now?: (() => Date) | undefined;
 };
+
+/** The issuing admin's role, when known, rides along so a refusal's audit row names it. */
+type IssuerMeta = ClientMeta & { role?: string | undefined };
 
 type RevocationActor = { actorId: User['id'] | null } & Partial<ClientMeta>;
 
@@ -127,6 +167,21 @@ type UsersRevocation = Omit<Parameters<McpTokenRevocation['revokeAllForUser']>[0
 function toMcpTokenDto(row: McpToken, now: Date) {
   const { tokenHash: _tokenHash, ...token } = row;
   return { ...serializeRow(token, { dateFields: DATE_FIELDS }), status: mcpTokenStatus(row, now) };
+}
+
+function reauthenticationRefusal(
+  verdict: Exclude<FreshReauthenticationVerdict, { status: 'ok' }>,
+): Error {
+  switch (verdict.status) {
+    case 'second_factor_required':
+      return new McpTokenReauthenticationRequiredError();
+    case 'locked':
+      return new McpTokenReauthenticationLockedError(verdict.lockedUntil);
+    case 'second_factor_invalid':
+      return new McpTokenReauthenticationFailedError(verdict.attemptsLeft);
+    case 'password_invalid':
+      return new McpTokenReauthenticationFailedError();
+  }
 }
 
 function auditClientMeta(meta: Partial<ClientMeta>) {
@@ -166,23 +221,36 @@ export class McpTokenService implements McpTokenRevocation {
   private readonly audit: AuditWritePort;
   private readonly events: EventBus;
   private readonly rateLimiter: RateLimiterAdapter<RateLimitKey>;
+  private readonly reauthentication: FreshReauthentication;
   private readonly config: McpTransportConfig;
   private readonly now: () => Date;
 
-  constructor({ drizzle, audit, events, rateLimiter, config, now }: McpTokenServiceDeps) {
+  constructor({
+    drizzle,
+    audit,
+    events,
+    rateLimiter,
+    reauthentication,
+    config,
+    now,
+  }: McpTokenServiceDeps) {
     this.drizzle = drizzle;
     this.audit = audit;
     this.events = events;
     this.rateLimiter = rateLimiter;
+    this.reauthentication = reauthentication;
     this.config = config;
     this.now = now ?? (() => new Date());
   }
 
   /**
-   * Refuses a disabled transport, a lifetime over the cap, an owner who is missing, inactive, a
-   * player or without MCP access, a session that has ended, an owner at the active-token cap,
-   * and an owner over the hourly issuance limit (a 429 carrying `retryAfterMs`). Any other
-   * failure surfaces as `McpTokenIssueError`.
+   * Refuses a disabled transport, a lifetime over the cap, an owner over the hourly issuance
+   * limit (a 429 carrying `retryAfterMs`), a caller who fails the fresh re-authentication, an
+   * owner who is missing, inactive, a player or without MCP access, a session that has ended,
+   * and an owner at the active-token cap. Any other failure surfaces as `McpTokenIssueError`.
+   *
+   * Every attempt that reaches the re-authentication counts toward the hourly limit, a wrong
+   * password included, so a stolen session cannot guess the password without bound.
    *
    * The owner's row is locked before the revocation lock, the order identity's deactivation
    * takes them in. The MCP grant and the issuing session are read again under the revocation
@@ -195,8 +263,15 @@ export class McpTokenService implements McpTokenRevocation {
       sessionId,
       label,
       ttlDays,
-    }: CreateMcpTokenInput & { adminUserId: User['id']; sessionId: Session['id'] | null },
-    meta: ClientMeta,
+      currentPassword,
+      totpCode,
+      headers,
+    }: CreateMcpTokenInput & {
+      adminUserId: User['id'];
+      sessionId: Session['id'] | null;
+      headers: NodeHeaders;
+    },
+    meta: IssuerMeta,
   ) {
     if (!this.config.enabled) {
       throw new McpTransportDisabledError();
@@ -205,6 +280,18 @@ export class McpTokenService implements McpTokenRevocation {
     if (lifetimeDays > this.config.tokenTtlDays.max) {
       throw new McpTokenTtlError(this.config.tokenTtlDays.max);
     }
+    await assertRateLimit(
+      this.rateLimiter,
+      makeRateLimitKey(RATE_LIMIT_KEYS.MCP_TOKEN_CREATE, adminUserId),
+      { limit: this.config.tokenIssuance.perHour, windowMs: HOUR_MS, onUnavailable: 'deny' },
+    );
+    await this.assertReauthenticated({
+      ownerId: adminUserId,
+      headers,
+      currentPassword,
+      totpCode,
+      meta,
+    });
 
     const token = generateMcpToken();
     const createdAt = this.now();
@@ -215,11 +302,6 @@ export class McpTokenService implements McpTokenRevocation {
           meta,
           now: createdAt,
         });
-        await assertRateLimit(
-          this.rateLimiter,
-          makeRateLimitKey(RATE_LIMIT_KEYS.MCP_TOKEN_CREATE, adminUserId),
-          { limit: this.config.tokenIssuance.perHour, windowMs: HOUR_MS, onUnavailable: 'deny' },
-        );
         await this.lockForRevocation(tx);
         await this.assertOwnerHoldsMcpAccess(tx, { ownerId: adminUserId, role, meta });
         await this.assertSessionLive(tx, { ownerId: adminUserId, sessionId, role, meta });
@@ -334,6 +416,33 @@ export class McpTokenService implements McpTokenRevocation {
     await tx.execute(sql`LOCK TABLE ${mcpToken} IN SHARE ROW EXCLUSIVE MODE`);
   }
 
+  private async assertReauthenticated({
+    ownerId,
+    headers,
+    currentPassword,
+    totpCode,
+    meta,
+  }: {
+    ownerId: User['id'];
+    headers: NodeHeaders;
+    currentPassword: string;
+    totpCode: string | undefined;
+    meta: IssuerMeta;
+  }) {
+    const verdict = await this.reauthentication.assert({
+      userId: ownerId,
+      headers,
+      currentPassword,
+      totpCode,
+      meta: { ip: meta.ip, userAgent: meta.userAgent },
+    });
+    if (verdict.status === 'ok') {
+      return;
+    }
+    this.emitAccessDenied(ownerId, meta.role, meta);
+    throw reauthenticationRefusal(verdict);
+  }
+
   private async assertOwnerMayIssue(
     tx: DrizzleTx,
     { ownerId, meta, now }: { ownerId: User['id']; meta: ClientMeta; now: Date },
@@ -344,7 +453,7 @@ export class McpTokenService implements McpTokenRevocation {
       .where(eq(user.id, ownerId))
       .for('no key update');
     if (!owner?.isActive || owner.role === 'player') {
-      this.emitOwnerIneligible(ownerId, owner?.role, meta);
+      this.emitAccessDenied(ownerId, owner?.role, meta);
       throw new McpTokenOwnerIneligibleError();
     }
     const [active] = await tx
@@ -364,7 +473,7 @@ export class McpTokenService implements McpTokenRevocation {
   ) {
     const [withoutAccess] = await usersWithoutMcpAccess(tx, [ownerId]);
     if (withoutAccess) {
-      this.emitOwnerIneligible(ownerId, role, meta);
+      this.emitAccessDenied(ownerId, role, meta);
       throw new McpTokenOwnerIneligibleError();
     }
   }
@@ -394,7 +503,7 @@ export class McpTokenService implements McpTokenRevocation {
           .limit(1)
       : [];
     if (!live) {
-      this.emitOwnerIneligible(ownerId, role, meta);
+      this.emitAccessDenied(ownerId, role, meta);
       throw new McpTokenOwnerIneligibleError();
     }
   }
@@ -449,7 +558,7 @@ export class McpTokenService implements McpTokenRevocation {
     return row;
   }
 
-  private emitOwnerIneligible(ownerId: User['id'], role: string | undefined, meta: ClientMeta) {
+  private emitAccessDenied(ownerId: User['id'], role: string | undefined, meta: ClientMeta) {
     this.events.emit('identity.user.unauthorized_access', {
       userId: ownerId,
       playerId: null,

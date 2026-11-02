@@ -816,7 +816,10 @@ describe('agent tag, note and enhanced-KYC actions are replay-safe', () => {
 
 describe('MCP transport while agents.mcp is off', () => {
   it('refuses token issuance with a typed reason', async () => {
-    const res = await admin.post('/iam/my-mcp-tokens', { label: 'off' });
+    const res = await admin.post('/iam/my-mcp-tokens', {
+      label: 'off',
+      currentPassword: 'password1234',
+    });
 
     expect(res.status).toBe(409);
     expect(

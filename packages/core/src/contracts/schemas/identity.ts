@@ -108,7 +108,8 @@ export const MemberSchema = z.object({
  * Sign-in deliberately does NOT use this: capping the input cannot help (no longer
  * password was ever storable) and would only narrow an existing contract.
  */
-export const PasswordSchema = z.string().min(12).max(128);
+export const PASSWORD_MAX_LENGTH = 128;
+export const PasswordSchema = z.string().min(12).max(PASSWORD_MAX_LENGTH);
 
 const credentialsBase = z.object({
   email: z.email(),

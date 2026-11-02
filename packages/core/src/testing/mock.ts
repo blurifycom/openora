@@ -16,6 +16,8 @@ import {
   type ChatContextSendPolicy,
   type ClientMeta,
   type ExchangeRateReader,
+  type FreshReauthentication,
+  type FreshReauthenticationVerdict,
   type IdentityReader,
   type JobQueueAdapter,
   type PaymentAdapter,
@@ -140,6 +142,16 @@ export const makeWithdrawalSecurity = (
     async () => undefined,
   ),
   ...overrides,
+});
+
+/**
+ * FreshReauthentication double that passes every proof. A test of a refused proof passes the
+ * verdict it wants instead.
+ */
+export const makeFreshReauthentication = (
+  verdict: FreshReauthenticationVerdict = { status: 'ok' },
+): FreshReauthentication & { assert: Mock<FreshReauthentication['assert']> } => ({
+  assert: vi.fn<FreshReauthentication['assert']>(async () => verdict),
 });
 
 /**

@@ -3,7 +3,9 @@ import * as z from 'zod';
 import {
   MCP_TOKEN_TTL_CEILING_DAYS,
   McpTokenRevokeReasonSchema,
+  PASSWORD_MAX_LENGTH,
   TimestampSchema,
+  TotpStepUpCodeSchema,
   UuidSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
@@ -19,6 +21,9 @@ export const MCP_TOKEN_ERROR_REASONS = [
   'ttl_exceeds_max',
   'owner_ineligible',
   'token_limit',
+  'reauthentication_required',
+  'reauthentication_failed',
+  'reauthentication_locked',
 ] as const;
 export const McpTokenErrorReasonSchema = z.enum(MCP_TOKEN_ERROR_REASONS);
 export type McpTokenErrorReason = z.infer<typeof McpTokenErrorReasonSchema>;
@@ -60,9 +65,13 @@ export const McpTokenListItemSchema = McpTokenSchema.extend({ admin: McpTokenAdm
 /** The only response that carries the plaintext token; it cannot be read back afterwards. */
 export const IssuedMcpTokenSchema = McpTokenSchema.extend({ token: z.string() });
 
+// A live session alone does not issue a bearer that outlives it: the caller proves the password
+// again, plus a fresh second-factor code when the account has one enrolled.
 export const CreateMcpTokenInputSchema = z.object({
   label: z.string().trim().min(1).max(64),
   ttlDays: z.number().int().min(1).max(MCP_TOKEN_TTL_CEILING_DAYS).optional(),
+  currentPassword: z.string().min(1).max(PASSWORD_MAX_LENGTH),
+  totpCode: TotpStepUpCodeSchema.optional(),
 });
 
 export const ListMyMcpTokensInputSchema = PageQuerySchema.extend({

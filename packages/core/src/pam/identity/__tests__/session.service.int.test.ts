@@ -15,6 +15,7 @@ import {
   makeAuditWriter,
   makeEventBus,
   makeIdentityReader,
+  makeFreshReauthentication,
   makeRateLimiter,
   mock,
 } from '../../../testing/mock.js';
@@ -47,6 +48,7 @@ function makeMcpTokenService() {
     audit,
     events: makeEventBus(),
     rateLimiter: makeRateLimiter(),
+    reauthentication: makeFreshReauthentication(),
     config: McpTransportConfigSchema.parse({}),
   });
   return { tokens, audit, revokeAllForUser: vi.spyOn(tokens, 'revokeAllForUser') };

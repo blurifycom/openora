@@ -81,13 +81,26 @@ export class TwoFactorLockoutService {
 
   /**
    * `method` is the credential that was presented, so the audit trail can tell a wrong
-   * recovery code from a wrong authenticator code.
+   * recovery code from a wrong authenticator code. Throws the account-locked error when this
+   * failure trips the lockout.
    */
   async recordFailure(
     userId: User['id'],
     method: TwoFactorChallengeMethod,
     meta: ClientMeta,
   ): Promise<void> {
+    const { lockoutUntil } = await this.countFailure(userId, method, meta);
+    if (lockoutUntil) {
+      throw createAccountLockedError(lockoutUntil);
+    }
+  }
+
+  /** `recordFailure` for a caller that answers the lockout itself instead of throwing. */
+  async countFailure(
+    userId: User['id'],
+    method: TwoFactorChallengeMethod,
+    meta: ClientMeta,
+  ): Promise<{ attemptsRemaining: number | undefined; lockoutUntil: Date | null }> {
     const [row] = await this.drizzle.db
       .select({
         failedAttempts: user.failedTwoFactorAttempts,
@@ -99,7 +112,7 @@ export class TwoFactorLockoutService {
       .limit(1);
 
     if (!row) {
-      return;
+      return { attemptsRemaining: undefined, lockoutUntil: null };
     }
 
     const attempts = row.failedAttempts + 1;
@@ -126,12 +139,13 @@ export class TwoFactorLockoutService {
       })
       .where(eq(user.id, userId));
 
+    const attemptsRemaining = isLocking ? 0 : Math.max(this.config.maxAttempts - attempts, 0);
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     this.events.emit('identity.2fa.failed', {
       userId,
       playerId,
       method,
-      attemptsRemaining: isLocking ? 0 : Math.max(this.config.maxAttempts - attempts, 0),
+      attemptsRemaining,
       ip: meta.ip ?? null,
       userAgent: meta.userAgent ?? null,
     });
@@ -144,8 +158,8 @@ export class TwoFactorLockoutService {
         ip: meta.ip ?? null,
         userAgent: meta.userAgent ?? null,
       });
-      throw createAccountLockedError(lockoutUntil);
     }
+    return { attemptsRemaining, lockoutUntil };
   }
 
   async reset(userId: User['id']): Promise<void> {
