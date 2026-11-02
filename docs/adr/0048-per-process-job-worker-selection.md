@@ -1,4 +1,4 @@
-# ADR-0046: Per-process job worker selection
+# ADR-0048: Per-process job worker selection
 
 **Date**: 2026-10-13
 **Status**: Proposed
