@@ -71,14 +71,6 @@ function setLimit(userId: string, body: Record<string, unknown>) {
   });
 }
 
-async function setPlayerCurrency(userId: string, currency: string) {
-  await app.container
-    .get(DRIZZLE)
-    .db.update(playerProfile)
-    .set({ currency })
-    .where(eq(playerProfile.userId, userId));
-}
-
 type AuditRow = { before: Record<string, unknown> | null; after: Record<string, unknown> };
 
 async function auditRows(playerId: string, action = 'rg.limit.set'): Promise<AuditRow[]> {
@@ -88,19 +80,6 @@ async function auditRows(playerId: string, action = 'rg.limit.set'): Promise<Aud
 
 async function auditAfter(playerId: string) {
   return (await auditRows(playerId)).map((i) => i.after);
-}
-
-async function limitSetEvents(userId: string) {
-  return app.container
-    .get(DRIZZLE)
-    .db.select()
-    .from(eventOutbox)
-    .where(
-      and(
-        eq(eventOutbox.topic, 'rg.limit.set'),
-        sql`${eventOutbox.payload}->>'userId' = ${userId}`,
-      ),
-    );
 }
 
 beforeAll(async () => {
@@ -160,7 +139,11 @@ describe('admin limit override carries the old limit currency', () => {
     const p = await registerAndMaterializePlayer(app, {
       email: `rgpc-legacy-${randomUUID()}@e2e.test`,
     });
-    await setPlayerCurrency(p.userId, 'EUR');
+    await app.container
+      .get(DRIZZLE)
+      .db.update(playerProfile)
+      .set({ currency: 'EUR' })
+      .where(eq(playerProfile.userId, p.userId));
     await app.container.get(DRIZZLE).db.insert(userLimit).values({
       userId: p.userId,
       type: 'deposit',
@@ -241,7 +224,16 @@ describe('admin limit override carries the old limit currency', () => {
     });
     await setLimit(p.userId, { type: 'deposit', amount: '60', currency: 'USD' });
     await vi.waitFor(async () => expect(await notificationParams(p.client)).toHaveLength(1));
-    const [evt] = await limitSetEvents(p.userId);
+    const [evt] = await app.container
+      .get(DRIZZLE)
+      .db.select()
+      .from(eventOutbox)
+      .where(
+        and(
+          eq(eventOutbox.topic, 'rg.limit.set'),
+          sql`${eventOutbox.payload}->>'userId' = ${p.userId}`,
+        ),
+      );
 
     const forgedId = randomUUID();
     await app.container.get(MESSAGE_BROKER).publish({
