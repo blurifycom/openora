@@ -97,7 +97,14 @@ export const NOTIFICATION_PARAM_KEYS = {
   'kyc.resubmission_requested': { required: [], optional: ['reason'] },
   'rg.limit.admin_updated': {
     required: ['period', 'limitType'],
-    optional: ['previousAmount', 'previousMinutes', 'amount', 'minutes', 'currency'],
+    optional: [
+      'previousAmount',
+      'previousMinutes',
+      'amount',
+      'minutes',
+      'currency',
+      'previousCurrency',
+    ],
   },
   'chat.rain.received': { required: ['amount', 'currency'], optional: [] },
   'chat.gift.expired': { required: ['amount', 'currency'], optional: [] },

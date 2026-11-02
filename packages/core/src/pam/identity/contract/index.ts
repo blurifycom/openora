@@ -39,6 +39,7 @@ import {
   SetLoginWithdrawalAlertsInputSchema,
   SetRequireTwoFactorOnLoginInputSchema,
   SetWithdrawalPinInputSchema,
+  RemoveWithdrawalPinInputSchema,
   SetAntiPhishingCodeInputSchema,
   PhoneVerificationRequestInputSchema,
   PhoneVerificationRequestOutputSchema,
@@ -185,7 +186,8 @@ export const identityContract = {
       .output(SecurityControlsSchema),
 
     // Set and Change share this one upsert route (identical New PIN/Confirm PIN/Save
-    // flow); Remove is a separate route with no confirmation step, per AC.
+    // flow); Remove is a separate route with no confirmation step but the same
+    // fresh-reauth proof.
     setWithdrawalPin: oc
       .route({ method: 'POST', path: '/identity/security/withdrawal-pin' })
       .input(SetWithdrawalPinInputSchema)
@@ -193,6 +195,7 @@ export const identityContract = {
 
     removeWithdrawalPin: oc
       .route({ method: 'DELETE', path: '/identity/security/withdrawal-pin' })
+      .input(RemoveWithdrawalPinInputSchema)
       .output(SecurityControlsSchema),
 
     // No reauth (not money-moving, unlike the withdrawal PIN); set/overwrite only, no

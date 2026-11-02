@@ -844,7 +844,11 @@ export async function mapEventToRecord(
   ) {
     const before =
       topic === 'rg.limit.set' || topic === 'rg.limit.change_confirmed'
-        ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
+        ? {
+            amount: p['previousAmount'] ?? null,
+            minutes: p['previousMinutes'] ?? null,
+            ...(topic === 'rg.limit.set' ? { currency: p['previousCurrency'] ?? null } : {}),
+          }
         : topic === 'rg.self_exclusion.lifted' || topic === 'rg.cooling_off.lifted'
           ? { status: 'active' }
           : null;
@@ -1328,6 +1332,17 @@ export async function mapEventToRecord(
       ...identitySubject(p),
       before: { withdrawalPinSet: true },
       after: { withdrawalPinSet: false },
+    };
+  }
+
+  if (topic === 'identity.security.withdrawal_pin.locked') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      ...identitySubject(p),
+      after: { withdrawalPinLockedUntil: p['lockedUntil'] ?? null },
     };
   }
 

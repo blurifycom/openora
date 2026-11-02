@@ -26,6 +26,8 @@ import {
   DEPOSIT_ADMISSION_POLICY,
   DEPOSIT_HOLD_POLICY,
   KYC_WITHDRAWAL_POLICY,
+  WITHDRAWAL_SECURITY,
+  MAIL_DISPATCH,
   EXCHANGE_RATE_READER,
   resolveExchangeRatePivot,
   SWAP_ADAPTER,
@@ -253,6 +255,8 @@ export default {
         rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
         rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
         kycPolicy: c.has(KYC_WITHDRAWAL_POLICY) ? c.get(KYC_WITHDRAWAL_POLICY) : undefined,
+        withdrawalSecurity: c.has(WITHDRAWAL_SECURITY) ? c.get(WITHDRAWAL_SECURITY) : undefined,
+        mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : undefined,
         depositHold: c.has(DEPOSIT_HOLD_POLICY) ? c.get(DEPOSIT_HOLD_POLICY) : undefined,
         depositAdmission: c.has(DEPOSIT_ADMISSION_POLICY)
           ? c.get(DEPOSIT_ADMISSION_POLICY)
@@ -506,6 +510,7 @@ export default {
         wallet,
         adminGuard: c.get(ADMIN_GUARD),
         audit: c.get(AUDIT_WRITER),
+        withdrawalSecurity: c.get(WITHDRAWAL_SECURITY),
         paymentProviders: c.get(PAYMENT_PROVIDERS),
         reconciliation,
         jobQueue,

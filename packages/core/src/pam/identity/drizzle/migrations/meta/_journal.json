@@ -120,6 +120,13 @@
       "when": 1793101549873,
       "tag": "0016_tiny_bruce_banner",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793280820581,
+      "tag": "0017_withdrawal_pin_lockout",
+      "breakpoints": true
     }
   ]
 }
