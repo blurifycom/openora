@@ -35,6 +35,7 @@ export const SUBSCRIBED_TOPICS = [
   'identity.security.require_two_factor.updated',
   'identity.security.withdrawal_pin.set',
   'identity.security.withdrawal_pin.removed',
+  'identity.security.withdrawal_pin.locked',
   'identity.security.anti_phishing_code.set',
   'identity.profile.updated',
   'identity.user.deactivated',

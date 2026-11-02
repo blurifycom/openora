@@ -91,6 +91,12 @@ does not repeat it.
   is refused, since a reversal outside its round would drop out of loss spend, and a plain `debit`
   or `credit` never writes a `win_reversal`. A round's payouts and reversals count only when all
   its bets fall inside the limit window, and a round's stake never nets below zero.
+- **A withdrawal asks for the Withdrawal PIN, and pays only an address that has waited 24 hours.** The
+  PIN is checked through `WITHDRAWAL_SECURITY` before any other check, so every guess is counted; five
+  wrong ones in a row lock withdrawals for 30 minutes, and a right PIN does not lift the lock. The
+  destination must be in the player's address book and saved more than 24 hours ago, so an address named
+  only at withdrawal time cannot walk around the wait. Auto-approval holds such a payout for a human
+  as well. Saving an address asks for the password (and the 2FA code when enrolled) and mails the player.
 - **Cross-module money moves through the wallet's command port, inside the caller's transaction.**
   Another module never reads or writes wallet tables directly, and a transfer is never settled over
   an event.

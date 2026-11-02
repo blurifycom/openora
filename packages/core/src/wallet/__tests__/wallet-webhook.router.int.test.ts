@@ -24,6 +24,7 @@ import {
   makeExchangeRateReader,
   testContext,
   makeAuditWriter,
+  makeWithdrawalSecurity,
   makeJobQueue,
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
@@ -84,6 +85,7 @@ function routerWithProviders(
     payment,
     paymentProviders,
     audit: makeAuditWriter(),
+    withdrawalSecurity: makeWithdrawalSecurity(),
     identityReader: makeIdentityReader(),
     rates: makeExchangeRateReader(),
   });
@@ -91,6 +93,7 @@ function routerWithProviders(
     wallet: service,
     adminGuard: mock<AdminGuard>({ assert: vi.fn() }),
     audit: makeAuditWriter(),
+    withdrawalSecurity: makeWithdrawalSecurity(),
     paymentProviders,
     reconciliation: mock<ReconciliationService>({}),
     jobQueue: makeJobQueue(),

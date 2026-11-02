@@ -24,6 +24,7 @@ import {
   makeExchangeRateReader,
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
+import { seedMatureWithdrawalAddress } from '../../testing/seed-wallet.js';
 import { migrate } from '../migrate.js';
 import {
   wallet,
@@ -56,6 +57,9 @@ import {
   WithdrawalLockedError,
 } from '../service/wallet.service.js';
 import { WithdrawalQueueItemSchema } from '../contract/index.js';
+
+// Past the 24-hour wait a new payout address sits out, for a row a test inserts directly.
+const MATURE = new Date(Date.now() - 25 * 60 * 60 * 1000);
 
 let db: TestDb;
 
@@ -530,6 +534,11 @@ describe('WalletService.withdraw (real PG)', () => {
     const { svc } = makeService();
     const w = await seedWallet({ balance: '2', currency: 'BTC' });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -555,7 +564,12 @@ describe('WalletService.withdraw (real PG)', () => {
       minWithdrawal: '0',
       withdrawalFee: '0',
     });
-
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+      network: 'BITCOIN',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -639,6 +653,14 @@ describe('WalletService.withdraw (real PG)', () => {
         withdrawalFee: '0',
       },
     ]);
+    for (const network of ['ERC20', 'BEP20']) {
+      await seedMatureWithdrawalAddress(db, {
+        userId: w.userId,
+        currency: 'USDT',
+        address: '0xexample',
+        network,
+      });
+    }
     const args = {
       userId: w.userId,
       amount: '5',
@@ -1049,6 +1071,7 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
       address: 'bc1qsaved',
       providerName: DEFAULT_PAYMENT_PROVIDER,
       providerWalletId: 'fb-wallet-1',
+      createdAt: MATURE,
     });
 
     const result = await svc.withdraw({
@@ -1083,6 +1106,7 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
       destinationTag: '1000',
       providerName: DEFAULT_PAYMENT_PROVIDER,
       providerWalletId: 'fb-wallet-1',
+      createdAt: MATURE,
     });
 
     // Same shared exchange address, someone else's account behind it.
@@ -1113,6 +1137,13 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(5);
     expect(psp.processWithdrawal).not.toHaveBeenCalled();
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'XRP',
+      address: 'rSharedExchangeAddress',
+      network: 'XRPL',
+      destinationTag: '1000',
+    });
     const allowed = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -1129,6 +1160,13 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
     const { svc, psp } = makeService();
     const w = await seedWallet({ currency: 'BTC', balance: '5' });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+      network: 'BITCOIN',
+      destinationTag: '4138454749',
+    });
     const requested = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -1151,6 +1189,12 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
     const { svc, psp } = makeService();
     const w = await seedWallet({ currency: 'BTC', balance: '5' });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qexample',
+      network: 'BITCOIN',
+    });
     const requested = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -1172,6 +1216,12 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
     const { svc } = makeService();
     const w = await seedWallet({ currency: 'BTC', balance: '5' });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qnever-saved',
+      network: 'BITCOIN',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -1230,6 +1280,7 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
       address: 'bc1qsaved',
       providerName: DEFAULT_PAYMENT_PROVIDER,
       providerWalletId: 'fb-wallet-1',
+      createdAt: MATURE,
     });
 
     const requested = await svc.withdraw({
@@ -1265,6 +1316,7 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
         address: 'bc1qsaved',
         providerName: DEFAULT_PAYMENT_PROVIDER,
         providerWalletId: 'fb-wallet-1',
+        createdAt: MATURE,
       })
       .returning();
 
@@ -1298,6 +1350,11 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
       address: 'bc1qlegacy',
     });
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qlegacy',
+    });
     const requested = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -2838,6 +2895,12 @@ describe('WalletService.withdraw asset terms (real PG)', () => {
     const w = await seedWallet({ currency: 'BTC', balance: '5' });
     await seedBtcAsset('1', '0');
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qmin',
+      network: 'BITCOIN',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '1',
@@ -2854,6 +2917,12 @@ describe('WalletService.withdraw asset terms (real PG)', () => {
     const w = await seedWallet({ currency: 'BTC', balance: '5' });
     await seedBtcAsset('0', '0');
 
+    await seedMatureWithdrawalAddress(db, {
+      userId: w.userId,
+      currency: 'BTC',
+      address: 'bc1qfree',
+      network: 'BITCOIN',
+    });
     const result = await svc.withdraw({
       userId: w.userId,
       amount: '1',
