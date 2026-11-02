@@ -71,6 +71,18 @@ describe('ModuleRegistryImpl', () => {
     ]);
   });
 
+  it('events.on() keeps a consumer group only when the subscriber names one', () => {
+    const { reg } = newRegistry();
+    const plain = () => {};
+    const grouped = () => {};
+    reg.events.on('tag.created', plain);
+    reg.events.on('tag.created', grouped, { consumerGroup: 'audit' });
+    expect(reg.events.getAll().get('tag.created')).toEqual([
+      { handler: plain, consumer: 'unknown/tag.created' },
+      { handler: grouped, consumer: 'unknown/tag.created#1', consumerGroup: 'audit' },
+    ]);
+  });
+
   it('triggers.listen() keeps each listener with the plugin that registered it', () => {
     const { reg } = newRegistry();
     const first = () => {};

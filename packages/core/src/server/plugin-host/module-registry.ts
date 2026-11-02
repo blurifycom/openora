@@ -21,6 +21,7 @@ import type {
   TypedContainer,
   EventHandler,
   RegisteredEventHandler,
+  EventSubscriptionOptions,
 } from './define-plugin.js';
 import { assertValidActionType, assertValidMcpTool } from '../mcp/contract-validation.js';
 
@@ -37,8 +38,16 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
   private _actions: RegisteredActionType<C>[] = [];
   private _sealedBound = new Set<symbol>();
   private _owner = UNKNOWN_OWNER;
+  private _routerless = new Set<string>();
 
   constructor(private readonly container: Container<C>) {}
+
+  // The module still binds every port, handles every event and runs every job. Its router
+  // factories still run too (they build the services and schedules its handlers and workers
+  // read), but each router is swapped for an empty one, so no route is served.
+  withholdRouters(pluginId: string): void {
+    this._routerless.add(pluginId);
+  }
 
   setOwner(pluginId: string | null): void {
     this._owner = pluginId ?? UNKNOWN_OWNER;
@@ -88,18 +97,30 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
       if (this._routers.has(namespace)) {
         throw new Error(`Router namespace "${namespace}" is already registered`);
       }
-      this._routers.set(namespace, factory);
+      this._routers.set(
+        namespace,
+        this._routerless.has(this._owner)
+          ? (c) => {
+              factory(c, { mounted: false });
+              return {};
+            }
+          : factory,
+      );
     },
     getAll: () => this._routers,
   };
 
   events = {
-    on: (event: string, handler: EventHandler) => {
+    on: (event: string, handler: EventHandler, options?: EventSubscriptionOptions) => {
       const handlers = this._events.get(event) ?? [];
       const consumer = `${this._owner}/${event}`;
       const ordinal = this._consumerOrdinals.get(consumer) ?? 0;
       this._consumerOrdinals.set(consumer, ordinal + 1);
-      handlers.push({ handler, consumer: ordinal === 0 ? consumer : `${consumer}#${ordinal}` });
+      handlers.push({
+        handler,
+        consumer: ordinal === 0 ? consumer : `${consumer}#${ordinal}`,
+        ...(options?.consumerGroup ? { consumerGroup: options.consumerGroup } : {}),
+      });
       this._events.set(event, handlers);
     },
     getAll: () => this._events,

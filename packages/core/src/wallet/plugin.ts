@@ -369,6 +369,7 @@ export default {
           rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
           bonusWagering: c.has(BONUS_WAGERING) ? c.get(BONUS_WAGERING) : undefined,
           bonusGrants: c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
+          identityReader: c.get(IDENTITY_READER),
         }),
     );
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
@@ -400,6 +401,11 @@ export default {
       if (!rgLimits) {
         logger.warn(
           'wallet loaded without RG_LIMITS - deposit limits are not enforced on any route',
+        );
+      }
+      if (Object.keys(platformConfig?.wallet?.significantAmountThresholds ?? {}).length === 0) {
+        logger.warn(
+          'wallet.significantAmountThresholds is not configured - large bets and wins are not audited',
         );
       }
       const wallet = walletService(c);

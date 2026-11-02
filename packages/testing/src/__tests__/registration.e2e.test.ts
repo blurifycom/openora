@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
-import { DRIZZLE } from '@openora/core/server';
+import { and, eq, sql } from 'drizzle-orm';
+import { DRIZZLE, eventOutbox } from '@openora/core/server';
 import { user, session } from '@openora/core/pam/schema/identity';
 import { player, playerAcquisition } from '@openora/core/pam/schema/profile';
 import { auditLog } from '@openora/core/audit/schema';
@@ -280,6 +280,34 @@ describe('registration email verification', () => {
     expect(row?.termsAcceptedAt).toBeInstanceOf(Date);
     expect(row?.ageAcceptedAt).toBeInstanceOf(Date);
     expect(row?.registrationIp).not.toBeNull();
+  });
+
+  it('writes the registered event to the outbox with the new player', async () => {
+    const userId = await registerPlayer(app, { email: `reg-outbox-${randomUUID()}@e2e.test` });
+    const db = app.container.get(DRIZZLE).db;
+    const [owner] = await db
+      .select({ id: player.id })
+      .from(player)
+      .where(eq(player.userId, userId));
+
+    const rows = await db
+      .select({ payload: eventOutbox.payload })
+      .from(eventOutbox)
+      .where(
+        and(
+          eq(eventOutbox.topic, 'identity.user.registered'),
+          sql`${eventOutbox.payload}->>'userId' = ${userId}`,
+        ),
+      );
+    expect(rows.map(({ payload }) => payload)).toEqual([
+      expect.objectContaining({
+        userId,
+        playerId: owner?.id,
+        termsVersion: 'test-v1',
+        acceptedTerms: true,
+        acceptedAge: true,
+      }),
+    ]);
   });
 
   describe('acquisition parameters', () => {

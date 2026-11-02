@@ -23,6 +23,7 @@ import {
   type PromoGrant,
   type PromoGrantEntry,
 } from '../schema/index.js';
+import { isRealMoneyOnlyProduct } from '../contract/index.js';
 import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
 
 const ZERO = '0';
@@ -69,7 +70,9 @@ export class WageringService implements BonusWageringCommands {
   constructor(private readonly wagerTracking?: WagerTrackingCommands) {}
 
   async wager(tx: DrizzleTx, args: BonusWagerArgs): Promise<BonusWagerOutcome> {
-    const grant = await this.lockAttributedGrant(tx, args.userId, args.currency);
+    const grant = isRealMoneyOnlyProduct(args.context.product)
+      ? undefined
+      : await this.lockAttributedGrant(tx, args.userId, args.currency);
 
     if (!grant) {
       if (moneyCompare(args.fromBonus, ZERO) > 0) {

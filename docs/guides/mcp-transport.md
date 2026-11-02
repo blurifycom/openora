@@ -113,6 +113,8 @@ path has not been verified by the platform maintainers.
   being an admin, when an IAM change takes away their MCP access, when all of their sessions are
   revoked (a forced logout, a two-factor reset, an email change), and when their password is
   reset or changed. A revoked token stays revoked after the account or the access is restored.
+- Deactivating an account also ends its Backoffice sessions at once, and the account is refused
+  on every request until it is reactivated; a reactivated admin signs in again.
 - Each revocation commits together with the change that caused it, except after a password
   change or reset, which is committed first: every token issued before it is refused from that
   moment whether or not its revocation succeeds. If that revocation fails, the tokens are still

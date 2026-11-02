@@ -79,6 +79,7 @@ beforeAll(async () => {
   // rather than a call count on a spy - the hash chain has to accept these writes too.
   const svc = new AuditService(db.drizzle, makeEventBus(), makeIdentityReader());
   audit = {
+    auditedTopics: new Set(),
     record: (entry) => svc.record(entry).then(() => undefined),
     recordInTransaction: (tx, entry) => svc.recordInTransaction(tx, entry).then(() => undefined),
     recordManyInTransaction: (tx, entries) =>

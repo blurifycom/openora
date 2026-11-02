@@ -113,6 +113,14 @@ export const walletTransaction = pgTable(
     type: walletTransactionTypeEnum().notNull(),
     amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     currency: text().notNull(),
+    // The wallet's real balance in `currency` right after this row's money moved, written in the
+    // same transaction as the move. The balance before is this minus the signed `amount`, except
+    // for a stake bonus funds partly paid (they sit on the grant, not here) and for a win or bet
+    // reversal on a bonus-funded round: those write the full `amount` but move the balance by
+    // the real share only. Set once, when the
+    // balance moves: a deposit's at completion, a withdrawal's at the request. NULL on rows written
+    // before this column existed and on rows that moved no balance (a pending deposit, a failed one).
+    balanceAfter: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     // The chain this moved on. A currency does not identify one, so reconciliation and
     // reporting are per (currency, network). Null on a fiat rail and on any internal
     // transaction type (bet/win/bonus) that never touches a chain.
@@ -163,6 +171,12 @@ export const walletTransaction = pgTable(
     // Client-supplied dedup key for deposit/withdraw. A wallet is 1:1 with its user, so
     // scoping the unique index on walletId is equivalent to scoping on userId.
     idempotencyKey: uuid(),
+    // What a correction debit asked to collect; `amount` is what it took, zero included. NULL on
+    // every other row, so a correction's replay never matches the stake debit it re-collects.
+    correctionRequestedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    // What a bonus-funded round's win or stake reversal put into the real balance, the rest having
+    // gone to the grant. NULL when all of `amount` was real.
+    realShare: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -188,6 +202,10 @@ export const walletTransaction = pgTable(
       .on(t.providerName, t.providerRefId)
       .where(sql`${t.providerRefId} IS NOT NULL`),
     index('wallet_transaction_external_round_id_idx').on(t.externalRoundId),
+    // RG netting reads one player's legs of a round; a round id can be shared across players.
+    index('wallet_transaction_wallet_id_external_round_id_idx')
+      .on(t.walletId, t.externalRoundId)
+      .where(sql`${t.externalRoundId} IS NOT NULL`),
     uniqueIndex('wallet_transaction_wallet_id_idempotency_key_idx')
       .on(t.walletId, t.idempotencyKey)
       .where(sql`${t.idempotencyKey} IS NOT NULL`),
@@ -206,6 +224,25 @@ export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
     .notNull()
     .$onUpdateFn(() => new Date()),
 });
+
+// A module-owned block on every withdrawal, one row per (player, source). The owning module
+// places and releases it in its own transaction; a source never releases another's hold.
+export const walletWithdrawalHold = pgTable(
+  'wallet_withdrawal_hold',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Cross-module (identity), bare uuid.
+    userId: uuid().notNull(),
+    source: text().notNull(),
+    reason: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [uniqueIndex('wallet_withdrawal_hold_user_id_source_idx').on(t.userId, t.source)],
+);
 
 export const walletDepositAddress = pgTable(
   'wallet_deposit_address',

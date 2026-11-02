@@ -12,7 +12,7 @@ import {
 import type { ZodType } from 'zod';
 import type { Logger } from 'pino';
 import { createLogger } from './logger.js';
-import { getCurrentTraceId } from './request-context.js';
+import { getCurrentTraceId, notePublishedTopic } from './request-context.js';
 
 // How long a published event stays redeliverable: the Redis Streams retention, and the
 // age past which outbox and processed_events rows are pruned. See ADR-0045.
@@ -27,6 +27,10 @@ export type SubscribeHandlerOptions = {
   // Stable identity of this handler across restarts and replicas. When set, a
   // redelivered event skips the handler once it has succeeded for that event.
   consumer?: string;
+  // Broker consumer group to subscribe in. Omitted: the broker's own default, one group per
+  // service. Services sharing a name compete for each event, so it is how a subscription
+  // runs once per deployment instead of once per service.
+  consumerGroup?: string;
 };
 
 // Records which (eventId, consumer) pairs already ran to completion. A port so the
@@ -113,6 +117,7 @@ export function createEventBus({
 }: EventBusDeps): EventBus {
   function publishEvent(event: string, payload: unknown): void {
     parseKnownPayload(event, payload);
+    notePublishedTopic(event);
     const envelope = buildEnvelope(event, payload);
     void Promise.resolve(broker.publish(envelope)).catch((err) =>
       logger.error({ event, err }, 'event publish failed'),
@@ -130,12 +135,14 @@ export function createEventBus({
 
     async emitInTransaction(tx: unknown, event: string, payload: unknown): Promise<void> {
       parseKnownPayload(event, payload);
+      notePublishedTopic(event);
       await outbox.write(tx, buildEnvelope(event, payload));
     },
 
     on(event: string, handler: EventHandler, options?: SubscribeHandlerOptions): () => void {
       const consumer = options?.consumer;
-      return broker.subscribe(event, async (envelope: EventEnvelope) => {
+      const consumerGroup = options?.consumerGroup;
+      const onEnvelope = async (envelope: EventEnvelope) => {
         if (consumer && (await processedEvents.has(envelope.eventId, consumer))) {
           return;
         }
@@ -153,7 +160,10 @@ export function createEventBus({
         if (consumer) {
           await processedEvents.record(envelope.eventId, consumer);
         }
-      });
+      };
+      return consumerGroup
+        ? broker.subscribe(event, onEnvelope, { consumerGroup })
+        : broker.subscribe(event, onEnvelope);
     },
   };
 }

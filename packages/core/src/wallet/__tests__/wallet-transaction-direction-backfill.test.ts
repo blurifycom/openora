@@ -20,6 +20,7 @@ const BACKFILL_DEBIT_TYPES: WalletTransactionType[] = [
   'loss',
   'manual_debit',
   'swap_out',
+  'win_reversal',
 ];
 
 // The only types where the same value is written for both legs of a transfer (see

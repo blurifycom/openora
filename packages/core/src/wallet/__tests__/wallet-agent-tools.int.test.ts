@@ -241,6 +241,37 @@ describe('wallet.activity through the MCP kernel (real PG)', () => {
     expect(Array.isArray(open) && open.length).toBe(OPEN_WITHDRAWALS_LIMIT);
   });
 
+  it('reports wins net of win reversals, never below zero', async () => {
+    const { kernel } = bootKernel();
+    const player = await seedPlayer();
+    await seedTx(player.walletId, { type: 'win', amount: '50' });
+    await seedTx(player.walletId, { type: 'win_reversal', amount: '20', direction: 'debit' });
+    await seedTx(player.walletId, { type: 'win', amount: '0.1', currency: 'BTC' });
+    await seedTx(player.walletId, {
+      type: 'win_reversal',
+      amount: '0.4',
+      currency: 'BTC',
+      direction: 'debit',
+    });
+
+    const result = await kernel.invokeTool(
+      'wallet.activity',
+      { playerId: player.playerId },
+      runContext(),
+    );
+
+    const wins = result.ok
+      ? (result.output['totals'] as { currency: string; wins: string }[]).map((t) => [
+          t.currency,
+          Number(t.wins),
+        ])
+      : null;
+    expect(wins).toEqual([
+      ['BTC', 0],
+      ['USD', 30],
+    ]);
+  });
+
   it('reads a player without a wallet as having no activity', async () => {
     const { kernel } = bootKernel();
     const playerId = randomUUID();

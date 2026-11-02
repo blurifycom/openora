@@ -39,7 +39,7 @@ export type BonusWagerArgs = {
 export type BonusWagerOutcome =
   | {
       ok: true;
-      /** Grant the bet was attributed to, or `null` when the player holds none. */
+      /** Grant the bet was attributed to, or `null` when none was: the player holds none, or the product never uses bonus funds. */
       grantId: string | null;
       /** Part of the stake actually taken from bonus funds. Echoes `fromBonus` on success. */
       bonusSpent: string;
@@ -73,7 +73,7 @@ export type BonusWagerOutcome =
 /**
  * A stake refused because it is over the active grant's `maxBet`. Shared here rather than
  * module-local, the same as `RgLimitExceededError` beside `RG_LIMITS`: the wallet throws it from
- * inside `debit`, but whatever router sits above the caller (a game round, a sportsbook slip) is
+ * inside `debit`, but whatever router sits above the caller (a game round) is
  * the one that has to map it to a response, and it can only do that against a class it can import.
  */
 export class MaxBetExceededError extends Error {

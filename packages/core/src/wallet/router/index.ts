@@ -41,6 +41,7 @@ import {
   InsufficientBalanceError,
   KycRequiredError,
   WithdrawalLockedError,
+  WithdrawalHeldError,
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
@@ -303,6 +304,7 @@ export function createWalletRouter({
           ],
           CONFLICT: [
             WithdrawalLockedError,
+            WithdrawalHeldError,
             KycRequiredError,
             IdempotencyKeyReuseError,
             DestinationAddressRequiredError,
@@ -326,7 +328,14 @@ export function createWalletRouter({
     }),
 
     manualAdjustment: os.manualAdjustment.handler(async ({ input, context }) => {
-      const { userId: adminId, ip, userAgent } = await adminGuard.assertSuperAdmin(context);
+      const {
+        userId: adminId,
+        ip,
+        userAgent,
+      } = await adminGuard.assertSuperAdmin(context, {
+        resource: 'wallet',
+        action: 'manualAdjustment',
+      });
       return mapErrors(
         {
           NOT_FOUND: PlayerNotFoundError,
@@ -371,7 +380,12 @@ export function createWalletRouter({
         return mapErrors(
           {
             NOT_FOUND: WithdrawalNotFoundError,
-            CONFLICT: [WithdrawalNotPendingError, WithdrawalLockedError, PaymentRejectedError],
+            CONFLICT: [
+              WithdrawalNotPendingError,
+              WithdrawalLockedError,
+              WithdrawalHeldError,
+              PaymentRejectedError,
+            ],
           },
           () => wallet.approveWithdrawal(adminId, input.withdrawalId, { ip, userAgent }),
         );

@@ -386,6 +386,23 @@ describe('RgStandingReaderService.getStanding (real PG)', () => {
     ]);
   });
 
+  it('takes a win reversal off the wins of the window it is collected in', async () => {
+    const userId = await seedPlayer();
+    await seedMoney(userId, { type: 'bet', amount: '10', createdAt: daysAgo(10) });
+    await seedMoney(userId, { type: 'win', amount: '1000', createdAt: daysAgo(10) });
+    await seedMoney(userId, { type: 'win_reversal', amount: '400', createdAt: daysAgo(2) });
+    await seedMoney(userId, { type: 'win', amount: '50' });
+
+    const standing = await reader().getStanding(userId, { windowDays: [7, 30] });
+
+    expect(
+      standing?.windows.map(({ days, totals }) => ({ days, wins: Number(totals?.wins) })),
+    ).toEqual([
+      { days: 7, wins: 0 },
+      { days: 30, wins: 650 },
+    ]);
+  });
+
   it('answers a null window, never a partial one, when a currency in it cannot be priced', async () => {
     const userId = await seedPlayer();
     await seedMoney(userId, { amount: '100' });

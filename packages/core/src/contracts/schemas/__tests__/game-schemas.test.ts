@@ -82,7 +82,7 @@ describe('game category translations', () => {
   });
 
   it('rejects malformed language keys and invalid category names', () => {
-    for (const key of ['', 'd', 'de_DE', 'de-', '-de']) {
+    for (const key of ['', 'd', 'de_DE', 'de-', '-de', 'de-x', 'de-1']) {
       expect(GameCategoryTranslationsSchema.safeParse({ [key]: { name: 'Slots' } }).success).toBe(
         false,
       );

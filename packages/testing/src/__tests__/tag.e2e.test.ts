@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE, EVENT_BUS, type Container, type CoreTokenCatalog } from '@openora/core/server';
 import { JOB_QUEUE, queue } from '@openora/core/contracts';
 import { session } from '@openora/core/pam/schema/identity';
@@ -41,17 +41,24 @@ async function backdateSessions(
     .where(eq(session.userId, userId));
 }
 
-async function backdateTransaction(
+async function backdateTransactionWithLedgerGuardOff(
   container: Container<CoreTokenCatalog>,
   transactionId: string,
   daysAgo: number,
 ) {
   const past = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
-  await container
-    .get(DRIZZLE)
-    .db.update(walletTransaction)
-    .set({ createdAt: past })
-    .where(eq(walletTransaction.id, transactionId));
+  await container.get(DRIZZLE).db.transaction(async (tx) => {
+    await tx.execute(
+      sql`ALTER TABLE wallet_transaction DISABLE TRIGGER wallet_transaction_append_only_update`,
+    );
+    await tx
+      .update(walletTransaction)
+      .set({ createdAt: past })
+      .where(eq(walletTransaction.id, transactionId));
+    await tx.execute(
+      sql`ALTER TABLE wallet_transaction ENABLE TRIGGER wallet_transaction_append_only_update`,
+    );
+  });
 }
 
 async function activeTagKeys(admin: TestClient, playerId: string): Promise<string[]> {
@@ -335,8 +342,8 @@ describe('high_risk: existing assign path unaffected, frequency-only resweep', (
     await auditHasEntry(admin, playerId, 'tag.player.assigned');
 
     // Age both withdrawals out of the 7-day window, then resweep.
-    await backdateTransaction(app.container, w1.transactionId, 10);
-    await backdateTransaction(app.container, w2.transactionId, 10);
+    await backdateTransactionWithLedgerGuardOff(app.container, w1.transactionId, 10);
+    await backdateTransactionWithLedgerGuardOff(app.container, w2.transactionId, 10);
     await runDailySweep(app.container);
 
     await vi.waitFor(async () => {

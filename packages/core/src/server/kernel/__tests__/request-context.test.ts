@@ -4,6 +4,8 @@ import {
   getCurrentRequestContext,
   getCurrentTraceId,
   getCurrentClientMeta,
+  getRequestAuditTrail,
+  noteGrantedPermission,
 } from '../request-context.js';
 
 const CLIENT_META = { ip: '203.0.113.7', userAgent: 'curl/8.4.0' };
@@ -81,5 +83,37 @@ describe('withRequestContext', () => {
     withRequestContext({ traceId: 'trace-2' }, () => {
       expect(getCurrentClientMeta()).toEqual({ ip: null, userAgent: null });
     });
+  });
+});
+
+describe('noteGrantedPermission', () => {
+  const grant = (action: string) => ({
+    userId: 'user-1',
+    resource: 'bonus',
+    action,
+    ...CLIENT_META,
+  });
+  const grantedAfter = (...actions: string[]) =>
+    withRequestContext({ traceId: 'trace-grant' }, () => {
+      actions.forEach((action) => noteGrantedPermission(grant(action)));
+      return getRequestAuditTrail()?.grant?.action;
+    });
+
+  it('keeps the first grant', () => {
+    expect(grantedAfter('cancel', 'update')).toBe('cancel');
+  });
+
+  it('lets a later grant replace a view grant, which the fallback audit ignores', () => {
+    expect(grantedAfter('view', 'cancel')).toBe('cancel');
+  });
+
+  it('keeps a view grant when nothing else is granted', () => {
+    expect(grantedAfter('view', 'view')).toBe('view');
+  });
+
+  it('notes nothing outside a request', () => {
+    noteGrantedPermission(grant('cancel'));
+
+    expect(getRequestAuditTrail()).toBeUndefined();
   });
 });

@@ -100,8 +100,6 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await app.container.get(DRIZZLE).db.delete(gameRound).where(eq(gameRound.gameId, gameId));
-  await app.container.get(DRIZZLE).db.delete(game).where(eq(game.id, gameId));
   await closeE2e({ app, db });
 });
 

@@ -66,7 +66,8 @@ export const ggrSummaryTool = defineMcpTool({
   id: 'ggr.summary',
   title: 'GGR summary',
   description:
-    'Operator-wide gross gaming revenue - completed bets minus bet reversals minus wins - per ' +
+    'Operator-wide gross gaming revenue - completed bets minus bet reversals minus wins plus win ' +
+    'reversals - per ' +
     'currency, in day, week or month buckets over whole UTC days from dateFrom through dateTo. ' +
     'Defaults to the 30 days ending today; a range spans at most 366 days. Amounts are decimal ' +
     'strings and can be negative.',

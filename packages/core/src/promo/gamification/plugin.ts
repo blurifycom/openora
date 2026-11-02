@@ -17,6 +17,7 @@ import {
   resolveWalletDefaultCurrency,
   type IdentityReader,
   type JobQueueAdapter,
+  type SettledWagerArgs,
   type WagerReversalArgs,
   type WagerTrackingArgs,
   type WagerTrackingCommands,
@@ -106,6 +107,18 @@ class CompositeWagerTracking implements WagerTrackingCommands {
   async reverseWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
     for (const consumer of this.consumers) {
       await consumer.reverseWager?.(tx, args);
+    }
+  }
+
+  async recordSettledWager(tx: DrizzleTx, args: SettledWagerArgs): Promise<void> {
+    for (const consumer of this.consumers) {
+      await consumer.recordSettledWager?.(tx, args);
+    }
+  }
+
+  async reverseSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
+    for (const consumer of this.consumers) {
+      await consumer.reverseSettledWager?.(tx, args);
     }
   }
 }
@@ -393,6 +406,7 @@ export default {
         c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
         c.get(EXCHANGE_RATE_READER),
         payoutCurrency,
+        c.get(AUDIT_WRITER),
         logger,
       );
       rankChallengePayouts = new RankChallengePayoutService(

@@ -1,0 +1,1 @@
+ALTER TABLE "wallet_transaction" ADD COLUMN "real_share" numeric(38, 18);

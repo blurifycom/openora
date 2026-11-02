@@ -13,6 +13,9 @@ and gaming list it in `controlPorts`, so a `SERVICE_MANIFEST` boot that loads ei
 start without the compliance module while the plugin list has it: another process of the install
 enforces the limits there ([ADR-0046](./0046-per-process-job-worker-selection.md)).
 
+> **Update (2026-10-15)**: RG spend now reads the wallet ledger for every product, and `loss`
+> stays unenforced for the reason in [ADR-0046](./0046-sportsbook-ledger-port.md).
+
 ## Context
 
 ADR-0032 closed the exclusion dimension of responsible gambling: a cooling-off or

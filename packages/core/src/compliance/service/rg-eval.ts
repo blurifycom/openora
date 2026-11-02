@@ -1,4 +1,5 @@
 import { RG_FLAG_THRESHOLD_PCT, type LimitPeriod } from '@openora/core/contracts';
+import type { walletTransaction } from '@openora/core/wallet/schema';
 
 // Pure, DB-free RG evaluation helpers. Rolling windows (last N) rather than calendar
 // buckets: a defensible, timezone-free reading of "daily/weekly/monthly" spend.
@@ -25,6 +26,25 @@ export function thresholdPct(actual: number, limit: number): number {
 export function isAtThreshold(actual: number, limit: number): boolean {
   return thresholdPct(actual, limit) >= RG_FLAG_THRESHOLD_PCT;
 }
+
+type LedgerRow = typeof walletTransaction.$inferSelect;
+
+export type PlayLeg = {
+  type: Extract<LedgerRow['type'], 'bet' | 'bet_reversal' | 'win' | 'win_reversal'>;
+  direction: NonNullable<LedgerRow['direction']>;
+};
+
+export const WAGER_LEGS = [
+  { type: 'bet', direction: 'debit' },
+  { type: 'bet_reversal', direction: 'credit' },
+] as const satisfies readonly PlayLeg[];
+
+// Every ledger leg RG reads as play; RG spend and RG standing both count from this list.
+export const LOSS_LEGS = [
+  ...WAGER_LEGS,
+  { type: 'win', direction: 'credit' },
+  { type: 'win_reversal', direction: 'debit' },
+] as const satisfies readonly PlayLeg[];
 
 export type PendingChangeStatus = 'waiting' | 'ready' | 'expired';
 

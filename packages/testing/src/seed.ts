@@ -12,7 +12,10 @@ import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
 import { seedRankLadder, type RankLadderSeed } from '@openora/core/promo/seed/gamification';
-import { DEFAULT_PAYOUT_ANCHORS } from '@openora/core/promo/contracts/gamification';
+import {
+  DEFAULT_PAYOUT_ANCHORS,
+  DEFAULT_RANK_PERK_PRODUCTS,
+} from '@openora/core/promo/contracts/gamification';
 import { user, session, account, verification } from '@openora/core/pam/schema/identity';
 
 /**
@@ -58,6 +61,8 @@ export const EXAMPLE_RANK_LADDER: RankLadderSeed = {
     payInPlayerCurrency: false,
     periodicRequiresActivity: true,
     eligibleProducts: [],
+    rakebackEligibleProducts: [...DEFAULT_RANK_PERK_PRODUCTS],
+    rankChallengeEligibleProducts: [...DEFAULT_RANK_PERK_PRODUCTS],
     rewards: {
       levelUp: { wageringMultiplier: '1', expiryDays: 7 },
       daily: { wageringMultiplier: '1', expiryDays: 1 },

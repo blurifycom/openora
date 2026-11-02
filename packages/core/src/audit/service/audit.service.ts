@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   DrizzleService,
   likePrefix,
+  noteAuditWrite,
   pageToOffset,
   serializeRow,
   withAdvisoryXactLock,
@@ -258,6 +259,7 @@ export async function recordAuditInTransaction(
 
     return inserted;
   });
+  noteAuditWrite(input.actorId);
   return row;
 }
 
@@ -275,7 +277,7 @@ async function recordManyAuditInTransaction(
   if (inputs.length === 0) {
     return [];
   }
-  return withAdvisoryXactLock(txn, 'audit_log', async () => {
+  const appended = await withAdvisoryXactLock(txn, 'audit_log', async () => {
     const headHash = await latestChainHash(txn);
     const { rows: reserved } = await txn.execute<{ seq: string | number }>(
       sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq
@@ -293,6 +295,10 @@ async function recordManyAuditInTransaction(
     }
     return inserted;
   });
+  for (const { actorId } of inputs) {
+    noteAuditWrite(actorId);
+  }
+  return appended;
 }
 
 export class AuditService {

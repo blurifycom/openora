@@ -2,6 +2,7 @@ import { asc, eq, inArray } from 'drizzle-orm';
 import type { AuditWritePort, Uuid } from '@openora/core/contracts';
 import {
   createDomainError,
+  findOneOrThrow,
   makeConflictError,
   makeNotFoundError,
   moneyCompare,
@@ -10,7 +11,12 @@ import {
   type DrizzleTx,
 } from '@openora/core/server';
 import { promoPlayerRank, promoRankConfig, promoRankTier } from '../schema/index.js';
-import type { RankConfig, SetRankLadderInput, SubmittedRankTier } from '../contract/index.js';
+import type {
+  RankConfig,
+  SetRankConfigInput,
+  SetRankLadderInput,
+  SubmittedRankTier,
+} from '../contract/index.js';
 import { TIER_COLUMNS, toLadder } from '../shared/rank-ladder.js';
 import { RankLadderNotConfiguredError } from './rank.service.js';
 
@@ -49,6 +55,20 @@ export const RankTierKeyTakenError = makeConflictError(
   'RankTierKeyTakenError',
   'another tier already goes by that key',
 );
+
+const CONFIG_COLUMNS = {
+  eligibleProducts: promoRankConfig.eligibleProducts,
+  rakebackEligibleProducts: promoRankConfig.rakebackEligibleProducts,
+  rankChallengeEligibleProducts: promoRankConfig.rankChallengeEligibleProducts,
+  rewards: promoRankConfig.rewards,
+  payoutAnchors: promoRankConfig.payoutAnchors,
+  payoutCurrency: promoRankConfig.payoutCurrency,
+  payInPlayerCurrency: promoRankConfig.payInPlayerCurrency,
+  periodicRequiresActivity: promoRankConfig.periodicRequiresActivity,
+  periodicMinimumWager: promoRankConfig.periodicMinimumWager,
+};
+
+const dedupe = <T>(list: readonly T[] | undefined) => (list ? [...new Set(list)] : undefined);
 
 function assertKnownTiers(known: ReadonlySet<string>, tiers: readonly SubmittedRankTier[]) {
   const unknown = tiers.flatMap((tier) =>
@@ -151,23 +171,14 @@ export class RankAdminService {
   }
 
   async getConfig(): Promise<RankConfig> {
-    const [config] = await this.drizzle.db
-      .select({
-        eligibleProducts: promoRankConfig.eligibleProducts,
-        rewards: promoRankConfig.rewards,
-        payoutAnchors: promoRankConfig.payoutAnchors,
-        payoutCurrency: promoRankConfig.payoutCurrency,
-        payInPlayerCurrency: promoRankConfig.payInPlayerCurrency,
-        periodicRequiresActivity: promoRankConfig.periodicRequiresActivity,
-      })
-      .from(promoRankConfig);
+    const [config] = await this.drizzle.db.select(CONFIG_COLUMNS).from(promoRankConfig);
     if (!config) {
       throw new RankConfigNotSetError('global');
     }
     return config;
   }
 
-  async setConfig(adminId: Uuid, input: RankConfig): Promise<RankConfig> {
+  async setConfig(adminId: Uuid, input: SetRankConfigInput): Promise<RankConfig> {
     for (const terms of Object.values(input.rewards)) {
       if (moneyCompare(terms.wageringMultiplier, MAX_WAGERING_MULTIPLIER) > 0) {
         throw new RankConfigInvalidError(
@@ -177,31 +188,29 @@ export class RankAdminService {
     }
     const config = {
       eligibleProducts: [...new Set(input.eligibleProducts)],
+      rakebackEligibleProducts: dedupe(input.rakebackEligibleProducts),
+      rankChallengeEligibleProducts: dedupe(input.rankChallengeEligibleProducts),
       rewards: input.rewards,
       payoutAnchors: input.payoutAnchors,
       payoutCurrency: input.payoutCurrency ?? null,
       payInPlayerCurrency: input.payInPlayerCurrency,
       periodicRequiresActivity: input.periodicRequiresActivity,
+      periodicMinimumWager: input.periodicMinimumWager,
     };
     return this.drizzle.db.transaction(async (tx) => {
-      const [before] = await tx
-        .select({
-          eligibleProducts: promoRankConfig.eligibleProducts,
-          rewards: promoRankConfig.rewards,
-          payoutAnchors: promoRankConfig.payoutAnchors,
-          payoutCurrency: promoRankConfig.payoutCurrency,
-          payInPlayerCurrency: promoRankConfig.payInPlayerCurrency,
-          periodicRequiresActivity: promoRankConfig.periodicRequiresActivity,
-        })
-        .from(promoRankConfig)
-        .for('update');
-      await tx
-        .insert(promoRankConfig)
-        .values({ ...config, updatedBy: adminId })
-        .onConflictDoUpdate({
-          target: promoRankConfig.singletonKey,
-          set: { ...config, updatedBy: adminId },
-        });
+      const [before] = await tx.select(CONFIG_COLUMNS).from(promoRankConfig).for('update');
+      // An undefined list or minimum wager is left out of both the insert and the update.
+      const saved = findOneOrThrow(
+        await tx
+          .insert(promoRankConfig)
+          .values({ ...config, updatedBy: adminId })
+          .onConflictDoUpdate({
+            target: promoRankConfig.singletonKey,
+            set: { ...config, updatedBy: adminId },
+          })
+          .returning(CONFIG_COLUMNS),
+        new Error('rank config upsert returned no row'),
+      );
       await this.audit.recordInTransaction(tx, {
         actorId: adminId,
         actorType: 'admin',
@@ -209,9 +218,9 @@ export class RankAdminService {
         resourceType: 'promo_rank_config',
         resourceId: null,
         before: before ?? null,
-        after: config,
+        after: saved,
       });
-      return config;
+      return saved;
     });
   }
 }
