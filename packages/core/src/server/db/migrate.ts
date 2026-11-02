@@ -128,7 +128,15 @@ export function appendOnlyTableSql(
          .map((group) => {
            const sum = (row: 'NEW' | 'OLD') =>
              group.map((column) => `${row}.${column}`).join(' + ');
-           return `IF ${sum('NEW')} < ${sum('OLD')} THEN
+           const negatives = group
+             .map(
+               (column) => `IF NEW.${column} < 0 THEN
+         RAISE EXCEPTION '${table} is append-only: ${column} cannot be negative once final';
+       END IF;`,
+             )
+             .join('\n       ');
+           return `${negatives}
+       IF ${sum('NEW')} < ${sum('OLD')} THEN
          RAISE EXCEPTION '${table} is append-only: ${group.join(' + ')} cannot decrease once final';
        END IF;`;
          })

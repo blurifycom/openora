@@ -118,6 +118,10 @@ describe('game_round record protection (real PG)', () => {
     await expect(update(round.id, { betAmount: '3', reversedAmount: '2' })).resolves.toBeDefined();
     await rejectedWith(update(round.id, { betAmount: '0' }), /cannot decrease once final/);
     await rejectedWith(update(round.id, { reversedAmount: '1' }), /cannot decrease once final/);
+    await rejectedWith(
+      update(round.id, { betAmount: '-3', reversedAmount: '8' }),
+      /cannot be negative once final/,
+    );
     await expect(update(round.id, { betAmount: '0', reversedAmount: '5' })).resolves.toBeDefined();
 
     const [after] = await db.drizzle.db.select().from(gameRound).where(eq(gameRound.id, round.id));
