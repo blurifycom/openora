@@ -66,7 +66,7 @@ describe('the registration pass of a failed SERVICE_MANIFEST boot', () => {
     await expect(
       selectServiceEntries<TokenCatalog>({
         entries: loaded.map(({ entry }) => entry),
-        manifest: ['wallet'],
+        manifest: [{ id: 'wallet', noRoutes: false }],
         readPlugin: (entry) => importPlugin<TokenCatalog>(entry),
         hostControls: [],
         isBound: () => false,

@@ -415,7 +415,13 @@ describe('createApp - service name for the Redis Streams consumer group', () => 
 });
 
 describe('createApp - SERVICE_MANIFEST and JOB_WORKERS on the plugin list it is given', () => {
-  const keys = ['REDIS_URL', 'SERVICE_MANIFEST', 'SERVICE_NAME', 'JOB_WORKERS'] as const;
+  const keys = [
+    'REDIS_URL',
+    'SERVICE_MANIFEST',
+    'SERVICE_NAME',
+    'REALTIME_NAMESPACE',
+    'JOB_WORKERS',
+  ] as const;
   const saved = keys.map((key) => [key, process.env[key]] as const);
 
   afterEach(() => {
@@ -441,12 +447,18 @@ describe('createApp - SERVICE_MANIFEST and JOB_WORKERS on the plugin list it is 
     list: PluginEntry[] = plugins,
   ) {
     process.env['REDIS_URL'] = redisUrlForWorker();
-    for (const key of ['SERVICE_MANIFEST', 'SERVICE_NAME', 'JOB_WORKERS'] as const) {
+    for (const key of [
+      'SERVICE_MANIFEST',
+      'SERVICE_NAME',
+      'REALTIME_NAMESPACE',
+      'JOB_WORKERS',
+    ] as const) {
       delete process.env[key];
     }
     if (env.SERVICE_MANIFEST) {
       process.env['SERVICE_MANIFEST'] = env.SERVICE_MANIFEST;
       process.env['SERVICE_NAME'] = 'fixture';
+      process.env['REALTIME_NAMESPACE'] = 'fixture';
     }
     if (env.JOB_WORKERS) {
       process.env['JOB_WORKERS'] = env.JOB_WORKERS;
@@ -506,7 +518,7 @@ describe('createApp - SERVICE_MANIFEST and JOB_WORKERS on the plugin list it is 
 });
 
 describe('createApp - a split service fails closed on a control it would skip', () => {
-  const keys = ['REDIS_URL', 'SERVICE_MANIFEST', 'SERVICE_NAME'] as const;
+  const keys = ['REDIS_URL', 'SERVICE_MANIFEST', 'SERVICE_NAME', 'REALTIME_NAMESPACE'] as const;
   const saved = keys.map((key) => [key, process.env[key]] as const);
 
   afterEach(() => {
@@ -536,9 +548,11 @@ describe('createApp - a split service fails closed on a control it would skip', 
     process.env['REDIS_URL'] = redisUrlForWorker();
     delete process.env['SERVICE_MANIFEST'];
     delete process.env['SERVICE_NAME'];
+    delete process.env['REALTIME_NAMESPACE'];
     if (manifest) {
       process.env['SERVICE_MANIFEST'] = manifest;
       process.env['SERVICE_NAME'] = 'fixture';
+      process.env['REALTIME_NAMESPACE'] = 'fixture';
     }
     const created = await createApp({ plugins, databaseUrl: DUMMY_DATABASE_URL }, (c) => {
       c.register(JOB_QUEUE, () => makeJobQueue());

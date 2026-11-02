@@ -11,7 +11,7 @@ const createServiceExample = ServiceExampleSchema.parse(
   ),
 );
 const SUGGESTED_MANIFEST = /^Add them: SERVICE_MANIFEST=(\S+)$/m;
-const SPLIT_ENV = ['SERVICE_MANIFEST', 'SERVICE_NAME'] as const;
+const SPLIT_ENV = ['SERVICE_MANIFEST', 'SERVICE_NAME', 'REALTIME_NAMESPACE'] as const;
 
 let db: TestDb;
 let split: TestApp;
@@ -21,6 +21,7 @@ async function bootSplit(manifest: string) {
   const saved = SPLIT_ENV.map((key) => [key, process.env[key]] as const);
   process.env['SERVICE_MANIFEST'] = manifest;
   process.env['SERVICE_NAME'] = 'split-e2e';
+  process.env['REALTIME_NAMESPACE'] = 'split-e2e';
   try {
     return await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
   } finally {

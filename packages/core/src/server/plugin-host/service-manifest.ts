@@ -83,7 +83,7 @@ export type HostControl<C extends TokenCatalog> = ControlPort<C> & {
 export type ServiceManifestCheck<C extends TokenCatalog> = {
   /** The whole plugin list: the manifest's modules and every one it leaves out. */
   entries: readonly PluginEntry[];
-  manifest: readonly string[];
+  manifest: readonly ServiceManifestEntry[];
   readPlugin: (entry: PluginEntry) => Promise<Plugin<C>>;
   hostControls: readonly HostControl<C>[];
   /** Whether the process has bound the port so far. */
@@ -265,7 +265,10 @@ async function shortfallError<C extends TokenCatalog>(check: ServiceManifestChec
   const unregistered = [...plugins.values()].filter(({ id }) => !check.registered?.has(id));
   const { binders, failed } = await portBinders(unregistered, ports);
   const { findings, added } = shortfall(check, plugins, binders);
-  const manifest = check.manifest.join(',');
+  // As the operator wrote it, flags included, so the suggested line keeps them.
+  const manifest = check.manifest
+    .map((m) => (m.noRoutes ? `${m.id}:${NO_ROUTES_FLAG}` : m.id))
+    .join(',');
   const unknownBinder = findings.some((f) => f.kind === 'required' && f.boundBy === undefined);
   return new Error(
     `SERVICE_MANIFEST=${manifest} leaves out what this service needs:\n` +

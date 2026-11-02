@@ -138,7 +138,7 @@ function checkOf(
       path: p.id,
       ...(infra.includes(p.id) ? { kind: 'infra' as const } : {}),
     })),
-    manifest,
+    manifest: manifest.map((id) => ({ id, noRoutes: false })),
     readPlugin,
     hostControls,
     isBound: (port) => bound.includes(port),
