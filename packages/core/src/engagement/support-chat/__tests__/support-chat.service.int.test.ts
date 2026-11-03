@@ -8,7 +8,9 @@ import {
   type SupportChatProvider,
   type WalletReader,
 } from '@openora/core/contracts';
+import { eq } from 'drizzle-orm';
 import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
+import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -26,6 +28,7 @@ import {
   SupportChatService,
   SupportChatSyncFailedError,
   SupportChatUnavailableError,
+  SupportContextNotSettledError,
 } from '../service/support-chat.service.js';
 
 const log = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }));
@@ -217,5 +220,94 @@ describe('SupportChatService sync path errors (real PG)', () => {
     expect((error as Error).message).toBe('support-chat provider failed: unexpected adapter error');
     expect((error as Error).cause).toBeUndefined();
     expect(inspect([logged(), error], { depth: null })).not.toMatch(LEAK);
+  });
+});
+
+// Adapter errors shaped to slip past a sanitizer that trusts `name`, `message`, `stack`, a
+// getter or a `cause` chain.
+describe('SupportChatService adapter error shapes (real PG)', () => {
+  const dirt = () => `${EMAIL} ${secret()}`;
+
+  const deepCause = (depth: number) => {
+    let cause: unknown = new Error(dirt());
+    for (let level = 0; level < depth; level++) {
+      cause = Object.assign(new Error(dirt(), { cause }), { name: dirt() });
+    }
+    return cause;
+  };
+
+  // A reason that is a getter, as a subclass or a proxy-like adapter error would expose it.
+  const getterProviderError = () => {
+    const err = new SupportChatProviderError('timeout');
+    Object.defineProperty(err, 'reason', { get: dirt });
+    return err;
+  };
+
+  // Passes the listed-code check on the first read and leaks on the second.
+  const flippingProviderError = () => {
+    let reads = 0;
+    const err = new SupportChatProviderError('timeout');
+    Object.defineProperty(err, 'reason', { get: () => (reads++ === 0 ? 'timeout' : dirt()) });
+    return err;
+  };
+
+  const shapes: [string, string, () => unknown][] = [
+    [
+      'a message and stack holding the secret',
+      'unexpected adapter error',
+      () => Object.assign(new Error(dirt()), { stack: `Error: ${dirt()}\n    at vendor` }),
+    ],
+    ['a reason that is a getter returning text', 'unlisted reason', getterProviderError],
+    ['a reason getter that is listed once, then leaks', 'timeout', flippingProviderError],
+    [
+      'a listed code over a six-level cause chain',
+      'timeout',
+      () => new SupportChatProviderError('timeout', { cause: deepCause(6) }),
+    ],
+    [
+      'a raw error over a six-level cause chain',
+      'unexpected adapter error',
+      () => new Error(dirt(), { cause: deepCause(6) }),
+    ],
+  ];
+
+  it.each(shapes)('token path: %s logs `%s` only', async (_shape, reason, thrown) => {
+    const { playerId, error } = await refusedToken(thrown);
+
+    expect(error).toBeInstanceOf(SupportChatUnavailableError);
+    expect(warned()).toEqual([{ playerId, reason }]);
+    expect(inspect([logged(), error], { depth: null, showHidden: true })).not.toMatch(LEAK);
+  });
+
+  it.each(shapes)('sync path: %s rethrows `%s` only', async (_shape, reason, thrown) => {
+    const { error } = await failedSync(async () => {
+      throw thrown();
+    });
+
+    expect(error).toBeInstanceOf(SupportChatSyncFailedError);
+    expect((error as Error).message).toBe(`support-chat provider failed: ${reason}`);
+    expect((error as Error).cause).toBeUndefined();
+    expect(inspect([logged(), error], { depth: null, showHidden: true })).not.toMatch(LEAK);
+  });
+});
+
+describe('SupportChatService sync path core errors (real PG)', () => {
+  it('lets a context that keeps moving surface as itself, not as an adapter failure', async () => {
+    const p = await linkedPlayer();
+    const error = await service(p.playerId, {
+      // Every write lands, then the player's name changes under it, so the re-read never settles.
+      syncCustomer: async () => {
+        await db.drizzle.db
+          .update(user)
+          .set({ username: `moved-${randomUUID()}` })
+          .where(eq(user.id, p.userId));
+      },
+    })
+      .syncCustomer(p.userId)
+      .catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(SupportContextNotSettledError);
+    expect(error).not.toBeInstanceOf(SupportChatSyncFailedError);
+    expect(inspect([logged(), error], { depth: null })).not.toContain('unexpected adapter error');
   });
 });
