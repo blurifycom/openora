@@ -1,5 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  notInArray,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import type {
@@ -13,6 +26,7 @@ import type {
 } from '@openora/core/contracts';
 import {
   makeConflictError,
+  mapConcurrent,
   moneyAdd,
   moneyCompare,
   moneyEquals,
@@ -63,6 +77,7 @@ export const RakebackClaimConflictError = makeConflictError(
 const BLOCKED_STATUSES = ['suspended', 'closed'] as const;
 const PROVIDER_NAME = 'rakeback-claim';
 const NOTIFY_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const AUTO_PAYOUT_CHECK_CONCURRENCY = 10;
 
 type RakebackPaid = RakebackCurrencyAmount & {
   /** Null on a replayed claim: the balance already moved and was already announced. */
@@ -156,13 +171,10 @@ export class RakebackClaimService {
           or(inArray(player.status, ['closed', 'self_excluded']), eq(user.rgBlocked, true)),
         ),
       );
-    const due: Uuid[] = [];
-    for (const row of rows) {
-      if (await this.dueOn(row.userId, row.status)) {
-        due.push(row.userId);
-      }
-    }
-    return due;
+    const due = await mapConcurrent(rows, AUTO_PAYOUT_CHECK_CONCURRENCY, (row) =>
+      this.dueOn(row.userId, row.status),
+    );
+    return rows.filter((_, index) => due[index]).map((row) => row.userId);
   }
 
   private async isDue(tx: DrizzleTx, userId: Uuid): Promise<boolean> {
@@ -199,9 +211,16 @@ export class RakebackClaimService {
       .selectDistinct({ userId: promoRakebackAccrual.userId })
       .from(promoRakebackAccrual)
       .innerJoin(promoPlayerRank, eq(promoPlayerRank.userId, promoRakebackAccrual.userId))
+      .innerJoin(player, eq(player.userId, promoRakebackAccrual.userId))
+      .innerJoin(user, eq(user.id, promoRakebackAccrual.userId))
       .where(
         and(
           eq(promoRakebackAccrual.status, 'accrued'),
+          notInArray(player.status, [...BLOCKED_STATUSES, 'self_excluded']),
+          or(
+            eq(user.rgBlocked, false),
+            and(isNotNull(user.rgBlockedUntil), lte(user.rgBlockedUntil, now)),
+          ),
           or(
             isNull(promoPlayerRank.lastClaimableNotifiedAt),
             lt(promoPlayerRank.lastClaimableNotifiedAt, cutoff),

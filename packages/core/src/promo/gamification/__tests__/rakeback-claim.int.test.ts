@@ -599,6 +599,29 @@ describe('the claimable-rakeback reminder', () => {
       [{ userId, amount: '1.000000000000000000', currency: 'USDT' }],
     ]);
   });
+
+  it('leaves a blocked player out until the block lifts, without waiting for new rakeback', async () => {
+    const coolingOff = await newPlayer();
+    const suspended = await newPlayer('suspended');
+    for (const userId of [coolingOff, suspended]) {
+      await rankFor(userId);
+      await accrue(userId, '5');
+    }
+    await db.drizzle.db
+      .update(user)
+      .set({ rgBlocked: true, rgBlockedUntil: new Date('2026-10-05T00:00:00Z') })
+      .where(eq(user.id, coolingOff));
+    const announce = vi.fn();
+
+    await claimsWith('1').notifyClaimable(announce, new Date('2026-10-01T10:00:00Z'));
+    expect(isRestricted).not.toHaveBeenCalled();
+
+    await claimsWith('1').notifyClaimable(announce, new Date('2026-10-05T10:00:00Z'));
+
+    expect(announce.mock.calls).toEqual([
+      [{ userId: coolingOff, amount: '5.000000000000000000', currency: 'USDT' }],
+    ]);
+  });
 });
 
 describe('an admin voiding unclaimed rakeback', () => {
