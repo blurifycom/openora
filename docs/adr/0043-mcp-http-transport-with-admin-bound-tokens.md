@@ -168,7 +168,11 @@ Rejected alternatives:
   > is checked after the hourly issue limit has counted the attempt and before the issuing
   > transaction opens; a refusal answers `reauthentication_required` (422),
   > `reauthentication_failed` or `reauthentication_locked` (403) and is audited as a denied MCP
-  > access.
+  > access. Two limits of that: a TOTP code just used to sign in is accepted again within its
+  > 30-second step, so "fresh" holds only to the step; and since every attempt counts, a stolen
+  > session gets `perHour` (10 by default) password guesses an hour, and an admin who mistypes
+  > that many times cannot issue until the hour has passed. Wrong passwords do not feed the
+  > two-factor lockout.
 
 - Issuance holds the token-table lock from its permission and session checks to its commit, so
   issues run one at a time, wait for a bulk revocation or grant change in flight, and briefly
