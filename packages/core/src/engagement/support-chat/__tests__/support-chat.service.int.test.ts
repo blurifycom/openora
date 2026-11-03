@@ -251,7 +251,28 @@ describe('SupportChatService adapter error shapes (real PG)', () => {
     return err;
   };
 
+  // Reading the reason throws an error that carries the secret.
+  const throwingReasonError = () => {
+    const err = new SupportChatProviderError('timeout');
+    Object.defineProperty(err, 'reason', {
+      get: () => {
+        throw new Error(dirt());
+      },
+    });
+    return err;
+  };
+
+  // Even `instanceof` throws on it: the prototype lookup is a trap.
+  const throwingPrototypeProxy = () =>
+    new Proxy(new SupportChatProviderError('timeout'), {
+      getPrototypeOf: () => {
+        throw new Error(dirt());
+      },
+    });
+
   const shapes: [string, string, () => unknown][] = [
+    ['a reason getter that throws', 'unexpected adapter error', throwingReasonError],
+    ['a proxy whose prototype lookup throws', 'unexpected adapter error', throwingPrototypeProxy],
     [
       'a message and stack holding the secret',
       'unexpected adapter error',

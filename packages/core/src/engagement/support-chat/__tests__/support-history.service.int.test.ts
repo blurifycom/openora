@@ -116,6 +116,30 @@ describe('SupportHistoryService logging (real PG)', () => {
     );
   });
 
+  it('logs a provider error whose reason getter throws as unexpected, its secret kept out', async () => {
+    const p = await linkedPlayer();
+    const secret = `sk_live_${randomUUID()}`;
+    const thrown = new SupportHistoryProviderError('timeout');
+    Object.defineProperty(thrown, 'reason', {
+      get: () => {
+        throw new Error(`jane.doe@example.test ${secret}`);
+      },
+    });
+    const history = await service({
+      listTickets: async () => {
+        throw thrown;
+      },
+    }).getHistory(p.userId, false);
+
+    expect(history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(warned()).toEqual([
+      { userId: p.userId, section: 'ticket', reason: 'unexpected adapter error' },
+    ]);
+    expect(inspect([log.warn.mock.calls, history], { depth: null })).not.toMatch(
+      /jane\.doe|sk_live_/,
+    );
+  });
+
   it.each([
     'javascript:alert(1)',
     'data:text/html,<script>alert(1)</script>',

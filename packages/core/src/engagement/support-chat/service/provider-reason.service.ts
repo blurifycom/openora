@@ -11,9 +11,14 @@ import {
  * keeps its reason only when it is a listed code, since a JavaScript adapter can pass any text.
  */
 export const reasonOf = (err: unknown): string => {
-  if (!(err instanceof SupportHistoryProviderError || err instanceof SupportChatProviderError)) {
+  // A getter or a proxy trap can throw while it is read, and its error is the adapter's too.
+  try {
+    if (!(err instanceof SupportHistoryProviderError || err instanceof SupportChatProviderError)) {
+      return 'unexpected adapter error';
+    }
+    const listed = SupportHistoryFailureReasonSchema.safeParse(err.reason);
+    return listed.success ? listed.data : 'unlisted reason';
+  } catch {
     return 'unexpected adapter error';
   }
-  const listed = SupportHistoryFailureReasonSchema.safeParse(err.reason);
-  return listed.success ? listed.data : 'unlisted reason';
 };
