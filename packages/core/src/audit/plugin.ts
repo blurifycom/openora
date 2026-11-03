@@ -371,8 +371,14 @@ export async function mapEventToRecord(
     const rawActorId = p['actorId'];
     const isSystem = rawActorId === undefined || rawActorId === null;
     const isForced = !isSystem && rawActorId !== p['userId'];
-    const actorType = isSystem ? 'system' : isForced ? 'admin' : 'player';
-    const actorId = isSystem ? null : isForced ? str(rawActorId) : str(p['playerId']);
+    // An admin acting on its own account has no player row: it is recorded under its user id.
+    const ownPlayerId = typeof p['playerId'] === 'string' ? p['playerId'] : null;
+    const actorType = isSystem ? 'system' : isForced || !ownPlayerId ? 'admin' : 'player';
+    const actorId = isSystem
+      ? null
+      : isForced
+        ? str(rawActorId)
+        : (ownPlayerId ?? str(p['userId']));
     return {
       ...base,
       actorType,
