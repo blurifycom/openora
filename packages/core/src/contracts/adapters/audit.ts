@@ -123,6 +123,7 @@ type AuditEntry = {
   resourceId?: string | null;
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
+  /** Omitted: the correlation id of the context the write runs in, if any. `null` writes none. */
   correlationId?: string | null;
   result?: string | null;
 } & Partial<ClientMeta>;

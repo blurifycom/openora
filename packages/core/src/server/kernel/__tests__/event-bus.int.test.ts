@@ -7,6 +7,7 @@ import { migrate } from '@openora/core/server/migrate';
 import { mock } from '../../../testing/mock.js';
 import { RedisStreamsBroker } from '../redis-streams-broker.js';
 import { createEventBus, type EventBus } from '../event-bus.js';
+import { withCorrelationId } from '../request-context.js';
 import { DrizzleOutboxWriter } from '../../db/outbox/writer.js';
 import { DrizzleProcessedEventLog } from '../../db/outbox/processed-events.js';
 import { OutboxRelay } from '../../db/outbox/relay.js';
@@ -290,6 +291,35 @@ describe('createEventBus over Redis Streams', () => {
     expect(await relay.drainOnce()).toBe(1);
 
     await vi.waitFor(() => expect(received).toEqual([committed]), DELIVERY);
+  });
+
+  it('carries the emitting context correlation id through emit and through the outbox', async () => {
+    const { bus, serviceName, broker } = realBus();
+    const received: Array<EventEnvelope | undefined> = [];
+    bus.on('wallet.deposit.completed', (_payload, envelope) => {
+      received.push(envelope);
+    });
+    await waitForConsumerGroup(redis.client, {
+      stream: streamOf('wallet.deposit.completed'),
+      group: serviceName,
+    });
+    const relay = new OutboxRelay(db.drizzle.db, broker);
+
+    withCorrelationId('corr-emit', () => bus.emit('wallet.deposit.completed', deposit()));
+    await withCorrelationId('corr-outbox', () =>
+      db.drizzle.db.transaction((tx) =>
+        bus.emitInTransaction(tx, 'wallet.deposit.completed', deposit()),
+      ),
+    );
+    bus.emit('wallet.deposit.completed', deposit());
+    expect(await relay.drainOnce()).toBe(1);
+
+    await vi.waitFor(() => expect(received).toHaveLength(3), DELIVERY);
+    expect(received.map((envelope) => envelope?.correlationId).sort()).toEqual([
+      'corr-emit',
+      'corr-outbox',
+      undefined,
+    ]);
   });
 
   it('applies schema defaults to a legacy backlog payload before the handler runs', async () => {
