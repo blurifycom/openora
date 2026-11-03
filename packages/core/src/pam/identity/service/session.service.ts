@@ -286,7 +286,11 @@ export class SessionService {
       });
     } catch (err) {
       failure = err;
-      ended = await expireActiveSessions(this.drizzle.db, userId);
+      try {
+        ended = await expireActiveSessions(this.drizzle.db, userId);
+      } catch (fallbackErr) {
+        throw new AggregateError([err, fallbackErr], 'Password reset could not end the sessions.');
+      }
     }
     if (ended > 0) {
       this.events.emit('identity.sessions.revoked_all', {

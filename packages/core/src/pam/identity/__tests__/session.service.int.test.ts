@@ -357,6 +357,32 @@ describe('SessionService.endSessionsAfterPasswordReset', () => {
     );
   });
 
+  it('keeps the revocation failure when ending the sessions on their own fails too', async () => {
+    const { tokens, audit } = makeMcpTokenService();
+    audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
+    const update = vi.spyOn(db.drizzle.db, 'update').mockImplementationOnce(() => {
+      throw new Error('database down');
+    });
+    const events = makeEventBus();
+    const admin = await seedUser(db, { role: 'admin' });
+    await seedSession(admin.id);
+
+    try {
+      const failure = await service(tokens, events)
+        .endSessionsAfterPasswordReset(admin.id, META)
+        .catch((err: unknown) => err);
+
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors.map((err: Error) => err.message)).toEqual([
+        'audit store unavailable',
+        'database down',
+      ]);
+      expect(events.emit).not.toHaveBeenCalled();
+    } finally {
+      update.mockRestore();
+    }
+  });
+
   it('signs nothing out when the account had no live session', async () => {
     const { port } = makeMcpTokenRevocation();
     const events = makeEventBus();
