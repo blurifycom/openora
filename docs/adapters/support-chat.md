@@ -35,12 +35,15 @@ strict, so a field reaches the vendor only when it is added to the contract on p
   as someone else.
 - **Answer the token in the port's shape.** Core validates it; a missing access token, a
   non-positive lifetime or anything else malformed answers the player as unavailable.
-- **Throw the port's provider error on a refusal, an unreachable vendor or an unexpected
-  answer,** with a short reason. The reason goes to the log only; the player gets a fixed
-  "unavailable" refusal. Never put a token, a request body or an unmasked email in it, and do
-  not attach a raw HTTP error as its `cause`: it can carry headers and bodies. Any other error
-  that escapes the adapter is handled the same way, but core keeps only its class name as the
-  reason, so throwing the provider error is what leaves a useful reason in the log.
+- **Throw the port's provider error with a listed reason code** on a refusal, an unreachable
+  vendor or an unexpected answer. The codes are the six in `SUPPORT_HISTORY_FAILURE_REASONS`
+  (`unauthorized`, `rate_limited`, `timeout`, `unavailable`, `not_found`, `bad_response`), as
+  [Support history](#support-history) describes them, never free text. The code goes to the log,
+  and for a failed sync to the job queue and the error reporter, and nowhere else; the player
+  gets a fixed "unavailable" refusal. A JavaScript adapter can still pass any text; core logs it
+  as `unlisted reason`. Any other error that escapes the adapter is logged as
+  `unexpected adapter error`, nothing of it kept, not even its name. The vendor's own error may
+  ride along as `cause`: core never reads, logs, reports or rethrows it.
 - **Make the context sync idempotent.** The same context may be written more than once, and two
   syncs for one player may run at once. Core re-reads the context after each write and writes
   again when it moved, so the last write converges on the database's latest state; the adapter

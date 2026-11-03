@@ -5,12 +5,13 @@ import {
   SupportChatProviderError,
   type SupportChatProvider,
   type SupportCustomerContext,
+  type SupportHistoryFailureReason,
 } from '@openora/core/contracts';
 
 export type TestSupportChatSync = { customerId: string; context: SupportCustomerContext };
 
 type NextTokenAnswer =
-  | { kind: 'fail'; reason: string }
+  | { kind: 'fail'; reason: SupportHistoryFailureReason }
   | { kind: 'throw'; error: Error }
   | { kind: 'malformed' }
   | { kind: 'customer'; customerId: string };
@@ -49,7 +50,7 @@ export const resetSupportChat = () => {
  * The next `issueCustomerToken` throws a provider error carrying `reason`, or, given an
  * `Error`, throws that error as is - an adapter that let a raw client error escape.
  */
-export const failNextSupportChatToken = (reason: string | Error) => {
+export const failNextSupportChatToken = (reason: SupportHistoryFailureReason | Error) => {
   state().nextTokenAnswer =
     typeof reason === 'string' ? { kind: 'fail', reason } : { kind: 'throw', error: reason };
 };
@@ -144,7 +145,7 @@ export default {
             }
             return (async () => {
               if (s.failSyncs) {
-                throw new SupportChatProviderError('test vendor write refused');
+                throw new SupportChatProviderError('unavailable');
               }
               const held = s.heldSync?.customerId === customerId ? s.heldSync : null;
               if (held) {

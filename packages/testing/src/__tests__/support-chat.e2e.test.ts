@@ -26,7 +26,7 @@ import {
 } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { rgExclusion } from '@openora/core/compliance/schema';
-import { SupportChatService } from '@openora/core/engagement/server';
+import { SupportChatService, SupportChatSyncFailedError } from '@openora/core/engagement/server';
 import { supportChatCustomer } from '@openora/core/engagement/schema/support-chat';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
@@ -333,7 +333,7 @@ describe('POST /support-chat/session', () => {
   });
 
   it.each([
-    ['refuses', () => failNextSupportChatToken('vendor said no')],
+    ['refuses', () => failNextSupportChatToken('rate_limited')],
     ['answers a malformed token', () => malformNextSupportChatToken()],
   ])(
     'answers a generic 503 when the vendor %s, then serves the next call',
@@ -345,7 +345,7 @@ describe('POST /support-chat/session', () => {
       const error = await body(refused);
       expect(error['message']).toBe('Support chat is unavailable');
       expect(error['data']).toBeUndefined();
-      expect(JSON.stringify(error)).not.toContain('vendor said no');
+      expect(JSON.stringify(error)).not.toContain('rate_limited');
       expect(await linkRows(playerId)).toHaveLength(0);
 
       expect((await client.post(SESSION)).status).toBe(200);
@@ -359,34 +359,46 @@ describe('POST /support-chat/session', () => {
     expect((await client.post(SESSION)).status).toBe(503);
   });
 
-  it('keeps a raw adapter error and its vendor secret out of the response and the error reporter', async () => {
+  it('keeps a raw adapter error, an unlisted reason and their vendor secret out of the response and the error reporter', async () => {
+    const email = 'jane.doe@example.test';
     const secret = `sk_live_${randomUUID()}`;
-    const rawClientError = () =>
-      Object.assign(new Error(`POST https://vendor.example/customers?key=${secret} failed`), {
-        config: { headers: { Authorization: `Bearer ${secret}` } },
-      });
+    const leaks = [
+      // A raw client error, its writable name included.
+      () =>
+        Object.assign(new Error(`POST https://vendor.example/customers?key=${secret} failed`), {
+          name: `${email} ${secret}`,
+          config: { headers: { Authorization: `Bearer ${secret}` } },
+        }),
+      // A provider error whose reason a JavaScript adapter filled past the listed codes.
+      () => Reflect.construct(SupportChatProviderError, [`${email} ${secret}`]) as Error,
+    ];
     const reported: { error: unknown; context: unknown }[] = [];
     setErrorReporter((error, context) => reported.push({ error, context }));
     try {
-      const p = await newPlayer();
-      failNextSupportChatToken(rawClientError());
-      const refused = await p.client.post(SESSION);
-      expect(refused.status).toBe(503);
-      expect(await refused.text()).not.toContain(secret);
+      for (const leak of leaks) {
+        reported.length = 0;
+        const p = await newPlayer();
+        failNextSupportChatToken(leak());
+        const refused = await p.client.post(SESSION);
+        expect(refused.status).toBe(503);
+        expect(await refused.text()).not.toMatch(/jane\.doe|sk_live_/);
 
-      failSupportChatSyncs(rawClientError());
-      await openSession(p.client);
-      await enqueueSync(p.userId);
-      const deadLetter = await vi.waitFor(() => {
-        const found = reported.find(({ context }) => inspect(context).includes(SYNC_QUEUE));
-        if (!found) {
-          throw new Error('sync dead-letter not reported yet');
-        }
-        return found;
-      }, WAIT);
-      expect(deadLetter.error).toBeInstanceOf(SupportChatProviderError);
-      expect((deadLetter.error as Error).cause).toBeUndefined();
-      expect(inspect(reported, { depth: null })).not.toContain(secret);
+        failSupportChatSyncs(leak());
+        await openSession(p.client);
+        await enqueueSync(p.userId);
+        const deadLetter = await vi.waitFor(() => {
+          const found = reported.find(({ context }) => inspect(context).includes(SYNC_QUEUE));
+          if (!found) {
+            throw new Error('sync dead-letter not reported yet');
+          }
+          return found;
+        }, WAIT);
+        expect(deadLetter.error).toBeInstanceOf(SupportChatSyncFailedError);
+        expect((deadLetter.error as Error).name).toBe('SupportChatSyncFailedError');
+        expect((deadLetter.error as Error).cause).toBeUndefined();
+        expect(inspect(reported, { depth: null })).not.toMatch(/jane\.doe|sk_live_/);
+        failSupportChatSyncs(false);
+      }
     } finally {
       setErrorReporter(undefined);
     }
@@ -472,7 +484,9 @@ describe('POST /support-chat/session', () => {
         }
         return found;
       }, WAIT);
-      expect(gaveUp.error).toBeInstanceOf(SupportChatProviderError);
+      expect(gaveUp.error).toBeInstanceOf(SupportChatSyncFailedError);
+      expect((gaveUp.error as Error).message).toBe('support-chat provider failed: unavailable');
+      expect((gaveUp.error as Error).cause).toBeUndefined();
       expect(gaveUp.context).toMatchObject({ extra: { userId: p.userId } });
       const sent = inspect(gaveUp, { depth: null });
       expect(sent).not.toContain(p.email);

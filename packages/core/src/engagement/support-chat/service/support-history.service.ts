@@ -5,9 +5,7 @@ import {
   TimestampSchema,
   SUPPORT_CHAT_STATUSES,
   SUPPORT_TICKET_STATUSES,
-  SupportHistoryFailureReasonSchema,
   SupportHistoryItemSchema,
-  SupportHistoryProviderError,
   type CacheAdapter,
   type SupportHistoryEmailWindow,
   type SupportHistoryItem,
@@ -17,6 +15,7 @@ import { auditLog } from '@openora/core/audit/schema';
 import { user, type User } from '@openora/core/pam/schema/identity';
 import { player, type Player } from '@openora/core/pam/schema/profile';
 import { supportChatCustomer } from '../schema/index.js';
+import { reasonOf } from './provider-reason.service.js';
 import { SupportChatPlayerNotFoundError } from './support-chat.service.js';
 
 const logger = createLogger('support-chat');
@@ -178,18 +177,6 @@ export function boundFirstWindow(
     broken: true,
   };
 }
-
-// An adapter may throw anything, such as an HTTP client error holding the vendor API key or an
-// email, in its message or even its writable `name`: nothing of it survives. A provider error keeps
-// its reason only when it is a listed code, since a JavaScript adapter can pass any text.
-const reasonOf = (err: unknown): string => {
-  if (!(err instanceof SupportHistoryProviderError)) {
-    return 'unexpected adapter error';
-  }
-  return SupportHistoryFailureReasonSchema.safeParse(err.reason).success
-    ? err.reason
-    : 'unlisted reason';
-};
 
 // The change time the event carried, when it is a valid timestamp; rows from before it fall back
 // to their write time.
