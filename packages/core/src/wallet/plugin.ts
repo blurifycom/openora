@@ -261,6 +261,7 @@ export default {
         depositAdmission: c.has(DEPOSIT_ADMISSION_POLICY)
           ? c.get(DEPOSIT_ADMISSION_POLICY)
           : undefined,
+        playEligibility: c.get(PLAY_ELIGIBILITY),
         grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
         bonusLifecycle: c.has(BONUS_LIFECYCLE) ? c.get(BONUS_LIFECYCLE) : undefined,
       }));

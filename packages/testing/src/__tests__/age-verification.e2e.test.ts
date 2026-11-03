@@ -204,4 +204,24 @@ describe('KYC verified date of birth', () => {
     expect(await statusOf(userId)).toBe('active');
     expect((await depositUsd(client)).status).toBe(200);
   });
+
+  it('refuses a deposit to a suspended player whose session has not been revoked yet', async () => {
+    const { client, userId } = await newPlayer('suspended-session');
+    await app.container
+      .get(DRIZZLE)
+      .db.update(player)
+      .set({ status: 'suspended' })
+      .where(eq(player.userId, userId));
+
+    for (const refused of [
+      await client.post('/wallet/deposits/address', { currency: 'USD' }),
+      await depositUsd(client),
+    ]) {
+      expect(refused.status).toBe(403);
+      expect(await readJson(refused)).toMatchObject({
+        code: 'FORBIDDEN',
+        data: { reason: 'account_suspended' },
+      });
+    }
+  });
 });

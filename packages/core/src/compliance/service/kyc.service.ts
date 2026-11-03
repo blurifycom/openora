@@ -462,7 +462,8 @@ export class KycVerificationService {
    * one that differs from the player's declared date of birth emits
    * `compliance.kyc.dob_mismatch_detected`. Both only on a decision that changed a row. A
    * date that is not an ISO date or datetime turns a vendor `approved` into
-   * `resubmission_requested`.
+   * `resubmission_requested`. A row rejected as `underage` takes no later vendor decision;
+   * only a staff override moves it.
    *
    * `opts.receivedAt` (when the caller has it - the `kyc-decision-sync` job path always
    * does, stamped at webhook-arrival time in the router, BEFORE the job queue can
@@ -527,10 +528,12 @@ export class KycVerificationService {
         const reasonFromThisReconcile = gated.reason ?? opts.reason;
         const decisionReason = reasonFromThisReconcile ?? row.decisionReason;
 
+        const heldUnderage = row.status === 'rejected' && row.decisionReason === UNDERAGE_REASON;
         if (
-          row.status === status &&
-          row.decidedAt &&
-          (!dob.underage || row.decisionReason === UNDERAGE_REASON)
+          heldUnderage ||
+          (row.status === status &&
+            row.decidedAt &&
+            (!dob.underage || row.decisionReason === UNDERAGE_REASON))
         ) {
           reconciled.push({
             row,

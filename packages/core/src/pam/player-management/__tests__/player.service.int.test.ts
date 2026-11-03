@@ -236,6 +236,21 @@ describe('PlayerService.suspendBySystem (real PG)', () => {
     expect(sessionCommands.revokeAll).toHaveBeenCalledWith(account.id);
   });
 
+  it('keeps a self-excluded player self-excluded and still revokes every session', async () => {
+    const { svc, events, sessionCommands } = makeService();
+    const { account, player: seeded } = await seedPlayerWithUser();
+    await db.drizzle.db
+      .update(player)
+      .set({ status: 'self_excluded' })
+      .where(eq(player.id, seeded.id));
+
+    await svc.suspendBySystem(account.id);
+
+    expect(await rowById(seeded.id)).toMatchObject({ status: 'self_excluded' });
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+    expect(sessionCommands.revokeAll).toHaveBeenCalledWith(account.id);
+  });
+
   it('throws for a user with no player yet, so the event is redelivered', async () => {
     const { svc, events, sessionCommands } = makeService();
 

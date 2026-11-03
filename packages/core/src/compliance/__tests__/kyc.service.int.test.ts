@@ -480,6 +480,28 @@ describe('KycVerificationService.reconcile - vendor date of birth (real PG)', ()
     expect(events.emitInTransaction).not.toHaveBeenCalled();
   });
 
+  it('keeps an under-age rejection when a later decision carries no date of birth', async () => {
+    const { svc, events, statusWriter, adapterResult } = makeService({
+      adapter: { status: 'pending' },
+      identityReader: readerWith(null),
+    });
+    await svc.submit(randomUUID(), passportSubmission);
+    await svc.reconcile(adapterResult.referenceId, 'approved', {
+      dateOfBirth: '2015-06-01',
+      receivedAt: new Date(Date.now() + 1_000),
+    });
+    vi.mocked(events.emitInTransaction).mockClear();
+    vi.mocked(statusWriter.setStatus).mockClear();
+
+    const later = await svc.reconcile(adapterResult.referenceId, 'approved', {
+      receivedAt: new Date(Date.now() + 2_000),
+    });
+
+    expect(later).toMatchObject({ status: 'rejected', decisionReason: 'underage' });
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+  });
+
   it('emits dob_mismatch_detected when an adult verified date differs from the declared one', async () => {
     const { svc, events, adapterResult } = makeService({
       adapter: { status: 'pending' },
