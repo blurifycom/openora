@@ -172,7 +172,9 @@ Rejected alternatives:
   > 30-second step, so "fresh" holds only to the step; and since every attempt counts, a stolen
   > session gets `perHour` (10 by default) password guesses an hour, and an admin who mistypes
   > that many times cannot issue until the hour has passed. Wrong passwords do not feed the
-  > two-factor lockout.
+  > two-factor lockout. A backup code is not accepted, as on the other re-authenticated flows:
+  > it is for recovering sign-in, so an admin who lost their authenticator has their second
+  > factor reset before issuing a token.
 
 - Issuance holds the token-table lock from its permission and session checks to its commit, so
   issues run one at a time, wait for a bulk revocation or grant change in flight, and briefly
