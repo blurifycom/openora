@@ -16,10 +16,12 @@ import {
   type TestDb,
 } from '../index.js';
 import {
+  answerNextSupportChatTokenRaw,
   failNextSupportChatToken,
   failSupportChatSyncs,
+  readSupportChatCalls,
   resetSupportChat,
-  setSupportChatSyncDelay,
+  setSupportChatSyncHook,
 } from '../test-support-chat-plugin.js';
 
 const pluginPath = fileURLToPath(new URL('../test-support-chat-plugin.ts', import.meta.url));
@@ -28,9 +30,6 @@ const SESSION = '/support-chat/session';
 const SYNC_QUEUE = 'support-chat.sync-customer';
 const EMAIL = 'jane.doe@example.test';
 const LEAK = /jane\.doe|sk_live_/;
-const REDIS_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6380';
-// The databases `bootTestApp` hands out (see redis.ts).
-const APP_DATABASES = [8, 9, 10, 11, 12, 13, 14, 15];
 
 let db: TestDb;
 let testApp: TestApp;
@@ -44,8 +43,8 @@ beforeAll(async () => {
 }, 60_000);
 
 afterEach(() => {
-  setSupportChatSyncDelay(0);
   failSupportChatSyncs(false);
+  setSupportChatSyncHook(null);
   setErrorReporter(undefined);
 });
 
@@ -89,31 +88,29 @@ const shapes: [string, () => Error][] = [
   ['a raw error over a six-level cause chain', () => new Error(dirt(), { cause: deepCause(6) })],
 ];
 
-/** Everything BullMQ keeps of the sync jobs, read from the test Redis databases. */
+/** Everything BullMQ keeps of the sync jobs, read from this app's own Redis database. */
 async function storedJobs(): Promise<string> {
   const stored: unknown[] = [];
-  for (const database of APP_DATABASES) {
-    const redis = createClient({ url: REDIS_URL, database });
-    redis.on('error', () => undefined);
-    await redis.connect();
-    try {
-      for await (const keys of redis.scanIterator({ MATCH: `bull:${SYNC_QUEUE}:*`, COUNT: 200 })) {
-        for (const key of keys) {
-          if ((await redis.type(key)) === 'hash') {
-            stored.push(await redis.hGetAll(key));
-          }
+  const redis = createClient({ url: testApp.redisUrl });
+  redis.on('error', () => undefined);
+  await redis.connect();
+  try {
+    for await (const keys of redis.scanIterator({ MATCH: `bull:${SYNC_QUEUE}:*`, COUNT: 200 })) {
+      for (const key of keys) {
+        if ((await redis.type(key)) === 'hash') {
+          stored.push(await redis.hGetAll(key));
         }
       }
-    } finally {
-      redis.destroy();
     }
+  } finally {
+    redis.destroy();
   }
   return inspect(stored, { depth: null });
 }
 
 describe('support chat adapter failures that leak vendor text', () => {
   it.each(shapes)(
-    'answers the player a generic 503 and logs nothing of %s',
+    'answers the player a generic 503 with nothing of %s in the response',
     async (_shape, thrown) => {
       const p = await registerAndMaterializePlayer(testApp, {
         email: `leak-${randomUUID()}@e2e.test`,
@@ -127,6 +124,29 @@ describe('support chat adapter failures that leak vendor text', () => {
       expect(text).not.toMatch(LEAK);
     },
   );
+
+  it('answers the player a generic 503 when a token answer field throws on read', async () => {
+    const reported: { error: unknown; context: unknown }[] = [];
+    setErrorReporter((error, context) => reported.push({ error, context }));
+    const p = await registerAndMaterializePlayer(testApp, {
+      email: `leak-${randomUUID()}@e2e.test`,
+    });
+    answerNextSupportChatTokenRaw({
+      customerId: `customer-${randomUUID()}`,
+      tokenType: 'Bearer',
+      expiresInMs: 60_000,
+      get accessToken(): string {
+        throw new Error(dirt());
+      },
+    });
+    const refused = await p.client.post(SESSION);
+    const text = await refused.text();
+
+    expect(refused.status).toBe(503);
+    expect(JSON.parse(text)).toMatchObject({ message: 'Support chat is unavailable' });
+    expect(text).not.toMatch(LEAK);
+    expect(inspect(reported, { depth: null, showHidden: true })).not.toMatch(LEAK);
+  });
 
   it.each(shapes)(
     'keeps %s out of the error reporter and the stored job after a sync gives up',
@@ -168,35 +188,33 @@ describe('support chat sync failures that are not the adapter', () => {
       email: `leak-${randomUUID()}@e2e.test`,
     });
     expect((await p.client.post(SESSION)).status).toBe(200);
-    // The player's name moves while each write is in flight, so the re-read never settles.
-    setSupportChatSyncDelay(40);
-    const mover = setInterval(() => {
-      // A drizzle query only runs once it is awaited or `then`ed.
-      void Promise.resolve(
-        testApp.container
-          .get(DRIZZLE)
-          .db.update(user)
-          .set({ username: `moved-${randomUUID()}` })
-          .where(eq(user.id, p.userId)),
-      );
-    }, 5);
-    try {
+    // The link's own sync lands first, so only the job below meets the moving name.
+    await vi.waitFor(
+      () =>
+        expect(readSupportChatCalls().syncs.some((s) => s.context.userId === p.userId)).toBe(true),
+      WAIT,
+    );
+    // Every write lands, then the player's name changes under it, so the re-read never settles.
+    setSupportChatSyncHook(async () => {
       await testApp.container
-        .get(JOB_QUEUE)
-        .enqueue(queue(SYNC_QUEUE), { userId: p.userId }, { attempts: 1 });
-      const deadLetter = await vi.waitFor(() => {
-        const found = reported.find(({ context }) => inspect(context).includes(SYNC_QUEUE));
-        if (!found) {
-          throw new Error('sync dead-letter not reported yet');
-        }
-        return found;
-      }, WAIT);
+        .get(DRIZZLE)
+        .db.update(user)
+        .set({ username: `moved-${randomUUID()}` })
+        .where(eq(user.id, p.userId));
+    });
+    await testApp.container
+      .get(JOB_QUEUE)
+      .enqueue(queue(SYNC_QUEUE), { userId: p.userId }, { attempts: 1 });
+    const deadLetter = await vi.waitFor(() => {
+      const found = reported.find(({ context }) => inspect(context).includes(SYNC_QUEUE));
+      if (!found) {
+        throw new Error('sync dead-letter not reported yet');
+      }
+      return found;
+    }, WAIT);
 
-      expect(deadLetter.error).not.toBeInstanceOf(SupportChatSyncFailedError);
-      expect((deadLetter.error as Error).name).toBe('SupportContextNotSettledError');
-      expect((deadLetter.error as Error).message).toMatch(/still changing/);
-    } finally {
-      clearInterval(mover);
-    }
+    expect(deadLetter.error).not.toBeInstanceOf(SupportChatSyncFailedError);
+    expect((deadLetter.error as Error).name).toBe('SupportContextNotSettledError');
+    expect((deadLetter.error as Error).message).toMatch(/still changing/);
   });
 });

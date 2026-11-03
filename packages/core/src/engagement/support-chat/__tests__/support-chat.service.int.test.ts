@@ -195,6 +195,28 @@ describe('SupportChatService token path logging (real PG)', () => {
   });
 });
 
+describe('SupportChatService token answer (real PG)', () => {
+  it('refuses a token answer whose field getter throws as malformed, its secret kept out', async () => {
+    const p = await linkedPlayer();
+    const error = await service(p.playerId, {
+      issueCustomerToken: async () => ({
+        customerId: `customer-${randomUUID()}`,
+        tokenType: 'Bearer',
+        expiresInMs: 60_000,
+        get accessToken(): string {
+          throw new Error(`${EMAIL} ${secret()}`);
+        },
+      }),
+    })
+      .openSession(p.userId, NO_CLIENT_META)
+      .catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(SupportChatUnavailableError);
+    expect(warned()).toEqual([{ playerId: p.playerId, reason: 'malformed token answer' }]);
+    expect(inspect([logged(), error], { depth: null, showHidden: true })).not.toMatch(LEAK);
+  });
+});
+
 describe('SupportChatService sync path errors (real PG)', () => {
   it.each([
     ['a provider error with an unlisted reason and name', 'unlisted reason', leakingProviderError],

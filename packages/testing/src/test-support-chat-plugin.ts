@@ -3,6 +3,7 @@ import { type CoreTokenCatalog, type Plugin } from '@openora/core/server';
 import {
   SUPPORT_CHAT_PROVIDER,
   SupportChatProviderError,
+  type SupportChatCustomerToken,
   type SupportChatProvider,
   type SupportCustomerContext,
   type SupportHistoryFailureReason,
@@ -14,6 +15,7 @@ type NextTokenAnswer =
   | { kind: 'fail'; reason: SupportHistoryFailureReason }
   | { kind: 'throw'; error: Error }
   | { kind: 'malformed' }
+  | { kind: 'raw'; answer: unknown }
   | { kind: 'customer'; customerId: string };
 
 type SupportChatState = {
@@ -24,6 +26,7 @@ type SupportChatState = {
   failSyncs: boolean | Error;
   syncAttempts: string[];
   heldSync: { customerId: string; reached: () => void; released: Promise<void> } | null;
+  syncHook: ((customerId: string) => Promise<void>) | null;
 };
 
 // On the process, not the module: the app loads this file as a separate module instance from
@@ -38,6 +41,7 @@ const freshState = (): SupportChatState => ({
   failSyncs: false,
   syncAttempts: [],
   heldSync: null,
+  syncHook: null,
 });
 const state = (): SupportChatState => (holder[STATE] ??= freshState());
 
@@ -60,6 +64,11 @@ export const malformNextSupportChatToken = () => {
   state().nextTokenAnswer = { kind: 'malformed' };
 };
 
+/** The next `issueCustomerToken` answers `answer` as is, whatever its shape. */
+export const answerNextSupportChatTokenRaw = (answer: unknown) => {
+  state().nextTokenAnswer = { kind: 'raw', answer };
+};
+
 /** The next `issueCustomerToken` answers a token for `customerId`, whatever was asked. */
 export const answerNextSupportChatTokenWith = (customerId: string) => {
   state().nextTokenAnswer = { kind: 'customer', customerId };
@@ -77,6 +86,11 @@ export const setSupportChatSyncDelay = (ms: number) => {
  */
 export const failSupportChatSyncs = (on: boolean | Error) => {
   state().failSyncs = on;
+};
+
+/** Runs inside every `syncCustomer` before it lands, until set back to null. */
+export const setSupportChatSyncHook = (hook: ((customerId: string) => Promise<void>) | null) => {
+  state().syncHook = hook;
 };
 
 /** How many `syncCustomer` calls `customerId` has had so far, landed or failed. */
@@ -126,6 +140,9 @@ export default {
             if (next?.kind === 'throw') {
               throw next.error;
             }
+            if (next?.kind === 'raw') {
+              return next.answer as SupportChatCustomerToken;
+            }
             const customerId =
               next?.kind === 'customer'
                 ? next.customerId
@@ -153,6 +170,7 @@ export default {
                 held.reached();
                 await held.released;
               }
+              await s.syncHook?.(customerId);
               if (s.syncDelayMs > 0) {
                 await new Promise((resolve) => setTimeout(resolve, s.syncDelayMs));
               }

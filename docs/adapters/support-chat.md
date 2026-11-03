@@ -42,8 +42,8 @@ strict, so a field reaches the vendor only when it is added to the contract on p
   and for a failed sync to the job queue and the error reporter, and nowhere else; the player
   gets a fixed "unavailable" refusal. A JavaScript adapter can still pass any text; core logs it
   as `unlisted reason`. Any other error that escapes the adapter is logged as
-  `unexpected adapter error`, nothing of it kept, not even its name. The vendor's own error may
-  ride along as `cause`: core never reads, logs, reports or rethrows it.
+  `unexpected adapter error`, nothing of it kept, not even its name. It may carry the original
+  error as `cause`; core never reads, logs, reports or rethrows it.
 - **Make the context sync idempotent.** The same context may be written more than once, and two
   syncs for one player may run at once. Core re-reads the context after each write and writes
   again when it moved, so the last write converges on the database's latest state; the adapter
@@ -175,8 +175,8 @@ What a reader must guarantee:
   URL starting `https://`: an http, `javascript:` or `data:` link, or a slash-less `https:` form
   a browser would resolve against the back office's own origin, makes the section unavailable.
 - **Errors carry a listed reason code.** Throw the port's support-history provider error with one
-  of the codes in `SUPPORT_HISTORY_FAILURE_REASONS`, never free text, and do not attach a raw HTTP
-  error as its `cause`:
+  of the codes in `SUPPORT_HISTORY_FAILURE_REASONS`, never free text. It may carry the original
+  error as `cause`; core never reads, logs, reports or rethrows it.
   - `unauthorized`: the vendor refused the credentials.
   - `rate_limited`: the vendor throttled the call.
   - `timeout`: the vendor did not answer in time.

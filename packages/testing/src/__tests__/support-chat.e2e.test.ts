@@ -10,7 +10,6 @@ import {
   PLAYER_ACCOUNT_MANAGER_READER,
   RG_EXCLUSION_READER,
   SUPPORT_CHAT_PROVIDER,
-  SupportChatProviderError,
   SupportCustomerContextSchema,
   WAGER_TRACKING,
   WALLET_READER,
@@ -359,46 +358,34 @@ describe('POST /support-chat/session', () => {
     expect((await client.post(SESSION)).status).toBe(503);
   });
 
-  it('keeps a raw adapter error, an unlisted reason and their vendor secret out of the response and the error reporter', async () => {
-    const email = 'jane.doe@example.test';
+  it('keeps a raw adapter error and its vendor secret out of the response and the error reporter', async () => {
     const secret = `sk_live_${randomUUID()}`;
-    const leaks = [
-      // A raw client error, its writable name included.
-      () =>
-        Object.assign(new Error(`POST https://vendor.example/customers?key=${secret} failed`), {
-          name: `${email} ${secret}`,
-          config: { headers: { Authorization: `Bearer ${secret}` } },
-        }),
-      // A provider error whose reason a JavaScript adapter filled past the listed codes.
-      () => Reflect.construct(SupportChatProviderError, [`${email} ${secret}`]) as Error,
-    ];
+    const rawClientError = () =>
+      Object.assign(new Error(`POST https://vendor.example/customers?key=${secret} failed`), {
+        config: { headers: { Authorization: `Bearer ${secret}` } },
+      });
     const reported: { error: unknown; context: unknown }[] = [];
     setErrorReporter((error, context) => reported.push({ error, context }));
     try {
-      for (const leak of leaks) {
-        reported.length = 0;
-        const p = await newPlayer();
-        failNextSupportChatToken(leak());
-        const refused = await p.client.post(SESSION);
-        expect(refused.status).toBe(503);
-        expect(await refused.text()).not.toMatch(/jane\.doe|sk_live_/);
+      const p = await newPlayer();
+      failNextSupportChatToken(rawClientError());
+      const refused = await p.client.post(SESSION);
+      expect(refused.status).toBe(503);
+      expect(await refused.text()).not.toContain(secret);
 
-        failSupportChatSyncs(leak());
-        await openSession(p.client);
-        await enqueueSync(p.userId);
-        const deadLetter = await vi.waitFor(() => {
-          const found = reported.find(({ context }) => inspect(context).includes(SYNC_QUEUE));
-          if (!found) {
-            throw new Error('sync dead-letter not reported yet');
-          }
-          return found;
-        }, WAIT);
-        expect(deadLetter.error).toBeInstanceOf(SupportChatSyncFailedError);
-        expect((deadLetter.error as Error).name).toBe('SupportChatSyncFailedError');
-        expect((deadLetter.error as Error).cause).toBeUndefined();
-        expect(inspect(reported, { depth: null })).not.toMatch(/jane\.doe|sk_live_/);
-        failSupportChatSyncs(false);
-      }
+      failSupportChatSyncs(rawClientError());
+      await openSession(p.client);
+      await enqueueSync(p.userId);
+      const deadLetter = await vi.waitFor(() => {
+        const found = reported.find(({ context }) => inspect(context).includes(SYNC_QUEUE));
+        if (!found) {
+          throw new Error('sync dead-letter not reported yet');
+        }
+        return found;
+      }, WAIT);
+      expect(deadLetter.error).toBeInstanceOf(SupportChatSyncFailedError);
+      expect((deadLetter.error as Error).cause).toBeUndefined();
+      expect(inspect(reported, { depth: null })).not.toContain(secret);
     } finally {
       setErrorReporter(undefined);
     }

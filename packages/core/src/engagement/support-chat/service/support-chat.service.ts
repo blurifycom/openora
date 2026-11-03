@@ -25,7 +25,7 @@ import { user, type User } from '@openora/core/pam/schema/identity';
 import { player, type Player } from '@openora/core/pam/schema/profile';
 import { promoPlayerRank, promoRankTier } from '@openora/core/promo/schema/gamification';
 import { supportChatCustomer, type SupportChatCustomer } from '../schema/index.js';
-import { reasonOf } from './provider-reason.service.js';
+import { reasonOf, type ProviderFailureReason } from './provider-reason.service.js';
 
 const logger = createLogger('support-chat');
 
@@ -84,7 +84,7 @@ export function toSupportCustomerContext(
 
 // What the job queue and the error reporter see of a failed vendor write: the listed code only,
 // never the adapter's error or its `cause`.
-export const SupportChatSyncFailedError = createDomainError<[reason: string]>(
+export const SupportChatSyncFailedError = createDomainError<[reason: ProviderFailureReason]>(
   'SupportChatSyncFailedError',
   (reason) => `support-chat provider failed: ${reason}`,
 );
@@ -316,7 +316,12 @@ export class SupportChatService {
     playerId: Player['id'],
     customerId?: SupportChatCustomer['providerCustomerId'],
   ): Promise<SupportChatCustomerToken> {
-    const refuse = (reason: string) => {
+    const refuse = (
+      reason:
+        | ProviderFailureReason
+        | 'malformed token answer'
+        | 'token answered for another customer',
+    ) => {
       logger.warn({ playerId, reason }, 'support-chat customer token not issued');
       return new SupportChatUnavailableError();
     };
@@ -326,7 +331,13 @@ export class SupportChatService {
     } catch (err) {
       throw refuse(reasonOf(err));
     }
-    const parsed = SupportChatCustomerTokenSchema.safeParse(answer);
+    // safeParse rethrows what a getter on the answer throws, which is the adapter's text too.
+    let parsed: ReturnType<typeof SupportChatCustomerTokenSchema.safeParse>;
+    try {
+      parsed = SupportChatCustomerTokenSchema.safeParse(answer);
+    } catch {
+      throw refuse('malformed token answer');
+    }
     if (!parsed.success) {
       throw refuse('malformed token answer');
     }
