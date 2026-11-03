@@ -36,4 +36,31 @@ describe('DEFAULT_ADMIN_ROLES', () => {
 
     expect(withMcpAccess.map((role) => role.key)).toEqual(['admin']);
   });
+
+  it('holds every approval resource for the super admin alone', () => {
+    const approvals = Object.keys(statement).filter((resource) => resource.endsWith('-approval'));
+
+    expect(approvals).toEqual([
+      'kyc-override-approval',
+      'bonus-grant-approval',
+      'treasury-rebalance-approval',
+    ]);
+    const holders = DEFAULT_ADMIN_ROLES.filter((role) =>
+      approvals.some((resource) => role.matrix[resource as keyof typeof role.matrix] !== undefined),
+    );
+
+    expect(holders.map((role) => role.key)).toEqual(['super-admin']);
+  });
+
+  it.each([
+    ['kyc-override-request', ['customer-support-agent', 'support-manager', 'compliance-manager']],
+    ['bonus-grant-request', ['customer-support-agent', 'support-manager', 'vip-manager']],
+    ['treasury-rebalance-request', ['payments-manager', 'finance-accounting']],
+  ] as const)('lets only the intended roles request through %s', (resource, requesters) => {
+    const holders = DEFAULT_ADMIN_ROLES.filter(
+      (role) => !role.isSuperAdmin && role.matrix[resource] !== undefined,
+    );
+
+    expect(holders.map((role) => role.key).sort()).toEqual([...requesters].sort());
+  });
 });
