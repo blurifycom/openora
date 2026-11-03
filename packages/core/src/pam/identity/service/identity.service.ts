@@ -98,6 +98,12 @@ import {
   assertFreshReauthentication,
 } from './fresh-reauthentication.service.js';
 
+const TWO_FACTOR_PENDING_COOKIE_NAME = 'better-auth.two_factor';
+const TwoFactorVerificationResponseSchema = z.object({
+  token: z.string(),
+  user: z.object({ id: z.string() }).optional(),
+});
+
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
   for (const [key, value] of Object.entries(nodeHeaders)) {
@@ -173,15 +179,15 @@ function makeLoginIpRateLimitKey(ip: string): `login-ip:${string}` {
   return `login-ip:${ip}`;
 }
 
-// Key on the `.two_factor` cookie VALUE, never the raw Cookie header: an attacker can
-// otherwise churn the rate-limit key each retry by appending unrelated cookie pairs.
+// Read only Better Auth's pending-cookie VALUE, never a similarly suffixed cookie or the
+// raw Cookie header: unrelated cookie pairs must not change the challenge identity.
 function twoFactorPendingCookieValue(headers: Headers): string | undefined {
   const cookieHeader = headers.get('cookie');
   if (!cookieHeader) {
     return undefined;
   }
   for (const [name, value] of parseCookies(cookieHeader)) {
-    if (name.endsWith('.two_factor')) {
+    if (name === TWO_FACTOR_PENDING_COOKIE_NAME) {
       return value;
     }
   }
@@ -1840,6 +1846,21 @@ export class IdentityService {
       });
     }
     await ensureOk(res);
+    if (!sessionUserId) {
+      const verification = TwoFactorVerificationResponseSchema.safeParse(
+        await res
+          .clone()
+          .json()
+          .catch(() => undefined),
+      );
+      if (!verification.success) {
+        throw new ORPCError('UNAUTHORIZED', { message: 'Invalid two-factor challenge' });
+      }
+      if (!challengedUserId || verification.data.user?.id !== challengedUserId) {
+        await this.drizzle.db.delete(session).where(eq(session.token, verification.data.token));
+        throw new ORPCError('UNAUTHORIZED', { message: 'Invalid two-factor challenge' });
+      }
+    }
     // The challenge proves the password as it stood when the pending login began. An account
     // deactivated or blocked since then must not get a session by completing it, so the gate
     // runs here, on the session better-auth just minted, before its cookie is forwarded.
