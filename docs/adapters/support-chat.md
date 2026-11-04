@@ -138,9 +138,10 @@ Core works out which identities belong to the player and hands them to the reade
   created with (`registered_email`; null on accounts created before it existed). When the walk back
   ends without a break on a different email, compared case-insensitively, a first change was lost:
   the trail counts as broken and has no registration window.
-- **Another account's changes bound the oldest window.** On an account without a recorded
-  registration email, a lost first change would leave the next email taken as held from
-  registration, over the time another account held it. When the trail is intact and its oldest
+- **Another account's changes bound the oldest window.** On every account, recorded registration
+  email or not, a lost first change would otherwise leave the next email taken as held from
+  registration, over the time another account held it; on accounts with a recorded registration
+  email this check backs up the one above. When the trail is intact and its oldest
   window starts at registration, core looks for another account's email change naming that
   address, compared case-insensitively, after registration and before the window closes. The
   latest one decides: another account leaving the address opens the window then, and another
@@ -152,8 +153,8 @@ Core works out which identities belong to the player and hands them to the reade
   lost first change stays unseen when the other account's change of that address was lost too, or
   the address was freed another way, such as the account being deleted. A lost run of changes
   returning to the address it left (A to B recorded, B to C and C to B lost, B to D recorded) also
-  leaves a trail that looks consistent, so B's window spans the gap. A change time later than the real change by no more than its audit write's own delay plus the
-  5-second margin also goes unseen: a fast clock with a delayed or redelivered write, or a legacy
+  leaves a trail that looks consistent, so B's window spans the gap. A change time later than the
+  real change by no more than its audit write's own delay plus the 5-second margin also goes unseen: a fast clock with a delayed or redelivered write, or a legacy
   row timed by its write. It widens the earlier email's window by that much. A clock running behind
   goes unseen for as long as each time it stamps is still later than every earlier one, shifting the
   bounds by the lag.

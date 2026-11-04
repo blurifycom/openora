@@ -70,8 +70,6 @@ describe('buildEmailWindows against corrupted audit trails', () => {
         }
       }
 
-      // Every other account records the email it registered with; without it a lost first change
-      // cannot be noticed.
       const registeredEmail = trial % 2 === 0 ? email(0) : null;
       if (
         registeredEmail === null &&

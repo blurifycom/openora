@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { ORPCError } from '@orpc/server';
+import type { DrizzleTx } from '@openora/core/server';
 import {
   createTestDb,
   createTestRedis,
@@ -52,6 +53,7 @@ const {
   confirmEmailChangeMock,
   changePasswordMock,
   capturedAuthOptions,
+  authTx,
 } = vi.hoisted(() => ({
   signInEmailMock: vi.fn(),
   verifyTotpMock: vi.fn(),
@@ -70,6 +72,7 @@ const {
   requestEmailChangeMock: vi.fn(),
   confirmEmailChangeMock: vi.fn(),
   changePasswordMock: vi.fn(),
+  authTx: { current: undefined as DrizzleTx | undefined },
   capturedAuthOptions: {
     current: undefined as
       | {
@@ -82,8 +85,10 @@ const {
 
 vi.mock('@openora/core/server', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  // better-auth is doubled below, so there is no better-auth write to enlist in the transaction.
-  runInAuthTransaction: (_auth: unknown, _schema: unknown, _tx: unknown, fn: () => unknown) => fn(),
+  runInAuthTransaction: (tx: DrizzleTx, _deps: unknown, fn: () => unknown) => {
+    authTx.current = tx;
+    return fn();
+  },
   createAuth: vi.fn((options) => {
     capturedAuthOptions.current = options;
     return {
@@ -2200,6 +2205,38 @@ describe('IdentityService security controls', () => {
       'identity.security.login_withdrawal_alerts.updated',
       expect.anything(),
     );
+  });
+
+  it('rolls the swap back when better-auth answers an error after swapping the address', async () => {
+    const account = await seedUser({ emailVerified: true });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    confirmEmailChangeMock.mockImplementation(async () => {
+      await authTx
+        .current!.update(user)
+        .set({ email: 'swapped-then-refused@test.dev' })
+        .where(eq(user.id, account.id));
+      return jsonResponse({ message: 'after hook failed' }, 500);
+    });
+    const events = makeEventBus();
+    const audit = makeAuditWriter();
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => undefined),
+      toUser: vi.fn(async () => undefined),
+    });
+    const svc = buildService({ events, audit, mailDispatch });
+
+    await expect(
+      svc.confirmEmailChange(
+        { newEmail: 'swapped-then-refused@test.dev', otp: '123456' },
+        {},
+        new Headers(),
+      ),
+    ).rejects.toThrow();
+
+    expect((await readUser(account.id))?.email).toBe(EMAIL);
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+    expect(mailDispatch.toAddress).not.toHaveBeenCalled();
   });
 
   it('carries the caller anti-phishing code on the emailChanged notice to the old address', async () => {

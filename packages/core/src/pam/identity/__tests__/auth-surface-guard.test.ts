@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { GEO_CHECK_COMMANDS, KYC_ADAPTER, MAIL_DISPATCH } from '@openora/core/contracts';
 import { Container, loadPlugins } from '@openora/core/server';
 import { mock } from '../../../testing/mock.js';
+import identityPlugin from '../plugin.js';
 
 const pluginPath = fileURLToPath(new URL('../plugin.ts', import.meta.url));
 const auditPluginPath = fileURLToPath(new URL('../../../audit/plugin.ts', import.meta.url));
@@ -45,5 +46,11 @@ describe('identity auth-surface boot guard', () => {
 
     expect(() => factory?.(container as never)).not.toThrow(/country gate/);
     expect(container.has(KYC_ADAPTER)).toBe(true);
+  });
+});
+
+describe('identity plugin dependencies', () => {
+  it('loads after audit, whose writer the email change appends to', () => {
+    expect(identityPlugin.dependsOn).toContain('audit');
   });
 });

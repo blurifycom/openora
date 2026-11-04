@@ -236,7 +236,6 @@ describe('registration email verification', () => {
     const registeredEmail = email.toLowerCase();
     expect(await stored()).toEqual({ email: registeredEmail, registeredEmail });
 
-    // A sign-up on the taken address, in another case, leaves the row alone.
     expect((await submitRegistration(app, { email: email.toUpperCase() })).status).toBe(200);
     expect(await stored()).toEqual({ email: registeredEmail, registeredEmail });
 

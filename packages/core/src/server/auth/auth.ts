@@ -239,13 +239,15 @@ export type Auth = BetterAuthType;
  * Runs `fn` - better-auth `auth.api` calls - with every better-auth write inside the caller's
  * Drizzle transaction `tx`, so they commit or roll back with the caller's own rows. better-auth
  * after-hooks queued inside run when `fn` returns, before `tx` commits; none that matters here
- * (`user.update.after`) is configured. `runWithTransaction` is a better-auth internal, which is
- * why `@better-auth/core` is pinned to the exact `better-auth` version.
+ * (`user.update.after`) is configured. `runWithTransaction` is a better-auth internal: the exact
+ * `better-auth` / `@better-auth/core` 1.6.22 pin and the email-change E2E fault and single-txid
+ * tests are the gate for upgrading either.
+ *
+ * @internal
  */
 export async function runInAuthTransaction<T>(
-  auth: Auth,
-  schema: Record<string, unknown>,
   tx: DrizzleTx,
+  { auth, schema }: { auth: Auth; schema: Record<string, unknown> },
   fn: () => Promise<T>,
 ): Promise<T> {
   const adapter = drizzleAdapter(tx, { provider: 'pg', schema })(auth.options);

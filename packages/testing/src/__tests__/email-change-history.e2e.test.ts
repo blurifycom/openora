@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { and, eq, like, sql } from 'drizzle-orm';
-import { DRIZZLE, eventOutbox, processedEvents } from '@openora/core/server';
+import { DRIZZLE, eventOutbox, loadExtensions, processedEvents } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import { auditLog } from '@openora/core/audit/schema';
 import {
+  asAdmin,
   registerAndMaterializePlayer,
   capturedEmailsFor,
   waitForEmail,
@@ -14,19 +16,37 @@ import {
   bootE2e,
   closeE2e,
 } from '../index.js';
+import { readSupportHistoryCalls, resetSupportHistory } from '../test-support-history-plugin.js';
+
+const historyPluginPath = fileURLToPath(
+  new URL('../test-support-history-plugin.ts', import.meta.url),
+);
 
 let db: TestDb;
 let app: TestApp;
+let admin: TestClient;
 
 const PASSWORD = 'password1234';
 const CONFIRM_SUBJECT = 'Confirm your new email address';
 const CHANGED_SUBJECT = 'Your email address was changed';
+const AUTH_TABLES = ['"user"', 'session', 'account', 'verification', 'two_factor'];
 
 const drizzle = () => app.container.get(DRIZZLE).db;
+const exec = (statement: string) => drizzle().execute(sql.raw(statement));
 
 beforeAll(async () => {
-  ({ db, app } = await bootE2e());
+  ({ db, app } = await bootE2e({
+    plugins: [
+      ...(await loadExtensions()),
+      { id: 'testing-support-history', path: historyPluginPath },
+    ],
+  }));
+  admin = await asAdmin(app.app);
 }, 60_000);
+
+beforeEach(() => {
+  resetSupportHistory();
+});
 
 afterAll(async () => {
   await closeE2e({ app, db });
@@ -41,10 +61,15 @@ const newPlayer = async () => {
   return { email, client, userId, playerId };
 };
 
-const emailOf = async (userId: string) => {
-  const [row] = await drizzle().select({ email: user.email }).from(user).where(eq(user.id, userId));
-  return row?.email;
+const userRow = async (userId: string) => {
+  const [row] = await drizzle()
+    .select({ email: user.email, registeredEmail: user.registeredEmail })
+    .from(user)
+    .where(eq(user.id, userId));
+  return row;
 };
+
+const emailOf = async (userId: string) => (await userRow(userId))?.email;
 
 const auditRows = (playerId: string) =>
   drizzle()
@@ -69,7 +94,6 @@ const outboxRows = (userId: string) =>
       ),
     );
 
-/** Asks for a change to `newEmail` and returns the code mailed to it. */
 const requestChange = async (client: TestClient, newEmail: string) => {
   const requested = await client.post('/identity/email/change/request', {
     newEmail,
@@ -87,30 +111,33 @@ const requestChange = async (client: TestClient, newEmail: string) => {
 const confirm = (client: TestClient, newEmail: string, otp: string) =>
   client.post('/identity/email/change/confirm', { newEmail, otp });
 
-/**
- * Makes every insert into `table` that `when` matches raise, for the length of `run`. The trigger
- * lives in this file's own test database only and is dropped whatever `run` does.
- */
-async function failingInsertsInto(table: string, when: string, run: () => Promise<void>) {
-  const name = `fail_${table}_${randomUUID().replaceAll('-', '')}`;
-  await drizzle().execute(
-    sql.raw(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN
-        IF ${when} THEN RAISE EXCEPTION 'injected failure'; END IF;
-        RETURN NEW;
-      END $$`),
-  );
-  await drizzle().execute(
-    sql.raw(`CREATE TRIGGER ${name} BEFORE INSERT ON ${table}
-      FOR EACH ROW EXECUTE FUNCTION ${name}()`),
-  );
+async function withTriggers(
+  tables: readonly string[],
+  { events, body }: { events: string; body: string },
+  run: () => Promise<void>,
+) {
+  const name = `probe_${randomUUID().replaceAll('-', '')}`;
+  await exec(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN ${body} RETURN COALESCE(NEW, OLD); END $$`);
   try {
+    for (const table of tables) {
+      await exec(
+        `CREATE TRIGGER ${name} BEFORE ${events} ON ${table} FOR EACH ROW EXECUTE FUNCTION ${name}()`,
+      );
+    }
     await run();
   } finally {
-    await drizzle().execute(sql.raw(`DROP TRIGGER IF EXISTS ${name} ON ${table}`));
-    await drizzle().execute(sql.raw(`DROP FUNCTION IF EXISTS ${name}()`));
+    for (const table of tables) {
+      await exec(`DROP TRIGGER IF EXISTS ${name} ON ${table}`);
+    }
+    await exec(`DROP FUNCTION IF EXISTS ${name}()`);
   }
 }
+
+const failing = (when: string) => ({
+  events: 'INSERT',
+  body: `IF ${when} THEN RAISE EXCEPTION 'injected failure'; END IF;`,
+});
 
 describe('email change history', () => {
   it('commits the audit row and the outbox event with the swap, and the relay adds no second row', async () => {
@@ -121,9 +148,7 @@ describe('email change history', () => {
     const confirmed = await confirm(p.client, newEmail, otp);
 
     expect(confirmed.status).toBe(200);
-    // Read as the response returns, not waited for: the row is written with the change.
-    const rows = await auditRows(p.playerId);
-    expect(rows).toEqual([
+    expect(await auditRows(p.playerId)).toEqual([
       {
         id: expect.any(String),
         before: { email: p.email },
@@ -137,7 +162,6 @@ describe('email change history', () => {
       newEmail,
       auditRecorded: true,
     });
-    // The audit subscriber handles the relayed event and skips it.
     const eventId = events[0]!.eventId;
     await vi.waitFor(
       async () => {
@@ -157,6 +181,44 @@ describe('email change history', () => {
     expect(await auditRows(p.playerId)).toHaveLength(1);
   });
 
+  it('writes every row of the change in the one transaction that appends its audit row', async () => {
+    const p = await newPlayer();
+    const newEmail = `email-history-txid-${randomUUID()}@e2e.test`;
+    const otp = await requestChange(p.client, newEmail);
+    await exec(
+      `CREATE TABLE IF NOT EXISTS tx_probe (id bigserial PRIMARY KEY, tbl text, op text, txid bigint, pid int)`,
+    );
+    await exec(`TRUNCATE tx_probe`);
+    let probe: { tbl: string; op: string; txid: string; pid: number }[] = [];
+
+    await withTriggers(
+      [...AUTH_TABLES, 'audit_log', 'event_outbox'],
+      {
+        events: 'INSERT OR UPDATE OR DELETE',
+        body: `INSERT INTO tx_probe(tbl, op, txid, pid) VALUES (TG_TABLE_NAME, TG_OP, txid_current(), pg_backend_pid());`,
+      },
+      async () => {
+        expect((await confirm(p.client, newEmail, otp)).status).toBe(200);
+        probe = (await exec(`SELECT tbl, op, txid, pid FROM tx_probe ORDER BY id`))
+          .rows as typeof probe;
+      },
+    );
+
+    const audit = probe.find((r) => r.tbl === 'audit_log');
+    const outboxInsert = probe.findIndex((r) => r.tbl === 'event_outbox' && r.op === 'INSERT');
+    expect(audit).toBeDefined();
+    for (const r of probe.slice(0, outboxInsert + 1)) {
+      expect({ write: `${r.tbl}:${r.op}`, txid: r.txid, pid: r.pid }).toEqual({
+        write: `${r.tbl}:${r.op}`,
+        txid: audit?.txid,
+        pid: audit?.pid,
+      });
+    }
+    expect(probe.slice(0, outboxInsert + 1).map((r) => `${r.tbl}:${r.op}`)).toEqual(
+      expect.arrayContaining(['user:UPDATE', 'audit_log:INSERT', 'event_outbox:INSERT']),
+    );
+  });
+
   it.each([
     ['audit row', 'audit_log', `NEW.action = 'identity.email.changed'`],
     ['outbox event', 'event_outbox', `NEW.topic = 'identity.email.changed'`],
@@ -167,7 +229,7 @@ describe('email change history', () => {
       const newEmail = `email-history-fault-${randomUUID()}@e2e.test`;
       const otp = await requestChange(p.client, newEmail);
 
-      await failingInsertsInto(table, when, async () => {
+      await withTriggers([table], failing(when), async () => {
         const failed = await confirm(p.client, newEmail, otp);
         expect(failed.status).toBe(500);
         expect(await failed.text()).not.toContain('injected');
@@ -176,7 +238,6 @@ describe('email change history', () => {
       expect(await emailOf(p.userId)).toBe(p.email);
       expect(await auditRows(p.playerId)).toHaveLength(0);
       expect(await outboxRows(p.userId)).toHaveLength(0);
-      // Sessions are revoked only after a committed change; this one still works.
       expect((await p.client.get('/identity/2fa/status')).status).toBe(200);
 
       const retried = await confirm(p.client, newEmail, otp);
@@ -185,7 +246,6 @@ describe('email change history', () => {
       expect(await emailOf(p.userId)).toBe(newEmail);
       expect(await auditRows(p.playerId)).toHaveLength(1);
       expect(await outboxRows(p.userId)).toHaveLength(1);
-      // The failed attempt sent no notice: the old inbox gets exactly the one for the retry.
       await waitForEmail(p.email, (m) => m.subject === CHANGED_SUBJECT);
       expect(capturedEmailsFor(p.email).filter((m) => m.subject === CHANGED_SUBJECT)).toHaveLength(
         1,
@@ -193,8 +253,20 @@ describe('email change history', () => {
     },
   );
 
-  // Each refused guess commits its count: were it rolled back with the swap, the right code
-  // would still be accepted here.
+  it('keeps the committed change, its audit row and outbox event when the session revocation after it fails', async () => {
+    const p = await newPlayer();
+    const newEmail = `email-history-revoke-${randomUUID()}@e2e.test`;
+    const otp = await requestChange(p.client, newEmail);
+
+    await withTriggers(['session'], { ...failing('true'), events: 'UPDATE' }, async () => {
+      await confirm(p.client, newEmail, otp);
+    });
+
+    expect(await emailOf(p.userId)).toBe(newEmail);
+    expect(await auditRows(p.playerId)).toHaveLength(1);
+    expect(await outboxRows(p.userId)).toHaveLength(1);
+  });
+
   it('keeps the wrong-code count across attempts, so the right code is refused after three misses', async () => {
     const p = await newPlayer();
     const newEmail = `email-history-guess-${randomUUID()}@e2e.test`;
@@ -209,6 +281,22 @@ describe('email change history', () => {
     expect(refused.status).toBe(400);
     expect(await emailOf(p.userId)).toBe(p.email);
     expect(await auditRows(p.playerId)).toHaveLength(0);
+  });
+
+  it('changes nothing when another account took the new address between request and confirm', async () => {
+    const p = await newPlayer();
+    const taken = await newPlayer();
+    const newEmail = `email-history-taken-${randomUUID()}@e2e.test`;
+    const otp = await requestChange(p.client, newEmail);
+    await drizzle().update(user).set({ email: newEmail }).where(eq(user.id, taken.userId));
+
+    const res = await confirm(p.client, newEmail, otp);
+
+    expect(res.status).toBe(400);
+    expect(await emailOf(p.userId)).toBe(p.email);
+    expect(await emailOf(taken.userId)).toBe(newEmail);
+    expect(await auditRows(p.playerId)).toHaveLength(0);
+    expect(await outboxRows(p.userId)).toHaveLength(0);
   });
 
   it('refuses a confirmation without a session', async () => {
@@ -266,12 +354,35 @@ describe('email change history', () => {
       confirm(p.client, second, secondOtp),
     ]);
 
-    const won = answers.findIndex((r) => r.status === 200);
     expect(answers.filter((r) => r.status === 200)).toHaveLength(1);
-    const winner = won === 0 ? first : second;
+    const winner = answers.findIndex((r) => r.status === 200) === 0 ? first : second;
     expect(await emailOf(p.userId)).toBe(winner);
     const rows = await auditRows(p.playerId);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.after).toMatchObject({ email: winner });
+  });
+
+  it('keeps the support history of an account without a registered email as before, also after a change', async () => {
+    const p = await newPlayer();
+    await drizzle().update(user).set({ registeredEmail: null }).where(eq(user.id, p.userId));
+    const history = (query: string) =>
+      admin.get(`/support-chat/admin/players/${p.userId}/history${query}`);
+
+    expect((await history('')).status).toBe(200);
+    expect(readSupportHistoryCalls().listTickets[0]?.windows).toEqual([
+      { email: p.email, from: expect.any(String), to: null },
+    ]);
+    resetSupportHistory();
+    const newEmail = `email-history-null-${randomUUID()}@e2e.test`;
+    expect(
+      (await confirm(p.client, newEmail, await requestChange(p.client, newEmail))).status,
+    ).toBe(200);
+
+    expect((await userRow(p.userId))?.registeredEmail).toBeNull();
+    expect((await history('?includeResolved=true')).status).toBe(200);
+    expect(readSupportHistoryCalls().listTickets[0]?.windows).toEqual([
+      { email: p.email, from: expect.any(String), to: expect.any(String) },
+      { email: newEmail, from: expect.any(String), to: null },
+    ]);
   });
 });

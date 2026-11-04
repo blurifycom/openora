@@ -46,7 +46,6 @@ describe('buildEmailWindows against corrupted change times', () => {
 
       const result = buildEmailWindows({
         currentEmail: email(count),
-        // The trail is whole, so the email registered with never changes the answer.
         registeredEmail: trial % 2 === 0 ? email(0) : null,
         registeredAt: REGISTERED,
         changes: days.map((d, i) => ({

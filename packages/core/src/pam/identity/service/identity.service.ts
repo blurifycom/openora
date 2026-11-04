@@ -302,11 +302,14 @@ type ExtendedAuthApi = {
 
 const SUCCESS = { success: true as const };
 
-// The tables better-auth's drizzle adapter maps its models onto.
 const AUTH_SCHEMA = { user, session, account, verification, twoFactor };
 
 export const UserNotFoundError = makeNotFoundError('User');
 export const UsernameConflictError = makeConflictError('Username', 'Username is already in use');
+const EmailChangeWithoutHistoryError = createDomainError<[]>(
+  'EmailChangeWithoutHistoryError',
+  () => 'The email change was refused after the address was swapped',
+);
 export const AvatarHostNotAllowedError = createDomainError<[]>(
   'AvatarHostNotAllowedError',
   () => 'Avatar URL is not on an allowed host or URL prefix',
@@ -488,7 +491,6 @@ function computeLockoutState({
 export type IdentityServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
-  // Appends the email-change audit row inside the swap's own transaction.
   audit: AuditWritePort;
   identityReader: IdentityReader;
   mailDispatch?: MailDispatchPort;
@@ -2844,10 +2846,9 @@ export class IdentityService {
       await assertRateLimit(this.limiter, `confirm-email-change-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
     }
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
-    const changedAt = new Date().toISOString();
-    const { res, before } = await this.drizzle.db.transaction(async (tx) => {
-      // The row lock queues a concurrent confirm for this account behind this one, so it
-      // reads the committed swap rather than the address this one replaced.
+    const { res, before, changedAt } = await this.drizzle.db.transaction(async (tx) => {
+      // FOR NO KEY UPDATE conflicts with itself, so a concurrent confirm for this account reads
+      // the committed swap.
       const before = findOneOrThrow(
         await tx
           .select({
@@ -2859,10 +2860,11 @@ export class IdentityService {
           })
           .from(user)
           .where(eq(user.id, userId))
-          .for('update'),
+          .for('no key update'),
         new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' }),
       );
-      const res = await runInAuthTransaction(this.auth, AUTH_SCHEMA, tx, () =>
+      const changedAt = new Date().toISOString();
+      const res = await runInAuthTransaction(tx, { auth: this.auth, schema: AUTH_SCHEMA }, () =>
         this.api.changeEmailEmailOTP({
           body: { newEmail: input.newEmail, otp: input.otp },
           headers,
@@ -2872,7 +2874,16 @@ export class IdentityService {
       // A refused code commits too: better-auth's attempt count and expired-code delete
       // must persist, or every retry would start a fresh guess budget.
       if (!res.ok) {
-        return { res, before };
+        const [after] = await tx
+          .select({ email: user.email })
+          .from(user)
+          .where(eq(user.id, userId));
+        // better-auth can answer an error after it swapped the row (a later hook or step); the
+        // swap must then roll back rather than commit without its audit row.
+        if (after?.email !== before.email) {
+          throw new EmailChangeWithoutHistoryError();
+        }
+        return { res, before, changedAt };
       }
       await this.audit.recordInTransaction(tx, {
         actorType: playerId ? 'player' : 'admin',
@@ -2896,7 +2907,7 @@ export class IdentityService {
         userAgent,
         auditRecorded: true,
       });
-      return { res, before };
+      return { res, before, changedAt };
     });
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
     this.forwardCookies(res, resHeaders);

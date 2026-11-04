@@ -56,10 +56,7 @@ type Row = {
   action?: string;
 };
 
-/**
- * A player whose current email is `account.email`; `name('a')` is another address of theirs.
- * `registeredEmail` is the email the account recorded at sign-up, resolved like a row's email.
- */
+/** A player whose current email is `account.email`; `name('a')` is another address of theirs. */
 async function scenario(rows: Row[], { registeredEmail }: { registeredEmail?: string } = {}) {
   const { account, player } = await seedPlayerWithUser(db);
   const [registered] = await db.drizzle.db

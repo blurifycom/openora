@@ -76,7 +76,7 @@ function reportUnsafeAuthSurface(message: string): void {
 function assertAuthSurfaceGuards(c: IdentityContainer): void {
   if (!c.has(GEO_CHECK_COMMANDS)) {
     reportUnsafeAuthSurface(
-      'identity mounts its sign-in, phone-login and 2FA routes but GEO_CHECK_COMMANDS is unbound, so the country gate is a silent no-op on registration and sign-in and writes no access-blocked audit row. Load the compliance module in this process, or load identity service-only (SERVICE_MANIFEST=identity:no-routes) so it serves no auth route.',
+      'identity mounts its sign-in, phone-login and 2FA routes but GEO_CHECK_COMMANDS is unbound, so the country gate is a silent no-op on registration and sign-in and writes no access-blocked audit row. Load the compliance module in this process, or load identity service-only (SERVICE_MANIFEST=audit:no-routes,identity:no-routes) so it serves no auth route.',
     );
   }
 }
@@ -149,7 +149,6 @@ function makeAdminSecurity(c: IdentityContainer) {
 
 export default {
   id: 'identity',
-  // The email change appends its audit row through AUDIT_WRITER inside its own transaction.
   dependsOn: ['audit'],
   requiresPorts: [MAIL_DISPATCH],
   register(ctx) {
