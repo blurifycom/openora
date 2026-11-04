@@ -3,6 +3,15 @@
 **Date**: 2026-10-28
 **Status**: Accepted
 
+> **Update (2026-11-04)**: a sportsbook bet now earns rakeback when it settles other than void,
+> through `recordSettledWager`, rather than when its stake is reserved, so a rejected, cancelled
+> or voided bet earns nothing. Each bet pays once: the instant credit is keyed to the bet, and an
+> accrual is not written again while the bet has an accrued, claimed or voided one. A reopen
+> reverses an unclaimed accrual through the new `reopenSettledWager`, and paid rakeback still
+> stays final. Under `margin` a sportsbook bet pays nothing, since it carries no `rtp`. Under
+> `instant`, a bet reserved before this change was paid at reserve without a key to the bet, so
+> its settle pays again; an operator counting sportsbook settles its open bets before upgrading.
+
 ## Context
 
 Rank rakeback paid a percentage of every qualifying own-money stake, credited with the bet. Two

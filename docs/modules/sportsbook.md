@@ -293,8 +293,8 @@ nothing else, so the provider may retry it or treat it as final.
   max-bet-checks them. They always count toward responsible-gambling spend. Rank level counts
   them as the operator's rank setting says. Rakeback and the rank challenge leave them out by
   default, until the operator adds them; a ladder upgraded from before those lists existed counts
-  every product, sportsbook included. A race counts a cash stake once, when the bet settles, not
-  at reserve. A provider promotion is not a bonus-funded stake: a
+  every product, sportsbook included. A race and rakeback count a cash stake once, when the bet
+  settles, not at reserve, and rakeback skips a void. A provider promotion is not a bonus-funded stake: a
   promotion-paid stake writes no debit, so it is no wager, no spend and no rank, streak or race progress, and its
   payout never reduces a player's measured loss. Reopening it, and an offset or collect of the debt
   that left, land in its own round and are not netted either. A cash bet's shortfall nets in that
