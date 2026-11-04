@@ -19,6 +19,9 @@ import {
   McpTokenLimitError,
   McpTokenNotFoundError,
   McpTokenOwnerIneligibleError,
+  McpTokenReauthenticationFailedError,
+  McpTokenReauthenticationLockedError,
+  McpTokenReauthenticationRequiredError,
   McpTokenTtlError,
   McpTransportDisabledError,
 } from '../service/mcp-token.service.js';
@@ -39,10 +42,17 @@ export function createIamRouter(
     CONFLICT: [ProtectedRoleError, LastSuperAdminError],
   };
 
+  // A failed re-authentication is FORBIDDEN, never UNAUTHORIZED: clients read a 401 as an
+  // ended session and would sign the admin out over a mistyped password.
   const mcpTokenErrors = {
     NOT_FOUND: McpTokenNotFoundError,
     BAD_REQUEST: McpTokenTtlError,
-    FORBIDDEN: McpTokenOwnerIneligibleError,
+    UNPROCESSABLE_CONTENT: McpTokenReauthenticationRequiredError,
+    FORBIDDEN: [
+      McpTokenOwnerIneligibleError,
+      McpTokenReauthenticationFailedError,
+      McpTokenReauthenticationLockedError,
+    ],
     CONFLICT: [McpTransportDisabledError, McpTokenLimitError],
   };
 
@@ -144,7 +154,10 @@ export function createIamRouter(
         const caller = await adminGuard.assert(context, 'mcp-access', 'use');
         const sessionId = getSessionId(context) ?? null;
         return mapErrors(mcpTokenErrors, () =>
-          mcpTokens.create({ ...input, adminUserId: caller.userId, sessionId }, caller),
+          mcpTokens.create(
+            { ...input, adminUserId: caller.userId, sessionId, headers: context.request.headers },
+            caller,
+          ),
         );
       }),
 

@@ -322,6 +322,17 @@ export async function mapEventToRecord(
     };
   }
 
+  // A deactivated account's sign-in was refused after its credential was proven. The refused
+  // account is both actor and subject; system-driven, so outcome failure.
+  if (topic === 'identity.user.login_blocked') {
+    return {
+      ...base,
+      actorType: 'system',
+      ...identitySubject(p),
+      result: 'failure',
+    };
+  }
+
   // Player authenticated via SMS OTP. actorId = resource = the player; success outcome.
   if (topic === 'identity.user.phone_login') {
     return {
@@ -384,8 +395,14 @@ export async function mapEventToRecord(
     const rawActorId = p['actorId'];
     const isSystem = rawActorId === undefined || rawActorId === null;
     const isForced = !isSystem && rawActorId !== p['userId'];
-    const actorType = isSystem ? 'system' : isForced ? 'admin' : 'player';
-    const actorId = isSystem ? null : isForced ? str(rawActorId) : str(p['playerId']);
+    // An admin acting on its own account has no player row: it is recorded under its user id.
+    const ownPlayerId = typeof p['playerId'] === 'string' ? p['playerId'] : null;
+    const actorType = isSystem ? 'system' : isForced || !ownPlayerId ? 'admin' : 'player';
+    const actorId = isSystem
+      ? null
+      : isForced
+        ? str(rawActorId)
+        : (ownPlayerId ?? str(p['userId']));
     return {
       ...base,
       actorType,
@@ -1436,7 +1453,7 @@ export default {
       // broker redelivers it instead of the change going unaudited (ADR-0045).
       ctx.events.on(
         topic,
-        async (payload) => {
+        async (payload, envelope) => {
           if (!isRecord(payload)) {
             return;
           }
@@ -1448,7 +1465,12 @@ export default {
           if (!svcRef) {
             throw new Error(`audit record for '${topic}' skipped - service not constructed`);
           }
-          await svcRef.record(await mapEventToRecord(topic, payload));
+          const record = await mapEventToRecord(topic, payload);
+          // A bulk operation's id, when the topic maps one, outranks the emitter's correlation id.
+          await svcRef.record({
+            ...record,
+            correlationId: record.correlationId ?? envelope?.correlationId ?? null,
+          });
         },
         { consumerGroup: AUDIT_CONSUMER_GROUP },
       );

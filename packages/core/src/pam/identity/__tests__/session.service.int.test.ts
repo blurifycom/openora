@@ -15,6 +15,7 @@ import {
   makeAuditWriter,
   makeEventBus,
   makeIdentityReader,
+  makeFreshReauthentication,
   makeRateLimiter,
   mock,
 } from '../../../testing/mock.js';
@@ -47,6 +48,7 @@ function makeMcpTokenService() {
     audit,
     events: makeEventBus(),
     rateLimiter: makeRateLimiter(),
+    reauthentication: makeFreshReauthentication(),
     config: McpTransportConfigSchema.parse({}),
   });
   return { tokens, audit, revokeAllForUser: vi.spyOn(tokens, 'revokeAllForUser') };
@@ -202,9 +204,10 @@ describe('SessionService', () => {
     expect(active.items.map((s) => s.id)).not.toContain(idled.id);
   });
 
-  it('does not idle out an admin session, which has no auto-logout window of its own', async () => {
+  it('lists a staff session only inside its fixed 30-minute idle window', async () => {
     const admin = await seedUser(db, { role: 'admin' });
-    const target = await seedSession(admin.id, { lastSeenAt: minutesAgo(60 * 24 * 30) });
+    const inside = await seedSession(admin.id, { lastSeenAt: minutesAgo(29) });
+    const idled = await seedSession(admin.id, { lastSeenAt: minutesAgo(31) });
 
     const active = await service().listSessions({
       userId: admin.id,
@@ -213,7 +216,8 @@ describe('SessionService', () => {
       limit: 20,
     });
 
-    expect(active.items.map((s) => s.id)).toContain(target.id);
+    expect(active.items.map((s) => s.id)).toEqual([inside.id]);
+    expect(active.items.map((s) => s.id)).not.toContain(idled.id);
   });
 
   it('excludes an idled-out player session from the platform-wide active list', async () => {
@@ -313,6 +317,109 @@ describe('SessionService.revokeAllSessions and MCP tokens', () => {
       'identity.sessions.revoked_all',
       expect.objectContaining({ userId: player.id, ...META }),
     );
+  });
+});
+
+describe('SessionService.endSessionsAfterPasswordReset', () => {
+  it("ends an admin's sessions and revokes its tokens together, then signs its tabs out", async () => {
+    const { tokens } = makeMcpTokenService();
+    const events = makeEventBus();
+    const admin = await seedUser(db, { role: 'admin' });
+    await seedSession(admin.id);
+    const tokenId = await seedActiveToken(admin.id);
+
+    await service(tokens, events).endSessionsAfterPasswordReset(admin.id, META);
+
+    expect(await activeSessionCount(admin.id)).toBe(0);
+    expect(await revocationOf(tokenId)).toMatchObject({
+      revokedBy: admin.id,
+      revokeReason: 'sessions_revoked',
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({ userId: admin.id, actorId: admin.id, ...META }),
+    );
+  });
+
+  it('ends the sessions on their own when the revocation fails, then revokes the tokens again', async () => {
+    const { tokens, audit } = makeMcpTokenService();
+    audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
+    const events = makeEventBus();
+    const admin = await seedUser(db, { role: 'admin' });
+    await seedSession(admin.id);
+    const tokenId = await seedActiveToken(admin.id);
+
+    await service(tokens, events).endSessionsAfterPasswordReset(admin.id, META);
+
+    expect(await activeSessionCount(admin.id)).toBe(0);
+    expect(await revocationOf(tokenId)).toMatchObject({ revokeReason: 'sessions_revoked' });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({ userId: admin.id }),
+    );
+  });
+
+  it('throws both failures when the second revocation fails too, with the sessions ended', async () => {
+    const { tokens, audit } = makeMcpTokenService();
+    audit.recordManyInTransaction
+      .mockRejectedValueOnce(new Error('audit store unavailable'))
+      .mockRejectedValueOnce(new Error('still unavailable'));
+    const events = makeEventBus();
+    const admin = await seedUser(db, { role: 'admin' });
+    await seedSession(admin.id);
+    const tokenId = await seedActiveToken(admin.id);
+
+    const failure = await service(tokens, events)
+      .endSessionsAfterPasswordReset(admin.id, META)
+      .catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors.map((err: Error) => err.message)).toEqual([
+      'audit store unavailable',
+      'still unavailable',
+    ]);
+    expect(await activeSessionCount(admin.id)).toBe(0);
+    expect(await revocationOf(tokenId)).toMatchObject({ revokedAt: null });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({ userId: admin.id }),
+    );
+  });
+
+  it('keeps the revocation failure when ending the sessions on their own fails too', async () => {
+    const { tokens, audit } = makeMcpTokenService();
+    audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
+    const update = vi.spyOn(db.drizzle.db, 'update').mockImplementationOnce(() => {
+      throw new Error('database down');
+    });
+    const events = makeEventBus();
+    const admin = await seedUser(db, { role: 'admin' });
+    await seedSession(admin.id);
+
+    try {
+      const failure = await service(tokens, events)
+        .endSessionsAfterPasswordReset(admin.id, META)
+        .catch((err: unknown) => err);
+
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors.map((err: Error) => err.message)).toEqual([
+        'audit store unavailable',
+        'database down',
+      ]);
+      expect(events.emit).not.toHaveBeenCalled();
+    } finally {
+      update.mockRestore();
+    }
+  });
+
+  it('signs nothing out when the account had no live session', async () => {
+    const { port } = makeMcpTokenRevocation();
+    const events = makeEventBus();
+    const admin = await seedUser(db, { role: 'admin' });
+
+    await service(port, events).endSessionsAfterPasswordReset(admin.id, META);
+
+    expect(events.emit).not.toHaveBeenCalled();
   });
 });
 

@@ -158,12 +158,39 @@ Rejected alternatives:
   an admin who holds several tokens can exceed them in total.
 - Issuing a token needs a session with the MCP permission but no fresh second factor. A step-up
   needs a cross-module port into identity and a Backoffice flow, and is left to a later change.
+
+  > **Update (2026-11-02)**: the step-up exists. Issuing a token takes the admin's current
+  > password, and a fresh second-factor code when the account has one enrolled, so a hijacked
+  > Backoffice session cannot mint a bearer that outlives it. iam asks identity through the
+  > `FRESH_REAUTHENTICATION` port, which answers a verdict rather than throwing: identity reads
+  > the second-factor lock before the password, so a locked account is no password oracle, and
+  > counts a wrong code towards the same lockout as its other re-authenticated flows. The proof
+  > is checked after the hourly issue limit has counted the attempt and before the issuing
+  > transaction opens; a refusal answers `reauthentication_required` (422),
+  > `reauthentication_failed` or `reauthentication_locked` (403) and is audited as a denied MCP
+  > access. Two limits of that: a TOTP code just used to sign in is accepted again within its
+  > 30-second step, so "fresh" holds only to the step; and since every attempt counts, a stolen
+  > session gets `perHour` (10 by default) password guesses an hour, and an admin who mistypes
+  > that many times cannot issue until the hour has passed. Wrong passwords do not feed the
+  > two-factor lockout. A backup code is not accepted, as on the other re-authenticated flows:
+  > it is for recovering sign-in, so an admin who lost their authenticator has their second
+  > factor reset before issuing a token.
+
 - Issuance holds the token-table lock from its permission and session checks to its commit, so
   issues run one at a time, wait for a bulk revocation or grant change in flight, and briefly
   hold back the call counter of tokens in use. Issuing is rare enough for that serialization.
 - On a password reset better-auth deletes the account's sessions only after the token revocation
   has committed, so a token issued from one of those sessions in that interval of a few
   milliseconds survives the reset until it expires or is revoked by hand.
+
+  > **Update (2026-11-02)**: the interval is closed. The reset hook now expires the account's
+  > sessions in the transaction that revokes its MCP tokens, before that revocation takes the
+  > token table's lock, so an issue from an old session either commits first and is revoked, or
+  > waits and finds its session ended. A failed revocation still ends the sessions and is tried
+  > once more after: its rollback released the lock before the sessions ended, so an old session
+  > may have issued a token in between, which only a second failure leaves live. The reset then
+  > emits `identity.sessions.revoked_all`, which signs the account's open tabs out and is audited.
+
 - A token whose revocation after a password change or reset failed is refused at once but stays
   listed as active, and counts towards its admin's active-token cap, until it is revoked by hand
   or expires. The password-change check compares two application-clock stamps, so a token issued

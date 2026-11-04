@@ -29,6 +29,7 @@ function toEnvelope(row: EventOutboxRow): EventEnvelope {
     occurredAt: row.occurredAt.toISOString(),
     schemaVersion: row.schemaVersion,
     ...(row.traceId ? { traceId: row.traceId } : {}),
+    ...(row.correlationId ? { correlationId: row.correlationId } : {}),
     ...(row.orderingKey ? { orderingKey: row.orderingKey } : {}),
   };
 }

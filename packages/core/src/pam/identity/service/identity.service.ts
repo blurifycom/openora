@@ -100,6 +100,12 @@ import {
   assertFreshReauthentication,
 } from './fresh-reauthentication.service.js';
 
+const TWO_FACTOR_PENDING_COOKIE_NAME = 'better-auth.two_factor';
+const TwoFactorVerificationResponseSchema = z.object({
+  token: z.string(),
+  user: z.object({ id: z.string() }).optional(),
+});
+
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
   for (const [key, value] of Object.entries(nodeHeaders)) {
@@ -175,15 +181,15 @@ function makeLoginIpRateLimitKey(ip: string): `login-ip:${string}` {
   return `login-ip:${ip}`;
 }
 
-// Key on the `.two_factor` cookie VALUE, never the raw Cookie header: an attacker can
-// otherwise churn the rate-limit key each retry by appending unrelated cookie pairs.
+// Read only Better Auth's pending-cookie VALUE, never a similarly suffixed cookie or the
+// raw Cookie header: unrelated cookie pairs must not change the challenge identity.
 function twoFactorPendingCookieValue(headers: Headers): string | undefined {
   const cookieHeader = headers.get('cookie');
   if (!cookieHeader) {
     return undefined;
   }
   for (const [name, value] of parseCookies(cookieHeader)) {
-    if (name.endsWith('.two_factor')) {
+    if (name === TWO_FACTOR_PENDING_COOKIE_NAME) {
       return value;
     }
   }
@@ -616,15 +622,24 @@ export class IdentityService {
           ...meta,
         });
         await this.clearLockout(resetUser.id);
-        await this.revokeMcpTokensAfterCredentialChange(resetUser.id, meta);
+        await this.endSessionsAfterPasswordReset(resetUser.id, meta);
       },
     });
   }
 
+  // Ends the sessions and revokes the MCP tokens together, before better-auth deletes the
+  // sessions itself, so no session outlives the revocation to issue a token. A failed
+  // revocation is logged, as below: the sessions end regardless.
+  private async endSessionsAfterPasswordReset(userId: User['id'], meta: ClientMeta) {
+    try {
+      await this.sessions?.endSessionsAfterPasswordReset(userId, meta);
+    } catch (err) {
+      identityLogger.error({ err, userId }, 'MCP token revocation after a password reset failed');
+    }
+  }
+
   // The new password is committed before this runs, and the MCP authenticator refuses every
-  // token issued before it either way, so a failed revocation is logged rather than rethrown. On
-  // a reset a throw would also keep every session alive: better-auth revokes them only after
-  // `onPasswordReset` returns.
+  // token issued before it either way, so a failed revocation is logged rather than rethrown.
   private async revokeMcpTokensAfterCredentialChange(userId: User['id'], meta: ClientMeta) {
     try {
       await this.sessions?.revokeMcpTokens(userId, userId, meta);
@@ -696,14 +711,35 @@ export class IdentityService {
     }
   }
 
+  /** Re-reads the account a pending 2FA login belongs to and applies the sign-in gate to it. */
+  private async assertChallengedAccountNotBlocked(userId: User['id'], meta: ClientMeta) {
+    const [account] = await this.drizzle.db
+      .select({
+        id: user.id,
+        isActive: user.isActive,
+        rgBlocked: user.rgBlocked,
+        rgBlockedUntil: user.rgBlockedUntil,
+      })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (account) {
+      await this.assertAccountNotBlocked(account, meta);
+    }
+  }
+
   // Same gate as password login and phone login, from the one shared implementation.
   private assertAccountNotBlocked(
-    account: { id: User['id']; rgBlocked: boolean; rgBlockedUntil: Date | null },
+    account: { id: User['id']; isActive: boolean; rgBlocked: boolean; rgBlockedUntil: Date | null },
     meta: ClientMeta,
   ): Promise<string | null> {
     return assertAccountNotBlocked({ drizzle: this.drizzle, events: this.events }, account, meta, {
       revokeSessions: true,
-      errorData: { rgBlocked: { code: 'RG_BLOCKED' }, suspended: { code: 'ACCOUNT_SUSPENDED' } },
+      errorData: {
+        rgBlocked: { code: 'RG_BLOCKED' },
+        suspended: { code: 'ACCOUNT_SUSPENDED' },
+        inactive: { code: 'ACCOUNT_INACTIVE' },
+      },
     });
   }
 
@@ -1003,6 +1039,7 @@ export class IdentityService {
     const [existingUserRow] = await this.drizzle.db
       .select({
         id: user.id,
+        isActive: user.isActive,
         failedLoginAttempts: user.failedLoginAttempts,
         lockoutUntil: user.lockoutUntil,
         lockoutCount: user.lockoutCount,
@@ -1020,6 +1057,7 @@ export class IdentityService {
       | Pick<
           typeof user.$inferSelect,
           | 'id'
+          | 'isActive'
           | 'failedLoginAttempts'
           | 'lockoutUntil'
           | 'lockoutCount'
@@ -1204,6 +1242,7 @@ export class IdentityService {
         error.code === 'FORBIDDEN' &&
         (hasErrorCode(error, 'RG_BLOCKED') ||
           hasErrorCode(error, 'ACCOUNT_SUSPENDED') ||
+          hasErrorCode(error, 'ACCOUNT_INACTIVE') ||
           hasErrorCode(error, 'GEO_BLOCKED'))
       ) {
         throw error;
@@ -1822,6 +1861,27 @@ export class IdentityService {
       });
     }
     await ensureOk(res);
+    if (!sessionUserId) {
+      const verification = TwoFactorVerificationResponseSchema.safeParse(
+        await res
+          .clone()
+          .json()
+          .catch(() => undefined),
+      );
+      if (!verification.success) {
+        throw new ORPCError('UNAUTHORIZED', { message: 'Invalid two-factor challenge' });
+      }
+      if (!challengedUserId || verification.data.user?.id !== challengedUserId) {
+        await this.drizzle.db.delete(session).where(eq(session.token, verification.data.token));
+        throw new ORPCError('UNAUTHORIZED', { message: 'Invalid two-factor challenge' });
+      }
+    }
+    // The challenge proves the password as it stood when the pending login began. An account
+    // deactivated or blocked since then must not get a session by completing it, so the gate
+    // runs here, on the session better-auth just minted, before its cookie is forwarded.
+    if (challengedUserId && !sessionUserId) {
+      await this.assertChallengedAccountNotBlocked(challengedUserId, { ip, userAgent });
+    }
     if (challengedUserId) {
       await this.twoFactorLockout?.reset(challengedUserId);
     }
@@ -2627,6 +2687,7 @@ export class IdentityService {
     const [account] = await this.drizzle.db
       .select({
         id: user.id,
+        isActive: user.isActive,
         rgBlocked: user.rgBlocked,
         rgBlockedUntil: user.rgBlockedUntil,
         twoFactorEnabled: user.twoFactorEnabled,

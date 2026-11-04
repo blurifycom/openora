@@ -108,7 +108,8 @@ export const MemberSchema = z.object({
  * Sign-in deliberately does NOT use this: capping the input cannot help (no longer
  * password was ever storable) and would only narrow an existing contract.
  */
-export const PasswordSchema = z.string().min(12).max(128);
+export const PASSWORD_MAX_LENGTH = 128;
+export const PasswordSchema = z.string().min(12).max(PASSWORD_MAX_LENGTH);
 
 const credentialsBase = z.object({
   email: z.email(),
@@ -327,6 +328,10 @@ export const AUTO_LOGOUT_MINUTES: Record<AutoLogoutDuration, number> = {
   '7d': 7 * 24 * 60,
   '30d': 30 * 24 * 60,
 };
+
+// Backoffice staff sessions end after this long without activity. Fixed, not per-user: staff
+// cannot set the player auto-logout preference, so there is nothing for them to configure.
+export const ADMIN_IDLE_MINUTES = 30;
 
 export const SecurityControlsSchema = z.object({
   passwordMeetsPolicy: z.boolean(),

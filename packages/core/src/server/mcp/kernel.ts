@@ -34,6 +34,7 @@ import type {
   TypedContainer,
 } from '../plugin-host/define-plugin.js';
 import { createLogger } from '../kernel/logger.js';
+import { withCorrelationId } from '../kernel/request-context.js';
 import { sha256Hex } from './canonical-json.js';
 import { mcpToolModelName } from './contract-validation.js';
 import { projectedOutputJsonSchema } from './output-schema.js';
@@ -554,7 +555,7 @@ async function runExecution(
   state: KernelState,
   action: ServedAction,
   payload: unknown,
-  { proposalId, actor }: ActionExecutionContext,
+  { proposalId, actor, correlationId }: ActionExecutionContext,
 ): Promise<ExecutionOutcome> {
   const rawPayload = payload ?? {};
   const refusal = authorizationFailure(
@@ -570,8 +571,11 @@ async function runExecution(
   }
   const payloadHash = sha256Hex(parsed.data);
   try {
+    // Every audit row and event the executor writes carries the run's correlation id.
     const outcome = ActionExecutionOutcomeSchema.safeParse(
-      await action.implementation.execute(parsed.data, proposalId, actor),
+      await withCorrelationId(correlationId, () =>
+        action.implementation.execute(parsed.data, proposalId, actor),
+      ),
     );
     if (!outcome.success) {
       logger.error(logContext, 'mcp executor returned no applied/already_applied outcome');

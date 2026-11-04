@@ -17,6 +17,7 @@ import {
 } from '@openora/core/contracts';
 import { makeAuditWriter, mock } from '../../../testing/mock.js';
 import { Container } from '../../kernel/index.js';
+import { getCurrentRequestContext, withRequestContext } from '../../kernel/request-context.js';
 import { ModuleRegistryImpl } from '../../plugin-host/module-registry.js';
 import { canonicalJson } from '../canonical-json.js';
 import { createMcpKernel, type McpAuthorizer } from '../kernel.js';
@@ -693,6 +694,64 @@ describe('McpKernel.executeAction', () => {
 
     expect(first).toEqual({ ok: false, error: 'audit_unavailable' });
     expect(retry).toEqual({ ok: true, outcome: 'already_applied' });
+  });
+});
+
+describe('McpKernel.executeAction request context', () => {
+  const payload = { withdrawalId, reason: 'velocity spike' };
+  const approver = { kind: 'admin', adminId } as const;
+
+  function capturingContext() {
+    const seen: { precondition?: unknown; execute?: unknown } = {};
+    const implementation: HoldImplementation = {
+      precondition: async () => {
+        seen.precondition = getCurrentRequestContext();
+        return { ok: true };
+      },
+      execute: async () => {
+        seen.execute = getCurrentRequestContext();
+        return { outcome: 'applied' };
+      },
+    };
+    return { seen, ...setup({ implementation }) };
+  }
+
+  it('runs the executor under the run correlation id, in a fresh context when no request is active', async () => {
+    const { kernel, seen } = capturingContext();
+
+    await kernel.executeAction('hold_withdrawal', payload, {
+      proposalId: randomUUID(),
+      actor: approver,
+      correlationId: 'correlation-8',
+    });
+
+    expect(seen.execute).toEqual({ traceId: expect.any(String), correlationId: 'correlation-8' });
+    expect(getCurrentRequestContext()).toBeUndefined();
+  });
+
+  it("keeps the active request's trace, caller and audit trail around the executor", async () => {
+    const { kernel, seen } = capturingContext();
+    const request = { traceId: 'trace-9', userId: adminId, clientMeta: CLIENT_META };
+
+    await withRequestContext(request, async () => {
+      await kernel.executeAction('hold_withdrawal', payload, {
+        proposalId: randomUUID(),
+        actor: approver,
+        correlationId: 'correlation-9',
+      });
+      expect(getCurrentRequestContext()).toMatchObject(request);
+      expect(getCurrentRequestContext()?.correlationId).toBeUndefined();
+    });
+
+    expect(seen.execute).toMatchObject({ ...request, correlationId: 'correlation-9' });
+  });
+
+  it('leaves the precondition in the caller context', async () => {
+    const { kernel, seen } = capturingContext();
+
+    await kernel.checkPrecondition('hold_withdrawal', payload, runContext());
+
+    expect(seen.precondition).toBeUndefined();
   });
 });
 

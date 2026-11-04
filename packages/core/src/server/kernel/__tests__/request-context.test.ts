@@ -5,7 +5,10 @@ import {
   getCurrentTraceId,
   getCurrentClientMeta,
   getRequestAuditTrail,
+  getCurrentCorrelationId,
+  noteAuditWrite,
   noteGrantedPermission,
+  withCorrelationId,
 } from '../request-context.js';
 
 const CLIENT_META = { ip: '203.0.113.7', userAgent: 'curl/8.4.0' };
@@ -115,5 +118,26 @@ describe('noteGrantedPermission', () => {
     noteGrantedPermission(grant('cancel'));
 
     expect(getRequestAuditTrail()).toBeUndefined();
+  });
+});
+
+describe('withCorrelationId', () => {
+  it('opens a context with a fresh trace id when no request is active', () => {
+    withCorrelationId('corr-1', () => {
+      expect(getCurrentCorrelationId()).toBe('corr-1');
+      expect(getCurrentTraceId()).toEqual(expect.any(String));
+    });
+    expect(getCurrentRequestContext()).toBeUndefined();
+  });
+
+  it("keeps the active request's trace, caller and audit trail, and restores it after", () => {
+    withRequestContext(CONTEXT, () => {
+      withCorrelationId('corr-2', () => {
+        expect(getCurrentRequestContext()).toMatchObject({ ...CONTEXT, correlationId: 'corr-2' });
+        noteAuditWrite('admin-1');
+      });
+      expect(getCurrentCorrelationId()).toBeUndefined();
+      expect(getRequestAuditTrail()?.writtenFor.has('admin-1')).toBe(true);
+    });
   });
 });

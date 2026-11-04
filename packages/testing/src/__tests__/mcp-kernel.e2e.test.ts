@@ -6,8 +6,10 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import * as z from 'zod';
 import { DRIZZLE } from '@openora/core/server';
 import {
+  AUDIT_WRITER,
   MCP_KERNEL,
   type ActionExecutionContext,
+  type AuditWritePort,
   type McpKernel,
   type McpToolResult,
   type RunContext,
@@ -364,6 +366,37 @@ describe('MCP kernel registries match the generated catalog', () => {
       /Token "MCP_KERNEL" is sealed/,
     );
     expect(app.container.get(MCP_KERNEL)).toBe(kernel);
+  });
+
+  it('refuses to rebind the audit writer after boot, and the one the audit module bound keeps writing', async () => {
+    const writer = app.container.get(AUDIT_WRITER);
+    const silent: AuditWritePort = {
+      record: async () => undefined,
+      recordInTransaction: async () => undefined,
+      recordManyInTransaction: async () => undefined,
+    };
+
+    expect(() => app.container.register(AUDIT_WRITER, () => silent)).toThrow(
+      /Token "sealed:AUDIT_WRITER" is sealed/,
+    );
+    expect(app.container.get(AUDIT_WRITER)).toBe(writer);
+
+    const correlationId = randomUUID();
+    await drizzle().transaction((tx) =>
+      app.container.get(AUDIT_WRITER).recordInTransaction(tx, {
+        actorType: 'system',
+        action: 'test.sealed_audit_writer.kept',
+        resourceType: 'test',
+        resourceId: correlationId,
+        correlationId,
+      }),
+    );
+    expect(
+      await drizzle()
+        .select({ id: auditLog.id })
+        .from(auditLog)
+        .where(eq(auditLog.correlationId, correlationId)),
+    ).toHaveLength(1);
   });
 });
 
@@ -816,7 +849,10 @@ describe('agent tag, note and enhanced-KYC actions are replay-safe', () => {
 
 describe('MCP transport while agents.mcp is off', () => {
   it('refuses token issuance with a typed reason', async () => {
-    const res = await admin.post('/iam/my-mcp-tokens', { label: 'off' });
+    const res = await admin.post('/iam/my-mcp-tokens', {
+      label: 'off',
+      currentPassword: 'password1234',
+    });
 
     expect(res.status).toBe(409);
     expect(

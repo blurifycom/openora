@@ -10,6 +10,7 @@ import {
   MAIL_DISPATCH,
   MAIL_RECIPIENT_DIRECTORY,
   MCP_TOKEN_REVOCATION,
+  FRESH_REAUTHENTICATION,
   GEO_CHECK_COMMANDS,
   PLAYER_PROVISIONING,
   IDENTITY_OPTIONS,
@@ -52,6 +53,7 @@ import { AdminSecurityService } from './service/admin-security.service.js';
 import { TrustedDeviceService } from './service/trusted-device.service.js';
 import { SessionIdleService } from './service/session-idle.service.js';
 import { TwoFactorLockoutService } from './service/two-factor-lockout.service.js';
+import { FreshReauthenticationService } from './service/fresh-reauthentication.service.js';
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
 import { PlayEligibilityService } from './service/play-eligibility.service.js';
 import { TwoFactorSetupPolicyService } from './service/two-factor-setup-policy.service.js';
@@ -241,6 +243,16 @@ export default {
         }),
     );
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
+    // Lets iam demand the password and a fresh second factor before it issues an MCP token.
+    ctx.provide(
+      FRESH_REAUTHENTICATION,
+      (c) =>
+        new FreshReauthenticationService({
+          drizzle: c.get(DRIZZLE),
+          auth: c.get(AUTH_SESSION).auth,
+          twoFactorLockout: makeTwoFactorLockout(c),
+        }),
+    );
     // Holds an account that owes a second-factor enrolment (a support reset of a player who
     // required 2FA on login) to the enrolment flow until it is done.
     ctx.provide(WITHDRAWAL_SECURITY, (c) => makeWithdrawalPin(c, withdrawalPinHmacSecret));
