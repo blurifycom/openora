@@ -448,6 +448,8 @@ export default {
         rg,
         rgMonitoring,
         rgSelfService,
+        requireApprovalForDirectKycOverride:
+          platformConfig?.kyc?.requireApprovalForDirectOverride ?? false,
       });
     });
   },
