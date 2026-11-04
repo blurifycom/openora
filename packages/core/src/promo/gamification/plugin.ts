@@ -127,15 +127,26 @@ class CompositeWagerTracking implements WagerTrackingCommands {
     }
   }
 
-  async recordSettledWager(tx: DrizzleTx, args: SettledWagerArgs): Promise<void> {
+  async recordSettledWager(
+    tx: DrizzleTx,
+    args: SettledWagerArgs,
+  ): Promise<WagerTrackingWalletCredit[]> {
+    const credits: WagerTrackingWalletCredit[] = [];
     for (const consumer of this.consumers) {
-      await consumer.recordSettledWager?.(tx, args);
+      credits.push(...((await consumer.recordSettledWager?.(tx, args)) ?? []));
     }
+    return credits;
   }
 
   async reverseSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
     for (const consumer of this.consumers) {
       await consumer.reverseSettledWager?.(tx, args);
+    }
+  }
+
+  async reopenSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
+    for (const consumer of this.consumers) {
+      await consumer.reopenSettledWager?.(tx, args);
     }
   }
 }
