@@ -100,9 +100,9 @@ const shapes: [string, () => Error][] = [
   ['a raw error over a six-level cause chain', () => new Error(dirt(), { cause: deepCause(6) })],
 ];
 
-/** Everything BullMQ keeps of the sync jobs, read from this app's own Redis database. */
-async function storedJobs(): Promise<string> {
-  const stored: unknown[] = [];
+/** Every sync job hash BullMQ keeps, read from this app's own Redis database. */
+async function storedJobs(): Promise<Record<string, string>[]> {
+  const stored: Record<string, string>[] = [];
   const redis = createClient({ url: testApp.redisUrl });
   redis.on('error', () => undefined);
   await redis.connect();
@@ -117,7 +117,7 @@ async function storedJobs(): Promise<string> {
   } finally {
     redis.destroy();
   }
-  return inspect(stored, { depth: null });
+  return stored;
 }
 
 describe('support chat adapter failures that leak vendor text', () => {
@@ -186,8 +186,11 @@ describe('support chat adapter failures that leak vendor text', () => {
       expect(inspect(reported, { depth: null, showHidden: true })).not.toMatch(LEAK);
       // BullMQ keeps `failedReason` and `stacktrace` of the failed job.
       const stored = await storedJobs();
-      expect(stored).toContain('support-chat provider failed');
-      expect(stored).not.toMatch(LEAK);
+      const own = stored.filter((job) => job.data?.includes(p.userId) && job.failedReason);
+      expect(own.map((job) => job.failedReason)).toContainEqual(
+        expect.stringMatching(/^support-chat provider failed: /),
+      );
+      expect(inspect(stored, { depth: null })).not.toMatch(LEAK);
     },
   );
 });
