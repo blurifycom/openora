@@ -2231,7 +2231,7 @@ describe('IdentityService security controls', () => {
         {},
         new Headers(),
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow('The email change was refused after the address was swapped');
 
     expect((await readUser(account.id))?.email).toBe(EMAIL);
     expect(audit.recordInTransaction).not.toHaveBeenCalled();

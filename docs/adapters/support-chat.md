@@ -154,10 +154,10 @@ Core works out which identities belong to the player and hands them to the reade
   the address was freed another way, such as the account being deleted. A lost run of changes
   returning to the address it left (A to B recorded, B to C and C to B lost, B to D recorded) also
   leaves a trail that looks consistent, so B's window spans the gap. A change time later than the
-  real change by no more than its audit write's own delay plus the 5-second margin also goes unseen: a fast clock with a delayed or redelivered write, or a legacy
-  row timed by its write. It widens the earlier email's window by that much. A clock running behind
-  goes unseen for as long as each time it stamps is still later than every earlier one, shifting the
-  bounds by the lag.
+  real change by no more than its audit write's own delay plus the 5-second margin also goes
+  unseen: a fast clock with a delayed or redelivered write, or a legacy row timed by its write. It
+  widens the earlier email's window by that much. A clock running behind goes unseen for as long as
+  each time it stamps is still later than every earlier one, shifting the bounds by the lag.
 - **Chats** are matched by the vendor customer the player is linked to. A player who never
   opened the chat has no link, and the reader is not asked.
 

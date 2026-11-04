@@ -242,8 +242,6 @@ export type Auth = BetterAuthType;
  * (`user.update.after`) is configured. `runWithTransaction` is a better-auth internal: the exact
  * `better-auth` / `@better-auth/core` 1.6.22 pin and the email-change E2E fault and single-txid
  * tests are the gate for upgrading either.
- *
- * @internal
  */
 export async function runInAuthTransaction<T>(
   tx: DrizzleTx,
