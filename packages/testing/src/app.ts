@@ -33,6 +33,8 @@ export type TestApp = {
   app: Hono;
   /** The composition container, for resolving services/tokens in assertions. */
   container: Container<CoreTokenCatalog>;
+  /** The Redis logical database this app claimed, for a test that reads what a driver stored. */
+  redisUrl: string;
   /** Dispose the container (closes the DB pool, drains workers, frees the Redis db). */
   close(): Promise<void>;
 };
@@ -139,6 +141,7 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
   return {
     app: created.app,
     container: created.container,
+    redisUrl: redisDatabase.url,
     async close(): Promise<void> {
       await created.close();
       await redisDatabase.release();
