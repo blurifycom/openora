@@ -337,7 +337,7 @@ describe('SessionService.endSessionsAfterPasswordReset', () => {
     );
   });
 
-  it('still ends the sessions when the token revocation fails, and rethrows the failure', async () => {
+  it('ends the sessions on their own when the revocation fails, then revokes the tokens again', async () => {
     const { tokens, audit } = makeMcpTokenService();
     audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
     const events = makeEventBus();
@@ -345,10 +345,35 @@ describe('SessionService.endSessionsAfterPasswordReset', () => {
     await seedSession(admin.id);
     const tokenId = await seedActiveToken(admin.id);
 
-    await expect(
-      service(tokens, events).endSessionsAfterPasswordReset(admin.id, META),
-    ).rejects.toThrow('audit store unavailable');
+    await service(tokens, events).endSessionsAfterPasswordReset(admin.id, META);
 
+    expect(await activeSessionCount(admin.id)).toBe(0);
+    expect(await revocationOf(tokenId)).toMatchObject({ revokeReason: 'sessions_revoked' });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({ userId: admin.id }),
+    );
+  });
+
+  it('throws both failures when the second revocation fails too, with the sessions ended', async () => {
+    const { tokens, audit } = makeMcpTokenService();
+    audit.recordManyInTransaction
+      .mockRejectedValueOnce(new Error('audit store unavailable'))
+      .mockRejectedValueOnce(new Error('still unavailable'));
+    const events = makeEventBus();
+    const admin = await seedUser(db, { role: 'admin' });
+    await seedSession(admin.id);
+    const tokenId = await seedActiveToken(admin.id);
+
+    const failure = await service(tokens, events)
+      .endSessionsAfterPasswordReset(admin.id, META)
+      .catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors.map((err: Error) => err.message)).toEqual([
+      'audit store unavailable',
+      'still unavailable',
+    ]);
     expect(await activeSessionCount(admin.id)).toBe(0);
     expect(await revocationOf(tokenId)).toMatchObject({ revokedAt: null });
     expect(events.emit).toHaveBeenCalledWith(

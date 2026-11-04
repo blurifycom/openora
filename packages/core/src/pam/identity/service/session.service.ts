@@ -272,24 +272,35 @@ export class SessionService {
    * transaction, then signs its open tabs out. better-auth deletes the sessions only once its
    * reset hook returns, so a session still live after the revocation could issue a token the
    * revocation missed; expired first, before the revocation takes the token table's lock, none
-   * can. A failed revocation still ends the sessions, and is rethrown for the caller to log.
+   * can. A failed revocation still ends the sessions, then is tried once more; a second failure
+   * is thrown for the caller to log.
    */
   async endSessionsAfterPasswordReset(userId: User['id'], meta?: ClientMeta) {
     const mcpTokens = await this.mcpTokensOf(userId);
+    const revocation = sessionsRevoked({ userId, actorId: userId, meta });
     let ended = 0;
     let failure: unknown = null;
     try {
       ended = await this.drizzle.db.transaction(async (tx) => {
         const count = await expireActiveSessions(tx, userId);
-        await mcpTokens?.revokeAllForUser(sessionsRevoked({ userId, actorId: userId, meta }), tx);
+        await mcpTokens?.revokeAllForUser(revocation, tx);
         return count;
       });
     } catch (err) {
-      failure = err;
       try {
         ended = await expireActiveSessions(this.drizzle.db, userId);
       } catch (fallbackErr) {
         throw new AggregateError([err, fallbackErr], 'Password reset could not end the sessions.');
+      }
+      // The rollback released the token table's lock before the sessions ended, so an old
+      // session may have issued a token in between; with none live now, a retry covers it.
+      try {
+        await mcpTokens?.revokeAllForUser(revocation);
+      } catch (retryErr) {
+        failure = new AggregateError(
+          [err, retryErr],
+          'Password reset could not revoke the MCP tokens.',
+        );
       }
     }
     if (ended > 0) {

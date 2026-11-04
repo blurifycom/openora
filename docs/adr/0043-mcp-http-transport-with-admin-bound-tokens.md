@@ -168,7 +168,9 @@ Rejected alternatives:
   > **Update (2026-11-02)**: the interval is closed. The reset hook now expires the account's
   > sessions in the transaction that revokes its MCP tokens, before that revocation takes the
   > token table's lock, so an issue from an old session either commits first and is revoked, or
-  > waits and finds its session ended. A failed revocation still ends the sessions. The reset then
+  > waits and finds its session ended. A failed revocation still ends the sessions and is tried
+  > once more after: its rollback released the lock before the sessions ended, so an old session
+  > may have issued a token in between, which only a second failure leaves live. The reset then
   > emits `identity.sessions.revoked_all`, which signs the account's open tabs out and is audited.
 
 - A token whose revocation after a password change or reset failed is refused at once but stays

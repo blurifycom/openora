@@ -1289,7 +1289,11 @@ describe('IdentityService password changes and MCP tokens', () => {
       capturedAuthOptions.current?.onPasswordReset?.({ id: admin.id, email: EMAIL }),
     ).resolves.toBeUndefined();
 
-    expect(revokeAllForUser).toHaveBeenCalledTimes(1);
+    // The first attempt failed inside the transaction; the retry runs once the sessions ended.
+    expect(revokeAllForUser).toHaveBeenCalledTimes(2);
+    expect(revokeAllForUser).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userId: admin.id, reason: 'sessions_revoked' }),
+    );
   });
 
   it("leaves the token port alone on a player's password reset", async () => {
