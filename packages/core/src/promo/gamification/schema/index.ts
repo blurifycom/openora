@@ -133,52 +133,66 @@ export type RankRewardTerms = NonNullable<RankRewards[keyof RankRewards]>;
  * operator who has not decided what counts toward a rank has not launched ranks. The rank
  * challenge is not part of the ladder: absent, it counts `DEFAULT_RANK_PERK_PRODUCTS`.
  */
-export const promoRankConfig = pgTable('promo_rank_config', {
-  id: uuid().primaryKey().defaultRandom(),
-  // Unique, so the table can only ever hold the one row.
-  singletonKey: text().notNull().unique().default('global'),
-  /** Products whose stakes count toward a rank. Empty counts every product. */
-  eligibleProducts: text().array().notNull().default([]),
-  /** Products whose stakes earn rakeback. A stake must count toward the rank as well. Empty counts every product. */
-  rakebackEligibleProducts: text()
-    .array()
-    .$type<WagerProduct[]>()
-    .notNull()
-    .default([...DEFAULT_RANK_PERK_PRODUCTS]),
-  /** Products whose stakes count toward the rank challenge. Empty counts every product. */
-  rankChallengeEligibleProducts: text()
-    .array()
-    .$type<WagerProduct[]>()
-    .notNull()
-    .default([...DEFAULT_RANK_PERK_PRODUCTS]),
-  /** Terms each reward kind is granted under. A kind with no terms is not paid. */
-  rewards: jsonb().$type<RankRewards>().notNull().default({}),
-  /** What rewards are credited in, when that is not the ladder's own currency. */
-  payoutCurrency: text(),
-  /** Credit a reward in the currency the player plays in, falling back to the two above. */
-  payInPlayerCurrency: boolean().notNull().default(false),
-  /** Pay a periodic bonus only to players who wagered in the period it covers. */
-  periodicRequiresActivity: boolean().notNull().default(true),
-  /** How much a player must wager inside the period to qualify. Null means any bet counts. */
-  periodicMinimumWager: money(),
-  /** When each periodic payout closes, and so what window it pays for. All UTC. */
-  payoutAnchors: jsonb()
-    .$type<RankPayoutAnchors>()
-    .notNull()
-    .default({ dailyHour: 0, weeklyDay: 1, monthlyDay: 1 }),
-  /**
-   * The end of the last period each kind was paid for. A payout runs only for a period that
-   * ends after its watermark, so moving an anchor cannot pay the same stretch of time twice and
-   * a late or repeated tick cannot reach back into a period already settled.
-   */
-  paidThrough: jsonb().$type<Partial<Record<RankPayoutKind, string>>>().notNull().default({}),
-  updatedBy: uuid(),
-  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp({ withTimezone: true })
-    .notNull()
-    .defaultNow()
-    .$onUpdate(() => new Date()),
-});
+export const promoRankConfig = pgTable(
+  'promo_rank_config',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Unique, so the table can only ever hold the one row.
+    singletonKey: text().notNull().unique().default('global'),
+    /** Products whose stakes count toward a rank. */
+    eligibleProducts: text().array().notNull(),
+    /** Products whose stakes earn rakeback. A stake must count toward the rank as well. */
+    rakebackEligibleProducts: text()
+      .array()
+      .$type<WagerProduct[]>()
+      .notNull()
+      .default([...DEFAULT_RANK_PERK_PRODUCTS]),
+    /** Products whose stakes count toward the rank challenge. */
+    rankChallengeEligibleProducts: text()
+      .array()
+      .$type<WagerProduct[]>()
+      .notNull()
+      .default([...DEFAULT_RANK_PERK_PRODUCTS]),
+    /** Terms each reward kind is granted under. A kind with no terms is not paid. */
+    rewards: jsonb().$type<RankRewards>().notNull().default({}),
+    /** What rewards are credited in, when that is not the ladder's own currency. */
+    payoutCurrency: text(),
+    /** Credit a reward in the currency the player plays in, falling back to the two above. */
+    payInPlayerCurrency: boolean().notNull().default(false),
+    /** Pay a periodic bonus only to players who wagered in the period it covers. */
+    periodicRequiresActivity: boolean().notNull().default(true),
+    /** How much a player must wager inside the period to qualify. Null means any bet counts. */
+    periodicMinimumWager: money(),
+    /** When each periodic payout closes, and so what window it pays for. All UTC. */
+    payoutAnchors: jsonb()
+      .$type<RankPayoutAnchors>()
+      .notNull()
+      .default({ dailyHour: 0, weeklyDay: 1, monthlyDay: 1 }),
+    /**
+     * The end of the last period each kind was paid for. A payout runs only for a period that
+     * ends after its watermark, so moving an anchor cannot pay the same stretch of time twice and
+     * a late or repeated tick cannot reach back into a period already settled.
+     */
+    paidThrough: jsonb().$type<Partial<Record<RankPayoutKind, string>>>().notNull().default({}),
+    updatedBy: uuid(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    check('promo_rank_config_eligible_products_set', sql`cardinality(${t.eligibleProducts}) > 0`),
+    check(
+      'promo_rank_config_rakeback_eligible_products_set',
+      sql`cardinality(${t.rakebackEligibleProducts}) > 0`,
+    ),
+    check(
+      'promo_rank_config_rank_challenge_eligible_products_set',
+      sql`cardinality(${t.rankChallengeEligibleProducts}) > 0`,
+    ),
+  ],
+);
 
 export type PromoRankConfig = typeof promoRankConfig.$inferSelect;
 
@@ -259,22 +273,28 @@ export type PromoRankLevelUp = typeof promoRankLevelUp.$inferSelect;
  * day counts and no milestone pays: an operator who has not decided what qualifies has not
  * launched the streak.
  */
-export const promoStreakConfig = pgTable('promo_streak_config', {
-  id: uuid().primaryKey().defaultRandom(),
-  singletonKey: text().notNull().unique().default('global'),
-  currency: text().notNull(),
-  dailyMinWager: money().notNull(),
-  /** Products whose stakes count toward the streak. Empty counts every product. */
-  eligibleProducts: text().array().notNull().default([]),
-  milestones: jsonb().$type<StreakMilestone[]>().notNull().default([]),
-  resetAfterDay: integer().notNull().default(30),
-  updatedBy: uuid(),
-  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp({ withTimezone: true })
-    .notNull()
-    .defaultNow()
-    .$onUpdate(() => new Date()),
-});
+export const promoStreakConfig = pgTable(
+  'promo_streak_config',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    singletonKey: text().notNull().unique().default('global'),
+    currency: text().notNull(),
+    dailyMinWager: money().notNull(),
+    /** Products whose stakes count toward the streak. */
+    eligibleProducts: text().array().notNull(),
+    milestones: jsonb().$type<StreakMilestone[]>().notNull().default([]),
+    resetAfterDay: integer().notNull().default(30),
+    updatedBy: uuid(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    check('promo_streak_config_eligible_products_set', sql`cardinality(${t.eligibleProducts}) > 0`),
+  ],
+);
 
 export type PromoStreakConfig = typeof promoStreakConfig.$inferSelect;
 

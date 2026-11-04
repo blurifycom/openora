@@ -1,5 +1,5 @@
 import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
-import type { RankConfigInput, StreakConfig } from '../contract/index.js';
+import type { RankConfigInput, StreakConfigInput } from '../contract/index.js';
 import {
   promoRankChallengeTier,
   promoRankConfig,
@@ -54,7 +54,7 @@ export async function seedRankLadder(
   await db.insert(promoRankConfig).values(ladder.config).onConflictDoNothing();
 }
 
-export type StreakSeed = StreakConfig;
+export type StreakSeed = StreakConfigInput;
 
 /**
  * Seeds the streak config, mirroring `seedRankLadder`: idempotent, never overwrites a setting an
