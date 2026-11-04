@@ -472,6 +472,13 @@ export const domainEventSchemas = {
     // revoke-all path leaves it unset, so every session is kicked.
     exceptSessionId: UuidSchema.optional(),
   }),
+  // A sign-in refused for a deactivated account, after its credential was proven. Not a
+  // credential failure: it never counts toward the lockout. userId = the refused account.
+  'identity.user.login_blocked': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    reason: z.literal('inactive'),
+  }),
   'identity.user.unauthorized_access': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),

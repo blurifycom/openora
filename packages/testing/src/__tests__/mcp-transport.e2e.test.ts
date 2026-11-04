@@ -56,6 +56,7 @@ const ListItemSchema = z.object({
   id: z.string(),
   admin: z.object({ email: z.string().nullable() }),
 });
+const PASSWORD = 'password1234';
 const NEW_MODERATOR_PASSWORD = 'N3w-moderator-Passw0rd!';
 const TextContentSchema = z.object({
   content: z.array(z.object({ type: z.literal('text'), text: z.string() })),
@@ -80,7 +81,7 @@ async function userIdOf(email: string): Promise<string> {
 }
 
 async function issueToken(client: TestClient, label = 'e2e') {
-  const res = await client.post('/iam/my-mcp-tokens', { label });
+  const res = await client.post('/iam/my-mcp-tokens', { label, currentPassword: PASSWORD });
   expect(res.status).toBe(200);
   return IssuedTokenSchema.parse(await res.json());
 }
@@ -260,7 +261,11 @@ describe('MCP tokens', () => {
   });
 
   it('refuses a lifetime above the cap with a typed reason', async () => {
-    const res = await admin.post('/iam/my-mcp-tokens', { label: 'too-long', ttlDays: 91 });
+    const res = await admin.post('/iam/my-mcp-tokens', {
+      label: 'too-long',
+      ttlDays: 91,
+      currentPassword: PASSWORD,
+    });
 
     expect(res.status).toBe(400);
     expect(ErrorReasonSchema.parse(await res.json()).data.reason).toBe('ttl_exceeds_max');
@@ -480,7 +485,7 @@ describe('MCP tokens, automatic revocation', () => {
     const { id, token } = await issueToken(moderator);
 
     const res = await moderator.post('/identity/password/change', {
-      currentPassword: 'password1234',
+      currentPassword: PASSWORD,
       newPassword: NEW_MODERATOR_PASSWORD,
     });
 
@@ -540,9 +545,14 @@ describe('MCP transport, grants', () => {
     expect((await staff.setGrants(WITHOUT_MCP)).status).toBe(200);
     expect(await revokeReasonOf(id)).toBe('admin_role_removed');
     expect((await rawPost({ token })).status).toBe(401);
-    expect((await staff.client.post('/iam/my-mcp-tokens', { label: 'no-access' })).status).toBe(
-      403,
-    );
+    expect(
+      (
+        await staff.client.post('/iam/my-mcp-tokens', {
+          label: 'no-access',
+          currentPassword: PASSWORD,
+        })
+      ).status,
+    ).toBe(403);
     expect((await staff.client.get('/iam/my-mcp-tokens')).status).toBe(403);
   });
 });
@@ -607,7 +617,10 @@ describe('MCP tokens, issuing while a grant change takes MCP access away', () =>
 
     const removing = staff.setGrants(WITHOUT_MCP);
     await waitForRowLockWaiter(appDb);
-    const issuing = staff.client.post('/iam/my-mcp-tokens', { label: 'raced' });
+    const issuing = staff.client.post('/iam/my-mcp-tokens', {
+      label: 'raced',
+      currentPassword: PASSWORD,
+    });
     await waitForTableLockWaiter(appDb, mcpToken);
     rows.release();
     await rows.committed;
@@ -644,7 +657,7 @@ describe('MCP tokens, issuing while the issuing session is revoked', () => {
 
     const revoking = admin.post('/identity/sessions/revoke-all', { userId: staffId });
     await waitForRowLockWaiter(appDb);
-    const issuing = staff.post('/iam/my-mcp-tokens', { label: 'raced' });
+    const issuing = staff.post('/iam/my-mcp-tokens', { label: 'raced', currentPassword: PASSWORD });
     await waitForTableLockWaiter(appDb, mcpToken);
     rows.release();
     await rows.committed;

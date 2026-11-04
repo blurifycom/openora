@@ -15,6 +15,7 @@ import {
   makeAuditWriter,
   makeEventBus,
   makeIdentityReader,
+  makeFreshReauthentication,
   makeRateLimiter,
   mock,
 } from '../../../testing/mock.js';
@@ -47,6 +48,7 @@ function makeMcpTokenService() {
     audit,
     events: makeEventBus(),
     rateLimiter: makeRateLimiter(),
+    reauthentication: makeFreshReauthentication(),
     config: McpTransportConfigSchema.parse({}),
   });
   return { tokens, audit, revokeAllForUser: vi.spyOn(tokens, 'revokeAllForUser') };
@@ -202,9 +204,10 @@ describe('SessionService', () => {
     expect(active.items.map((s) => s.id)).not.toContain(idled.id);
   });
 
-  it('does not idle out an admin session, which has no auto-logout window of its own', async () => {
+  it('lists a staff session only inside its fixed 30-minute idle window', async () => {
     const admin = await seedUser(db, { role: 'admin' });
-    const target = await seedSession(admin.id, { lastSeenAt: minutesAgo(60 * 24 * 30) });
+    const inside = await seedSession(admin.id, { lastSeenAt: minutesAgo(29) });
+    const idled = await seedSession(admin.id, { lastSeenAt: minutesAgo(31) });
 
     const active = await service().listSessions({
       userId: admin.id,
@@ -213,7 +216,8 @@ describe('SessionService', () => {
       limit: 20,
     });
 
-    expect(active.items.map((s) => s.id)).toContain(target.id);
+    expect(active.items.map((s) => s.id)).toEqual([inside.id]);
+    expect(active.items.map((s) => s.id)).not.toContain(idled.id);
   });
 
   it('excludes an idled-out player session from the platform-wide active list', async () => {

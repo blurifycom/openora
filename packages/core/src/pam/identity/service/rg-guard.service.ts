@@ -9,7 +9,12 @@ export function isRgBlocked(u: { rgBlocked: boolean; rgBlockedUntil: Date | null
   return u.rgBlocked && (u.rgBlockedUntil === null || u.rgBlockedUntil > new Date());
 }
 
-type BlockedAccount = { id: User['id']; rgBlocked: boolean; rgBlockedUntil: Date | null };
+type BlockedAccount = {
+  id: User['id'];
+  isActive: boolean;
+  rgBlocked: boolean;
+  rgBlockedUntil: Date | null;
+};
 
 type AccountBlockGateOptions = {
   /**
@@ -19,7 +24,11 @@ type AccountBlockGateOptions = {
    */
   revokeSessions: boolean;
   /** `ORPCError.data` for each block, so each surface keeps its own error vocabulary. */
-  errorData: { rgBlocked: Record<string, string>; suspended: Record<string, string> };
+  errorData: {
+    rgBlocked: Record<string, string>;
+    suspended: Record<string, string>;
+    inactive: Record<string, string>;
+  };
 };
 
 /**
@@ -64,14 +73,48 @@ export async function assertAccountNotBlocked(
     });
   }
 
-  // Distinct mechanism from RG (self_excluded is out of scope here) - a suspended or
-  // closed player can never log back in.
-  if (playerRow && (playerRow.status === 'suspended' || playerRow.status === 'closed')) {
+  // The player status a suspended or closed account carries, if it is one. Distinct mechanism
+  // from RG (self_excluded is out of scope here) - such a player can never log back in.
+  const blockedPlayerStatus =
+    playerRow && (playerRow.status === 'suspended' || playerRow.status === 'closed')
+      ? playerRow.status
+      : null;
+
+  // A deactivated account (a back-office ban, or a staff member taken off the roster) cannot
+  // sign in, whatever its role. Checked with the other blocks so a probe still learns nothing
+  // about the account before the credential has been proven. Audited here, as a denial of the
+  // proven credential; both events fire when the account is also suspended, so neither hides
+  // the other.
+  if (!account.isActive) {
+    await revoke();
+    events.emit('identity.user.login_blocked', {
+      userId: account.id,
+      playerId: playerRow?.id ?? null,
+      reason: 'inactive',
+      ip,
+      userAgent,
+    });
+    if (playerRow && blockedPlayerStatus) {
+      events.emit('player.login_blocked', {
+        userId: account.id,
+        playerId: playerRow.id,
+        status: blockedPlayerStatus,
+        ip,
+        userAgent,
+      });
+    }
+    throw new ORPCError('FORBIDDEN', {
+      message: 'Your account is inactive. Contact your administrator.',
+      data: errorData.inactive,
+    });
+  }
+
+  if (playerRow && blockedPlayerStatus) {
     await revoke();
     events.emit('player.login_blocked', {
       userId: account.id,
       playerId: playerRow.id,
-      status: playerRow.status,
+      status: blockedPlayerStatus,
       ip,
       userAgent,
     });

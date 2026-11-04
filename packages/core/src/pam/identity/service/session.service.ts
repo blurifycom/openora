@@ -7,8 +7,9 @@ import {
   makeNotFoundError,
   makeConflictError,
 } from '@openora/core/server';
-import { eq, asc, desc, and, or, gt, isNull, ne, count, ilike, sql } from 'drizzle-orm';
+import { eq, asc, desc, and, or, gt, isNull, count, ilike, sql } from 'drizzle-orm';
 import {
+  ADMIN_IDLE_MINUTES,
   AUTO_LOGOUT_MINUTES,
   type ClientMeta,
   type IdentityReader,
@@ -25,18 +26,18 @@ export const SessionNotFoundError = makeNotFoundError('Session');
 
 // Idle expiry (`SessionIdleService`) is lazy: it only cuts a session when a request for
 // it arrives, so `expiresAt` alone goes stale for a session nobody has used since. Both
-// "active session" reads below need this alongside `expiresAt > now()` for a player row,
-// or a closed laptop on a 15-minute window keeps showing as logged in for up to 30 days.
-// Built from the same contract map `SessionIdleService` reads, not restated by hand, so
-// the two cannot disagree on what a window means.
-function autoLogoutMinutesCase() {
+// "active session" reads below need this alongside `expiresAt > now()`, or a closed laptop on
+// a 15-minute player window keeps showing as logged in for up to 30 days, and a backoffice
+// session keeps showing past its fixed staff window. Built from the same contract constants
+// `SessionIdleService` reads, not restated by hand, so the two cannot disagree on a window.
+function idleWindowMinutesCase() {
   return sql.join(
     [
-      sql`CASE ${user.autoLogoutDuration}`,
+      sql`CASE WHEN ${user.role} = 'player' THEN CASE ${user.autoLogoutDuration}`,
       ...Object.entries(AUTO_LOGOUT_MINUTES).map(
         ([duration, minutes]) => sql`WHEN ${duration} THEN ${minutes}`,
       ),
-      sql`END`,
+      sql`END ELSE ${ADMIN_IDLE_MINUTES} END`,
     ],
     sql` `,
   );
@@ -44,9 +45,8 @@ function autoLogoutMinutesCase() {
 
 function notIdledOut() {
   return or(
-    ne(user.role, 'player'),
     isNull(session.lastSeenAt),
-    gt(session.lastSeenAt, sql`now() - make_interval(mins => (${autoLogoutMinutesCase()})::int)`),
+    gt(session.lastSeenAt, sql`now() - make_interval(mins => (${idleWindowMinutesCase()})::int)`),
   );
 }
 export const CurrentSessionRevokeError = makeConflictError(
