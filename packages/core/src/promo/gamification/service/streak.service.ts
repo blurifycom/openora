@@ -37,9 +37,8 @@ import { fixedRewardViews, nextMilestoneAfter } from '../shared/streak-view.js';
 
 export const StreakConfigNotSetError = makeNotFoundError('StreakConfig');
 
-// An empty list counts every bet - the same convention `RankService` uses for eligibleProducts.
 const countsToward = (eligibleProducts: readonly string[], product: string) =>
-  eligibleProducts.length === 0 || eligibleProducts.includes(product);
+  eligibleProducts.includes(product);
 
 type Logger = { warn: (context: object, message: string) => void };
 

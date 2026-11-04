@@ -16,6 +16,7 @@ import {
   DEFAULT_PAYOUT_ANCHORS,
   DEFAULT_RANK_PERK_PRODUCTS,
 } from '@openora/core/promo/contracts/gamification';
+import { WAGER_PRODUCTS } from '@openora/core/contracts';
 import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
 import { seedDemoData, type SeedResult } from './seed-demo-data.js';
 
@@ -68,7 +69,7 @@ export const EXAMPLE_RANK_LADDER: RankLadderSeed = {
     payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
     payInPlayerCurrency: false,
     periodicRequiresActivity: true,
-    eligibleProducts: [],
+    eligibleProducts: [...WAGER_PRODUCTS],
     rakebackEligibleProducts: [...DEFAULT_RANK_PERK_PRODUCTS],
     rankChallengeEligibleProducts: [...DEFAULT_RANK_PERK_PRODUCTS],
     rewards: {
