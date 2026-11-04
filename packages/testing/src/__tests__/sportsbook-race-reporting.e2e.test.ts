@@ -199,6 +199,97 @@ describe('race eligible products', () => {
   });
 });
 
+describe('financial summary', () => {
+  type ByCurrency = { currency: string; total: string }[];
+  type Summary = { ggr: ByCurrency; sportsbookPromotionCost: ByCurrency };
+
+  const usd = (rows: ByCurrency) => Number(rows.find((r) => r.currency === 'USD')?.total ?? 0);
+
+  async function inWindow(step: () => Promise<unknown>) {
+    const from = new Date();
+    await step();
+    const range = new URLSearchParams({
+      dateFrom: from.toISOString(),
+      dateTo: new Date(Date.now() + 1).toISOString(),
+    });
+    const res = await admin.get(`/analytics/financial/summary?${range}&currency=USD`);
+    expect(res.status).toBe(200);
+    const summary = (await res.json()) as Summary;
+    const report = await admin.get(`/backoffice/sportsbook/promotions/report?${range}`);
+    expect(report.status).toBe(200);
+    const promotions = (await report.json()) as {
+      currency: string;
+      promotionPaid: string;
+      promotionReversed: string;
+    }[];
+    return {
+      ggr: usd(summary.ggr),
+      promotionCost: usd(summary.sportsbookPromotionCost),
+      reported: promotions
+        .filter((r) => r.currency === 'USD')
+        .reduce((sum, r) => sum + Number(r.promotionPaid) - Number(r.promotionReversed), 0),
+    };
+  }
+
+  it('shows the freebet win inside the official GGR and as promotion cost, and a reopen takes both back', async () => {
+    const player = await fundedPlayer(app);
+    const freebet: NonNullable<SportsbookReserveArgs['promotion']> = {
+      type: 'freebet',
+      id: `grant-${randomUUID()}`,
+      stake: 'promotion',
+      voidReturnsStake: false,
+    };
+    let freebetId = '';
+
+    const won = await inWindow(async () => {
+      const promoted = await acceptedBet(app, player, {
+        stake: '5',
+        potentialPayout: '12',
+        promotion: freebet,
+      });
+      freebetId = promoted.args.providerBetId;
+      await settle(freebetId, 'won', '12');
+      const { args } = await acceptedBet(app, player, { stake: '10' });
+      await settle(args.providerBetId, 'lost', '0');
+    });
+    const reopened = await inWindow(() => reopen(freebetId));
+
+    expect(won).toEqual({ ggr: -2, promotionCost: 12, reported: 12 });
+    expect(reopened).toEqual({ ggr: 12, promotionCost: -12, reported: -12 });
+  });
+
+  it('takes a reopened promotion win out of the promotion cost even when GGR collects none of it', async () => {
+    const player = await fundedPlayer(app, '5');
+    const { args } = await acceptedBet(app, player, {
+      stake: '5',
+      potentialPayout: '12',
+      promotion: {
+        type: 'freebet',
+        id: `grant-${randomUUID()}`,
+        stake: 'promotion',
+        voidReturnsStake: false,
+      },
+    });
+    await settle(args.providerBetId, 'won', '12');
+    await acceptedBet(app, player, { stake: '17' });
+
+    const reopened = await inWindow(() => reopen(args.providerBetId));
+
+    expect(reopened).toEqual({ ggr: 0, promotionCost: -12, reported: -12 });
+  });
+
+  it('counts no promotion cost for a cash bet', async () => {
+    const player = await fundedPlayer(app);
+
+    const played = await inWindow(async () => {
+      const { args } = await acceptedBet(app, player, { stake: '10', potentialPayout: '25' });
+      await settle(args.providerBetId, 'won', '25');
+    });
+
+    expect(played).toEqual({ ggr: -15, promotionCost: 0, reported: 0 });
+  });
+});
+
 describe('revenue by product', () => {
   const products = async (from: Date, to: Date) => {
     const query = new URLSearchParams({

@@ -3,6 +3,13 @@
 **Date**: 2026-10-16
 **Status**: Accepted
 
+> **Update (2026-11-04)**: the player summary reports a net result, not GGR. ADR-0050 makes the
+> wallet ledger's GGR the one figure to report as GGR. The player summary's figure below keeps its
+> rule, cash stake minus payout at each bet's latest settlement, and is now called the net result:
+> a per-player activity figure, not revenue. The financial summary shows what sportsbook promotions
+> paid inside GGR, read from the same transaction rows as the promotion report. The decision below
+> is otherwise unchanged.
+
 ## Context
 
 A turnkey sportsbook provider runs its own promotions (freebets, free money, no-risk bets, payout

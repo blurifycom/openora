@@ -42,12 +42,16 @@ fields. This file does not repeat it.
   range and none is open. With `dateFrom` and `dateTo`, a stake counts in the period its bet was
   accepted, or reserved while it is not yet accepted, and a payout in the period it settled; a
   cancelled bet counts in neither. Open exposure is the stake of every reserved or accepted,
-  unsettled bet now, whatever the range. GGR is cash stake minus payout, the wallet ledger's rule
-  applied per bet: a promotion-paid stake earns nothing and a promotion payout costs in full. It
+  unsettled bet now, whatever the range. The net result is cash stake minus payout: a
+  promotion-paid stake adds nothing and a promotion payout counts in full. It is a per-player
+  activity figure, not revenue; the official GGR is the wallet's (`docs/modules/analytics.md`). It
   reads each bet's latest settlement, so a reopened bet shows as open until it settles again and
   its payout leaves the period it first settled in, even when the reversal was collected. The
   ledger books a stake at reserve, not acceptance, and is cash-basis for a reopened bet, so a
-  reversal left as debt or written off makes the ledger GGR lower than the summary's (ADR-0047).
+  reversal left as debt or written off makes GGR lower than the net result (ADR-0047).
+- **What promotions cost.** A promotion win is a real win inside GGR. The financial summary shows
+  what promotions paid, net of reopens, and the promotion report splits the same total by
+  promotion type and funder.
 - **Sportsbook debt.** What a reversed settlement could not take back, per player and currency,
   with the withdrawal hold that lives exactly as long as the debt.
 - **Reconciliation findings.** Everything the ledger noticed but could not decide on its own, for
@@ -309,10 +313,10 @@ nothing else, so the provider may retry it or treat it as final.
   whether or not the player's balance covered it; what a reopen could not collect is in the
   sportsbook debts, and a written-off debt is a cost the report does not show. A month heavy in
   promotion wins can push GGR negative in the shared totals. `GET /analytics/financial/products`
-  splits stakes, payouts and GGR by product: a sportsbook stake counts when the bet is accepted,
-  a payout when it settles, and a reopen takes the payout back in the reopen's period. While the
-  book is loaded, its ledger is the whole sportsbook row: catalog game rounds typed `sportsbook`
-  are left out.
+  splits stakes, payouts and a settled-basis GGR, not the official one, by product: a sportsbook
+  stake counts when the bet is accepted, a payout when it settles, and a reopen takes the payout
+  back in the reopen's period. While the book is loaded, its ledger is the whole sportsbook row:
+  catalog game rounds of the sportsbook type are left out.
 - **A promotion win is real money with no deposit behind it.** It is withdrawable at once. Read the
   promotion report alongside the withdrawal review as the anti-money-laundering control.
 - **Cooling-off and self-exclusion end play at once.** Either one queues a retried job that revokes

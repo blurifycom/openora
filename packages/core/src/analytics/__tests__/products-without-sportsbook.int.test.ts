@@ -13,10 +13,16 @@ beforeAll(async () => {
 
 afterAll(() => db.drop());
 
-describe('revenue by product without the sportsbook installed', () => {
+describe('financial reports without the sportsbook installed', () => {
   it('reports the casino products and never reads the sportsbook tables', async () => {
     const service = new FinancialAnalyticsService(db.drizzle, makeCache());
 
     await expect(service.products({})).resolves.toEqual([]);
+  });
+
+  it('reports no sportsbook promotion cost and never reads the sportsbook tables', async () => {
+    const service = new FinancialAnalyticsService(db.drizzle, makeCache());
+
+    await expect(service.summary({})).resolves.toMatchObject({ sportsbookPromotionCost: [] });
   });
 });

@@ -8,7 +8,15 @@ import type { FunnelAnalyticsService } from '../service/funnel-analytics.service
 
 const CTX = testContext();
 
-const SUMMARY = { deposits: [], withdrawals: [], netDeposits: [], ggr: [], bonusCost: [], ngr: [] };
+const SUMMARY = {
+  deposits: [],
+  withdrawals: [],
+  netDeposits: [],
+  ggr: [],
+  bonusCost: [],
+  sportsbookPromotionCost: [],
+  ngr: [],
+};
 const GGR: never[] = [];
 const FUNNEL = [{ stage: 'registered' as const, count: 0, dropOffRate: 0 }];
 
