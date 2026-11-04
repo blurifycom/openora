@@ -115,7 +115,7 @@ beforeEach(async () => {
   await db.drizzle.db.insert(promoStreakConfig).values({
     enabled: true,
     dailyMinWager: '1',
-    eligibleProducts: [],
+    eligibleProducts: ['casino', 'live-casino', 'sportsbook', 'pvp'],
     rakebackMilestones: [],
     fixedRewards: [{ day: 3, amount: '10', rolloverMultiplier: '5', claimExpiryDays: 7 }],
   });

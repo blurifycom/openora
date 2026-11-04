@@ -31,7 +31,7 @@ const CONFIG_ACTION = 'promo.streak_config.set';
 const CONFIG = {
   enabled: true,
   dailyMinWager: '10',
-  eligibleProducts: [],
+  eligibleProducts: ['casino', 'live-casino', 'sportsbook', 'pvp'],
   rakebackMilestones: [],
   fixedRewards: [{ day: 1, amount: '5', rolloverMultiplier: '10', claimExpiryDays: 7 }],
 };

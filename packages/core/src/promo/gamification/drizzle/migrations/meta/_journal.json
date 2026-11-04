@@ -176,6 +176,13 @@
       "when": 1794482273447,
       "tag": "0024_rank_periodic_margin",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794828865317,
+      "tag": "0025_rank_streak_products_required",
+      "breakpoints": true
     }
   ]
 }

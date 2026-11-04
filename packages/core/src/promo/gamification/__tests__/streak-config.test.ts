@@ -166,4 +166,14 @@ describe('reading a streak config that has no dollar threshold yet', () => {
       'dailyMinWager',
     ]);
   });
+
+  it.each([
+    ['no product', []],
+    ['a repeated product', ['casino', 'casino']],
+    ['an unknown product', ['slots']],
+  ])('rejects a product list with %s', (_, eligibleProducts) => {
+    const result = SetStreakConfigInputSchema.safeParse(config({ eligibleProducts }));
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path.slice(0, 1)).toEqual(['eligibleProducts']);
+  });
 });
