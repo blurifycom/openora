@@ -5,13 +5,16 @@ import { fileURLToPath } from 'node:url';
 import { appendOnlyTableSql, runMigrations } from '@openora/core/server/migrate';
 
 const GAME_ROUND_RECORD_SQL = appendOnlyTableSql('game_round', {
-  mutableColumns: ['status', 'bet_amount', 'win_amount', 'ended_at'],
+  mutableColumns: ['status', 'bet_amount', 'win_amount', 'reversed_amount', 'ended_at'],
   // A settled round still takes late aggregator deltas (`accumulateExternalRound`), so its totals
-  // stay writable but only upwards, and it cannot return to `active`.
+  // stay writable but only upwards, and it cannot return to `active`. A stake the aggregator
+  // reverses leaves `bet_amount` only by landing in `reversed_amount`, so the stake as first
+  // placed (`bet_amount + reversed_amount`) is never lost from the record.
   terminal: {
     column: 'status',
     values: ['completed', 'cancelled'],
-    growOnly: ['bet_amount', 'win_amount'],
+    growOnly: ['win_amount', 'reversed_amount'],
+    growOnlyTotals: [['bet_amount', 'reversed_amount']],
   },
 });
 

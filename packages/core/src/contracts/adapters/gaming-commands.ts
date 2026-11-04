@@ -11,6 +11,7 @@ export type GamingAccumulateExternalRoundArgs = {
   userId: string;
   currency: string;
   externalRoundId: string;
+  /** Negative reverses stake already counted; the round keeps it as `reversedAmount`, also once it has ended. */
   betDelta?: string;
   winDelta?: string;
   isFinal?: boolean;

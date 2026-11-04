@@ -484,6 +484,11 @@ export async function createApp(
 
   assertDurableSeamsBound(container);
 
+  // Every sealed token is settled once the plugins and the composition root have registered: a
+  // holder of the returned container can neither rebind a regulator-mandated service a module
+  // bound (audit writes, bonus wagering) nor bind one that none did.
+  container.closeSealedTokens();
+
   // Sealed after configure() so neither an overlay, the composition root nor a holder of the
   // returned container can replace the wrapper that enforces IAM and audit, and bound before
   // the routers so a router factory can resolve it.

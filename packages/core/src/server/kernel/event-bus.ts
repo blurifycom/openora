@@ -12,7 +12,11 @@ import {
 import type { ZodType } from 'zod';
 import type { Logger } from 'pino';
 import { createLogger } from './logger.js';
-import { getCurrentTraceId, notePublishedTopic } from './request-context.js';
+import {
+  getCurrentCorrelationId,
+  getCurrentTraceId,
+  notePublishedTopic,
+} from './request-context.js';
 
 // How long a published event stays redeliverable: the Redis Streams retention, and the
 // age past which outbox and processed_events rows are pruned. See ADR-0045.
@@ -85,6 +89,7 @@ function isKnownEvent(event: string): event is DomainEventName {
 
 function buildEnvelope(event: string, payload: unknown): EventEnvelope {
   const traceId = getCurrentTraceId();
+  const correlationId = getCurrentCorrelationId();
   return {
     eventId: crypto.randomUUID(),
     topic: event,
@@ -92,6 +97,7 @@ function buildEnvelope(event: string, payload: unknown): EventEnvelope {
     occurredAt: new Date().toISOString(),
     schemaVersion: getEventVersion(event),
     ...(traceId !== undefined ? { traceId } : {}),
+    ...(correlationId !== undefined ? { correlationId } : {}),
   };
 }
 

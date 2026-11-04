@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import type { ClientMeta } from '@openora/core/contracts';
 
 /** What the active request has done that bears on its audit trail; read by the admin-mutation fallback. */
@@ -16,6 +17,8 @@ export type RequestContext = {
   traceId: string;
   clientMeta?: ClientMeta;
   audit?: RequestAuditTrail;
+  /** The id every audit row and event written in this context is correlated under, e.g. one agent proposal's execution. */
+  correlationId?: string;
 };
 
 export type RequestStorage = AsyncLocalStorage<RequestContext>;
@@ -31,6 +34,11 @@ export function getCurrentTraceId(): string | undefined {
   return requestStorage.getStore()?.traceId;
 }
 
+/** The correlation id the active context opened with, or undefined when none was set. */
+export function getCurrentCorrelationId(): string | undefined {
+  return requestStorage.getStore()?.correlationId;
+}
+
 /** The active request's caller metadata, for an event emitted from a callback the request cannot thread it into. */
 export function getCurrentClientMeta(): ClientMeta {
   return requestStorage.getStore()?.clientMeta ?? { ip: null, userAgent: null };
@@ -43,6 +51,21 @@ export function withRequestContext<T>(ctx: RequestContext, fn: () => T): T {
 function auditTrail(): RequestAuditTrail | undefined {
   const store = requestStorage.getStore();
   return store && (store.audit ??= { writtenFor: new Set(), published: new Set() });
+}
+
+/**
+ * Runs `fn` under `correlationId`. Inside a request it keeps the request's trace id, caller
+ * metadata and audit trail (shared, so what `fn` writes still counts for the request); outside
+ * one - a job, a startup task - it opens a context of its own with a fresh trace id.
+ */
+export function withCorrelationId<T>(correlationId: string, fn: () => T): T {
+  const store = requestStorage.getStore();
+  return requestStorage.run(
+    store
+      ? { ...store, audit: auditTrail(), correlationId }
+      : { traceId: randomUUID(), correlationId },
+    fn,
+  );
 }
 
 /** The active request's audit trail, or undefined on system/background paths. */

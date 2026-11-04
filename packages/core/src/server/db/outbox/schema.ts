@@ -27,6 +27,7 @@ export const eventOutbox = pgTable(
     payload: jsonb().notNull(),
     schemaVersion: integer().notNull().default(1),
     traceId: text(),
+    correlationId: text(),
     orderingKey: text(),
     occurredAt: timestamp({ withTimezone: true }).notNull(),
     publishedAt: timestamp({ withTimezone: true }),

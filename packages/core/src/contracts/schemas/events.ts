@@ -1195,6 +1195,9 @@ export const domainEventSchemas = {
     previousAmount: MoneyAmountSchema.nullable(),
     previousMinutes: z.number().int().nullable(),
     currency: CurrencyTickerSchema.nullable(),
+    // The prior row's own currency; null for a session limit, no prior limit, or an
+    // event written before this field.
+    previousCurrency: CurrencyTickerSchema.nullable().default(null),
     initiatedBy: RgInitiatorSchema,
     reason: z.string().nullable(),
   }),
