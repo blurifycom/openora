@@ -267,6 +267,56 @@ export class SessionService {
     return { success: true as const };
   }
 
+  /**
+   * After a password reset: ends the account's sessions and revokes its MCP tokens in one
+   * transaction, then signs its open tabs out. better-auth deletes the sessions only once its
+   * reset hook returns, so a session still live after the revocation could issue a token the
+   * revocation missed; expired first, before the revocation takes the token table's lock, none
+   * can. A failed revocation still ends the sessions, then is tried once more; a second failure
+   * is thrown for the caller to log.
+   */
+  async endSessionsAfterPasswordReset(userId: User['id'], meta?: ClientMeta) {
+    const mcpTokens = await this.mcpTokensOf(userId);
+    const revocation = sessionsRevoked({ userId, actorId: userId, meta });
+    let ended = 0;
+    let failure: unknown = null;
+    try {
+      ended = await this.drizzle.db.transaction(async (tx) => {
+        const count = await expireActiveSessions(tx, userId);
+        await mcpTokens?.revokeAllForUser(revocation, tx);
+        return count;
+      });
+    } catch (err) {
+      try {
+        ended = await expireActiveSessions(this.drizzle.db, userId);
+      } catch (fallbackErr) {
+        throw new AggregateError([err, fallbackErr], 'Password reset could not end the sessions.');
+      }
+      // The rollback released the token table's lock before the sessions ended, so an old
+      // session may have issued a token in between; with none live now, a retry covers it.
+      try {
+        await mcpTokens?.revokeAllForUser(revocation);
+      } catch (retryErr) {
+        failure = new AggregateError(
+          [err, retryErr],
+          'Password reset could not revoke the MCP tokens.',
+        );
+      }
+    }
+    if (ended > 0) {
+      this.events.emit('identity.sessions.revoked_all', {
+        userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        actorId: userId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
+    if (failure !== null) {
+      throw failure;
+    }
+  }
+
   /** For a credential change that ends the user's sessions without `revokeAllSessions`. */
   async revokeMcpTokens(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
     const mcpTokens = await this.mcpTokensOf(userId);
