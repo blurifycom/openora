@@ -230,9 +230,10 @@ describe('disabling a staff account', () => {
 
     expect(await signedOut).toBe('revoked');
     expect((await staff.get('/backoffice/users')).status).toBe(401);
-    // Signing in again gets a session, but not past the guard while the account is disabled.
-    const again = await asAdmin(app.app, { email, password: 'password1234' });
-    expect((await again.get('/backoffice/users')).status).toBe(403);
+    // Signing in again is refused outright while the account is disabled.
+    await expect(asAdmin(app.app, { email, password: 'password1234' })).rejects.toThrow(
+      'ACCOUNT_INACTIVE',
+    );
 
     expect((await setActive(superAdmin, staffId, true)).status).toBe(200);
     expect((await staff.get('/backoffice/users')).status).toBe(401);

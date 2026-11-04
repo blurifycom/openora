@@ -6,6 +6,7 @@ import { RedisRateLimiter } from '@openora/core/server';
 import {
   McpTransportConfigSchema,
   type AuditWritePort,
+  type FreshReauthentication,
   type McpTransportConfig,
   type RateLimiterAdapter,
   type RateLimitKey,
@@ -22,7 +23,13 @@ import {
 } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { session, user, type Session, type User } from '@openora/core/pam/schema/identity';
-import { makeAuditWriter, makeEventBus, makeRateLimiter, mock } from '../../testing/mock.js';
+import {
+  makeAuditWriter,
+  makeEventBus,
+  makeFreshReauthentication,
+  makeRateLimiter,
+  mock,
+} from '../../testing/mock.js';
 import { migrate as migrateIam } from '../migrate.js';
 import { adminRole, adminRolePermission, adminRoleAssignment, mcpToken } from '../schema/index.js';
 import {
@@ -36,6 +43,9 @@ import {
   McpTokenLimitError,
   McpTokenNotFoundError,
   McpTokenOwnerIneligibleError,
+  McpTokenReauthenticationFailedError,
+  McpTokenReauthenticationLockedError,
+  McpTokenReauthenticationRequiredError,
   McpTokenService,
   McpTokenTtlError,
   McpTransportDisabledError,
@@ -51,6 +61,7 @@ const NOW = new Date('2026-10-06T12:00:00.000Z');
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const META = { ip: '203.0.113.7', userAgent: 'mcp-client/1.0' };
+const PROOF = { currentPassword: 'password1234', headers: { cookie: 'session=abc' } };
 const PAGE = { page: 1, limit: 50 };
 const BACKOFFICE_HOSTS = ['backoffice.example.com'];
 const ENABLED = McpTransportConfigSchema.parse({
@@ -88,8 +99,14 @@ beforeEach(async () => {
 function makeService({
   config = ENABLED,
   rateLimiter = makeRateLimiter(),
-}: { config?: McpTransportConfig; rateLimiter?: RateLimiterAdapter<RateLimitKey> } = {}) {
-  const audit = makeAuditWriter();
+  reauthentication = makeFreshReauthentication(),
+  audit = makeAuditWriter(),
+}: {
+  config?: McpTransportConfig;
+  rateLimiter?: RateLimiterAdapter<RateLimitKey>;
+  reauthentication?: FreshReauthentication;
+  audit?: ReturnType<typeof makeAuditWriter>;
+} = {}) {
   const events = makeEventBus();
   return {
     svc: new McpTokenService({
@@ -97,6 +114,7 @@ function makeService({
       audit,
       events,
       rateLimiter,
+      reauthentication,
       config,
       now: () => NOW,
     }),
@@ -154,8 +172,9 @@ const seedAdmin = async (email: string, name = 'Admin') => {
 const issueAs = (
   svc: McpTokenService,
   owner: { id: User['id']; sessionId: Session['id'] },
-  input: CreateMcpTokenInput,
-) => svc.create({ ...input, adminUserId: owner.id, sessionId: owner.sessionId }, META);
+  input: Omit<CreateMcpTokenInput, 'currentPassword'> & Partial<CreateMcpTokenInput>,
+  meta: Parameters<McpTokenService['create']>[1] = META,
+) => svc.create({ ...PROOF, ...input, adminUserId: owner.id, sessionId: owner.sessionId }, meta);
 
 async function seedToken(adminUserId: string, over: Partial<typeof mcpToken.$inferInsert> = {}) {
   const token = generateMcpToken();
@@ -338,7 +357,7 @@ describe('McpTokenService.create owner checks (real PG)', () => {
     const ghostId = randomUUID();
 
     await expect(
-      svc.create({ adminUserId: ghostId, sessionId: null, label: 'Nope' }, META),
+      svc.create({ ...PROOF, adminUserId: ghostId, sessionId: null, label: 'Nope' }, META),
     ).rejects.toBeInstanceOf(McpTokenOwnerIneligibleError);
 
     expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
@@ -365,7 +384,12 @@ describe('McpTokenService.create session check (real PG)', () => {
 
       const refusal = await rejectionOf(
         svc.create(
-          { adminUserId: alice.id, sessionId: await sessionOf(alice.id), label: 'Stale' },
+          {
+            ...PROOF,
+            adminUserId: alice.id,
+            sessionId: await sessionOf(alice.id),
+            label: 'Stale',
+          },
           META,
         ),
       );
@@ -460,28 +484,24 @@ describe('McpTokenService.create active-token cap (real PG)', () => {
   });
 
   it('holds a concurrent issue until the first commits, then refuses it at the cap', async () => {
-    let markCounted = () => {};
+    let markInserted = () => {};
     let releaseFirst = () => {};
-    const counted = new Promise<void>((resolve) => {
-      markCounted = resolve;
+    const inserted = new Promise<void>((resolve) => {
+      markInserted = resolve;
     });
     const firstHeld = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
-    const consume = vi.fn(async () => ({ allowed: true, retryAfterMs: 0 }));
-    consume.mockImplementationOnce(async () => {
-      markCounted();
+    const audit = makeAuditWriter();
+    audit.recordInTransaction.mockImplementationOnce(async () => {
+      markInserted();
       await firstHeld;
-      return { allowed: true, retryAfterMs: 0 };
     });
-    const { svc } = makeService({
-      config: withIssuance({ maxActivePerAdmin: 1 }),
-      rateLimiter: mock<RateLimiterAdapter<RateLimitKey>>({ consume, reset: vi.fn() }),
-    });
+    const { svc } = makeService({ config: withIssuance({ maxActivePerAdmin: 1 }), audit });
     const alice = await seedAdmin('alice@ops.example');
 
     const first = issueAs(svc, alice, { label: 'First' });
-    await counted;
+    await inserted;
     const second = rejectionOf(issueAs(svc, alice, { label: 'Second' }));
     await waitForRowLockWaiter(db);
     releaseFirst();
@@ -523,9 +543,11 @@ describe('McpTokenService.create issuance throttle', () => {
       retryAfterMs: HOUR_MS,
       unavailable: true,
     }));
+    const reauthentication = makeFreshReauthentication();
     const { svc, audit } = makeService({
       config: withIssuance({ perHour: 7 }),
       rateLimiter: mock<RateLimiterAdapter<RateLimitKey>>({ consume, reset: vi.fn() }),
+      reauthentication,
     });
     const alice = await seedAdmin('alice@ops.example');
 
@@ -541,7 +563,102 @@ describe('McpTokenService.create issuance throttle', () => {
     });
     expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
     expect(audit.recordInTransaction).not.toHaveBeenCalled();
+    expect(reauthentication.assert).not.toHaveBeenCalled();
   });
+
+  it('counts a refused re-authentication, so wrong passwords spend the hourly budget', async () => {
+    const reauthentication = makeFreshReauthentication({ status: 'password_invalid' });
+    const { svc } = makeService({
+      config: withIssuance({ perHour: 2 }),
+      rateLimiter: new RedisRateLimiter(redis.client),
+      reauthentication,
+    });
+    const alice = await seedAdmin('alice@ops.example');
+    for (const guess of ['guess-one', 'guess-two']) {
+      await expect(
+        issueAs(svc, alice, { label: 'Guess', currentPassword: guess }),
+      ).rejects.toBeInstanceOf(McpTokenReauthenticationFailedError);
+    }
+    reauthentication.assert.mockResolvedValue({ status: 'ok' });
+
+    await expect(issueAs(svc, alice, { label: 'Right' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(reauthentication.assert).toHaveBeenCalledTimes(2);
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+  });
+});
+
+describe('McpTokenService.create re-authentication (real PG)', () => {
+  const LOCKED_UNTIL = new Date('2026-10-06T12:30:00.000Z');
+
+  it('hands the proof, the request headers and the client meta to the identity port', async () => {
+    const reauthentication = makeFreshReauthentication();
+    const { svc } = makeService({ reauthentication });
+    const alice = await seedAdmin('alice@ops.example');
+
+    await issueAs(svc, alice, { label: 'Proved', totpCode: '123456' }, { ...META, role: 'admin' });
+
+    expect(reauthentication.assert).toHaveBeenCalledExactlyOnceWith({
+      userId: alice.id,
+      headers: PROOF.headers,
+      currentPassword: PROOF.currentPassword,
+      totpCode: '123456',
+      meta: META,
+    });
+  });
+
+  it.each([
+    [
+      'a wrong password',
+      { status: 'password_invalid' },
+      McpTokenReauthenticationFailedError,
+      { reason: 'reauthentication_failed' },
+    ],
+    [
+      'a missing second-factor code',
+      { status: 'second_factor_required' },
+      McpTokenReauthenticationRequiredError,
+      { reason: 'reauthentication_required' },
+    ],
+    [
+      'a wrong second-factor code',
+      { status: 'second_factor_invalid', attemptsLeft: 2 },
+      McpTokenReauthenticationFailedError,
+      { reason: 'reauthentication_failed', attemptsLeft: 2 },
+    ],
+    [
+      'a second factor under lockout',
+      { status: 'locked', lockedUntil: LOCKED_UNTIL },
+      McpTokenReauthenticationLockedError,
+      { reason: 'reauthentication_locked', lockedUntil: LOCKED_UNTIL.toISOString() },
+    ],
+  ] as const)(
+    'refuses %s with its reason, issues nothing and records the denial',
+    async (_case, verdict, refusalClass, data) => {
+      const { svc, audit, events } = makeService({
+        reauthentication: makeFreshReauthentication(verdict),
+      });
+      const alice = await seedAdmin('alice@ops.example');
+
+      const refusal = await rejectionOf(
+        issueAs(svc, alice, { label: 'Refused' }, { ...META, role: 'admin' }),
+      );
+
+      expect(refusal).toBeInstanceOf(refusalClass);
+      expect(refusal).toHaveProperty('data', data);
+      expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+      expect(audit.recordInTransaction).not.toHaveBeenCalled();
+      expect(events.emit).toHaveBeenCalledExactlyOnceWith('identity.user.unauthorized_access', {
+        userId: alice.id,
+        playerId: null,
+        resource: 'mcp-access',
+        action: 'use',
+        role: 'admin',
+        ...META,
+      });
+    },
+  );
 });
 
 describe('McpTokenService.revokeMine (real PG)', () => {

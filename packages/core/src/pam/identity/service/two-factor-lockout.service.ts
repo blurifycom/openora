@@ -81,62 +81,96 @@ export class TwoFactorLockoutService {
 
   /**
    * `method` is the credential that was presented, so the audit trail can tell a wrong
-   * recovery code from a wrong authenticator code.
+   * recovery code from a wrong authenticator code. Throws the account-locked error when this
+   * failure trips the lockout.
    */
   async recordFailure(
     userId: User['id'],
     method: TwoFactorChallengeMethod,
     meta: ClientMeta,
   ): Promise<void> {
-    const [row] = await this.drizzle.db
-      .select({
-        failedAttempts: user.failedTwoFactorAttempts,
-        lockoutCount: user.twoFactorLockoutCount,
-        lastFailedAt: user.lastFailedTwoFactorAt,
-      })
-      .from(user)
-      .where(eq(user.id, userId))
-      .limit(1);
-
-    if (!row) {
-      return;
+    const { lockoutUntil } = await this.countFailure(userId, method, meta);
+    if (lockoutUntil) {
+      throw createAccountLockedError(lockoutUntil);
     }
+  }
 
-    const attempts = row.failedAttempts + 1;
-    const isLocking = attempts >= this.config.maxAttempts;
-    const { durationMs } = computeLockoutTier({
-      lockoutCount: row.lockoutCount,
-      lastFailedLoginAt: row.lastFailedAt,
-      nowMs: Date.now(),
-      fallbackDurationMs: this.config.durationMs,
+  /**
+   * `recordFailure` for a caller that answers the lockout itself instead of throwing. Counts
+   * under the account row's lock, so overlapping wrong codes are each counted; one that lands
+   * after another has locked the account answers that lock without extending it.
+   */
+  async countFailure(
+    userId: User['id'],
+    method: TwoFactorChallengeMethod,
+    meta: ClientMeta,
+  ): Promise<{ attemptsRemaining: number | undefined; lockoutUntil: Date | null }> {
+    const counted = await this.drizzle.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({
+          failedAttempts: user.failedTwoFactorAttempts,
+          lockoutCount: user.twoFactorLockoutCount,
+          lastFailedAt: user.lastFailedTwoFactorAt,
+          lockoutUntil: user.twoFactorLockoutUntil,
+        })
+        .from(user)
+        .where(eq(user.id, userId))
+        .for('update')
+        .limit(1);
+
+      if (!row) {
+        return null;
+      }
+      if (row.lockoutUntil && isActiveLockout(row.lockoutUntil)) {
+        return { attemptsRemaining: 0, lockoutUntil: row.lockoutUntil, locking: false };
+      }
+
+      const attempts = row.failedAttempts + 1;
+      const isLocking = attempts >= this.config.maxAttempts;
+      const { durationMs } = computeLockoutTier({
+        lockoutCount: row.lockoutCount,
+        lastFailedLoginAt: row.lastFailedAt,
+        nowMs: Date.now(),
+        fallbackDurationMs: this.config.durationMs,
+      });
+      const lockoutUntil = isLocking ? new Date(Date.now() + durationMs) : null;
+
+      await tx
+        .update(user)
+        .set({
+          failedTwoFactorAttempts: isLocking ? 0 : attempts,
+          lastFailedTwoFactorAt: sql`now()`,
+          ...(isLocking
+            ? {
+                twoFactorLockoutUntil: lockoutUntil,
+                twoFactorLockoutCount: row.lockoutCount + 1,
+              }
+            : {}),
+        })
+        .where(eq(user.id, userId));
+
+      return {
+        attemptsRemaining: isLocking ? 0 : Math.max(this.config.maxAttempts - attempts, 0),
+        lockoutUntil,
+        locking: isLocking,
+      };
     });
-    const lockoutUntil = isLocking ? new Date(Date.now() + durationMs) : null;
 
-    await this.drizzle.db
-      .update(user)
-      .set({
-        failedTwoFactorAttempts: isLocking ? 0 : attempts,
-        lastFailedTwoFactorAt: sql`now()`,
-        ...(isLocking
-          ? {
-              twoFactorLockoutUntil: lockoutUntil,
-              twoFactorLockoutCount: row.lockoutCount + 1,
-            }
-          : {}),
-      })
-      .where(eq(user.id, userId));
-
+    if (!counted) {
+      return { attemptsRemaining: undefined, lockoutUntil: null };
+    }
+    const { attemptsRemaining, lockoutUntil, locking } = counted;
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     this.events.emit('identity.2fa.failed', {
       userId,
       playerId,
       method,
-      attemptsRemaining: isLocking ? 0 : Math.max(this.config.maxAttempts - attempts, 0),
+      attemptsRemaining,
       ip: meta.ip ?? null,
       userAgent: meta.userAgent ?? null,
     });
 
-    if (lockoutUntil) {
+    if (locking && lockoutUntil) {
       this.events.emit('identity.2fa.lockout.triggered', {
         userId,
         playerId,
@@ -144,8 +178,8 @@ export class TwoFactorLockoutService {
         ip: meta.ip ?? null,
         userAgent: meta.userAgent ?? null,
       });
-      throw createAccountLockedError(lockoutUntil);
     }
+    return { attemptsRemaining, lockoutUntil };
   }
 
   async reset(userId: User['id']): Promise<void> {

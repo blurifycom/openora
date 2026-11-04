@@ -16,6 +16,7 @@ import { McpTokenService } from '@openora/core/iam/server';
 import {
   makeAuditWriter,
   makeEventBus,
+  makeFreshReauthentication,
   makeRateLimiter,
   mock,
   NO_CLIENT_META,
@@ -50,6 +51,7 @@ function makeDirectoryWithTokens() {
     audit,
     events: makeEventBus(),
     rateLimiter: makeRateLimiter(),
+    reauthentication: makeFreshReauthentication(),
     config: McpTransportConfigSchema.parse({}),
   });
   const revokeAllForUser = vi.spyOn(tokens, 'revokeAllForUser');

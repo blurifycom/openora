@@ -107,8 +107,8 @@ async function grantMcpAccess(userId: string) {
   await drizzle().insert(adminRoleAssignment).values({ userId, roleId: role.id });
 }
 
-async function issueToken(client: TestClient) {
-  const res = await client.post('/iam/my-mcp-tokens', { label: 'laptop' });
+async function issueToken(client: TestClient, currentPassword = PASSWORD) {
+  const res = await client.post('/iam/my-mcp-tokens', { label: 'laptop', currentPassword });
   expect(res.status).toBe(200);
   return IssuedTokenSchema.parse(await res.json());
 }
@@ -230,7 +230,7 @@ describe('MCP tokens when revoking them after a credential change fails', () => 
     expect((await ping(before.token)).status).toBe(401);
     expect((await ping(bystanders.token)).status).toBe(200);
     const signedInAgain = await asAdmin(app.app, { email: staff.email, password: NEW_PASSWORD });
-    const after = await issueToken(signedInAgain);
+    const after = await issueToken(signedInAgain, NEW_PASSWORD);
     expect((await ping(after.token)).status).toBe(200);
   });
 
@@ -245,10 +245,15 @@ describe('MCP tokens when revoking them after a credential change fails', () => 
     expect(await revocationOf(before.id)).toEqual({ revokedAt: null, revokeReason: null });
     expect((await ping(before.token)).status).toBe(401);
     expect(
-      (await staff.client.post('/iam/my-mcp-tokens', { label: 'stolen session' })).status,
+      (
+        await staff.client.post('/iam/my-mcp-tokens', {
+          label: 'stolen session',
+          currentPassword: PASSWORD,
+        })
+      ).status,
     ).toBe(401);
     const signedInAgain = await asAdmin(app.app, { email: staff.email, password: NEW_PASSWORD });
-    const after = await issueToken(signedInAgain);
+    const after = await issueToken(signedInAgain, NEW_PASSWORD);
     expect((await ping(after.token)).status).toBe(200);
   });
 });
