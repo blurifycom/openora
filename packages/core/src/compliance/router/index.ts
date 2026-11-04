@@ -367,6 +367,7 @@ export function createComplianceRouter({
 
     overrideKycStatus: os.overrideKycStatus.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
+      await adminGuard.assert(context, 'kyc-override-approval', 'approve');
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
         kyc.overrideStatus(input.userId, input.tier, input.status, input.reason, caller.userId),
       );
@@ -374,6 +375,7 @@ export function createComplianceRouter({
 
     bulkApproveKyc: os.bulkApproveKyc.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
+      await adminGuard.assert(context, 'kyc-override-approval', 'approve');
       const results = await kyc.bulkApprove(input.userIds, input.tier, input.reason, caller.userId);
       // A per-item failure never reaches overrideStatus, so it leaves no
       // compliance.kyc.updated trail of its own - record the WHOLE attempted batch here
