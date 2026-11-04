@@ -85,13 +85,13 @@ describe('rank perk product lists on upgrade', () => {
       .values({ userId, currency: 'USDT', tierId: tier?.id });
 
     await db.drizzle.db.transaction((tx) =>
-      rakeback.recordWager(tx, {
+      rakeback.recordSettledWager(tx, {
         userId,
         currency: 'USDT',
-        amount: '100',
-        weightedAmount: '100',
         realAmount: '100',
         context: { provider: 'sportsbook', product: 'sportsbook' },
+        round: { providerName: 'sportsbook:provider', externalRoundId: randomUUID() },
+        qualifiedAt: new Date(),
       }),
     );
 
