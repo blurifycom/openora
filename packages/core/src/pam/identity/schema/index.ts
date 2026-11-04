@@ -124,10 +124,12 @@ export const session = pgTable(
       .$onUpdateFn(() => new Date()),
     ipAddress: text(),
     userAgent: text(),
-    // Written by the admin session guard, throttled. better-auth owns `updatedAt` and
+    // Written by the idle policy, throttled. better-auth owns `updatedAt` and
     // ties it to its own updateAge bookkeeping, so touching that column to record
     // activity would shift session expiry - this one is ours and better-auth ignores it.
-    lastSeenAt: timestamp({ withTimezone: true }),
+    // Defaults to the sign-in time, so a new session's idle clock starts at once; only rows
+    // that predate the default are null, and the idle policy handles those on their own.
+    lastSeenAt: timestamp({ withTimezone: true }).defaultNow(),
     userId: uuid()
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),

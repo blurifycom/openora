@@ -9,9 +9,10 @@ import { IMPLEMENTED_SEALED_TOKENS } from './sealed.js';
  * audit write).
  *
  * A sealed token can only ever be bound once, by its owning module, via
- * `ctx.provideSealed()` - `ctx.provide()` rejects any sealed token outright and
- * `provideSealed()` itself refuses a second bind (see module-registry.ts). So a
- * bound sealed token is always the owner's canonical implementation, never a
+ * `ctx.provideSealed()` - `ctx.provide()` rejects any sealed token outright,
+ * `provideSealed()` itself refuses a second bind (see module-registry.ts) and seals the
+ * token in the container, and `createApp` closes every sealed token once it has booted.
+ * So a bound sealed token is always the owner's canonical implementation, never a
  * plugin override; this check exists to catch an ABSENT binding, not a hijacked
  * one - the hijack path is already closed at bind time for every deployment.
  *

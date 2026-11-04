@@ -72,6 +72,14 @@ The platform ships the token routes; the operator's Backoffice builds the screen
 Only an active admin can generate a token. Copy it at once: it is shown only once, and the
 platform stores only its hash.
 
+A signed-in session is not enough to generate one, because a token outlives the session that
+issued it. `POST /iam/my-mcp-tokens` takes the admin's `currentPassword`, and a `totpCode` from
+the second factor when the account has one enrolled; the Backoffice screen asks for both. An
+account that receives its codes by email or SMS sends one first, the same way as for the other
+re-authenticated actions. A wrong code counts towards the account's second-factor lockout, a
+right one resets it, and every attempt, a wrong password included, counts towards the hourly
+issue limit. Each refusal is audited as a denied MCP access.
+
 ## Connect Claude Code
 
 ```bash
@@ -137,3 +145,12 @@ path has not been verified by the platform maintainers.
 | 415    | The request is not sent as JSON.                                                                                                 |
 | 429    | The token or the client address hit its limit. Retry after the time the response names.                                          |
 | 503    | The rate limiter is unreachable. Retry shortly.                                                                                  |
+
+Generating a token answers with a `reason` in the error data:
+
+| Status | Reason                      | Meaning                                                                                                   |
+| ------ | --------------------------- | --------------------------------------------------------------------------------------------------------- |
+| 403    | `reauthentication_failed`   | The password or the second-factor code is wrong. After a wrong code, `attemptsLeft` says how many remain. |
+| 403    | `reauthentication_locked`   | Too many wrong codes locked the second factor. Retry after `lockedUntil`.                                 |
+| 422    | `reauthentication_required` | The account has a second factor enrolled and the request carried no code.                                 |
+| 429    | -                           | The admin hit the hourly issue limit, which every attempt counts towards. Retry after the time it names.  |

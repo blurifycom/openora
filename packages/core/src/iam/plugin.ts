@@ -5,6 +5,7 @@ import {
   ADMIN_PLAYER_ACTIVITY,
   ADMIN_ROLE_ASSIGNMENT_DIRECTORY,
   AUDIT_WRITER,
+  FRESH_REAUTHENTICATION,
   IDENTITY_READER,
   MAIL_DISPATCH,
   MCP_TOKEN_AUTHENTICATOR,
@@ -29,6 +30,7 @@ function makeMcpTokenService(c: TypedContainer<CoreTokenCatalog>) {
     audit: c.get(AUDIT_WRITER),
     events: c.get(EVENT_BUS),
     rateLimiter: c.get(RATE_LIMITER),
+    reauthentication: c.get(FRESH_REAUTHENTICATION),
     config: c.get(PLATFORM_CONFIG).agents.mcp,
   });
 }
@@ -36,7 +38,7 @@ function makeMcpTokenService(c: TypedContainer<CoreTokenCatalog>) {
 export default {
   id: 'iam',
   dependsOn: ['identity', 'audit'],
-  requiresPorts: [MAIL_DISPATCH],
+  requiresPorts: [MAIL_DISPATCH, FRESH_REAUTHENTICATION],
   register(ctx) {
     // Captured from the provider factory so the event handlers below purge the SAME
     // singleton the AdminGuard reads (Container memoizes per token). Null until the

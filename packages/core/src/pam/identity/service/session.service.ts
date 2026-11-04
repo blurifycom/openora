@@ -7,8 +7,9 @@ import {
   makeNotFoundError,
   makeConflictError,
 } from '@openora/core/server';
-import { eq, asc, desc, and, or, gt, isNull, ne, count, ilike, sql } from 'drizzle-orm';
+import { eq, asc, desc, and, or, gt, isNull, count, ilike, sql } from 'drizzle-orm';
 import {
+  ADMIN_IDLE_MINUTES,
   AUTO_LOGOUT_MINUTES,
   type ClientMeta,
   type IdentityReader,
@@ -25,18 +26,18 @@ export const SessionNotFoundError = makeNotFoundError('Session');
 
 // Idle expiry (`SessionIdleService`) is lazy: it only cuts a session when a request for
 // it arrives, so `expiresAt` alone goes stale for a session nobody has used since. Both
-// "active session" reads below need this alongside `expiresAt > now()` for a player row,
-// or a closed laptop on a 15-minute window keeps showing as logged in for up to 30 days.
-// Built from the same contract map `SessionIdleService` reads, not restated by hand, so
-// the two cannot disagree on what a window means.
-function autoLogoutMinutesCase() {
+// "active session" reads below need this alongside `expiresAt > now()`, or a closed laptop on
+// a 15-minute player window keeps showing as logged in for up to 30 days, and a backoffice
+// session keeps showing past its fixed staff window. Built from the same contract constants
+// `SessionIdleService` reads, not restated by hand, so the two cannot disagree on a window.
+function idleWindowMinutesCase() {
   return sql.join(
     [
-      sql`CASE ${user.autoLogoutDuration}`,
+      sql`CASE WHEN ${user.role} = 'player' THEN CASE ${user.autoLogoutDuration}`,
       ...Object.entries(AUTO_LOGOUT_MINUTES).map(
         ([duration, minutes]) => sql`WHEN ${duration} THEN ${minutes}`,
       ),
-      sql`END`,
+      sql`END ELSE ${ADMIN_IDLE_MINUTES} END`,
     ],
     sql` `,
   );
@@ -44,9 +45,8 @@ function autoLogoutMinutesCase() {
 
 function notIdledOut() {
   return or(
-    ne(user.role, 'player'),
     isNull(session.lastSeenAt),
-    gt(session.lastSeenAt, sql`now() - make_interval(mins => (${autoLogoutMinutesCase()})::int)`),
+    gt(session.lastSeenAt, sql`now() - make_interval(mins => (${idleWindowMinutesCase()})::int)`),
   );
 }
 export const CurrentSessionRevokeError = makeConflictError(
@@ -265,6 +265,56 @@ export class SessionService {
       userAgent: meta?.userAgent ?? null,
     });
     return { success: true as const };
+  }
+
+  /**
+   * After a password reset: ends the account's sessions and revokes its MCP tokens in one
+   * transaction, then signs its open tabs out. better-auth deletes the sessions only once its
+   * reset hook returns, so a session still live after the revocation could issue a token the
+   * revocation missed; expired first, before the revocation takes the token table's lock, none
+   * can. A failed revocation still ends the sessions, then is tried once more; a second failure
+   * is thrown for the caller to log.
+   */
+  async endSessionsAfterPasswordReset(userId: User['id'], meta?: ClientMeta) {
+    const mcpTokens = await this.mcpTokensOf(userId);
+    const revocation = sessionsRevoked({ userId, actorId: userId, meta });
+    let ended = 0;
+    let failure: unknown = null;
+    try {
+      ended = await this.drizzle.db.transaction(async (tx) => {
+        const count = await expireActiveSessions(tx, userId);
+        await mcpTokens?.revokeAllForUser(revocation, tx);
+        return count;
+      });
+    } catch (err) {
+      try {
+        ended = await expireActiveSessions(this.drizzle.db, userId);
+      } catch (fallbackErr) {
+        throw new AggregateError([err, fallbackErr], 'Password reset could not end the sessions.');
+      }
+      // The rollback released the token table's lock before the sessions ended, so an old
+      // session may have issued a token in between; with none live now, a retry covers it.
+      try {
+        await mcpTokens?.revokeAllForUser(revocation);
+      } catch (retryErr) {
+        failure = new AggregateError(
+          [err, retryErr],
+          'Password reset could not revoke the MCP tokens.',
+        );
+      }
+    }
+    if (ended > 0) {
+      this.events.emit('identity.sessions.revoked_all', {
+        userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        actorId: userId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
+    if (failure !== null) {
+      throw failure;
+    }
   }
 
   /** For a credential change that ends the user's sessions without `revokeAllSessions`. */

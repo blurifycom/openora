@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createToken } from '@openora/core/contracts';
+import { createSealedToken, createToken } from '@openora/core/contracts';
 import { Container } from '../container.js';
 
 describe('Container', () => {
@@ -26,18 +26,66 @@ describe('Container', () => {
     expect(c.get(TOKEN)).toBe('second');
   });
 
-  it('refuses every later registration of a sealed token and keeps serving it', () => {
-    const TOKEN = createToken<string>('kernel');
-    const c = new Container();
-    c.registerSealed(TOKEN, () => 'enforcing');
-    expect(c.get(TOKEN)).toBe('enforcing');
+  describe('a token bound with registerSealed', () => {
+    const sealedKernel = () => {
+      const TOKEN = createToken<string>('kernel');
+      const c = new Container();
+      c.registerSealed(TOKEN, () => 'enforcing');
+      expect(c.get(TOKEN)).toBe('enforcing');
+      return { TOKEN, c };
+    };
 
-    expect(() => c.register(TOKEN, () => 'replacement')).toThrow(
-      '[container] Token "kernel" is sealed: it is bound once and never rebound.',
-    );
-    expect(() => c.registerUnsafe(TOKEN, () => 'replacement')).toThrow(/is sealed/);
-    expect(() => c.registerSealed(TOKEN, () => 'replacement')).toThrow(/is sealed/);
-    expect(c.get(TOKEN)).toBe('enforcing');
+    it('refuses a later register, and keeps serving the binding', () => {
+      const { TOKEN, c } = sealedKernel();
+      expect(() => c.register(TOKEN, () => 'replacement')).toThrow(
+        '[container] Token "kernel" is sealed: it is bound once and never rebound.',
+      );
+      expect(c.get(TOKEN)).toBe('enforcing');
+    });
+
+    it('refuses a later registerUnsafe, and keeps serving the binding', () => {
+      const { TOKEN, c } = sealedKernel();
+      expect(() => c.registerUnsafe(TOKEN, () => 'replacement')).toThrow(/is sealed/);
+      expect(c.get(TOKEN)).toBe('enforcing');
+    });
+
+    it('refuses a later registerSealed or registerSealedUnsafe, and keeps serving the binding', () => {
+      const { TOKEN, c } = sealedKernel();
+      expect(() => c.registerSealed(TOKEN, () => 'replacement')).toThrow(/is sealed/);
+      expect(() => c.registerSealedUnsafe(TOKEN, () => 'replacement')).toThrow(/is sealed/);
+      expect(c.get(TOKEN)).toBe('enforcing');
+    });
+  });
+
+  describe('closeSealedTokens', () => {
+    it('refuses every registration of a sealed token, bound or not, and keeps serving the bound', () => {
+      const BOUND = createSealedToken<string>('audit-writer');
+      const UNBOUND = createSealedToken<string>('rg-enforcement');
+      const c = new Container();
+      c.registerSealedUnsafe(BOUND, () => 'canonical');
+
+      c.closeSealedTokens();
+
+      for (const token of [BOUND, UNBOUND]) {
+        expect(() => c.registerUnsafe(token, () => 'replacement')).toThrow(
+          `[container] Token "${token.description}" is sealed: it is bound once and never rebound.`,
+        );
+        expect(() => c.registerSealedUnsafe(token, () => 'replacement')).toThrow(/is sealed/);
+      }
+      expect(c.get(BOUND)).toBe('canonical');
+      expect(c.has(UNBOUND)).toBe(false);
+    });
+
+    it('leaves the ordinary tokens to the last registration', () => {
+      const ADAPTER = createToken<string>('payment-adapter');
+      const c = new Container();
+      c.register(ADAPTER, () => 'default');
+
+      c.closeSealedTokens();
+      c.register(ADAPTER, () => 'overlay');
+
+      expect(c.get(ADAPTER)).toBe('overlay');
+    });
   });
 
   it('lets a sealed registration replace an earlier ordinary one', () => {

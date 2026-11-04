@@ -6,7 +6,12 @@ import { McpTransportConfigSchema } from '@openora/core/contracts';
 import { createTestDb, seedUser, type TestDb } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { session } from '@openora/core/pam/schema/identity';
-import { makeAuditWriter, makeEventBus, makeRateLimiter } from '../../testing/mock.js';
+import {
+  makeAuditWriter,
+  makeEventBus,
+  makeFreshReauthentication,
+  makeRateLimiter,
+} from '../../testing/mock.js';
 import { migrate as migrateIam } from '../migrate.js';
 import { adminRole, adminRolePermission, adminRoleAssignment, mcpToken } from '../schema/index.js';
 import { McpTokenIssueError, McpTokenService } from '../service/mcp-token.service.js';
@@ -43,6 +48,7 @@ describe('McpTokenService.create when the database refuses the write (real PG)',
       audit,
       events: makeEventBus(),
       rateLimiter: makeRateLimiter(),
+      reauthentication: makeFreshReauthentication(),
       config: McpTransportConfigSchema.parse({
         enabled: true,
         allowedHosts: ['backoffice.example.com'],
@@ -75,7 +81,16 @@ describe('McpTokenService.create when the database refuses the write (real PG)',
       .returning({ id: session.id });
 
     const failure = await svc
-      .create({ adminUserId: admin.id, sessionId: live?.id ?? null, label: 'unwritable' }, META)
+      .create(
+        {
+          adminUserId: admin.id,
+          sessionId: live?.id ?? null,
+          label: 'unwritable',
+          currentPassword: 'password1234',
+          headers: {},
+        },
+        META,
+      )
       .then(
         () => undefined,
         (err: unknown) => err,

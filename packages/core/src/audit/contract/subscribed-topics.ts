@@ -43,6 +43,7 @@ export const SUBSCRIBED_TOPICS = [
   'identity.session.revoked',
   'identity.sessions.revoked_all',
   'identity.user.unauthorized_access',
+  'identity.user.login_blocked',
   'wallet.deposit.completed',
   'wallet.withdrawal.completed',
   'wallet.withdrawal.requested',
