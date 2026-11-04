@@ -140,6 +140,29 @@ describe('SupportHistoryService logging (real PG)', () => {
     );
   });
 
+  it('answers a section unavailable for an item whose getter throws, the other section kept', async () => {
+    const p = await linkedPlayer();
+    const secret = `sk_live_${randomUUID()}`;
+    const history = await service({
+      listChats: async () => [
+        {
+          ...TICKET,
+          kind: 'chat',
+          get status(): never {
+            throw new Error(`jane.doe@example.test ${secret}`);
+          },
+        },
+      ],
+    }).getHistory(p.userId, false);
+
+    expect(history.chats).toEqual({ state: 'unavailable', items: [] });
+    expect(history.tickets).toEqual({ state: 'ok', items: [TICKET], complete: true });
+    expect(warned()).toEqual([{ userId: p.userId, section: 'chat', reason: 'malformed answer' }]);
+    expect(inspect([log.warn.mock.calls, history], { depth: null })).not.toMatch(
+      /jane\.doe|sk_live_/,
+    );
+  });
+
   it.each([
     'javascript:alert(1)',
     'data:text/html,<script>alert(1)</script>',

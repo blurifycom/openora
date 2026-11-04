@@ -8,3 +8,4 @@ export {
   SupportChatService,
   SupportChatSyncFailedError,
 } from './support-chat/service/support-chat.service.js';
+export type { ProviderFailureReason } from './support-chat/service/provider-reason.service.js';

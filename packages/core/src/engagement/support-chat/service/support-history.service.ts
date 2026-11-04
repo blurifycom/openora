@@ -15,7 +15,7 @@ import { auditLog } from '@openora/core/audit/schema';
 import { user, type User } from '@openora/core/pam/schema/identity';
 import { player, type Player } from '@openora/core/pam/schema/profile';
 import { supportChatCustomer } from '../schema/index.js';
-import { reasonOf } from './provider-reason.service.js';
+import { reasonOf, type ProviderFailureReason } from './provider-reason.service.js';
 import { SupportChatPlayerNotFoundError } from './support-chat.service.js';
 
 const logger = createLogger('support-chat');
@@ -337,7 +337,12 @@ export class SupportHistoryService {
     kind: SupportHistoryItem['kind'],
     read: () => Promise<unknown>,
   ): Promise<Section> {
-    const unavailable = (reason: string): Section => {
+    const unavailable = (
+      reason:
+        | ProviderFailureReason
+        | 'malformed answer'
+        | `answered an item that is not a ${SupportHistoryItem['kind']}`,
+    ): Section => {
       logger.warn({ userId, section: kind, reason }, 'support history section unavailable');
       return { state: 'unavailable', items: [] };
     };
@@ -347,7 +352,13 @@ export class SupportHistoryService {
     } catch (err) {
       return unavailable(reasonOf(err));
     }
-    const parsed = SupportHistoryItemsSchema.safeParse(answer);
+    // safeParse rethrows what a getter on the answer throws, which is the adapter's text too.
+    let parsed: ReturnType<typeof SupportHistoryItemsSchema.safeParse>;
+    try {
+      parsed = SupportHistoryItemsSchema.safeParse(answer);
+    } catch {
+      return unavailable('malformed answer');
+    }
     if (!parsed.success) {
       return unavailable('malformed answer');
     }
