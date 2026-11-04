@@ -117,11 +117,12 @@ Core works out which identities belong to the player and hands them to the reade
 - **The email trail is trusted from its end back to its first break.** An email change writes its
   audit row in the same transaction as the change, so a change can no longer be saved without its
   row. Rows written before that were appended shortly after each change, outside its transaction,
-  so one of those can be lost, duplicated, land out of order or carry a skewed time. Each row carries the time stamped right after the change, so
-  a slow write does not move a window's bounds; a row written before that field existed is timed by
-  when it was written. A redelivered event writes its row again: a row that repeats any earlier one,
-  change time included, counts once, but a repeated row without a change time cannot be told from a
-  real repeat and breaks the trail. Core walks back from the current email: the last change must
+  so one of those can be lost, duplicated, land out of order or carry a skewed time. Each row
+  carries the time stamped right after the change, so a slow write does not move a window's bounds;
+  a row written before that field existed is timed by when it was written. A redelivered event
+  written before that change appends its row again: a row that repeats any earlier one, change time
+  included, counts once, but a repeated row without a change time cannot be told from a real repeat
+  and breaks the trail. Core walks back from the current email: the last change must
   name the current email as its new one, each change must name as its new email the one the next
   change replaced, and each change's time must be later than every earlier change and registration,
   and no more than 5 seconds later than its own audit row was written (a change always comes before
@@ -134,10 +135,10 @@ Core works out which identities belong to the player and hands them to the reade
   clock: every later change then reads as falling back, and the section stays unavailable until real
   time passes that stamp, which with realistic clock skew takes seconds. Core fails closed rather
   than trust it.
-- **The email registered with anchors the oldest window.** Each account records the email it was
-  created with (`registered_email`; null on accounts created before it existed). When the walk back
-  ends without a break on a different email, compared case-insensitively, a first change was lost:
-  the trail counts as broken and has no registration window.
+- **The email registered with anchors the oldest window.** Each account keeps the email it was
+  created with, set once at registration. Accounts created before that was recorded have none.
+  When the walk back ends without a break on a different email, compared case-insensitively, a
+  first change was lost: the trail counts as broken and has no registration window.
 - **Another account's changes bound the oldest window.** On every account, recorded registration
   email or not, a lost first change would otherwise leave the next email taken as held from
   registration, over the time another account held it; on accounts with a recorded registration
@@ -149,9 +150,10 @@ Core works out which identities belong to the player and hands them to the reade
   way the trail counts as broken: the tickets section is not complete, the warning goes to the
   log, and when no window is left the section is unavailable.
 - **What the trail cannot notice.** The lost rows below can only be rows written before email
-  changes committed with their audit row. On an account without a recorded registration email, a
-  lost first change stays unseen when the other account's change of that address was lost too, or
-  the address was freed another way, such as the account being deleted. A lost run of changes
+  changes committed with their audit row, which is to say from before that deploy. On an account
+  without a recorded registration email, a lost first change stays unseen when the other account's
+  change of that address was lost too, or the address was freed another way, such as the account
+  being deleted. A lost run of changes
   returning to the address it left (A to B recorded, B to C and C to B lost, B to D recorded) also
   leaves a trail that looks consistent, so B's window spans the gap. A change time later than the
   real change by no more than its audit write's own delay plus the 5-second margin also goes
