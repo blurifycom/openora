@@ -41,9 +41,10 @@ strict, so a field reaches the vendor only when it is added to the contract on p
   [Support history](#support-history) describes them, never free text. The code goes to the log,
   and for a failed sync to the job queue and the error reporter, and nowhere else; the player
   gets a fixed "unavailable" refusal. A JavaScript adapter can still pass any text; core logs it
-  as `unlisted reason`. Any other error that escapes the adapter is logged as
-  `unexpected adapter error`, nothing of it kept, not even its name. The provider error may
-  carry the original error as `cause`; core never reads, logs, reports or rethrows it.
+  as `unlisted reason`. Any other error that escapes the adapter, or a provider error whose
+  `reason` throws when read, is logged as `unexpected adapter error`, nothing of it kept, not
+  even its name. The provider error may carry the original error as `cause`; core never reads,
+  logs, reports or rethrows it.
 - **Make the context sync idempotent.** The same context may be written more than once, and two
   syncs for one player may run at once. Core re-reads the context after each write and writes
   again when it moved, so the last write converges on the database's latest state; the adapter
@@ -185,8 +186,8 @@ What a reader must guarantee:
   - `bad_response`: the vendor answered something unexpected.
 
   The code goes to the log only. A JavaScript adapter can still pass any text; core logs it as
-  `unlisted reason`. Any other error that escapes is logged as `unexpected adapter error`, nothing
-  of it kept, not even its name.
+  `unlisted reason`. Any other error that escapes, or a provider error whose `reason` throws when
+  read, is logged as `unexpected adapter error`, nothing of it kept, not even its name.
 
 The answer has a tickets and a chats section. Each one either carries its items, most recently
 updated first, or says it is unavailable: its read failed, or the current email could not be
