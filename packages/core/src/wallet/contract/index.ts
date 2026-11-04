@@ -229,8 +229,9 @@ export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
   balanceAfter: MoneyAmountSchema.nullable(),
   // Null on row types that carry no conversion, and on rows written before it was recorded.
   reference: WalletReferenceConversionSchema.nullable(),
-  // The rakeback claim a `cashback` credit paid.
-  claimId: UuidSchema.nullable(),
+  // The rakeback claim a `cashback` credit paid. Optional so a consumer that builds this type
+  // by hand (a fixture, a mock) keeps compiling; the service always sets it.
+  claimId: UuidSchema.nullable().optional(),
 });
 export type AdminWalletTransaction = z.infer<typeof AdminWalletTransactionSchema>;
 
