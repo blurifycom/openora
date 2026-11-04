@@ -68,6 +68,17 @@ const getterReason = () => {
   return err;
 };
 
+// Reading the reason throws an error that carries the secret.
+const throwingReason = () => {
+  const err = new SupportChatProviderError('timeout');
+  Object.defineProperty(err, 'reason', {
+    get: () => {
+      throw new Error(dirt());
+    },
+  });
+  return err;
+};
+
 const shapes: [string, () => Error][] = [
   [
     'a message and stack holding the secret',
@@ -81,6 +92,7 @@ const shapes: [string, () => Error][] = [
       }),
   ],
   ['a reason that is a getter returning text', getterReason],
+  ['a reason getter that throws the secret', throwingReason],
   [
     'a listed code over a six-level cause chain',
     () => new SupportChatProviderError('timeout', { cause: deepCause(6) }),
