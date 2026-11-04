@@ -837,7 +837,11 @@ export async function mapEventToRecord(
   ) {
     const before =
       topic === 'rg.limit.set' || topic === 'rg.limit.change_confirmed'
-        ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
+        ? {
+            amount: p['previousAmount'] ?? null,
+            minutes: p['previousMinutes'] ?? null,
+            ...(topic === 'rg.limit.set' ? { currency: p['previousCurrency'] ?? null } : {}),
+          }
         : topic === 'rg.self_exclusion.lifted' || topic === 'rg.cooling_off.lifted'
           ? { status: 'active' }
           : null;
@@ -1425,7 +1429,7 @@ export default {
       // broker redelivers it instead of the change going unaudited (ADR-0045).
       ctx.events.on(
         topic,
-        async (payload) => {
+        async (payload, envelope) => {
           if (!isRecord(payload)) {
             return;
           }
@@ -1437,7 +1441,12 @@ export default {
           if (!svcRef) {
             throw new Error(`audit record for '${topic}' skipped - service not constructed`);
           }
-          await svcRef.record(await mapEventToRecord(topic, payload));
+          const record = await mapEventToRecord(topic, payload);
+          // A bulk operation's id, when the topic maps one, outranks the emitter's correlation id.
+          await svcRef.record({
+            ...record,
+            correlationId: record.correlationId ?? envelope?.correlationId ?? null,
+          });
         },
         { consumerGroup: AUDIT_CONSUMER_GROUP },
       );

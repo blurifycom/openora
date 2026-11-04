@@ -14,7 +14,7 @@ export type {
   TokenCatalogValues,
   TokenValue,
 } from './token.js';
-export { createToken, createSealedToken, createClientPageToken } from './token.js';
+export { createToken, createSealedToken, createClientPageToken, isSealedToken } from './token.js';
 export type {
   ChatModeration,
   ChatModerationEntry,

@@ -27,6 +27,8 @@ export type EventEnvelope<T = unknown> = {
   orderingKey?: string;
   /** Distributed trace correlation ID. */
   traceId?: string;
+  /** The audit correlation id the emitting context ran under (eg one agent proposal's execution). */
+  correlationId?: string;
 };
 
 export type BrokerHandler = (envelope: EventEnvelope) => void | Promise<void>;
