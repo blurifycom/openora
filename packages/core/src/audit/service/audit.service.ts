@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   DrizzleService,
+  getCurrentCorrelationId,
   likePrefix,
   noteAuditWrite,
   pageToOffset,
@@ -214,7 +215,11 @@ function chainedRow(
     createdAt: createdAt.toISOString(),
     prevHash,
   });
-  return { ...input, id, seq, prevHash, createdAt, hash };
+  // An entry that leaves the correlation id unset takes the one its context runs under, e.g. the
+  // agent proposal an MCP execution writes for; an explicit value, null included, is kept.
+  const correlationId =
+    input.correlationId === undefined ? getCurrentCorrelationId() : input.correlationId;
+  return { ...input, correlationId, id, seq, prevHash, createdAt, hash };
 }
 
 function chainedRows(

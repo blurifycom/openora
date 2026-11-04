@@ -3,6 +3,7 @@ export {
   requestStorage,
   getCurrentRequestContext,
   getCurrentTraceId,
+  getCurrentCorrelationId,
   getCurrentClientMeta,
   withRequestContext,
   noteAuditWrite,

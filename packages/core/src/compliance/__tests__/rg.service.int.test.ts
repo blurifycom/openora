@@ -141,6 +141,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         amount: '100',
         previousAmount: null,
         currency: 'USD',
+        previousCurrency: null,
         reason: 'player requested via support',
       }),
     );

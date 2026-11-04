@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
+import { withRequestContext } from '@openora/core/server';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type { IdentityReader } from '@openora/core/contracts';
@@ -217,6 +218,45 @@ describe('AuditService.record() (real PG)', () => {
       after: { status: 'accepted' },
       result: 'success',
     });
+  });
+});
+
+describe('AuditService correlation id from the request context (real PG)', () => {
+  const entry = { actorType: 'system', action: 'test.action', resourceType: 'test' } as const;
+  const inCorrelation = <T>(fn: () => Promise<T>) =>
+    withRequestContext({ traceId: 'trace-1', correlationId: 'corr-ctx' }, fn);
+
+  it('fills an unset correlation id from the context, for single and bulk appends', async () => {
+    const svc = makeService();
+    const single = await inCorrelation(() => svc.record(entry));
+    const bulk = await inCorrelation(() =>
+      db.drizzle.db.transaction((tx) => svc.recordManyInTransaction(tx, [entry, entry])),
+    );
+
+    expect([single, ...bulk].map((row) => row.correlationId)).toEqual([
+      'corr-ctx',
+      'corr-ctx',
+      'corr-ctx',
+    ]);
+    expect((await svc.verifyChain()).valid).toBe(true);
+  });
+
+  it('keeps an explicit correlation id, null included, over the context one', async () => {
+    const svc = makeService();
+    const explicit = await inCorrelation(() => svc.record({ ...entry, correlationId: 'bulk-1' }));
+    const none = await inCorrelation(() => svc.record({ ...entry, correlationId: null }));
+
+    expect(explicit.correlationId).toBe('bulk-1');
+    expect(none.correlationId).toBeNull();
+  });
+
+  it('writes none outside a context, or in a request context that sets none', async () => {
+    const svc = makeService();
+    const outside = await svc.record(entry);
+    const request = await withRequestContext({ traceId: 'trace-2' }, () => svc.record(entry));
+
+    expect(outside.correlationId).toBeNull();
+    expect(request.correlationId).toBeNull();
   });
 });
 

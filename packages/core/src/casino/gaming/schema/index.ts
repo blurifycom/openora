@@ -276,6 +276,9 @@ export const gameRound = pgTable(
     status: gameRoundStatusEnum().notNull().default('active'),
     betAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
     winAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
+    reversedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
     currency: text().notNull(),
     startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp({ withTimezone: true }),

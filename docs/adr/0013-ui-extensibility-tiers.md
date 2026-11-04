@@ -63,6 +63,9 @@ All gating props are optional with backwards-safe defaults: existing fills keep 
 `@openora/adapters` gains two phantom-typed token kinds alongside `Token<T>`:
 
 - `SealedToken<T>` - regulator-mandated services operators must never override. Structurally incompatible with `Token<T>`, so `ctx.provide(sealed, ...)` fails typecheck. Belt-and-braces runtime guard in `plugin-host` rejects any token whose Symbol description starts with `sealed:`.
+
+  > **Update (2026-10-30)**: the container enforces it too, so the plugin host is no longer the only guard. `provideSealed` seals the token in the container, so no later `register`, `registerUnsafe` or `registerSealed` rebinds it. Once the plugins and the composition root have registered, `createApp` closes every sealed token, bound or not (`Container.closeSealedTokens`): a holder of the container it returns can neither replace a sealed service nor bind one no module bound.
+
 - `ClientPageToken<P>` - Tier 3 escape hatch for full client-side page replacement.
 
 `@openora/compliance-invariants` is the canonical home for the sealed list with regulatory citations per token (UKGC LCCP 3.5, MGA Player Protection, 5AMLD, FATF, etc.). 12 sealed tokens shipped in v1.
