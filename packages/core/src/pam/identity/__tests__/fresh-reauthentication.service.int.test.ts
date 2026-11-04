@@ -204,4 +204,29 @@ describe('FreshReauthenticationService.assert (real PG)', () => {
       expect.objectContaining({ userId: owner.id }),
     );
   });
+
+  it('counts each wrong code of an overlapping burst and locks once', async () => {
+    const { svc, events } = build({ codeStatus: 401 });
+    const owner = await seedAccount({ twoFactorEnabled: true });
+
+    const verdicts = await Promise.all(
+      Array.from({ length: 12 }, () => assertAs(svc, owner.id, { totpCode: CODE })),
+    );
+
+    expect(verdicts.filter((v) => v.status === 'second_factor_invalid')).toHaveLength(
+      LOCKOUT.maxAttempts - 1,
+    );
+    expect(verdicts.filter((v) => v.status === 'locked')).toHaveLength(
+      12 - (LOCKOUT.maxAttempts - 1),
+    );
+    const locks = events.emit.mock.calls.filter(
+      ([topic]) => topic === 'identity.2fa.lockout.triggered',
+    );
+    expect(locks).toHaveLength(1);
+    const [row] = await db.drizzle.db
+      .select({ lockoutCount: user.twoFactorLockoutCount })
+      .from(user)
+      .where(eq(user.id, owner.id));
+    expect(row?.lockoutCount).toBe(1);
+  });
 });
