@@ -1,5 +1,5 @@
 export type { AuthOptions, Auth, DispatchOtpMail } from './auth.js';
-export { createAuth } from './auth.js';
+export { createAuth, runInAuthTransaction } from './auth.js';
 export { AdminGuard, ADMIN_GUARD } from './admin-guard.js';
 export type { AdminCaller } from './admin-guard.js';
 export { SessionResolver, AUTH_SESSION } from './session-resolver.js';
