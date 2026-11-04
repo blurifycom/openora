@@ -441,16 +441,13 @@ describe('WithdrawalPinService.verifyPin (real PG)', () => {
     const toUser = vi.fn(async () => undefined);
     const { accountUser, svc } = await withPin({ mailDispatch: { toUser, toAddress: vi.fn() } });
 
-    const verdicts = await Promise.all([
-      ...Array.from({ length: 12 }, () =>
-        svc.verifyPin({ userId: accountUser.id, pin: WRONG_PIN }),
-      ),
-      svc.verifyPin({ userId: accountUser.id, pin: PIN }),
-    ]);
+    // Wrong guesses only: a right one inside the burst would reset the count wherever it lands.
+    const verdicts = await Promise.all(
+      Array.from({ length: 12 }, () => svc.verifyPin({ userId: accountUser.id, pin: WRONG_PIN })),
+    );
 
     expect(verdicts.filter((v) => v.status === 'incorrect')).toHaveLength(4);
-    expect(verdicts.filter((v) => v.status === 'ok').length).toBeLessThanOrEqual(1);
-    expect(verdicts.filter((v) => v.status === 'locked').length).toBeGreaterThanOrEqual(8);
+    expect(verdicts.filter((v) => v.status === 'locked')).toHaveLength(8);
     expect(toUser).toHaveBeenCalledTimes(1);
     await expect(svc.verifyPin({ userId: accountUser.id, pin: PIN })).resolves.toMatchObject({
       status: 'locked',
