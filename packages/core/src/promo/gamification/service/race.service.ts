@@ -132,9 +132,12 @@ export class RaceService implements WagerTrackingCommands {
    * A round already standing in a race was counted there, so a re-settle after a reopen adds
    * nothing; a round a void took back to zero counts again.
    */
-  async recordSettledWager(tx: DrizzleTx, args: SettledWagerArgs): Promise<void> {
+  async recordSettledWager(
+    tx: DrizzleTx,
+    args: SettledWagerArgs,
+  ): Promise<WagerTrackingWalletCredit[]> {
     if (moneyCompare(args.realAmount, '0') <= 0) {
-      return;
+      return [];
     }
     // Skips a race its payout is closing right now, so a closed race never changes.
     const open = await openRaceRows(tx, args.qualifiedAt).for('key share', { skipLocked: true });
@@ -176,6 +179,7 @@ export class RaceService implements WagerTrackingCommands {
           set: { stake: args.realAmount, wagered: amount },
         });
     }
+    return [];
   }
 
   private async openRaces(tx: DrizzleTx, at: Date, product: string): Promise<OpenRace[]> {

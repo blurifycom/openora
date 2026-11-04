@@ -3,11 +3,14 @@ import {
   isUsableRtp,
   type RakebackBasis,
   type RakebackPayout,
+  type SettledWagerArgs,
   type WagerReversalArgs,
+  type WagerRound,
   type WagerTrackingArgs,
   type WagerTrackingCommands,
   type WagerTrackingWalletCredit,
   type WalletCommands,
+  type WalletProviderRef,
 } from '@openora/core/contracts';
 import {
   moneyAdd,
@@ -27,6 +30,17 @@ import {
 import { roundReversal } from '../shared/round-reversal.js';
 
 const ZERO = '0';
+
+// Paid when the bet settles, through recordSettledWager, so a rejected or cancelled bet earns nothing.
+const SETTLED_PRODUCT = 'sportsbook';
+const SETTLED_PROVIDER_NAME = 'rakeback-settled';
+
+const roundMatch = (userId: WagerReversalArgs['userId'], currency: string, round: WagerRound) => [
+  eq(promoRakebackAccrual.userId, userId),
+  eq(promoRakebackAccrual.providerName, round.providerName),
+  eq(promoRakebackAccrual.currency, currency),
+  eq(promoRakebackAccrual.externalRoundId, round.externalRoundId),
+];
 
 export type RakebackSettings = { basis: RakebackBasis; payout: RakebackPayout };
 
@@ -70,6 +84,46 @@ export class RakebackService implements WagerTrackingCommands {
   ) {}
 
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
+    if (args.context.product === SETTLED_PRODUCT) {
+      return [];
+    }
+    return this.pay(tx, args, undefined);
+  }
+
+  async recordSettledWager(
+    tx: DrizzleTx,
+    args: SettledWagerArgs,
+  ): Promise<WagerTrackingWalletCredit[]> {
+    const counted = await tx
+      .select({ id: promoRakebackAccrual.id })
+      .from(promoRakebackAccrual)
+      .where(
+        and(
+          ...roundMatch(args.userId, args.currency, args.round),
+          inArray(promoRakebackAccrual.status, ['accrued', 'claimed', 'voided']),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    if (counted.length > 0) {
+      return [];
+    }
+    return this.pay(tx, args, {
+      providerName: SETTLED_PROVIDER_NAME,
+      providerRefId: `${args.round.providerName}:${args.round.externalRoundId}`,
+    });
+  }
+
+  /** Takes back a reopened bet's unclaimed rakeback; a paid credit is left to a manual adjustment. */
+  async reopenSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
+    await this.reverseWager(tx, args);
+  }
+
+  private async pay(
+    tx: DrizzleTx,
+    args: Pick<WagerTrackingArgs, 'userId' | 'currency' | 'realAmount' | 'context' | 'round'>,
+    providerRef: WalletProviderRef | undefined,
+  ): Promise<WagerTrackingWalletCredit[]> {
     if (moneyCompare(args.realAmount, ZERO) <= 0) {
       return [];
     }
@@ -130,13 +184,14 @@ export class RakebackService implements WagerTrackingCommands {
       amount: rakeback,
       currency: args.currency,
       type: 'cashback',
+      ...(providerRef ? { providerRef } : {}),
     });
     if (!outcome.ok) {
       this.logger.warn({ userId: args.userId, reason: outcome.reason }, 'rakeback credit failed');
       return [];
     }
-    // `moved: false` is a replayed credit (a duplicate bet-tracking call for the same bet) -
-    // the balance already changed and was already announced the first time.
+    // `moved: false` is a replayed credit (a duplicate bet-tracking call, or a re-settle of a bet
+    // already paid) - the balance already changed and was already announced the first time.
     return outcome.moved
       ? [{ transactionId: outcome.transactionId, amount: rakeback, currency: args.currency }]
       : [];
@@ -163,10 +218,7 @@ export class RakebackService implements WagerTrackingCommands {
       .from(promoRakebackAccrual)
       .where(
         and(
-          eq(promoRakebackAccrual.userId, args.userId),
-          eq(promoRakebackAccrual.providerName, args.round.providerName),
-          eq(promoRakebackAccrual.currency, args.currency),
-          eq(promoRakebackAccrual.externalRoundId, args.round.externalRoundId),
+          ...roundMatch(args.userId, args.currency, args.round),
           inArray(promoRakebackAccrual.status, ['accrued', 'claimed', 'voided']),
           gt(promoRakebackAccrual.stake, promoRakebackAccrual.rolledBackStake),
         ),
@@ -198,7 +250,7 @@ export class RakebackService implements WagerTrackingCommands {
 
   private async rateFor(
     tx: DrizzleTx,
-    args: WagerTrackingArgs,
+    args: Pick<WagerTrackingArgs, 'userId' | 'context'>,
   ): Promise<{ ratePercent: string; boostPercent: string } | null> {
     const [config] = await tx
       .select({
