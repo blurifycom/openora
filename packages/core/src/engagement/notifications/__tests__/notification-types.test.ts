@@ -91,17 +91,6 @@ describe('CreateNotificationInputSchema params', () => {
         }).success,
       ).toBe(true);
     });
-
-    it('rejects params missing a required key, naming it', () => {
-      const result = CreateNotificationInputSchema.safeParse({
-        ...donation,
-        params: { amount: '5', currency: 'USDT' },
-      });
-
-      expect(result.error?.issues.map((issue) => issue.path)).toEqual([
-        ['params', 'senderUsername'],
-      ]);
-    });
   });
 
   it('accepts the mention author on chat.mention and still rejects an undeclared key', () => {

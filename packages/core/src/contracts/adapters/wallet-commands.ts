@@ -69,9 +69,10 @@ export type WalletCreditArgs = {
   amount: string;
   currency: string;
   /**
-   * A `gift`/`rain`/`donation` credit's bonus grant takes this as its source, so a new
-   * bonus-backed transfer type must be in both `WALLET_TRANSACTION_TYPES` and
-   * `BONUS_GRANT_SOURCES`.
+   * A `gift`/`rain`/`donation` credit is a bonus grant whose source is this type. A new
+   * bonus-backed transfer type must be in `WALLET_TRANSACTION_TYPES`, in `BONUS_GRANT_SOURCES`
+   * and in the wallet's `bonusSource` check, or the credit is written as cash; the notifications
+   * plugin also skips the bonus-credited email only for those three sources.
    */
   type: WalletTransactionType;
   /** Allow crediting a currency the player does not hold a balance in yet, creating the `wallet_balance` row. Off by default. */

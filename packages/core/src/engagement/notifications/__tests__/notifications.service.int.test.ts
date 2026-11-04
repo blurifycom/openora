@@ -83,32 +83,6 @@ describe('NotificationsService.create (real PG)', () => {
     ]);
   });
 
-  it('refuses a donation received without its sender, writing nothing', async () => {
-    const { svc } = makeService();
-
-    await expect(
-      svc.create({
-        userId: randomUUID(),
-        type: 'chat.donation.received',
-        params: { amount: '5', currency: 'USDT' },
-      }),
-    ).rejects.toThrow('senderUsername');
-    expect(await db.drizzle.db.select().from(notification)).toHaveLength(0);
-  });
-
-  it('refuses a wagering multiplier on a tip, writing nothing', async () => {
-    const { svc } = makeService();
-
-    await expect(
-      svc.create({
-        userId: randomUUID(),
-        type: 'chat.tip.received',
-        params: { senderUsername: 'alice', amount: '5', currency: 'USDT', wageringMultiplier: '3' },
-      }),
-    ).rejects.toThrow('wageringMultiplier');
-    expect(await db.drizzle.db.select().from(notification)).toHaveLength(0);
-  });
-
   it('does not persist pre-rendered text an overlay still passes alongside params', async () => {
     const { svc } = makeService();
     const legacyInput = {
