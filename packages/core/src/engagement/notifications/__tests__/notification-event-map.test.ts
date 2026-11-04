@@ -543,7 +543,7 @@ describe('notificationEventMap', () => {
   });
 
   describe('a bonus credit', () => {
-    const granted = (source: 'deposit' | 'gift' | 'rain') => ({
+    const granted = (source: 'deposit' | 'gift' | 'rain' | 'donation') => ({
       userId: randomUUID(),
       grantId: randomUUID(),
       currency: 'USDT',
@@ -565,7 +565,7 @@ describe('notificationEventMap', () => {
     });
 
     it('sends no mail for a bonus another player gave, which is announced where it happened', () => {
-      for (const source of ['gift', 'rain'] as const) {
+      for (const source of ['gift', 'rain', 'donation'] as const) {
         expect(entryFor('promo.bonus.granted').buildEmail(granted(source), OCCURRED_AT)).toBeNull();
       }
     });

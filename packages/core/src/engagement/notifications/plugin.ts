@@ -322,10 +322,10 @@ export const notificationEventMap: NotificationMapEntry[] = [
         data: { grantId: p.grantId },
       }),
     {
-      // A gift or rain comes from another player and is already announced where it happened;
-      // a rain fans out to a whole room, so a mail per recipient would be noise.
+      // A gift, rain or donation comes from another player and is already announced where it
+      // happened; a rain fans out to a whole room, so a mail per recipient would be noise.
       email: (p) =>
-        p.source === 'gift' || p.source === 'rain'
+        p.source === 'gift' || p.source === 'rain' || p.source === 'donation'
           ? null
           : {
               key: 'bonusCredited',

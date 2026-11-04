@@ -3812,8 +3812,9 @@ export class WalletService {
 
   /**
    * The player's history: their ledger rows and, when `includeGrants`, the bonus grants they
-   * received (a bonus, gift or rain credit lands on a grant, never on the ledger). Both halves
-   * are one UNION ALL, so every filter, the sort and the page apply to the whole history in SQL.
+   * received (a bonus, gift, rain or donation credit lands on a grant, never on the ledger). Both
+   * halves are one UNION ALL, so every filter, the sort and the page apply to the whole history in
+   * SQL.
    */
   async getTransactions({
     userId,

@@ -437,9 +437,9 @@ export class WalletCommandsService implements WalletCommands {
       throw new WalletCommandAmountError('credit', amount);
     }
 
-    // A gift or rain only writes a bonus grant, so it leaves the wallet row unlocked: a rain debits its
-    // sender and credits many recipients in one transaction.
-    const bonusSource = type === 'gift' || type === 'rain';
+    // A gift, rain or donation only writes a bonus grant, so it leaves the wallet row unlocked: a
+    // rain debits its sender and credits many recipients in one transaction.
+    const bonusSource = type === 'gift' || type === 'rain' || type === 'donation';
     const row = allowNewWallet
       ? await this.resolveOrOpenWallet(txn, userId, currency, !bonusSource)
       : await this.selectWallet(txn, userId, !bonusSource);

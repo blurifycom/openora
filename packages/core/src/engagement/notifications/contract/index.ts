@@ -110,7 +110,10 @@ export const NOTIFICATION_PARAM_KEYS = {
   },
   'chat.rain.received': { required: ['amount', 'currency'], optional: [] },
   'chat.gift.expired': { required: ['amount', 'currency'], optional: [] },
-  'chat.tip.received': { required: ['senderUsername', 'amount', 'currency'], optional: [] },
+  'chat.tip.received': {
+    required: ['senderUsername', 'amount', 'currency'],
+    optional: ['wageringMultiplier'],
+  },
   'chat.gift.claimed': { required: ['claimerUsername', 'amount', 'currency'], optional: [] },
   'vip.assigned': { required: [], optional: [] },
 } as const satisfies Record<

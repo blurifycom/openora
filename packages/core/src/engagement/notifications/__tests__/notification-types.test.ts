@@ -31,6 +31,16 @@ describe('CreateNotificationInputSchema params', () => {
     expect(CreateNotificationInputSchema.safeParse({ ...base, params }).success).toBe(true);
   });
 
+  it('accepts the wagering multiplier a donation was granted under', () => {
+    const params = {
+      senderUsername: 'alice',
+      amount: '5',
+      currency: 'USDT',
+      wageringMultiplier: '3',
+    };
+    expect(CreateNotificationInputSchema.safeParse({ ...base, params }).success).toBe(true);
+  });
+
   it('rejects absent params for a type with required keys', () => {
     expect(CreateNotificationInputSchema.safeParse(base).error?.issues[0]?.path).toEqual([
       'params',
