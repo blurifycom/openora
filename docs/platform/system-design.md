@@ -277,7 +277,7 @@ sequenceDiagram
 flowchart TB
   CODE["Single codebase · extensions.config.ts"]
   CODE --> MONO["SERVICE_MANIFEST unset to MONOLITH<br/>all 15 modules, in-process seams"]
-  CODE --> SPLIT["SERVICE_MANIFEST=identity,wallet,...<br/>per-module thin host (pnpm create:service)"]
+  CODE --> SPLIT["SERVICE_MANIFEST=audit,identity,wallet,...<br/>per-module thin host (pnpm create:service)"]
   SPLIT --> S1["identity svc"]
   SPLIT --> S2["wallet svc"]
   SPLIT --> S3["casino svc"]
@@ -294,13 +294,14 @@ hooks, so it is always current. Query it directly, or use the `oss-dev` MCP tool
 
 ## Cross-domain edges (lint-enforced — ADR-0015)
 
-| From → To                   | Channel                                                        |
-| --------------------------- | -------------------------------------------------------------- |
-| iam → identity              | `dependsOn` (load order)                                       |
-| gaming → wallet             | `WALLET_COMMANDS` synchronous command port (same `tx`, atomic) |
-| player-management → profile | read-only `@openora/core/pam/schema/profile`                   |
-| lobby → gaming              | read-only `@openora/core/casino/schema/gaming`                 |
-| any → any                   | domain **events** via `EventBus` — never money                 |
+| From → To                   | Channel                                                            |
+| --------------------------- | ------------------------------------------------------------------ |
+| iam → identity              | `dependsOn` (load order)                                           |
+| identity → audit            | `dependsOn` (load order); writes its audit rows via `AUDIT_WRITER` |
+| gaming → wallet             | `WALLET_COMMANDS` synchronous command port (same `tx`, atomic)     |
+| player-management → profile | read-only `@openora/core/pam/schema/profile`                       |
+| lobby → gaming              | read-only `@openora/core/casino/schema/gaming`                     |
+| any → any                   | domain **events** via `EventBus` — never money                     |
 
 The adapter ports and 3 async seams (`MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`) plus
 the transactional `OUTBOX` carry everything else. Money and needed-now reads stay synchronous

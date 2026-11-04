@@ -134,6 +134,13 @@
       "when": 1793625255349,
       "tag": "0018_graceful_wonder_man",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793785431076,
+      "tag": "0019_sticky_karma",
+      "breakpoints": true
     }
   ]
 }
