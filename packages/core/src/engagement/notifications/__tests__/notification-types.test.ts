@@ -11,6 +11,7 @@ describe('NotificationTypeSchema', () => {
     for (const type of [
       'chat.rain.received',
       'chat.tip.received',
+      'chat.donation.received',
       'chat.gift.claimed',
       'chat.gift.expired',
     ]) {
@@ -31,14 +32,15 @@ describe('CreateNotificationInputSchema params', () => {
     expect(CreateNotificationInputSchema.safeParse({ ...base, params }).success).toBe(true);
   });
 
-  it('accepts the wagering multiplier a donation was granted under', () => {
-    const params = {
-      senderUsername: 'alice',
-      amount: '5',
-      currency: 'USDT',
-      wageringMultiplier: '3',
-    };
-    expect(CreateNotificationInputSchema.safeParse({ ...base, params }).success).toBe(true);
+  it('rejects a wagering multiplier on a tip', () => {
+    const result = CreateNotificationInputSchema.safeParse({
+      ...base,
+      params: { senderUsername: 'alice', amount: '5', currency: 'USDT', wageringMultiplier: '3' },
+    });
+
+    expect(result.error?.issues.map((issue) => issue.path)).toEqual([
+      ['params', 'wageringMultiplier'],
+    ]);
   });
 
   it('rejects absent params for a type with required keys', () => {
@@ -74,6 +76,32 @@ describe('CreateNotificationInputSchema params', () => {
     });
 
     expect(result.error?.issues.map((issue) => issue.path)).toEqual([['params', 'note']]);
+  });
+
+  describe('chat.donation.received', () => {
+    const donation = { userId: base.userId, type: 'chat.donation.received' } as const;
+    const params = { senderUsername: 'alice', amount: '5', currency: 'USDT' };
+
+    it('accepts its required keys, with or without the wagering multiplier', () => {
+      expect(CreateNotificationInputSchema.safeParse({ ...donation, params }).success).toBe(true);
+      expect(
+        CreateNotificationInputSchema.safeParse({
+          ...donation,
+          params: { ...params, wageringMultiplier: '3' },
+        }).success,
+      ).toBe(true);
+    });
+
+    it('rejects params missing a required key, naming it', () => {
+      const result = CreateNotificationInputSchema.safeParse({
+        ...donation,
+        params: { amount: '5', currency: 'USDT' },
+      });
+
+      expect(result.error?.issues.map((issue) => issue.path)).toEqual([
+        ['params', 'senderUsername'],
+      ]);
+    });
   });
 
   it('accepts the mention author on chat.mention and still rejects an undeclared key', () => {
