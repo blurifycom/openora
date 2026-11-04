@@ -47,7 +47,7 @@ describe('buildEmailWindows against corrupted audit trails', () => {
       const held = new Map(truth.map((w) => [w.email, w]));
 
       const original = JSON.stringify(rows);
-      for (let k = pick(4); k > 0; k--) {
+      for (let k = pick(4); k > 0 && rows.length > 0; k--) {
         const i = pick(rows.length);
         const kind = pick(5);
         switch (kind) {
@@ -70,12 +70,18 @@ describe('buildEmailWindows against corrupted audit trails', () => {
         }
       }
 
-      // A lost first change cannot be noticed: nothing records the email registered with.
-      if (!rows.some((row) => row.before === email(0) || row.after === email(1))) {
+      // Every other account records the email it registered with; without it a lost first change
+      // cannot be noticed.
+      const registeredEmail = trial % 2 === 0 ? email(0) : null;
+      if (
+        registeredEmail === null &&
+        !rows.some((row) => row.before === email(0) || row.after === email(1))
+      ) {
         continue;
       }
       const result = buildEmailWindows({
         currentEmail: email(count),
+        registeredEmail,
         registeredAt: REGISTERED,
         changes: rows,
       });

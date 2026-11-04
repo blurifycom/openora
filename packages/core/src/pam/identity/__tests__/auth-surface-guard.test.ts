@@ -5,12 +5,16 @@ import { Container, loadPlugins } from '@openora/core/server';
 import { mock } from '../../../testing/mock.js';
 
 const pluginPath = fileURLToPath(new URL('../plugin.ts', import.meta.url));
+const auditPluginPath = fileURLToPath(new URL('../../../audit/plugin.ts', import.meta.url));
 
 async function identityRouterFactory(options: { noRoutes?: boolean } = {}) {
   const container = new Container();
   container.register(MAIL_DISPATCH, () => mock({}));
   const registry = await loadPlugins(
-    [{ id: 'identity', path: pluginPath, noRoutes: options.noRoutes }],
+    [
+      { id: 'audit', path: auditPluginPath },
+      { id: 'identity', path: pluginPath, noRoutes: options.noRoutes },
+    ],
     container,
   );
   return { container, factory: registry.routers.getAll().get('identity') };

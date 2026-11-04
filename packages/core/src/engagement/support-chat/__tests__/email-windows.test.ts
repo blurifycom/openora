@@ -26,9 +26,14 @@ const held = (email: string, from: number | null, to: number | null) => ({
   from: from === null ? REGISTERED.toISOString() : iso(from),
   to: to === null ? null : iso(to),
 });
-const windowsOf = (currentEmail: string, changes: ReturnType<typeof change>[]) =>
+const windowsOf = (
+  currentEmail: string,
+  changes: ReturnType<typeof change>[],
+  registeredEmail: string | null = null,
+) =>
   buildEmailWindows({
     currentEmail: currentEmail && `${currentEmail}@example.test`,
+    registeredEmail: registeredEmail && `${registeredEmail}@example.test`,
     registeredAt: REGISTERED,
     changes,
   });
@@ -78,9 +83,41 @@ describe('buildEmailWindows', () => {
     });
   });
 
-  it('cannot tell a lost first change, since nothing records the email registered with', () => {
+  it('cannot tell a lost first change on an account that did not record its registered email', () => {
     expect(windowsOf('c', [change('b', 'c', 20)])).toEqual(
       whole(held('b', null, 20), held('c', 20, null)),
+    );
+  });
+
+  it('opens the registration window when the oldest email is the one registered with', () => {
+    expect(windowsOf('c', [change('a', 'b', 10), change('b', 'c', 20)], 'a')).toEqual(
+      whole(held('a', null, 10), held('b', 10, 20), held('c', 20, null)),
+    );
+  });
+
+  it('compares the registered email whatever its case', () => {
+    expect(windowsOf('b', [change('a', 'b', 10)], 'A')).toEqual(
+      whole(held('a', null, 10), held('b', 10, null)),
+    );
+  });
+
+  it('opens the registration window of a player who never changed email', () => {
+    expect(windowsOf('now', [], 'now')).toEqual(whole(held('now', null, null)));
+  });
+
+  it('notices a lost first change against the registered email and keeps the later windows', () => {
+    expect(windowsOf('c', [change('b', 'c', 20)], 'a')).toEqual(afterBreak(held('c', 20, null)));
+  });
+
+  it('notices a lost run from the registered email to the current one with no row at all', () => {
+    expect(windowsOf('b', [], 'a')).toEqual(UNTRUSTED);
+  });
+
+  it('notices a lost first change even when the cap would have hidden the registration window', () => {
+    const changes = [1, 2, 3, 4].map((n) => change(`e${n}`, n === 4 ? 'now' : `e${n + 1}`, n));
+
+    expect(windowsOf('now', changes, 'e0')).toEqual(
+      afterBreak(held('e2', 1, 2), held('e3', 2, 3), held('e4', 3, 4), held('now', 4, null)),
     );
   });
 

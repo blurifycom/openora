@@ -31,7 +31,7 @@ import { TrustedDeviceService } from '../service/trusted-device.service.js';
 import { SessionService } from '../service/session.service.js';
 import { TwoFactorLockoutService } from '../service/two-factor-lockout.service.js';
 import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
-import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
+import { makeAuditWriter, makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 
 const {
   signInEmailMock,
@@ -82,6 +82,8 @@ const {
 
 vi.mock('@openora/core/server', async (importOriginal) => ({
   ...(await importOriginal<object>()),
+  // better-auth is doubled below, so there is no better-auth write to enlist in the transaction.
+  runInAuthTransaction: (_auth: unknown, _schema: unknown, _tx: unknown, fn: () => unknown) => fn(),
   createAuth: vi.fn((options) => {
     capturedAuthOptions.current = options;
     return {
@@ -130,6 +132,7 @@ function buildService(deps: Partial<IdentityServiceDeps> = {}) {
   return new IdentityService({
     drizzle: db.drizzle,
     events: makeEventBus(),
+    audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
     twoFactorDelivery: new TwoFactorDeliveryService({
       drizzle: db.drizzle,
@@ -2134,14 +2137,7 @@ describe('IdentityService security controls', () => {
       loginWithdrawalAlertsEnabled: true,
     });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    // Mirror better-auth's row swap before the mock resolves.
-    confirmEmailChangeMock.mockImplementation(async () => {
-      await db.drizzle.db
-        .update(user)
-        .set({ email: 'new-address@test.dev' })
-        .where(eq(user.id, account.id));
-      return jsonResponse({ success: true }, 200);
-    });
+    confirmEmailChangeMock.mockResolvedValue(jsonResponse({ success: true }, 200));
     const events = makeEventBus();
     const svc = buildService({ events });
     const calledAt = Date.now();
@@ -2154,7 +2150,8 @@ describe('IdentityService security controls', () => {
     const returnedAt = Date.now();
 
     expect((await readUser(account.id))?.loginWithdrawalAlertsEnabled).toBe(false);
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'identity.email.changed',
       expect.objectContaining({
         userId: account.id,
@@ -2163,8 +2160,10 @@ describe('IdentityService security controls', () => {
         changedAt: expect.any(String),
       }),
     );
-    const [, changed] =
-      vi.mocked(events.emit).mock.calls.find(([topic]) => topic === 'identity.email.changed') ?? [];
+    const [, , changed] =
+      vi
+        .mocked(events.emitInTransaction)
+        .mock.calls.find(([, topic]) => topic === 'identity.email.changed') ?? [];
     const changedAt = Date.parse(String((changed as { changedAt?: unknown })?.changedAt));
     expect(changedAt).toBeGreaterThanOrEqual(calledAt);
     expect(changedAt).toBeLessThanOrEqual(returnedAt);
@@ -2206,13 +2205,7 @@ describe('IdentityService security controls', () => {
   it('carries the caller anti-phishing code on the emailChanged notice to the old address', async () => {
     const account = await seedUser({ emailVerified: true, antiPhishingCode: 'Sunny Meadow' });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    confirmEmailChangeMock.mockImplementation(async () => {
-      await db.drizzle.db
-        .update(user)
-        .set({ email: 'new-address-2@test.dev' })
-        .where(eq(user.id, account.id));
-      return jsonResponse({ success: true }, 200);
-    });
+    confirmEmailChangeMock.mockResolvedValue(jsonResponse({ success: true }, 200));
     const mailDispatch = mock<MailDispatchPort>({
       toAddress: vi.fn(async () => undefined),
       toUser: vi.fn(async () => undefined),
@@ -2244,13 +2237,7 @@ describe('IdentityService security controls', () => {
   it('sends a plain, warning-free confirmation to the new address, with fields captured at swap time rather than looked up live', async () => {
     const account = await seedUser({ emailVerified: true, antiPhishingCode: 'Sunny Meadow' });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    confirmEmailChangeMock.mockImplementation(async () => {
-      await db.drizzle.db
-        .update(user)
-        .set({ email: 'new-address-4@test.dev' })
-        .where(eq(user.id, account.id));
-      return jsonResponse({ success: true }, 200);
-    });
+    confirmEmailChangeMock.mockResolvedValue(jsonResponse({ success: true }, 200));
     const mailDispatch = mock<MailDispatchPort>({
       toAddress: vi.fn(async () => undefined),
       toUser: vi.fn(async () => undefined),
@@ -2283,13 +2270,7 @@ describe('IdentityService security controls', () => {
   it('still enqueues the emailChanged notice even when session revocation later throws', async () => {
     const account = await seedUser({ emailVerified: true });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    confirmEmailChangeMock.mockImplementation(async () => {
-      await db.drizzle.db
-        .update(user)
-        .set({ email: 'new-address-3@test.dev' })
-        .where(eq(user.id, account.id));
-      return jsonResponse({ success: true }, 200);
-    });
+    confirmEmailChangeMock.mockResolvedValue(jsonResponse({ success: true }, 200));
     const mailDispatch = mock<MailDispatchPort>({
       toAddress: vi.fn(async () => undefined),
       toUser: vi.fn(async () => undefined),

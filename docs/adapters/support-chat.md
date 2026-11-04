@@ -114,9 +114,10 @@ Core works out which identities belong to the player and hands them to the reade
   registered by another player, so a ticket counts only when it was created inside its email's
   window: the reader must filter by creation date, never return every ticket an address ever
   opened.
-- **The email trail is trusted from its end back to its first break.** The audit rows are written
-  shortly after each change, outside the change's transaction, so one can be lost, duplicated, land
-  out of order or carry a skewed time. Each row carries the time stamped right after the change, so
+- **The email trail is trusted from its end back to its first break.** An email change writes its
+  audit row in the same transaction as the change, so a change can no longer be saved without its
+  row. Rows written before that were appended shortly after each change, outside its transaction,
+  so one of those can be lost, duplicated, land out of order or carry a skewed time. Each row carries the time stamped right after the change, so
   a slow write does not move a window's bounds; a row written before that field existed is timed by
   when it was written. A redelivered event writes its row again: a row that repeats any earlier one,
   change time included, counts once, but a repeated row without a change time cannot be told from a
@@ -133,8 +134,12 @@ Core works out which identities belong to the player and hands them to the reade
   clock: every later change then reads as falling back, and the section stays unavailable until real
   time passes that stamp, which with realistic clock skew takes seconds. Core fails closed rather
   than trust it.
-- **Another account's changes bound the oldest window.** Nothing records the email an account
-  registered with, so a lost first change would leave the next email taken as held from
+- **The email registered with anchors the oldest window.** Each account records the email it was
+  created with (`registered_email`; null on accounts created before it existed). When the walk back
+  ends without a break on a different email, compared case-insensitively, a first change was lost:
+  the trail counts as broken and has no registration window.
+- **Another account's changes bound the oldest window.** On an account without a recorded
+  registration email, a lost first change would leave the next email taken as held from
   registration, over the time another account held it. When the trail is intact and its oldest
   window starts at registration, core looks for another account's email change naming that
   address, compared case-insensitively, after registration and before the window closes. The
@@ -142,19 +147,16 @@ Core works out which identities belong to the player and hands them to the reade
   account taking it drops the window, since nothing places when that account let it go. Either
   way the trail counts as broken: the tickets section is not complete, the warning goes to the
   log, and when no window is left the section is unavailable.
-- **What the trail cannot notice.** A lost first change stays unseen only when the other account's
-  change of that address was lost too, or the address was freed another way, such as the account
-  being deleted. That account's audit row is written best-effort after its change, so while it is
-  still in flight, and for the 60-second cache after a read, the window can still start at
-  registration. A lost run of changes returning to the address it left (A to B recorded, B to C and
-  C to B lost, B to D recorded) also leaves a trail that looks consistent, so B's window spans the
-  gap. A change time later than the real change by no more than its audit write's own delay plus the
+- **What the trail cannot notice.** The lost rows below can only be rows written before email
+  changes committed with their audit row. On an account without a recorded registration email, a
+  lost first change stays unseen when the other account's change of that address was lost too, or
+  the address was freed another way, such as the account being deleted. A lost run of changes
+  returning to the address it left (A to B recorded, B to C and C to B lost, B to D recorded) also
+  leaves a trail that looks consistent, so B's window spans the gap. A change time later than the real change by no more than its audit write's own delay plus the
   5-second margin also goes unseen: a fast clock with a delayed or redelivered write, or a legacy
   row timed by its write. It widens the earlier email's window by that much. A clock running behind
   goes unseen for as long as each time it stamps is still later than every earlier one, shifting the
-  bounds by the lag. The lost rows follow from the email-change event being emitted best-effort
-  rather than through the outbox; moving that emit to the outbox is the fix, and is not part of this
-  port.
+  bounds by the lag.
 - **Chats** are matched by the vendor customer the player is linked to. A player who never
   opened the chat has no link, and the reader is not asked.
 

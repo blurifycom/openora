@@ -1,5 +1,6 @@
 import {
   ADMIN_SECURITY_POLICY,
+  AUDIT_WRITER,
   ADMIN_USER_DIRECTORY,
   CACHE,
   GEO_IP_ADAPTER,
@@ -148,6 +149,8 @@ function makeAdminSecurity(c: IdentityContainer) {
 
 export default {
   id: 'identity',
+  // The email change appends its audit row through AUDIT_WRITER inside its own transaction.
+  dependsOn: ['audit'],
   requiresPorts: [MAIL_DISPATCH],
   register(ctx) {
     // Built once and shared by ADMIN_SECURITY_POLICY and the router below - two
@@ -278,6 +281,7 @@ export default {
         new IdentityService({
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
+          audit: c.get(AUDIT_WRITER),
           identityReader: c.get(IDENTITY_READER),
           mailDispatch: c.get(MAIL_DISPATCH),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,

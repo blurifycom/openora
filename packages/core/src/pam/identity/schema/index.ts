@@ -27,6 +27,9 @@ export const user = pgTable(
     name: text().notNull(),
     username: text().notNull(),
     email: text().notNull().unique(),
+    // The login email the account was created with, set once by createAuth's user-create
+    // hook. Null on accounts created before it existed.
+    registeredEmail: text(),
     emailVerified: boolean().notNull().default(false),
     image: text(),
     theme: userThemeEnum().notNull().default('system'),

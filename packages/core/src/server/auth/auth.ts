@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { runWithTransaction } from '@better-auth/core/context';
 import { betterAuth } from 'better-auth';
 import type { Auth as BetterAuthType } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { organization, admin as adminPlugin, twoFactor, emailOTP } from 'better-auth/plugins';
-import type { DrizzleDb } from '../db/index.js';
+import type { DrizzleDb, DrizzleTx } from '../db/index.js';
 import { ac, roles } from './permissions.js';
 import { OTP_CODE_LENGTH, OTP_EXPIRES_IN_SEC, type MailTemplate } from '@openora/core/contracts';
 
@@ -112,6 +113,17 @@ export function createAuth(options: AuthOptions): BetterAuthType {
         username: { type: 'string', required: false, input: true },
         theme: { type: 'string', required: false, input: true, defaultValue: 'system' },
         language: { type: 'string', required: false, input: true, defaultValue: 'en' },
+        // The address the account was created with, never written again: the support
+        // history checks its oldest recorded email change against it.
+        registeredEmail: { type: 'string', required: false, input: false, returned: false },
+      },
+    },
+    databaseHooks: {
+      user: {
+        create: {
+          // Runs after better-auth lowercased the address, so this is the stored login email.
+          before: async (u) => ({ data: { registeredEmail: u.email } }),
+        },
       },
     },
     emailAndPassword: {
@@ -222,3 +234,20 @@ export function createAuth(options: AuthOptions): BetterAuthType {
 }
 
 export type Auth = BetterAuthType;
+
+/**
+ * Runs `fn` - better-auth `auth.api` calls - with every better-auth write inside the caller's
+ * Drizzle transaction `tx`, so they commit or roll back with the caller's own rows. better-auth
+ * after-hooks queued inside run when `fn` returns, before `tx` commits; none that matters here
+ * (`user.update.after`) is configured. `runWithTransaction` is a better-auth internal, which is
+ * why `@better-auth/core` is pinned to the exact `better-auth` version.
+ */
+export async function runInAuthTransaction<T>(
+  auth: Auth,
+  schema: Record<string, unknown>,
+  tx: DrizzleTx,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const adapter = drizzleAdapter(tx, { provider: 'pg', schema })(auth.options);
+  return runWithTransaction(adapter, fn);
+}

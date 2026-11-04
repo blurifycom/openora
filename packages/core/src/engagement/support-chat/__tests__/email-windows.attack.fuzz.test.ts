@@ -92,8 +92,11 @@ describe('buildEmailWindows against every corruption at once', () => {
         }
       }
 
+      // Every other account records the email it registered with; without it a lost first change
+      // cannot be noticed.
+      const registeredEmail = trial % 2 === 0 ? email(0) : null;
       const lostFirstChange = !rows.some((r) => r.before === email(0) || r.after === email(1));
-      if (lostFirstChange) {
+      if (registeredEmail === null && lostFirstChange) {
         continue;
       }
       checked++;
@@ -104,6 +107,7 @@ describe('buildEmailWindows against every corruption at once', () => {
       const final = collapseRedeliveries(changes);
       const result = buildEmailWindows({
         currentEmail: email(count),
+        registeredEmail,
         registeredAt: REGISTERED,
         changes,
       });

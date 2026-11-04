@@ -77,19 +77,25 @@ function withoutRedeliveries(changes: readonly EmailChange[]) {
  * change cannot be trusted there is no window at all. `complete` is false when a break or the cap
  * on previous emails left an older email out; `broken` tells a break from the cap. A row repeating
  * an earlier one, change time included, is a redelivery and counts once. The oldest window of an
- * intact trail is only assumed to start at registration; `boundFirstWindow` checks it against other
- * accounts. Nothing in the trail can notice a lost first change, a lost run returning to the
- * address it left, a time later than the real change by no more than its audit write's own delay
+ * intact trail is only assumed to start at registration: when the account recorded the email it
+ * registered with (`registeredEmail`, null on older accounts), an oldest email that differs from it,
+ * case-insensitively, is a break, which catches a lost first change; `boundFirstWindow` checks it
+ * against other accounts. Since each change now commits with its row, the remaining gaps apply to
+ * rows the audit subscriber wrote before that: nothing in the trail can notice a lost run
+ * returning to the address it left, a lost first change on an account without
+ * `registeredEmail`, a time later than the real change by no more than its audit write's own delay
  * plus the skew (a fast clock with a delayed or redelivered write, or a legacy row timed by its
  * write), which widens the earlier email's window by that much, or a clock running behind whose
  * stamps still follow every earlier one, which shifts the bounds by the lag.
  */
 export function buildEmailWindows({
   currentEmail,
+  registeredEmail,
   registeredAt,
   changes,
 }: {
   currentEmail: User['email'];
+  registeredEmail: User['registeredEmail'];
   registeredAt: Date;
   changes: readonly EmailChange[];
 }): { windows: SupportHistoryEmailWindow[]; complete: boolean; broken: boolean } {
@@ -124,6 +130,9 @@ export function buildEmailWindows({
     }
     email = before;
     to = at.toISOString();
+  }
+  if (!broken && registeredEmail && registeredEmail.toLowerCase() !== email.toLowerCase()) {
+    broken = true;
   }
   if (!broken) {
     found.push({ email, from: registeredAt.toISOString(), to });
@@ -250,6 +259,7 @@ export class SupportHistoryService {
     const [row] = await this.deps.drizzle.db
       .select({
         email: user.email,
+        registeredEmail: user.registeredEmail,
         registeredAt: user.createdAt,
         playerId: player.id,
         customerId: supportChatCustomer.providerCustomerId,
@@ -264,6 +274,7 @@ export class SupportHistoryService {
     }
     const built = buildEmailWindows({
       currentEmail: row.email,
+      registeredEmail: row.registeredEmail,
       registeredAt: row.registeredAt,
       changes: await this.emailChanges(userId, row.playerId),
     });
@@ -296,9 +307,9 @@ export class SupportHistoryService {
 
   /**
    * The player's email changes from the audit log, in the order they were written, each timed by
-   * the change the event carried. The audit subscriber writes each row after its change (the
-   * event is not on the outbox), so a row can be lost or land out of order; `buildEmailWindows`
-   * then drops everything from the first break walking back.
+   * the change the event carried. A change now commits with its row; rows from before that were
+   * written by the audit subscriber after the change, so one can be lost or land out of order, and
+   * `buildEmailWindows` then drops everything from the first break walking back.
    */
   private async emailChanges(userId: User['id'], playerId: Player['id']) {
     // The audit subject is the player when the account has one, the user otherwise.

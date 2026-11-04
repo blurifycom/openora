@@ -400,6 +400,9 @@ export const domainEventSchemas = {
     // Stamped right after the swap returns; the audit row's own write time can trail it.
     // Optional so a payload from before this field still parses.
     changedAt: TimestampSchema.optional(),
+    // The swap appended its audit row in its own transaction; absent on events published
+    // before that, which the audit subscriber still records.
+    auditRecorded: z.literal(true).optional(),
   }),
   'identity.phone.verified': authContextBase.extend({
     userId: UuidSchema,
