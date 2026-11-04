@@ -326,6 +326,10 @@ export const AUTO_LOGOUT_MINUTES: Record<AutoLogoutDuration, number> = {
   '30d': 30 * 24 * 60,
 };
 
+// Backoffice staff sessions end after this long without activity. Fixed, not per-user: staff
+// cannot set the player auto-logout preference, so there is nothing for them to configure.
+export const ADMIN_IDLE_MINUTES = 30;
+
 export const SecurityControlsSchema = z.object({
   passwordMeetsPolicy: z.boolean(),
   emailVerified: z.boolean(),

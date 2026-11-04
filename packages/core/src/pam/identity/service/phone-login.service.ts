@@ -361,6 +361,7 @@ export class PhoneLoginService {
         lockoutCount: user.lockoutCount,
         lastLockoutAt: user.lastLockoutAt,
         lastFailedLoginAt: user.lastFailedLoginAt,
+        isActive: user.isActive,
       })
       .from(user)
       .where(eq(user.id, otp.userId))
@@ -414,6 +415,7 @@ export class PhoneLoginService {
         errorData: {
           rgBlocked: { reason: PhoneLoginErrorReasonSchema.enum.rg_blocked },
           suspended: { reason: PhoneLoginErrorReasonSchema.enum.account_suspended },
+          inactive: { reason: PhoneLoginErrorReasonSchema.enum.account_suspended },
         },
       },
     );

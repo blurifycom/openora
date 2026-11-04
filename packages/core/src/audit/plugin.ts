@@ -309,6 +309,17 @@ export async function mapEventToRecord(
     };
   }
 
+  // A deactivated account's sign-in was refused after its credential was proven. The refused
+  // account is both actor and subject; system-driven, so outcome failure.
+  if (topic === 'identity.user.login_blocked') {
+    return {
+      ...base,
+      actorType: 'system',
+      ...identitySubject(p),
+      result: 'failure',
+    };
+  }
+
   // Player authenticated via SMS OTP. actorId = resource = the player; success outcome.
   if (topic === 'identity.user.phone_login') {
     return {

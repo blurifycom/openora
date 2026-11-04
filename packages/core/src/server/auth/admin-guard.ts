@@ -97,9 +97,16 @@ export class AdminGuard {
     const resolvedSession = await this.sessions.resolveSession(headers);
     const userId = resolvedSession?.userId;
     if (!userId) {
+      // The idle policy ended this session on the way in, so say so: the back office shows
+      // the reason on its sign-in page instead of a bare "not signed in".
+      const idleEnded = (context as { sessionEndedReason?: string }).sessionEndedReason;
       throw new ORPCError('UNAUTHORIZED', {
-        message: 'Authentication required',
-        data: { reason: AuthGuardReasonSchema.enum.authentication_required },
+        message: idleEnded ? 'Signed out after inactivity' : 'Authentication required',
+        data: {
+          reason: idleEnded
+            ? AuthGuardReasonSchema.enum.session_idle_timeout
+            : AuthGuardReasonSchema.enum.authentication_required,
+        },
       });
     }
 

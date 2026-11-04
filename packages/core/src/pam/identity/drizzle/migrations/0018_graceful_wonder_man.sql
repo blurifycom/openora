@@ -1,0 +1,1 @@
+ALTER TABLE "session" ALTER COLUMN "last_seen_at" SET DEFAULT now();

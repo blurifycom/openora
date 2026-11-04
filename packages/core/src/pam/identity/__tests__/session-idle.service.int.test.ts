@@ -59,7 +59,7 @@ describe('SessionIdleService', () => {
     const account = await seedUser(db);
     const target = await seedSession(account.id, minutesAgo(60 * 24 * 8));
 
-    expect(await service().touch(account.id, target.id)).toBe('expired');
+    expect(await service().touch(account.id, target.id)).toBe('idle');
   });
 
   it('leaves a session inside the default window alone', async () => {
@@ -75,7 +75,7 @@ describe('SessionIdleService', () => {
     await setWindow(account.id, '15m');
     const target = await seedSession(account.id, minutesAgo(16));
 
-    expect(await service().touch(account.id, target.id)).toBe('expired');
+    expect(await service().touch(account.id, target.id)).toBe('idle');
 
     const { rows } = await db.drizzle.db.execute<{ now: string }>(sql`select now() as now`);
     const row = await readSession(target.id);
@@ -144,15 +144,39 @@ describe('SessionIdleService', () => {
     expect((await readSession(target.id)).lastSeenAt?.getTime()).toBe(justNow.getTime());
   });
 
-  it('never idles out an admin session, even one that has sat far past the default window', async () => {
+  it('ends a staff session after the fixed 30-minute window, whatever the player setting', async () => {
     const admin = await seedUser(db, { role: 'admin' });
-    const staleLastSeen = minutesAgo(60 * 24 * 30);
-    const target = await seedSession(admin.id, staleLastSeen);
+    await setWindow(admin.id, '7d');
+    const target = await seedSession(admin.id, minutesAgo(31));
+
+    expect(await service().touch(admin.id, target.id)).toBe('idle');
+    expect((await readSession(target.id)).expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('keeps a staff session alive while it is inside the 30-minute window', async () => {
+    const admin = await seedUser(db, { role: 'admin' });
+    const target = await seedSession(admin.id, minutesAgo(29));
 
     expect(await service().touch(admin.id, target.id)).toBe('active');
-    // Admins have their own idle tracking through AdminGuard; this service must not
-    // touch their `lastSeenAt` at all, or the two mechanisms would fight over it.
-    expect((await readSession(target.id)).lastSeenAt?.getTime()).toBe(staleLastSeen.getTime());
+    expect((await readSession(target.id)).lastSeenAt!.getTime()).toBeGreaterThan(
+      minutesAgo(1).getTime(),
+    );
+  });
+
+  it("starts a new session's idle clock at sign-in, so a session never used cannot outlive the window", async () => {
+    const admin = await seedUser(db, { role: 'admin' });
+    const [created] = await db.drizzle.db
+      .insert(session)
+      .values({
+        userId: admin.id,
+        token: crypto.randomUUID(),
+        expiresAt: new Date(Date.now() + 86_400_000),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    expect(created!.lastSeenAt).not.toBeNull();
+    expect(created!.lastSeenAt!.getTime()).toBeGreaterThan(minutesAgo(1).getTime());
   });
 
   it('fails closed when the session cannot be found', async () => {
@@ -174,7 +198,7 @@ describe('SessionIdleService', () => {
       svc.touch(account.id, target.id),
     ]);
 
-    expect(results).toEqual(['expired', 'expired', 'expired']);
+    expect(results).toEqual(['idle', 'idle', 'idle']);
     // Each concurrent call reads the same stale `lastSeenAt` and passes the idle test, but
     // only the write that actually flips `expiresAt` may announce a revocation - otherwise
     // one logout writes several rows into the append-only audit chain.
