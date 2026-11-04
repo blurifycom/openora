@@ -169,11 +169,56 @@ describe('an operator configuring what a rank counts and pays', () => {
     expect(await auditRows()).toHaveLength(auditedBefore);
   });
 
+  it.each([
+    [
+      'an empty rank list',
+      { eligibleProducts: [] },
+      ['eligibleProducts'],
+      'select at least one product',
+    ],
+    [
+      'an empty rakeback list',
+      { rakebackEligibleProducts: [] },
+      ['rakebackEligibleProducts'],
+      'select at least one product',
+    ],
+    [
+      'an empty rank challenge list',
+      { rankChallengeEligibleProducts: [] },
+      ['rankChallengeEligibleProducts'],
+      'select at least one product',
+    ],
+    [
+      'a repeated product',
+      { eligibleProducts: ['casino', 'casino'] },
+      ['eligibleProducts'],
+      'products must not repeat',
+    ],
+    [
+      'an unknown rank product',
+      { eligibleProducts: ['slots'] },
+      ['eligibleProducts', 0],
+      expect.any(String),
+    ],
+  ])('refuses %s, changing nothing', async (_, lists, path, message) => {
+    const auditedBefore = (await auditRows()).length;
+
+    const res = await admin.put(CONFIG_PATH, { ...CASINO_ONLY, ...lists });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: 'BAD_REQUEST',
+      data: { issues: [expect.objectContaining({ path, message })] },
+    });
+    expect(await readJson(await admin.get(CONFIG_PATH))).toEqual(SEEDED);
+    expect(await auditRows()).toHaveLength(auditedBefore);
+  });
+
   it('refuses a wagering multiplier the bonus engine would reject, changing nothing', async () => {
     const auditedBefore = (await auditRows()).length;
 
     const res = await admin.put(CONFIG_PATH, {
-      eligibleProducts: [],
+      eligibleProducts: ['casino'],
       rewards: { daily: { wageringMultiplier: '1000.01', expiryDays: 1 } },
       payoutAnchors: EXAMPLE_RANK_LADDER.config.payoutAnchors,
     });

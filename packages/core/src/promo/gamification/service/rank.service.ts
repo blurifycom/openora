@@ -37,9 +37,8 @@ type LadderRung = Pick<PromoRankTier, 'id' | 'position' | 'wagerThreshold'>;
 const tierFor = <T extends LadderRung>(ladder: readonly T[], lifetime: string) =>
   ladder.filter((tier) => moneyCompare(tier.wagerThreshold, lifetime) <= 0).at(-1);
 
-// An empty list counts every bet. A bet always names its product, so there is no third case.
 const countsToward = (eligibleProducts: readonly string[], product: string) =>
-  eligibleProducts.length === 0 || eligibleProducts.includes(product);
+  eligibleProducts.includes(product);
 
 export class RankService implements WagerTrackingCommands {
   constructor(

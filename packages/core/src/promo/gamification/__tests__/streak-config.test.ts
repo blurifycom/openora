@@ -24,4 +24,14 @@ describe('setting the streak config', () => {
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.path).toEqual(['milestones']);
   });
+
+  it.each([
+    ['no product', []],
+    ['a repeated product', ['casino', 'casino']],
+    ['an unknown product', ['slots']],
+  ])('rejects a product list with %s', (_, eligibleProducts) => {
+    const result = SetStreakConfigInputSchema.safeParse({ ...config(3), eligibleProducts });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path.slice(0, 1)).toEqual(['eligibleProducts']);
+  });
 });

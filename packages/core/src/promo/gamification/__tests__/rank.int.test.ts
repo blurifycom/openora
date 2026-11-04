@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeAuditWriter, mock } from '../../../testing/mock.js';
-import type { ExchangeRateReader, WagerContext } from '@openora/core/contracts';
+import type { ExchangeRateReader, WagerContext, WagerProduct } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import {
   promoPlayerRank,
@@ -43,7 +43,7 @@ const LADDER = {
     },
   ],
   config: {
-    eligibleProducts: [],
+    eligibleProducts: ['casino', 'live-casino', 'sportsbook', 'pvp'] satisfies WagerProduct[],
     rewards: {},
     payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
     payInPlayerCurrency: false,
