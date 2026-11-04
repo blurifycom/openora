@@ -69,6 +69,20 @@ describe('mapEventToRecord: identity.session.revoked', () => {
 
     expect(row).toMatchObject({ actorType: 'admin', actorId: adminId, resourceId: sessionId });
   });
+
+  it.each(['identity.session.revoked', 'identity.sessions.revoked_all'])(
+    "records an admin's %s on its own account under its user id",
+    async (topic) => {
+      const row = await mapEventToRecord(topic, {
+        userId,
+        playerId: null,
+        sessionId,
+        actorId: userId,
+      });
+
+      expect(row).toMatchObject({ actorType: 'admin', actorId: userId });
+    },
+  );
 });
 
 describe('mapEventToRecord: cms.banner.schedule.updated', () => {
