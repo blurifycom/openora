@@ -6,6 +6,7 @@
 import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from '../schemas/common.js';
 import { KycStatusSchema, PlayerStatusSchema } from '../schemas/player.js';
+import type { SupportHistoryFailureReason } from './support-history.js';
 import { createToken, type Token } from './token.js';
 
 /**
@@ -66,13 +67,15 @@ export const SUPPORT_CHAT_PROVIDER: Token<SupportChatProvider> =
 
 /**
  * Thrown by an adapter when the vendor refuses, is unreachable or answers something unexpected.
- * `reason` is short and goes to the log only, never to the player: no token, no request body,
- * no unmasked email.
+ * `reason` is one of `SUPPORT_HISTORY_FAILURE_REASONS` and goes to the log only, never to the
+ * player; core logs any other value, which a JavaScript adapter can still pass, as
+ * `unlisted reason`, and any other thrown value as `unexpected adapter error`. It may carry the
+ * original error as `cause`; core never reads, logs, reports or rethrows it.
  */
 export class SupportChatProviderError extends Error {
-  readonly reason: string;
+  readonly reason: SupportHistoryFailureReason;
 
-  constructor(reason: string, options?: ErrorOptions) {
+  constructor(reason: SupportHistoryFailureReason, options?: ErrorOptions) {
     super(`support-chat provider failed: ${reason}`, options);
     this.name = 'SupportChatProviderError';
     this.reason = reason;

@@ -10,7 +10,6 @@ import {
   PLAYER_ACCOUNT_MANAGER_READER,
   RG_EXCLUSION_READER,
   SUPPORT_CHAT_PROVIDER,
-  SupportChatProviderError,
   SupportCustomerContextSchema,
   WAGER_TRACKING,
   WALLET_READER,
@@ -26,7 +25,7 @@ import {
 } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { rgExclusion } from '@openora/core/compliance/schema';
-import { SupportChatService } from '@openora/core/engagement/server';
+import { SupportChatService, SupportChatSyncFailedError } from '@openora/core/engagement/server';
 import { supportChatCustomer } from '@openora/core/engagement/schema/support-chat';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
@@ -333,7 +332,7 @@ describe('POST /support-chat/session', () => {
   });
 
   it.each([
-    ['refuses', () => failNextSupportChatToken('vendor said no')],
+    ['refuses', () => failNextSupportChatToken('rate_limited')],
     ['answers a malformed token', () => malformNextSupportChatToken()],
   ])(
     'answers a generic 503 when the vendor %s, then serves the next call',
@@ -345,7 +344,7 @@ describe('POST /support-chat/session', () => {
       const error = await body(refused);
       expect(error['message']).toBe('Support chat is unavailable');
       expect(error['data']).toBeUndefined();
-      expect(JSON.stringify(error)).not.toContain('vendor said no');
+      expect(JSON.stringify(error)).not.toContain('rate_limited');
       expect(await linkRows(playerId)).toHaveLength(0);
 
       expect((await client.post(SESSION)).status).toBe(200);
@@ -384,7 +383,7 @@ describe('POST /support-chat/session', () => {
         }
         return found;
       }, WAIT);
-      expect(deadLetter.error).toBeInstanceOf(SupportChatProviderError);
+      expect(deadLetter.error).toBeInstanceOf(SupportChatSyncFailedError);
       expect((deadLetter.error as Error).cause).toBeUndefined();
       expect(inspect(reported, { depth: null })).not.toContain(secret);
     } finally {
@@ -472,7 +471,9 @@ describe('POST /support-chat/session', () => {
         }
         return found;
       }, WAIT);
-      expect(gaveUp.error).toBeInstanceOf(SupportChatProviderError);
+      expect(gaveUp.error).toBeInstanceOf(SupportChatSyncFailedError);
+      expect((gaveUp.error as Error).message).toBe('support-chat provider failed: unavailable');
+      expect((gaveUp.error as Error).cause).toBeUndefined();
       expect(gaveUp.context).toMatchObject({ extra: { userId: p.userId } });
       const sent = inspect(gaveUp, { depth: null });
       expect(sent).not.toContain(p.email);

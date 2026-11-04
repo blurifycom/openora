@@ -35,12 +35,16 @@ strict, so a field reaches the vendor only when it is added to the contract on p
   as someone else.
 - **Answer the token in the port's shape.** Core validates it; a missing access token, a
   non-positive lifetime or anything else malformed answers the player as unavailable.
-- **Throw the port's provider error on a refusal, an unreachable vendor or an unexpected
-  answer,** with a short reason. The reason goes to the log only; the player gets a fixed
-  "unavailable" refusal. Never put a token, a request body or an unmasked email in it, and do
-  not attach a raw HTTP error as its `cause`: it can carry headers and bodies. Any other error
-  that escapes the adapter is handled the same way, but core keeps only its class name as the
-  reason, so throwing the provider error is what leaves a useful reason in the log.
+- **Throw the port's provider error with a listed reason code** on a refusal, an unreachable
+  vendor or an unexpected answer. The codes are the six in `SUPPORT_HISTORY_FAILURE_REASONS`
+  (`unauthorized`, `rate_limited`, `timeout`, `unavailable`, `not_found`, `bad_response`), as
+  [Support history](#support-history) describes them, never free text. The code goes to the log,
+  and for a failed sync to the job queue and the error reporter, and nowhere else; the player
+  gets a fixed "unavailable" refusal. A JavaScript adapter can still pass any text; core logs it
+  as `unlisted reason`. Any other error that escapes the adapter, or a provider error whose
+  `reason` throws when read, is logged as `unexpected adapter error`, nothing of it kept, not
+  even its name. The provider error may carry the original error as `cause`; core never reads,
+  logs, reports or rethrows it.
 - **Make the context sync idempotent.** The same context may be written more than once, and two
   syncs for one player may run at once. Core re-reads the context after each write and writes
   again when it moved, so the last write converges on the database's latest state; the adapter
@@ -177,8 +181,8 @@ What a reader must guarantee:
   URL starting `https://`: an http, `javascript:` or `data:` link, or a slash-less `https:` form
   a browser would resolve against the back office's own origin, makes the section unavailable.
 - **Errors carry a listed reason code.** Throw the port's support-history provider error with one
-  of the codes in `SUPPORT_HISTORY_FAILURE_REASONS`, never free text, and do not attach a raw HTTP
-  error as its `cause`:
+  of the codes in `SUPPORT_HISTORY_FAILURE_REASONS`, never free text. It may carry the original
+  error as `cause`; core never reads, logs, reports or rethrows it.
   - `unauthorized`: the vendor refused the credentials.
   - `rate_limited`: the vendor throttled the call.
   - `timeout`: the vendor did not answer in time.
@@ -187,8 +191,8 @@ What a reader must guarantee:
   - `bad_response`: the vendor answered something unexpected.
 
   The code goes to the log only. A JavaScript adapter can still pass any text; core logs it as
-  `unlisted reason`. Any other error that escapes is logged as `unexpected adapter error`, nothing
-  of it kept, not even its name.
+  `unlisted reason`. Any other error that escapes, or a provider error whose `reason` throws when
+  read, is logged as `unexpected adapter error`, nothing of it kept, not even its name.
 
 The answer has a tickets and a chats section. Each one either carries its items, most recently
 updated first, or says it is unavailable: its read failed, or the current email could not be

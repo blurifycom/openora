@@ -47,6 +47,12 @@ export const KycConfigSchema = z
     /** When true, withdrawals require a passing KYC status (verified|manually_overridden). */
     gateWithdrawals: z.boolean().default(false),
     /**
+     * When true, the immediate `overrideKycStatus` and `bulkApproveKyc` endpoints also require
+     * `kyc-override-approval:approve`, so a role that may only request an override cannot apply
+     * one directly. Leave false unless an overlay owns the request/approve flow.
+     */
+    requireApprovalForDirectOverride: z.boolean().default(false),
+    /**
      * Per-currency cumulative-deposit thresholds (currency code -> decimal string)
      * that trigger a re-KYC of a verified player. Absent currency = no threshold for that currency.
      */

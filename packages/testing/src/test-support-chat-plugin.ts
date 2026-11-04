@@ -3,16 +3,19 @@ import { type CoreTokenCatalog, type Plugin } from '@openora/core/server';
 import {
   SUPPORT_CHAT_PROVIDER,
   SupportChatProviderError,
+  type SupportChatCustomerToken,
   type SupportChatProvider,
   type SupportCustomerContext,
+  type SupportHistoryFailureReason,
 } from '@openora/core/contracts';
 
 export type TestSupportChatSync = { customerId: string; context: SupportCustomerContext };
 
 type NextTokenAnswer =
-  | { kind: 'fail'; reason: string }
+  | { kind: 'fail'; reason: SupportHistoryFailureReason }
   | { kind: 'throw'; error: Error }
   | { kind: 'malformed' }
+  | { kind: 'raw'; answer: unknown }
   | { kind: 'customer'; customerId: string };
 
 type SupportChatState = {
@@ -23,6 +26,7 @@ type SupportChatState = {
   failSyncs: boolean | Error;
   syncAttempts: string[];
   heldSync: { customerId: string; reached: () => void; released: Promise<void> } | null;
+  syncHook: ((customerId: string) => Promise<void>) | null;
 };
 
 // On the process, not the module: the app loads this file as a separate module instance from
@@ -37,6 +41,7 @@ const freshState = (): SupportChatState => ({
   failSyncs: false,
   syncAttempts: [],
   heldSync: null,
+  syncHook: null,
 });
 const state = (): SupportChatState => (holder[STATE] ??= freshState());
 
@@ -49,7 +54,7 @@ export const resetSupportChat = () => {
  * The next `issueCustomerToken` throws a provider error carrying `reason`, or, given an
  * `Error`, throws that error as is - an adapter that let a raw client error escape.
  */
-export const failNextSupportChatToken = (reason: string | Error) => {
+export const failNextSupportChatToken = (reason: SupportHistoryFailureReason | Error) => {
   state().nextTokenAnswer =
     typeof reason === 'string' ? { kind: 'fail', reason } : { kind: 'throw', error: reason };
 };
@@ -57,6 +62,11 @@ export const failNextSupportChatToken = (reason: string | Error) => {
 /** The next `issueCustomerToken` answers a token without an access token. */
 export const malformNextSupportChatToken = () => {
   state().nextTokenAnswer = { kind: 'malformed' };
+};
+
+/** The next `issueCustomerToken` answers `answer` as is, whatever its shape. */
+export const answerNextSupportChatTokenRaw = (answer: unknown) => {
+  state().nextTokenAnswer = { kind: 'raw', answer };
 };
 
 /** The next `issueCustomerToken` answers a token for `customerId`, whatever was asked. */
@@ -76,6 +86,11 @@ export const setSupportChatSyncDelay = (ms: number) => {
  */
 export const failSupportChatSyncs = (on: boolean | Error) => {
   state().failSyncs = on;
+};
+
+/** Runs inside every `syncCustomer` before it lands, until set back to null. */
+export const setSupportChatSyncHook = (hook: ((customerId: string) => Promise<void>) | null) => {
+  state().syncHook = hook;
 };
 
 /** How many `syncCustomer` calls `customerId` has had so far, landed or failed. */
@@ -125,6 +140,9 @@ export default {
             if (next?.kind === 'throw') {
               throw next.error;
             }
+            if (next?.kind === 'raw') {
+              return next.answer as SupportChatCustomerToken;
+            }
             const customerId =
               next?.kind === 'customer'
                 ? next.customerId
@@ -144,7 +162,7 @@ export default {
             }
             return (async () => {
               if (s.failSyncs) {
-                throw new SupportChatProviderError('test vendor write refused');
+                throw new SupportChatProviderError('unavailable');
               }
               const held = s.heldSync?.customerId === customerId ? s.heldSync : null;
               if (held) {
@@ -152,6 +170,7 @@ export default {
                 held.reached();
                 await held.released;
               }
+              await s.syncHook?.(customerId);
               if (s.syncDelayMs > 0) {
                 await new Promise((resolve) => setTimeout(resolve, s.syncDelayMs));
               }

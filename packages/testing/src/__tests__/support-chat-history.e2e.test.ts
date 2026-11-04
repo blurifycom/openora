@@ -569,6 +569,61 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       }
     });
 
+    it('answers chats unavailable for an item whose getter throws, the tickets kept, its text kept out of the response and the error reporter', async () => {
+      const p = await linkedPlayer();
+      const viewer = await supportViewer();
+      const dirt = `jane.doe@example.test sk_live_${randomUUID()}`;
+      const ticket = item('ticket', '2026-03-01T00:00:00Z');
+      answerSupportHistoryWith({
+        tickets: [ticket],
+        chats: [
+          {
+            ...item('chat', '2026-03-01T00:00:00Z'),
+            get status(): never {
+              throw new Error(dirt);
+            },
+          },
+        ],
+      });
+      const reported: unknown[] = [];
+      setErrorReporter((error, context) => reported.push({ error, context }));
+      try {
+        const res = await viewer.client.get(historyPath(p.userId));
+        const text = await res.clone().text();
+
+        expect(res.status, text).toBe(200);
+        const body = SupportHistorySchema.parse(JSON.parse(text));
+        expect(body.chats).toEqual({ state: 'unavailable', items: [] });
+        expect(body.tickets).toEqual({ state: 'ok', items: [ticket], complete: true });
+        expect(text).not.toMatch(/jane\.doe|sk_live_/);
+        expect(inspect(reported, { depth: null, showHidden: true })).not.toMatch(
+          /jane\.doe|sk_live_/,
+        );
+      } finally {
+        setErrorReporter(undefined);
+      }
+    });
+
+    it('refuses a player session the same history instead of reading the throwing items', async () => {
+      const p = await linkedPlayer();
+      answerSupportHistoryWith({
+        chats: [
+          {
+            ...item('chat', '2026-03-01T00:00:00Z'),
+            get status(): never {
+              throw new Error('jane.doe@example.test');
+            },
+          },
+        ],
+      });
+
+      const res = await p.client.get(historyPath(p.userId));
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).not.toMatch(/jane\.doe/);
+      expect(readSupportHistoryCalls().listChats).toEqual([]);
+    });
+
     it('answers a section unavailable for a malformed item or a status of the other kind', async () => {
       const malformed = await linkedPlayer();
       answerSupportHistoryWith({ chats: [item('chat', '2026-03-01T00:00:00Z')] });

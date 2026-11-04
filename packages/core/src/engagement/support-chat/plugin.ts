@@ -11,7 +11,6 @@ import {
   SUPPORT_HISTORY_READER,
   UuidSchema,
   WALLET_READER,
-  SupportChatProviderError,
   domainEventSchemas,
   queue,
   type DomainEventName,
@@ -113,16 +112,10 @@ export default {
           );
           throw new Error('support-chat sync needs a SUPPORT_CHAT_PROVIDER, none bound here');
         }
+        // The service already reduced an adapter failure to a listed code, so `err` is safe as is.
         await service.syncCustomer(payload.userId).catch((err: unknown) => {
-          // A provider error carries its short reason only: its `cause` may hold vendor detail.
-          const detail = err instanceof SupportChatProviderError ? { reason: err.reason } : { err };
-          logger.warn(
-            { ...detail, userId: payload.userId, attempt },
-            'support-chat sync attempt failed',
-          );
-          throw err instanceof SupportChatProviderError
-            ? new SupportChatProviderError(err.reason)
-            : err;
+          logger.warn({ err, userId: payload.userId, attempt }, 'support-chat sync attempt failed');
+          throw err;
         });
       },
       // Scheduled whichever process gives up: one without the provider cannot tell a fleet where

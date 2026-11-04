@@ -5,9 +5,7 @@ import {
   TimestampSchema,
   SUPPORT_CHAT_STATUSES,
   SUPPORT_TICKET_STATUSES,
-  SupportHistoryFailureReasonSchema,
   SupportHistoryItemSchema,
-  SupportHistoryProviderError,
   type CacheAdapter,
   type SupportHistoryEmailWindow,
   type SupportHistoryItem,
@@ -17,6 +15,7 @@ import { auditLog } from '@openora/core/audit/schema';
 import { user, type User } from '@openora/core/pam/schema/identity';
 import { player, type Player } from '@openora/core/pam/schema/profile';
 import { supportChatCustomer } from '../schema/index.js';
+import { reasonOf, type ProviderFailureReason } from './provider-reason.service.js';
 import { SupportChatPlayerNotFoundError } from './support-chat.service.js';
 
 const logger = createLogger('support-chat');
@@ -185,18 +184,6 @@ export function boundFirstWindow(
   };
 }
 
-// An adapter may throw anything, such as an HTTP client error holding the vendor API key or an
-// email, in its message or even its writable `name`: nothing of it survives. A provider error keeps
-// its reason only when it is a listed code, since a JavaScript adapter can pass any text.
-const reasonOf = (err: unknown): string => {
-  if (!(err instanceof SupportHistoryProviderError)) {
-    return 'unexpected adapter error';
-  }
-  return SupportHistoryFailureReasonSchema.safeParse(err.reason).success
-    ? err.reason
-    : 'unlisted reason';
-};
-
 // The change time the event carried, when it is a valid timestamp; rows from before it fall back
 // to their write time.
 const changedAtOf = (after: Record<string, unknown> | null) => {
@@ -356,7 +343,12 @@ export class SupportHistoryService {
     kind: SupportHistoryItem['kind'],
     read: () => Promise<unknown>,
   ): Promise<Section> {
-    const unavailable = (reason: string): Section => {
+    const unavailable = (
+      reason:
+        | ProviderFailureReason
+        | 'malformed answer'
+        | `answered an item that is not a ${SupportHistoryItem['kind']}`,
+    ): Section => {
       logger.warn({ userId, section: kind, reason }, 'support history section unavailable');
       return { state: 'unavailable', items: [] };
     };
@@ -366,7 +358,13 @@ export class SupportHistoryService {
     } catch (err) {
       return unavailable(reasonOf(err));
     }
-    const parsed = SupportHistoryItemsSchema.safeParse(answer);
+    // safeParse rethrows what a getter on the answer throws, which is the adapter's text too.
+    let parsed: ReturnType<typeof SupportHistoryItemsSchema.safeParse>;
+    try {
+      parsed = SupportHistoryItemsSchema.safeParse(answer);
+    } catch {
+      return unavailable('malformed answer');
+    }
     if (!parsed.success) {
       return unavailable('malformed answer');
     }

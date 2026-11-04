@@ -36,6 +36,7 @@ const CTX = {
   clientMeta: NO_CLIENT_META,
 };
 const ADMIN = '33333333-3333-4333-8333-333333333333';
+const KYC_OVERRIDER = ['compliance:override-limit'] as const;
 
 let db: TestDb;
 
@@ -62,7 +63,7 @@ function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
   });
 }
 
-function build(guard: AdminGuard) {
+function build(guard: AdminGuard, requireApprovalForDirectKycOverride = false) {
   const events = makeEventBus();
   const statusWriter = mock<KycStatusWriter>({ setStatus: vi.fn(async () => null) });
   const kyc = new KycVerificationService({
@@ -88,6 +89,7 @@ function build(guard: AdminGuard) {
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),
     rgSelfService: mock<RgSelfServiceService>({}),
+    requireApprovalForDirectKycOverride,
   });
   return { router, audit, statusWriter, events };
 }
@@ -153,10 +155,55 @@ describe('compliance admin KYC router authz (real PG)', () => {
   });
 });
 
+describe('compliance admin KYC router with requireApprovalForDirectKycOverride (real PG)', () => {
+  it('overrideKycStatus refuses a caller holding only compliance:override-limit', async () => {
+    const seeded = await seedPlayer();
+    const { router } = build(fakeGuard(['compliance:override-limit']), true);
+
+    await expect(
+      call(
+        router.overrideKycStatus,
+        { userId: seeded.userId, tier: 'basic', status: 'approved', reason: 'manual review' },
+        { context: CTX },
+      ),
+    ).rejects.toBeInstanceOf(ORPCError);
+    expect(await verificationsOf(seeded.userId)).toHaveLength(0);
+  });
+
+  it('overrideKycStatus lets a caller holding the approval permission through', async () => {
+    const seeded = await seedPlayer();
+    const { router } = build(
+      fakeGuard(['compliance:override-limit', 'kyc-override-approval:approve']),
+      true,
+    );
+
+    await call(
+      router.overrideKycStatus,
+      { userId: seeded.userId, tier: 'basic', status: 'approved', reason: 'manual review' },
+      { context: CTX },
+    );
+    expect(await verificationsOf(seeded.userId)).toHaveLength(1);
+  });
+
+  it('bulkApproveKyc refuses a caller holding only compliance:override-limit', async () => {
+    const seeded = await seedPlayer();
+    const { router } = build(fakeGuard(['compliance:override-limit']), true);
+
+    await expect(
+      call(
+        router.bulkApproveKyc,
+        { userIds: [seeded.userId], tier: 'basic', reason: 'sweep' },
+        { context: CTX },
+      ),
+    ).rejects.toBeInstanceOf(ORPCError);
+    expect(await verificationsOf(seeded.userId)).toHaveLength(0);
+  });
+});
+
 describe('compliance admin KYC router input validation (real PG)', () => {
   it('rejects a whitespace-only reason on requestKycResubmission before the handler runs', async () => {
     const seeded = await seedPlayer();
-    const { router } = build(fakeGuard(['compliance:override-limit']));
+    const { router } = build(fakeGuard(KYC_OVERRIDER));
 
     await expect(
       call(
@@ -170,7 +217,7 @@ describe('compliance admin KYC router input validation (real PG)', () => {
 
   it('rejects an empty reason on overrideKycStatus', async () => {
     const seeded = await seedPlayer();
-    const { router } = build(fakeGuard(['compliance:override-limit']));
+    const { router } = build(fakeGuard(KYC_OVERRIDER));
 
     await expect(
       call(
@@ -183,7 +230,7 @@ describe('compliance admin KYC router input validation (real PG)', () => {
 
   it('rejects an empty reason on bulkApproveKyc', async () => {
     const seeded = await seedPlayer();
-    const { router } = build(fakeGuard(['compliance:override-limit']));
+    const { router } = build(fakeGuard(KYC_OVERRIDER));
 
     await expect(
       call(
@@ -195,7 +242,7 @@ describe('compliance admin KYC router input validation (real PG)', () => {
   });
 
   it('rejects a batch over the size cap', async () => {
-    const { router } = build(fakeGuard(['compliance:override-limit']));
+    const { router } = build(fakeGuard(KYC_OVERRIDER));
     const userIds = Array.from({ length: 101 }, () => randomUUID());
 
     await expect(
@@ -207,7 +254,7 @@ describe('compliance admin KYC router input validation (real PG)', () => {
 describe('compliance admin KYC router effects (real PG)', () => {
   it('requestKycResubmission appends a manual history row and drives the status writer', async () => {
     const seeded = await seedPlayer();
-    const { router, statusWriter } = build(fakeGuard(['compliance:override-limit']));
+    const { router, statusWriter } = build(fakeGuard(KYC_OVERRIDER));
 
     await call(
       router.requestKycResubmission,
@@ -233,7 +280,7 @@ describe('compliance admin KYC router effects (real PG)', () => {
 
   it('overrideKycStatus writes an approved choice as manually_overridden', async () => {
     const seeded = await seedPlayer();
-    const { router, statusWriter } = build(fakeGuard(['compliance:override-limit']));
+    const { router, statusWriter } = build(fakeGuard(KYC_OVERRIDER));
 
     await call(
       router.overrideKycStatus,
@@ -254,7 +301,7 @@ describe('compliance admin KYC router effects (real PG)', () => {
 
   it('is idempotent on a repeat override that resolves to the current status', async () => {
     const seeded = await seedPlayer();
-    const { router, statusWriter } = build(fakeGuard(['compliance:override-limit']));
+    const { router, statusWriter } = build(fakeGuard(KYC_OVERRIDER));
     const input = {
       userId: seeded.userId,
       tier: 'basic' as const,
@@ -278,7 +325,7 @@ describe('compliance admin KYC router effects (real PG)', () => {
   it('bulkApproveKyc reports per-item results and leaves history only for the real player', async () => {
     const seeded = await seedPlayer();
     const missing = randomUUID();
-    const { router } = build(fakeGuard(['compliance:override-limit']));
+    const { router } = build(fakeGuard(KYC_OVERRIDER));
 
     const result = await call(
       router.bulkApproveKyc,
@@ -299,7 +346,7 @@ describe('compliance admin KYC router effects (real PG)', () => {
   it('audits the whole attempted bulk-approve batch, including the failed item', async () => {
     const seeded = await seedPlayer();
     const missing = randomUUID();
-    const { router, audit } = build(fakeGuard(['compliance:override-limit']));
+    const { router, audit } = build(fakeGuard(KYC_OVERRIDER));
 
     await call(
       router.bulkApproveKyc,
