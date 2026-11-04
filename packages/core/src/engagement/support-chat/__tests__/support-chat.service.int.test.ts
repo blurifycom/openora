@@ -273,7 +273,6 @@ describe('SupportChatService adapter error shapes (real PG)', () => {
     return err;
   };
 
-  // Reading the reason throws an error that carries the secret.
   const throwingReasonError = () => {
     const err = new SupportChatProviderError('timeout');
     Object.defineProperty(err, 'reason', {

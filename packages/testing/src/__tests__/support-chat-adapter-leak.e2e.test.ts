@@ -68,7 +68,6 @@ const getterReason = () => {
   return err;
 };
 
-// Reading the reason throws an error that carries the secret.
 const throwingReason = () => {
   const err = new SupportChatProviderError('timeout');
   Object.defineProperty(err, 'reason', {
