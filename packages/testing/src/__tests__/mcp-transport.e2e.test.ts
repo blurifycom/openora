@@ -704,7 +704,12 @@ describe('MCP tokens, issuing while a password reset is in flight', () => {
       newPassword: NEW_MODERATOR_PASSWORD,
     });
     await revocation.reached;
-    const issuing = staff.post('/iam/my-mcp-tokens', { label: 'raced' });
+    // better-auth has committed the new password by now, so the step-up passes only with it:
+    // even an issuer who knows it is refused for the session the reset is ending.
+    const issuing = staff.post('/iam/my-mcp-tokens', {
+      label: 'raced',
+      currentPassword: NEW_MODERATOR_PASSWORD,
+    });
     // The issue queues behind the revocation's transaction, which ends the sessions too.
     await waitForTableLockWaiter(appDb, mcpToken);
     revocation.release();

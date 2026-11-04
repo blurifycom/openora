@@ -1,5 +1,6 @@
 import {
   AUDIT_WRITER,
+  FRESH_REAUTHENTICATION,
   MCP_TOKEN_REVOCATION,
   PLATFORM_CONFIG,
   RATE_LIMITER,
@@ -39,6 +40,7 @@ export default {
         audit: c.get(AUDIT_WRITER),
         events: c.get(EVENT_BUS),
         rateLimiter: c.get(RATE_LIMITER),
+        reauthentication: c.get(FRESH_REAUTHENTICATION),
         config: c.get(PLATFORM_CONFIG).agents.mcp,
       });
       return {
