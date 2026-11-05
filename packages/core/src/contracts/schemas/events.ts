@@ -400,6 +400,9 @@ export const domainEventSchemas = {
     // Stamped right after the swap returns; the audit row's own write time can trail it.
     // Optional so a payload from before this field still parses.
     changedAt: TimestampSchema.optional(),
+    // The swap appended its audit row in its own transaction; absent on events published
+    // before that, which the audit subscriber still records.
+    auditRecorded: z.literal(true).optional(),
   }),
   'identity.phone.verified': authContextBase.extend({
     userId: UuidSchema,
@@ -435,6 +438,12 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
+  // The wrong PINs that tripped the lock, not the PINs themselves.
+  'identity.security.withdrawal_pin.locked': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    lockedUntil: TimestampSchema,
+  }),
   // The code itself never travels here - audit/event streams are broader-read than
   // security.me, which is the only place the raw value is returned.
   'identity.security.anti_phishing_code.set': authContextBase.extend({
@@ -465,6 +474,13 @@ export const domainEventSchemas = {
     // streamSession handler skips the `revoked` push for this session id. The admin
     // revoke-all path leaves it unset, so every session is kicked.
     exceptSessionId: UuidSchema.optional(),
+  }),
+  // A sign-in refused for a deactivated account, after its credential was proven. Not a
+  // credential failure: it never counts toward the lockout. userId = the refused account.
+  'identity.user.login_blocked': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    reason: z.literal('inactive'),
   }),
   'identity.user.unauthorized_access': authContextBase.extend({
     userId: UuidSchema,
@@ -849,6 +865,13 @@ export const domainEventSchemas = {
     // Absent when the milestone's reward is not a bonus grant.
     grantId: UuidSchema.nullable(),
   }),
+  // Unclaimed rakeback has reached the claim minimum; `amount` is its total in `currency`, the
+  // operator's reference currency. Emitted at most once a day per player.
+  'promo.rakeback.claimable': z.object({
+    userId: UuidSchema,
+    amount: MoneyAmountSchema,
+    currency: CurrencyTickerSchema,
+  }),
   'promo.rank.changed': z.object({
     userId: UuidSchema,
     tierId: UuidSchema,
@@ -1182,6 +1205,9 @@ export const domainEventSchemas = {
     previousAmount: MoneyAmountSchema.nullable(),
     previousMinutes: z.number().int().nullable(),
     currency: CurrencyTickerSchema.nullable(),
+    // The prior row's own currency; null for a session limit, no prior limit, or an
+    // event written before this field.
+    previousCurrency: CurrencyTickerSchema.nullable().default(null),
     initiatedBy: RgInitiatorSchema,
     reason: z.string().nullable(),
   }),

@@ -57,7 +57,7 @@ type Row = {
 };
 
 /** A player whose current email is `account.email`; `name('a')` is another address of theirs. */
-async function scenario(rows: Row[]) {
+async function scenario(rows: Row[], { registeredEmail }: { registeredEmail?: string } = {}) {
   const { account, player } = await seedPlayerWithUser(db);
   const [registered] = await db.drizzle.db
     .select({ createdAt: user.createdAt })
@@ -67,6 +67,12 @@ async function scenario(rows: Row[]) {
   const name = (tag: string) => `${tag}-${account.id}@test.dev`;
   const resolve = (value: string) =>
     value === 'cur' ? account.email : value === 'CUR' ? account.email.toUpperCase() : name(value);
+  if (registeredEmail !== undefined) {
+    await db.drizzle.db
+      .update(user)
+      .set({ registeredEmail: resolve(registeredEmail) })
+      .where(eq(user.id, account.id));
+  }
   const otherId = randomUUID();
   const side = (value: Row['before']) =>
     typeof value === 'string' ? { email: resolve(value) } : value;
@@ -134,6 +140,41 @@ describe('support history email windows from crafted audit rows (real PG)', () =
 
     const none = await scenario([]);
     expect(none.asked).toEqual([[none.win('cur', 'registered', null)]]);
+  });
+
+  it('opens the registration window when the oldest email is the one the account registered with', async () => {
+    const s = await scenario(
+      [
+        { before: 'a', after: 'b', at: 10 },
+        { before: 'b', after: 'cur', at: 20 },
+      ],
+      { registeredEmail: 'a' },
+    );
+    expect(s.asked).toEqual([
+      [s.win('a', 'registered', 10), s.win('b', 10, 20), s.win('cur', 20, null)],
+    ]);
+    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: true });
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('matches the registered email whatever its case', async () => {
+    const s = await scenario([], { registeredEmail: 'CUR' });
+    expect(s.asked).toEqual([[s.win('cur', 'registered', null)]]);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('notices a lost first change against the registered email and keeps the later windows', async () => {
+    const s = await scenario([{ before: 'b', after: 'cur', at: 20 }], { registeredEmail: 'a' });
+    expect(s.asked).toEqual([[s.win('cur', 20, null)]]);
+    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: false });
+    warnedWithUserOnly(s.userId);
+  });
+
+  it('trusts no window when the account holds another email than it registered with and no row says so', async () => {
+    const s = await scenario([], { registeredEmail: 'a' });
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    warnedWithUserOnly(s.userId);
   });
 
   it('trusts no window when the rows were written out of order, read in write order not time order', async () => {

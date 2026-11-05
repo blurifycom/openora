@@ -453,6 +453,14 @@ export const notificationEventMap: NotificationMapEntry[] = [
     }),
   ),
 
+  mapEvent('promo.rakeback.claimable', (p) =>
+    notification({
+      userId: p.userId,
+      type: 'rakeback.claimable',
+      params: { amount: p.amount, currency: p.currency },
+    }),
+  ),
+
   mapEvent('chat.user.mentioned', (p) =>
     notification({
       userId: p.mentionedUserId,
@@ -548,6 +556,7 @@ export function buildRgLimitAdminUpdatedNotification(
       amount: p.amount,
       minutes: p.minutes === null ? null : String(p.minutes),
       currency: p.currency,
+      previousCurrency: p.previousCurrency,
     },
   });
 }

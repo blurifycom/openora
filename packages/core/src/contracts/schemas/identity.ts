@@ -108,7 +108,8 @@ export const MemberSchema = z.object({
  * Sign-in deliberately does NOT use this: capping the input cannot help (no longer
  * password was ever storable) and would only narrow an existing contract.
  */
-export const PasswordSchema = z.string().min(12).max(128);
+export const PASSWORD_MAX_LENGTH = 128;
+export const PasswordSchema = z.string().min(12).max(PASSWORD_MAX_LENGTH);
 
 const credentialsBase = z.object({
   email: z.email(),
@@ -326,6 +327,10 @@ export const AUTO_LOGOUT_MINUTES: Record<AutoLogoutDuration, number> = {
   '30d': 30 * 24 * 60,
 };
 
+// Backoffice staff sessions end after this long without activity. Fixed, not per-user: staff
+// cannot set the player auto-logout preference, so there is nothing for them to configure.
+export const ADMIN_IDLE_MINUTES = 30;
+
 export const SecurityControlsSchema = z.object({
   passwordMeetsPolicy: z.boolean(),
   emailVerified: z.boolean(),
@@ -374,6 +379,13 @@ export const SetWithdrawalPinInputSchema = z
     message: 'PIN and confirmation must match.',
     path: ['confirmPin'],
   });
+
+// Removing the PIN asks for the same fresh proof as setting it: without it a stolen session
+// could drop the PIN and then withdraw.
+export const RemoveWithdrawalPinInputSchema = z.object({
+  currentPassword: z.string().min(8),
+  totpCode: TotpStepUpCodeSchema.optional(),
+});
 
 export const PhoneVerificationRequestInputSchema = z.object({
   phone: E164PhoneSchema,
@@ -499,6 +511,7 @@ export type SetLoginWithdrawalAlertsInput = z.infer<typeof SetLoginWithdrawalAle
 export type SetAutoLogoutInput = z.infer<typeof SetAutoLogoutInputSchema>;
 export type SetRequireTwoFactorOnLoginInput = z.infer<typeof SetRequireTwoFactorOnLoginInputSchema>;
 export type SetWithdrawalPinInput = z.infer<typeof SetWithdrawalPinInputSchema>;
+export type RemoveWithdrawalPinInput = z.infer<typeof RemoveWithdrawalPinInputSchema>;
 export type SetAntiPhishingCodeInput = z.infer<typeof SetAntiPhishingCodeInputSchema>;
 export type PhoneVerificationRequestInput = z.infer<typeof PhoneVerificationRequestInputSchema>;
 export type PhoneVerificationRequestOutput = z.infer<typeof PhoneVerificationRequestOutputSchema>;

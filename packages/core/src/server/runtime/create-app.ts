@@ -567,6 +567,11 @@ async function bootApp(
     container.get(ADMIN_GUARD);
   }
 
+  // Every sealed token is settled once the plugins and the composition root have registered: a
+  // holder of the returned container can neither rebind a regulator-mandated service a module
+  // bound (audit writes, bonus wagering) nor bind one that none did.
+  container.closeSealedTokens();
+
   // Sealed after configure() so neither an overlay, the composition root nor a holder of the
   // returned container can replace the wrapper that enforces IAM and audit, and bound before
   // the routers so a router factory can resolve it.
@@ -839,14 +844,17 @@ async function bootApp(
     // query blips - the client should see "not signed in", the same honest answer an
     // actually-idle session gets, not "server broken".
     if (sessionId && container.has(SESSION_IDLE_POLICY)) {
-      let state: 'active' | 'expired';
+      let state: 'active' | 'expired' | 'idle';
       try {
         state = await container.get(SESSION_IDLE_POLICY).touch(userId, sessionId);
       } catch (err) {
         createLogger('session-idle').error({ err }, 'touch failed');
         state = 'expired';
       }
-      if (state === 'expired') {
+      if (state !== 'active') {
+        if (state === 'idle') {
+          context.sessionEndedReason = 'idle_timeout';
+        }
         return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
       }
     }

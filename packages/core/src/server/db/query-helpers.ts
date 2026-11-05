@@ -1,4 +1,9 @@
-import { MONEY_SCALE, MoneyAmountSchema, type ExchangeRateReader } from '@openora/core/contracts';
+import {
+  MONEY_SCALE,
+  MoneyAmountSchema,
+  isUsableRtp,
+  type ExchangeRateReader,
+} from '@openora/core/contracts';
 import { sql } from 'drizzle-orm';
 import type { DrizzleTx } from './drizzle.js';
 
@@ -113,6 +118,14 @@ export function moneyAdd(a: string, b: string): string {
 
 export function moneySubtract(a: string, b: string): string {
   return fromMinorUnits(toMinorUnits(a) - toMinorUnits(b));
+}
+
+/** A bet's house edge, `realAmount × (1 − rtp)`; zero when the rtp is missing or not usable. */
+export function houseEdge(realAmount: string, rtp?: string | null): string {
+  if (!isUsableRtp(rtp)) {
+    return '0';
+  }
+  return moneyScaleBy(realAmount, moneySubtract('1', rtp));
 }
 
 export function moneyFloorToScale(amount: string, scale: number): string {

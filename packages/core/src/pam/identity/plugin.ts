@@ -1,5 +1,6 @@
 import {
   ADMIN_SECURITY_POLICY,
+  AUDIT_WRITER,
   ADMIN_USER_DIRECTORY,
   CACHE,
   GEO_IP_ADAPTER,
@@ -10,6 +11,7 @@ import {
   MAIL_DISPATCH,
   MAIL_RECIPIENT_DIRECTORY,
   MCP_TOKEN_REVOCATION,
+  FRESH_REAUTHENTICATION,
   GEO_CHECK_COMMANDS,
   PLAYER_PROVISIONING,
   IDENTITY_OPTIONS,
@@ -18,6 +20,7 @@ import {
   SESSION_COMMANDS,
   SESSION_IDLE_POLICY,
   TWO_FACTOR_SETUP_POLICY,
+  WITHDRAWAL_SECURITY,
   USER_COMMANDS,
   SMS_ADAPTER,
   REALTIME_TRANSPORT,
@@ -51,6 +54,7 @@ import { AdminSecurityService } from './service/admin-security.service.js';
 import { TrustedDeviceService } from './service/trusted-device.service.js';
 import { SessionIdleService } from './service/session-idle.service.js';
 import { TwoFactorLockoutService } from './service/two-factor-lockout.service.js';
+import { FreshReauthenticationService } from './service/fresh-reauthentication.service.js';
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
 import { PlayEligibilityService } from './service/play-eligibility.service.js';
 import { TwoFactorSetupPolicyService } from './service/two-factor-setup-policy.service.js';
@@ -72,7 +76,7 @@ function reportUnsafeAuthSurface(message: string): void {
 function assertAuthSurfaceGuards(c: IdentityContainer): void {
   if (!c.has(GEO_CHECK_COMMANDS)) {
     reportUnsafeAuthSurface(
-      'identity mounts its sign-in, phone-login and 2FA routes but GEO_CHECK_COMMANDS is unbound, so the country gate is a silent no-op on registration and sign-in and writes no access-blocked audit row. Load the compliance module in this process, or load identity service-only (SERVICE_MANIFEST=identity:no-routes) so it serves no auth route.',
+      'identity mounts its sign-in, phone-login and 2FA routes but GEO_CHECK_COMMANDS is unbound, so the country gate is a silent no-op on registration and sign-in and writes no access-blocked audit row. Load the compliance module in this process, or load identity service-only (SERVICE_MANIFEST=audit:no-routes,identity:no-routes) so it serves no auth route.',
     );
   }
 }
@@ -113,6 +117,21 @@ function makeTwoFactorLockout(c: IdentityContainer) {
   });
 }
 
+// Stateless over the database, so the router and the `WITHDRAWAL_SECURITY` port each build one.
+function makeWithdrawalPin(c: IdentityContainer, hmacSecret: string) {
+  return new WithdrawalPinService({
+    drizzle: c.get(DRIZZLE),
+    events: c.get(EVENT_BUS),
+    limiter: c.get(RATE_LIMITER),
+    auth: c.get(AUTH_SESSION).auth,
+    identityReader: c.get(IDENTITY_READER),
+    twoFactorLockout: makeTwoFactorLockout(c),
+    mailDispatch: c.get(MAIL_DISPATCH),
+    hmacSecret,
+    trustedDeviceDays: adminSecurityConfig(c).trustedDeviceDays,
+  });
+}
+
 function makeAdminSecurity(c: IdentityContainer) {
   const identityReader = c.get(IDENTITY_READER);
   return new AdminSecurityService({
@@ -130,6 +149,7 @@ function makeAdminSecurity(c: IdentityContainer) {
 
 export default {
   id: 'identity',
+  dependsOn: ['audit'],
   requiresPorts: [MAIL_DISPATCH],
   optionalPorts: [{ port: PLAYER_PROVISIONING, without: 'registration is refused' }],
   controlPorts: [
@@ -238,8 +258,19 @@ export default {
         }),
     );
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
+    // Lets iam demand the password and a fresh second factor before it issues an MCP token.
+    ctx.provide(
+      FRESH_REAUTHENTICATION,
+      (c) =>
+        new FreshReauthenticationService({
+          drizzle: c.get(DRIZZLE),
+          auth: c.get(AUTH_SESSION).auth,
+          twoFactorLockout: makeTwoFactorLockout(c),
+        }),
+    );
     // Holds an account that owes a second-factor enrolment (a support reset of a player who
     // required 2FA on login) to the enrolment flow until it is done.
+    ctx.provide(WITHDRAWAL_SECURITY, (c) => makeWithdrawalPin(c, withdrawalPinHmacSecret));
     ctx.provide(TWO_FACTOR_SETUP_POLICY, (c) => new TwoFactorSetupPolicyService(c.get(DRIZZLE)));
     // Mandatory-2FA + session-fingerprint enforcement. AdminGuard resolves this on every
     // admin request; leaving it unbound turns both checks off, which is why it is bound
@@ -262,6 +293,7 @@ export default {
         new IdentityService({
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
+          audit: c.get(AUDIT_WRITER),
           identityReader: c.get(IDENTITY_READER),
           mailDispatch: c.get(MAIL_DISPATCH),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
@@ -304,16 +336,7 @@ export default {
         c.get(ADMIN_GUARD),
         realtimeTransport,
         resolveAdminSecurity(c),
-        new WithdrawalPinService({
-          drizzle: c.get(DRIZZLE),
-          events: c.get(EVENT_BUS),
-          limiter: c.get(RATE_LIMITER),
-          auth: c.get(AUTH_SESSION).auth,
-          identityReader: c.get(IDENTITY_READER),
-          twoFactorLockout: makeTwoFactorLockout(c),
-          hmacSecret: withdrawalPinHmacSecret,
-          trustedDeviceDays: adminSecurityConfig(c).trustedDeviceDays,
-        }),
+        makeWithdrawalPin(c, withdrawalPinHmacSecret),
       );
     });
   },

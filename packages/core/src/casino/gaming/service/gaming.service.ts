@@ -791,6 +791,8 @@ export class GamingService {
    * `targetWhere` must repeat the partial index's predicate (schema/index.ts) - Postgres
    * rejects ON CONFLICT against a partial index without it. Deltas add onto the stored
    * value, not `excluded.<col>`, so concurrent callbacks each apply their own delta.
+   * A negative `betDelta` reverses stake: `betAmount` falls and `reversedAmount` rises by the
+   * same amount, which is how a settled round (whose stake may only grow) takes a late rollback.
    */
   async accumulateExternalRound(
     tx: unknown,
@@ -807,6 +809,7 @@ export class GamingService {
     const txn = tx as DrizzleDb;
     const betDelta = args.betDelta ?? '0';
     const winDelta = args.winDelta ?? '0';
+    const reversedStake = sql`greatest(-(${betDelta}::numeric), 0)`;
     const status = args.isFinal ? 'completed' : 'active';
     const endedAt = args.isFinal ? new Date() : undefined;
     const [row] = await txn
@@ -818,6 +821,7 @@ export class GamingService {
         externalRoundId: args.externalRoundId,
         betAmount: betDelta,
         winAmount: winDelta,
+        reversedAmount: reversedStake,
         status,
         endedAt,
       })
@@ -827,6 +831,7 @@ export class GamingService {
         set: {
           betAmount: sql`${gameRound.betAmount} + ${betDelta}::numeric`,
           winAmount: sql`${gameRound.winAmount} + ${winDelta}::numeric`,
+          reversedAmount: sql`${gameRound.reversedAmount} + ${reversedStake}`,
           ...(args.isFinal ? { status, endedAt } : {}),
         },
         // A conflicting row owned by a different game/user is left untouched (0 rows

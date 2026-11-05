@@ -14,7 +14,7 @@ export type {
   TokenCatalogValues,
   TokenValue,
 } from './token.js';
-export { createToken, createSealedToken, createClientPageToken } from './token.js';
+export { createToken, createSealedToken, createClientPageToken, isSealedToken } from './token.js';
 export type {
   ChatModeration,
   ChatModerationEntry,
@@ -62,7 +62,9 @@ export type { WagerContext, WagerProduct } from './wager-context.js';
 export {
   WAGER_PRODUCTS,
   WagerProductSchema,
+  isUsableRtp,
   isWagerProduct,
+  isWagerRtp,
   wagerProductOfProviderName,
   wagerProductProviderPrefix,
 } from './wager-context.js';
@@ -534,6 +536,11 @@ export { PLAYER_ACCOUNT_MANAGER_READER } from './player-account-manager-reader.j
 export { SESSION_IDLE_POLICY, type SessionIdlePolicy } from './session-idle-policy.js';
 export { MIRROR_TARGET_POLICY, type MirrorTargetPolicy } from './mirror-target-policy.js';
 export { TWO_FACTOR_SETUP_POLICY, type TwoFactorSetupPolicy } from './two-factor-setup-policy.js';
+export {
+  WITHDRAWAL_SECURITY,
+  type WithdrawalPinVerdict,
+  type WithdrawalSecurity,
+} from './withdrawal-security.js';
 
 export type { SocialCommands, FriendshipDissolvedPayload } from './social-commands.js';
 export { SOCIAL_COMMANDS } from './social-commands.js';
@@ -599,6 +606,11 @@ export type { McpTokenAuthentication, McpTokenAuthenticator } from './mcp-token-
 export { MCP_TOKEN_AUTHENTICATOR } from './mcp-token-authenticator.js';
 export type { McpTokenAutomaticRevokeReason, McpTokenRevocation } from './mcp-token-revocation.js';
 export { MCP_TOKEN_REVOCATION } from './mcp-token-revocation.js';
+export {
+  FRESH_REAUTHENTICATION,
+  type FreshReauthentication,
+  type FreshReauthenticationVerdict,
+} from './fresh-reauthentication.js';
 
 export type {
   SportsbookLedger,

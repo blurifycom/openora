@@ -17,6 +17,7 @@ import {
   uniqueUsername,
   bootE2e,
   closeE2e,
+  asPlayer,
 } from '../index.js';
 
 let db: TestDb;
@@ -219,6 +220,44 @@ describe('registration email verification', () => {
     // sign-up produced. A second would hand a stranger a code that signs them in.
     await waitForEmail(email, (e) => /verify/i.test(e.subject));
     expect(capturedEmailsFor(email).filter((e) => /verify/i.test(e.subject))).toHaveLength(1);
+  });
+
+  it('records the email the account registered with and never rewrites it', async () => {
+    const email = `Reg-Registered-${randomUUID()}@E2E.test`;
+    const userId = await registerPlayer(app, { email });
+    const stored = async () =>
+      (
+        await app.container
+          .get(DRIZZLE)
+          .db.select({ email: user.email, registeredEmail: user.registeredEmail })
+          .from(user)
+          .where(eq(user.id, userId))
+      )[0];
+    const registeredEmail = email.toLowerCase();
+    expect(await stored()).toEqual({ email: registeredEmail, registeredEmail });
+
+    expect((await submitRegistration(app, { email: email.toUpperCase() })).status).toBe(200);
+    expect(await stored()).toEqual({ email: registeredEmail, registeredEmail });
+
+    const newEmail = `reg-registered-new-${randomUUID()}@e2e.test`;
+    const client = await asPlayer(app.app, { email });
+    expect(
+      (
+        await client.post('/identity/email/change/request', {
+          newEmail,
+          currentPassword: 'password1234',
+        })
+      ).status,
+    ).toBe(200);
+    const mail = await waitForEmail(
+      newEmail,
+      (m) => m.subject === 'Confirm your new email address',
+    );
+    const otp = /(\d{6})/.exec(mail.text)?.[1];
+    expect((await client.post('/identity/email/change/confirm', { newEmail, otp })).status).toBe(
+      200,
+    );
+    expect(await stored()).toEqual({ email: newEmail, registeredEmail });
   });
 
   // The audit subscription is fire-and-forget, so this is the only level that proves the

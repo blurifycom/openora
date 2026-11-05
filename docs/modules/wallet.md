@@ -59,6 +59,9 @@ does not repeat it.
   else `wallet.defaultReferenceCurrency`. The rate and its timestamp are stored with it and never
   recalculated. With no fresh rate the row is not written: a request fails with a typed error, and a
   deposit webhook fails so the vendor redelivers it.
+- **A bet row records what the bet was placed on.** `wager_product` comes from its `WagerContext`,
+  and so does `wager_rtp` when it is a fraction in [0, 1]. A malformed rtp is stored as NULL rather
+  than refusing the bet. `houseEdge` in `@openora/core/server` prices it.
 - **A withdrawal's network fee comes out of the amount the player entered.** The player is debited
   the full amount, the row records the fee, and the provider pays out the amount minus the fee. An
   amount that does not exceed the fee is refused. A refund returns the full debited amount.
@@ -91,6 +94,12 @@ does not repeat it.
   is refused, since a reversal outside its round would drop out of loss spend, and a plain `debit`
   or `credit` never writes a `win_reversal`. A round's payouts and reversals count only when all
   its bets fall inside the limit window, and a round's stake never nets below zero.
+- **A withdrawal asks for the Withdrawal PIN, and pays only an address that has waited 24 hours.** The
+  PIN is checked through `WITHDRAWAL_SECURITY` before any other check, so every guess is counted; five
+  wrong ones in a row lock withdrawals for 30 minutes, and a right PIN does not lift the lock. The
+  destination must be in the player's address book and saved more than 24 hours ago, so an address named
+  only at withdrawal time cannot walk around the wait. Auto-approval holds such a payout for a human
+  as well. Saving an address asks for the password (and the 2FA code when enrolled) and mails the player.
 - **Cross-module money moves through the wallet's command port, inside the caller's transaction.**
   Another module never reads or writes wallet tables directly, and a transfer is never settled over
   an event.

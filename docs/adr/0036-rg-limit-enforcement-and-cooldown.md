@@ -11,7 +11,7 @@ and the concurrency reasoning) is unchanged.
 **Update (2026-10-16)**: `RG_LIMITS` stays optional for its consumers in a full boot, but wallet
 and gaming list it in `controlPorts`, so a `SERVICE_MANIFEST` boot that loads either refuses to
 start without the compliance module while the plugin list has it: another process of the install
-enforces the limits there ([ADR-0048](./0048-per-process-job-worker-selection.md)).
+enforces the limits there ([ADR-0049](./0049-per-process-job-worker-selection.md)).
 
 > **Update (2026-10-15)**: RG spend now reads the wallet ledger for every product, and `loss`
 > stays unenforced for the reason in [ADR-0046](./0046-sportsbook-ledger-port.md).

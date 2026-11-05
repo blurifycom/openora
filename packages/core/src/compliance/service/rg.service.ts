@@ -429,11 +429,9 @@ export class RgService {
             ),
           )
           .limit(1);
-        if (existing) {
-          const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
-          if (await isWeakening(resolvedExisting, input, this.rates, tx)) {
-            throw new LimitRaiseNotAllowedError(existing, input);
-          }
+        const resolvedExisting = existing && (await resolveLimitCurrencyInTx(tx, existing));
+        if (resolvedExisting && (await isWeakening(resolvedExisting, input, this.rates, tx))) {
+          throw new LimitRaiseNotAllowedError(resolvedExisting, input);
         }
         // Reduce-only doesn't exempt ordering: an admin can still drop e.g. weekly
         // below an existing daily.
@@ -478,6 +476,7 @@ export class RgService {
           previousAmount: existing?.amount ?? null,
           previousMinutes: existing?.minutes ?? null,
           currency: toWireCurrency(written.type, written.currency),
+          previousCurrency: toWireCurrency(input.type, resolvedExisting?.currency ?? null),
           initiatedBy,
           reason: input.reason,
           ip: meta?.ip ?? null,
@@ -774,13 +773,16 @@ export class RgService {
    */
   async getActiveExclusions(
     userId: User['id'],
+    tx?: unknown,
   ): Promise<{ coolingOff: RgExclusion | null; selfExclusion: RgExclusion | null }> {
     const now = new Date();
-    const exclusions = await this.drizzle.db
+    const db = (tx as Tx | undefined) ?? this.drizzle.db;
+    const query = db
       .select()
       .from(rgExclusion)
       .where(and(eq(rgExclusion.userId, userId), eq(rgExclusion.status, 'active')))
       .orderBy(desc(rgExclusion.createdAt));
+    const exclusions = tx ? await query.for('share') : await query;
     const coolingOff =
       exclusions.find((e) => e.kind === 'cooling_off' && e.expiresAt && e.expiresAt > now) ?? null;
     const selfExclusion = exclusions.find((e) => e.kind === 'self_exclusion') ?? null;

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { ORPCError } from '@orpc/server';
+import type { DrizzleTx } from '@openora/core/server';
 import {
   createTestDb,
   createTestRedis,
@@ -26,12 +27,12 @@ import {
   type IdentityServiceDeps,
 } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
-import { user, session, account } from '../schema/index.js';
+import { user, session, account, verification } from '../schema/index.js';
 import { TrustedDeviceService } from '../service/trusted-device.service.js';
 import { SessionService } from '../service/session.service.js';
-import type { TwoFactorLockoutService } from '../service/two-factor-lockout.service.js';
+import { TwoFactorLockoutService } from '../service/two-factor-lockout.service.js';
 import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
-import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
+import { makeAuditWriter, makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 
 const {
   signInEmailMock,
@@ -52,6 +53,7 @@ const {
   confirmEmailChangeMock,
   changePasswordMock,
   capturedAuthOptions,
+  authTx,
 } = vi.hoisted(() => ({
   signInEmailMock: vi.fn(),
   verifyTotpMock: vi.fn(),
@@ -70,6 +72,7 @@ const {
   requestEmailChangeMock: vi.fn(),
   confirmEmailChangeMock: vi.fn(),
   changePasswordMock: vi.fn(),
+  authTx: { current: undefined as DrizzleTx | undefined },
   capturedAuthOptions: {
     current: undefined as
       | {
@@ -82,6 +85,10 @@ const {
 
 vi.mock('@openora/core/server', async (importOriginal) => ({
   ...(await importOriginal<object>()),
+  runInAuthTransaction: (tx: DrizzleTx, _deps: unknown, fn: () => unknown) => {
+    authTx.current = tx;
+    return fn();
+  },
   createAuth: vi.fn((options) => {
     capturedAuthOptions.current = options;
     return {
@@ -130,6 +137,7 @@ function buildService(deps: Partial<IdentityServiceDeps> = {}) {
   return new IdentityService({
     drizzle: db.drizzle,
     events: makeEventBus(),
+    audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
     twoFactorDelivery: new TwoFactorDeliveryService({
       drizzle: db.drizzle,
@@ -722,6 +730,41 @@ describe('IdentityService - player-status login gate (real PG)', () => {
   });
 });
 
+describe('IdentityService - deactivated account login gate (real PG)', () => {
+  it('refuses a deactivated staff login AFTER credentials verify, expires the session, and says why', async () => {
+    const account = await seedUser({ role: 'admin', isActive: false });
+    const live = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await db.drizzle.db
+      .insert(session)
+      .values({ userId: account.id, token: randomUUID(), expiresAt: live });
+    const events = makeEventBus();
+    signInEmailMock.mockResolvedValue(signInSuccess(account.id));
+    const svc = buildService({ events });
+
+    await expect(
+      svc.login({ email: EMAIL, password: 'rightpass1' }, {}, new Headers()),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Your account is inactive. Contact your administrator.',
+      data: { code: 'ACCOUNT_INACTIVE' },
+    });
+
+    expect(signInEmailMock).toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalledWith('identity.user.login', expect.anything());
+    expect(events.emit).not.toHaveBeenCalledWith('identity.user.login.failed', expect.anything());
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.login_blocked',
+      expect.objectContaining({ userId: account.id, reason: 'inactive' }),
+    );
+
+    const [revoked] = await db.drizzle.db
+      .select()
+      .from(session)
+      .where(eq(session.userId, account.id));
+    expect(revoked.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+});
+
 describe('IdentityService - trusted device login (real PG)', () => {
   const TRUSTED_UA =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -1259,7 +1302,7 @@ describe('IdentityService password changes and MCP tokens', () => {
     return { sessions, revokeAllForUser };
   }
 
-  it("revokes an admin's MCP tokens when better-auth reports a password reset", async () => {
+  it("revokes an admin's MCP tokens, in the transaction that ends its sessions, when better-auth reports a password reset", async () => {
     const admin = await seedUser({ role: 'admin' });
     const { sessions, revokeAllForUser } = sessionsRevokingTokens();
     buildService({ sessions });
@@ -1267,13 +1310,16 @@ describe('IdentityService password changes and MCP tokens', () => {
     await capturedAuthOptions.current?.onPasswordReset?.({ id: admin.id, email: EMAIL });
 
     expect(revokeAllForUser).toHaveBeenCalledTimes(1);
-    expect(revokeAllForUser).toHaveBeenCalledWith({
-      userId: admin.id,
-      reason: 'sessions_revoked',
-      actorId: admin.id,
-      ip: null,
-      userAgent: null,
-    });
+    expect(revokeAllForUser).toHaveBeenCalledWith(
+      {
+        userId: admin.id,
+        reason: 'sessions_revoked',
+        actorId: admin.id,
+        ip: null,
+        userAgent: null,
+      },
+      expect.anything(),
+    );
   });
 
   it('lets better-auth finish the password reset when the MCP token revocation fails', async () => {
@@ -1286,7 +1332,11 @@ describe('IdentityService password changes and MCP tokens', () => {
       capturedAuthOptions.current?.onPasswordReset?.({ id: admin.id, email: EMAIL }),
     ).resolves.toBeUndefined();
 
-    expect(revokeAllForUser).toHaveBeenCalledTimes(1);
+    // The first attempt failed inside the transaction; the retry runs once the sessions ended.
+    expect(revokeAllForUser).toHaveBeenCalledTimes(2);
+    expect(revokeAllForUser).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userId: admin.id, reason: 'sessions_revoked' }),
+    );
   });
 
   it("leaves the token port alone on a player's password reset", async () => {
@@ -1396,7 +1446,24 @@ describe('IdentityService.updateProfile language validation', () => {
 });
 
 describe('IdentityService.verifyTwoFactor', () => {
-  const okResponse = () => jsonResponse({ status: true }, 200);
+  const okResponse = (userId: string) =>
+    jsonResponse({ token: randomUUID(), user: { id: userId } }, 200);
+
+  const realPendingChallenge = async (userId: string) => {
+    const identifier = `2fa-${randomUUID()}`;
+    await db.drizzle.db.insert(verification).values({
+      identifier,
+      value: userId,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+    });
+    const lockout = new TwoFactorLockoutService({
+      drizzle: db.drizzle,
+      events: makeEventBus(),
+      identityReader: makeIdentityReader(),
+      config: { maxAttempts: 5, durationMs: 15 * 60 * 1000 },
+    });
+    return { cookieValue: `${identifier}.signature`, lockout };
+  };
 
   const pendingChallenge = (userId: string) =>
     mock<TwoFactorLockoutService>({
@@ -1406,9 +1473,91 @@ describe('IdentityService.verifyTwoFactor', () => {
       reset: vi.fn(async () => undefined),
     });
 
+  it('refuses a pending 2FA completion for an account deactivated after its password was proven', async () => {
+    const account = await seedUser({ isActive: false });
+    const { cookieValue, lockout } = await realPendingChallenge(account.id);
+    const live = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await db.drizzle.db
+      .insert(session)
+      .values({ userId: account.id, token: randomUUID(), expiresAt: live });
+    verifyTotpMock.mockResolvedValue(okResponse(account.id));
+    const events = makeEventBus();
+    const svc = buildService({ events, twoFactorLockout: lockout });
+    const responseHeaders = new Headers();
+
+    await expect(
+      svc.verifyTwoFactor(
+        { code: '123456', method: 'totp', trustDevice: false },
+        { cookie: `a.two_factor=junk; better-auth.two_factor=${cookieValue}` },
+        responseHeaders,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', data: { code: 'ACCOUNT_INACTIVE' } });
+
+    const [revoked] = await db.drizzle.db
+      .select()
+      .from(session)
+      .where(eq(session.userId, account.id));
+    expect(revoked.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(responseHeaders.getSetCookie()).toEqual([]);
+    expect(events.emit).not.toHaveBeenCalledWith('identity.2fa.verified', expect.anything());
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.authentication.succeeded',
+      expect.anything(),
+    );
+  });
+
+  it('revokes a minted session when Better Auth verifies a different account than the pending challenge', async () => {
+    const challengedAccount = await seedUser();
+    const otherAccount = await seedUser({ email: 'other@b.dev' });
+    const { cookieValue, lockout } = await realPendingChallenge(challengedAccount.id);
+    const token = randomUUID();
+    await db.drizzle.db.insert(session).values({
+      userId: otherAccount.id,
+      token,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+    verifyTotpMock.mockResolvedValue(jsonResponse({ token, user: { id: otherAccount.id } }, 200));
+    const responseHeaders = new Headers();
+
+    await expect(
+      buildService({ twoFactorLockout: lockout }).verifyTwoFactor(
+        { code: '123456', method: 'totp', trustDevice: false },
+        { cookie: `better-auth.two_factor=${cookieValue}` },
+        responseHeaders,
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+
+    expect(await db.drizzle.db.select().from(session).where(eq(session.token, token))).toEqual([]);
+    expect(responseHeaders.getSetCookie()).toEqual([]);
+  });
+
+  it('revokes a minted session when the successful verification response omits its user id', async () => {
+    const account = await seedUser();
+    const { cookieValue, lockout } = await realPendingChallenge(account.id);
+    const token = randomUUID();
+    await db.drizzle.db.insert(session).values({
+      userId: account.id,
+      token,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+    verifyTotpMock.mockResolvedValue(jsonResponse({ token }, 200));
+    const responseHeaders = new Headers();
+
+    await expect(
+      buildService({ twoFactorLockout: lockout }).verifyTwoFactor(
+        { code: '123456', method: 'totp', trustDevice: false },
+        { cookie: `better-auth.two_factor=${cookieValue}` },
+        responseHeaders,
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+
+    expect(await db.drizzle.db.select().from(session).where(eq(session.token, token))).toEqual([]);
+    expect(responseHeaders.getSetCookie()).toEqual([]);
+  });
+
   it('spends a backup code through better-auth instead of the authenticator', async () => {
     const account = await seedUser();
-    verifyBackupCodeMock.mockResolvedValue(okResponse());
+    verifyBackupCodeMock.mockResolvedValue(okResponse(account.id));
     const events = makeEventBus();
     const svc = buildService({ events, twoFactorLockout: pendingChallenge(account.id) });
 
@@ -1456,7 +1605,7 @@ describe('IdentityService.verifyTwoFactor', () => {
 
   it('announces enrolment only for the challenge answered from a live session', async () => {
     const account = await seedUser();
-    verifyTotpMock.mockResolvedValue(okResponse());
+    verifyTotpMock.mockResolvedValue(okResponse(account.id));
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
     const enrolment = makeEventBus();
 
@@ -1488,7 +1637,7 @@ describe('IdentityService.verifyTwoFactor', () => {
 
   it('reports trustGranted so the caller knows the checkbox it ticked actually did something', async () => {
     const account = await seedUser();
-    verifyTotpMock.mockResolvedValue(okResponse());
+    verifyTotpMock.mockResolvedValue(okResponse(account.id));
     const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0';
     const makeTrustedDevices = () =>
       new TrustedDeviceService({
@@ -1558,7 +1707,9 @@ describe('IdentityService 2fa step-up teardown', () => {
 
   it('does not buy the trust window for a spent backup code', async () => {
     const account = await seedUser();
-    verifyBackupCodeMock.mockResolvedValue(okResponse());
+    verifyBackupCodeMock.mockResolvedValue(
+      jsonResponse({ token: randomUUID(), user: { id: account.id } }, 200),
+    );
     const { events, trustedDevices } = buildTeardownDeps(account.id);
     getSessionMock.mockResolvedValue(null);
     const lockout = mock<TwoFactorLockoutService>({
@@ -1998,14 +2149,7 @@ describe('IdentityService security controls', () => {
       loginWithdrawalAlertsEnabled: true,
     });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    // Mirror better-auth's row swap before the mock resolves.
-    confirmEmailChangeMock.mockImplementation(async () => {
-      await db.drizzle.db
-        .update(user)
-        .set({ email: 'new-address@test.dev' })
-        .where(eq(user.id, account.id));
-      return jsonResponse({ success: true }, 200);
-    });
+    confirmEmailChangeMock.mockResolvedValue(jsonResponse({ success: true }, 200));
     const events = makeEventBus();
     const svc = buildService({ events });
     const calledAt = Date.now();
@@ -2018,7 +2162,8 @@ describe('IdentityService security controls', () => {
     const returnedAt = Date.now();
 
     expect((await readUser(account.id))?.loginWithdrawalAlertsEnabled).toBe(false);
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'identity.email.changed',
       expect.objectContaining({
         userId: account.id,
@@ -2027,8 +2172,10 @@ describe('IdentityService security controls', () => {
         changedAt: expect.any(String),
       }),
     );
-    const [, changed] =
-      vi.mocked(events.emit).mock.calls.find(([topic]) => topic === 'identity.email.changed') ?? [];
+    const [, , changed] =
+      vi
+        .mocked(events.emitInTransaction)
+        .mock.calls.find(([, topic]) => topic === 'identity.email.changed') ?? [];
     const changedAt = Date.parse(String((changed as { changedAt?: unknown })?.changedAt));
     expect(changedAt).toBeGreaterThanOrEqual(calledAt);
     expect(changedAt).toBeLessThanOrEqual(returnedAt);
@@ -2067,16 +2214,42 @@ describe('IdentityService security controls', () => {
     );
   });
 
+  it('rolls the swap back when better-auth answers an error after swapping the address', async () => {
+    const account = await seedUser({ emailVerified: true });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    confirmEmailChangeMock.mockImplementation(async () => {
+      await authTx
+        .current!.update(user)
+        .set({ email: 'swapped-then-refused@test.dev' })
+        .where(eq(user.id, account.id));
+      return jsonResponse({ message: 'after hook failed' }, 500);
+    });
+    const events = makeEventBus();
+    const audit = makeAuditWriter();
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => undefined),
+      toUser: vi.fn(async () => undefined),
+    });
+    const svc = buildService({ events, audit, mailDispatch });
+
+    await expect(
+      svc.confirmEmailChange(
+        { newEmail: 'swapped-then-refused@test.dev', otp: '123456' },
+        {},
+        new Headers(),
+      ),
+    ).rejects.toThrow('The email change was refused after the address was swapped');
+
+    expect((await readUser(account.id))?.email).toBe(EMAIL);
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+    expect(mailDispatch.toAddress).not.toHaveBeenCalled();
+  });
+
   it('carries the caller anti-phishing code on the emailChanged notice to the old address', async () => {
     const account = await seedUser({ emailVerified: true, antiPhishingCode: 'Sunny Meadow' });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    confirmEmailChangeMock.mockImplementation(async () => {
-      await db.drizzle.db
-        .update(user)
-        .set({ email: 'new-address-2@test.dev' })
-        .where(eq(user.id, account.id));
-      return jsonResponse({ success: true }, 200);
-    });
+    confirmEmailChangeMock.mockResolvedValue(jsonResponse({ success: true }, 200));
     const mailDispatch = mock<MailDispatchPort>({
       toAddress: vi.fn(async () => undefined),
       toUser: vi.fn(async () => undefined),
@@ -2108,13 +2281,7 @@ describe('IdentityService security controls', () => {
   it('sends a plain, warning-free confirmation to the new address, with fields captured at swap time rather than looked up live', async () => {
     const account = await seedUser({ emailVerified: true, antiPhishingCode: 'Sunny Meadow' });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    confirmEmailChangeMock.mockImplementation(async () => {
-      await db.drizzle.db
-        .update(user)
-        .set({ email: 'new-address-4@test.dev' })
-        .where(eq(user.id, account.id));
-      return jsonResponse({ success: true }, 200);
-    });
+    confirmEmailChangeMock.mockResolvedValue(jsonResponse({ success: true }, 200));
     const mailDispatch = mock<MailDispatchPort>({
       toAddress: vi.fn(async () => undefined),
       toUser: vi.fn(async () => undefined),
@@ -2147,13 +2314,7 @@ describe('IdentityService security controls', () => {
   it('still enqueues the emailChanged notice even when session revocation later throws', async () => {
     const account = await seedUser({ emailVerified: true });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    confirmEmailChangeMock.mockImplementation(async () => {
-      await db.drizzle.db
-        .update(user)
-        .set({ email: 'new-address-3@test.dev' })
-        .where(eq(user.id, account.id));
-      return jsonResponse({ success: true }, 200);
-    });
+    confirmEmailChangeMock.mockResolvedValue(jsonResponse({ success: true }, 200));
     const mailDispatch = mock<MailDispatchPort>({
       toAddress: vi.fn(async () => undefined),
       toUser: vi.fn(async () => undefined),

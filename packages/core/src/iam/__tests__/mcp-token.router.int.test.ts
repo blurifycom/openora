@@ -4,6 +4,7 @@ import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import {
   McpTransportConfigSchema,
+  type FreshReauthentication,
   type MailDispatchPort,
   type McpTransportConfig,
   type RateLimiterAdapter,
@@ -16,6 +17,7 @@ import {
   makeAdminGuard,
   makeAuditWriter,
   makeEventBus,
+  makeFreshReauthentication,
   makeIdentityReader,
   makeUserCommands,
   makeRateLimiter,
@@ -52,16 +54,19 @@ function buildRouter({
   guard,
   config = ENABLED,
   rateLimiter = makeRateLimiter(),
+  reauthentication = makeFreshReauthentication(),
 }: {
   guard: AdminGuard;
   config?: McpTransportConfig;
   rateLimiter?: RateLimiterAdapter<RateLimitKey>;
+  reauthentication?: FreshReauthentication;
 }) {
   const mcpTokens = new McpTokenService({
     drizzle: db.drizzle,
     audit: makeAuditWriter(),
     events: makeEventBus(),
     rateLimiter,
+    reauthentication,
     config,
   });
   const iam = new IamService({
@@ -120,11 +125,15 @@ async function seedOwner(over: Partial<typeof user.$inferInsert> = {}) {
 const issue = (
   router: ReturnType<typeof buildRouter>,
   owner: { id: User['id']; sessionId: Session['id'] | undefined },
-  input: { label: string; ttlDays?: number },
+  input: { label: string; ttlDays?: number; totpCode?: string },
 ) =>
-  call(router.mcpTokens.create, input, {
-    context: testContext({ auth: { userId: owner.id, sessionId: owner.sessionId } }),
-  });
+  call(
+    router.mcpTokens.create,
+    { currentPassword: 'password1234', ...input },
+    {
+      context: testContext({ auth: { userId: owner.id, sessionId: owner.sessionId } }),
+    },
+  );
 
 describe('iam router mcpTokens.create errors (real PG)', () => {
   it('refuses a caller without mcp-access before anything is issued', async () => {
@@ -215,5 +224,93 @@ describe('iam router mcpTokens.create errors (real PG)', () => {
       data: { retryAfterMs: HOUR_MS },
     });
     expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+  });
+
+  it('refuses a request without the current password before the service runs', async () => {
+    const owner = await seedOwner();
+    const reauthentication = makeFreshReauthentication();
+    const router = buildRouter({
+      guard: makeAdminGuard({ caller: { userId: owner.id } }),
+      reauthentication,
+    });
+
+    const refusal = call(
+      router.mcpTokens.create,
+      mock<{ label: string; currentPassword: string }>({ label: 'No password' }),
+      { context: testContext({ auth: { userId: owner.id, sessionId: owner.sessionId } }) },
+    );
+
+    expect(await transportError(refusal)).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(reauthentication.assert).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+  });
+
+  const LOCKED_UNTIL = new Date('2026-11-02T13:00:00.000Z');
+  it.each([
+    [
+      'a wrong password',
+      { status: 'password_invalid' },
+      { code: 'FORBIDDEN', data: { reason: 'reauthentication_failed' } },
+    ],
+    [
+      'a missing second-factor code',
+      { status: 'second_factor_required' },
+      { code: 'UNPROCESSABLE_CONTENT', data: { reason: 'reauthentication_required' } },
+    ],
+    [
+      'a wrong second-factor code',
+      { status: 'second_factor_invalid', attemptsLeft: 3 },
+      { code: 'FORBIDDEN', data: { reason: 'reauthentication_failed', attemptsLeft: 3 } },
+    ],
+    [
+      'a second factor under lockout',
+      { status: 'locked', lockedUntil: LOCKED_UNTIL },
+      {
+        code: 'FORBIDDEN',
+        data: { reason: 'reauthentication_locked', lockedUntil: LOCKED_UNTIL.toISOString() },
+      },
+    ],
+  ] as const)(
+    'answers %s with its typed reason, issuing nothing',
+    async (_case, verdict, answer) => {
+      const owner = await seedOwner();
+      const router = buildRouter({
+        guard: makeAdminGuard({ caller: { userId: owner.id } }),
+        reauthentication: makeFreshReauthentication(verdict),
+      });
+
+      expect(await transportError(issue(router, owner, { label: 'Refused' }))).toEqual(answer);
+      expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+    },
+  );
+
+  it('hands the request headers and the proof to the re-authentication', async () => {
+    const owner = await seedOwner();
+    const reauthentication = makeFreshReauthentication();
+    const router = buildRouter({
+      guard: makeAdminGuard({ caller: { userId: owner.id } }),
+      reauthentication,
+    });
+    const headers = { cookie: 'session=abc', 'user-agent': 'backoffice/1.0' };
+
+    await call(
+      router.mcpTokens.create,
+      { label: 'Proved', currentPassword: 'password1234', totpCode: '123456' },
+      {
+        context: testContext({
+          request: { headers },
+          auth: { userId: owner.id, sessionId: owner.sessionId },
+        }),
+      },
+    );
+
+    expect(reauthentication.assert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: owner.id,
+        headers,
+        currentPassword: 'password1234',
+        totpCode: '123456',
+      }),
+    );
   });
 });

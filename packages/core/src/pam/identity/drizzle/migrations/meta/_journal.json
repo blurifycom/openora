@@ -120,6 +120,27 @@
       "when": 1793101549873,
       "tag": "0016_tiny_bruce_banner",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793280820581,
+      "tag": "0017_withdrawal_pin_lockout",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793625255349,
+      "tag": "0018_graceful_wonder_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793785431076,
+      "tag": "0019_sticky_karma",
+      "breakpoints": true
     }
   ]
 }

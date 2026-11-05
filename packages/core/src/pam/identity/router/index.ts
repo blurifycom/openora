@@ -195,8 +195,13 @@ export function createIdentityRouter(
         withdrawalPin.set(getUserId(context), input, context.request.headers, context.clientMeta),
       ),
 
-      removeWithdrawalPin: os.security.removeWithdrawalPin.handler(({ context }) =>
-        withdrawalPin.remove(getUserId(context), context.clientMeta),
+      removeWithdrawalPin: os.security.removeWithdrawalPin.handler(({ input, context }) =>
+        withdrawalPin.remove(
+          getUserId(context),
+          input,
+          context.request.headers,
+          context.clientMeta,
+        ),
       ),
 
       setAntiPhishingCode: os.security.setAntiPhishingCode.handler(({ input, context }) =>

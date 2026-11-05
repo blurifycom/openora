@@ -27,6 +27,9 @@ export const user = pgTable(
     name: text().notNull(),
     username: text().notNull(),
     email: text().notNull().unique(),
+    // The login email the account was created with, set once by createAuth's user-create
+    // hook. Null on accounts created before it existed.
+    registeredEmail: text(),
     emailVerified: boolean().notNull().default(false),
     image: text(),
     theme: userThemeEnum().notNull().default('system'),
@@ -65,6 +68,11 @@ export const user = pgTable(
     // `withdrawalPinHash !== null`, no separate boolean column.
     withdrawalPinHash: text(),
     withdrawalPinSetAt: timestamp({ withTimezone: true }),
+    // Consecutive wrong PINs at withdrawal time, and the end of the lock the last of them
+    // set. Their own columns, like the second-factor ones: a PIN lock must not eat the
+    // login budget, and the lock stops withdrawals only - the player can still sign in.
+    withdrawalPinFailedAttempts: integer().notNull().default(0),
+    withdrawalPinLockedUntil: timestamp({ withTimezone: true }),
     // Player-set, free-text, case-sensitive recognition phrase stamped into every outgoing
     // platform email so the player can tell a genuine email from a phishing attempt. Plaintext
     // (not hashed) - read back verbatim both to the owning player and into outgoing email.
@@ -119,10 +127,12 @@ export const session = pgTable(
       .$onUpdateFn(() => new Date()),
     ipAddress: text(),
     userAgent: text(),
-    // Written by the admin session guard, throttled. better-auth owns `updatedAt` and
+    // Written by the idle policy, throttled. better-auth owns `updatedAt` and
     // ties it to its own updateAge bookkeeping, so touching that column to record
     // activity would shift session expiry - this one is ours and better-auth ignores it.
-    lastSeenAt: timestamp({ withTimezone: true }),
+    // Defaults to the sign-in time, so a new session's idle clock starts at once; only rows
+    // that predate the default are null, and the idle policy handles those on their own.
+    lastSeenAt: timestamp({ withTimezone: true }).defaultNow(),
     userId: uuid()
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),

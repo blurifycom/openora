@@ -192,6 +192,19 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       `Two-factor authentication on your account was reset by our support team on ${formatEmailDate(data.occurredAt, locale)}, and you were signed out everywhere.\n\n` +
       'Sign in and set up two-factor authentication again. If you did not ask for this, contact support immediately.',
   }),
+  withdrawalAddressAdded: (data, locale) => ({
+    subject: 'A new withdrawal address was added to your account',
+    text:
+      `A new withdrawal address was added to your account on ${formatEmailDate(data.occurredAt, locale)}.\n\n` +
+      `Address: ${data.address}\nNetwork: ${data.network}\n\n` +
+      'It cannot be used for withdrawals for 24 hours. If this was not you, contact support right away.',
+  }),
+  withdrawalsLocked: () => ({
+    subject: 'Withdrawals locked after incorrect PIN attempts',
+    text:
+      'Withdrawals on your account are locked for 30 minutes after 5 incorrect Withdrawal PIN attempts. ' +
+      'If this was not you, change your password and contact support.',
+  }),
   raceWon: (data) => ({
     subject: `You placed #${data.position} in ${data.raceName}`,
     text: `You placed #${data.position} in ${data.raceName} and won ${formatMoney(data.amount, data.currency)}. The prize has been credited to your balance.`,

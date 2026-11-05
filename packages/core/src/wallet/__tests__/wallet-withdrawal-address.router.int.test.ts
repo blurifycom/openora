@@ -1,15 +1,24 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
-import { queue, type PaymentAdapter } from '@openora/core/contracts';
+import {
+  queue,
+  type MailDispatchPort,
+  type PaymentAdapter,
+  type WithdrawalSecurity,
+} from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import type { CreateWithdrawalAddressInput } from '../contract/index.js';
+import type {
+  CreateWithdrawalAddressInput,
+  CreateWithdrawalAddressRequest,
+} from '../contract/index.js';
 import {
   mock,
   makeRealtimeTransport,
   makeEventBus,
   testContext,
   makeAuditWriter,
+  makeWithdrawalSecurity,
   makeAdminGuard,
   makeIdentityReader,
   makeJobQueue,
@@ -48,7 +57,13 @@ beforeEach(async () => {
   await db.drizzle.db.delete(walletWithdrawalAddress);
 });
 
-function routerWith(payment: Partial<PaymentAdapter> = {}) {
+function routerWith(
+  payment: Partial<PaymentAdapter> = {},
+  {
+    security = makeWithdrawalSecurity(),
+    mailDispatch,
+  }: { security?: WithdrawalSecurity; mailDispatch?: MailDispatchPort } = {},
+) {
   const audit = makeAuditWriter();
   const paymentProviders = makePaymentProviderRegistry({});
   const service = new WalletService({
@@ -58,11 +73,13 @@ function routerWith(payment: Partial<PaymentAdapter> = {}) {
     paymentProviders,
     audit,
     identityReader: makeIdentityReader(),
+    mailDispatch,
   });
   const router = createWalletRouter({
     wallet: service,
     adminGuard: makeAdminGuard({ caller: { userId: PLAYER, role: 'admin' } }),
     audit,
+    withdrawalSecurity: security,
     paymentProviders,
     reconciliation: mock<ReconciliationService>({}),
     jobQueue: makeJobQueue(),
@@ -72,11 +89,18 @@ function routerWith(payment: Partial<PaymentAdapter> = {}) {
   return { router, audit, service };
 }
 
+const PROOF = { currentPassword: 'correct-horse-battery' };
+
 const create = (
   router: ReturnType<typeof routerWith>['router'],
-  input: Partial<CreateWithdrawalAddressInput> = {},
+  input: Partial<CreateWithdrawalAddressRequest> = {},
   userId = PLAYER,
-) => call(router.withdrawalAddresses.create, { ...LEDGER, ...input }, { context: ctxFor(userId) });
+) =>
+  call(
+    router.withdrawalAddresses.create,
+    { ...LEDGER, ...PROOF, ...input },
+    { context: ctxFor(userId) },
+  );
 
 describe('wallet withdrawal address book', () => {
   it('create: persists, normalizes casing, trims, and audits without the address', async () => {
@@ -199,7 +223,7 @@ describe('wallet withdrawal address book', () => {
       call(router.withdrawalAddresses.list, {}, { context: testContext() }),
     ).rejects.toThrow(ORPCError);
     await expect(
-      call(router.withdrawalAddresses.create, { ...LEDGER }, { context: testContext() }),
+      call(router.withdrawalAddresses.create, { ...LEDGER, ...PROOF }, { context: testContext() }),
     ).rejects.toThrow(ORPCError);
     await expect(
       call(router.withdrawalAddresses.delete, { id: randomUUID() }, { context: testContext() }),
@@ -264,5 +288,77 @@ describe('provider whitelisting on the address-book write path', () => {
 
     const [row] = await db.drizzle.db.select().from(walletWithdrawalAddress);
     expect(row?.providerWalletId).toBeNull();
+  });
+
+  describe('proof of ownership and the new-address notice', () => {
+    it('create: names the moment the address becomes usable, 24 hours after it was saved', async () => {
+      const { router } = routerWith();
+
+      const saved = await create(router);
+
+      expect(new Date(saved.usableFrom).getTime() - new Date(saved.createdAt).getTime()).toBe(
+        24 * 60 * 60 * 1000,
+      );
+    });
+
+    it('create: refuses a wrong proof before anything is saved or mailed', async () => {
+      const toUser = vi.fn(async () => undefined);
+      const security = makeWithdrawalSecurity({
+        assertReauthentication: vi.fn(async () => {
+          throw new ORPCError('UNAUTHORIZED', { message: 'Current password is invalid.' });
+        }),
+      });
+      const { router } = routerWith({}, { security, mailDispatch: { toUser, toAddress: vi.fn() } });
+
+      await expect(create(router)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+
+      expect(await db.drizzle.db.select().from(walletWithdrawalAddress)).toHaveLength(0);
+      expect(toUser).not.toHaveBeenCalled();
+    });
+
+    it('create: hands the password and 2FA code to the check, never to the row', async () => {
+      const security = makeWithdrawalSecurity();
+      const { router } = routerWith({}, { security });
+
+      await create(router, { currentPassword: 'another-password', totpCode: '123456' });
+
+      expect(security.assertReauthentication).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: PLAYER,
+          currentPassword: 'another-password',
+          totpCode: '123456',
+        }),
+      );
+      const [row] = await db.drizzle.db.select().from(walletWithdrawalAddress);
+      expect(JSON.stringify(row)).not.toContain('another-password');
+    });
+
+    it('create: mails the new address once, with the address and network', async () => {
+      const toUser = vi.fn(async () => undefined);
+      const { router } = routerWith({}, { mailDispatch: { toUser, toAddress: vi.fn() } });
+
+      const saved = await create(router);
+
+      expect(toUser).toHaveBeenCalledTimes(1);
+      expect(toUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: PLAYER,
+          template: {
+            key: 'withdrawalAddressAdded',
+            data: expect.objectContaining({ address: LEDGER.address, network: 'ERC20' }),
+          },
+          idempotencyKey: `withdrawal-address-added:${saved.id}`,
+        }),
+      );
+    });
+
+    it('create: a failed mail enqueue does not undo the save', async () => {
+      const toUser = vi.fn(async () => {
+        throw new Error('queue down');
+      });
+      const { router } = routerWith({}, { mailDispatch: { toUser, toAddress: vi.fn() } });
+
+      await expect(create(router)).resolves.toMatchObject({ address: LEDGER.address });
+    });
   });
 });

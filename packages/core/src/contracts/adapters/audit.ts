@@ -2,7 +2,8 @@
  * Audit-write seam. AML/SAR audit writes are a regulator-mandated invariant under
  * MGA/UKGC - the audit module binds the sole implementation via ctx.provideSealed()
  * (bind-once, owner-only); no overlay can rebind it (ctx.provide() rejects any
- * sealed token outright, and provideSealed() itself refuses a second bind). Other
+ * sealed token outright, provideSealed() itself refuses a second bind and seals it in
+ * the container, and createApp closes every sealed token once booted). Other
  * modules resolve this port read-only (container.get(AUDIT_WRITER)) to call it.
  */
 import type { DomainEventName } from '../schemas/events.js';
@@ -83,6 +84,9 @@ export type DirectAuditAction =
   | 'promo.rank_ladder.installed'
   | 'promo.rank_config.set'
   | 'promo.rank_config.installed'
+  | 'promo.rakeback.claimed'
+  | 'promo.rakeback.auto_paid'
+  | 'promo.rakeback.voided'
   | 'mcp.tool.invoked'
   | 'mcp.tool.failed'
   | 'mcp.action.executed'
@@ -123,6 +127,7 @@ type AuditEntry = {
   resourceId?: string | null;
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
+  /** Omitted: the correlation id of the context the write runs in, if any. `null` writes none. */
   correlationId?: string | null;
   result?: string | null;
 } & Partial<ClientMeta>;

@@ -13,6 +13,7 @@ import {
   makeEventBus,
   testContext,
   makeAuditWriter,
+  makeWithdrawalSecurity,
   makeAdminGuard,
   makeIdentityReader,
   makeJobQueue,
@@ -40,12 +41,14 @@ function routerWith(
     payment: mock<PaymentAdapter>({}),
     paymentProviders,
     audit: makeAuditWriter(),
+    withdrawalSecurity: makeWithdrawalSecurity(),
     identityReader: makeIdentityReader(),
   });
   return createWalletRouter({
     wallet: service,
     adminGuard: guard,
     audit: makeAuditWriter(),
+    withdrawalSecurity: makeWithdrawalSecurity(),
     paymentProviders,
     reconciliation: overrides.reconciliation ?? mock<ReconciliationService>({}),
     jobQueue: overrides.jobQueue ?? makeJobQueue(),

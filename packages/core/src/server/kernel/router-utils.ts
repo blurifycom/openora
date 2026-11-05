@@ -23,6 +23,9 @@ export type OssContext = {
   request: RequestLike;
   clientMeta: ClientMeta;
   auth?: AuthContext;
+  // Set by the runtime when the request carried a session that the idle policy just ended, so
+  // the guard can tell the caller why it is signed out rather than leaving them to guess.
+  sessionEndedReason?: 'idle_timeout';
   resHeaders?: Headers;
   // The verbatim request body, captured by the runtime for signature verification
   // (eg aggregator webhooks). Present only for signed, bounded-size bodies.
