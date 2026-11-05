@@ -1,0 +1,15 @@
+{
+  "name": "payments",
+  "manifest": [
+    "wallet",
+    "identity",
+    "audit",
+    "compliance",
+    "mail",
+    "iam",
+    "player-management",
+    "gaming",
+    "exchange-rate",
+    "chat"
+  ]
+}

@@ -67,11 +67,12 @@ const RoomPurgeJobSchema = z.object({ roomId: UuidSchema });
 const AccountClosedJobSchema = z.object({ userId: UuidSchema, closedAt: z.iso.datetime() });
 const AccountReopenedJobSchema = z.object({ userId: UuidSchema });
 
+const logger = createLogger('chat');
+
 export default {
   id: 'chat',
   dependsOn: ['identity', 'audit'],
   register(ctx) {
-    const logger = createLogger('chat');
     let expiryRef: ChatModerationExpiryService | undefined;
     let inviteRef: ChatRoomInviteService | undefined;
     ctx.provide(CHAT_REALTIME_TRANSPORT, (c) => c.get(REALTIME_TRANSPORT));

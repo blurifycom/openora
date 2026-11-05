@@ -3,7 +3,8 @@ import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 // Overlay plugin. Registered in extensions.config.ts (auto-wired in the OSS repo;
 // in a consumer repo add it to your apps/api/src/extensions.config.ts).
 //
-// In register(ctx) - the typed ModuleRegistry - you can:
+// register(ctx) only declares - open a timer or connection in a provide()/router factory,
+// closed with c.onDispose(). In register(ctx) - the typed ModuleRegistry - you can:
 //   ctx.provide(TOKEN, (c) => new Impl())       - bind/rebind a DI token (last wins)
 //   ctx.routers.add(namespace, (c) => router)   - mount an oRPC router
 //   ctx.events.on(topic, (payload) => ...)       - subscribe to a domain event
