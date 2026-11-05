@@ -67,6 +67,22 @@ describe('NotificationsService.create (real PG)', () => {
     expect(await db.drizzle.db.select().from(notification)).toHaveLength(0);
   });
 
+  it('persists a donation received with the wagering multiplier it was granted under', async () => {
+    const { svc } = makeService();
+    const params = {
+      senderUsername: 'alice',
+      amount: '5',
+      currency: 'USDT',
+      wageringMultiplier: '3',
+    };
+
+    await svc.create({ userId: randomUUID(), type: 'chat.donation.received', params });
+
+    expect(await db.drizzle.db.select().from(notification)).toMatchObject([
+      { type: 'chat.donation.received', params },
+    ]);
+  });
+
   it('does not persist pre-rendered text an overlay still passes alongside params', async () => {
     const { svc } = makeService();
     const legacyInput = {

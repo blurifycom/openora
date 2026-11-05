@@ -68,16 +68,29 @@ export type WalletCreditArgs = {
   userId: string;
   amount: string;
   currency: string;
+  /**
+   * A `gift`/`rain`/`donation` credit is a bonus grant whose source is this type. A new
+   * bonus-backed transfer type must be in `WALLET_TRANSACTION_TYPES`, in `BONUS_GRANT_SOURCES`
+   * and in the wallet's `bonusSource` check, or the credit is written as cash; the notifications
+   * plugin also skips the bonus-credited email only for those three sources.
+   */
   type: WalletTransactionType;
   /** Allow crediting a currency the player does not hold a balance in yet, creating the `wallet_balance` row. Off by default. */
   allowNewCurrency?: boolean;
   /** Allow crediting a player who has no `wallet` row at all yet, creating it in the caller's transaction. Off by default. */
   allowNewWallet?: boolean;
+  /**
+   * Required for a `gift`/`rain`/`donation` credit: `providerRefId` is the idempotency key of its
+   * bonus grant, matched per recipient and type without `providerName`, so it must be unique per
+   * transfer across provider names. Such a credit returns `{ ok: false }` rather than throwing for
+   * "wallet not found" and "currency mismatch", so a caller that has already debited the sender
+   * in the same transaction must throw on `ok: false` to roll that debit back.
+   */
   providerRef?: WalletProviderRef;
   /**
-   * Terms a `gift`/`rain` credit's underlying bonus grant is created under. Ignored by any other
-   * credit type. Omit it and the grant falls back to the bonus module's own default terms, same
-   * as before this field existed.
+   * Terms a `gift`/`rain`/`donation` credit's underlying bonus grant is created under. Ignored by
+   * any other credit type. Omit it and the grant falls back to the bonus module's own default
+   * terms.
    */
   terms?: BonusGrantTerms;
 };

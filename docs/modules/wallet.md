@@ -52,8 +52,17 @@ does not repeat it.
 - **A currency does not identify a chain.** Anything that reconciles, prices, or limits works on
   the currency and the network together. Only a fiat rail and an internal movement have no network.
 - **Every ledger row records its direction explicitly.** Direction is never inferred from the kind
-  of transaction: a player-to-player transfer writes the same kind for the sender's debit and the
-  recipient's credit.
+  of transaction: a cash transfer between players writes the same kind for the sender's debit and
+  the recipient's credit.
+- **A donation, a gift and a rain credit their recipient a bonus grant, never cash.** The sender's
+  leg is an ordinary cash debit of the transfer's own kind. The recipient's leg is a wagered bonus
+  grant: it writes no ledger row and moves no settled balance. A credit of any other kind is paid
+  as that kind says, so a tip is paid as cash, and an integration that wants a wagered transfer
+  sends a donation. The grant is deduplicated on the recipient, the transfer's kind and the
+  caller's reference, without the provider name, so that reference must be unique per transfer
+  across provider names. A credit the wallet refuses for a missing wallet or a currency
+  mismatch is reported as a refused outcome, not thrown, so a caller that has already debited the
+  sender in the same transaction must fail on it to roll the debit back.
 - **A deposit, withdrawal or manual adjustment records its reference value once, when written.**
   The reference currency is the player's deposit-limit currency, else their wager-limit currency,
   else `wallet.defaultReferenceCurrency`. The rate and its timestamp are stored with it and never
@@ -107,7 +116,8 @@ does not repeat it.
   transition idempotent, and compensate a failed held withdrawal exactly once.
 - **The balance stream carries a signal, not an amount.** A dropped frame must not be able to leave
   a stale number on screen, so the client refetches. Every event that moves a settled balance
-  publishes one, both legs of a player-to-player transfer included.
+  publishes one, both legs of a cash transfer between players included. A transfer credited as a
+  bonus grant publishes one for its sender's debit only.
 - **A held withdrawal waits for an admin.** Holding moves no money: the funds were taken when the
   withdrawal was requested. An admin approves or rejects a held withdrawal the same way as one
   still waiting, and auto-approval only ever takes a withdrawal nobody has held. Only a waiting

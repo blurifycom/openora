@@ -85,6 +85,13 @@
       "when": 1791469614770,
       "tag": "0011_crazy_risque",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793793608870,
+      "tag": "0012_bonus_grant_source_donation",
+      "breakpoints": true
     }
   ]
 }

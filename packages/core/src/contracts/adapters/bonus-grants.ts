@@ -20,9 +20,9 @@ export type BonusGrantTerms = {
   expiryDays: number;
   /**
    * Weight profile whose rows are copied onto the grant to score its bets. Omitted by a caller
-   * that has no offer behind it - a chat gift, a rain drop - which falls back to the profile the
-   * module seeds as the operator's default. A grant whose profile cannot be resolved is refused
-   * rather than scored at nothing.
+   * that has no offer behind it - a chat gift, a rain drop, a donation - which falls back to the
+   * profile the module seeds as the operator's default. A grant whose profile cannot be resolved
+   * is refused rather than scored at nothing.
    */
   weightProfileId?: string;
   /**
@@ -66,8 +66,8 @@ export type BonusGrantArgs = {
   /** Offer the grant is created from, when one exists. Absent for a manual or a job grant. */
   offerId?: string;
   /**
-   * Omitted by a caller with no offer behind it - a chat gift, a rain drop. The bonus module
-   * owns what those are granted under; the wallet only reports that money was given.
+   * Omitted by a caller with no offer behind it - a chat gift, a rain drop, a donation. The bonus
+   * module owns what those are granted under; the wallet only reports that money was given.
    */
   terms?: BonusGrantTerms;
 };

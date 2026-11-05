@@ -21,11 +21,11 @@ const BACKFILL_DEBIT_TYPES: WalletTransactionType[] = [
   'manual_debit',
   'swap_out',
   'win_reversal',
+  'donation',
 ];
 
-// The only types where the same value is written for both legs of a transfer (see
-// engagement/social-transfers/service/social-transfers.service.ts), so a historical row
-// has no recoverable direction and the migration deliberately leaves it NULL.
+// The only types where the same value is written for both legs of a transfer, so a historical
+// row has no recoverable direction and the migration deliberately leaves it NULL.
 const KNOWN_AMBIGUOUS_TYPES: WalletTransactionType[] = ['gift', 'rain', 'tip'];
 
 describe('wallet_transaction direction backfill vocabulary', () => {

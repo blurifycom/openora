@@ -4,9 +4,9 @@ import { promoWeight, promoWeightProfile } from '../schema/index.js';
 import { DEFAULT_WEIGHT_PROFILE_NAME } from '../service/grant.service.js';
 
 /**
- * The profile a grant scores against when nothing named one - a chat gift, a rain drop, an
- * admin's hand-issued bonus. It counts every bet in full; an operator narrows it from the
- * backoffice.
+ * The profile a grant scores against when nothing named one - a chat gift, a rain drop, a
+ * donation, an admin's hand-issued bonus. It counts every bet in full; an operator narrows it from
+ * the backoffice.
  *
  * Reference data, seeded the way IAM roles and player tags are: an environment that runs
  * migrations without running the seeds has no default profile, and every grant with no offer
