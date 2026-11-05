@@ -1594,7 +1594,6 @@ export class SportsbookLedgerService {
       } else {
         balance = await this.balanceOf(tx, settled);
       }
-      const walletTransactionIds = moves.map((m) => m.transactionId);
       if (result === 'void') {
         await this.reverseSettledStake(tx, settled, args);
       } else {
@@ -1621,7 +1620,7 @@ export class SportsbookLedgerService {
         betVersion: settled.version,
         fingerprint,
         result,
-        walletTransactionIds,
+        walletTransactionIds: moves.map((m) => m.transactionId),
         balanceAfter: balance,
         currency: settled.currency,
       });
@@ -1673,7 +1672,7 @@ export class SportsbookLedgerService {
         ),
       );
     const ref = walletRef(args);
-    return this.wagerTracking.recordSettledWager(tx, {
+    const credits = await this.wagerTracking.recordSettledWager(tx, {
       userId: bet.userId,
       currency: bet.currency,
       realAmount: bet.cashStake,
@@ -1681,6 +1680,7 @@ export class SportsbookLedgerService {
       round: { providerName: ref.providerName, externalRoundId: ref.externalRoundId },
       qualifiedAt: first?.at ?? new Date(),
     });
+    return credits ?? [];
   }
 
   private async reverseSettledStake(
