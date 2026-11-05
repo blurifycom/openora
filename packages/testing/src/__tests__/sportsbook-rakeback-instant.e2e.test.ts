@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
+import { sportsbookBetTransaction } from '@openora/core/sportsbook/schema/betting';
 import { WAGER_TRACKING } from '@openora/core/contracts';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { closeE2e, type TestApp, type TestClient, type TestDb } from '../index.js';
@@ -60,6 +61,31 @@ const rakebackOf = (providerBetId: string) =>
     .where(
       and(
         eq(walletTransaction.type, 'cashback'),
+        eq(walletTransaction.providerName, 'rakeback-settled'),
+        eq(walletTransaction.providerRefId, `sportsbook:${PROVIDER}:${providerBetId}`),
+      ),
+    );
+
+const settleRowOf = (providerBetId: string) =>
+  drizzle()
+    .select({
+      walletTransactionIds: sportsbookBetTransaction.walletTransactionIds,
+      balanceAfter: sportsbookBetTransaction.balanceAfter,
+    })
+    .from(sportsbookBetTransaction)
+    .where(
+      and(
+        eq(sportsbookBetTransaction.providerBetId, providerBetId),
+        eq(sportsbookBetTransaction.kind, 'settle'),
+      ),
+    );
+
+const rakebackIdOf = (providerBetId: string) =>
+  drizzle()
+    .select({ id: walletTransaction.id })
+    .from(walletTransaction)
+    .where(
+      and(
         eq(walletTransaction.providerName, 'rakeback-settled'),
         eq(walletTransaction.providerRefId, `sportsbook:${PROVIDER}:${providerBetId}`),
       ),
@@ -137,6 +163,11 @@ describe('sportsbook rakeback paid instantly', () => {
     expect(await rakebackOf(args.providerBetId)).toEqual(PAID);
     expect(settled.balance).toBe('115.100000000000000000');
     expect(await balanceOf(app, player.userId)).toBe('115.100000000000000000');
+    const [rakeback] = await rakebackIdOf(args.providerBetId);
+    const [row] = await settleRowOf(args.providerBetId);
+    expect(row?.walletTransactionIds).toContain(rakeback?.id);
+    expect(row?.walletTransactionIds).toHaveLength(2);
+    expect(row?.balanceAfter).toBe('115.100000000000000000');
   });
 
   it('pays once when a reopened bet settles again', async () => {
