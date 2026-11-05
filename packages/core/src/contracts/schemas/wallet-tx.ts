@@ -14,6 +14,7 @@ export const WALLET_TRANSACTION_TYPES = [
   'win',
   'loss',
   'bonus',
+  /** A plain cash transfer between players, credited as withdrawable balance with no wagering; for a player-to-player donation use `donation`. */
   'tip',
   'gift',
   'rain',
@@ -26,6 +27,8 @@ export const WALLET_TRANSACTION_TYPES = [
   'cashback',
   /** Takes back a settled payout after the provider reopens the bet; never more than the balance holds. */
   'win_reversal',
+  /** The sender's cash leg of a player-to-player donation; the recipient's credit is a wagered bonus grant. */
+  'donation',
 ] as const;
 
 export const WALLET_TRANSACTION_STATUSES = [

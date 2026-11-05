@@ -174,8 +174,8 @@ export default {
         rates: c.get(EXCHANGE_RATE_READER),
       }));
     ctx.provide(RG_EXCLUSION_READER, (c) => ({
-      getExclusionState: async (userId) => {
-        const { selfExclusion, coolingOff } = await rgService(c).getActiveExclusions(userId);
+      getExclusionState: async (userId, tx) => {
+        const { selfExclusion, coolingOff } = await rgService(c).getActiveExclusions(userId, tx);
         return { isSelfExcluded: selfExclusion !== null, isCoolingOff: coolingOff !== null };
       },
     }));
@@ -448,6 +448,8 @@ export default {
         rg,
         rgMonitoring,
         rgSelfService,
+        requireApprovalForDirectKycOverride:
+          platformConfig?.kyc?.requireApprovalForDirectOverride ?? false,
       });
     });
   },

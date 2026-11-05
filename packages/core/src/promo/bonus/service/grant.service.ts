@@ -49,7 +49,7 @@ const MAX_EXPIRY_DAYS = 3650;
 export const DEFAULT_WEIGHT_PROFILE_NAME = 'default';
 
 /**
- * What a grant with no offer behind it is created under - a chat gift, a rain drop. One
+ * What a grant with no offer behind it is created under - a chat gift, a rain drop, a donation. One
  * turnover of the gifted amount, a month to do it in. An operator narrows both from the
  * backoffice; the point is that gifted money is never withdrawable the instant it lands.
  */

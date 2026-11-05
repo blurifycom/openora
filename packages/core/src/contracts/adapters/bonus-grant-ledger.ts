@@ -1,9 +1,9 @@
 /**
  * Bonus grant ledger read port: a player's grants as rows of their wallet transaction history.
- * A bonus, a chat gift or a rain drop the player received lands on a `promo_grant`, never on the
- * real-money `wallet_transaction` ledger, so without this the player's history silently leaves
- * them out. The bonus module owns the projection (which source is which type, which grant status
- * is which transaction status); the wallet only unions it with its own rows.
+ * A bonus, a chat gift, a rain drop or a donation the player received lands on a `promo_grant`,
+ * never on the real-money `wallet_transaction` ledger, so without this the player's history
+ * silently leaves them out. The bonus module owns the projection (which source is which type,
+ * which grant status is which transaction status); the wallet only unions it with its own rows.
  */
 import { createToken, type Token } from './token.js';
 

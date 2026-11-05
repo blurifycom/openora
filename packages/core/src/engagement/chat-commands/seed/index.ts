@@ -35,7 +35,7 @@ export async function seedChatCommands(db: DrizzleDb): Promise<void> {
         key: 'donate',
         enabled: true,
         label: 'Donate',
-        description: 'Send a direct tip to a specific player',
+        description: 'Send a donation to a specific player',
         config: { minAmount: { currency: 'USD', amount: '1.00000000' } },
       },
       {

@@ -543,7 +543,7 @@ describe('notificationEventMap', () => {
   });
 
   describe('a bonus credit', () => {
-    const granted = (source: 'deposit' | 'gift' | 'rain') => ({
+    const granted = (source: 'deposit' | 'gift' | 'rain' | 'donation') => ({
       userId: randomUUID(),
       grantId: randomUUID(),
       currency: 'USDT',
@@ -565,7 +565,7 @@ describe('notificationEventMap', () => {
     });
 
     it('sends no mail for a bonus another player gave, which is announced where it happened', () => {
-      for (const source of ['gift', 'rain'] as const) {
+      for (const source of ['gift', 'rain', 'donation'] as const) {
         expect(entryFor('promo.bonus.granted').buildEmail(granted(source), OCCURRED_AT)).toBeNull();
       }
     });
@@ -639,6 +639,23 @@ describe('notificationEventMap', () => {
       type: 'promo.streak.milestone.reached',
       params: { day: '7' },
       data: { day: '7' },
+    });
+  });
+
+  it('tells the player how much rakeback is waiting to be claimed', () => {
+    const userId = randomUUID();
+
+    const input = entryFor('promo.rakeback.claimable').buildNotification({
+      userId,
+      amount: '12.5',
+      currency: 'USDT',
+    });
+
+    expect(input).toEqual({
+      userId,
+      type: 'rakeback.claimable',
+      params: { amount: '12.5', currency: 'USDT' },
+      data: null,
     });
   });
 
@@ -814,6 +831,7 @@ describe('notificationEventMap', () => {
         monthlyBonus: '20',
       },
       'promo.streak.milestone.reached': { userId: id(), day: 7, grantId: null },
+      'promo.rakeback.claimable': { userId: id(), amount: '12.5', currency: 'USDT' },
       'chat.user.mentioned': {
         mentionedUserId: id(),
         byUserId: id(),

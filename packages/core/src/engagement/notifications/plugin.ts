@@ -322,10 +322,10 @@ export const notificationEventMap: NotificationMapEntry[] = [
         data: { grantId: p.grantId },
       }),
     {
-      // A gift or rain comes from another player and is already announced where it happened;
-      // a rain fans out to a whole room, so a mail per recipient would be noise.
+      // A gift, rain or donation comes from another player and is already announced where it
+      // happened; a rain fans out to a whole room, so a mail per recipient would be noise.
       email: (p) =>
-        p.source === 'gift' || p.source === 'rain'
+        p.source === 'gift' || p.source === 'rain' || p.source === 'donation'
           ? null
           : {
               key: 'bonusCredited',
@@ -450,6 +450,14 @@ export const notificationEventMap: NotificationMapEntry[] = [
       type: 'promo.streak.milestone.reached',
       params: { day: String(p.day) },
       data: { day: String(p.day) },
+    }),
+  ),
+
+  mapEvent('promo.rakeback.claimable', (p) =>
+    notification({
+      userId: p.userId,
+      type: 'rakeback.claimable',
+      params: { amount: p.amount, currency: p.currency },
     }),
   ),
 

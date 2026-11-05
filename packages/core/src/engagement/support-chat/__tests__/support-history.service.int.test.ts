@@ -116,6 +116,53 @@ describe('SupportHistoryService logging (real PG)', () => {
     );
   });
 
+  it('logs a provider error whose reason getter throws as unexpected, its secret kept out', async () => {
+    const p = await linkedPlayer();
+    const secret = `sk_live_${randomUUID()}`;
+    const thrown = new SupportHistoryProviderError('timeout');
+    Object.defineProperty(thrown, 'reason', {
+      get: () => {
+        throw new Error(`jane.doe@example.test ${secret}`);
+      },
+    });
+    const history = await service({
+      listTickets: async () => {
+        throw thrown;
+      },
+    }).getHistory(p.userId, false);
+
+    expect(history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(warned()).toEqual([
+      { userId: p.userId, section: 'ticket', reason: 'unexpected adapter error' },
+    ]);
+    expect(inspect([log.warn.mock.calls, history], { depth: null })).not.toMatch(
+      /jane\.doe|sk_live_/,
+    );
+  });
+
+  it('answers a section unavailable for an item whose getter throws, the other section kept', async () => {
+    const p = await linkedPlayer();
+    const secret = `sk_live_${randomUUID()}`;
+    const history = await service({
+      listChats: async () => [
+        {
+          ...TICKET,
+          kind: 'chat',
+          get status(): never {
+            throw new Error(`jane.doe@example.test ${secret}`);
+          },
+        },
+      ],
+    }).getHistory(p.userId, false);
+
+    expect(history.chats).toEqual({ state: 'unavailable', items: [] });
+    expect(history.tickets).toEqual({ state: 'ok', items: [TICKET], complete: true });
+    expect(warned()).toEqual([{ userId: p.userId, section: 'chat', reason: 'malformed answer' }]);
+    expect(inspect([log.warn.mock.calls, history], { depth: null })).not.toMatch(
+      /jane\.doe|sk_live_/,
+    );
+  });
+
   it.each([
     'javascript:alert(1)',
     'data:text/html,<script>alert(1)</script>',

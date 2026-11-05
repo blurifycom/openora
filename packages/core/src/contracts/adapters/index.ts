@@ -62,7 +62,9 @@ export type { WagerContext, WagerProduct } from './wager-context.js';
 export {
   WAGER_PRODUCTS,
   WagerProductSchema,
+  isUsableRtp,
   isWagerProduct,
+  isWagerRtp,
   wagerProductOfProviderName,
   wagerProductProviderPrefix,
 } from './wager-context.js';

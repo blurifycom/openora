@@ -279,6 +279,31 @@ describe('WalletCommandsService.debit (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(5);
   });
 
+  it("records a bet's product and a well-formed rtp on its ledger row", async () => {
+    const w = await seedWallet({ balance: '100' });
+    const bet = (rtp: string | undefined, providerRefId: string) =>
+      svc.debit(db.drizzle.db, {
+        userId: w.userId,
+        amount: '10',
+        type: 'bet',
+        context: { provider: 'agg', product: 'live-casino', ...(rtp === undefined ? {} : { rtp }) },
+        providerRef: { providerName: 'agg', providerRefId },
+      });
+
+    await bet('0.965', 'b1');
+    await bet('96.5', 'b2');
+    await bet(undefined, 'b3');
+
+    const rows = await txRows(w.id);
+    const byRef = (ref: string) => rows.find((row) => row.providerRefId === ref);
+    expect(byRef('b1')).toMatchObject({
+      wagerProduct: 'live-casino',
+      wagerRtp: '0.965000000000000000',
+    });
+    expect(byRef('b2')).toMatchObject({ wagerProduct: 'live-casino', wagerRtp: null });
+    expect(byRef('b3')).toMatchObject({ wagerProduct: 'live-casino', wagerRtp: null });
+  });
+
   it('rolls the debit back when the caller transaction later throws', async () => {
     const w = await seedWallet({ balance: '100' });
 
@@ -455,6 +480,49 @@ describe('WalletCommandsService.credit gift/rain grant terms (real PG)', () => {
     await betting;
 
     expect(outcome.ok).toBe(true);
+  });
+
+  it('refuses a donation credit when no bonus engine is bound, rather than paying it as cash', async () => {
+    const w = await seedWallet({ balance: '0' });
+
+    await expect(
+      svc.credit(db.drizzle.db, {
+        userId: w.userId,
+        amount: '10',
+        currency: 'USD',
+        type: 'donation',
+        providerRef: { providerName: 'social-transfers', providerRefId: randomUUID() },
+      }),
+    ).rejects.toMatchObject({ name: 'WalletBonusEngineUnavailableError' });
+    expect(await txRows(w.id)).toHaveLength(0);
+    expect(await balanceOf(w.userId)).toBe(0);
+  });
+
+  it('pays a tip credit in cash on the ledger, with a bonus engine bound', async () => {
+    const w = await seedWallet({ balance: '5' });
+    const grant = vi.fn();
+    const svcWithGrants = new WalletCommandsService(eligibility(false), audit, {
+      bonusGrants: mock<BonusGrantCommands>({ grant }),
+    });
+
+    const outcome = await svcWithGrants.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      currency: 'USD',
+      type: 'tip',
+      providerRef: { providerName: 'social-transfers', providerRefId: randomUUID() },
+    });
+
+    expect(outcome).toMatchObject({ ok: true, moved: true });
+    expect(grant).not.toHaveBeenCalled();
+    expect(await txRows(w.id)).toEqual([
+      expect.objectContaining({
+        type: 'tip',
+        direction: 'credit',
+        amount: '10.000000000000000000',
+      }),
+    ]);
+    expect(await balanceOf(w.userId)).toBe(15);
   });
 });
 
@@ -1227,6 +1295,9 @@ describe('WalletCommandsService.debit of a non-bet type (real PG)', () => {
     expect(limits.checkWager).not.toHaveBeenCalled();
     expect(wager).not.toHaveBeenCalled();
     expect(await balanceOf(w.userId)).toBe(90);
+    expect(await txRows(w.id)).toEqual([
+      expect.objectContaining({ type: 'tip', wagerProduct: null, wagerRtp: null }),
+    ]);
   });
 
   it('reports the shortfall and moves nothing when the balance cannot cover it', async () => {

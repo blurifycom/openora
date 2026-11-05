@@ -400,6 +400,9 @@ export const domainEventSchemas = {
     // Stamped right after the swap returns; the audit row's own write time can trail it.
     // Optional so a payload from before this field still parses.
     changedAt: TimestampSchema.optional(),
+    // The swap appended its audit row in its own transaction; absent on events published
+    // before that, which the audit subscriber still records.
+    auditRecorded: z.literal(true).optional(),
   }),
   'identity.phone.verified': authContextBase.extend({
     userId: UuidSchema,
@@ -861,6 +864,13 @@ export const domainEventSchemas = {
     day: z.number().int().positive(),
     // Absent when the milestone's reward is not a bonus grant.
     grantId: UuidSchema.nullable(),
+  }),
+  // Unclaimed rakeback has reached the claim minimum; `amount` is its total in `currency`, the
+  // operator's reference currency. Emitted at most once a day per player.
+  'promo.rakeback.claimable': z.object({
+    userId: UuidSchema,
+    amount: MoneyAmountSchema,
+    currency: CurrencyTickerSchema,
   }),
   'promo.rank.changed': z.object({
     userId: UuidSchema,

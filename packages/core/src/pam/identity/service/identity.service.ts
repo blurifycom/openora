@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
 import {
   createAuth,
+  runInAuthTransaction,
   type EventBus,
   type NodeHeaders,
   DrizzleService,
@@ -28,6 +29,7 @@ import {
   type TwoFactorDeliveryService,
 } from './two-factor-delivery.service.js';
 import type {
+  AuditWritePort,
   CacheAdapter,
   RateLimiterAdapter,
   RateLimitKey,
@@ -302,8 +304,14 @@ type ExtendedAuthApi = {
 
 const SUCCESS = { success: true as const };
 
+const AUTH_SCHEMA = { user, session, account, verification, twoFactor };
+
 export const UserNotFoundError = makeNotFoundError('User');
 export const UsernameConflictError = makeConflictError('Username', 'Username is already in use');
+const EmailChangeWithoutHistoryError = createDomainError<[]>(
+  'EmailChangeWithoutHistoryError',
+  () => 'The email change was refused after the address was swapped',
+);
 export const AvatarHostNotAllowedError = createDomainError<[]>(
   'AvatarHostNotAllowedError',
   () => 'Avatar URL is not on an allowed host or URL prefix',
@@ -485,6 +493,7 @@ function computeLockoutState({
 export type IdentityServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
+  audit: AuditWritePort;
   identityReader: IdentityReader;
   mailDispatch?: MailDispatchPort;
   options?: IdentityServiceOptions;
@@ -517,6 +526,7 @@ export class IdentityService {
   private readonly auth: ReturnType<typeof createAuth>;
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
+  private readonly audit: AuditWritePort;
   private readonly identityReader: IdentityReader;
   private readonly mailDispatch?: MailDispatchPort;
   private readonly options?: IdentityServiceOptions;
@@ -539,6 +549,7 @@ export class IdentityService {
   constructor({
     drizzle,
     events,
+    audit,
     identityReader,
     mailDispatch,
     options,
@@ -554,6 +565,7 @@ export class IdentityService {
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
+    this.audit = audit;
     this.identityReader = identityReader;
     this.mailDispatch = mailDispatch;
     this.options = options;
@@ -568,7 +580,7 @@ export class IdentityService {
     this.sessions = sessions;
     this.auth = createAuth({
       db: drizzle.db,
-      schema: { user, session, account, verification, twoFactor },
+      schema: AUTH_SCHEMA,
       ...(mailDispatch
         ? {
             dispatchOtpMail: async ({ to, template, recipientName, antiPhishingCode }) => {
@@ -2813,9 +2825,11 @@ export class IdentityService {
 
   /**
    * Step 2: the code proves ownership of `newEmail`, so better-auth swaps the login email.
-   * The old address is read first, since no row carries it afterwards, for the "changed"
-   * notice and to reset the verified-email alert opt-in (made on the old inbox). Every
-   * other session and trusted device is torn down too, the same as `disableTwoFactor`.
+   * The swap, its audit row and its outbox event commit in one transaction, so no change is
+   * saved without its history. The old address is read first, since no row carries it
+   * afterwards, for the "changed" notice and to reset the verified-email alert opt-in (made on
+   * the old inbox). Every other session and trusted device is torn down too, the same as
+   * `disableTwoFactor`.
    */
   async confirmEmailChange(
     input: ConfirmEmailChangeInput,
@@ -2846,29 +2860,59 @@ export class IdentityService {
     if (ip) {
       await assertRateLimit(this.limiter, `confirm-email-change-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
     }
-    const [before] = await this.drizzle.db
-      .select({
-        email: user.email,
-        language: user.language,
-        name: user.username,
-        antiPhishingCode: user.antiPhishingCode,
-        loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
-      })
-      .from(user)
-      .where(eq(user.id, userId))
-      .limit(1);
-    const res = await this.api.changeEmailEmailOTP({
-      body: { newEmail: input.newEmail, otp: input.otp },
-      headers,
-      asResponse: true,
-    });
-    await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
-    this.forwardCookies(res, resHeaders);
-    const changedAt = new Date().toISOString();
-
-    if (before) {
-      const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
-      this.events.emit('identity.email.changed', {
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    const { res, before, changedAt } = await this.drizzle.db.transaction(async (tx) => {
+      // FOR NO KEY UPDATE conflicts with itself, so a concurrent confirm for this account reads
+      // the committed swap.
+      const before = findOneOrThrow(
+        await tx
+          .select({
+            email: user.email,
+            language: user.language,
+            name: user.username,
+            antiPhishingCode: user.antiPhishingCode,
+            loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
+          })
+          .from(user)
+          .where(eq(user.id, userId))
+          .for('no key update'),
+        new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' }),
+      );
+      const changedAt = new Date().toISOString();
+      const res = await runInAuthTransaction(tx, { auth: this.auth, schema: AUTH_SCHEMA }, () =>
+        this.api.changeEmailEmailOTP({
+          body: { newEmail: input.newEmail, otp: input.otp },
+          headers,
+          asResponse: true,
+        }),
+      );
+      // A refused code commits too: better-auth's attempt count and expired-code delete
+      // must persist, or every retry would start a fresh guess budget.
+      if (!res.ok) {
+        const [after] = await tx
+          .select({ email: user.email })
+          .from(user)
+          .where(eq(user.id, userId));
+        // better-auth can answer an error after it swapped the row (a later hook or step); the
+        // swap must then roll back rather than commit without its audit row.
+        if (after?.email !== before.email) {
+          throw new EmailChangeWithoutHistoryError();
+        }
+        return { res, before, changedAt };
+      }
+      await this.audit.recordInTransaction(tx, {
+        actorType: playerId ? 'player' : 'admin',
+        actorId: playerId ?? userId,
+        action: 'identity.email.changed',
+        resourceType: playerId ? 'player' : 'user',
+        resourceId: playerId ?? userId,
+        before: { email: before.email },
+        after: { email: newEmail, changedAt },
+        result: 'success',
+        ip,
+        userAgent,
+      });
+      await this.events.emitInTransaction(tx, 'identity.email.changed', {
         userId,
         playerId,
         previousEmail: before.email,
@@ -2876,68 +2920,73 @@ export class IdentityService {
         changedAt,
         ip,
         userAgent,
+        auditRecorded: true,
       });
-      // Both inboxes get told - fire-and-forget like `dispatchMail` in
-      // notifications/plugin.ts, right after the emit and before the revocation calls
-      // below: if either of those throws, the swap has already committed and both
-      // owners still need their notice. `randomUUID()` keeps each key unique so the
-      // queue's dedupe window can't swallow a repeat notice.
-      //
-      // To the OLD address - the row no longer holds it, so every field is read from
-      // `before`. Carries the "was this you?" warning and a support CTA: this inbox
-      // could belong to someone who never asked for the change.
-      this.mailDispatch
-        ?.toAddress({
-          email: before.email,
-          locale: before.language,
-          antiPhishingCode: before.antiPhishingCode,
-          recipientName: before.name,
-          template: {
-            key: 'emailChanged',
-            data: { newEmail, occurredAt: changedAt, isNewAddress: false },
-          },
-          idempotencyKey: `email-change-notice-old:${userId}:${randomUUID()}`,
-        })
-        .catch((err: unknown) =>
-          identityLogger.error({ err, userId }, 'email-change notice (old address) enqueue failed'),
-        );
-      // To the NEW address - `toAddress` with the fields already in hand from `before`
-      // (name/locale/antiPhishingCode are account-level, unaffected by the swap), not
-      // `toUser`: that reads the row live at delivery time, so a second change started
-      // right after this one would relabel this "new" notice onto whatever address the
-      // account holds by then. Plain confirmation, no warning: this inbox just proved
-      // ownership with a live OTP, it didn't fall victim to one.
-      this.mailDispatch
-        ?.toAddress({
-          email: newEmail,
-          locale: before.language,
-          antiPhishingCode: before.antiPhishingCode,
-          recipientName: before.name,
-          template: {
-            key: 'emailChanged',
-            data: { newEmail, occurredAt: changedAt, isNewAddress: true },
-          },
-          idempotencyKey: `email-change-notice-new:${userId}:${randomUUID()}`,
-        })
-        .catch((err: unknown) =>
-          identityLogger.error({ err, userId }, 'email-change notice (new address) enqueue failed'),
-        );
-      await this.trustedDevices?.revokeAllForUser(userId, userId);
-      await this.sessions?.revokeAllSessions(userId, userId, meta);
-      if (before.loginWithdrawalAlertsEnabled) {
-        await this.drizzle.db
-          .update(user)
-          .set({ loginWithdrawalAlertsEnabled: false })
-          .where(eq(user.id, userId));
-        this.events.emit('identity.security.login_withdrawal_alerts.updated', {
-          userId,
-          playerId,
-          previousEnabled: true,
-          enabled: false,
-          ip,
-          userAgent,
-        });
-      }
+      return { res, before, changedAt };
+    });
+    await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
+    this.forwardCookies(res, resHeaders);
+
+    // Both inboxes get told - fire-and-forget like `dispatchMail` in
+    // notifications/plugin.ts, right after the commit and before the revocation calls
+    // below: if either of those throws, the swap has already committed and both
+    // owners still need their notice. `randomUUID()` keeps each key unique so the
+    // queue's dedupe window can't swallow a repeat notice.
+    //
+    // To the OLD address - the row no longer holds it, so every field is read from
+    // `before`. Carries the "was this you?" warning and a support CTA: this inbox
+    // could belong to someone who never asked for the change.
+    this.mailDispatch
+      ?.toAddress({
+        email: before.email,
+        locale: before.language,
+        antiPhishingCode: before.antiPhishingCode,
+        recipientName: before.name,
+        template: {
+          key: 'emailChanged',
+          data: { newEmail, occurredAt: changedAt, isNewAddress: false },
+        },
+        idempotencyKey: `email-change-notice-old:${userId}:${randomUUID()}`,
+      })
+      .catch((err: unknown) =>
+        identityLogger.error({ err, userId }, 'email-change notice (old address) enqueue failed'),
+      );
+    // To the NEW address - `toAddress` with the fields already in hand from `before`
+    // (name/locale/antiPhishingCode are account-level, unaffected by the swap), not
+    // `toUser`: that reads the row live at delivery time, so a second change started
+    // right after this one would relabel this "new" notice onto whatever address the
+    // account holds by then. Plain confirmation, no warning: this inbox just proved
+    // ownership with a live OTP, it didn't fall victim to one.
+    this.mailDispatch
+      ?.toAddress({
+        email: newEmail,
+        locale: before.language,
+        antiPhishingCode: before.antiPhishingCode,
+        recipientName: before.name,
+        template: {
+          key: 'emailChanged',
+          data: { newEmail, occurredAt: changedAt, isNewAddress: true },
+        },
+        idempotencyKey: `email-change-notice-new:${userId}:${randomUUID()}`,
+      })
+      .catch((err: unknown) =>
+        identityLogger.error({ err, userId }, 'email-change notice (new address) enqueue failed'),
+      );
+    await this.trustedDevices?.revokeAllForUser(userId, userId);
+    await this.sessions?.revokeAllSessions(userId, userId, meta);
+    if (before.loginWithdrawalAlertsEnabled) {
+      await this.drizzle.db
+        .update(user)
+        .set({ loginWithdrawalAlertsEnabled: false })
+        .where(eq(user.id, userId));
+      this.events.emit('identity.security.login_withdrawal_alerts.updated', {
+        userId,
+        playerId,
+        previousEnabled: true,
+        enabled: false,
+        ip,
+        userAgent,
+      });
     }
     return SUCCESS;
   }
