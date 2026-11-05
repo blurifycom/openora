@@ -1,12 +1,46 @@
-import { and, eq, gte, inArray, isNotNull, lte, ne, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  lt,
+  lte,
+  ne,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import { alias, type PgColumn } from 'drizzle-orm/pg-core';
-import type { CacheAdapter, GameType, Granularity } from '@openora/core/contracts';
+import type {
+  CacheAdapter,
+  GameType,
+  Granularity,
+  WalletTransactionStatus,
+} from '@openora/core/contracts';
 import { DrizzleService, moneyAdd, moneySubtract } from '@openora/core/server';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
 import { sportsbookBet, sportsbookBetTransaction } from '@openora/core/sportsbook/schema/betting';
 import { walletTransaction } from '@openora/core/wallet/schema';
 import {
+  FINANCIAL_SUMMARY_MAX_CURRENCIES,
+  FINANCIAL_SUMMARY_MAX_PRODUCT_ROWS,
+  PAYMENTS_FLOW_MAX_ROWS,
+  PAYMENT_FLOW_TYPES,
+  resolveFinancialSummaryRange,
   resolveGgrSummaryRange,
+  resolvePaymentsFlowRange,
+  type FinancialCurrencyTotals,
+  type FinancialSummaryInput,
+  type FinancialSummaryOverview,
+  type MoneyByCurrency,
+  type MoneyByCurrencyRail,
+  type PaymentFlowGranularity,
+  type PaymentFlowRow,
+  type PaymentFlowType,
+  type PaymentsFlow,
+  type PaymentsFlowInput,
   type ProductRevenue,
   type FinancialGgrQuery,
   type FinancialSummary,
@@ -68,6 +102,57 @@ function inRange(
 
 const total = (column: PgColumn | SQL) => sql<string>`coalesce(sum(${column}), 0)`;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const utcCreatedAt = sql`(${walletTransaction.createdAt} at time zone 'UTC')`;
+const FLOW_BUCKETS: Record<PaymentFlowGranularity, SQL<string>> = {
+  day: sql<string>`to_char(${utcCreatedAt}, 'YYYY-MM-DD')`,
+  week: sql<string>`to_char(date_trunc('week', ${utcCreatedAt}), 'YYYY-MM-DD')`,
+};
+
+type PaymentsFlowQuery = {
+  dateFrom: string;
+  dateTo: string;
+  granularity: PaymentFlowGranularity;
+  types: readonly PaymentFlowType[];
+  statuses: readonly WalletTransactionStatus[] | null;
+  currency: string | null;
+};
+
+const dayAfter = (isoDay: string) => new Date(Date.parse(isoDay) + DAY_MS);
+
+function sumByCurrency(rows: readonly MoneyByCurrencyRail[]): Map<string, string> {
+  const sums = new Map<string, string>();
+  for (const row of rows) {
+    sums.set(row.currency, moneyAdd(sums.get(row.currency) ?? '0', row.total));
+  }
+  return sums;
+}
+
+function byCurrency(rows: readonly MoneyByCurrency[]): Map<string, string> {
+  return new Map(rows.map((row) => [row.currency, row.total]));
+}
+
+/** One row per currency of a financial summary, rails folded together. */
+export function totalsPerCurrency(summary: FinancialSummary): FinancialCurrencyTotals[] {
+  const deposits = sumByCurrency(summary.deposits);
+  const withdrawals = sumByCurrency(summary.withdrawals);
+  const netDeposits = byCurrency(summary.netDeposits);
+  const ggr = byCurrency(summary.ggr);
+  const bonusCost = byCurrency(summary.bonusCost);
+  const ngr = byCurrency(summary.ngr);
+  const currencies = new Set([...deposits.keys(), ...withdrawals.keys(), ...ggr.keys()]);
+  return [...currencies].sort().map((currency) => ({
+    currency,
+    deposits: deposits.get(currency) ?? '0',
+    withdrawals: withdrawals.get(currency) ?? '0',
+    netDeposits: netDeposits.get(currency) ?? '0',
+    ggr: ggr.get(currency) ?? '0',
+    bonusCost: bonusCost.get(currency) ?? '0',
+    ngr: ngr.get(currency) ?? '0',
+  }));
+}
+
 export class FinancialAnalyticsService {
   private sportsbookLedgerFound = false;
 
@@ -97,6 +182,53 @@ export class FinancialAnalyticsService {
       granularity,
     });
     return { ...range, granularity, series };
+  }
+
+  async financialSummary(
+    { currency, ...dates }: FinancialSummaryInput,
+    now = new Date(),
+  ): Promise<FinancialSummaryOverview> {
+    const range = resolveFinancialSummaryRange(dates, now);
+    const query = {
+      dateFrom: `${range.dateFrom}T00:00:00.000Z`,
+      dateTo: `${range.dateTo}T23:59:59.999Z`,
+      currency: currency?.toUpperCase(),
+    };
+    const [summary, products] = await Promise.all([this.summary(query), this.products(query)]);
+    const currencies = totalsPerCurrency(summary);
+    return {
+      ...range,
+      currencies: currencies.slice(0, FINANCIAL_SUMMARY_MAX_CURRENCIES),
+      products: products.slice(0, FINANCIAL_SUMMARY_MAX_PRODUCT_ROWS),
+      truncated:
+        currencies.length > FINANCIAL_SUMMARY_MAX_CURRENCIES ||
+        products.length > FINANCIAL_SUMMARY_MAX_PRODUCT_ROWS,
+    };
+  }
+
+  /**
+   * Deposits and withdrawals per bucket, type, status and currency, over whole UTC days. A row
+   * holds the transactions created in its bucket under the status they hold now.
+   */
+  async paymentsFlow(
+    { dateFrom, dateTo, types, statuses, currency, granularity }: PaymentsFlowInput,
+    now = new Date(),
+  ): Promise<PaymentsFlow> {
+    const range = resolvePaymentsFlowRange({ dateFrom, dateTo }, now);
+    const query: PaymentsFlowQuery = {
+      ...range,
+      granularity,
+      types: types ?? PAYMENT_FLOW_TYPES,
+      statuses: statuses ?? null,
+      currency: currency?.toUpperCase() ?? null,
+    };
+    const rows = await this.cached('payments.flow', query, () => this.computePaymentsFlow(query));
+    return {
+      ...range,
+      granularity,
+      rows: rows.slice(0, PAYMENTS_FLOW_MAX_ROWS),
+      truncated: rows.length > PAYMENTS_FLOW_MAX_ROWS,
+    };
   }
 
   private async cached<T>(scope: string, query: object, compute: () => Promise<T>): Promise<T> {
@@ -275,6 +407,45 @@ export class FinancialAnalyticsService {
     return [...rows.values()].sort(
       (a, b) => a.product.localeCompare(b.product) || a.currency.localeCompare(b.currency),
     );
+  }
+
+  private async computePaymentsFlow({
+    dateFrom,
+    dateTo,
+    granularity,
+    types,
+    statuses,
+    currency,
+  }: PaymentsFlowQuery): Promise<PaymentFlowRow[]> {
+    const bucket = FLOW_BUCKETS[granularity];
+    const type = sql<PaymentFlowType>`${walletTransaction.type}`;
+    return this.drizzle.db
+      .select({
+        bucket,
+        type,
+        status: walletTransaction.status,
+        currency: walletTransaction.currency,
+        count: count(),
+        amount: sql<string>`sum(${walletTransaction.amount})`,
+      })
+      .from(walletTransaction)
+      .where(
+        and(
+          inArray(walletTransaction.type, [...types]),
+          statuses ? inArray(walletTransaction.status, [...statuses]) : undefined,
+          currency ? eq(walletTransaction.currency, currency) : undefined,
+          gte(walletTransaction.createdAt, new Date(dateFrom)),
+          lt(walletTransaction.createdAt, dayAfter(dateTo)),
+        ),
+      )
+      .groupBy(bucket, walletTransaction.type, walletTransaction.status, walletTransaction.currency)
+      .orderBy(
+        asc(bucket),
+        asc(walletTransaction.type),
+        asc(walletTransaction.status),
+        asc(walletTransaction.currency),
+      )
+      .limit(PAYMENTS_FLOW_MAX_ROWS + 1);
   }
 
   private async computeGgr({
