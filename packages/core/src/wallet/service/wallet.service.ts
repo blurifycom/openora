@@ -130,8 +130,16 @@ import type {
   WithdrawalAddress,
   CreateWithdrawalAddressInput,
   WalletReferenceConversion,
+  QueuedWithdrawalStatus,
+  WithdrawalRiskTag,
+  WithdrawalsQueue,
+  WithdrawalsQueueInput,
 } from '../contract/index.js';
-import { OPEN_WITHDRAWALS_LIMIT } from '../contract/index.js';
+import {
+  OPEN_WITHDRAWALS_LIMIT,
+  QUEUED_WITHDRAWAL_STATUSES,
+  WITHDRAWAL_QUEUE_MAX_CURRENCIES,
+} from '../contract/index.js';
 
 const logger = createLogger('wallet');
 
@@ -892,9 +900,10 @@ export const VELOCITY_IGNORED_STATUSES = [
   'cancelled',
 ] as const satisfies readonly WalletTransactionStatus[];
 
-// A withdrawal still waiting on a decision: the queue summary counts and totals only these, and
-// an admin may approve or reject only these.
-const QUEUED_WITHDRAWAL_STATUSES = ['pending', 'on_hold'] as const;
+// A held deposit reaches the balance when an operator releases it, which stamps reviewedAt;
+// every other completed deposit has no reviewedAt.
+export const depositedAt = () =>
+  sql<Date>`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`;
 
 export const IN_FLIGHT_TRANSACTION_STATUSES = [
   'pending',
@@ -905,6 +914,10 @@ export const IN_FLIGHT_TRANSACTION_STATUSES = [
 const ACTIVITY_TRANSACTION_TYPES = ['deposit', 'withdrawal', 'bet', 'win', 'win_reversal'] as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+/** A duration in hours to one decimal, never below zero. */
+const hoursIn = (ms: number) => Math.round((Math.max(0, ms) / HOUR_MS) * 10) / 10;
 
 const DAILY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -2502,42 +2515,21 @@ export class WalletService {
   }
 
   async listWithdrawals(filters: WithdrawalQueueFilter) {
-    const db = this.drizzle.db;
     const { page, limit } = filters;
     const { matching, byUserId } = await this.matchingWithdrawals(filters, { withPlayers: true });
 
     const start = pageToOffset(page, limit);
     const pageRows = matching.slice(start, start + limit);
 
-    // One batched velocity query for the page (no N+1); shares the window + threshold + query the auto-approval evaluator uses.
-    // The tag is a display hint, so an unseeded install (no config row) just drops it rather
-    // than failing the queue - the auto-approval read path is the one that fails closed.
-    const pageWalletIds = [...new Set(pageRows.map((r) => r.tx.walletId))];
-    const frequentWalletIds = await this.frequentWithdrawalWalletIds(
-      db,
-      pageWalletIds,
-      await this.getAutoWithdrawalConfigOrNull(),
-    );
-    const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
     const pageUserIds = [...new Set(pageRows.map((r) => r.userId))];
-    const [lockedUserIds, heldUserIds] = await Promise.all([
+    const [riskTags, lockedUserIds, heldUserIds] = await Promise.all([
+      this.withdrawalRiskTags(pageRows.map((r) => r.tx)),
       this.withdrawalLockedUserIds(pageUserIds),
       this.withdrawalHeldUserIds(pageUserIds),
     ]);
 
-    const items: WithdrawalQueueItem[] = await mapConcurrent(pageRows, 5, async (r) => {
+    const items: WithdrawalQueueItem[] = pageRows.map((r) => {
       const summary = byUserId.get(r.userId);
-      const riskTags: string[] = [];
-      // The queue tag is priced in the fx pivot, same as auto-approval - a raw compare let a
-      // 5000 DOGE withdrawal read as "large" next to a 5000 BTC one that dwarfs it. No rate
-      // for the coin flags it anyway: never let a compliance total quietly undercount.
-      const pivotAmount = await this.toPivotAmount(r.tx.amount, r.tx.currency, pivotCurrency);
-      if (pivotAmount === null || moneyCompare(pivotAmount, LARGE_WITHDRAWAL_THRESHOLD) >= 0) {
-        riskTags.push('large_amount');
-      }
-      if (frequentWalletIds.has(r.tx.walletId)) {
-        riskTags.push('high_frequency');
-      }
       return {
         transactionId: r.tx.id,
         userId: r.userId,
@@ -2550,7 +2542,7 @@ export class WalletService {
         rail: r.tx.rail ?? null,
         status: r.tx.status,
         kycStatus: summary?.kycStatus ?? null,
-        riskTags,
+        riskTags: riskTags.get(r.tx.id) ?? [],
         withdrawalLocked: lockedUserIds.has(r.userId),
         withdrawalHeld: heldUserIds.has(r.userId),
         requestedAt: r.tx.createdAt.toISOString(),
@@ -2561,6 +2553,110 @@ export class WalletService {
     });
 
     return { items, total: matching.length, page, limit };
+  }
+
+  /**
+   * The queue's headline figures across every player and the withdrawals waiting longest for a
+   * decision, oldest first, without the addresses, hashes, names or review notes the admin
+   * queue shows.
+   */
+  async withdrawalQueueOverview(
+    { status, limit }: WithdrawalsQueueInput,
+    now = new Date(),
+  ): Promise<WithdrawalsQueue> {
+    const [summary, oldest] = await Promise.all([
+      this.summarizeWithdrawals({}),
+      this.oldestQueuedWithdrawals(status ? [status] : QUEUED_WITHDRAWAL_STATUSES, limit),
+    ]);
+    return {
+      pendingCount: summary.pendingCount,
+      onHoldCount: summary.onHoldCount,
+      queuedTotals: summary.queuedTotals.slice(0, WITHDRAWAL_QUEUE_MAX_CURRENCIES),
+      avgPendingWaitHours:
+        summary.avgPendingWaitSeconds === null
+          ? null
+          : hoursIn(summary.avgPendingWaitSeconds * 1000),
+      oldest: oldest.map(({ requestedAt, ...item }) => ({
+        ...item,
+        requestedAt: requestedAt.toISOString(),
+        waitHours: hoursIn(now.getTime() - requestedAt.getTime()),
+      })),
+    };
+  }
+
+  private async oldestQueuedWithdrawals(
+    statuses: readonly QueuedWithdrawalStatus[],
+    limit: number,
+  ) {
+    const rows = await this.drizzle.db
+      .select({
+        id: walletTransaction.id,
+        walletId: walletTransaction.walletId,
+        amount: walletTransaction.amount,
+        currency: walletTransaction.currency,
+        status: walletTransaction.status,
+        createdAt: walletTransaction.createdAt,
+        userId: wallet.userId,
+      })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(
+        and(
+          eq(walletTransaction.type, 'withdrawal'),
+          inArray(walletTransaction.status, [...statuses]),
+        ),
+      )
+      .orderBy(asc(walletTransaction.createdAt), asc(walletTransaction.id))
+      .limit(limit);
+    const userIds = [...new Set(rows.map((row) => row.userId))];
+    const [players, riskTags] = await Promise.all([
+      this.directory && userIds.length > 0 ? this.directory.lookupPlayers(userIds) : [],
+      this.withdrawalRiskTags(rows),
+    ]);
+    const playerByUserId = new Map(players.map((player) => [player.userId, player]));
+    return rows.map((row) => {
+      const player = playerByUserId.get(row.userId);
+      return {
+        withdrawalId: row.id,
+        playerId: player?.playerId ?? null,
+        amount: row.amount,
+        currency: row.currency,
+        status: row.status,
+        requestedAt: row.createdAt,
+        kycStatus: player?.kycStatus ? normalizeKycStatus(player.kycStatus) : null,
+        riskTags: riskTags.get(row.id) ?? [],
+      };
+    });
+  }
+
+  /** The queue's risk tags of each withdrawal, keyed by its id. */
+  private async withdrawalRiskTags(
+    withdrawals: readonly Pick<WalletTransaction, 'id' | 'walletId' | 'amount' | 'currency'>[],
+  ): Promise<Map<WalletTransaction['id'], WithdrawalRiskTag[]>> {
+    // One batched velocity query for the page (no N+1); shares the window + threshold + query the auto-approval evaluator uses.
+    // The tag is a display hint, so an unseeded install (no config row) just drops it rather
+    // than failing the queue - the auto-approval read path is the one that fails closed.
+    const frequentWalletIds = await this.frequentWithdrawalWalletIds(
+      this.drizzle.db,
+      [...new Set(withdrawals.map((w) => w.walletId))],
+      await this.getAutoWithdrawalConfigOrNull(),
+    );
+    const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
+    const tags = await mapConcurrent(withdrawals, 5, async (w) => {
+      const riskTags: WithdrawalRiskTag[] = [];
+      // The queue tag is priced in the fx pivot, same as auto-approval - a raw compare let a
+      // 5000 DOGE withdrawal read as "large" next to a 5000 BTC one that dwarfs it. No rate
+      // for the coin flags it anyway: never let a compliance total quietly undercount.
+      const pivotAmount = await this.toPivotAmount(w.amount, w.currency, pivotCurrency);
+      if (pivotAmount === null || moneyCompare(pivotAmount, LARGE_WITHDRAWAL_THRESHOLD) >= 0) {
+        riskTags.push('large_amount');
+      }
+      if (frequentWalletIds.has(w.walletId)) {
+        riskTags.push('high_frequency');
+      }
+      return [w.id, riskTags] as const;
+    });
+    return new Map(tags);
   }
 
   /**
