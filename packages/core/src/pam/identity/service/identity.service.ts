@@ -100,7 +100,6 @@ import {
   assertFreshReauthentication,
 } from './fresh-reauthentication.service.js';
 
-const TWO_FACTOR_PENDING_COOKIE_NAME = 'better-auth.two_factor';
 const TwoFactorVerificationResponseSchema = z.object({
   token: z.string(),
   user: z.object({ id: z.string() }).optional(),
@@ -183,13 +182,13 @@ function makeLoginIpRateLimitKey(ip: string): `login-ip:${string}` {
 
 // Read only Better Auth's pending-cookie VALUE, never a similarly suffixed cookie or the
 // raw Cookie header: unrelated cookie pairs must not change the challenge identity.
-function twoFactorPendingCookieValue(headers: Headers): string | undefined {
+function twoFactorPendingCookieValue(headers: Headers, cookieName: string): string | undefined {
   const cookieHeader = headers.get('cookie');
   if (!cookieHeader) {
     return undefined;
   }
   for (const [name, value] of parseCookies(cookieHeader)) {
-    if (name === TWO_FACTOR_PENDING_COOKIE_NAME) {
+    if (name === cookieName) {
       return value;
     }
   }
@@ -1654,7 +1653,7 @@ export class IdentityService {
    */
   async sendTwoFactorOtp(reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const pendingCookie = twoFactorPendingCookieValue(headers);
+    const pendingCookie = await this.twoFactorPendingCookie(headers);
     const userId =
       (await this.currentUserId(headers)) ??
       (await this.twoFactorLockout?.resolvePendingUserId(pendingCookie));
@@ -1822,6 +1821,12 @@ export class IdentityService {
     return row?.requireTwoFactorOnLogin ?? false;
   }
 
+  private async twoFactorPendingCookie(headers: Headers) {
+    // The two-factor plugin's own cookie key; it does not export the constant.
+    const { name } = (await this.auth.$context).createAuthCookie('two_factor');
+    return twoFactorPendingCookieValue(headers, name);
+  }
+
   private async accountRole(userId: User['id']) {
     const [row] = await this.drizzle.db
       .select({ role: user.role })
@@ -1834,7 +1839,7 @@ export class IdentityService {
   async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const pendingCookie = twoFactorPendingCookieValue(headers);
+    const pendingCookie = await this.twoFactorPendingCookie(headers);
     const sessionUserId = await this.currentUserId(headers);
     const twoFactorKey = sessionUserId ?? pendingCookie ?? 'anonymous';
     await assertRateLimit(this.limiter, `verify2fa:${twoFactorKey}`, VERIFY_2FA_RATE_LIMIT);
