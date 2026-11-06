@@ -1565,20 +1565,7 @@
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "promo_rank_config_eligible_products_set": {
-          "name": "promo_rank_config_eligible_products_set",
-          "value": "cardinality(\"promo_rank_config\".\"eligible_products\") > 0"
-        },
-        "promo_rank_config_rakeback_eligible_products_set": {
-          "name": "promo_rank_config_rakeback_eligible_products_set",
-          "value": "cardinality(\"promo_rank_config\".\"rakeback_eligible_products\") > 0"
-        },
-        "promo_rank_config_rank_challenge_eligible_products_set": {
-          "name": "promo_rank_config_rank_challenge_eligible_products_set",
-          "value": "cardinality(\"promo_rank_config\".\"rank_challenge_eligible_products\") > 0"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.promo_rank_level_up": {
@@ -2013,12 +2000,7 @@
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "promo_streak_config_eligible_products_set": {
-          "name": "promo_streak_config_eligible_products_set",
-          "value": "cardinality(\"promo_streak_config\".\"eligible_products\") > 0"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.promo_streak_daily_wager": {

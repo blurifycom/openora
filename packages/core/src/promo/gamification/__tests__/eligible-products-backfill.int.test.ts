@@ -53,14 +53,12 @@ beforeEach(async () => {
 });
 
 async function asBeforeTheUpgrade() {
-  await db.drizzle.db.execute(sql`ALTER TABLE "promo_rank_config"
-    DROP CONSTRAINT "promo_rank_config_eligible_products_set",
-    DROP CONSTRAINT "promo_rank_config_rakeback_eligible_products_set",
-    DROP CONSTRAINT "promo_rank_config_rank_challenge_eligible_products_set",
-    ALTER COLUMN "eligible_products" SET DEFAULT '{}'`);
-  await db.drizzle.db.execute(sql`ALTER TABLE "promo_streak_config"
-    DROP CONSTRAINT "promo_streak_config_eligible_products_set",
-    ALTER COLUMN "eligible_products" SET DEFAULT '{}'`);
+  await db.drizzle.db.execute(
+    sql`ALTER TABLE "promo_rank_config" ALTER COLUMN "eligible_products" SET DEFAULT '{}'`,
+  );
+  await db.drizzle.db.execute(
+    sql`ALTER TABLE "promo_streak_config" ALTER COLUMN "eligible_products" SET DEFAULT '{}'`,
+  );
 }
 
 async function upgrade() {
@@ -101,6 +99,18 @@ async function playerOnTier() {
   return userId;
 }
 
+const settleSportsbookBet = (userId: string) =>
+  db.drizzle.db.transaction((tx) =>
+    rakeback.recordSettledWager(tx, {
+      userId,
+      currency: 'USDT',
+      realAmount: '100',
+      context: { provider: 'sportsbook', product: 'sportsbook' },
+      round: { providerName: 'sportsbook:provider', externalRoundId: randomUUID() },
+      qualifiedAt: new Date(),
+    }),
+  );
+
 describe('product lists on upgrade', () => {
   it('gives every empty list all products, so a sportsbook bet still earns rakeback', async () => {
     await asBeforeTheUpgrade();
@@ -113,16 +123,7 @@ describe('product lists on upgrade', () => {
     const userId = await playerOnTier();
 
     await upgrade();
-    await db.drizzle.db.transaction((tx) =>
-      rakeback.recordSettledWager(tx, {
-        userId,
-        currency: 'USDT',
-        realAmount: '100',
-        context: { provider: 'sportsbook', product: 'sportsbook' },
-        round: { providerName: 'sportsbook:provider', externalRoundId: randomUUID() },
-        qualifiedAt: new Date(),
-      }),
-    );
+    await settleSportsbookBet(userId);
 
     const [rank] = await db.drizzle.db.select().from(promoRankConfig);
     const [streak] = await db.drizzle.db.select().from(promoStreakConfig);
@@ -156,32 +157,18 @@ describe('product lists on upgrade', () => {
     expect(streak?.eligibleProducts).toEqual(['live-casino']);
   });
 
-  it('refuses an empty list once upgraded', async () => {
-    const violation = (constraint: string) => ({
-      cause: expect.objectContaining({ code: '23514', constraint }),
-    });
-
-    await expect(
-      saveRankConfig({
-        eligibleProducts: [],
-        rakebackEligibleProducts: ['casino'],
-        rankChallengeEligibleProducts: ['casino'],
-      }),
-    ).rejects.toMatchObject(violation('promo_rank_config_eligible_products_set'));
-    await expect(saveStreakConfig([])).rejects.toMatchObject(
-      violation('promo_streak_config_eligible_products_set'),
-    );
-
+  it('still counts every product on a list the previous release saves empty after the upgrade', async () => {
+    await asBeforeTheUpgrade();
+    await upgrade();
     await saveRankConfig({
-      eligibleProducts: ['casino'],
-      rakebackEligibleProducts: ['casino'],
-      rankChallengeEligibleProducts: ['casino'],
+      eligibleProducts: [],
+      rakebackEligibleProducts: [],
+      rankChallengeEligibleProducts: [],
     });
-    await expect(
-      db.drizzle.db.update(promoRankConfig).set({ rakebackEligibleProducts: [] }),
-    ).rejects.toMatchObject(violation('promo_rank_config_rakeback_eligible_products_set'));
-    await expect(
-      db.drizzle.db.update(promoRankConfig).set({ rankChallengeEligibleProducts: [] }),
-    ).rejects.toMatchObject(violation('promo_rank_config_rank_challenge_eligible_products_set'));
+    const userId = await playerOnTier();
+
+    await settleSportsbookBet(userId);
+
+    expect(credit).toHaveBeenCalledTimes(1);
   });
 });

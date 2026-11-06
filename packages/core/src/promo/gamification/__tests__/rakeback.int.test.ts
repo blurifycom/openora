@@ -289,6 +289,16 @@ describe('which products earn rakeback', () => {
 
     expect(credit).not.toHaveBeenCalled();
   });
+
+  it('counts every product the rank counts when the rakeback list is empty', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    await db.drizzle.db.update(promoRankConfig).set({ rakebackEligibleProducts: [] });
+
+    await settledBet(rakeback, userId, 'bet-1');
+
+    expect(credit).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('rakeback on the house edge', () => {
