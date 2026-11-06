@@ -21,7 +21,7 @@ describe('sportsbook.turnover_exposure input', () => {
 });
 
 describe('betting agent surface registration', () => {
-  it('registers sportsbook.turnover_exposure within the kernel contract rules', async () => {
+  it('registers its read tools within the kernel contract rules', async () => {
     const registry = new ModuleRegistryImpl<CoreTokenCatalog>(new Container());
     registry.setOwner('betting');
 
@@ -29,6 +29,7 @@ describe('betting agent surface registration', () => {
 
     expect(registry.mcp.getTools().map((tool) => tool.contract.id)).toEqual([
       'sportsbook.turnover_exposure',
+      'sportsbook.bets_find',
     ]);
   });
 });
