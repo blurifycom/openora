@@ -196,7 +196,7 @@ describe('rg.flags_queue through the MCP kernel (real PG)', () => {
 });
 
 describe('kyc.queue through the MCP kernel (real PG)', () => {
-  it("counts each player's latest verification per tier and lists the oldest pending ones", async () => {
+  it("counts each player's latest verification per tier and lists the oldest waiting ones", async () => {
     const kernel = bootKernel();
     const [superseded, waiting, resubmitting] = [
       await seedPlayer(),
@@ -208,7 +208,12 @@ describe('kyc.queue through the MCP kernel (real PG)', () => {
     await seedVerification(superseded.userId, 'basic', 'approved', hoursAgo(50));
     const advanced = await seedVerification(waiting.userId, 'advanced', 'pending', hoursAgo(20));
     const basic = await seedVerification(waiting.userId, 'basic', 'pending', hoursAgo(10));
-    await seedVerification(resubmitting.userId, 'basic', 'resubmission_requested', hoursAgo(5));
+    const resubmission = await seedVerification(
+      resubmitting.userId,
+      'basic',
+      'resubmission_requested',
+      hoursAgo(5),
+    );
 
     const result = await kernel.invokeTool('kyc.queue', {}, runContext());
 
@@ -234,19 +239,86 @@ describe('kyc.queue through the MCP kernel (real PG)', () => {
             waitHours: expect.closeTo(20, 0),
           },
           expect.objectContaining({ verificationId: basic.id, tier: 'basic' }),
+          {
+            verificationId: resubmission.id,
+            playerId: resubmitting.id,
+            tier: 'basic',
+            status: 'resubmission_requested',
+            triggeredBy: 'submission',
+            documentTypes: ['passport'],
+            submittedAt: resubmission.submittedAt.toISOString(),
+            waitHours: expect.closeTo(5, 0),
+          },
         ],
       },
     });
-    expect(JSON.stringify(result)).not.toContain(DECISION_REASON);
+    const served = JSON.stringify(result);
+    expect(served).not.toContain(DECISION_REASON);
+    expect(served).not.toContain(resubmitting.userId);
   });
 
-  it('narrows the oldest pending to one tier', async () => {
+  it('names the players waiting to resubmit when status asks for them', async () => {
     const kernel = bootKernel();
-    const row = await seedPlayer();
+    const [pending, resubmitting, superseded] = [
+      await seedPlayer(),
+      await seedPlayer(),
+      await seedPlayer(),
+    ];
+    await seedVerification(pending.userId, 'basic', 'pending', hoursAgo(30));
+    const advanced = await seedVerification(
+      resubmitting.userId,
+      'advanced',
+      'resubmission_requested',
+      hoursAgo(20),
+    );
+    const basic = await seedVerification(
+      resubmitting.userId,
+      'basic',
+      'resubmission_requested',
+      hoursAgo(10),
+    );
+    // A request the player answered with a fresh submission waits for nothing.
+    await seedVerification(superseded.userId, 'basic', 'resubmission_requested', hoursAgo(40));
+    await seedVerification(superseded.userId, 'basic', 'pending', hoursAgo(1));
+
+    const result = await kernel.invokeTool(
+      'kyc.queue',
+      { status: 'resubmission_requested' },
+      runContext(),
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      output: {
+        pendingCount: 2,
+        resubmissionRequestedCount: 2,
+        oldest: [
+          {
+            verificationId: advanced.id,
+            playerId: resubmitting.id,
+            status: 'resubmission_requested',
+          },
+          { verificationId: basic.id, playerId: resubmitting.id, status: 'resubmission_requested' },
+        ],
+      },
+    });
+    expect(
+      await kernel.invokeTool('kyc.queue', { status: 'approved' }, runContext()),
+    ).toMatchObject({ ok: false, error: 'invalid_input' });
+  });
+
+  it('narrows the oldest waiting to one tier and status', async () => {
+    const kernel = bootKernel();
+    const [row, other] = [await seedPlayer(), await seedPlayer()];
     await seedVerification(row.userId, 'advanced', 'pending', hoursAgo(20));
+    await seedVerification(other.userId, 'basic', 'resubmission_requested', hoursAgo(30));
     const basic = await seedVerification(row.userId, 'basic', 'pending', hoursAgo(10));
 
-    const result = await kernel.invokeTool('kyc.queue', { tier: 'basic', limit: 1 }, runContext());
+    const result = await kernel.invokeTool(
+      'kyc.queue',
+      { tier: 'basic', status: 'pending', limit: 1 },
+      runContext(),
+    );
 
     expect(result).toMatchObject({ ok: true, output: { oldest: [{ verificationId: basic.id }] } });
     expect(result).toMatchObject({ ok: true, output: { pendingCount: 2 } });
