@@ -2,10 +2,17 @@ import * as z from 'zod';
 import {
   BONUS_FORFEIT_REASONS,
   BONUS_GRANT_SOURCES,
+  BONUS_GRANT_STATUSES,
   BonusForfeitReasonSchema,
   BonusGrantSourceSchema,
+  BonusGrantStatusSchema,
   CurrencyTickerSchema,
+  FIND_TOOL_MAX_LIMIT,
+  FindToolLimitSchema,
   MoneyAmountSchema,
+  TimestampSchema,
+  UuidSchema,
+  checkDayBounds,
   checkDayRange,
   defineMcpTool,
   resolveDayRange,
@@ -99,5 +106,83 @@ export const grantsSummaryTool = defineMcpTool({
   inputSchema: GrantsSummaryInputSchema,
   outputSchema: GrantsSummaryOutputSchema,
   redact: { allow: ['dateFrom', 'dateTo', 'currencies', 'truncated'] },
+  errors: [],
+});
+
+/** How far ahead bonus.grants_find's expiringWithinDays may look. */
+export const GRANTS_FIND_MAX_EXPIRING_DAYS = 90;
+
+export const GrantsFindInputSchema = z
+  .object({
+    status: z.array(BonusGrantStatusSchema).max(BONUS_GRANT_STATUSES.length).optional(),
+    source: z.array(BonusGrantSourceSchema).max(BONUS_GRANT_SOURCES.length).optional(),
+    playerId: UuidSchema.optional(),
+    currency: CurrencyTickerSchema.max(10).optional(),
+    activatedFrom: z.iso.date().optional(),
+    activatedTo: z.iso.date().optional(),
+    expiringWithinDays: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(GRANTS_FIND_MAX_EXPIRING_DAYS)
+      .optional(),
+    limit: FindToolLimitSchema,
+  })
+  .superRefine((input, ctx) =>
+    checkDayBounds(
+      input.activatedFrom,
+      input.activatedTo,
+      { from: 'activatedFrom', to: 'activatedTo' },
+      ctx,
+    ),
+  );
+export type GrantsFindInput = z.infer<typeof GrantsFindInputSchema>;
+
+export const GrantsFindOutputSchema = z.object({
+  total: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  grants: z
+    .array(
+      z.object({
+        grantId: UuidSchema,
+        playerId: UuidSchema.nullable(),
+        status: BonusGrantStatusSchema,
+        source: BonusGrantSourceSchema,
+        currency: CurrencyTickerSchema,
+        grantedAmount: MoneyAmountSchema,
+        bonusBalance: MoneyAmountSchema,
+        wageringRequired: MoneyAmountSchema,
+        wageringProgress: MoneyAmountSchema,
+        activatedAt: TimestampSchema.nullable(),
+        expiresAt: TimestampSchema,
+        closedAt: TimestampSchema.nullable(),
+        forfeitReason: BonusForfeitReasonSchema.nullable(),
+      }),
+    )
+    .max(FIND_TOOL_MAX_LIMIT),
+});
+export type GrantsFind = z.infer<typeof GrantsFindOutputSchema>;
+
+export const grantsFindTool = defineMcpTool({
+  id: 'bonus.grants_find',
+  title: 'Find bonus grants',
+  description:
+    'Lists the bonus grants matching every filter given: status (any of pending - claimed, not ' +
+    'funded -, active, completed - wagering met and converted -, expired, forfeited, ' +
+    'cancelled), source (any of deposit, manual, streak, rank, race, gift, rain, cashback, ' +
+    'donation), playerId, currency, activatedFrom/activatedTo (whole UTC days the grant was ' +
+    'funded, either end optional) and expiringWithinDays (1 to 90: only the pending and active ' +
+    'grants that expire within that many days from now). Each carries its grantId and playerId, ' +
+    'status, source, currency, the bonus granted, the bonus balance left, the wagering required ' +
+    'and done so far, when it was funded, expires and closed, and why it was forfeited. Newest ' +
+    'first, or soonest to expire first with expiringWithinDays. Lists at most limit grants (1 ' +
+    'to 50, default 20); total counts every match and truncated is true when more matched. ' +
+    'Amounts are decimal strings in the grant currency. No admin note is returned.',
+  class: 'read',
+  schemaVersion: 1,
+  iam: { resource: 'bonus', action: 'view' },
+  inputSchema: GrantsFindInputSchema,
+  outputSchema: GrantsFindOutputSchema,
+  redact: { allow: ['total', 'truncated', 'grants'] },
   errors: [],
 });

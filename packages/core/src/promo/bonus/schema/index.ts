@@ -263,6 +263,8 @@ export const promoGrant = pgTable(
     index('promo_grant_closed_at_idx')
       .on(t.closedAt)
       .where(sql`${t.closedAt} is not null`),
+    // The operator-wide grant list, newest first whoever holds them.
+    index('promo_grant_created_at_idx').on(t.createdAt, t.id),
     // Money invariants the engine must never be able to break, held where no caller can route
     // around them: a bonus balance cannot go negative and progress cannot pass its requirement.
     check('promo_grant_bonus_balance_non_negative', sql`${t.bonusBalance} >= 0`),
