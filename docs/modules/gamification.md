@@ -130,6 +130,35 @@ ends when the next period closes and the stuck one is left behind. A retry re-co
 of the moment, so a player already paid no longer matches their grant; that conflict, and a grant
 the bonus engine refuses outright, count as settled and do not hold the watermark.
 
+## What a periodic bonus is worth
+
+`promo.rankPeriodic.basis` in platform config decides it, and defaults to `flat`.
+
+- **`flat`** pays the tier's `dailyBonus`, `weeklyBonus` or `monthlyBonus` as is.
+- **`margin`** pays the tier's `dailyBonusPercent`, `weeklyBonusPercent` or `monthlyBonusPercent`
+  of the house edge the player gave up in the period: the own-money stake times `1 - rtp`, summed
+  on the period counter as the bets happen, priced by the shared `houseEdge` rakeback uses. The flat amount
+  becomes a cap, and a null amount leaves the bonus uncapped. A tier with no percent for a kind
+  pays nothing of that kind. A bet whose rtp is missing, zero or malformed adds nothing.
+
+A tier's `rakebackPercent` and its three bonus percents may total at most 100, under either basis,
+since one bet can fund all four. On the `margin` rakeback basis a streak boost is trimmed to what
+that total leaves, so rakeback, the boost and the `margin` bonuses pay at most the bet's whole
+edge, and a tier already at 100 gets nothing from a boost. On the `stake` basis rakeback is a share
+of turnover and can exceed the edge.
+
+Under `margin` a player with no counter for the period is never paid, whatever the activity
+setting, and the minimum is still measured on the stake wagered, not on the margin. A rollback
+removes a proportional share of the round's recorded margin under a row lock, bounded by its
+remaining own-money stake. The round retains its converted contribution, so differing RTPs,
+changed rates, and repeated callbacks cannot remove another round's margin. Partial reversals
+use the round's blended margin. Open period counters are clamped at zero; lifetime wagered stays
+monotonic. A rollback after its period closes still reduces the new period. The round's row is
+written under either basis and for ineligible products too. The same daily job deletes it once it
+was created more than 35 days ago, measured from the clock rather than a watermark, because a
+rollback only reduces the period open when it lands. A rollback of a pruned round takes no margin
+back.
+
 ## What a reward is paid in
 
 A ladder can be priced in a unit the wallet cannot hold - a fiat ticker on a crypto-only operator
