@@ -66,10 +66,7 @@ beforeEach(async () => {
 
 async function addProductLists() {
   await db.drizzle.db.execute(sql`ALTER TABLE "promo_rank_config"
-    DROP COLUMN "rakeback_eligible_products", DROP COLUMN "rank_challenge_eligible_products",
-    DROP CONSTRAINT "promo_rank_config_eligible_products_set"`);
-  await db.drizzle.db.execute(sql`ALTER TABLE "promo_streak_config"
-    DROP CONSTRAINT "promo_streak_config_eligible_products_set"`);
+    DROP COLUMN "rakeback_eligible_products", DROP COLUMN "rank_challenge_eligible_products"`);
   for (const statement of sqlOf(ADDED_IN)) {
     await db.drizzle.db.execute(sql.raw(statement));
   }
