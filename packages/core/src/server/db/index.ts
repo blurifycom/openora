@@ -21,6 +21,7 @@ export {
   moneySubtract,
   moneyFloorToScale,
   moneyCeilToScale,
+  houseEdge,
   mapConcurrent,
   sumInPivot,
 } from './query-helpers.js';

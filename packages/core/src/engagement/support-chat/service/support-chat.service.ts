@@ -9,7 +9,6 @@ import {
 } from '@openora/core/server';
 import {
   SupportChatCustomerTokenSchema,
-  SupportChatProviderError,
   normalizeKycStatus,
   type AuditWritePort,
   type ClientMeta,
@@ -26,6 +25,7 @@ import { user, type User } from '@openora/core/pam/schema/identity';
 import { player, type Player } from '@openora/core/pam/schema/profile';
 import { promoPlayerRank, promoRankTier } from '@openora/core/promo/schema/gamification';
 import { supportChatCustomer, type SupportChatCustomer } from '../schema/index.js';
+import { reasonOf, type ProviderFailureReason } from './provider-reason.service.js';
 
 const logger = createLogger('support-chat');
 
@@ -82,13 +82,12 @@ export function toSupportCustomerContext(
   };
 }
 
-// An adapter may throw anything, such as an HTTP client error holding the vendor API key or the
-// player's data. Only its class name survives, so nothing of it reaches a log, the error reporter
-// or the job queue.
-const asProviderError = (err: unknown): SupportChatProviderError =>
-  err instanceof SupportChatProviderError
-    ? err
-    : new SupportChatProviderError(`adapter threw ${err instanceof Error ? err.name : typeof err}`);
+// What the job queue and the error reporter see of a failed vendor write: the listed code only,
+// never the adapter's error or its `cause`.
+export const SupportChatSyncFailedError = createDomainError<[reason: ProviderFailureReason]>(
+  'SupportChatSyncFailedError',
+  (reason) => `support-chat provider failed: ${reason}`,
+);
 
 /** Extra writes a sync makes when the context moved under it, before it gives up to the job's retry. */
 export const MAX_EXTRA_SYNC_ROUNDS = 2;
@@ -199,7 +198,7 @@ export class SupportChatService {
         try {
           await this.deps.provider.syncCustomer(linked.customerId, context);
         } catch (err) {
-          throw asProviderError(err);
+          throw new SupportChatSyncFailedError(reasonOf(err));
         }
       },
     );
@@ -317,7 +316,12 @@ export class SupportChatService {
     playerId: Player['id'],
     customerId?: SupportChatCustomer['providerCustomerId'],
   ): Promise<SupportChatCustomerToken> {
-    const refuse = (reason: string) => {
+    const refuse = (
+      reason:
+        | ProviderFailureReason
+        | 'malformed token answer'
+        | 'token answered for another customer',
+    ) => {
       logger.warn({ playerId, reason }, 'support-chat customer token not issued');
       return new SupportChatUnavailableError();
     };
@@ -325,9 +329,15 @@ export class SupportChatService {
     try {
       answer = await this.deps.provider.issueCustomerToken(customerId ? { customerId } : {});
     } catch (err) {
-      throw refuse(asProviderError(err).reason);
+      throw refuse(reasonOf(err));
     }
-    const parsed = SupportChatCustomerTokenSchema.safeParse(answer);
+    // safeParse rethrows what a getter on the answer throws, which is the adapter's text too.
+    let parsed: ReturnType<typeof SupportChatCustomerTokenSchema.safeParse>;
+    try {
+      parsed = SupportChatCustomerTokenSchema.safeParse(answer);
+    } catch {
+      throw refuse('malformed token answer');
+    }
     if (!parsed.success) {
       throw refuse('malformed token answer');
     }

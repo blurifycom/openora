@@ -68,6 +68,11 @@ export const AUDIT_COVERAGE_GAPS = {
     reason:
       'an invitation to claim, no money moves; the claim is audited by StreakPayoutService (promo.streak.milestone.claimed)',
   },
+  'promo.rakeback.claimable': {
+    kind: 'exempt',
+    reason:
+      'an invitation to claim, no money moves; the payout is audited by RakebackClaimService (promo.rakeback.claimed / promo.rakeback.auto_paid)',
+  },
   'promo.rank.changed': {
     kind: 'atSource',
     writer: 'RankService via recordInTransaction',

@@ -35,12 +35,16 @@ strict, so a field reaches the vendor only when it is added to the contract on p
   as someone else.
 - **Answer the token in the port's shape.** Core validates it; a missing access token, a
   non-positive lifetime or anything else malformed answers the player as unavailable.
-- **Throw the port's provider error on a refusal, an unreachable vendor or an unexpected
-  answer,** with a short reason. The reason goes to the log only; the player gets a fixed
-  "unavailable" refusal. Never put a token, a request body or an unmasked email in it, and do
-  not attach a raw HTTP error as its `cause`: it can carry headers and bodies. Any other error
-  that escapes the adapter is handled the same way, but core keeps only its class name as the
-  reason, so throwing the provider error is what leaves a useful reason in the log.
+- **Throw the port's provider error with a listed reason code** on a refusal, an unreachable
+  vendor or an unexpected answer. The codes are the six in `SUPPORT_HISTORY_FAILURE_REASONS`
+  (`unauthorized`, `rate_limited`, `timeout`, `unavailable`, `not_found`, `bad_response`), as
+  [Support history](#support-history) describes them, never free text. The code goes to the log,
+  and for a failed sync to the job queue and the error reporter, and nowhere else; the player
+  gets a fixed "unavailable" refusal. A JavaScript adapter can still pass any text; core logs it
+  as `unlisted reason`. Any other error that escapes the adapter, or a provider error whose
+  `reason` throws when read, is logged as `unexpected adapter error`, nothing of it kept, not
+  even its name. The provider error may carry the original error as `cause`; core never reads,
+  logs, reports or rethrows it.
 - **Make the context sync idempotent.** The same context may be written more than once, and two
   syncs for one player may run at once. Core re-reads the context after each write and writes
   again when it moved, so the last write converges on the database's latest state; the adapter
@@ -114,13 +118,15 @@ Core works out which identities belong to the player and hands them to the reade
   registered by another player, so a ticket counts only when it was created inside its email's
   window: the reader must filter by creation date, never return every ticket an address ever
   opened.
-- **The email trail is trusted from its end back to its first break.** The audit rows are written
-  shortly after each change, outside the change's transaction, so one can be lost, duplicated, land
-  out of order or carry a skewed time. Each row carries the time stamped right after the change, so
-  a slow write does not move a window's bounds; a row written before that field existed is timed by
-  when it was written. A redelivered event writes its row again: a row that repeats any earlier one,
-  change time included, counts once, but a repeated row without a change time cannot be told from a
-  real repeat and breaks the trail. Core walks back from the current email: the last change must
+- **The email trail is trusted from its end back to its first break.** An email change writes its
+  audit row in the same transaction as the change, so a change can no longer be saved without its
+  row. Rows written before that were appended shortly after each change, outside its transaction,
+  so one of those can be lost, duplicated, land out of order or carry a skewed time. Each row
+  carries the time stamped right after the change, so a slow write does not move a window's bounds;
+  a row written before that field existed is timed by when it was written. A redelivered event
+  written before that change appends its row again: a row that repeats any earlier one, change time
+  included, counts once, but a repeated row without a change time cannot be told from a real repeat
+  and breaks the trail. Core walks back from the current email: the last change must
   name the current email as its new one, each change must name as its new email the one the next
   change replaced, and each change's time must be later than every earlier change and registration,
   and no more than 5 seconds later than its own audit row was written (a change always comes before
@@ -133,28 +139,31 @@ Core works out which identities belong to the player and hands them to the reade
   clock: every later change then reads as falling back, and the section stays unavailable until real
   time passes that stamp, which with realistic clock skew takes seconds. Core fails closed rather
   than trust it.
-- **Another account's changes bound the oldest window.** Nothing records the email an account
-  registered with, so a lost first change would leave the next email taken as held from
-  registration, over the time another account held it. When the trail is intact and its oldest
+- **The email registered with anchors the oldest window.** Each account keeps the email it was
+  created with, set once at registration. Accounts created before that was recorded have none.
+  When the walk back ends without a break on a different email, compared case-insensitively, a
+  first change was lost: the trail counts as broken and has no registration window.
+- **Another account's changes bound the oldest window.** On every account, recorded registration
+  email or not, a lost first change would otherwise leave the next email taken as held from
+  registration, over the time another account held it; on accounts with a recorded registration
+  email this check backs up the one above. When the trail is intact and its oldest
   window starts at registration, core looks for another account's email change naming that
   address, compared case-insensitively, after registration and before the window closes. The
   latest one decides: another account leaving the address opens the window then, and another
   account taking it drops the window, since nothing places when that account let it go. Either
   way the trail counts as broken: the tickets section is not complete, the warning goes to the
   log, and when no window is left the section is unavailable.
-- **What the trail cannot notice.** A lost first change stays unseen only when the other account's
+- **What the trail cannot notice.** The lost rows below can only be rows written before email
+  changes committed with their audit row, which is to say from before that deploy. On an account
+  without a recorded registration email, a lost first change stays unseen when the other account's
   change of that address was lost too, or the address was freed another way, such as the account
-  being deleted. That account's audit row is written best-effort after its change, so while it is
-  still in flight, and for the 60-second cache after a read, the window can still start at
-  registration. A lost run of changes returning to the address it left (A to B recorded, B to C and
-  C to B lost, B to D recorded) also leaves a trail that looks consistent, so B's window spans the
-  gap. A change time later than the real change by no more than its audit write's own delay plus the
-  5-second margin also goes unseen: a fast clock with a delayed or redelivered write, or a legacy
-  row timed by its write. It widens the earlier email's window by that much. A clock running behind
-  goes unseen for as long as each time it stamps is still later than every earlier one, shifting the
-  bounds by the lag. The lost rows follow from the email-change event being emitted best-effort
-  rather than through the outbox; moving that emit to the outbox is the fix, and is not part of this
-  port.
+  being deleted. A lost run of changes
+  returning to the address it left (A to B recorded, B to C and C to B lost, B to D recorded) also
+  leaves a trail that looks consistent, so B's window spans the gap. A change time later than the
+  real change by no more than its audit write's own delay plus the 5-second margin also goes
+  unseen: a fast clock with a delayed or redelivered write, or a legacy row timed by its write. It
+  widens the earlier email's window by that much. A clock running behind goes unseen for as long as
+  each time it stamps is still later than every earlier one, shifting the bounds by the lag.
 - **Chats** are matched by the vendor customer the player is linked to. A player who never
   opened the chat has no link, and the reader is not asked.
 
@@ -172,8 +181,8 @@ What a reader must guarantee:
   URL starting `https://`: an http, `javascript:` or `data:` link, or a slash-less `https:` form
   a browser would resolve against the back office's own origin, makes the section unavailable.
 - **Errors carry a listed reason code.** Throw the port's support-history provider error with one
-  of the codes in `SUPPORT_HISTORY_FAILURE_REASONS`, never free text, and do not attach a raw HTTP
-  error as its `cause`:
+  of the codes in `SUPPORT_HISTORY_FAILURE_REASONS`, never free text. It may carry the original
+  error as `cause`; core never reads, logs, reports or rethrows it.
   - `unauthorized`: the vendor refused the credentials.
   - `rate_limited`: the vendor throttled the call.
   - `timeout`: the vendor did not answer in time.
@@ -182,8 +191,8 @@ What a reader must guarantee:
   - `bad_response`: the vendor answered something unexpected.
 
   The code goes to the log only. A JavaScript adapter can still pass any text; core logs it as
-  `unlisted reason`. Any other error that escapes is logged as `unexpected adapter error`, nothing
-  of it kept, not even its name.
+  `unlisted reason`. Any other error that escapes, or a provider error whose `reason` throws when
+  read, is logged as `unexpected adapter error`, nothing of it kept, not even its name.
 
 The answer has a tickets and a chats section. Each one either carries its items, most recently
 updated first, or says it is unavailable: its read failed, or the current email could not be

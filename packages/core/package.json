@@ -799,6 +799,7 @@
     "gen:drizzle": "node scripts/generate-all.mjs"
   },
   "dependencies": {
+    "@better-auth/core": "1.6.22",
     "@hono/node-server": "2.1.5",
     "@opentelemetry/api": "1.9.1",
     "@orpc/client": "1.15.7",

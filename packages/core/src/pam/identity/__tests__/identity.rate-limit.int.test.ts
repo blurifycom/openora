@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { createCookieGetter } from 'better-auth/cookies';
 import { RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import type {
@@ -8,19 +9,21 @@ import type {
   SmsAdapter,
 } from '@openora/core/contracts';
 import { definePlatformConfig } from '@openora/core/contracts';
-import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
+import { makeAuditWriter, makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
 import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
 
 function withTemplateRenderer(
-  deps: Omit<IdentityServiceDeps, 'identityReader' | 'twoFactorDelivery'> & {
+  deps: Omit<IdentityServiceDeps, 'audit' | 'identityReader' | 'twoFactorDelivery'> & {
+    audit?: IdentityServiceDeps['audit'];
     identityReader?: IdentityReader;
     twoFactorDelivery?: IdentityServiceDeps['twoFactorDelivery'];
   },
 ) {
   return new IdentityService({
     playerProvisioning: mock<PlayerProvisioning>({ createForRegistration: vi.fn() }),
+    audit: makeAuditWriter(),
     ...deps,
     identityReader: deps.identityReader ?? makeIdentityReader(),
     twoFactorDelivery:
@@ -32,9 +35,10 @@ function withTemplateRenderer(
   });
 }
 
-const { getSessionMock, signInEmailMock } = vi.hoisted(() => ({
+const { getSessionMock, signInEmailMock, authBaseURL } = vi.hoisted(() => ({
   getSessionMock: vi.fn().mockResolvedValue(null),
   signInEmailMock: vi.fn(),
+  authBaseURL: { current: undefined as string | undefined },
 }));
 
 const rejectedOtpResponse = () =>
@@ -50,6 +54,9 @@ vi.mock('@openora/core/server', async (importOriginal) => {
   return {
     ...actual,
     createAuth: vi.fn(() => ({
+      $context: Promise.resolve({
+        createAuthCookie: createCookieGetter({ baseURL: authBaseURL.current }),
+      }),
       options: { session: {} },
       api: {
         getSession: getSessionMock,
@@ -85,6 +92,7 @@ beforeEach(async () => {
   getSessionMock.mockReset();
   getSessionMock.mockResolvedValue(null);
   signInEmailMock.mockReset();
+  authBaseURL.current = undefined;
 });
 
 describe('IdentityService - rate limiting (real Redis)', () => {
@@ -288,6 +296,27 @@ describe('IdentityService - verify2fa rate-limit key stability (ABC-208 finding 
         ),
       ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     }
+  });
+
+  it('keys on the __Secure- two_factor cookie value when better-auth runs over HTTPS', async () => {
+    authBaseURL.current = 'https://api.example.test';
+    const limiter = makeLimiter();
+    const twoFactorIdentifier = 'pending-2fa-identifier-secure';
+    for (let i = 0; i < 5; i++) {
+      await limiter.consume(`verify2fa:${twoFactorIdentifier}`, {
+        limit: 5,
+        windowMs: 5 * 60 * 1000,
+      });
+    }
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+
+    await expect(
+      svc.verifyTwoFactor(
+        { code: '123456', method: 'totp', trustDevice: false },
+        { cookie: `__Secure-better-auth.two_factor=${twoFactorIdentifier}` },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 });
 

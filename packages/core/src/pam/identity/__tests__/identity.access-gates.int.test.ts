@@ -3,7 +3,7 @@ import { RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import type { GeoCheckCommands, PlayerProvisioning, SmsAdapter } from '@openora/core/contracts';
 import { definePlatformConfig } from '@openora/core/contracts';
-import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
+import { makeAuditWriter, makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
 import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
@@ -43,6 +43,7 @@ function makeService(overrides: Partial<IdentityServiceDeps> = {}) {
   return new IdentityService({
     drizzle,
     events,
+    audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
     platformConfig: registrationConfig,
     playerProvisioning: mock<PlayerProvisioning>({

@@ -91,7 +91,8 @@ export const bonusGrantLedger: BonusGrantLedgerReader = {
     select
       ${promoGrant.id} as id,
       case ${promoGrant.source}
-        when 'gift' then 'gift' when 'rain' then 'rain' when 'cashback' then 'cashback'
+        when 'gift' then 'gift' when 'rain' then 'rain' when 'donation' then 'donation'
+        when 'cashback' then 'cashback'
         else 'bonus'
       end as type,
       ${promoGrant.grantedAmount} as amount,

@@ -69,10 +69,11 @@ function inRange(
 const total = (column: PgColumn | SQL) => sql<string>`coalesce(sum(${column}), 0)`;
 
 export class FinancialAnalyticsService {
+  private sportsbookLedgerFound = false;
+
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly cache: CacheAdapter,
-    private readonly sportsbook = false,
   ) {}
 
   async summary(query: FinancialSummaryQuery): Promise<FinancialSummary> {
@@ -107,6 +108,25 @@ export class FinancialAnalyticsService {
     const value = await compute();
     await this.cache.set(key, value, { ttlMs: ANALYTICS_CACHE_TTL_MS });
     return value;
+  }
+
+  // openora-migrate creates these tables for every operator, so only a recorded bet means the book is in use.
+  private async hasSportsbookLedger(): Promise<boolean> {
+    if (this.sportsbookLedgerFound) {
+      return true;
+    }
+    const db = this.drizzle.db;
+    const table = await db.execute<{ found: boolean }>(
+      sql`select to_regclass('sportsbook_bet') is not null as found`,
+    );
+    if (table.rows[0]?.found !== true) {
+      return false;
+    }
+    const bets = await db.execute<{ found: boolean }>(
+      sql`select exists (select 1 from ${sportsbookBet}) as found`,
+    );
+    this.sportsbookLedgerFound = bets.rows[0]?.found === true;
+    return this.sportsbookLedgerFound;
   }
 
   private async computeSummary({
@@ -201,7 +221,8 @@ export class FinancialAnalyticsService {
     const bet = sportsbookBet;
     const tx = sportsbookBetTransaction;
     const prior = alias(sportsbookBetTransaction, 'prior_settle');
-    const book = <T>(query: () => Promise<T[]>) => (this.sportsbook ? query() : []);
+    const sportsbook = await this.hasSportsbookLedger();
+    const book = <T>(query: () => Promise<T[]>) => (sportsbook ? query() : []);
     const [rounds, bookStakes, bookPayouts, bookReversals] = await Promise.all([
       db
         .select({
@@ -215,8 +236,8 @@ export class FinancialAnalyticsService {
         .where(
           and(
             eq(gameRound.status, COMPLETED_STATUS),
-            // With the book loaded its ledger is the sportsbook row, not a catalog game typed so.
-            ...(this.sportsbook ? [ne(game.gameType, 'sportsbook')] : []),
+            // With the book in use its ledger is the sportsbook row, not a catalog game typed so.
+            ...(sportsbook ? [ne(game.gameType, 'sportsbook')] : []),
             ...inRange(gameRound.startedAt, gameRound.currency, query),
           ),
         )

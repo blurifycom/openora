@@ -836,7 +836,23 @@ type TransactionHistoryRow = {
   fee: string | null;
   balance_after: string | null;
   provider_name: string | null;
+  metadata: string | null;
 };
+
+function claimIdOf(raw: string | null): Uuid | null {
+  if (raw === null) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const claimId =
+      typeof parsed === 'object' && parsed !== null && 'claimId' in parsed ? parsed.claimId : null;
+    const checked = UuidSchema.safeParse(claimId);
+    return checked.success ? checked.data : null;
+  } catch {
+    return null;
+  }
+}
 
 const TX_SORT_COLUMNS = {
   createdAt: 'created_at',
@@ -3796,8 +3812,9 @@ export class WalletService {
 
   /**
    * The player's history: their ledger rows and, when `includeGrants`, the bonus grants they
-   * received (a bonus, gift or rain credit lands on a grant, never on the ledger). Both halves
-   * are one UNION ALL, so every filter, the sort and the page apply to the whole history in SQL.
+   * received (a bonus, gift, rain or donation credit lands on a grant, never on the ledger). Both
+   * halves are one UNION ALL, so every filter, the sort and the page apply to the whole history in
+   * SQL.
    */
   async getTransactions({
     userId,
@@ -3832,7 +3849,7 @@ export class WalletService {
         ${t.referenceAmount} as reference_amount, ${t.referenceRate} as reference_rate,
         ${t.referenceRateAsOf} as reference_rate_as_of, ${t.providerRefId} as provider_ref_id,
         ${t.txHash} as tx_hash, ${t.fee} as fee, ${t.providerName} as provider_name,
-        ${t.balanceAfter} as balance_after
+        ${t.balanceAfter} as balance_after, ${t.metadata} as metadata
       from ${t}
       where ${t.walletId} in (select ${wallet.id} from ${wallet} where ${wallet.userId} = ${userId})`;
     // The port hands back a Drizzle SQL fragment typed `unknown` (contracts cannot import drizzle).
@@ -3844,7 +3861,7 @@ export class WalletService {
       ? sql`
       union all
       select g.id, g.type, g.amount, g.currency, null, g.status, 'credit', g.created_at, null,
-        null, null, null, null, null, null, null, null, null, null, null, null
+        null, null, null, null, null, null, null, null, null, null, null, null, null
       from (${grantQuery}) g`
       : sql``;
     const history = sql`(${ledgerRows} ${grantRows}) as history`;
@@ -3923,6 +3940,8 @@ export class WalletService {
               referenceRateAsOf: tx.reference_rate_as_of ? new Date(tx.reference_rate_as_of) : null,
             })
           : null,
+        // Only the claim id leaves the row: the metadata can carry a provider's raw response.
+        claimId: includeInternal && tx.type === 'cashback' ? claimIdOf(tx.metadata) : null,
       })),
       total: counted[0]?.n ?? 0,
       page,

@@ -1,5 +1,6 @@
 import {
   ADMIN_SECURITY_POLICY,
+  AUDIT_WRITER,
   ADMIN_USER_DIRECTORY,
   CACHE,
   GEO_IP_ADAPTER,
@@ -75,7 +76,7 @@ function reportUnsafeAuthSurface(message: string): void {
 function assertAuthSurfaceGuards(c: IdentityContainer): void {
   if (!c.has(GEO_CHECK_COMMANDS)) {
     reportUnsafeAuthSurface(
-      'identity mounts its sign-in, phone-login and 2FA routes but GEO_CHECK_COMMANDS is unbound, so the country gate is a silent no-op on registration and sign-in and writes no access-blocked audit row. Load the compliance module in this process, or load identity service-only (SERVICE_MANIFEST=identity:no-routes) so it serves no auth route.',
+      'identity mounts its sign-in, phone-login and 2FA routes but GEO_CHECK_COMMANDS is unbound, so the country gate is a silent no-op on registration and sign-in and writes no access-blocked audit row. Load the compliance module in this process, or load identity service-only (SERVICE_MANIFEST=audit:no-routes,identity:no-routes) so it serves no auth route.',
     );
   }
 }
@@ -148,7 +149,21 @@ function makeAdminSecurity(c: IdentityContainer) {
 
 export default {
   id: 'identity',
+  dependsOn: ['audit'],
   requiresPorts: [MAIL_DISPATCH],
+  optionalPorts: [{ port: PLAYER_PROVISIONING, without: 'registration is refused' }],
+  controlPorts: [
+    {
+      port: GEO_CHECK_COMMANDS,
+      without: 'registration and sign-in skip the country check',
+      boundBy: 'compliance',
+    },
+    {
+      port: MCP_TOKEN_REVOCATION,
+      without: "ending an admin's sessions leaves their MCP tokens valid",
+      boundBy: 'iam',
+    },
+  ],
   register(ctx) {
     // Built once and shared by ADMIN_SECURITY_POLICY and the router below - two
     // separate `makeAdminSecurity(c)` calls would construct two independent
@@ -278,6 +293,7 @@ export default {
         new IdentityService({
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
+          audit: c.get(AUDIT_WRITER),
           identityReader: c.get(IDENTITY_READER),
           mailDispatch: c.get(MAIL_DISPATCH),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,

@@ -26,6 +26,8 @@ import {
   type BonusGrantCommands,
   type BonusWageringCommands,
   type IdentityReader,
+  type WagerContext,
+  isWagerRtp,
 } from '@openora/core/contracts';
 import {
   createDomainError,
@@ -170,7 +172,10 @@ export class WalletCommandsService implements WalletCommands {
     direction: ManualAdjustmentDirection,
     providerRef?: WalletProviderRef,
     balanceAfter?: string,
-    { correctionRequestedAmount }: { correctionRequestedAmount?: string } = {},
+    {
+      correctionRequestedAmount,
+      wager,
+    }: { correctionRequestedAmount?: string; wager?: WagerContext } = {},
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const insertQuery = txn.insert(walletTransaction).values({
       walletId: row.id,
@@ -185,6 +190,8 @@ export class WalletCommandsService implements WalletCommands {
       providerRefId: providerRef?.providerRefId,
       externalRoundId: providerRef?.externalRoundId,
       correctionRequestedAmount,
+      wagerProduct: wager?.product,
+      wagerRtp: wager?.rtp !== undefined && isWagerRtp(wager.rtp) ? wager.rtp : undefined,
       metadata:
         providerRef?.responseSnapshot !== undefined
           ? JSON.stringify(providerRef.responseSnapshot)
@@ -329,6 +336,7 @@ export class WalletCommandsService implements WalletCommands {
       'debit',
       providerRef,
       debitedBalance,
+      { wager: type === 'bet' ? context : undefined },
     );
     if (type === 'bet') {
       await this.auditSignificantAmount(txn, 'wallet.large_bet.recorded', userId, ledgerRow, {
@@ -429,9 +437,9 @@ export class WalletCommandsService implements WalletCommands {
       throw new WalletCommandAmountError('credit', amount);
     }
 
-    // A gift or rain only writes a bonus grant, so it leaves the wallet row unlocked: a rain debits its
-    // sender and credits many recipients in one transaction.
-    const bonusSource = type === 'gift' || type === 'rain';
+    // A gift, rain or donation only writes a bonus grant, so it leaves the wallet row unlocked: a
+    // rain debits its sender and credits many recipients in one transaction.
+    const bonusSource = type === 'gift' || type === 'rain' || type === 'donation';
     const row = allowNewWallet
       ? await this.resolveOrOpenWallet(txn, userId, currency, !bonusSource)
       : await this.selectWallet(txn, userId, !bonusSource);

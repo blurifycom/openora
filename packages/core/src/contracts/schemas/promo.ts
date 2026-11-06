@@ -16,6 +16,7 @@ export const BONUS_GRANT_SOURCES = [
   // over a period rather than off a deposit - system-actor like 'streak'/'rank'/'race', not
   // 'manual' (no admin issued it) and not 'deposit' (no deposit earned it).
   'cashback',
+  'donation',
 ] as const;
 
 /**

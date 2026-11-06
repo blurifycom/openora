@@ -322,10 +322,10 @@ export const notificationEventMap: NotificationMapEntry[] = [
         data: { grantId: p.grantId },
       }),
     {
-      // A gift or rain comes from another player and is already announced where it happened;
-      // a rain fans out to a whole room, so a mail per recipient would be noise.
+      // A gift, rain or donation comes from another player and is already announced where it
+      // happened; a rain fans out to a whole room, so a mail per recipient would be noise.
       email: (p) =>
-        p.source === 'gift' || p.source === 'rain'
+        p.source === 'gift' || p.source === 'rain' || p.source === 'donation'
           ? null
           : {
               key: 'bonusCredited',
@@ -453,6 +453,14 @@ export const notificationEventMap: NotificationMapEntry[] = [
     }),
   ),
 
+  mapEvent('promo.rakeback.claimable', (p) =>
+    notification({
+      userId: p.userId,
+      type: 'rakeback.claimable',
+      params: { amount: p.amount, currency: p.currency },
+    }),
+  ),
+
   mapEvent('chat.user.mentioned', (p) =>
     notification({
       userId: p.mentionedUserId,
@@ -553,11 +561,18 @@ export function buildRgLimitAdminUpdatedNotification(
   });
 }
 
+const logger = createLogger('notifications');
+
 export default {
   id: 'notifications',
+  controlPorts: [
+    {
+      port: GEO_CHECK_COMMANDS,
+      without: 'welcome mails offer promotions without the country check',
+      boundBy: 'compliance',
+    },
+  ],
   register(ctx) {
-    const logger = createLogger('notifications');
-
     // Subscriptions are wired before router factories run (boot order), so these refs are
     // null at registration but set from the router factory before any real event arrives.
     let svcRef: NotificationsService | null = null;
