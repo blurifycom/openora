@@ -1312,7 +1312,7 @@ describe('wager tracking', () => {
       admin.put('/backoffice/promo/streaks/config', {
         currency: 'USD',
         dailyMinWager: '1000',
-        eligibleProducts: [],
+        eligibleProducts: ['casino', 'live-casino', 'sportsbook', 'pvp'],
         milestones: [],
         resetAfterDay: 30,
       }),

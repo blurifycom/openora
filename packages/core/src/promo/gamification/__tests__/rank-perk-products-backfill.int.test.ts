@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
-import type { WalletCommands } from '@openora/core/contracts';
+import type { WagerProduct, WalletCommands } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import { promoPlayerRank, promoRankConfig, promoRankTier } from '../schema/index.js';
 import { DEFAULT_PAYOUT_ANCHORS, DEFAULT_RANK_PERK_PRODUCTS } from '../contract/index.js';
@@ -15,6 +15,7 @@ import { RakebackService } from '../service/rakeback.service.js';
 const MIGRATIONS = new URL('../drizzle/migrations/', import.meta.url);
 const ADDED_IN = '0018_aberrant_killer_shrike';
 const BACKFILLED_IN = '0019_rank_perk_products_backfill';
+const EVERY_PRODUCT = ['casino', 'live-casino', 'sportsbook', 'pvp'] satisfies WagerProduct[];
 
 const JOURNAL_TAGS = (
   JSON.parse(readFileSync(fileURLToPath(new URL('meta/_journal.json', MIGRATIONS)), 'utf8')) as {
@@ -27,16 +28,16 @@ const sqlOf = (tag: string) =>
     '--> statement-breakpoint',
   );
 
-const UPGRADE_SQL = JOURNAL_TAGS.slice(
-  JOURNAL_TAGS.indexOf(ADDED_IN),
-  JOURNAL_TAGS.indexOf(BACKFILLED_IN) + 1,
-).flatMap(sqlOf);
+const BACKFILL_SQL = [
+  BACKFILLED_IN,
+  JOURNAL_TAGS.find((tag) => tag.endsWith('_rank_streak_products_required')) ?? '',
+].flatMap(sqlOf);
 
 const LADDER = {
   currency: 'USDT',
   tiers: [{ key: 'bronze', name: 'Bronze', wagerThreshold: '0', rakebackPercent: '1' }],
   config: {
-    eligibleProducts: [],
+    eligibleProducts: EVERY_PRODUCT,
     rewards: {},
     payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
     payInPlayerCurrency: false,
@@ -63,10 +64,16 @@ beforeEach(async () => {
   await db.drizzle.db.delete(promoRankConfig);
 });
 
-async function upgradeFromBeforeProductLists() {
+async function addProductLists() {
   await db.drizzle.db.execute(sql`ALTER TABLE "promo_rank_config"
     DROP COLUMN "rakeback_eligible_products", DROP COLUMN "rank_challenge_eligible_products"`);
-  for (const statement of UPGRADE_SQL) {
+  for (const statement of sqlOf(ADDED_IN)) {
+    await db.drizzle.db.execute(sql.raw(statement));
+  }
+}
+
+async function backfill() {
+  for (const statement of BACKFILL_SQL) {
     await db.drizzle.db.execute(sql.raw(statement));
   }
 }
@@ -74,7 +81,8 @@ async function upgradeFromBeforeProductLists() {
 describe('rank perk product lists on upgrade', () => {
   it('keeps every product on a ladder configured before the lists existed', async () => {
     await seedRankLadder(db.drizzle.db, LADDER);
-    await upgradeFromBeforeProductLists();
+    await addProductLists();
+    await backfill();
     const userId = randomUUID();
     const [tier] = await db.drizzle.db
       .select({ id: promoRankTier.id })
@@ -97,32 +105,31 @@ describe('rank perk product lists on upgrade', () => {
 
     const [config] = await db.drizzle.db.select().from(promoRankConfig);
     expect(config).toMatchObject({
-      rakebackEligibleProducts: [],
-      rankChallengeEligibleProducts: [],
+      rakebackEligibleProducts: EVERY_PRODUCT,
+      rankChallengeEligibleProducts: EVERY_PRODUCT,
     });
     expect(credit).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a list the operator saved when the backfill runs after it', async () => {
-    await upgradeFromBeforeProductLists();
+    await addProductLists();
     await seedRankLadder(db.drizzle.db, LADDER);
     await db.drizzle.db
       .update(promoRankConfig)
       .set({ rakebackEligibleProducts: ['casino', 'sportsbook'] });
 
-    for (const statement of sqlOf('0019_rank_perk_products_backfill')) {
-      await db.drizzle.db.execute(sql.raw(statement));
-    }
+    await backfill();
 
     const [config] = await db.drizzle.db.select().from(promoRankConfig);
     expect(config).toMatchObject({
       rakebackEligibleProducts: ['casino', 'sportsbook'],
-      rankChallengeEligibleProducts: [],
+      rankChallengeEligibleProducts: EVERY_PRODUCT,
     });
   });
 
   it('gives a ladder configured after the upgrade the narrow default', async () => {
-    await upgradeFromBeforeProductLists();
+    await addProductLists();
+    await backfill();
     await seedRankLadder(db.drizzle.db, LADDER);
 
     const [config] = await db.drizzle.db.select().from(promoRankConfig);

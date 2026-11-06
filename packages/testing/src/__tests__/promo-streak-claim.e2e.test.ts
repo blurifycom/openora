@@ -80,7 +80,7 @@ beforeAll(async () => {
     .values({
       currency: 'USD',
       dailyMinWager: '10',
-      eligibleProducts: [],
+      eligibleProducts: ['casino', 'live-casino', 'sportsbook', 'pvp'],
       milestones: [{ day: 1, rewards: [{ kind: 'cash', amount: '5' }] }],
       resetAfterDay: 30,
     });

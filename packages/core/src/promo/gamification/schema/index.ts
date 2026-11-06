@@ -138,7 +138,7 @@ export const promoRankConfig = pgTable('promo_rank_config', {
   // Unique, so the table can only ever hold the one row.
   singletonKey: text().notNull().unique().default('global'),
   /** Products whose stakes count toward a rank. Empty counts every product. */
-  eligibleProducts: text().array().notNull().default([]),
+  eligibleProducts: text().array().notNull(),
   /** Products whose stakes earn rakeback. A stake must count toward the rank as well. Empty counts every product. */
   rakebackEligibleProducts: text()
     .array()
@@ -265,7 +265,7 @@ export const promoStreakConfig = pgTable('promo_streak_config', {
   currency: text().notNull(),
   dailyMinWager: money().notNull(),
   /** Products whose stakes count toward the streak. Empty counts every product. */
-  eligibleProducts: text().array().notNull().default([]),
+  eligibleProducts: text().array().notNull(),
   milestones: jsonb().$type<StreakMilestone[]>().notNull().default([]),
   resetAfterDay: integer().notNull().default(30),
   updatedBy: uuid(),

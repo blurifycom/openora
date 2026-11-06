@@ -132,7 +132,7 @@ beforeEach(async () => {
       },
     ],
     config: {
-      eligibleProducts: [],
+      eligibleProducts: ['casino', 'live-casino', 'sportsbook', 'pvp'],
       rewards: { levelUp: LEVEL_UP_TERMS, daily: DAILY_TERMS },
       payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
       payInPlayerCurrency: false,

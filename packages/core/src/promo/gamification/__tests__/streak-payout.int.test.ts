@@ -116,7 +116,7 @@ beforeEach(async () => {
   await db.drizzle.db.insert(promoStreakConfig).values({
     currency: 'USD',
     dailyMinWager: '1',
-    eligibleProducts: [],
+    eligibleProducts: ['casino', 'live-casino', 'sportsbook', 'pvp'],
     milestones: MILESTONES,
     resetAfterDay: 30,
   });
