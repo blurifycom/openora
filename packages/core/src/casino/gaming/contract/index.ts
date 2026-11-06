@@ -863,3 +863,4 @@ export const gamingAdminContract = {
     .route({ method: 'GET', path: '/backoffice/gaming/sort-options' })
     .output(z.array(GameSortOptionSchema)),
 };
+export * from './agent-tools.js';
