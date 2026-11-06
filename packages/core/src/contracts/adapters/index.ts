@@ -145,7 +145,7 @@ export { TAG_EVALUATION_COMMANDS } from './tag-evaluation-commands.js';
 
 export type { UserCommands } from './identity.js';
 export type { IdentityReader } from './identity-reader.js';
-export { userIdOfPlayer } from './identity-reader.js';
+export { userIdOfPlayer, userIdsOfPlayers } from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';
 
 export type {

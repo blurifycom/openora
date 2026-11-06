@@ -52,6 +52,7 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       'chat-command': RW,
       'chat-moderation': RW,
       'mcp-access': RW,
+      'agent-chat': RW,
       'mcp-token': RW,
     },
   },
