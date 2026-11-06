@@ -36,6 +36,12 @@ export type IdentityReader = {
    * needs it must fail closed when it is missing rather than treat that as "no such player".
    */
   getUserIdByPlayerId?(playerId: Player['id']): Promise<User['id'] | null>;
+  /**
+   * The player's declared ISO date of birth, or null when none is stored. Optional so an
+   * operator's own implementation keeps compiling; without it a KYC date-of-birth mismatch
+   * goes undetected.
+   */
+  getPlayerDateOfBirthByUserId?(userId: User['id'], tx?: unknown): Promise<string | null>;
 };
 
 export const IDENTITY_READER = createToken<IdentityReader>('IDENTITY_READER');

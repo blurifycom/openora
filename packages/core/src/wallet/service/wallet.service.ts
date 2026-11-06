@@ -47,6 +47,9 @@ import {
   type MailDispatchPort,
   type WithdrawalSecurity,
   type DepositHoldPolicy,
+  type DepositAdmissionPolicy,
+  type PlayEligibilityPort,
+  DepositRefusedError,
   type ExchangeRateReader,
   type AuditWritePort,
   type TagEvaluationCommands,
@@ -1074,6 +1077,10 @@ export type WalletServiceDeps = {
   mailDispatch?: MailDispatchPort;
   // Optional: bound by an operator. Absent = every attributed on-chain deposit is credited.
   depositHold?: DepositHoldPolicy;
+  // Optional: bound by an operator. Absent = every player PLAY_ELIGIBILITY admits may deposit.
+  depositAdmission?: DepositAdmissionPolicy;
+  // Optional for unit wiring only: the plugin always binds it. Absent = no account-state deposit gate.
+  playEligibility?: PlayEligibilityPort;
   // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
   grantLedger?: BonusGrantLedgerReader;
   // Optional: bound by the bonus module. Absent = there is no bonus a withdrawal could forfeit.
@@ -1106,6 +1113,8 @@ export class WalletService {
   private readonly withdrawalSecurity?: WithdrawalSecurity;
   private readonly mailDispatch?: MailDispatchPort;
   private readonly depositHold?: DepositHoldPolicy;
+  private readonly depositAdmission?: DepositAdmissionPolicy;
+  private readonly playEligibility?: PlayEligibilityPort;
 
   private readonly grantLedger?: BonusGrantLedgerReader;
   private readonly bonusLifecycle?: BonusLifecycleCommands;
@@ -1128,6 +1137,8 @@ export class WalletService {
     withdrawalSecurity,
     mailDispatch,
     depositHold,
+    depositAdmission,
+    playEligibility,
     grantLedger,
     bonusLifecycle,
   }: WalletServiceDeps) {
@@ -1148,6 +1159,8 @@ export class WalletService {
     this.withdrawalSecurity = withdrawalSecurity;
     this.mailDispatch = mailDispatch;
     this.depositHold = depositHold;
+    this.depositAdmission = depositAdmission;
+    this.playEligibility = playEligibility;
     this.grantLedger = grantLedger;
     this.bonusLifecycle = bonusLifecycle;
   }
@@ -1689,6 +1702,7 @@ export class WalletService {
     idempotencyKey?: string;
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
+    await this.assertDepositAdmitted(userId);
     await this.assertDepositable(currency, amount);
 
     // Short-circuit a replay BEFORE the PSP call - the common retry case (client
@@ -3970,11 +3984,33 @@ export class WalletService {
     }));
   }
 
+  async assertDepositAdmitted(userId: User['id']): Promise<void> {
+    const refusal = await this.playRefusal(userId);
+    if (refusal) {
+      throw new DepositRefusedError(refusal);
+    }
+    const reason = await this.depositAdmission?.refusalReason(userId);
+    if (typeof reason === 'string') {
+      throw new DepositRefusedError(reason);
+    }
+  }
+
+  private async playRefusal(userId: User['id']): Promise<string | null> {
+    if (!this.playEligibility) {
+      return null;
+    }
+    if (this.playEligibility.checkPlay) {
+      return this.playEligibility.checkPlay(userId);
+    }
+    return (await this.playEligibility.isRestricted(userId)) ? 'restricted' : null;
+  }
+
   async getOrCreateDepositAddress(
     userId: User['id'],
     currency: string,
     network?: string,
   ): Promise<DepositAddressResult> {
+    await this.assertDepositAdmitted(userId);
     await this.assertDepositable(currency, undefined, network);
 
     const existing = await this.findDepositAddress(userId, currency, network);

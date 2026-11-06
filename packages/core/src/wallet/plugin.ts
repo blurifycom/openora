@@ -23,6 +23,7 @@ import {
   TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   RG_LIMITS,
+  DEPOSIT_ADMISSION_POLICY,
   DEPOSIT_HOLD_POLICY,
   KYC_WITHDRAWAL_POLICY,
   WITHDRAWAL_SECURITY,
@@ -260,6 +261,10 @@ export default {
         withdrawalSecurity: c.has(WITHDRAWAL_SECURITY) ? c.get(WITHDRAWAL_SECURITY) : undefined,
         mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : undefined,
         depositHold: c.has(DEPOSIT_HOLD_POLICY) ? c.get(DEPOSIT_HOLD_POLICY) : undefined,
+        depositAdmission: c.has(DEPOSIT_ADMISSION_POLICY)
+          ? c.get(DEPOSIT_ADMISSION_POLICY)
+          : undefined,
+        playEligibility: c.get(PLAY_ELIGIBILITY),
         grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
         bonusLifecycle: c.has(BONUS_LIFECYCLE) ? c.get(BONUS_LIFECYCLE) : undefined,
       }));

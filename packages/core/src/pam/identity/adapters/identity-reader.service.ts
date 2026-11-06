@@ -56,6 +56,16 @@ export class IdentityReaderService implements IdentityReader {
     return row?.id ?? null;
   }
 
+  async getPlayerDateOfBirthByUserId(userId: User['id'], tx?: unknown): Promise<string | null> {
+    const db = tx === undefined ? this.drizzle.db : (tx as DrizzleTx);
+    const [row] = await db
+      .select({ dateOfBirth: player.dateOfBirth })
+      .from(player)
+      .where(eq(player.userId, userId))
+      .limit(1);
+    return row?.dateOfBirth ?? null;
+  }
+
   async getUserIdByPlayerId(playerId: Player['id']): Promise<User['id'] | null> {
     const [row] = await this.drizzle.db
       .select({ userId: player.userId })

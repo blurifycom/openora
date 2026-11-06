@@ -34,5 +34,16 @@ export const PLAY_REFUSALS = [
 ] as const;
 export type PlayRefusal = (typeof PLAY_REFUSALS)[number];
 
+/** True when the player may not wager or deposit: `checkPlay` when bound, else `isRestricted`. */
+export async function isPlayRefused(
+  port: PlayEligibilityPort,
+  userId: string,
+  tx?: unknown,
+): Promise<boolean> {
+  return port.checkPlay
+    ? (await port.checkPlay(userId, tx)) !== null
+    : port.isRestricted(userId, tx);
+}
+
 export const PLAY_ELIGIBILITY: Token<PlayEligibilityPort> =
   createToken<PlayEligibilityPort>('PLAY_ELIGIBILITY');

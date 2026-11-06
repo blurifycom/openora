@@ -63,6 +63,7 @@ import type {
   PlatformConfig,
   ClientMeta,
   RegistrationFailureReason,
+  RegistrationPolicy,
   GeoCheckCommands,
   PlayerProvisioning,
   SecurityControls,
@@ -76,6 +77,7 @@ import {
   isAllowedHttpsUrl,
   isAllowedUrlPrefix,
   makeRateLimitKey,
+  resolveMinPlayerAge,
 } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
 import { assertAccountNotBlocked, assertCountryAllowed } from './rg-guard.service.js';
@@ -977,6 +979,10 @@ export class IdentityService {
       );
     }
     return { playerId: outcome.playerId ?? null, consentStored: outcome.created };
+  }
+
+  registrationPolicy(): RegistrationPolicy {
+    return { minPlayerAge: resolveMinPlayerAge(this.platformConfig) };
   }
 
   async usernameAvailable(username: string, reqHeaders: NodeHeaders) {
