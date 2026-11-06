@@ -12,12 +12,14 @@ import type {
 import { migrate } from '../migrate.js';
 import {
   promoPlayerRank,
+  promoPlayerStreak,
   promoRakebackAccrual,
   promoRakebackClaim,
   promoRankConfig,
   promoRankLevelUp,
   promoRankPeriodWager,
   promoRankTier,
+  promoStreakConfig,
 } from '../schema/index.js';
 import { DEFAULT_PAYOUT_ANCHORS } from '../contract/index.js';
 import { seedRankLadder } from '../seed/index.js';
@@ -133,6 +135,8 @@ beforeEach(async () => {
   await db.drizzle.db.delete(promoPlayerRank);
   await db.drizzle.db.delete(promoRankTier);
   await db.drizzle.db.delete(promoRankConfig);
+  await db.drizzle.db.delete(promoPlayerStreak);
+  await db.drizzle.db.delete(promoStreakConfig);
   await seedRankLadder(db.drizzle.db, LADDER);
 });
 
@@ -152,35 +156,6 @@ describe('instant rakeback on a qualifying bet', () => {
       amount: '0.600000000000000000',
       type: 'cashback',
     });
-  });
-
-  it('adds an active streak boost on top of the tier rate', async () => {
-    const userId = randomUUID();
-    await givePlayerTier(userId, 'bronze');
-    await db.drizzle.db
-      .update(promoPlayerRank)
-      .set({ rakebackBoostPercent: '2', rakebackBoostExpiresAt: new Date(Date.now() + 86_400_000) })
-      .where(eq(promoPlayerRank.userId, userId));
-
-    await wager(userId, '100');
-
-    const args = credit.mock.calls[0]?.[1] as WalletCreditArgs;
-    // bronze 1% + boost 2% = 3% of 100
-    expect(args.amount).toBe('3.000000000000000000');
-  });
-
-  it('ignores an expired streak boost', async () => {
-    const userId = randomUUID();
-    await givePlayerTier(userId, 'bronze');
-    await db.drizzle.db
-      .update(promoPlayerRank)
-      .set({ rakebackBoostPercent: '2', rakebackBoostExpiresAt: new Date(Date.now() - 1000) })
-      .where(eq(promoPlayerRank.userId, userId));
-
-    await wager(userId, '100');
-
-    const args = credit.mock.calls[0]?.[1] as WalletCreditArgs;
-    expect(args.amount).toBe('1.000000000000000000');
   });
 
   it('pays nothing for a bet fully funded by bonus money', async () => {
@@ -297,19 +272,6 @@ describe('rakeback on the house edge', () => {
     expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '0.010000000000000000' });
   });
 
-  it('adds an active streak boost to the tier rate before applying the edge', async () => {
-    const userId = randomUUID();
-    await givePlayerTier(userId, 'gold');
-    await db.drizzle.db
-      .update(promoPlayerRank)
-      .set({ rakebackBoostPercent: '1', rakebackBoostExpiresAt: new Date(Date.now() + 86_400_000) })
-      .where(eq(promoPlayerRank.userId, userId));
-
-    await betOn(margin(), userId, '100', { rtp: '0.96' });
-
-    expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '0.240000000000000000' });
-  });
-
   it.each([
     ['missing', undefined],
     ['out of range', '1.2'],
@@ -336,6 +298,363 @@ describe('rakeback on the house edge', () => {
       expect.objectContaining({ userId, gameId: 'game-1', rtp: '0' }),
       'margin rakeback skipped: bet has no usable rtp',
     );
+  });
+});
+
+const daysAgo = (days: number) =>
+  new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+
+const STREAK_RATES = [
+  { day: 3, unrankedRatePercent: '5', rankedUpliftPercent: '10' },
+  { day: 7, unrankedRatePercent: '8', rankedUpliftPercent: '20' },
+];
+
+const enableStreak = (overrides: Partial<typeof promoStreakConfig.$inferInsert> = {}) =>
+  db.drizzle.db.insert(promoStreakConfig).values({
+    enabled: true,
+    dailyMinWager: '10',
+    eligibleProducts: ['casino', 'live-casino'],
+    rakebackMilestones: STREAK_RATES,
+    ...overrides,
+  });
+
+const givePlayerStreak = (userId: string, current: number, lastQualifyingDay: string | null) =>
+  db.drizzle.db
+    .insert(promoPlayerStreak)
+    .values({ userId, current, best: current, lastQualifyingDay });
+
+const lastCredit = () => credit.mock.calls.at(-1)?.[1] as WalletCreditArgs;
+
+describe('streak rakeback for a ranked player', () => {
+  const margin = () => serviceWith({ basis: 'margin', payout: 'instant' });
+
+  beforeEach(async () => {
+    await enableStreak();
+  });
+
+  it('multiplies the rank rakeback by the uplift: gold 5% with a 10% uplift on 100 at 96% rtp', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 3, daysAgo(0));
+
+    await betOn(margin(), userId, '100', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('0.220000000000000000');
+  });
+
+  it('pays the plain rank rakeback until the streak reaches its first rate row', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 2, daysAgo(0));
+
+    await betOn(margin(), userId, '100', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('0.200000000000000000');
+  });
+
+  it('uses the row with the highest day at or below the streak', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 50, daysAgo(0));
+
+    await betOn(margin(), userId, '100', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('0.240000000000000000');
+  });
+
+  it('applies the uplift to the stake basis too, which needs no rtp', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 7, daysAgo(0));
+
+    await betOn(serviceWith({ basis: 'stake', payout: 'instant' }), userId, '100');
+
+    expect(lastCredit().amount).toBe('6.000000000000000000');
+  });
+
+  it('turns 5 of rank rakeback with a 5% uplift into 5.25, not 10', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db.delete(promoStreakConfig);
+    await enableStreak({
+      rakebackMilestones: [{ day: 1, unrankedRatePercent: '5', rankedUpliftPercent: '5' }],
+    });
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 1, daysAgo(0));
+
+    await betOn(serviceWith({ basis: 'stake', payout: 'instant' }), userId, '100');
+
+    expect(lastCredit().amount).toBe('5.250000000000000000');
+  });
+
+  it('applies still while the player has not qualified yet today but did yesterday', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 3, daysAgo(1));
+
+    await betOn(margin(), userId, '100', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('0.220000000000000000');
+  });
+
+  it('pays no uplift on a broken streak, even before the close job has reset it', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 9, daysAgo(2));
+
+    await betOn(margin(), userId, '100', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('0.200000000000000000');
+  });
+
+  it('pays no uplift while the streak is disabled', async () => {
+    await db.drizzle.db.update(promoStreakConfig).set({ enabled: false });
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 9, daysAgo(0));
+
+    await betOn(margin(), userId, '100', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('0.200000000000000000');
+  });
+
+  it('pays no uplift on a product the streak does not count, though the rank still pays', async () => {
+    await db.drizzle.db.update(promoStreakConfig).set({ eligibleProducts: ['live-casino'] });
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 9, daysAgo(0));
+
+    await betOn(margin(), userId, '100', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('0.200000000000000000');
+  });
+
+  it('reads the rate from the config as it is when the bet settles', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 3, daysAgo(0));
+    await betOn(margin(), userId, '100', { rtp: '0.96' });
+    expect(lastCredit().amount).toBe('0.220000000000000000');
+
+    await db.drizzle.db.update(promoStreakConfig).set({
+      rakebackMilestones: [{ day: 3, unrankedRatePercent: '5', rankedUpliftPercent: '50' }],
+    });
+    await betOn(margin(), userId, '100', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('0.300000000000000000');
+    expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '0.220000000000000000' });
+  });
+
+  it('pays the rank rakeback with no uplift for a bet with a 0% uplift row', async () => {
+    await db.drizzle.db.update(promoStreakConfig).set({
+      rakebackMilestones: [{ day: 1, unrankedRatePercent: '5', rankedUpliftPercent: '0' }],
+    });
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 4, daysAgo(0));
+
+    await betOn(margin(), userId, '100', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('0.200000000000000000');
+  });
+});
+
+describe('streak rakeback for a player with no rank', () => {
+  const instant = () => serviceWith({ basis: 'stake', payout: 'instant' });
+
+  beforeEach(async () => {
+    await enableStreak();
+  });
+
+  it('pays the unranked rate on the theoretical GGR: 2,500 at 96% rtp with 5% is 5', async () => {
+    const userId = randomUUID();
+    await givePlayerStreak(userId, 3, daysAgo(0));
+
+    await betOn(instant(), userId, '2500', { rtp: '0.96' });
+
+    expect(lastCredit()).toMatchObject({
+      userId,
+      amount: '5.000000000000000000',
+      currency: 'USDT',
+      type: 'cashback',
+    });
+  });
+
+  it('pays on the house edge whatever the rakeback basis', async () => {
+    const userId = randomUUID();
+    await givePlayerStreak(userId, 3, daysAgo(0));
+
+    await betOn(serviceWith({ basis: 'margin', payout: 'instant' }), userId, '2500', {
+      rtp: '0.96',
+    });
+
+    expect(lastCredit().amount).toBe('5.000000000000000000');
+  });
+
+  it('pays nothing without a usable rtp, and warns', async () => {
+    const userId = randomUUID();
+    await givePlayerStreak(userId, 3, daysAgo(0));
+
+    const credits = await betOn(instant(), userId, '2500', {});
+
+    expect(credits).toEqual([]);
+    expect(credit).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ userId }),
+      'streak rakeback skipped: bet has no usable rtp',
+    );
+  });
+
+  it('pays nothing before the streak reaches its first rate row', async () => {
+    const userId = randomUUID();
+    await givePlayerStreak(userId, 2, daysAgo(0));
+
+    await betOn(instant(), userId, '2500', { rtp: '0.96' });
+
+    expect(credit).not.toHaveBeenCalled();
+  });
+
+  it('pays nothing for a player who has no streak yet', async () => {
+    await betOn(instant(), randomUUID(), '2500', { rtp: '0.96' });
+
+    expect(credit).not.toHaveBeenCalled();
+  });
+
+  it('pays nothing on a broken streak', async () => {
+    const userId = randomUUID();
+    await givePlayerStreak(userId, 9, daysAgo(2));
+
+    await betOn(instant(), userId, '2500', { rtp: '0.96' });
+
+    expect(credit).not.toHaveBeenCalled();
+  });
+
+  it('pays nothing while the streak is disabled, or was never configured', async () => {
+    const userId = randomUUID();
+    await givePlayerStreak(userId, 9, daysAgo(0));
+    await db.drizzle.db.update(promoStreakConfig).set({ enabled: false });
+    await betOn(instant(), userId, '2500', { rtp: '0.96' });
+    await db.drizzle.db.delete(promoStreakConfig);
+    await betOn(instant(), userId, '2500', { rtp: '0.96' });
+
+    expect(credit).not.toHaveBeenCalled();
+  });
+
+  it('pays nothing on a product the streak does not count', async () => {
+    await db.drizzle.db.update(promoStreakConfig).set({ eligibleProducts: ['live-casino'] });
+    const userId = randomUUID();
+    await givePlayerStreak(userId, 9, daysAgo(0));
+
+    await betOn(instant(), userId, '2500', { rtp: '0.96' });
+
+    expect(credit).not.toHaveBeenCalled();
+  });
+
+  it('pays nothing for the bonus-funded part of a stake', async () => {
+    const userId = randomUUID();
+    await givePlayerStreak(userId, 3, daysAgo(0));
+
+    await db.drizzle.db.transaction((tx) =>
+      instant().recordWager(tx, {
+        userId,
+        currency: 'USDT',
+        amount: '2500',
+        weightedAmount: '2500',
+        realAmount: '1000',
+        context: { ...CASINO, rtp: '0.96' },
+      }),
+    );
+
+    expect(lastCredit().amount).toBe('2.000000000000000000');
+  });
+
+  it('pays a ranked player the rank rate with the uplift, never the unranked rate', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    await givePlayerStreak(userId, 3, daysAgo(0));
+
+    await betOn(instant(), userId, '2500', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('27.500000000000000000');
+  });
+});
+
+describe('streak rakeback accruals', () => {
+  const claimable = () => serviceWith({ basis: 'margin', payout: 'claim' });
+
+  beforeEach(async () => {
+    await enableStreak();
+  });
+
+  it('records the unranked formula on the accrual, priced on the house edge', async () => {
+    const userId = randomUUID();
+    await givePlayerStreak(userId, 3, daysAgo(0));
+
+    await betOn(serviceWith({ basis: 'stake', payout: 'claim' }), userId, '2500', {
+      rtp: '0.96',
+      roundId: 'r-1',
+    });
+
+    expect(await accrualsOf(userId)).toEqual([
+      expect.objectContaining({
+        amount: '5.000000000000000000',
+        stake: '2500.000000000000000000',
+        basis: 'margin',
+        rtp: '0.960000000000000000',
+        ratePercent: '0.00',
+        boostPercent: '0.00',
+        streakMode: 'unranked',
+        streakPercent: '5.00',
+      }),
+    ]);
+  });
+
+  it('records the uplift that raised a ranked accrual', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 3, daysAgo(0));
+
+    await betOn(claimable(), userId, '100', { rtp: '0.96' });
+
+    expect(await accrualsOf(userId)).toEqual([
+      expect.objectContaining({
+        amount: '0.220000000000000000',
+        ratePercent: '5.00',
+        boostPercent: '0.00',
+        streakMode: 'ranked',
+        streakPercent: '10.00',
+      }),
+    ]);
+  });
+
+  it('records no streak on an accrual the streak did not change', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 1, daysAgo(0));
+
+    await betOn(claimable(), userId, '100', { rtp: '0.96' });
+
+    expect(await accrualsOf(userId)).toEqual([
+      expect.objectContaining({
+        amount: '0.200000000000000000',
+        streakMode: null,
+        streakPercent: null,
+      }),
+    ]);
+  });
+
+  it('reverses a streak accrual in full when its round is rolled back', async () => {
+    const userId = randomUUID();
+    await givePlayerStreak(userId, 3, daysAgo(0));
+    await betOn(serviceWith({ basis: 'stake', payout: 'claim' }), userId, '2500', {
+      rtp: '0.96',
+      roundId: 'r-1',
+    });
+
+    await rollBack(claimable(), userId, 'r-1', '2500');
+
+    expect(await accrualsOf(userId)).toEqual([
+      expect.objectContaining({ status: 'reversed', streakMode: 'unranked' }),
+    ]);
   });
 });
 

@@ -1,27 +1,119 @@
 import { describe, it, expect } from 'vitest';
-import { SetStreakConfigInputSchema } from '../contract/index.js';
+import { StreakConfigSchema } from '../contract/index.js';
 
-const config = (resetAfterDay: number) => ({
-  currency: 'USD',
-  dailyMinWager: '10',
-  eligibleProducts: ['casino'],
-  milestones: [
-    {
-      day: 3,
-      rewards: [{ kind: 'bonus', amount: '5', terms: { wageringMultiplier: '1', expiryDays: 30 } }],
-    },
-  ],
-  resetAfterDay,
+const rate = (day: number) => ({ day, unrankedRatePercent: '1', rankedUpliftPercent: '5' });
+const reward = (day: number) => ({
+  day,
+  amount: '5',
+  rolloverMultiplier: '10',
+  claimExpiryDays: 7,
 });
 
+const config = (overrides: Record<string, unknown> = {}) => ({
+  enabled: true,
+  dailyMinWager: '10',
+  eligibleProducts: ['casino'],
+  rakebackMilestones: [rate(1), rate(7)],
+  fixedRewards: [reward(3), reward(35)],
+  ...overrides,
+});
+
+const issuePaths = (input: unknown) => {
+  const result = StreakConfigSchema.safeParse(input);
+  return result.success ? null : result.error.issues.map((issue) => issue.path.join('.'));
+};
+
 describe('setting the streak config', () => {
-  it('accepts a milestone on or before the day the run resets', () => {
-    expect(SetStreakConfigInputSchema.safeParse(config(3)).success).toBe(true);
+  it('accepts a valid config, including the boundary days 1 and 35', () => {
+    expect(StreakConfigSchema.safeParse(config()).success).toBe(true);
   });
 
-  it('rejects a milestone after the day the run resets, which no player could reach', () => {
-    const result = SetStreakConfigInputSchema.safeParse(config(2));
-    expect(result.success).toBe(false);
-    expect(result.error?.issues[0]?.path).toEqual(['milestones']);
+  it('accepts empty lists, which is a streak that pays nothing', () => {
+    expect(
+      StreakConfigSchema.safeParse(config({ rakebackMilestones: [], fixedRewards: [] })).success,
+    ).toBe(true);
+  });
+
+  it.each([0, 36, -1, 1.5])('rejects a milestone on day %s, naming the day field', (day) => {
+    expect(issuePaths(config({ rakebackMilestones: [rate(day)] }))).toEqual([
+      'rakebackMilestones.0.day',
+    ]);
+    expect(issuePaths(config({ fixedRewards: [reward(day)] }))).toEqual(['fixedRewards.0.day']);
+  });
+
+  it('rejects days that are not ascending, naming the offending entry', () => {
+    expect(issuePaths(config({ rakebackMilestones: [rate(5), rate(2)] }))).toEqual([
+      'rakebackMilestones.1.day',
+    ]);
+  });
+
+  it('rejects two entries on the same day, naming the later one', () => {
+    expect(issuePaths(config({ fixedRewards: [reward(3), reward(3)] }))).toEqual([
+      'fixedRewards.1.day',
+    ]);
+  });
+
+  it('rejects more than 35 rows in a list', () => {
+    const rows = Array.from({ length: 36 }, (_, index) => rate(index + 1));
+    expect(issuePaths(config({ rakebackMilestones: rows }))).toContain('rakebackMilestones');
+  });
+
+  it.each([
+    ['a zero amount', { amount: '0' }, 'fixedRewards.0.amount'],
+    ['a zero amount with decimals', { amount: '0.000' }, 'fixedRewards.0.amount'],
+    ['a negative amount', { amount: '-1' }, 'fixedRewards.0.amount'],
+    ['a zero rollover', { rolloverMultiplier: '0' }, 'fixedRewards.0.rolloverMultiplier'],
+    [
+      'a rollover above the bonus engine limit',
+      { rolloverMultiplier: '1000.01' },
+      'fixedRewards.0.rolloverMultiplier',
+    ],
+    ['a zero claim expiry', { claimExpiryDays: 0 }, 'fixedRewards.0.claimExpiryDays'],
+    ['a claim expiry above a year', { claimExpiryDays: 366 }, 'fixedRewards.0.claimExpiryDays'],
+    ['a fractional claim expiry', { claimExpiryDays: 1.5 }, 'fixedRewards.0.claimExpiryDays'],
+  ])('rejects %s, naming its field', (_label, patch, path) => {
+    expect(issuePaths(config({ fixedRewards: [{ ...reward(3), ...patch }] }))).toEqual([path]);
+  });
+
+  it('accepts a rollover of exactly the limit', () => {
+    expect(
+      StreakConfigSchema.safeParse(
+        config({ fixedRewards: [{ ...reward(3), rolloverMultiplier: '1000' }] }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    ['a negative rate', { unrankedRatePercent: '-1' }, 'rakebackMilestones.0.unrankedRatePercent'],
+    [
+      'a rate above 100',
+      { unrankedRatePercent: '100.01' },
+      'rakebackMilestones.0.unrankedRatePercent',
+    ],
+    [
+      'a negative uplift',
+      { rankedUpliftPercent: '-5' },
+      'rakebackMilestones.0.rankedUpliftPercent',
+    ],
+  ])('rejects %s, naming its field', (_label, patch, path) => {
+    expect(issuePaths(config({ rakebackMilestones: [{ ...rate(1), ...patch }] }))).toEqual([path]);
+  });
+
+  it('accepts a zero rate, which switches a milestone off without deleting it', () => {
+    expect(
+      StreakConfigSchema.safeParse(
+        config({
+          rakebackMilestones: [{ day: 1, unrankedRatePercent: '0', rankedUpliftPercent: '0' }],
+        }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it('rejects a zero daily minimum, naming the field', () => {
+    expect(issuePaths(config({ dailyMinWager: '0' }))).toEqual(['dailyMinWager']);
+  });
+
+  it('rejects a config without the enabled switch', () => {
+    expect(issuePaths({ ...config(), enabled: undefined })).toEqual(['enabled']);
   });
 });

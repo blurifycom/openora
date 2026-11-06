@@ -195,3 +195,35 @@ lock until payout commits, serializing a concurrent exclusion lift with settleme
 rakeback for when it ends. An hourly job reminds a player at most once a day, and only when a claim
 would succeed. A player found below the minimum is checked again only once new rakeback accrues. An admin can void an unclaimed row with a reason. The void is audited. See
 [ADR-0048](../adr/0048-claimable-rakeback-on-the-house-edge.md).
+
+## The daily streak
+
+A player who wagers the operator's minimum, in dollars, on a UTC day extends their streak by one.
+The count has no ceiling and no automatic reset: it falls to zero only when a day is missed, or
+when the operator switches the streak off. Only the real-money part of a stake counts, so wagering a
+bonus never advances it, and a provider rollback takes a stake back out of the day it counted on,
+undoing that day if it drops under the minimum. The operator sets the minimum, the products that
+count, and the two things the streak pays.
+
+**Rakeback rate.** From a configured day on, a qualifying player earns more rakeback. A ranked
+player's rank rakeback is multiplied by one plus the milestone's uplift. A player with no rank
+earns the milestone's unranked rate on the theoretical gross gaming revenue of the bet, its house
+edge, and nothing without a usable return-to-player figure. The rate comes from the milestone with
+the highest day the streak has reached, read when the bet settles, and only while the player last
+qualified today or yesterday, so a broken streak pays nothing before the daily close runs. The bet
+that unlocks a milestone earns the previous milestone's rate, because rakeback is computed before
+the streak advances. See [ADR-0051](../adr/0051-streak-milestone-rakeback-rate.md).
+
+**Fixed rewards.** The first time a streak reaches a configured day it unlocks a one-time bonus. The
+amount, rollover and claim window are captured at that moment, so editing the config later changes
+nothing a player already holds. The player is told it is ready by a notification carrying the day and the captured dollar amount. The player claims it within the window, and it becomes a bonus in
+the currency they play in, priced from dollars at claim time, with a rollover window as long as the
+claim window. A reward that was claimed, expired or lost never unlocks again, except one taken back
+because a same-day rollback undid the day that unlocked it. An hourly sweep settles unclaimed
+rewards once their window closes, with an audit record each.
+
+**Switching it off** ends every streak at the next daily close and stops new rates and rewards;
+rewards already unlocked stay claimable until they expire. Switching it on starts everyone from
+zero. A self-exclusion or cooling-off forfeits unclaimed rewards without a notification, and
+nothing is restored when it ends. Saving the config needs write access to bonuses and is audited
+with the staff member who made the change.
