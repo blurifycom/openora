@@ -1,6 +1,11 @@
 import * as z from 'zod';
 import {
   CurrencyTickerSchema,
+  FIND_TOOL_MAX_LIMIT,
+  FindToolLimitSchema,
+  GAME_REVIEW_STATUSES,
+  GameCategoryMembershipModeSchema,
+  GameReviewStatusSchema,
   GameTypeSchema,
   MoneyAmountSchema,
   SignedMoneyAmountSchema,
@@ -97,5 +102,105 @@ export const topGamesTool = defineMcpTool({
   inputSchema: TopGamesInputSchema,
   outputSchema: TopGamesOutputSchema,
   redact: { allow: ['dateFrom', 'dateTo', 'sortBy', 'sortDir', 'currencies', 'truncated'] },
+  errors: [],
+});
+
+/** At most this many of a game's categories games.find lists with it. */
+export const GAMES_FIND_MAX_CATEGORIES = 10;
+
+export const GamesFindInputSchema = z.object({
+  search: z.string().trim().min(1).max(100).optional(),
+  providerSlug: z.string().min(1).max(100).optional(),
+  gameType: GameTypeSchema.optional(),
+  reviewStatus: z.array(GameReviewStatusSchema).max(GAME_REVIEW_STATUSES.length).optional(),
+  active: z.boolean().optional(),
+  gameCategoryId: UuidSchema.optional(),
+  limit: FindToolLimitSchema,
+});
+export type GamesFindInput = z.infer<typeof GamesFindInputSchema>;
+
+export const GamesFindOutputSchema = z.object({
+  total: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  games: z
+    .array(
+      z.object({
+        gameId: UuidSchema,
+        name: z.string(),
+        slug: z.string(),
+        provider: z.string(),
+        gameType: GameTypeSchema,
+        reviewStatus: GameReviewStatusSchema,
+        isActive: z.boolean(),
+        isUnavailable: z.boolean(),
+        categories: z
+          .array(z.object({ gameCategoryId: UuidSchema, name: z.string() }))
+          .max(GAMES_FIND_MAX_CATEGORIES),
+      }),
+    )
+    .max(FIND_TOOL_MAX_LIMIT),
+});
+export type GamesFind = z.infer<typeof GamesFindOutputSchema>;
+
+export const gamesFindTool = defineMcpTool({
+  id: 'games.find',
+  title: 'Find games',
+  description:
+    'Lists the catalog games matching every filter given, by name (alphabetical): search (part ' +
+    'of the name, any case), providerSlug, gameType, reviewStatus (any of pending, ' +
+    'auto_approved, approved, declined), active (whether it is switched on in the lobby) and ' +
+    'gameCategoryId (from games.categories). Each carries its gameId, name, slug, provider name, ' +
+    'game type, review status, isActive, isUnavailable (the vendor marked it unavailable) and the ' +
+    'categories it is in, each with its gameCategoryId and name (at most 10, in category order). ' +
+    'Lists at most limit games (1 to 50, default 20); total counts every match and truncated is ' +
+    'true when more matched. Use gaming.top_games for how a game performs.',
+  class: 'read',
+  schemaVersion: 1,
+  iam: { resource: 'game-config', action: 'view' },
+  inputSchema: GamesFindInputSchema,
+  outputSchema: GamesFindOutputSchema,
+  redact: { allow: ['total', 'truncated', 'games'] },
+  errors: [],
+});
+
+/** At most this many categories games.categories lists. */
+export const GAME_CATEGORIES_MAX = 200;
+
+export const GameCategoriesInputSchema = z.object({ active: z.boolean().optional() });
+export type GameCategoriesInput = z.infer<typeof GameCategoriesInputSchema>;
+
+export const GameCategoriesOutputSchema = z.object({
+  categories: z
+    .array(
+      z.object({
+        gameCategoryId: UuidSchema,
+        slug: z.string(),
+        name: z.string(),
+        isActive: z.boolean(),
+        membershipMode: GameCategoryMembershipModeSchema,
+        sortOrder: z.number().int(),
+        gameCount: z.number().int().nonnegative(),
+      }),
+    )
+    .max(GAME_CATEGORIES_MAX),
+  truncated: z.boolean(),
+});
+export type GameCategories = z.infer<typeof GameCategoriesOutputSchema>;
+
+export const gameCategoriesTool = defineMcpTool({
+  id: 'games.categories',
+  title: 'Game categories',
+  description:
+    'Lists the lobby game categories in their lobby order (sortOrder, then name), each with its ' +
+    'gameCategoryId, slug, name, isActive, membershipMode (manual: games added by hand; rule: ' +
+    'filled by its rule) and gameCount, the games in it whether switched on or not. active ' +
+    'narrows them to the categories switched on or off. At most 200; truncated is true when ' +
+    'there are more. Pass a gameCategoryId to games.find to list its games.',
+  class: 'read',
+  schemaVersion: 1,
+  iam: { resource: 'game-config', action: 'view' },
+  inputSchema: GameCategoriesInputSchema,
+  outputSchema: GameCategoriesOutputSchema,
+  redact: { allow: ['categories', 'truncated'] },
   errors: [],
 });

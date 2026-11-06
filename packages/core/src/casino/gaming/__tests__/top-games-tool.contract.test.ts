@@ -29,12 +29,16 @@ describe('gaming.top_games input', () => {
 });
 
 describe('gaming agent surface registration', () => {
-  it('registers gaming.top_games within the kernel contract rules', async () => {
+  it('registers its read tools within the kernel contract rules', async () => {
     const registry = new ModuleRegistryImpl<CoreTokenCatalog>(new Container());
     registry.setOwner('gaming');
 
     await gamingPlugin.register(registry);
 
-    expect(registry.mcp.getTools().map((tool) => tool.contract.id)).toEqual(['gaming.top_games']);
+    expect(registry.mcp.getTools().map((tool) => tool.contract.id)).toEqual([
+      'gaming.top_games',
+      'games.find',
+      'games.categories',
+    ]);
   });
 });
