@@ -37,11 +37,12 @@ import { GrantLifecycleService } from './service/grant-lifecycle.service.js';
 import { createBonusLifecyclePort } from './service/bonus-lifecycle-port.service.js';
 import { GrantReaderService, bonusGrantLedger } from './service/grant-reader.service.js';
 import { GrantService } from './service/grant.service.js';
+import { GrantsSummaryService } from './service/grants-summary.service.js';
 import { OfferService } from './service/offer.service.js';
 import { WageringService } from './service/wagering.service.js';
 import { WeightService } from './service/weight.service.js';
 import { bonusBalanceChannel, createBonusRouter } from './router/index.js';
-import type { BonusBalanceChangeReason } from './contract/index.js';
+import { grantsSummaryTool, type BonusBalanceChangeReason } from './contract/index.js';
 
 const logger = createLogger('promo-bonus');
 
@@ -105,6 +106,10 @@ export default {
   register(ctx) {
     ctx.provide(BONUS_GRANTS, (c) => new GrantService(c.get(AUDIT_WRITER)));
     ctx.provide(BONUS_GRANT_LEDGER, () => bonusGrantLedger);
+    ctx.mcp.tool(grantsSummaryTool, (c) => {
+      const summary = new GrantsSummaryService(c.get(DRIZZLE));
+      return (input) => summary.grantsSummary(input);
+    });
     ctx.provideSealed(
       BONUS_WAGERING,
       (c) => new WageringService(c.has(WAGER_TRACKING) ? c.get(WAGER_TRACKING) : undefined),

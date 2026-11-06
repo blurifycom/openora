@@ -1,0 +1,2 @@
+CREATE INDEX "promo_grant_activated_at_idx" ON "promo_grant" USING btree ("activated_at") WHERE "promo_grant"."activated_at" is not null;--> statement-breakpoint
+CREATE INDEX "promo_grant_closed_at_idx" ON "promo_grant" USING btree ("closed_at") WHERE "promo_grant"."closed_at" is not null;
