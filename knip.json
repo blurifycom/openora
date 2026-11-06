@@ -11,7 +11,8 @@
         "src/**/drizzle.config.ts",
         "src/{compliance,casino/*,engagement/*,fx/*,pam/*,promo/*,sportsbook/*}/index.ts",
         "src/**/__tests__/fixtures/**/*.ts",
-        "vitest.mutation.config.ts"
+        "vitest.mutation.config.ts",
+        "vitest.mutation.setup.ts"
       ],
       "ignoreDependencies": ["naughty-words", "react"]
     }

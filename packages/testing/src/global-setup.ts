@@ -16,7 +16,8 @@ import { applyMigrations, templateDatabase, adminUrl, urlForDatabase } from './d
  * second run sharing this Postgres server, out from under its live connections.
  */
 export default async function setup(): Promise<() => Promise<void>> {
-  process.env['OPENORA_TEST_RUN_ID'] = randomUUID().replaceAll('-', '').slice(0, 8);
+  // Kept if already set: the mutation config runs both tiers' global setups in one process.
+  process.env['OPENORA_TEST_RUN_ID'] ??= randomUUID().replaceAll('-', '').slice(0, 8);
   const template = templateDatabase();
   const admin = new Pool({ connectionString: adminUrl(), connectionTimeoutMillis: 5000 });
 
