@@ -89,7 +89,7 @@ export const NOTIFICATION_PARAM_KEYS = {
       'monthlyBonus',
     ],
   },
-  'promo.streak.milestone.reached': { required: ['day'], optional: [] },
+  'promo.streak.milestone.reached': { required: ['day', 'amount'], optional: [] },
   'rakeback.claimable': { required: ['amount', 'currency'], optional: [] },
   'chat.mention': { required: [], optional: ['byUsername'] },
   'chat.room_invite.received': { required: ['inviterUsername', 'roomName'], optional: [] },

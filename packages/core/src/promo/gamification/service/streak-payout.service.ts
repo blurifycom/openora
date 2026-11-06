@@ -261,7 +261,11 @@ export class StreakPayoutService {
     eligibility: PlayEligibilityPort,
   ): Promise<StreakMilestoneReached | null> {
     const [row] = await tx
-      .select({ userId: promoStreakMilestoneGrant.userId, day: promoStreakMilestoneGrant.day })
+      .select({
+        userId: promoStreakMilestoneGrant.userId,
+        day: promoStreakMilestoneGrant.day,
+        amount: promoStreakMilestoneGrant.amount,
+      })
       .from(promoStreakMilestoneGrant)
       .where(
         and(
@@ -272,7 +276,7 @@ export class StreakPayoutService {
         ),
       )
       .for('update', { skipLocked: true });
-    if (!row) {
+    if (!row || row.amount === null) {
       return null;
     }
     const restricted = await eligibility.isRestricted(row.userId, tx);
@@ -292,7 +296,7 @@ export class StreakPayoutService {
         after: { userId: row.userId, day: row.day, outcome: 'restricted' },
       });
     }
-    return restricted ? null : { ...row, grantId: null };
+    return restricted ? null : { ...row, amount: row.amount, grantId: null };
   }
 
   private async settleOne(

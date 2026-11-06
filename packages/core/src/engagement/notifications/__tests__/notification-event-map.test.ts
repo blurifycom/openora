@@ -631,14 +631,15 @@ describe('notificationEventMap', () => {
     const input = entryFor('promo.streak.milestone.reached').buildNotification({
       userId,
       day: 7,
+      amount: '5.000000000000000000',
       grantId: null,
     });
 
     expect(input).toEqual({
       userId,
       type: 'promo.streak.milestone.reached',
-      params: { day: '7' },
-      data: { day: '7' },
+      params: { day: '7', amount: '5.000000000000000000' },
+      data: { day: '7', amount: '5.000000000000000000' },
     });
   });
 
@@ -830,7 +831,12 @@ describe('notificationEventMap', () => {
         weeklyBonus: '5',
         monthlyBonus: '20',
       },
-      'promo.streak.milestone.reached': { userId: id(), day: 7, grantId: null },
+      'promo.streak.milestone.reached': {
+        userId: id(),
+        day: 7,
+        amount: '5.000000000000000000',
+        grantId: null,
+      },
       'promo.rakeback.claimable': { userId: id(), amount: '12.5', currency: 'USDT' },
       'chat.user.mentioned': {
         mentionedUserId: id(),
