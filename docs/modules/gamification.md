@@ -177,6 +177,24 @@ shape it, and both default to the original behaviour.
   `claim` writes each bet's rakeback to `promo_rakeback_accrual` and moves no money until the
   player claims it, with `claimMinimum` in the wallet reference currency.
 
+A sportsbook bet, once the operator adds `sportsbook` to `rakebackEligibleProducts`, earns
+rakeback when it settles other than void, not when its stake is reserved. A bet the provider
+rejects or cancels earns nothing, and neither does a free bet's promotion-paid stake. The
+sportsbook ledger reports the settle through `recordSettledWager`, so this works without the bonus
+plugin, at the tier the player holds when the bet settles. A bet pays once. Its instant credit
+is keyed to the bet, so a re-settle after a reopen replays it, and no accrual is written while
+the bet already has an accrued, claimed or voided one. A reopen reverses an unclaimed accrual, so
+the re-settle accrues afresh. A claimed accrual or an instant credit stays, as all paid
+rakeback does. A sportsbook bet carries no `rtp`, so under `margin` it pays nothing. Switching
+`payout` from `instant` to `claim` between a settle and a re-settle can pay that bet once under
+each mode. A `sportsbook` wager reported through `recordWager`, rather than the sportsbook ledger's
+settle, earns no rakeback.
+
+Upgrading: under `instant`, a sportsbook bet reserved before the upgrade was paid at reserve, and
+that credit carries no key to the bet, so its settle after the upgrade pays it again. An operator
+that counts `sportsbook` toward rakeback, or whose list is empty, settles or voids its open bets
+before upgrading. Under `claim` the reserve-time accrual already blocks a second one.
+
 A claim pays every unclaimed row in one transaction, one `cashback` credit per currency. The
 `(userId, idempotencyKey)` claim row makes a retry replay the first result, and a second claim
 racing the first finds its rows already taken and rolls back. A rollback of the round reduces or

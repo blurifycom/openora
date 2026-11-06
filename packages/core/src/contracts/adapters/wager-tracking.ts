@@ -91,10 +91,15 @@ export type WagerTrackingCommands = {
    * counter is deliberately monotonic (the rank ladder) has nothing to undo.
    */
   reverseWager?(tx: unknown, args: WagerReversalArgs): Promise<void>;
-  /** Optional: only a consumer that counts a product at settlement rather than at the wager. */
-  recordSettledWager?(tx: unknown, args: SettledWagerArgs): Promise<void>;
+  /**
+   * Optional: only a consumer that counts a product at settlement rather than at the wager. The
+   * caller serializes the calls for one bet.
+   */
+  recordSettledWager?(tx: unknown, args: SettledWagerArgs): Promise<WagerTrackingWalletCredit[]>;
   /** Takes back what `recordSettledWager` counted when the bet is voided. Repeating it takes nothing more. */
   reverseSettledWager?(tx: unknown, args: WagerReversalArgs): Promise<void>;
+  /** A settled bet was reopened, so its outcome is unknown again. Repeating it takes nothing more. */
+  reopenSettledWager?(tx: unknown, args: WagerReversalArgs): Promise<void>;
 };
 
 export const WAGER_TRACKING: Token<WagerTrackingCommands> = createToken('WAGER_TRACKING');
