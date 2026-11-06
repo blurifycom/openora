@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SetStreakConfigInputSchema } from '../contract/index.js';
+import { StreakConfigSchema } from '../contract/index.js';
 
 const rate = (day: number) => ({ day, unrankedRatePercent: '1', rankedUpliftPercent: '5' });
 const reward = (day: number) => ({
@@ -19,19 +19,18 @@ const config = (overrides: Record<string, unknown> = {}) => ({
 });
 
 const issuePaths = (input: unknown) => {
-  const result = SetStreakConfigInputSchema.safeParse(input);
+  const result = StreakConfigSchema.safeParse(input);
   return result.success ? null : result.error.issues.map((issue) => issue.path.join('.'));
 };
 
 describe('setting the streak config', () => {
   it('accepts a valid config, including the boundary days 1 and 35', () => {
-    expect(SetStreakConfigInputSchema.safeParse(config()).success).toBe(true);
+    expect(StreakConfigSchema.safeParse(config()).success).toBe(true);
   });
 
   it('accepts empty lists, which is a streak that pays nothing', () => {
     expect(
-      SetStreakConfigInputSchema.safeParse(config({ rakebackMilestones: [], fixedRewards: [] }))
-        .success,
+      StreakConfigSchema.safeParse(config({ rakebackMilestones: [], fixedRewards: [] })).success,
     ).toBe(true);
   });
 
@@ -78,7 +77,7 @@ describe('setting the streak config', () => {
 
   it('accepts a rollover of exactly the limit', () => {
     expect(
-      SetStreakConfigInputSchema.safeParse(
+      StreakConfigSchema.safeParse(
         config({ fixedRewards: [{ ...reward(3), rolloverMultiplier: '1000' }] }),
       ).success,
     ).toBe(true);
@@ -102,7 +101,7 @@ describe('setting the streak config', () => {
 
   it('accepts a zero rate, which switches a milestone off without deleting it', () => {
     expect(
-      SetStreakConfigInputSchema.safeParse(
+      StreakConfigSchema.safeParse(
         config({
           rakebackMilestones: [{ day: 1, unrankedRatePercent: '0', rankedUpliftPercent: '0' }],
         }),

@@ -307,9 +307,6 @@ export const StreakConfigSchema = z.object({
 });
 export type StreakConfig = z.infer<typeof StreakConfigSchema>;
 
-export const SetStreakConfigInputSchema = StreakConfigSchema;
-export type SetStreakConfigInput = z.infer<typeof SetStreakConfigInputSchema>;
-
 export const StreakActiveRateSchema = z.object({
   mode: StreakRakebackModeSchema,
   percent: ContributionPercentSchema,
@@ -810,7 +807,7 @@ export const gamificationContract = {
 
         set: oc
           .route({ method: 'PUT', path: '/backoffice/promo/streaks/config' })
-          .input(SetStreakConfigInputSchema)
+          .input(StreakConfigSchema)
           .output(StreakConfigSchema),
       },
     },
