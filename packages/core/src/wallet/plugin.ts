@@ -49,6 +49,7 @@ import {
 import {
   holdWithdrawalAction,
   playersDepositCompareTool,
+  transactionsFindTool,
   walletActivityTool,
   withdrawalsQueueTool,
   type WalletBalanceChangeReason,
@@ -60,6 +61,7 @@ import {
 } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
 import { DepositCompareService, SegmentTooLargeError } from './service/deposit-compare.service.js';
+import { TransactionsFindService } from './service/transactions-find.service.js';
 import {
   CustodySweepService,
   CUSTODY_SWEEP_QUEUE,
@@ -295,6 +297,12 @@ export default {
     ctx.mcp.tool(withdrawalsQueueTool, (c) => {
       const wallet = walletService(c);
       return (input) => wallet.withdrawalQueueOverview(input);
+    });
+
+    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
+    ctx.mcp.tool(transactionsFindTool, (c) => {
+      const transactions = new TransactionsFindService(c.get(DRIZZLE));
+      return (input) => transactions.find(input);
     });
 
     ctx.mcp.tool(playersDepositCompareTool, (c) => {
