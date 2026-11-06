@@ -1523,16 +1523,16 @@ describe('player summary', () => {
       payout: zero,
       cashPayout: zero,
       promotionPayout: zero,
-      ggr: zero,
+      netResult: zero,
       openExposure: money('5'),
       ...fields,
     });
 
     expect(await summary(player.userId, september)).toEqual([
-      row({ bets: 2, stake: money('15'), cashStake: money('15'), ggr: money('15') }),
+      row({ bets: 2, stake: money('15'), cashStake: money('15'), netResult: money('15') }),
     ]);
     expect(await summary(player.userId, october)).toEqual([
-      row({ payout: money('25'), cashPayout: money('25'), ggr: money('-25') }),
+      row({ payout: money('25'), cashPayout: money('25'), netResult: money('-25') }),
     ]);
     expect(await summary(player.userId)).toEqual([
       row({
@@ -1541,7 +1541,7 @@ describe('player summary', () => {
         cashStake: money('15'),
         payout: money('25'),
         cashPayout: money('25'),
-        ggr: money('-10'),
+        netResult: money('-10'),
       }),
     ]);
     expect(await summary(player.userId, '?dateFrom=2026-11-01T00:00:00Z')).toEqual([row({})]);
@@ -1582,7 +1582,7 @@ describe('player summary', () => {
         payout: money('27.5'),
         cashPayout: money('10'),
         promotionPayout: money('17.5'),
-        ggr: money('4.5'),
+        netResult: money('4.5'),
         openExposure: money('7'),
       },
     ]);
@@ -1597,7 +1597,7 @@ describe('player summary', () => {
     payout: zero,
     cashPayout: zero,
     promotionPayout: zero,
-    ggr: zero,
+    netResult: zero,
     openExposure: zero,
     ...fields,
   });
@@ -1614,7 +1614,7 @@ describe('player summary', () => {
         bets: 2,
         stake: money('14'),
         cashStake: money('14'),
-        ggr: money('14'),
+        netResult: money('14'),
         openExposure: money('14'),
       }),
     ]);
@@ -1631,7 +1631,7 @@ describe('player summary', () => {
       bets: 1,
       stake: money('8'),
       cashStake: money('8'),
-      ggr: money('8'),
+      netResult: money('8'),
       openExposure: money('8'),
     });
     expect(await summary(player.userId)).toEqual([afterCancel]);
@@ -1658,7 +1658,7 @@ describe('player summary', () => {
         cashStake: money('10'),
         payout: money('30'),
         cashPayout: money('30'),
-        ggr: money('-20'),
+        netResult: money('-20'),
       }),
     ]);
 
@@ -1669,7 +1669,7 @@ describe('player summary', () => {
         bets: 1,
         stake: money('10'),
         cashStake: money('10'),
-        ggr: money('10'),
+        netResult: money('10'),
         openExposure: money('10'),
       }),
     ]);
@@ -1677,7 +1677,7 @@ describe('player summary', () => {
     expectApplied(await settle(args.providerBetId, 'lost', '0'));
     expect(await balanceOf(app, player.userId)).toBe(money('90'));
     expect(await summary(player.userId)).toEqual([
-      cashRow({ bets: 1, stake: money('10'), cashStake: money('10'), ggr: money('10') }),
+      cashRow({ bets: 1, stake: money('10'), cashStake: money('10'), netResult: money('10') }),
     ]);
   });
 });

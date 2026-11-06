@@ -235,7 +235,7 @@ export class SportsbookBetQueryService {
         payout: sumOf(bet.payoutTotal, settled),
         cashPayout: sumOf(sql`${bet.payoutTotal} - ${bet.promotionPaid}`, settled),
         promotionPayout: sumOf(bet.promotionPaid, settled),
-        ggr: sql<string>`(${sumOf(bet.cashStake, staked)} - ${sumOf(bet.payoutTotal, settled)})::numeric(38, 18)`,
+        netResult: sql<string>`(${sumOf(bet.cashStake, staked)} - ${sumOf(bet.payoutTotal, settled)})::numeric(38, 18)`,
         openExposure: sumOf(bet.stake, open),
       })
       .from(bet)
