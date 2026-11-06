@@ -3,6 +3,8 @@
 **Date**: 2026-10-28
 **Status**: Accepted
 
+> **Update (2026-11-06)**: the margin basis no longer pays `houseEdge × (tier + boost) / 100`. The additive streak boost is retired; a streak milestone now multiplies the rank rate, and a player with no rank earns a streak rate on the house edge. See [ADR-0051](./0051-streak-milestone-rakeback-rate.md).
+
 ## Context
 
 Rank rakeback paid a percentage of every qualifying own-money stake, credited with the bet. Two
