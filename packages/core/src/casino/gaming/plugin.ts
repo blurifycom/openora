@@ -55,6 +55,14 @@ export default {
   id: 'gaming',
   requiresPorts: [PLAY_ELIGIBILITY, IDENTITY_READER],
   dependsOn: ['wallet'],
+  controlPorts: [
+    { port: RG_LIMITS, without: 'a round starts over a wager limit', boundBy: 'compliance' },
+    {
+      port: GAME_GEO_CHECK,
+      without: 'a game starts in a country it is restricted in',
+      boundBy: 'compliance',
+    },
+  ],
   register(ctx) {
     ctx.provide(GAME_ADAPTER, () => new MockGameAdapter());
     ctx.provide(RNG_ADAPTER, () => new MockRngAdapter());

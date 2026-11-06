@@ -487,7 +487,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
   });
 
   plop.setGenerator('service', {
-    description: 'Thin single-purpose service host (bakes SERVICE_MANIFEST)',
+    description: 'Thin single-purpose service host (bakes SERVICE_MANIFEST and SERVICE_NAME)',
     prompts: [
       {
         type: 'input',

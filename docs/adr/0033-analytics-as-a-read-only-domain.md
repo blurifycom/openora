@@ -3,6 +3,8 @@
 **Date**: 2026-07-25
 **Status**: Accepted
 
+> **Update (2026-10-13)**: `SERVICE_MANIFEST=analytics` alone does not boot: the manifest must also list the modules analytics depends on (wallet, identity, profile, gaming) and theirs. The boot names every missing one ([ADR-0017](./0017-extraction-readiness-manifest-outbox-command-ports.md)).
+
 ## Context
 
 A financial-analytics dashboard is requested (deposits/withdrawals by

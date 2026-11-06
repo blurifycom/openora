@@ -1,9 +1,8 @@
 /**
  * Background-job seam. Modules enqueue durable, retryable, schedulable work
- * through this adapter, so the queue driver is swappable: the default binding is
- * an in-process queue (zero dependencies - good for `pnpm dev`, seed and tests);
- * a downstream operator binds a durable driver (BullMQ/Redis is the reference
- * overlay) to JOB_QUEUE without touching modules. Delivery is at-least-once, so
+ * through this adapter, so the queue driver is swappable: `createApp` binds the
+ * BullMQ driver on `REDIS_URL`, and an operator may bind another durable driver to
+ * JOB_QUEUE without touching modules. Delivery is at-least-once, so
  * handlers MUST be idempotent (use `idempotencyKey` + a DB guard for money jobs).
  * Distinct from MESSAGE_BROKER: the broker is "something happened" fan-out (the
  * EventBus facade); JOB_QUEUE is "execute this unit of work later, with delivery
@@ -112,7 +111,7 @@ export type JobQueueAdapter = {
     repeat: RepeatOptions,
   ): Promise<void>;
   unschedule(queue: QueueName, scheduleId: string): Promise<void>;
-  /** Start consuming a queue. Called once per worker overlay during boot. */
+  /** Start consuming a queue. `createApp` calls it at boot for each queue this process consumes (`JOB_WORKERS`). */
   registerWorker<T>(registration: WorkerRegistration<T>): void;
   /** Graceful drain: stop accepting, finish in-flight, close connections. */
   close(): Promise<void>;

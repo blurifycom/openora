@@ -134,6 +134,13 @@
       "when": 1793629060256,
       "tag": "0018_rare_viper",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793884629793,
+      "tag": "0019_curly_doomsday",
+      "breakpoints": true
     }
   ]
 }
