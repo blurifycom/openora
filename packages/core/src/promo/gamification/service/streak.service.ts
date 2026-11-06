@@ -27,8 +27,9 @@ import { roundReversal } from '../shared/round-reversal.js';
 
 export const StreakConfigNotSetError = makeNotFoundError('StreakConfig');
 
+// An empty list counts every bet - the same convention `RankService` uses for eligibleProducts.
 const countsToward = (eligibleProducts: readonly string[], product: string) =>
-  eligibleProducts.includes(product);
+  eligibleProducts.length === 0 || eligibleProducts.includes(product);
 
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 const DAY_MS = 86_400_000;

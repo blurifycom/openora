@@ -47,7 +47,7 @@ export type RakebackSettings = { basis: RakebackBasis; payout: RakebackPayout };
 const DEFAULT_SETTINGS: RakebackSettings = { basis: 'stake', payout: 'instant' };
 
 const countsToward = (eligibleProducts: readonly string[], product: string) =>
-  eligibleProducts.includes(product);
+  eligibleProducts.length === 0 || eligibleProducts.includes(product);
 
 /** The part of a bet's own-money stake rakeback is a share of; zero when it cannot be priced. */
 export function rakebackBase(realAmount: string, basis: RakebackBasis, rtp?: string): string {
