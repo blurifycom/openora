@@ -22,8 +22,9 @@ import * as z from 'zod';
 import { PlayerService, PlayerNotFoundError } from './service/player.service.js';
 import { PlayerKycStatusWriter } from './service/kyc-status-writer.js';
 import { AccountManagerService } from './service/account-manager.service.js';
+import { PlayersFindService } from './service/players-find.service.js';
 import { createPlayerRouter } from './router/index.js';
-import { playerSummaryTool } from './contract/agent-tools.js';
+import { playerSummaryTool, playersFindTool } from './contract/agent-tools.js';
 
 function makePlayerService(c: TypedContainer<CoreTokenCatalog>) {
   return new PlayerService(
@@ -118,6 +119,11 @@ export default {
           throw err instanceof PlayerNotFoundError ? new McpToolError('player_not_found') : err;
         }
       };
+    });
+    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
+    ctx.mcp.tool(playersFindTool, (c) => {
+      const players = new PlayersFindService(c.get(DRIZZLE));
+      return (input) => players.find(input);
     });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;
