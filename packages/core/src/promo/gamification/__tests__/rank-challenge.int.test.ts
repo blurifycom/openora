@@ -238,6 +238,17 @@ describe('which products count toward the Rank Challenge', () => {
 
     expect(await wageredBy(account.id)).toBeUndefined();
   });
+
+  it('counts every product when the list is empty', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    await db.drizzle.db
+      .insert(promoRankConfig)
+      .values({ eligibleProducts: ['casino'], rankChallengeEligibleProducts: [] });
+
+    await wagerOn(account.id, 'sportsbook');
+
+    expect(await wageredBy(account.id)).toBe('1.000000000000000000');
+  });
 });
 
 describe('settling a claim', () => {

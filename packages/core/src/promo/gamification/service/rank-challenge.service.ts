@@ -55,7 +55,7 @@ export class RankChallengeService implements WagerTrackingCommands {
     const products = promoRankConfig.rankChallengeEligibleProducts;
     const product = args.context.product;
     const challengeCountsProduct = sql`coalesce(
-      (select ${product} = any(${products})
+      (select cardinality(${products}) = 0 or ${product} = any(${products})
         from ${promoRankConfig} where ${promoRankConfig.singletonKey} = 'global'),
       ${DEFAULT_RANK_PERK_PRODUCTS.some((p) => p === product)}::boolean
     )`;

@@ -1,5 +1,5 @@
 {
-  "id": "8b48ab1f-bb35-47fe-8f9e-170c9620d098",
+  "id": "11e47a87-6e1b-4628-88f6-3cf0fc15a030",
   "prevId": "cd36447c-363a-4119-bbd9-87523212b51b",
   "version": "7",
   "dialect": "postgresql",
@@ -1582,20 +1582,7 @@
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "promo_rank_config_eligible_products_set": {
-          "name": "promo_rank_config_eligible_products_set",
-          "value": "cardinality(\"promo_rank_config\".\"eligible_products\") > 0"
-        },
-        "promo_rank_config_rakeback_eligible_products_set": {
-          "name": "promo_rank_config_rakeback_eligible_products_set",
-          "value": "cardinality(\"promo_rank_config\".\"rakeback_eligible_products\") > 0"
-        },
-        "promo_rank_config_rank_challenge_eligible_products_set": {
-          "name": "promo_rank_config_rank_challenge_eligible_products_set",
-          "value": "cardinality(\"promo_rank_config\".\"rank_challenge_eligible_products\") > 0"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.promo_rank_level_up": {
@@ -2218,12 +2205,7 @@
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "promo_streak_config_eligible_products_set": {
-          "name": "promo_streak_config_eligible_products_set",
-          "value": "cardinality(\"promo_streak_config\".\"eligible_products\") > 0"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.promo_streak_daily_wager": {

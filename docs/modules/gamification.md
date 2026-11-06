@@ -48,8 +48,11 @@ list and the rakeback list admit. The rank challenge does not need the ladder's 
 without one it counts the default list. Every product list - the rank's, rakeback's, the rank
 challenge's and the streak's - names its products, and a save with an empty list, a repeated
 product or an unknown one is refused. An empty list used to count every product, so a list saved
-empty before that rule was given all four on upgrade and keeps counting what it did. A list
-naming only unknown products was kept and counts nothing until the operator saves a valid one.
+empty before that rule was given all four on upgrade and keeps counting what it did. An instance
+still on the previous release can save an empty list during a rolling upgrade, so a stored empty
+list still counts every product; a later release backfills those and refuses them in the
+database. A list naming only unknown products was kept and counts nothing until the operator
+saves a valid one.
 Both lists are set on `PUT /backoffice/promo/ranks/config`, so changing one
 writes the ladder's settings row with it; a save that leaves a list or `periodicMinimumWager` out
 keeps the stored one, and only an explicit `null` clears the minimum.
