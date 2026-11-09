@@ -745,9 +745,14 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
 
     await reconcile([{ ...event, amount: '99' }]);
 
-    const [closed] = await findings(event.externalId);
-    expect(closed).toMatchObject({ status: 'resolved' });
+    const filed = await findings(event.externalId);
+    const closed = filed.find((finding) => finding.kind === 'missing_deposit');
+    const mismatch = filed.find((finding) => finding.kind === 'amount_mismatch');
+    expect(filed).toHaveLength(2);
+    expect(closed).toMatchObject({ id: findingId, status: 'resolved' });
     expect(Number(closed?.amount)).toBe(Number(FLOOR));
+    expect(mismatch).toMatchObject({ status: 'open' });
+    expect(Number(mismatch?.amount)).toBe(99);
     expect(await filledAudits(findingId)).toHaveLength(1);
     expect(await ledgerRows(event.externalId)).toHaveLength(1);
   });
