@@ -111,6 +111,8 @@ export const SUBSCRIBED_TOPICS = [
   'compliance.kyc.submitted',
   'compliance.kyc.reverify_required',
   'compliance.kyc.high_risk_signal_detected',
+  'compliance.kyc.underage_detected',
+  'compliance.kyc.dob_mismatch_detected',
   'compliance.geo-rule.added',
   'compliance.game-geo-rule.upserted',
   'compliance.game-geo-rule.deleted',

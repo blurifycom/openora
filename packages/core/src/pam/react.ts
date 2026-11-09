@@ -4,6 +4,7 @@ export {
   useLogin,
   useLogout,
   useRegister,
+  useRegistrationPolicy,
   useRequestPasswordReset,
   useResetPassword,
 } from './identity/react/auth.js';

@@ -7,6 +7,7 @@ import {
   RegisterOutputSchema,
   UsernameAvailabilityInputSchema,
   UsernameAvailabilityOutputSchema,
+  RegistrationPolicySchema,
   Enable2faInputSchema,
   Enable2faResultSchema,
   Verify2faInputSchema,
@@ -121,6 +122,10 @@ export const identityContract = {
     .route({ method: 'GET', path: '/identity/username-available' })
     .input(UsernameAvailabilityInputSchema)
     .output(UsernameAvailabilityOutputSchema),
+
+  registrationPolicy: oc
+    .route({ method: 'GET', path: '/identity/registration-policy' })
+    .output(RegistrationPolicySchema),
 
   // When 2FA is enabled, better-auth withholds the session and signals `twoFactorRedirect`; client must then call verify2fa.
   login: oc

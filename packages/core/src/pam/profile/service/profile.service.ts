@@ -18,7 +18,12 @@ import type {
   RateLimiterAdapter,
   RateLimitKey,
 } from '@openora/core/contracts';
-import { RATE_LIMIT_KEYS, makeRateLimitKey, resolveTimezone } from '@openora/core/contracts';
+import {
+  RATE_LIMIT_KEYS,
+  isAdultDateOfBirth,
+  makeRateLimitKey,
+  resolveTimezone,
+} from '@openora/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player, playerAcquisition } from '../schema/index.js';
 import type {
@@ -48,6 +53,18 @@ export const BioBlockedError = createDomainError<[]>(
   'BioBlockedError',
   () => 'Bio contains prohibited language',
   { reason: 'prohibited_language', field: 'bio' },
+);
+
+export const UnderageDateOfBirthError = createDomainError<[minAge: number]>(
+  'UnderageDateOfBirthError',
+  (minAge) => `Player must be at least ${minAge} years old`,
+  { reason: 'underage', field: 'dateOfBirth' },
+);
+
+export const DateOfBirthLockedError = createDomainError<[]>(
+  'DateOfBirthLockedError',
+  () => 'Date of birth cannot be changed once set',
+  { reason: 'date_of_birth_locked', field: 'dateOfBirth' },
 );
 
 const VALUE_COMPARISON_CURRENCY = 'USD';
@@ -98,6 +115,7 @@ export type ProfileServiceDeps = {
   userCommands: UserCommands;
   limiter: RateLimiterAdapter<RateLimitKey>;
   supportedDisplayCurrencies: readonly string[];
+  minPlayerAge: number;
   reservedUsernames?: readonly string[];
 };
 
@@ -109,6 +127,7 @@ export class ProfileService implements PlayerProvisioning {
   private readonly userCommands: UserCommands;
   private readonly limiter: RateLimiterAdapter<RateLimitKey>;
   private readonly supportedDisplayCurrencies: readonly string[];
+  private readonly minPlayerAge: number;
   private readonly reservedUsernames?: readonly string[];
 
   constructor({
@@ -119,6 +138,7 @@ export class ProfileService implements PlayerProvisioning {
     userCommands,
     limiter,
     supportedDisplayCurrencies,
+    minPlayerAge,
     reservedUsernames,
   }: ProfileServiceDeps) {
     this.drizzle = drizzle;
@@ -128,6 +148,7 @@ export class ProfileService implements PlayerProvisioning {
     this.userCommands = userCommands;
     this.limiter = limiter;
     this.supportedDisplayCurrencies = supportedDisplayCurrencies;
+    this.minPlayerAge = minPlayerAge;
     this.reservedUsernames = reservedUsernames;
   }
 
@@ -231,6 +252,12 @@ export class ProfileService implements PlayerProvisioning {
   async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {
     const { timezone, username, ...rest } = data;
     const fields = { ...rest, ...(rest.bio ? { bio: moderateBio(rest.bio) } : {}) };
+    if (
+      fields.dateOfBirth &&
+      !isAdultDateOfBirth(fields.dateOfBirth, new Date(), this.minPlayerAge)
+    ) {
+      throw new UnderageDateOfBirthError(this.minPlayerAge);
+    }
     const identity = await fetchIdentityByUserId(this.drizzle.db, userId);
     if (!identity) {
       throw new ProfileUserNotFoundError(userId);
@@ -268,6 +295,14 @@ export class ProfileService implements PlayerProvisioning {
         throw new ProfileUserNotFoundError(userId);
       }
       const newUsername = username !== undefined && username !== current.username ? username : null;
+
+      if (
+        fields.dateOfBirth !== undefined &&
+        row.dateOfBirth !== null &&
+        fields.dateOfBirth !== row.dateOfBirth
+      ) {
+        throw new DateOfBirthLockedError();
+      }
 
       if ('phone' in fields || 'country' in fields) {
         const effectivePhone = 'phone' in fields ? fields.phone : row.phone;
