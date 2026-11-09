@@ -1,0 +1,1 @@
+CREATE INDEX "promo_rakeback_accrual_claimed_settled_at_idx" ON "promo_rakeback_accrual" USING btree ("settled_at") WHERE "promo_rakeback_accrual"."status" = 'claimed';

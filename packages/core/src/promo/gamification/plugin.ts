@@ -43,6 +43,7 @@ import {
   RakebackClaimService,
 } from './service/rakeback-claim.service.js';
 import { RakebackAdminService } from './service/rakeback-admin.service.js';
+import { RakebackLiabilityService } from './service/rakeback-liability.service.js';
 import { RankAdminService } from './service/rank-admin.service.js';
 import { RankPayoutService } from './service/rank-payout.service.js';
 import { RankService } from './service/rank.service.js';
@@ -60,6 +61,7 @@ import {
   RankPayoutKindSchema,
   StreakForfeitReasonSchema,
   type StreakForfeitReason,
+  rakebackLiabilityTool,
 } from './contract/index.js';
 
 const logger = createLogger('promo-gamification');
@@ -164,6 +166,12 @@ export default {
   id: 'gamification',
   dependsOn: ['exchange-rate', 'audit'],
   register(ctx) {
+    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
+    ctx.mcp.tool(rakebackLiabilityTool, (c) => {
+      const liability = new RakebackLiabilityService(c.get(DRIZZLE));
+      return (input) => liability.report(input);
+    });
+
     ctx.provide(
       WAGER_TRACKING,
       (c) =>
