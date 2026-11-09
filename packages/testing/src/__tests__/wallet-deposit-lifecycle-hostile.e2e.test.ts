@@ -479,6 +479,97 @@ describe('reconciliation, beyond a plain below-minimum deposit', () => {
   });
 });
 
+describe('a malformed amount or id on an audited outcome', () => {
+  it.each(['', '-5'])(
+    'records no refusal for %j, so the real amount still credits',
+    async (amount) => {
+      const player = await setup();
+      const externalId = randomUUID();
+
+      const refused = await deliver(player.deposit({ externalId, amount }));
+
+      expect(refused.status).toBe(500);
+      expect(await guardRows(externalId)).toHaveLength(0);
+      expect(await auditRows(externalId)).toHaveLength(0);
+
+      const retried = await deliver(player.deposit({ externalId, amount: '15' }));
+
+      expect(retried.status).toBe(200);
+      expect(await ledgerRows(externalId)).toHaveLength(1);
+      expect(await balanceOf(player.userId, player.currency)).toBe(15);
+    },
+  );
+
+  it('records no refusal for a negative amount under a floor of zero', async () => {
+    const player = await setup({ minDeposit: '0' });
+    const event = player.deposit({ amount: '-1' });
+
+    const res = await deliver(event);
+
+    expect(res.status).toBe(500);
+    expect(await guardRows(event.externalId)).toHaveLength(0);
+    expect(await auditRows(event.externalId)).toHaveLength(0);
+  });
+
+  it('still refuses a valid zero under a positive floor', async () => {
+    const player = await setup();
+    const event = player.deposit({ amount: '0' });
+
+    const res = await deliver(event);
+
+    expect(res.status).toBe(200);
+    expect(await auditTrail(event.externalId)).toEqual(['below_minimum']);
+    expect(await ledgerRows(event.externalId)).toHaveLength(0);
+  });
+
+  it.each([
+    { label: 'abc', amount: 'abc' },
+    { label: '1e3', amount: '1e3' },
+    { label: '0x1', amount: '0x1' },
+    { label: 'a 400-digit string', amount: '9'.repeat(400) },
+  ])('fails a status event for retry on an amount of $label', async ({ amount }) => {
+    const player = await setup();
+    const event = player.status('detected', { amount });
+
+    const res = await deliver(event);
+
+    expect(res.status).toBe(500);
+    expect(await guardRows(event.externalId)).toHaveLength(0);
+    expect(await auditRows(event.externalId)).toHaveLength(0);
+  });
+
+  it('fails a status event with an empty id for retry and takes no shared slot', async () => {
+    const player = await setup();
+
+    const res = await deliver(player.status('detected', { externalId: '' }));
+
+    expect(res.status).toBe(500);
+    expect(await guardRows('')).toHaveLength(0);
+    expect(await auditRows('')).toHaveLength(0);
+  });
+
+  it('fails a below-minimum deposit with an empty id for retry and takes no shared slot', async () => {
+    const player = await setup();
+
+    const res = await deliver(player.deposit({ externalId: '', amount: BELOW_FLOOR }));
+
+    expect(res.status).toBe(500);
+    expect(await guardRows('')).toHaveLength(0);
+    expect(await auditRows('')).toHaveLength(0);
+  });
+
+  it('skips a malformed polled status event and still finishes the run', async () => {
+    const player = await setup();
+    const malformed = player.status('detected', { amount: 'abc' });
+    const wellFormed = player.status('detected');
+
+    await reconcile([malformed, wellFormed]);
+
+    expect(await auditRows(malformed.externalId)).toHaveLength(0);
+    expect(await auditTrail(wellFormed.externalId)).toEqual(['detected']);
+  });
+});
+
 describe('the audit chain after all of the above', () => {
   it('still verifies end to end', async () => {
     const audit = new AuditService(

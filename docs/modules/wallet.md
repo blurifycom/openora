@@ -75,7 +75,8 @@ does not repeat it.
   the player, guarded by `wallet_deposit_status_event` in the same transaction, so a redelivery or
   a poll adds nothing. The first refusal stands if the minimum later drops. A credited or refunded
   deposit audits no later status, and a failed one no later detection. A refused deposit never
-  becomes a `missing_deposit` finding.
+  becomes a `missing_deposit` finding. An event with a malformed amount or an empty id records
+  nothing and answers an error, so the vendor retries it; the poll skips it and logs.
 - **A bet row records what the bet was placed on.** `wager_product` comes from its `WagerContext`,
   and so does `wager_rtp` when it is a fraction in [0, 1]. A malformed rtp is stored as NULL rather
   than refusing the bet. `houseEdge` in `@openora/core/server` prices it.

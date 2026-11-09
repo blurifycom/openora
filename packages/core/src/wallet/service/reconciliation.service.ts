@@ -47,6 +47,7 @@ import {
   DepositAlreadyOnLedgerError,
   HeldDepositNotFoundError,
   type WalletService,
+  isRecordableDeposit,
 } from './wallet.service.js';
 import {
   DEPOSIT_FINDING_KINDS,
@@ -901,9 +902,17 @@ export class ReconciliationService {
     );
 
     for (const event of relevant) {
-      if (event.kind === 'deposit_status') {
-        await this.wallet.recordDepositStatus(event);
+      if (event.kind !== 'deposit_status') {
+        continue;
       }
+      if (!isRecordableDeposit(event)) {
+        logger.error(
+          { providerName, externalId: event.externalId },
+          'wallet reconciliation: malformed deposit status event skipped',
+        );
+        continue;
+      }
+      await this.wallet.recordDepositStatus(event);
     }
 
     await this.reconcileDeposits(runId, providerName, deposits, counts);

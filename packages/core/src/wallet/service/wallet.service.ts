@@ -35,6 +35,7 @@ import {
   type KycStatus,
   type RateLimiterAdapter,
   type RateLimitKey,
+  MoneyAmountSchema,
   type WalletDepositStatusEventStatus,
   type WalletRail,
   railFor as sharedRailFor,
@@ -385,6 +386,11 @@ const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually
 
 const isKycPassed = (status: KycStatus | null) =>
   status !== null && KYC_PASS_STATUSES.has(normalizeKycStatus(status));
+
+export const MalformedDepositEventError = createDomainError<[externalId: string]>(
+  'MalformedDepositEventError',
+  (externalId) => `Deposit event ${externalId || '(empty id)'} carries no usable amount or id`,
+);
 
 export const AmbiguousDepositAddressError = createDomainError(
   'AmbiguousDepositAddressError',
@@ -803,6 +809,14 @@ type DepositOutcome = {
   playerId: Player['id'] | null;
   detail: Record<string, string>;
 };
+
+/** Whether a vendor's deposit event carries a real amount and an id that names one transfer. */
+export function isRecordableDeposit({
+  externalId,
+  amount,
+}: Pick<DepositEvent, 'externalId' | 'amount'>) {
+  return externalId.trim() !== '' && MoneyAmountSchema.safeParse(amount).success;
+}
 
 function isAddressCurrencyMismatch(
   event: Pick<DepositEvent, 'network' | 'currency'>,
@@ -4350,7 +4364,8 @@ export class WalletService {
   /**
    * Audits that a vendor saw a deposit or reported it failed. Moves no money. A no-op once
    * the deposit is credited, refunded or refused below minimum, and for a detection after the
-   * failure. An event no single player can be named for is only logged.
+   * failure. An event no single player can be named for is only logged, and a malformed one
+   * throws so the vendor retries it.
    */
   async recordDepositStatus(event: DepositStatusEvent): Promise<void> {
     const depositAddress = await this.findAttributableDepositAddress(event);
@@ -4383,10 +4398,14 @@ export class WalletService {
 
   /**
    * Whether a polled deposit missing from the ledger is one the minimum refuses, auditing it
-   * the first time. An event no single player can be named for answers false, as does one the
-   * webhook path would have filed as a currency mismatch, so both still reach a finding.
+   * the first time. A malformed event or one no single player can be named for answers false,
+   * as does one the webhook path would have filed as a currency mismatch, so all still reach a
+   * finding.
    */
   async recordDepositIfBelowMinimum(event: DepositEvent): Promise<boolean> {
+    if (!isRecordableDeposit(event)) {
+      return false;
+    }
     const depositAddress = await this.findAttributableDepositAddress(event);
     if (!depositAddress || isAddressCurrencyMismatch(event, depositAddress)) {
       return false;
@@ -4464,6 +4483,9 @@ export class WalletService {
     status: WalletDepositStatusEventStatus,
     { event, depositAddress, playerId, detail }: DepositOutcome,
   ) {
+    if (!isRecordableDeposit(event)) {
+      throw new MalformedDepositEventError(event.externalId);
+    }
     const { providerName } = depositAddress;
     const { externalId, amount, currency } = event;
     const [inserted] = await txn
