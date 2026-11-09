@@ -24,6 +24,8 @@ export const tagKeys = [
   'level',
   'withdrawal_lock',
   'recent_depositor',
+  'age_verification_review',
+  'kyc_dob_mismatch',
 ] as const;
 export const TagKeySchema = z.enum(tagKeys);
 export type TagKey = z.infer<typeof TagKeySchema>;

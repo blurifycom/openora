@@ -337,6 +337,38 @@ export class PlayerService implements PlayerActivityTracker {
     return this.fetchOneWithTags(playerId);
   }
 
+  /**
+   * Suspends a player without an admin actor, as an under-age KYC result requires: the
+   * status change and `player.status.changed` (actorId null) commit together, then every
+   * session is revoked. Balances and bonuses are untouched. A closed or self-excluded player
+   * keeps its status.
+   */
+  async suspendBySystem(userId: User['id']): Promise<void> {
+    await this.drizzle.db.transaction(async (trx) => {
+      const [locked] = await trx
+        .select()
+        .from(player)
+        .where(eq(player.userId, userId))
+        .for('update');
+      if (!locked) {
+        throw new PlayerNotFoundError(userId);
+      }
+      if (locked.status === 'self_excluded' || BLOCKING_PLAYER_STATUSES.has(locked.status)) {
+        return;
+      }
+      await trx.update(player).set({ status: 'suspended' }).where(eq(player.id, locked.id));
+      await this.events.emitInTransaction(trx, 'player.status.changed', {
+        playerId: locked.id,
+        userId,
+        actorId: null,
+        previousStatus: locked.status,
+        newStatus: 'suspended',
+      });
+    });
+    // Also on a redelivery that finds the player already blocked: the revoke may be what failed.
+    await this.sessionCommands.revokeAll(userId);
+  }
+
   private async emitStatusTransition(
     trx: DrizzleTx,
     transition: {

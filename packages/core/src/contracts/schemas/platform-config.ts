@@ -9,6 +9,7 @@ import { CurrencyTickerInputSchema, MoneyAmountSchema } from './common.js';
 import { AgentsConfigSchema } from './agents.js';
 import { HostAllowlistEntrySchema, UrlPrefixAllowlistEntrySchema } from './host-allowlist.js';
 import { createToken } from '../adapters/token.js';
+import { MIN_PLAYER_AGE_YEARS } from './player.js';
 
 /**
  * Platform-wide T0 configuration consumed by the slot evaluation context and
@@ -257,6 +258,8 @@ export const RegistrationConfigSchema = z
      * unverified players stay unrestricted while the KYC toggle is off.
      */
     requireEmailVerification: z.boolean().default(false),
+    /** Youngest age a player may declare or be verified at. Never below the legal 18. */
+    minPlayerAge: z.number().int().min(MIN_PLAYER_AGE_YEARS).default(MIN_PLAYER_AGE_YEARS),
   })
   .strict();
 
@@ -535,3 +538,7 @@ export const defaultPlatformConfig: PlatformConfig = definePlatformConfig({});
 
 /** DI token to inject the active PlatformConfig into services + slot fills. */
 export const PLATFORM_CONFIG = createToken<PlatformConfig>('PLATFORM_CONFIG');
+
+export function resolveMinPlayerAge(config?: PlatformConfig): number {
+  return Math.max(MIN_PLAYER_AGE_YEARS, config?.registration?.minPlayerAge ?? MIN_PLAYER_AGE_YEARS);
+}

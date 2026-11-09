@@ -98,6 +98,14 @@ export default {
       },
     });
 
+    ctx.events.on('compliance.kyc.underage_detected', async (payload) => {
+      const { userId } = domainEventSchemas['compliance.kyc.underage_detected'].parse(payload);
+      if (!svc) {
+        throw new Error('player service is not initialized');
+      }
+      await svc.suspendBySystem(userId);
+    });
+
     ctx.provide(KYC_STATUS_WRITER, (c) => new PlayerKycStatusWriter(c.get(DRIZZLE)));
     ctx.provide(PLAYER_ACTIVITY_TRACKER, playerService);
     ctx.provide(PLAYER_ACCOUNT_MANAGER_READER, accountManagerService);

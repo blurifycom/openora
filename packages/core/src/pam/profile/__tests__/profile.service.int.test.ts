@@ -3,6 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { MIN_PLAYER_AGE_YEARS } from '@openora/core/contracts';
 import type {
   WalletReader,
   ExchangeRateReader,
@@ -12,7 +13,11 @@ import type {
 } from '@openora/core/contracts';
 import { player } from '../schema/index.js';
 import { migrate } from '../migrate.js';
-import { ProfileService } from '../service/profile.service.js';
+import {
+  DateOfBirthLockedError,
+  ProfileService,
+  UnderageDateOfBirthError,
+} from '../service/profile.service.js';
 import { UsernameBlockedError } from '../../shared/username.js';
 import { mock, makeAuditWriter } from '../../../testing/mock.js';
 
@@ -26,6 +31,7 @@ function makeService(
     exchangeRateReader?: ExchangeRateReader;
     supported?: string[];
     reservedUsernames?: string[];
+    minPlayerAge?: number;
   } = {},
 ): ProfileService {
   return new ProfileService({
@@ -38,6 +44,7 @@ function makeService(
     userCommands: mock<UserCommands>({}),
     limiter: mock<RateLimiterAdapter<RateLimitKey>>({}),
     supportedDisplayCurrencies: overrides.supported ?? DEFAULT_SUPPORTED,
+    minPlayerAge: overrides.minPlayerAge ?? MIN_PLAYER_AGE_YEARS,
     reservedUsernames: overrides.reservedUsernames,
   });
 }
@@ -192,6 +199,61 @@ describe('ProfileService.updateMyProfile (real PG)', () => {
     });
   });
 
+  it('refuses a date of birth under the configured minimum age and stores nothing', async () => {
+    const svc = makeService({ minPlayerAge: 21 });
+    const account = await seedUser(db);
+    await seedPlayer(account.id);
+    const twentyYearsAgo = new Date();
+    twentyYearsAgo.setUTCFullYear(twentyYearsAgo.getUTCFullYear() - 20);
+
+    const attempt = svc.updateMyProfile(account.id, {
+      dateOfBirth: twentyYearsAgo.toISOString().slice(0, 10),
+    });
+
+    await expect(attempt).rejects.toThrow(UnderageDateOfBirthError);
+    await expect(attempt).rejects.toMatchObject({
+      message: 'Player must be at least 21 years old',
+      data: { reason: 'underage', field: 'dateOfBirth' },
+    });
+    const [row] = await playersFor(account.id);
+    expect(row?.dateOfBirth).toBeNull();
+  });
+
+  it('refuses clearing a stored date of birth', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id, { dateOfBirth: '1990-05-17' });
+
+    await expect(svc.updateMyProfile(account.id, { dateOfBirth: null })).rejects.toThrow(
+      DateOfBirthLockedError,
+    );
+    const [row] = await playersFor(account.id);
+    expect(row?.dateOfBirth).toBe('1990-05-17');
+  });
+
+  it('refuses replacing a stored date of birth and accepts resending the same one', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id, { dateOfBirth: '1990-05-17' });
+
+    await expect(
+      svc.updateMyProfile(account.id, { dateOfBirth: '1985-03-03' }),
+    ).rejects.toMatchObject({ data: { reason: 'date_of_birth_locked', field: 'dateOfBirth' } });
+    await expect(
+      svc.updateMyProfile(account.id, { dateOfBirth: '1990-05-17', firstName: 'Ada' }),
+    ).resolves.toMatchObject({ dateOfBirth: '1990-05-17', firstName: 'Ada' });
+  });
+
+  it('accepts a null date of birth while none is stored', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id);
+
+    const result = await svc.updateMyProfile(account.id, { dateOfBirth: null, firstName: 'Ada' });
+
+    expect(result).toMatchObject({ firstName: 'Ada', dateOfBirth: null });
+  });
+
   it('leaves other players untouched', async () => {
     const svc = makeService();
     const account = await seedUser(db);
@@ -324,6 +386,7 @@ describe('ProfileService.setMyDisplayCurrency (real PG)', () => {
       userCommands: mock<UserCommands>({}),
       limiter: mock<RateLimiterAdapter<RateLimitKey>>({}),
       supportedDisplayCurrencies: DEFAULT_SUPPORTED,
+      minPlayerAge: MIN_PLAYER_AGE_YEARS,
     });
 
     const result = await svc.setMyDisplayCurrency(account.id, { currency: 'EUR' });
@@ -370,6 +433,7 @@ describe('ProfileService.setMyDisplayDecimalPlaces (real PG)', () => {
       userCommands: mock<UserCommands>({}),
       limiter: mock<RateLimiterAdapter<RateLimitKey>>({}),
       supportedDisplayCurrencies: DEFAULT_SUPPORTED,
+      minPlayerAge: MIN_PLAYER_AGE_YEARS,
     });
 
     const result = await svc.setMyDisplayDecimalPlaces(account.id, { decimalPlaces: 6 });

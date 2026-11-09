@@ -19,4 +19,6 @@ export const DEFAULT_TAGS: CreateTagInput[] = [
   { key: 'level', isSticky: false },
   { key: 'withdrawal_lock', isSticky: true },
   { key: 'recent_depositor', isSticky: false },
+  { key: 'age_verification_review', isSticky: true },
+  { key: 'kyc_dob_mismatch', isSticky: true },
 ];
