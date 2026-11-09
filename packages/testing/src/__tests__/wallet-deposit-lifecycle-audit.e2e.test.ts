@@ -24,6 +24,7 @@ const {
   setup,
   deliver,
   auditRows,
+  guardRows,
   ledgerRows,
   findings,
   balanceOf,
@@ -412,5 +413,126 @@ describe('reconciliation', () => {
     await reconcile([event]);
 
     expect(await auditedActions(event.externalId)).toEqual(['wallet.deposit.detected']);
+  });
+});
+
+describe('an event checked at entry', () => {
+  const malformed: Array<[string, Record<string, unknown>]> = [
+    ['no id', { externalId: undefined }],
+    ['an empty id', { externalId: '' }],
+    ['an empty amount', { amount: '' }],
+    ['a negative amount', { amount: '-1' }],
+    ['more decimals than the ledger keeps', { amount: '15.0000000000000000001' }],
+  ];
+
+  it.each([
+    { kind: 'deposit', withFloor: true },
+    { kind: 'status', withFloor: true },
+    { kind: 'deposit', withFloor: false },
+    { kind: 'status', withFloor: false },
+  ] as const)(
+    'answers an error and writes nothing for a malformed $kind, floor row: $withFloor',
+    async ({ kind, withFloor }) => {
+      const player = await setup({
+        assets: [{ network: withFloor ? NETWORK : OTHER_NETWORK, minDeposit: FLOOR }],
+      });
+      const credited = player.deposit();
+      await delivered(credited);
+      const addresses = [
+        ['an unknown address', `unknown-${randomUUID()}`, undefined],
+        ['a known address', player.address, undefined],
+        ['an already credited deposit', player.address, credited.externalId],
+      ] as const;
+
+      for (const [where, address, existingId] of addresses) {
+        if (!withFloor && where !== 'a known address') {
+          continue;
+        }
+        for (const [label, bad] of malformed) {
+          const base =
+            kind === 'deposit'
+              ? player.deposit({ address })
+              : player.status('detected', { address });
+          const event = { ...base, ...(existingId ? { externalId: existingId } : {}), ...bad };
+          const id = typeof event.externalId === 'string' ? event.externalId : '__no_id__';
+          const sent = `${kind} with ${label} on ${where}`;
+
+          const res = await deliver(event);
+
+          expect(res.status, sent).toBe(500);
+          expect(await guardRows(id), sent).toHaveLength(0);
+          expect(await auditRows(id), sent).toHaveLength(0);
+          expect(await findings(id), sent).toHaveLength(0);
+          expect(await ledgerRows(id), sent).toHaveLength(
+            existingId && !('externalId' in bad) ? 1 : 0,
+          );
+        }
+      }
+      expect(await balanceOf(player.userId, player.currency)).toBe(Number(FLOOR));
+    },
+  );
+});
+
+describe('the floor taken from the address when the event names no network', () => {
+  const twoNetworks = [
+    { network: NETWORK, minDeposit: FLOOR },
+    { network: OTHER_NETWORK, minDeposit: '1' },
+  ];
+
+  it('is the issuing network’s, even where another network of the currency is cheaper', async () => {
+    const player = await setup({ assets: twoNetworks });
+    const event = withoutNetwork(player.deposit({ amount: BELOW_FLOOR }));
+
+    await delivered(event);
+
+    expect(await auditedActions(event.externalId)).toEqual(['wallet.deposit.below_minimum']);
+    expect(await ledgerRows(event.externalId)).toHaveLength(0);
+  });
+
+  it('is the other network’s when the address was issued there', async () => {
+    const player = await setup({ assets: twoNetworks, addressNetwork: OTHER_NETWORK });
+    const under = withoutNetwork(player.deposit({ amount: '0.5' }));
+    const over = withoutNetwork(player.deposit({ amount: '2' }));
+
+    await delivered(under);
+    await delivered(over);
+
+    expect(await auditedActions(under.externalId)).toEqual(['wallet.deposit.below_minimum']);
+    expect(await ledgerRows(over.externalId)).toHaveLength(1);
+  });
+
+  it('is never chosen by the row of another currency on the same address', async () => {
+    const player = await setup({ assets: twoNetworks });
+    const other = await setup({ assets: [{ network: OTHER_NETWORK, minDeposit: '1' }] });
+    await drizzle().insert(walletDepositAddress).values({
+      userId: player.userId,
+      currency: other.currency,
+      network: OTHER_NETWORK,
+      address: player.address,
+      providerName: DEFAULT_PAYMENT_PROVIDER,
+    });
+    const event = withoutNetwork(player.deposit({ amount: BELOW_FLOOR }));
+
+    await delivered(event);
+
+    expect(await auditedActions(event.externalId)).toEqual(['wallet.deposit.below_minimum']);
+    expect(await ledgerRows(event.externalId)).toHaveLength(0);
+  });
+});
+
+describe('a status event in another currency than its address', () => {
+  it('leaves no trace, and a later valid event for the same transfer is audited and credited', async () => {
+    const player = await setup();
+    const externalId = randomUUID();
+
+    await delivered(withoutNetwork(player.status('failed', { externalId, currency: 'ZZZ' })));
+    expect(await auditRows(externalId)).toHaveLength(0);
+
+    await delivered(player.status('detected', { externalId }));
+    await delivered(player.deposit({ externalId }));
+
+    expect(await auditedActions(externalId)).toEqual(['wallet.deposit.detected']);
+    expect(await ledgerRows(externalId)).toHaveLength(1);
+    expect(await balanceOf(player.userId, player.currency)).toBe(Number(FLOOR));
   });
 });
