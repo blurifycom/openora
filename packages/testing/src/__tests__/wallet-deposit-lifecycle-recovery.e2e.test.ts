@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
+import { IDENTITY_READER } from '@openora/core/contracts';
+import { DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
-import { walletDepositAddress } from '@openora/core/wallet/schema';
+import { AuditService } from '@openora/core/audit/server';
+import { walletDepositAddress, walletJobRun } from '@openora/core/wallet/schema';
+import { setTestPaymentTransactions } from '../test-payment-webhook-plugin.js';
 import {
   BELOW_FLOOR,
   bootDepositLifecycle,
@@ -15,6 +19,7 @@ import {
 } from './fixtures/wallet-deposit-lifecycle.js';
 
 const {
+  app,
   adminClient,
   drizzle,
   addCurrencyOnSameAddress,
@@ -557,5 +562,308 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
     const [closed] = await findings(event.externalId);
     expect(closed).toMatchObject({ status: 'resolved', amount: null });
     expect(await filledAudits(findingId)).toHaveLength(0);
+  });
+
+  it('writes every field of the readable report over the unreadable one', async () => {
+    const player = await setup();
+    const { event, findingId } = await reportedUnreadable(player, {
+      address: `unknown-${randomUUID()}`,
+      txHash: 'first-hash',
+      sourceAddress: 'first-source',
+    });
+    const readable = {
+      ...event,
+      address: `unknown-${randomUUID()}`,
+      tag: 'memo-2',
+      txHash: 'second-hash',
+      sourceAddress: 'second-source',
+    };
+
+    await deliver(readable);
+
+    const [filled] = await findings(event.externalId);
+    expect(filled).toMatchObject({
+      kind: 'missing_deposit',
+      status: 'open',
+      currency: readable.currency,
+      network: readable.network,
+      address: readable.address,
+      tag: 'memo-2',
+      txHash: 'second-hash',
+      sourceAddress: 'second-source',
+      detail: null,
+    });
+    expect(Number(filled?.amount)).toBe(Number(FLOOR));
+    const [audit, ...rest] = await filledAudits(findingId);
+    expect(rest).toHaveLength(0);
+    expect(audit).toMatchObject({
+      actorType: 'system',
+      resourceType: 'wallet_reconciliation_finding',
+    });
+    expect(audit?.before).toMatchObject({ amount: null });
+    expect(audit?.after).toMatchObject({ amount: FLOOR, currency: readable.currency });
+  });
+
+  it('asks an admin to name the player after a fill at an unknown address', async () => {
+    const player = await setup();
+    const other = await setup();
+    const { event, findingId } = await reportedUnreadable(player, {
+      address: `unknown-${randomUUID()}`,
+    });
+    await deliver(event);
+
+    const unnamed = await resolve(findingId, { outcome: 'credited' });
+    const ghost = await resolve(findingId, { outcome: 'credited', userId: randomUUID() });
+
+    expect([unnamed.status, ghost.status]).toEqual([409, 404]);
+    expect(await ledgerRows(event.externalId)).toHaveLength(0);
+
+    const named = await resolve(findingId, { outcome: 'credited', userId: other.userId });
+
+    expect(named.status).toBe(200);
+    expect(await ledgerRows(event.externalId)).toHaveLength(1);
+    expect(await balanceOf(other.userId, player.currency)).toBe(Number(FLOOR));
+    expect(await balanceOf(player.userId, player.currency)).toBe(0);
+  });
+
+  it('refuses to credit another player than the owner of the address it was filled with', async () => {
+    const player = await setup();
+    const other = await setup();
+    const { event, findingId } = await reportedUnreadable(player, {
+      address: `unknown-${randomUUID()}`,
+    });
+    await reconcile([{ ...event, address: player.address }]);
+
+    const wrong = await resolve(findingId, { outcome: 'credited', userId: other.userId });
+
+    expect(wrong.status).toBe(409);
+    expect(await ledgerRows(event.externalId)).toHaveLength(0);
+    expect((await resolve(findingId, { outcome: 'credited' })).status).toBe(200);
+    expect(await balanceOf(player.userId, player.currency)).toBe(Number(FLOOR));
+    expect(await balanceOf(other.userId, player.currency)).toBe(0);
+  });
+
+  it('fills a zero amount reported for an unknown address, which can then only be dismissed', async () => {
+    const player = await setup();
+    const { event, findingId } = await reportedUnreadable(player, {
+      address: `unknown-${randomUUID()}`,
+    });
+
+    await deliver({ ...event, amount: '0' });
+
+    expect(Number((await findings(event.externalId))[0]?.amount)).toBe(0);
+    expect((await resolve(findingId, { outcome: 'credited', userId: player.userId })).status).toBe(
+      409,
+    );
+    expect(await ledgerRows(event.externalId)).toHaveLength(0);
+    expect((await resolve(findingId, { outcome: 'dismissed', note: 'zero' })).status).toBe(200);
+  });
+
+  it('does not fill a finding an admin already credited, whatever amount is reported next', async () => {
+    const player = await setup();
+    const { event, findingId } = await reportedUnreadable(player);
+    await reconcile([event]);
+    expect((await resolve(findingId, { outcome: 'credited' })).status).toBe(200);
+
+    await reconcile([{ ...event, amount: '99' }]);
+
+    const [closed] = await findings(event.externalId);
+    expect(closed).toMatchObject({ status: 'resolved' });
+    expect(Number(closed?.amount)).toBe(Number(FLOOR));
+    expect(await filledAudits(findingId)).toHaveLength(1);
+    expect(await ledgerRows(event.externalId)).toHaveLength(1);
+  });
+
+  it('does not fill once the deposit id was refunded from a finding of another kind', async () => {
+    const player = await setup();
+    const { event, findingId } = await reportedUnreadable(player);
+    await deliver({ ...event, amount: BELOW_FLOOR });
+    const [refusal] = (await findings(event.externalId)).filter(
+      (finding) => finding.kind === 'below_minimum_deposit',
+    );
+    expect((await refund(refusal!.id, BELOW_FLOOR)).status).toBe(200);
+    const elsewhere = { ...event, address: `unknown-${randomUUID()}` };
+
+    expect((await deliver(elsewhere)).status).toBe(200);
+    await reconcile([elsewhere]);
+
+    const [unreadable] = (await findings(event.externalId)).filter(
+      (finding) => finding.kind === 'missing_deposit',
+    );
+    expect(unreadable).toMatchObject({ id: findingId, status: 'open', amount: null });
+    expect(await filledAudits(findingId)).toHaveLength(0);
+    expect((await resolve(findingId, { outcome: 'credited', userId: player.userId })).status).toBe(
+      409,
+    );
+    expect((await ledgerRows(event.externalId)).map((row) => row.status)).toEqual(['refunded']);
+    expect(await balanceOf(player.userId, player.currency)).toBe(0);
+  });
+
+  it('rolls a polled fill back with a forced audit failure, and the next run fills', async () => {
+    const player = await setup();
+    const { event, findingId } = await reportedUnreadable(player);
+    const failAudit = `fail_audit_${randomUUID().replaceAll('-', '')}`;
+    await drizzle().execute(
+      sql.raw(`create function ${failAudit}() returns trigger language plpgsql as $$ begin
+        if new.action = 'wallet.reconciliation_finding.filled' then
+          raise exception 'forced audit failure';
+        end if;
+        return new;
+      end $$`),
+    );
+    await drizzle().execute(
+      sql.raw(
+        `create trigger ${failAudit} before insert on audit_log for each row execute function ${failAudit}()`,
+      ),
+    );
+    try {
+      setTestPaymentTransactions([event]);
+      const started = await adminClient().post('/wallet/reconciliation/run', {});
+      const { runId } = (await started.json()) as { runId: string };
+      await vi.waitFor(
+        async () => {
+          const [run] = await drizzle()
+            .select({ status: walletJobRun.status })
+            .from(walletJobRun)
+            .where(eq(walletJobRun.runId, runId));
+          expect(run?.status).toBe('failed');
+        },
+        { timeout: 20_000, interval: 100 },
+      );
+      expect((await findings(event.externalId))[0]?.amount).toBeNull();
+    } finally {
+      await drizzle().execute(sql.raw(`drop trigger ${failAudit} on audit_log`));
+      await drizzle().execute(sql.raw(`drop function ${failAudit}()`));
+    }
+
+    const retried = await reconcile([event]);
+
+    expect(retried.status).toBe('completed');
+    expect(Number((await findings(event.externalId))[0]?.amount)).toBe(Number(FLOOR));
+    expect(await filledAudits(findingId)).toHaveLength(1);
+  });
+
+  it.each(['credited', 'refunded', 'dismissed'] as const)(
+    'settles one outcome when a readable report races a %s resolution',
+    async (outcome) => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const player = await setup();
+        const { event, findingId } = await reportedUnreadable(player);
+        const resolution =
+          outcome === 'credited'
+            ? resolve(findingId, { outcome })
+            : outcome === 'refunded'
+              ? refund(findingId, FLOOR)
+              : resolve(findingId, { outcome, note: 'raced' });
+
+        await Promise.all([resolution, reconcile([event])]);
+
+        const [finding] = await findings(event.externalId);
+        const ledger = await ledgerRows(event.externalId);
+        expect(await filledAudits(findingId)).toHaveLength(finding?.amount === null ? 0 : 1);
+        expect(ledger.length).toBe(
+          finding?.status === 'resolved' && outcome !== 'dismissed' ? 1 : 0,
+        );
+        expect(await balanceOf(player.userId, player.currency)).toBe(
+          ledger.some((row) => row.status === 'completed') ? Number(FLOOR) : 0,
+        );
+      }
+    },
+  );
+
+  it('moves the money once when a credit races a refund of a filled finding', async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const player = await setup();
+      const { event, findingId } = await reportedUnreadable(player);
+      await reconcile([event]);
+
+      await Promise.all([resolve(findingId, { outcome: 'credited' }), refund(findingId, FLOOR)]);
+
+      const ledger = await ledgerRows(event.externalId);
+      expect(ledger).toHaveLength(1);
+      expect((await findings(event.externalId))[0]?.status).toBe('resolved');
+      expect(await balanceOf(player.userId, player.currency)).toBe(
+        ledger[0]?.status === 'completed' ? Number(FLOOR) : 0,
+      );
+    }
+  });
+
+  it('shows the fill through the audit read route and keeps the hash chain valid', async () => {
+    const player = await setup();
+    const { event, findingId } = await reportedUnreadable(player);
+    await reconcile([event]);
+
+    const res = await adminClient().get(
+      `/audit/logs?resourceId=${findingId}&action=wallet.reconciliation_finding.filled&limit=50`,
+    );
+
+    expect(res.status).toBe(200);
+    const { items } = (await res.json()) as {
+      items: Array<{ action: string; before: unknown; after: unknown }>;
+    };
+    expect(items).toHaveLength(1);
+    expect(items[0]?.before).toMatchObject({ amount: null });
+    expect(items[0]?.after).toMatchObject({ amount: FLOOR });
+    const audit = new AuditService(
+      app().container.get(DRIZZLE),
+      app().container.get(EVENT_BUS),
+      app().container.get(IDENTITY_READER),
+    );
+    expect(await audit.verifyChain()).toEqual({ valid: true });
+  });
+});
+
+describe('a polled deposit or event that is skipped, not filed', () => {
+  it('files nothing for a blank id on a polled deposit', async () => {
+    const player = await setup();
+    const before = (await findings('')).length;
+
+    const run = await reconcile([player.deposit({ amount: 'abc', externalId: '' })]);
+
+    expect(run.status).toBe('completed');
+    expect(await findings('')).toHaveLength(before);
+  });
+
+  it('files nothing and records no refusal for a malformed polled status event', async () => {
+    const player = await setup();
+    const event = player.status('detected', { amount: 'abc' });
+
+    const run = await reconcile([event]);
+
+    expect(run.status).toBe('completed');
+    expect(await findings(event.externalId)).toHaveLength(0);
+    expect(await guardRows(event.externalId)).toHaveLength(0);
+  });
+
+  it('answers an error on the webhook for an unreadable amount, and files nothing', async () => {
+    const player = await setup();
+    const event = player.deposit({ amount: 'abc' });
+
+    const res = await deliver(event);
+
+    expect(res.status).toBe(500);
+    expect(await findings(event.externalId)).toHaveLength(0);
+  });
+
+  it('files nothing for a refunded id without a ledger row that is re-reported unreadable', async () => {
+    const player = await setup();
+    const event = player.deposit({ address: `unknown-${randomUUID()}` });
+    await reconcile([event]);
+    const [finding] = await findings(event.externalId);
+    expect(
+      (
+        await resolve(finding!.id, {
+          outcome: 'refunded',
+          amount: FLOOR,
+          txHash: `refund-${randomUUID()}`,
+          destinationAddress: `dest-${randomUUID()}`,
+        })
+      ).status,
+    ).toBe(200);
+
+    await reconcile([{ ...event, amount: 'abc' }]);
+
+    expect(await findings(event.externalId)).toHaveLength(1);
+    expect(await ledgerRows(event.externalId)).toHaveLength(0);
   });
 });
