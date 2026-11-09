@@ -56,7 +56,7 @@ export class StreakAdminService {
       const reset = switchedOn
         ? await tx
             .update(promoPlayerStreak)
-            .set({ current: 0, updatedAt: sql`now()` })
+            .set({ current: 0, lastQualifyingDay: null, updatedAt: sql`now()` })
             .where(gt(promoPlayerStreak.current, 0))
         : null;
       await this.audit.recordInTransaction(tx, {

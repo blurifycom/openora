@@ -28,7 +28,7 @@ import {
   promoStreakConfig,
 } from '../schema/index.js';
 import { roundReversal } from '../shared/round-reversal.js';
-import { activeRakebackMilestone, isStreakLive } from '../shared/streak-day.js';
+import { activeRakebackRate, isStreakLive, type StreakRate } from '../shared/streak-day.js';
 
 const ZERO = '0';
 
@@ -76,8 +76,6 @@ export function unrankedRakeback({
 type RakebackRate =
   | { mode: 'ranked'; ratePercent: string; upliftPercent: string }
   | { mode: 'unranked'; ratePercent: string };
-
-type StreakRate = { unrankedRatePercent: string; rankedUpliftPercent: string };
 
 /**
  * Rakeback on a qualifying bet's own-money stake, or under the `margin` basis that stake times the
@@ -309,7 +307,7 @@ export class RakebackService implements WagerTrackingCommands {
     if (!streak || !isStreakLive(streak.lastQualifyingDay, new Date())) {
       return null;
     }
-    return activeRakebackMilestone(config.rakebackMilestones, streak.current);
+    return activeRakebackRate(config.rakebackMilestones, streak.current);
   }
 }
 

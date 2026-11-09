@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { activeRakebackMilestone, isStreakLive } from '../shared/streak-day.js';
+import { activeRakebackRate, isStreakLive } from '../shared/streak-day.js';
 import {
   fixedRewardViews,
   nextMilestoneAfter,
@@ -49,23 +49,48 @@ describe('isStreakLive', () => {
   });
 });
 
-describe('activeRakebackMilestone', () => {
-  const milestones = [rate(1, '1'), rate(7, '3'), rate(14, '5')];
+describe('activeRakebackRate', () => {
+  const milestones = [rate(1, '1', '2'), rate(7, '3', '6'), rate(14, '5', '10')];
 
   it.each([
     [0, null],
-    [1, 1],
-    [6, 1],
-    [7, 7],
-    [13, 7],
-    [14, 14],
-    [400, 14],
-  ])('at streak %s uses the row for day %s', (current, day) => {
-    expect(activeRakebackMilestone(milestones, current)?.day ?? null).toBe(day);
+    [1, { unrankedRatePercent: '1', rankedUpliftPercent: '2' }],
+    [6, { unrankedRatePercent: '1', rankedUpliftPercent: '2' }],
+    [7, { unrankedRatePercent: '3', rankedUpliftPercent: '6' }],
+    [13, { unrankedRatePercent: '3', rankedUpliftPercent: '6' }],
+    [14, { unrankedRatePercent: '5', rankedUpliftPercent: '10' }],
+    [400, { unrankedRatePercent: '5', rankedUpliftPercent: '10' }],
+  ])('at streak %s unlocks %j', (current, expected) => {
+    expect(activeRakebackRate(milestones, current)).toEqual(expected);
+  });
+
+  it('never falls to a later row with a lower rate', () => {
+    const uneven = [rate(5, '3', '30'), rate(10, '2', '20')];
+
+    expect(activeRakebackRate(uneven, 12)).toEqual({
+      unrankedRatePercent: '3',
+      rankedUpliftPercent: '30',
+    });
+  });
+
+  it('keeps the best of each formula separately', () => {
+    const crossed = [rate(5, '3', '10'), rate(10, '2', '20')];
+
+    expect(activeRakebackRate(crossed, 12)).toEqual({
+      unrankedRatePercent: '3',
+      rankedUpliftPercent: '20',
+    });
+  });
+
+  it('compares percentages as numbers, not as text', () => {
+    expect(activeRakebackRate([rate(1, '9', '9'), rate(2, '10', '10')], 2)).toEqual({
+      unrankedRatePercent: '10',
+      rankedUpliftPercent: '10',
+    });
   });
 
   it('is null when nothing is configured', () => {
-    expect(activeRakebackMilestone([], 10)).toBeNull();
+    expect(activeRakebackRate([], 10)).toBeNull();
   });
 });
 

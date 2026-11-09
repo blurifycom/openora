@@ -611,6 +611,22 @@ describe('the active rate', () => {
     });
   });
 
+  it('does not fall to a later row with a lower rate', async () => {
+    await setConfig({
+      rakebackMilestones: [
+        { day: 5, unrankedRatePercent: '3', rankedUpliftPercent: '30' },
+        { day: 10, unrankedRatePercent: '2', rankedUpliftPercent: '20' },
+      ],
+    });
+    const userId = randomUUID();
+    await seedStreak(userId, 12, daysAgo(0));
+
+    expect((await streaks.getForPlayer(userId)).activeRate).toEqual({
+      mode: 'unranked',
+      percent: '3',
+    });
+  });
+
   it('is none before the first rate row is reached', async () => {
     const userId = randomUUID();
     await seedStreak(userId, 2, daysAgo(0));
@@ -992,6 +1008,21 @@ describe('closeDay', () => {
     await record(userId, '10');
 
     expect(await streaks.getForPlayer(userId)).toMatchObject({ current: 1, best: 5 });
+  });
+
+  it('lets a player who qualified today advance again once the streak is switched back on', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db
+      .insert(promoStreakDailyWager)
+      .values({ userId, day: daysAgo(0), currency: 'USD', wagered: '20' });
+    await seedStreak(userId, 3, daysAgo(0));
+    await setConfig({ enabled: false });
+    await streaks.closeDay(new Date());
+    await setConfig({ enabled: true });
+
+    await record(userId, '1');
+
+    expect(await streaks.getForPlayer(userId)).toMatchObject({ current: 1, best: 3 });
   });
 
   it('keeps a waiting reward claimable while the close resets a disabled streak', async () => {

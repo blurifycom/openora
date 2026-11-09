@@ -1,3 +1,4 @@
+import { moneyCompare } from '@openora/core/server';
 import type { StreakRakebackMilestone } from '../contract/index.js';
 
 export const DAY_MS = 86_400_000;
@@ -14,16 +15,39 @@ export const isStreakLive = (lastQualifyingDay: string | null, now: Date) =>
   lastQualifyingDay !== null &&
   (lastQualifyingDay === isoDate(now) || lastQualifyingDay === yesterdayOf(now));
 
-/** The rate row with the highest day at or below `current`. */
-export function activeRakebackMilestone(
+export type StreakRate = Pick<
+  StreakRakebackMilestone,
+  'unrankedRatePercent' | 'rankedUpliftPercent'
+>;
+
+/**
+ * The best rate the streak has unlocked: for each formula, the highest percentage among the rows
+ * at or below `current`. A later row with a lower rate never lowers it, because an unlocked rate
+ * holds until the player misses a day.
+ */
+export function activeRakebackRate(
   milestones: readonly StreakRakebackMilestone[],
   current: number,
-): StreakRakebackMilestone | null {
-  return milestones.reduce<StreakRakebackMilestone | null>(
-    (active, milestone) =>
-      milestone.day <= current && (active === null || milestone.day > active.day)
-        ? milestone
-        : active,
-    null,
-  );
+): StreakRate | null {
+  return milestones
+    .filter((milestone) => milestone.day <= current)
+    .reduce<StreakRate | null>(
+      (best, milestone) =>
+        best === null
+          ? {
+              unrankedRatePercent: milestone.unrankedRatePercent,
+              rankedUpliftPercent: milestone.rankedUpliftPercent,
+            }
+          : {
+              unrankedRatePercent:
+                moneyCompare(milestone.unrankedRatePercent, best.unrankedRatePercent) > 0
+                  ? milestone.unrankedRatePercent
+                  : best.unrankedRatePercent,
+              rankedUpliftPercent:
+                moneyCompare(milestone.rankedUpliftPercent, best.rankedUpliftPercent) > 0
+                  ? milestone.rankedUpliftPercent
+                  : best.rankedUpliftPercent,
+            },
+      null,
+    );
 }

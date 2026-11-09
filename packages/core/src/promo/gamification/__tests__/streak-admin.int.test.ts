@@ -180,6 +180,25 @@ describe('switching the streak on', () => {
     });
   });
 
+  it('forgets the last qualifying day too, so a player who qualified today can advance again', async () => {
+    const userId = randomUUID();
+    await admin().setConfig(randomUUID(), { ...CONFIG, enabled: false });
+    await db.drizzle.db.insert(promoPlayerStreak).values({
+      userId,
+      current: 4,
+      best: 4,
+      lastQualifyingDay: new Date().toISOString().slice(0, 10),
+    });
+
+    await admin().setConfig(randomUUID(), CONFIG);
+
+    const [row] = await db.drizzle.db
+      .select({ lastQualifyingDay: promoPlayerStreak.lastQualifyingDay })
+      .from(promoPlayerStreak)
+      .where(eq(promoPlayerStreak.userId, userId));
+    expect(row?.lastQualifyingDay).toBeNull();
+  });
+
   it('starts every run from zero the first time the streak is configured on', async () => {
     const userId = randomUUID();
     await run(userId, 6);

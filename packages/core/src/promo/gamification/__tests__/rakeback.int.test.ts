@@ -342,6 +342,22 @@ describe('streak rakeback for a ranked player', () => {
     expect(lastCredit().amount).toBe('0.220000000000000000');
   });
 
+  it('keeps the highest unlocked uplift when a later row lowers it', async () => {
+    await db.drizzle.db.update(promoStreakConfig).set({
+      rakebackMilestones: [
+        { day: 3, unrankedRatePercent: '5', rankedUpliftPercent: '20' },
+        { day: 7, unrankedRatePercent: '4', rankedUpliftPercent: '10' },
+      ],
+    });
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'gold');
+    await givePlayerStreak(userId, 9, daysAgo(0));
+
+    await betOn(margin(), userId, '100', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('0.240000000000000000');
+  });
+
   it('pays the plain rank rakeback until the streak reaches its first rate row', async () => {
     const userId = randomUUID();
     await givePlayerTier(userId, 'gold');
@@ -502,6 +518,21 @@ describe('streak rakeback for a player with no rank', () => {
       expect.objectContaining({ userId }),
       'streak rakeback skipped: bet has no usable rtp',
     );
+  });
+
+  it('keeps the highest unlocked unranked rate when a later row lowers it', async () => {
+    await db.drizzle.db.update(promoStreakConfig).set({
+      rakebackMilestones: [
+        { day: 3, unrankedRatePercent: '5', rankedUpliftPercent: '20' },
+        { day: 7, unrankedRatePercent: '4', rankedUpliftPercent: '10' },
+      ],
+    });
+    const userId = randomUUID();
+    await givePlayerStreak(userId, 9, daysAgo(0));
+
+    await betOn(instant(), userId, '2500', { rtp: '0.96' });
+
+    expect(lastCredit().amount).toBe('5.000000000000000000');
   });
 
   it('pays nothing before the streak reaches its first rate row', async () => {

@@ -28,7 +28,7 @@ import {
 import { roundReversal } from '../shared/round-reversal.js';
 import {
   DAY_MS,
-  activeRakebackMilestone,
+  activeRakebackRate,
   isStreakLive,
   isoDate,
   yesterdayOf,
@@ -393,7 +393,7 @@ export class StreakService implements WagerTrackingCommands {
       .where(eq(promoStreakMilestoneGrant.userId, userId));
     const counting = config.enabled && isStreakLive(streak?.lastQualifyingDay ?? null, now);
     const current = counting ? (streak?.current ?? 0) : 0;
-    const milestone = counting ? activeRakebackMilestone(config.rakebackMilestones, current) : null;
+    const rate = counting ? activeRakebackRate(config.rakebackMilestones, current) : null;
     return {
       enabled: config.enabled,
       current,
@@ -402,10 +402,10 @@ export class StreakService implements WagerTrackingCommands {
       dailyMinWager: config.dailyMinWager,
       currency: STREAK_CURRENCY,
       isRanked,
-      activeRate: milestone
+      activeRate: rate
         ? isRanked
-          ? { mode: 'ranked', percent: milestone.rankedUpliftPercent }
-          : { mode: 'unranked', percent: milestone.unrankedRatePercent }
+          ? { mode: 'ranked', percent: rate.rankedUpliftPercent }
+          : { mode: 'unranked', percent: rate.unrankedRatePercent }
         : null,
       nextMilestone: config.enabled
         ? nextMilestoneAfter({
@@ -471,7 +471,11 @@ export class StreakService implements WagerTrackingCommands {
       const disabled = !config?.enabled;
       const result = await tx
         .update(promoPlayerStreak)
-        .set({ current: 0, updatedAt: sql`now()` })
+        .set({
+          current: 0,
+          ...(disabled ? { lastQualifyingDay: null } : {}),
+          updatedAt: sql`now()`,
+        })
         .where(
           and(
             gt(promoPlayerStreak.current, 0),
