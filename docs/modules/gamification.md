@@ -208,8 +208,9 @@ count, and the two things the streak pays.
 **Rakeback rate.** From a configured day on, a qualifying player earns more rakeback. A ranked
 player's rank rakeback is multiplied by one plus the milestone's uplift. A player with no rank
 earns the milestone's unranked rate on the theoretical gross gaming revenue of the bet, its house
-edge, and nothing without a usable return-to-player figure. The rate comes from the milestone with
-the highest day the streak has reached, read when the bet settles, and only while the player last
+edge, and nothing without a usable return-to-player figure. The rate is the best the streak has
+unlocked, the highest unranked rate and the highest uplift among the milestones at or below the
+streak, so a later milestone with a lower rate never lowers it. It is read when the bet settles, and only while the player last
 qualified today or yesterday, so a broken streak pays nothing before the daily close runs. The bet
 that unlocks a milestone earns the previous milestone's rate, because rakeback is computed before
 the streak advances. See [ADR-0051](../adr/0051-streak-milestone-rakeback-rate.md).

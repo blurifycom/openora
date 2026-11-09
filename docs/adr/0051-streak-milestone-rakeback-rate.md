@@ -21,8 +21,11 @@ could never run past it, so the most loyal players stopped progressing.
 **Two separate things unlock along the streak, configured apart.** A rate row says what rakeback a
 player earns from a given day on. A fixed reward says what one-time bonus a given day unlocks. Days
 run from 1 to 35, the count has no upper limit and the streak never resets on its own: only a
-missed day, or switching the streak off, resets it. Past the last configured day the highest
-rate row stays.
+missed day, or switching the streak off, resets it. The rate in force is the best the streak
+has unlocked: per formula, the highest percentage among the rows at or below the current day, so a
+rate never falls while the streak holds, even if a later row is lower. Past the last configured
+day it stays. Switching the streak on, and the close that resets a disabled streak, also forget
+the last qualifying day, so a player who already qualified that day can advance again.
 
 **The uplift multiplies, it does not add.** A ranked player's rank rakeback is multiplied by one
 plus the row's uplift. The same uplift is therefore worth the same share of the rank's rakeback on
