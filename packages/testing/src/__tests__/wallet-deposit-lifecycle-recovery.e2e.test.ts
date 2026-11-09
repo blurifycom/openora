@@ -438,26 +438,22 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
     await deliver(readable);
 
     const [audit] = await filledAudits(findingId);
-    expect(audit?.before).toMatchObject({
+    expect(audit?.before).toEqual({
       amount: null,
       currency: event.currency,
       network: event.network,
-      address: event.address,
-      tag: 'tag-first',
-      txHash: event.txHash,
-      sourceAddress: 'source-first',
       detail: expect.stringContaining('abc'),
     });
     expect(audit?.after).toMatchObject({
       amount: FLOOR,
       currency: 'ZZZ',
       network: OTHER_NETWORK,
-      address: readable.address,
-      tag: 'tag-second',
-      txHash: readable.txHash,
-      sourceAddress: 'source-second',
       detail: null,
     });
+    for (const identifier of ['address', 'tag', 'txHash', 'sourceAddress']) {
+      expect(audit?.before).not.toHaveProperty(identifier);
+      expect(audit?.after).not.toHaveProperty(identifier);
+    }
   });
 
   it('credits the reported amount once through the admin route', async () => {

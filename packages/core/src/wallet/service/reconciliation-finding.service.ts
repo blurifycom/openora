@@ -121,10 +121,6 @@ async function fillUnreadableFinding(
         amount: walletReconciliationFinding.amount,
         currency: walletReconciliationFinding.currency,
         network: walletReconciliationFinding.network,
-        address: walletReconciliationFinding.address,
-        tag: walletReconciliationFinding.tag,
-        txHash: walletReconciliationFinding.txHash,
-        sourceAddress: walletReconciliationFinding.sourceAddress,
         detail: walletReconciliationFinding.detail,
       })
       .from(walletReconciliationFinding)
@@ -140,7 +136,7 @@ async function fillUnreadableFinding(
       ...recorded,
       action: 'wallet.reconciliation_finding.filled',
       before,
-      after: { ...recorded.after, ...filled },
+      after: { ...recorded.after, detail: null },
     });
   });
 }
