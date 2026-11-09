@@ -16,12 +16,14 @@ import {
   EXCHANGE_RATE_READER,
   IDENTITY_READER,
   PLAYER_SEGMENT_READER,
+  PLAY_ELIGIBILITY,
   RATE_LIMITER,
   type AdminPlayerSummary,
   type AdminUserDirectory,
   type ExchangeRateReader,
   type IdentityReader,
   type KycStatus,
+  type PlayEligibilityPort,
   type PlayerSegmentReader,
   type RateLimiterAdapter,
   type RunContext,
@@ -103,6 +105,7 @@ function bootKernel() {
   container.register(EVENT_BUS, () => makeEventBus());
   container.register(AUDIT_WRITER, () => makeAuditWriter());
   container.register(IDENTITY_READER, () => identityReader());
+  container.register(PLAY_ELIGIBILITY, () => mock<PlayEligibilityPort>({}));
   container.register(ADMIN_USER_DIRECTORY, () =>
     mock<AdminUserDirectory>({
       lookupPlayers: vi.fn(async (userIds: readonly string[]) =>
