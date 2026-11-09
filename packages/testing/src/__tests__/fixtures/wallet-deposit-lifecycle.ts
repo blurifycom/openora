@@ -50,7 +50,7 @@ const LIFECYCLE_ACTIONS = [
 ];
 
 export type DepositEvent = Extract<PaymentWebhookEvent, { kind: 'deposit' }>;
-export type StatusEvent = Extract<PaymentWebhookEvent, { kind: 'deposit_status' }>;
+type StatusEvent = Extract<PaymentWebhookEvent, { kind: 'deposit_status' }>;
 type AssetSeed = { network: string; minDeposit: string; depositEnabled?: boolean };
 
 export const withoutNetwork = <T extends { network?: string }>({ network: _network, ...rest }: T) =>
