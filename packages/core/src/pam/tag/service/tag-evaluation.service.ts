@@ -12,7 +12,12 @@ import {
   type User,
 } from '@openora/core/contracts';
 import { moneyToNumber, mapConcurrent, createLogger, type DrizzleTx } from '@openora/core/server';
-import { TagService, TagAlreadyInUseError, TagAssignmentNotFoundError } from './tag.service.js';
+import {
+  TagService,
+  TagAlreadyInUseError,
+  TagAssignmentNotFoundError,
+  PlayerNotFoundError,
+} from './tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
 import {
   SYSTEM_ACTOR_ID,
@@ -581,6 +586,33 @@ export class TagEvaluationService {
       userId,
       tagKey: 'high_risk',
       reason: 'kyc device/IP screening flagged high risk',
+    });
+  }
+
+  /**
+   * Assigns the sticky age_verification_review on compliance.kyc.underage_detected. Never
+   * auto-removed: an admin clears it after reviewing the verified document.
+   */
+  async onKycUnderageDetected(payload: unknown) {
+    const { userId } = domainEventSchemas['compliance.kyc.underage_detected'].parse(payload);
+    const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+    if (!playerId) {
+      throw new PlayerNotFoundError(userId);
+    }
+    await this.tryAssignPlayerTag({
+      playerId,
+      tagKey: 'age_verification_review',
+      reason: 'kyc document shows the player under the minimum age',
+    });
+  }
+
+  /** Assigns the sticky kyc_dob_mismatch on compliance.kyc.dob_mismatch_detected. */
+  async onKycDobMismatchDetected(payload: unknown) {
+    const { userId } = domainEventSchemas['compliance.kyc.dob_mismatch_detected'].parse(payload);
+    await this.tryAssignTag({
+      userId,
+      tagKey: 'kyc_dob_mismatch',
+      reason: 'kyc document date of birth differs from the declared one',
     });
   }
 

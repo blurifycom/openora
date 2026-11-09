@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Client } from 'pg';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { player as playerTable } from '@openora/core/pam/schema/profile';
 import { migrate } from '../migrate.js';
 import { PlayEligibilityService } from '../service/play-eligibility.service.js';
 
@@ -56,6 +57,49 @@ describe('PlayEligibilityService inside a caller transaction (real PG)', () => {
         await svc.isRestricted(player.id, tx);
         await expect(
           other.query('UPDATE "user" SET rg_blocked = true WHERE id = $1', [player.id]),
+        ).rejects.toMatchObject({ code: '55P03' });
+      });
+    } finally {
+      await other.end();
+    }
+  });
+});
+
+describe('PlayEligibilityService player status (real PG)', () => {
+  it.each([
+    ['suspended', 'account_suspended'],
+    ['closed', 'account_closed'],
+  ] as const)('refuses play for a %s player', async (status, reason) => {
+    const account = await seedUser(db);
+    await db.drizzle.db.insert(playerTable).values({ userId: account.id, currency: 'USD', status });
+    const svc = new PlayEligibilityService(db.drizzle);
+
+    expect(await svc.checkPlay(account.id)).toBe(reason);
+    expect(await db.drizzle.db.transaction((tx) => svc.checkPlay(account.id, tx))).toBe(reason);
+    expect(await svc.isRestricted(account.id)).toBe(false);
+  });
+
+  it('admits an active player', async () => {
+    const account = await seedUser(db);
+    await db.drizzle.db.insert(playerTable).values({ userId: account.id, currency: 'USD' });
+    const svc = new PlayEligibilityService(db.drizzle);
+
+    expect(await svc.checkPlay(account.id)).toBeNull();
+  });
+
+  it('holds a concurrent suspension back until the caller transaction ends', async () => {
+    const account = await seedUser(db);
+    await db.drizzle.db.insert(playerTable).values({ userId: account.id, currency: 'USD' });
+    const svc = new PlayEligibilityService(db.drizzle);
+    const other = new Client({ connectionString: db.url });
+    await other.connect();
+
+    try {
+      await other.query(`SET lock_timeout = '200ms'`);
+      await db.drizzle.db.transaction(async (tx) => {
+        await svc.checkPlay(account.id, tx);
+        await expect(
+          other.query(`UPDATE player SET status = 'suspended' WHERE user_id = $1`, [account.id]),
         ).rejects.toMatchObject({ code: '55P03' });
       });
     } finally {

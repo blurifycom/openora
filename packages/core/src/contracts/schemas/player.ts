@@ -155,14 +155,16 @@ export const PlayerBioSchema = z
 
 /**
  * Compares calendar dates, not elapsed milliseconds: a leap day between the birth date
- * and the cutoff would shift a ms-based boundary by a day. The player's own 18th birthday
+ * and the cutoff would shift a ms-based boundary by a day. The birthday that reaches `minAge`
  * passes.
  */
-export function isAdultDateOfBirth(dateOfBirth: string, now = new Date()): boolean {
+export function isAdultDateOfBirth(
+  dateOfBirth: string,
+  now = new Date(),
+  minAge = MIN_PLAYER_AGE_YEARS,
+): boolean {
   const cutoff =
-    (now.getUTCFullYear() - MIN_PLAYER_AGE_YEARS) * 10_000 +
-    (now.getUTCMonth() + 1) * 100 +
-    now.getUTCDate();
+    (now.getUTCFullYear() - minAge) * 10_000 + (now.getUTCMonth() + 1) * 100 + now.getUTCDate();
   return Number(dateOfBirth.replaceAll('-', '')) <= cutoff;
 }
 
@@ -181,12 +183,7 @@ export const UpdatePlayerProfileInputSchema = z
   .object({
     firstName: z.string().min(1).max(100).nullable(),
     lastName: z.string().min(1).max(100).nullable(),
-    dateOfBirth: z.iso
-      .date()
-      .refine((value) => isAdultDateOfBirth(value), {
-        message: `Player must be at least ${MIN_PLAYER_AGE_YEARS} years old`,
-      })
-      .nullable(),
+    dateOfBirth: z.iso.date().nullable(),
     phone: E164PhoneSchema.nullable(),
     country: CountryCodeSchema.nullable(),
     currency: CurrencyTickerInputSchema,
