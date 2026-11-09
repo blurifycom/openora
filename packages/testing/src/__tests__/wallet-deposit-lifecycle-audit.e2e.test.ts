@@ -272,6 +272,22 @@ describe('deposit_status events', () => {
     },
   );
 
+  it.each(['detected', 'failed'] as const)(
+    'adds no row for a late %s after an ownerless deposit was refunded with only a marker',
+    async (late) => {
+      const { deposit, status } = await setup();
+      const refunded = deposit({ address: `unknown-${randomUUID()}` });
+      const { externalId } = refunded;
+      await refundMissingDeposit(refunded);
+      expect(await ledgerRows(externalId)).toHaveLength(0);
+
+      await delivered(status(late, { externalId }));
+
+      expect(await auditedActions(externalId)).toEqual([]);
+      expect(await ledgerRows(externalId)).toHaveLength(0);
+    },
+  );
+
   it('adds no detected row after a failed one', async () => {
     const { status } = await setup();
     const externalId = randomUUID();
