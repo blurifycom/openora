@@ -114,12 +114,8 @@
           "name": "promo_player_rank_tier_id_promo_rank_tier_id_fk",
           "tableFrom": "promo_player_rank",
           "tableTo": "promo_rank_tier",
-          "columnsFrom": [
-            "tier_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tier_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -129,9 +125,7 @@
         "promo_player_rank_userId_unique": {
           "name": "promo_player_rank_userId_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
+          "columns": ["user_id"]
         }
       },
       "policies": {},
@@ -202,9 +196,7 @@
         "promo_player_streak_userId_unique": {
           "name": "promo_player_streak_userId_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
+          "columns": ["user_id"]
         }
       },
       "policies": {},
@@ -450,12 +442,8 @@
           "name": "promo_race_payout_race_id_promo_race_id_fk",
           "tableFrom": "promo_race_payout",
           "tableTo": "promo_race",
-          "columnsFrom": [
-            "race_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["race_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -596,12 +584,8 @@
           "name": "promo_race_round_wager_race_id_promo_race_id_fk",
           "tableFrom": "promo_race_round_wager",
           "tableTo": "promo_race",
-          "columnsFrom": [
-            "race_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["race_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -710,12 +694,8 @@
           "name": "promo_race_wager_race_id_promo_race_id_fk",
           "tableFrom": "promo_race_wager",
           "tableTo": "promo_race",
-          "columnsFrom": [
-            "race_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["race_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -997,12 +977,8 @@
           "name": "promo_rakeback_accrual_claim_id_promo_rakeback_claim_id_fk",
           "tableFrom": "promo_rakeback_accrual",
           "tableTo": "promo_rakeback_claim",
-          "columnsFrom": [
-            "claim_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["claim_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1181,12 +1157,8 @@
           "name": "promo_rakeback_claim_payout_claim_id_promo_rakeback_claim_id_fk",
           "tableFrom": "promo_rakeback_claim_payout",
           "tableTo": "promo_rakeback_claim",
-          "columnsFrom": [
-            "claim_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["claim_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1418,16 +1390,12 @@
         "promo_rank_challenge_tier_key_unique": {
           "name": "promo_rank_challenge_tier_key_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "key"
-          ]
+          "columns": ["key"]
         },
         "promo_rank_challenge_tier_position_unique": {
           "name": "promo_rank_challenge_tier_position_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "position"
-          ]
+          "columns": ["position"]
         }
       },
       "policies": {},
@@ -1484,9 +1452,7 @@
         "promo_rank_challenge_wager_userId_unique": {
           "name": "promo_rank_challenge_wager_userId_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
+          "columns": ["user_id"]
         }
       },
       "policies": {},
@@ -1612,9 +1578,7 @@
         "promo_rank_config_singletonKey_unique": {
           "name": "promo_rank_config_singletonKey_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "singleton_key"
-          ]
+          "columns": ["singleton_key"]
         }
       },
       "policies": {},
@@ -1959,9 +1923,7 @@
         "promo_rank_tier_key_unique": {
           "name": "promo_rank_tier_key_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "key"
-          ]
+          "columns": ["key"]
         }
       },
       "policies": {},
@@ -2052,9 +2014,7 @@
         "promo_streak_config_singletonKey_unique": {
           "name": "promo_streak_config_singletonKey_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "singleton_key"
-          ]
+          "columns": ["singleton_key"]
         }
       },
       "policies": {},
@@ -2367,28 +2327,17 @@
     "public.promo_rakeback_accrual_status": {
       "name": "promo_rakeback_accrual_status",
       "schema": "public",
-      "values": [
-        "accrued",
-        "claimed",
-        "reversed",
-        "voided"
-      ]
+      "values": ["accrued", "claimed", "reversed", "voided"]
     },
     "public.promo_rakeback_basis": {
       "name": "promo_rakeback_basis",
       "schema": "public",
-      "values": [
-        "stake",
-        "margin"
-      ]
+      "values": ["stake", "margin"]
     },
     "public.promo_rakeback_claim_outcome": {
       "name": "promo_rakeback_claim_outcome",
       "schema": "public",
-      "values": [
-        "claimed",
-        "auto_paid"
-      ]
+      "values": ["claimed", "auto_paid"]
     }
   },
   "schemas": {},
