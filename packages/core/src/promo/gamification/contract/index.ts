@@ -240,8 +240,13 @@ export type StreakFixedRewardState = z.infer<typeof StreakFixedRewardStateSchema
 export const STREAK_GRANT_OUTCOMES = ['granted', 'restricted', 'reversed', 'expired'] as const;
 export type StreakGrantOutcome = (typeof STREAK_GRANT_OUTCOMES)[number];
 
+// Zod runs a refine even when the format check before it failed, so a malformed value reaches
+// here too; it passes, leaving the format error as the one reported.
 const isRolloverWithinLimit = (value: string) => {
   const [whole = '0', fraction = ''] = value.split('.');
+  if (!/^\d+$/.test(whole)) {
+    return true;
+  }
   const wholePart = BigInt(whole);
   const limit = BigInt(STREAK_MAX_ROLLOVER_MULTIPLIER);
   return wholePart < limit || (wholePart === limit && !/[1-9]/.test(fraction));

@@ -134,6 +134,28 @@ describe('setting the streak config', () => {
   });
 });
 
+describe('a malformed decimal string', () => {
+  it.each(['1,000', 'abc', '1e3', ' 5', '', '1.5.5', '-1'])(
+    'reports the rollover %j as a field error instead of throwing',
+    (rolloverMultiplier) => {
+      const paths = issuePaths(config({ fixedRewards: [{ ...reward(3), rolloverMultiplier }] }));
+      expect([...new Set(paths)]).toEqual(['fixedRewards.0.rolloverMultiplier']);
+    },
+  );
+
+  it.each(['NaN', 'Infinity', '1e2', ' 5', '', '1,5', 'abc', '1.234', '1000'])(
+    'reports the rate %j as a field error instead of throwing',
+    (value) => {
+      expect(
+        issuePaths(config({ rakebackMilestones: [{ ...rate(1), unrankedRatePercent: value }] })),
+      ).toEqual(['rakebackMilestones.0.unrankedRatePercent']);
+      expect(
+        issuePaths(config({ rakebackMilestones: [{ ...rate(1), rankedUpliftPercent: value }] })),
+      ).toEqual(['rakebackMilestones.0.rankedUpliftPercent']);
+    },
+  );
+});
+
 describe('reading a streak config that has no dollar threshold yet', () => {
   it('reads a zero daily minimum, which a config converted from another currency carries', () => {
     expect(StreakConfigSchema.safeParse(config({ dailyMinWager: '0' })).success).toBe(true);

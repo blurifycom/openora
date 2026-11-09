@@ -214,6 +214,25 @@ describe('an operator configuring the streak', () => {
     expect(await configAudits()).toHaveLength(auditedBefore);
   });
 
+  it.each([
+    [
+      'a rollover with a thousands separator',
+      { fixedRewards: [{ ...CONFIG.fixedRewards[0], rolloverMultiplier: '1,000' }] },
+      'fixedRewards.0.rolloverMultiplier',
+    ],
+    [
+      'a rate that is not a number',
+      { rakebackMilestones: [{ day: 1, unrankedRatePercent: 'NaN', rankedUpliftPercent: '0' }] },
+      'rakebackMilestones.0.unrankedRatePercent',
+    ],
+  ])('answers 400 naming the field for %s, not a server error', async (_label, patch, path) => {
+    const res = await bonusAdmin.put(CONFIG_PATH, { ...CONFIG, ...patch });
+
+    expect(res.status).toBe(400);
+    const body = (await readJson(res)) as { data: { issues: { path: (string | number)[] }[] } };
+    expect(body.data.issues.map((issue) => issue.path.join('.'))).toContain(path);
+  });
+
   it('reads back a config whose threshold was never set in dollars, without letting it be saved as is', async () => {
     await bonusAdmin.put(CONFIG_PATH, CONFIG);
     await drizzle().update(promoStreakConfig).set({ enabled: false, dailyMinWager: '0' });
