@@ -239,7 +239,7 @@ export class SupportHistoryService {
     const id = userId.toLowerCase();
     return cached(
       this.deps.cache,
-      `support-chat-history:${id}:${includeResolved}`,
+      `support-chat-history:v2:${id}:${includeResolved}`,
       HISTORY_CACHE_TTL_MS,
       () => this.load(id, includeResolved),
     );

@@ -480,6 +480,20 @@ describe('support history cache (real PG)', () => {
     listChats: vi.fn(async () => []),
   });
 
+  it('does not serve an answer cached under the key from before the gap state', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    const cache = makeCache();
+    const oldAnswer = { fetchedAt: 'cached under the old key' };
+    await cache.set(`support-chat-history:${account.id}:false`, oldAnswer, { ttlMs: 60_000 });
+    const read = reader();
+    const service = new SupportHistoryService({ drizzle: db.drizzle, cache, reader: read });
+
+    const history = await service.getHistory(account.id, false);
+
+    expect(history).not.toEqual(oldAnswer);
+    expect(read.listTickets).toHaveBeenCalledOnce();
+  });
+
   it('does not cache a missing player', async () => {
     const { cache, calls } = countingCache();
     const service = new SupportHistoryService({
