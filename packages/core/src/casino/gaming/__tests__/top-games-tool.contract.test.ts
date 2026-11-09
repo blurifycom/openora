@@ -37,6 +37,7 @@ describe('gaming agent surface registration', () => {
 
     expect(registry.mcp.getTools().map((tool) => tool.contract.id)).toEqual([
       'gaming.top_games',
+      'gaming.top_providers',
       'games.find',
       'games.categories',
     ]);

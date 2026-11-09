@@ -36,6 +36,7 @@ import { GameProviderService } from './service/game-provider.service.js';
 import { GameBulkService } from './service/game-bulk.service.js';
 import { GameFavoriteService } from './service/game-favorite.service.js';
 import { topGames } from './service/top-games.service.js';
+import { topProviders } from './service/top-providers.service.js';
 import { GamesFindService } from './service/games-find.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
@@ -54,6 +55,7 @@ import {
   gameCategoriesTool,
   gamesFindTool,
   topGamesTool,
+  topProvidersTool,
 } from './contract/index.js';
 
 export default {
@@ -77,6 +79,10 @@ export default {
     ctx.mcp.tool(topGamesTool, (c) => {
       const reporting = c.get(ADMIN_GAME_REPORTING);
       return (input) => topGames(reporting, input);
+    });
+    ctx.mcp.tool(topProvidersTool, (c) => {
+      const reporting = c.get(ADMIN_GAME_REPORTING);
+      return (input) => topProviders(reporting, input);
     });
     ctx.mcp.tool(gamesFindTool, (c) => {
       const catalog = new GamesFindService(c.get(DRIZZLE));
