@@ -73,6 +73,13 @@ ends.
 - A stake is counted on the UTC day the wallet accepts it, only its real-money part. Bonus buys are
   not told apart from other casino stakes yet.
 - Every streak amount and threshold is in dollars, converted at the rate of the moment.
-- The data conversion switches an existing streak off, turns each old bonus reward into a fixed
-  reward, leaves no rate rows, and settles rewards waiting under a day that no longer pays. The
-  operator re-enables the streak once it has set the new rates.
+- The data conversion switches an existing streak off, empties the old milestone list, turns each
+  old bonus reward into a fixed reward and leaves no rate rows. Rewards and waiting grants are
+  mapped only when the old config was priced in dollars; otherwise the old amounts mean nothing
+  in dollars, no reward is mapped, and the day totals and round shares counted in the old
+  currency are dropped so a total can never mix currencies. A waiting grant left unmapped has no
+  claim window, so it cannot be claimed or announced, and the hourly sweep settles it as expired
+  with an audit record each. The operator re-enables the streak once it has set the new rates.
+- During a rolling deploy, a process still running the previous release reads the emptied milestone
+  list, so it keeps counting days but unlocks and pays nothing. The columns it reads stay until a
+  later release drops them.

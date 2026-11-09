@@ -215,8 +215,8 @@ that unlocks a milestone earns the previous milestone's rate, because rakeback i
 the streak advances. See [ADR-0051](../adr/0051-streak-milestone-rakeback-rate.md).
 
 **Fixed rewards.** The first time a streak reaches a configured day it unlocks a one-time bonus. The
-amount, rollover and claim window are captured at that moment, so editing the config later changes
-nothing a player already holds. The player is told it is ready by a notification carrying the day and the captured dollar amount. The player claims it within the window, and it becomes a bonus in
+amount, rollover, claim window and optional max bet are captured at that moment, so editing the config later changes
+nothing a player already holds. The player is told it is ready by a notification carrying the day and the captured amount with its currency, both optional for an event from before they were carried. The player claims it within the window, and it becomes a bonus in
 the currency they play in, priced from dollars at claim time, with a rollover window as long as the
 claim window. A reward that was claimed, expired or lost never unlocks again, except one taken back
 because a same-day rollback undid the day that unlocked it. An hourly sweep settles unclaimed
@@ -224,6 +224,6 @@ rewards once their window closes, with an audit record each.
 
 **Switching it off** ends every streak at the next daily close and stops new rates and rewards;
 rewards already unlocked stay claimable until they expire. Switching it on starts everyone from
-zero. A self-exclusion or cooling-off forfeits unclaimed rewards without a notification, and
+zero. A close that resets runs because the streak is off writes one audit record with the count. A self-exclusion or cooling-off forfeits unclaimed rewards without a notification, and
 nothing is restored when it ends. Saving the config needs write access to bonuses and is audited
 with the staff member who made the change.
