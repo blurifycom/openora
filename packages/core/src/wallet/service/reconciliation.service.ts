@@ -900,6 +900,12 @@ export class ReconciliationService {
         event.kind === 'withdrawal',
     );
 
+    for (const event of relevant) {
+      if (event.kind === 'deposit_status') {
+        await this.wallet.recordDepositStatus(event);
+      }
+    }
+
     await this.reconcileDeposits(runId, providerName, deposits, counts);
 
     for (const event of withdrawals) {
@@ -940,7 +946,7 @@ export class ReconciliationService {
     for (const event of deposits) {
       const tx = byExternalId.get(event.externalId);
       const result = diffDeposit(event, tx);
-      if (result === null) {
+      if (result === null || (!tx && (await this.wallet.recordDepositIfBelowMinimum(event)))) {
         continue;
       }
       counts[

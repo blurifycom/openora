@@ -8,10 +8,13 @@ import { createToken, type Token } from './token.js';
 /**
  * Normalized shape of an inbound payment-vendor webhook, produced by a
  * `PaymentAdapter.parseWebhook` implementation. A `deposit` event reports funds that
- * arrived at a previously-issued address (see `issueDepositAddress`); a `withdrawal`
- * event reports a status transition for a withdrawal already sent to the vendor via
- * `processWithdrawal`. `externalId` is the vendor's reference id for the underlying
- * settlement - the dedup key the wallet module reconciles against.
+ * arrived at a previously-issued address (see `issueDepositAddress`); a `deposit_status`
+ * event reports that an inbound transfer was seen but not confirmed, or failed, and only
+ * ever writes the audit trail, never the ledger; a `withdrawal` event reports a status
+ * transition for a withdrawal already sent to the vendor via `processWithdrawal`.
+ * `externalId` is the vendor's reference id for the underlying settlement - the dedup key
+ * the wallet module reconciles against, and shared by a transfer's status events and its
+ * confirmed `deposit`.
  *
  * A deposit carries `network` because an address does not identify a chain: an EVM vault
  * hands out one address that is shared across every EVM chain AND every token on them, so
@@ -33,6 +36,20 @@ export type PaymentWebhookEvent =
        * else is flagged in the audit trail, so it is worth passing whenever it is known.
        */
       sourceAddress?: string;
+    }
+  | {
+      kind: 'deposit_status';
+      status: 'detected' | 'failed';
+      address: string;
+      network?: string;
+      tag?: string;
+      amount: string;
+      currency: string;
+      /** Absent when a transfer fails before it is broadcast. */
+      txHash?: string;
+      externalId: string;
+      /** The vendor's own status word, kept for the audit trail. */
+      vendorStatus?: string;
     }
   | {
       kind: 'withdrawal';

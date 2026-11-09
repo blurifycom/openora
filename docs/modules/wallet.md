@@ -68,6 +68,14 @@ does not repeat it.
   else `wallet.defaultReferenceCurrency`. The rate and its timestamp are stored with it and never
   recalculated. With no fresh rate the row is not written: a request fails with a typed error, and a
   deposit webhook fails so the vendor redelivers it.
+- **An address-based deposit under its asset's minimum is not credited.** The floor is the row for
+  the event's network, else the network the address was issued on; with no network at all, the
+  lowest row. A row with deposits switched off still counts, and a named network with no row has
+  no floor. The refusal, a `detected` status and a `failed` status each leave one audit row under
+  the player, guarded by `wallet_deposit_status_event` in the same transaction, so a redelivery or
+  a poll adds nothing. The first refusal stands if the minimum later drops. A credited or refunded
+  deposit audits no later status, and a failed one no later detection. A refused deposit never
+  becomes a `missing_deposit` finding.
 - **A bet row records what the bet was placed on.** `wager_product` comes from its `WagerContext`,
   and so does `wager_rtp` when it is a fraction in [0, 1]. A malformed rtp is stored as NULL rather
   than refusing the bet. `houseEdge` in `@openora/core/server` prices it.

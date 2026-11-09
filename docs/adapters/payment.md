@@ -33,6 +33,10 @@ rather than failing.
   order, and the signature will not match.
 - **Normalise, never interpret.** The adapter translates a vendor payload into the shared event
   shape. Deciding whether to credit anyone is the ledger's job, not the adapter's.
+- **Report inbound transfers as the vendor sees them, whatever their size.** Map one the vendor
+  has seen but not confirmed, or has failed, to a `deposit_status` event carrying the same
+  settlement identifier as the confirmed `deposit`. Do not filter deposits by minimum: core
+  compares each one to the asset's minimum.
 - **Carry an idempotency key on every state-changing call.** A thrown call and a lost response
   look identical from here, and the retry must not move funds twice.
 - **Throw `PaymentRejectedError` only when the vendor definitely did not accept a payout.** It is
@@ -58,7 +62,8 @@ rather than failing.
 2. The player sends funds on-chain at some later time. Nothing calls this API.
 3. The vendor posts a webhook. Core verifies the signature, asks the binding to normalise the
    payload, resolves the address back to a player, and credits the ledger once - deduplicated on
-   the vendor's settlement identifier.
+   the vendor's settlement identifier. A deposit under its asset's minimum is audited and not
+   credited.
 
 A payout runs the same way in reverse: core submits, the vendor answers "accepted, not final", and
 a later webhook moves the transaction to its final state. A replayed webhook, or one for a

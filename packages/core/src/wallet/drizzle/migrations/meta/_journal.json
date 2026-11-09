@@ -281,6 +281,13 @@
       "when": 1793804304004,
       "tag": "0039_wallet_transaction_type_donation",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1794208767070,
+      "tag": "0040_young_rick_jones",
+      "breakpoints": true
     }
   ]
 }
