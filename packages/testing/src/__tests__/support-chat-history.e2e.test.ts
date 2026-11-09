@@ -533,6 +533,47 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       expect(readSupportHistoryCalls().listTickets).toEqual([]);
     });
 
+    it('answers email_gap when another account took the address, from the cache on a repeat by uppercase id', async () => {
+      const p = await newPlayer();
+      const q = await newPlayer();
+      await drizzle()
+        .insert(auditLog)
+        .values({
+          actorType: 'player',
+          actorId: q.playerId,
+          action: 'identity.email.changed',
+          resourceType: 'player',
+          resourceId: q.playerId,
+          before: { email: `support-history-gone-${randomUUID()}@e2e.test` },
+          after: { email: p.email.toUpperCase() },
+          hash: randomUUID(),
+        });
+      answerSupportHistoryWith({ tickets: [item('ticket', '2026-03-01T00:00:00Z')] });
+
+      const first = await history(admin, p.userId);
+      const again = await history(admin, p.userId.toUpperCase());
+
+      expect(first.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
+      expect(again).toEqual(first);
+      expect(readSupportHistoryCalls().listTickets).toEqual([]);
+    });
+
+    it('keeps every email of the trail out of an email_gap response', async () => {
+      const p = await newPlayer();
+      await trail(p, [
+        ['a', 'b', 10],
+        ['b', 'not-current', 20],
+      ]);
+
+      const res = await admin.get(historyPath(p.userId));
+      const text = await res.text();
+
+      expect(Object.keys(JSON.parse(text).tickets).sort()).toEqual(['complete', 'items', 'state']);
+      expect(JSON.parse(text).tickets.state).toBe('email_gap');
+      expect(text).not.toContain('@');
+      expect(text).not.toContain(p.email);
+    });
+
     it('answers tickets unavailable, not email_gap, when a gap leaves a window and the vendor then fails', async () => {
       const p = await newPlayer();
       const win = await trail(p, [
