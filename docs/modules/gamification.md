@@ -195,3 +195,10 @@ lock until payout commits, serializing a concurrent exclusion lift with settleme
 rakeback for when it ends. An hourly job reminds a player at most once a day, and only when a claim
 would succeed. A player found below the minimum is checked again only once new rakeback accrues. An admin can void an unclaimed row with a reason. The void is audited. See
 [ADR-0048](../adr/0048-claimable-rakeback-on-the-house-edge.md).
+
+`bonus.rakeback_liability`, a read tool under `bonus:view` - the grant the rakeback admin routes
+assert - gives per currency the unclaimed rakeback now, which is the operator's liability, and over
+whole UTC days what accrued and what players claimed, by when they claimed it, each with the
+accruals and players behind it, never converted across currencies. A partial index on the claimed
+accruals' `settled_at` serves the claimed-in-range read. It is served only through the MCP kernel
+(ADR-0042).
