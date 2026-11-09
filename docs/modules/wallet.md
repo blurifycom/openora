@@ -85,8 +85,11 @@ does not repeat it.
   network named, is logged and records nothing. An event with a malformed amount or an empty id
   answers an error on the webhook, so the vendor retries it. An amount with more decimals than the
   ledger keeps is malformed too, and is never rounded. The poll files a polled deposit with a
-  malformed amount as a `missing_deposit` finding with no amount and the raw string in its detail,
-  which an admin can only dismiss; a blank id or a malformed status event is logged and skipped. A
+  malformed amount as a `missing_deposit` finding with no amount and the raw string, escaped and
+  cut to 200 characters, in its detail. An admin can only dismiss it until a readable report of the
+  same id completes the open row, once and with an audit record of both amounts; a dismissed or
+  resolved finding stays as it was. An id already on the ledger or refused below minimum files
+  nothing, and a blank id or a malformed status event is logged and skipped. A
   finding for a zero amount can be dismissed but never credited.
 - **A bet row records what the bet was placed on.** `wager_product` comes from its `WagerContext`,
   and so does `wager_rtp` when it is a fraction in [0, 1]. A malformed rtp is stored as NULL rather

@@ -114,6 +114,22 @@ describe('an amount with more decimals than the ledger keeps, below the floor', 
 });
 
 describe('the poll, with a malformed status event in the batch', () => {
+  it('files one finding for an amount holding a NUL and still moves the withdrawal', async () => {
+    const player = await setup();
+    await deliver(player.deposit());
+    const withdrawalId = await withdrawalInFlight(player);
+    const malformed = player.deposit({ amount: 'ab\u0000c' });
+
+    const run = await reconcile([
+      malformed,
+      { kind: 'withdrawal', externalId: withdrawalId, status: 'completed' },
+    ]);
+
+    expect(run.status).toBe('completed');
+    expect(await findings(malformed.externalId)).toHaveLength(1);
+    expect((await ledgerRows(withdrawalId)).map((row) => row.status)).toEqual(['completed']);
+  });
+
   it('skips it, audits the good one, moves the withdrawal and finishes the run', async () => {
     const player = await setup();
     await deliver(player.deposit());

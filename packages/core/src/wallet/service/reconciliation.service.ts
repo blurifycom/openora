@@ -983,7 +983,7 @@ export class ReconciliationService {
         txHash: event.txHash,
         sourceAddress: event.sourceAddress ?? null,
         externalId: event.externalId,
-        detail: `vendor reported an unreadable amount: ${event.amount}`,
+        detail: `vendor reported an unreadable amount: ${JSON.stringify(event.amount).slice(0, 200)}`,
       },
       this.audit,
     );
@@ -1008,6 +1008,14 @@ export class ReconciliationService {
       if (!isRecordableDeposit(event)) {
         if (event.externalId.trim() === '') {
           logger.error({ providerName }, 'wallet reconciliation: deposit with no id skipped');
+        } else if (
+          ledger.has(event.externalId) ||
+          seen.get(event.externalId)?.has('below_minimum')
+        ) {
+          logger.error(
+            { providerName, externalId: event.externalId },
+            'wallet reconciliation: unreadable amount reported for a settled deposit, skipped',
+          );
         } else {
           await this.fileUnreadableDeposit(runId, providerName, event);
           counts.missingDeposit += 1;
