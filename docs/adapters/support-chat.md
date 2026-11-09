@@ -134,9 +134,9 @@ Core works out which identities belong to the player and hands them to the reade
   the windows after the break are kept, everything from the break back is dropped, the window opened
   by a change with a wrong time included, and a warning naming the user goes to the log. When even
   the last change cannot be trusted, there is no window at all: the tickets section is reported
-  unavailable and the reader is not asked. The rows are append-only and nothing repairs them; the
+  `email_gap` and the reader is not asked. The rows are append-only and nothing repairs them; the
   player's next email change heals that state, unless an earlier row claims a time ahead of the real
-  clock: every later change then reads as falling back, and the section stays unavailable until real
+  clock: every later change then reads as falling back, and the section stays `email_gap` until real
   time passes that stamp, which with realistic clock skew takes seconds. Core fails closed rather
   than trust it.
 - **The email registered with anchors the oldest window.** Each account keeps the email it was
@@ -152,7 +152,7 @@ Core works out which identities belong to the player and hands them to the reade
   latest one decides: another account leaving the address opens the window then, and another
   account taking it drops the window, since nothing places when that account let it go. Either
   way the trail counts as broken: the tickets section is not complete, the warning goes to the
-  log, and when no window is left the section is unavailable.
+  log, and when no window is left the section is `email_gap`.
 - **What the trail cannot notice.** The lost rows below can only be rows written before email
   changes committed with their audit row, which is to say from before that deploy. On an account
   without a recorded registration email, a lost first change stays unseen when the other account's
@@ -195,13 +195,15 @@ What a reader must guarantee:
   read, is logged as `unexpected adapter error`, nothing of it kept, not even its name.
 
 The answer has a tickets and a chats section. Each one either carries its items, most recently
-updated first, or says it is unavailable: its read failed, or the current email could not be
-trusted. The tickets section also says whether it is complete: true only when every email the
-player held was searched, false when a break in the trail or the cap of three previous emails
-left older ones out, so staff know an older ticket may exist that the list does not show.
-The tickets section also says there is no email to match when the account has neither an email
-nor an email change, and the chats section says the player is not linked when there was nothing
-to ask. One section failing never hides the other; the reason goes to the log only. Core caches
+updated first, or says it is unavailable: its read failed. The tickets section says `email_gap`
+when the email trail left no period that can be trusted: the reader was not asked, and retrying
+does not help until the trail heals. A trail with a break that still leaves a window is read as
+usual, so a failed read there is unavailable. The tickets section also says whether it is
+complete: true only when every email the player held was searched, false when a break in the
+trail or the cap of three previous emails left older ones out, so staff know an older ticket may
+exist that the list does not show. The tickets section also says there is no email to match when
+the account has neither an email nor an email change, and the chats section says the player is
+not linked when there was nothing to ask. One section failing never hides the other; the reason goes to the log only. Core caches
 the whole answer for 60 seconds per player and per resolved setting, keeping its original fetch
 time, and limits each admin to 30 calls a minute, cache hits included, so staff clicking around do not
 spend the vendor's API quota. The default cache is in-process, so each replica fetches on its

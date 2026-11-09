@@ -173,7 +173,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
   it('trusts no window when the account holds another email than it registered with and no row says so', async () => {
     const s = await scenario([], { registeredEmail: 'a' });
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
@@ -183,7 +183,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
       { before: 'a', after: 'b', at: 10 },
     ]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
@@ -218,7 +218,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
       { before: { email: '' }, after: { email: '' }, at: 12 },
     ]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
@@ -275,14 +275,14 @@ describe('support history email windows from crafted audit rows (real PG)', () =
       { before: 'b', after: 'cur', at: 20 },
     ]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
   it('trusts no window when a change time is later than its own audit write', async () => {
     const s = await scenario([{ before: 'a', after: 'cur', at: 10, changedAt: 11 }]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
@@ -331,7 +331,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
   it('trusts no window when another account took the address, whatever its case', async () => {
     const s = await scenario([{ subject: 'other', before: 'q', after: 'CUR', at: 5 }]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 

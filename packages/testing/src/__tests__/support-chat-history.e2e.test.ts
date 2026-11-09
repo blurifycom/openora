@@ -332,7 +332,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     ]);
   });
 
-  it('answers tickets unavailable for a repeated email change row whose change time is later than its audit write', async () => {
+  it('answers tickets email_gap for a repeated email change row whose change time is later than its audit write', async () => {
     const p = await newPlayer();
     await changeEmail(p.client, `support-history-new-${randomUUID()}@e2e.test`);
     await emailChangeAuditedAt('player', p.playerId);
@@ -343,11 +343,11 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     }));
     const body = await history(admin, p.userId);
 
-    expect(body.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(body.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     expect(readSupportHistoryCalls().listTickets).toEqual([]);
   });
 
-  it('answers tickets unavailable without asking the vendor when the last email change does not name the current email', async () => {
+  it('answers tickets email_gap without asking the vendor when the last email change does not name the current email', async () => {
     const p = await newPlayer();
     await drizzle()
       .insert(auditLog)
@@ -364,7 +364,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
 
     const body = await history(admin, p.userId);
 
-    expect(body.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(body.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     expect(readSupportHistoryCalls().listTickets).toEqual([]);
   });
 
@@ -426,6 +426,14 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       });
     }
 
+    async function takeEmptyEmail(p: Player) {
+      await drizzle()
+        .update(user)
+        .set({ email: `support-history-released-${randomUUID()}@e2e.test` })
+        .where(eq(user.email, ''));
+      await drizzle().update(user).set({ email: '' }).where(eq(user.id, p.userId));
+    }
+
     it('searches only the four most recent of five emails and says the history is not complete', async () => {
       const p = await newPlayer();
       const win = await trail(p, [
@@ -461,14 +469,14 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
         ],
       ],
     ] as [string, [string, string, number][]][])(
-      'answers tickets unavailable without asking the vendor for %s',
+      'answers tickets email_gap without asking the vendor for %s',
       async (_name, rows) => {
         const p = await newPlayer();
         await trail(p, rows);
 
         const body = await history(admin, p.userId);
 
-        expect(body.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+        expect(body.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
         expect(readSupportHistoryCalls().listTickets).toEqual([]);
       },
     );
@@ -506,12 +514,53 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
 
     it('answers no_email, complete, asking nobody, for an account with no email and no change', async () => {
       const p = await newPlayer();
-      await drizzle().update(user).set({ email: '' }).where(eq(user.id, p.userId));
+      await takeEmptyEmail(p);
 
       const body = await history(admin, p.userId);
 
       expect(body.tickets).toEqual({ state: 'no_email', items: [], complete: true });
       expect(readSupportHistoryCalls().listTickets).toEqual([]);
+    });
+
+    it('answers email_gap, asking nobody, for an account with no email but with email changes', async () => {
+      const p = await newPlayer();
+      await trail(p, [['a', 'cur', 10]]);
+      await takeEmptyEmail(p);
+
+      const body = await history(admin, p.userId);
+
+      expect(body.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
+      expect(readSupportHistoryCalls().listTickets).toEqual([]);
+    });
+
+    it('answers tickets unavailable, not email_gap, when a gap leaves a window and the vendor then fails', async () => {
+      const p = await newPlayer();
+      const win = await trail(p, [
+        ['a', 'b', 10],
+        ['c', 'cur', 20],
+      ]);
+      failSupportHistory('listTickets', 'timeout');
+
+      const body = await history(admin, p.userId);
+
+      expect(body.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+      expect(readSupportHistoryCalls().listTickets.map((c) => c.windows)).toEqual([
+        [win(20, null, 'cur')],
+      ]);
+    });
+
+    it('answers tickets email_gap and still serves the chats of a linked player', async () => {
+      const p = await linkedPlayer();
+      await trail(p, [['a', 'not-current', 10]]);
+      const chat = item('chat', '2026-03-01T00:00:00Z');
+      answerSupportHistoryWith({ chats: [chat] });
+
+      const body = await history(admin, p.userId);
+
+      expect(body.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
+      expect(body.chats).toEqual({ state: 'ok', items: [chat] });
+      expect(readSupportHistoryCalls().listTickets).toEqual([]);
+      expect(readSupportHistoryCalls().listChats).toEqual([{ customerId: p.customerId }]);
     });
   });
 

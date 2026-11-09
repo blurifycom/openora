@@ -275,7 +275,7 @@ export class SupportHistoryService {
     const [tickets, chats] = await Promise.all([
       windows.length === 0
         ? {
-            state: broken ? ('unavailable' as const) : ('no_email' as const),
+            state: broken ? ('email_gap' as const) : ('no_email' as const),
             items: [],
             complete: !broken,
           }
