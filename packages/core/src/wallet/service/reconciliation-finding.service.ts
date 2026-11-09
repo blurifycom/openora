@@ -94,39 +94,54 @@ async function fillUnreadableFinding(
   if (!amount || !externalId || !SAME_DEPOSIT_KIND[input.kind]) {
     return;
   }
+  const filled = {
+    amount,
+    currency: input.currency ?? null,
+    network: input.network ?? null,
+    address: input.address ?? null,
+    tag: input.tag ?? null,
+    txHash: input.txHash ?? null,
+    sourceAddress: input.sourceAddress ?? null,
+    detail: null,
+  };
+  const stillUnreadable = and(
+    eq(walletReconciliationFinding.kind, 'missing_deposit'),
+    eq(walletReconciliationFinding.providerName, input.providerName),
+    eq(walletReconciliationFinding.externalId, externalId),
+    eq(walletReconciliationFinding.status, 'open'),
+    isNull(walletReconciliationFinding.amount),
+  );
   await db.transaction(async (txn) => {
     if (await isRefundedDeposit(txn, input.providerName, externalId)) {
       return;
     }
     const [row] = await txn
-      .update(walletReconciliationFinding)
-      .set({
-        amount,
-        currency: input.currency ?? null,
-        network: input.network ?? null,
-        address: input.address ?? null,
-        tag: input.tag ?? null,
-        txHash: input.txHash ?? null,
-        sourceAddress: input.sourceAddress ?? null,
-        detail: null,
+      .select({
+        id: walletReconciliationFinding.id,
+        amount: walletReconciliationFinding.amount,
+        currency: walletReconciliationFinding.currency,
+        network: walletReconciliationFinding.network,
+        address: walletReconciliationFinding.address,
+        tag: walletReconciliationFinding.tag,
+        txHash: walletReconciliationFinding.txHash,
+        sourceAddress: walletReconciliationFinding.sourceAddress,
+        detail: walletReconciliationFinding.detail,
       })
-      .where(
-        and(
-          eq(walletReconciliationFinding.kind, 'missing_deposit'),
-          eq(walletReconciliationFinding.providerName, input.providerName),
-          eq(walletReconciliationFinding.externalId, externalId),
-          eq(walletReconciliationFinding.status, 'open'),
-          isNull(walletReconciliationFinding.amount),
-        ),
-      )
-      .returning({ id: walletReconciliationFinding.id });
-    if (row) {
-      await audit.recordInTransaction(txn, {
-        ...findingRecordedAudit(row.id, input),
-        action: 'wallet.reconciliation_finding.filled',
-        before: { amount: null },
-      });
+      .from(walletReconciliationFinding)
+      .where(stillUnreadable)
+      .for('update');
+    if (!row) {
+      return;
     }
+    await txn.update(walletReconciliationFinding).set(filled).where(stillUnreadable);
+    const { id, ...before } = row;
+    const recorded = findingRecordedAudit(id, input);
+    await audit.recordInTransaction(txn, {
+      ...recorded,
+      action: 'wallet.reconciliation_finding.filled',
+      before,
+      after: { ...recorded.after, ...filled },
+    });
   });
 }
 

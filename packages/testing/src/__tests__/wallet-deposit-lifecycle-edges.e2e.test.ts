@@ -15,6 +15,7 @@ import {
   NETWORK,
   OTHER_NETWORK,
   withoutNetwork,
+  type DepositEvent,
   type DepositPlayer,
 } from './fixtures/wallet-deposit-lifecycle.js';
 
@@ -114,6 +115,26 @@ describe('an amount with more decimals than the ledger keeps, below the floor', 
 });
 
 describe('the poll, with a malformed status event in the batch', () => {
+  it('files one finding for a deposit with no amount and still moves the withdrawal', async () => {
+    const player = await setup();
+    await deliver(player.deposit());
+    const withdrawalId = await withdrawalInFlight(player);
+    const noAmount: DepositEvent = JSON.parse(
+      JSON.stringify({ ...player.deposit(), amount: undefined }),
+    );
+
+    const run = await reconcile([
+      noAmount,
+      { kind: 'withdrawal', externalId: withdrawalId, status: 'completed' },
+    ]);
+
+    expect(run.status).toBe('completed');
+    const filed = await findings(noAmount.externalId);
+    expect(filed).toHaveLength(1);
+    expect(filed[0]).toMatchObject({ kind: 'missing_deposit', amount: null });
+    expect((await ledgerRows(withdrawalId)).map((row) => row.status)).toEqual(['completed']);
+  });
+
   it('files one finding for an amount holding a NUL and still moves the withdrawal', async () => {
     const player = await setup();
     await deliver(player.deposit());

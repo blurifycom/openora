@@ -303,6 +303,27 @@ describe('a polled deposit whose amount cannot be read', () => {
     },
   );
 
+  it('files and audits an amount cut in the middle of an emoji on the first run', async () => {
+    const player = await setup();
+    const event = player.deposit({ amount: '\u{1F600}'.repeat(150) });
+
+    const run = await reconcile([event]);
+
+    expect(run.status).toBe('completed');
+    const [finding, ...others] = await findings(event.externalId);
+    expect(others).toHaveLength(0);
+    const audits = await drizzle()
+      .select()
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.action, 'wallet.reconciliation_finding.recorded'),
+          eq(auditLog.resourceId, finding!.id),
+        ),
+      );
+    expect(audits).toHaveLength(1);
+  });
+
   it('cannot be refunded or credited, moves no money, and can be dismissed', async () => {
     const player = await setup();
     const event = player.deposit({ amount: 'abc' });
@@ -395,6 +416,48 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
     expect(audits).toHaveLength(1);
     expect(audits[0]?.before).toMatchObject({ amount: null });
     expect(audits[0]?.after).toMatchObject({ amount: FLOOR });
+  });
+
+  it('audits the old and new value of every field the fill overwrites', async () => {
+    const player = await setup();
+    const { event, findingId } = await reportedUnreadable(player, {
+      address: `first-${randomUUID()}`,
+      tag: 'tag-first',
+      sourceAddress: 'source-first',
+    });
+    const readable = {
+      ...event,
+      currency: 'ZZZ',
+      network: OTHER_NETWORK,
+      address: `second-${randomUUID()}`,
+      tag: 'tag-second',
+      txHash: `hash-${randomUUID()}`,
+      sourceAddress: 'source-second',
+    };
+
+    await deliver(readable);
+
+    const [audit] = await filledAudits(findingId);
+    expect(audit?.before).toMatchObject({
+      amount: null,
+      currency: event.currency,
+      network: event.network,
+      address: event.address,
+      tag: 'tag-first',
+      txHash: event.txHash,
+      sourceAddress: 'source-first',
+      detail: expect.stringContaining('abc'),
+    });
+    expect(audit?.after).toMatchObject({
+      amount: FLOOR,
+      currency: 'ZZZ',
+      network: OTHER_NETWORK,
+      address: readable.address,
+      tag: 'tag-second',
+      txHash: readable.txHash,
+      sourceAddress: 'source-second',
+      detail: null,
+    });
   });
 
   it('credits the reported amount once through the admin route', async () => {

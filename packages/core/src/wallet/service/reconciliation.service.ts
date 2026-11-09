@@ -983,7 +983,7 @@ export class ReconciliationService {
         txHash: event.txHash,
         sourceAddress: event.sourceAddress ?? null,
         externalId: event.externalId,
-        detail: `vendor reported an unreadable amount: ${JSON.stringify(event.amount).slice(0, 200)}`,
+        detail: `vendor reported an unreadable amount: ${[...String(JSON.stringify(event.amount))].slice(0, 200).join('')}`,
       },
       this.audit,
     );

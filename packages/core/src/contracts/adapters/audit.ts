@@ -56,6 +56,7 @@ export type DirectAuditAction =
   | 'wallet.custody.sweep_cycle'
   | 'wallet.custody.sweep'
   | 'wallet.reconciliation_finding.recorded'
+  | 'wallet.reconciliation_finding.filled'
   | 'wallet.reconciliation_run.skipped'
   | 'wallet.reconciliation_run.completed'
   | 'wallet.reconciliation_run.failed'
