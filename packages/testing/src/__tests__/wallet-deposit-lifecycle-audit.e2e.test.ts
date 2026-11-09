@@ -2,11 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DEFAULT_PAYMENT_PROVIDER } from '@openora/core/contracts';
-import {
-  walletDepositAddress,
-  walletReconciliationFinding,
-  walletRefundedDeposit,
-} from '@openora/core/wallet/schema';
+import { walletDepositAddress } from '@openora/core/wallet/schema';
 import {
   BELOW_FLOOR,
   bootDepositLifecycle,
@@ -14,11 +10,13 @@ import {
   NETWORK,
   OTHER_NETWORK,
   withoutNetwork,
+  type DepositEvent,
 } from './fixtures/wallet-deposit-lifecycle.js';
 
 const ONE_UNIT_UNDER_FLOOR = '9.999999999999999999';
 
 const {
+  adminClient,
   drizzle,
   setMinDeposit,
   setup,
@@ -39,19 +37,18 @@ async function delivered(event: unknown) {
 const auditedActions = async (externalId: string) =>
   (await auditRows(externalId)).map((row) => row.action).sort();
 
-async function markRefunded(externalId: string) {
-  const [finding] = await drizzle()
-    .insert(walletReconciliationFinding)
-    .values({
-      runId: randomUUID(),
-      providerName: DEFAULT_PAYMENT_PROVIDER,
-      kind: 'held_deposit',
-      externalId,
-    })
-    .returning({ id: walletReconciliationFinding.id });
-  await drizzle()
-    .insert(walletRefundedDeposit)
-    .values({ providerName: DEFAULT_PAYMENT_PROVIDER, externalId, findingId: finding!.id });
+async function refundMissingDeposit(event: DepositEvent) {
+  await reconcile([event]);
+  const [finding] = await findings(event.externalId);
+  const res = await adminClient().post(`/wallet/reconciliation/${finding!.id}/resolve`, {
+    resolution: {
+      outcome: 'refunded',
+      amount: event.amount,
+      txHash: `refund-${randomUUID()}`,
+      destinationAddress: `dest-${randomUUID()}`,
+    },
+  });
+  expect(res.status).toBe(200);
 }
 
 describe('a deposit below its asset minimum', () => {
@@ -264,9 +261,10 @@ describe('deposit_status events', () => {
   it.each(['detected', 'failed'] as const)(
     'adds no row for a late %s after the deposit was refunded',
     async (late) => {
-      const { status } = await setup();
-      const externalId = randomUUID();
-      await markRefunded(externalId);
+      const { deposit, status } = await setup();
+      const refunded = deposit();
+      const { externalId } = refunded;
+      await refundMissingDeposit(refunded);
 
       await delivered(status(late, { externalId }));
 

@@ -801,9 +801,11 @@ export function providerRefCondition(
 
 type DepositEvent = Extract<PaymentWebhookEvent, { kind: 'deposit' }>;
 type DepositStatusEvent = Extract<PaymentWebhookEvent, { kind: 'deposit_status' }>;
-type DepositAddressTarget = Pick<DepositEvent, 'address' | 'network' | 'tag'>;
+type DepositAddressTarget = Pick<DepositEvent, 'address' | 'network' | 'tag'> &
+  Partial<Pick<DepositEvent, 'currency'>>;
 type DepositOutcome = {
-  event: Pick<DepositEvent, 'externalId' | 'amount' | 'currency' | 'network'>;
+  event: Pick<DepositEvent, 'externalId' | 'amount' | 'currency'>;
+  network: string | null;
   depositAddress: WalletDepositAddress;
   playerId: Player['id'] | null;
   detail: Record<string, string | null>;
@@ -4415,6 +4417,7 @@ export class WalletService {
       }
       await this.recordDepositOutcome(txn, event.status, {
         event,
+        network: await this.reportedNetwork(event, txn),
         depositAddress,
         playerId,
         detail: event.vendorStatus ? { vendorStatus: event.vendorStatus } : {},
@@ -4445,7 +4448,7 @@ export class WalletService {
 
   private async refuseIfBelowMinimum(
     txn: DrizzleTx,
-    deposit: Omit<DepositOutcome, 'event' | 'detail'> & { event: DepositEvent },
+    deposit: Omit<DepositOutcome, 'event' | 'network' | 'detail'> & { event: DepositEvent },
   ): Promise<boolean> {
     const { event, depositAddress } = deposit;
     const { providerName } = depositAddress;
@@ -4453,10 +4456,10 @@ export class WalletService {
     if (seen.has('below_minimum')) {
       return true;
     }
+    const network = await this.reportedNetwork(event, txn);
     const floor = depositFloor(
       await this.selectDepositAssets(event.currency, txn),
-      event.network ??
-        soleNetworkForCurrency(await this.depositAddressRows(event, txn), event.currency),
+      network ?? undefined,
     );
     const refused =
       !isPositiveMoney(event.amount) ||
@@ -4466,6 +4469,7 @@ export class WalletService {
     }
     await this.recordDepositOutcome(txn, 'below_minimum', {
       ...deposit,
+      network,
       detail: { minDeposit: floor?.minDeposit ?? null },
     });
     await recordReconciliationFindingInTransaction(
@@ -4475,7 +4479,7 @@ export class WalletService {
         providerName,
         kind: 'below_minimum_deposit',
         currency: event.currency,
-        network: event.network ?? depositAddress.network,
+        network,
         amount: event.amount,
         address: event.address,
         tag: event.tag ?? null,
@@ -4501,6 +4505,17 @@ export class WalletService {
     return row !== undefined;
   }
 
+  private async reportedNetwork(
+    event: DepositAddressTarget & Pick<DepositEvent, 'currency'>,
+    db: DrizzleTx,
+  ) {
+    return (
+      event.network ??
+      soleNetworkForCurrency(await this.depositAddressRows(event, db), event.currency) ??
+      null
+    );
+  }
+
   private async depositStatusesSeen(
     txn: DrizzleTx,
     providerName: string,
@@ -4521,7 +4536,7 @@ export class WalletService {
   private async recordDepositOutcome(
     txn: DrizzleTx,
     status: WalletDepositStatusEventStatus,
-    { event, depositAddress, playerId, detail }: DepositOutcome,
+    { event, network, depositAddress, playerId, detail }: DepositOutcome,
   ) {
     const { providerName } = depositAddress;
     const { externalId, amount, currency } = event;
@@ -4544,7 +4559,7 @@ export class WalletService {
         externalId,
         amount,
         currency,
-        network: event.network ?? depositAddress.network,
+        network,
         ...detail,
       },
     });
@@ -4821,14 +4836,18 @@ export class WalletService {
   }
 
   private async findDepositAddressByAddress(target: DepositAddressTarget) {
-    const { address, network } = target;
+    const { address, network, currency } = target;
     const rows = await this.depositAddressRows(target);
 
     const owners = new Set(rows.map((row) => row.userId));
     if (owners.size > 1) {
       throw new AmbiguousDepositAddressError(address, network);
     }
-    return rows.find((row) => row.network === network) ?? rows[0];
+    return (
+      rows.find((row) => row.network === network) ??
+      rows.find((row) => row.currency.toUpperCase() === currency?.toUpperCase()) ??
+      rows[0]
+    );
   }
 
   /**

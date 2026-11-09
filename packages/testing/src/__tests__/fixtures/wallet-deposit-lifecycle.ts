@@ -121,6 +121,32 @@ export function bootDepositLifecycle() {
     return ((await res.json()) as { address: string }).address;
   }
 
+  async function addCurrencyOnSameAddress(player: {
+    client: TestClient;
+    userId: string;
+    address: string;
+  }) {
+    const currency = uniqueCurrency();
+    await createAsset(currency, NETWORK, FLOOR);
+    await drizzle().insert(exchangeRateQuote).values({
+      baseCurrency: currency,
+      quoteCurrency: 'USD',
+      rate: '1',
+      providerAsOf: new Date(),
+    });
+    await issueAddress(player.client, currency, NETWORK);
+    await drizzle()
+      .update(walletDepositAddress)
+      .set({ address: player.address })
+      .where(
+        and(
+          eq(walletDepositAddress.userId, player.userId),
+          eq(walletDepositAddress.currency, currency),
+        ),
+      );
+    return currency;
+  }
+
   async function setup({
     assets = [{ network: NETWORK, minDeposit: FLOOR }],
     addressNetwork = NETWORK,
@@ -266,6 +292,7 @@ export function bootDepositLifecycle() {
     drizzle,
     adminClient,
     issueAddress,
+    addCurrencyOnSameAddress,
     setMinDeposit,
     setup,
     deliver,

@@ -41,7 +41,9 @@ rather than failing.
   comes from the address's own network for that currency, or the lowest row if that is not one
   network, and a status event in another currency than its address is ignored. An amount that is
   not a valid money string, including more decimals than the ledger keeps, or an empty id answers
-  an error, so the event is retried and never recorded.
+  an error on the webhook, so the event is retried. From `listTransactions`, a `deposit` with such
+  an amount becomes a finding an operator can only dismiss, and an empty id or a malformed
+  `deposit_status` is logged and skipped.
 - **Carry an idempotency key on every state-changing call.** A thrown call and a lost response
   look identical from here, and the retry must not move funds twice.
 - **Throw `PaymentRejectedError` only when the vendor definitely did not accept a payout.** It is

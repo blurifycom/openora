@@ -152,7 +152,6 @@ describe('a deposit credited after the vendor reported it failed', () => {
     expect(await outboxPayloads('wallet.deposit.completed', credit!.id)).toEqual([
       expect.objectContaining({ userId: player.userId, amount: FLOOR, currency: player.currency }),
     ]);
-    // The audit subscriber turns that event into a row of its own, beside the failed one.
     await vi.waitFor(
       async () => {
         const completed = await drizzle().execute(
@@ -386,7 +385,7 @@ describe('a status event in another currency than its address', () => {
 });
 
 describe('the poll, with a malformed deposit in the batch', () => {
-  it('skips it and still finishes the run', async () => {
+  it('files it and still finishes the run', async () => {
     const player = await setup();
     const malformed = player.deposit({ amount: 'abc' });
     const good = player.status('detected');
@@ -394,7 +393,9 @@ describe('the poll, with a malformed deposit in the batch', () => {
     const run = await reconcile([malformed, good]);
 
     expect(run.status).toBe('completed');
-    expect(await findings(malformed.externalId)).toHaveLength(0);
+    expect((await findings(malformed.externalId)).map((finding) => finding.kind)).toEqual([
+      'missing_deposit',
+    ]);
     expect(await auditTrail(good.externalId)).toEqual(['detected']);
   });
 });
@@ -620,7 +621,7 @@ describe('the open findings the alert counts', () => {
 });
 
 describe('the poll, with malformed events beside valid ones', () => {
-  it('processes every valid event of the run and files nothing for the malformed ones', async () => {
+  it('processes every valid event and files only the deposit with a named id', async () => {
     const player = await setup();
     const malformedDeposit = player.deposit({ amount: 'abc' });
     const noId = player.deposit({ externalId: '' });
@@ -639,10 +640,12 @@ describe('the poll, with malformed events beside valid ones', () => {
     ]);
 
     expect(run.status).toBe('completed');
-    for (const { externalId } of [malformedDeposit, malformedStatus]) {
-      expect(await findings(externalId)).toHaveLength(0);
-      expect(await guardRows(externalId)).toHaveLength(0);
-    }
+    expect((await findings(malformedDeposit.externalId)).map((finding) => finding.kind)).toEqual([
+      'missing_deposit',
+    ]);
+    expect(await guardRows(malformedDeposit.externalId)).toHaveLength(0);
+    expect(await findings(malformedStatus.externalId)).toHaveLength(0);
+    expect(await guardRows(malformedStatus.externalId)).toHaveLength(0);
     expect(await findings('')).toHaveLength(0);
     expect((await findings(refused.externalId)).map((finding) => finding.kind)).toEqual([
       'below_minimum_deposit',
@@ -654,8 +657,8 @@ describe('the poll, with malformed events beside valid ones', () => {
   });
 });
 
-describe('the poll over more events than one lookup chunk', () => {
-  it('records only the new ones, and a second identical run writes nothing', async () => {
+describe('a poll batch past the first 1000-id lookup chunk', () => {
+  it('matches every id to the ledger and writes nothing on a repeat run', async () => {
     const player = await setup();
     const credited = player.deposit();
     await deliver(credited);
@@ -667,7 +670,6 @@ describe('the poll over more events than one lookup chunk', () => {
       .select({ id: wallet.id })
       .from(wallet)
       .where(eq(wallet.userId, player.userId));
-    // Matching ledger rows push the events below past the first 1000-id lookup chunk.
     const fillers = Array.from({ length: 1005 }, () =>
       player.deposit({ externalId: `filler-${randomUUID()}` }),
     );

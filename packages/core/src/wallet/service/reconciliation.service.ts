@@ -9,6 +9,7 @@ import {
   createLogger,
   makeConflictError,
   makeNotFoundError,
+  isPositiveMoney,
   moneyCompare,
   moneyEquals,
   moneySubtract,
@@ -493,7 +494,7 @@ export class ReconciliationService {
     adminId: User['id'],
     attributedUserId: User['id'] | undefined,
   ): Promise<CreditedDeposit> {
-    if (finding.currency === null || finding.amount === null) {
+    if (finding.currency === null || finding.amount === null || !isPositiveMoney(finding.amount)) {
       throw new ReconciliationCreditMismatchError();
     }
     if (
@@ -896,12 +897,9 @@ export class ReconciliationService {
     const swept = await this.sweptExternalIds(providerName, since);
     const relevant = events.filter((event) => !swept.has(event.externalId));
 
-    const deposits = this.keepRecordable(
-      relevant.filter(
-        (event): event is Extract<PaymentWebhookEvent, { kind: 'deposit' }> =>
-          event.kind === 'deposit',
-      ),
-      providerName,
+    const deposits = relevant.filter(
+      (event): event is Extract<PaymentWebhookEvent, { kind: 'deposit' }> =>
+        event.kind === 'deposit',
     );
     const statuses = this.keepRecordable(
       relevant.filter(
@@ -950,20 +948,45 @@ export class ReconciliationService {
     return new Set(rows.map((row) => row.externalId).filter((id): id is string => id !== null));
   }
 
-  private keepRecordable<T extends Parameters<typeof isRecordableDeposit>[0]>(
-    events: readonly T[],
+  private keepRecordable(
+    events: readonly Extract<PaymentWebhookEvent, { kind: 'deposit_status' }>[],
     providerName: string,
-  ): T[] {
+  ) {
     return events.filter((event) => {
       if (isRecordableDeposit(event)) {
         return true;
       }
       logger.error(
         { providerName, externalId: event.externalId },
-        'wallet reconciliation: malformed deposit event skipped',
+        'wallet reconciliation: malformed deposit status event skipped',
       );
       return false;
     });
+  }
+
+  private async fileUnreadableDeposit(
+    runId: WalletJobRun['runId'],
+    providerName: string,
+    event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
+  ) {
+    await recordReconciliationFinding(
+      this.drizzle.db,
+      {
+        runId,
+        providerName,
+        kind: 'missing_deposit',
+        currency: event.currency,
+        network: event.network ?? null,
+        amount: null,
+        address: event.address,
+        tag: event.tag ?? null,
+        txHash: event.txHash,
+        sourceAddress: event.sourceAddress ?? null,
+        externalId: event.externalId,
+        detail: `vendor reported an unreadable amount: ${event.amount}`,
+      },
+      this.audit,
+    );
   }
 
   private async reconcileDeposits({
@@ -982,17 +1005,28 @@ export class ReconciliationService {
     counts: { missingDeposit: number; currencyMismatch: number; amountMismatch: number };
   }): Promise<void> {
     for (const event of deposits) {
+      if (!isRecordableDeposit(event)) {
+        if (event.externalId.trim() === '') {
+          logger.error({ providerName }, 'wallet reconciliation: deposit with no id skipped');
+        } else {
+          await this.fileUnreadableDeposit(runId, providerName, event);
+          counts.missingDeposit += 1;
+        }
+        continue;
+      }
       const tx = ledger.get(event.externalId);
       const result = diffDeposit(event, tx);
       if (result === null) {
         continue;
       }
-      if (
-        result === 'missing_deposit' &&
-        (seen.get(event.externalId)?.has('below_minimum') ||
-          (await this.wallet.recordDepositIfBelowMinimum(event)))
-      ) {
-        continue;
+      if (result === 'missing_deposit') {
+        if (seen.get(event.externalId)?.has('below_minimum')) {
+          continue;
+        }
+        const refused = await this.wallet.recordDepositIfBelowMinimum(event);
+        if (refused) {
+          continue;
+        }
       }
       counts[
         result === 'missing_deposit'

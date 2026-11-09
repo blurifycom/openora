@@ -78,11 +78,16 @@ does not repeat it.
   deposit audits no later status, and a failed one no later detection. A refused deposit never
   becomes a `missing_deposit` finding: its own `below_minimum_deposit` finding is filed in the
   refusal's transaction, carries the address, tag, tx hash and sender, can be credited or refunded
-  by an admin, and is left out of the open count behind `alertThreshold`. A status event in another
-  currency than its address, with no network named, is logged and records nothing. An event with a
-  malformed amount or an empty id records nothing and answers an error, so the vendor retries it;
-  the poll skips it and logs. An amount with more decimals than the ledger keeps is malformed too,
-  so it answers a 500 and is never rounded.
+  by an admin, and is left out of the open count behind `alertThreshold`. The finding and the audit row
+  name a network only when the event reported one or the address has a single row of that
+  currency. With no network named, an address holding several currencies resolves to its row of
+  the event's currency. A status event in another currency than every row of its address, with no
+  network named, is logged and records nothing. An event with a malformed amount or an empty id
+  answers an error on the webhook, so the vendor retries it. An amount with more decimals than the
+  ledger keeps is malformed too, and is never rounded. The poll files a polled deposit with a
+  malformed amount as a `missing_deposit` finding with no amount and the raw string in its detail,
+  which an admin can only dismiss; a blank id or a malformed status event is logged and skipped. A
+  finding for a zero amount can be dismissed but never credited.
 - **A bet row records what the bet was placed on.** `wager_product` comes from its `WagerContext`,
   and so does `wager_rtp` when it is a fraction in [0, 1]. A malformed rtp is stored as NULL rather
   than refusing the bet. `houseEdge` in `@openora/core/server` prices it.
