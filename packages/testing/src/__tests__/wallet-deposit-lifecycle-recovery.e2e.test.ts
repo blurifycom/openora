@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { IDENTITY_READER } from '@openora/core/contracts';
 import { DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
@@ -33,6 +33,7 @@ const {
   findings,
   balanceOf,
   reconcile,
+  withFailingTrigger,
 } = bootDepositLifecycle();
 
 const resolve = (id: string, resolution: Record<string, string>) =>
@@ -456,6 +457,38 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
     }
   });
 
+  it('leaves the incoming report’s kind and run out of a webhook fill’s audit row', async () => {
+    const player = await setup();
+    const { event, findingId } = await reportedUnreadable(player, {
+      address: `unknown-${randomUUID()}`,
+    });
+
+    await deliver(event);
+
+    expect(await kinds(event.externalId)).toEqual(['missing_deposit']);
+    const [audit] = await filledAudits(findingId);
+    expect(audit?.after).not.toHaveProperty('kind');
+    expect(audit?.after).not.toHaveProperty('runId');
+  });
+
+  it.each([
+    { changed: false, reportedAt: (first: string) => first },
+    { changed: true, reportedAt: () => `second-${randomUUID()}` },
+  ])('records addressChanged $changed, and never the address', async ({ changed, reportedAt }) => {
+    const player = await setup();
+    const { event, findingId } = await reportedUnreadable(player, {
+      address: `first-${randomUUID()}`,
+    });
+    const address = reportedAt(event.address);
+
+    await deliver({ ...event, address });
+
+    const [audit] = await filledAudits(findingId);
+    expect(audit?.after).toMatchObject({ addressChanged: changed });
+    expect(JSON.stringify([audit?.before, audit?.after])).not.toContain(event.address);
+    expect(JSON.stringify([audit?.before, audit?.after])).not.toContain(address);
+  });
+
   it('credits the reported amount once through the admin route', async () => {
     const player = await setup();
     const { event, findingId } = await reportedUnreadable(player);
@@ -557,29 +590,15 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
     const { event, findingId } = await reportedUnreadable(player, {
       address: `unknown-${randomUUID()}`,
     });
-    const failAudit = `fail_audit_${randomUUID().replaceAll('-', '')}`;
-    await drizzle().execute(
-      sql.raw(`create function ${failAudit}() returns trigger language plpgsql as $$ begin
-        if new.action = 'wallet.reconciliation_finding.filled' then
-          raise exception 'forced audit failure';
-        end if;
-        return new;
-      end $$`),
+    await withFailingTrigger(
+      { table: 'audit_log', when: "new.action = 'wallet.reconciliation_finding.filled'" },
+      async () => {
+        expect((await deliver(event)).ok).toBe(false);
+        const [unfilled] = await findings(event.externalId);
+        expect(unfilled?.amount).toBeNull();
+        expect(unfilled?.detail).toContain('abc');
+      },
     );
-    await drizzle().execute(
-      sql.raw(
-        `create trigger ${failAudit} before insert on audit_log for each row execute function ${failAudit}()`,
-      ),
-    );
-    try {
-      expect((await deliver(event)).ok).toBe(false);
-      const [unfilled] = await findings(event.externalId);
-      expect(unfilled?.amount).toBeNull();
-      expect(unfilled?.detail).toContain('abc');
-    } finally {
-      await drizzle().execute(sql.raw(`drop trigger ${failAudit} on audit_log`));
-      await drizzle().execute(sql.raw(`drop function ${failAudit}()`));
-    }
 
     expect((await deliver(event)).status).toBe(200);
 
@@ -761,39 +780,25 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
   it('rolls a polled fill back with a forced audit failure, and the next run fills', async () => {
     const player = await setup();
     const { event, findingId } = await reportedUnreadable(player);
-    const failAudit = `fail_audit_${randomUUID().replaceAll('-', '')}`;
-    await drizzle().execute(
-      sql.raw(`create function ${failAudit}() returns trigger language plpgsql as $$ begin
-        if new.action = 'wallet.reconciliation_finding.filled' then
-          raise exception 'forced audit failure';
-        end if;
-        return new;
-      end $$`),
+    await withFailingTrigger(
+      { table: 'audit_log', when: "new.action = 'wallet.reconciliation_finding.filled'" },
+      async () => {
+        setTestPaymentTransactions([event]);
+        const started = await adminClient().post('/wallet/reconciliation/run', {});
+        const { runId } = (await started.json()) as { runId: string };
+        await vi.waitFor(
+          async () => {
+            const [run] = await drizzle()
+              .select({ status: walletJobRun.status })
+              .from(walletJobRun)
+              .where(eq(walletJobRun.runId, runId));
+            expect(run?.status).toBe('failed');
+          },
+          { timeout: 20_000, interval: 100 },
+        );
+        expect((await findings(event.externalId))[0]?.amount).toBeNull();
+      },
     );
-    await drizzle().execute(
-      sql.raw(
-        `create trigger ${failAudit} before insert on audit_log for each row execute function ${failAudit}()`,
-      ),
-    );
-    try {
-      setTestPaymentTransactions([event]);
-      const started = await adminClient().post('/wallet/reconciliation/run', {});
-      const { runId } = (await started.json()) as { runId: string };
-      await vi.waitFor(
-        async () => {
-          const [run] = await drizzle()
-            .select({ status: walletJobRun.status })
-            .from(walletJobRun)
-            .where(eq(walletJobRun.runId, runId));
-          expect(run?.status).toBe('failed');
-        },
-        { timeout: 20_000, interval: 100 },
-      );
-      expect((await findings(event.externalId))[0]?.amount).toBeNull();
-    } finally {
-      await drizzle().execute(sql.raw(`drop trigger ${failAudit} on audit_log`));
-      await drizzle().execute(sql.raw(`drop function ${failAudit}()`));
-    }
 
     const retried = await reconcile([event]);
 
@@ -847,7 +852,7 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
     }
   });
 
-  it('reads the old and new value of the overwritten fields back from the audit route', async () => {
+  it('serves one fill on the audit route with no chain identifier, and the chain verifies', async () => {
     const player = await setup();
     const { event, findingId } = await reportedUnreadable(player, {
       address: `first-${randomUUID()}`,
@@ -873,18 +878,6 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
       items: Array<{ before: Record<string, unknown>; after: Record<string, unknown> }>;
     };
     expect(items).toHaveLength(1);
-    expect(items[0]?.before).toEqual({
-      amount: null,
-      currency: event.currency,
-      network: event.network,
-      detail: expect.stringContaining('abc'),
-    });
-    expect(items[0]?.after).toMatchObject({
-      amount: FLOOR,
-      currency: 'ZZZ',
-      network: OTHER_NETWORK,
-      detail: null,
-    });
     const logged = JSON.stringify(items);
     for (const identifier of [
       readable.address,

@@ -121,6 +121,7 @@ async function fillUnreadableFinding(
         amount: walletReconciliationFinding.amount,
         currency: walletReconciliationFinding.currency,
         network: walletReconciliationFinding.network,
+        address: walletReconciliationFinding.address,
         detail: walletReconciliationFinding.detail,
       })
       .from(walletReconciliationFinding)
@@ -130,13 +131,14 @@ async function fillUnreadableFinding(
       return;
     }
     await txn.update(walletReconciliationFinding).set(filled).where(stillUnreadable);
-    const { id, ...before } = row;
+    const { id, address, ...before } = row;
     const recorded = findingRecordedAudit(id, input);
+    const { kind: _kind, runId: _runId, ...reported } = recorded.after;
     await audit.recordInTransaction(txn, {
       ...recorded,
       action: 'wallet.reconciliation_finding.filled',
       before,
-      after: { ...recorded.after, detail: null },
+      after: { ...reported, detail: null, addressChanged: address !== filled.address },
     });
   });
 }

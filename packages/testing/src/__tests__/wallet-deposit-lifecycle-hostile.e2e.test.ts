@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { count, eq, inArray, sql } from 'drizzle-orm';
+import { count, eq, inArray } from 'drizzle-orm';
 import { DEFAULT_PAYMENT_PROVIDER, IDENTITY_READER } from '@openora/core/contracts';
 import { DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
@@ -29,6 +29,7 @@ const {
   findings,
   balanceOf,
   reconcile,
+  withFailingTrigger,
 } = bootDepositLifecycle();
 
 const LIFECYCLE_ACTIONS = [
@@ -228,33 +229,22 @@ describe('the guard row and the audit row', () => {
     const player = await setup();
     const failed = player.status('failed');
     const belowMinimum = player.deposit({ amount: BELOW_FLOOR });
-    const failAudit = `fail_audit_${randomUUID().replaceAll('-', '')}`;
-    await drizzle().execute(
-      sql.raw(`create function ${failAudit}() returns trigger language plpgsql as $$ begin
-        if new.action in ('wallet.deposit.failed', 'wallet.deposit.below_minimum') then
-          raise exception 'forced audit failure';
-        end if;
-        return new;
-      end $$`),
+    await withFailingTrigger(
+      {
+        table: 'audit_log',
+        when: "new.action in ('wallet.deposit.failed', 'wallet.deposit.below_minimum')",
+      },
+      async () => {
+        const refused = await Promise.all([deliver(failed), deliver(belowMinimum)]);
+        expect(refused.map((res) => res.ok)).toEqual([false, false]);
+        for (const { externalId } of [failed, belowMinimum]) {
+          expect(await guardRows(externalId)).toHaveLength(0);
+          expect(await auditRows(externalId)).toHaveLength(0);
+          expect(await findings(externalId)).toHaveLength(0);
+        }
+        expect(await ledgerRows(belowMinimum.externalId)).toHaveLength(0);
+      },
     );
-    await drizzle().execute(
-      sql.raw(
-        `create trigger ${failAudit} before insert on audit_log for each row execute function ${failAudit}()`,
-      ),
-    );
-    try {
-      const refused = await Promise.all([deliver(failed), deliver(belowMinimum)]);
-      expect(refused.map((res) => res.ok)).toEqual([false, false]);
-      for (const { externalId } of [failed, belowMinimum]) {
-        expect(await guardRows(externalId)).toHaveLength(0);
-        expect(await auditRows(externalId)).toHaveLength(0);
-        expect(await findings(externalId)).toHaveLength(0);
-      }
-      expect(await ledgerRows(belowMinimum.externalId)).toHaveLength(0);
-    } finally {
-      await drizzle().execute(sql.raw(`drop trigger ${failAudit} on audit_log`));
-      await drizzle().execute(sql.raw(`drop function ${failAudit}()`));
-    }
 
     const retried = await Promise.all([deliver(failed), deliver(belowMinimum)]);
 

@@ -75,10 +75,11 @@ does not repeat it.
   is refused whatever the floor, with `minDeposit: null` when none applies. The refusal, a `detected` status and a `failed` status each leave one audit row under
   the player, guarded by `wallet_deposit_status_event` in the same transaction, so a redelivery or
   a poll adds nothing. The first refusal stands if the minimum later drops. A credited or refunded
-  deposit audits no later status, and a failed one no later detection. A refused deposit never
-  becomes a `missing_deposit` finding: its own `below_minimum_deposit` finding is filed in the
-  refusal's transaction, carries the address, tag, tx hash and sender, can be credited or refunded
-  by an admin, and is left out of the open count behind `alertThreshold`. The finding and the audit row
+  deposit audits no later status, and a failed one no later detection. A refused deposit gets its own
+  `below_minimum_deposit` finding: filed in the refusal's transaction, it carries the address, tag,
+  tx hash and sender, can be credited or refunded by an admin, and is left out of the open count
+  behind `alertThreshold`. If an unreadable poll report of the same id came first, its
+  `missing_deposit` finding stays beside the refusal with no amount, and can only be dismissed. The finding and the audit row
   name a network only when the event reported one or the address has a single row of that
   currency. With no network named, an address holding several currencies resolves to its row of
   the event's currency. A status event in another currency than every row of its address, with no

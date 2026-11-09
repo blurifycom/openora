@@ -33,6 +33,7 @@ const {
   findings,
   balanceOf,
   reconcile,
+  withFailingTrigger,
 } = bootDepositLifecycle();
 
 async function withdrawalInFlight({ userId, currency }: DepositPlayer) {
@@ -575,33 +576,17 @@ describe('a refusal and its finding', () => {
   it('commit together: a finding that cannot be written leaves no refusal, and the retry writes both', async () => {
     const player = await setup();
     const event = player.deposit({ amount: BELOW_FLOOR });
-    const failFinding = `fail_finding_${randomUUID().replaceAll('-', '')}`;
-    await drizzle().execute(
-      sql.raw(`create function ${failFinding}() returns trigger language plpgsql as $$ begin
-        if new.kind = 'below_minimum_deposit' then
-          raise exception 'forced finding failure';
-        end if;
-        return new;
-      end $$`),
-    );
-    await drizzle().execute(
-      sql.raw(
-        `create trigger ${failFinding} before insert on wallet_reconciliation_finding for each row execute function ${failFinding}()`,
-      ),
-    );
-    try {
-      const refused = await deliver(event);
+    await withFailingTrigger(
+      { table: 'wallet_reconciliation_finding', when: "new.kind = 'below_minimum_deposit'" },
+      async () => {
+        const refused = await deliver(event);
 
-      expect(refused.ok).toBe(false);
-      expect(await guardRows(event.externalId)).toHaveLength(0);
-      expect(await auditRows(event.externalId)).toHaveLength(0);
-      expect(await findings(event.externalId)).toHaveLength(0);
-    } finally {
-      await drizzle().execute(
-        sql.raw(`drop trigger ${failFinding} on wallet_reconciliation_finding`),
-      );
-      await drizzle().execute(sql.raw(`drop function ${failFinding}()`));
-    }
+        expect(refused.ok).toBe(false);
+        expect(await guardRows(event.externalId)).toHaveLength(0);
+        expect(await auditRows(event.externalId)).toHaveLength(0);
+        expect(await findings(event.externalId)).toHaveLength(0);
+      },
+    );
 
     const retried = await deliver(event);
 

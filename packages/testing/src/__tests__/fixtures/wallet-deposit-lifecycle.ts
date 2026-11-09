@@ -121,6 +121,32 @@ export function bootDepositLifecycle() {
     return ((await res.json()) as { address: string }).address;
   }
 
+  async function withFailingTrigger(
+    { table, when }: { table: string; when: string },
+    body: () => Promise<void>,
+  ) {
+    const name = `fail_${randomUUID().replaceAll('-', '')}`;
+    await drizzle().execute(
+      sql.raw(`create function ${name}() returns trigger language plpgsql as $$ begin
+        if ${when} then
+          raise exception 'forced failure';
+        end if;
+        return new;
+      end $$`),
+    );
+    await drizzle().execute(
+      sql.raw(
+        `create trigger ${name} before insert on ${table} for each row execute function ${name}()`,
+      ),
+    );
+    try {
+      await body();
+    } finally {
+      await drizzle().execute(sql.raw(`drop trigger ${name} on ${table}`));
+      await drizzle().execute(sql.raw(`drop function ${name}()`));
+    }
+  }
+
   async function addCurrencyOnSameAddress(player: {
     client: TestClient;
     userId: string;
@@ -293,6 +319,7 @@ export function bootDepositLifecycle() {
     adminClient,
     issueAddress,
     addCurrencyOnSameAddress,
+    withFailingTrigger,
     setMinDeposit,
     setup,
     deliver,
