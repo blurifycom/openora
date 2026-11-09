@@ -148,6 +148,30 @@ const emailChangeAuditedAt = (resourceType: 'player' | 'user', resourceId: strin
     return changedAt;
   }, WAIT);
 
+const auditEmailChange = ({
+  owner,
+  subject = 'player',
+  before,
+  after,
+}: {
+  owner: Player;
+  subject?: 'player' | 'user';
+  before: string;
+  after: string;
+}) =>
+  drizzle()
+    .insert(auditLog)
+    .values({
+      actorType: 'player',
+      actorId: owner.playerId,
+      action: 'identity.email.changed',
+      resourceType: subject,
+      resourceId: subject === 'player' ? owner.playerId : owner.userId,
+      before: { email: before },
+      after: { email: after },
+      hash: randomUUID(),
+    });
+
 /** Writes the player's confirmed email change row again, as a redelivered event would. */
 async function redeliverEmailChange(
   playerId: string,
@@ -349,18 +373,11 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
 
   it('answers tickets email_gap without asking the vendor when the last email change does not name the current email', async () => {
     const p = await newPlayer();
-    await drizzle()
-      .insert(auditLog)
-      .values({
-        actorType: 'player',
-        actorId: p.playerId,
-        action: 'identity.email.changed',
-        resourceType: 'player',
-        resourceId: p.playerId,
-        before: { email: `support-history-old-${randomUUID()}@e2e.test` },
-        after: { email: `support-history-not-current-${randomUUID()}@e2e.test` },
-        hash: randomUUID(),
-      });
+    await auditEmailChange({
+      owner: p,
+      before: `support-history-old-${randomUUID()}@e2e.test`,
+      after: `support-history-not-current-${randomUUID()}@e2e.test`,
+    });
 
     const body = await history(admin, p.userId);
 
@@ -372,18 +389,12 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     const p = await newPlayer();
     // Audited under the user, which the history reads too, so the real change below stays the
     // player's first row.
-    await drizzle()
-      .insert(auditLog)
-      .values({
-        actorType: 'player',
-        actorId: p.playerId,
-        action: 'identity.email.changed',
-        resourceType: 'user',
-        resourceId: p.userId,
-        before: { email: `support-history-old-${randomUUID()}@e2e.test` },
-        after: { email: `support-history-not-current-${randomUUID()}@e2e.test` },
-        hash: randomUUID(),
-      });
+    await auditEmailChange({
+      owner: p,
+      subject: 'user',
+      before: `support-history-old-${randomUUID()}@e2e.test`,
+      after: `support-history-not-current-${randomUUID()}@e2e.test`,
+    });
     const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
     await changeEmail(p.client, newEmail);
     const changedAt = await emailChangeAuditedAt('player', p.playerId);
@@ -536,18 +547,11 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     it('answers email_gap when another account took the address, from the cache on a repeat by uppercase id', async () => {
       const p = await newPlayer();
       const q = await newPlayer();
-      await drizzle()
-        .insert(auditLog)
-        .values({
-          actorType: 'player',
-          actorId: q.playerId,
-          action: 'identity.email.changed',
-          resourceType: 'player',
-          resourceId: q.playerId,
-          before: { email: `support-history-gone-${randomUUID()}@e2e.test` },
-          after: { email: p.email.toUpperCase() },
-          hash: randomUUID(),
-        });
+      await auditEmailChange({
+        owner: q,
+        before: `support-history-gone-${randomUUID()}@e2e.test`,
+        after: p.email.toUpperCase(),
+      });
       answerSupportHistoryWith({ tickets: [item('ticket', '2026-03-01T00:00:00Z')] });
 
       const first = await history(admin, p.userId);
@@ -571,7 +575,6 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       expect(Object.keys(JSON.parse(text).tickets).sort()).toEqual(['complete', 'items', 'state']);
       expect(JSON.parse(text).tickets.state).toBe('email_gap');
       expect(text).not.toContain('@');
-      expect(text).not.toContain(p.email);
     });
 
     it('answers tickets unavailable, not email_gap, when a gap leaves a window and the vendor then fails', async () => {

@@ -54,7 +54,8 @@ export type SupportHistoryEmailWindow = z.infer<typeof SupportHistoryEmailWindow
  * A player's support history as the back office reads it; each section fails on its own.
  * `tickets.complete` is true only when every email the player held was searched: an early break
  * in the email-change trail, or the cap on previous emails, leaves the older ones out.
- * `unavailable` is a failed read; `email_gap` is no trusted email period, so a retry does not help.
+ * `unavailable` is a failed read; `email_gap` is no trusted email period, so a retry does not help
+ * until the trail heals.
  */
 export const SupportHistorySchema = z.object({
   tickets: z.object({
