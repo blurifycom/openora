@@ -77,9 +77,18 @@ ends.
   old bonus reward into a fixed reward and leaves no rate rows. Rewards and waiting grants are
   mapped only when the old config was priced in dollars; otherwise the old amounts mean nothing
   in dollars, no reward is mapped, and the day totals and round shares counted in the old
-  currency are dropped so a total can never mix currencies. A waiting grant left unmapped has no
+  currency are dropped so a total can never mix currencies. The config is relabelled as dollars
+  and its daily minimum is cleared to zero, because no reliable rate table is guaranteed to
+  exist when the migration runs and a threshold read as dollars could be trivially small. A zero
+  minimum can be read but not saved, so the operator must enter a dollar threshold before the
+  streak can be enabled again, and a streak with a zero minimum counts nothing even if it were
+  switched on in the database. A waiting grant left unmapped has no
   claim window, so it cannot be claimed or announced, and the hourly sweep settles it as expired
   with an audit record each. The operator re-enables the streak once it has set the new rates.
 - During a rolling deploy, a process still running the previous release reads the emptied milestone
-  list, so it keeps counting days but unlocks and pays nothing. The columns it reads stay until a
+  list, so it keeps counting days but unlocks and pays nothing. Because the conversion also
+  relabels the config as dollars, that process prices what it counts in dollars too, so a day
+  total or round share never mixes currencies after the conversion; only a bet being settled at
+  the instant the conversion commits can still be priced in the old currency. Enabling the streak
+  resets every run, so nothing counted in that window carries over. The columns it reads stay until a
   later release drops them.
