@@ -847,6 +847,79 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
     }
   });
 
+  it('reads the old and new value of the overwritten fields back from the audit route', async () => {
+    const player = await setup();
+    const { event, findingId } = await reportedUnreadable(player, {
+      address: `first-${randomUUID()}`,
+      tag: 'tag-first',
+      sourceAddress: 'source-first',
+    });
+    const readable = {
+      ...event,
+      currency: 'ZZZ',
+      network: OTHER_NETWORK,
+      address: `second-${randomUUID()}`,
+      tag: 'tag-second',
+      txHash: `hash-${randomUUID()}`,
+      sourceAddress: 'source-second',
+    };
+    await deliver(readable);
+
+    const res = await adminClient().get(
+      `/audit/logs?resourceId=${findingId}&action=wallet.reconciliation_finding.filled&limit=50`,
+    );
+
+    const { items } = (await res.json()) as {
+      items: Array<{ before: Record<string, unknown>; after: Record<string, unknown> }>;
+    };
+    expect(items).toHaveLength(1);
+    expect(items[0]?.before).toEqual({
+      amount: null,
+      currency: event.currency,
+      network: event.network,
+      detail: expect.stringContaining('abc'),
+    });
+    expect(items[0]?.after).toMatchObject({
+      amount: FLOOR,
+      currency: 'ZZZ',
+      network: OTHER_NETWORK,
+      detail: null,
+    });
+    const logged = JSON.stringify(items);
+    for (const identifier of [
+      readable.address,
+      readable.txHash,
+      'tag-second',
+      'source-second',
+      'tag-first',
+      'source-first',
+      event.address,
+    ]) {
+      expect(logged).not.toContain(identifier);
+    }
+    const audit = new AuditService(
+      app().container.get(DRIZZLE),
+      app().container.get(EVENT_BUS),
+      app().container.get(IDENTITY_READER),
+    );
+    expect(await audit.verifyChain()).toEqual({ valid: true });
+  });
+
+  it('fills once when a poll and two webhooks report the same deposit at once', async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const player = await setup();
+      const { event, findingId } = await reportedUnreadable(player, {
+        address: `unknown-${randomUUID()}`,
+      });
+
+      await Promise.all([reconcile([event]), deliver(event), deliver(event)]);
+
+      expect(await filledAudits(findingId)).toHaveLength(1);
+      expect(Number((await findings(event.externalId))[0]?.amount)).toBe(Number(FLOOR));
+      expect(await ledgerRows(event.externalId)).toHaveLength(0);
+    }
+  });
+
   it('shows the fill through the audit read route and keeps the hash chain valid', async () => {
     const player = await setup();
     const { event, findingId } = await reportedUnreadable(player);

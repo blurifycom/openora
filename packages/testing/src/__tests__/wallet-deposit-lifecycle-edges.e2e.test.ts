@@ -56,6 +56,15 @@ async function withdrawalInFlight({ userId, currency }: DepositPlayer) {
   return externalId;
 }
 
+const recordedAudits = async (findingId: string) =>
+  Number(
+    (
+      await drizzle().execute(
+        sql`select count(*)::int as n from audit_log where action = 'wallet.reconciliation_finding.recorded' and resource_id = ${findingId}`,
+      )
+    ).rows[0]?.['n'],
+  );
+
 const outboxPayloads = async (topic: string, transactionId: string) =>
   (
     await drizzle().execute(
@@ -134,6 +143,73 @@ describe('the poll, with a malformed status event in the batch', () => {
     expect(filed[0]).toMatchObject({ kind: 'missing_deposit', amount: null });
     expect((await ledgerRows(withdrawalId)).map((row) => row.status)).toEqual(['completed']);
   });
+
+  it('files one finding for a deposit with no amount on every run, moving a withdrawal each time', async () => {
+    const player = await setup();
+    await deliver(player.deposit());
+    const noAmount: Record<string, unknown> = { ...player.deposit() };
+    delete noAmount['amount'];
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const withdrawalId = await withdrawalInFlight(player);
+
+      const run = await reconcile([
+        noAmount as DepositEvent,
+        { kind: 'withdrawal', externalId: withdrawalId, status: 'completed' },
+      ]);
+
+      expect(run.status).toBe('completed');
+      expect((await ledgerRows(withdrawalId)).map((row) => row.status)).toEqual(['completed']);
+    }
+    expect(await findings(noAmount['externalId'] as string)).toHaveLength(1);
+  });
+
+  const UNREADABLE_PREFIX = 'vendor reported an unreadable amount: ';
+  const codePoints = (text: string) => [...text].length;
+
+  it.each([
+    { label: 'a number', amount: 15, shown: '15' },
+    { label: 'an object', amount: { a: 1 }, shown: '{"a":1}' },
+    { label: 'null', amount: null, shown: 'null' },
+  ])('files one finding and audit row for an amount that is $label', async ({ amount, shown }) => {
+    const player = await setup();
+    const event = { ...player.deposit(), amount } as unknown as DepositEvent;
+
+    const run = await reconcile([event]);
+
+    expect(run.status).toBe('completed');
+    const [finding, ...others] = await findings(event.externalId);
+    expect(others).toHaveLength(0);
+    expect(finding).toMatchObject({ kind: 'missing_deposit', amount: null });
+    expect(finding?.detail).toBe(`${UNREADABLE_PREFIX}${shown}`);
+    expect(await recordedAudits(finding!.id)).toBe(1);
+  });
+
+  it.each([
+    { label: 'exactly 200 code points', amount: 'x'.repeat(198), cut: false },
+    { label: '201 code points', amount: 'x'.repeat(199), cut: true },
+    { label: 'a lone high surrogate', amount: '\ud83d', cut: false },
+    { label: 'a lone low surrogate after text', amount: 'a\ude00', cut: false },
+    { label: 'a surrogate pair at the cut', amount: `${'x'.repeat(197)}\u{1F600}`, cut: false },
+    { label: 'astral characters past the cut', amount: '\u{1F600}'.repeat(250), cut: true },
+  ])(
+    'keeps the stored raw value within 200 code points and well formed for $label',
+    async ({ amount, cut }) => {
+      const player = await setup();
+      const event = player.deposit({ amount });
+
+      const run = await reconcile([event]);
+
+      expect(run.status).toBe('completed');
+      const [finding, ...others] = await findings(event.externalId);
+      expect(others).toHaveLength(0);
+      const raw = finding!.detail!.slice(UNREADABLE_PREFIX.length);
+      expect(codePoints(raw)).toBeLessThanOrEqual(200);
+      expect(Buffer.from(raw).toString('utf8')).toBe(raw);
+      expect(raw.endsWith('"')).toBe(!cut);
+      expect(await recordedAudits(finding!.id)).toBe(1);
+    },
+  );
 
   it('files one finding for an amount holding a NUL and still moves the withdrawal', async () => {
     const player = await setup();
