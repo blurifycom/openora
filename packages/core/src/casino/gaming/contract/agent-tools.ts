@@ -97,5 +97,5 @@ export const topGamesTool = defineMcpTool({
   inputSchema: TopGamesInputSchema,
   outputSchema: TopGamesOutputSchema,
   redact: { allow: ['dateFrom', 'dateTo', 'sortBy', 'sortDir', 'currencies', 'truncated'] },
-  errors: [],
+  errors: ['report_unavailable'],
 });
