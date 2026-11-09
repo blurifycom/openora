@@ -274,6 +274,8 @@ export const StreakFixedRewardSchema = z.object({
     `must not exceed ${STREAK_MAX_ROLLOVER_MULTIPLIER}`,
   ),
   claimExpiryDays: z.number().int().min(1).max(STREAK_MAX_CLAIM_EXPIRY_DAYS),
+  /** Largest single stake allowed while the bonus is wagered, in `STREAK_CURRENCY`; absent for no limit. */
+  maxBet: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero').nullish(),
 });
 export type StreakFixedReward = z.infer<typeof StreakFixedRewardSchema>;
 

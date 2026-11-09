@@ -1,6 +1,7 @@
 import { and, desc, eq, gt, lt, sql } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import type {
+  AuditWritePort,
   ExchangeRateReader,
   Uuid,
   WagerReversalArgs,
@@ -70,12 +71,25 @@ type Logger = { warn: (context: object, message: string) => void };
  * already excludes whatever part of a stake a bonus grant covered, so wagering a bonus never
  * advances the streak.
  */
+export type StreakServiceDeps = {
+  drizzle: DrizzleService;
+  rates: ExchangeRateReader;
+  logger: Logger;
+  audit: AuditWritePort;
+};
+
 export class StreakService implements WagerTrackingCommands {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly rates: ExchangeRateReader,
-    private readonly logger: Logger,
-  ) {}
+  private readonly drizzle: DrizzleService;
+  private readonly rates: ExchangeRateReader;
+  private readonly logger: Logger;
+  private readonly audit: AuditWritePort;
+
+  constructor(deps: StreakServiceDeps) {
+    this.drizzle = deps.drizzle;
+    this.rates = deps.rates;
+    this.logger = deps.logger;
+    this.audit = deps.audit;
+  }
 
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
     if (moneyCompare(args.realAmount, '0') <= 0) {
@@ -113,7 +127,8 @@ export class StreakService implements WagerTrackingCommands {
       .onConflictDoUpdate({
         target: [promoStreakDailyWager.userId, promoStreakDailyWager.day],
         set: {
-          wagered: sql`${promoStreakDailyWager.wagered} + ${amount}::numeric`,
+          wagered: sql`CASE WHEN ${promoStreakDailyWager.currency} = ${STREAK_CURRENCY} THEN ${promoStreakDailyWager.wagered} + ${amount}::numeric ELSE ${amount}::numeric END`,
+          currency: STREAK_CURRENCY,
           updatedAt: sql`now()`,
         },
       })
@@ -180,6 +195,7 @@ export class StreakService implements WagerTrackingCommands {
         amount: reward.amount,
         rolloverMultiplier: reward.rolloverMultiplier,
         claimExpiryDays: reward.claimExpiryDays,
+        maxBet: reward.maxBet ?? null,
         expiresAt: new Date(now.getTime() + reward.claimExpiryDays * DAY_MS),
       };
       await tx
@@ -363,6 +379,7 @@ export class StreakService implements WagerTrackingCommands {
         amount: promoStreakMilestoneGrant.amount,
         rolloverMultiplier: promoStreakMilestoneGrant.rolloverMultiplier,
         claimExpiryDays: promoStreakMilestoneGrant.claimExpiryDays,
+        maxBet: promoStreakMilestoneGrant.maxBet,
         reachedAt: promoStreakMilestoneGrant.reachedAt,
         settledAt: promoStreakMilestoneGrant.settledAt,
         outcome: promoStreakMilestoneGrant.outcome,
@@ -445,17 +462,31 @@ export class StreakService implements WagerTrackingCommands {
     const [config] = await this.drizzle.db
       .select({ enabled: promoStreakConfig.enabled })
       .from(promoStreakConfig);
-    const result = await this.drizzle.db
-      .update(promoPlayerStreak)
-      .set({ current: 0, updatedAt: sql`now()` })
-      .where(
-        and(
-          gt(promoPlayerStreak.current, 0),
-          config?.enabled
-            ? sql`(${promoPlayerStreak.lastQualifyingDay} is null or ${promoPlayerStreak.lastQualifyingDay} < ${yesterday}::date)`
-            : undefined,
-        ),
-      );
-    return result.rowCount ?? 0;
+    const disabled = !config?.enabled;
+    return this.drizzle.db.transaction(async (tx) => {
+      const result = await tx
+        .update(promoPlayerStreak)
+        .set({ current: 0, updatedAt: sql`now()` })
+        .where(
+          and(
+            gt(promoPlayerStreak.current, 0),
+            disabled
+              ? undefined
+              : sql`(${promoPlayerStreak.lastQualifyingDay} is null or ${promoPlayerStreak.lastQualifyingDay} < ${yesterday}::date)`,
+          ),
+        );
+      const reset = result.rowCount ?? 0;
+      if (disabled && reset > 0) {
+        await this.audit.recordInTransaction(tx, {
+          actorType: 'system',
+          action: 'promo.streak.runs_reset',
+          resourceType: 'promo_player_streak',
+          resourceId: null,
+          before: { enabled: false },
+          after: { reason: 'streak_disabled', reset, closedDay: yesterday },
+        });
+      }
+      return reset;
+    });
   }
 }

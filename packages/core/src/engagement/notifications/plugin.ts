@@ -448,8 +448,8 @@ export const notificationEventMap: NotificationMapEntry[] = [
     notification({
       userId: p.userId,
       type: 'promo.streak.milestone.reached',
-      params: { day: String(p.day), amount: p.amount },
-      data: { day: String(p.day), amount: p.amount },
+      params: { day: String(p.day), amount: p.amount ?? null, currency: p.currency ?? null },
+      data: compactData({ day: String(p.day), amount: p.amount, currency: p.currency }),
     }),
   ),
 

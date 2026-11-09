@@ -397,6 +397,7 @@ export const promoStreakMilestoneGrant = pgTable(
     amount: money(),
     rolloverMultiplier: money(),
     claimExpiryDays: integer(),
+    maxBet: money(),
     expiresAt: timestamp({ withTimezone: true }),
   },
   (t) => [
@@ -409,7 +410,8 @@ export const promoStreakMilestoneGrant = pgTable(
       'promo_streak_milestone_grant_terms_valid',
       sql`(${t.amount} is null OR ${t.amount} > 0)
         AND (${t.rolloverMultiplier} is null OR ${t.rolloverMultiplier} > 0)
-        AND (${t.claimExpiryDays} is null OR ${t.claimExpiryDays} > 0)`,
+        AND (${t.claimExpiryDays} is null OR ${t.claimExpiryDays} > 0)
+        AND (${t.maxBet} is null OR ${t.maxBet} > 0)`,
     ),
   ],
 );

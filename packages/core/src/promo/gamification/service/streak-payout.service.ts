@@ -296,7 +296,9 @@ export class StreakPayoutService {
         after: { userId: row.userId, day: row.day, outcome: 'restricted' },
       });
     }
-    return restricted ? null : { ...row, amount: row.amount, grantId: null };
+    return restricted
+      ? null
+      : { ...row, amount: row.amount, currency: STREAK_CURRENCY, grantId: null };
   }
 
   private async settleOne(
@@ -311,6 +313,7 @@ export class StreakPayoutService {
         amount: promoStreakMilestoneGrant.amount,
         rolloverMultiplier: promoStreakMilestoneGrant.rolloverMultiplier,
         claimExpiryDays: promoStreakMilestoneGrant.claimExpiryDays,
+        maxBet: promoStreakMilestoneGrant.maxBet,
       })
       .from(promoStreakMilestoneGrant)
       .where(
@@ -334,6 +337,7 @@ export class StreakPayoutService {
       amount: row.amount,
       rolloverMultiplier: row.rolloverMultiplier,
       claimExpiryDays: row.claimExpiryDays,
+      maxBet: row.maxBet,
     };
     const settle = async (outcome: StreakClaimResult['outcome'], grantIds: Uuid[]) => {
       await tx
@@ -381,7 +385,12 @@ export class StreakPayoutService {
       sourceRef,
     }: {
       userId: Uuid;
-      reward: { amount: string; rolloverMultiplier: string; claimExpiryDays: number };
+      reward: {
+        amount: string;
+        rolloverMultiplier: string;
+        claimExpiryDays: number;
+        maxBet: string | null;
+      };
       sourceRef: string;
     },
   ): Promise<Granted> {
@@ -398,6 +407,10 @@ export class StreakPayoutService {
       STREAK_CURRENCY,
       currency,
     );
+    const maxBet =
+      reward.maxBet === null
+        ? null
+        : (await priceForPayout(tx, this.rates, reward.maxBet, STREAK_CURRENCY, currency)).amount;
     const outcome = await this.grants.grant(tx, {
       userId,
       currency,
@@ -408,6 +421,7 @@ export class StreakPayoutService {
       terms: {
         wageringMultiplier: reward.rolloverMultiplier,
         expiryDays: reward.claimExpiryDays,
+        ...(maxBet === null ? {} : { maxBet }),
       },
     });
     if (!outcome.ok) {

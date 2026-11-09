@@ -25,6 +25,7 @@ const grant = (overrides: Partial<StreakGrantView> = {}): StreakGrantView => ({
   amount: '5',
   rolloverMultiplier: '10',
   claimExpiryDays: 7,
+  maxBet: null,
   reachedAt: new Date('2026-03-09T00:00:00Z'),
   settledAt: null,
   outcome: null,
@@ -73,6 +74,11 @@ describe('fixedRewardViews', () => {
     expect(fixedRewardViews([reward(3)], [], NOW)).toEqual([
       { ...reward(3), state: 'locked', grantId: null, unlockedAt: null, expiresAt: null },
     ]);
+  });
+
+  it('shows the max bet captured at unlock', () => {
+    const [view] = fixedRewardViews([reward(3)], [grant({ maxBet: '2' })], NOW);
+    expect(view?.maxBet).toBe('2');
   });
 
   it('shows an unclaimed reward inside its window as claimable, with the terms captured at unlock', () => {

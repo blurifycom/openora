@@ -1,6 +1,6 @@
 {
-  "id": "f7609f28-371d-48c3-abbb-58e704f96da9",
-  "prevId": "d2bcb2d0-def8-42a0-926a-410dc5ea648c",
+  "id": "ccc93a83-34e9-4cc5-a5a5-719bf2408fbf",
+  "prevId": "14a5efbe-4e37-49ef-b7ca-b949a39a975a",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2189,6 +2189,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "max_bet": {
+          "name": "max_bet",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "expires_at": {
           "name": "expires_at",
           "type": "timestamp with time zone",
@@ -2246,7 +2252,7 @@
         },
         "promo_streak_milestone_grant_terms_valid": {
           "name": "promo_streak_milestone_grant_terms_valid",
-          "value": "(\"promo_streak_milestone_grant\".\"amount\" is null OR \"promo_streak_milestone_grant\".\"amount\" > 0)\n        AND (\"promo_streak_milestone_grant\".\"rollover_multiplier\" is null OR \"promo_streak_milestone_grant\".\"rollover_multiplier\" > 0)\n        AND (\"promo_streak_milestone_grant\".\"claim_expiry_days\" is null OR \"promo_streak_milestone_grant\".\"claim_expiry_days\" > 0)"
+          "value": "(\"promo_streak_milestone_grant\".\"amount\" is null OR \"promo_streak_milestone_grant\".\"amount\" > 0)\n        AND (\"promo_streak_milestone_grant\".\"rollover_multiplier\" is null OR \"promo_streak_milestone_grant\".\"rollover_multiplier\" > 0)\n        AND (\"promo_streak_milestone_grant\".\"claim_expiry_days\" is null OR \"promo_streak_milestone_grant\".\"claim_expiry_days\" > 0)\n        AND (\"promo_streak_milestone_grant\".\"max_bet\" is null OR \"promo_streak_milestone_grant\".\"max_bet\" > 0)"
         }
       },
       "isRLSEnabled": false

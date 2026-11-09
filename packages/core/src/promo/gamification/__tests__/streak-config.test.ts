@@ -71,8 +71,23 @@ describe('setting the streak config', () => {
     ['a zero claim expiry', { claimExpiryDays: 0 }, 'fixedRewards.0.claimExpiryDays'],
     ['a claim expiry above a year', { claimExpiryDays: 366 }, 'fixedRewards.0.claimExpiryDays'],
     ['a fractional claim expiry', { claimExpiryDays: 1.5 }, 'fixedRewards.0.claimExpiryDays'],
+    ['a zero max bet', { maxBet: '0' }, 'fixedRewards.0.maxBet'],
+    ['a negative max bet', { maxBet: '-1' }, 'fixedRewards.0.maxBet'],
   ])('rejects %s, naming its field', (_label, patch, path) => {
     expect(issuePaths(config({ fixedRewards: [{ ...reward(3), ...patch }] }))).toEqual([path]);
+  });
+
+  it('accepts a max bet above zero, and none', () => {
+    expect(
+      StreakConfigSchema.safeParse(
+        config({
+          fixedRewards: [
+            { ...reward(3), maxBet: '2.5' },
+            { ...reward(4), maxBet: null },
+          ],
+        }),
+      ).success,
+    ).toBe(true);
   });
 
   it('accepts a rollover of exactly the limit', () => {

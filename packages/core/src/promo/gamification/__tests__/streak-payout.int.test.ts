@@ -61,6 +61,7 @@ type Owed = {
   amount: string;
   rolloverMultiplier: string;
   claimExpiryDays: number;
+  maxBet: string | null;
   expiresAt: Date;
   reachedAt: Date;
 };
@@ -186,7 +187,12 @@ describe('claiming a streak reward', () => {
 
   it('pays the reward unlocked by a real qualifying bet', async () => {
     const userId = randomUUID();
-    const streaks = new StreakService(db.drizzle, mock<ExchangeRateReader>({ convert }), logger);
+    const streaks = new StreakService({
+      drizzle: db.drizzle,
+      rates: mock<ExchangeRateReader>({ convert }),
+      logger,
+      audit,
+    });
     await db.drizzle.db
       .insert(promoPlayerStreak)
       .values({ userId, current: 2, best: 2, lastQualifyingDay: yesterday() });
@@ -409,6 +415,53 @@ describe("granting the bonus in the player's active currency", () => {
   });
 });
 
+describe('the max bet of the bonus', () => {
+  it('carries the max bet captured at unlock into the grant terms', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3, { maxBet: '2' });
+
+    await service().claim(userId, id);
+
+    expect(grant.mock.calls[0]?.[1].terms).toMatchObject({ maxBet: '2.000000000000000000' });
+  });
+
+  it('prices the max bet into the currency the player plays in, like the amount', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3, { maxBet: '2' });
+    playsIn('USDT');
+    convert.mockImplementation(async (amount) => (amount.startsWith('10') ? '9.9' : '1.98'));
+
+    await service().claim(userId, id);
+
+    expect(grant.mock.calls[0]?.[1]).toMatchObject({
+      currency: 'USDT',
+      amount: '9.9',
+      terms: { maxBet: '1.98' },
+    });
+  });
+
+  it('sets no limit when none was captured', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+
+    await service().claim(userId, id);
+
+    expect(grant.mock.calls[0]?.[1].terms).not.toHaveProperty('maxBet');
+  });
+
+  it('leaves the reward claimable when the max bet cannot be priced', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3, { maxBet: '2' });
+    playsIn('USDT');
+    convert.mockImplementation(async (amount) => (amount.startsWith('10') ? '9.9' : null));
+
+    await expect(service().claim(userId, id)).rejects.toBeInstanceOf(PayoutRateUnavailableError);
+
+    expect(grant).not.toHaveBeenCalled();
+    await expect(rewardRow(id)).resolves.toMatchObject({ settledAt: null });
+  });
+});
+
 describe('announcing a reward waiting to be claimed', () => {
   it('announces each unclaimed reward once', async () => {
     const userId = randomUUID();
@@ -417,7 +470,9 @@ describe('announcing a reward waiting to be claimed', () => {
     const first = await announceReached();
     const second = await announceReached();
 
-    expect(first).toEqual([{ userId, day: 3, amount: REWARD_AMOUNT, grantId: null }]);
+    expect(first).toEqual([
+      { userId, day: 3, amount: REWARD_AMOUNT, currency: 'USD', grantId: null },
+    ]);
     expect(second).toEqual([]);
     expect((await rewardRow(id))?.announcedAt).toBeInstanceOf(Date);
   });
@@ -427,7 +482,7 @@ describe('announcing a reward waiting to be claimed', () => {
     await owe(userId, 3, { amount: '25' });
 
     await expect(announceReached()).resolves.toEqual([
-      { userId, day: 3, amount: '25.000000000000000000', grantId: null },
+      { userId, day: 3, amount: '25.000000000000000000', currency: 'USD', grantId: null },
     ]);
   });
 
@@ -462,7 +517,7 @@ describe('announcing a reward waiting to be claimed', () => {
     await owe(userId, 5);
 
     await expect(announceReached()).resolves.toEqual([
-      { userId, day: 5, amount: REWARD_AMOUNT, grantId: null },
+      { userId, day: 5, amount: REWARD_AMOUNT, currency: 'USD', grantId: null },
     ]);
   });
 
@@ -492,8 +547,8 @@ describe('announcing a batch with a row that fails', () => {
 
     expect(announced).toEqual(
       expect.arrayContaining([
-        { userId: first, day: 3, amount: REWARD_AMOUNT, grantId: null },
-        { userId: last, day: 7, amount: REWARD_AMOUNT, grantId: null },
+        { userId: first, day: 3, amount: REWARD_AMOUNT, currency: 'USD', grantId: null },
+        { userId: last, day: 7, amount: REWARD_AMOUNT, currency: 'USD', grantId: null },
       ]),
     );
     expect(announced).toHaveLength(2);
@@ -515,7 +570,7 @@ describe('announcing a batch with a row that fails', () => {
 
     await expect(announceReached()).resolves.toEqual([]);
     await expect(announceReached()).resolves.toEqual([
-      { userId, day: 3, amount: REWARD_AMOUNT, grantId: null },
+      { userId, day: 3, amount: REWARD_AMOUNT, currency: 'USD', grantId: null },
     ]);
   });
 });

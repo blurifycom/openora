@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { ExchangeRateReader, WagerContext } from '@openora/core/contracts';
-import { mock } from '../../../testing/mock.js';
+import { makeAuditWriter, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
   promoPlayerRank,
@@ -19,6 +19,7 @@ import { StreakService } from '../service/streak.service.js';
 let db: TestDb;
 const convert = vi.fn<ExchangeRateReader['convert']>();
 const logger = { warn: vi.fn() };
+const audit = makeAuditWriter();
 let streaks: StreakService;
 
 const CASINO: WagerContext = { provider: 'aggregator', product: 'casino' };
@@ -36,7 +37,7 @@ const CONFIG = {
     { day: 10, unrankedRatePercent: '2', rankedUpliftPercent: '10' },
   ],
   fixedRewards: [
-    { day: 3, amount: '5', rolloverMultiplier: '0.01', claimExpiryDays: 7 },
+    { day: 3, amount: '5', rolloverMultiplier: '0.01', claimExpiryDays: 7, maxBet: '2' },
     { day: 30, amount: '500', rolloverMultiplier: '1', claimExpiryDays: 14 },
     { day: 35, amount: '900', rolloverMultiplier: '2', claimExpiryDays: 30 },
   ],
@@ -44,7 +45,12 @@ const CONFIG = {
 
 beforeAll(async () => {
   db = await createTestDb([migrate]);
-  streaks = new StreakService(db.drizzle, mock<ExchangeRateReader>({ convert }), logger);
+  streaks = new StreakService({
+    drizzle: db.drizzle,
+    rates: mock<ExchangeRateReader>({ convert }),
+    logger,
+    audit,
+  });
 });
 
 afterAll(async () => {
@@ -208,6 +214,36 @@ describe('what counts toward a day', () => {
     expect((await streaks.getForPlayer(userId)).current).toBe(1);
   });
 
+  it('starts a day total kept in another currency over in dollars instead of adding to it', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db.insert(promoStreakDailyWager).values({
+      userId,
+      day: daysAgo(0),
+      currency: 'EUR',
+      wagered: '100',
+    });
+
+    await record(userId, '5');
+
+    const [row] = await dailyRowsOf(userId);
+    expect(row).toMatchObject({ currency: 'USD', wagered: '5.000000000000000000' });
+    expect((await streaks.getForPlayer(userId)).current).toBe(0);
+  });
+
+  it('keeps adding to a day total already in dollars', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db.insert(promoStreakDailyWager).values({
+      userId,
+      day: daysAgo(0),
+      currency: 'USD',
+      wagered: '4',
+    });
+
+    await record(userId, '5');
+
+    expect((await dailyRowsOf(userId))[0]?.wagered).toBe('9.000000000000000000');
+  });
+
   it('counts only the real-money part of a bonus-funded stake toward the daily minimum', async () => {
     const userId = randomUUID();
     await record(userId, '20', CASINO, '5');
@@ -335,6 +371,33 @@ describe('unlocking a fixed reward', () => {
       claimExpiryDays: 7,
     });
     expect(grant?.expiresAt?.getTime()).toBe((grant?.reachedAt.getTime() ?? 0) + 7 * DAY_MS);
+  });
+
+  it('captures the max bet with the reward, and none when the reward has none', async () => {
+    const limited = randomUUID();
+    const unlimited = randomUUID();
+    await seedStreak(limited, 2, daysAgo(1));
+    await seedStreak(unlimited, 29, daysAgo(1));
+
+    await record(limited, '10');
+    await record(unlimited, '10');
+
+    expect((await grantOnDay(limited, 3))?.maxBet).toBe('2.000000000000000000');
+    expect((await grantOnDay(unlimited, 30))?.maxBet).toBeNull();
+  });
+
+  it('shows the captured max bet to the player', async () => {
+    const userId = randomUUID();
+    await seedStreak(userId, 2, daysAgo(1));
+    await record(userId, '10');
+    await setConfig({
+      fixedRewards: [{ day: 3, amount: '5', rolloverMultiplier: '1', claimExpiryDays: 7 }],
+    });
+
+    expect((await streaks.getForPlayer(userId)).fixedRewards[0]).toMatchObject({
+      day: 3,
+      maxBet: '2.000000000000000000',
+    });
   });
 
   it('records nothing for a day with a rate but no fixed reward', async () => {
@@ -829,6 +892,53 @@ describe('closeDay', () => {
         { current: 0, best: 3 },
       ]),
     );
+  });
+
+  it('audits, once, the runs a disabled streak reset', async () => {
+    await setConfig({ enabled: false });
+    await db.drizzle.db.insert(promoPlayerStreak).values([
+      { userId: randomUUID(), current: 5, best: 9, lastQualifyingDay: '2020-01-04' },
+      { userId: randomUUID(), current: 3, best: 3, lastQualifyingDay: '2020-01-04' },
+    ]);
+
+    await streaks.closeDay(new Date('2020-01-05T00:05:00Z'));
+    await streaks.closeDay(new Date('2020-01-05T00:06:00Z'));
+
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
+    expect(audit.recordInTransaction.mock.calls[0]?.[1]).toMatchObject({
+      actorType: 'system',
+      action: 'promo.streak.runs_reset',
+      resourceType: 'promo_player_streak',
+      after: { reason: 'streak_disabled', reset: 2, closedDay: '2020-01-04' },
+    });
+  });
+
+  it('writes no audit row for runs reset because the player missed a day, or when none reset', async () => {
+    await db.drizzle.db
+      .insert(promoPlayerStreak)
+      .values({ userId: randomUUID(), current: 5, best: 5, lastQualifyingDay: '2020-01-01' });
+    await streaks.closeDay(new Date('2020-01-05T00:05:00Z'));
+    await setConfig({ enabled: false });
+    await streaks.closeDay(new Date('2020-01-05T00:05:00Z'));
+
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('resets nothing when the audit write fails', async () => {
+    await setConfig({ enabled: false });
+    const userId = randomUUID();
+    await seedStreak(userId, 5, '2020-01-04');
+    audit.recordInTransaction.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    await expect(streaks.closeDay(new Date('2020-01-05T00:05:00Z'))).rejects.toThrow(
+      /audit unavailable/,
+    );
+
+    const [row] = await db.drizzle.db
+      .select({ current: promoPlayerStreak.current })
+      .from(promoPlayerStreak)
+      .where(eq(promoPlayerStreak.userId, userId));
+    expect(row?.current).toBe(5);
   });
 
   it('resets every run when the streak was never configured', async () => {

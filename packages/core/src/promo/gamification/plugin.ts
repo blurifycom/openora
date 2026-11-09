@@ -144,7 +144,12 @@ const rankService = (c: TypedContainer<CoreTokenCatalog>) =>
   new RankService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), c.get(AUDIT_WRITER), logger);
 
 const streakService = (c: TypedContainer<CoreTokenCatalog>) =>
-  new StreakService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
+  new StreakService({
+    drizzle: c.get(DRIZZLE),
+    rates: c.get(EXCHANGE_RATE_READER),
+    logger,
+    audit: c.get(AUDIT_WRITER),
+  });
 
 const raceService = (c: TypedContainer<CoreTokenCatalog>) =>
   new RaceService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);

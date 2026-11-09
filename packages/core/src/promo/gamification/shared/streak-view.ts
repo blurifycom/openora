@@ -14,6 +14,7 @@ export type StreakGrantView = Pick<
   | 'amount'
   | 'rolloverMultiplier'
   | 'claimExpiryDays'
+  | 'maxBet'
   | 'reachedAt'
   | 'settledAt'
   | 'outcome'
@@ -45,6 +46,7 @@ function capturedTerms(grant: StreakGrantView, configured: StreakFixedReward | u
       amount: grant.amount,
       rolloverMultiplier: grant.rolloverMultiplier,
       claimExpiryDays: grant.claimExpiryDays,
+      maxBet: grant.maxBet,
     };
   }
   return configured;

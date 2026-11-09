@@ -75,6 +75,7 @@ export type DirectAuditAction =
   | 'promo.race.payout.settled'
   | 'promo.streak.milestone.claimed'
   | 'promo.streak.milestone.expired'
+  | 'promo.streak.runs_reset'
   | 'promo.offer.claimed'
   | 'promo.offer.created'
   | 'promo.offer.updated'
