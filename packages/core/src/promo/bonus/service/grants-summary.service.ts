@@ -1,6 +1,5 @@
-import { and, count, eq, gte, inArray, lte, or, sql, type SQL } from 'drizzle-orm';
-import type { PgColumn } from 'drizzle-orm/pg-core';
-import { moneyAdd, type DrizzleService } from '@openora/core/server';
+import { and, count, eq, gte, inArray, lte, or, sql } from 'drizzle-orm';
+import { moneyAdd, sumMoney, type DrizzleService } from '@openora/core/server';
 import {
   dayRangeInstants,
   type BonusForfeitReason,
@@ -21,10 +20,6 @@ const ZERO = '0';
 
 const grant = promoGrant;
 const entry = promoGrantEntry;
-const sumOf = (amount: SQL | PgColumn, where?: SQL) =>
-  where
-    ? sql<string>`coalesce(sum(${amount}) filter (where ${where}), 0)::numeric(38, 18)`
-    : sql<string>`coalesce(sum(${amount}), 0)::numeric(38, 18)`;
 
 type Counted = { count: number; amount: string };
 
@@ -99,7 +94,7 @@ export class GrantsSummaryService {
           currency: grant.currency,
           source: grant.source,
           count: count(),
-          amount: sumOf(grant.grantedAmount),
+          amount: sumMoney(grant.grantedAmount),
         })
         .from(grant)
         .where(and(gte(grant.activatedAt, from), lte(grant.activatedAt, to), narrowed))
@@ -112,7 +107,7 @@ export class GrantsSummaryService {
           reason: grant.forfeitReason,
           count: sql<number>`count(distinct ${grant.id})`.mapWith(Number),
           // A closing entry is negative: the bonus balance that left the grant.
-          amount: sumOf(sql`-${entry.bonusAmount}`),
+          amount: sumMoney(sql`-${entry.bonusAmount}`),
         })
         .from(grant)
         .leftJoin(
@@ -135,13 +130,13 @@ export class GrantsSummaryService {
           pendingGrants: sql<number>`count(*) filter (where ${grant.status} = 'pending')`.mapWith(
             Number,
           ),
-          bonusBalance: sumOf(grant.bonusBalance, active),
-          wageringRemaining: sumOf(
+          bonusBalance: sumMoney(grant.bonusBalance, active),
+          wageringRemaining: sumMoney(
             sql`${grant.wageringRequired} - ${grant.wageringProgress}`,
             active,
           ),
           expiringSoonCount: sql<number>`count(*) filter (where ${expiringSoon})`.mapWith(Number),
-          expiringSoonAmount: sumOf(grant.bonusBalance, expiringSoon),
+          expiringSoonAmount: sumMoney(grant.bonusBalance, expiringSoon),
         })
         .from(grant)
         .where(and(inArray(grant.status, ['pending', 'active']), narrowed))

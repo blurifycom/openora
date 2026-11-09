@@ -1,5 +1,5 @@
 import { and, asc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
-import type { DrizzleService } from '@openora/core/server';
+import { sumMoney, type DrizzleService } from '@openora/core/server';
 import { dayRangeInstants } from '@openora/core/contracts';
 import {
   TOP_GAMES_MAX_CURRENCIES,
@@ -10,9 +10,9 @@ import {
 } from '../contract/index.js';
 import { game, gameProvider, gameRound } from '../schema/index.js';
 
-const volume = sql<string>`sum(${gameRound.betAmount})::numeric(38, 18)`;
+const volume = sumMoney(gameRound.betAmount);
 // GGR: negative when the games paid out more than they took in.
-const revenue = sql<string>`(sum(${gameRound.betAmount}) - sum(${gameRound.winAmount}))::numeric(38, 18)`;
+const revenue = sql<string>`(${sumMoney(gameRound.betAmount)} - ${sumMoney(gameRound.winAmount)})::numeric(38, 18)`;
 const roundsPlayed = sql<number>`count(*)`.mapWith(Number);
 const uniquePlayers = sql<number>`count(distinct ${gameRound.userId})`.mapWith(Number);
 

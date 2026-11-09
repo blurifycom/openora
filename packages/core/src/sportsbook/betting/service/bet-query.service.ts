@@ -14,7 +14,12 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
-import { makeNotFoundError, pageToOffset, type DrizzleService } from '@openora/core/server';
+import {
+  makeNotFoundError,
+  pageToOffset,
+  sumMoney,
+  type DrizzleService,
+} from '@openora/core/server';
 import type { DateRange, IdentityReader, User, Uuid, WalletReader } from '@openora/core/contracts';
 import type {
   AdminSportsbookBet,
@@ -100,10 +105,6 @@ function within(column: PgColumn, { dateFrom, dateTo }: DateRange) {
   ];
 }
 
-function sumOf(amount: SQL | PgColumn, where: SQL) {
-  return sql<string>`coalesce(sum(${amount}) filter (where ${where}), 0)::numeric(38, 18)`;
-}
-
 /** A bet the provider has not settled or cancelled: the operator still owes its outcome. */
 export const openBet = inArray(sportsbookBet.status, ['reserved', 'accepted']);
 
@@ -125,14 +126,14 @@ export function betTotals(range: DateRange) {
     columns: {
       currency: bet.currency,
       bets: sql<number>`count(*) filter (where ${staked})`.mapWith(Number),
-      stake: sumOf(bet.stake, staked),
-      cashStake: sumOf(bet.cashStake, staked),
-      promotionStake: sumOf(sql`${bet.stake} - ${bet.cashStake}`, staked),
-      payout: sumOf(bet.payoutTotal, settled),
-      cashPayout: sumOf(sql`${bet.payoutTotal} - ${bet.promotionPaid}`, settled),
-      promotionPayout: sumOf(bet.promotionPaid, settled),
-      ggr: sql<string>`(${sumOf(bet.cashStake, staked)} - ${sumOf(bet.payoutTotal, settled)})::numeric(38, 18)`,
-      openExposure: sumOf(bet.stake, openBet),
+      stake: sumMoney(bet.stake, staked),
+      cashStake: sumMoney(bet.cashStake, staked),
+      promotionStake: sumMoney(sql`${bet.stake} - ${bet.cashStake}`, staked),
+      payout: sumMoney(bet.payoutTotal, settled),
+      cashPayout: sumMoney(sql`${bet.payoutTotal} - ${bet.promotionPaid}`, settled),
+      promotionPayout: sumMoney(bet.promotionPaid, settled),
+      ggr: sql<string>`(${sumMoney(bet.cashStake, staked)} - ${sumMoney(bet.payoutTotal, settled)})::numeric(38, 18)`,
+      openExposure: sumMoney(bet.stake, openBet),
     },
     read: or(staked, settled, openBet),
   };
@@ -223,7 +224,7 @@ export class SportsbookBetQueryService {
     range: SportsbookPromotionReportInput,
   ): Promise<SportsbookPromotionReportRow[]> {
     const tx = sportsbookBetTransaction;
-    const partOf = (kind: 'settle' | 'reopen') => sumOf(tx.promotionAmount, eq(tx.kind, kind));
+    const partOf = (kind: 'settle' | 'reopen') => sumMoney(tx.promotionAmount, eq(tx.kind, kind));
     return this.drizzle.db
       .select({
         type: sql<SportsbookPromotionReportRow['type']>`${sportsbookBet.promotionType}`,
