@@ -496,19 +496,11 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       const p = await newPlayer();
       const q = await newPlayer();
       // Q gave up P's address after P registered, so P's change to it was lost.
-      const [left] = await drizzle()
-        .insert(auditLog)
-        .values({
-          actorType: 'player',
-          actorId: q.playerId,
-          action: 'identity.email.changed',
-          resourceType: 'player',
-          resourceId: q.playerId,
-          before: { email: p.email },
-          after: { email: q.email },
-          hash: randomUUID(),
-        })
-        .returning({ at: auditLog.createdAt });
+      const [left] = await auditEmailChange({
+        owner: q,
+        before: p.email,
+        after: q.email,
+      }).returning({ at: auditLog.createdAt });
       const ticket = item('ticket', '2026-03-01T00:00:00Z');
       answerSupportHistoryWith({ tickets: [ticket] });
 
