@@ -36,7 +36,12 @@ rather than failing.
 - **Report inbound transfers as the vendor sees them, whatever their size.** Map one the vendor
   has seen but not confirmed, or has failed, to a `deposit_status` event carrying the same
   settlement identifier as the confirmed `deposit`. Do not filter deposits by minimum: core
-  compares each one to the asset's minimum.
+  compares each one to the asset's minimum, refuses one under it, and files a finding an operator
+  settles by crediting or refunding. Send `network` whenever you know it: without it the floor
+  comes from the address's own network for that currency, or the lowest row if that is not one
+  network, and a status event in another currency than its address is ignored. An amount that is
+  not a valid money string, including more decimals than the ledger keeps, or an empty id answers
+  an error, so the event is retried and never recorded.
 - **Carry an idempotency key on every state-changing call.** A thrown call and a lost response
   look identical from here, and the retry must not move funds twice.
 - **Throw `PaymentRejectedError` only when the vendor definitely did not accept a payout.** It is

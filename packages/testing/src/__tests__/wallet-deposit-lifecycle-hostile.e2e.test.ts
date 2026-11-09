@@ -1,223 +1,55 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import { and, eq, inArray, sql } from 'drizzle-orm';
-import {
-  DEFAULT_PAYMENT_PROVIDER,
-  IDENTITY_READER,
-  type PaymentWebhookEvent,
-} from '@openora/core/contracts';
-import { DRIZZLE, EVENT_BUS, loadExtensions } from '@openora/core/server';
+import { describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { count, eq, inArray, sql } from 'drizzle-orm';
+import { DEFAULT_PAYMENT_PROVIDER, IDENTITY_READER } from '@openora/core/contracts';
+import { DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { AuditService } from '@openora/core/audit/server';
-import { exchangeRateQuote } from '@openora/core/fx/schema/exchange-rate';
+import { walletDepositAddress, walletDepositStatusEvent } from '@openora/core/wallet/schema';
 import {
-  wallet,
-  walletAsset,
-  walletBalance,
-  walletDepositAddress,
-  walletDepositStatusEvent,
-  walletJobRun,
-  walletReconciliationFinding,
-  walletTransaction,
-} from '@openora/core/wallet/schema';
-import {
-  asAdmin,
-  bootTestApp,
-  registerAndMaterializePlayer,
-  seedMinimal,
-  setupTestDb,
-  type TestApp,
-  type TestClient,
-  type TestDb,
-} from '../index.js';
-import {
-  setTestPaymentTransactions,
-  signTestPaymentWebhook,
-  TEST_PAYMENT_SIGNATURE_HEADER,
-} from '../test-payment-webhook-plugin.js';
+  BELOW_FLOOR,
+  bootDepositLifecycle,
+  FLOOR,
+  NETWORK,
+  type DepositPlayer,
+} from './fixtures/wallet-deposit-lifecycle.js';
 
-// The webhook route allows 120 requests a minute per client, and this file shares one app:
-// keep the total number of deliveries well under that.
-const paymentPluginPath = fileURLToPath(
-  new URL('../test-payment-webhook-plugin.ts', import.meta.url),
-);
-const reconciliationConfigPluginPath = fileURLToPath(
-  new URL('./fixtures/test-wallet-reconciliation-config-plugin.ts', import.meta.url),
-);
+const SECOND_VENDOR = 'second-vendor';
+
+const {
+  app,
+  drizzle,
+  setMinDeposit,
+  setup,
+  deliver,
+  auditRows,
+  auditTrailOldestFirst: auditTrail,
+  guardRows,
+  ledgerRows,
+  findings,
+  balanceOf,
+  reconcile,
+} = bootDepositLifecycle();
 
 const LIFECYCLE_ACTIONS = [
   'wallet.deposit.detected',
   'wallet.deposit.failed',
   'wallet.deposit.below_minimum',
 ];
-const NETWORK = 'TESTCHAIN';
-const SECOND_VENDOR = 'second-vendor';
-const FLOOR = '10';
-const BELOW_FLOOR = '5';
 
-type DepositEvent = Extract<PaymentWebhookEvent, { kind: 'deposit' }>;
-type StatusEvent = Extract<PaymentWebhookEvent, { kind: 'deposit_status' }>;
-
-let db: TestDb;
-let testApp: TestApp;
-let admin: TestClient;
-
-const drizzle = () => testApp.container.get(DRIZZLE).db;
-
-const uniqueCurrency = () =>
-  Array.from(randomBytes(8), (byte) => String.fromCharCode(65 + (byte % 26))).join('');
-
-async function setup({ minDeposit = FLOOR }: { minDeposit?: string } = {}) {
-  const currency = uniqueCurrency();
-  await drizzle()
-    .insert(walletAsset)
-    .values({
-      currency,
-      network: NETWORK,
-      minDeposit,
-      providerAssetId: `${currency}-${NETWORK}`,
-      minWithdrawal: '1',
-      withdrawalFee: '0',
-    });
-  await drizzle().insert(exchangeRateQuote).values({
-    baseCurrency: currency,
-    quoteCurrency: 'USD',
-    rate: '1',
-    providerAsOf: new Date(),
-  });
-  const { userId, playerId } = await registerAndMaterializePlayer(testApp, {
-    email: `deposit-hostile-${randomUUID()}@e2e.test`,
-  });
-  const address = `addr-${randomUUID()}`;
-  await drizzle().insert(walletDepositAddress).values({
-    userId,
-    currency,
-    network: NETWORK,
-    address,
-    providerName: DEFAULT_PAYMENT_PROVIDER,
-  });
-  const deposit = (overrides: Partial<DepositEvent> = {}): DepositEvent => ({
-    kind: 'deposit',
-    address,
-    network: NETWORK,
-    amount: FLOOR,
-    currency,
-    txHash: `hash-${randomUUID()}`,
-    externalId: randomUUID(),
-    ...overrides,
-  });
-  const status = (
-    value: StatusEvent['status'],
-    overrides: Partial<StatusEvent> = {},
-  ): StatusEvent => ({
-    kind: 'deposit_status',
-    status: value,
-    address,
-    network: NETWORK,
-    amount: FLOOR,
-    currency,
-    externalId: randomUUID(),
-    ...overrides,
-  });
-  return { userId, playerId, currency, address, deposit, status };
-}
-
-type Player = Awaited<ReturnType<typeof setup>>;
-
-const deliver = (event: unknown) => {
-  const rawBody = JSON.stringify(event);
-  return testApp.app.request('/wallet/webhook', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      [TEST_PAYMENT_SIGNATURE_HEADER]: signTestPaymentWebhook(rawBody),
-    },
-    body: rawBody,
-  });
-};
-
-const auditRows = (externalId: string) =>
-  drizzle()
-    .select()
+async function rowCounts() {
+  const [guards] = await drizzle().select({ n: count() }).from(walletDepositStatusEvent);
+  const [audits] = await drizzle()
+    .select({ n: count() })
     .from(auditLog)
-    .where(
-      and(
-        inArray(auditLog.action, LIFECYCLE_ACTIONS),
-        sql`${auditLog.after}->>'externalId' = ${externalId}`,
-      ),
-    );
-
-// Oldest first, by the audit chain's own sequence.
-const auditTrail = async (externalId: string) =>
-  (await auditRows(externalId))
-    .sort((a, b) => a.seq - b.seq)
-    .map((row) => row.action.replace('wallet.deposit.', ''));
-
-const guardRows = (externalId: string) =>
-  drizzle()
-    .select()
-    .from(walletDepositStatusEvent)
-    .where(eq(walletDepositStatusEvent.externalId, externalId));
-
-const ledgerRows = (externalId: string) =>
-  drizzle().select().from(walletTransaction).where(eq(walletTransaction.providerRefId, externalId));
-
-const findings = (externalId: string) =>
-  drizzle()
-    .select()
-    .from(walletReconciliationFinding)
-    .where(eq(walletReconciliationFinding.externalId, externalId));
-
-async function balanceOf(userId: string, currency: string) {
-  const [row] = await drizzle()
-    .select({ amount: walletBalance.amount })
-    .from(walletBalance)
-    .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
-    .where(and(eq(wallet.userId, userId), eq(walletBalance.currency, currency)));
-  return Number(row?.amount ?? 0);
+    .where(inArray(auditLog.action, LIFECYCLE_ACTIONS));
+  return { guards: guards?.n, audits: audits?.n };
 }
-
-async function reconcile(events: PaymentWebhookEvent[]) {
-  setTestPaymentTransactions(events);
-  const res = await admin.post('/wallet/reconciliation/run', {});
-  expect(res.status).toBe(200);
-  const { runId } = (await res.json()) as { runId: string };
-  await vi.waitFor(
-    async () => {
-      const [run] = await drizzle()
-        .select({ status: walletJobRun.status })
-        .from(walletJobRun)
-        .where(eq(walletJobRun.runId, runId));
-      expect(run?.status).toBe('completed');
-    },
-    { timeout: 20_000, interval: 100 },
-  );
-}
-
-beforeAll(async () => {
-  db = await setupTestDb();
-  testApp = await bootTestApp({
-    plugins: [
-      ...(await loadExtensions()),
-      { id: 'testing-payment-webhook', path: paymentPluginPath },
-      { id: 'test-wallet-reconciliation-config', path: reconciliationConfigPluginPath },
-    ],
-    databaseUrl: db.url,
-  });
-  await seedMinimal(testApp.container, { playerCount: 0 });
-  admin = await asAdmin(testApp.app);
-}, 60_000);
-
-afterAll(async () => {
-  await testApp?.close();
-  await db?.dispose();
-});
 
 describe('a status event racing the confirmed deposit of the same transfer', () => {
   const ROUNDS = 3;
 
-  async function race(make: (p: Player) => [{ externalId: string }, unknown]) {
+  async function race(make: (p: DepositPlayer) => [{ externalId: string }, unknown]) {
     const player = await setup();
     const [first, second] = make(player);
     const responses = await Promise.all([deliver(first), deliver(second)]);
@@ -225,7 +57,7 @@ describe('a status event racing the confirmed deposit of the same transfer', () 
     return { player, externalId: first.externalId };
   }
 
-  it('credits once whichever order the two commit in, and never audits a status after the credit', async () => {
+  it('credits once whichever commits first, and audits the status only if it won the lock', async () => {
     const kinds: Array<'detected' | 'failed'> = ['detected', 'failed'];
     for (let round = 0; round < ROUNDS; round += 1) {
       for (const kind of kinds) {
@@ -235,7 +67,6 @@ describe('a status event racing the confirmed deposit of the same transfer', () 
         });
         expect(await ledgerRows(externalId)).toHaveLength(1);
         expect(await balanceOf(player.userId, player.currency)).toBe(Number(FLOOR));
-        // Either the status won the lock and was audited once, or the credit won and it left nothing.
         expect(await auditTrail(externalId)).toEqual(
           (await guardRows(externalId)).length === 1 ? [kind] : [],
         );
@@ -319,14 +150,14 @@ describe('the same transfer id under two vendors', () => {
 
 describe('an amount the vendor should never send', () => {
   it.each(['', '-5', '1e3', 'abc', '0x1', '15.5.5', 'NaN'])(
-    'credits nothing and moves no balance for %j',
+    'answers an error, credits nothing and moves no balance for %j',
     async (amount) => {
       const player = await setup();
       const event = player.deposit({ amount });
 
-      await deliver(event);
-      await deliver(event);
+      const responses = [await deliver(event), await deliver(event)];
 
+      expect(responses.map((res) => res.status)).toEqual([500, 500]);
       expect(await ledgerRows(event.externalId)).toHaveLength(0);
       expect(await balanceOf(player.userId, player.currency)).toBe(0);
       expect(await findings(event.externalId)).toHaveLength(0);
@@ -336,15 +167,15 @@ describe('an amount the vendor should never send', () => {
 
 describe('a status event the contract does not describe', () => {
   it.each([{ status: 'pending' }, { status: undefined }, { externalId: undefined }])(
-    'writes no guard or audit row for %j',
+    'answers an error and writes no guard or audit row for %j',
     async (override) => {
       const player = await setup();
-      const event = { ...player.status('detected'), ...override };
+      const before = await rowCounts();
 
-      await deliver(event);
+      const res = await deliver({ ...player.status('detected'), ...override });
 
-      expect(await guardRows(event.externalId ?? '')).toHaveLength(0);
-      expect(await auditRows(event.externalId ?? '')).toHaveLength(0);
+      expect(res.status).toBe(500);
+      expect(await rowCounts()).toEqual(before);
       expect(await balanceOf(player.userId, player.currency)).toBe(0);
     },
   );
@@ -382,7 +213,7 @@ describe('currency and network casing', () => {
 
 describe('a floor of zero', () => {
   it('refuses nothing that is positive and still credits it', async () => {
-    const player = await setup({ minDeposit: '0' });
+    const player = await setup({ assets: [{ network: NETWORK, minDeposit: '0' }] });
     const event = player.deposit({ amount: '0.000000000000000001' });
 
     await deliver(event);
@@ -393,7 +224,7 @@ describe('a floor of zero', () => {
 });
 
 describe('the guard row and the audit row', () => {
-  it('commit together: a forced audit failure leaves no guard row, and the retry audits', async () => {
+  it('commit together with the finding: a forced audit failure leaves none, and the retry writes all', async () => {
     const player = await setup();
     const failed = player.status('failed');
     const belowMinimum = player.deposit({ amount: BELOW_FLOOR });
@@ -417,6 +248,7 @@ describe('the guard row and the audit row', () => {
       for (const { externalId } of [failed, belowMinimum]) {
         expect(await guardRows(externalId)).toHaveLength(0);
         expect(await auditRows(externalId)).toHaveLength(0);
+        expect(await findings(externalId)).toHaveLength(0);
       }
       expect(await ledgerRows(belowMinimum.externalId)).toHaveLength(0);
     } finally {
@@ -431,6 +263,7 @@ describe('the guard row and the audit row', () => {
     expect(await auditTrail(belowMinimum.externalId)).toEqual(['below_minimum']);
     expect(await guardRows(failed.externalId)).toHaveLength(1);
     expect(await guardRows(belowMinimum.externalId)).toHaveLength(1);
+    expect(await findings(belowMinimum.externalId)).toHaveLength(1);
   });
 });
 
@@ -439,10 +272,7 @@ describe('reconciliation, beyond a plain below-minimum deposit', () => {
     const player = await setup();
     const credited = player.deposit();
     await deliver(credited);
-    await drizzle()
-      .update(walletAsset)
-      .set({ minDeposit: '100' })
-      .where(eq(walletAsset.currency, player.currency));
+    await setMinDeposit(player.currency, '100');
 
     await reconcile([credited, player.status('failed', { externalId: credited.externalId })]);
 
@@ -474,7 +304,9 @@ describe('reconciliation, beyond a plain below-minimum deposit', () => {
 
     expect(res.status).toBe(200);
     expect(await auditTrail(event.externalId)).toEqual(['below_minimum']);
-    expect(await findings(event.externalId)).toHaveLength(0);
+    expect((await findings(event.externalId)).map((finding) => finding.kind)).toEqual([
+      'below_minimum_deposit',
+    ]);
     expect(await ledgerRows(event.externalId)).toHaveLength(0);
   });
 });
@@ -501,7 +333,7 @@ describe('a malformed amount or id on an audited outcome', () => {
   );
 
   it('records no refusal for a negative amount under a floor of zero', async () => {
-    const player = await setup({ minDeposit: '0' });
+    const player = await setup({ assets: [{ network: NETWORK, minDeposit: '0' }] });
     const event = player.deposit({ amount: '-1' });
 
     const res = await deliver(event);
@@ -573,9 +405,9 @@ describe('a malformed amount or id on an audited outcome', () => {
 describe('the audit chain after all of the above', () => {
   it('still verifies end to end', async () => {
     const audit = new AuditService(
-      testApp.container.get(DRIZZLE),
-      testApp.container.get(EVENT_BUS),
-      testApp.container.get(IDENTITY_READER),
+      app().container.get(DRIZZLE),
+      app().container.get(EVENT_BUS),
+      app().container.get(IDENTITY_READER),
     );
 
     expect(await audit.verifyChain()).toEqual({ valid: true });

@@ -288,6 +288,13 @@
       "when": 1794208767070,
       "tag": "0040_young_rick_jones",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1794217881101,
+      "tag": "0041_violet_gladiator",
+      "breakpoints": true
     }
   ]
 }

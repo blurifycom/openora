@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, count, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import {
   type DrizzleDb,
   type DrizzleService,
@@ -25,11 +25,13 @@ import {
   type RgLimitsPort,
   type User,
   type WalletJobRunStatus,
+  type WalletDepositStatusEventStatus,
   type WalletReconciliationFindingKind,
 } from '@openora/core/contracts';
 import {
   wallet,
   walletCustodySweep,
+  walletDepositStatusEvent,
   walletJobRun,
   walletReconciliationFinding,
   walletRefundedDeposit,
@@ -47,6 +49,7 @@ import {
   DepositAlreadyOnLedgerError,
   HeldDepositNotFoundError,
   type WalletService,
+  depositStatusIsNoOp,
   isRecordableDeposit,
 } from './wallet.service.js';
 import {
@@ -105,6 +108,7 @@ const REFUNDABLE_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = n
   'held_deposit',
   'missing_deposit',
   'unattributed_deposit',
+  'below_minimum_deposit',
 ]);
 
 function assertOutcomeAllowed(
@@ -390,7 +394,7 @@ export class ReconciliationService {
             finding.transactionId,
             adminId,
           );
-        } else if (finding.kind === 'missing_deposit') {
+        } else if (finding.kind === 'missing_deposit' || finding.kind === 'below_minimum_deposit') {
           refundedDepositId = await this.recordMissingDepositRefunded(txn, finding, adminId);
         }
       } else {
@@ -892,30 +896,38 @@ export class ReconciliationService {
     const swept = await this.sweptExternalIds(providerName, since);
     const relevant = events.filter((event) => !swept.has(event.externalId));
 
-    const deposits = relevant.filter(
-      (event): event is Extract<PaymentWebhookEvent, { kind: 'deposit' }> =>
-        event.kind === 'deposit',
+    const deposits = this.keepRecordable(
+      relevant.filter(
+        (event): event is Extract<PaymentWebhookEvent, { kind: 'deposit' }> =>
+          event.kind === 'deposit',
+      ),
+      providerName,
+    );
+    const statuses = this.keepRecordable(
+      relevant.filter(
+        (event): event is Extract<PaymentWebhookEvent, { kind: 'deposit_status' }> =>
+          event.kind === 'deposit_status',
+      ),
+      providerName,
     );
     const withdrawals = relevant.filter(
       (event): event is Extract<PaymentWebhookEvent, { kind: 'withdrawal' }> =>
         event.kind === 'withdrawal',
     );
 
-    for (const event of relevant) {
-      if (event.kind !== 'deposit_status') {
-        continue;
-      }
-      if (!isRecordableDeposit(event)) {
-        logger.error(
-          { providerName, externalId: event.externalId },
-          'wallet reconciliation: malformed deposit status event skipped',
-        );
+    const externalIds = [...deposits, ...statuses].map((event) => event.externalId);
+    const ledger = await this.batchLookupByProviderRefId(providerName, externalIds);
+    const seen = await this.batchDepositStatusesSeen(providerName, externalIds);
+
+    for (const event of statuses) {
+      const statusesSeen = seen.get(event.externalId) ?? new Set();
+      if (ledger.has(event.externalId) || depositStatusIsNoOp(statusesSeen, event.status)) {
         continue;
       }
       await this.wallet.recordDepositStatus(event);
     }
 
-    await this.reconcileDeposits(runId, providerName, deposits, counts);
+    await this.reconcileDeposits({ runId, providerName, deposits, ledger, seen, counts });
 
     for (const event of withdrawals) {
       // Reconciliation is the same normalization a webhook produces, polled instead of
@@ -938,24 +950,48 @@ export class ReconciliationService {
     return new Set(rows.map((row) => row.externalId).filter((id): id is string => id !== null));
   }
 
-  private async reconcileDeposits(
-    runId: WalletJobRun['runId'],
+  private keepRecordable<T extends Parameters<typeof isRecordableDeposit>[0]>(
+    events: readonly T[],
     providerName: string,
-    deposits: readonly Extract<PaymentWebhookEvent, { kind: 'deposit' }>[],
-    counts: { missingDeposit: number; currencyMismatch: number; amountMismatch: number },
-  ): Promise<void> {
-    if (deposits.length === 0) {
-      return;
-    }
-    const byExternalId = await this.batchLookupByProviderRefId(
-      providerName,
-      deposits.map((d) => d.externalId),
-    );
+  ): T[] {
+    return events.filter((event) => {
+      if (isRecordableDeposit(event)) {
+        return true;
+      }
+      logger.error(
+        { providerName, externalId: event.externalId },
+        'wallet reconciliation: malformed deposit event skipped',
+      );
+      return false;
+    });
+  }
 
+  private async reconcileDeposits({
+    runId,
+    providerName,
+    deposits,
+    ledger,
+    seen,
+    counts,
+  }: {
+    runId: WalletJobRun['runId'];
+    providerName: string;
+    deposits: readonly Extract<PaymentWebhookEvent, { kind: 'deposit' }>[];
+    ledger: ReadonlyMap<string, WalletTransaction>;
+    seen: ReadonlyMap<string, ReadonlySet<WalletDepositStatusEventStatus>>;
+    counts: { missingDeposit: number; currencyMismatch: number; amountMismatch: number };
+  }): Promise<void> {
     for (const event of deposits) {
-      const tx = byExternalId.get(event.externalId);
+      const tx = ledger.get(event.externalId);
       const result = diffDeposit(event, tx);
-      if (result === null || (!tx && (await this.wallet.recordDepositIfBelowMinimum(event)))) {
+      if (result === null) {
+        continue;
+      }
+      if (
+        result === 'missing_deposit' &&
+        (seen.get(event.externalId)?.has('below_minimum') ||
+          (await this.wallet.recordDepositIfBelowMinimum(event)))
+      ) {
         continue;
       }
       counts[
@@ -990,6 +1026,31 @@ export class ReconciliationService {
         this.audit,
       );
     }
+  }
+
+  private async batchDepositStatusesSeen(
+    providerName: string,
+    externalIds: string[],
+  ): Promise<Map<string, Set<WalletDepositStatusEventStatus>>> {
+    const seen = new Map<string, Set<WalletDepositStatusEventStatus>>();
+    for (const batch of chunk(externalIds, PROVIDER_REF_LOOKUP_CHUNK_SIZE)) {
+      const rows = await this.drizzle.db
+        .select({
+          externalId: walletDepositStatusEvent.externalId,
+          status: walletDepositStatusEvent.status,
+        })
+        .from(walletDepositStatusEvent)
+        .where(
+          and(
+            eq(walletDepositStatusEvent.providerName, providerName),
+            inArray(walletDepositStatusEvent.externalId, batch),
+          ),
+        );
+      for (const { externalId, status } of rows) {
+        seen.set(externalId, (seen.get(externalId) ?? new Set()).add(status));
+      }
+    }
+    return seen;
   }
 
   // Single chunked inArray(...) batch read (chunks well under the parameter ceiling) -
@@ -1327,7 +1388,12 @@ export class ReconciliationService {
     const [row] = await this.drizzle.db
       .select({ n: count() })
       .from(walletReconciliationFinding)
-      .where(eq(walletReconciliationFinding.status, 'open'));
+      .where(
+        and(
+          eq(walletReconciliationFinding.status, 'open'),
+          ne(walletReconciliationFinding.kind, 'below_minimum_deposit'),
+        ),
+      );
     return Number(row?.n ?? 0);
   }
 

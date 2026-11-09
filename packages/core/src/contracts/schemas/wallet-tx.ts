@@ -82,11 +82,11 @@ export const WALLET_RECONCILIATION_FINDING_KINDS = [
   'rg_limit_breach',
   'stuck_swap',
   'held_deposit',
+  'below_minimum_deposit',
 ] as const;
 
 export const WALLET_RECONCILIATION_FINDING_STATUSES = ['open', 'resolved'] as const;
 
-// What became of an inbound deposit that never reached the ledger as a credit.
 export const WALLET_DEPOSIT_STATUS_EVENT_STATUSES = [
   'detected',
   'failed',

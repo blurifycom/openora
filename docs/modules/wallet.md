@@ -69,14 +69,20 @@ does not repeat it.
   recalculated. With no fresh rate the row is not written: a request fails with a typed error, and a
   deposit webhook fails so the vendor redelivers it.
 - **An address-based deposit under its asset's minimum is not credited.** The floor is the row for
-  the event's network, else the network the address was issued on; with no network at all, the
-  lowest row. A row with deposits switched off still counts, and a named network with no row has
-  no floor. The refusal, a `detected` status and a `failed` status each leave one audit row under
+  the event's network. With none named it is the row of the one network the address was issued
+  on for that currency, and if the address has no such row or several, the lowest row. A row with
+  deposits switched off still counts, and a named network with no row has no floor. A zero amount
+  is refused whatever the floor, with `minDeposit: null` when none applies. The refusal, a `detected` status and a `failed` status each leave one audit row under
   the player, guarded by `wallet_deposit_status_event` in the same transaction, so a redelivery or
   a poll adds nothing. The first refusal stands if the minimum later drops. A credited or refunded
   deposit audits no later status, and a failed one no later detection. A refused deposit never
-  becomes a `missing_deposit` finding. An event with a malformed amount or an empty id records
-  nothing and answers an error, so the vendor retries it; the poll skips it and logs.
+  becomes a `missing_deposit` finding: its own `below_minimum_deposit` finding is filed in the
+  refusal's transaction, carries the address, tag, tx hash and sender, can be credited or refunded
+  by an admin, and is left out of the open count behind `alertThreshold`. A status event in another
+  currency than its address, with no network named, is logged and records nothing. An event with a
+  malformed amount or an empty id records nothing and answers an error, so the vendor retries it;
+  the poll skips it and logs. An amount with more decimals than the ledger keeps is malformed too,
+  so it answers a 500 and is never rounded.
 - **A bet row records what the bet was placed on.** `wager_product` comes from its `WagerContext`,
   and so does `wager_rtp` when it is a fraction in [0, 1]. A malformed rtp is stored as NULL rather
   than refusing the bet. `houseEdge` in `@openora/core/server` prices it.

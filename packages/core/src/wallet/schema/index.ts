@@ -611,8 +611,6 @@ export const walletDepositStatusEventStatusEnum = pgEnum(
   WALLET_DEPOSIT_STATUS_EVENT_STATUSES,
 );
 
-// One row per audited outcome of a vendor deposit, the database guard that keeps a redelivered
-// status from auditing twice. Insert-only.
 export const walletDepositStatusEvent = pgTable(
   'wallet_deposit_status_event',
   {

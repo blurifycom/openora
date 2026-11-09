@@ -3,6 +3,7 @@
  * implements PaymentAdapter; bind a concrete adapter to PAYMENT_ADAPTER in the wallet
  * module's plugin.ts. See docs/adapters/payment.md for the full binding guide.
  */
+import type { WalletDepositStatusEventStatus } from '../schemas/wallet-tx.js';
 import { createToken, type Token } from './token.js';
 
 /**
@@ -39,7 +40,7 @@ export type PaymentWebhookEvent =
     }
   | {
       kind: 'deposit_status';
-      status: 'detected' | 'failed';
+      status: Exclude<WalletDepositStatusEventStatus, 'below_minimum'>;
       address: string;
       network?: string;
       tag?: string;
@@ -48,7 +49,6 @@ export type PaymentWebhookEvent =
       /** Absent when a transfer fails before it is broadcast. */
       txHash?: string;
       externalId: string;
-      /** The vendor's own status word, kept for the audit trail. */
       vendorStatus?: string;
     }
   | {

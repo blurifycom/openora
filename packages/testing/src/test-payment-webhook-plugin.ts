@@ -30,8 +30,9 @@ export const setTestPaymentTransactions = (events: PaymentWebhookEvent[]) => {
 
 /**
  * Binds a fake address-based payment vendor to the default provider: a webhook body is the
- * normalized event itself, signed with `signTestPaymentWebhook`, and `listTransactions` answers
- * what `setTestPaymentTransactions` set. Opt-in only - pass it in `config.plugins`.
+ * normalized event itself, signed with `signTestPaymentWebhook`, `listTransactions` answers what
+ * `setTestPaymentTransactions` set, and a player's address repeats across the networks of one
+ * currency, as on an account chain. Opt-in only - pass it in `config.plugins`.
  */
 export default {
   id: 'testing-payment-webhook',
@@ -46,6 +47,9 @@ export default {
           },
           async processWithdrawal() {
             return { externalId: `test-${randomUUID()}`, status: 'completed' };
+          },
+          async issueDepositAddress(userId, currency) {
+            return { address: `addr-${userId}-${currency}` };
           },
           parseWebhook(rawBody) {
             return JSON.parse(rawBody) as PaymentWebhookEvent;

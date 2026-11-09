@@ -105,6 +105,7 @@ export const DEPOSIT_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind>
   'amount_mismatch',
   'currency_mismatch',
   'held_deposit',
+  'below_minimum_deposit',
 ]);
 
 /** Whether an admin already refunded this vendor deposit on chain, from any finding. */

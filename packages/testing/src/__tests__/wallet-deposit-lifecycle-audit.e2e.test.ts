@@ -1,197 +1,42 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import { and, eq, inArray, sql } from 'drizzle-orm';
-import { DEFAULT_PAYMENT_PROVIDER, type PaymentWebhookEvent } from '@openora/core/contracts';
-import { DRIZZLE, loadExtensions } from '@openora/core/server';
-import { auditLog } from '@openora/core/audit/schema';
-import { exchangeRateQuote } from '@openora/core/fx/schema/exchange-rate';
+import { describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+import { DEFAULT_PAYMENT_PROVIDER } from '@openora/core/contracts';
 import {
-  wallet,
-  walletAsset,
-  walletBalance,
   walletDepositAddress,
-  walletJobRun,
   walletReconciliationFinding,
   walletRefundedDeposit,
-  walletTransaction,
 } from '@openora/core/wallet/schema';
 import {
-  asAdmin,
-  bootTestApp,
-  registerAndMaterializePlayer,
-  seedMinimal,
-  setupTestDb,
-  type TestApp,
-  type TestClient,
-  type TestDb,
-} from '../index.js';
-import {
-  setTestPaymentTransactions,
-  signTestPaymentWebhook,
-  TEST_PAYMENT_SIGNATURE_HEADER,
-} from '../test-payment-webhook-plugin.js';
+  BELOW_FLOOR,
+  bootDepositLifecycle,
+  FLOOR,
+  NETWORK,
+  OTHER_NETWORK,
+  withoutNetwork,
+} from './fixtures/wallet-deposit-lifecycle.js';
 
-const paymentPluginPath = fileURLToPath(
-  new URL('../test-payment-webhook-plugin.ts', import.meta.url),
-);
-const reconciliationConfigPluginPath = fileURLToPath(
-  new URL('./fixtures/test-wallet-reconciliation-config-plugin.ts', import.meta.url),
-);
-
-const LIFECYCLE_ACTIONS = [
-  'wallet.deposit.detected',
-  'wallet.deposit.failed',
-  'wallet.deposit.below_minimum',
-];
-const NETWORK = 'TESTCHAIN';
-const OTHER_NETWORK = 'OTHERCHAIN';
-const FLOOR = '10';
-const BELOW_FLOOR = '5';
 const ONE_UNIT_UNDER_FLOOR = '9.999999999999999999';
 
-type DepositEvent = Extract<PaymentWebhookEvent, { kind: 'deposit' }>;
-type StatusEvent = Extract<PaymentWebhookEvent, { kind: 'deposit_status' }>;
-type AssetSeed = { network: string; minDeposit: string; depositEnabled?: boolean };
-
-let db: TestDb;
-let testApp: TestApp;
-let admin: TestClient;
-
-const drizzle = () => testApp.container.get(DRIZZLE).db;
-
-const uniqueCurrency = () =>
-  Array.from(randomBytes(8), (byte) => String.fromCharCode(65 + (byte % 26))).join('');
-
-async function seedCurrency(assets: readonly AssetSeed[], rated: boolean) {
-  const currency = uniqueCurrency();
-  await drizzle()
-    .insert(walletAsset)
-    .values(
-      assets.map((asset) => ({
-        ...asset,
-        currency,
-        providerAssetId: `${currency}-${asset.network}`,
-        minWithdrawal: '1',
-        withdrawalFee: '0',
-      })),
-    );
-  if (rated) {
-    await drizzle().insert(exchangeRateQuote).values({
-      baseCurrency: currency,
-      quoteCurrency: 'USD',
-      rate: '1',
-      providerAsOf: new Date(),
-    });
-  }
-  return currency;
-}
-
-async function setup({
-  assets = [{ network: NETWORK, minDeposit: FLOOR }],
-  addressNetwork = NETWORK,
-  tag,
-  rated = true,
-}: {
-  assets?: readonly AssetSeed[];
-  addressNetwork?: string | null;
-  tag?: string;
-  rated?: boolean;
-} = {}) {
-  const currency = await seedCurrency(assets, rated);
-  const { userId, playerId } = await registerAndMaterializePlayer(testApp, {
-    email: `deposit-lifecycle-${randomUUID()}@e2e.test`,
-  });
-  const address = `addr-${randomUUID()}`;
-  await drizzle()
-    .insert(walletDepositAddress)
-    .values({
-      userId,
-      currency,
-      network: addressNetwork,
-      address,
-      providerName: DEFAULT_PAYMENT_PROVIDER,
-      ...(tag ? { tag } : {}),
-    });
-  const deposit = (overrides: Partial<DepositEvent> = {}): DepositEvent => ({
-    kind: 'deposit',
-    address,
-    network: NETWORK,
-    amount: FLOOR,
-    currency,
-    txHash: `hash-${randomUUID()}`,
-    externalId: randomUUID(),
-    ...overrides,
-  });
-  const status = (
-    value: StatusEvent['status'],
-    overrides: Partial<StatusEvent> = {},
-  ): StatusEvent => ({
-    kind: 'deposit_status',
-    status: value,
-    address,
-    network: NETWORK,
-    amount: FLOOR,
-    currency,
-    externalId: randomUUID(),
-    ...overrides,
-  });
-  return { userId, playerId, currency, address, deposit, status };
-}
-
-const withoutNetwork = <T extends { network?: string }>({ network: _network, ...rest }: T) => rest;
-
-const deliver = (event: unknown, signature?: string) => {
-  const rawBody = JSON.stringify(event);
-  return testApp.app.request('/wallet/webhook', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      [TEST_PAYMENT_SIGNATURE_HEADER]: signature ?? signTestPaymentWebhook(rawBody),
-    },
-    body: rawBody,
-  });
-};
+const {
+  drizzle,
+  setMinDeposit,
+  setup,
+  deliver,
+  auditRows,
+  ledgerRows,
+  findings,
+  balanceOf,
+  reconcile,
+} = bootDepositLifecycle();
 
 async function delivered(event: unknown) {
   const res = await deliver(event);
   expect(res.status).toBe(200);
 }
 
-const auditRows = (externalId: string) =>
-  drizzle()
-    .select()
-    .from(auditLog)
-    .where(
-      and(
-        inArray(auditLog.action, LIFECYCLE_ACTIONS),
-        sql`${auditLog.after}->>'externalId' = ${externalId}`,
-      ),
-    );
-
 const auditedActions = async (externalId: string) =>
   (await auditRows(externalId)).map((row) => row.action).sort();
-
-const ledgerRows = (externalId: string) =>
-  drizzle().select().from(walletTransaction).where(eq(walletTransaction.providerRefId, externalId));
-
-const findings = (externalId: string) =>
-  drizzle()
-    .select()
-    .from(walletReconciliationFinding)
-    .where(eq(walletReconciliationFinding.externalId, externalId));
-
-async function balanceOf(userId: string, currency: string) {
-  const [row] = await drizzle()
-    .select({ amount: walletBalance.amount })
-    .from(walletBalance)
-    .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
-    .where(and(eq(wallet.userId, userId), eq(walletBalance.currency, currency)));
-  return Number(row?.amount ?? 0);
-}
-
-const setMinDeposit = (currency: string, minDeposit: string) =>
-  drizzle().update(walletAsset).set({ minDeposit }).where(eq(walletAsset.currency, currency));
 
 async function markRefunded(externalId: string) {
   const [finding] = await drizzle()
@@ -207,42 +52,6 @@ async function markRefunded(externalId: string) {
     .insert(walletRefundedDeposit)
     .values({ providerName: DEFAULT_PAYMENT_PROVIDER, externalId, findingId: finding!.id });
 }
-
-async function reconcile(events: PaymentWebhookEvent[]) {
-  setTestPaymentTransactions(events);
-  const res = await admin.post('/wallet/reconciliation/run', {});
-  expect(res.status).toBe(200);
-  const { runId } = (await res.json()) as { runId: string };
-  await vi.waitFor(
-    async () => {
-      const [run] = await drizzle()
-        .select({ status: walletJobRun.status })
-        .from(walletJobRun)
-        .where(eq(walletJobRun.runId, runId));
-      expect(run?.status).toBe('completed');
-    },
-    { timeout: 20_000, interval: 100 },
-  );
-}
-
-beforeAll(async () => {
-  db = await setupTestDb();
-  testApp = await bootTestApp({
-    plugins: [
-      ...(await loadExtensions()),
-      { id: 'testing-payment-webhook', path: paymentPluginPath },
-      { id: 'test-wallet-reconciliation-config', path: reconciliationConfigPluginPath },
-    ],
-    databaseUrl: db.url,
-  });
-  await seedMinimal(testApp.container, { playerCount: 0 });
-  admin = await asAdmin(testApp.app);
-}, 60_000);
-
-afterAll(async () => {
-  await testApp?.close();
-  await db?.dispose();
-});
 
 describe('a deposit below its asset minimum', () => {
   it('is not credited and leaves one audit row filed under the player with the amount and floor', async () => {
@@ -568,43 +377,17 @@ describe('deposit_status events', () => {
   });
 });
 
-describe('withdrawal webhook events', () => {
-  it('still reach the withdrawal path', async () => {
-    const { userId, currency, deposit } = await setup();
-    await delivered(deposit());
-    const [record] = await drizzle()
-      .select({ id: wallet.id })
-      .from(wallet)
-      .where(eq(wallet.userId, userId));
-    const externalId = randomUUID();
-    await drizzle().insert(walletTransaction).values({
-      walletId: record!.id,
-      type: 'withdrawal',
-      amount: '1',
-      currency,
-      status: 'processing',
-      direction: 'debit',
-      rail: 'crypto',
-      network: NETWORK,
-      providerName: DEFAULT_PAYMENT_PROVIDER,
-      providerRefId: externalId,
-    });
-
-    await delivered({ kind: 'withdrawal', externalId, status: 'completed' });
-
-    expect((await ledgerRows(externalId)).map((row) => row.status)).toEqual(['completed']);
-  });
-});
-
 describe('reconciliation', () => {
-  it('audits a polled below-minimum deposit once and files no missing_deposit, however often it runs', async () => {
+  it('audits a polled below-minimum deposit once and files its own finding, never missing_deposit, however often it runs', async () => {
     const { deposit } = await setup();
     const event = deposit({ amount: BELOW_FLOOR });
 
     await reconcile([event]);
     await reconcile([event]);
 
-    expect(await findings(event.externalId)).toHaveLength(0);
+    expect((await findings(event.externalId)).map((finding) => finding.kind)).toEqual([
+      'below_minimum_deposit',
+    ]);
     expect(await auditedActions(event.externalId)).toEqual(['wallet.deposit.below_minimum']);
     expect(await ledgerRows(event.externalId)).toHaveLength(0);
   });
