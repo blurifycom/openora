@@ -187,7 +187,12 @@ describe('sportsbook.turnover_exposure through the MCP kernel (real PG)', () => 
       output: {
         ...RANGE,
         currencies: [
-          expect.objectContaining({ currency: 'EUR', bets: 1, ggr: amount(7), openBets: 0 }),
+          expect.objectContaining({
+            currency: 'EUR',
+            bets: 1,
+            stake: amount(7),
+            payout: amount(0),
+          }),
           {
             currency: 'USD',
             bets: 3,
@@ -197,7 +202,6 @@ describe('sportsbook.turnover_exposure through the MCP kernel (real PG)', () => 
             payout: amount(25),
             cashPayout: amount(25),
             promotionPayout: amount(0),
-            ggr: amount(10),
             openBets: 3,
             openExposure: amount(65),
             openPotentialPayout: amount(210),

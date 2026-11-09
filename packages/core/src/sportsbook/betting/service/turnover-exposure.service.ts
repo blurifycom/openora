@@ -1,5 +1,5 @@
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
-import type { DrizzleService } from '@openora/core/server';
+import { sumMoney, type DrizzleService } from '@openora/core/server';
 import { dayRangeInstants } from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
 import {
@@ -51,7 +51,7 @@ export class SportsbookTurnoverService {
         .select({
           ...totals.columns,
           openBets: sql<number>`count(*) filter (where ${openBet})`.mapWith(Number),
-          openPotentialPayout: sql<string>`coalesce(sum(${bet.potentialPayout}) filter (where ${openBet}), 0)::numeric(38, 18)`,
+          openPotentialPayout: sumMoney(bet.potentialPayout, openBet),
         })
         .from(bet)
         .where(and(totals.read, inCurrency))

@@ -14,7 +14,12 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
-import { makeNotFoundError, pageToOffset, type DrizzleService } from '@openora/core/server';
+import {
+  makeNotFoundError,
+  pageToOffset,
+  sumMoney,
+  type DrizzleService,
+} from '@openora/core/server';
 import type { DateRange, IdentityReader, User, Uuid, WalletReader } from '@openora/core/contracts';
 import type {
   AdminSportsbookBet,
@@ -100,10 +105,6 @@ function within(column: PgColumn, { dateFrom, dateTo }: DateRange) {
   ];
 }
 
-function sumOf(amount: SQL | PgColumn, where: SQL) {
-  return sql<string>`coalesce(sum(${amount}) filter (where ${where}), 0)::numeric(38, 18)`;
-}
-
 /** A bet the provider has not settled or cancelled: the operator still owes its outcome. */
 export const openBet = inArray(sportsbookBet.status, ['reserved', 'accepted']);
 
@@ -112,7 +113,8 @@ export const openBet = inArray(sportsbookBet.status, ['reserved', 'accepted']);
  * stake-side fields count every bet not cancelled, by its acceptance or, while still reserved, its
  * debit, in the range; payout-side fields bets settled in it; and `openExposure` the reserved and
  * accepted stakes now, whatever the range. Group by currency; `read` keeps the bets any of them
- * counts.
+ * counts. `ggr`, their cash stake less their payout, is the player summary's alone: the operator's
+ * sportsbook GGR (financial.summary) follows the ledger, so a reopen counts when it posts.
  */
 export function betTotals(range: DateRange) {
   const bet = sportsbookBet;
@@ -125,15 +127,15 @@ export function betTotals(range: DateRange) {
     columns: {
       currency: bet.currency,
       bets: sql<number>`count(*) filter (where ${staked})`.mapWith(Number),
-      stake: sumOf(bet.stake, staked),
-      cashStake: sumOf(bet.cashStake, staked),
-      promotionStake: sumOf(sql`${bet.stake} - ${bet.cashStake}`, staked),
-      payout: sumOf(bet.payoutTotal, settled),
-      cashPayout: sumOf(sql`${bet.payoutTotal} - ${bet.promotionPaid}`, settled),
-      promotionPayout: sumOf(bet.promotionPaid, settled),
-      ggr: sql<string>`(${sumOf(bet.cashStake, staked)} - ${sumOf(bet.payoutTotal, settled)})::numeric(38, 18)`,
-      openExposure: sumOf(bet.stake, openBet),
+      stake: sumMoney(bet.stake, staked),
+      cashStake: sumMoney(bet.cashStake, staked),
+      promotionStake: sumMoney(sql`${bet.stake} - ${bet.cashStake}`, staked),
+      payout: sumMoney(bet.payoutTotal, settled),
+      cashPayout: sumMoney(sql`${bet.payoutTotal} - ${bet.promotionPaid}`, settled),
+      promotionPayout: sumMoney(bet.promotionPaid, settled),
+      openExposure: sumMoney(bet.stake, openBet),
     },
+    ggr: sql<string>`(${sumMoney(bet.cashStake, staked)} - ${sumMoney(bet.payoutTotal, settled)})::numeric(38, 18)`,
     read: or(staked, settled, openBet),
   };
 }
@@ -223,7 +225,7 @@ export class SportsbookBetQueryService {
     range: SportsbookPromotionReportInput,
   ): Promise<SportsbookPromotionReportRow[]> {
     const tx = sportsbookBetTransaction;
-    const partOf = (kind: 'settle' | 'reopen') => sumOf(tx.promotionAmount, eq(tx.kind, kind));
+    const partOf = (kind: 'settle' | 'reopen') => sumMoney(tx.promotionAmount, eq(tx.kind, kind));
     return this.drizzle.db
       .select({
         type: sql<SportsbookPromotionReportRow['type']>`${sportsbookBet.promotionType}`,
@@ -254,7 +256,7 @@ export class SportsbookBetQueryService {
     await assertSportsbookPlayer(this.identity, userId);
     const totals = betTotals(range);
     return this.drizzle.db
-      .select(totals.columns)
+      .select({ ...totals.columns, ggr: totals.ggr })
       .from(sportsbookBet)
       .where(and(eq(sportsbookBet.userId, userId), totals.read))
       .groupBy(sportsbookBet.currency)

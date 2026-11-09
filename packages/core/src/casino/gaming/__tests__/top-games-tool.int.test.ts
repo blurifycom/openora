@@ -8,7 +8,14 @@ import {
   findOneOrThrow,
   type CoreTokenCatalog,
 } from '@openora/core/server';
-import type { GameType, RunContext } from '@openora/core/contracts';
+import {
+  ADMIN_GAME_REPORTING,
+  type AdminGameReporting,
+  type GameCurrencyRanking,
+  type GameCurrencyRankingFilter,
+  type GameType,
+  type RunContext,
+} from '@openora/core/contracts';
 import { createMcpKernel, createTestDb, type TestDb } from '@openora/core/testing';
 import { makeAuditWriter } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -20,12 +27,16 @@ let db: TestDb;
 const RANGE = { dateFrom: '2026-01-01', dateTo: '2026-01-31' };
 const IN_RANGE = new Date('2026-01-10T12:00:00.000Z');
 
-function bootKernel() {
+/** Boots the gaming tools; `report` rebinds ADMIN_GAME_REPORTING as an operator's overlay would. */
+function bootKernel(report?: AdminGameReporting) {
   const container = new Container<CoreTokenCatalog>();
   container.register(DRIZZLE, () => db.drizzle);
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   registry.setOwner('gaming');
   gamingPlugin.register(registry);
+  if (report) {
+    container.register(ADMIN_GAME_REPORTING, () => report);
+  }
   return createMcpKernel({
     tools: registry.mcp.getTools(),
     actions: registry.actions.getAll(),
@@ -199,6 +210,70 @@ describe('gaming.top_games through the MCP kernel (real PG)', () => {
         ],
       },
     });
+  });
+
+  it("ranks by the operator's rebound game report, and is unavailable when it cannot rank", async () => {
+    const unread = () => Promise.reject(new Error('gaming.top_games reads only the ranking'));
+    const operatorReport = {
+      listGamePerformance: unread,
+      getGamePerformanceTrend: unread,
+      getPlayerStats: unread,
+    } satisfies AdminGameReporting;
+    const asked: GameCurrencyRankingFilter[] = [];
+    const ranking: GameCurrencyRanking = {
+      currencies: [
+        {
+          currency: 'EUR',
+          totals: {
+            volume: '80.000000000000000000',
+            revenue: '-20.000000000000000000',
+            roundsPlayed: 4,
+            uniquePlayers: 2,
+            gamesPlayed: 1,
+          },
+          games: [
+            {
+              gameId: randomUUID(),
+              name: 'Warehouse Aces',
+              provider: 'Warehouse Studio',
+              gameType: 'casino',
+              volume: '80.000000000000000000',
+              revenue: '-20.000000000000000000',
+              roundsPlayed: 4,
+              uniquePlayers: 2,
+            },
+          ],
+        },
+      ],
+      truncated: false,
+    };
+    const ranked = bootKernel({
+      ...operatorReport,
+      rankGamesPerCurrency: (filter) => {
+        asked.push(filter);
+        return Promise.resolve(ranking);
+      },
+    });
+    const input = { ...RANGE, currency: 'eur', sortBy: 'revenue', sortDir: 'asc', limit: 3 };
+
+    expect(await ranked.invokeTool('gaming.top_games', input, runContext())).toEqual({
+      ok: true,
+      output: { ...RANGE, sortBy: 'revenue', sortDir: 'asc', ...ranking },
+    });
+    expect(asked).toEqual([
+      {
+        dateFrom: new Date('2026-01-01T00:00:00.000Z'),
+        dateTo: new Date('2026-01-31T23:59:59.999Z'),
+        currency: 'EUR',
+        sortBy: 'revenue',
+        sortDir: 'asc',
+        limit: 3,
+        maxCurrencies: 20,
+      },
+    ]);
+    expect(
+      await bootKernel(operatorReport).invokeTool('gaming.top_games', RANGE, runContext()),
+    ).toMatchObject({ ok: false, error: 'report_unavailable' });
   });
 
   it('refuses a range over 92 days and a limit over 50', async () => {

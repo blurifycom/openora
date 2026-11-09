@@ -4,7 +4,7 @@ import {
   isUsableRtp,
   type ExchangeRateReader,
 } from '@openora/core/contracts';
-import { sql } from 'drizzle-orm';
+import { sql, type AnyColumn, type SQL } from 'drizzle-orm';
 import type { DrizzleTx } from './drizzle.js';
 
 export function findOneOrThrow<T>(rows: T[], error: Error): T {
@@ -144,6 +144,17 @@ function fromUnitsAtScale(units: bigint, scale: number): string {
   const digits = units.toString().padStart(scale + 1, '0');
   const whole = digits.slice(0, digits.length - scale) || '0';
   return scale === 0 ? whole : `${whole}.${digits.slice(digits.length - scale)}`;
+}
+
+/**
+ * SQL sum of a money column or expression as a decimal string at the money columns' scale: zero,
+ * not null, over no row, and with `where` only the rows it holds (`filter (where ...)`), so a
+ * report's group-by sums one money figure the same way everywhere.
+ */
+export function sumMoney(amount: AnyColumn | SQL, where?: SQL): SQL<string> {
+  return where
+    ? sql<string>`coalesce(sum(${amount}) filter (where ${where}), 0)::numeric(38, 18)`
+    : sql<string>`coalesce(sum(${amount}), 0)::numeric(38, 18)`;
 }
 
 // A no-base-currency platform holds each row in whatever coin it was made in, so a

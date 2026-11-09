@@ -35,7 +35,7 @@ import { GameTagService } from './service/game-tag.service.js';
 import { GameProviderService } from './service/game-provider.service.js';
 import { GameBulkService } from './service/game-bulk.service.js';
 import { GameFavoriteService } from './service/game-favorite.service.js';
-import { TopGamesService } from './service/top-games.service.js';
+import { topGames } from './service/top-games.service.js';
 import { GamesFindService } from './service/games-find.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
@@ -75,8 +75,8 @@ export default {
     ctx.provide(GAME_CATALOG_READER, (c) => new GameCatalogReaderService(c.get(DRIZZLE)));
 
     ctx.mcp.tool(topGamesTool, (c) => {
-      const topGames = new TopGamesService(c.get(DRIZZLE));
-      return (input) => topGames.topGames(input);
+      const reporting = c.get(ADMIN_GAME_REPORTING);
+      return (input) => topGames(reporting, input);
     });
     ctx.mcp.tool(gamesFindTool, (c) => {
       const catalog = new GamesFindService(c.get(DRIZZLE));

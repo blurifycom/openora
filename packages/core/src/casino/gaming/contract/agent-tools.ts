@@ -102,7 +102,7 @@ export const topGamesTool = defineMcpTool({
   inputSchema: TopGamesInputSchema,
   outputSchema: TopGamesOutputSchema,
   redact: { allow: ['dateFrom', 'dateTo', 'sortBy', 'sortDir', 'currencies', 'truncated'] },
-  errors: [],
+  errors: ['report_unavailable'],
 });
 
 /** At most this many of a game's categories games.find lists with it. */
