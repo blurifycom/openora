@@ -300,14 +300,22 @@ const dayOrdered = <Item extends z.ZodType<{ day: number }>>(item: Item) =>
 export const StreakConfigSchema = z.object({
   /** Off, no day counts and no rate applies; rewards already unlocked stay claimable. */
   enabled: z.boolean(),
-  /** What a player must wager in a day, priced in `STREAK_CURRENCY`, for the day to count. */
-  dailyMinWager: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+  /**
+   * What a player must wager in a day, priced in `STREAK_CURRENCY`, for the day to count. Zero
+   * means no threshold was ever set in dollars, as on a config converted from another currency;
+   * it can be read but not saved, and a streak with it counts nothing.
+   */
+  dailyMinWager: MoneyAmountSchema,
   /** Products whose stakes count toward the streak. Empty counts every product. */
   eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
   rakebackMilestones: dayOrdered(StreakRakebackMilestoneSchema),
   fixedRewards: dayOrdered(StreakFixedRewardSchema),
 });
 export type StreakConfig = z.infer<typeof StreakConfigSchema>;
+
+export const SetStreakConfigInputSchema = StreakConfigSchema.extend({
+  dailyMinWager: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+});
 
 export const StreakActiveRateSchema = z.object({
   mode: StreakRakebackModeSchema,
@@ -809,7 +817,7 @@ export const gamificationContract = {
 
         set: oc
           .route({ method: 'PUT', path: '/backoffice/promo/streaks/config' })
-          .input(StreakConfigSchema)
+          .input(SetStreakConfigInputSchema)
           .output(StreakConfigSchema),
       },
     },

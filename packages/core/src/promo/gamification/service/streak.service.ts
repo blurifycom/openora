@@ -103,7 +103,11 @@ export class StreakService implements WagerTrackingCommands {
         fixedRewards: promoStreakConfig.fixedRewards,
       })
       .from(promoStreakConfig);
-    if (!config?.enabled || !countsToward(config.eligibleProducts, args.context.product)) {
+    if (
+      !config?.enabled ||
+      moneyCompare(config.dailyMinWager, '0') <= 0 ||
+      !countsToward(config.eligibleProducts, args.context.product)
+    ) {
       return [];
     }
     const amount =
@@ -459,11 +463,12 @@ export class StreakService implements WagerTrackingCommands {
     await this.drizzle.db
       .delete(promoStreakRoundWager)
       .where(lt(promoStreakRoundWager.day, yesterday));
-    const [config] = await this.drizzle.db
-      .select({ enabled: promoStreakConfig.enabled })
-      .from(promoStreakConfig);
-    const disabled = !config?.enabled;
     return this.drizzle.db.transaction(async (tx) => {
+      const [config] = await tx
+        .select({ enabled: promoStreakConfig.enabled })
+        .from(promoStreakConfig)
+        .for('share');
+      const disabled = !config?.enabled;
       const result = await tx
         .update(promoPlayerStreak)
         .set({ current: 0, updatedAt: sql`now()` })

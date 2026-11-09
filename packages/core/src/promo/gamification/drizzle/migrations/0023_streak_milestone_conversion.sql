@@ -1,5 +1,10 @@
+DELETE FROM "promo_streak_round_wager"
+WHERE EXISTS (SELECT 1 FROM "promo_streak_config" WHERE "currency" <> 'USD');--> statement-breakpoint
+DELETE FROM "promo_streak_daily_wager" WHERE "currency" <> 'USD';--> statement-breakpoint
 UPDATE "promo_streak_config" SET
 	"enabled" = false,
+	"daily_min_wager" = CASE WHEN "currency" = 'USD' THEN "daily_min_wager" ELSE 0 END,
+	"currency" = 'USD',
 	"rakeback_milestones" = '[]'::jsonb,
 	"fixed_rewards" = COALESCE((
 		SELECT jsonb_agg(
@@ -38,7 +43,4 @@ UPDATE "promo_streak_milestone_grant" AS g SET
 	"expires_at" = now() + ((fr ->> 'claimExpiryDays')::int * interval '1 day')
 FROM "promo_streak_config" AS c, jsonb_array_elements(c."fixed_rewards") AS fr
 WHERE g."settled_at" IS NULL
-	AND (fr ->> 'day')::int = g."day";--> statement-breakpoint
-DELETE FROM "promo_streak_round_wager"
-WHERE EXISTS (SELECT 1 FROM "promo_streak_config" WHERE "currency" <> 'USD');--> statement-breakpoint
-DELETE FROM "promo_streak_daily_wager" WHERE "currency" <> 'USD';
+	AND (fr ->> 'day')::int = g."day";

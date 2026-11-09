@@ -9,6 +9,7 @@ import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { promoGrant } from '@openora/core/promo/schema/bonus';
 import {
   promoPlayerStreak,
+  promoStreakConfig,
   promoStreakMilestoneGrant,
 } from '@openora/core/promo/schema/gamification';
 import {
@@ -194,6 +195,7 @@ describe('an operator configuring the streak', () => {
         ],
       },
     ],
+    ['a zero daily minimum', { dailyMinWager: '0' }],
     ['a zero claim expiry', { fixedRewards: [{ ...CONFIG.fixedRewards[0], claimExpiryDays: 0 }] }],
     [
       'a negative rate',
@@ -210,6 +212,18 @@ describe('an operator configuring the streak', () => {
       fixedRewards: [expect.objectContaining({ day: 1, claimExpiryDays: 7 })],
     });
     expect(await configAudits()).toHaveLength(auditedBefore);
+  });
+
+  it('reads back a config whose threshold was never set in dollars, without letting it be saved as is', async () => {
+    await bonusAdmin.put(CONFIG_PATH, CONFIG);
+    await drizzle().update(promoStreakConfig).set({ enabled: false, dailyMinWager: '0' });
+
+    const read = await bonusAdmin.get(CONFIG_PATH);
+    const resave = await bonusAdmin.put(CONFIG_PATH, await readJson(read));
+    await bonusAdmin.put(CONFIG_PATH, CONFIG);
+
+    expect(read.status).toBe(200);
+    expect(resave.status).toBe(400);
   });
 
   it('lets a read-only admin look but not save, and refuses a player and an anonymous caller', async () => {

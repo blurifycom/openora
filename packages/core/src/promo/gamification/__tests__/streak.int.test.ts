@@ -301,6 +301,16 @@ describe('a disabled streak', () => {
     expect(streak?.current).toBe(2);
   });
 
+  it('counts nothing while the daily minimum is zero, as on a config with no dollar threshold', async () => {
+    await setConfig({ dailyMinWager: '0' });
+    const userId = randomUUID();
+
+    await record(userId, '0.01');
+
+    expect(await dailyRowsOf(userId)).toEqual([]);
+    expect((await streaks.getForPlayer(userId)).current).toBe(0);
+  });
+
   it('counts nothing when no config exists at all', async () => {
     await db.drizzle.db.delete(promoStreakConfig);
     const userId = randomUUID();
@@ -939,6 +949,27 @@ describe('closeDay', () => {
       .from(promoPlayerStreak)
       .where(eq(promoPlayerStreak.userId, userId));
     expect(row?.current).toBe(5);
+  });
+
+  it('does not reset runs, nor audit a disabled close, when the streak is switched on during the close', async () => {
+    await setConfig({ enabled: false });
+    const userId = randomUUID();
+    await seedStreak(userId, 5, '2020-01-04');
+    const switchOn = db.drizzle.db.transaction(async (tx) => {
+      await tx.update(promoStreakConfig).set({ enabled: true });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    await streaks.closeDay(new Date('2020-01-05T00:05:00Z'));
+    await switchOn;
+
+    const [row] = await db.drizzle.db
+      .select({ current: promoPlayerStreak.current })
+      .from(promoPlayerStreak)
+      .where(eq(promoPlayerStreak.userId, userId));
+    expect(row?.current).toBe(5);
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
   });
 
   it('resets every run when the streak was never configured', async () => {

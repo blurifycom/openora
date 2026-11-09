@@ -297,7 +297,25 @@ describe('converting a config that was not priced in dollars', () => {
     await runConversion();
 
     const [config] = await db.drizzle.db.select().from(promoStreakConfig);
-    expect(config).toMatchObject({ enabled: false, currency: 'EUR', fixedRewards: [] });
+    expect(config).toMatchObject({ enabled: false, fixedRewards: [] });
+  });
+
+  it('clears the threshold, which was priced in the old currency, and relabels the config as dollars', async () => {
+    await legacyConfig(eurMilestones, 'EUR');
+
+    await runConversion();
+
+    const [config] = await db.drizzle.db.select().from(promoStreakConfig);
+    expect(config).toMatchObject({ currency: 'USD', dailyMinWager: '0.000000000000000000' });
+  });
+
+  it('keeps the threshold of a config that was already in dollars', async () => {
+    await legacyConfig(eurMilestones);
+
+    await runConversion();
+
+    const [config] = await db.drizzle.db.select().from(promoStreakConfig);
+    expect(config).toMatchObject({ currency: 'USD', dailyMinWager: '10.000000000000000000' });
   });
 
   it('leaves a waiting reward unmapped, so it expires through the sweep', async () => {

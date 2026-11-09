@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { StreakConfigSchema } from '../contract/index.js';
+import { SetStreakConfigInputSchema, StreakConfigSchema } from '../contract/index.js';
 
 const rate = (day: number) => ({ day, unrankedRatePercent: '1', rankedUpliftPercent: '5' });
 const reward = (day: number) => ({
@@ -19,18 +19,19 @@ const config = (overrides: Record<string, unknown> = {}) => ({
 });
 
 const issuePaths = (input: unknown) => {
-  const result = StreakConfigSchema.safeParse(input);
+  const result = SetStreakConfigInputSchema.safeParse(input);
   return result.success ? null : result.error.issues.map((issue) => issue.path.join('.'));
 };
 
 describe('setting the streak config', () => {
   it('accepts a valid config, including the boundary days 1 and 35', () => {
-    expect(StreakConfigSchema.safeParse(config()).success).toBe(true);
+    expect(SetStreakConfigInputSchema.safeParse(config()).success).toBe(true);
   });
 
   it('accepts empty lists, which is a streak that pays nothing', () => {
     expect(
-      StreakConfigSchema.safeParse(config({ rakebackMilestones: [], fixedRewards: [] })).success,
+      SetStreakConfigInputSchema.safeParse(config({ rakebackMilestones: [], fixedRewards: [] }))
+        .success,
     ).toBe(true);
   });
 
@@ -79,7 +80,7 @@ describe('setting the streak config', () => {
 
   it('accepts a max bet above zero, and none', () => {
     expect(
-      StreakConfigSchema.safeParse(
+      SetStreakConfigInputSchema.safeParse(
         config({
           fixedRewards: [
             { ...reward(3), maxBet: '2.5' },
@@ -92,7 +93,7 @@ describe('setting the streak config', () => {
 
   it('accepts a rollover of exactly the limit', () => {
     expect(
-      StreakConfigSchema.safeParse(
+      SetStreakConfigInputSchema.safeParse(
         config({ fixedRewards: [{ ...reward(3), rolloverMultiplier: '1000' }] }),
       ).success,
     ).toBe(true);
@@ -116,7 +117,7 @@ describe('setting the streak config', () => {
 
   it('accepts a zero rate, which switches a milestone off without deleting it', () => {
     expect(
-      StreakConfigSchema.safeParse(
+      SetStreakConfigInputSchema.safeParse(
         config({
           rakebackMilestones: [{ day: 1, unrankedRatePercent: '0', rankedUpliftPercent: '0' }],
         }),
@@ -130,5 +131,17 @@ describe('setting the streak config', () => {
 
   it('rejects a config without the enabled switch', () => {
     expect(issuePaths({ ...config(), enabled: undefined })).toEqual(['enabled']);
+  });
+});
+
+describe('reading a streak config that has no dollar threshold yet', () => {
+  it('reads a zero daily minimum, which a config converted from another currency carries', () => {
+    expect(StreakConfigSchema.safeParse(config({ dailyMinWager: '0' })).success).toBe(true);
+  });
+
+  it('refuses to save it back until a threshold above zero is entered', () => {
+    expect(issuePaths(config({ dailyMinWager: '0.000000000000000000', enabled: true }))).toEqual([
+      'dailyMinWager',
+    ]);
   });
 });
