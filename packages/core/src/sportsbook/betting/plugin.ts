@@ -26,6 +26,7 @@ import {
   betsFindTool,
   turnoverExposureTool,
   promotionReportTool,
+  debtsTool,
 } from './contract/index.js';
 import { createSportsbookRouter } from './router/index.js';
 import { SportsbookAlignService } from './service/align.service.js';
@@ -40,6 +41,7 @@ import { SportsbookRestrictionService } from './service/restriction.service.js';
 import { SportsbookSessionService } from './service/session.service.js';
 import { SportsbookTurnoverService } from './service/turnover-exposure.service.js';
 import { promotionReport } from './service/promotion-report-tool.service.js';
+import { SportsbookDebtsSummaryService } from './service/debts-summary.service.js';
 
 const logger = createLogger('sportsbook');
 
@@ -136,6 +138,10 @@ export default {
     ctx.mcp.tool(promotionReportTool, (c) => {
       const drizzle = c.get(DRIZZLE);
       return (input) => promotionReport(drizzle, input);
+    });
+    ctx.mcp.tool(debtsTool, (c) => {
+      const debts = new SportsbookDebtsSummaryService(c.get(DRIZZLE));
+      return (input) => debts.summary(input);
     });
     ctx.mcp.tool(betsFindTool, (c) => {
       const bets = new BetsFindService(c.get(DRIZZLE));

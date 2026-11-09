@@ -264,3 +264,67 @@ export const promotionReportTool = defineMcpTool({
   redact: { allow: ['dateFrom', 'dateTo', 'currencies', 'truncated'] },
   errors: [],
 });
+
+export const DEBTS_MAX_CURRENCIES = 20;
+export const LARGEST_DEBTS_MAX = 20;
+
+export const DebtsSummaryInputSchema = z.object({
+  currency: CurrencyTickerSchema.max(10).optional(),
+  largest: z.coerce.number().int().min(0).max(LARGEST_DEBTS_MAX).default(5),
+});
+export type DebtsSummaryInput = z.infer<typeof DebtsSummaryInputSchema>;
+
+export const DebtsSummaryOutputSchema = z.object({
+  currencies: z
+    .array(
+      z.object({
+        currency: CurrencyTickerSchema,
+        /** Players owing in this currency now. */
+        openDebts: z.number().int().nonnegative(),
+        outstanding: MoneyAmountSchema,
+        /** Over every debt in this currency, open or settled. */
+        owed: MoneyAmountSchema,
+        collected: MoneyAmountSchema,
+        writtenOff: MoneyAmountSchema,
+        largestOpen: z
+          .array(
+            z.object({
+              debtId: UuidSchema,
+              playerId: UuidSchema.nullable(),
+              outstanding: MoneyAmountSchema,
+              owed: MoneyAmountSchema,
+              collected: MoneyAmountSchema,
+              openSince: TimestampSchema,
+              /** The player's withdrawals are held while any debt of theirs is outstanding. */
+              withdrawalsHeld: z.boolean(),
+            }),
+          )
+          .max(LARGEST_DEBTS_MAX),
+      }),
+    )
+    .max(DEBTS_MAX_CURRENCIES),
+  truncated: z.boolean(),
+});
+export type DebtsSummary = z.infer<typeof DebtsSummaryOutputSchema>;
+
+export const debtsTool = defineMcpTool({
+  id: 'sportsbook.debts',
+  title: 'Sportsbook debts',
+  description:
+    'What players owe the sportsbook now: what a reopened settlement took back and their balance ' +
+    'could not cover, one debt per player and currency. Per currency: openDebts (players owing ' +
+    'now), their outstanding total, and over every debt, open or settled, what was owed, ' +
+    'collected and written off; plus the largestOpen open debts by outstanding amount (0 to 20, ' +
+    'default 5), each by debtId and playerId with what is outstanding, owed and collected, since ' +
+    "when it is open, and whether the player's withdrawals are held - they are while any debt of " +
+    'theirs is outstanding. Narrow with currency. At most 20 currencies, alphabetical; truncated ' +
+    'is true when more had debts. Amounts are decimal strings in the row currency and are never ' +
+    'summed across currencies.',
+  class: 'read',
+  schemaVersion: 1,
+  iam: { resource: 'sportsbook', action: 'view' },
+  inputSchema: DebtsSummaryInputSchema,
+  outputSchema: DebtsSummaryOutputSchema,
+  redact: { allow: ['currencies', 'truncated'] },
+  errors: [],
+});

@@ -14,7 +14,12 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeAuditWriter } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { sportsbookBet, sportsbookBetTransaction, sportsbookSession } from '../schema/index.js';
+import {
+  sportsbookBet,
+  sportsbookBetTransaction,
+  sportsbookPlayerDebt,
+  sportsbookSession,
+} from '../schema/index.js';
 import bettingPlugin from '../plugin.js';
 
 let db: TestDb;
@@ -112,7 +117,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${sportsbookBet}, ${sportsbookSession}, ${player} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${sportsbookBet}, ${sportsbookSession}, ${sportsbookPlayerDebt}, ${player} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -363,6 +368,85 @@ describe('sportsbook.promotion_report through the MCP kernel (real PG)', () => {
         { dateFrom: '2026-01-01', dateTo: '2026-04-03' },
         runContext(),
       ),
+    ).toMatchObject({ ok: false, error: 'invalid_input' });
+  });
+});
+
+describe('sportsbook.debts through the MCP kernel (real PG)', () => {
+  async function seedDebt(
+    userId: string,
+    values: Partial<typeof sportsbookPlayerDebt.$inferInsert> & { owed: string },
+  ) {
+    const collected = values.collected ?? '0';
+    const writtenOff = values.writtenOff ?? '0';
+    return findOneOrThrow(
+      await db.drizzle.db
+        .insert(sportsbookPlayerDebt)
+        .values({
+          userId,
+          currency: 'USD',
+          collected,
+          writtenOff,
+          outstanding: String(Number(values.owed) - Number(collected) - Number(writtenOff)),
+          ...values,
+        })
+        .returning(),
+      new Error('seedDebt: no row'),
+    );
+  }
+
+  it('totals what players owe per currency and ranks the open debts by player id', async () => {
+    const kernel = bootKernel();
+    const [alice, bob] = [await seedPlayer(), await seedPlayer()];
+    const big = await seedDebt(bob.userId, {
+      owed: '80',
+      collected: '20',
+      createdAt: AT('2026-01-05T10:00:00.000Z'),
+    });
+    await seedDebt(alice.userId, { owed: '15' });
+    await seedDebt(alice.userId, { currency: 'EUR', owed: '9', collected: '9', status: 'cleared' });
+    await seedDebt(randomUUID(), { owed: '40', writtenOff: '40', status: 'written_off' });
+
+    const result = await kernel.invokeTool('sportsbook.debts', { largest: 1 }, runContext());
+
+    expect(result).toEqual({
+      ok: true,
+      output: {
+        currencies: [
+          {
+            currency: 'EUR',
+            openDebts: 0,
+            outstanding: amount(0),
+            owed: amount(9),
+            collected: amount(9),
+            writtenOff: amount(0),
+            largestOpen: [],
+          },
+          {
+            currency: 'USD',
+            openDebts: 2,
+            outstanding: amount(75),
+            owed: amount(135),
+            collected: amount(20),
+            writtenOff: amount(40),
+            largestOpen: [
+              {
+                debtId: big.id,
+                playerId: bob.id,
+                outstanding: amount(60),
+                owed: amount(80),
+                collected: amount(20),
+                openSince: '2026-01-05T10:00:00.000Z',
+                withdrawalsHeld: true,
+              },
+            ],
+          },
+        ],
+        truncated: false,
+      },
+    });
+    expect(
+      await kernel.invokeTool('sportsbook.debts', { largest: 21 }, runContext()),
     ).toMatchObject({ ok: false, error: 'invalid_input' });
   });
 });

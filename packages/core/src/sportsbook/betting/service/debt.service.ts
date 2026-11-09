@@ -145,7 +145,8 @@ function snapshot(row: SportsbookPlayerDebtRow | undefined) {
     : null;
 }
 
-const holdActiveSql = sql<boolean>`exists (
+/** Whether the debt's player holds any outstanding debt, which holds their withdrawals. */
+export const holdActiveSql = sql<boolean>`exists (
   select 1 from ${sportsbookPlayerDebt} as other
   where other.user_id = ${sportsbookPlayerDebt}.user_id and other.outstanding > 0
 )`;

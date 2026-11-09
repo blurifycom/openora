@@ -30,6 +30,7 @@ describe('betting agent surface registration', () => {
     expect(registry.mcp.getTools().map((tool) => tool.contract.id)).toEqual([
       'sportsbook.turnover_exposure',
       'sportsbook.promotion_report',
+      'sportsbook.debts',
       'sportsbook.bets_find',
     ]);
   });
