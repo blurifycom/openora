@@ -17,6 +17,7 @@ import {
   SwapLimitExceededError,
   SwapRefusedError,
   OnRampRefusedError,
+  DepositRefusedError,
   OnRampVendorUnavailableError,
   makeRateLimitKey,
   type AuditWritePort,
@@ -249,7 +250,7 @@ export function createWalletRouter({
   };
 
   const onRampRefusals = {
-    FORBIDDEN: [OnRampRestrictedError, OnRampGeoBlockedError],
+    FORBIDDEN: [OnRampRestrictedError, OnRampGeoBlockedError, DepositRefusedError],
     CONFLICT: [
       OnRampUnavailableError,
       OnRampVendorUnavailableError,
@@ -285,6 +286,7 @@ export function createWalletRouter({
           // conflict: 409 would tell a status-code-branching client to retry it.
           BAD_REQUEST: [UnsupportedNetworkError, BelowMinimumDepositError, DepositDisabledError],
           CONFLICT: [IdempotencyKeyReuseError, RgLimitExceededError],
+          FORBIDDEN: DepositRefusedError,
           SERVICE_UNAVAILABLE: WalletReferenceRateUnavailableError,
         },
         () =>
@@ -591,6 +593,7 @@ export function createWalletRouter({
           {
             BAD_REQUEST: [UnsupportedNetworkError, DepositDisabledError],
             CONFLICT: DepositAddressUnsupportedError,
+            FORBIDDEN: DepositRefusedError,
           },
           () => wallet.getOrCreateDepositAddress(getUserId(context), input.currency, input.network),
         ),

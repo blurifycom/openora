@@ -202,6 +202,65 @@ describe('PlayerService.remove (real PG)', () => {
   });
 });
 
+describe('PlayerService.suspendBySystem (real PG)', () => {
+  it('suspends the player with no actor and revokes every session', async () => {
+    const { svc, events, sessionCommands } = makeService();
+    const { account, player: seeded } = await seedPlayerWithUser();
+
+    await svc.suspendBySystem(account.id);
+
+    expect(await rowById(seeded.id)).toMatchObject({ status: 'suspended' });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'player.status.changed',
+      {
+        playerId: seeded.id,
+        userId: account.id,
+        actorId: null,
+        previousStatus: 'active',
+        newStatus: 'suspended',
+      },
+    );
+    expect(sessionCommands.revokeAll).toHaveBeenCalledWith(account.id);
+  });
+
+  it('leaves an already closed player closed without a second status event', async () => {
+    const { svc, events, sessionCommands } = makeService();
+    const { account, player: seeded } = await seedPlayerWithUser();
+    await db.drizzle.db.update(player).set({ status: 'closed' }).where(eq(player.id, seeded.id));
+
+    await svc.suspendBySystem(account.id);
+
+    expect(await rowById(seeded.id)).toMatchObject({ status: 'closed' });
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+    expect(sessionCommands.revokeAll).toHaveBeenCalledWith(account.id);
+  });
+
+  it('keeps a self-excluded player self-excluded and still revokes every session', async () => {
+    const { svc, events, sessionCommands } = makeService();
+    const { account, player: seeded } = await seedPlayerWithUser();
+    await db.drizzle.db
+      .update(player)
+      .set({ status: 'self_excluded' })
+      .where(eq(player.id, seeded.id));
+
+    await svc.suspendBySystem(account.id);
+
+    expect(await rowById(seeded.id)).toMatchObject({ status: 'self_excluded' });
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+    expect(sessionCommands.revokeAll).toHaveBeenCalledWith(account.id);
+  });
+
+  it('throws for a user with no player yet, so the event is redelivered', async () => {
+    const { svc, events, sessionCommands } = makeService();
+
+    await expect(svc.suspendBySystem(randomUUID())).rejects.toBeInstanceOf(PlayerNotFoundError);
+
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+    expect(sessionCommands.revokeAll).not.toHaveBeenCalled();
+  });
+});
+
 describe('PlayerService.touchLastSeen (real PG)', () => {
   it('writes lastSeenAt when it was previously null', async () => {
     const { svc } = makeService();

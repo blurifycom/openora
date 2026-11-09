@@ -48,6 +48,7 @@ const DURING_TWO_FACTOR_SETUP = { allowPendingTwoFactorSetup: true } as const;
 const REACHABLE_DURING_TWO_FACTOR_SETUP: ReadonlySet<string> = new Set([
   'register',
   'usernameAvailable',
+  'registrationPolicy',
   'login',
   'phoneLoginRequest',
   'phoneLoginVerify',
@@ -142,6 +143,8 @@ export function createIdentityRouter(
     usernameAvailable: os.usernameAvailable.handler(({ input, context }) =>
       identity.usernameAvailable(input.username, context.request.headers),
     ),
+
+    registrationPolicy: os.registrationPolicy.handler(() => identity.registrationPolicy()),
 
     login: os.login.handler(({ input, context }) =>
       identity.login(input, context.request.headers, context.resHeaders ?? new Headers()),

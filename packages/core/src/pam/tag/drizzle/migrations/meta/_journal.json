@@ -50,6 +50,13 @@
       "when": 1792746439462,
       "tag": "0006_wild_ironclad",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793374401517,
+      "tag": "0007_safe_satana",
+      "breakpoints": true
     }
   ]
 }

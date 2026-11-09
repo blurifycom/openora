@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { definePlatformConfig, resolveWalletDefaultCurrency } from '../platform-config.js';
+import {
+  definePlatformConfig,
+  resolveMinPlayerAge,
+  resolveWalletDefaultCurrency,
+  type PlatformConfig,
+} from '../platform-config.js';
 
 describe('resolveWalletDefaultCurrency', () => {
   it('falls back to USD when the operator has not set one', () => {
@@ -89,5 +94,32 @@ describe('definePlatformConfig', () => {
         wallet: { significantAmountThresholds: { USD: '1000000', usd: '1' } },
       }),
     ).toThrow(/significantAmountThresholds/);
+  });
+});
+
+describe('registration.minPlayerAge', () => {
+  it('defaults to 18, also when registration is not configured', () => {
+    expect(
+      definePlatformConfig({ registration: { termsVersion: 'v1' } }).registration?.minPlayerAge,
+    ).toBe(18);
+    expect(resolveMinPlayerAge(definePlatformConfig({}))).toBe(18);
+  });
+
+  it('accepts an age above 18', () => {
+    const config = definePlatformConfig({ registration: { termsVersion: 'v1', minPlayerAge: 21 } });
+
+    expect(resolveMinPlayerAge(config)).toBe(21);
+  });
+
+  it('refuses an age below 18', () => {
+    expect(() =>
+      definePlatformConfig({ registration: { termsVersion: 'v1', minPlayerAge: 17 } }),
+    ).toThrow(/registration\.minPlayerAge/);
+  });
+
+  it('never resolves below 18 for a config built without the schema', () => {
+    const config = { registration: { termsVersion: 'v1', minPlayerAge: 16 } } as PlatformConfig;
+
+    expect(resolveMinPlayerAge(config)).toBe(18);
   });
 });

@@ -26,6 +26,15 @@ describe('isAdultDateOfBirth', () => {
   it('rejects a date in the future', () => {
     expect(isAdultDateOfBirth('2030-01-01', NOW)).toBe(false);
   });
+
+  it('passes the birthday that reaches a configured age and refuses the day before', () => {
+    expect(isAdultDateOfBirth(isoBirthday(21), NOW, 21)).toBe(true);
+    expect(isAdultDateOfBirth(isoBirthday(21, 1), NOW, 21)).toBe(false);
+  });
+
+  it('refuses a 20-year-old when the configured age is 21', () => {
+    expect(isAdultDateOfBirth(isoBirthday(20, -100), NOW, 21)).toBe(false);
+  });
 });
 
 describe('UpdatePlayerProfileInputSchema', () => {
@@ -63,9 +72,15 @@ describe('UpdatePlayerProfileInputSchema', () => {
     );
   });
 
-  it('rejects a date of birth under the minimum age', () => {
-    const result = UpdatePlayerProfileInputSchema.safeParse({ dateOfBirth: '2020-01-01' });
+  it('leaves the minimum age to the service, which reads it from config', () => {
+    expect(UpdatePlayerProfileInputSchema.safeParse({ dateOfBirth: '2020-01-01' }).success).toBe(
+      true,
+    );
+  });
 
-    expect(result.success).toBe(false);
+  it('rejects a date of birth that is not an ISO calendar date', () => {
+    expect(UpdatePlayerProfileInputSchema.safeParse({ dateOfBirth: '17/05/1990' }).success).toBe(
+      false,
+    );
   });
 });

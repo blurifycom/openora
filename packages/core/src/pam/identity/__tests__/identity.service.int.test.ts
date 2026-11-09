@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
+import { createCookieGetter } from 'better-auth/cookies';
 import { ORPCError } from '@orpc/server';
 import type { DrizzleTx } from '@openora/core/server';
 import {
@@ -54,6 +55,7 @@ const {
   changePasswordMock,
   capturedAuthOptions,
   authTx,
+  authBaseURL,
 } = vi.hoisted(() => ({
   signInEmailMock: vi.fn(),
   verifyTotpMock: vi.fn(),
@@ -73,6 +75,7 @@ const {
   confirmEmailChangeMock: vi.fn(),
   changePasswordMock: vi.fn(),
   authTx: { current: undefined as DrizzleTx | undefined },
+  authBaseURL: { current: undefined as string | undefined },
   capturedAuthOptions: {
     current: undefined as
       | {
@@ -92,7 +95,10 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
   createAuth: vi.fn((options) => {
     capturedAuthOptions.current = options;
     return {
-      $context: Promise.resolve({ password: { verify: passwordVerifyMock } }),
+      $context: Promise.resolve({
+        password: { verify: passwordVerifyMock },
+        createAuthCookie: createCookieGetter({ baseURL: authBaseURL.current }),
+      }),
       options: {
         session: {
           expiresIn: SESSION_DURATION_IN_SECONDS,
@@ -210,6 +216,7 @@ beforeEach(async () => {
   requestEmailChangeMock.mockReset();
   confirmEmailChangeMock.mockReset();
   changePasswordMock.mockReset();
+  authBaseURL.current = undefined;
   await db.drizzle.db.execute(
     sql`TRUNCATE ${user}, ${session}, ${player} RESTART IDENTITY CASCADE`,
   );
@@ -1503,6 +1510,26 @@ describe('IdentityService.verifyTwoFactor', () => {
     expect(events.emit).not.toHaveBeenCalledWith(
       'identity.authentication.succeeded',
       expect.anything(),
+    );
+  });
+
+  it('binds an HTTPS challenge to the account behind the __Secure- pending cookie', async () => {
+    authBaseURL.current = 'https://api.example.test';
+    const account = await seedUser();
+    const { cookieValue, lockout } = await realPendingChallenge(account.id);
+    verifyTotpMock.mockResolvedValue(okResponse(account.id));
+    const events = makeEventBus();
+
+    const result = await buildService({ events, twoFactorLockout: lockout }).verifyTwoFactor(
+      { code: '123456', method: 'totp', trustDevice: false },
+      { cookie: `a.two_factor=junk; __Secure-better-auth.two_factor=${cookieValue}` },
+      new Headers(),
+    );
+
+    expect(result).toEqual({ success: true, trustGranted: false });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.2fa.verified',
+      expect.objectContaining({ userId: account.id }),
     );
   });
 

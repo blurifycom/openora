@@ -12,11 +12,13 @@ import {
   ADMIN_USER_DIRECTORY,
   AUDIT_WRITER,
   IDENTITY_READER,
+  PLAY_ELIGIBILITY,
   WITHDRAWAL_SECURITY,
   JOB_QUEUE,
   RATE_LIMITER,
   REALTIME_TRANSPORT,
   type AdminUserDirectory,
+  type PlayEligibilityPort,
   type RateLimiterAdapter,
 } from '@openora/core/contracts';
 import {
@@ -43,6 +45,7 @@ function boot() {
   container.register(ADMIN_GUARD, () => makeAdminGuard());
   container.register(AUDIT_WRITER, () => makeAuditWriter());
   container.register(IDENTITY_READER, () => makeIdentityReader());
+  container.register(PLAY_ELIGIBILITY, () => mock<PlayEligibilityPort>({}));
   container.register(WITHDRAWAL_SECURITY, () => makeWithdrawalSecurity());
   container.register(ADMIN_USER_DIRECTORY, () => mock<AdminUserDirectory>({}));
   container.register(RATE_LIMITER, () => mock<RateLimiterAdapter<string>>({}));

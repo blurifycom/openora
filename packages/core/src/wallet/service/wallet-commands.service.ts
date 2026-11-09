@@ -26,6 +26,7 @@ import {
   type BonusGrantCommands,
   type BonusWageringCommands,
   type IdentityReader,
+  isPlayRefused,
   type WagerContext,
   isWagerRtp,
 } from '@openora/core/contracts';
@@ -240,7 +241,7 @@ export class WalletCommandsService implements WalletCommands {
     if (type === 'win_reversal') {
       throw new WalletCorrectionTypeError(type);
     }
-    if (type === 'bet' && (await this.playEligibility.isRestricted(userId, txn))) {
+    if (type === 'bet' && (await isPlayRefused(this.playEligibility, userId, txn))) {
       throw new WalletRgRestrictedError();
     }
 

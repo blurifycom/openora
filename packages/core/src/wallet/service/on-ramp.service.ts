@@ -34,6 +34,7 @@ import {
   type RateLimitKey,
   type RateLimiterAdapter,
   type User,
+  isPlayRefused,
 } from '@openora/core/contracts';
 import { and, eq, isNull, ne } from 'drizzle-orm';
 import type { OnRampCheckoutResponse, OnRampOrder } from '../contract/index.js';
@@ -622,16 +623,17 @@ export class OnRampService {
     return order;
   }
 
-  /** Throttle, RG restriction, then geo. Returns the country the vendor is told. */
+  /** Throttle, RG restriction, deposit admission, then geo. Returns the country the vendor is told. */
   private async admit(userId: User['id'], meta: ClientMeta): Promise<string | null> {
     await assertRateLimit(
       this.limiter,
       makeRateLimitKey(RATE_LIMIT_KEYS.ON_RAMP, userId),
       ON_RAMP_RATE_LIMIT,
     );
-    if (await this.playEligibility.isRestricted(userId)) {
+    if (await isPlayRefused(this.playEligibility, userId)) {
       throw new OnRampRestrictedError();
     }
+    await this.wallet.assertDepositAdmitted(userId);
     const access = await this.geoCheck.checkAccess(meta.ip);
     if (!access.allowed) {
       throw new OnRampGeoBlockedError();

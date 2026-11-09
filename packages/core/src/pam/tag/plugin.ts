@@ -152,6 +152,12 @@ export default {
     ctx.events.on('compliance.kyc.high_risk_signal_detected', (p) =>
       requireEvaluation().onKycHighRiskSignalDetected(p),
     );
+    ctx.events.on('compliance.kyc.underage_detected', (p) =>
+      requireEvaluation().onKycUnderageDetected(p),
+    );
+    ctx.events.on('compliance.kyc.dob_mismatch_detected', (p) =>
+      requireEvaluation().onKycDobMismatchDetected(p),
+    );
     ctx.events.on('rg.self_exclusion.activated', (p) =>
       requireEvaluation().onSelfExclusionActivated(p),
     );

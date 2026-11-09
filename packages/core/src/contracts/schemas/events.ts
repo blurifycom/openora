@@ -1308,6 +1308,24 @@ export const domainEventSchemas = {
     tier: KycTierSchema.default('basic'),
   }),
 
+  // The verified document puts the player under the configured minimum age; the decision
+  // is forced to rejected. Carries no date of birth.
+  'compliance.kyc.underage_detected': z.object({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    referenceId: z.string(),
+    tier: KycTierSchema,
+  }),
+
+  // The verified document's date of birth differs from the one the player declared, or the
+  // player declared none. Carries no date of birth.
+  'compliance.kyc.dob_mismatch_detected': z.object({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    referenceId: z.string(),
+    tier: KycTierSchema,
+  }),
+
   'notifications.created': z.object({ notificationId: UuidSchema, userId: UuidSchema }),
 
   'cms.page.published': authContextBase.extend({ pageId: UuidSchema, slug: z.string() }),
@@ -1417,7 +1435,7 @@ export const domainEventSchemas = {
   'player.status.changed': authContextBase.extend({
     playerId: UuidSchema,
     userId: UuidSchema,
-    actorId: UuidSchema,
+    actorId: UuidSchema.nullable(),
     previousStatus: PlayerStatusSchema,
     newStatus: PlayerStatusSchema,
   }),
@@ -1516,6 +1534,8 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // by the state's new `source`; auditRecorded marks one whose audit row already exists.
   'compliance.game-geo-rule.upserted': 2,
   'compliance.game-geo-rule.deleted': 2,
+  // v2: actorId is nullable - null marks a system suspension (an under-age KYC result).
+  'player.status.changed': 2,
 };
 
 export function getEventVersion(event: string): number {
