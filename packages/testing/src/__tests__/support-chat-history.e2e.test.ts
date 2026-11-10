@@ -836,6 +836,6 @@ describe('ports bound apart', () => {
 
     const res = await p.client.post('/support-chat/session');
     expect(res.status).toBe(503);
-    expect(await res.json()).toMatchObject({ message: 'Support chat is not configured' });
+    expect(await res.json()).toMatchObject({ data: { reason: 'not_configured' } });
   });
 });

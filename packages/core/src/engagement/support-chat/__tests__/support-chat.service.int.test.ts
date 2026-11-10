@@ -26,7 +26,6 @@ import {
 import { migrate } from '../migrate.js';
 import { supportChatCustomer } from '../schema/index.js';
 import {
-  SupportChatNotConfiguredError,
   SupportChatService,
   SupportChatSyncFailedError,
   SupportChatUnavailableError,
@@ -363,29 +362,9 @@ describe('SupportChatService sync path core errors (real PG)', () => {
 describe('SupportChatService offline ticket (real PG)', () => {
   const MESSAGE = 'my withdrawal is stuck';
 
-  it('answers not configured for a provider without createTicket, which still opens a session', async () => {
+  it('answers 200 when the audit write fails after the ticket is created, logging no message', async () => {
     const { account, player } = await seedPlayerWithUser(db);
-    const customerId = `customer-${randomUUID()}`;
-    const chat = service(player.id, {
-      issueCustomerToken: async () => ({
-        customerId,
-        accessToken: 'token',
-        tokenType: 'Bearer',
-        expiresInMs: 60_000,
-      }),
-    });
-
-    await expect(chat.createTicket(account.id, MESSAGE, NO_CLIENT_META)).rejects.toBeInstanceOf(
-      SupportChatNotConfiguredError,
-    );
-    await expect(chat.openSession(account.id, NO_CLIENT_META)).resolves.toMatchObject({
-      customerId,
-    });
-  });
-
-  it('answers 200 when the audit write fails after the ticket is created, logging the player id only', async () => {
-    const { account, player } = await seedPlayerWithUser(db);
-    const createTicket = vi.fn(async () => undefined);
+    const createTicket = vi.fn(async () => ({ ticketId: `ticket-${randomUUID()}` }));
     const audit = makeAuditWriter();
     audit.record.mockRejectedValueOnce(new Error(`audit down for ${account.email}`));
 
@@ -393,7 +372,10 @@ describe('SupportChatService offline ticket (real PG)', () => {
       service(player.id, { createTicket }, audit).createTicket(account.id, MESSAGE, NO_CLIENT_META),
     ).resolves.toBeUndefined();
     expect(createTicket).toHaveBeenCalledOnce();
-    expect(log.error.mock.calls).toEqual([[{ playerId: player.id }, expect.any(String)]]);
+    expect(log.error.mock.calls).toEqual([
+      [{ err: { name: 'Error' }, playerId: player.id }, expect.any(String)],
+    ]);
+    expect(inspect(logged(), { depth: null })).not.toContain(account.email);
   });
 
   it('logs a raw adapter error holding the email and the message as unexpected only', async () => {

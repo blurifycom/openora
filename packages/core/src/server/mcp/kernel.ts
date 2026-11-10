@@ -38,7 +38,7 @@ import { withCorrelationId } from '../kernel/request-context.js';
 import { sha256Hex } from './canonical-json.js';
 import { mcpToolModelName } from './contract-validation.js';
 import { projectedOutputJsonSchema } from './output-schema.js';
-import { loggableError } from './loggable-error.js';
+import { loggableError } from '../kernel/loggable-error.js';
 
 const logger = createLogger('mcp-kernel');
 

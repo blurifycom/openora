@@ -70,12 +70,15 @@ export type SupportChatProvider = {
 
   /**
    * Creates exactly one ticket authored by the customer, with `requester` as given as its
-   * requester and in no group: routing it is the vendor's. Not idempotent - every call is a new
-   * ticket, and core never retries one. On failure, throw `SupportChatProviderError` with a listed
-   * reason. Mask the email in any log line. Optional: without it, the ticket route answers not
-   * configured.
+   * requester and in no group: routing it is the vendor's. Answers the vendor's own id for that
+   * ticket, which core records on the audit row and never shows the player. Not idempotent -
+   * every call is a new ticket, and core never retries one. On failure, throw
+   * `SupportChatProviderError` with a listed reason. Mask the email in any log line. `message` is
+   * untrusted player text, passed through untouched apart from trimming, HTML and control
+   * characters included: send it to the vendor as plain text, never as HTML. Optional: without
+   * it, the ticket route answers not configured.
    */
-  createTicket?(input: SupportTicketRequest): Promise<void>;
+  createTicket?(input: SupportTicketRequest): Promise<{ ticketId: string }>;
 };
 
 export const SUPPORT_CHAT_PROVIDER: Token<SupportChatProvider> =

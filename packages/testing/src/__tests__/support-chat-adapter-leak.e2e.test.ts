@@ -133,7 +133,7 @@ describe('support chat adapter failures that leak vendor text', () => {
       const text = await refused.text();
 
       expect(refused.status).toBe(503);
-      expect(JSON.parse(text)).toMatchObject({ message: 'Support chat is unavailable' });
+      expect(JSON.parse(text)).toMatchObject({ data: { reason: 'unavailable' } });
       expect(text).not.toMatch(LEAK);
     },
   );
@@ -156,7 +156,7 @@ describe('support chat adapter failures that leak vendor text', () => {
     const text = await refused.text();
 
     expect(refused.status).toBe(503);
-    expect(JSON.parse(text)).toMatchObject({ message: 'Support chat is unavailable' });
+    expect(JSON.parse(text)).toMatchObject({ data: { reason: 'unavailable' } });
     expect(text).not.toMatch(LEAK);
     expect(inspect(reported, { depth: null, showHidden: true })).not.toMatch(LEAK);
   });
@@ -254,7 +254,7 @@ describe('support ticket adapter failures', () => {
       const text = await refused.text();
 
       expect(refused.status).toBe(503);
-      expect(JSON.parse(text)).toMatchObject({ message: 'Support chat is unavailable' });
+      expect(JSON.parse(text)).toMatchObject({ data: { reason: 'unavailable' } });
       expect(text).not.toContain(email);
       expect(text).not.toContain(MESSAGE);
       const seen = inspect(reported, { depth: null, showHidden: true });

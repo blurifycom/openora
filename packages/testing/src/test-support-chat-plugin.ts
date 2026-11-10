@@ -11,6 +11,7 @@ import {
 } from '@openora/core/contracts';
 
 export type TestSupportChatSync = { customerId: string; context: SupportCustomerContext };
+export type TestSupportTicket = SupportTicketRequest & { ticketId: string };
 
 type NextTokenAnswer =
   | { kind: 'fail'; reason: SupportHistoryFailureReason }
@@ -21,7 +22,7 @@ type NextTokenAnswer =
 
 type SupportChatState = {
   tokenRequests: { customerId?: string }[];
-  tickets: SupportTicketRequest[];
+  tickets: TestSupportTicket[];
   nextTicketFailure: SupportHistoryFailureReason | Error | null;
   syncs: TestSupportChatSync[];
   nextTokenAnswer: NextTokenAnswer | null;
@@ -201,7 +202,9 @@ export default {
             if (failure) {
               throw failure;
             }
-            s.tickets.push(structuredClone(input));
+            const ticketId = `ticket-${randomUUID()}`;
+            s.tickets.push({ ...structuredClone(input), ticketId });
+            return { ticketId };
           },
         }) satisfies SupportChatProvider,
     );

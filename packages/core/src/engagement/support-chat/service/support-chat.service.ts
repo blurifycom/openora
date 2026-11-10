@@ -3,6 +3,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import {
   createDomainError,
   createLogger,
+  loggableError,
   makeNotFoundError,
   type DrizzleService,
   type EventBus,
@@ -36,11 +37,13 @@ export const SupportChatPlayerNotFoundError = makeNotFoundError('Player');
 export const SupportChatNotConfiguredError = createDomainError<[]>(
   'SupportChatNotConfiguredError',
   () => 'Support chat is not configured',
+  { reason: 'not_configured' },
 );
 
 export const SupportChatUnavailableError = createDomainError<[]>(
   'SupportChatUnavailableError',
   () => 'Support chat is unavailable',
+  { reason: 'unavailable' },
 );
 
 // Its message reaches the player, so the detail is logged where it is thrown instead.
@@ -196,35 +199,35 @@ export class SupportChatService {
    * read from the account now. Not idempotent: a double submit is two tickets.
    */
   async createTicket(userId: User['id'], message: string, clientMeta: ClientMeta): Promise<void> {
-    const playerId = await this.deps.identityReader.getPlayerIdByUserId(userId);
-    if (!playerId) {
-      throw new SupportChatPlayerNotFoundError(userId);
-    }
     if (!this.deps.provider.createTicket) {
       throw new SupportChatNotConfiguredError();
     }
     const [account] = await this.deps.drizzle.db
       .select({
+        playerId: player.id,
         username: user.username,
         email: user.email,
         language: user.language,
         emailVerified: user.emailVerified,
       })
-      .from(user)
-      .where(eq(user.id, userId))
+      .from(player)
+      .innerJoin(user, eq(user.id, player.userId))
+      .where(eq(player.userId, userId))
       .limit(1);
     if (!account) {
       throw new SupportChatPlayerNotFoundError(userId);
     }
+    const { playerId } = account;
     if (!account.emailVerified) {
       throw new SupportTicketEmailNotVerifiedError();
     }
+    let ticketId: string;
     try {
-      await this.deps.provider.createTicket({
+      ({ ticketId } = await this.deps.provider.createTicket({
         requester: { name: account.username, email: account.email },
         language: account.language,
         message,
-      });
+      }));
     } catch (err) {
       logger.warn({ playerId, reason: reasonOf(err) }, 'support ticket not created');
       throw new SupportChatUnavailableError();
@@ -238,9 +241,15 @@ export class SupportChatService {
         action: 'support_chat.ticket.created',
         resourceType: 'player',
         resourceId: playerId,
+        after: { ticketId },
         ...clientMeta,
       })
-      .catch(() => logger.error({ playerId }, 'support ticket created but not audited'));
+      .catch((err: unknown) =>
+        logger.error(
+          { err: loggableError(err), playerId },
+          'support ticket created but not audited',
+        ),
+      );
   }
 
   /** Writes the current context onto the player's vendor customer; a player who never opened the chat is skipped. */

@@ -34,6 +34,7 @@ export { Container } from './container.js';
 export type { Factory } from './container.js';
 
 export { createLogger } from './logger.js';
+export { loggableError } from './loggable-error.js';
 
 export { setErrorReporter, reportError } from './error-reporter.js';
 export type { ErrorReporter } from './error-reporter.js';
