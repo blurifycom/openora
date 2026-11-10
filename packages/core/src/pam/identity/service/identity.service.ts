@@ -16,7 +16,7 @@ import {
   createLogger,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
-import { and, eq, isNull, lte, ne, sql } from 'drizzle-orm';
+import { and, eq, isNull, like, lte, ne, sql } from 'drizzle-orm';
 import * as z from 'zod';
 import { user, session, account, verification, twoFactor, type Session } from '../schema/index.js';
 import { captureTimezone } from './capture-timezone.service.js';
@@ -71,6 +71,7 @@ import type {
   SetAutoLogoutInput,
   SetLoginWithdrawalAlertsInput,
   SetRequireTwoFactorOnLoginInput,
+  Uuid,
 } from '@openora/core/contracts';
 import {
   RATE_LIMIT_KEYS,
@@ -271,6 +272,10 @@ type AuthCall<B> = (opts: {
   headers: Headers;
   asResponse: true;
 }) => Promise<globalThis.Response>;
+
+// better-auth's email-otp change-email key: `change-email-otp-<userId>:<newEmail>`.
+// userId is a UUID, so it holds no LIKE wildcard.
+const pendingEmailChangeIdentifierPattern = (userId: Uuid) => `change-email-otp-${userId}:%`;
 
 type ExtendedAuthApi = {
   signUpEmail: AuthCall<
@@ -2905,6 +2910,12 @@ export class IdentityService {
         }
         return { res, before, changedAt };
       }
+      // better-auth keys a pending change by user and new address only, so another one
+      // requested before this swap would still confirm. Drop them under the row lock: a
+      // concurrent confirm waiting on it then finds no code.
+      await tx
+        .delete(verification)
+        .where(like(verification.identifier, pendingEmailChangeIdentifierPattern(userId)));
       await this.audit.recordInTransaction(tx, {
         actorType: playerId ? 'player' : 'admin',
         actorId: playerId ?? userId,
