@@ -43,3 +43,5 @@ allowBuilds:
   msgpackr-extract: true
   sharp: true
   tldjs: false
+# Explicit so pnpm enforces it strictly; the built-in default falls back to a too-young version.
+minimumReleaseAge: 1440
