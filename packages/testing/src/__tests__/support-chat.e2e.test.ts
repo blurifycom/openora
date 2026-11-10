@@ -645,11 +645,6 @@ const TICKETS = '/support-chat/tickets';
 const ticketsTo = (email: string) =>
   readSupportChatCalls().tickets.filter((ticket) => ticket.requester.email === email);
 
-const byTicketId = (a: unknown, b: unknown) =>
-  String((a as { ticketId: string }).ticketId).localeCompare(
-    String((b as { ticketId: string }).ticketId),
-  );
-
 const ticketAudits = (playerId: string) =>
   testApp.container
     .get(DRIZZLE)
@@ -814,9 +809,9 @@ describe('offline ticket', () => {
     expect(answers.map((res) => res.status)).toEqual([200, 200]);
     const tickets = ticketsTo(p.email);
     expect(tickets).toHaveLength(2);
-    expect((await ticketAudits(p.playerId)).map((row) => row.after).sort(byTicketId)).toEqual(
-      tickets.map(({ ticketId }) => ({ ticketId })).sort(byTicketId),
-    );
+    const afters = (await ticketAudits(p.playerId)).map((row) => row.after);
+    expect(afters).toHaveLength(2);
+    expect(afters).toEqual(expect.arrayContaining(tickets.map(({ ticketId }) => ({ ticketId }))));
   });
 
   it("never carries one player's name or email on another player's ticket under parallel posts", async () => {

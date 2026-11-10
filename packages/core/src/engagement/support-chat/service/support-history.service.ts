@@ -28,6 +28,7 @@ const MAX_CLOCK_SKEW_MS = 5_000;
 export const SupportHistoryNotConfiguredError = createDomainError<[]>(
   'SupportHistoryNotConfiguredError',
   () => 'Support history is not configured',
+  { reason: 'not_configured' },
 );
 
 const STATUSES_OF: Record<SupportHistoryItem['kind'], ReadonlySet<SupportHistoryItem['status']>> = {

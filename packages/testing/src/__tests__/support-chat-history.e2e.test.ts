@@ -827,7 +827,7 @@ describe('ports bound apart', () => {
     const res = await unconfiguredAdmin.get(historyPath(randomUUID()));
 
     expect(res.status).toBe(503);
-    expect(await res.json()).toMatchObject({ message: 'Support history is not configured' });
+    expect(await res.json()).toMatchObject({ data: { reason: 'not_configured' } });
   });
 
   it('serves the history with no chat provider bound, while the session route is not configured', async () => {

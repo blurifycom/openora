@@ -10,6 +10,7 @@ import {
 } from '@openora/core/server';
 import {
   SupportChatCustomerTokenSchema,
+  SupportTicketCreatedSchema,
   normalizeKycStatus,
   type AuditWritePort,
   type ClientMeta,
@@ -221,19 +222,20 @@ export class SupportChatService {
     if (!account.emailVerified) {
       throw new SupportTicketEmailNotVerifiedError();
     }
-    let ticketId: string;
+    let answer: unknown;
     try {
-      ({ ticketId } = await this.deps.provider.createTicket({
+      answer = await this.deps.provider.createTicket({
         requester: { name: account.username, email: account.email },
         language: account.language,
         message,
-      }));
+      });
     } catch (err) {
       logger.warn({ playerId, reason: reasonOf(err) }, 'support ticket not created');
       throw new SupportChatUnavailableError();
     }
-    // The ticket exists at the vendor by now, so a failed audit write must not answer the player
-    // as if it did not.
+    // The ticket exists at the vendor by now, so neither a malformed answer nor a failed audit
+    // write may answer the player as if it did not: a retry would file it twice.
+    const ticketId = this.ticketIdOf(playerId, answer);
     await this.deps.audit
       .record({
         actorType: 'player',
@@ -250,6 +252,25 @@ export class SupportChatService {
           'support ticket created but not audited',
         ),
       );
+  }
+
+  /**
+   * The vendor's ticket id, or null when its answer is off the schema. Only the parsed id leaves
+   * here: the raw answer may hold the requester's email or the message, and the audit row it
+   * would land in is append-only.
+   */
+  private ticketIdOf(playerId: Player['id'], answer: unknown): string | null {
+    // safeParse rethrows what a getter on the answer throws, which is the adapter's text too.
+    try {
+      const parsed = SupportTicketCreatedSchema.safeParse(answer);
+      if (parsed.success) {
+        return parsed.data.ticketId;
+      }
+    } catch {
+      // Logged below as malformed, like an answer that fails the schema.
+    }
+    logger.warn({ playerId, reason: 'malformed ticket answer' }, 'support ticket id not recorded');
+    return null;
   }
 
   /** Writes the current context onto the player's vendor customer; a player who never opened the chat is skipped. */
