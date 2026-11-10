@@ -7,6 +7,7 @@ import {
   type SupportChatProvider,
   type SupportCustomerContext,
   type SupportHistoryFailureReason,
+  type SupportTicketCreated,
   type SupportTicketRequest,
 } from '@openora/core/contracts';
 
@@ -24,6 +25,7 @@ type SupportChatState = {
   tokenRequests: { customerId?: string }[];
   tickets: TestSupportTicket[];
   nextTicketFailure: SupportHistoryFailureReason | Error | null;
+  nextTicketAnswer: { raw: unknown } | null;
   syncs: TestSupportChatSync[];
   nextTokenAnswer: NextTokenAnswer | null;
   syncDelayMs: number;
@@ -41,6 +43,7 @@ const freshState = (): SupportChatState => ({
   tokenRequests: [],
   tickets: [],
   nextTicketFailure: null,
+  nextTicketAnswer: null,
   syncs: [],
   nextTokenAnswer: null,
   syncDelayMs: 0,
@@ -71,6 +74,11 @@ export const failNextSupportChatToken = (reason: SupportHistoryFailureReason | E
  */
 export const failNextSupportTicket = (reason: SupportHistoryFailureReason | Error) => {
   state().nextTicketFailure = reason;
+};
+
+/** The next `createTicket` records the ticket, then answers `answer` as is, whatever its shape. */
+export const answerNextSupportTicketRaw = (answer: unknown) => {
+  state().nextTicketAnswer = { raw: answer };
 };
 
 /** The next `issueCustomerToken` answers a token without an access token. */
@@ -204,7 +212,9 @@ export default {
             }
             const ticketId = `ticket-${randomUUID()}`;
             s.tickets.push({ ...structuredClone(input), ticketId });
-            return { ticketId };
+            const raw = s.nextTicketAnswer;
+            s.nextTicketAnswer = null;
+            return raw ? (raw.raw as SupportTicketCreated) : { ticketId };
           },
         }) satisfies SupportChatProvider,
     );

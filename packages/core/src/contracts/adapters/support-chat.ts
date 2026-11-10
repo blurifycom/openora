@@ -51,7 +51,15 @@ export type SupportCustomerContext = z.infer<typeof SupportCustomerContextSchema
  * What the vendor answers for a created ticket: its own id for it. Core validates the answer
  * against this schema before the id reaches the audit row.
  */
-export const SupportTicketCreatedSchema = z.object({ ticketId: z.string().min(1).max(200) });
+export const SupportTicketCreatedSchema = z.object({
+  // Id-shaped only: an adapter answering the requester's email or the message by mistake gets
+  // no id recorded, instead of that text landing in the append-only audit chain.
+  ticketId: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[\w.:#/-]+$/),
+});
 export type SupportTicketCreated = z.infer<typeof SupportTicketCreatedSchema>;
 
 /** An offline ticket a player writes to support, outside a live chat. */
@@ -78,10 +86,10 @@ export type SupportChatProvider = {
   /**
    * Creates exactly one ticket authored by the customer, with `requester` as given as its
    * requester and in no group: routing it is the vendor's. Answers the vendor's own id for that
-   * ticket, which core records on the audit row and never shows the player; an answer outside
-   * `SupportTicketCreatedSchema` is logged as malformed and audited without an id, and the player
-   * still gets success, since the ticket exists. Not idempotent -
-   * every call is a new ticket, and core never retries one. On failure, throw
+   * ticket, an id of 1-200 characters (letters, digits and `_ . : # / -`), which core records on
+   * the audit row and never shows the player; an answer outside `SupportTicketCreatedSchema` is
+   * logged as malformed and audited without an id, and the player still gets success, since the
+   * ticket exists. Not idempotent - every call is a new ticket, and core never retries one. On failure, throw
    * `SupportChatProviderError` with a listed reason. Mask the email in any log line. `message` is
    * untrusted player text, passed through untouched apart from trimming, HTML and control
    * characters included: send it to the vendor as plain text, never as HTML. Optional: without

@@ -45,6 +45,7 @@ import {
 } from '../index.js';
 import {
   answerNextSupportChatTokenWith,
+  answerNextSupportTicketRaw,
   failNextSupportChatToken,
   failSupportChatSyncs,
   holdNextSupportChatSync,
@@ -903,6 +904,8 @@ describe('offline ticket', () => {
     ['a numeric ticket id', () => ({ ticketId: 42 })],
     ['an empty ticket id', () => ({ ticketId: '' })],
     ['a 201-character ticket id', () => ({ ticketId: 'x'.repeat(201) })],
+    ['the requester email as the ticket id', (email) => ({ ticketId: email })],
+    ['the message as the ticket id', (_email, message) => ({ ticketId: message })],
     [
       'a ticket id holding the requester and the message',
       (email, message) => ({ ticketId: { requester: { email }, description: message } }),
@@ -921,25 +924,18 @@ describe('offline ticket', () => {
     async (_case, answer) => {
       const p = await newPlayer();
       const message = `stuck withdrawal ${randomUUID()}`;
-      const provider = testApp.container.get(SUPPORT_CHAT_PROVIDER);
-      const createTicket = provider.createTicket;
-      provider.createTicket = async () => answer(p.email, message) as never;
-      try {
-        const res = await p.client.post(TICKETS, { message });
-        const text = await res.text();
+      answerNextSupportTicketRaw(answer(p.email, message));
 
-        expect(res.status).toBe(200);
-        expect(JSON.parse(text)).toEqual({ success: true });
-        const audits = await ticketAudits(p.playerId);
-        expect(audits).toEqual([expect.objectContaining({ after: { ticketId: null } })]);
-        for (const seen of [text, JSON.stringify(audits)]) {
-          expect(seen).not.toContain(p.email);
-          expect(seen).not.toContain(message);
-        }
-      } finally {
-        if (createTicket) {
-          provider.createTicket = createTicket;
-        }
+      const res = await p.client.post(TICKETS, { message });
+      const text = await res.text();
+
+      expect(res.status).toBe(200);
+      expect(JSON.parse(text)).toEqual({ success: true });
+      const audits = await ticketAudits(p.playerId);
+      expect(audits).toEqual([expect.objectContaining({ after: { ticketId: null } })]);
+      for (const seen of [text, JSON.stringify(audits)]) {
+        expect(seen).not.toContain(p.email);
+        expect(seen).not.toContain(message);
       }
     },
   );

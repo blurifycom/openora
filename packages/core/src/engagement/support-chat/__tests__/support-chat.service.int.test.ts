@@ -379,39 +379,34 @@ describe('SupportChatService offline ticket (real PG)', () => {
   });
 
   it.each<[string, (email: string) => unknown]>([
-    ['undefined', () => undefined],
+    [
+      'a ticket id getter that throws an error carrying the email',
+      (email) =>
+        Object.defineProperty({}, 'ticketId', {
+          get() {
+            throw new Error(`vendor says ${email}: ${MESSAGE}`);
+          },
+        }),
+    ],
     [
       'a ticket id that is the vendor ticket holding the email',
       (email) => ({
         ticketId: { id: 7, requester: { email }, description: MESSAGE },
       }),
     ],
-  ])(
-    'answers 200 for a resolved answer of %s, audited with a null ticket id and nothing of it logged',
-    async (_case, answer) => {
-      const { account, player } = await seedPlayerWithUser(db);
-      const audit = makeAuditWriter();
+  ])('logs a malformed answer of %s as its reason only', async (_case, answer) => {
+    const { account, player } = await seedPlayerWithUser(db);
+    const createTicket = mock<NonNullable<SupportChatProvider['createTicket']>>(async () =>
+      answer(account.email),
+    );
 
-      await expect(
-        service(
-          player.id,
-          { createTicket: async () => answer(account.email) as never },
-          audit,
-        ).createTicket(account.id, MESSAGE, NO_CLIENT_META),
-      ).resolves.toBeUndefined();
+    await service(player.id, { createTicket }).createTicket(account.id, MESSAGE, NO_CLIENT_META);
 
-      expect(warned()).toEqual([{ playerId: player.id, reason: 'malformed ticket answer' }]);
-      expect(audit.record).toHaveBeenCalledOnce();
-      expect(audit.record.mock.calls[0]?.[0]).toMatchObject({
-        action: 'support_chat.ticket.created',
-        resourceId: player.id,
-        after: { ticketId: null },
-      });
-      const seen = inspect([logged(), audit.record.mock.calls], { depth: null });
-      expect(seen).not.toContain(account.email);
-      expect(seen).not.toContain(MESSAGE);
-    },
-  );
+    expect(warned()).toEqual([{ playerId: player.id, reason: 'malformed ticket answer' }]);
+    const seen = inspect(logged(), { depth: null, showHidden: true });
+    expect(seen).not.toContain(account.email);
+    expect(seen).not.toContain(MESSAGE);
+  });
 
   it('logs a raw adapter error holding the email and the message as unexpected only', async () => {
     const { account, player } = await seedPlayerWithUser(db);

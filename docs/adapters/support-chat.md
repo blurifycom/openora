@@ -96,10 +96,11 @@ account on every request, plus the message.
   `email_not_verified`, and the adapter is not called.
 - **One ticket per call, as given.** The adapter creates exactly one ticket authored by the
   customer, with the requester core sent and in no group; routing is the vendor's. It answers the
-  vendor's own id for that ticket, a string of 1 to 200 characters. Core validates the answer: one
-  off that shape is logged as malformed, never itself, and the ticket is audited without an id;
-  the player still gets success, since the ticket exists and a retry would file it twice. Mask the email in any log line, and throw the port's provider
-  error with a listed reason on failure. The player then gets the generic unavailable refusal; the
+  vendor's own id for that ticket: an id of 1-200 characters, letters, digits and `_ . : # / -`
+  only, so never an email or free text. Core validates the answer: one off that shape is logged as
+  malformed, never itself, and the ticket is audited without an id; the player still gets success,
+  since the ticket exists and a retry would file it twice. Mask the email in any log line, and
+  throw the port's provider error with a listed reason on failure. The player then gets the generic unavailable refusal; the
   reason goes to the log only, and neither the email nor the message reaches the response, a log
   line or the error reporter.
 - **The message is untrusted text.** Core trims its ends and passes the rest untouched, HTML and
