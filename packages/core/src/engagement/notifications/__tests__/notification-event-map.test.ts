@@ -631,6 +631,25 @@ describe('notificationEventMap', () => {
     const input = entryFor('promo.streak.milestone.reached').buildNotification({
       userId,
       day: 7,
+      amount: '5.000000000000000000',
+      currency: 'USD',
+      grantId: null,
+    });
+
+    expect(input).toEqual({
+      userId,
+      type: 'promo.streak.milestone.reached',
+      params: { day: '7', amount: '5.000000000000000000', currency: 'USD' },
+      data: { day: '7', amount: '5.000000000000000000', currency: 'USD' },
+    });
+  });
+
+  it('still tells the player a streak reward is ready for an event from before the amount was carried', () => {
+    const userId = randomUUID();
+
+    const input = entryFor('promo.streak.milestone.reached').buildNotification({
+      userId,
+      day: 7,
       grantId: null,
     });
 
@@ -830,7 +849,13 @@ describe('notificationEventMap', () => {
         weeklyBonus: '5',
         monthlyBonus: '20',
       },
-      'promo.streak.milestone.reached': { userId: id(), day: 7, grantId: null },
+      'promo.streak.milestone.reached': {
+        userId: id(),
+        day: 7,
+        amount: '5.000000000000000000',
+        currency: 'USD',
+        grantId: null,
+      },
       'promo.rakeback.claimable': { userId: id(), amount: '12.5', currency: 'USDT' },
       'chat.user.mentioned': {
         mentionedUserId: id(),
