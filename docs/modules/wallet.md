@@ -34,7 +34,10 @@ does not repeat it.
   containers, the sweep, reconciliation findings, and the withdrawal approval path.
 - **Its agent surface.** A read tool over a player's balances, recent money movement and
   withdrawals still awaiting a decision, and an action type that holds a player's waiting
-  withdrawal for manual review. Both are served only through the MCP kernel (ADR-0042).
+  withdrawal for manual review. Two operator-level read tools: the withdrawal queue (its counts,
+  totals, average wait and oldest waiting withdrawals, with no review note, address or hash),
+  and a tagged segment's completed deposits compared between two windows, priced into the fx
+  pivot. All are served only through the MCP kernel (ADR-0042).
 - **Read-only money facts for other modules.** Lifetime deposits and withdrawals, the last
   deposit, turnover and recent withdrawal requests, read through the wallet's read port rather
   than its tables. Every total is priced into the fx pivot at today's rates and reads as

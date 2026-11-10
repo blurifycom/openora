@@ -62,6 +62,11 @@ describe('levelToActions', () => {
     expect(levelToActions('content', 'read')).toEqual([]);
   });
 
+  it.each(['mcp-access', 'agent-chat'])('grants %s only at read_write', (resource) => {
+    expect(levelToActions(resource, 'read')).toEqual([]);
+    expect(levelToActions(resource, 'read_write')).toEqual(['use']);
+  });
+
   it.each(PERMISSION_LEVELS)('grants nothing on an unknown resource at %s', (level) => {
     expect(levelToActions('tournaments', level)).toEqual([]);
   });

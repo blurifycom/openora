@@ -84,3 +84,33 @@ describe('IdentityReaderService.getUserIdByPlayerId (real PG)', () => {
     expect(await reader.getUserIdByPlayerId(randomUUID())).toBeNull();
   });
 });
+
+describe('IdentityReaderService.getUserIdsByPlayerIds (real PG)', () => {
+  it('resolves many player ids in one call and leaves an unknown one out', async () => {
+    const reader = new IdentityReaderService(db.drizzle);
+    const rows = await db.drizzle.db
+      .insert(player)
+      .values([{ userId: randomUUID() }, { userId: randomUUID() }, { userId: randomUUID() }])
+      .returning();
+    const [first, second] = rows;
+    if (!first || !second) {
+      throw new Error('player insert returned too few rows');
+    }
+    const unknown = randomUUID();
+
+    const resolved = await reader.getUserIdsByPlayerIds([first.id, second.id, unknown]);
+
+    expect(resolved).toEqual(
+      new Map([
+        [first.id, first.userId],
+        [second.id, second.userId],
+      ]),
+    );
+  });
+
+  it('answers an empty map for no player ids', async () => {
+    expect(await new IdentityReaderService(db.drizzle).getUserIdsByPlayerIds([])).toEqual(
+      new Map(),
+    );
+  });
+});
