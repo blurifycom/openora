@@ -898,6 +898,52 @@ describe('offline ticket', () => {
     }
   });
 
+  it.each<[string, (email: string, message: string) => unknown]>([
+    ['nothing', () => undefined],
+    ['a numeric ticket id', () => ({ ticketId: 42 })],
+    ['an empty ticket id', () => ({ ticketId: '' })],
+    ['a 201-character ticket id', () => ({ ticketId: 'x'.repeat(201) })],
+    [
+      'a ticket id holding the requester and the message',
+      (email, message) => ({ ticketId: { requester: { email }, description: message } }),
+    ],
+    [
+      'a ticket id whose getter throws the email',
+      (email) =>
+        Object.defineProperty({}, 'ticketId', {
+          get() {
+            throw new Error(`vendor says ${email}`);
+          },
+        }),
+    ],
+  ])(
+    'answers 200 and audits a null ticket id when the vendor answers %s, leaking neither email nor message',
+    async (_case, answer) => {
+      const p = await newPlayer();
+      const message = `stuck withdrawal ${randomUUID()}`;
+      const provider = testApp.container.get(SUPPORT_CHAT_PROVIDER);
+      const createTicket = provider.createTicket;
+      provider.createTicket = async () => answer(p.email, message) as never;
+      try {
+        const res = await p.client.post(TICKETS, { message });
+        const text = await res.text();
+
+        expect(res.status).toBe(200);
+        expect(JSON.parse(text)).toEqual({ success: true });
+        const audits = await ticketAudits(p.playerId);
+        expect(audits).toEqual([expect.objectContaining({ after: { ticketId: null } })]);
+        for (const seen of [text, JSON.stringify(audits)]) {
+          expect(seen).not.toContain(p.email);
+          expect(seen).not.toContain(message);
+        }
+      } finally {
+        if (createTicket) {
+          provider.createTicket = createTicket;
+        }
+      }
+    },
+  );
+
   it('refuses a player whose email is not verified with 403 email_not_verified and files nothing', async () => {
     const p = await newPlayer();
     await testApp.container
