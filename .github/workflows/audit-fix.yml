@@ -32,6 +32,10 @@ jobs:
           turbo-cache: 'false'
       # Exits non-zero while anything is still vulnerable - the diff decides, not the exit code.
       - run: pnpm audit --fix=update || true
+      # The fix adds every bumped version to `minimumReleaseAgeExclude`, which would bypass the
+      # release-age cooldown for good. Drop them: the install below checks the lockfile against the
+      # policy and fails on a version still inside the cooldown, so the next run picks it up.
+      - run: git checkout -- pnpm-workspace.yaml
       # The fix rewrites bumped specifiers as `^x.y.z`; dependencies stay pinned exact.
       - name: Pin bumped versions
         run: |
@@ -41,14 +45,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if git diff --quiet -- pnpm-lock.yaml pnpm-workspace.yaml '*package.json'; then
+          if git diff --quiet -- pnpm-lock.yaml '*package.json'; then
             echo "nothing to bump"
             exit 0
           fi
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git config user.name 'github-actions[bot]'
           git checkout -b "$BRANCH"
-          git add -- pnpm-lock.yaml pnpm-workspace.yaml '*package.json'
+          git add -- pnpm-lock.yaml '*package.json'
           git commit -m "$TITLE"
           git push -f origin "$BRANCH"
           if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
