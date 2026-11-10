@@ -906,6 +906,10 @@ describe('offline ticket', () => {
     ['a global id with colon and slashes', 'gid://helpdesk/Ticket/123'],
     ['a namespaced id with colon and hash', 'acme:ticket#42_v2.1'],
     ['a 200-character id', 'a'.repeat(200)],
+    ['a padded base64 id', 'dGlja2V0MTIz=='],
+    ['a base64 id with a plus', 'Zm9v+YmFy'],
+    ['an id with a tilde', 'T-2026~11'],
+    ['a percent-encoded id', '%7B1%7D'],
   ])('records the vendor ticket id on the audit row when it is %s', async (_case, ticketId) => {
     const p = await newPlayer();
     answerNextSupportTicketRaw({ ticketId });
@@ -924,6 +928,7 @@ describe('offline ticket', () => {
     ['a 201-character ticket id', () => ({ ticketId: 'x'.repeat(201) })],
     ['the requester email as the ticket id', (email) => ({ ticketId: email })],
     ['the message as the ticket id', (_email, message) => ({ ticketId: message })],
+    ['a message id in angle brackets', () => ({ ticketId: '<123.abc@mail.example>' })],
     [
       'a ticket id holding the requester and the message',
       (email, message) => ({ ticketId: { requester: { email }, description: message } }),
