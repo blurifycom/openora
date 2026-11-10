@@ -97,6 +97,9 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     advanced: {
       database: {
         generateId: () => randomUUID(),
+        // Without a schema the check can only fail, and it would fail every request -
+        // including anonymous ones that never touch an auth table.
+        validateSchema: options.schema !== undefined,
       },
       ...(cookieDomain ? { crossSubDomainCookies: { enabled: true, domain: cookieDomain } } : {}),
     },
@@ -240,7 +243,7 @@ export type Auth = BetterAuthType;
  * Drizzle transaction `tx`, so they commit or roll back with the caller's own rows. better-auth
  * after-hooks queued inside run when `fn` returns, before `tx` commits; none that matters here
  * (`user.update.after`) is configured. `runWithTransaction` is a better-auth internal: the exact
- * `better-auth` / `@better-auth/core` 1.6.22 pin and the email-change E2E fault and single-txid
+ * `better-auth` / `@better-auth/core` 1.7.18 pin and the email-change E2E fault and single-txid
  * tests are the gate for upgrading either.
  */
 export async function runInAuthTransaction<T>(
