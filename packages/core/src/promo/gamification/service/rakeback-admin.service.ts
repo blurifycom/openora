@@ -32,6 +32,8 @@ const toAccrual = (row: PromoRakebackAccrual): RakebackAccrual => ({
   rtp: row.rtp,
   ratePercent: row.ratePercent,
   boostPercent: row.boostPercent,
+  streakMode: row.streakMode,
+  streakPercent: row.streakPercent,
   gameId: row.gameId,
   providerGameKey: row.providerGameKey,
   providerName: row.providerName,

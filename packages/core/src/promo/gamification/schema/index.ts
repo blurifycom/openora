@@ -26,6 +26,8 @@ import {
   DEFAULT_RANK_PERK_PRODUCTS,
   RAKEBACK_ACCRUAL_STATUSES,
   RAKEBACK_CLAIM_OUTCOMES,
+  STREAK_CURRENCY,
+  STREAK_RAKEBACK_MODES,
 } from '../contract/index.js';
 import type {
   RaceEligibleProducts,
@@ -33,7 +35,9 @@ import type {
   RankConfig,
   RankPayoutAnchors,
   RankPayoutKind,
-  StreakMilestone,
+  StreakFixedReward,
+  StreakGrantOutcome,
+  StreakRakebackMilestone,
 } from '../contract/index.js';
 
 const money = () => decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE });
@@ -96,11 +100,7 @@ export const promoPlayerRank = pgTable(
     announcedTierId: uuid(),
     /** Last counted wager. A periodic bonus goes only to a player active in the period it pays. */
     lastWageredAt: timestamp({ withTimezone: true }),
-    /**
-     * A streak milestone's temporary lift on top of the tier's own `rakebackPercent`. Additive,
-     * and gone once `rakebackBoostExpiresAt` passes - read together, never `rakebackPercent`
-     * alone, by anything that pays rakeback.
-     */
+    /** Retired: the streak no longer lifts a rank's rate this way. Nothing reads or writes it; a later release drops it. */
     rakebackBoostPercent: decimal({
       precision: CONTRIBUTION_PERCENT_PRECISION,
       scale: CONTRIBUTION_PERCENT_SCALE,
@@ -255,18 +255,23 @@ export const promoRankLevelUp = pgTable(
 export type PromoRankLevelUp = typeof promoRankLevelUp.$inferSelect;
 
 /**
- * Streak-wide settings, one row - the same singleton shape as `promoRankConfig`. Absent means no
- * day counts and no milestone pays: an operator who has not decided what qualifies has not
- * launched the streak.
+ * Streak-wide settings, one row - the same singleton shape as `promoRankConfig`. Absent, or
+ * `enabled` false, means no day counts and no rate applies: an operator who has not decided what
+ * qualifies has not launched the streak.
  */
 export const promoStreakConfig = pgTable('promo_streak_config', {
   id: uuid().primaryKey().defaultRandom(),
   singletonKey: text().notNull().unique().default('global'),
-  currency: text().notNull(),
+  enabled: boolean().notNull().default(false),
+  currency: text().notNull().default(STREAK_CURRENCY),
   dailyMinWager: money().notNull(),
   /** Products whose stakes count toward the streak. Empty counts every product. */
   eligibleProducts: text().array().notNull().default([]),
-  milestones: jsonb().$type<StreakMilestone[]>().notNull().default([]),
+  rakebackMilestones: jsonb().$type<StreakRakebackMilestone[]>().notNull().default([]),
+  fixedRewards: jsonb().$type<StreakFixedReward[]>().notNull().default([]),
+  /** Retired by `rakebackMilestones` and `fixedRewards`: nothing reads or writes it; a later release drops it. */
+  milestones: jsonb().notNull().default([]),
+  /** Retired: a streak no longer resets at a set day. Nothing reads or writes it; a later release drops it. */
   resetAfterDay: integer().notNull().default(30),
   updatedBy: uuid(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -365,10 +370,12 @@ export const promoStreakRoundWager = pgTable(
 );
 
 /**
- * A milestone a player has reached, one row per player per milestone day. An unsettled row is a
- * reward waiting for the player to claim it; it outlives a reset of `promo_player_streak.current`
- * and never expires. A settled row is reactivated when the same day is reached again on a later
- * run, so the table needs no per-run dimension.
+ * A fixed reward a player has unlocked, one row per player per day for good: a day unlocks once,
+ * and only a same-day rollback that took the unlocking day back (`reversed`) lets it unlock again.
+ * An unsettled row is a reward waiting to be claimed until `expiresAt`; it outlives a reset of
+ * `promo_player_streak.current`. `amount`, `rolloverMultiplier`, `claimExpiryDays` and
+ * `expiresAt` are captured when the day is reached, so a config edit never changes them. They
+ * are null only on a row from before they were captured, which can never be claimed.
  */
 export const promoStreakMilestoneGrant = pgTable(
   'promo_streak_milestone_grant',
@@ -381,11 +388,17 @@ export const promoStreakMilestoneGrant = pgTable(
     /**
      * `granted`, or why nothing was: `restricted` for a player under an RG block, settled when
      * the block starts or when the reward is announced or claimed during it, `reversed` when a
-     * rollback took the day that reached it back under the minimum before it was claimed.
+     * rollback took the day that reached it back under the minimum before it was claimed,
+     * `expired` when the claim window closed first.
      */
-    outcome: text(),
+    outcome: text().$type<StreakGrantOutcome>(),
     /** When the player was told the reward is waiting to be claimed. */
     announcedAt: timestamp({ withTimezone: true }),
+    amount: money(),
+    rolloverMultiplier: money(),
+    claimExpiryDays: integer(),
+    maxBet: money(),
+    expiresAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     uniqueIndex('promo_streak_milestone_grant_user_id_day_idx').on(t.userId, t.day),
@@ -393,6 +406,13 @@ export const promoStreakMilestoneGrant = pgTable(
       .on(t.reachedAt)
       .where(sql`${t.settledAt} is null`),
     check('promo_streak_milestone_grant_day_positive', sql`${t.day} > 0`),
+    check(
+      'promo_streak_milestone_grant_terms_valid',
+      sql`(${t.amount} is null OR ${t.amount} > 0)
+        AND (${t.rolloverMultiplier} is null OR ${t.rolloverMultiplier} > 0)
+        AND (${t.claimExpiryDays} is null OR ${t.claimExpiryDays} > 0)
+        AND (${t.maxBet} is null OR ${t.maxBet} > 0)`,
+    ),
   ],
 );
 
@@ -644,6 +664,10 @@ const percent = () =>
   decimal({ precision: CONTRIBUTION_PERCENT_PRECISION, scale: CONTRIBUTION_PERCENT_SCALE });
 
 export const promoRakebackBasisEnum = pgEnum('promo_rakeback_basis', RAKEBACK_BASES);
+export const promoStreakRakebackModeEnum = pgEnum(
+  'promo_streak_rakeback_mode',
+  STREAK_RAKEBACK_MODES,
+);
 export const promoRakebackAccrualStatusEnum = pgEnum(
   'promo_rakeback_accrual_status',
   RAKEBACK_ACCRUAL_STATUSES,
@@ -655,8 +679,9 @@ export const promoRakebackClaimOutcomeEnum = pgEnum(
 
 /**
  * One bet's rakeback under the claim payout, in the bet's own currency. Nothing reaches the
- * balance until a claim flips the row to `claimed`. The rate, boost and rtp it was priced at are
- * kept so the amount can be reproduced after the ladder changes.
+ * balance until a claim flips the row to `claimed`. The rate, streak rate and rtp it was priced
+ * at are kept so the amount can be reproduced after the ladder or the streak config changes.
+ * `boostPercent` is retired and written as zero; it stays for rows priced before.
  */
 export const promoRakebackAccrual = pgTable(
   'promo_rakeback_accrual',
@@ -671,6 +696,8 @@ export const promoRakebackAccrual = pgTable(
     rtp: decimal({ precision: 19, scale: 18 }),
     ratePercent: percent().notNull(),
     boostPercent: percent().notNull(),
+    streakMode: promoStreakRakebackModeEnum(),
+    streakPercent: percent(),
     gameId: text(),
     providerGameKey: text(),
     providerName: text(),
@@ -698,6 +725,10 @@ export const promoRakebackAccrual = pgTable(
     check(
       'promo_rakeback_accrual_bounds',
       sql`${t.amount} > 0 AND ${t.stake} >= 0 AND ${t.rolledBackStake} >= 0 AND ${t.rolledBackStake} <= ${t.stake} AND (${t.rtp} is null OR (${t.rtp} > 0 AND ${t.rtp} <= 1))`,
+    ),
+    check(
+      'promo_rakeback_accrual_streak',
+      sql`(${t.streakMode} is null) = (${t.streakPercent} is null)`,
     ),
     check(
       'promo_rakeback_accrual_settlement',
