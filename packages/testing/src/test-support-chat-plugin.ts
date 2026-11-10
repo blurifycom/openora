@@ -7,6 +7,7 @@ import {
   type SupportChatProvider,
   type SupportCustomerContext,
   type SupportHistoryFailureReason,
+  type SupportTicketRequest,
 } from '@openora/core/contracts';
 
 export type TestSupportChatSync = { customerId: string; context: SupportCustomerContext };
@@ -20,6 +21,8 @@ type NextTokenAnswer =
 
 type SupportChatState = {
   tokenRequests: { customerId?: string }[];
+  tickets: SupportTicketRequest[];
+  nextTicketFailure: SupportHistoryFailureReason | Error | null;
   syncs: TestSupportChatSync[];
   nextTokenAnswer: NextTokenAnswer | null;
   syncDelayMs: number;
@@ -35,6 +38,8 @@ const STATE = Symbol.for('openora.testing.support-chat');
 const holder = globalThis as typeof globalThis & { [STATE]?: SupportChatState };
 const freshState = (): SupportChatState => ({
   tokenRequests: [],
+  tickets: [],
+  nextTicketFailure: null,
   syncs: [],
   nextTokenAnswer: null,
   syncDelayMs: 0,
@@ -57,6 +62,14 @@ export const resetSupportChat = () => {
 export const failNextSupportChatToken = (reason: SupportHistoryFailureReason | Error) => {
   state().nextTokenAnswer =
     typeof reason === 'string' ? { kind: 'fail', reason } : { kind: 'throw', error: reason };
+};
+
+/**
+ * The next `createTicket` throws a provider error carrying `reason`, or, given an `Error`,
+ * throws that error as is, and records no ticket.
+ */
+export const failNextSupportTicket = (reason: SupportHistoryFailureReason | Error) => {
+  state().nextTicketFailure = reason;
 };
 
 /** The next `issueCustomerToken` answers a token without an access token. */
@@ -110,15 +123,16 @@ export const holdNextSupportChatSync = (customerId: string) => {
   return { reached: reachedPromise, release };
 };
 
-/** Every token request and every landed sync, in order. */
+/** Every token request, every landed sync and every created ticket, in order. */
 export const readSupportChatCalls = () => ({
   tokenRequests: [...state().tokenRequests],
+  tickets: [...state().tickets],
   syncs: [...state().syncs],
 });
 
 /**
  * Binds a fake support-chat vendor: a new customer per token request without `customerId`, a
- * token for the asked customer otherwise, and syncs recorded when they land. Steered by the
+ * token for the asked customer otherwise, and syncs and tickets recorded when they land. Steered by the
  * functions above. Opt-in only - pass it in `config.plugins`.
  */
 export default {
@@ -176,6 +190,18 @@ export default {
               }
               state().syncs.push({ customerId, context });
             })();
+          },
+          async createTicket(input) {
+            const s = state();
+            const failure = s.nextTicketFailure;
+            s.nextTicketFailure = null;
+            if (typeof failure === 'string') {
+              throw new SupportChatProviderError(failure);
+            }
+            if (failure) {
+              throw failure;
+            }
+            s.tickets.push(structuredClone(input));
           },
         }) satisfies SupportChatProvider,
     );

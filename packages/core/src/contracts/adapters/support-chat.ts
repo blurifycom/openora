@@ -47,6 +47,13 @@ export const SupportCustomerContextSchema = z
   .strict();
 export type SupportCustomerContext = z.infer<typeof SupportCustomerContextSchema>;
 
+/** An offline ticket a player writes to support, outside a live chat. */
+export type SupportTicketRequest = {
+  requester: { name: string; email: string };
+  language: string;
+  message: string;
+};
+
 export type SupportChatProvider = {
   /**
    * Without `customerId` the vendor creates a new chat customer; with it, a token for that
@@ -60,6 +67,15 @@ export type SupportChatProvider = {
    * reordered sync writes the same values again.
    */
   syncCustomer(customerId: string, context: SupportCustomerContext): Promise<void>;
+
+  /**
+   * Creates exactly one ticket authored by the customer, with `requester` as given as its
+   * requester and in no group: routing it is the vendor's. Not idempotent - every call is a new
+   * ticket, and core never retries one. On failure, throw `SupportChatProviderError` with a listed
+   * reason. Mask the email in any log line. Optional: without it, the ticket route answers not
+   * configured.
+   */
+  createTicket?(input: SupportTicketRequest): Promise<void>;
 };
 
 export const SUPPORT_CHAT_PROVIDER: Token<SupportChatProvider> =

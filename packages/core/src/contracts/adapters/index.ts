@@ -320,6 +320,7 @@ export type {
   SupportChatCustomerToken,
   SupportCustomerContext,
   SupportChatProvider,
+  SupportTicketRequest,
 } from './support-chat.js';
 export {
   SUPPORT_CHAT_PROVIDER,

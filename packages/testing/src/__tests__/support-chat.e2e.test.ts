@@ -32,6 +32,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { promoPlayerRank } from '@openora/core/promo/schema/gamification';
 import {
   asAdmin,
+  asPlayer,
   assignIamRoleByKey,
   bootE2e,
   clearCapturedEmails,
@@ -635,6 +636,186 @@ describe('POST /support-chat/session', () => {
     for (const secret of ['+48123456789', '1990-01-01', 'Secret', 'Person', 'balance']) {
       expect(everything).not.toContain(secret);
     }
+  });
+});
+
+const TICKETS = '/support-chat/tickets';
+
+const ticketsTo = (email: string) =>
+  readSupportChatCalls().tickets.filter((ticket) => ticket.requester.email === email);
+
+const ticketAudits = (playerId: string) =>
+  testApp.container
+    .get(DRIZZLE)
+    .db.select()
+    .from(auditLog)
+    .where(
+      and(eq(auditLog.action, 'support_chat.ticket.created'), eq(auditLog.resourceId, playerId)),
+    );
+
+describe('offline ticket', () => {
+  it('files one ticket under the account name, email and language and audits it without either', async () => {
+    const p = await newPlayer();
+    await testApp.container
+      .get(DRIZZLE)
+      .db.update(user)
+      .set({ language: 'de' })
+      .where(eq(user.id, p.userId));
+    const [{ username } = { username: '' }] = await testApp.container
+      .get(DRIZZLE)
+      .db.select({ username: user.username })
+      .from(user)
+      .where(eq(user.id, p.userId));
+
+    const res = await p.client.post(TICKETS, { message: '  hi  ' });
+
+    expect(res.status).toBe(200);
+    expect(await body(res)).toEqual({ success: true });
+    expect(ticketsTo(p.email)).toEqual([
+      { requester: { name: username, email: p.email }, language: 'de', message: 'hi' },
+    ]);
+    const audits = await ticketAudits(p.playerId);
+    expect(audits).toEqual([
+      expect.objectContaining({ actorType: 'player', actorId: p.userId, resourceType: 'player' }),
+    ]);
+    expect(JSON.stringify(audits)).not.toContain(p.email);
+    expect(JSON.stringify(audits)).not.toContain('"hi"');
+  });
+
+  it('refuses a body naming the requester or another player with 400 and files nothing', async () => {
+    const p = await newPlayer();
+    const victim = await newPlayer();
+    const res = await p.client.post(TICKETS, {
+      message: 'hello',
+      email: victim.email,
+      name: 'Support Team',
+      userId: victim.userId,
+      language: 'fr',
+    });
+
+    expect(res.status).toBe(400);
+    expect(ticketsTo(p.email)).toHaveLength(0);
+    expect(ticketsTo(victim.email)).toHaveLength(0);
+  });
+
+  it('refuses a guest with 401 and files nothing', async () => {
+    const before = readSupportChatCalls().tickets.length;
+    const res = await testApp.app.request(TICKETS, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: 'hello' }),
+    });
+
+    expect(res.status).toBe(401);
+    expect(readSupportChatCalls().tickets).toHaveLength(before);
+  });
+
+  it("answers 429 on a player's 6th ticket in 10 minutes while another player still files one", async () => {
+    const p = await newPlayer();
+    for (let call = 0; call < 5; call++) {
+      expect((await p.client.post(TICKETS, { message: `ticket ${call}` })).status).toBe(200);
+    }
+    const refused = await p.client.post(TICKETS, { message: 'one more' });
+
+    expect(refused.status).toBe(429);
+    const error = await body(refused);
+    expect(error['code']).toBe('TOO_MANY_REQUESTS');
+    expect((error['data'] as { retryAfterMs: number }).retryAfterMs).toBeGreaterThan(0);
+    expect(ticketsTo(p.email)).toHaveLength(5);
+    const other = await newPlayer();
+    expect((await other.client.post(TICKETS, { message: 'hello' })).status).toBe(200);
+  });
+
+  it('refuses an empty, blank, too long, missing or non-text message with 400 without spending the limit', async () => {
+    const p = await newPlayer();
+    for (const invalid of [
+      { message: '' },
+      { message: '   ' },
+      { message: 'x'.repeat(5001) },
+      {},
+      { message: 42 },
+    ]) {
+      expect((await p.client.post(TICKETS, invalid)).status, JSON.stringify(invalid)).toBe(400);
+    }
+    expect(ticketsTo(p.email)).toHaveLength(0);
+
+    const longest = 'x'.repeat(5000);
+    expect((await p.client.post(TICKETS, { message: longest })).status).toBe(200);
+    for (let call = 0; call < 4; call++) {
+      expect((await p.client.post(TICKETS, { message: `ticket ${call}` })).status).toBe(200);
+    }
+    expect(ticketsTo(p.email)[0]?.message).toBe(longest);
+  });
+
+  it('answers 503 not configured when no provider is bound', async () => {
+    const { client } = await newPlayer(unconfiguredApp);
+    const res = await client.post(TICKETS, { message: 'hello' });
+
+    expect(res.status).toBe(503);
+    expect(await body(res)).toMatchObject({ message: 'Support chat is not configured' });
+  });
+
+  it('answers an admin without a player profile 404 and files nothing', async () => {
+    const before = readSupportChatCalls().tickets.length;
+    const res = await admin.post(TICKETS, { message: 'hello' });
+
+    expect(res.status).toBe(404);
+    expect(readSupportChatCalls().tickets).toHaveLength(before);
+  });
+
+  it('files the ticket under the new email after an email change', async () => {
+    const p = await newPlayer();
+    const newEmail = `support-chat-new-${randomUUID()}@e2e.test`;
+    clearCapturedEmails();
+    await ok(
+      await p.client.post('/identity/email/change/request', {
+        newEmail,
+        currentPassword: PASSWORD,
+      }),
+    );
+    const mail = await waitForEmail(
+      newEmail,
+      (m) => m.subject === 'Confirm your new email address',
+    );
+    const otp = /(\d{6})/.exec(mail.text)?.[1];
+    await ok(await p.client.post('/identity/email/change/confirm', { newEmail, otp }));
+    // The change ends the player's sessions, so they sign in again under the new address.
+    const client = await asPlayer(testApp.app, { email: newEmail });
+
+    expect((await client.post(TICKETS, { message: 'hello' })).status).toBe(200);
+    expect(ticketsTo(newEmail)).toHaveLength(1);
+    expect(ticketsTo(p.email)).toHaveLength(0);
+  });
+
+  it('files two tickets for two concurrent identical posts', async () => {
+    const p = await newPlayer();
+    const answers = await Promise.all([
+      p.client.post(TICKETS, { message: 'same' }),
+      p.client.post(TICKETS, { message: 'same' }),
+    ]);
+
+    expect(answers.map((res) => res.status)).toEqual([200, 200]);
+    expect(ticketsTo(p.email)).toHaveLength(2);
+    expect(await ticketAudits(p.playerId)).toHaveLength(2);
+  });
+
+  it('refuses a player whose email is not verified with 403 email_not_verified and files nothing', async () => {
+    const p = await newPlayer();
+    await testApp.container
+      .get(DRIZZLE)
+      .db.update(user)
+      .set({ emailVerified: false })
+      .where(eq(user.id, p.userId));
+
+    const res = await p.client.post(TICKETS, { message: 'hello' });
+
+    expect(res.status).toBe(403);
+    expect(await body(res)).toMatchObject({
+      code: 'FORBIDDEN',
+      data: { reason: 'email_not_verified' },
+    });
+    expect(ticketsTo(p.email)).toHaveLength(0);
+    expect(await ticketAudits(p.playerId)).toHaveLength(0);
   });
 });
 

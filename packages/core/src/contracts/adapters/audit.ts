@@ -106,6 +106,7 @@ export type DirectAuditAction =
   | 'chat.cooldown.lifted'
   | 'chat.cooldown.expired'
   | 'support_chat.customer.linked'
+  | 'support_chat.ticket.created'
   | 'sportsbook.config.set'
   | 'sportsbook.config.suspended'
   | 'sportsbook.config.resumed'

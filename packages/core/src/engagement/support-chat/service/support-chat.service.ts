@@ -49,6 +49,14 @@ export const SupportChatLinkMissingError = createDomainError<[]>(
   () => 'Support chat could not be opened',
 );
 
+// A unique email is not a proven one: an account can be registered on someone else's
+// not-yet-registered address, and the vendor files the ticket under whoever owns that email.
+export const SupportTicketEmailNotVerifiedError = createDomainError<[]>(
+  'SupportTicketEmailNotVerifiedError',
+  () => 'Verify your email address before writing to support',
+  { reason: 'email_not_verified' },
+);
+
 export type SupportCustomerReading = Omit<SupportCustomerContext, 'accountStatus' | 'syncedAt'> & {
   playerStatus: PlayerStatus;
 };
@@ -181,6 +189,58 @@ export class SupportChatService {
         logger.error({ err, userId }, 'support-chat sync not enqueued on session open'),
       );
     return token;
+  }
+
+  /**
+   * Hands the vendor one ticket from the caller's own player, under the name, email and language
+   * read from the account now. Not idempotent: a double submit is two tickets.
+   */
+  async createTicket(userId: User['id'], message: string, clientMeta: ClientMeta): Promise<void> {
+    const playerId = await this.deps.identityReader.getPlayerIdByUserId(userId);
+    if (!playerId) {
+      throw new SupportChatPlayerNotFoundError(userId);
+    }
+    if (!this.deps.provider.createTicket) {
+      throw new SupportChatNotConfiguredError();
+    }
+    const [account] = await this.deps.drizzle.db
+      .select({
+        username: user.username,
+        email: user.email,
+        language: user.language,
+        emailVerified: user.emailVerified,
+      })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (!account) {
+      throw new SupportChatPlayerNotFoundError(userId);
+    }
+    if (!account.emailVerified) {
+      throw new SupportTicketEmailNotVerifiedError();
+    }
+    try {
+      await this.deps.provider.createTicket({
+        requester: { name: account.username, email: account.email },
+        language: account.language,
+        message,
+      });
+    } catch (err) {
+      logger.warn({ playerId, reason: reasonOf(err) }, 'support ticket not created');
+      throw new SupportChatUnavailableError();
+    }
+    // The ticket exists at the vendor by now, so a failed audit write must not answer the player
+    // as if it did not.
+    await this.deps.audit
+      .record({
+        actorType: 'player',
+        actorId: userId,
+        action: 'support_chat.ticket.created',
+        resourceType: 'player',
+        resourceId: playerId,
+        ...clientMeta,
+      })
+      .catch(() => logger.error({ playerId }, 'support ticket created but not audited'));
   }
 
   /** Writes the current context onto the player's vendor customer; a player who never opened the chat is skipped. */

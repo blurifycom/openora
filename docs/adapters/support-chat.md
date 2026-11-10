@@ -82,10 +82,35 @@ strict, so a field reaches the vendor only when it is added to the contract on p
    chat gets no sync. A username change has no event today, so it reaches the vendor on the
    player's next chat open; the same holds for an active-currency change.
 
+## Offline tickets
+
+A player who does not want a live chat can write a ticket through the tickets route instead. The
+body carries the message only, trimmed, between 1 and 5000 characters; any other field is refused,
+so a player cannot file a ticket under someone else's name or address. Core hands the adapter the
+requester's name (the account username) and email and the account language, all read from the
+account on every request, plus the message.
+
+- **The email must be verified.** A unique email is not a proven one: an account can be registered
+  on an address its owner has not registered yet, and the vendor files the ticket under whoever owns
+  that address. A player with an unverified email gets a forbidden refusal with the reason
+  `email_not_verified`, and the adapter is not called.
+- **One ticket per call, as given.** The adapter creates exactly one ticket authored by the
+  customer, with the requester core sent and in no group; routing is the vendor's. Mask the email in
+  any log line, and throw the port's provider error with a listed reason on failure. The player
+  then gets the generic unavailable refusal; the reason goes to the log only, and neither the email
+  nor the message reaches the response, a log line or the error reporter.
+- **No dedupe.** The call is not idempotent and core never retries it, so a double submit files two
+  tickets. Each player may file 5 tickets in 10 minutes; a body refused as invalid spends none.
+- **Audited without content.** Each created ticket leaves one `support_chat.ticket.created` audit
+  row naming the player, without the email or the message. A failed audit write after the vendor
+  created the ticket is logged as an error and the player still gets success.
+- **Optional on the port.** A provider without the ticket method answers the tickets route as not
+  configured, and boot logs one warning; the session route works as before.
+
 ## Unbound
 
-Core binds no provider and no history reader. Without a provider, the session route answers
-service-unavailable as not configured and boot logs one warning; without a reader, the history
+Core binds no provider and no history reader. Without a provider, the session and tickets routes
+answer service-unavailable as not configured and boot logs one warning; without a reader, the history
 route does the same with its own warning. Whether a player is linked is read from the database, not
 from the process, so a refresh still enqueues a sync for a player another process linked. A
 process without a provider fails that job, logging a warning per attempt, and the queue retries
