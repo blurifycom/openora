@@ -76,10 +76,15 @@ export type PromoOfferStatus = z.infer<typeof PromoOfferStatusSchema>;
 // or game from wagering; above 100 would count a bet for more than it was worth.
 export const CONTRIBUTION_PERCENT_PRECISION = 5;
 export const CONTRIBUTION_PERCENT_SCALE = 2;
+const CONTRIBUTION_PERCENT_FORMAT = /^\d{1,3}(\.\d{1,2})?$/;
 export const ContributionPercentSchema = z
   .string()
-  .regex(/^\d{1,3}(\.\d{1,2})?$/, 'must be a decimal string with at most two decimal places')
+  .regex(CONTRIBUTION_PERCENT_FORMAT, 'must be a decimal string with at most two decimal places')
   .refine((v) => {
+    // Zod still runs this after the format check failed; let that error be the one reported.
+    if (!CONTRIBUTION_PERCENT_FORMAT.test(v)) {
+      return true;
+    }
     const [whole = '0', fraction = ''] = v.split('.');
     return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0')) <= 10_000n;
   }, 'must not exceed 100');
