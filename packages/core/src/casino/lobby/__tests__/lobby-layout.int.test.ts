@@ -9,6 +9,7 @@ import { lobbyLayout, lobbySection } from '../schema/index.js';
 import {
   LobbyLayoutVersionConflictError,
   LobbySectionFieldError,
+  LobbySectionNotFoundError,
   LobbyService,
 } from '../service/lobby.service.js';
 
@@ -177,7 +178,159 @@ describe('LobbyService aggregate layout', () => {
     });
     expect(events.emit).toHaveBeenCalledWith(
       'lobby.layout.updated',
-      expect.objectContaining({ before: { version: 0, sections: [] }, after: saved }),
+      expect.objectContaining({
+        layoutKey: 'global',
+        before: { version: 0, sections: [] },
+        after: saved,
+      }),
+    );
+  });
+});
+
+describe('LobbyService layout keys', () => {
+  async function seedTwoLayouts(svc: LobbyService) {
+    const casino = await svc.replaceLayout({
+      version: 0,
+      sections: [hero('Casino A'), hero('Casino B')],
+      ...ACTOR,
+    });
+    const home = await svc.replaceLayout({
+      layoutKey: 'home',
+      version: 0,
+      sections: [hero('Home A'), hero('Home B', [], false)],
+      ...ACTOR,
+    });
+    return { casino, home };
+  }
+
+  function titles(sections: Array<{ config: Record<string, unknown> }>) {
+    return sections.map((section) => section.config['title']);
+  }
+
+  it('treats an omitted key as the global layout', async () => {
+    const { svc } = service();
+    const { casino } = await seedTwoLayouts(svc);
+
+    expect(await svc.getAdminLayout()).toEqual(casino);
+    expect(await svc.getAdminLayout('global')).toEqual(casino);
+    expect(await svc.getLayout()).toEqual(await svc.getLayout('global'));
+  });
+
+  it('reads each layout in isolation', async () => {
+    const { svc } = service();
+    const { casino, home } = await seedTwoLayouts(svc);
+
+    expect(titles((await svc.getAdminLayout('global')).sections)).toEqual(['Casino A', 'Casino B']);
+    expect(await svc.getAdminLayout('home')).toEqual(home);
+    expect(titles(home.sections)).toEqual(['Home A', 'Home B']);
+    expect((await svc.getLayout('home')).map((section) => section.data)).toEqual([
+      { title: 'Home A', items: [], resolved: true },
+    ]);
+    expect((await svc.getLayout('global')).map((section) => section.id)).toEqual(
+      casino.sections.map((section) => section.id),
+    );
+    expect(await svc.getAdminLayout('unused')).toEqual({ version: 0, sections: [] });
+    expect(await svc.getLayout('unused')).toEqual([]);
+  });
+
+  it('keeps one sort order per layout', async () => {
+    const { svc } = service();
+    const { casino, home } = await seedTwoLayouts(svc);
+
+    expect(casino.sections.map((section) => section.sortOrder)).toEqual([0, 1]);
+    expect(home.sections.map((section) => section.sortOrder)).toEqual([0, 1]);
+  });
+
+  it('deletes omitted sections of the saved layout only', async () => {
+    const { svc } = service();
+    const { casino, home } = await seedTwoLayouts(svc);
+
+    const emptied = await svc.replaceLayout({
+      layoutKey: 'home',
+      version: home.version,
+      sections: [],
+      ...ACTOR,
+    });
+    expect(emptied).toEqual({ version: 2, sections: [] });
+    expect(await svc.getAdminLayout('global')).toEqual(casino);
+
+    const [kept] = casino.sections;
+    if (!kept) {
+      throw new Error('casino section was not created');
+    }
+    const trimmed = await svc.replaceLayout({
+      version: casino.version,
+      sections: [{ id: kept.id, ...hero('Casino A') }],
+      ...ACTOR,
+    });
+    expect(titles(trimmed.sections)).toEqual(['Casino A']);
+    expect(await svc.getAdminLayout('home')).toEqual(emptied);
+  });
+
+  it('versions each layout independently', async () => {
+    const { svc } = service();
+    const { casino, home } = await seedTwoLayouts(svc);
+    expect(casino.version).toBe(1);
+    expect(home.version).toBe(1);
+
+    await svc.replaceLayout({ layoutKey: 'home', version: 1, sections: [], ...ACTOR });
+    await expect(
+      svc.replaceLayout({ layoutKey: 'home', version: 1, sections: [], ...ACTOR }),
+    ).rejects.toThrow(LobbyLayoutVersionConflictError);
+
+    const saved = await svc.replaceLayout({ version: 1, sections: [hero('Casino C')], ...ACTOR });
+    expect(saved.version).toBe(2);
+  });
+
+  it('lets writers of different layouts commit concurrently', async () => {
+    const { svc } = service();
+    const writes = await Promise.all([
+      svc.replaceLayout({ version: 0, sections: [hero('Casino')], ...ACTOR }),
+      svc.replaceLayout({ layoutKey: 'home', version: 0, sections: [hero('Home')], ...ACTOR }),
+    ]);
+
+    expect(writes.map((write) => write.version)).toEqual([1, 1]);
+    expect(titles((await svc.getAdminLayout()).sections)).toEqual(['Casino']);
+    expect(titles((await svc.getAdminLayout('home')).sections)).toEqual(['Home']);
+  });
+
+  it('rejects a section id that belongs to another layout instead of moving it', async () => {
+    const { svc } = service();
+    const { casino, home } = await seedTwoLayouts(svc);
+    const [foreign] = casino.sections;
+    if (!foreign) {
+      throw new Error('casino section was not created');
+    }
+
+    await expect(
+      svc.replaceLayout({
+        layoutKey: 'home',
+        version: home.version,
+        sections: [{ id: foreign.id, ...hero('Stolen') }],
+        ...ACTOR,
+      }),
+    ).rejects.toThrow(LobbySectionNotFoundError);
+
+    expect(await svc.getAdminLayout('global')).toEqual(casino);
+    expect(await svc.getAdminLayout('home')).toEqual(home);
+  });
+
+  it('carries the layout key on the audit event', async () => {
+    const { svc, events } = service();
+    const saved = await svc.replaceLayout({
+      layoutKey: 'home',
+      version: 0,
+      sections: [hero('Audited')],
+      ...ACTOR,
+    });
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'lobby.layout.updated',
+      expect.objectContaining({
+        layoutKey: 'home',
+        before: { version: 0, sections: [] },
+        after: saved,
+      }),
     );
   });
 });

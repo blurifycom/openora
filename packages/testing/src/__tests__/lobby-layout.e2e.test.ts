@@ -20,8 +20,9 @@ async function json(res: Response): Promise<Record<string, unknown>> {
   return (await res.json()) as Record<string, unknown>;
 }
 
-async function currentVersion() {
-  const res = await admin.get('/backoffice/lobby/layout');
+async function currentVersion(layoutKey?: string) {
+  const query = layoutKey ? `?layoutKey=${layoutKey}` : '';
+  const res = await admin.get(`/backoffice/lobby/layout${query}`);
   expect(res.status).toBe(200);
   return ((await json(res))['version'] as number) ?? 0;
 }
@@ -118,6 +119,95 @@ describe('lobby layout aggregate', () => {
         after: expect.objectContaining({ version: expect.any(Number) }),
       });
     });
+  });
+
+  it('saves and serves a keyed layout without touching the default one', async () => {
+    const layoutKey = `home-${randomUUID().slice(0, 8)}`;
+    const globalBefore = await json(await admin.get('/backoffice/lobby/layout'));
+    const gameId = randomUUID();
+
+    const save = await admin.put('/backoffice/lobby/layout', {
+      layoutKey,
+      version: 0,
+      sections: [{ type: 'test-game', config: { title: 'Home', gameId }, isEnabled: true }],
+    });
+    expect(save.status).toBe(200);
+    const saved = await json(save);
+    expect(saved['version']).toBe(1);
+
+    expect(await json(await admin.get(`/backoffice/lobby/layout?layoutKey=${layoutKey}`))).toEqual(
+      saved,
+    );
+    expect(await json(await admin.get('/backoffice/lobby/layout'))).toEqual(globalBefore);
+
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `lobby-keyed-${randomUUID()}@e2e.test`,
+    });
+    const keyed = await client.get(`/lobby/layout?layoutKey=${layoutKey}`);
+    expect(keyed.status).toBe(200);
+    expect(await keyed.json()).toMatchObject([
+      { type: 'test-game', data: { gameId, resolved: true } },
+    ]);
+
+    const cleared = await admin.put('/backoffice/lobby/layout', {
+      layoutKey,
+      version: 1,
+      sections: [],
+    });
+    expect(cleared.status).toBe(200);
+    expect(await json(await admin.get('/backoffice/lobby/layout'))).toEqual(globalBefore);
+
+    await vi.waitFor(async () => {
+      const auditRes = await admin.get(
+        `/audit/logs?action=lobby.layout.updated&resourceId=${layoutKey}`,
+      );
+      const entries = (await json(auditRes))['items'] as Array<{ resourceId: string }>;
+      expect(entries.length).toBeGreaterThan(0);
+      expect(entries.every((entry) => entry.resourceId === layoutKey)).toBe(true);
+    });
+  });
+
+  it('rejects a section id from another layout and a malformed layout key', async () => {
+    const layoutKey = `home-${randomUUID().slice(0, 8)}`;
+    const globalSave = await admin.put('/backoffice/lobby/layout', {
+      version: await currentVersion(),
+      sections: [
+        { type: 'test-game', config: { title: 'Casino', gameId: randomUUID() }, isEnabled: true },
+      ],
+    });
+    expect(globalSave.status).toBe(200);
+    const globalLayout = await json(globalSave);
+    const [foreign] = globalLayout['sections'] as Array<{ id: string }>;
+    if (!foreign) {
+      throw new Error('global section was not created');
+    }
+
+    const steal = await admin.put('/backoffice/lobby/layout', {
+      layoutKey,
+      version: await currentVersion(layoutKey),
+      sections: [
+        {
+          id: foreign.id,
+          type: 'test-game',
+          config: { title: 'Stolen', gameId: randomUUID() },
+          isEnabled: true,
+        },
+      ],
+    });
+    expect(steal.status).toBe(404);
+    expect(await json(await admin.get('/backoffice/lobby/layout'))).toEqual(globalLayout);
+
+    expect((await admin.get('/backoffice/lobby/layout?layoutKey=Home%20Page')).status).toBe(400);
+    expect((await admin.get('/lobby/layout?layoutKey=a_b')).status).toBe(400);
+    expect(
+      (
+        await admin.put('/backoffice/lobby/layout', {
+          layoutKey: 'x'.repeat(41),
+          version: 0,
+          sections: [],
+        })
+      ).status,
+    ).toBe(400);
   });
 
   it('rejects player and anonymous access to both backoffice routes', async () => {

@@ -15,10 +15,11 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { LobbySectionDataSchema } from '@openora/core/contracts';
+import { DEFAULT_LOBBY_LAYOUT_KEY, LobbySectionDataSchema } from '@openora/core/contracts';
 import type {
   CacheAdapter,
   ClientMeta,
+  LobbyLayoutKey,
   LobbySectionCatalog,
   LobbySectionConfig,
   LobbySectionData,
@@ -77,6 +78,10 @@ type Actor = {
   actorId?: User['id'];
 } & ClientMeta;
 
+type ReplaceLayoutInput = Omit<ReplaceLobbyLayoutInput, 'layoutKey'> & {
+  layoutKey?: LobbyLayoutKey;
+} & Actor;
+
 type PreparedLayoutSection = {
   id: string;
   isNew: boolean;
@@ -88,13 +93,13 @@ type PreparedLayoutSection = {
 
 const logger = createLogger('lobby');
 
-const GLOBAL_LAYOUT_KEY = 'global';
-const LAYOUT_LOCK_KEY = 'lobby:global-layout';
 const LOBBY_CACHE_TTL_MS = 30_000;
-const LAYOUT_CACHE_KEY = 'lobby:layout';
 const SECTION_OPERATION_CONCURRENCY = 5;
 const CATEGORIES_CACHE_KEY = 'lobby:categories';
 const FEATURED_CACHE_KEY = 'lobby:featured:v2';
+
+const layoutLockKey = (layoutKey: LobbyLayoutKey) => `lobby:layout-lock:${layoutKey}`;
+const layoutCacheKey = (layoutKey: LobbyLayoutKey) => `lobby:layout:${layoutKey}`;
 
 function toGameSummary(row: {
   game: typeof game.$inferSelect;
@@ -127,8 +132,10 @@ export class LobbyService {
     private readonly cache?: CacheAdapter,
   ) {}
 
-  async getLayout() {
-    return cached(this.cache, LAYOUT_CACHE_KEY, LOBBY_CACHE_TTL_MS, () => this.loadLayout());
+  async getLayout(layoutKey: LobbyLayoutKey = DEFAULT_LOBBY_LAYOUT_KEY) {
+    return cached(this.cache, layoutCacheKey(layoutKey), LOBBY_CACHE_TTL_MS, () =>
+      this.loadLayout(layoutKey),
+    );
   }
 
   async listCategories() {
@@ -284,25 +291,27 @@ export class LobbyService {
     );
   }
 
-  async getAdminLayout(): Promise<LobbyAdminLayout> {
+  async getAdminLayout(
+    layoutKey: LobbyLayoutKey = DEFAULT_LOBBY_LAYOUT_KEY,
+  ): Promise<LobbyAdminLayout> {
     return this.drizzle.db.transaction(
       async (tx) => {
         const [layout] = await tx
           .select({ version: lobbyLayout.version })
           .from(lobbyLayout)
-          .where(eq(lobbyLayout.layoutKey, GLOBAL_LAYOUT_KEY));
+          .where(eq(lobbyLayout.layoutKey, layoutKey));
 
         return {
           version: layout?.version ?? 0,
-          sections: await this.loadAdminSections(tx),
+          sections: await this.loadAdminSections(tx, layoutKey),
         };
       },
       { isolationLevel: 'repeatable read', accessMode: 'read only' },
     );
   }
 
-  async replaceLayout(input: ReplaceLobbyLayoutInput & Actor): Promise<LobbyAdminLayout> {
-    const { actorId, ip, userAgent } = input;
+  async replaceLayout(input: ReplaceLayoutInput): Promise<LobbyAdminLayout> {
+    const { actorId, ip, userAgent, layoutKey = DEFAULT_LOBBY_LAYOUT_KEY } = input;
 
     this.assertUniqueSectionIds(input.sections.flatMap((section) => section.id ?? []));
 
@@ -321,16 +330,16 @@ export class LobbyService {
     await this.validateSections(preparedSections);
 
     const { before, after } = await this.drizzle.db.transaction((tx) =>
-      withAdvisoryXactLock(tx, LAYOUT_LOCK_KEY, async () => {
+      withAdvisoryXactLock(tx, layoutLockKey(layoutKey), async () => {
         await tx
           .insert(lobbyLayout)
-          .values({ layoutKey: GLOBAL_LAYOUT_KEY })
+          .values({ layoutKey })
           .onConflictDoNothing({ target: lobbyLayout.layoutKey });
 
         const [layout] = await tx
           .select()
           .from(lobbyLayout)
-          .where(eq(lobbyLayout.layoutKey, GLOBAL_LAYOUT_KEY))
+          .where(eq(lobbyLayout.layoutKey, layoutKey))
           .for('update');
 
         if (!layout) {
@@ -341,24 +350,31 @@ export class LobbyService {
           throw new LobbyLayoutVersionConflictError(input.version, layout.version);
         }
 
-        const before = { version: layout.version, sections: await this.loadAdminSections(tx) };
+        const before = {
+          version: layout.version,
+          sections: await this.loadAdminSections(tx, layoutKey),
+        };
         this.assertExistingSectionIds(before.sections, preparedSections);
-        await this.replaceSections(tx, preparedSections);
+        await this.replaceSections(tx, layoutKey, preparedSections);
 
         const nextVersion = layout.version + 1;
         await tx
           .update(lobbyLayout)
           .set({ version: nextVersion })
           .where(eq(lobbyLayout.id, layout.id));
-        const after = { version: nextVersion, sections: await this.loadAdminSections(tx) };
+        const after = {
+          version: nextVersion,
+          sections: await this.loadAdminSections(tx, layoutKey),
+        };
         return { before, after };
       }),
     );
 
-    await invalidate(this.cache, LAYOUT_CACHE_KEY);
+    await invalidate(this.cache, layoutCacheKey(layoutKey));
 
     this.events.emit('lobby.layout.updated', {
       actorId,
+      layoutKey,
       ip: ip ?? null,
       userAgent: userAgent ?? null,
       before,
@@ -368,11 +384,11 @@ export class LobbyService {
     return after;
   }
 
-  private async loadLayout(): Promise<LobbyResolvedSection[]> {
+  private async loadLayout(layoutKey: LobbyLayoutKey): Promise<LobbyResolvedSection[]> {
     const sections = await this.drizzle.db
       .select()
       .from(lobbySection)
-      .where(eq(lobbySection.isEnabled, true))
+      .where(and(eq(lobbySection.layoutKey, layoutKey), eq(lobbySection.isEnabled, true)))
       .orderBy(asc(lobbySection.sortOrder), asc(lobbySection.createdAt));
 
     const groups = this.groupSections(sections);
@@ -524,13 +540,14 @@ export class LobbyService {
     return definition;
   }
 
-  private async loadAdminSections(tx: DrizzleTx) {
+  private async loadAdminSections(tx: DrizzleTx, layoutKey: LobbyLayoutKey) {
     const sections = await tx
       .select()
       .from(lobbySection)
+      .where(eq(lobbySection.layoutKey, layoutKey))
       .orderBy(asc(lobbySection.sortOrder), asc(lobbySection.createdAt));
 
-    return sections.map((section) =>
+    return sections.map(({ layoutKey: _layoutKey, ...section }) =>
       serializeRow(section, { dateFields: ['createdAt', 'updatedAt'] as const }),
     );
   }
@@ -566,20 +583,26 @@ export class LobbyService {
     }
   }
 
-  private async replaceSections(tx: DrizzleTx, sections: PreparedLayoutSection[]) {
+  private async replaceSections(
+    tx: DrizzleTx,
+    layoutKey: LobbyLayoutKey,
+    sections: PreparedLayoutSection[],
+  ) {
     const sectionIds = sections.map((section) => section.id);
+    const inLayout = eq(lobbySection.layoutKey, layoutKey);
 
     if (sectionIds.length === 0) {
-      await tx.delete(lobbySection);
+      await tx.delete(lobbySection).where(inLayout);
       return;
     }
 
-    await tx.delete(lobbySection).where(notInArray(lobbySection.id, sectionIds));
+    await tx.delete(lobbySection).where(and(inLayout, notInArray(lobbySection.id, sectionIds)));
     await tx
       .insert(lobbySection)
       .values(
         sections.map((section) => ({
           id: section.id,
+          layoutKey,
           type: section.type,
           config: section.config,
           sortOrder: section.sortOrder,

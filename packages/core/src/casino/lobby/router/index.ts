@@ -22,7 +22,7 @@ export function createLobbyRouter({
   const os = implement(lobbyContract).$context<OssContext>();
 
   return os.router({
-    getLayout: os.getLayout.handler(() => lobby.getLayout()),
+    getLayout: os.getLayout.handler(({ input }) => lobby.getLayout(input.layoutKey)),
     listCategories: os.listCategories.handler(() => lobby.listCategories()),
 
     getCategoryBySlug: os.getCategoryBySlug.handler(({ input }) =>
@@ -35,9 +35,9 @@ export function createLobbyRouter({
 
     search: os.search.handler(({ input }) => lobby.search(input.q)),
 
-    getAdminLayout: os.getAdminLayout.handler(async ({ context }) => {
+    getAdminLayout: os.getAdminLayout.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
-      return lobby.getAdminLayout();
+      return lobby.getAdminLayout(input.layoutKey);
     }),
 
     replaceLayout: os.replaceLayout.handler(async ({ input, context }) => {

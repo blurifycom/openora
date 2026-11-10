@@ -9,6 +9,14 @@ export const LobbySectionTypeSchema = z
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 export type LobbySectionType = z.infer<typeof LobbySectionTypeSchema>;
 
+export const DEFAULT_LOBBY_LAYOUT_KEY = 'global';
+export const LobbyLayoutKeySchema = z
+  .string()
+  .max(40)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  .describe('Consumer-defined layout key; each key is an independent layout.');
+export type LobbyLayoutKey = z.infer<typeof LobbyLayoutKeySchema>;
+
 export const LobbySectionConfigSchema = z.record(z.string(), z.json());
 export type LobbySectionConfig = z.infer<typeof LobbySectionConfigSchema>;
 export const LobbySectionDataSchema = z.json();
