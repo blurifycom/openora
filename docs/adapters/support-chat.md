@@ -96,9 +96,10 @@ account on every request, plus the message.
   `email_not_verified`, and the adapter is not called.
 - **One ticket per call, as given.** The adapter creates exactly one ticket authored by the
   customer, with the requester core sent and in no group; routing is the vendor's. It answers the
-  vendor's own id for that ticket: 1-200 ASCII letters, digits and `_ . : # / = + ~ -` only, so
-  never an email address (`@`) or text with spaces. A single word would still pass, so the adapter
-  must answer the vendor's id field, never another one. Core validates the answer: one off
+  vendor's own id for that ticket: 1-200 ASCII letters, digits and `_ . : # / = + ~ -` only. That
+  shape is a sanity check against obvious mistakes such as an email address (`@`) or text with
+  spaces, not a guarantee the value holds no personal data: a username or an encoded email still
+  passes, so the adapter must answer the vendor's id field, never another one. Core validates the answer: one off
   that shape is logged as malformed, never itself, and the ticket is audited without an id; the
   player still gets success, since the ticket exists and a retry would file it twice. Mask the
   email in any log line, and throw the port's provider error with a listed reason on failure. The
@@ -111,8 +112,8 @@ account on every request, plus the message.
 - **Audited without content.** Each created ticket leaves one `support_chat.ticket.created` audit
   row naming the player and carrying the vendor's ticket id, so staff can match the row to the
   ticket; it holds neither the email nor the message, and the player never sees the id. A failed
-  audit write after the vendor created the ticket is logged as an error, with the error's name and
-  code only, and the player still gets success.
+  audit write after the vendor created the ticket is logged as an error with the error's name and
+  code and the player id, and the player still gets success.
 - **Optional on the port.** A provider without the ticket method answers the tickets route
   service-unavailable with the reason `not_configured`, and boot logs one warning; the session route works as before.
 

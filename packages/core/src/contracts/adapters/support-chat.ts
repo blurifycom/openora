@@ -52,10 +52,10 @@ export type SupportCustomerContext = z.infer<typeof SupportCustomerContextSchema
  * against this schema before the id reaches the audit row.
  */
 export const SupportTicketCreatedSchema = z.object({
-  // ASCII letters, digits and `_ . : # / = + ~ -` only, base64 ids included. Without `@`, `%` or
-  // whitespace, an email address or text with spaces answered by mistake gets no id recorded,
-  // instead of landing in the append-only audit chain. A single word still passes, so the
-  // adapter must answer the vendor's id field.
+  // ASCII letters, digits and `_ . : # / = + ~ -` only, base64 ids included: a sanity check that
+  // keeps an obvious mistake, such as an email address (`@`) or text with spaces, out of the
+  // append-only audit chain. It does not prove the value holds no personal data - a username or
+  // an encoded email still passes - so the adapter must answer the vendor's id field.
   ticketId: z
     .string()
     .min(1)
@@ -88,9 +88,10 @@ export type SupportChatProvider = {
   /**
    * Creates exactly one ticket authored by the customer, with `requester` as given as its
    * requester and in no group: routing it is the vendor's. Answers the vendor's own id for that
-   * ticket from the vendor's id field: 1-200 ASCII letters, digits and `_ . : # / = + ~ -`, so
-   * never an email address (`@`) or text with spaces, though a single word would still pass. Core
-   * records it on the audit row and never shows the player; an answer outside
+   * ticket from the vendor's id field: 1-200 ASCII letters, digits and `_ . : # / = + ~ -`. That
+   * shape is a sanity check against obvious mistakes such as an email address (`@`) or text with
+   * spaces, not a guarantee the value holds no personal data, so answer the vendor's id field and
+   * nothing else. Core records it on the audit row and never shows the player; an answer outside
    * `SupportTicketCreatedSchema` is logged as malformed and audited without an id, and the player
    * still gets success, since the ticket exists. Not idempotent - every call is a new ticket, and
    * core never retries one. On failure, throw `SupportChatProviderError` with a listed reason.
