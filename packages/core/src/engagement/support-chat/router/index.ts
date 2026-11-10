@@ -87,7 +87,7 @@ export function createSupportChatRouter({
           if (!session) {
             throw new SupportChatNotConfiguredError();
           }
-          await session.createTicket(userId, input.message, context.clientMeta);
+          await session.createTicket(userId, input, context.clientMeta);
           return { success: true as const };
         },
       );

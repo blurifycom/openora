@@ -21,6 +21,7 @@ import {
   type SupportChatCustomerToken,
   type SupportChatProvider,
   type SupportCustomerContext,
+  type SupportTicketRequest,
   type WalletReader,
 } from '@openora/core/contracts';
 import { user, type User } from '@openora/core/pam/schema/identity';
@@ -199,7 +200,11 @@ export class SupportChatService {
    * Hands the vendor one ticket from the caller's own player, under the name, email and language
    * read from the account now. Not idempotent: a double submit is two tickets.
    */
-  async createTicket(userId: User['id'], message: string, clientMeta: ClientMeta): Promise<void> {
+  async createTicket(
+    userId: User['id'],
+    { subject, message }: Pick<SupportTicketRequest, 'subject' | 'message'>,
+    clientMeta: ClientMeta,
+  ): Promise<void> {
     if (!this.deps.provider.createTicket) {
       throw new SupportChatNotConfiguredError();
     }
@@ -227,6 +232,7 @@ export class SupportChatService {
       answer = await this.deps.provider.createTicket({
         requester: { name: account.username, email: account.email },
         language: account.language,
+        subject,
         message,
       });
     } catch (err) {
@@ -257,8 +263,8 @@ export class SupportChatService {
 
   /**
    * The vendor's ticket id, or null when its answer is off the schema. Only the parsed id leaves
-   * here: the raw answer may hold the requester's email or the message, and the audit row it
-   * would land in is append-only.
+   * here: the raw answer may hold the requester's email, the subject or the message, and the audit
+   * row it would land in is append-only.
    */
   private ticketIdOf(playerId: Player['id'], answer: unknown): string | null {
     // safeParse rethrows what a getter on the answer throws, which is the adapter's text too.

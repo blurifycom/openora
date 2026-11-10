@@ -68,6 +68,7 @@ export type SupportTicketCreated = z.infer<typeof SupportTicketCreatedSchema>;
 export type SupportTicketRequest = {
   requester: { name: string; email: string };
   language: string;
+  subject: string;
   message: string;
 };
 
@@ -95,9 +96,9 @@ export type SupportChatProvider = {
    * `SupportTicketCreatedSchema` is logged as malformed and audited without an id, and the player
    * still gets success, since the ticket exists. Not idempotent - every call is a new ticket, and
    * core never retries one. On failure, throw `SupportChatProviderError` with a listed reason.
-   * Mask the email in any log line. `message` is untrusted player text, passed through untouched
-   * apart from trimming, HTML and control characters included: send it to the vendor as plain
-   * text, never as HTML. Optional: without it, the ticket route answers not configured.
+   * Mask the email in any log line. `subject` and `message` are untrusted player text, passed
+   * through untouched apart from trimming, HTML and control characters included: send both to the
+   * vendor as plain text, never as HTML, and never log either. Optional: without it, the ticket route answers not configured.
    */
   createTicket?(input: SupportTicketRequest): Promise<SupportTicketCreated>;
 };

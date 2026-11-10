@@ -236,13 +236,17 @@ describe('support chat sync failures that are not the adapter', () => {
 });
 
 describe('support ticket adapter failures', () => {
+  const SUBJECT = `withdrawal stuck ${randomUUID()}`;
   const MESSAGE = `please call me back ${randomUUID()}`;
 
   it.each<[string, (email: string) => SupportChatProviderError | Error]>([
     ['a provider error', () => new SupportChatProviderError('unavailable')],
-    ['a raw error holding the email and the message', (email) => new Error(`${email} ${MESSAGE}`)],
+    [
+      'a raw error holding the email, the subject and the message',
+      (email) => new Error(`${email} ${SUBJECT} ${MESSAGE}`),
+    ],
   ])(
-    'answers a generic 503 for %s, with neither email nor message reported, and audits nothing',
+    'answers a generic 503 for %s, with no email, subject or message reported, and audits nothing',
     async (_case, thrown) => {
       const reported: { error: unknown; context: unknown }[] = [];
       setErrorReporter((error, context) => reported.push({ error, context }));
@@ -250,16 +254,21 @@ describe('support ticket adapter failures', () => {
       const p = await registerAndMaterializePlayer(testApp, { email });
       failNextSupportTicket(thrown(email));
 
-      const refused = await p.client.post('/support-chat/tickets', { message: MESSAGE });
+      const refused = await p.client.post('/support-chat/tickets', {
+        subject: SUBJECT,
+        message: MESSAGE,
+      });
       const text = await refused.text();
 
       expect(refused.status).toBe(503);
       expect(JSON.parse(text)).toMatchObject({ data: { reason: 'unavailable' } });
       expect(text).not.toContain(email);
       expect(text).not.toContain(MESSAGE);
+      expect(text).not.toContain(SUBJECT);
       const seen = inspect(reported, { depth: null, showHidden: true });
       expect(seen).not.toContain(email);
       expect(seen).not.toContain(MESSAGE);
+      expect(seen).not.toContain(SUBJECT);
       expect(readSupportChatCalls().tickets.some((t) => t.requester.email === email)).toBe(false);
       const audits = await testApp.container
         .get(DRIZZLE)

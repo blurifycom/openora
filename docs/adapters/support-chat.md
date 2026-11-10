@@ -85,10 +85,12 @@ strict, so a field reaches the vendor only when it is added to the contract on p
 ## Offline tickets
 
 A player who does not want a live chat can write a ticket through the tickets route instead. The
-body carries the message only, trimmed, between 1 and 5000 characters; any other field is refused,
-so a player cannot file a ticket under someone else's name or address. Core hands the adapter the
+body carries a subject, trimmed, between 1 and 150 characters, and a message, trimmed, between 1
+and 5000 characters; both are required and any other field is refused, so a player cannot file a
+ticket under someone else's name or address. The contract exports both limits as
+`SUPPORT_TICKET_SUBJECT_MAX` and `SUPPORT_TICKET_MESSAGE_MAX`. Core hands the adapter the
 requester's name (the account username) and email and the account language, all read from the
-account on every request, plus the message.
+account on every request, plus the subject and the message.
 
 - **The email must be verified.** A unique email is not a proven one: an account can be registered
   on an address its owner has not registered yet, and the vendor files the ticket under whoever owns
@@ -103,15 +105,17 @@ account on every request, plus the message.
   that shape is logged as malformed, never itself, and the ticket is audited without an id; the
   player still gets success, since the ticket exists and a retry would file it twice. Mask the
   email in any log line, and throw the port's provider error with a listed reason on failure. The
-  player then gets the generic unavailable refusal; the reason goes to the log only, and neither
-  the email nor the message reaches the response, a log line or the error reporter.
-- **The message is untrusted text.** Core trims its ends and passes the rest untouched, HTML and
-  control characters included. Send it to the vendor as plain text, never as HTML.
+  player then gets the generic unavailable refusal; the reason goes to the log only, and none of
+  the email, the subject or the message reaches the response, a log line or the error reporter.
+- **The subject and the message are untrusted text.** Core trims their ends and passes the rest
+  untouched, HTML and control characters included. Send both to the vendor as plain text, never
+  as HTML.
 - **No dedupe.** The call is not idempotent and core never retries it, so a double submit files two
   tickets. Each player may file 5 tickets in 10 minutes; a body refused as invalid spends none.
 - **Audited without content.** Each created ticket leaves one `support_chat.ticket.created` audit
   row naming the player and carrying the vendor's ticket id, so staff can match the row to the
-  ticket; it holds neither the email nor the message, and the player never sees the id. A failed
+  ticket; it holds none of the email, the subject or the message, and the player never sees the
+  id. A failed
   audit write after the vendor created the ticket is logged as an error with the error's name and
   code and the player id, and the player still gets success.
 - **Optional on the port.** A provider without the ticket method answers the tickets route

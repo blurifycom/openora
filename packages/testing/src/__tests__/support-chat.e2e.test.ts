@@ -669,7 +669,7 @@ describe('offline ticket', () => {
       .from(user)
       .where(eq(user.id, p.userId));
 
-    const res = await p.client.post(TICKETS, { message: '  hi  ' });
+    const res = await p.client.post(TICKETS, { subject: '  Withdrawal  ', message: '  hi  ' });
 
     expect(res.status).toBe(200);
     expect(await body(res)).toEqual({ success: true });
@@ -678,6 +678,7 @@ describe('offline ticket', () => {
       {
         requester: { name: username, email: p.email },
         language: 'de',
+        subject: 'Withdrawal',
         message: 'hi',
         ticketId: expect.any(String),
       },
@@ -693,12 +694,14 @@ describe('offline ticket', () => {
     ]);
     expect(JSON.stringify(audits)).not.toContain(p.email);
     expect(JSON.stringify(audits)).not.toContain('"hi"');
+    expect(JSON.stringify(audits)).not.toContain('Withdrawal');
   });
 
   it('refuses a body naming the requester or another player with 400 and files nothing', async () => {
     const p = await newPlayer();
     const victim = await newPlayer();
     const res = await p.client.post(TICKETS, {
+      subject: 'Help',
       message: 'hello',
       email: victim.email,
       name: 'Support Team',
@@ -716,7 +719,7 @@ describe('offline ticket', () => {
     const res = await testApp.app.request(TICKETS, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message: 'hello' }),
+      body: JSON.stringify({ subject: 'Help', message: 'hello' }),
     });
 
     expect(res.status).toBe(401);
@@ -726,9 +729,11 @@ describe('offline ticket', () => {
   it("answers 429 on a player's 6th ticket in 10 minutes while another player still files one", async () => {
     const p = await newPlayer();
     for (let call = 0; call < 5; call++) {
-      expect((await p.client.post(TICKETS, { message: `ticket ${call}` })).status).toBe(200);
+      expect(
+        (await p.client.post(TICKETS, { subject: 'Help', message: `ticket ${call}` })).status,
+      ).toBe(200);
     }
-    const refused = await p.client.post(TICKETS, { message: 'one more' });
+    const refused = await p.client.post(TICKETS, { subject: 'Help', message: 'one more' });
 
     expect(refused.status).toBe(429);
     const error = await body(refused);
@@ -736,33 +741,54 @@ describe('offline ticket', () => {
     expect((error['data'] as { retryAfterMs: number }).retryAfterMs).toBeGreaterThan(0);
     expect(ticketsTo(p.email)).toHaveLength(5);
     const other = await newPlayer();
-    expect((await other.client.post(TICKETS, { message: 'hello' })).status).toBe(200);
+    expect((await other.client.post(TICKETS, { subject: 'Help', message: 'hello' })).status).toBe(
+      200,
+    );
   });
 
   it('refuses an empty, blank, too long, missing or non-text message with 400 without spending the limit', async () => {
     const p = await newPlayer();
     for (const invalid of [
-      { message: '' },
-      { message: '   ' },
-      { message: 'x'.repeat(5001) },
-      {},
-      { message: 42 },
+      { subject: 'Help', message: '' },
+      { subject: 'Help', message: '   ' },
+      { subject: 'Help', message: 'x'.repeat(5001) },
+      { subject: 'Help' },
+      { subject: 'Help', message: 42 },
     ]) {
       expect((await p.client.post(TICKETS, invalid)).status, JSON.stringify(invalid)).toBe(400);
     }
     expect(ticketsTo(p.email)).toHaveLength(0);
 
     const longest = 'x'.repeat(5000);
-    expect((await p.client.post(TICKETS, { message: longest })).status).toBe(200);
+    expect((await p.client.post(TICKETS, { subject: 'Help', message: longest })).status).toBe(200);
     for (let call = 0; call < 4; call++) {
-      expect((await p.client.post(TICKETS, { message: `ticket ${call}` })).status).toBe(200);
+      expect(
+        (await p.client.post(TICKETS, { subject: 'Help', message: `ticket ${call}` })).status,
+      ).toBe(200);
     }
     expect(ticketsTo(p.email)[0]?.message).toBe(longest);
   });
 
+  it('refuses a missing, empty, blank or too long subject with 400 and takes exactly 150 characters', async () => {
+    const p = await newPlayer();
+    for (const invalid of [
+      { message: 'hello' },
+      { subject: '', message: 'hello' },
+      { subject: ' \t\n ', message: 'hello' },
+      { subject: 'x'.repeat(151), message: 'hello' },
+    ]) {
+      expect((await p.client.post(TICKETS, invalid)).status, JSON.stringify(invalid)).toBe(400);
+    }
+    expect(ticketsTo(p.email)).toHaveLength(0);
+
+    const longest = 'x'.repeat(150);
+    expect((await p.client.post(TICKETS, { subject: longest, message: 'hello' })).status).toBe(200);
+    expect(ticketsTo(p.email).map((t) => t.subject)).toEqual([longest]);
+  });
+
   it('answers 503 not configured when no provider is bound', async () => {
     const { client } = await newPlayer(unconfiguredApp);
-    const res = await client.post(TICKETS, { message: 'hello' });
+    const res = await client.post(TICKETS, { subject: 'Help', message: 'hello' });
 
     expect(res.status).toBe(503);
     expect(await body(res)).toMatchObject({ data: { reason: 'not_configured' } });
@@ -770,7 +796,7 @@ describe('offline ticket', () => {
 
   it('answers an admin without a player profile 404 and files nothing', async () => {
     const before = readSupportChatCalls().tickets.length;
-    const res = await admin.post(TICKETS, { message: 'hello' });
+    const res = await admin.post(TICKETS, { subject: 'Help', message: 'hello' });
 
     expect(res.status).toBe(404);
     expect(readSupportChatCalls().tickets).toHaveLength(before);
@@ -795,7 +821,7 @@ describe('offline ticket', () => {
     // The change ends the player's sessions, so they sign in again under the new address.
     const client = await asPlayer(testApp.app, { email: newEmail });
 
-    expect((await client.post(TICKETS, { message: 'hello' })).status).toBe(200);
+    expect((await client.post(TICKETS, { subject: 'Help', message: 'hello' })).status).toBe(200);
     expect(ticketsTo(newEmail)).toHaveLength(1);
     expect(ticketsTo(p.email)).toHaveLength(0);
   });
@@ -803,8 +829,8 @@ describe('offline ticket', () => {
   it('files two tickets for two concurrent identical posts', async () => {
     const p = await newPlayer();
     const answers = await Promise.all([
-      p.client.post(TICKETS, { message: 'same' }),
-      p.client.post(TICKETS, { message: 'same' }),
+      p.client.post(TICKETS, { subject: 'Help', message: 'same' }),
+      p.client.post(TICKETS, { subject: 'Help', message: 'same' }),
     ]);
 
     expect(answers.map((res) => res.status)).toEqual([200, 200]);
@@ -819,7 +845,9 @@ describe('offline ticket', () => {
     const players = await Promise.all([newPlayer(), newPlayer(), newPlayer(), newPlayer()]);
 
     const answers = await Promise.all(
-      players.map((p, i) => p.client.post(TICKETS, { message: `from ${i} ${p.email}` })),
+      players.map((p, i) =>
+        p.client.post(TICKETS, { subject: `subject ${i}`, message: `from ${i} ${p.email}` }),
+      ),
     );
 
     expect(answers.map((res) => res.status)).toEqual([200, 200, 200, 200]);
@@ -842,6 +870,7 @@ describe('offline ticket', () => {
         {
           requester: { name: names.get(p.userId), email: p.email },
           language: 'en',
+          subject: `subject ${i}`,
           message: `from ${i} ${p.email}`,
           ticketId: expect.any(String),
         },
@@ -853,7 +882,9 @@ describe('offline ticket', () => {
     const p = await newPlayer();
     const message = '<script>alert(1)</script>\r\nline two\u0000 \u202e';
 
-    expect((await p.client.post(TICKETS, { message: `\n\t ${message}  ` })).status).toBe(200);
+    expect(
+      (await p.client.post(TICKETS, { subject: 'Help', message: `\n\t ${message}  ` })).status,
+    ).toBe(200);
 
     expect(ticketsTo(p.email)[0]?.message).toBe(message.trim());
   });
@@ -862,8 +893,10 @@ describe('offline ticket', () => {
     const p = await newPlayer();
     const atLimit = '\u{1F600}'.repeat(5000);
 
-    expect((await p.client.post(TICKETS, { message: '\u{1F600}'.repeat(5001) })).status).toBe(400);
-    expect((await p.client.post(TICKETS, { message: atLimit })).status).toBe(200);
+    expect(
+      (await p.client.post(TICKETS, { subject: 'Help', message: '\u{1F600}'.repeat(5001) })).status,
+    ).toBe(400);
+    expect((await p.client.post(TICKETS, { subject: 'Help', message: atLimit })).status).toBe(200);
 
     expect(ticketsTo(p.email).map((t) => t.message)).toEqual([atLimit]);
   });
@@ -873,7 +906,7 @@ describe('offline ticket', () => {
     const suspended = await admin.patch(`/players/${p.playerId}`, { status: 'suspended' });
     expect(suspended.status, await suspended.clone().text()).toBe(200);
 
-    const res = await p.client.post(TICKETS, { message: 'let me back in' });
+    const res = await p.client.post(TICKETS, { subject: 'Help', message: 'let me back in' });
 
     expect(res.status).toBe(401);
     expect(ticketsTo(p.email)).toHaveLength(0);
@@ -885,7 +918,7 @@ describe('offline ticket', () => {
     const createTicket = provider.createTicket;
     delete provider.createTicket;
     try {
-      const res = await p.client.post(TICKETS, { message: 'hello' });
+      const res = await p.client.post(TICKETS, { subject: 'Help', message: 'hello' });
 
       expect(res.status).toBe(503);
       expect(await body(res)).toMatchObject({ data: { reason: 'not_configured' } });
@@ -913,28 +946,31 @@ describe('offline ticket', () => {
     const p = await newPlayer();
     answerNextSupportTicketRaw({ ticketId });
 
-    expect((await p.client.post(TICKETS, { message: 'hello' })).status).toBe(200);
+    expect((await p.client.post(TICKETS, { subject: 'Help', message: 'hello' })).status).toBe(200);
 
     expect(await ticketAudits(p.playerId)).toEqual([
       expect.objectContaining({ after: { ticketId } }),
     ]);
   });
 
-  it.each<[string, (email: string, message: string) => unknown]>([
+  it.each<[string, (email: string, message: string, subject: string) => unknown]>([
     ['nothing', () => undefined],
     ['a numeric ticket id', () => ({ ticketId: 42 })],
     ['an empty ticket id', () => ({ ticketId: '' })],
     ['a 201-character ticket id', () => ({ ticketId: 'x'.repeat(201) })],
     ['the requester email as the ticket id', (email) => ({ ticketId: email })],
     ['the message as the ticket id', (_email, message) => ({ ticketId: message })],
+    ['the subject as the ticket id', (_email, _message, subject) => ({ ticketId: subject })],
     ['a message id in angle brackets', () => ({ ticketId: '<123.abc@mail.example>' })],
     [
       'the percent-encoded email as the ticket id',
       (email) => ({ ticketId: encodeURIComponent(email) }),
     ],
     [
-      'a ticket id holding the requester and the message',
-      (email, message) => ({ ticketId: { requester: { email }, description: message } }),
+      'a ticket id holding the requester, the subject and the message',
+      (email, message, subject) => ({
+        ticketId: { requester: { email }, subject, description: message },
+      }),
     ],
     [
       'a ticket id whose getter throws the email',
@@ -946,13 +982,14 @@ describe('offline ticket', () => {
         }),
     ],
   ])(
-    'answers 200 and audits a null ticket id when the vendor answers %s, leaking neither email nor message',
+    'answers 200 and audits a null ticket id when the vendor answers %s, leaking no email, subject or message',
     async (_case, answer) => {
       const p = await newPlayer();
+      const subject = `withdrawal ${randomUUID()}`;
       const message = `stuck withdrawal ${randomUUID()}`;
-      answerNextSupportTicketRaw(answer(p.email, message));
+      answerNextSupportTicketRaw(answer(p.email, message, subject));
 
-      const res = await p.client.post(TICKETS, { message });
+      const res = await p.client.post(TICKETS, { subject, message });
       const text = await res.text();
 
       expect(res.status).toBe(200);
@@ -961,6 +998,7 @@ describe('offline ticket', () => {
       expect(audits).toEqual([expect.objectContaining({ after: { ticketId: null } })]);
       for (const seen of [text, JSON.stringify(audits)]) {
         expect(seen).not.toContain(p.email);
+        expect(seen).not.toContain(subject);
         expect(seen).not.toContain(message);
       }
     },
@@ -974,7 +1012,7 @@ describe('offline ticket', () => {
       .set({ emailVerified: false })
       .where(eq(user.id, p.userId));
 
-    const res = await p.client.post(TICKETS, { message: 'hello' });
+    const res = await p.client.post(TICKETS, { subject: 'Help', message: 'hello' });
 
     expect(res.status).toBe(403);
     expect(await body(res)).toMatchObject({

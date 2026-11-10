@@ -360,7 +360,9 @@ describe('SupportChatService sync path core errors (real PG)', () => {
 });
 
 describe('SupportChatService offline ticket (real PG)', () => {
+  const SUBJECT = 'withdrawal stuck since monday';
   const MESSAGE = 'my withdrawal is stuck';
+  const TICKET = { subject: SUBJECT, message: MESSAGE };
 
   it('answers 200 when the audit write fails after the ticket is created, logging the player id only', async () => {
     const { account, player } = await seedPlayerWithUser(db);
@@ -370,7 +372,7 @@ describe('SupportChatService offline ticket (real PG)', () => {
     audit.record.mockRejectedValueOnce(new Error(`audit down for ${account.email}`));
 
     await expect(
-      service(player.id, { createTicket }, audit).createTicket(account.id, MESSAGE, NO_CLIENT_META),
+      service(player.id, { createTicket }, audit).createTicket(account.id, TICKET, NO_CLIENT_META),
     ).resolves.toBeUndefined();
     expect(createTicket).toHaveBeenCalledOnce();
     expect(log.error.mock.calls).toEqual([
@@ -381,6 +383,7 @@ describe('SupportChatService offline ticket (real PG)', () => {
     expect(seen).not.toContain(ticketId);
     expect(seen).not.toContain(account.email);
     expect(seen).not.toContain(MESSAGE);
+    expect(seen).not.toContain(SUBJECT);
   });
 
   it.each<[string, (email: string) => unknown]>([
@@ -389,14 +392,14 @@ describe('SupportChatService offline ticket (real PG)', () => {
       (email) =>
         Object.defineProperty({}, 'ticketId', {
           get() {
-            throw new Error(`vendor says ${email}: ${MESSAGE}`);
+            throw new Error(`vendor says ${email}: ${SUBJECT} ${MESSAGE}`);
           },
         }),
     ],
     [
       'a ticket id that is the vendor ticket holding the email',
       (email) => ({
-        ticketId: { id: 7, requester: { email }, description: MESSAGE },
+        ticketId: { id: 7, requester: { email }, subject: SUBJECT, description: MESSAGE },
       }),
     ],
   ])('logs a malformed answer of %s as its reason only', async (_case, answer) => {
@@ -405,12 +408,13 @@ describe('SupportChatService offline ticket (real PG)', () => {
       answer(account.email),
     );
 
-    await service(player.id, { createTicket }).createTicket(account.id, MESSAGE, NO_CLIENT_META);
+    await service(player.id, { createTicket }).createTicket(account.id, TICKET, NO_CLIENT_META);
 
     expect(warned()).toEqual([{ playerId: player.id, reason: 'malformed ticket answer' }]);
     const seen = inspect(logged(), { depth: null, showHidden: true });
     expect(seen).not.toContain(account.email);
     expect(seen).not.toContain(MESSAGE);
+    expect(seen).not.toContain(SUBJECT);
   });
 
   it('logs a raw adapter error holding the email and the message as unexpected only', async () => {
@@ -420,12 +424,12 @@ describe('SupportChatService offline ticket (real PG)', () => {
       player.id,
       {
         createTicket: async () => {
-          throw new Error(`ticket for ${account.email} failed: ${MESSAGE} ${secret()}`);
+          throw new Error(`ticket for ${account.email} failed: ${SUBJECT} ${MESSAGE} ${secret()}`);
         },
       },
       audit,
     )
-      .createTicket(account.id, MESSAGE, NO_CLIENT_META)
+      .createTicket(account.id, TICKET, NO_CLIENT_META)
       .catch((err: unknown) => err);
 
     expect(error).toBeInstanceOf(SupportChatUnavailableError);
@@ -433,6 +437,7 @@ describe('SupportChatService offline ticket (real PG)', () => {
     const seen = inspect([logged(), error], { depth: null, showHidden: true });
     expect(seen).not.toContain(account.email);
     expect(seen).not.toContain(MESSAGE);
+    expect(seen).not.toContain(SUBJECT);
     expect(seen).not.toMatch(LEAK);
     expect(audit.record).not.toHaveBeenCalled();
   });
