@@ -115,11 +115,7 @@ export function createGamificationRouter({
     },
 
     streaks: {
-      get: os.streaks.get.handler(({ context }) =>
-        mapErrors({ NOT_FOUND: StreakConfigNotSetError }, () =>
-          streaks.getForPlayer(getUserId(context)),
-        ),
-      ),
+      get: os.streaks.get.handler(({ context }) => streaks.getForPlayer(getUserId(context))),
 
       claim: os.streaks.claim.handler(async ({ input, context }) => {
         const claimed = await mapErrors(
@@ -231,8 +227,8 @@ export function createGamificationRouter({
           }),
 
           set: os.admin.streaks.config.set.handler(async ({ input, context }) => {
-            const { userId } = await adminGuard.assert(context, 'bonus', 'update');
-            return streakAdmin.setConfig(userId, input);
+            const { userId, ip, userAgent } = await adminGuard.assert(context, 'bonus', 'update');
+            return streakAdmin.setConfig(userId, input, { ip, userAgent });
           }),
         },
       },

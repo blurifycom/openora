@@ -159,8 +159,22 @@
     {
       "idx": 22,
       "version": "7",
-      "when": 1794218672606,
-      "tag": "0022_clumsy_bishop",
+      "when": 1793975333249,
+      "tag": "0022_streak_milestone_rakeback",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793975347828,
+      "tag": "0023_streak_milestone_conversion",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794302216575,
+      "tag": "0024_rakeback_claimed_index",
       "breakpoints": true
     }
   ]

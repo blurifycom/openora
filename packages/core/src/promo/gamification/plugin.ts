@@ -70,6 +70,7 @@ const RANK_PAYOUT_QUEUE = queue('promo-rank-payout');
 const STREAK_PAYOUT_QUEUE = queue('promo-streak-payout');
 const STREAK_ANNOUNCE_QUEUE = queue('promo-streak-announce');
 const STREAK_CLOSE_QUEUE = queue('promo-streak-close');
+const STREAK_EXPIRE_QUEUE = queue('promo-streak-expire');
 const STREAK_FORFEIT_QUEUE = queue('promo-streak-forfeit');
 const RACE_PAYOUT_QUEUE = queue('promo-race-payout');
 const RANK_CHALLENGE_PAYOUT_QUEUE = queue('promo-rank-challenge-payout');
@@ -86,6 +87,7 @@ const RACE_PAYOUT_CRON = '*/1 * * * *';
 const RANK_CHALLENGE_PAYOUT_CRON = '*/1 * * * *';
 const RANK_ANNOUNCE_CRON = '*/1 * * * *';
 const STREAK_ANNOUNCE_CRON = '*/1 * * * *';
+const STREAK_EXPIRE_CRON = '11 * * * *';
 const RANK_PERIOD_PRUNE_CRON = '30 3 * * *';
 const RAKEBACK_SWEEP_CRON = '25 4 * * *';
 const RAKEBACK_NOTIFY_CRON = '11 * * * *';
@@ -144,7 +146,12 @@ const rankService = (c: TypedContainer<CoreTokenCatalog>) =>
   new RankService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), c.get(AUDIT_WRITER), logger);
 
 const streakService = (c: TypedContainer<CoreTokenCatalog>) =>
-  new StreakService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
+  new StreakService({
+    drizzle: c.get(DRIZZLE),
+    rates: c.get(EXCHANGE_RATE_READER),
+    logger,
+    audit: c.get(AUDIT_WRITER),
+  });
 
 const raceService = (c: TypedContainer<CoreTokenCatalog>) =>
   new RaceService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
@@ -434,6 +441,21 @@ export default {
     });
 
     ctx.jobs.worker({
+      queue: STREAK_EXPIRE_QUEUE,
+      schema: EmptyJobSchema,
+      handler: async () => {
+        if (!streakPayouts) {
+          logger.warn({}, 'streak expiry skipped - service not constructed');
+          return;
+        }
+        const expired = await streakPayouts.expireDue(new Date());
+        if (expired > 0) {
+          logger.info({ expired }, 'unclaimed streak rewards expired');
+        }
+      },
+    });
+
+    ctx.jobs.worker({
       queue: RACE_PAYOUT_QUEUE,
       schema: EmptyJobSchema,
       handler: async () => {
@@ -479,7 +501,7 @@ export default {
 
     ctx.routers.add('promo-gamification', (c) => {
       // A cash prize/cashback credit lands here when its own source (a race, a rank challenge
-      // tier, a streak milestone) is priced in something else - see `priceForPayout`.
+      // tier) is priced in something else - see `priceForPayout`.
       const payoutCurrency = resolveWalletDefaultCurrency(
         c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).wallet : undefined,
       );
@@ -497,10 +519,8 @@ export default {
         eligibility: c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
         rates: c.get(EXCHANGE_RATE_READER),
         walletReader: c.get(WALLET_READER),
-        payoutCurrency,
         audit: c.get(AUDIT_WRITER),
         logger,
-        wallet: c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
       });
       racePayouts = new RacePayoutService(
         c.get(DRIZZLE),
@@ -574,6 +594,9 @@ export default {
         )
         .catch((err: unknown) => logger.error({ err }, 'streak close schedule failed'));
       void jobQueue
+        .schedule(STREAK_EXPIRE_QUEUE, 'promo-streak-expire.cron', {}, { cron: STREAK_EXPIRE_CRON })
+        .catch((err: unknown) => logger.error({ err }, 'streak expiry schedule failed'));
+      void jobQueue
         .schedule(RACE_PAYOUT_QUEUE, 'promo-race-payout.cron', {}, { cron: RACE_PAYOUT_CRON })
         .catch((err: unknown) => logger.error({ err }, 'race payout schedule failed'));
       void jobQueue
@@ -617,13 +640,10 @@ export default {
         admin: new RankAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         streaks,
         streakPayouts,
-        onStreakClaimed: async ({ granted, cashPaid }) => {
+        onStreakClaimed: async ({ granted }) => {
           try {
             for (const grant of granted) {
               events?.emit('promo.bonus.granted', grant);
-            }
-            for (const paid of cashPaid) {
-              await emitCashCredit(paid);
             }
           } catch (err) {
             logger.error({ err }, 'streak claim announcement failed after the claim committed');
