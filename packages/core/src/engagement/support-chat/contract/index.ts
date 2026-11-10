@@ -7,7 +7,7 @@ import {
   UuidSchema,
 } from '@openora/core/contracts';
 
-export const SUPPORT_TICKET_MESSAGE_MAX = 5000;
+const SUPPORT_TICKET_MESSAGE_MAX = 5000;
 
 export const supportChatContract = {
   // Takes no input: always the caller's own player.
