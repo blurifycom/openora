@@ -134,18 +134,6 @@ describe('a deposit below its asset minimum', () => {
     expect(await auditedActions(event.externalId)).toEqual(['wallet.deposit.below_minimum']);
   });
 
-  it('credits as before when the reported network has no asset row', async () => {
-    const { deposit } = await setup({
-      assets: [{ network: OTHER_NETWORK, minDeposit: FLOOR }],
-    });
-    const event = deposit({ amount: BELOW_FLOOR });
-
-    await delivered(event);
-
-    expect(await ledgerRows(event.externalId)).toHaveLength(1);
-    expect(await auditedActions(event.externalId)).toEqual([]);
-  });
-
   it('applies the lowest row when neither the event nor the address names a network', async () => {
     const { deposit } = await setup({
       assets: [

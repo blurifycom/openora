@@ -71,8 +71,9 @@ does not repeat it.
 - **An address-based deposit under its asset's minimum is not credited.** The floor is the row for
   the event's network. With none named it is the row of the one network the address was issued
   on for that currency, and if the address has no such row or several, the lowest row. A row with
-  deposits switched off still counts, and a named network with no row has no floor. A zero amount
-  is refused whatever the floor, with `minDeposit: null` when none applies. The refusal, a `detected` status and a `failed` status each leave one audit row under
+  deposits switched off still counts, and a named network with no row takes the currency's lowest
+  row. A zero amount is refused whatever the floor, with `minDeposit: null` when the currency has
+  no row. The refusal, a `detected` status and a `failed` status each leave one audit row under
   the player, guarded by `wallet_deposit_status_event` in the same transaction, so a redelivery or
   a poll adds nothing. The first refusal stands if the minimum later drops. A credited or refunded
   deposit audits no later status, and a failed one no later detection. A refused deposit gets its own

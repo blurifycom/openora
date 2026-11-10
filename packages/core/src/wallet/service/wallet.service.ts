@@ -4457,10 +4457,9 @@ export class WalletService {
       return true;
     }
     const network = await this.reportedNetwork(event, txn);
-    const floor = depositFloor(
-      await this.selectDepositAssets(event.currency, txn),
-      network ?? undefined,
-    );
+    const assets = await this.selectDepositAssets(event.currency, txn);
+    // A network the catalog has no row for falls back to the currency's lowest minimum.
+    const floor = depositFloor(assets, network ?? undefined) ?? depositFloor(assets);
     const refused =
       !isPositiveMoney(event.amount) ||
       (floor !== undefined && moneyCompare(event.amount, floor.minDeposit) < 0);

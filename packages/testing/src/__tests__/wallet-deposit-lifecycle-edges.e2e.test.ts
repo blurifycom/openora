@@ -438,6 +438,41 @@ describe('the floor when the event names no network', () => {
   });
 });
 
+describe('the floor when the event names a network the currency has no row for', () => {
+  const onUnlistedNetwork = () =>
+    setup({ assets: [{ network: OTHER_NETWORK, minDeposit: FLOOR }] });
+
+  it.each([
+    { via: 'webhook', send: (event: DepositEvent) => deliver(event) },
+    { via: 'poll', send: (event: DepositEvent) => reconcile([event]) },
+  ] as const)(
+    'refuses under the currency’s lowest row via the $via, and the webhook credits at it once',
+    async ({ send }) => {
+      const player = await onUnlistedNetwork();
+      const below = player.deposit({ amount: BELOW_FLOOR });
+      const atFloor = player.deposit({ amount: FLOOR });
+
+      await send(below);
+      await send(below);
+      await send(atFloor);
+      await deliver(atFloor);
+      await deliver(atFloor);
+
+      expect((await findings(below.externalId)).map((finding) => finding.kind)).toEqual([
+        'below_minimum_deposit',
+      ]);
+      expect(await auditTrail(below.externalId)).toEqual(['below_minimum']);
+      expect(await ledgerRows(below.externalId)).toHaveLength(0);
+      expect((await findings(atFloor.externalId)).map((finding) => finding.kind)).not.toContain(
+        'below_minimum_deposit',
+      );
+      expect(await auditTrail(atFloor.externalId)).toEqual([]);
+      expect(await ledgerRows(atFloor.externalId)).toHaveLength(1);
+      expect(await balanceOf(player.userId, player.currency)).toBe(Number(FLOOR));
+    },
+  );
+});
+
 describe('an event checked at entry', () => {
   it('refuses to credit an empty id', async () => {
     const player = await setup();
@@ -461,7 +496,8 @@ describe('an event checked at entry', () => {
   });
 
   it('refuses a zero amount where no floor row applies, with no minimum to report', async () => {
-    const player = await setup({ assets: [{ network: OTHER_NETWORK, minDeposit: FLOOR }] });
+    const player = await setup();
+    await drizzle().delete(walletAsset).where(eq(walletAsset.currency, player.currency));
     const event = player.deposit({ amount: '0' });
 
     const res = await deliver(event);
