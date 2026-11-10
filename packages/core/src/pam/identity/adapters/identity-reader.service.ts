@@ -1,6 +1,6 @@
 import { createLogger, DrizzleService, type DrizzleTx } from '@openora/core/server';
 import type { IdentityReader, KycStatus, Player, User } from '@openora/core/contracts';
-import { and, eq, exists, inArray, isNull, lt, max, ne, or, SQL } from 'drizzle-orm';
+import { and, eq, exists, inArray, isNull, lt, max, ne, or, sql, SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { session, user } from '../schema/index.js';
 import { player } from '@openora/core/pam/schema/profile';
@@ -73,6 +73,19 @@ export class IdentityReaderService implements IdentityReader {
       .where(eq(player.id, playerId))
       .limit(1);
     return row?.userId ?? null;
+  }
+
+  async getUserIdsByPlayerIds(
+    playerIds: readonly Player['id'][],
+  ): Promise<Map<Player['id'], User['id']>> {
+    if (playerIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.drizzle.db
+      .select({ id: player.id, userId: player.userId })
+      .from(player)
+      .where(sql`${player.id} = ANY(${sql.param([...playerIds])}::uuid[])`);
+    return new Map(rows.map((row) => [row.id, row.userId]));
   }
 
   async getPlayerIdByUserIdSafe(userId: User['id']): Promise<Player['id'] | null> {
