@@ -246,9 +246,11 @@ export class SupportChatService {
         after: { ticketId },
         ...clientMeta,
       })
+      // The id is schema-checked (no `@`, no whitespace) or null, so it is safe to log, and it
+      // is what lets ops match the vendor ticket that went unaudited.
       .catch((err: unknown) =>
         logger.error(
-          { err: loggableError(err), playerId },
+          { err: loggableError(err), playerId, ticketId },
           'support ticket created but not audited',
         ),
       );

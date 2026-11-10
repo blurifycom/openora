@@ -362,9 +362,10 @@ describe('SupportChatService sync path core errors (real PG)', () => {
 describe('SupportChatService offline ticket (real PG)', () => {
   const MESSAGE = 'my withdrawal is stuck';
 
-  it('answers 200 when the audit write fails after the ticket is created, logging no message', async () => {
+  it('answers 200 when the audit write fails after the ticket is created, logging the ticket id but no message', async () => {
     const { account, player } = await seedPlayerWithUser(db);
-    const createTicket = vi.fn(async () => ({ ticketId: `ticket-${randomUUID()}` }));
+    const ticketId = `ticket-${randomUUID()}`;
+    const createTicket = vi.fn(async () => ({ ticketId }));
     const audit = makeAuditWriter();
     audit.record.mockRejectedValueOnce(new Error(`audit down for ${account.email}`));
 
@@ -373,9 +374,11 @@ describe('SupportChatService offline ticket (real PG)', () => {
     ).resolves.toBeUndefined();
     expect(createTicket).toHaveBeenCalledOnce();
     expect(log.error.mock.calls).toEqual([
-      [{ err: { name: 'Error' }, playerId: player.id }, expect.any(String)],
+      [{ err: { name: 'Error' }, playerId: player.id, ticketId }, expect.any(String)],
     ]);
-    expect(inspect(logged(), { depth: null })).not.toContain(account.email);
+    const seen = inspect(logged(), { depth: null });
+    expect(seen).not.toContain(account.email);
+    expect(seen).not.toContain(MESSAGE);
   });
 
   it.each<[string, (email: string) => unknown]>([
