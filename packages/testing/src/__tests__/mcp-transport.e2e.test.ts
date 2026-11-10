@@ -695,8 +695,8 @@ describe('MCP tokens, issuing while a password reset is in flight', () => {
     const mail = await waitForEmail(email, (sent) => sent.subject === 'Reset your password');
     const otp = /\b(\d{6})\b/.exec(mail.text)?.[1];
 
-    // The reset hook is held right after its revocation: better-auth deletes the account's
-    // sessions only once the hook returns, the window an old session could issue a token in.
+    // The reset hook is held right after its revocation, the window an old session could
+    // issue a token in. better-auth 1.7 already deleted the sessions with the password update.
     const revocation = holdNextRevocation();
     const resetting = post('/identity/password/reset', {
       email,
@@ -716,8 +716,8 @@ describe('MCP tokens, issuing while a password reset is in flight', () => {
     const [reset, issued] = await Promise.all([resetting, issuing]);
 
     expect(reset.status).toBe(200);
-    expect(issued.status).toBe(403);
-    expect(ErrorReasonSchema.parse(await issued.json()).data.reason).toBe('owner_ineligible');
+    // The issuing session is gone by the time the issue resumes.
+    expect(issued.status).toBe(401);
     expect(await tokenIdsOf(staffId)).toEqual([{ id: existing.id }]);
     expect(await revokeReasonOf(existing.id)).toBe('sessions_revoked');
   });
