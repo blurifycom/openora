@@ -64,7 +64,11 @@ export const SupportTicketCreatedSchema = z.object({
 });
 export type SupportTicketCreated = z.infer<typeof SupportTicketCreatedSchema>;
 
-/** An offline ticket a player writes to support, outside a live chat. */
+/**
+ * An offline ticket a player writes to support, outside a live chat. `subject` and `message` are
+ * trimmed and each contain at least one visible character: neither is only whitespace or
+ * invisible format characters such as U+200B.
+ */
 export type SupportTicketRequest = {
   requester: { name: string; email: string };
   language: string;

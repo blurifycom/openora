@@ -786,6 +786,27 @@ describe('offline ticket', () => {
     expect(ticketsTo(p.email).map((t) => t.subject)).toEqual([longest]);
   });
 
+  it('refuses a subject or message with no visible text, and keeps emoji sequences and newlines', async () => {
+    const p = await newPlayer();
+    for (const invisible of [
+      { subject: '\u200b', message: 'hello' },
+      { subject: 'help', message: '\u200b\u2060' },
+      { subject: ' \ufeff ', message: 'hello' },
+    ]) {
+      expect((await p.client.post(TICKETS, invisible)).status, JSON.stringify(invisible)).toBe(400);
+    }
+    expect(ticketsTo(p.email)).toHaveLength(0);
+
+    const subject = '\u{1F469}\u200d\u{1F4BB} help';
+    const message = 'line one\nline two\n\nthanks';
+    expect((await p.client.post(TICKETS, { subject, message: 'hello' })).status).toBe(200);
+    expect((await p.client.post(TICKETS, { subject: 'help', message })).status).toBe(200);
+    expect(ticketsTo(p.email).map((t) => [t.subject, t.message])).toEqual([
+      [subject, 'hello'],
+      ['help', message],
+    ]);
+  });
+
   it('answers 503 not configured when no provider is bound', async () => {
     const { client } = await newPlayer(unconfiguredApp);
     const res = await client.post(TICKETS, { subject: 'Help', message: 'hello' });

@@ -10,6 +10,11 @@ import {
 export const SUPPORT_TICKET_SUBJECT_MAX = 150;
 export const SUPPORT_TICKET_MESSAGE_MAX = 5000;
 
+// `trim` keeps format characters such as U+200B and U+2060, so a field of only those would read
+// as empty to support staff. Only the check strips them: the text itself, ZWJ emoji, soft hyphens
+// and newlines included, passes on untouched.
+const hasVisibleText = (text: string) => text.replace(/[\p{Cf}\s]/gu, '').length > 0;
+
 export const supportChatContract = {
   // Takes no input: always the caller's own player.
   session: oc
@@ -23,8 +28,18 @@ export const supportChatContract = {
     .input(
       z
         .object({
-          subject: z.string().trim().min(1).max(SUPPORT_TICKET_SUBJECT_MAX),
-          message: z.string().trim().min(1).max(SUPPORT_TICKET_MESSAGE_MAX),
+          subject: z
+            .string()
+            .trim()
+            .min(1)
+            .max(SUPPORT_TICKET_SUBJECT_MAX)
+            .refine(hasVisibleText, 'Subject has no visible text'),
+          message: z
+            .string()
+            .trim()
+            .min(1)
+            .max(SUPPORT_TICKET_MESSAGE_MAX)
+            .refine(hasVisibleText, 'Message has no visible text'),
         })
         .strict(),
     )
