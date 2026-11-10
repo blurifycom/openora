@@ -133,6 +133,8 @@ async function dispatchWebhook(
   if (event) {
     if (event.kind === 'deposit') {
       await wallet.creditDepositByAddress(event, providerName);
+    } else if (event.kind === 'deposit_status') {
+      await wallet.recordDepositStatus(event);
     } else {
       await wallet.reconcileWithdrawalStatus(event, providerName);
     }

@@ -82,9 +82,16 @@ export const WALLET_RECONCILIATION_FINDING_KINDS = [
   'rg_limit_breach',
   'stuck_swap',
   'held_deposit',
+  'below_minimum_deposit',
 ] as const;
 
 export const WALLET_RECONCILIATION_FINDING_STATUSES = ['open', 'resolved'] as const;
+
+export const WALLET_DEPOSIT_STATUS_EVENT_STATUSES = [
+  'detected',
+  'failed',
+  'below_minimum',
+] as const;
 
 // A fiat on-ramp order as its vendor reports it. `pending` and `processing` cover every
 // non-terminal vendor status; the rest are terminal.
@@ -107,6 +114,7 @@ export const WalletReconciliationFindingKindSchema = z.enum(WALLET_RECONCILIATIO
 export const WalletReconciliationFindingStatusSchema = z.enum(
   WALLET_RECONCILIATION_FINDING_STATUSES,
 );
+export const WalletDepositStatusEventStatusSchema = z.enum(WALLET_DEPOSIT_STATUS_EVENT_STATUSES);
 export const OnRampStatusSchema = z.enum(ON_RAMP_STATUSES);
 
 // A currency does not identify a chain: USDT settles on ERC20, TRC20 and BEP20 with
@@ -123,6 +131,7 @@ export type WalletReconciliationFindingKind = z.infer<typeof WalletReconciliatio
 export type WalletReconciliationFindingStatus = z.infer<
   typeof WalletReconciliationFindingStatusSchema
 >;
+export type WalletDepositStatusEventStatus = z.infer<typeof WalletDepositStatusEventStatusSchema>;
 export type OnRampStatus = z.infer<typeof OnRampStatusSchema>;
 
 export const DEFAULT_CRYPTO_CURRENCIES = ['BTC', 'ETH', 'USDT', 'USDC'] as const;

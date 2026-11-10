@@ -57,6 +57,9 @@ export const adminStatement = {
   'agent-proposal': ['view', 'approve', 'reject'] as const,
   'agent-config': ['view', 'update'] as const,
   'mcp-access': ['use'] as const,
+  // Checked by the agent hub, not by core: lets an admin use the back-office AI assistant, which
+  // reads platform tools on the admin's own grants.
+  'agent-chat': ['use'] as const,
   'mcp-token': ['view', 'revoke'] as const,
   'support-chat': ['view'] as const,
 } as const;
