@@ -1,5 +1,4 @@
-import { randomInt } from 'node:crypto';
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, lte, or } from 'drizzle-orm';
 import type {
   AuditWritePort,
   BonusGrantCommands,
@@ -7,7 +6,6 @@ import type {
   ExchangeRateReader,
   PlayEligibilityPort,
   Uuid,
-  WalletCommands,
   WalletReader,
 } from '@openora/core/contracts';
 import {
@@ -16,30 +14,18 @@ import {
   type DrizzleService,
   type DrizzleTx,
 } from '@openora/core/server';
-import { promoPlayerRank, promoStreakConfig, promoStreakMilestoneGrant } from '../schema/index.js';
-import type { StreakClaimResult, StreakForfeitReason, StreakReward } from '../contract/index.js';
+import { promoStreakMilestoneGrant } from '../schema/index.js';
+import {
+  STREAK_CURRENCY,
+  type StreakClaimResult,
+  type StreakForfeitReason,
+} from '../contract/index.js';
 import { priceForPayout } from '../shared/payout-currency.js';
 
 type Granted = DomainEventPayload<'promo.bonus.granted'>;
 
-type RakebackBoost = Pick<
-  Extract<StreakReward, { kind: 'rakebackBoost' }>,
-  'percentPoints' | 'days'
->;
-
-/** What `plugin.ts` announces per cash reward, once the claim's transaction has committed. */
-export type StreakCashPaid = {
-  userId: Uuid;
-  /** As actually credited, after `priceForPayout` - may differ from the streak's own currency. */
-  amount: string;
-  currency: string;
-  /** Null on a replayed credit (the balance already moved and was already announced). */
-  transactionId: string | null;
-};
-
 export type StreakClaimOutcome = StreakClaimResult & {
   granted: Granted[];
-  cashPaid: StreakCashPaid[];
 };
 
 export type StreakMilestoneReached = DomainEventPayload<'promo.streak.milestone.reached'>;
@@ -54,32 +40,21 @@ export type StreakPayoutDeps = {
   eligibility: PlayEligibilityPort | undefined;
   rates: ExchangeRateReader;
   walletReader: WalletReader;
-  payoutCurrency: string;
   audit: AuditWritePort;
   logger: Logger;
-  wallet?: WalletCommands | undefined;
 };
 
 /** Who started the block: null when no person did (a rule), so the audit row names the system. */
 export type StreakForfeitActor = { id: Uuid; isAdmin: boolean } | null;
 
 const BATCH = 500;
-const DAY_MS = 86_400_000;
-
-/** A "gift drop": an amount rolled fresh at settlement, cents precision, uniform over the range. */
-function rollGiftDrop(min: string, max: string): string {
-  const lowCents = Math.round(Number(min) * 100);
-  const highCents = Math.round(Number(max) * 100);
-  const cents = highCents > lowCents ? randomInt(lowCents, highCents + 1) : lowCents;
-  return (cents / 100).toFixed(2);
-}
 
 /**
- * Settles a milestone `StreakService.recordWager` recorded, when its player claims it: every
- * `bonus`/`giftDrop` reward through `BONUS_GRANTS`, every `rakebackBoost` onto the player's own
- * rank row. One milestone can carry several rewards (day 21 pays two gift drops and a fixed
- * bonus); each gets its own `sourceRef` off the milestone row's id, so a retry after a partial
- * failure never pays a reward that already landed twice.
+ * Settles a fixed reward `StreakService.recordWager` unlocked, when its player claims it: a bonus
+ * through `BONUS_GRANTS`, priced from the reward's USD amount into the currency the player plays
+ * in, under the rollover and expiry window captured at unlock. The reward row is the whole source
+ * of truth; the live streak config is never read, so an edit to it cannot change a reward already
+ * held. A claim after `expiresAt` is refused, and `expireDue` settles the rows nobody claimed.
  *
  * A player under a responsible-gambling block gets nothing settled, the same rule
  * `RankPayoutService` applies - a bonus waiting at the end of a block is an incentive to return.
@@ -90,10 +65,8 @@ export class StreakPayoutService {
   private readonly eligibility: PlayEligibilityPort | undefined;
   private readonly rates: ExchangeRateReader;
   private readonly walletReader: WalletReader;
-  private readonly payoutCurrency: string;
   private readonly audit: AuditWritePort;
   private readonly logger: Logger;
-  private readonly wallet: WalletCommands | undefined;
 
   constructor(deps: StreakPayoutDeps) {
     this.drizzle = deps.drizzle;
@@ -101,25 +74,20 @@ export class StreakPayoutService {
     this.eligibility = deps.eligibility;
     this.rates = deps.rates;
     this.walletReader = deps.walletReader;
-    this.payoutCurrency = deps.payoutCurrency;
     this.audit = deps.audit;
     this.logger = deps.logger;
-    this.wallet = deps.wallet;
   }
 
   /**
-   * Row lock with SKIP LOCKED plus the unsettled filter make a double or parallel claim settle
-   * once; the loser sees the milestone as not claimable.
+   * Row lock with SKIP LOCKED plus the unsettled and unexpired filters make a double or parallel
+   * claim settle once; the loser sees the reward as not claimable.
    */
   async claim(userId: Uuid, milestoneGrantId: Uuid): Promise<StreakClaimOutcome> {
     if (!this.grants || !this.eligibility) {
       throw new Error('streak claim needs BONUS_GRANTS and PLAY_ELIGIBILITY bound');
     }
     return this.drizzle.db.transaction(async (tx) => {
-      const [config] = await tx
-        .select({ milestones: promoStreakConfig.milestones })
-        .from(promoStreakConfig);
-      const settled = await this.settleOne(tx, userId, milestoneGrantId, config?.milestones ?? []);
+      const settled = await this.settleOne(tx, userId, milestoneGrantId);
       if (!settled) {
         throw new StreakMilestoneNotClaimableError(milestoneGrantId);
       }
@@ -128,8 +96,75 @@ export class StreakPayoutService {
   }
 
   /**
-   * Marks unclaimed milestones nobody has been told about yet as announced, handing each to
-   * `announce` once its own transaction has committed. `recordWager` inserts the milestone inside
+   * Settles every reward whose claim window has closed as `expired`, with one audit row each in
+   * the same transaction. The `settledAt is null` claim makes a repeated run write nothing twice.
+   * A row from before the window was captured has no expiry and can never be claimed, so it is
+   * swept too.
+   */
+  async expireDue(now: Date): Promise<number> {
+    let expired = 0;
+    for (;;) {
+      const batch = await this.drizzle.db.transaction(async (tx) => {
+        const due = await tx
+          .select({
+            id: promoStreakMilestoneGrant.id,
+            userId: promoStreakMilestoneGrant.userId,
+            day: promoStreakMilestoneGrant.day,
+            reachedAt: promoStreakMilestoneGrant.reachedAt,
+            expiresAt: promoStreakMilestoneGrant.expiresAt,
+          })
+          .from(promoStreakMilestoneGrant)
+          .where(
+            and(
+              isNull(promoStreakMilestoneGrant.settledAt),
+              or(
+                isNull(promoStreakMilestoneGrant.expiresAt),
+                lte(promoStreakMilestoneGrant.expiresAt, now),
+              ),
+            ),
+          )
+          .orderBy(asc(promoStreakMilestoneGrant.reachedAt))
+          .limit(BATCH)
+          .for('update', { skipLocked: true });
+        await tx
+          .update(promoStreakMilestoneGrant)
+          .set({ settledAt: now, outcome: 'expired' })
+          .where(
+            inArray(
+              promoStreakMilestoneGrant.id,
+              due.map((row) => row.id),
+            ),
+          );
+        await this.audit.recordManyInTransaction(
+          tx,
+          due.map((row) => ({
+            actorType: 'system' as const,
+            action: 'promo.streak.milestone.expired',
+            resourceType: 'promo_streak_milestone_grant',
+            resourceId: row.id,
+            before: { settledAt: null, outcome: null },
+            after: {
+              userId: row.userId,
+              day: row.day,
+              reachedAt: row.reachedAt.toISOString(),
+              expiresAt: row.expiresAt?.toISOString() ?? null,
+              outcome: 'expired',
+            },
+          })),
+        );
+        return due.length;
+      });
+      expired += batch;
+      if (batch < BATCH) {
+        return expired;
+      }
+    }
+  }
+
+  /**
+   * Marks unclaimed rewards nobody has been told about yet as announced, handing each to
+   * `announce` once its own transaction has committed. A reward whose claim window has closed is
+   * skipped. `recordWager` inserts the reward inside
    * the bet's own transaction, which has no after-commit hook, so the announcement is read back
    * from committed rows instead. A row that fails is logged and left for the next tick without
    * holding back the rest of the batch. A player under a responsible-gambling block is not invited
@@ -140,13 +175,6 @@ export class StreakPayoutService {
       return;
     }
     const eligibility = this.eligibility;
-    const [config] = await this.drizzle.db
-      .select({ milestones: promoStreakConfig.milestones })
-      .from(promoStreakConfig);
-    const paidDays = config?.milestones.map((milestone) => milestone.day) ?? [];
-    if (paidDays.length === 0) {
-      return;
-    }
     const pending = await this.drizzle.db
       .select({ id: promoStreakMilestoneGrant.id })
       .from(promoStreakMilestoneGrant)
@@ -154,7 +182,7 @@ export class StreakPayoutService {
         and(
           isNull(promoStreakMilestoneGrant.settledAt),
           isNull(promoStreakMilestoneGrant.announcedAt),
-          inArray(promoStreakMilestoneGrant.day, paidDays),
+          gt(promoStreakMilestoneGrant.expiresAt, new Date()),
         ),
       )
       .orderBy(asc(promoStreakMilestoneGrant.reachedAt))
@@ -233,17 +261,22 @@ export class StreakPayoutService {
     eligibility: PlayEligibilityPort,
   ): Promise<StreakMilestoneReached | null> {
     const [row] = await tx
-      .select({ userId: promoStreakMilestoneGrant.userId, day: promoStreakMilestoneGrant.day })
+      .select({
+        userId: promoStreakMilestoneGrant.userId,
+        day: promoStreakMilestoneGrant.day,
+        amount: promoStreakMilestoneGrant.amount,
+      })
       .from(promoStreakMilestoneGrant)
       .where(
         and(
           eq(promoStreakMilestoneGrant.id, id),
           isNull(promoStreakMilestoneGrant.settledAt),
           isNull(promoStreakMilestoneGrant.announcedAt),
+          gt(promoStreakMilestoneGrant.expiresAt, new Date()),
         ),
       )
       .for('update', { skipLocked: true });
-    if (!row) {
+    if (!row || row.amount === null) {
       return null;
     }
     const restricted = await eligibility.isRestricted(row.userId, tx);
@@ -263,19 +296,24 @@ export class StreakPayoutService {
         after: { userId: row.userId, day: row.day, outcome: 'restricted' },
       });
     }
-    return restricted ? null : { ...row, grantId: null };
+    return restricted
+      ? null
+      : { ...row, amount: row.amount, currency: STREAK_CURRENCY, grantId: null };
   }
 
   private async settleOne(
     tx: DrizzleTx,
     userId: Uuid,
     id: Uuid,
-    milestones: readonly { day: number; rewards: readonly StreakReward[] }[],
   ): Promise<StreakClaimOutcome | null> {
     const [row] = await tx
       .select({
         day: promoStreakMilestoneGrant.day,
         reachedAt: promoStreakMilestoneGrant.reachedAt,
+        amount: promoStreakMilestoneGrant.amount,
+        rolloverMultiplier: promoStreakMilestoneGrant.rolloverMultiplier,
+        claimExpiryDays: promoStreakMilestoneGrant.claimExpiryDays,
+        maxBet: promoStreakMilestoneGrant.maxBet,
       })
       .from(promoStreakMilestoneGrant)
       .where(
@@ -283,19 +321,25 @@ export class StreakPayoutService {
           eq(promoStreakMilestoneGrant.id, id),
           eq(promoStreakMilestoneGrant.userId, userId),
           isNull(promoStreakMilestoneGrant.settledAt),
+          gt(promoStreakMilestoneGrant.expiresAt, new Date()),
         ),
       )
       .for('update', { skipLocked: true });
-    const milestone = row && milestones.find((m) => m.day === row.day);
-    if (!milestone) {
+    if (
+      !row ||
+      row.amount === null ||
+      row.rolloverMultiplier === null ||
+      row.claimExpiryDays === null
+    ) {
       return null;
     }
-    // Cash and boosts never reach the bonus engine, so the claim is recorded here, with the
-    // settlement it describes.
-    const settle = async (
-      outcome: StreakClaimResult['outcome'],
-      paid: { grantIds: Uuid[]; cashPaid: StreakCashPaid[]; rakebackBoosts: RakebackBoost[] },
-    ) => {
+    const reward = {
+      amount: row.amount,
+      rolloverMultiplier: row.rolloverMultiplier,
+      claimExpiryDays: row.claimExpiryDays,
+      maxBet: row.maxBet,
+    };
+    const settle = async (outcome: StreakClaimResult['outcome'], grantIds: Uuid[]) => {
       await tx
         .update(promoStreakMilestoneGrant)
         .set({ settledAt: new Date(), outcome })
@@ -307,59 +351,66 @@ export class StreakPayoutService {
         resourceType: 'promo_streak_milestone_grant',
         resourceId: id,
         before: { settledAt: null, outcome: null },
-        after: { userId, day: row.day, reachedAt: row.reachedAt.toISOString(), outcome, ...paid },
+        after: {
+          userId,
+          day: row.day,
+          reachedAt: row.reachedAt.toISOString(),
+          outcome,
+          grantIds,
+          ...reward,
+        },
       });
     };
 
     if ((await this.eligibility?.isRestricted(userId, tx)) ?? true) {
-      await settle('restricted', { grantIds: [], cashPaid: [], rakebackBoosts: [] });
-      return { outcome: 'restricted', granted: [], cashPaid: [] };
+      await settle('restricted', []);
+      return { outcome: 'restricted', granted: [] };
     }
-    const granted: Granted[] = [];
-    const cashPaid: StreakCashPaid[] = [];
-    const rakebackBoosts: RakebackBoost[] = [];
-    for (const [index, reward] of milestone.rewards.entries()) {
-      // A settled row is reactivated when its day is reached again, so the reach time keeps
-      // each reach's credits apart from the last one's.
-      const sourceRef = `streak-milestone:${id}:${row.reachedAt.getTime()}:${index}`;
-      if (reward.kind === 'rakebackBoost') {
-        await this.applyRakebackBoost(tx, userId, reward);
-        rakebackBoosts.push({ percentPoints: reward.percentPoints, days: reward.days });
-        continue;
-      }
-      if (reward.kind === 'cash') {
-        cashPaid.push(await this.grantCash(tx, userId, reward, sourceRef));
-        continue;
-      }
-      granted.push(await this.grantOne(tx, userId, reward, sourceRef));
-    }
-    await settle('granted', {
-      grantIds: granted.map((grant) => grant.grantId),
-      cashPaid,
-      rakebackBoosts,
+    // A settled row is never reactivated except after a same-day reversal, so the reach time
+    // keeps a re-unlocked reward's credit apart from the reversed one's.
+    const granted = await this.grantOne(tx, {
+      userId,
+      reward,
+      sourceRef: `streak-milestone:${id}:${row.reachedAt.getTime()}:0`,
     });
-    return { outcome: 'granted', granted, cashPaid };
+    await settle('granted', [granted.grantId]);
+    return { outcome: 'granted', granted: [granted] };
   }
 
   private async grantOne(
     tx: DrizzleTx,
-    userId: Uuid,
-    reward: Extract<StreakReward, { kind: 'bonus' | 'giftDrop' }>,
-    sourceRef: string,
+    {
+      userId,
+      reward,
+      sourceRef,
+    }: {
+      userId: Uuid;
+      reward: {
+        amount: string;
+        rolloverMultiplier: string;
+        claimExpiryDays: number;
+        maxBet: string | null;
+      };
+      sourceRef: string;
+    },
   ): Promise<Granted> {
     if (!this.grants) {
       throw new Error('BONUS_GRANTS is not bound');
     }
-    const owed = reward.kind === 'bonus' ? reward.amount : rollGiftDrop(reward.min, reward.max);
-    const from = await this.currencyFor(tx);
     // A bonus can only be wagered by bets in the currency it was granted in. No rate throws,
-    // rolling the claim back so it can be retried.
+    // rolling the claim back so the reward stays claimable.
     const currency = (await this.walletReader.getBalances(userId, tx)).activeCurrency;
-    const { amount } = await priceForPayout(tx, this.rates, owed, from, currency);
+    const { amount } = await priceForPayout(
+      tx,
+      this.rates,
+      reward.amount,
+      STREAK_CURRENCY,
+      currency,
+    );
     const maxBet =
-      reward.terms.maxBet === null || reward.terms.maxBet === undefined
+      reward.maxBet === null
         ? null
-        : (await priceForPayout(tx, this.rates, reward.terms.maxBet, from, currency)).amount;
+        : (await priceForPayout(tx, this.rates, reward.maxBet, STREAK_CURRENCY, currency)).amount;
     const outcome = await this.grants.grant(tx, {
       userId,
       currency,
@@ -368,12 +419,9 @@ export class StreakPayoutService {
       sourceRef,
       actor: { type: 'system' },
       terms: {
-        wageringMultiplier: reward.terms.wageringMultiplier,
-        expiryDays: reward.terms.expiryDays,
+        wageringMultiplier: reward.rolloverMultiplier,
+        expiryDays: reward.claimExpiryDays,
         ...(maxBet === null ? {} : { maxBet }),
-        ...(reward.terms.maxWinMultiplier === null || reward.terms.maxWinMultiplier === undefined
-          ? {}
-          : { maxWinMultiplier: reward.terms.maxWinMultiplier }),
       },
     });
     if (!outcome.ok) {
@@ -387,83 +435,9 @@ export class StreakPayoutService {
       grantId: outcome.grantId,
       currency,
       grantedAmount: amount,
-      wageringRequired: moneyScaleBy(amount, reward.terms.wageringMultiplier),
+      wageringRequired: moneyScaleBy(amount, reward.rolloverMultiplier),
       source: 'streak',
       offerId: null,
     };
-  }
-
-  /**
-   * `cash`: real money, no bonus grant, no wagering requirement - credited through the same
-   * `cashback` wallet transaction type rank rakeback uses. `sourceRef` is the milestone's own
-   * `providerRefId`, so a retried claim can never pay the same milestone's cash reward twice.
-   */
-  private async grantCash(
-    tx: DrizzleTx,
-    userId: Uuid,
-    reward: Extract<StreakReward, { kind: 'cash' }>,
-    sourceRef: string,
-  ): Promise<StreakCashPaid> {
-    if (!this.wallet) {
-      throw new Error('WALLET_COMMANDS is not bound');
-    }
-    const currency = await this.currencyFor(tx);
-    // Never the streak's own currency unconditionally - see RacePayoutService's own use of
-    // `priceForPayout` for why. Throws on no rate, rolling back the claim so it can be retried.
-    const priced = await priceForPayout(
-      tx,
-      this.rates,
-      reward.amount,
-      currency,
-      this.payoutCurrency,
-    );
-    const outcome = await this.wallet.credit(tx, {
-      userId,
-      amount: priced.amount,
-      currency: priced.currency,
-      type: 'cashback',
-      allowNewCurrency: true,
-      allowNewWallet: true,
-      providerRef: { providerName: 'promo-streak', providerRefId: sourceRef },
-    });
-    if (!outcome.ok) {
-      // Thrown rather than logged-and-settled-as-granted: a milestone must never settle
-      // `outcome: 'granted'` for cash that never moved. See RacePayoutService for the same
-      // "roll back and retry" rule.
-      throw new Error(`streak cash reward failed: ${outcome.reason}`);
-    }
-    if (!outcome.moved) {
-      throw new Error(`streak cash reward ${sourceRef} was already credited`);
-    }
-    return {
-      userId,
-      amount: priced.amount,
-      currency: priced.currency,
-      transactionId: outcome.transactionId,
-    };
-  }
-
-  private async currencyFor(tx: DrizzleTx) {
-    const [config] = await tx
-      .select({ currency: promoStreakConfig.currency })
-      .from(promoStreakConfig);
-    return config?.currency ?? 'USD';
-  }
-
-  /**
-   * Additive on top of whatever `rakebackPercent` the player's tier already carries; there is no
-   * rakeback payout engine in core yet to consume it, so this only records the boost for one to
-   * read later. See the streak module's README for the deferral.
-   */
-  private async applyRakebackBoost(
-    tx: DrizzleTx,
-    userId: Uuid,
-    reward: Extract<StreakReward, { kind: 'rakebackBoost' }>,
-  ) {
-    const expiresAt = new Date(Date.now() + reward.days * DAY_MS);
-    await tx
-      .update(promoPlayerRank)
-      .set({ rakebackBoostPercent: reward.percentPoints, rakebackBoostExpiresAt: expiresAt })
-      .where(eq(promoPlayerRank.userId, userId));
   }
 }

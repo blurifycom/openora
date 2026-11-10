@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, lt, sql } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import type {
+  AuditWritePort,
   ExchangeRateReader,
   Uuid,
   WagerReversalArgs,
@@ -15,8 +16,9 @@ import {
   type DrizzleService,
   type DrizzleTx,
 } from '@openora/core/server';
-import type { PlayerStreak, StreakLeaderboard } from '../contract/index.js';
+import { STREAK_CURRENCY, type PlayerStreak, type StreakLeaderboard } from '../contract/index.js';
 import {
+  promoPlayerRank,
   promoPlayerStreak,
   promoStreakConfig,
   promoStreakDailyWager,
@@ -24,6 +26,14 @@ import {
   promoStreakRoundWager,
 } from '../schema/index.js';
 import { roundReversal } from '../shared/round-reversal.js';
+import {
+  DAY_MS,
+  activeRakebackRate,
+  isStreakLive,
+  isoDate,
+  yesterdayOf,
+} from '../shared/streak-day.js';
+import { fixedRewardViews, nextMilestoneAfter } from '../shared/streak-view.js';
 
 export const StreakConfigNotSetError = makeNotFoundError('StreakConfig');
 
@@ -31,44 +41,55 @@ export const StreakConfigNotSetError = makeNotFoundError('StreakConfig');
 const countsToward = (eligibleProducts: readonly string[], product: string) =>
   eligibleProducts.length === 0 || eligibleProducts.includes(product);
 
-const isoDate = (date: Date) => date.toISOString().slice(0, 10);
-const DAY_MS = 86_400_000;
-
 type Logger = { warn: (context: object, message: string) => void };
 
 /**
  * The daily streak: a player who wagers the operator's minimum in an eligible product on a UTC
- * calendar day keeps their streak, and the milestone list in `promoStreakConfig` is what pays
- * for it. Bound alongside `RankService` on the same `WAGER_TRACKING` port through
- * `CompositeWagerTracking` - both read the same bet, on the same transaction, for different
- * ledgers.
+ * calendar day extends their streak. What the streak pays is configured in `promoStreakConfig`: a
+ * rakeback rate per milestone day, which `RakebackService` reads, and fixed rewards, which this
+ * service unlocks as grant rows the player claims later. Bound alongside `RankService` on the same
+ * `WAGER_TRACKING` port through `CompositeWagerTracking` - both read the same bet, on the same
+ * transaction, for different ledgers.
  *
  * A day is counted once no matter how many qualifying bets land inside it: the daily wager
  * accumulator (`promoStreakDailyWager`) only tells this service when the threshold has been
  * crossed; `promoPlayerStreak.lastQualifyingDay` is the guard that stops a second bet the same
- * day from advancing the counter twice.
+ * day from advancing the counter twice. The count has no upper limit and no automatic reset.
  *
  * A missed day is observed in two places: the close job (`closeDay`) resets a run whose player
  * did not qualify yesterday, and a qualifying bet that finds its last qualifying day older than
  * yesterday starts a new run rather than extending the broken one - the close job may not have
- * run yet when the next day's first bet lands.
+ * run yet when the next day's first bet lands. While the streak is disabled nothing is counted,
+ * and the next close resets every run.
  *
  * A provider rollback takes the round's stake back out of the day it counted on
  * (`reverseWager`); if that drops today back under the minimum, today's advance is undone too -
- * unless the milestone it reached has already been claimed, since nothing here can take a paid
+ * unless the reward it unlocked has already been claimed, since nothing here can take a paid
  * reward back. A day that has already ended is final: a late rollback only corrects its total.
- * A missed day or a completed run never touches a reward waiting to be claimed.
  *
  * Own-money only, the same rule `RaceService`/`RankChallengeService` apply: `args.realAmount`
  * already excludes whatever part of a stake a bonus grant covered, so wagering a bonus never
  * advances the streak.
  */
+export type StreakServiceDeps = {
+  drizzle: DrizzleService;
+  rates: ExchangeRateReader;
+  logger: Logger;
+  audit: AuditWritePort;
+};
+
 export class StreakService implements WagerTrackingCommands {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly rates: ExchangeRateReader,
-    private readonly logger: Logger,
-  ) {}
+  private readonly drizzle: DrizzleService;
+  private readonly rates: ExchangeRateReader;
+  private readonly logger: Logger;
+  private readonly audit: AuditWritePort;
+
+  constructor(deps: StreakServiceDeps) {
+    this.drizzle = deps.drizzle;
+    this.rates = deps.rates;
+    this.logger = deps.logger;
+    this.audit = deps.audit;
+  }
 
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
     if (moneyCompare(args.realAmount, '0') <= 0) {
@@ -76,25 +97,26 @@ export class StreakService implements WagerTrackingCommands {
     }
     const [config] = await tx
       .select({
-        currency: promoStreakConfig.currency,
+        enabled: promoStreakConfig.enabled,
         dailyMinWager: promoStreakConfig.dailyMinWager,
         eligibleProducts: promoStreakConfig.eligibleProducts,
-        milestones: promoStreakConfig.milestones,
-        resetAfterDay: promoStreakConfig.resetAfterDay,
+        fixedRewards: promoStreakConfig.fixedRewards,
       })
       .from(promoStreakConfig);
-    if (!config || !countsToward(config.eligibleProducts, args.context.product)) {
+    if (
+      !config?.enabled ||
+      moneyCompare(config.dailyMinWager, '0') <= 0 ||
+      !countsToward(config.eligibleProducts, args.context.product)
+    ) {
       return [];
     }
     const amount =
-      args.currency === config.currency
+      args.currency === STREAK_CURRENCY
         ? args.realAmount
-        : await this.rates.convert(args.realAmount, args.currency, config.currency, tx);
+        : await this.rates.convert(args.realAmount, args.currency, STREAK_CURRENCY, tx);
     if (amount === null) {
-      // ponytail: a wager with no rate does not count toward the streak; revisit if this shows
-      // up in logs the way the equivalent rank-side skip would.
       this.logger.warn(
-        { userId: args.userId, from: args.currency, to: config.currency, amount: args.realAmount },
+        { userId: args.userId, from: args.currency, to: STREAK_CURRENCY, amount: args.realAmount },
         'streak wager skipped - no exchange rate',
       );
       return [];
@@ -102,14 +124,15 @@ export class StreakService implements WagerTrackingCommands {
 
     const now = new Date();
     const today = isoDate(now);
-    const yesterday = isoDate(new Date(now.getTime() - DAY_MS));
+    const yesterday = yesterdayOf(now);
     const [day] = await tx
       .insert(promoStreakDailyWager)
-      .values({ userId: args.userId, day: today, currency: config.currency, wagered: amount })
+      .values({ userId: args.userId, day: today, currency: STREAK_CURRENCY, wagered: amount })
       .onConflictDoUpdate({
         target: [promoStreakDailyWager.userId, promoStreakDailyWager.day],
         set: {
-          wagered: sql`${promoStreakDailyWager.wagered} + ${amount}::numeric`,
+          wagered: sql`CASE WHEN ${promoStreakDailyWager.currency} = ${STREAK_CURRENCY} THEN ${promoStreakDailyWager.wagered} + ${amount}::numeric ELSE ${amount}::numeric END`,
+          currency: STREAK_CURRENCY,
           updatedAt: sql`now()`,
         },
       })
@@ -166,26 +189,27 @@ export class StreakService implements WagerTrackingCommands {
       return [];
     }
 
-    if (config.milestones.some((milestone) => milestone.day === advanced.current)) {
-      // `onConflictDoUpdate` rather than `onConflictDoNothing`: a milestone day reached on an
-      // earlier streak, already settled, is reactivated rather than refused - the unique index
-      // is per player and day, not per streak attempt. One still waiting to be claimed is left
-      // as it is.
+    const reward = config.fixedRewards.find((candidate) => candidate.day === advanced.current);
+    if (reward) {
+      const captured = {
+        reachedAt: now,
+        settledAt: null,
+        outcome: null,
+        announcedAt: null,
+        amount: reward.amount,
+        rolloverMultiplier: reward.rolloverMultiplier,
+        claimExpiryDays: reward.claimExpiryDays,
+        maxBet: reward.maxBet ?? null,
+        expiresAt: new Date(now.getTime() + reward.claimExpiryDays * DAY_MS),
+      };
       await tx
         .insert(promoStreakMilestoneGrant)
-        .values({ userId: args.userId, day: advanced.current })
+        .values({ userId: args.userId, day: advanced.current, ...captured })
         .onConflictDoUpdate({
           target: [promoStreakMilestoneGrant.userId, promoStreakMilestoneGrant.day],
-          set: { reachedAt: sql`now()`, settledAt: null, outcome: null, announcedAt: null },
-          setWhere: sql`${promoStreakMilestoneGrant.settledAt} is not null`,
+          set: captured,
+          setWhere: eq(promoStreakMilestoneGrant.outcome, 'reversed'),
         });
-    }
-
-    if (advanced.current >= config.resetAfterDay) {
-      await tx
-        .update(promoPlayerStreak)
-        .set({ current: 0, updatedAt: sql`now()` })
-        .where(eq(promoPlayerStreak.userId, args.userId));
     }
     return [];
   }
@@ -246,15 +270,12 @@ export class StreakService implements WagerTrackingCommands {
 
   /**
    * Undoes today's advance once a rollback has taken today back under the minimum. The day number
-   * today reached is `current`, or `resetAfterDay` when that advance completed the run and reset
-   * it to zero. `best` is left alone: it is a record, not something any reward reads.
+   * today reached is `current`. `best` is left alone: it is a record, not something any reward
+   * reads.
    */
   private async undoTodayIfBelowMinimum(tx: DrizzleTx, userId: Uuid, todayWagered: string) {
     const [config] = await tx
-      .select({
-        dailyMinWager: promoStreakConfig.dailyMinWager,
-        resetAfterDay: promoStreakConfig.resetAfterDay,
-      })
+      .select({ dailyMinWager: promoStreakConfig.dailyMinWager })
       .from(promoStreakConfig);
     if (!config || moneyCompare(todayWagered, config.dailyMinWager) >= 0) {
       return;
@@ -268,10 +289,10 @@ export class StreakService implements WagerTrackingCommands {
         and(eq(promoPlayerStreak.userId, userId), eq(promoPlayerStreak.lastQualifyingDay, today)),
       )
       .for('update');
-    if (!streak) {
+    if (!streak || streak.current < 1) {
       return;
     }
-    const reached = streak.current === 0 ? config.resetAfterDay : streak.current;
+    const reached = streak.current;
     const [milestone] = await tx
       .select({
         id: promoStreakMilestoneGrant.id,
@@ -287,14 +308,14 @@ export class StreakService implements WagerTrackingCommands {
         ),
       )
       .for('update');
-    // A row reached on an earlier run is not today's to undo: it stays waiting to be claimed.
+    // A row reached on an earlier run is not today's to undo: it stays as it was.
     const reachedToday = milestone !== undefined && isoDate(milestone.reachedAt) === today;
     if (reachedToday && milestone.outcome === 'granted') {
       return;
     }
     if (reachedToday && !milestone.settledAt) {
-      // Settled rather than deleted, so reaching the same day again reactivates it the way a
-      // re-reached milestone always is, and the row still says why it never paid.
+      // Settled rather than deleted: reaching the same day again reactivates only a `reversed`
+      // row, and the row still says why it never paid.
       await tx
         .update(promoStreakMilestoneGrant)
         .set({ settledAt: now, outcome: 'reversed' })
@@ -304,54 +325,98 @@ export class StreakService implements WagerTrackingCommands {
       .update(promoPlayerStreak)
       .set({
         current: reached - 1,
-        lastQualifyingDay: reached > 1 ? isoDate(new Date(now.getTime() - DAY_MS)) : null,
+        lastQualifyingDay: reached > 1 ? yesterdayOf(now) : null,
         updatedAt: sql`now()`,
       })
       .where(eq(promoPlayerStreak.userId, userId));
   }
 
   async getForPlayer(userId: Uuid): Promise<PlayerStreak> {
-    const [config] = await this.drizzle.db
+    const db = this.drizzle.db;
+    const now = new Date();
+    const [config] = await db
       .select({
-        currency: promoStreakConfig.currency,
+        enabled: promoStreakConfig.enabled,
         dailyMinWager: promoStreakConfig.dailyMinWager,
-        milestones: promoStreakConfig.milestones,
+        rakebackMilestones: promoStreakConfig.rakebackMilestones,
+        fixedRewards: promoStreakConfig.fixedRewards,
       })
       .from(promoStreakConfig);
+    const [rank] = await db
+      .select({ tierId: promoPlayerRank.tierId })
+      .from(promoPlayerRank)
+      .where(eq(promoPlayerRank.userId, userId));
+    const isRanked = (rank?.tierId ?? null) !== null;
     if (!config) {
-      throw new StreakConfigNotSetError('global');
+      return {
+        enabled: false,
+        current: 0,
+        best: 0,
+        todayWagered: '0',
+        dailyMinWager: '0',
+        currency: STREAK_CURRENCY,
+        isRanked,
+        activeRate: null,
+        nextMilestone: null,
+        rakebackMilestones: [],
+        fixedRewards: [],
+      };
     }
-    const today = isoDate(new Date());
-    const [streak] = await this.drizzle.db
-      .select({ current: promoPlayerStreak.current, best: promoPlayerStreak.best })
+    const [streak] = await db
+      .select({
+        current: promoPlayerStreak.current,
+        best: promoPlayerStreak.best,
+        lastQualifyingDay: promoPlayerStreak.lastQualifyingDay,
+      })
       .from(promoPlayerStreak)
       .where(eq(promoPlayerStreak.userId, userId));
-    const [wagered] = await this.drizzle.db
+    const [wagered] = await db
       .select({ wagered: promoStreakDailyWager.wagered })
       .from(promoStreakDailyWager)
-      .where(and(eq(promoStreakDailyWager.userId, userId), eq(promoStreakDailyWager.day, today)));
-    const claimable = await this.drizzle.db
-      .select({ id: promoStreakMilestoneGrant.id, day: promoStreakMilestoneGrant.day })
-      .from(promoStreakMilestoneGrant)
       .where(
-        and(
-          eq(promoStreakMilestoneGrant.userId, userId),
-          isNull(promoStreakMilestoneGrant.settledAt),
-          inArray(
-            promoStreakMilestoneGrant.day,
-            config.milestones.map((milestone) => milestone.day),
-          ),
-        ),
-      )
-      .orderBy(asc(promoStreakMilestoneGrant.day));
+        and(eq(promoStreakDailyWager.userId, userId), eq(promoStreakDailyWager.day, isoDate(now))),
+      );
+    const grants = await db
+      .select({
+        id: promoStreakMilestoneGrant.id,
+        day: promoStreakMilestoneGrant.day,
+        amount: promoStreakMilestoneGrant.amount,
+        rolloverMultiplier: promoStreakMilestoneGrant.rolloverMultiplier,
+        claimExpiryDays: promoStreakMilestoneGrant.claimExpiryDays,
+        maxBet: promoStreakMilestoneGrant.maxBet,
+        reachedAt: promoStreakMilestoneGrant.reachedAt,
+        settledAt: promoStreakMilestoneGrant.settledAt,
+        outcome: promoStreakMilestoneGrant.outcome,
+        expiresAt: promoStreakMilestoneGrant.expiresAt,
+      })
+      .from(promoStreakMilestoneGrant)
+      .where(eq(promoStreakMilestoneGrant.userId, userId));
+    const counting = config.enabled && isStreakLive(streak?.lastQualifyingDay ?? null, now);
+    const current = counting ? (streak?.current ?? 0) : 0;
+    const rate = counting ? activeRakebackRate(config.rakebackMilestones, current) : null;
     return {
-      current: streak?.current ?? 0,
+      enabled: config.enabled,
+      current,
       best: streak?.best ?? 0,
       todayWagered: wagered?.wagered ?? '0',
       dailyMinWager: config.dailyMinWager,
-      currency: config.currency,
-      milestones: config.milestones,
-      claimable,
+      currency: STREAK_CURRENCY,
+      isRanked,
+      activeRate: rate
+        ? isRanked
+          ? { mode: 'ranked', percent: rate.rankedUpliftPercent }
+          : { mode: 'unranked', percent: rate.unrankedRatePercent }
+        : null,
+      nextMilestone: config.enabled
+        ? nextMilestoneAfter({
+            current,
+            rakebackMilestones: config.rakebackMilestones,
+            fixedRewards: config.fixedRewards,
+            grants,
+          })
+        : null,
+      rakebackMilestones: config.rakebackMilestones,
+      fixedRewards: fixedRewardViews(config.fixedRewards, grants, now),
     };
   }
 
@@ -388,24 +453,49 @@ export class StreakService implements WagerTrackingCommands {
   /**
    * Daily UTC close: a player whose last qualifying day was not yesterday (and who is not
    * already at zero) missed a day, so their run resets - `best` is untouched, it is the record,
-   * not the current attempt. Run once per UTC day, after it turns over; safe to run again, since
-   * a player already at zero or already qualified for the new day is left alone.
+   * not the current attempt. With the streak disabled, or never configured, every run resets: a
+   * disabled streak ends them all. Run once per UTC day, after it turns over; safe to run again,
+   * since a player already at zero or already qualified for the new day is left alone.
    */
   async closeDay(now: Date): Promise<number> {
-    const yesterday = isoDate(new Date(now.getTime() - DAY_MS));
+    const yesterday = yesterdayOf(now);
     // A rollback can no longer change a day before yesterday, so what its rounds counted is done.
     await this.drizzle.db
       .delete(promoStreakRoundWager)
       .where(lt(promoStreakRoundWager.day, yesterday));
-    const result = await this.drizzle.db
-      .update(promoPlayerStreak)
-      .set({ current: 0, updatedAt: sql`now()` })
-      .where(
-        and(
-          gt(promoPlayerStreak.current, 0),
-          sql`(${promoPlayerStreak.lastQualifyingDay} is null or ${promoPlayerStreak.lastQualifyingDay} < ${yesterday}::date)`,
-        ),
-      );
-    return result.rowCount ?? 0;
+    return this.drizzle.db.transaction(async (tx) => {
+      const [config] = await tx
+        .select({ enabled: promoStreakConfig.enabled })
+        .from(promoStreakConfig)
+        .for('share');
+      const disabled = !config?.enabled;
+      const result = await tx
+        .update(promoPlayerStreak)
+        .set({
+          current: 0,
+          ...(disabled ? { lastQualifyingDay: null } : {}),
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(
+            gt(promoPlayerStreak.current, 0),
+            disabled
+              ? undefined
+              : sql`(${promoPlayerStreak.lastQualifyingDay} is null or ${promoPlayerStreak.lastQualifyingDay} < ${yesterday}::date)`,
+          ),
+        );
+      const reset = result.rowCount ?? 0;
+      if (disabled && reset > 0) {
+        await this.audit.recordInTransaction(tx, {
+          actorType: 'system',
+          action: 'promo.streak.runs_reset',
+          resourceType: 'promo_player_streak',
+          resourceId: null,
+          before: { enabled: false },
+          after: { reason: 'streak_disabled', reset, closedDay: yesterday },
+        });
+      }
+      return reset;
+    });
   }
 }
