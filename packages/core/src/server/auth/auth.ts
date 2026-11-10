@@ -97,9 +97,11 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     advanced: {
       database: {
         generateId: () => randomUUID(),
-        // Without a schema the check can only fail, and it would fail every request -
-        // including anonymous ones that never touch an auth table.
-        validateSchema: options.schema !== undefined,
+        // better-auth 1.7 checks the schema on first use and fails every request on a gap.
+        // The organization() tables and the admin plugin's session.impersonatedBy were never
+        // migrated (neither feature is used), and consumers inject only the identity tables,
+        // so the check would 500 every sign-in.
+        validateSchema: false,
       },
       ...(cookieDomain ? { crossSubDomainCookies: { enabled: true, domain: cookieDomain } } : {}),
     },
