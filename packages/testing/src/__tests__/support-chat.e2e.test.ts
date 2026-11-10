@@ -909,7 +909,6 @@ describe('offline ticket', () => {
     ['a padded base64 id', 'dGlja2V0MTIz=='],
     ['a base64 id with a plus', 'Zm9v+YmFy'],
     ['an id with a tilde', 'T-2026~11'],
-    ['a percent-encoded id', '%7B1%7D'],
   ])('records the vendor ticket id on the audit row when it is %s', async (_case, ticketId) => {
     const p = await newPlayer();
     answerNextSupportTicketRaw({ ticketId });
@@ -929,6 +928,10 @@ describe('offline ticket', () => {
     ['the requester email as the ticket id', (email) => ({ ticketId: email })],
     ['the message as the ticket id', (_email, message) => ({ ticketId: message })],
     ['a message id in angle brackets', () => ({ ticketId: '<123.abc@mail.example>' })],
+    [
+      'the percent-encoded email as the ticket id',
+      (email) => ({ ticketId: encodeURIComponent(email) }),
+    ],
     [
       'a ticket id holding the requester and the message',
       (email, message) => ({ ticketId: { requester: { email }, description: message } }),

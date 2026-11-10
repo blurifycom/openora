@@ -96,8 +96,9 @@ account on every request, plus the message.
   `email_not_verified`, and the adapter is not called.
 - **One ticket per call, as given.** The adapter creates exactly one ticket authored by the
   customer, with the requester core sent and in no group; routing is the vendor's. It answers the
-  vendor's own id for that ticket: an id of 1-200 characters, letters, digits and
-  `_ . : # / = + ~ % -` only, so never an email or free text. Core validates the answer: one off
+  vendor's own id for that ticket: 1-200 ASCII letters, digits and `_ . : # / = + ~ -` only, so
+  never an email address (`@`) or text with spaces. A single word would still pass, so the adapter
+  must answer the vendor's id field, never another one. Core validates the answer: one off
   that shape is logged as malformed, never itself, and the ticket is audited without an id; the
   player still gets success, since the ticket exists and a retry would file it twice. Mask the
   email in any log line, and throw the port's provider error with a listed reason on failure. The
