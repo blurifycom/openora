@@ -899,6 +899,24 @@ describe('offline ticket', () => {
     }
   });
 
+  it.each([
+    ['a uuid', 'a0b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c4d'],
+    ['a numeric string', '12345'],
+    ['a project-key slug', 'PM-1234'],
+    ['a global id with colon and slashes', 'gid://helpdesk/Ticket/123'],
+    ['a namespaced id with colon and hash', 'acme:ticket#42_v2.1'],
+    ['a 200-character id', 'a'.repeat(200)],
+  ])('records the vendor ticket id on the audit row when it is %s', async (_case, ticketId) => {
+    const p = await newPlayer();
+    answerNextSupportTicketRaw({ ticketId });
+
+    expect((await p.client.post(TICKETS, { message: 'hello' })).status).toBe(200);
+
+    expect(await ticketAudits(p.playerId)).toEqual([
+      expect.objectContaining({ after: { ticketId } }),
+    ]);
+  });
+
   it.each<[string, (email: string, message: string) => unknown]>([
     ['nothing', () => undefined],
     ['a numeric ticket id', () => ({ ticketId: 42 })],
