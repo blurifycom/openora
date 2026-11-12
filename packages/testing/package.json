@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
+    "@orpc/server": "1.15.7",
     "@types/node": "26.6.5",
     "@types/pg": "8.23.1",
     "typescript": "6.0.3",

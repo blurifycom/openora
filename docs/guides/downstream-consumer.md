@@ -104,6 +104,16 @@ and each job reaches one of them.
   replicas `JOB_WORKERS=!<queues>`. Every queue needs a consumer somewhere. See
   [ADR-0049](../adr/0049-per-process-job-worker-selection.md).
 
+- **Calls between services.** Set `INTERNAL_API_SECRETS` to the same comma list on every
+  process, with each secret at least 32 characters. A plugin serves a call with
+  `ctx.routers.addInternal(namespace, factory)`, which mounts under `/internal/v1`, and
+  another process calls it with
+  `createInternalClient({ baseUrl, serviceName, secret, timeoutMs })`. A handler that serves
+  only some callers checks `context.internalCaller` against an allow-list. While the variable
+  is unset every internal route answers 401. Proxies must not rewrite `/internal/v1` paths.
+  For rotation and limits, see
+  [ADR-0052](../adr/0052-signed-internal-api-for-service-calls.md).
+
 ## Seeding reference data (production)
 
 Migrations carry **structure only** (DDL: tables, indexes, constraints) - never data.

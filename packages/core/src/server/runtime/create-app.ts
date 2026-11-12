@@ -23,6 +23,7 @@ import {
   setErrorReporter,
   EVENT_BUS,
   extractClientMeta,
+  type InternalContext,
   type OssContext,
 } from '../kernel/index.js';
 import { randomUUID } from 'node:crypto';
@@ -81,6 +82,12 @@ import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platfor
 import { wireErrorBody } from '../kernel/wire-error-response.js';
 import type { CoreTokenCatalog } from './core-token-catalog.js';
 import { parseJobWorkers, selectJobWorkers } from './job-workers.js';
+import {
+  INTERNAL_API_MAX_BODY_BYTES,
+  INTERNAL_API_PREFIX,
+  parseInternalApiSecrets,
+  verifyInternalRequest,
+} from './internal-api.js';
 
 // Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
 // only (public CMS content and the game catalogue). NOTHING
@@ -363,20 +370,20 @@ function mountMcpTransport(
 // and the signature check fails closed (401).
 const MAX_CAPTURED_BODY_BYTES = 1_048_576;
 
-async function captureRawBody(req: Request): Promise<string | undefined> {
+// content-length can be absent (chunked) or lie, so the actual stream is bounded rather than
+// the header trusted: past the cap it stops and resolves undefined, so memory stays bounded and
+// a signature check over the body fails closed.
+async function readBoundedBody(req: Request, maxBytes: number): Promise<Buffer | undefined> {
   if (!req.body) {
-    return undefined;
+    return Buffer.alloc(0);
   }
   const declaredLength = req.headers.get('content-length');
-  if (declaredLength && Number(declaredLength) > MAX_CAPTURED_BODY_BYTES) {
+  if (declaredLength && Number(declaredLength) > maxBytes) {
     return undefined;
   }
-  // content-length can be absent (chunked) or lie, so bound the actual stream rather
-  // than trusting the header: stop and bail past the cap so memory stays bounded and
-  // the signature check fails closed.
   const clonedBody = req.clone().body;
   if (!clonedBody) {
-    return undefined;
+    return Buffer.alloc(0);
   }
   const reader = clonedBody.getReader();
   const chunks: Uint8Array[] = [];
@@ -388,8 +395,10 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
         break;
       }
       total += value.byteLength;
-      if (total > MAX_CAPTURED_BODY_BYTES) {
-        await reader.cancel();
+      if (total > maxBytes) {
+        // Not awaited: cancelling one branch of a tee settles only once the other branch is
+        // cancelled too, and the request keeps that one, so awaiting here hangs the request.
+        reader.cancel().catch(() => undefined);
         return undefined;
       }
       chunks.push(value);
@@ -397,7 +406,80 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
   } finally {
     reader.releaseLock();
   }
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
+}
+
+async function captureRawBody(req: Request): Promise<string | undefined> {
+  if (!req.body) {
+    return undefined;
+  }
+  return (await readBoundedBody(req, MAX_CAPTURED_BODY_BYTES))?.toString('utf8');
+}
+
+// `/internal/v1/*` answers here and never falls through, so no player or admin route can be
+// reached under it and no session cookie is read. An unsigned request gets an empty 401 whether
+// or not a route matches, so the surface cannot be enumerated without the secret.
+function mountInternalApi(
+  app: Hono,
+  handler: OpenAPIHandler<OssContext>,
+  secrets: readonly string[],
+  trustedProxies: TrustedProxies,
+) {
+  app.all(`${INTERNAL_API_PREFIX}/*`, async (c) => {
+    if (secrets.length === 0) {
+      return c.body(null, 401);
+    }
+    const body = await readBoundedBody(c.req.raw, INTERNAL_API_MAX_BODY_BYTES);
+    if (body === undefined) {
+      return c.body(null, 413);
+    }
+    const url = new URL(c.req.url);
+    const internalCaller = verifyInternalRequest(
+      {
+        headers: c.req.raw.headers,
+        method: c.req.method,
+        pathAndQuery: `${url.pathname}${url.search}`,
+        body,
+      },
+      secrets,
+      Date.now(),
+    );
+    if (internalCaller === null) {
+      return c.body(null, 401);
+    }
+    const { headers, clientMeta, traceId } = requestMeta(c, trustedProxies);
+    const context: InternalContext = {
+      request: { headers },
+      clientMeta,
+      rawBody: body.toString('utf8'),
+      internalCaller,
+    };
+    return withRequestContext({ traceId, clientMeta }, async () => {
+      const { matched, response } = await handler.handle(c.req.raw, {
+        prefix: INTERNAL_API_PREFIX,
+        context,
+      });
+      return matched ? c.newResponse(response.body, response) : c.body(null, 404);
+    });
+  });
+}
+
+// oRPC wraps a thrown native error (a DB failure, a bug) into an
+// ORPCError('INTERNAL_SERVER_ERROR', { cause }). Report anything that is a
+// server fault - a non-ORPCError, or an ORPCError with a 5xx status - and skip
+// expected client errors (4xx: not-found, conflict, validation, rate-limit).
+// Report the underlying `cause` so the tracker gets the real error + stack,
+// not the generic wrapper. A wire error reply the route chose is reported only
+// when it carries the fault as its cause.
+function reportServerFault(error: unknown) {
+  if (
+    error instanceof ORPCError &&
+    (error.status < 500 || (wireErrorBody(error) !== null && error.cause === undefined))
+  ) {
+    return;
+  }
+  const err = error instanceof ORPCError ? (error.cause ?? error) : error;
+  createLogger('orpc').error({ err }, 'unhandled error');
 }
 
 /**
@@ -454,6 +536,7 @@ async function bootApp(
     process.env['TRUSTED_PROXIES'],
   );
   const jobWorkerSelection = parseJobWorkers(process.env['JOB_WORKERS']);
+  const internalApiSecrets = parseInternalApiSecrets(process.env['INTERNAL_API_SECRETS']);
   const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
 
   if (config.databaseUrl) {
@@ -642,6 +725,16 @@ async function bootApp(
     }
     router[namespace] = factory(container) as AnyRouter;
   }
+  const internalRouter: Record<string, AnyRouter> = {};
+  for (const [namespace, factory] of registry.routers.getInternal()) {
+    internalRouter[namespace] = factory(container) as AnyRouter;
+  }
+  if (Object.keys(internalRouter).length > 0 && internalApiSecrets.length === 0) {
+    bootLogger.warn(
+      { namespaces: Object.keys(internalRouter) },
+      'INTERNAL_API_SECRETS is unset: every /internal/v1 request is refused',
+    );
+  }
   // Built now so a broken tool or action-type factory fails boot, not the first call.
   const mcpTransport = await loadMcpTransport(container, container.get(MCP_KERNEL));
 
@@ -690,25 +783,12 @@ async function bootApp(
       ? [adminMutationAudit(container.get(AUDIT_WRITER))]
       : [],
     customErrorResponseBodyEncoder: wireErrorBody,
-    interceptors: [
-      onError((error) => {
-        // oRPC wraps a thrown native error (a DB failure, a bug) into an
-        // ORPCError('INTERNAL_SERVER_ERROR', { cause }). Report anything that is a
-        // server fault - a non-ORPCError, or an ORPCError with a 5xx status - and skip
-        // expected client errors (4xx: not-found, conflict, validation, rate-limit).
-        // Report the underlying `cause` so the tracker gets the real error + stack,
-        // not the generic wrapper. A wire error reply the route chose is reported only
-        // when it carries the fault as its cause.
-        if (
-          error instanceof ORPCError &&
-          (error.status < 500 || (wireErrorBody(error) !== null && error.cause === undefined))
-        ) {
-          return;
-        }
-        const err = error instanceof ORPCError ? (error.cause ?? error) : error;
-        createLogger('orpc').error({ err }, 'unhandled error');
-      }),
-    ],
+    interceptors: [onError(reportServerFault)],
+  });
+
+  const internalHandler = new OpenAPIHandler<OssContext>(internalRouter, {
+    customErrorResponseBodyEncoder: wireErrorBody,
+    interceptors: [onError(reportServerFault)],
   });
 
   const app = new Hono();
@@ -728,6 +808,10 @@ async function bootApp(
     );
     return c.json({ error: 'Internal Server Error' }, 500);
   });
+
+  // Ahead of every app-wide middleware: CORS, the HTTP cache and session resolution never run
+  // for a service-to-service call.
+  mountInternalApi(app, internalHandler, internalApiSecrets, trustedProxies);
 
   // Ahead of every app-wide middleware: a served MCP request returns from its own handler, so
   // CORS, the HTTP cache, raw-body capture and session resolution never run for it.

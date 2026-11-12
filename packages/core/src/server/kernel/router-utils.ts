@@ -32,6 +32,11 @@ export type OssContext = {
   rawBody?: string;
 };
 
+// The context of a route a plugin adds with `ctx.routers.addInternal`. `internalCaller` is the
+// `SERVICE_NAME` the request was signed as; a route allow-lists its callers on it. No `auth`:
+// an internal route acts for a service, never for a player or an admin.
+export type InternalContext = OssContext & { internalCaller: string };
+
 export type ResolveAuthOptions = {
   // For the few routes an account must still reach while it owes a second-factor
   // enrolment: the session streams, its own sessions, the phone verification an SMS factor
