@@ -803,7 +803,8 @@ export class WalletCommandsService implements WalletCommands {
         'debit',
         providerRef,
         taken?.balance,
-        { correctionRequestedAmount: amount },
+        // All of it came off the real balance, which the ledger invariant reads from here.
+        { correctionRequestedAmount: amount, realShare: collected },
       );
       if (raced) {
         throw new WalletCorrectionRefConflictError(

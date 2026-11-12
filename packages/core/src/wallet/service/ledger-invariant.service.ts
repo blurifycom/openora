@@ -43,11 +43,13 @@ end`;
 
 // A row that moved money by an amount nothing on it records: written before `balance_after`
 // (and with it a win's `real_share`), before `direction`, or a bet from before bets recorded
-// their real part that emptied the balance (it may have been bonus-split).
+// their real part that emptied the balance (it may have been bonus-split). A correction's `bet`
+// re-collects from the real balance only, so emptying it says nothing about a bonus split.
 const unpriced = sql`(t.amount <> 0 and (${moves}) and (
   t.balance_after is null
   or (t.type not in ('deposit', 'withdrawal', 'swap_out') and t.direction is null)
-  or (t.type = 'bet' and t.real_share is null and t.balance_after = 0)))`;
+  or (t.type = 'bet' and t.real_share is null and t.balance_after = 0
+    and t.correction_requested_amount is null)))`;
 
 /** Sum of effects and count of unpriced rows for the pair `p`, over rows after `asOf`. */
 function ledgerAfter(asOf: SQL): SQL {

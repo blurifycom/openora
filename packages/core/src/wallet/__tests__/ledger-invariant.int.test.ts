@@ -320,9 +320,9 @@ describe('ledger invariant scan (real PG)', () => {
 
 describe('legacy rows and the baseline backfill (real PG)', () => {
   /** A wallet funded before rows recorded `balance_after`. */
-  function legacyWallet(createdAt = hoursAgo(48)) {
-    return seedWallet('300', [
-      { type: 'deposit', amount: '300', status: 'completed', balanceAfter: null, createdAt },
+  function legacyWallet(createdAt = hoursAgo(48), amount = '300') {
+    return seedWallet(amount, [
+      { type: 'deposit', amount, status: 'completed', balanceAfter: null, createdAt },
     ]);
   }
 
@@ -386,6 +386,60 @@ describe('legacy rows and the baseline backfill (real PG)', () => {
     const found = await breaches();
     expect(found).toHaveLength(1);
     expect(Number(found[0]?.amount)).toBe(-0.5);
+  });
+
+  it('prices a correction that re-collects a stake down to zero, so a later hand edit is a breach', async () => {
+    const w = await legacyWallet(hoursAgo(48), '100');
+    const svc = makeReconciliation();
+    await run(svc, true);
+    const round = { providerName: 'dice', externalRoundId: randomUUID() };
+    const leg = () => ({ ...round, providerRefId: randomUUID() });
+    await db.drizzle.db.transaction(async (txn) => {
+      await commands.debit(txn, {
+        userId: w.userId,
+        amount: '40',
+        type: 'bet',
+        providerRef: leg(),
+      });
+      await commands.credit(txn, {
+        userId: w.userId,
+        amount: '40',
+        currency: 'USD',
+        type: 'bet_reversal',
+        providerRef: leg(),
+      });
+      await commands.debit(txn, {
+        userId: w.userId,
+        amount: '70',
+        type: 'bet',
+        providerRef: {
+          providerName: 'dice',
+          providerRefId: randomUUID(),
+          externalRoundId: randomUUID(),
+        },
+      });
+    });
+    const correction = await db.drizzle.db.transaction((txn) =>
+      commands.correctionDebit(txn, {
+        userId: w.userId,
+        amount: '40',
+        currency: 'USD',
+        type: 'bet',
+        providerRef: leg(),
+      }),
+    );
+    await db.drizzle.db.execute(
+      sql`update wallet_balance set amount = amount + 7 where wallet_id = ${w.id}`,
+    );
+
+    const summary = await run(svc);
+
+    expect(Number(correction.collected)).toBe(30);
+    expect(Number(correction.newBalance)).toBe(0);
+    expect(summary?.summary).toMatchObject({ needsBaseline: 0, balanceBreaches: 1 });
+    const found = await breaches();
+    expect(found).toHaveLength(1);
+    expect(Number(found[0]?.amount)).toBe(7);
   });
 
   it('skips a wallet whose legacy row is too recent to baseline, and keeps it as needing one', async () => {
