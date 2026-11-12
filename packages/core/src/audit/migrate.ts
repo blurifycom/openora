@@ -7,7 +7,7 @@ import { runMigrations } from '@openora/core/server/migrate';
 // Every UPDATE, DELETE and TRUNCATE on audit_log raises, whatever the role. ENABLE ALWAYS keeps the
 // triggers firing under `session_replication_role = replica`, which skips ordinary triggers, so
 // only DDL gets past them: the owner can still disable or drop one, which is why the app must not
-// run as the owner (ADR-0052). The function keeps its
+// run as the owner (ADR-0053). The function keeps its
 // audit_log name from before it guarded the outbox tables too.
 const APPEND_ONLY_SQL = [
   `CREATE OR REPLACE FUNCTION audit_log_deny_mutation() RETURNS trigger LANGUAGE plpgsql
