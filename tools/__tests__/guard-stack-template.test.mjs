@@ -29,4 +29,5 @@ test('a PR based on a feature branch is denied', () => {
   assert.equal(exitCode('gh pr edit 12 --base=feat/a'), DENIED);
   assert.equal(exitCode('cd repo && gh pr create --base origin/feat/a'), DENIED);
   assert.equal(exitCode('gh -R o/r pr create --base feat/a'), DENIED);
+  assert.equal(exitCode('GH_REPO=o/r gh pr create --base feat/a'), DENIED);
 });

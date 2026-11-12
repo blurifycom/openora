@@ -4,8 +4,8 @@
 // checkout with the reviewed `sha` and the `verdict`. A push, `gh stack submit|push`, or a new
 // MR/PR is denied unless one of those files records the current HEAD as APPROVED (or GO).
 // Each command in a chain is judged on its own: a branch delete or a tag-only push passes, and
-// so does a promotion, sent from a shared branch that no branch review covers. Git errors fail
-// open, like every other guard.
+// so does a PR/MR opened from a shared branch (a promotion, which no branch review covers). Git
+// errors fail open, like every other guard.
 //
 // ponytail: trusts the state file, which an agent could write by hand, and checks the checked-out
 // HEAD, not a different ref named on the command line. It stops a forgotten review, not a hostile
@@ -49,7 +49,7 @@ const segments = (command) =>
   command
     .replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, (quoted) => (/[\s;&|(){}]/.test(quoted) ? '""' : quoted))
     .split(/&&|\|\||[;|\n(){}]/)
-    .map((part) => part.trim())
+    .map((part) => part.replace(/(?:^|\s)#.*$/, '').trim())
     .filter(Boolean);
 
 const sendsNothingNew = (pushArgs) => {
@@ -62,26 +62,39 @@ const sendsNothingNew = (pushArgs) => {
   );
 };
 
-// Returns the directory to check, or null when the segment sends nothing that needs a review.
+// The directory to check and whether the segment opens a PR/MR, or null when it sends nothing
+// that needs a review. A PR/MR opened from a shared branch is a promotion and needs none; a push
+// from one does.
 const reviewTarget = (segment, cwd) => {
-  if (/^cd\s/.test(segment)) return null;
+  if (/^cd\s/.test(segment)) {
+    return null;
+  }
   const push = GIT_PUSH.exec(segment);
   if (push) {
-    if (sendsNothingNew(push[2])) return null;
+    if (sendsNothingNew(push[2])) {
+      return null;
+    }
     const dir = DIR_FLAG.exec(push[1]);
-    return dir ? within(cwd, dir[1]) : cwd;
+    return { dir: dir ? within(cwd, dir[1]) : cwd, opensReview: false };
   }
   const opens = OPENS_REVIEW.exec(segment);
-  if (!opens) return null;
+  if (!opens) {
+    return null;
+  }
   const source = SOURCE.exec(opens[1]);
-  return source && SHARED.test(unquote(source[1])) ? null : cwd;
+  if (source && SHARED.test(unquote(source[1]))) {
+    return null;
+  }
+  return { dir: cwd, opensReview: true };
 };
 
 const isApproved = (dirs, head) =>
   dirs.some((dir) => {
     try {
       const reviews = join(dir, '.claude', 'reviews');
-      if (!existsSync(reviews)) return false;
+      if (!existsSync(reviews)) {
+        return false;
+      }
       return readdirSync(reviews)
         .filter((name) => name.endsWith('.json'))
         .some((name) => {
@@ -102,12 +115,14 @@ const isApproved = (dirs, head) =>
     }
   });
 
-const check = (dir) => {
+const check = ({ dir, opensReview }) => {
   const branch = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
   const top = git(dir, 'rev-parse', '--show-toplevel');
   const common = git(dir, 'rev-parse', '--git-common-dir');
   const head = git(dir, 'rev-parse', 'HEAD');
-  if (!top || !common || !head || SHARED.test(branch)) return;
+  if (!top || !common || !head || (opensReview && SHARED.test(branch))) {
+    return;
+  }
   const mainCheckout = dirname(isAbsolute(common) ? common : resolve(dir, common));
   if (!isApproved([...new Set([top, mainCheckout])], head)) {
     deny(
@@ -120,8 +135,12 @@ const payload = readPayload();
 let cwd = payload.cwd ?? process.cwd();
 for (const segment of segments(extractCommand(payload))) {
   const cd = /^cd\s+(\S+)$/.exec(segment);
-  if (cd) cwd = within(cwd, cd[1]);
-  const dir = reviewTarget(segment, cwd);
-  if (dir) check(dir);
+  if (cd) {
+    cwd = within(cwd, cd[1]);
+  }
+  const target = reviewTarget(segment, cwd);
+  if (target) {
+    check(target);
+  }
 }
 process.exit(0);
