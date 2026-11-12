@@ -217,7 +217,7 @@ describe('system cards through the outbox (real PG)', () => {
   });
 
   it('keeps one card when the same event is delivered twice or emitted twice', async () => {
-    const { writer, relay, broker } = setup();
+    const { writer, relay, broker, publish } = setup();
     const roomId = await createRoom();
     const giftId = randomUUID();
     const post = () =>
@@ -237,6 +237,8 @@ describe('system cards through the outbox (real PG)', () => {
     await relay.drainOnce();
 
     expect(await messagesWithId(giftId)).toHaveLength(1);
+    await flushPublishes();
+    expect(publish).toHaveBeenCalledTimes(1);
   });
 
   it('leaves the card at v2 when the update is delivered before the post', async () => {
@@ -271,7 +273,8 @@ describe('system cards through the outbox (real PG)', () => {
     const [stored] = await messagesWithId(giftId);
     expect(stored).toMatchObject({ version: 2, metadata: claimed, userId: actorId });
     expect(outcomes).toEqual(['inserted', 'stale']);
-    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+    await flushPublishes();
+    expect(publish).toHaveBeenCalledTimes(1);
   });
 
   it('moves a player-authored card from v1 to v2 in order, the update on its own tx', async () => {
@@ -304,7 +307,8 @@ describe('system cards through the outbox (real PG)', () => {
     expect(outcomes).toEqual(['inserted', 'updated']);
     expect(stored).toMatchObject({ version: 2, metadata: claimed, userId: senderId });
     // Once per stored version, after the chat side stored it.
-    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
+    await flushPublishes();
+    expect(publish).toHaveBeenCalledTimes(2);
     expect(publish).toHaveBeenLastCalledWith(
       `chat:room:${roomId}`,
       expect.objectContaining({ id: giftId, metadata: claimed, type: 'system' }),
@@ -348,7 +352,7 @@ describe('system cards through the outbox (real PG)', () => {
   });
 
   it('stores a card addressed to the global room by its id under the null room', async () => {
-    const { writer, relay } = setup();
+    const { writer, relay, publish } = setup();
     const [global] = await db.drizzle.db
       .select({ id: chatRoom.id })
       .from(chatRoom)
@@ -366,6 +370,11 @@ describe('system cards through the outbox (real PG)', () => {
     await relay.drainOnce();
 
     expect((await messagesWithId(messageId))[0]?.roomId).toBeNull();
+    await flushPublishes();
+    expect(publish).toHaveBeenCalledWith(
+      'chat:global',
+      expect.objectContaining({ id: messageId, roomId: null }),
+    );
   });
 
   it('leaves no outbox row and no card when the caller tx rolls back', async () => {
