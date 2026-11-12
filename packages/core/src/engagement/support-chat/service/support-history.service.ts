@@ -222,8 +222,13 @@ const toEmailChange = ({
 
 // Email changes still queued in `audit_outbox`. The shipper moves a row into `audit_log` and
 // deletes it in one transaction, so one snapshot holds each change in exactly one of the two, and
-// the queued ones are chained after every row already in the log, in queue order.
-const queuedField = (key: string) => sql`${auditOutbox.entry}->>${key}`;
+// the queued ones are chained after every row already in the log. Two changes of one account are
+// serialized by its `user` row lock, so their queue order is their commit order.
+// ponytail: seq scan of the outbox, fine while the shipper keeps it near empty; if a stalled
+// shipper makes history slow, add a partial index on (entry->>'resourceId') for email changes.
+// The key goes in as a literal so such an expression index can match.
+const queuedField = (key: 'action' | 'resourceType' | 'resourceId') =>
+  sql`${auditOutbox.entry}->>${sql.raw(`'${key}'`)}`;
 const QUEUED_CHANGE = {
   before: sql<Record<string, unknown> | null>`${auditOutbox.entry}->'before'`,
   after: sql<Record<string, unknown> | null>`${auditOutbox.entry}->'after'`,
@@ -314,7 +319,7 @@ export class SupportHistoryService {
   }
 
   /**
-   * The player's email changes from the audit log, in the order they were written, each timed by
+   * The player's email changes from the audit log and the audit outbox, in the order they were written, each timed by
    * the change time the row carries, or by its write time when it carries none.
    */
   private async emailChanges(tx: DrizzleTx, userId: User['id'], playerId: Player['id']) {

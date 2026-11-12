@@ -9,6 +9,7 @@ import {
 } from '@openora/core/contracts';
 import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
 import { auditLog } from '@openora/core/audit/schema';
+import { drainAuditOutbox } from '@openora/core/audit/server';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
@@ -105,9 +106,17 @@ async function scenario(rows: Row[], { registeredEmail }: { registeredEmail?: st
     };
     const writtenAt = new Date(registeredAt.getTime() + row.at * HOUR);
     if (row.queued) {
+      // Shaped like a real enqueue: an absent side is left out, so the shipper accepts the entry.
+      const { before, after, ...rest } = record;
       await db.drizzle.db.insert(auditOutbox).values({
         eventId: randomUUID(),
-        entry: { ...record, correlationId: null, createdAt: writtenAt.toISOString() },
+        entry: {
+          ...rest,
+          ...(before === null ? {} : { before }),
+          ...(after === null ? {} : { after }),
+          correlationId: null,
+          createdAt: writtenAt.toISOString(),
+        },
       });
       continue;
     }
@@ -135,7 +144,12 @@ async function scenario(rows: Row[], { registeredEmail }: { registeredEmail?: st
   };
   const service = new SupportHistoryService({ drizzle: db.drizzle, cache: makeCache(), reader });
   const history = await service.getHistory(account.id, false);
-  return { history, asked, win, userId: account.id };
+  const readAgain = () =>
+    new SupportHistoryService({ drizzle: db.drizzle, cache: makeCache(), reader }).getHistory(
+      account.id,
+      false,
+    );
+  return { history, asked, win, userId: account.id, readAgain };
 }
 
 const warnedWithUserOnly = (userId: string) => {
@@ -362,6 +376,19 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     ]);
     expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: true });
     expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('gives the same windows before and after the shipper chains a queued change', async () => {
+    const s = await scenario([
+      { before: 'a', after: 'b', at: 10 },
+      { before: 'b', after: 'cur', at: 20, queued: true },
+    ]);
+    await drainAuditOutbox(db.drizzle.db);
+    const queuedLeft = await db.drizzle.db.select({ id: auditOutbox.id }).from(auditOutbox);
+    expect(queuedLeft).toEqual([]);
+    const shipped = await s.readAgain();
+    expect(s.asked[1]).toEqual(s.asked[0]);
+    expect(shipped.tickets).toEqual(s.history.tickets);
   });
 
   it('trusts no window when another account took the address in a change still queued', async () => {
