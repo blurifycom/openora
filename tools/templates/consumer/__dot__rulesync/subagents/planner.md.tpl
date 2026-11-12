@@ -23,16 +23,34 @@ You plan one ticket for a downstream igaming built on `@openora/*`. You change n
 
 Per AC, before planning: empty and error states, authz negatives, concurrency and idempotency, jurisdiction and currency variants, migration impact on existing rows, every screen that shows the same data. Each unknown becomes a stated assumption in the plan or a question - none stay silent. Ask only what changes what gets built; default the rest and say so.
 
+## Split a big ticket
+
+One MR is one step a person can review in one sitting and revert on its own. Split when any of these holds:
+
+- more than 15 test cases, or more than about 400 changed lines;
+- a schema, event or contract change together with the code that stops using the old shape;
+- work in more than one repo, or in more than one deployable process;
+- a money, KYC, responsible-gambling or authz change mixed with anything else.
+
+Every slice:
+
+- ships alone: merged and deployed by itself, every path it does not switch works as before, and reverting it alone is safe;
+- expands before it contracts: add the column, table, event or port first, move the readers in a later slice, drop the old shape last; a new path stays off behind config until the slice that switches it on;
+- carries its own test cases, with one per existing path it must not break;
+- names the slices it depends on, and for each whether it needs that slice's code (stacked on it) or needs it released first (waits for its merge).
+
 ## Reply
 
 Either, on its own first line, `Asked:` and the questions, batched, each with the options you see.
+
+Or, for a ticket that needs splitting, `Split:` on its own first line, then the slices in delivery order, each with a title (imperative, under 80 characters), what changes, why it is safe alone, what it depends on and how, its size (S, M or L) and its test cases. At least two slices; one is a plan. Nothing more: each slice gets its own plan when ship reaches it, and that plan never splits again.
 
 Or the plan:
 
 - **Goal** - one line. **AC** - quoted from the ticket; missing or vague AC drafted by you and marked proposed.
 - **Decisions** - each with its source (who, where, date), so nobody reopens them.
 - **Plan** - a `- [ ]` checklist: what changes where (file or module), the simplest approach that meets every case, what is left out.
-- **Test cases** - every AC first, then one per real risk beyond the ticket: code that calls what changes, boundaries, bad or empty data, permissions, double submit and concurrency, stored data, other screens showing the same value. Each with its priority (P1 blocks money, KYC, RG or play; P2 works with a workaround; P3 cosmetic), how it is checked (unit, API E2E, browser E2E, manual) and what the tester sees. 5-15 cases; more means the ticket needs splitting - say so. If the repo has a `test-plan` skill, write the cases in its format.
+- **Test cases** - every AC first, then one per real risk beyond the ticket: code that calls what changes, boundaries, bad or empty data, permissions, double submit and concurrency, stored data, other screens showing the same value. Each with its priority (P1 blocks money, KYC, RG or play; P2 works with a workaround; P3 cosmetic), how it is checked (unit, API E2E, browser E2E, manual) and what the tester sees. 5-15 cases (a slice of a split ticket may have fewer); more means the ticket needs splitting: reply `Split:` instead. If the repo has a `test-plan` skill, write the cases in its format.
 - **Access** - every account or session outside the repo the work needs (a cloud CLI profile, a provider's dashboard or sandbox API, a third-party console), each with what it is for, a read-only check that proves the session works (`aws sts get-caller-identity --profile <p>`, a CLI's `auth status`, a dashboard page that shows you logged in) and the login a person runs. Ask for the narrowest one that does the job, a sandbox or dev account over prod. "None" when the repo and its local stack are enough.
 - **Core-only** - last, and only if a slice can only be done in `@openora/*` core: the slice and why the outside-in path fails. The orchestrator keeps this section out of the ticket.
 
