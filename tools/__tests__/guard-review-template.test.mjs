@@ -96,6 +96,11 @@ test('a hand merge is denied, quoted prose about one is not', () => {
   }
   assert.equal(exitCode('git commit -m "run gh pr merge later"'), ALLOWED);
   assert.equal(exitCode('gh api repos/o/r/pulls/1/merge'), ALLOWED);
+  assert.equal(exitCode('gh pr list --search merge'), ALLOWED);
+  assert.equal(
+    exitCode("gh api graphql -f query='{ repository { mergeQueue { url } } }'"),
+    ALLOWED,
+  );
 });
 
 test('a push to a shared branch is denied even on an approved HEAD', () => {
@@ -109,6 +114,12 @@ test('a push to a shared branch is denied even on an approved HEAD', () => {
     'git push origin :dev',
     'git push origin "HEAD:dev"',
     "git push origin 'refs/heads/*:refs/heads/*'",
+    'git push origin HEAD:"dev"',
+    'git push origin HEAD:d\\ev',
+    "git push origin HEAD:de''v",
+    'git push origin HEAD:heads/dev',
+    'git push -o ci.skip origin dev',
+    'git push --repo origin HEAD:dev',
   ]) {
     assert.equal(exitCode(command), DENIED, command);
   }
