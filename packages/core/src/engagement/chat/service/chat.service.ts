@@ -41,6 +41,7 @@ import {
   ChatContextSendDecisionSchema,
   ChatContextSendDeniedError,
   CHAT_SYSTEM_AUTHOR_USERNAME,
+  CHAT_SYSTEM_MESSAGE_VERSION,
   chatBlockLockKey,
   chatChannel,
   GLOBAL_CHAT_ROOM_ID,
@@ -2773,6 +2774,7 @@ export class ChatService {
   }
 
   async postSystemMessage(args: {
+    messageId?: ChatMessage['id'];
     roomId: ChatRoom['id'] | null;
     actorId?: User['id'];
     username?: User['name'];
@@ -2784,6 +2786,7 @@ export class ChatService {
     const [record] = await db
       .insert(chatMessage)
       .values({
+        id: args.messageId,
         roomId,
         userId: args.actorId ?? CHAT_SYSTEM_AUTHOR_ID,
         username: args.username ?? CHAT_SYSTEM_AUTHOR_USERNAME,
@@ -2811,7 +2814,10 @@ export class ChatService {
     const db = (args.tx as DrizzleDb | undefined) ?? this.drizzle.db;
     const [record] = await db
       .update(chatMessage)
-      .set({ metadata: args.metadata })
+      .set({
+        metadata: args.metadata,
+        version: sql`greatest(${chatMessage.version}, ${CHAT_SYSTEM_MESSAGE_VERSION.updated})`,
+      })
       .where(eq(chatMessage.id, args.messageId))
       .returning();
     const message = toWrittenSystemMessage(record, args.metadata);
