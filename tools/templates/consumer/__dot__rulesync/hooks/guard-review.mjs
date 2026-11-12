@@ -29,7 +29,8 @@ const MERGE_API = /\/merge(?=$|[?\s"'])/;
 const API_WRITES =
   /\s(?:(?:-X\s*|--method[=\s]+)(?:PUT|POST)\b|(?:-f|-F|--field|--raw-field|--input)\b)/i;
 // GraphQL merges live in a quoted query, which `segments` blanks, so the raw command is checked.
-const GRAPHQL_MERGE = /\b(?:mergePullRequest|mergeRequestAccept|mergeQueue)\b/;
+const GRAPHQL_MERGE =
+  /\b(?:mergePullRequest|mergeRequestAccept|enqueuePullRequest|enablePullRequestAutoMerge)\b/;
 const isHandMerge = (segment) => {
   const cli = FORGE_CLI.exec(segment);
   if (!cli) {
@@ -37,8 +38,12 @@ const isHandMerge = (segment) => {
   }
   const words = cli[2].split(/\s+/);
   const command = words.findIndex((word) => /^(?:pr|stack|mr)$/.test(word));
+  // The subcommand is the first word after `pr|stack|mr` that is no flag and no `-R` value.
+  const subcommand = words
+    .slice(command + 1)
+    .find((word, i, rest) => !word.startsWith('-') && !/^(?:-R|--repo)$/.test(rest[i - 1]));
   return (
-    (command >= 0 && words.slice(command + 1).includes('merge')) ||
+    (command >= 0 && subcommand === 'merge') ||
     (words.includes('api') && MERGE_API.test(cli[2]) && API_WRITES.test(` ${cli[2]}`))
   );
 };
@@ -72,9 +77,18 @@ const segments = (command) =>
     .map((part) => part.replace(/(?:^|\s)#.*$/, '').trim())
     .filter(Boolean);
 
-const sendsNothingNew = (pushArgs) => {
+// The flags and refspecs of a push. A flag's separate value (`-o ci.skip`) is no remote, and with
+// `--repo <remote>` every positional word is a refspec.
+const VALUED = /^(?:-o|--push-option|--repo|--receive-pack|--exec)$/;
+const pushWords = (pushArgs) => {
   const args = pushArgs.trim().split(/\s+/).filter(Boolean);
-  const refs = args.filter((arg) => !arg.startsWith('-')).slice(1);
+  const positional = args.filter((arg, i) => !arg.startsWith('-') && !VALUED.test(args[i - 1]));
+  const hasRepo = args.some((arg) => /^--repo(?:=|$)/.test(arg));
+  return { args, refs: hasRepo ? positional : positional.slice(1) };
+};
+
+const sendsNothingNew = (pushArgs) => {
+  const { args, refs } = pushWords(pushArgs);
   return (
     args.some((arg) => arg === '--delete' || arg === '-d') ||
     (refs.length > 0 && refs.every((ref) => ref.startsWith(':'))) ||
@@ -144,11 +158,9 @@ const pushesShared = (dir, pushArgs, branch) => {
   if (/\s--(?:all|mirror)\b/.test(pushArgs)) {
     return true;
   }
-  const args = pushArgs.trim().split(/\s+/).filter(Boolean);
-  const refs = args
-    .filter((arg) => !arg.startsWith('-'))
-    .slice(1)
-    .map(unquote);
+  const { args, refs: specs } = pushWords(pushArgs);
+  // The shell drops every quote and backslash, and git reads `heads/dev` as `refs/heads/dev`.
+  const refs = specs.map((spec) => spec.replace(/['"\\]/g, ''));
   if (refs.length === 0) {
     if (args.includes('--tags')) {
       return false;
@@ -161,7 +173,10 @@ const pushesShared = (dir, pushArgs, branch) => {
     return (
       destination.includes('*') ||
       SHARED.test(
-        (/^(?:HEAD|@)$/.test(destination) ? branch : destination).replace(/^refs\/heads\//, ''),
+        (/^(?:HEAD|@)$/.test(destination) ? branch : destination).replace(
+          /^(?:refs\/)?(?:heads\/)?/,
+          '',
+        ),
       )
     );
   });
