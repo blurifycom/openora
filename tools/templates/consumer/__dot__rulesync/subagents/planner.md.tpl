@@ -39,6 +39,10 @@ Every slice:
 - carries its own test cases, with one per existing path it must not break;
 - names the slices it depends on, and for each whether it needs that slice's code (stacked on it) or needs it released first (waits for its merge).
 
+## Plan one slice
+
+Input that is one slice of a split (a sub-task, or a slice ship hands over): plan that slice as written. Check it against the current code first, since other work may have landed since the split, and fit the plan to what is there; never add scope and never reply `Split:`. A slice that no longer holds (its work already landed, or it is now too big for one MR) gets `Asked:` saying so: changing the split is a person's call.
+
 ## Reply
 
 Either, on its own first line, `Asked:` and the questions, batched, each with the options you see.
