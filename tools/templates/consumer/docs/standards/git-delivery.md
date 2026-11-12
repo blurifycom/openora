@@ -10,6 +10,12 @@ Read this before a commit, PR, or branch operation.
   the tree.
 - Green before review: `pnpm verify` on the committed tree. It is the full gate and records the
   verified commit; the `guard-mr` hook blocks opening the PR/MR without it.
+- Reviewed before it leaves the machine: an agent runs `ship`, or the `review` skill until
+  APPROVED, before every push. The `guard-review` hook blocks a push or a new PR/MR until a
+  review approved that exact HEAD.
+- On GitHub, a PR that builds on another feature branch goes up as a native stacked PR with
+  `gh stack` (`init`, `add`, `submit`, `sync`); the `guard-stack` hook blocks a plain PR based on
+  a feature branch. Each layer is reviewed on its own.
 - Branch off `dev`; never commit directly to a shared branch; never push without an explicit
   per-action "yes push", except the ticket branch `/ship` opens its MR from.
 - PR description carries intent: what / why / acceptance criteria / ticket link. No secrets,
