@@ -192,10 +192,16 @@ async function redeliverEmailChange(
   if (!row) {
     throw new Error('no email change to redeliver');
   }
-  const { id: _id, seq: _seq, hash: _hash, ...rest } = row;
+  // A redelivery from before the unique event id: a second row, so no event id of its own.
+  const { id: _id, seq: _seq, hash: _hash, prevHash: _prevHash, eventId: _eventId, ...rest } = row;
   await drizzle()
     .insert(auditLog)
-    .values({ ...rest, after: rewrite(row.after ?? {}), hash: randomUUID() });
+    .values({
+      ...rest,
+      after: rewrite(row.after ?? {}),
+      hash: randomUUID(),
+      prevHash: randomUUID(),
+    });
 }
 
 async function registeredAt(userId: string) {
