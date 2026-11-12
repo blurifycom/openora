@@ -3,9 +3,11 @@ import {
   type DrizzleDb,
   type DrizzleTx,
   createDomainError,
+  createLogger,
   makeNotFoundError,
   makeConflictError,
   DrizzleService,
+  expandMoneyExponent,
   findOneOrThrow,
   isPositiveMoney,
   likeContains,
@@ -91,6 +93,8 @@ import {
   type UpdateGameInput,
 } from '../contract/index.js';
 
+const logger = createLogger('gaming');
+
 export const GameNotFoundError = makeNotFoundError('Game');
 
 export const GameRoundNotFoundError = makeNotFoundError('GameRound');
@@ -151,7 +155,9 @@ export const WinCreditFailedError = createDomainError<[roundId: string, reason: 
 );
 
 // Thrown before the round is touched, so it stays `active`: an amount the ledger cannot hold
-// exactly (`1e-7`, a 19th decimal, a negative) is never rounded or dropped in silence.
+// exactly (`1e-19`, a 19th decimal, a negative) is never rounded or dropped in silence. Every
+// throw is logged at error level, which reaches the bound ERROR_TRACKING adapter, so operations
+// see the stuck round and the provider's raw value.
 export const WinAmountInvalidError = createDomainError<[roundId: string, winAmount: string]>(
   'WinAmountInvalidError',
   (roundId, winAmount) =>
@@ -740,9 +746,15 @@ export class GamingService {
 
     const outcome = await this.provider.endRound(roundId);
     // The provider's number, never the caller's: the win is credited off this alone.
-    const winAmount = outcome?.winAmount ?? '0';
+    const providerWinAmount = outcome?.winAmount ?? '0';
+    const winAmount = expandMoneyExponent(providerWinAmount);
     if (!MoneyAmountSchema.safeParse(winAmount).success) {
-      throw new WinAmountInvalidError(roundId, winAmount);
+      const err = new WinAmountInvalidError(roundId, providerWinAmount);
+      logger.error(
+        { err, roundId, providerWinAmount },
+        'provider win cannot be stored, round left active',
+      );
+      throw err;
     }
 
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);

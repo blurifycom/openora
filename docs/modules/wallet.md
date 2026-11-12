@@ -136,7 +136,11 @@ does not repeat it.
   product is not compared, since it moves no money and a recategorized game must not refuse a true
   retry. A debit replay that names no currency answers in the currency the first call moved. An
   amount must be a positive decimal with at most 18 places; `1e1` or a 19th decimal is refused
-  before anything is written.
+  with `WalletCommandAmountError` (exported from contracts) before anything is written. A caller
+  holding a vendor number expands exponent form first with `expandMoneyExponent`, as casino
+  `endRound` does: `1e-7` pays `0.0000001`, while a win that still cannot be stored throws
+  `WinAmountInvalidError`, leaves the round active and is logged at error level with the round id
+  and the raw value, which reaches the bound error tracker.
 - **Every bet, win and reversal leg of a round carries its `externalRoundId`.** RG spend nets a
   round's legs by it, and a leg without one never offsets a stake. A correction debit without one
   is refused, since a reversal outside its round would drop out of loss spend, and a plain `debit`
