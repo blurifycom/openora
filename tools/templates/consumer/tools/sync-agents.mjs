@@ -242,6 +242,12 @@ if (owned.length > 0) {
 const missingWiring = [
   ['.claude/settings.json', 'guard-mr.mjs', 'a PreToolUse "Bash" hook running guard-mr.mjs'],
   [
+    '.claude/settings.json',
+    'guard-review.mjs',
+    'a PreToolUse "Bash" hook running guard-review.mjs',
+  ],
+  ['.claude/settings.json', 'guard-stack.mjs', 'a PreToolUse "Bash" hook running guard-stack.mjs'],
+  [
     'package.json',
     'guard-mr.mjs --stamp',
     'end "verify" with `&& node .rulesync/hooks/guard-mr.mjs --stamp`',
