@@ -1,7 +1,7 @@
 import { os } from '@orpc/server';
 import * as z from 'zod';
 import type { TokenCatalog } from '@openora/core/contracts';
-import type { InternalContext, OssContext } from '../../../kernel/index.js';
+import { internalProcedure, type OssContext } from '../../../kernel/index.js';
 import type { Plugin } from '../../../plugin-host/define-plugin.js';
 import { INTERNAL_API_SESSION_HEADERS } from '../../internal-api.js';
 
@@ -17,7 +17,7 @@ function hit(route: string) {
   hits[route] = (hits[route] ?? 0) + 1;
 }
 
-const internal = os.$context<InternalContext>();
+const internal = internalProcedure;
 
 const probe = {
   echo: internal
@@ -49,6 +49,14 @@ const probe = {
   }),
 };
 
+// An internal procedure wrongly mounted on the public surface.
+const leak = {
+  read: internal.route({ method: 'GET', path: '/probe-leak' }).handler(() => {
+    hit('leak');
+    return { leaked: true };
+  }),
+};
+
 // A public route that reports whether the runtime captured its raw body.
 const rawBodyProbe = {
   raw: os
@@ -62,5 +70,6 @@ export default {
   register(ctx) {
     ctx.routers.addInternal('probe', () => probe);
     ctx.routers.add('probeRaw', () => rawBodyProbe);
+    ctx.routers.add('probeLeak', () => leak);
   },
 } satisfies Plugin<TokenCatalog>;

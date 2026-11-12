@@ -1,4 +1,4 @@
-import { ORPCError } from '@orpc/server';
+import { ORPCError, os } from '@orpc/server';
 import type { ClientMeta } from '@openora/core/contracts';
 import { AuthGuardReasonSchema } from '@openora/core/contracts';
 
@@ -40,6 +40,16 @@ export type InternalContext = Omit<OssContext, 'auth' | 'sessionEndedReason'> & 
   auth?: never;
   internalCaller: string;
 };
+
+// The base procedure of every `addInternal` route. It refuses a request that carries no
+// `internalCaller`, so a router mistakenly passed to `ctx.routers.add` (same factory type) is
+// closed on the public surface instead of served unsigned.
+export const internalProcedure = os.$context<InternalContext>().use(({ context, next }) => {
+  if (typeof context.internalCaller !== 'string' || context.internalCaller === '') {
+    throw new ORPCError('NOT_FOUND');
+  }
+  return next();
+});
 
 export type ResolveAuthOptions = {
   // For the few routes an account must still reach while it owes a second-factor
