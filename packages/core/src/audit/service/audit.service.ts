@@ -184,11 +184,14 @@ const toDto = (row: AuditLog) => serializeRow(row, { dateFields: ['createdAt'] }
 
 export type RecordInput = Parameters<AuditWritePort['record']>[0] & {
   result?: string | null;
+  /** When the audited event happened (its envelope's `occurredAt`); the entry's time, else now. */
+  occurredAt?: EventEnvelope['occurredAt'];
 };
 
 // What `audit_outbox.entry` holds: the entry with its correlation id and `createdAt` resolved at
 // enqueue, inside the request that wrote it. `createdAt` is queue time: when the business
-// transaction wrote the record, not when it committed or shipped. `seq` is assigned at ship time
+// transaction wrote the record, not when it committed or shipped; for a record mapped from an
+// event it is the event's own time, so the tap and the consumer queue the same entry for it. `seq` is assigned at ship time
 // and is the authoritative order of the chain; `createdAt` is not monotonic in it. Checked at
 // enqueue, so a bad entry fails the business transaction as an `audit_log` insert used to; the
 // shipper checks each row again and moves one that fails aside instead of stopping behind it.
@@ -221,7 +224,10 @@ function outboxEntry(input: RecordInput): OutboxEntry {
   // agent proposal an MCP execution writes for; an explicit value, null included, is kept.
   const correlationId =
     input.correlationId === undefined ? (getCurrentCorrelationId() ?? null) : input.correlationId;
-  return OutboxEntrySchema.parse({ ...input, correlationId, createdAt: new Date().toISOString() });
+  const createdAt = (
+    input.occurredAt === undefined ? new Date() : new Date(input.occurredAt)
+  ).toISOString();
+  return OutboxEntrySchema.parse({ ...input, correlationId, createdAt });
 }
 
 async function enqueue(

@@ -1,11 +1,6 @@
 import * as z from 'zod';
-import {
-  auditOutbox,
-  auditOutboxRejected,
-  createLogger,
-  type DrizzleDb,
-} from '@openora/core/server';
-import { asc, inArray, sql } from 'drizzle-orm';
+import { auditOutbox, createLogger, type DrizzleDb } from '@openora/core/server';
+import { and, asc, inArray, sql } from 'drizzle-orm';
 import { appendAuditEntries, OutboxEntrySchema, type ShippableEntry } from './audit.service.js';
 
 const BATCH_SIZE = 1_000;
@@ -15,15 +10,19 @@ const MAX_BACKOFF_MS = 5_000;
 
 const log = createLogger('audit-shipper');
 
-type RejectedRow = typeof auditOutboxRejected.$inferInsert;
+type Rejection = { outboxId: number; eventId: string; error: string };
+
+const CHAINED_WITH_OTHER_CONTENT = 'event_id already chained with different content';
 
 /**
  * Moves one batch of `audit_outbox` rows into the hash chain, oldest first, in one transaction
  * that holds the shipper lock, so one shipper per database ships at a time; returns null when
- * another holds it and `wait` is false. A row whose entry fails its schema moves to
- * `audit_outbox_rejected` with the error, so one bad row never stops the rows behind it. The rows
- * are deleted in the same transaction as the append, so a crash ships the whole batch again and
- * the append skips every `event_id` the log already has.
+ * another holds it and `wait` is false. A row the chain cannot take as it is moves to
+ * `audit_outbox_rejected`, copied unchanged with the reason, and the rest ship: an entry that fails
+ * its schema, or one whose event id the chain already holds with other content (a forged or
+ * colliding row), which is never dropped as a duplicate. The rows are deleted in the same
+ * transaction as the append, so a crash ships the whole batch again and the append skips every
+ * `event_id` the log already has.
  */
 export async function shipAuditBatch(
   db: DrizzleDb,
@@ -39,33 +38,53 @@ export async function shipAuditBatch(
       return null;
     }
     const batch = await tx
-      .select()
+      .select({ id: auditOutbox.id, eventId: auditOutbox.eventId, entry: auditOutbox.entry })
       .from(auditOutbox)
       .orderBy(asc(auditOutbox.id))
       .limit(BATCH_SIZE);
-    const shippable: ShippableEntry[] = [];
-    const rejected: RejectedRow[] = [];
+    const shippable: (ShippableEntry & { outboxId: number })[] = [];
+    const rejected: Rejection[] = [];
     for (const row of batch) {
       const parsed = OutboxEntrySchema.safeParse(row.entry);
       if (parsed.success) {
-        shippable.push({ eventId: row.eventId, entry: parsed.data });
+        shippable.push({ outboxId: row.id, eventId: row.eventId, entry: parsed.data });
       } else {
         rejected.push({
           outboxId: row.id,
           eventId: row.eventId,
-          entry: row.entry,
           error: z.prettifyError(parsed.error),
-          createdAt: row.createdAt,
         });
       }
     }
-    if (rejected.length > 0) {
-      await tx
-        .insert(auditOutboxRejected)
-        .values(rejected)
-        .onConflictDoNothing({ target: auditOutboxRejected.eventId });
-    }
     await appendAuditEntries(tx, shippable);
+    // What the delete guard checks: a row whose event id is chained with other content, already
+    // or just now, is moved aside rather than deleted as shipped.
+    if (shippable.length > 0) {
+      const unmatched = await tx
+        .select({ outboxId: auditOutbox.id, eventId: auditOutbox.eventId })
+        .from(auditOutbox)
+        .where(
+          and(
+            inArray(
+              auditOutbox.id,
+              shippable.map(({ outboxId }) => outboxId),
+            ),
+            sql`NOT audit_outbox_entry_chained(${auditOutbox.eventId}, ${auditOutbox.entry})`,
+          ),
+        );
+      rejected.push(...unmatched.map((row) => ({ ...row, error: CHAINED_WITH_OTHER_CONTENT })));
+    }
+    if (rejected.length > 0) {
+      // Copied in SQL, so the entry the guard compares is the outbox's own jsonb, not a JS round
+      // trip of it.
+      await tx.execute(sql`
+        INSERT INTO audit_outbox_rejected (outbox_id, event_id, entry, error, created_at)
+        SELECT o.id, o.event_id, o.entry, r.error, o.created_at
+          FROM audit_outbox o
+          JOIN jsonb_to_recordset(${JSON.stringify(rejected)}::jsonb) AS r("outboxId" bigint, error text)
+            ON r."outboxId" = o.id
+        ON CONFLICT (outbox_id) DO NOTHING`);
+    }
     if (batch.length > 0) {
       await tx.delete(auditOutbox).where(
         inArray(
@@ -80,10 +99,7 @@ export async function shipAuditBatch(
     return null;
   }
   for (const { outboxId, eventId, error } of result.rejected) {
-    log.error(
-      { outboxId, eventId, error },
-      'audit outbox row failed its schema and moved to audit_outbox_rejected',
-    );
+    log.error({ outboxId, eventId, error }, 'audit outbox row moved to audit_outbox_rejected');
   }
   return result.size;
 }
@@ -142,6 +158,9 @@ export type AuditShipperOptions = {
  */
 export class AuditShipper {
   private running = false;
+  // Bumped on every start and stop, so a drain left over from an earlier run never schedules a
+  // second loop beside the current one.
+  private generation = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private draining: Promise<void> | undefined;
   private failures = 0;
@@ -156,30 +175,36 @@ export class AuditShipper {
       return;
     }
     this.running = true;
-    this.schedule();
+    this.generation += 1;
+    this.schedule(this.generation);
   }
 
   async stop(): Promise<void> {
     this.running = false;
+    this.generation += 1;
     clearTimeout(this.timer);
     await this.draining;
   }
 
-  private schedule(): void {
+  private schedule(generation: number): void {
     const intervalMs = this.opts.intervalMs ?? DEFAULT_INTERVAL_MS;
     const delayMs =
       this.failures === 0 ? intervalMs : Math.min(intervalMs * 2 ** this.failures, MAX_BACKOFF_MS);
     this.timer = setTimeout(() => {
-      this.draining = this.drain().finally(() => {
-        this.draining = undefined;
+      const draining = this.drain(generation).finally(() => {
+        if (this.draining === draining) {
+          this.draining = undefined;
+        }
       });
+      this.draining = draining;
     }, delayMs);
     this.timer.unref?.();
   }
 
-  private async drain(): Promise<void> {
+  private async drain(generation: number): Promise<void> {
+    const current = () => generation === this.generation;
     try {
-      while (this.running && (await shipAuditBatch(this.db)) === BATCH_SIZE) {
+      while (current() && (await shipAuditBatch(this.db)) === BATCH_SIZE) {
         // Keep going while batches come back full, so a backlog clears at append speed.
       }
       this.failures = 0;
@@ -187,8 +212,8 @@ export class AuditShipper {
       this.failures += 1;
       this.opts.onError?.(err);
     }
-    if (this.running) {
-      this.schedule();
+    if (current()) {
+      this.schedule(generation);
     }
   }
 }

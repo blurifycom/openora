@@ -1451,7 +1451,7 @@ const SUBSCRIBED: ReadonlySet<string> = new Set(SUBSCRIBED_TOPICS);
 export async function auditRecordFor(
   topic: string,
   payload: unknown,
-  envelope: Pick<EventEnvelope, 'correlationId'> | undefined,
+  envelope: Partial<Pick<EventEnvelope, 'correlationId' | 'occurredAt'>> | undefined,
 ): Promise<RecordInput | null> {
   // KYC exemptions and game geo rule syncs append their audit record inside the state
   // transaction, then publish this event for realtime and other consumers after commit.
@@ -1460,7 +1460,13 @@ export async function auditRecordFor(
   }
   const record = await mapEventToRecord(topic, payload);
   // A bulk operation's id, when the topic maps one, outranks the emitter's correlation id.
-  return { ...record, correlationId: record.correlationId ?? envelope?.correlationId ?? null };
+  // The event's time, not the moment a path queued it, keeps the tap's and the consumer's entries
+  // for one event equal, as the outbox delete guard checks.
+  return {
+    ...record,
+    correlationId: record.correlationId ?? envelope?.correlationId ?? null,
+    occurredAt: envelope?.occurredAt,
+  };
 }
 
 export default {

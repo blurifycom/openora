@@ -24,6 +24,8 @@ function alterTriggers(action: 'DISABLE' | 'ENABLE ALWAYS') {
  * Runs `mutate` with the audit tables' append-only triggers off, for a test reset or a tamper
  * fixture. One transaction lifts and restores them, so a failure cannot leave them off; `mutate`
  * must write through `tx`, since the lift locks the tables against every other connection.
+ * Core's own tests import it by path; `@openora/core/testing` does not export it, so nothing
+ * outside core gets a switch for the audit guards.
  */
 export function withAuditGuardsLifted<T>(
   db: DrizzleDb,
