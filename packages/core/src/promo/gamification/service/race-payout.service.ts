@@ -6,17 +6,18 @@ import type {
   Uuid,
   WalletCommands,
 } from '@openora/core/contracts';
-import type { DrizzleService, DrizzleTx } from '@openora/core/server';
+import type { DrizzleService, DrizzleTx, EventBus } from '@openora/core/server';
 import {
   promoRace,
   promoRacePayout,
   promoRaceRoundWager,
   promoRaceWager,
 } from '../schema/index.js';
+import { announceCashCredit } from '../shared/cash-credit-event.js';
 import { priceForPayout } from '../shared/payout-currency.js';
 import { RACE_STANDING_ORDER } from './race.service.js';
 
-/** What `plugin.ts` announces per winner, once its own settlement transaction has committed. */
+/** One paid winner, announced through the outbox in its race's settlement transaction. */
 export type RaceWon = {
   userId: Uuid;
   raceId: Uuid;
@@ -72,6 +73,7 @@ export class RacePayoutService {
     private readonly rates: ExchangeRateReader,
     private readonly payoutCurrency: string,
     private readonly audit: AuditWritePort,
+    private readonly events: EventBus,
     private readonly logger: Logger,
   ) {}
 
@@ -228,6 +230,10 @@ export class RacePayoutService {
       .where(eq(promoRace.id, raceId));
     // With the credits and the close, so a prize can never be paid without its record.
     await this.audit.recordManyInTransaction(tx, audits);
+    for (const win of won) {
+      await this.events.emitInTransaction(tx, 'promo.race.won', win);
+      await announceCashCredit(tx, this.events, win);
+    }
     // Frozen standings ignore a rollback, so what each round counted here is no longer needed.
     await tx.delete(promoRaceRoundWager).where(eq(promoRaceRoundWager.raceId, raceId));
     return won;

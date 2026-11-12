@@ -1,13 +1,33 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { createTestDb, type TestDb } from '@openora/core/testing';
-import { makeAuditWriter, mock } from '../../../testing/mock.js';
+import {
+  createTestDb,
+  createTestRedis,
+  seedPlayerWithUser,
+  waitForConsumerGroup,
+  type TestDb,
+  type TestRedis,
+} from '@openora/core/testing';
+import { makeAuditWriter, makeOutboxEventBus, mock } from '../../../testing/mock.js';
 import type {
+  EventEnvelope,
   ExchangeRateReader,
   PlayEligibilityPort,
   WalletCommands,
 } from '@openora/core/contracts';
+import {
+  createEventBus,
+  DrizzleOutboxWriter,
+  DrizzleProcessedEventLog,
+  eventOutbox,
+  OutboxRelay,
+  RedisStreamsBroker,
+  type EventBus,
+} from '@openora/core/server';
+import { migrate as serverMigrate } from '@openora/core/server/migrate';
+import { migrate as identityMigrate } from '@openora/core/pam/migrate/identity';
+import { migrate as profileMigrate } from '@openora/core/pam/migrate/profile';
 import { migrate } from '../migrate.js';
 import { promoRace, promoRacePayout, promoRaceWager } from '../schema/index.js';
 import { RacePayoutService } from '../service/race-payout.service.js';
@@ -27,7 +47,7 @@ const POSITIONS: RacePosition[] = [
 
 // The race's own currency and the payout currency match by default, so most tests exercise the
 // no-conversion path - the currency-conversion behaviour has its own describe block below.
-const service = (payoutCurrency = 'USDT') =>
+const service = (payoutCurrency = 'USDT', events: EventBus = makeOutboxEventBus()) =>
   new RacePayoutService(
     db.drizzle,
     mock<PlayEligibilityPort>({ isRestricted }),
@@ -35,8 +55,15 @@ const service = (payoutCurrency = 'USDT') =>
     mock<ExchangeRateReader>({ convert }),
     payoutCurrency,
     audit,
+    events,
     logger,
   );
+
+const outboxed = (topic: string) =>
+  db.drizzle.db
+    .select({ payload: eventOutbox.payload, publishedAt: eventOutbox.publishedAt })
+    .from(eventOutbox)
+    .where(eq(eventOutbox.topic, topic));
 
 const hoursFromNow = (h: number) => new Date(Date.now() + h * 3_600_000);
 
@@ -76,7 +103,7 @@ const payoutsFor = (raceId: string) =>
     .orderBy(promoRacePayout.position);
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([serverMigrate, migrate, identityMigrate, profileMigrate]);
 });
 
 afterAll(() => db.drop());
@@ -93,6 +120,7 @@ beforeEach(async () => {
   await db.drizzle.db.delete(promoRacePayout);
   await db.drizzle.db.delete(promoRaceWager);
   await db.drizzle.db.delete(promoRace);
+  await db.drizzle.db.delete(eventOutbox);
 });
 
 describe('settling a closed race', () => {
@@ -300,5 +328,138 @@ describe('crediting a prize in a currency the player can actually hold', () => {
       .from(promoRace)
       .where(eq(promoRace.id, raceId));
     expect(race?.closedAt).toBeNull();
+  });
+});
+
+describe('announcing a settled race through the outbox', () => {
+  it('writes each win and its balance credit in the settlement transaction', async () => {
+    const raceId = await insertRace();
+    const { account, player } = await seedPlayerWithUser(db);
+    const transactionId = randomUUID();
+    credit.mockResolvedValue({ ok: true, moved: true, transactionId, newBalance: '500' });
+    await insertWager(raceId, account.id, '500');
+
+    await service().closeDue(new Date());
+
+    expect(await outboxed('promo.race.won')).toEqual([
+      {
+        payload: expect.objectContaining({
+          userId: account.id,
+          raceId,
+          position: 1,
+          amount: '500',
+        }),
+        publishedAt: null,
+      },
+    ]);
+    expect(await outboxed('wallet.balance.changed')).toEqual([
+      {
+        payload: {
+          userId: account.id,
+          playerId: player.id,
+          amount: '500',
+          currency: 'USDT',
+          transactionId,
+          type: 'cashback',
+          direction: 'credit',
+        },
+        publishedAt: null,
+      },
+    ]);
+  });
+
+  it('leaves no event behind when the settlement rolls back after announcing', async () => {
+    const raceId = await insertRace();
+    await insertWager(raceId, randomUUID(), '500');
+    const events = makeOutboxEventBus();
+    const announce = events.emitInTransaction.bind(events);
+    vi.spyOn(events, 'emitInTransaction').mockImplementation(async (tx, topic, payload) => {
+      if (topic === 'wallet.balance.changed') {
+        throw new Error('outbox unavailable');
+      }
+      await announce(tx, topic, payload);
+    });
+
+    const won = await service('USDT', events).closeDue(new Date());
+
+    expect(won).toHaveLength(0);
+    expect(await payoutsFor(raceId)).toHaveLength(0);
+    expect(await db.drizzle.db.select().from(eventOutbox)).toHaveLength(0);
+  });
+
+  it('announces nothing for a restricted winner', async () => {
+    const raceId = await insertRace();
+    isRestricted.mockResolvedValue(true);
+    await insertWager(raceId, randomUUID(), '500');
+
+    await service().closeDue(new Date());
+
+    expect(await db.drizzle.db.select().from(eventOutbox)).toHaveLength(0);
+  });
+});
+
+describe('delivering a committed race win', () => {
+  const DELIVERY = { timeout: 5000, interval: 20 };
+  let redis: TestRedis;
+  let broker: RedisStreamsBroker;
+
+  beforeAll(async () => {
+    redis = await createTestRedis();
+  });
+
+  afterEach(async () => {
+    await broker.close();
+    await redis.flush();
+  });
+
+  afterAll(() => redis.quit());
+
+  it('reaches the consumer once, after a relay that was down comes up, even when redelivered', async () => {
+    const serviceName = `race-${randomUUID()}`;
+    broker = new RedisStreamsBroker(redis.client, {
+      serviceName,
+      reclaim: { intervalMs: 20, minIdleMs: 10 },
+    });
+    const events = createEventBus({
+      broker,
+      outbox: new DrizzleOutboxWriter(),
+      processedEvents: new DrizzleProcessedEventLog(db.drizzle.db),
+    });
+    const deliveries: EventEnvelope[] = [];
+    const notified = vi.fn();
+    events.on('promo.race.won', (_payload, envelope) => {
+      if (envelope) {
+        deliveries.push(envelope);
+      }
+    });
+    events.on('promo.race.won', notified, { consumer: 'notifications/promo.race.won' });
+    await waitForConsumerGroup(redis.client, {
+      stream: 'oss:evt:promo.race.won',
+      group: serviceName,
+    });
+    const raceId = await insertRace();
+    await insertWager(raceId, randomUUID(), '500');
+
+    await service('USDT', events).closeDue(new Date());
+
+    expect(await outboxed('promo.race.won')).toEqual([
+      expect.objectContaining({ publishedAt: null }),
+    ]);
+    expect(notified).not.toHaveBeenCalled();
+
+    expect(await new OutboxRelay(db.drizzle.db, broker).drainOnce()).toBe(2);
+    await vi.waitFor(() => expect(notified).toHaveBeenCalledTimes(1), DELIVERY);
+
+    const [delivered] = deliveries;
+    if (!delivered) {
+      throw new Error('the race win was never delivered');
+    }
+    await broker.publish(delivered);
+    await vi.waitFor(() => expect(deliveries).toHaveLength(2), DELIVERY);
+    expect(notified).toHaveBeenCalledTimes(1);
+    expect(notified).toHaveBeenCalledWith(
+      expect.objectContaining({ raceId, position: 1, amount: '500' }),
+      expect.objectContaining({ eventId: delivered.eventId }),
+    );
   });
 });

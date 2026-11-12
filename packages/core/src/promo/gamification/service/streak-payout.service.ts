@@ -13,6 +13,7 @@ import {
   moneyScaleBy,
   type DrizzleService,
   type DrizzleTx,
+  type EventBus,
 } from '@openora/core/server';
 import { promoStreakMilestoneGrant } from '../schema/index.js';
 import {
@@ -41,6 +42,7 @@ export type StreakPayoutDeps = {
   rates: ExchangeRateReader;
   walletReader: WalletReader;
   audit: AuditWritePort;
+  events: EventBus;
   logger: Logger;
 };
 
@@ -66,6 +68,7 @@ export class StreakPayoutService {
   private readonly rates: ExchangeRateReader;
   private readonly walletReader: WalletReader;
   private readonly audit: AuditWritePort;
+  private readonly events: EventBus;
   private readonly logger: Logger;
 
   constructor(deps: StreakPayoutDeps) {
@@ -75,6 +78,7 @@ export class StreakPayoutService {
     this.rates = deps.rates;
     this.walletReader = deps.walletReader;
     this.audit = deps.audit;
+    this.events = deps.events;
     this.logger = deps.logger;
   }
 
@@ -90,6 +94,9 @@ export class StreakPayoutService {
       const settled = await this.settleOne(tx, userId, milestoneGrantId);
       if (!settled) {
         throw new StreakMilestoneNotClaimableError(milestoneGrantId);
+      }
+      for (const grant of settled.granted) {
+        await this.events.emitInTransaction(tx, 'promo.bonus.granted', grant);
       }
       return settled;
     });

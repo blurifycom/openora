@@ -2,13 +2,15 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { makeOutboxEventBus, mock } from '../../../testing/mock.js';
 import type {
   BonusGrantCommands,
   ExchangeRateReader,
   PlayEligibilityPort,
   WalletReader,
 } from '@openora/core/contracts';
+import { eventOutbox, type EventBus } from '@openora/core/server';
+import { migrate as serverMigrate } from '@openora/core/server/migrate';
 import { migrate } from '../migrate.js';
 import {
   promoPlayerRank,
@@ -34,15 +36,31 @@ const NOW = new Date('2026-09-22T00:00:00Z');
 const YESTERDAY_NOON = new Date('2026-09-21T12:00:00Z');
 const TWO_DAYS_AGO = new Date('2026-09-20T12:00:00Z');
 
-const service = () =>
+const service = (events: EventBus = makeOutboxEventBus()) =>
   new RankPayoutService(
     db.drizzle,
     mock<BonusGrantCommands>({ grant }),
     mock<PlayEligibilityPort>({ isRestricted }),
     mock<ExchangeRateReader>({ convert }),
     mock<WalletReader>({ getBalances }),
+    events,
     logger,
   );
+
+const announcedGrants = async () =>
+  (
+    await db.drizzle.db
+      .select({ payload: eventOutbox.payload })
+      .from(eventOutbox)
+      .where(eq(eventOutbox.topic, 'promo.bonus.granted'))
+  ).map(({ payload }) => payload);
+
+/** A bus whose outbox write fails, so the transaction it joins must roll back. */
+const failingBus = () => {
+  const events = makeOutboxEventBus();
+  vi.spyOn(events, 'emitInTransaction').mockRejectedValue(new Error('outbox unavailable'));
+  return events;
+};
 
 const tierId = async (key: string) => {
   const [tier] = await db.drizzle.db
@@ -103,7 +121,7 @@ const played = async (key: string, wagered = '5') => {
 };
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([serverMigrate, migrate]);
 });
 
 afterAll(() => db.drop());
@@ -114,6 +132,7 @@ beforeEach(async () => {
   isRestricted.mockResolvedValue(false);
   convert.mockResolvedValue(null);
   getBalances.mockResolvedValue({ activeCurrency: 'USD', balances: [] });
+  await db.drizzle.db.delete(eventOutbox);
   await db.drizzle.db.delete(promoRankLevelUp);
   await db.drizzle.db.delete(promoRankPeriodWager);
   await db.drizzle.db.delete(promoPlayerRank);
@@ -174,6 +193,25 @@ describe('settling owed level-up bonuses', () => {
     });
   });
 
+  it('announces each grant through the outbox, in the transaction that settled it', async () => {
+    const userId = randomUUID();
+    await owe(userId, 'silver', '10');
+
+    const granted = await service().settleLevelUps();
+
+    expect(await announcedGrants()).toEqual(granted);
+    expect(granted).toEqual([expect.objectContaining({ userId })]);
+  });
+
+  it('leaves the level-up owed, and nothing announced, when the announcement cannot be written', async () => {
+    const id = await owe(randomUUID(), 'silver', '10');
+
+    expect(await service(failingBus()).settleLevelUps()).toEqual([]);
+
+    expect((await levelUp(id))?.settledAt).toBeNull();
+    expect(await announcedGrants()).toEqual([]);
+  });
+
   it('pays nothing twice when the job runs again', async () => {
     await owe(randomUUID(), 'silver', '10');
 
@@ -213,6 +251,7 @@ describe('settling owed level-up bonuses', () => {
       undefined,
       mock<ExchangeRateReader>({ convert }),
       mock<WalletReader>({ getBalances }),
+      makeOutboxEventBus(),
       logger,
     );
 
@@ -526,6 +565,27 @@ describe('paying a periodic bonus', () => {
     grant.mockResolvedValue({ ok: true, grantId: randomUUID(), created: false });
 
     expect(await service().payPeriodic('daily', NOW)).toEqual([]);
+    expect(await announcedGrants()).toEqual([]);
+  });
+
+  it('announces each grant through the outbox, with the bonus kind, in its own transaction', async () => {
+    const userId = await played('silver');
+
+    const granted = await service().payPeriodic('daily', NOW);
+
+    expect(granted).toEqual([expect.objectContaining({ userId, rankBonusKind: 'daily' })]);
+    expect(await announcedGrants()).toEqual(granted);
+  });
+
+  it('holds the period for a retry, announcing nothing, when the announcement cannot be written', async () => {
+    const userId = await played('silver');
+
+    expect(await service(failingBus()).payPeriodic('daily', NOW)).toEqual([]);
+    expect(await announcedGrants()).toEqual([]);
+
+    const retried = await service().payPeriodic('daily', NOW);
+    expect(retried).toEqual([expect.objectContaining({ userId })]);
+    expect(await announcedGrants()).toEqual(retried);
   });
 
   it('keeps paying the rest when one player fails', async () => {
@@ -708,6 +768,7 @@ describe('announcing a promotion', () => {
       undefined,
       mock<ExchangeRateReader>({ convert }),
       mock<WalletReader>({ getBalances }),
+      makeOutboxEventBus(),
       logger,
     );
 

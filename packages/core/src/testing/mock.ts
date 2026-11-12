@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { vi, type Mock } from 'vitest';
 import { ORPCError } from '@orpc/server';
 import {
+  createEventBus,
+  DrizzleOutboxWriter,
   moneyScaleBy,
   type AdminCaller,
   type AdminGuard,
   type DrizzleService,
   type EventBus,
   type OssContext,
+  type ProcessedEventLog,
 } from '@openora/core/server';
 import {
   DEFAULT_PAYMENT_PROVIDER,
@@ -118,6 +121,18 @@ type MockedEventBus = EventBus & { emit: Mock; on: Mock; emitInTransaction: Mock
  */
 export const makeEventBus = (): MockedEventBus =>
   mock<MockedEventBus>({ emit: vi.fn(), on: vi.fn(), emitInTransaction: vi.fn() });
+
+/**
+ * A real EventBus whose `emitInTransaction` writes the `event_outbox` row in the caller's
+ * transaction, over a broker that publishes nothing: a test reads the outbox to see exactly
+ * which events committed. Needs the `@openora/core/server/migrate` migration.
+ */
+export const makeOutboxEventBus = (): EventBus =>
+  createEventBus({
+    broker: { publish: vi.fn(), subscribe: () => () => {}, close: async () => {} },
+    outbox: new DrizzleOutboxWriter(),
+    processedEvents: mock<ProcessedEventLog>(),
+  });
 
 export const makeAuditWriter = (): AuditWritePort & {
   record: Mock;

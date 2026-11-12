@@ -47,6 +47,7 @@ import type {
   RakebackSummary,
 } from '../contract/index.js';
 import { claimedByCurrency, priceRakeback, unclaimedRakeback } from '../shared/rakeback-totals.js';
+import { announceCashCredit } from '../shared/cash-credit-event.js';
 
 export const RakebackNothingToClaimError = makeConflictError(
   'RakebackNothingToClaimError',
@@ -402,23 +403,8 @@ export class RakebackClaimService {
     if (!events) {
       return;
     }
-    const [account] = await tx
-      .select({ id: player.id })
-      .from(player)
-      .where(eq(player.userId, userId));
-    for (const { currency, amount, transactionId } of paid) {
-      if (!transactionId) {
-        continue;
-      }
-      await events.emitInTransaction(tx, 'wallet.balance.changed', {
-        userId,
-        playerId: account?.id ?? null,
-        amount,
-        currency,
-        transactionId,
-        type: 'cashback',
-        direction: 'credit',
-      });
+    for (const credit of paid) {
+      await announceCashCredit(tx, events, { userId, ...credit });
     }
   }
 
