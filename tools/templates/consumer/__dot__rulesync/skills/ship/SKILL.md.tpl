@@ -97,7 +97,7 @@ A split ticket is delivered through its sub-tasks, so progress lives in Jira and
 - No Plan comment yet: post one titled "Plan" that lists the sub-task keys in delivery order, and move the ticket to In Progress.
 - Each sub-task then runs this skill from 1 as its own ticket: its own plan, branch `<type>/<sub-task key>/<slug>`, MR and transitions.
 - The next one is the first sub-task in order that is not yet in Code Review or later. One that needs another's code starts once that one has an MR, and is stacked on it: its worktree branches off that branch, and 2, 4 and 7 use that branch in place of `{{mrTarget}}`; when that MR merges, rebase onto `{{mrTarget}}` and retarget. One that needs another deployed starts only once that one is merged; until then report what it waits on and stop.
-- One sub-task per run, in this order. First, each earlier sub-task MR that is red or has unanswered threads gets 6, ending once its fix is pushed (no 7 for it). Then, with three sub-task MRs open and unmerged, report that the next waits for a merge and stop. Otherwise deliver the next one, which stops at `green` in 7. The next `/ship` on the ticket, in a fresh session, starts the one after.
+- One sub-task per run, in this order. First, each earlier sub-task MR that is red or has unanswered threads gets 6, ending once its fix is pushed (no 7 for it). Then, if no sub-task is left to deliver, the "None left" bullet below. Then, with three sub-task MRs open and unmerged, report that the next waits for a merge and stop. Otherwise deliver the next one, which stops at `green` in 7. The next `/ship` on the ticket, in a fresh session, starts the one after.
 - None left: move the ticket to Code Review, report every sub-task MR, stop.
 
 ### 2. Build

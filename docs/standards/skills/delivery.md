@@ -12,7 +12,7 @@ You run in the main session and are the only one who delegates: each step goes t
 
 Every run starts here, so a run that died midway resumes where it stopped: the ticket or work order, `git branch -a --list '*<key>*'`, then `gh pr list --head <branch>` and its checks.
 
-- No plan yet -> 1. A ticket with sub-tasks -> fix earlier sub-task PRs that are red or have unanswered threads (fix pipeline or fix review comments, no watch), then with three open and unmerged report and stop, else the first sub-task not yet in review, from 1. A branch, no PR -> 3, 4, 5 (a dead run's verdicts are gone, so test and review run again). An open PR with red checks or conflicts -> the fix-pipeline workflow. Unanswered review threads -> the fix-review-comments workflow. Checks running, or green with nothing unanswered -> 6. Merged or closed -> report it and stop.
+- No plan yet -> 1. A ticket with sub-tasks -> fix earlier sub-task PRs that are red or have unanswered threads (fix pipeline or fix review comments, no watch), then with none left, or three open and unmerged, report and stop, else the first sub-task not yet in review, from 1. A branch, no PR -> 3, 4, 5 (a dead run's verdicts are gone, so test and review run again). An open PR with red checks or conflicts -> the fix-pipeline workflow. Unanswered review threads -> the fix-review-comments workflow. Checks running, or green with nothing unanswered -> 6. Merged or closed -> report it and stop.
 
 ### Workflow
 
