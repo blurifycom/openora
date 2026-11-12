@@ -238,26 +238,36 @@ if (owned.length > 0) {
   );
 }
 
-// Both files are tracked by every consumer, so a template bump cannot wire the verify gate in.
+// Both files are tracked by every consumer, so a template bump cannot wire these gates in.
 const missingWiring = [
-  ['.claude/settings.json', 'guard-mr.mjs', 'a PreToolUse "Bash" hook running guard-mr.mjs'],
+  [
+    '.claude/settings.json',
+    'guard-mr.mjs',
+    'the verify gate',
+    'a PreToolUse "Bash" hook running guard-mr.mjs',
+  ],
   [
     '.claude/settings.json',
     'guard-review.mjs',
+    'the review gate',
     'a PreToolUse "Bash" hook running guard-review.mjs',
   ],
-  ['.claude/settings.json', 'guard-stack.mjs', 'a PreToolUse "Bash" hook running guard-stack.mjs'],
+  [
+    '.claude/settings.json',
+    'guard-stack.mjs',
+    'the stacked-PR gate',
+    'a PreToolUse "Bash" hook running guard-stack.mjs',
+  ],
   [
     'package.json',
     'guard-mr.mjs --stamp',
+    'the verify gate',
     'end "verify" with `&& node .rulesync/hooks/guard-mr.mjs --stamp`',
   ],
 ].filter(([path, marker]) => {
   const target = join(ROOT, path);
   return existsSync(target) && !readFileSync(target, 'utf8').includes(marker);
 });
-for (const [path, , fix] of missingWiring) {
-  console.warn(
-    `sync:agents - ${path} is missing the verify gate: ${fix} (see the template's copy).`,
-  );
+for (const [path, , gate, fix] of missingWiring) {
+  console.warn(`sync:agents - ${path} is missing ${gate}: ${fix} (see the template's copy).`);
 }

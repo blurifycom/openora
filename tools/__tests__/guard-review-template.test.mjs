@@ -21,7 +21,7 @@ copyFileSync(join(hooks, '_shared.mjs'), join(repo, '.rulesync', 'hooks', '_shar
 copyFileSync(join(hooks, 'guard-review.mjs'), guard);
 writeFileSync(join(repo, '.gitignore'), '.claude/\n');
 const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
-git('init', '-q');
+git('init', '-q', '-b', 'feat/x');
 git('add', '-A');
 git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
 const head = git('rev-parse', 'HEAD');
@@ -42,19 +42,31 @@ const ALLOWED = 0;
 
 test('commands that send nothing for review are allowed', () => {
   assert.equal(exitCode('git status'), ALLOWED);
-  assert.equal(exitCode('git commit -m "then git push it"'), ALLOWED);
+  assert.equal(exitCode('git commit -m "wip; git push next"'), ALLOWED);
   assert.equal(exitCode('git push origin --delete feat/x'), ALLOWED);
   assert.equal(exitCode('git push origin :feat/x'), ALLOWED);
   assert.equal(exitCode('git push --tags'), ALLOWED);
+  assert.equal(exitCode('glab mr create --source-branch dev --target-branch stage'), ALLOWED);
 });
 
 test('a push or a new PR without an approved review is denied', () => {
   assert.equal(exitCode('git push -u origin feat/x'), DENIED);
   assert.equal(exitCode(`cd ${repo} && git push`), DENIED);
   assert.equal(exitCode(`git -C ${repo} push`), DENIED);
+  assert.equal(exitCode('git -c core.x=y push'), DENIED);
+  assert.equal(exitCode('GIT_TRACE=1 git push'), DENIED);
+  assert.equal(exitCode('gh -R o/r pr create --fill'), DENIED);
   assert.equal(exitCode('gh pr create --fill'), DENIED);
   assert.equal(exitCode('gh stack submit'), DENIED);
   assert.equal(exitCode('glab mr create --fill'), DENIED);
+});
+
+test('a delete or tag flag elsewhere in a chain does not excuse a push', () => {
+  assert.equal(exitCode('git push -u origin feat && gh pr create -d --fill'), DENIED);
+  assert.equal(exitCode('git push -u origin HEAD && glab mr create -d desc'), DENIED);
+  assert.equal(exitCode('git push origin feat --tags'), DENIED);
+  assert.equal(exitCode('git push && gh pr create --body "drop the -d flag"'), DENIED);
+  assert.equal(exitCode('git push origin feat && git push origin --delete old'), DENIED);
 });
 
 test('an APPROVED or GO review of HEAD lets the push through', () => {
@@ -62,6 +74,23 @@ test('an APPROVED or GO review of HEAD lets the push through', () => {
   assert.equal(exitCode('git push'), ALLOWED);
   saveReview(head, 'GO - 0 BLOCK');
   assert.equal(exitCode('gh pr create --fill'), ALLOWED);
+  saveReview(head.slice(0, 12), 'APPROVED');
+  assert.equal(exitCode('git push'), ALLOWED);
+});
+
+test('a promotion sent from a shared branch needs no branch review', () => {
+  const trunk = `${repo}-dev`;
+  git('worktree', 'add', '-q', '-b', 'dev', trunk);
+  after(() => rmSync(trunk, { recursive: true, force: true }));
+  assert.equal(exitCode(`cd ${trunk} && gh pr create --base stage --fill`), ALLOWED);
+});
+
+test('a review saved in the main checkout covers a linked worktree', () => {
+  const worktree = `${repo}-wt`;
+  git('worktree', 'add', '-q', '-b', 'feat/wt', worktree);
+  after(() => rmSync(worktree, { recursive: true, force: true }));
+  saveReview(head, 'APPROVED');
+  assert.equal(exitCode(`cd ${worktree} && git push`), ALLOWED);
 });
 
 test('a rejected or stale review is denied', () => {
