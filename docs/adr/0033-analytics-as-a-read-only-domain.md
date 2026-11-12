@@ -7,7 +7,7 @@
 
 > **Update (2026-11-04)**: The ledger GGR this ADR names is now the official GGR, which also takes
 > off voided stakes and adds back wins taken back. The definition is in
-> [ADR-0053](./0053-wallet-ggr-is-the-official-ggr.md); the wallet ledger stays its source.
+> [ADR-0054](./0053-wallet-ggr-is-the-official-ggr.md); the wallet ledger stays its source.
 
 ## Context
 

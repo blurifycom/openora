@@ -18,6 +18,7 @@ import {
 import {
   asAdmin,
   bootTestApp,
+  flushAudit,
   registerAndMaterializePlayer,
   seedMinimal,
   setupTestDb,
@@ -252,8 +253,9 @@ export function bootDepositLifecycle() {
     });
   };
 
-  const auditRows = (externalId: string) =>
-    drizzle()
+  const auditRows = async (externalId: string) => {
+    await flushAudit(testApp);
+    return drizzle()
       .select()
       .from(auditLog)
       .where(
@@ -262,6 +264,7 @@ export function bootDepositLifecycle() {
           sql`${auditLog.after}->>'externalId' = ${externalId}`,
         ),
       );
+  };
 
   const auditTrailOldestFirst = async (externalId: string) =>
     (await auditRows(externalId))

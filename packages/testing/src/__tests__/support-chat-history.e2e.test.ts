@@ -170,6 +170,7 @@ const auditEmailChange = ({
       before: { email: before },
       after: { email: after },
       hash: randomUUID(),
+      prevHash: randomUUID(),
     });
 
 /** Writes the player's confirmed email change row again, as a redelivered event would. */
@@ -194,7 +195,14 @@ async function redeliverEmailChange(
   const { id: _id, seq: _seq, hash: _hash, ...rest } = row;
   await drizzle()
     .insert(auditLog)
-    .values({ ...rest, after: rewrite(row.after ?? {}), hash: randomUUID() });
+    .values({
+      ...rest,
+      after: rewrite(row.after ?? {}),
+      // Off the chain: its own predecessor and no event, as the unique indexes require.
+      prevHash: randomUUID(),
+      eventId: null,
+      hash: randomUUID(),
+    });
 }
 
 async function registeredAt(userId: string) {
@@ -427,6 +435,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
             before: { email: name(before) },
             after: { email: name(after) },
             hash: randomUUID(),
+            prevHash: randomUUID(),
             createdAt: new Date(start + hours * HOUR),
           })),
         );

@@ -8,6 +8,7 @@ import {
   walletRefundedDeposit,
   walletTransaction,
 } from '@openora/core/wallet/schema';
+import { flushAudit } from '../index.js';
 import {
   BELOW_FLOOR,
   bootDepositLifecycle,
@@ -57,14 +58,16 @@ async function withdrawalInFlight({ userId, currency }: DepositPlayer) {
   return externalId;
 }
 
-const recordedAudits = async (findingId: string) =>
-  Number(
+const recordedAudits = async (findingId: string) => {
+  await flushAudit(app());
+  return Number(
     (
       await drizzle().execute(
         sql`select count(*)::int as n from audit_log where action = 'wallet.reconciliation_finding.recorded' and resource_id = ${findingId}`,
       )
     ).rows[0]?.['n'],
   );
+};
 
 const outboxPayloads = async (topic: string, transactionId: string) =>
   (
@@ -829,18 +832,21 @@ describe('a poll batch past the first 1000-id lookup chunk', () => {
     const newMissing = player.deposit();
     const newStatus = player.status('failed');
     const events = [...fillers, credited, refused, newRefused, newMissing, seen, newStatus];
-    const written = async () => ({
-      findings: (
-        await drizzle().execute(
-          sql`select count(*)::int as n from wallet_reconciliation_finding where external_id is not null`,
-        )
-      ).rows[0]?.['n'],
-      audit: (
-        await drizzle().execute(
-          sql`select count(*)::int as n from audit_log where action in ('wallet.deposit.detected', 'wallet.deposit.failed', 'wallet.deposit.below_minimum')`,
-        )
-      ).rows[0]?.['n'],
-    });
+    const written = async () => {
+      await flushAudit(app());
+      return {
+        findings: (
+          await drizzle().execute(
+            sql`select count(*)::int as n from wallet_reconciliation_finding where external_id is not null`,
+          )
+        ).rows[0]?.['n'],
+        audit: (
+          await drizzle().execute(
+            sql`select count(*)::int as n from audit_log where action in ('wallet.deposit.detected', 'wallet.deposit.failed', 'wallet.deposit.below_minimum')`,
+          )
+        ).rows[0]?.['n'],
+      };
+    };
     const before = await written();
 
     await reconcile(events);

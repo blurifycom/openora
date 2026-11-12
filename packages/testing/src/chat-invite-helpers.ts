@@ -10,6 +10,7 @@ import {
   MyChatRoomInviteSchema,
   type ChatRoom,
 } from '@openora/core/engagement/contracts/chat';
+import { flushAudit } from './audit.js';
 import type { TestApp } from './app.js';
 import type { TestClient } from './request.js';
 import { registerChatter as registerChatterOn, type Chatter } from './helpers.js';
@@ -97,6 +98,7 @@ export function chatInviteHelpers(getApp: () => TestApp, getAdmin: () => TestCli
   }
 
   async function auditRows(resourceId: string, action: string, actorId?: string) {
+    await flushAudit(getApp());
     const res = await getAdmin().get(
       `/audit/logs?resourceId=${resourceId}&action=${action}${actorId ? `&actorId=${actorId}` : ''}`,
     );

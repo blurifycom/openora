@@ -31,6 +31,7 @@ export {
 
 // Transactional outbox - writer binds atomically with the state change; relay publishes to MESSAGE_BROKER. See ADR-0016/0045.
 export {
+  auditOutbox,
   eventOutbox,
   eventOutboxSeq,
   openoraInstance,

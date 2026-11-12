@@ -32,6 +32,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -205,7 +206,8 @@ function wholeAmount(units: number): RegExp {
 
 const drizzle = () => app.container.get(DRIZZLE).db;
 
-function auditRowsOfCall(correlationId: string) {
+async function auditRowsOfCall(correlationId: string) {
+  await flushAudit(app);
   return drizzle()
     .select()
     .from(auditLog)
@@ -213,7 +215,8 @@ function auditRowsOfCall(correlationId: string) {
     .orderBy(asc(auditLog.seq));
 }
 
-function auditRowsOf(action: string, resourceId: string) {
+async function auditRowsOf(action: string, resourceId: string) {
+  await flushAudit(app);
   return drizzle()
     .select()
     .from(auditLog)
@@ -433,12 +436,7 @@ describe('MCP kernel registries match the generated catalog', () => {
         correlationId,
       }),
     );
-    expect(
-      await drizzle()
-        .select({ id: auditLog.id })
-        .from(auditLog)
-        .where(eq(auditLog.correlationId, correlationId)),
-    ).toHaveLength(1);
+    expect(await auditRowsOfCall(correlationId)).toHaveLength(1);
   });
 });
 

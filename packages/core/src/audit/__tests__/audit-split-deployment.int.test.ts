@@ -151,6 +151,73 @@ describe('audit trail with two services of one deployment up', () => {
     expect(consumers.map((row) => row.consumer)).toEqual(['audit/tag.created']);
   });
 
+  it('queues an event emitted in a transaction with it, and one row lands after delivery too', async () => {
+    const namespace = `deploy-${randomUUID()}`;
+    const service = await bootService(`svc-a-${randomUUID()}`, namespace);
+    const bus = service.container.get(EVENT_BUS);
+    const kept = randomUUID();
+    const lost = randomUUID();
+
+    const queued = await db.drizzle.db.transaction(async (tx) => {
+      await bus.emitInTransaction(tx, 'tag.created', {
+        key: 'vip',
+        isSticky: false,
+        actorId: kept,
+      });
+      const { rows } = await tx.execute<{ event: string; audit: string }>(
+        sql`select e.event_id as event, a.event_id::text as audit
+            from event_outbox e join audit_outbox a on a.event_id::text = e.event_id
+            where a.entry->'after'->>'actorId' = ${kept}`,
+      );
+      return rows;
+    });
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await bus.emitInTransaction(tx, 'tag.created', {
+          key: 'vip',
+          isSticky: false,
+          actorId: lost,
+        });
+        throw new Error('rolled back');
+      }),
+    ).rejects.toThrow('rolled back');
+
+    // Queued under the envelope's own id, so the subscriber's copy of the event dedupes on it.
+    expect(queued).toHaveLength(1);
+    const rowsFor = async (marker: string) => {
+      const { rows } = await db.drizzle.db.execute<{ rows: number }>(
+        sql`select count(*)::int as rows from audit_log
+            where action = 'tag.created' and after->>'actorId' = ${marker}`,
+      );
+      return rows[0]?.rows;
+    };
+    const count = async (query: ReturnType<typeof sql>) => {
+      const { rows: counted } = await db.drizzle.db.execute<{ n: number }>(query);
+      return counted[0]?.n;
+    };
+    // The subscriber has handled the delivered event too once its dedupe record is in, and
+    // whatever it queued has shipped once the outbox is empty.
+    await vi.waitFor(
+      async () =>
+        expect(
+          await count(sql`select count(*)::int as n from processed_events
+                          where event_id = ${queued[0]?.event} and consumer = 'audit/tag.created'`),
+        ).toBe(1),
+      { timeout: 10_000 },
+    );
+    await vi.waitFor(
+      async () => expect(await count(sql`select count(*)::int as n from audit_outbox`)).toBe(0),
+      { timeout: 10_000 },
+    );
+
+    expect(await rowsFor(kept)).toBe(1);
+    expect(await rowsFor(lost)).toBe(0);
+    const { rows } = await db.drizzle.db.execute<{ event_id: string }>(
+      sql`select event_id::text from audit_log where after->>'actorId' = ${kept}`,
+    );
+    expect(rows[0]?.event_id).toBe(queued[0]?.event);
+  });
+
   it('gives each deployment on one Redis its own audit group', async () => {
     const nsA = `deploy-${randomUUID()}`;
     const nsB = `deploy-${randomUUID()}`;

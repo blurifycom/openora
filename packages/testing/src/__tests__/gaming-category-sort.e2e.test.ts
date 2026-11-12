@@ -21,6 +21,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -649,6 +650,7 @@ describe('gaming catalogue sync availability e2e (GAMING_COMMANDS.setGameAvailab
   }
 
   async function syncAuditRows(correlationId: string) {
+    await flushAudit(app);
     return drizzleOf(app.container)
       .select({ id: auditLog.id })
       .from(auditLog)

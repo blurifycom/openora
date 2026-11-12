@@ -43,6 +43,13 @@
       "when": 1794641811878,
       "tag": "0005_organic_stranger",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795042945365,
+      "tag": "0006_audit_outbox",
+      "breakpoints": true
     }
   ]
 }

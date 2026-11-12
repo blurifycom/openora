@@ -6,6 +6,7 @@ import { DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { AuditService } from '@openora/core/audit/server';
 import { walletDepositAddress, walletDepositStatusEvent } from '@openora/core/wallet/schema';
+import { flushAudit } from '../index.js';
 import {
   BELOW_FLOOR,
   bootDepositLifecycle,
@@ -39,6 +40,7 @@ const LIFECYCLE_ACTIONS = [
 ];
 
 async function rowCounts() {
+  await flushAudit(app());
   const [guards] = await drizzle().select({ n: count() }).from(walletDepositStatusEvent);
   const [audits] = await drizzle()
     .select({ n: count() })
@@ -231,8 +233,8 @@ describe('the guard row and the audit row', () => {
     const belowMinimum = player.deposit({ amount: BELOW_FLOOR });
     await withFailingTrigger(
       {
-        table: 'audit_log',
-        when: "new.action in ('wallet.deposit.failed', 'wallet.deposit.below_minimum')",
+        table: 'audit_outbox',
+        when: "new.entry->>'action' in ('wallet.deposit.failed', 'wallet.deposit.below_minimum')",
       },
       async () => {
         const refused = await Promise.all([deliver(failed), deliver(belowMinimum)]);
