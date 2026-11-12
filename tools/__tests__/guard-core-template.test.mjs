@@ -72,6 +72,19 @@ test('a worktree path cannot climb back into the main checkout or reach node_mod
   );
 });
 
+test('a worktree path cannot smuggle a second target or point git at the main repo', () => {
+  const core = join(oss, 'packages/a.ts');
+  for (const command of [
+    `echo x > ../oss/.worktrees/feat+x/a><${core}`,
+    `echo x | tee {../oss/.worktrees/feat+x/a,${core}}`,
+    `echo x > ../oss/.worktrees/feat+x/$(echo>${core})a`,
+    'git -C ../oss/.worktrees/ checkout -- :/',
+    `git -C ${join(oss, '.worktrees/./')} reset --hard`,
+  ]) {
+    assert.equal(exitCode({ command }), DENIED, command);
+  }
+});
+
 test('shell writes are judged per path: worktree allowed, main checkout denied', () => {
   assert.equal(
     exitCode({ command: `sed -i s/a/b/ ${join(oss, '.worktrees/feat+x/a.ts')}` }),
