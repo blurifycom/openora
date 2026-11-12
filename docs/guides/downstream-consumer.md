@@ -108,10 +108,14 @@ and each job reaches one of them.
   process, with each secret at least 32 characters. A plugin serves a call with
   `ctx.routers.addInternal(namespace, factory)`, which mounts under `/internal/v1`, and
   another process calls it with
-  `createInternalClient({ baseUrl, serviceName, secret, timeoutMs })`. A handler that serves
-  only some callers checks `context.internalCaller` against an allow-list. While the variable
-  is unset every internal route answers 401. Proxies must not rewrite `/internal/v1` paths.
-  For rotation and limits, see
+  `createInternalClient({ baseUrl, serviceName, audience, secrets, timeoutMs })`, where
+  `audience` is the called service's `SERVICE_NAME` and `secrets` is the
+  `INTERNAL_API_SECRETS` value. Inputs go in the signed JSON body; a handler that moves money
+  takes an idempotency key there. A handler that serves only some callers checks
+  `context.internalCaller` against an allow-list. A signed call never carries a session. While
+  the variable is unset every internal route answers 401. Your internet-facing edge (load
+  balancer or reverse proxy) MUST deny `/internal/`; services call each other directly over the
+  private network. For rotation and limits, see
   [ADR-0052](../adr/0052-signed-internal-api-for-service-calls.md).
 
 ## Seeding reference data (production)

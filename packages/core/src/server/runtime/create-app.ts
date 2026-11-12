@@ -83,10 +83,12 @@ import { wireErrorBody } from '../kernel/wire-error-response.js';
 import type { CoreTokenCatalog } from './core-token-catalog.js';
 import { parseJobWorkers, selectJobWorkers } from './job-workers.js';
 import {
-  INTERNAL_API_MAX_BODY_BYTES,
   INTERNAL_API_PREFIX,
+  INTERNAL_API_SESSION_HEADERS,
+  type InternalRefusalReason,
+  isSignedBy,
   parseInternalApiSecrets,
-  verifyInternalRequest,
+  readSignatureHeaders,
 } from './internal-api.js';
 
 // Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
@@ -364,26 +366,26 @@ function mountMcpTransport(
   });
 }
 
-// Webhook signature schemes (eg aggregator callbacks) must hash the verbatim body,
-// so the runtime captures it before oRPC parses the request. Bounded to keep an
-// oversized payload from buffering into memory - past the cap rawBody stays unset
-// and the signature check fails closed (401).
+// Webhook signature schemes (eg aggregator callbacks) and the internal API must hash the
+// verbatim body, so the runtime captures it before oRPC parses the request. Bounded to keep an
+// oversized payload from buffering into memory - past the cap rawBody stays unset and a webhook
+// signature check fails closed (401); an internal call is refused with 413.
 const MAX_CAPTURED_BODY_BYTES = 1_048_576;
 
 // content-length can be absent (chunked) or lie, so the actual stream is bounded rather than
 // the header trusted: past the cap it stops and resolves undefined, so memory stays bounded and
-// a signature check over the body fails closed.
-async function readBoundedBody(req: Request, maxBytes: number): Promise<Buffer | undefined> {
+// a signature check over the body fails closed. No body at all is an empty buffer.
+async function readBoundedBody(req: Request): Promise<Buffer | undefined> {
   if (!req.body) {
     return Buffer.alloc(0);
   }
   const declaredLength = req.headers.get('content-length');
-  if (declaredLength && Number(declaredLength) > maxBytes) {
+  if (declaredLength && Number(declaredLength) > MAX_CAPTURED_BODY_BYTES) {
     return undefined;
   }
   const clonedBody = req.clone().body;
   if (!clonedBody) {
-    return Buffer.alloc(0);
+    return undefined;
   }
   const reader = clonedBody.getReader();
   const chunks: Uint8Array[] = [];
@@ -395,7 +397,7 @@ async function readBoundedBody(req: Request, maxBytes: number): Promise<Buffer |
         break;
       }
       total += value.byteLength;
-      if (total > maxBytes) {
+      if (total > MAX_CAPTURED_BODY_BYTES) {
         // Not awaited: cancelling one branch of a tee settles only once the other branch is
         // cancelled too, and the request keeps that one, so awaiting here hangs the request.
         reader.cancel().catch(() => undefined);
@@ -413,46 +415,65 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
   if (!req.body) {
     return undefined;
   }
-  return (await readBoundedBody(req, MAX_CAPTURED_BODY_BYTES))?.toString('utf8');
+  return (await readBoundedBody(req))?.toString('utf8');
 }
 
+type InternalApiMount = {
+  handler: OpenAPIHandler<OssContext>;
+  secrets: readonly string[];
+  // This process's SERVICE_NAME: a request signed for another service is refused here.
+  audience: string;
+  trustedProxies: TrustedProxies;
+};
+
 // `/internal/v1/*` answers here and never falls through, so no player or admin route can be
-// reached under it and no session cookie is read. An unsigned request gets an empty 401 whether
-// or not a route matches, so the surface cannot be enumerated without the secret.
+// reached under it, and the session headers are stripped before a handler runs. An unsigned
+// request gets an empty 401 whether or not a route matches, so the surface cannot be enumerated
+// without the secret.
 function mountInternalApi(
   app: Hono,
-  handler: OpenAPIHandler<OssContext>,
-  secrets: readonly string[],
-  trustedProxies: TrustedProxies,
+  { handler, secrets, audience, trustedProxies }: InternalApiMount,
 ) {
+  const logger = createLogger('internal-api');
   app.all(`${INTERNAL_API_PREFIX}/*`, async (c) => {
-    if (secrets.length === 0) {
-      return c.body(null, 401);
-    }
-    const body = await readBoundedBody(c.req.raw, INTERNAL_API_MAX_BODY_BYTES);
-    if (body === undefined) {
-      return c.body(null, 413);
-    }
     const url = new URL(c.req.url);
-    const internalCaller = verifyInternalRequest(
-      {
-        headers: c.req.raw.headers,
-        method: c.req.method,
-        pathAndQuery: `${url.pathname}${url.search}`,
-        body,
-      },
-      secrets,
-      Date.now(),
-    );
-    if (internalCaller === null) {
-      return c.body(null, 401);
+    const refuse = (reason: InternalRefusalReason, service: string | null = null) => {
+      logger.warn(
+        { service, method: c.req.method, path: url.pathname, reason },
+        'internal call refused',
+      );
+      return c.body(null, reason === 'body_too_large' ? 413 : 401);
+    };
+    if (secrets.length === 0) {
+      return refuse('disabled');
+    }
+    const signature = readSignatureHeaders(c.req.raw.headers, Date.now());
+    if (typeof signature === 'string') {
+      return refuse(signature);
+    }
+    const body = await readBoundedBody(c.req.raw);
+    if (body === undefined) {
+      return refuse('body_too_large', signature.service);
+    }
+    const content = {
+      audience,
+      method: c.req.method,
+      pathAndQuery: `${url.pathname}${url.search}`,
+      contentType: c.req.header('content-type') ?? '',
+      body,
+    };
+    if (!isSignedBy(signature, content, secrets)) {
+      return refuse('bad_signature', signature.service);
     }
     const { headers, clientMeta, traceId } = requestMeta(c, trustedProxies);
+    for (const name of INTERNAL_API_SESSION_HEADERS) {
+      delete headers[name];
+    }
     const context: InternalContext = {
       request: { headers },
       clientMeta,
       rawBody: body.toString('utf8'),
-      internalCaller,
+      internalCaller: signature.service,
     };
     return withRequestContext({ traceId, clientMeta }, async () => {
       const { matched, response } = await handler.handle(c.req.raw, {
@@ -811,7 +832,12 @@ async function bootApp(
 
   // Ahead of every app-wide middleware: CORS, the HTTP cache and session resolution never run
   // for a service-to-service call.
-  mountInternalApi(app, internalHandler, internalApiSecrets, trustedProxies);
+  mountInternalApi(app, {
+    handler: internalHandler,
+    secrets: internalApiSecrets,
+    audience: serviceName,
+    trustedProxies,
+  });
 
   // Ahead of every app-wide middleware: a served MCP request returns from its own handler, so
   // CORS, the HTTP cache, raw-body capture and session resolution never run for it.

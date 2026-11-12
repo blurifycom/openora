@@ -2,21 +2,34 @@ import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { serve, type ServerType } from '@hono/node-server';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisUrlForWorker } from '@openora/core/testing';
 import { createApp, type CreatedApp } from '../create-app.js';
 import {
   INTERNAL_API_HEADERS,
+  INTERNAL_API_SESSION_HEADERS,
   parseInternalApiSecrets,
   signInternalRequest,
 } from '../internal-api.js';
 import { createInternalClient, InternalApiError } from '../internal-client.js';
 import { internalProbeHits } from './fixtures/internal-probe-plugin.js';
 
+const internalApiLog = vi.hoisted(() => ({ warn: vi.fn() }));
+vi.mock('../../kernel/logger.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../kernel/logger.js')>();
+  return {
+    ...original,
+    createLogger: (name: string) =>
+      name === 'internal-api' ? internalApiLog : original.createLogger(name),
+  };
+});
+
 // Never queried: the internal surface reads no session, and the probe routes touch no table.
 const DUMMY_DATABASE_URL = 'postgres://test:[redacted]@127.0.0.1:1/internal_api_test';
 const PROBE_PATH = fileURLToPath(new URL('./fixtures/internal-probe-plugin.ts', import.meta.url));
-const ENV_KEYS = ['REDIS_URL', 'INTERNAL_API_SECRETS'] as const;
+const ENV_KEYS = ['REDIS_URL', 'INTERNAL_API_SECRETS', 'SERVICE_NAME'] as const;
+// The SERVICE_NAME every booted app runs as, so the audience a call is signed for.
+const AUDIENCE = 'wallet';
 
 const OLD_SECRET = randomBytes(32).toString('hex');
 const NEW_SECRET = randomBytes(32).toString('hex');
@@ -27,6 +40,7 @@ const servers: ServerType[] = [];
 
 async function boot(secrets: string | undefined): Promise<CreatedApp['app']> {
   process.env['REDIS_URL'] = redisUrlForWorker();
+  process.env['SERVICE_NAME'] = AUDIENCE;
   if (secrets === undefined) {
     delete process.env['INTERNAL_API_SECRETS'];
   } else {
@@ -53,22 +67,28 @@ type SignOptions = {
   secret?: string;
   service?: string;
   timestamp?: number;
+  audience?: string;
+  headers?: Record<string, string>;
   // What the signature covers, when a test sends something else.
   signedPath?: string;
   signedBody?: string;
+  signedContentType?: string;
 };
 
 function signedInit(path: string, options: SignOptions = {}): RequestInit {
   const method = options.method ?? 'POST';
   const body = options.body ?? (method === 'GET' ? '' : '{"amount":5}');
+  const contentType = body === '' ? '' : 'application/json';
   const timestamp = String(options.timestamp ?? Date.now());
   const service = options.service ?? 'chat';
   const signature = signInternalRequest(
     {
       service,
+      audience: options.audience ?? AUDIENCE,
       timestamp,
       method,
       pathAndQuery: options.signedPath ?? path,
+      contentType: options.signedContentType ?? contentType,
       body: new TextEncoder().encode(options.signedBody ?? body),
     },
     options.secret ?? NEW_SECRET,
@@ -76,7 +96,8 @@ function signedInit(path: string, options: SignOptions = {}): RequestInit {
   return {
     method,
     headers: {
-      'content-type': 'application/json',
+      ...(contentType === '' ? {} : { 'content-type': contentType }),
+      ...options.headers,
       [INTERNAL_API_HEADERS.service]: service,
       [INTERNAL_API_HEADERS.timestamp]: timestamp,
       [INTERNAL_API_HEADERS.signature]: signature,
@@ -93,6 +114,7 @@ async function expectRefused(res: Response, status = 401) {
 const ECHO = '/internal/v1/probe/echo';
 
 beforeEach(() => {
+  internalApiLog.warn.mockClear();
   for (const route of Object.keys(internalProbeHits())) {
     delete internalProbeHits()[route];
   }
@@ -138,7 +160,49 @@ describe('the /internal/v1 surface', () => {
     const res = await app.request(ECHO, signedInit(ECHO));
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ caller: 'chat', input: { amount: 5 }, signedIn: false });
+    expect(await res.json()).toEqual({
+      caller: 'chat',
+      input: { amount: 5 },
+      signedIn: false,
+      sessionHeaders: [],
+    });
+  });
+
+  it('strips every session header from a signed call before the handler sees it', async () => {
+    const app = await boot(NEW_SECRET);
+    const sessionHeaders = Object.fromEntries(
+      INTERNAL_API_SESSION_HEADERS.map((name) => [name, 'forged']),
+    );
+
+    const res = await app.request(ECHO, signedInit(ECHO, { headers: sessionHeaders }));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ signedIn: false, sessionHeaders: [] });
+  });
+
+  it('refuses a call signed for another service', async () => {
+    const app = await boot(NEW_SECRET);
+
+    await expectRefused(await app.request(ECHO, signedInit(ECHO, { audience: 'chat' })));
+    expect(internalProbeHits()['echo']).toBeUndefined();
+  });
+
+  it('refuses a content type other than the one signed', async () => {
+    const app = await boot(NEW_SECRET);
+
+    await expectRefused(
+      await app.request(ECHO, signedInit(ECHO, { signedContentType: 'text/plain' })),
+    );
+    expect(internalProbeHits()['echo']).toBeUndefined();
+  });
+
+  it('refuses a stale call on its headers, before reading an oversized body', async () => {
+    const app = await boot(NEW_SECRET);
+    const body = JSON.stringify({ amount: 5, pad: 'x'.repeat(1_048_576) });
+
+    await expectRefused(
+      await app.request(ECHO, signedInit(ECHO, { body, timestamp: Date.now() - 61_000 })),
+    );
   });
 
   it('signs the query string with the path', async () => {
@@ -256,6 +320,21 @@ describe('the /internal/v1 surface', () => {
     );
   });
 
+  it('logs one warn line per refusal, without the signature', async () => {
+    const app = await boot(NEW_SECRET);
+    const init = signedInit(ECHO, { secret: randomBytes(32).toString('hex') });
+    const signature = new Headers(init.headers).get(INTERNAL_API_HEADERS.signature);
+
+    await expectRefused(await app.request(ECHO, init));
+
+    expect(internalApiLog.warn).toHaveBeenCalledTimes(1);
+    expect(internalApiLog.warn).toHaveBeenCalledWith(
+      { service: 'chat', method: 'POST', path: ECHO, reason: 'bad_signature' },
+      'internal call refused',
+    );
+    expect(JSON.stringify(internalApiLog.warn.mock.calls)).not.toContain(signature);
+  });
+
   it('answers 401 to an unsigned call on any path, 404 only once signed', async () => {
     const app = await boot(NEW_SECRET);
     const missing = '/internal/v1/nothing-here';
@@ -275,16 +354,66 @@ describe('the /internal/v1 surface', () => {
     const app = await boot(NEW_SECRET);
 
     const spec = (await (await app.request('/openapi.json')).json()) as { paths?: object };
-    expect(Object.keys(spec.paths ?? {}).filter((path) => path.includes('probe'))).toEqual([]);
+    expect(Object.keys(spec.paths ?? {}).filter((path) => path.includes('probe/'))).toEqual([]);
   });
 });
 
+describe('raw body capture on the public routes', () => {
+  // A chunked body sends no content-length, so only the stream bound stops it.
+  function chunkedBody(bytes: number): ReadableStream<Uint8Array> {
+    const chunk = new Uint8Array(64 * 1024).fill(120);
+    let sent = 0;
+    return new ReadableStream({
+      pull(controller) {
+        if (sent >= bytes) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunk);
+        sent += chunk.byteLength;
+      },
+    });
+  }
+
+  async function postChunked(baseUrl: string, bytes: number) {
+    const res = await fetch(`${baseUrl}/probe-raw`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: chunkedBody(bytes),
+      duplex: 'half',
+      signal: AbortSignal.timeout(5_000),
+    } as RequestInit);
+    return (await res.json()) as { captured: boolean };
+  }
+
+  it('captures a chunked body under the cap', async () => {
+    const baseUrl = await listen(await boot(NEW_SECRET));
+
+    await expect(postChunked(baseUrl, 256 * 1024)).resolves.toEqual({ captured: true });
+  });
+
+  it.each([2, 4])(
+    'leaves rawBody unset for a %i MiB chunked body instead of hanging',
+    async (mebibytes) => {
+      const baseUrl = await listen(await boot(NEW_SECRET));
+
+      await expect(postChunked(baseUrl, mebibytes * 1024 * 1024)).resolves.toEqual({
+        captured: false,
+      });
+    },
+  );
+});
+
 describe('createInternalClient', () => {
-  const client = (baseUrl: string, overrides: { secret?: string; timeoutMs?: number } = {}) =>
+  const client = (
+    baseUrl: string,
+    overrides: { secrets?: string; timeoutMs?: number; audience?: string } = {},
+  ) =>
     createInternalClient({
       baseUrl,
       serviceName: 'chat',
-      secret: overrides.secret ?? NEW_SECRET,
+      audience: overrides.audience ?? AUDIENCE,
+      secrets: overrides.secrets ?? `${NEW_SECRET},${OLD_SECRET}`,
       timeoutMs: overrides.timeoutMs ?? 2_000,
     });
 
@@ -295,10 +424,41 @@ describe('createInternalClient', () => {
       caller: 'chat',
       input: { amount: 7 },
       signedIn: false,
+      sessionHeaders: [],
     });
-    await expect(client(baseUrl).request('GET', '/probe/read?player=1')).resolves.toEqual({
+    await expect(client(baseUrl).request('GET', '/probe/read')).resolves.toEqual({
       caller: 'chat',
     });
+  });
+
+  it('is refused by a service it did not sign for', async () => {
+    const baseUrl = await listen(await boot(NEW_SECRET));
+
+    await expect(
+      client(baseUrl, { audience: 'bonus' }).request('POST', '/probe/echo', { amount: 1 }),
+    ).rejects.toMatchObject({ kind: 'client', status: 401 });
+  });
+
+  it('cannot be built without a secret', () => {
+    expect(() => client('http://127.0.0.1:1', { secrets: ' ' })).toThrow(/INTERNAL_API_SECRETS/);
+  });
+
+  it.each([
+    'probe/echo',
+    '/probe/../admin',
+    '/probe/%2e%2e/admin',
+    '/probe/./echo',
+    '/probe/echo?amount=1',
+    '/probe/echo#top',
+    '/probe/echo?',
+  ])('refuses to send the path %s', async (path) => {
+    const baseUrl = await listen(await boot(NEW_SECRET));
+
+    await expect(client(baseUrl).request('POST', path, {})).rejects.toMatchObject({
+      kind: 'client',
+      status: undefined,
+    });
+    expect(internalProbeHits()).toEqual({});
   });
 
   it('throws a timeout error and does not retry', async () => {
@@ -327,7 +487,7 @@ describe('createInternalClient', () => {
     const baseUrl = await listen(await boot(NEW_SECRET));
 
     await expect(
-      client(baseUrl, { secret: OLD_SECRET }).request('POST', '/probe/echo', { amount: 1 }),
+      client(baseUrl, { secrets: OLD_SECRET }).request('POST', '/probe/echo', { amount: 1 }),
     ).rejects.toMatchObject({ kind: 'client', status: 401 });
     expect(internalProbeHits()['echo']).toBeUndefined();
   });

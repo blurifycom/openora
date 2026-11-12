@@ -1,7 +1,7 @@
 # ADR-0052: Signed internal API for service-to-service calls
 
 **Date**: 2026-11-12
-**Status**: Proposed
+**Status**: Accepted
 **Relates to**: ADR-0017 (extraction readiness), ADR-0030 (distributed-only production seams),
 ADR-0049 (per-process job worker selection).
 
@@ -17,21 +17,41 @@ on a surface that a browser can reach.
 
 - **A separate surface.** A plugin adds internal routes with `ctx.routers.addInternal(namespace,
 factory)`, next to `ctx.routers.add`. They mount under `/internal/v1/*` on their own oRPC handler.
-  They are not in `/openapi.json` and they never see the request's session: the context holds no
-  `auth`, and the handler reads the caller from `context.internalCaller` (`InternalContext`).
+  They are not in `/openapi.json`, and the handler reads the caller from `context.internalCaller`
+  (`InternalContext`).
+- **No session, ever.** Before a handler runs, the runtime strips every header core reads a
+  session or identity from (`cookie`, `authorization`, `proxy-authorization`, `x-user-id`,
+  `x-username`). `InternalContext` types `auth` as `never`. A handler that calls
+  `adminGuard.assert` on a signed call that carried an admin cookie gets a 401.
 - **HMAC-SHA256 request signing.** The caller sends `x-openora-service`, `x-openora-timestamp`
   (unix ms) and `x-openora-signature`. The signature is the hex HMAC over
-  `service\ntimestamp\nMETHOD\npath+query\nsha256hex(body)`. The server checks the timestamp
-  against a 60s window and compares the signature in constant time against every configured secret.
+  `service\naudience\ntimestamp\nMETHOD\npath+query\ncontent-type\nsha256hex(body)`. The audience
+  is the `SERVICE_NAME` of the service called: the server signs with its own name, so a call
+  signed for one service is refused by another. `content-type` is the header as sent, or empty.
+- **Order of checks.** The server checks the headers' shape and the 60s clock window first, then
+  reads the body, then compares the signature in constant time against every configured secret.
+  A stale or unsigned call is refused without reading its body.
 - **Secrets from `INTERNAL_API_SECRETS`.** This is a comma list, and each secret is at least 32
   characters. The first secret signs and any of them verifies. When the variable is unset, the
   surface is off and every internal path answers 401.
 - **Failure shape.** Any auth failure gets a 401 with an empty body, whether the route exists or
   not, so an unsigned caller learns nothing about the routes. A body over 1 MiB gets a 413. A signed
-  call to an unknown route gets a 404.
-- **Client.** `createInternalClient({ baseUrl, serviceName, secret, timeoutMs })` signs each call
-  and applies `AbortSignal.timeout`. It never retries. Every failure throws an `InternalApiError`
-  whose `kind` is `timeout`, `network`, `client` (4xx) or `server` (5xx or an unreadable reply).
+  call to an unknown route gets a 404. Each refusal logs one warn line with the claimed service
+  name, method, path and reason. The signature is never logged.
+- **Client.** `createInternalClient({ baseUrl, serviceName, audience, secrets, timeoutMs })` takes
+  the `INTERNAL_API_SECRETS` value, signs each call with its first secret and applies
+  `AbortSignal.timeout`. It never retries. It refuses a path that does not start with `/` or that
+  has a dot segment, `?` or `#`: inputs travel in the signed JSON body, and percent-encoding a
+  segment is the caller's job. Every failure throws an `InternalApiError` whose `kind` is
+  `timeout`, `network`, `client` (4xx or a refused path) or `server` (5xx or an unreadable reply).
+- **The edge denies it.** The internet-facing edge (load balancer, ALB or reverse proxy) MUST
+  deny `/internal/` for every request. Services call each other directly over the private
+  network, never through the public edge.
+- **Replies are not signed.** Replies are trusted because they travel on the private network the
+  edge closes off. A caller still parses a reply with its schema. mTLS or a mesh is the upgrade
+  when that network is not trusted.
+- **Idempotency on money.** A handler that moves money MUST take an idempotency key in the signed
+  body and apply the operation once per key.
 - **No rate limit.** A per-caller cap on a trusted peer does not stop a peer that has leaked the
   secret. On the money path it turns a traffic spike into declines, and there is no limit value
   that makes sense without per-route semantics. Rate limiting stays on the public surface.
@@ -39,10 +59,9 @@ factory)`, next to `ctx.routers.add`. They mount under `/internal/v1/*` on their
 ### Why HMAC and not mTLS for now
 
 mTLS needs a CA, certificate issuance and rotation, and TLS termination at the process or in a
-mesh. Operators deploy on whatever they choose, and most terminate TLS at a proxy that would need
-to forward the client identity. HMAC needs one environment variable, works behind any proxy that
-does not rewrite the path, and needs no infrastructure. mTLS or a mesh can be added later as
-transport protection underneath, without changing the route surface.
+mesh. Operators deploy on whatever they choose. HMAC needs one environment variable and no
+infrastructure. mTLS or a mesh can be added later as transport protection underneath, without
+changing the route surface.
 
 ### Rotation
 
@@ -61,10 +80,10 @@ should not reuse the shared secret.
 - Every holder of the secret can sign as any service name. The name identifies the caller among
   trusted peers but does not prove it. A handler that must restrict callers allow-lists
   `context.internalCaller`, and that check is only as strong as the secret's custody.
-- There is no nonce store, so a captured request can be replayed within the 60s window. Operations
-  that move money carry an idempotency key in the signed body.
-- Proxies in front of the API must pass internal paths and query strings through unchanged, or the
-  signature fails.
+- There is no nonce store, so a captured request can be replayed within the 60s window against
+  the same service. That is why money handlers take an idempotency key in the signed body.
+- A deployment that leaves `/internal/` open at its edge exposes the surface to anyone who holds
+  or guesses the secret. Closing it at the edge is part of running a split install.
 - `baseUrl` is an origin. The client appends `/internal/v1` and the route path.
 - A request body is buffered up to 1 MiB before verification. Larger payloads belong in events or
   object storage.
