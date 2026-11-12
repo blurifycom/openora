@@ -10,6 +10,7 @@ import type { DrizzleService, DrizzleTx, EventBus } from '@openora/core/server';
 import { promoRankChallengeClaim, promoRankChallengeTier } from '../schema/index.js';
 import { announceCashCredit } from '../shared/cash-credit-event.js';
 import { priceForPayout } from '../shared/payout-currency.js';
+import { STUCK_AFTER_FAILURES } from './race-payout.service.js';
 
 /** One settled win, announced through the outbox in its claim's settlement transaction. */
 export type RankChallengeWon = {
@@ -42,6 +43,9 @@ type Logger = {
  * `RacePayoutService` applies to its own grants.
  */
 export class RankChallengePayoutService {
+  // ponytail: per-process count, resets on restart; a shared counter if workers scale out.
+  private readonly failures = new Map<Uuid, number>();
+
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly eligibility: PlayEligibilityPort | undefined,
@@ -67,9 +71,15 @@ export class RankChallengePayoutService {
         if (result) {
           won.push(result);
         }
+        this.failures.delete(id);
       } catch (err) {
         // One claim's failure must not stop the next tick from settling the others due.
-        this.logger.error({ err, claimId: id }, 'rank challenge settlement failed');
+        const failures = (this.failures.get(id) ?? 0) + 1;
+        this.failures.set(id, failures);
+        this.logger.error({ err, claimId: id, failures }, 'rank challenge settlement failed');
+        if (failures >= STUCK_AFTER_FAILURES) {
+          this.logger.error({ claimId: id, failures }, 'rank challenge settlement stuck');
+        }
       }
     }
     return won;

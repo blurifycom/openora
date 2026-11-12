@@ -72,6 +72,7 @@ payload that fails validation makes the handler throw, so it follows the redeliv
   on the same topic swaps their ids, and in-flight events may re-run them once.
 - A poison event retries 5 times over ~5 minutes before it is dead-lettered.
 - Every deployment needs the engine outbox migration applied (`0001_event_delivery`).
-- Events still on `emit()` (gamification payout notifications, geo access informational events,
-  catalog changes) remain best-effort. Moving gamification payouts to `emitInTransaction`
-  needs the event threaded into the payout services' transactions.
+- Events still on `emit()` (geo access informational events, catalog changes, gamification
+  announcements such as `promo.rank.changed`) remain best-effort. Gamification payouts
+  (`promo.bonus.granted`, `promo.race.won`, `promo.rank-challenge.won` and their
+  `wallet.balance.changed`) are written in the payout transaction via `emitInTransaction`.

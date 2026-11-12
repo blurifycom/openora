@@ -47,6 +47,9 @@ const payoutAudit = (raceId: Uuid, settled: PayoutSettled): AuditEntry => ({
   after: settled,
 });
 
+/** Consecutive failed ticks before a settlement is logged as stuck rather than just failed. */
+export const STUCK_AFTER_FAILURES = 5;
+
 type Logger = {
   warn: (context: object, message: string) => void;
   error: (context: object, message: string) => void;
@@ -66,6 +69,9 @@ type Logger = {
  * `RankPayoutService`/`StreakPayoutService` apply to their own grants.
  */
 export class RacePayoutService {
+  // ponytail: per-process count, resets on restart; a shared counter if workers scale out.
+  private readonly failures = new Map<Uuid, number>();
+
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly eligibility: PlayEligibilityPort | undefined,
@@ -87,9 +93,16 @@ export class RacePayoutService {
     for (const { id } of due) {
       try {
         won.push(...(await this.drizzle.db.transaction((tx) => this.settleOne(tx, id, now))));
+        this.failures.delete(id);
       } catch (err) {
         // One race's failure must not stop the next tick from settling the others due.
-        this.logger.error({ err, raceId: id }, 'race settlement failed');
+        const failures = (this.failures.get(id) ?? 0) + 1;
+        this.failures.set(id, failures);
+        this.logger.error({ err, raceId: id, failures }, 'race settlement failed');
+        if (failures >= STUCK_AFTER_FAILURES) {
+          // A failure that repeats every tick (a bad payload, a missing rate) never heals itself.
+          this.logger.error({ raceId: id, failures }, 'race settlement stuck');
+        }
       }
     }
     return won;

@@ -42,8 +42,14 @@ export class WalletService {
 
   async deposit(userId: string, amount: number, currency: string): Promise<TransactionResult> {
     const psp = await this.payment.processDeposit(amount, currency, { userId });
-    // ...persist in a transaction, then emit after commit
-    this.events.emit('wallet.deposit.completed', { userId, amount, currency });
+    await this.drizzle.db.transaction(async (tx) => {
+      // ...persist the ledger row and balance, then write the money event in the same tx
+      await this.events.emitInTransaction(tx, 'wallet.deposit.completed', {
+        userId,
+        amount,
+        currency,
+      });
+    });
     return { transactionId: psp.id, status: 'completed' };
   }
 }
@@ -116,11 +122,16 @@ ctx.provide(PAYMENT_ADAPTER, () => new AcmePayments(env.ACME_KEY));
 ## Events
 
 Modules stay decoupled by reacting to domain events, never importing each other's internals.
-Declare the payload in the Zod catalog, emit after the DB commit, and subscribe in a plugin.
+Declare the payload in the Zod catalog and subscribe in a plugin. Informational events emit
+after commit via `emit`; money, compliance and RG events are written in the transaction via
+`emitInTransaction`, and the outbox relay publishes them once it commits (ADR-0045).
 
 ```ts
-// emit from a service (after commit)
-this.events.emit('wallet.deposit.completed', { userId, amount, currency });
+// money event, from a service, inside its transaction
+await this.events.emitInTransaction(tx, 'wallet.deposit.completed', { userId, amount, currency });
+
+// informational event, after commit
+this.events.emit('promo.rank.changed', payload);
 
 // subscribe from a plugin
 ctx.events.on('wallet.deposit.completed', (payload) => {

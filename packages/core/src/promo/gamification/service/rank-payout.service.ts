@@ -64,8 +64,8 @@ const PERIOD_BONUS = {
  * block cannot be checked at all, nothing is paid.
  *
  * Each grant is announced as `promo.bonus.granted` through the outbox, in the transaction that
- * created it. The promotions themselves are announced from here too: they happen inside a bet,
- * and this is the first place after it where anything may be emitted.
+ * created it. Promotions (`promo.rank.changed`) are informational: they happen inside a bet, so
+ * `announceRankChanges` hands them to the caller to emit after commit.
  */
 export class RankPayoutService {
   constructor(
