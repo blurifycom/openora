@@ -77,7 +77,10 @@ table or operator in front of the ones the guards read.
   racing; the cost is one idle query per replica per poll.
 - The chain still lives in the business database. Moving it to a database of its own is a follow-up:
   the shipper is the only writer, so it is the only code that has to change.
-- `audit_log_seq_key` (unique) replaces the plain `seq` index.
+- `audit_log_seq_key` (unique) is built next to the plain `audit_log_seq_idx`, which stays until
+  the next minor release. Dropped in the same migrate run, the chain head lookup
+  (`ORDER BY seq DESC LIMIT 1`) would scan the whole table while the unique index builds; a later
+  migration drops it once every deployment has `audit_log_seq_key`.
 - Known gap: the app role can still divert a pending entry by writing its exact copy into
   `audit_outbox_rejected` under its outbox id and then deleting it. The content is kept, but it is
   never chained, and only the rejected count of `auditOutboxBacklog` shows it. The fix is a separate
