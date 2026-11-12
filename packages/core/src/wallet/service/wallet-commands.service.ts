@@ -123,6 +123,14 @@ type LedgerRequest = {
   externalRoundId: string | undefined;
 };
 
+/** A refusal thrown out of the debit's savepoint, so whatever the bonus engine wrote rolls back with it. */
+class DebitRefused extends Error {
+  constructor(readonly available: string) {
+    super('debit refused');
+    this.name = 'DebitRefused';
+  }
+}
+
 /**
  * A replay must ask for what the stored row moved. A row without a direction or a round predates
  * those columns and matches any. A correction row never matches: its `amount` is what was
@@ -142,7 +150,11 @@ function assertReplayMatches(
     (stored.externalRoundId === null || stored.externalRoundId === request.externalRoundId) &&
     moneyEquals(stored.amount, request.amount);
   if (!matches) {
-    throw new WalletReplayMismatchError(providerRef.providerName, providerRef.providerRefId);
+    throw new WalletReplayMismatchError(
+      providerRef.providerName,
+      providerRef.providerRefId,
+      stored.id,
+    );
   }
 }
 
@@ -322,6 +334,7 @@ export class WalletCommandsService implements WalletCommands {
             ? available
             : await readWalletBalance(txn, row.id, storedCurrency),
         currency: storedCurrency,
+        replayedTransactionId: stored.id,
       };
     };
 
@@ -338,7 +351,12 @@ export class WalletCommandsService implements WalletCommands {
       if (loss.replayed && providerRef) {
         return replay(loss.row, providerRef, { ...request, amount: '0' });
       }
-      return { ok: true, moved: false, newBalance: available, currency: debitCurrency };
+      return {
+        ok: true,
+        moved: false,
+        newBalance: available,
+        currency: debitCurrency,
+      };
     }
 
     // Must run before checkWager below - a replay must never re-evaluate the wager limit
@@ -366,68 +384,84 @@ export class WalletCommandsService implements WalletCommands {
     const fromBonus = moneySubtract(amount, realPart);
     // A savepoint around the wagering, the balance and the row, so a reference another wallet takes
     // meanwhile moves nothing even when the caller catches the conflict and commits.
-    const move = await txn.transaction(async (sp) => {
-      // A bet without both a context and a round id cannot be attributed to a grant or settled
-      // back later, so it draws no bonus funds and earns no wagering progress - a plain debit
-      // against the real balance, insufficient-funds if that balance cannot cover it.
-      const wagered =
-        type === 'bet' && this.ports.bonusWagering && context && providerRef?.externalRoundId
-          ? await this.ports.bonusWagering.wager(sp, {
-              userId,
-              currency: debitCurrency,
-              stake: amount,
-              fromBonus,
-              context,
-              providerName: providerRef.providerName,
-              externalRoundId: providerRef.externalRoundId,
-            })
-          : undefined;
-      if (wagered && !wagered.ok) {
-        // A stake over the grant's max bet is a refused bet, not a short balance. Reporting it as
-        // insufficient funds would tell the player to deposit more, and a client that did would
-        // hit the same wall with a bigger balance.
-        if (wagered.reason === 'max_bet_exceeded') {
-          throw new MaxBetExceededError(amount, wagered.maxBet);
+    const move = await txn
+      .transaction(async (sp) => {
+        // A bet without both a context and a round id cannot be attributed to a grant or settled
+        // back later, so it draws no bonus funds and earns no wagering progress - a plain debit
+        // against the real balance, insufficient-funds if that balance cannot cover it.
+        const wagered =
+          type === 'bet' && this.ports.bonusWagering && context && providerRef?.externalRoundId
+            ? await this.ports.bonusWagering.wager(sp, {
+                userId,
+                currency: debitCurrency,
+                stake: amount,
+                fromBonus,
+                context,
+                providerName: providerRef.providerName,
+                externalRoundId: providerRef.externalRoundId,
+              })
+            : undefined;
+        if (wagered && !wagered.ok) {
+          // A stake over the grant's max bet is a refused bet, not a short balance. Reporting it as
+          // insufficient funds would tell the player to deposit more, and a client that did would
+          // hit the same wall with a bigger balance.
+          if (wagered.reason === 'max_bet_exceeded') {
+            throw new MaxBetExceededError(amount, wagered.maxBet);
+          }
+          throw new DebitRefused(moneyAdd(available, wagered.bonusAvailable));
         }
-        return { refused: moneyAdd(available, wagered.bonusAvailable) };
-      }
-      if (moneyCompare(fromBonus, '0') > 0 && !wagered) {
-        return { refused: available };
-      }
+        if (moneyCompare(fromBonus, '0') > 0 && !wagered) {
+          throw new DebitRefused(available);
+        }
 
-      // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
-      // arithmetic - no JS float math on either side of the debit. A stake paid entirely from
-      // bonus funds touches no real balance at all, and must not be refused for not finding a
-      // row to take zero from - the bonus is already spent by this point.
-      const debited =
-        type === 'bet' && moneyCompare(realPart, '0') <= 0
-          ? [{ amount: available }]
-          : await debitWalletBalance(sp, row.id, debitCurrency, type === 'bet' ? realPart : amount);
-      const debitedBalance = debited[0]?.amount;
-      if (debitedBalance === undefined) {
-        return { refused: available };
-      }
+        // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
+        // arithmetic - no JS float math on either side of the debit. A stake paid entirely from
+        // bonus funds touches no real balance at all, and must not be refused for not finding a
+        // row to take zero from - the bonus is already spent by this point.
+        const debited =
+          type === 'bet' && moneyCompare(realPart, '0') <= 0
+            ? [{ amount: available }]
+            : await debitWalletBalance(
+                sp,
+                row.id,
+                debitCurrency,
+                type === 'bet' ? realPart : amount,
+              );
+        const debitedBalance = debited[0]?.amount;
+        if (debitedBalance === undefined) {
+          throw new DebitRefused(available);
+        }
 
-      // The ledger row carries the whole stake: a bet is a bet whichever balance paid for it.
-      const { row: ledgerRow, replayed } = await this.writeLedgerRow(
-        sp,
-        debitRow,
-        type,
-        amount,
-        'debit',
-        providerRef,
-        debitedBalance,
-        { wager: type === 'bet' ? context : undefined },
-      );
-      // The wallet lock serializes this wallet's own moves, so only another wallet's debit or
-      // credit can have taken the reference since the check above.
-      if (replayed && providerRef) {
-        throw new WalletReplayMismatchError(providerRef.providerName, providerRef.providerRefId);
-      }
-      return { wagered, ledgerRow, debitedBalance };
-    });
-    if (move.refused !== undefined) {
-      return { ok: false, available: move.refused };
+        // The ledger row carries the whole stake: a bet is a bet whichever balance paid for it.
+        const { row: ledgerRow, replayed } = await this.writeLedgerRow(
+          sp,
+          debitRow,
+          type,
+          amount,
+          'debit',
+          providerRef,
+          debitedBalance,
+          { wager: type === 'bet' ? context : undefined },
+        );
+        // The wallet lock serializes this wallet's own moves, so only another wallet's debit or
+        // credit can have taken the reference since the check above.
+        if (replayed && providerRef) {
+          throw new WalletReplayMismatchError(
+            providerRef.providerName,
+            providerRef.providerRefId,
+            ledgerRow.id,
+          );
+        }
+        return { wagered, ledgerRow, debitedBalance };
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DebitRefused) {
+          return error;
+        }
+        throw error;
+      });
+    if (move instanceof DebitRefused) {
+      return { ok: false, available: move.available };
     }
     const { wagered, ledgerRow, debitedBalance } = move;
     if (type === 'bet') {
@@ -609,7 +643,7 @@ export class WalletCommandsService implements WalletCommands {
       );
       if (replayed && providerRef) {
         assertReplayMatches(ledgerRow, request, providerRef);
-        return undefined;
+        return { replayedId: ledgerRow.id };
       }
 
       // Locked before the settlement engine below ever locks `promo_grant`, so this path and
@@ -649,11 +683,12 @@ export class WalletCommandsService implements WalletCommands {
       }
       return { ledgerRow, realShare: settlement.realShare, newBalance: credited.amount };
     });
-    if (!move) {
+    if ('replayedId' in move) {
       return {
         ok: true,
         moved: false,
         newBalance: await readWalletBalance(txn, row.id, balanceKey(currency)),
+        replayedTransactionId: move.replayedId,
       };
     }
     const { ledgerRow, realShare, newBalance } = move;
@@ -730,10 +765,12 @@ export class WalletCommandsService implements WalletCommands {
         throw new WalletCorrectionRefConflictError(
           providerRef.providerName,
           providerRef.providerRefId,
+          replayed.id,
         );
       }
       return {
         moved: false,
+        replayedTransactionId: replayed.id,
         collected: replayed.amount,
         shortfall: moneySubtract(amount, replayed.amount),
         newBalance: await readWalletBalance(txn, row.id, key),
@@ -773,6 +810,7 @@ export class WalletCommandsService implements WalletCommands {
         throw new WalletCorrectionRefConflictError(
           providerRef.providerName,
           providerRef.providerRefId,
+          ledgerRow.id,
         );
       }
 

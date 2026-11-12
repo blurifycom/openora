@@ -714,7 +714,7 @@ describe('WalletCommandsService providerRef replay of a different request (real 
   it('answers a true replay exactly as before, whatever scale its amount is written at', async () => {
     const w = await seedWallet({ balance: '100' });
 
-    await svc.debit(db.drizzle.db, bet(w.userId));
+    const first = await svc.debit(db.drizzle.db, bet(w.userId));
     const replay = await svc.debit(db.drizzle.db, bet(w.userId, { amount: '10.000' }));
 
     expect(replay).toEqual({
@@ -722,6 +722,8 @@ describe('WalletCommandsService providerRef replay of a different request (real 
       moved: false,
       newBalance: expect.any(String),
       currency: 'USD',
+      replayedTransactionId:
+        first.ok && first.moved ? first.transactionId : 'first debit did not move',
     });
     expect(Number(replay.ok && replay.newBalance)).toBe(90);
     expect(await balanceOf(w.userId)).toBe(90);
@@ -1577,6 +1579,30 @@ describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
         after: { currency: 'USD', balance: '115.000000000000000000', convertedAmount: '25' },
       }),
     );
+  });
+
+  it('rolls back what the engine wrote when the debit is refused after it', async () => {
+    const w = await seedWallet({ balance: '100' });
+    // An engine that drains the balance it runs beside leaves the debit nothing to take.
+    const wager = vi.fn(async (sp: DrizzleTx) => {
+      await sp.update(walletBalance).set({ amount: '0' }).where(eq(walletBalance.walletId, w.id));
+      return wagerOk;
+    });
+
+    const res = await db.drizzle.db.transaction((tx) =>
+      engineWith(wager).debit(tx, {
+        userId: w.userId,
+        amount: '10',
+        type: 'bet',
+        context,
+        providerRef: ref,
+      }),
+    );
+
+    expect(res).toEqual({ ok: false, available: expect.any(String) });
+    expect(wager).toHaveBeenCalledOnce();
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(0);
   });
 });
 

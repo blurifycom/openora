@@ -137,31 +137,39 @@ class LedgerRaceLost extends Error {
 
   constructor(
     what: string,
-    { provider, providerTxId }: TxKey,
+    key: TxKey & BetKey,
     owner: Pick<SportsbookFindingArgs, 'betId' | 'userId'>,
+    walletTransactionId: string | undefined,
   ) {
     super(`sportsbook ledger: the wallet holds ${what} the ledger never recorded`);
     this.name = 'LedgerRaceLost';
+    const { provider, providerTxId } = key;
+    const { providerName, providerRefId } = walletRef(key);
     // Its own dedupe key, so it never folds into a request fingerprint mismatch on the same tx.
     this.refusal = new LedgerRefusal('fingerprint_mismatch', {
       kind: 'fingerprint_mismatch',
       dedupeKey: `fingerprint_mismatch:${provider}:${providerTxId}:wallet_ref`,
       provider,
       ...owner,
-      detail: { providerTxId, walletRefTaken: what },
+      detail: {
+        providerTxId,
+        walletRefTaken: what,
+        walletRef: `${providerName}/${providerRefId}`,
+        walletTransactionId,
+      },
     });
   }
 }
 
 async function raceLostOnReplayMismatch<T>(
-  raceLost: () => LedgerRaceLost,
+  raceLost: (walletTransactionId: string) => LedgerRaceLost,
   move: Promise<T>,
 ): Promise<T> {
   try {
     return await move;
   } catch (err) {
     if (err instanceof WalletReplayMismatchError) {
-      throw raceLost();
+      throw raceLost(err.transactionId);
     }
     throw err;
   }
@@ -1045,7 +1053,7 @@ export class SportsbookLedgerService {
       }
       if (err instanceof WalletReplayMismatchError) {
         // The bet row rolls back with this transaction, so the finding names only the player.
-        throw new LedgerRaceLost('a stake', args, { userId: bet.userId });
+        throw new LedgerRaceLost('a stake', args, { userId: bet.userId }, err.transactionId);
       }
       throw err;
     }
@@ -1053,7 +1061,12 @@ export class SportsbookLedgerService {
       throw new LedgerRefusal('insufficient_funds');
     }
     if (!debit.moved) {
-      throw new LedgerRaceLost('a stake', args, { userId: bet.userId });
+      throw new LedgerRaceLost(
+        'a stake',
+        args,
+        { userId: bet.userId },
+        debit.replayedTransactionId,
+      );
     }
     return debit;
   }
@@ -1211,11 +1224,13 @@ export class SportsbookLedgerService {
       const moves: WalletMove[] = [];
       let balance: string;
       if (isPositiveMoney(refunded)) {
-        const raceLost = () =>
-          new LedgerRaceLost('a stake refund', args, {
-            betId: cancelled.id,
-            userId: cancelled.userId,
-          });
+        const raceLost = (heldBy: string | undefined) =>
+          new LedgerRaceLost(
+            'a stake refund',
+            args,
+            { betId: cancelled.id, userId: cancelled.userId },
+            heldBy,
+          );
         const credit = await raceLostOnReplayMismatch(
           raceLost,
           this.wallet.credit(tx, {
@@ -1231,7 +1246,7 @@ export class SportsbookLedgerService {
           throw new Error(`sportsbook cancel: stake refund did not move (${credit.reason})`);
         }
         if (!credit.moved) {
-          throw raceLost();
+          throw raceLost(credit.replayedTransactionId);
         }
         moves.push({
           transactionId: credit.transactionId,
@@ -1432,8 +1447,13 @@ export class SportsbookLedgerService {
       let balance: string;
       let debtChange: DebtChange | undefined;
       if (pays) {
-        const raceLost = () =>
-          new LedgerRaceLost('a payout', args, { betId: settled.id, userId: settled.userId });
+        const raceLost = (heldBy: string | undefined) =>
+          new LedgerRaceLost(
+            'a payout',
+            args,
+            { betId: settled.id, userId: settled.userId },
+            heldBy,
+          );
         const credit = await raceLostOnReplayMismatch(
           raceLost,
           this.wallet.credit(tx, {
@@ -1449,7 +1469,7 @@ export class SportsbookLedgerService {
           throw new Error(`sportsbook settle: payout did not move (${credit.reason})`);
         }
         if (!credit.moved) {
-          throw raceLost();
+          throw raceLost(credit.replayedTransactionId);
         }
         moves.push({
           transactionId: credit.transactionId,
@@ -1642,7 +1662,7 @@ export class SportsbookLedgerService {
           })
           .catch((err: unknown) => {
             if (err instanceof WalletCorrectionRefConflictError) {
-              throw new LedgerRaceLost('a correction', args, owner);
+              throw new LedgerRaceLost('a correction', args, owner, err.transactionId);
             }
             if (err instanceof WalletCorrectionExceedsRoundError) {
               throw invalidAmount(
@@ -1654,7 +1674,7 @@ export class SportsbookLedgerService {
             throw err;
           });
         if (!correction.moved && moneyCompare(correction.collected, '0') > 0) {
-          throw new LedgerRaceLost('a correction', args, owner);
+          throw new LedgerRaceLost('a correction', args, owner, correction.replayedTransactionId);
         }
         ({ collected, shortfall } = correction);
         balance = correction.newBalance;

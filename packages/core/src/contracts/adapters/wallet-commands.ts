@@ -60,7 +60,14 @@ export type WalletDebitOutcome =
        */
       wagerTrackingCredits?: WagerTrackingWalletCredit[];
     }
-  | { ok: true; moved: false; newBalance: string; currency: string }
+  | {
+      ok: true;
+      moved: false;
+      newBalance: string;
+      currency: string;
+      /** The row a replay answered from. Not a move: never emit `wallet.balance.changed` for it. */
+      replayedTransactionId?: string;
+    }
   /** `available` is the real balance plus whatever bonus funds could have covered the rest. */
   | { ok: false; available: string };
 
@@ -98,7 +105,13 @@ export type WalletCreditArgs = {
 /** `moved` as on `WalletDebitOutcome`; `moved: false` is a replayed `providerRef`. */
 export type WalletCreditOutcome =
   | { ok: true; moved: true; transactionId: string; newBalance: string }
-  | { ok: true; moved: false; newBalance: string }
+  | {
+      ok: true;
+      moved: false;
+      newBalance: string;
+      /** The row a replay answered from. Not a move: never emit `wallet.balance.changed` for it. */
+      replayedTransactionId?: string;
+    }
   | { ok: false; reason: string };
 
 /** Debit types a correction may take back: a reversed payout, or the stake of a voided bet a reopen puts back in play. */
@@ -127,14 +140,17 @@ export class WalletCorrectionTypeError extends Error {
 export class WalletCorrectionRefConflictError extends Error {
   readonly providerName: string;
   readonly providerRefId: string;
+  /** The `wallet_transaction` row that holds the reference. */
+  readonly transactionId: string;
 
-  constructor(providerName: string, providerRefId: string) {
+  constructor(providerName: string, providerRefId: string, transactionId: string) {
     super(
       `correction debit reference ${providerName}/${providerRefId} conflicts with an existing ledger move`,
     );
     this.name = 'WalletCorrectionRefConflictError';
     this.providerName = providerName;
     this.providerRefId = providerRefId;
+    this.transactionId = transactionId;
   }
 }
 
@@ -148,14 +164,17 @@ export class WalletCorrectionRefConflictError extends Error {
 export class WalletReplayMismatchError extends Error {
   readonly providerName: string;
   readonly providerRefId: string;
+  /** The `wallet_transaction` row that holds the reference. */
+  readonly transactionId: string;
 
-  constructor(providerName: string, providerRefId: string) {
+  constructor(providerName: string, providerRefId: string, transactionId: string) {
     super(
       `wallet reference ${providerName}/${providerRefId} was already used by a different request`,
     );
     this.name = 'WalletReplayMismatchError';
     this.providerName = providerName;
     this.providerRefId = providerRefId;
+    this.transactionId = transactionId;
   }
 }
 
@@ -240,7 +259,14 @@ export type WalletCorrectionDebitOutcome =
       shortfall: string;
       newBalance: string;
     }
-  | { moved: false; collected: string; shortfall: string; newBalance: string };
+  | {
+      moved: false;
+      collected: string;
+      shortfall: string;
+      newBalance: string;
+      /** The row a replay answered from. Not a move: never emit `wallet.balance.changed` for it. */
+      replayedTransactionId?: string;
+    };
 
 export type WalletWithdrawalHoldArgs = {
   userId: string;

@@ -7,6 +7,7 @@ import {
   makeConflictError,
   DrizzleService,
   findOneOrThrow,
+  isPositiveMoney,
   likeContains,
   pageToOffset,
   serializeRow,
@@ -32,6 +33,7 @@ import {
 import { type PgColumn, type PgTable, union } from 'drizzle-orm/pg-core';
 import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
 import {
+  MoneyAmountSchema,
   RgLimitExceededError,
   isAllowedHost,
   type GameAdapter,
@@ -146,6 +148,14 @@ export const InsufficientBalanceError = createDomainError<[available: string, re
 export const WinCreditFailedError = createDomainError<[roundId: string, reason: string]>(
   'WinCreditFailedError',
   (roundId, reason) => `win credit failed for round ${roundId}: ${reason}`,
+);
+
+// Thrown before the round is touched, so it stays `active`: an amount the ledger cannot hold
+// exactly (`1e-7`, a 19th decimal, a negative) is never rounded or dropped in silence.
+export const WinAmountInvalidError = createDomainError<[roundId: string, winAmount: string]>(
+  'WinAmountInvalidError',
+  (roundId, winAmount) =>
+    `round ${roundId} won ${JSON.stringify(winAmount)}, which is not a decimal with at most 18 places`,
 );
 
 export const ExternalRoundOwnerMismatchError = createDomainError<[externalRoundId: string]>(
@@ -731,6 +741,9 @@ export class GamingService {
     const outcome = await this.provider.endRound(roundId);
     // The provider's number, never the caller's: the win is credited off this alone.
     const winAmount = outcome?.winAmount ?? '0';
+    if (!MoneyAmountSchema.safeParse(winAmount).success) {
+      throw new WinAmountInvalidError(roundId, winAmount);
+    }
 
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
@@ -751,7 +764,7 @@ export class GamingService {
       if (settled.length === 0) {
         return false;
       }
-      if (Number(winAmount) > 0) {
+      if (isPositiveMoney(winAmount)) {
         // The bet already opened this currency's balance, so `allowNewCurrency` only
         // covers a player whose active currency moved between start and settlement.
         const credited = await this.walletCommands.credit(tx, {
