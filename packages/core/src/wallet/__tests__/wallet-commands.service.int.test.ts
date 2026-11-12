@@ -5,6 +5,7 @@ import { eq, sql } from 'drizzle-orm';
 import {
   definePlatformConfig,
   MaxBetExceededError,
+  WalletCommandAmountError,
   WalletReplayMismatchError,
   type WalletCreditArgs,
   type WalletDebitArgs,
@@ -966,13 +967,11 @@ describe('WalletCommandsService providerRef replay of a different request (real 
     'refuses %j as an amount before writing anything, debit and credit alike',
     async (amount) => {
       const w = await seedWallet({ balance: '100' });
-      const refused = { name: 'WalletCommandAmountError' };
-
-      await expect(svc.debit(db.drizzle.db, bet(w.userId, { amount }))).rejects.toMatchObject(
-        refused,
+      await expect(svc.debit(db.drizzle.db, bet(w.userId, { amount }))).rejects.toBeInstanceOf(
+        WalletCommandAmountError,
       );
-      await expect(svc.credit(db.drizzle.db, win(w.userId, { amount }))).rejects.toMatchObject(
-        refused,
+      await expect(svc.credit(db.drizzle.db, win(w.userId, { amount }))).rejects.toBeInstanceOf(
+        WalletCommandAmountError,
       );
       expect(await balanceOf(w.userId)).toBe(100);
       expect(await txRows(w.id)).toHaveLength(0);
