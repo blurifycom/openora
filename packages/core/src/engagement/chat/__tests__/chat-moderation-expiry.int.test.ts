@@ -5,9 +5,9 @@ import {
   createTestDb,
   waitForAdvisoryLockWaiter,
   waitForRowLockWaiter,
-  withAuditGuardsLifted,
   type TestDb,
 } from '@openora/core/testing';
+import { withAuditGuardsLifted } from '../../../testing/audit-guards.js';
 import type { AuditWritePort, RealtimeTransport } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';

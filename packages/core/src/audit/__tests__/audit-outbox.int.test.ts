@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { createTestDb, withAuditGuardsLifted, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { withAuditGuardsLifted } from '../../testing/audit-guards.js';
 import { auditOutbox, auditOutboxRejected, type DrizzleDb } from '@openora/core/server';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { makeEventBus, makeIdentityReader } from '../../testing/mock.js';
@@ -120,8 +121,11 @@ describe('audit outbox capture (real PG)', () => {
 
   it('writes one row for an event queued twice, before and after it ships', async () => {
     const eventId = randomUUID();
+    const occurredAt = new Date().toISOString();
     const queue = () =>
-      main.transaction((tx) => enqueueAuditInTransaction(tx, entry('once'), eventId));
+      main.transaction((tx) =>
+        enqueueAuditInTransaction(tx, entry('once', { occurredAt }), eventId),
+      );
 
     await queue();
     await queue();
@@ -132,13 +136,41 @@ describe('audit outbox capture (real PG)', () => {
 
     expect(await count('audit_log')).toBe(1);
     expect(await count('audit_outbox')).toBe(0);
+    expect(await count('audit_outbox_rejected')).toBe(0);
     const [row] = await main.select().from(auditLog);
     expect(row?.eventId).toBe(eventId);
+    expect(row?.createdAt.toISOString()).toBe(occurredAt);
+  });
+
+  it('chains an event once when the tap and the consumer both queue it, apart in time', async () => {
+    const envelope = {
+      eventId: randomUUID(),
+      correlationId: 'corr',
+      occurredAt: new Date().toISOString(),
+    };
+    const payload = { roleId: randomUUID(), actorId: randomUUID(), before: [], after: [] };
+    const queue = async () => {
+      const record = await auditRecordFor('iam.role.permissions.changed', payload, envelope);
+      await main.transaction((tx) => enqueueAuditInTransaction(tx, record!, envelope.eventId));
+    };
+
+    await queue();
+    await drainAuditOutbox(main);
+    await main.execute(sql`SELECT pg_sleep(0.01)`);
+    await queue();
+    await drainAuditOutbox(main);
+
+    expect(await count('audit_log')).toBe(1);
+    expect(await count('audit_outbox')).toBe(0);
+    expect(await count('audit_outbox_rejected')).toBe(0);
   });
 
   it('dedups an event whose id is not a uuid under the same derived uuid', async () => {
+    const occurredAt = new Date().toISOString();
     const queue = () =>
-      main.transaction((tx) => enqueueAuditInTransaction(tx, entry('broker'), '1700000000000-0'));
+      main.transaction((tx) =>
+        enqueueAuditInTransaction(tx, entry('broker', { occurredAt }), '1700000000000-0'),
+      );
 
     await queue();
     await drainAuditOutbox(main);
@@ -148,6 +180,7 @@ describe('audit outbox capture (real PG)', () => {
     const rows = await main.select({ eventId: auditLog.eventId }).from(auditLog);
     expect(rows).toEqual([{ eventId: auditEventId('1700000000000-0') }]);
     expect(rows[0]?.eventId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-/);
+    expect(await count('audit_outbox_rejected')).toBe(0);
   });
 
   it('records a role permission change, whose snapshots are arrays, through the outbox', async () => {
@@ -331,6 +364,51 @@ describe('audit shipper on a bad row (real PG)', () => {
     await expectLinearChain(2);
   });
 
+  it('moves an entry aside, not deletes it, when a forged chain row holds its event id', async () => {
+    const eventId = randomUUID();
+    await main.transaction((tx) =>
+      appendAuditEntries(tx, [
+        {
+          eventId,
+          entry: { ...entry('forged'), correlationId: null, createdAt: new Date().toISOString() },
+        },
+      ]),
+    );
+    await main.transaction((tx) => enqueueAuditInTransaction(tx, entry('real'), eventId));
+
+    await drainAuditOutbox(main);
+
+    const chained = await main.select({ resourceId: auditLog.resourceId }).from(auditLog);
+    expect(chained).toEqual([{ resourceId: 'forged' }]);
+    expect(await count('audit_outbox')).toBe(0);
+    const rejected = await main.select().from(auditOutboxRejected);
+    expect(rejected).toEqual([
+      expect.objectContaining({
+        eventId,
+        entry: expect.objectContaining({ resourceId: 'real', after: { resourceId: 'real' } }),
+        error: 'event_id already chained with different content',
+      }),
+    ]);
+  });
+
+  it('keeps both of two different entries rejected under one event id', async () => {
+    const eventId = randomUUID();
+    for (const bad of [{ bad: 1 }, { bad: 2 }]) {
+      await main.insert(auditOutbox).values({ eventId, entry: bad });
+      await drainAuditOutbox(main);
+    }
+
+    expect(await count('audit_outbox')).toBe(0);
+    const rejected = await main
+      .select({ eventId: auditOutboxRejected.eventId, entry: auditOutboxRejected.entry })
+      .from(auditOutboxRejected)
+      .orderBy(auditOutboxRejected.outboxId);
+    expect(rejected).toEqual([
+      { eventId, entry: { bad: 1 } },
+      { eventId, entry: { bad: 2 } },
+    ]);
+  });
+
   it('reports the backlog: rows waiting, the age of the oldest, and rows moved aside', async () => {
     expect(await auditOutboxBacklog(main)).toEqual({
       pending: 0,
@@ -383,10 +461,38 @@ describe('audit outbox guards (real PG)', () => {
     expect(await count('audit_outbox')).toBe(1);
   });
 
-  it('refuses DELETE of a row that has not shipped', async () => {
+  it('refuses DELETE of a row that is neither chained nor rejected', async () => {
     await expect(
       main.delete(auditOutbox).where(eq(auditOutbox.eventId, queuedId)),
-    ).rejects.toMatchObject({ cause: { message: expect.stringContaining('has not shipped') } });
+    ).rejects.toMatchObject({
+      cause: { message: expect.stringContaining('neither chained nor rejected') },
+    });
+    expect(await count('audit_outbox')).toBe(1);
+  });
+
+  it('refuses DELETE of a row whose id is forged into the chain or the rejected table', async () => {
+    const [queued] = await main.select().from(auditOutbox);
+    await main.insert(auditOutboxRejected).values({
+      outboxId: queued!.id,
+      eventId: queuedId,
+      entry: {},
+      error: 'forged',
+      createdAt: queued!.createdAt,
+    });
+    await main.transaction((tx) =>
+      appendAuditEntries(tx, [
+        {
+          eventId: queuedId,
+          entry: { ...entry('forged'), correlationId: null, createdAt: new Date().toISOString() },
+        },
+      ]),
+    );
+
+    await expect(
+      main.delete(auditOutbox).where(eq(auditOutbox.eventId, queuedId)),
+    ).rejects.toMatchObject({
+      cause: { message: expect.stringContaining('neither chained nor rejected') },
+    });
     expect(await count('audit_outbox')).toBe(1);
   });
 

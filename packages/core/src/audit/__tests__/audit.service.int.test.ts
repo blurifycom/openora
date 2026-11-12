@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, gt, sql } from 'drizzle-orm';
-import { createTestDb, withAuditGuardsLifted, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { withAuditGuardsLifted } from '../../testing/audit-guards.js';
 import { withRequestContext, type DrizzleTx } from '@openora/core/server';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { player } from '@openora/core/pam/schema/profile';

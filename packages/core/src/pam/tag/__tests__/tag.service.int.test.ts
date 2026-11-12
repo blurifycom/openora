@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { AuditWritePort, PlayEligibilityPort, TagKey } from '@openora/core/contracts';
-import { createTestDb, withAuditGuardsLifted, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { withAuditGuardsLifted } from '../../../testing/audit-guards.js';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { auditLog } from '@openora/core/audit/schema';

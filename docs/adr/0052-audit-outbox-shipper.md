@@ -26,28 +26,44 @@ id; the broker consumer path dedups against it. A consumer envelope id that is n
 a deterministic sha1 based uuid, so its redelivery still dedups.
 
 **The shipper.** One loop per process per database (started by the audit plugin, stopped on container
-dispose) takes `pg_try_advisory_xact_lock('audit_shipper')`, reads up to 1000 rows in id order,
+dispose) takes `pg_try_advisory_xact_lock(hashtext('audit_shipper'))`, reads up to 1000 rows in id order,
 appends them to the chain and deletes them, all in one transaction. A replica that does not get the
 lock skips the round, so several replicas never fork the chain. It polls every 200ms when idle,
 drains while there is work, and backs off exponentially, up to 5s, on error.
 
-**A row that fails the entry schema is moved aside, not retried.** It goes to `audit_outbox_rejected`
-with the parse error, is logged at error level with its id, and the rest of the batch ships. One bad
-row never stops the trail.
+**A row the chain cannot take as it is moves aside, not retried.** A row that fails the entry schema,
+or whose `event_id` the chain already holds with different content, goes to `audit_outbox_rejected`
+with the reason (`event_id already chained with different content` for the second), copied
+unchanged in SQL, is logged at error level with its id, and the rest of the batch ships. One bad row
+never stops the trail, and a forged or colliding `audit_log` row never makes the shipper drop the real
+entry as a duplicate. `audit_outbox_rejected` keeps one row per outbox row (unique `outbox_id`), so
+two different entries under one `event_id` are both kept.
 
 **Order and time.** `seq` is assigned at ship time and is the authoritative order of the trail.
 `created_at` is the time the record was queued, inside the business transaction: it is the business
-time of the change, not its commit time, so two rows can carry `created_at` out of `seq` order.
+time of the change, not its commit time, so two rows can carry `created_at` out of `seq` order. A
+record mapped from an event takes the event's `occurredAt`, so the tap and the consumer queue equal
+entries for one event and the redelivery is chained once.
 
 **Guards.** `ENABLE ALWAYS` triggers deny UPDATE and TRUNCATE on `audit_outbox` and allow a DELETE only
-of a row whose `event_id` is already in `audit_log` or `audit_outbox_rejected`. `audit_outbox_rejected`
-is append-only like `audit_log`.
+of a row whose content is kept elsewhere: a row in `audit_outbox_rejected` with the same `outbox_id`
+and an equal `entry`, or the `audit_log` row with its `event_id` and every field the shipper copies
+equal (actor, action, resource, before, after, ip, user agent, correlation id, result, created_at).
+An id match alone is not enough, since the app role could insert a forged row under that id and then
+delete the real one. `audit_outbox_rejected` is append-only like `audit_log`.
+
+The triggers stop DML from every role, under `session_replication_role = replica` too. They do not
+stop DDL: the table owner can still `ALTER TABLE ... DISABLE TRIGGER` and then change rows.
+Production must run the app as a role that does not own the audit tables, and run migrations as the
+owner.
 
 ## Consequences
 
 - `audit_log` lags the business write by up to a poll, longer under backlog. Nothing may read
   `audit_log` back to decide what a write just did; tests call `flushAudit`. `auditOutboxBacklog`
-  reports the pending count, the age of the oldest pending row and the rejected count.
+  reports the pending count, the age of the oldest pending row and the rejected count. There is no
+  health check that reads it: operators must poll it into alerting and page on any rejected row or
+  on an oldest pending age above a few seconds.
 - `AUDIT_WRITER` no longer returns the appended row: the row does not exist yet when the write
   returns.
 - `recordAuditInTransaction` still appends directly and still takes the chain lock. It is deprecated

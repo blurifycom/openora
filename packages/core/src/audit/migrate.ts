@@ -4,9 +4,10 @@
 import { fileURLToPath } from 'node:url';
 import { runMigrations } from '@openora/core/server/migrate';
 
-// Every UPDATE, DELETE and TRUNCATE on audit_log raises, for the table owner too. ENABLE ALWAYS
-// keeps the triggers firing under `session_replication_role = replica`, which skips ordinary
-// triggers, so only DDL (disabling or dropping one) gets past them. The function keeps its
+// Every UPDATE, DELETE and TRUNCATE on audit_log raises, whatever the role. ENABLE ALWAYS keeps the
+// triggers firing under `session_replication_role = replica`, which skips ordinary triggers, so
+// only DDL gets past them: the owner can still disable or drop one, which is why the app must not
+// run as the owner (ADR-0052). The function keeps its
 // audit_log name from before it guarded the outbox tables too.
 const APPEND_ONLY_SQL = [
   `CREATE OR REPLACE FUNCTION audit_log_deny_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -25,18 +26,45 @@ const APPEND_ONLY_SQL = [
 ];
 
 // The outbox holds records that are not in the chain yet, so losing a row loses an audit record.
-// No UPDATE or TRUNCATE; a DELETE only of a row the shipper has finished with, one whose event is
-// in audit_log or was moved to audit_outbox_rejected. The rejected table is append-only like
-// audit_log. Both outbox tables come from the engine migration set, which runs before this one.
+// No UPDATE or TRUNCATE; a DELETE only of a row whose content is kept elsewhere: the same entry
+// moved to audit_outbox_rejected under this outbox id, or chained in audit_log under its event id
+// with every field the shipper copies equal. Matching the id alone would let a forged row with the
+// same id stand in for the real one. The rejected table is append-only like audit_log. Both outbox
+// tables come from the engine migration set, which runs before this one.
+//
+// audit_outbox_entry_chained compares an entry as the shipper writes it: snapshots as jsonb, a
+// JSON null or a missing snapshot as SQL NULL, createdAt to the millisecond a JS Date keeps. The
+// shipper calls it too, after appending, so a row it would not be allowed to delete moves aside.
 const OUTBOX_GUARD_SQL = [
+  `CREATE OR REPLACE FUNCTION audit_outbox_entry_chained(chained_event_id uuid, entry jsonb)
+   RETURNS boolean LANGUAGE sql STABLE AS $$
+     SELECT EXISTS (
+       SELECT 1 FROM audit_log l
+        WHERE l.event_id = chained_event_id
+          AND l.actor_type::text = entry->>'actorType'
+          AND l.actor_id IS NOT DISTINCT FROM entry->>'actorId'
+          AND l.action = entry->>'action'
+          AND l.resource_type = entry->>'resourceType'
+          AND l.resource_id IS NOT DISTINCT FROM entry->>'resourceId'
+          AND l.before IS NOT DISTINCT FROM nullif(entry->'before', 'null'::jsonb)
+          AND l.after IS NOT DISTINCT FROM nullif(entry->'after', 'null'::jsonb)
+          AND l.ip IS NOT DISTINCT FROM entry->>'ip'
+          AND l.user_agent IS NOT DISTINCT FROM entry->>'userAgent'
+          AND l.correlation_id IS NOT DISTINCT FROM entry->>'correlationId'
+          AND l.result IS NOT DISTINCT FROM entry->>'result'
+          AND l.created_at = date_trunc('milliseconds', (entry->>'createdAt')::timestamptz))
+   $$`,
   `CREATE OR REPLACE FUNCTION audit_outbox_deny_unshipped_delete() RETURNS trigger
    LANGUAGE plpgsql AS $$
    BEGIN
-     IF EXISTS (SELECT 1 FROM audit_log WHERE event_id = OLD.event_id)
-        OR EXISTS (SELECT 1 FROM audit_outbox_rejected WHERE event_id = OLD.event_id) THEN
+     -- Checked apart and first: a rejected entry may not parse, so it never reaches the cast below.
+     IF EXISTS (SELECT 1 FROM audit_outbox_rejected WHERE outbox_id = OLD.id AND entry = OLD.entry) THEN
        RETURN OLD;
      END IF;
-     RAISE EXCEPTION 'audit_outbox row % (event %) has not shipped: DELETE is not permitted',
+     IF audit_outbox_entry_chained(OLD.event_id, OLD.entry) THEN
+       RETURN OLD;
+     END IF;
+     RAISE EXCEPTION 'audit_outbox row % (event %) is neither chained nor rejected as it is: DELETE is not permitted',
        OLD.id, OLD.event_id;
    END;
    $$`,
