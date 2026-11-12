@@ -17,13 +17,6 @@ export type BonusGrantLedgerReader = {
    * drizzle's `SQL` - the same convention as the `tx: unknown` command ports.
    */
   ledgerRowsQuery(userId: string): unknown;
-  /**
-   * A SELECT over one page of grants in id order, after `afterId` when given, returning
-   * `id uuid, user_id uuid, currency text, bonus_balance numeric, entries_total numeric`:
-   * each grant's balance beside what its entries add up to. The wallet's ledger invariant scan
-   * pages through it and reports any grant whose two figures differ.
-   */
-  grantBalancePageQuery(afterId: string | null, limit: number): unknown;
 };
 
 export const BONUS_GRANT_LEDGER: Token<BonusGrantLedgerReader> = createToken('BONUS_GRANT_LEDGER');

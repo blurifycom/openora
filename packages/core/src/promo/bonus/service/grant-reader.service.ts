@@ -103,18 +103,6 @@ export const bonusGrantLedger: BonusGrantLedgerReader = {
       ${promoGrant.createdAt} as created_at
     from ${promoGrant}
     where ${promoGrant.userId} = ${userId}`,
-  grantBalancePageQuery: (afterId, limit) => sql`
-    select
-      ${promoGrant.id} as id,
-      ${promoGrant.userId} as user_id,
-      ${promoGrant.currency} as currency,
-      ${promoGrant.bonusBalance} as bonus_balance,
-      (select coalesce(sum(${promoGrantEntry.bonusAmount}), 0) from ${promoGrantEntry}
-        where ${promoGrantEntry.grantId} = ${promoGrant.id}) as entries_total
-    from ${promoGrant}
-    ${afterId === null ? sql`` : sql`where ${promoGrant.id} > ${afterId}`}
-    order by ${promoGrant.id}
-    limit ${limit}`,
 };
 
 /** What a player is allowed to see of their own bonuses. The terms snapshot stays internal. */

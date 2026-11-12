@@ -2,12 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
-import type {
-  BonusGrantLedgerReader,
-  PaymentAdapter,
-  PlatformConfig,
-  PlayEligibilityPort,
-} from '@openora/core/contracts';
+import type { PaymentAdapter, PlatformConfig, PlayEligibilityPort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
@@ -54,10 +49,7 @@ const commands = new WalletCommandsService(
   makeAuditWriter(),
 );
 
-function makeReconciliation({
-  batchSize = 200,
-  grantLedger,
-}: { batchSize?: number; grantLedger?: BonusGrantLedgerReader } = {}) {
+function makeReconciliation({ batchSize = 200 }: { batchSize?: number } = {}) {
   const payment = mock<PaymentAdapter>({});
   const paymentProviders = makePaymentProviderRegistry({ adapter: payment });
   const audit = makeAuditWriter();
@@ -90,7 +82,6 @@ function makeReconciliation({
     paymentProviders,
     audit,
     platformConfig,
-    grantLedger,
   });
 }
 
@@ -447,32 +438,5 @@ describe('legacy rows and the baseline backfill (real PG)', () => {
     expect(baseline?.asOf.getTime()).toBeLessThan(hoursAgo(24).getTime());
     expect(summary?.summary).toMatchObject({ balanceBreaches: 0 });
     expect(await breaches()).toHaveLength(0);
-  });
-});
-
-describe('bonus grant balances (real PG)', () => {
-  // The grant table belongs to the bonus module; its query is covered against real grants
-  // there. Here a reader stands in, returning one grant whose entries miss its balance.
-  const grantId = randomUUID();
-  const driftedGrant: BonusGrantLedgerReader = {
-    ledgerRowsQuery: () => sql`select 1 where false`,
-    grantBalancePageQuery: (afterId) =>
-      afterId === null
-        ? sql`select ${grantId}::uuid as id, ${randomUUID()}::uuid as user_id, 'USD' as currency,
-            100::numeric as bonus_balance, 90::numeric as entries_total`
-        : sql`select null::uuid as id where false`,
-  };
-
-  it('files one finding for a grant off its entries, and a rerun does not duplicate it', async () => {
-    const svc = makeReconciliation({ grantLedger: driftedGrant });
-
-    const first = await run(svc);
-    await run(svc);
-
-    expect(first?.summary).toMatchObject({ grantsChecked: 1, grantBreaches: 1 });
-    const found = await breaches();
-    expect(found).toHaveLength(1);
-    expect(found[0]?.externalId).toContain(grantId);
-    expect(Number(found[0]?.amount)).toBe(10);
   });
 });

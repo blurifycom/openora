@@ -490,7 +490,6 @@ export default {
         audit: c.get(AUDIT_WRITER),
         platformConfig,
         rgLimits,
-        grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
       });
       reconciliationRef = reconciliation;
 

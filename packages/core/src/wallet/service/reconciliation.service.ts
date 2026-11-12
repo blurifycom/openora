@@ -1,19 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
-import {
-  type SQL,
-  and,
-  asc,
-  count,
-  desc,
-  eq,
-  gte,
-  inArray,
-  isNull,
-  lt,
-  ne,
-  sql,
-} from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import {
   type DrizzleDb,
   type DrizzleService,
@@ -33,7 +20,6 @@ import {
 import {
   DEFAULT_PAYMENT_PROVIDER,
   type AuditWritePort,
-  type BonusGrantLedgerReader,
   type ClientMeta,
   type PaymentProviderRegistry,
   type PaymentWebhookEvent,
@@ -198,13 +184,6 @@ const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
 
 const JOB_NAME = 'wallet-reconciliation';
 const LEDGER_INVARIANT_JOB_NAME = 'wallet-ledger-invariant';
-type GrantBalanceRow = {
-  id: string;
-  user_id: string;
-  currency: string;
-  bonus_balance: string;
-  entries_total: string;
-};
 export const LEDGER_INVARIANT_QUEUE = queue(LEDGER_INVARIANT_JOB_NAME);
 export const LedgerInvariantJobSchema = z.object({
   runId: UuidSchema.optional(),
@@ -242,7 +221,6 @@ export type ReconciliationServiceDeps = {
   audit: AuditWritePort;
   platformConfig?: PlatformConfig;
   rgLimits?: RgLimitsPort;
-  grantLedger?: BonusGrantLedgerReader;
 };
 
 /**
@@ -261,7 +239,6 @@ export class ReconciliationService {
   private readonly audit: AuditWritePort;
   private readonly platformConfig?: PlatformConfig;
   private readonly rgLimits?: RgLimitsPort;
-  private readonly grantLedger?: BonusGrantLedgerReader;
 
   constructor({
     drizzle,
@@ -271,7 +248,6 @@ export class ReconciliationService {
     audit,
     platformConfig,
     rgLimits,
-    grantLedger,
   }: ReconciliationServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -280,7 +256,6 @@ export class ReconciliationService {
     this.audit = audit;
     this.platformConfig = platformConfig;
     this.rgLimits = rgLimits;
-    this.grantLedger = grantLedger;
   }
 
   async listFindings(filter: ListReconciliationFindingsInput) {
@@ -915,8 +890,9 @@ export class ReconciliationService {
   }
 
   /**
-   * Checks every wallet balance against its own ledger, and every bonus grant's balance against
-   * its entries, filing a `ledger_invariant_breach` for each one that does not add up. Read-only
+   * Checks every wallet balance against its own ledger, filing a `ledger_invariant_breach` for
+   * each one that does not add up. A bonus grant's balance needs no pass here: a deferred trigger
+   * refuses any commit that leaves it off its entries. Read-only
    * over the money tables and page by page, each page one statement on one snapshot, so it never
    * blocks play and never sees half of a move. A pair holding rows nothing prices (legacy ones,
    * see `ledger-invariant.service.ts`) and no baseline covering them is counted as
@@ -939,15 +915,12 @@ export class ReconciliationService {
       pairsChecked: 0,
       needsBaseline: 0,
       balanceBreaches: 0,
-      grantsChecked: 0,
-      grantBreaches: 0,
     };
     try {
       if (backfillBaselines) {
         await this.backfillBaselines(batchSize, counts);
       }
       await this.checkWalletBalances(runId, batchSize, counts);
-      await this.checkGrantBalances(runId, batchSize, counts);
       await this.drizzle.db.transaction(async (txn) => {
         await this.finishRun(jobRunId, 'completed', counts, txn);
         await this.audit.recordInTransaction(txn, {
@@ -1035,52 +1008,6 @@ export class ReconciliationService {
       }
       const last = page.at(-1);
       if (page.length < batchSize || !last) {
-        return;
-      }
-      afterId = last.id;
-    }
-  }
-
-  private async checkGrantBalances(
-    runId: WalletJobRun['runId'],
-    batchSize: number,
-    counts: { grantsChecked: number; grantBreaches: number },
-  ): Promise<void> {
-    if (!this.grantLedger) {
-      return;
-    }
-    let afterId: string | null = null;
-    for (;;) {
-      const { rows }: { rows: GrantBalanceRow[] } = await this.drizzle.db.execute<GrantBalanceRow>(
-        this.grantLedger.grantBalancePageQuery(afterId, batchSize) as SQL,
-      );
-      for (const grant of rows) {
-        counts.grantsChecked += 1;
-        const drift = moneySubtract(grant.bonus_balance, grant.entries_total);
-        if (moneyEquals(drift, '0')) {
-          continue;
-        }
-        counts.grantBreaches += 1;
-        logger.error(
-          { runId, grantId: grant.id, drift },
-          'ledger invariant: grant off its entries',
-        );
-        await recordReconciliationFinding(
-          this.drizzle.db,
-          {
-            runId,
-            providerName: LEDGER_FINDING_LABEL,
-            kind: 'ledger_invariant_breach',
-            currency: grant.currency,
-            amount: drift,
-            externalId: `grant:${grant.id}:${drift}`,
-            detail: `bonus grant ${grant.id} of player ${grant.user_id} holds ${grant.bonus_balance} ${grant.currency} but its entries add up to ${grant.entries_total}`,
-          },
-          this.audit,
-        );
-      }
-      const last = rows.at(-1);
-      if (rows.length < batchSize || !last) {
         return;
       }
       afterId = last.id;
