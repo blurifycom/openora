@@ -51,7 +51,13 @@ const HOW_TO_CHANGE_OSS =
   '(overlay plugin, adapter rebinding, UI plugin, config).';
 
 // 1) Shell command writing into a protected path (sed -i, redirect, tee, cp, rm, git, ...).
-const command = extractCommand(payload).replace(WORKTREE_TOKEN, '<oss-worktree>');
+const rawCommand = extractCommand(payload);
+// A symlink planted in a worktree would carry later shell writes into the main checkout, and no
+// worktree needs one, so `ln` is judged before the worktree mask.
+if (new RegExp(String.raw`(?<![\w-])ln\b[^|;&]*${PROTECTED}`).test(rawCommand)) {
+  deny(`Blocked: this symlink points into or lives in the OSS checkout or node_modules. ${HOW_TO_CHANGE_OSS}`);
+}
+const command = rawCommand.replace(WORKTREE_TOKEN, '<oss-worktree>');
 if (command) {
   const writeToCore = [
     [new RegExp(String.raw`\b(?:sed|perl)\b[^|;&]*\s-\w*i\w*\b[^|;&]*${PROTECTED}`), 'in-place edit (sed/perl -i)'],

@@ -79,6 +79,7 @@ test('a worktree path cannot smuggle a second target or point git at the main re
     `echo x | tee {../oss/.worktrees/feat+x/a,${core}}`,
     `echo x > ../oss/.worktrees/feat+x/$(echo>${core})a`,
     'git -C ../oss/.worktrees/ checkout -- :/',
+    'ln -sfn ../../packages ../oss/.worktrees/feat+x/p && echo x > ../oss/.worktrees/feat+x/p/a.ts',
     `git -C ${join(oss, '.worktrees/./')} reset --hard`,
   ]) {
     assert.equal(exitCode({ command }), DENIED, command);
