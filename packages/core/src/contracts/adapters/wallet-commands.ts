@@ -138,6 +138,27 @@ export class WalletCorrectionRefConflictError extends Error {
   }
 }
 
+/**
+ * Thrown by `debit` and `credit` when their `providerRef` is already on a ledger move a different
+ * request wrote: another wallet, type, direction, amount, currency or round, or a correction. A
+ * true replay still returns `moved: false`. This one moved nothing, even when another wallet takes
+ * the reference mid-move and the caller catches the error and commits: a debit's balance and bonus
+ * wagering, and a credit's row, settlement and balance, run in a savepoint that rolls back.
+ */
+export class WalletReplayMismatchError extends Error {
+  readonly providerName: string;
+  readonly providerRefId: string;
+
+  constructor(providerName: string, providerRefId: string) {
+    super(
+      `wallet reference ${providerName}/${providerRefId} was already used by a different request`,
+    );
+    this.name = 'WalletReplayMismatchError';
+    this.providerName = providerName;
+    this.providerRefId = providerRefId;
+  }
+}
+
 /** Thrown by `correctionDebit` when its `providerRef` names no round, which RG spend could not net. */
 export class WalletCorrectionRoundError extends Error {
   readonly providerName: string;
@@ -229,7 +250,12 @@ export type WalletWithdrawalHoldArgs = {
 };
 
 export type WalletCommands = {
+  /**
+   * A replay that names no currency answers in the currency the first call moved.
+   * @throws WalletReplayMismatchError when `providerRef` is already on a different request's move.
+   */
   debit(tx: unknown, args: WalletDebitArgs): Promise<WalletDebitOutcome>;
+  /** @throws WalletReplayMismatchError when `providerRef` is already on a different request's move. */
   credit(tx: unknown, args: WalletCreditArgs): Promise<WalletCreditOutcome>;
   /**
    * A correction is never refused for a short balance, and skips play eligibility, RG limits and
