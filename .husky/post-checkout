@@ -2,6 +2,8 @@
 # AGENTS.md / CLAUDE.md and docs/catalog.json always match the branch you landed on.
 # $3 = 1 for a branch checkout, 0 for a file checkout.
 [ "$3" = "1" ] || exit 0
+# A fresh worktree has no node_modules yet; failing here aborts `git worktree add`.
+command -v rulesync >/dev/null 2>&1 || exit 0
 
 rulesync generate
 tsx tools/gen/gen-catalog.ts
