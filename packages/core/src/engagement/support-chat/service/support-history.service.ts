@@ -1,6 +1,12 @@
 import * as z from 'zod';
 import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
-import { cached, createDomainError, createLogger, type DrizzleService } from '@openora/core/server';
+import {
+  cached,
+  createDomainError,
+  createLogger,
+  type DrizzleService,
+  type DrizzleTx,
+} from '@openora/core/server';
 import {
   TimestampSchema,
   SUPPORT_CHAT_STATUSES,
@@ -233,14 +239,39 @@ export class SupportHistoryService {
     const id = userId.toLowerCase();
     return cached(
       this.deps.cache,
-      `support-chat-history:${id}:${includeResolved}`,
+      `support-chat-history:v2:${id}:${includeResolved}`,
       HISTORY_CACHE_TTL_MS,
       () => this.load(id, includeResolved),
     );
   }
 
   private async load(userId: User['id'], includeResolved: boolean) {
-    const [row] = await this.deps.drizzle.db
+    const { customerId, windows, complete, broken } = await this.deps.drizzle.db.transaction(
+      (tx) => this.readEmailTrail(tx, userId),
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
+    if (broken) {
+      logger.warn({ userId }, 'support history email trail inconsistent');
+    }
+    const [tickets, chats] = await Promise.all([
+      windows.length === 0
+        ? {
+            state: broken ? ('email_gap' as const) : ('no_email' as const),
+            items: [],
+            complete: !broken,
+          }
+        : this.section(userId, 'ticket', () =>
+            this.deps.reader.listTickets({ windows, includeResolved }),
+          ).then((section) => ({ ...section, complete: section.state === 'ok' && complete })),
+      customerId === null
+        ? { state: 'not_linked' as const, items: [] }
+        : this.section(userId, 'chat', () => this.deps.reader.listChats({ customerId })),
+    ]);
+    return { tickets, chats, fetchedAt: new Date().toISOString() };
+  }
+
+  private async readEmailTrail(tx: DrizzleTx, userId: User['id']) {
+    const [row] = await tx
       .select({
         email: user.email,
         registeredEmail: user.registeredEmail,
@@ -260,42 +291,24 @@ export class SupportHistoryService {
       currentEmail: row.email,
       registeredEmail: row.registeredEmail,
       registeredAt: row.registeredAt,
-      changes: await this.emailChanges(userId, row.playerId),
+      changes: await this.emailChanges(tx, userId, row.playerId),
     });
     const first = built.complete ? built.windows[0] : undefined;
-    const { windows, complete, broken } = boundFirstWindow(
+    const bounded = boundFirstWindow(
       built,
       row.registeredAt,
-      first ? await this.othersEmailChanges(first.email, userId, row.playerId) : [],
+      first ? await this.othersEmailChanges(tx, first.email, userId, row.playerId) : [],
     );
-    if (broken) {
-      logger.warn({ userId }, 'support history email trail inconsistent');
-    }
-    const { customerId } = row;
-    const [tickets, chats] = await Promise.all([
-      windows.length === 0
-        ? {
-            state: broken ? ('unavailable' as const) : ('no_email' as const),
-            items: [],
-            complete: !broken,
-          }
-        : this.section(userId, 'ticket', () =>
-            this.deps.reader.listTickets({ windows, includeResolved }),
-          ).then((section) => ({ ...section, complete: section.state === 'ok' && complete })),
-      customerId === null
-        ? { state: 'not_linked' as const, items: [] }
-        : this.section(userId, 'chat', () => this.deps.reader.listChats({ customerId })),
-    ]);
-    return { tickets, chats, fetchedAt: new Date().toISOString() };
+    return { customerId: row.customerId, ...bounded };
   }
 
   /**
    * The player's email changes from the audit log, in the order they were written, each timed by
    * the change time the row carries, or by its write time when it carries none.
    */
-  private async emailChanges(userId: User['id'], playerId: Player['id']) {
+  private async emailChanges(tx: DrizzleTx, userId: User['id'], playerId: Player['id']) {
     // The audit subject is the player when the account has one, the user otherwise.
-    const rows = await this.deps.drizzle.db
+    const rows = await tx
       .select({ before: auditLog.before, after: auditLog.after, at: auditLog.createdAt })
       .from(auditLog)
       .where(
@@ -315,8 +328,13 @@ export class SupportHistoryService {
    * Email changes of every other account that left or took `email`, case-insensitively, timed
    * like the player's own. The player's own rows, under either subject, are left out.
    */
-  private async othersEmailChanges(email: string, userId: User['id'], playerId: Player['id']) {
-    const rows = await this.deps.drizzle.db
+  private async othersEmailChanges(
+    tx: DrizzleTx,
+    email: string,
+    userId: User['id'],
+    playerId: Player['id'],
+  ) {
+    const rows = await tx
       .select({ before: auditLog.before, after: auditLog.after, at: auditLog.createdAt })
       .from(auditLog)
       .where(
