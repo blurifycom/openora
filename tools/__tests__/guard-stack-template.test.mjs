@@ -20,6 +20,7 @@ test('a PR on a shared branch or the default branch is allowed', () => {
   assert.equal(exitCode('gh pr edit 12 --base=stage'), ALLOWED);
   assert.equal(exitCode('gh stack submit'), ALLOWED);
   assert.equal(exitCode('git commit -m "gh pr create --base feat/a"'), ALLOWED);
+  assert.equal(exitCode('gh pr create --title "rebase onto --base feat" --base dev'), ALLOWED);
 });
 
 test('a PR based on a feature branch is denied', () => {
@@ -27,4 +28,5 @@ test('a PR based on a feature branch is denied', () => {
   assert.equal(exitCode('gh pr create --title "x" -B "feat/a"'), DENIED);
   assert.equal(exitCode('gh pr edit 12 --base=feat/a'), DENIED);
   assert.equal(exitCode('cd repo && gh pr create --base origin/feat/a'), DENIED);
+  assert.equal(exitCode('gh -R o/r pr create --base feat/a'), DENIED);
 });

@@ -8,22 +8,16 @@
 
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
-const SHARED = new Set([
-  'main',
-  'master',
-  'dev',
-  'develop',
-  'stage',
-  'staging',
-  'prod',
-  'production',
-]);
+const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
 const PR_WITH_BASE =
-  /(?:^|[;&|\n(]\s*)gh\s+pr\s+(?:create|edit)\b[^;&|\n]*?\s(?:--base|-B)(?:=|\s+)['"]?([^\s'"]+)/;
+  /(?:^|[;&|\n(]\s*)gh(?:\s+(?:-R|--repo)\s+\S+)?\s+pr\s+(?:create|edit)\b[^;&|\n]*?\s(?:--base|-B)(?:=|\s+)['"]?([^\s'"]+)/;
 
-const command = extractCommand(readPayload());
+// Quoted prose (a title or body) is blanked so a `--base` inside it never counts.
+const command = extractCommand(readPayload()).replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, (quoted) =>
+  /\s/.test(quoted) ? '""' : quoted,
+);
 const base = PR_WITH_BASE.exec(command)?.[1];
-if (base && !SHARED.has(base.replace(/^origin\//, ''))) {
+if (base && !SHARED.test(base)) {
   deny(
     `Blocked: a PR based on \`${base}\` is a stack. Use \`gh stack\` (gh extension install github/gh-stack): \`gh stack init\` or \`gh stack init <branches...>\`, \`gh stack add <branch>\`, then \`gh stack submit\`. Review each layer on its own; merge with \`gh stack merge\` only when asked.`,
   );

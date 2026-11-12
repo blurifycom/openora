@@ -126,7 +126,7 @@ VERDICT: <GO|NO-GO> - <counts by severity> - <most critical finding>
 - Order findings BLOCK, WARN, INFO; exactly one `VERDICT:` line, last.
 - In both forms, money, authz, data-loss, contract-break, unmet-acceptance, or trace BLOCK findings force NO-GO.
 
-After every review, `--ci` included, write `.claude/reviews/<pr or branch>.json` in the main checkout: `{ "sha": "<reviewed HEAD>", "base", "verdict": "GO|NO-GO", "findings": [...] }`. The `guard-review` hook lets a push or a new PR through only when one of these files records the current HEAD as GO.
+After every review, `--ci` included, write `.claude/reviews/<pr or branch>.json` in the main checkout: `{ "sha": "<full git rev-parse HEAD>", "base", "verdict": "GO" | "NO-GO", "findings": [...] }`, the verdict as that bare word. The `guard-review` hook lets a push or a new PR through only when one of these files records the current HEAD as GO.
 
 ## Posting to the PR
 
