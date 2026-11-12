@@ -37,6 +37,7 @@
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/context-async-hooks": "2.10.0",
     "@opentelemetry/sdk-trace": "2.10.0",
+    "@orpc/server": "1.15.7",
     "@orpc/shared": "1.15.7",
     "@types/node": "26.6.5",
     "@types/pg": "8.23.1",
