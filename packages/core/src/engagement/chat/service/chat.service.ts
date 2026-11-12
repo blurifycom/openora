@@ -417,7 +417,7 @@ function toSentMessage(
 
 // A system message this service just wrote: its metadata came in typed by the contract, so
 // it needs neither the legacy repair nor the re-parse a stored row does.
-function toWrittenSystemMessage(
+export function toWrittenSystemMessage(
   record: typeof chatMessage.$inferSelect,
   metadata: CommandMetadata,
 ): ChatSystemMessage {

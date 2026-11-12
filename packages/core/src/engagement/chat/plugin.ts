@@ -371,7 +371,7 @@ export default {
         c.get(AUDIT_WRITER),
       );
       jobQueueRef = c.get(JOB_QUEUE);
-      systemCardRef = new ChatSystemCardService(c.get(DRIZZLE));
+      systemCardRef = new ChatSystemCardService(c.get(DRIZZLE), c.get(CHAT_REALTIME_TRANSPORT));
       void jobQueueRef
         .schedule(
           CHAT_ROOM_PURGE_SCAN_QUEUE,
