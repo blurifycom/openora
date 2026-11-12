@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, gt, sql } from 'drizzle-orm';
-import { createTestDb, type TestDb } from '@openora/core/testing';
-import { withRequestContext } from '@openora/core/server';
+import { createTestDb, withAuditGuardsLifted, type TestDb } from '@openora/core/testing';
+import { withRequestContext, type DrizzleTx } from '@openora/core/server';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -22,19 +22,8 @@ import { drainAuditOutbox } from '../service/audit-shipper.service.js';
 import { AuditListFiltersSchema } from '../contract/index.js';
 
 // Gets past the append-only triggers the only way left: DDL that disables them.
-const tamper = async (mutate: () => Promise<unknown>) => {
-  await db.drizzle.db.execute(sql`ALTER TABLE audit_log DISABLE TRIGGER USER`);
-  try {
-    await mutate();
-  } finally {
-    await db.drizzle.db.execute(
-      sql`ALTER TABLE audit_log ENABLE ALWAYS TRIGGER audit_log_append_only`,
-    );
-    await db.drizzle.db.execute(
-      sql`ALTER TABLE audit_log ENABLE ALWAYS TRIGGER audit_log_no_truncate`,
-    );
-  }
-};
+const tamper = (mutate: (tx: DrizzleTx) => Promise<unknown>) =>
+  withAuditGuardsLifted(db.drizzle.db, mutate);
 
 // Runs `write`, ships what it queued, and returns the rows it appended, oldest first.
 async function shipped(write: () => Promise<unknown>) {
@@ -158,9 +147,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await tamper(() =>
-    db.drizzle.db.execute(
-      sql`TRUNCATE audit_log, audit_outbox, ${player} RESTART IDENTITY CASCADE`,
+  await tamper((tx) =>
+    tx.execute(
+      sql`TRUNCATE audit_log, audit_outbox, audit_outbox_rejected, ${player} RESTART IDENTITY CASCADE`,
     ),
   );
 });
@@ -339,11 +328,8 @@ describe('AuditService.verifyChain() (real PG)', () => {
       action: 'identity.user.registered',
       resourceType: 'identity',
     });
-    await tamper(() =>
-      db.drizzle.db
-        .update(auditLog)
-        .set({ hash: 'tampered-wrong-hash' })
-        .where(eq(auditLog.id, row.id)),
+    await tamper((tx) =>
+      tx.update(auditLog).set({ hash: 'tampered-wrong-hash' }).where(eq(auditLog.id, row.id)),
     );
 
     const result = await makeService().verifyChain();
@@ -366,8 +352,8 @@ describe('AuditService.verifyChain() (real PG)', () => {
       after: { role: 'player' },
       result: 'success',
     });
-    await tamper(() =>
-      db.drizzle.db
+    await tamper((tx) =>
+      tx
         .update(auditLog)
         .set({ after: { role: 'admin' } })
         .where(eq(auditLog.id, row.id)),
@@ -392,11 +378,8 @@ describe('AuditService.verifyChain() (real PG)', () => {
       action: 'wallet.deposit.completed',
       resourceType: 'wallet',
     });
-    await tamper(() =>
-      db.drizzle.db
-        .update(auditLog)
-        .set({ prevHash: 'wrong-prev-hash' })
-        .where(eq(auditLog.id, second.id)),
+    await tamper((tx) =>
+      tx.update(auditLog).set({ prevHash: 'wrong-prev-hash' }).where(eq(auditLog.id, second.id)),
     );
 
     const result = await makeService().verifyChain();

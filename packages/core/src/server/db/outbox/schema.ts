@@ -65,6 +65,18 @@ export const auditOutbox = pgTable('audit_outbox', {
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
+// `audit_outbox` rows the shipper could not parse, moved aside with the parse error so the rest
+// keep shipping. Append-only: the audit migration denies UPDATE, DELETE and TRUNCATE on it.
+export const auditOutboxRejected = pgTable('audit_outbox_rejected', {
+  id: bigserial({ mode: 'number' }).primaryKey(),
+  outboxId: bigint({ mode: 'number' }).notNull(),
+  eventId: uuid().notNull().unique('audit_outbox_rejected_event_id_unique'),
+  entry: jsonb().notNull(),
+  error: text().notNull(),
+  createdAt: timestamp({ withTimezone: true }).notNull(),
+  rejectedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 // One row per deployment: the anonymous id the usage telemetry reports under. The check pins the
 // table to a single row, so replicas racing on first boot converge on one id.
 export const openoraInstance = pgTable(

@@ -20,7 +20,7 @@ export type AuditActorType = z.infer<typeof AuditActorTypeSchema>;
 // before/after are jsonb snapshots and may hold an object OR an array (eg a role's
 // permission list), so allow both - constraining to a record 500s the list output
 // validation whenever an array snapshot exists.
-const AuditSnapshotSchema = z
+export const AuditSnapshotSchema = z
   .union([z.record(z.string(), z.unknown()), z.array(z.unknown())])
   .nullable();
 

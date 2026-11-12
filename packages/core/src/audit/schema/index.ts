@@ -44,7 +44,6 @@ export const auditLog = pgTable(
     index('audit_log_action_idx').on(t.action),
     index('audit_log_resource_type_idx').on(t.resourceType),
     index('audit_log_created_at_idx').on(t.createdAt),
-    index('audit_log_seq_idx').on(t.seq),
     // The two email-change indexes and the unique seq, prev_hash and event_id indexes are built
     // concurrently by migrate.ts, outside the schema.
   ],

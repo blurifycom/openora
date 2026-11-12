@@ -293,6 +293,34 @@ describe('createEventBus over Redis Streams', () => {
     await vi.waitFor(() => expect(received).toEqual([committed]), DELIVERY);
   });
 
+  it('hands a transactional tap the same payload a subscriber gets, undeclared fields included', async () => {
+    const { bus, serviceName, broker } = realBus();
+    const received: unknown[] = [];
+    bus.on('wallet.deposit.completed', (p) => {
+      received.push(p);
+    });
+    const tapped: unknown[] = [];
+    bus.tapTransactional((_tx, envelope) => {
+      tapped.push(envelope.payload);
+      return Promise.resolve();
+    });
+    await waitForConsumerGroup(redis.client, {
+      stream: streamOf('wallet.deposit.completed'),
+      group: serviceName,
+    });
+
+    await db.drizzle.db.transaction((tx) =>
+      bus.emitInTransaction(tx, 'wallet.deposit.completed', {
+        ...deposit(),
+        undeclared: 'extra',
+      } as ReturnType<typeof deposit>),
+    );
+    await new OutboxRelay(db.drizzle.db, broker).drainOnce();
+
+    await vi.waitFor(() => expect(received).toHaveLength(1), DELIVERY);
+    expect(tapped).toEqual(received);
+  });
+
   it('carries the emitting context correlation id through emit and through the outbox', async () => {
     const { bus, serviceName, broker } = realBus();
     const received: Array<EventEnvelope | undefined> = [];

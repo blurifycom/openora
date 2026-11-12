@@ -50,6 +50,13 @@
       "when": 1795042945365,
       "tag": "0006_audit_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795042970959,
+      "tag": "0007_audit_outbox_rejected",
+      "breakpoints": true
     }
   ]
 }

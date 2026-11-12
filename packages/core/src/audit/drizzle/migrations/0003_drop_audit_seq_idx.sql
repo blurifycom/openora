@@ -1,0 +1,1 @@
+DROP INDEX "audit_log_seq_idx";

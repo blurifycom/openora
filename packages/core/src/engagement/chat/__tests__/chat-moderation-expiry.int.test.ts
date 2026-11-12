@@ -5,6 +5,7 @@ import {
   createTestDb,
   waitForAdvisoryLockWaiter,
   waitForRowLockWaiter,
+  withAuditGuardsLifted,
   type TestDb,
 } from '@openora/core/testing';
 import type { AuditWritePort, RealtimeTransport } from '@openora/core/contracts';
@@ -98,15 +99,12 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  // audit_log refuses TRUNCATE for every role; the reset lifts that trigger inside its own
-  // transaction, so a failure cannot leave it off.
-  await db.drizzle.db.transaction(async (tx) => {
-    await tx.execute(sql`ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_truncate`);
-    await tx.execute(
+  // The audit tables refuse TRUNCATE for every role.
+  await withAuditGuardsLifted(db.drizzle.db, (tx) =>
+    tx.execute(
       sql`TRUNCATE ${chatMute}, ${chatPlatformBan}, ${chatPlayerCooldown}, audit_log, audit_outbox RESTART IDENTITY CASCADE`,
-    );
-    await tx.execute(sql`ALTER TABLE audit_log ENABLE ALWAYS TRIGGER audit_log_no_truncate`);
-  });
+    ),
+  );
 });
 
 describe('ChatModerationExpiryService.sweep', () => {
