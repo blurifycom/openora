@@ -155,6 +155,24 @@ export class WalletCorrectionRefConflictError extends Error {
 }
 
 /**
+ * Thrown by `debit`, `credit` and `correctionDebit` before anything is written when the amount is
+ * not a positive decimal with at most 18 places (`1e1`, a 19th decimal, a negative, `NaN`).
+ */
+export class WalletCommandAmountError extends Error {
+  readonly operation: string;
+  readonly amount: string;
+
+  constructor(operation: string, amount: string) {
+    super(
+      `wallet ${operation} amount must be a positive decimal with at most 18 places (got ${amount})`,
+    );
+    this.name = 'WalletCommandAmountError';
+    this.operation = operation;
+    this.amount = amount;
+  }
+}
+
+/**
  * Thrown by `debit` and `credit` when their `providerRef` is already on a ledger move a different
  * request wrote: another wallet, type, direction, amount, currency or round, or a correction. A
  * true replay still returns `moved: false`. This one moved nothing, even when another wallet takes

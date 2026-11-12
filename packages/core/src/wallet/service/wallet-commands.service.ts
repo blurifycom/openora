@@ -2,6 +2,7 @@ import {
   MaxBetExceededError,
   RgLimitExceededError,
   WALLET_CORRECTION_DEBIT_TYPES,
+  WalletCommandAmountError,
   WalletCorrectionExceedsRoundError,
   WalletCorrectionRefConflictError,
   WalletCorrectionRoundError,
@@ -61,12 +62,6 @@ import {
   readWalletBalanceForUpdate,
   stampBalanceAfter,
 } from './wallet.service.js';
-
-const WalletCommandAmountError = createDomainError<[operation: string, amount: string]>(
-  'WalletCommandAmountError',
-  (operation, amount) =>
-    `wallet ${operation} amount must be a positive decimal with at most 18 places (got ${amount})`,
-);
 
 // Default in-process WALLET_COMMANDS implementation. Operates on the caller's
 // transaction handle, so a move commits or rolls back together with the caller's
