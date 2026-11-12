@@ -9,16 +9,19 @@
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
 const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
-const PR_WITH_BASE =
-  /(?:^|[;&|\n(]\s*)(?:(?:env\s+)?\w+=\S*\s+)*gh(?:\s+(?:-R|--repo)\s+\S+)?\s+pr\s+(?:create|edit)\b[^;&|\n]*?\s(?:--base|-B)(?:=|\s+)['"]?([^\s'"]+)/g;
+// Each `gh pr create|edit` command up to the next separator, then every `--base`/`-B` in it,
+// glued (`-Bfeat/x`) or not: a repeated flag must not hide a feature base behind a shared one.
+const PR_COMMAND =
+  /(?:^|[;&|\n(]\s*)(?:(?:env\s+)?\w+=\S*\s+)*(?:command\s+)?(?:\S*\/)?gh(?:\s+(?:-R|--repo)\s+\S+)?\s+pr\s+(?:create|edit)\b([^;&|\n]*)/g;
+const BASE_FLAG = /\s(?:--base(?:=|\s+)|-B\s*)['"]?([^\s'"]+)/g;
 
 // Quoted prose (a title or body) is blanked so a `--base` inside it never counts.
 const command = extractCommand(readPayload()).replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, (quoted) =>
   /\s/.test(quoted) ? '""' : quoted,
 );
 // Every PR command in a chain is judged, not only the first.
-const base = [...command.matchAll(PR_WITH_BASE)]
-  .map((match) => match[1])
+const base = [...command.matchAll(PR_COMMAND)]
+  .flatMap((pr) => [...pr[1].matchAll(BASE_FLAG)].map((flag) => flag[1]))
   .find((name) => !SHARED.test(name));
 if (base) {
   deny(

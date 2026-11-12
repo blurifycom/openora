@@ -50,6 +50,21 @@ const HOW_TO_CHANGE_OSS =
   `${OSS_RELATIVE}/.worktrees/ (rule: oss-boundaries). Otherwise extend from the OUTSIDE ` +
   '(overlay plugin, adapter rebinding, UI plugin, config).';
 
+// The path on disk, symlinks followed, so a link in this repo that points into the checkout
+// does not pass as a local path. A file not yet created resolves through its nearest existing
+// ancestor.
+const physical = (path) => {
+  try {
+    return realpathSync(path);
+  } catch {
+    const parent = dirname(path);
+    return parent === path ? path : join(physical(parent), basename(path));
+  }
+};
+
+// The checkout itself may sit behind a symlink (a linked home or projects folder).
+const oss = physical(OSS);
+
 // 1) Shell command writing into a protected path (sed -i, redirect, tee, cp, rm, git, ...).
 const rawCommand = extractCommand(payload);
 // A symlink planted in a worktree would carry later shell writes into the main checkout, and no
@@ -58,7 +73,7 @@ const rawCommand = extractCommand(payload);
 const insideOss = (dir) => {
   try {
     const real = realpathSync(dir);
-    return real === OSS || real.startsWith(OSS + sep);
+    return [OSS, oss].some((root) => real === root || real.startsWith(root + sep));
   } catch {
     return false;
   }
@@ -85,20 +100,7 @@ if (command) {
   }
 }
 
-// The path on disk, symlinks followed, so a link in this repo that points into the checkout
-// does not pass as a local path. A file not yet created resolves through its nearest existing
-// ancestor.
-const physical = (path) => {
-  try {
-    return realpathSync(path);
-  } catch {
-    const parent = dirname(path);
-    return parent === path ? path : join(physical(parent), basename(path));
-  }
-};
-
 // 2) Direct file edit/write whose target resolves inside a protected path.
-const oss = physical(OSS);
 for (const filePath of extractFilePaths(payload)) {
   const written = resolve(payload.cwd ?? process.cwd(), filePath);
   const target = physical(written);

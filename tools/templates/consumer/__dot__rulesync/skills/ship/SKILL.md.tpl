@@ -121,7 +121,7 @@ The code is final now, so the videos are recorded once, here, never in an earlie
 
 ### 5. Open the MR
 
-The pushed HEAD is the commit step 4 approved: anything committed after it, 4b specs included, goes back to 4 first (`guard-review` blocks the push otherwise). `--ask`: report the SHA and stop for "yes push". Then run **create-pr** (it opens the MR as a draft) with the tester's AC table, the 4b videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
+The pushed HEAD is the commit step 4 approved: anything committed after it, 4b specs included, goes back to 4 first (`guard-review` blocks the push otherwise). That round counts against the budget of three, and 4b is not repeated unless app code changed. `--ask`: report the SHA and stop for "yes push". Then run **create-pr** (it opens the MR as a draft) with the tester's AC table, the 4b videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
 
 ### 6. Red CI and review comments
 

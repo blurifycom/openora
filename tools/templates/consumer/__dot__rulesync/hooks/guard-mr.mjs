@@ -13,7 +13,10 @@ import { dirname, join } from 'node:path';
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
 const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
-const OPENS_REVIEW = /\b(?:glab\s+mr\s+create|gh\s+pr\s+create)\b|merge_request\.create/;
+// A CLI create (its flags up to the next separator in group 3) or a push option.
+const CLI_CREATE =
+  /\b(?:(gh)(?:\s+(?:-R|--repo)\s+\S+)?\s+(?:pr\s+create|stack\s+(?:submit|push))|(glab)\s+mr\s+create)\b([^;&|\n]*)/;
+const PUSH_OPTION_CREATE = /merge_request\.create/;
 // GraphQL mutations live in a quoted query, so they are matched on the raw command of an API call.
 const GRAPHQL_CREATE = /\b(?:createPullRequest|mergeRequestCreate)\b/;
 const API_CALL = /\b(?:gh|glab)\s+api\b/;
@@ -21,7 +24,11 @@ const REVIEW_COLLECTION = /\/(?:pulls|merge_requests)(?=["'\s?]|$)/;
 // `gh api` and `glab api` default to POST once a field or body is passed.
 const WRITES = /\s(?:(?:-X\s*|--method[=\s]+)POST\b|(?:-f|-F|--field|--raw-field|--input)\b)/i;
 const READS = /\s(?:-X\s*|--method[=\s]+)GET\b/i;
-const SOURCE = /\s(?:--head|-H|--source-branch|-s)(?:=|\s+)['"]?([^\s'"]+)/;
+// The source branch flag, glued (`-Hfeat/x`) or not. glab's `-H` names the head repository.
+const SOURCE_FLAG = {
+  gh: /\s(?:--head(?:=|\s+)|-H\s*)['"]?([^\s'"]+)/g,
+  glab: /\s(?:--source-branch(?:=|\s+)|-s\s*)['"]?([^\s'"]+)/g,
+};
 
 // Quoted prose (a title, a search pattern) is blanked so a command named inside it never counts;
 // a quoted single word (a branch) is kept.
@@ -29,7 +36,8 @@ const blankProse = (command) =>
   command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, (quoted) => (/\s/.test(quoted) ? '""' : quoted));
 
 const opensReview = (raw, command) =>
-  OPENS_REVIEW.test(command) ||
+  CLI_CREATE.test(command) ||
+  PUSH_OPTION_CREATE.test(command) ||
   (API_CALL.test(command) &&
     (GRAPHQL_CREATE.test(raw) ||
       (REVIEW_COLLECTION.test(raw) && WRITES.test(command) && !READS.test(command))));
@@ -84,8 +92,24 @@ const command = blankProse(raw);
 if (!opensReview(raw, command)) {
   process.exit(0);
 }
-// `gh pr create --head owner:branch` names the fork too.
-const source = SOURCE.exec(command)?.[1].replace(/^[^:]+:/, '');
+// Every source branch the create command names; `gh pr create --head owner:branch` names the
+// fork too. Two different ones are ambiguous, so neither is trusted.
+const create = CLI_CREATE.exec(command);
+const sources = create
+  ? [
+      ...new Set(
+        [...create[3].matchAll(SOURCE_FLAG[create[1] ?? create[2]])].map((flag) =>
+          flag[1].replace(/^[^:]+:/, ''),
+        ),
+      ),
+    ]
+  : [];
+if (sources.length > 1) {
+  deny(
+    `Blocked: this command names more than one source branch (${sources.join(', ')}); name one.`,
+  );
+}
+const [source] = sources;
 if (source && SHARED.test(source)) {
   process.exit(0);
 }

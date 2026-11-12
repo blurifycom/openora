@@ -103,3 +103,16 @@ test('a stamp taken on a dirty tree is not recorded', () => {
   rmSync(join(repo, 'b.txt'));
   assert.equal(exitCode('gh pr create'), DENIED);
 });
+
+test('only the create command names the source branch, glued or repeated', () => {
+  assert.equal(exitCode('glab mr create -sverified'), ALLOWED);
+  assert.equal(exitCode('gh pr create -Hverified'), ALLOWED);
+  assert.equal(exitCode('gh pr create -Hunverified'), DENIED);
+  assert.equal(exitCode('glab mr create -sunverified'), DENIED);
+  assert.equal(exitCode('ls -s dev && gh pr create'), DENIED);
+  assert.equal(exitCode('gh pr create && echo --head dev'), DENIED);
+  assert.equal(exitCode('gh pr create -H dev -H unverified'), DENIED);
+  assert.equal(exitCode('glab mr create -H o/r --source-branch unverified'), DENIED);
+  assert.equal(exitCode('git status -s && glab mr create --source-branch verified'), ALLOWED);
+  assert.equal(exitCode('gh stack submit --auto'), DENIED);
+});

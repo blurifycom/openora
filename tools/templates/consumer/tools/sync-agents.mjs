@@ -262,7 +262,7 @@ const missingWiring = [
     'package.json',
     'guard-mr.mjs --stamp',
     'the verify gate',
-    'wrap "verify" so extra arguments reach turbo and only a full run stamps: `sh -c \'turbo run <tasks> "$@" && { [ $# -gt 0 ] || node .rulesync/hooks/guard-mr.mjs --stamp; }\' verify`',
+    'wrap "verify" so extra arguments reach turbo and only a full run stamps: `sh -c \'turbo run <tasks> "$@" && { [ $# -gt 0 ] || node .rulesync/hooks/guard-mr.mjs --stamp; }\' verify` (POSIX sh: on Windows run it from Git Bash or WSL)',
   ],
 ].filter(([path, marker]) => {
   const target = join(ROOT, path);
