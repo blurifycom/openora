@@ -126,6 +126,17 @@ does not repeat it.
   of the round's wins less its earlier reversals, and a re-collected stake by the real share of the
   round's stake reversals less its earlier corrections. Correction and hold audit rows are filed
   under the player.
+- **A different request on a used reference is refused.** A `debit` or `credit` whose provider
+  reference is already on a ledger row replays it only when it asks for what that row moved: the
+  same wallet, type, direction, amount at any scale, currency (when the request names one) and
+  round (when the row has one). An older row with no direction matches either one. A correction
+  debit's row never matches, so a `debit` or `credit` on a correction's reference now throws
+  instead of answering `moved: false` as it used to. Anything else throws
+  `WalletReplayMismatchError` and moves nothing, even for a caller that catches it and commits. The
+  product is not compared, since it moves no money and a recategorized game must not refuse a true
+  retry. A debit replay that names no currency answers in the currency the first call moved. An
+  amount must be a positive decimal with at most 18 places; `1e1` or a 19th decimal is refused
+  before anything is written.
 - **Every bet, win and reversal leg of a round carries its `externalRoundId`.** RG spend nets a
   round's legs by it, and a leg without one never offsets a stake. A correction debit without one
   is refused, since a reversal outside its round would drop out of loss spend, and a plain `debit`

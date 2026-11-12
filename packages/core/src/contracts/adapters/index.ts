@@ -56,6 +56,7 @@ export {
   WalletCorrectionRoundError,
   WalletCorrectionTypeError,
   WalletHoldWithoutWalletError,
+  WalletReplayMismatchError,
 } from './wallet-commands.js';
 
 export type { WagerContext, WagerProduct } from './wager-context.js';

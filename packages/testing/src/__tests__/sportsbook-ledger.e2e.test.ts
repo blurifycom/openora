@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, asc, eq, like, sql } from 'drizzle-orm';
 import { auditLog } from '@openora/core/audit/schema';
-import { MESSAGE_BROKER, type SportsbookConfirmArgs } from '@openora/core/contracts';
+import {
+  MESSAGE_BROKER,
+  WALLET_COMMANDS,
+  type SportsbookConfirmArgs,
+} from '@openora/core/contracts';
 import { betting } from '@openora/core/sportsbook/contracts';
 import { DRIZZLE, eventOutbox, processedEvents } from '@openora/core/server';
 import { player as playerProfile } from '@openora/core/pam/schema/profile';
@@ -199,6 +203,90 @@ describe('sportsbook ledger', () => {
     expect(await findingsByKey(`fingerprint_mismatch:${PROVIDER}:${providerTxId}`)).toHaveLength(1);
     expect(await balanceOf(app, player.userId)).toBe('100.000000000000000000');
   });
+
+  it('refuses and files a reserve whose wallet reference another request holds for good', async () => {
+    const player = await fundedPlayer(app, '100');
+    const providerTxId = txId();
+    await takeWalletRef(player, providerTxId);
+
+    expect(await ledgerOf(app).reserve({ ...reserveArgs(player.sessionId), providerTxId })).toEqual(
+      { status: 'refused', reason: 'fingerprint_mismatch' },
+    );
+    const filed = await findingsByKey(
+      `fingerprint_mismatch:${PROVIDER}:${providerTxId}:wallet_ref`,
+    );
+    expect(filed).toHaveLength(1);
+    expect(filed[0]).toMatchObject({
+      kind: 'fingerprint_mismatch',
+      betId: null,
+      userId: player.userId,
+      detail: { providerTxId, walletRefTaken: 'a stake' },
+    });
+    expect(await balanceOf(app, player.userId)).toBe('95.000000000000000000');
+  });
+
+  it.each([
+    [
+      'a cancel whose stake refund',
+      'reserved',
+      'a stake refund',
+      (providerBetId: string, providerTxId: string) =>
+        ledgerOf(app).cancel({
+          provider: PROVIDER,
+          providerTxId,
+          providerBetId,
+          reason: 'rejected',
+        }),
+    ],
+    [
+      'a settle whose payout',
+      'accepted',
+      'a payout',
+      (providerBetId: string, providerTxId: string) =>
+        ledgerOf(app).settle({
+          provider: PROVIDER,
+          providerTxId,
+          providerBetId,
+          result: 'won',
+          payout: '25',
+        }),
+    ],
+  ])(
+    'refuses and files %s finds its wallet reference held by another request',
+    async (_name, status, walletRefTaken, move) => {
+      const player = await fundedPlayer(app, '100');
+      const reserve = reserveArgs(player.sessionId, { stake: '10', potentialPayout: '25' });
+      const { betId } = expectApplied(await ledgerOf(app).reserve(reserve));
+      if (status === 'accepted') {
+        expectApplied(
+          await ledgerOf(app).confirm({
+            provider: PROVIDER,
+            providerTxId: txId(),
+            providerBetId: reserve.providerBetId,
+          }),
+        );
+      }
+      const providerTxId = txId();
+      await takeWalletRef(player, providerTxId);
+
+      expect(await move(reserve.providerBetId, providerTxId)).toEqual({
+        status: 'refused',
+        reason: 'fingerprint_mismatch',
+      });
+      const filed = await findingsByKey(
+        `fingerprint_mismatch:${PROVIDER}:${providerTxId}:wallet_ref`,
+      );
+      expect(filed).toHaveLength(1);
+      expect(filed[0]).toMatchObject({
+        kind: 'fingerprint_mismatch',
+        betId,
+        userId: player.userId,
+        detail: { providerTxId, walletRefTaken },
+      });
+      expect((await betRow(betId!)).status).toBe(status);
+      expect(await balanceOf(app, player.userId)).toBe('85.000000000000000000');
+    },
+  );
 
   it('refuses a reopen that loses its transaction id to another player mid-flight', async () => {
     const [first, second] = await Promise.all([fundedPlayer(app, '100'), fundedPlayer(app, '100')]);
@@ -1214,6 +1302,17 @@ describe('provider disagreement', () => {
     });
   });
 });
+
+/** Plants a stake under the wallet reference a callback with `providerTxId` would move on. */
+const takeWalletRef = (player: SportsbookPlayer, providerTxId: string) =>
+  app.container.get(DRIZZLE).db.transaction((tx) =>
+    app.container.get(WALLET_COMMANDS).debit(tx, {
+      userId: player.userId,
+      amount: '5',
+      type: 'bet',
+      providerRef: { providerName: `sportsbook:${PROVIDER}`, providerRefId: `tx:${providerTxId}` },
+    }),
+  );
 
 function settleWon(providerBetId: string, payout: string) {
   return ledgerOf(app).settle({

@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
-import { BONUS_GRANTS, WALLET_COMMANDS } from '@openora/core/contracts';
+import { BONUS_GRANTS, WALLET_COMMANDS, WalletReplayMismatchError } from '@openora/core/contracts';
+import { waitForRowLockWaiter } from '@openora/core/testing';
 import type {
   WalletCreditArgs,
   WalletDebitArgs,
@@ -333,6 +334,57 @@ describe('the transaction boundary', () => {
     expect(await realBalanceOf(userId)).toBe('100.000000000000000000');
     expect((await grantRow(grantId)).wageringProgress).toBe('0.000000000000000000');
     expect(await stakeEntries(grantId)).toHaveLength(0);
+  });
+
+  it('keeps no bonus spend or progress for a bet that lost its reference to another player, even when the caller commits', async () => {
+    const owner = await player('100');
+    const { userId } = await player('0');
+    const grantId = await grantBonus(userId, '100', '10');
+    const round = randomUUID();
+    const stake = (playerId: string): WalletDebitArgs => ({
+      userId: playerId,
+      amount: '40',
+      type: 'bet',
+      currency: 'USD',
+      context: CASINO,
+      providerRef: {
+        providerName: 'aggregator',
+        providerRefId: `bet-${round}`,
+        externalRoundId: round,
+      },
+    });
+    let commitOwner = () => {};
+    const ownerMayCommit = new Promise<void>((resolve) => {
+      commitOwner = resolve;
+    });
+    let ownerWrote = () => {};
+    const ownerHasRef = new Promise<void>((resolve) => {
+      ownerWrote = resolve;
+    });
+    const owning = drizzle().transaction(async (tx) => {
+      const moved = await app.container.get(WALLET_COMMANDS).debit(tx, stake(owner.userId));
+      ownerWrote();
+      await ownerMayCommit;
+      return moved;
+    });
+    await ownerHasRef;
+
+    const losing = drizzle().transaction((tx) =>
+      app.container
+        .get(WALLET_COMMANDS)
+        .debit(tx, stake(userId))
+        .catch((error: unknown) => error),
+    );
+    await waitForRowLockWaiter({ drizzle: app.container.get(DRIZZLE) });
+    commitOwner();
+
+    await expect(owning).resolves.toMatchObject({ ok: true, moved: true });
+    await expect(losing).resolves.toBeInstanceOf(WalletReplayMismatchError);
+    const row = await grantRow(grantId);
+    expect(row.bonusBalance).toBe('100.000000000000000000');
+    expect(row.wageringProgress).toBe('0.000000000000000000');
+    expect(await stakeEntries(grantId)).toHaveLength(0);
+    expect(await realBalanceOf(userId)).toBe('0.000000000000000000');
   });
 });
 

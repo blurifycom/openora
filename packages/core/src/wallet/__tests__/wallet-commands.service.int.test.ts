@@ -5,6 +5,9 @@ import { eq, sql } from 'drizzle-orm';
 import {
   definePlatformConfig,
   MaxBetExceededError,
+  WalletReplayMismatchError,
+  type WalletCreditArgs,
+  type WalletDebitArgs,
   type BonusGrantCommands,
   type BonusWageringCommands,
   type PlayEligibilityPort,
@@ -686,6 +689,312 @@ describe('WalletCommandsService providerRef replay safety (real PG)', () => {
   });
 });
 
+describe('WalletCommandsService providerRef replay of a different request (real PG)', () => {
+  const providerRef = {
+    providerName: 'aggregator-x',
+    providerRefId: 'ref-mismatch',
+    externalRoundId: 'round-1',
+  };
+  const bet = (userId: string, overrides: Partial<WalletDebitArgs> = {}): WalletDebitArgs => ({
+    userId,
+    amount: '10',
+    type: 'bet',
+    providerRef,
+    ...overrides,
+  });
+  const win = (userId: string, overrides: Partial<WalletCreditArgs> = {}): WalletCreditArgs => ({
+    userId,
+    amount: '20',
+    currency: 'USD',
+    type: 'win',
+    providerRef,
+    ...overrides,
+  });
+
+  it('answers a true replay exactly as before, whatever scale its amount is written at', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    await svc.debit(db.drizzle.db, bet(w.userId));
+    const replay = await svc.debit(db.drizzle.db, bet(w.userId, { amount: '10.000' }));
+
+    expect(replay).toEqual({
+      ok: true,
+      moved: false,
+      newBalance: expect.any(String),
+      currency: 'USD',
+    });
+    expect(Number(replay.ok && replay.newBalance)).toBe(90);
+    expect(await balanceOf(w.userId)).toBe(90);
+    expect(await txRows(w.id)).toHaveLength(1);
+  });
+
+  it('answers a replay whose product was recategorized meanwhile, since product moves no money', async () => {
+    const w = await seedWallet({ balance: '100' });
+    await svc.debit(
+      db.drizzle.db,
+      bet(w.userId, { context: { provider: 'aggregator-x', product: 'casino' } }),
+    );
+
+    await expect(
+      svc.debit(
+        db.drizzle.db,
+        bet(w.userId, { context: { provider: 'aggregator-x', product: 'live-casino' } }),
+      ),
+    ).resolves.toMatchObject({ ok: true, moved: false });
+    expect(await balanceOf(w.userId)).toBe(90);
+  });
+
+  it('answers a replay that names no currency against the stored one, not the active one', async () => {
+    const w = await seedWallet({ balance: '100' });
+    await db.drizzle.db
+      .insert(walletBalance)
+      .values({ walletId: w.id, currency: 'EUR', amount: '100' });
+    await svc.debit(db.drizzle.db, bet(w.userId, { currency: 'EUR', amount: '30' }));
+
+    const replay = await svc.debit(db.drizzle.db, bet(w.userId, { amount: '30' }));
+
+    expect(replay).toMatchObject({ ok: true, moved: false, currency: 'EUR' });
+    expect(Number(replay.ok && replay.newBalance)).toBe(70);
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(1);
+  });
+
+  it.each([
+    ['amount', { amount: '11' }],
+    ['type', { type: 'tip' as const }],
+    ['round', { providerRef: { ...providerRef, externalRoundId: 'round-2' } }],
+  ])('refuses a debit replay with a different %s, moving nothing', async (_name, overrides) => {
+    const w = await seedWallet({ balance: '100' });
+    await svc.debit(db.drizzle.db, bet(w.userId));
+
+    await expect(svc.debit(db.drizzle.db, bet(w.userId, overrides))).rejects.toBeInstanceOf(
+      WalletReplayMismatchError,
+    );
+    expect(await balanceOf(w.userId)).toBe(90);
+    expect(await txRows(w.id)).toHaveLength(1);
+  });
+
+  it.each([
+    ['amount', { amount: '200' }],
+    ['round', { providerRef: { ...providerRef, externalRoundId: 'round-2' } }],
+  ])('refuses a credit replay with a different %s, moving nothing', async (_name, overrides) => {
+    const w = await seedWallet({ balance: '50' });
+    await svc.credit(db.drizzle.db, win(w.userId));
+
+    await expect(svc.credit(db.drizzle.db, win(w.userId, overrides))).rejects.toBeInstanceOf(
+      WalletReplayMismatchError,
+    );
+    expect(await balanceOf(w.userId)).toBe(70);
+    expect(await txRows(w.id)).toHaveLength(1);
+  });
+
+  it('refuses a replay in a different currency, debit and credit alike', async () => {
+    const w = await seedWallet({ balance: '100' });
+    await db.drizzle.db
+      .insert(walletBalance)
+      .values({ walletId: w.id, currency: 'EUR', amount: '100' });
+    await svc.debit(db.drizzle.db, bet(w.userId, { currency: 'USD' }));
+    await svc.credit(
+      db.drizzle.db,
+      win(w.userId, { providerRef: { ...providerRef, providerRefId: 'win-1' } }),
+    );
+
+    await expect(
+      svc.debit(db.drizzle.db, bet(w.userId, { currency: 'EUR' })),
+    ).rejects.toBeInstanceOf(WalletReplayMismatchError);
+    await expect(
+      svc.credit(
+        db.drizzle.db,
+        win(w.userId, {
+          currency: 'EUR',
+          allowNewCurrency: true,
+          providerRef: { ...providerRef, providerRefId: 'win-1' },
+        }),
+      ),
+    ).rejects.toBeInstanceOf(WalletReplayMismatchError);
+    const balances = await db.drizzle.db
+      .select({ currency: walletBalance.currency, amount: walletBalance.amount })
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, w.id));
+    expect(Object.fromEntries(balances.map((b) => [b.currency, Number(b.amount)]))).toEqual({
+      USD: 110,
+      EUR: 100,
+    });
+    expect(await txRows(w.id)).toHaveLength(2);
+  });
+
+  it("refuses another player's request on a reference one player already used", async () => {
+    const first = await seedWallet({ balance: '100' });
+    const second = await seedWallet({ balance: '100' });
+    await svc.debit(db.drizzle.db, bet(first.userId));
+
+    await expect(svc.debit(db.drizzle.db, bet(second.userId))).rejects.toBeInstanceOf(
+      WalletReplayMismatchError,
+    );
+    await expect(svc.credit(db.drizzle.db, win(second.userId))).rejects.toBeInstanceOf(
+      WalletReplayMismatchError,
+    );
+    expect(await balanceOf(second.userId)).toBe(100);
+    expect(await txRows(second.id)).toHaveLength(0);
+  });
+
+  it('refuses a credit, or a loss, on the reference of a debit', async () => {
+    const w = await seedWallet({ balance: '100' });
+    await svc.debit(db.drizzle.db, bet(w.userId));
+
+    await expect(svc.credit(db.drizzle.db, win(w.userId, { amount: '10' }))).rejects.toBeInstanceOf(
+      WalletReplayMismatchError,
+    );
+    await expect(
+      svc.debit(db.drizzle.db, bet(w.userId, { type: 'loss', amount: '0' })),
+    ).rejects.toBeInstanceOf(WalletReplayMismatchError);
+    expect(await balanceOf(w.userId)).toBe(90);
+    expect(await txRows(w.id)).toHaveLength(1);
+  });
+
+  it('matches a row from before direction and round were recorded on the columns it has', async () => {
+    const w = await seedWallet({ balance: '90' });
+    await db.drizzle.db.insert(walletTransaction).values({
+      walletId: w.id,
+      type: 'bet',
+      amount: '10',
+      currency: 'USD',
+      status: 'completed',
+      providerName: providerRef.providerName,
+      providerRefId: providerRef.providerRefId,
+    });
+
+    await expect(svc.debit(db.drizzle.db, bet(w.userId))).resolves.toMatchObject({
+      ok: true,
+      moved: false,
+      currency: 'USD',
+    });
+    await expect(svc.debit(db.drizzle.db, bet(w.userId, { amount: '11' }))).rejects.toBeInstanceOf(
+      WalletReplayMismatchError,
+    );
+    await expect(svc.credit(db.drizzle.db, win(w.userId, { amount: '10' }))).rejects.toBeInstanceOf(
+      WalletReplayMismatchError,
+    );
+    expect(await balanceOf(w.userId)).toBe(90);
+    expect(await txRows(w.id)).toHaveLength(1);
+  });
+
+  it('moves money once for concurrent duplicates of one request', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    const debits = await Promise.all([
+      db.drizzle.db.transaction((tx) => svc.debit(tx, bet(w.userId))),
+      db.drizzle.db.transaction((tx) => svc.debit(tx, bet(w.userId))),
+    ]);
+    const credits = await Promise.all([
+      db.drizzle.db.transaction((tx) =>
+        svc.credit(tx, win(w.userId, { providerRef: { ...providerRef, providerRefId: 'win-c' } })),
+      ),
+      db.drizzle.db.transaction((tx) =>
+        svc.credit(tx, win(w.userId, { providerRef: { ...providerRef, providerRefId: 'win-c' } })),
+      ),
+    ]);
+
+    expect(debits.filter((d) => d.ok && d.moved)).toHaveLength(1);
+    expect(credits.filter((c) => c.ok && c.moved)).toHaveLength(1);
+    expect(await balanceOf(w.userId)).toBe(110);
+    expect(await txRows(w.id)).toHaveLength(2);
+  });
+
+  it.each([
+    ['the caller lets the refusal roll back', false],
+    ['the caller catches the refusal and commits', true],
+  ])(
+    'moves nothing for the loser when another wallet takes the reference mid-debit and %s',
+    async (_name, catchesRefusal) => {
+      const owner = await seedWallet({ balance: '100' });
+      const other = await seedWallet({ balance: '100' });
+      let commitOwner = () => {};
+      const ownerMayCommit = new Promise<void>((resolve) => {
+        commitOwner = resolve;
+      });
+      let ownerWrote = () => {};
+      const ownerHasRef = new Promise<void>((resolve) => {
+        ownerWrote = resolve;
+      });
+      const owning = db.drizzle.db.transaction(async (tx) => {
+        const moved = await svc.debit(tx, bet(owner.userId));
+        ownerWrote();
+        await ownerMayCommit;
+        return moved;
+      });
+      await ownerHasRef;
+
+      const colliding = db.drizzle.db.transaction(async (tx) => {
+        const debit = svc.debit(tx, bet(other.userId));
+        return catchesRefusal ? debit.catch((error: unknown) => error) : debit;
+      });
+      await waitForRowLockWaiter(db);
+      commitOwner();
+      const [won, lost] = await Promise.allSettled([owning, colliding]);
+
+      expect(won).toMatchObject({ status: 'fulfilled', value: { ok: true, moved: true } });
+      expect(lost).toMatchObject(
+        catchesRefusal
+          ? { status: 'fulfilled', value: expect.any(WalletReplayMismatchError) }
+          : { status: 'rejected', reason: expect.any(WalletReplayMismatchError) },
+      );
+      expect(await balanceOf(owner.userId)).toBe(90);
+      expect(await balanceOf(other.userId)).toBe(100);
+      expect(await txRows(other.id)).toHaveLength(0);
+    },
+  );
+
+  it('still refuses a zero or negative amount on a used reference before any replay', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const winRef = { ...providerRef, providerRefId: 'win-z' };
+    await svc.debit(db.drizzle.db, bet(w.userId));
+    await svc.credit(db.drizzle.db, win(w.userId, { providerRef: winRef }));
+
+    for (const amount of ['0', '-10']) {
+      await expect(svc.debit(db.drizzle.db, bet(w.userId, { amount }))).rejects.toThrow(/positive/);
+      await expect(
+        svc.credit(db.drizzle.db, win(w.userId, { amount, providerRef: winRef })),
+      ).rejects.toThrow(/positive/);
+    }
+    expect(await balanceOf(w.userId)).toBe(110);
+  });
+
+  it.each(['1e1', '0.0000000000000000001', '10.', ' 10'])(
+    'refuses %j as an amount before writing anything, debit and credit alike',
+    async (amount) => {
+      const w = await seedWallet({ balance: '100' });
+      const refused = { name: 'WalletCommandAmountError' };
+
+      await expect(svc.debit(db.drizzle.db, bet(w.userId, { amount }))).rejects.toMatchObject(
+        refused,
+      );
+      await expect(svc.credit(db.drizzle.db, win(w.userId, { amount }))).rejects.toMatchObject(
+        refused,
+      );
+      expect(await balanceOf(w.userId)).toBe(100);
+      expect(await txRows(w.id)).toHaveLength(0);
+    },
+  );
+
+  it('keeps no credit row when the move fails after writing it and the caller commits anyway', async () => {
+    const settle = vi.fn().mockRejectedValue(new Error('settlement failed'));
+    const engine = new WalletCommandsService(eligibility(false), audit, {
+      bonusWagering: mock<BonusWageringCommands>({ settle }),
+    });
+    const w = await seedWallet({ balance: '50' });
+
+    const caught = await db.drizzle.db.transaction((tx) =>
+      engine.credit(tx, win(w.userId)).catch((error: unknown) => error),
+    );
+
+    expect(caught).toMatchObject({ message: 'settlement failed' });
+    expect(settle).toHaveBeenCalledOnce();
+    expect(await balanceOf(w.userId)).toBe(50);
+    expect(await txRows(w.id)).toHaveLength(0);
+  });
+});
+
 describe('WalletCommandsService ledger sequence (real PG)', () => {
   it('nets a deposit-like credit, a bet debit, and a win credit into one running balance', async () => {
     const w = await seedWallet({ balance: '0' });
@@ -1050,7 +1359,7 @@ describe('WalletCommandsService.credit bonus settlement (real PG)', () => {
     });
 
     expect(settle).toHaveBeenCalledTimes(2);
-    expect(settle).toHaveBeenNthCalledWith(1, db.drizzle.db, {
+    expect(settle).toHaveBeenNthCalledWith(1, expect.anything(), {
       userId: w.userId,
       currency: 'USD',
       amount: '10',
@@ -1060,7 +1369,7 @@ describe('WalletCommandsService.credit bonus settlement (real PG)', () => {
     });
     expect(settle).toHaveBeenNthCalledWith(
       2,
-      db.drizzle.db,
+      expect.anything(),
       expect.objectContaining({ kind: 'bet_reversal' }),
     );
     expect(await balanceOf(w.userId)).toBe(8);
@@ -1134,8 +1443,9 @@ describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
     });
 
     expect(res).toMatchObject({ ok: true, moved: true, bonusSpent: '6' });
+    // The engine runs on the debit's savepoint, not the caller's handle.
     expect(wager).toHaveBeenCalledWith(
-      db.drizzle.db,
+      expect.anything(),
       expect.objectContaining({
         stake: '10',
         fromBonus: '6.000000000000000000',

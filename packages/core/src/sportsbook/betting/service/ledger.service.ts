@@ -24,6 +24,7 @@ import {
   SportsbookSettleArgsSchema,
   WalletCorrectionExceedsRoundError,
   WalletCorrectionRefConflictError,
+  WalletReplayMismatchError,
   type AuditWritePort,
   type DomainEventPayload,
   type ExchangeRateReader,
@@ -126,11 +127,43 @@ class LedgerRefusal extends Error {
   }
 }
 
-/** The wallet already holds this move's ref: a concurrent request with the same tx id committed first. */
+/**
+ * The wallet holds this move's ref on a row the ledger never wrote: a concurrent request with the
+ * same tx id committed first, or the ref is taken for good. The run retries once and answers a
+ * second loss with `refusal`, so no raw error reaches the provider.
+ */
 class LedgerRaceLost extends Error {
-  constructor(what: string) {
-    super(`sportsbook ledger: the wallet replayed ${what} the ledger never recorded`);
+  readonly refusal: LedgerRefusal;
+
+  constructor(
+    what: string,
+    { provider, providerTxId }: TxKey,
+    owner: Pick<SportsbookFindingArgs, 'betId' | 'userId'>,
+  ) {
+    super(`sportsbook ledger: the wallet holds ${what} the ledger never recorded`);
     this.name = 'LedgerRaceLost';
+    // Its own dedupe key, so it never folds into a request fingerprint mismatch on the same tx.
+    this.refusal = new LedgerRefusal('fingerprint_mismatch', {
+      kind: 'fingerprint_mismatch',
+      dedupeKey: `fingerprint_mismatch:${provider}:${providerTxId}:wallet_ref`,
+      provider,
+      ...owner,
+      detail: { providerTxId, walletRefTaken: what },
+    });
+  }
+}
+
+async function raceLostOnReplayMismatch<T>(
+  raceLost: () => LedgerRaceLost,
+  move: Promise<T>,
+): Promise<T> {
+  try {
+    return await move;
+  } catch (err) {
+    if (err instanceof WalletReplayMismatchError) {
+      throw raceLost();
+    }
+    throw err;
   }
 }
 
@@ -712,7 +745,9 @@ export class SportsbookLedgerService {
     try {
       result = await op().catch((err: unknown) => {
         if (isUniqueViolation(err) || err instanceof LedgerRaceLost) {
-          return op();
+          return op().catch((retryErr: unknown) => {
+            throw retryErr instanceof LedgerRaceLost ? retryErr.refusal : retryErr;
+          });
         }
         throw err;
       });
@@ -1008,13 +1043,17 @@ export class SportsbookLedgerService {
       if (err instanceof RgLimitExceededError) {
         throw new LedgerRefusal('limit');
       }
+      if (err instanceof WalletReplayMismatchError) {
+        // The bet row rolls back with this transaction, so the finding names only the player.
+        throw new LedgerRaceLost('a stake', args, { userId: bet.userId });
+      }
       throw err;
     }
     if (!debit.ok) {
       throw new LedgerRefusal('insufficient_funds');
     }
     if (!debit.moved) {
-      throw new LedgerRaceLost('a stake');
+      throw new LedgerRaceLost('a stake', args, { userId: bet.userId });
     }
     return debit;
   }
@@ -1172,19 +1211,27 @@ export class SportsbookLedgerService {
       const moves: WalletMove[] = [];
       let balance: string;
       if (isPositiveMoney(refunded)) {
-        const credit = await this.wallet.credit(tx, {
-          userId: cancelled.userId,
-          amount: refunded,
-          currency: cancelled.currency,
-          type: 'bet_reversal',
-          allowNewCurrency: true,
-          providerRef: walletRef(args),
-        });
+        const raceLost = () =>
+          new LedgerRaceLost('a stake refund', args, {
+            betId: cancelled.id,
+            userId: cancelled.userId,
+          });
+        const credit = await raceLostOnReplayMismatch(
+          raceLost,
+          this.wallet.credit(tx, {
+            userId: cancelled.userId,
+            amount: refunded,
+            currency: cancelled.currency,
+            type: 'bet_reversal',
+            allowNewCurrency: true,
+            providerRef: walletRef(args),
+          }),
+        );
         if (!credit.ok) {
           throw new Error(`sportsbook cancel: stake refund did not move (${credit.reason})`);
         }
         if (!credit.moved) {
-          throw new LedgerRaceLost('a stake refund');
+          throw raceLost();
         }
         moves.push({
           transactionId: credit.transactionId,
@@ -1385,19 +1432,24 @@ export class SportsbookLedgerService {
       let balance: string;
       let debtChange: DebtChange | undefined;
       if (pays) {
-        const credit = await this.wallet.credit(tx, {
-          userId: settled.userId,
-          amount: payout,
-          currency: settled.currency,
-          type: creditType,
-          allowNewCurrency: true,
-          providerRef: walletRef(args),
-        });
+        const raceLost = () =>
+          new LedgerRaceLost('a payout', args, { betId: settled.id, userId: settled.userId });
+        const credit = await raceLostOnReplayMismatch(
+          raceLost,
+          this.wallet.credit(tx, {
+            userId: settled.userId,
+            amount: payout,
+            currency: settled.currency,
+            type: creditType,
+            allowNewCurrency: true,
+            providerRef: walletRef(args),
+          }),
+        );
         if (!credit.ok) {
           throw new Error(`sportsbook settle: payout did not move (${credit.reason})`);
         }
         if (!credit.moved) {
-          throw new LedgerRaceLost('a payout');
+          throw raceLost();
         }
         moves.push({
           transactionId: credit.transactionId,
@@ -1579,6 +1631,7 @@ export class SportsbookLedgerService {
         // A void of a player-paid stake was a reversal, so the reopen re-stakes it; any other payout was a win.
         const type =
           current.result === 'void' && isPositiveMoney(current.cashStake) ? 'bet' : 'win_reversal';
+        const owner = { betId: current.id, userId: current.userId };
         const correction = await this.wallet
           .correctionDebit(tx, {
             userId: current.userId,
@@ -1589,19 +1642,19 @@ export class SportsbookLedgerService {
           })
           .catch((err: unknown) => {
             if (err instanceof WalletCorrectionRefConflictError) {
-              throw new LedgerRaceLost('a correction');
+              throw new LedgerRaceLost('a correction', args, owner);
             }
             if (err instanceof WalletCorrectionExceedsRoundError) {
               throw invalidAmount(
                 args,
                 { reversed: current.payoutTotal, available: err.available, type },
-                { betId: current.id, userId: current.userId },
+                owner,
               );
             }
             throw err;
           });
         if (!correction.moved && moneyCompare(correction.collected, '0') > 0) {
-          throw new LedgerRaceLost('a correction');
+          throw new LedgerRaceLost('a correction', args, owner);
         }
         ({ collected, shortfall } = correction);
         balance = correction.newBalance;
