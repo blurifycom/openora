@@ -34,9 +34,11 @@ const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const OSS_PATH = `(?:${escape(OSS)}|${escape(OSS_RELATIVE)})`;
 const PROTECTED = `(?:${OSS_PATH}|node_modules\\b)`;
 // A path into a worktree with no `..` hop and no node_modules segment is sanctioned; it is
-// masked out before the write checks run, so the rest of the command is still judged.
+// masked out before the write checks run, so the rest of the command is still judged. The mask
+// takes plain path characters only and needs a worktree name: a `>`, `$(`, `{a,b}` or a bare
+// `.worktrees/` (where git resolves to the main repo) is left for the checks to see.
 const WORKTREE_TOKEN = new RegExp(
-  String.raw`${OSS_PATH}/\.worktrees/(?![^\s'"|;&]*(?:\.\.|node_modules))[^\s'"|;&]*`,
+  String.raw`${OSS_PATH}/\.worktrees/(?![^\s'"|;&]*(?:\.\.|node_modules))[\w+@%=:-][\w.+@%=:/-]*`,
   'g',
 );
 // cp, install, and rsync write only to their last argument, so copying out of core stays a read.

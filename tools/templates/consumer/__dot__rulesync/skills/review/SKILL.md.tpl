@@ -207,7 +207,7 @@ Dedup by `file:line`, order BLOCK -> WARN -> INFO.
 
 **Prior findings.** One `PRIOR:` line each: `fixed`, `still open`, or `obsolete` from the reviewer that re-verified it, `carried` for the rest. `still open` and `carried` findings count toward the verdict like new ones.
 
-**Save the state** after every review, `--ci` included: write `.claude/reviews/<pr or branch>.json` in the main checkout with `sha` (the full `git rev-parse HEAD` reviewed), `base`, `verdict` (the bare `APPROVED` or `CHANGES REQUESTED`; the `guard-review` hook reads it before every push and new MR/PR), every open finding (new, `still open`, `carried`), and the `DIMENSION:` lines.
+**Save the state** after every review, `--ci` included: write `.claude/reviews/<pr or branch>.json` in the main checkout (for an OSS branch: in its `{{ossDir}}/.worktrees/<branch>/`, since the OSS main checkout is read-only here and `guard-review` reads the worktree too) with `sha` (the full `git rev-parse HEAD` reviewed), `base`, `verdict` (the bare `APPROVED` or `CHANGES REQUESTED`; the `guard-review` hook reads it before every push and new MR/PR), every open finding (new, `still open`, `carried`), and the `DIMENSION:` lines.
 
 Default and `--post`: a human-readable report - one line per finding `[SEV] file:line - finding - evidence - rule cited - fix`, one `TRACE:` line per traced entry point (format below), one status line per AC bullet, the `PRIOR:` lines, the `SKIPPED:` count, the seven `DIMENSION:` lines, and **APPROVED** / **CHANGES REQUESTED** with the most critical finding last. `--post` rewrites those findings into the §8 comments.
 
