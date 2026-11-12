@@ -1027,6 +1027,15 @@ export const walletContract = {
         summary: 'Enqueue a reconciliation run',
       })
       .output(JobRunResultSchema),
+
+    ledgerInvariant: oc
+      .route({
+        method: 'POST',
+        path: '/wallet/reconciliation/ledger-invariant',
+        summary: 'Enqueue a ledger invariant scan, optionally baselining legacy wallets first',
+      })
+      .input(z.object({ backfillBaselines: z.boolean().default(false) }))
+      .output(JobRunResultSchema),
   },
 };
 

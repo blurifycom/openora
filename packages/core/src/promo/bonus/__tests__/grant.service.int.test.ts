@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, type SQL } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { BonusGrantArgs, Uuid } from '@openora/core/contracts';
@@ -8,9 +8,12 @@ import { makeAuditWriter } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { promoGrant, promoGrantEntry, promoWeight, promoWeightProfile } from '../schema/index.js';
 import { GrantService } from '../service/grant.service.js';
+import { bonusGrantLedger } from '../service/grant-reader.service.js';
 import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
 
 let db: TestDb;
+
+type GrantBalance = { id: string; bonus_balance: string; entries_total: string };
 let service: GrantService;
 let audit: ReturnType<typeof makeAuditWriter>;
 let weightProfileId: Uuid;
@@ -427,6 +430,41 @@ describe('the grant ledger', () => {
 
     const [row] = await rows();
     expect(await ledgerSum(outcome.grantId)).toBe(row?.bonusBalance);
+  });
+
+  it('pages grants beside their entry totals, a balance edited past the commit check included', async () => {
+    const kept = await grant(args({ amount: '40' }));
+    const edited = await grant(args({ amount: '100' }));
+    if (!kept.ok || !edited.ok) {
+      throw new Error('grant was refused');
+    }
+    await db.drizzle.db.execute(
+      sql`alter table promo_grant disable trigger promo_grant_balance_matches_ledger`,
+    );
+    try {
+      await db.drizzle.db
+        .update(promoGrant)
+        .set({ bonusBalance: '90' })
+        .where(eq(promoGrant.id, edited.grantId));
+    } finally {
+      await db.drizzle.db.execute(
+        sql`alter table promo_grant enable trigger promo_grant_balance_matches_ledger`,
+      );
+    }
+
+    const first = await db.drizzle.db.execute<GrantBalance>(
+      bonusGrantLedger.grantBalancePageQuery(null, 1) as SQL,
+    );
+    const rest = await db.drizzle.db.execute<GrantBalance>(
+      bonusGrantLedger.grantBalancePageQuery(first.rows[0]?.id ?? null, 10) as SQL,
+    );
+    const byId = new Map([...first.rows, ...rest.rows].map((row) => [row.id, row]));
+
+    expect(byId.size).toBe(2);
+    expect(Number(byId.get(kept.grantId)?.entries_total)).toBe(40);
+    expect(Number(byId.get(kept.grantId)?.bonus_balance)).toBe(40);
+    expect(Number(byId.get(edited.grantId)?.entries_total)).toBe(100);
+    expect(Number(byId.get(edited.grantId)?.bonus_balance)).toBe(90);
   });
 
   it('keeps one ledger per grant when a player holds several', async () => {

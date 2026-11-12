@@ -98,6 +98,7 @@ import {
   ReconciliationRefundAmountError,
   ReconciliationAttributionError,
   DepositAlreadyRefundedError,
+  LEDGER_INVARIANT_QUEUE,
 } from '../service/reconciliation.service.js';
 
 // Unauthenticated route: it costs a signature verification (and, for a custody vendor,
@@ -796,6 +797,33 @@ export function createWalletRouter({
         await adminGuard.assert(context, 'wallet-reconciliation', 'run');
         const runId = randomUUID();
         await jobQueue.enqueue(reconciliationQueue, { runId });
+        return { runId };
+      }),
+
+      // A baseline fixes the point the ledger is counted from, so taking them is the
+      // super-admin's call and on the audit trail; a plain scan only reads.
+      ledgerInvariant: os.reconciliation.ledgerInvariant.handler(async ({ input, context }) => {
+        const { userId: adminId } = await adminGuard.assert(
+          context,
+          'wallet-reconciliation',
+          'run',
+        );
+        const runId = randomUUID();
+        if (input.backfillBaselines) {
+          await adminGuard.assertSuperAdmin(context);
+          await audit.record({
+            actorId: adminId,
+            actorType: 'admin',
+            action: 'wallet.ledger_invariant_run.requested',
+            resourceType: 'wallet_job_run',
+            resourceId: runId,
+            after: { runId, backfillBaselines: true },
+          });
+        }
+        await jobQueue.enqueue(LEDGER_INVARIANT_QUEUE, {
+          runId,
+          backfillBaselines: input.backfillBaselines,
+        });
         return { runId };
       }),
     },

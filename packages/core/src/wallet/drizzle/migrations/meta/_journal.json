@@ -295,6 +295,13 @@
       "when": 1794217881101,
       "tag": "0041_violet_gladiator",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1794525231940,
+      "tag": "0042_small_jane_foster",
+      "breakpoints": true
     }
   ]
 }

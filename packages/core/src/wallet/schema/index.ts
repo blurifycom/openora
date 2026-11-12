@@ -107,6 +107,27 @@ export const walletBalance = pgTable(
   (t) => [uniqueIndex('wallet_balance_wallet_id_currency_idx').on(t.walletId, t.currency)],
 );
 
+// Where the ledger invariant starts counting for a (wallet, currency) whose history holds rows
+// it cannot price: ones written before `balance_after`, `direction` or a bet's `real_share`
+// existed. `amount` is the balance the rows up to `asOf` add up to, so the invariant is
+// `amount + effect(rows created after asOf) = wallet_balance.amount`. Every row at or before
+// `asOf` was in a terminal status when it was taken, so none of them can move money again.
+// Written once by the operator-run backfill, never updated.
+export const walletBalanceBaseline = pgTable(
+  'wallet_balance_baseline',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    walletId: uuid()
+      .notNull()
+      .references(() => wallet.id),
+    currency: text().notNull(),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    asOf: timestamp({ withTimezone: true }).notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('wallet_balance_baseline_wallet_id_currency_idx').on(t.walletId, t.currency)],
+);
+
 export const walletTransaction = pgTable(
   'wallet_transaction',
   {
@@ -183,7 +204,8 @@ export const walletTransaction = pgTable(
     // every other row, so a correction's replay never matches the stake debit it re-collects.
     correctionRequestedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     // What a bonus-funded round's win or stake reversal put into the real balance, the rest having
-    // gone to the grant. NULL when all of `amount` was real.
+    // gone to the grant; NULL when all of `amount` was real. On a bet, the part of the stake the
+    // real balance paid, written on every bet (NULL only on bets older than that).
     realShare: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },

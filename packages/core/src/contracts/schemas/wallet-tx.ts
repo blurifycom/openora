@@ -83,6 +83,8 @@ export const WALLET_RECONCILIATION_FINDING_KINDS = [
   'stuck_swap',
   'held_deposit',
   'below_minimum_deposit',
+  // A wallet balance or bonus grant balance its own ledger does not add up to.
+  'ledger_invariant_breach',
 ] as const;
 
 export const WALLET_RECONCILIATION_FINDING_STATUSES = ['open', 'resolved'] as const;

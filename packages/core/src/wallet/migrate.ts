@@ -23,12 +23,15 @@ const LEDGER_RECORD_SQL = appendOnlyTableSql('wallet_transaction', {
   },
 });
 
+// A baseline moved after the fact would hide any breach before it.
+const BALANCE_BASELINE_SQL = appendOnlyTableSql('wallet_balance_baseline', { mutableColumns: [] });
+
 export function migrate(databaseUrl?: string) {
   return runMigrations({
     migrationsFolder: fileURLToPath(new URL('./drizzle/migrations', import.meta.url)),
     migrationsTable: '__drizzle_migrations_wallet',
     migrationsSchema: 'drizzle',
-    postSql: [LEDGER_RECORD_SQL],
+    postSql: [LEDGER_RECORD_SQL, BALANCE_BASELINE_SQL],
     ...(databaseUrl ? { databaseUrl } : {}),
   });
 }

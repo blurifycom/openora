@@ -172,6 +172,12 @@ export const WalletConfigSchema = z
         /** Run-claim takeover threshold, as in `sweep.staleRunAfterMinutes`. */
         staleRunAfterMinutes: z.number().int().positive().default(30),
         alertThreshold: z.number().int().positive().default(10),
+        /**
+         * When the ledger invariant scan runs. It reads every wallet's whole ledger since its
+         * baseline, so it gets its own, rarer schedule than the hourly vendor diff. Absent: daily
+         * at 03:30.
+         */
+        ledgerInvariantCron: z.string().optional(),
       })
       .strict()
       .optional(),

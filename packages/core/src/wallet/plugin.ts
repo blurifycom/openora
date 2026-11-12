@@ -72,7 +72,11 @@ import { DrizzleAdminWalletReporting } from './admin-reporting.js';
 import { createWalletRouter, walletBalanceChannel } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
-import { ReconciliationService } from './service/reconciliation.service.js';
+import {
+  LEDGER_INVARIANT_QUEUE,
+  LedgerInvariantJobSchema,
+  ReconciliationService,
+} from './service/reconciliation.service.js';
 import { SwapService } from './service/swap.service.js';
 import { OnRampService } from './service/on-ramp.service.js';
 
@@ -85,6 +89,9 @@ const DEFAULT_SWEEP_CRON = '*/15 * * * *';
 
 const WALLET_RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 const WalletReconciliationJobSchema = z.object({ runId: UuidSchema.optional() });
+// Mirrors wallet.reconciliation.ledgerInvariantCron's default. The ledger check needs no
+// vendor, so it runs even where the vendor diff is not configured.
+const DEFAULT_LEDGER_INVARIANT_CRON = '30 3 * * *';
 
 function depositCompareRefusal(err: unknown): never {
   if (err instanceof SegmentTooLargeError) {
@@ -390,6 +397,19 @@ export default {
       },
     });
 
+    ctx.jobs.worker({
+      queue: LEDGER_INVARIANT_QUEUE,
+      schema: LedgerInvariantJobSchema,
+      handler: async ({ payload }) => {
+        if (!reconciliationRef) {
+          throw new Error('wallet ledger invariant: service not constructed yet');
+        }
+        await reconciliationRef.runLedgerInvariant(payload.runId, {
+          backfillBaselines: payload.backfillBaselines,
+        });
+      },
+    });
+
     ctx.provide(PAYMENT_ADAPTER, () => new MockPaymentAdapter());
     ctx.provide(PAYMENT_WEBHOOK_VERIFIER, () => {
       const webhookSecret = z
@@ -470,6 +490,7 @@ export default {
         audit: c.get(AUDIT_WRITER),
         platformConfig,
         rgLimits,
+        grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
       });
       reconciliationRef = reconciliation;
 
@@ -495,6 +516,17 @@ export default {
           )
           .catch((err) => logger.error({ err }, 'wallet-reconciliation schedule failed'));
       }
+      const ledgerInvariantCron =
+        platformConfig?.wallet?.reconciliation?.ledgerInvariantCron ??
+        DEFAULT_LEDGER_INVARIANT_CRON;
+      void jobQueue
+        .schedule(
+          LEDGER_INVARIANT_QUEUE,
+          'wallet-ledger-invariant.cron',
+          {},
+          { cron: ledgerInvariantCron },
+        )
+        .catch((err) => logger.error({ err }, 'wallet-ledger-invariant schedule failed'));
 
       // No SWAP_ADAPTER bound is the resting state (core binds none) - the swap routes
       // then refuse rather than the module failing to load.

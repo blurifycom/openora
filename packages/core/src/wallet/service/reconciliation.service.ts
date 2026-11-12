@@ -1,5 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, count, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
+import * as z from 'zod';
+import {
+  type SQL,
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  ne,
+  sql,
+} from 'drizzle-orm';
 import {
   type DrizzleDb,
   type DrizzleService,
@@ -19,6 +33,7 @@ import {
 import {
   DEFAULT_PAYMENT_PROVIDER,
   type AuditWritePort,
+  type BonusGrantLedgerReader,
   type ClientMeta,
   type PaymentProviderRegistry,
   type PaymentWebhookEvent,
@@ -28,6 +43,8 @@ import {
   type WalletJobRunStatus,
   type WalletDepositStatusEventStatus,
   type WalletReconciliationFindingKind,
+  queue,
+  UuidSchema,
 } from '@openora/core/contracts';
 import {
   wallet,
@@ -61,6 +78,7 @@ import {
   recordReconciliationFinding,
   rgDecisionForLandedCredit,
 } from './reconciliation-finding.service.js';
+import { backfillBaselinePage, checkLedgerPage } from './ledger-invariant.service.js';
 
 const logger = createLogger('wallet-reconciliation');
 
@@ -179,6 +197,25 @@ const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
 const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
 
 const JOB_NAME = 'wallet-reconciliation';
+const LEDGER_INVARIANT_JOB_NAME = 'wallet-ledger-invariant';
+type GrantBalanceRow = {
+  id: string;
+  user_id: string;
+  currency: string;
+  bonus_balance: string;
+  entries_total: string;
+};
+export const LEDGER_INVARIANT_QUEUE = queue(LEDGER_INVARIANT_JOB_NAME);
+export const LedgerInvariantJobSchema = z.object({
+  runId: UuidSchema.optional(),
+  backfillBaselines: z.boolean().optional(),
+});
+
+// A breach is the platform's own ledger disagreeing with itself, not a vendor's report.
+const LEDGER_FINDING_LABEL = 'ledger';
+
+/** Page size when reconciliation runs without a `wallet.reconciliation` config block. */
+const DEFAULT_BATCH_SIZE = 200;
 
 /**
  * Ceiling on catching up after an outage, as a multiple of `lookbackHours`. Recovering
@@ -205,6 +242,7 @@ export type ReconciliationServiceDeps = {
   audit: AuditWritePort;
   platformConfig?: PlatformConfig;
   rgLimits?: RgLimitsPort;
+  grantLedger?: BonusGrantLedgerReader;
 };
 
 /**
@@ -223,6 +261,7 @@ export class ReconciliationService {
   private readonly audit: AuditWritePort;
   private readonly platformConfig?: PlatformConfig;
   private readonly rgLimits?: RgLimitsPort;
+  private readonly grantLedger?: BonusGrantLedgerReader;
 
   constructor({
     drizzle,
@@ -232,6 +271,7 @@ export class ReconciliationService {
     audit,
     platformConfig,
     rgLimits,
+    grantLedger,
   }: ReconciliationServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -240,6 +280,7 @@ export class ReconciliationService {
     this.audit = audit;
     this.platformConfig = platformConfig;
     this.rgLimits = rgLimits;
+    this.grantLedger = grantLedger;
   }
 
   async listFindings(filter: ListReconciliationFindingsInput) {
@@ -873,6 +914,179 @@ export class ReconciliationService {
     return { runId };
   }
 
+  /**
+   * Checks every wallet balance against its own ledger, and every bonus grant's balance against
+   * its entries, filing a `ledger_invariant_breach` for each one that does not add up. Read-only
+   * over the money tables and page by page, each page one statement on one snapshot, so it never
+   * blocks play and never sees half of a move. A pair holding rows nothing prices (legacy ones,
+   * see `ledger-invariant.service.ts`) and no baseline covering them is counted as
+   * `needsBaseline`, never filed as a breach. `backfillBaselines` first baselines those pairs:
+   * the operator's explicit step, never run by the schedule, because a baseline taken over a
+   * wallet that is already wrong makes its error the new zero.
+   */
+  async runLedgerInvariant(
+    runId: WalletJobRun['runId'] = randomUUID(),
+    { backfillBaselines = false }: { backfillBaselines?: boolean } = {},
+  ): Promise<{ runId: WalletJobRun['runId'] } | null> {
+    const jobRunId = await this.claimRun(runId, LEDGER_INVARIANT_JOB_NAME);
+    if (!jobRunId) {
+      return null;
+    }
+    const batchSize = this.platformConfig?.wallet?.reconciliation?.batchSize ?? DEFAULT_BATCH_SIZE;
+    const counts = {
+      baselinesInserted: 0,
+      baselinesSkipped: 0,
+      pairsChecked: 0,
+      needsBaseline: 0,
+      balanceBreaches: 0,
+      grantsChecked: 0,
+      grantBreaches: 0,
+    };
+    try {
+      if (backfillBaselines) {
+        await this.backfillBaselines(batchSize, counts);
+      }
+      await this.checkWalletBalances(runId, batchSize, counts);
+      await this.checkGrantBalances(runId, batchSize, counts);
+      await this.drizzle.db.transaction(async (txn) => {
+        await this.finishRun(jobRunId, 'completed', counts, txn);
+        await this.audit.recordInTransaction(txn, {
+          actorType: 'system',
+          action: 'wallet.ledger_invariant_run.completed',
+          resourceType: 'wallet_job_run',
+          resourceId: runId,
+          after: { runId, backfillBaselines, ...counts },
+        });
+      });
+    } catch (err) {
+      await this.finishRun(jobRunId, 'failed', {
+        ...counts,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await this.audit.record({
+        actorType: 'system',
+        action: 'wallet.ledger_invariant_run.failed',
+        resourceType: 'wallet_job_run',
+        resourceId: runId,
+        after: { runId, backfillBaselines, ...counts },
+      });
+      throw err;
+    }
+    if (counts.needsBaseline > 0) {
+      logger.warn(
+        { runId, needsBaseline: counts.needsBaseline },
+        'ledger invariant: wallets hold legacy rows and no baseline, run the baseline backfill',
+      );
+    }
+    return { runId };
+  }
+
+  private async backfillBaselines(
+    batchSize: number,
+    counts: { baselinesInserted: number; baselinesSkipped: number },
+  ): Promise<void> {
+    let afterId: string | null = null;
+    for (;;) {
+      const page = await backfillBaselinePage(this.drizzle.db, afterId, batchSize);
+      counts.baselinesInserted += page.inserted;
+      counts.baselinesSkipped += page.skipped;
+      if (page.scanned < batchSize || page.lastId === null) {
+        return;
+      }
+      afterId = page.lastId;
+    }
+  }
+
+  private async checkWalletBalances(
+    runId: WalletJobRun['runId'],
+    batchSize: number,
+    counts: { pairsChecked: number; needsBaseline: number; balanceBreaches: number },
+  ): Promise<void> {
+    let afterId: string | null = null;
+    for (;;) {
+      const page = await checkLedgerPage(this.drizzle.db, afterId, batchSize);
+      for (const pair of page) {
+        counts.pairsChecked += 1;
+        if (pair.unpricedRows > 0) {
+          counts.needsBaseline += 1;
+          continue;
+        }
+        const drift = moneySubtract(pair.balance, pair.expected);
+        if (moneyEquals(drift, '0')) {
+          continue;
+        }
+        counts.balanceBreaches += 1;
+        logger.error({ runId, ...pair, drift }, 'ledger invariant: wallet balance off its ledger');
+        // Keyed on the drift, which play after it leaves unchanged: a rerun files nothing new,
+        // while a further, different error on the same wallet does.
+        await recordReconciliationFinding(
+          this.drizzle.db,
+          {
+            runId,
+            providerName: LEDGER_FINDING_LABEL,
+            kind: 'ledger_invariant_breach',
+            currency: pair.currency,
+            amount: drift,
+            externalId: `wallet:${pair.walletId}:${pair.currency}:${drift}`,
+            detail: `wallet ${pair.walletId} holds ${pair.balance} ${pair.currency} but its ledger adds up to ${pair.expected}`,
+          },
+          this.audit,
+        );
+      }
+      const last = page.at(-1);
+      if (page.length < batchSize || !last) {
+        return;
+      }
+      afterId = last.id;
+    }
+  }
+
+  private async checkGrantBalances(
+    runId: WalletJobRun['runId'],
+    batchSize: number,
+    counts: { grantsChecked: number; grantBreaches: number },
+  ): Promise<void> {
+    if (!this.grantLedger) {
+      return;
+    }
+    let afterId: string | null = null;
+    for (;;) {
+      const { rows }: { rows: GrantBalanceRow[] } = await this.drizzle.db.execute<GrantBalanceRow>(
+        this.grantLedger.grantBalancePageQuery(afterId, batchSize) as SQL,
+      );
+      for (const grant of rows) {
+        counts.grantsChecked += 1;
+        const drift = moneySubtract(grant.bonus_balance, grant.entries_total);
+        if (moneyEquals(drift, '0')) {
+          continue;
+        }
+        counts.grantBreaches += 1;
+        logger.error(
+          { runId, grantId: grant.id, drift },
+          'ledger invariant: grant off its entries',
+        );
+        await recordReconciliationFinding(
+          this.drizzle.db,
+          {
+            runId,
+            providerName: LEDGER_FINDING_LABEL,
+            kind: 'ledger_invariant_breach',
+            currency: grant.currency,
+            amount: drift,
+            externalId: `grant:${grant.id}:${drift}`,
+            detail: `bonus grant ${grant.id} of player ${grant.user_id} holds ${grant.bonus_balance} ${grant.currency} but its entries add up to ${grant.entries_total}`,
+          },
+          this.audit,
+        );
+      }
+      const last = rows.at(-1);
+      if (rows.length < batchSize || !last) {
+        return;
+      }
+      afterId = last.id;
+    }
+  }
+
   private async reconcileProvider(
     runId: WalletJobRun['runId'],
     providerName: string,
@@ -1445,8 +1659,11 @@ export class ReconciliationService {
    * than the configured staleness window - presumed crashed) is marked `abandoned` and its slot freed
    * for this call to retry the claim once.
    */
-  private async claimRun(runId: WalletJobRun['runId']): Promise<WalletJobRun['id'] | null> {
-    const claimed = await this.retryClaim(runId);
+  private async claimRun(
+    runId: WalletJobRun['runId'],
+    jobName: string = JOB_NAME,
+  ): Promise<WalletJobRun['id'] | null> {
+    const claimed = await this.retryClaim(runId, jobName);
     if (claimed) {
       return claimed;
     }
@@ -1454,10 +1671,10 @@ export class ReconciliationService {
     const [existing] = await this.drizzle.db
       .select()
       .from(walletJobRun)
-      .where(and(eq(walletJobRun.jobName, JOB_NAME), isNull(walletJobRun.finishedAt)));
+      .where(and(eq(walletJobRun.jobName, jobName), isNull(walletJobRun.finishedAt)));
     if (!existing) {
       // The blocking run finished between our insert conflict and this read - retry once.
-      return this.retryClaim(runId);
+      return this.retryClaim(runId, jobName);
     }
     const staleAfterMs =
       (this.platformConfig?.wallet?.reconciliation?.staleRunAfterMinutes ??
@@ -1476,13 +1693,16 @@ export class ReconciliationService {
       // Someone else already resolved the stale run concurrently.
       return null;
     }
-    return this.retryClaim(runId);
+    return this.retryClaim(runId, jobName);
   }
 
-  private async retryClaim(runId: WalletJobRun['runId']): Promise<WalletJobRun['id'] | null> {
+  private async retryClaim(
+    runId: WalletJobRun['runId'],
+    jobName: string,
+  ): Promise<WalletJobRun['id'] | null> {
     const [inserted] = await this.drizzle.db
       .insert(walletJobRun)
-      .values({ jobName: JOB_NAME, runId })
+      .values({ jobName, runId })
       .onConflictDoNothing()
       .returning({ id: walletJobRun.id });
     return inserted?.id ?? null;
