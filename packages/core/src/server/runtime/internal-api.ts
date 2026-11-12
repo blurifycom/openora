@@ -15,7 +15,7 @@ export const INTERNAL_API_HEADERS = {
   signature: 'x-openora-signature',
 } as const;
 
-export const INTERNAL_API_MAX_CLOCK_SKEW_MS = 60_000;
+const INTERNAL_API_MAX_CLOCK_SKEW_MS = 60_000;
 
 // Headers core resolves a session or an identity from. Stripped from an internal request before
 // any handler sees it, so nothing downstream (AdminGuard, the chat display name) can act for a
