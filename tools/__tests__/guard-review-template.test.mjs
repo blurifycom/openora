@@ -214,6 +214,11 @@ test('a single & splits commands, and HEAD movers behind a path or prefix count'
   assert.equal(exitCode('git checkout -b z feat/x && git push'), DENIED);
   assert.equal(exitCode('git symbolic-ref HEAD refs/heads/dev && git push'), DENIED);
   assert.equal(exitCode('git branch -m dev && git push'), DENIED);
+  assert.equal(exitCode(`git switch -c "ma"in && git push -u origin HEAD`), DENIED);
+  assert.equal(exitCode('git switch -c ma\\in && git push -u origin HEAD'), DENIED);
+  assert.equal(exitCode('time git commit -am x && git push'), DENIED);
+  assert.equal(exitCode('b=$(git symbolic-ref --short HEAD) && git push -u origin "$b"'), ALLOWED);
+  assert.equal(exitCode('git bisect log; git push'), ALLOWED);
 });
 
 test('a glued or repeated source flag is read per CLI', () => {

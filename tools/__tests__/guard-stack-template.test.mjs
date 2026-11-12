@@ -47,4 +47,6 @@ test('aliases and prefixes are read', () => {
   assert.equal(exitCode('gh pr new --base feat/a'), DENIED);
   assert.equal(exitCode('gh pr -R o/r create --base feat/a'), DENIED);
   assert.equal(exitCode('env gh pr create --base feat/a'), DENIED);
+  assert.equal(exitCode('time gh pr create -B feat/a'), DENIED);
+  assert.equal(exitCode(' gh pr create -B feat/a'), DENIED);
 });

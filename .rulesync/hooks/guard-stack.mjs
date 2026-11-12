@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // PreToolUse guard: a GitHub pull request that builds on another feature branch goes up as a
 // native stacked PR (`gh stack`, the github/gh-stack extension), not as a plain PR whose base is
-// that branch. `gh pr create --base <b>` and `gh pr edit --base <b>` are denied when <b> is not a
+// that branch. `gh pr create|new|edit --base <b>` is denied when <b> is not a
 // shared branch. Without `--base` the PR targets the default branch and passes.
 //
 // ponytail: shared branches are a fixed list; a repo with another trunk name adds it here.
@@ -13,7 +13,7 @@ const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|prod
 // feature base behind a shared one. `-R <repo>` goes before or after `pr`; `new` aliases `create`.
 const REPO = String.raw`(?:\s+(?:-R\s*|--repo(?:=|\s+))\S+)?`;
 const PR_COMMAND = new RegExp(
-  String.raw`(?:^|[;&|\n(]\s*)(?:(?:env\s+)?\w+=\S*\s+)*(?:command\s+|env\s+)?(?:\S*\/)?gh${REPO}\s+pr${REPO}\s+(?:create|new|edit)\b([^;&|\n]*)`,
+  String.raw`(?:^|[;&|\n(])\s*(?:(?:env\s+)?\w+=\S*\s+)*(?:(?:command|env|time|nohup)\s+)?(?:\S*\/)?gh${REPO}\s+pr${REPO}\s+(?:create|new|edit)\b([^;&|\n]*)`,
   'g',
 );
 const BASE_FLAG = /\s(?:--base(?:=|\s+)|-[defw]*B(?:=|\s*))['"]?([^\s'"]+)/g;
