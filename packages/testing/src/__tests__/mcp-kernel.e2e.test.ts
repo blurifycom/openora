@@ -18,10 +18,12 @@ import { auditLog } from '@openora/core/audit/schema';
 import { kycVerification } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
-import { walletTransaction } from '@openora/core/wallet/schema';
+import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
   registerAndMaterializePlayer,
   asAdmin,
+  assignTag,
+  newStaff,
   type TestDb,
   type TestApp,
   type TestClient,
@@ -42,10 +44,14 @@ const REVIEWED = 'Reviewed, no issues.';
 const NOTE_ROUTE_KEYS = ['actorId', 'content', 'createdAt', 'id', 'playerId', 'updatedAt'];
 
 const EXPECTED_TOOL_OWNERS = {
+  'financial.summary': 'analytics',
   'ggr.summary': 'analytics',
   'kyc.status': 'compliance',
+  'payments.flow_daily': 'analytics',
   'player.summary': 'player-management',
+  'players.deposit_compare': 'wallet',
   'wallet.activity': 'wallet',
+  'withdrawals.queue': 'wallet',
 } as const;
 
 const EXPECTED_ACTION_OWNERS = {
@@ -175,6 +181,14 @@ function stringField(record: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function listField(record: Record<string, unknown>, key: string): Record<string, unknown>[] {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    throw new Error(`expected "${key}" to be an array, got ${JSON.stringify(value)}`);
+  }
+  return value.map(object);
+}
+
 // Amounts come back as fixed-scale decimal strings (eg `30.000000000000000000`).
 function wholeAmount(units: number): RegExp {
   return new RegExp(`^${units}(\\.0+)?$`);
@@ -263,6 +277,25 @@ async function requestUsdWithdrawal(client: TestClient, amount: string): Promise
   return stringField(body, 'transactionId');
 }
 
+async function walletIdOf(userId: string): Promise<string> {
+  const [row] = await drizzle()
+    .select({ id: wallet.id })
+    .from(wallet)
+    .where(eq(wallet.userId, userId));
+  if (!row) {
+    throw new Error(`no wallet row for user ${userId}`);
+  }
+  return row.id;
+}
+
+async function queuedWithdrawalCount(status: 'pending' | 'on_hold'): Promise<number> {
+  const [row] = await drizzle()
+    .select({ total: sql<number>`count(*)::int` })
+    .from(walletTransaction)
+    .where(and(eq(walletTransaction.type, 'withdrawal'), eq(walletTransaction.status, status)));
+  return row?.total ?? 0;
+}
+
 async function usdBalance(client: TestClient): Promise<string> {
   const res = await client.get('/wallet/balances');
   expect(res.status).toBe(200);
@@ -297,7 +330,7 @@ afterAll(async () => {
 });
 
 describe('MCP kernel registries match the generated catalog', () => {
-  it('serves exactly the four read tools and five action types, each under its owning plugin', () => {
+  it('serves exactly the eight read tools and five action types, each under its owning plugin', () => {
     const tools = kernel.listTools();
     const actions = kernel.listActionTypes();
 
@@ -941,5 +974,356 @@ describe('add_note writes one note per approved proposal', () => {
     expect(await notesOf(target.playerId)).toEqual([{ id: expect.any(String), proposalId }]);
     expect(await auditRowsOf('admin.player_note.created', target.playerId)).toHaveLength(1);
     expect(await auditRowsOf('mcp.action.executed', proposalId)).toHaveLength(2);
+  });
+});
+
+describe('operator read tools answer only their declared keys, under their own grants', () => {
+  const FLOW_CURRENCY = 'ZEC';
+  const FLOW_RANGE = { dateFrom: '2026-02-01', dateTo: '2026-02-14' };
+  const WINDOW_A = { from: '2026-02-01', to: '2026-02-28' };
+  const WINDOW_B = { from: '2026-05-01', to: '2026-05-31' };
+  const AML_NOTE = 'aml review: deposits structured below the reporting line';
+  const PAYOUT_ADDRESS = 'bc1qmcpkerneloperatortoolsdestination000';
+  const HELD_AT = '2025-12-01T10:00:00.000Z';
+  let analyst: Awaited<ReturnType<typeof newStaff>>;
+  let marketer: Awaited<ReturnType<typeof newStaff>>;
+  let dropping: Awaited<ReturnType<typeof newPlayer>>;
+  let rising: Awaited<ReturnType<typeof newPlayer>>;
+  let payer: Awaited<ReturnType<typeof newPlayer>>;
+  let heldWithdrawalId: string;
+
+  const seed = (
+    walletId: string,
+    rows: readonly Pick<
+      typeof walletTransaction.$inferInsert,
+      'type' | 'amount' | 'currency' | 'status' | 'createdAt'
+    >[],
+  ) =>
+    drizzle()
+      .insert(walletTransaction)
+      .values(rows.map((row) => ({ ...row, walletId })));
+
+  beforeAll(async () => {
+    analyst = await newStaff(app, 'mcp-no-analytics', 'kyc-aml-officer');
+    marketer = await newStaff(app, 'mcp-no-payments', 'marketing-banners');
+    dropping = await newPlayer('deposits-dropping');
+    rising = await newPlayer('deposits-rising');
+    payer = await newPlayer('payments-flow');
+    await depositUsd(dropping.client, '1');
+    await depositUsd(rising.client, '1');
+    await depositUsd(payer.client, '1');
+    const droppingWallet = await walletIdOf(dropping.userId);
+    const risingWallet = await walletIdOf(rising.userId);
+    const payerWallet = await walletIdOf(payer.userId);
+    const at = (iso: string) => new Date(iso);
+
+    await seed(payerWallet, [
+      {
+        type: 'deposit',
+        amount: '2',
+        currency: FLOW_CURRENCY,
+        status: 'completed',
+        createdAt: at('2026-02-02T10:00:00Z'),
+      },
+      {
+        type: 'deposit',
+        amount: '3',
+        currency: FLOW_CURRENCY,
+        status: 'completed',
+        createdAt: at('2026-02-02T11:00:00Z'),
+      },
+      {
+        type: 'deposit',
+        amount: '1',
+        currency: FLOW_CURRENCY,
+        status: 'failed',
+        createdAt: at('2026-02-03T10:00:00Z'),
+      },
+      {
+        type: 'withdrawal',
+        amount: '1.5',
+        currency: FLOW_CURRENCY,
+        status: 'rejected',
+        createdAt: at('2026-02-03T11:00:00Z'),
+      },
+      {
+        type: 'withdrawal',
+        amount: '1',
+        currency: FLOW_CURRENCY,
+        status: 'completed',
+        createdAt: at('2026-02-06T10:00:00Z'),
+      },
+      {
+        type: 'bonus',
+        amount: '0.5',
+        currency: FLOW_CURRENCY,
+        status: 'completed',
+        createdAt: at('2026-02-05T10:00:00Z'),
+      },
+      {
+        type: 'cashback',
+        amount: '0.25',
+        currency: FLOW_CURRENCY,
+        status: 'completed',
+        createdAt: at('2026-02-05T11:00:00Z'),
+      },
+      {
+        type: 'bet',
+        amount: '4',
+        currency: FLOW_CURRENCY,
+        status: 'completed',
+        createdAt: at('2026-02-05T12:00:00Z'),
+      },
+      {
+        type: 'win',
+        amount: '1',
+        currency: FLOW_CURRENCY,
+        status: 'completed',
+        createdAt: at('2026-02-05T13:00:00Z'),
+      },
+    ]);
+    await seed(droppingWallet, [
+      {
+        type: 'deposit',
+        amount: '300',
+        currency: 'USD',
+        status: 'completed',
+        createdAt: at('2026-02-10T10:00:00Z'),
+      },
+      {
+        type: 'deposit',
+        amount: '100',
+        currency: 'USD',
+        status: 'completed',
+        createdAt: at('2026-05-10T10:00:00Z'),
+      },
+    ]);
+    await seed(risingWallet, [
+      {
+        type: 'deposit',
+        amount: '50',
+        currency: 'USD',
+        status: 'completed',
+        createdAt: at('2026-02-11T10:00:00Z'),
+      },
+      {
+        type: 'deposit',
+        amount: '80',
+        currency: 'USD',
+        status: 'completed',
+        createdAt: at('2026-05-11T10:00:00Z'),
+      },
+    ]);
+    const [held] = await drizzle()
+      .insert(walletTransaction)
+      .values({
+        walletId: droppingWallet,
+        type: 'withdrawal',
+        amount: '6000',
+        currency: 'USD',
+        status: 'on_hold',
+        createdAt: at(HELD_AT),
+        reviewReason: AML_NOTE,
+        destinationAddress: PAYOUT_ADDRESS,
+      })
+      .returning({ id: walletTransaction.id });
+    if (!held) {
+      throw new Error('the held withdrawal was not seeded');
+    }
+    heldWithdrawalId = held.id;
+    await assignTag(admin, dropping.playerId, 'vip');
+    await assignTag(admin, rising.playerId, 'vip');
+  });
+
+  it('answers payments.flow_daily with every status of the day, and refuses a range longer than 92 days', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'payments.flow_daily',
+        { ...FLOW_RANGE, currency: FLOW_CURRENCY },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('payments.flow_daily'));
+    expect(output).toEqual({
+      ...FLOW_RANGE,
+      granularity: 'day',
+      rows: [
+        {
+          bucket: '2026-02-02',
+          type: 'deposit',
+          status: 'completed',
+          currency: FLOW_CURRENCY,
+          count: 2,
+          amount: expect.stringMatching(wholeAmount(5)),
+        },
+        {
+          bucket: '2026-02-03',
+          type: 'deposit',
+          status: 'failed',
+          currency: FLOW_CURRENCY,
+          count: 1,
+          amount: expect.stringMatching(wholeAmount(1)),
+        },
+        {
+          bucket: '2026-02-03',
+          type: 'withdrawal',
+          status: 'rejected',
+          currency: FLOW_CURRENCY,
+          count: 1,
+          amount: '1.500000000000000000',
+        },
+        {
+          bucket: '2026-02-06',
+          type: 'withdrawal',
+          status: 'completed',
+          currency: FLOW_CURRENCY,
+          count: 1,
+          amount: expect.stringMatching(wholeAmount(1)),
+        },
+      ],
+      truncated: false,
+    });
+
+    const tooLong = await kernel.invokeTool(
+      'payments.flow_daily',
+      { dateFrom: '2026-01-01', dateTo: '2026-04-03' },
+      adminRun(adminId),
+    );
+    expect(tooLong).toMatchObject({
+      ok: false,
+      error: 'invalid_input',
+      issues: [expect.objectContaining({ path: 'dateFrom' })],
+    });
+  });
+
+  it('answers financial.summary per currency with cashback outside bonus cost, and refuses a range longer than 366 days', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'financial.summary',
+        { dateFrom: '2026-02-01', dateTo: '2026-02-28', currency: FLOW_CURRENCY.toLowerCase() },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('financial.summary'));
+    expect(output).toEqual({
+      dateFrom: '2026-02-01',
+      dateTo: '2026-02-28',
+      currencies: [
+        {
+          currency: FLOW_CURRENCY,
+          deposits: expect.stringMatching(wholeAmount(5)),
+          withdrawals: expect.stringMatching(wholeAmount(1)),
+          netDeposits: '3.500000000000000000',
+          ggr: expect.stringMatching(wholeAmount(3)),
+          bonusCost: '0.500000000000000000',
+          ngr: '2.500000000000000000',
+        },
+      ],
+      products: [],
+      truncated: false,
+    });
+
+    const tooLong = await kernel.invokeTool(
+      'financial.summary',
+      { dateFrom: '2025-01-01', dateTo: '2026-01-02' },
+      adminRun(adminId),
+    );
+    expect(tooLong).toMatchObject({ ok: false, error: 'invalid_input' });
+  });
+
+  it('answers withdrawals.queue with the oldest held withdrawal and none of its review note, address or owner', async () => {
+    const output = outputOf(
+      await kernel.invokeTool('withdrawals.queue', { status: 'on_hold' }, adminRun(adminId)),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('withdrawals.queue'));
+    expect(output).toMatchObject({
+      pendingCount: await queuedWithdrawalCount('pending'),
+      onHoldCount: await queuedWithdrawalCount('on_hold'),
+    });
+    const [oldest] = listField(output, 'oldest');
+    expect(oldest).toEqual({
+      withdrawalId: heldWithdrawalId,
+      playerId: dropping.playerId,
+      amount: expect.stringMatching(wholeAmount(6000)),
+      currency: 'USD',
+      status: 'on_hold',
+      requestedAt: HELD_AT,
+      waitHours: expect.any(Number),
+      kycStatus: 'pending',
+      riskTags: ['large_amount'],
+    });
+    expect(Number(oldest?.['waitHours'])).toBeGreaterThan(24);
+    expect(listField(output, 'oldest').every((item) => item['status'] === 'on_hold')).toBe(true);
+    const served = JSON.stringify(output);
+    expect(served).not.toContain(AML_NOTE);
+    expect(served).not.toContain(PAYOUT_ADDRESS);
+    expect(served).not.toContain(dropping.email);
+    expect(served).not.toContain(dropping.userId);
+
+    const tooMany = await kernel.invokeTool('withdrawals.queue', { limit: 21 }, adminRun(adminId));
+    expect(tooMany).toMatchObject({ ok: false, error: 'invalid_input' });
+  });
+
+  it('answers players.deposit_compare with the drop in the pivot currency, and refuses a window longer than 92 days', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'players.deposit_compare',
+        { tag: 'vip', windowA: WINDOW_A, windowB: WINDOW_B },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('players.deposit_compare'));
+    expect(output).toMatchObject({
+      tag: 'vip',
+      pivotCurrency: 'USD',
+      totals: {
+        windowA: expect.stringMatching(wholeAmount(350)),
+        windowB: expect.stringMatching(wholeAmount(180)),
+      },
+      players: [
+        {
+          playerId: dropping.playerId,
+          depositsA: expect.stringMatching(wholeAmount(300)),
+          depositsB: expect.stringMatching(wholeAmount(100)),
+          change: '-200.000000000000000000',
+          changePct: -66.7,
+        },
+      ],
+      unpricedPlayers: 0,
+      truncated: false,
+    });
+    expect(listField(output, 'players')).toHaveLength(1);
+    expect(output['playersInSegment']).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(output)).not.toContain(dropping.userId);
+
+    const tooLong = await kernel.invokeTool(
+      'players.deposit_compare',
+      { tag: 'vip', windowA: WINDOW_A, windowB: { from: '2026-05-01', to: '2026-08-01' } },
+      adminRun(adminId),
+    );
+    expect(tooLong).toMatchObject({
+      ok: false,
+      error: 'invalid_input',
+      issues: [expect.objectContaining({ path: 'windowB.from' })],
+    });
+  });
+
+  it.each([
+    ['payments.flow_daily', {}, 'analyst'],
+    ['financial.summary', {}, 'analyst'],
+    ['withdrawals.queue', {}, 'marketer'],
+    ['players.deposit_compare', { tag: 'vip', windowA: WINDOW_A, windowB: WINDOW_B }, 'marketer'],
+  ] as const)('refuses %s to an admin whose roles lack its grant', async (toolId, input, who) => {
+    const caller = who === 'analyst' ? analyst : marketer;
+    const run = adminRun(caller.userId);
+
+    expect(await kernel.invokeTool(toolId, input, run)).toEqual({ ok: false, error: 'forbidden' });
+    const rows = await auditRowsOfCall(run.correlationId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ action: 'mcp.tool.failed', resourceId: toolId });
   });
 });

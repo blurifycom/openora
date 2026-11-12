@@ -5,14 +5,15 @@ import { DEFAULT_ADMIN_ROLES } from '../seed/data/default-admin-roles.js';
 const predefined = (key: string) => DEFAULT_ADMIN_ROLES.find((role) => role.key === key);
 
 describe('DEFAULT_ADMIN_ROLES', () => {
-  it('gives the predefined admin role read-write MCP access and token oversight', () => {
+  it('gives the predefined admin role read-write MCP access, token oversight and the AI assistant', () => {
     expect(predefined('admin')?.matrix).toMatchObject({
       'mcp-access': 'read_write',
       'mcp-token': 'read_write',
+      'agent-chat': 'read_write',
     });
   });
 
-  it.each(['mcp-access', 'mcp-token'] as const)(
+  it.each(['mcp-access', 'mcp-token', 'agent-chat'] as const)(
     'grants the predefined admin role every %s action the static admin role holds',
     (resource) => {
       const level = predefined('admin')?.matrix[resource] ?? 'no_access';
@@ -29,13 +30,16 @@ describe('DEFAULT_ADMIN_ROLES', () => {
     expect(Object.keys(superAdmin?.matrix ?? {})).toEqual(Object.keys(statement));
   });
 
-  it('grants MCP access to no other predefined role', () => {
-    const withMcpAccess = DEFAULT_ADMIN_ROLES.filter(
-      (role) => !role.isSuperAdmin && role.matrix['mcp-access'] !== undefined,
-    );
+  it.each(['mcp-access', 'agent-chat'] as const)(
+    'grants %s to no other predefined role',
+    (resource) => {
+      const holders = DEFAULT_ADMIN_ROLES.filter(
+        (role) => !role.isSuperAdmin && role.matrix[resource] !== undefined,
+      );
 
-    expect(withMcpAccess.map((role) => role.key)).toEqual(['admin']);
-  });
+      expect(holders.map((role) => role.key)).toEqual(['admin']);
+    },
+  );
 
   it('holds every approval resource for the super admin alone', () => {
     const approvals = Object.keys(statement).filter((resource) => resource.endsWith('-approval'));

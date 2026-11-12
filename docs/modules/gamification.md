@@ -185,8 +185,8 @@ plugin, at the tier the player holds when the bet settles. A bet pays once. Its 
 is keyed to the bet, so a re-settle after a reopen replays it, and no accrual is written while
 the bet already has an accrued, claimed or voided one. A reopen reverses an unclaimed accrual, so
 the re-settle accrues afresh. A claimed accrual or an instant credit stays, as all paid
-rakeback does. A sportsbook bet carries no `rtp`, so under `margin` it pays nothing. Switching
-`payout` from `instant` to `claim` between a settle and a re-settle can pay that bet once under
+rakeback does. A sportsbook bet carries no `rtp`, so it pays nothing under `margin`, nor at a
+streak's unranked rate for a player with no rank. Switching `payout` from `instant` to `claim` between a settle and a re-settle can pay that bet once under
 each mode. A `sportsbook` wager reported through `recordWager`, rather than the sportsbook ledger's
 settle, earns no rakeback.
 
@@ -213,3 +213,36 @@ lock until payout commits, serializing a concurrent exclusion lift with settleme
 rakeback for when it ends. An hourly job reminds a player at most once a day, and only when a claim
 would succeed. A player found below the minimum is checked again only once new rakeback accrues. An admin can void an unclaimed row with a reason. The void is audited. See
 [ADR-0048](../adr/0048-claimable-rakeback-on-the-house-edge.md).
+
+## The daily streak
+
+A player who wagers the operator's minimum, in dollars, on a UTC day extends their streak by one.
+The count has no ceiling and no automatic reset: it falls to zero only when a day is missed, or
+when the operator switches the streak off. Only the real-money part of a stake counts, so wagering a
+bonus never advances it, and a provider rollback takes a stake back out of the day it counted on,
+undoing that day if it drops under the minimum. The operator sets the minimum, the products that
+count, and the two things the streak pays.
+
+**Rakeback rate.** From a configured day on, a qualifying player earns more rakeback. A ranked
+player's rank rakeback is multiplied by one plus the milestone's uplift. A player with no rank
+earns the milestone's unranked rate on the theoretical gross gaming revenue of the bet, its house
+edge, and nothing without a usable return-to-player figure. The rate is the best the streak has
+unlocked, the highest unranked rate and the highest uplift among the milestones at or below the
+streak, so a later milestone with a lower rate never lowers it. It is read when the bet settles, and only while the player last
+qualified today or yesterday, so a broken streak pays nothing before the daily close runs. The bet
+that unlocks a milestone earns the previous milestone's rate, because rakeback is computed before
+the streak advances. See [ADR-0051](../adr/0051-streak-milestone-rakeback-rate.md).
+
+**Fixed rewards.** The first time a streak reaches a configured day it unlocks a one-time bonus. The
+amount, rollover, claim window and optional max bet are captured at that moment, so editing the config later changes
+nothing a player already holds. The player is told it is ready by a notification carrying the day and the captured amount with its currency, both optional for an event from before they were carried. The player claims it within the window, and it becomes a bonus in
+the currency they play in, priced from dollars at claim time, with a rollover window as long as the
+claim window. A reward that was claimed, expired or lost never unlocks again, except one taken back
+because a same-day rollback undid the day that unlocked it. An hourly sweep settles unclaimed
+rewards once their window closes, with an audit record each.
+
+**Switching it off** ends every streak at the next daily close and stops new rates and rewards;
+rewards already unlocked stay claimable until they expire. Switching it on starts everyone from
+zero. A close that resets runs because the streak is off writes one audit record with the count. A self-exclusion or cooling-off forfeits unclaimed rewards without a notification, and
+nothing is restored when it ends. Saving the config needs write access to bonuses and is audited
+with the staff member who made the change.

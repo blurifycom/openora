@@ -45,6 +45,7 @@ export const adminRole = ac.newRole({
   'agent-proposal': ['view', 'approve', 'reject'],
   'agent-config': ['view', 'update'],
   'mcp-access': ['use'],
+  'agent-chat': ['use'],
   'mcp-token': ['view', 'revoke'],
 });
 

@@ -37,6 +37,14 @@ export type IdentityReader = {
    */
   getUserIdByPlayerId?(playerId: Player['id']): Promise<User['id'] | null>;
   /**
+   * {@link getUserIdByPlayerId} for many players in one query, keyed by the player id given; a
+   * player id that names no player is absent. Optional for the same reason, and a caller that
+   * needs it fails closed the same way.
+   */
+  getUserIdsByPlayerIds?(
+    playerIds: readonly Player['id'][],
+  ): Promise<Map<Player['id'], User['id']>>;
+  /**
    * The player's declared ISO date of birth, or null when none is stored. Optional so an
    * operator's own implementation keeps compiling; without it a KYC date-of-birth mismatch
    * goes undetected.
@@ -58,4 +66,15 @@ export async function userIdOfPlayer(
     throw new Error('the bound IDENTITY_READER cannot resolve a player id to a user id');
   }
   return reader.getUserIdByPlayerId(playerId);
+}
+
+/** `getUserIdsByPlayerIds` for a caller that cannot work without it; throws like {@link userIdOfPlayer}. */
+export async function userIdsOfPlayers(
+  reader: IdentityReader,
+  playerIds: readonly Player['id'][],
+): Promise<Map<Player['id'], User['id']>> {
+  if (!reader.getUserIdsByPlayerIds) {
+    throw new Error('the bound IDENTITY_READER cannot resolve player ids to user ids');
+  }
+  return reader.getUserIdsByPlayerIds(playerIds);
 }
