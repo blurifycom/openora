@@ -80,6 +80,7 @@ test('a worktree path cannot smuggle a second target or point git at the main re
     `echo x > ../oss/.worktrees/feat+x/$(echo>${core})a`,
     'git -C ../oss/.worktrees/ checkout -- :/',
     'ln -sfn ../../packages ../oss/.worktrees/feat+x/p && echo x > ../oss/.worktrees/feat+x/p/a.ts',
+    'cd ../oss/.worktrees/feat+x && ln -s ../../packages p && echo x > p/a.ts',
     `git -C ${join(oss, '.worktrees/./')} reset --hard`,
   ]) {
     assert.equal(exitCode({ command }), DENIED, command);
@@ -124,6 +125,19 @@ test('copies out of the checkout or into a worktree, and git reads, pass', () =>
   ]) {
     assert.equal(exitCode({ command }), ALLOWED, command);
   }
+});
+
+test('a symlink made from a cwd inside the OSS checkout is denied', () => {
+  const worktree = join(oss, '.worktrees', 'feat+y');
+  mkdirSync(worktree, { recursive: true });
+  const run = (command, cwd) =>
+    spawnSync('node', [guard], {
+      cwd: consumer,
+      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd }),
+    }).status;
+  assert.equal(run('ln -s ../../packages p', worktree), DENIED);
+  assert.equal(run('ln -s overlay/a.ts b.ts', consumer), ALLOWED);
+  assert.equal(run('grep -ln x src', worktree), ALLOWED);
 });
 
 test('a symlink into the checkout does not make a core path look local', () => {

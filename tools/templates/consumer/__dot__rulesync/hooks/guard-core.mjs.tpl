@@ -53,8 +53,20 @@ const HOW_TO_CHANGE_OSS =
 // 1) Shell command writing into a protected path (sed -i, redirect, tee, cp, rm, git, ...).
 const rawCommand = extractCommand(payload);
 // A symlink planted in a worktree would carry later shell writes into the main checkout, and no
-// worktree needs one, so `ln` is judged before the worktree mask.
-if (new RegExp(String.raw`(?<![\w-])ln\b[^|;&]*${PROTECTED}`).test(rawCommand)) {
+// worktree needs one, so `ln` is judged before the worktree mask, against the whole command and
+// the cwd: `cd <oss>/.worktrees/x && ln -s ../../packages p` names no protected path itself.
+const insideOss = (dir) => {
+  try {
+    const real = realpathSync(dir);
+    return real === OSS || real.startsWith(OSS + sep);
+  } catch {
+    return false;
+  }
+};
+if (
+  /(?<![\w-])ln\s/.test(rawCommand) &&
+  (new RegExp(PROTECTED).test(rawCommand) || (payload.cwd && insideOss(payload.cwd)))
+) {
   deny(`Blocked: this symlink points into or lives in the OSS checkout or node_modules. ${HOW_TO_CHANGE_OSS}`);
 }
 const command = rawCommand.replace(WORKTREE_TOKEN, '<oss-worktree>');

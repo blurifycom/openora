@@ -10,16 +10,19 @@ import { deny, extractCommand, readPayload } from './_shared.mjs';
 
 const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
 const PR_WITH_BASE =
-  /(?:^|[;&|\n(]\s*)(?:(?:env\s+)?\w+=\S*\s+)*gh(?:\s+(?:-R|--repo)\s+\S+)?\s+pr\s+(?:create|edit)\b[^;&|\n]*?\s(?:--base|-B)(?:=|\s+)['"]?([^\s'"]+)/;
+  /(?:^|[;&|\n(]\s*)(?:(?:env\s+)?\w+=\S*\s+)*gh(?:\s+(?:-R|--repo)\s+\S+)?\s+pr\s+(?:create|edit)\b[^;&|\n]*?\s(?:--base|-B)(?:=|\s+)['"]?([^\s'"]+)/g;
 
 // Quoted prose (a title or body) is blanked so a `--base` inside it never counts.
 const command = extractCommand(readPayload()).replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, (quoted) =>
   /\s/.test(quoted) ? '""' : quoted,
 );
-const base = PR_WITH_BASE.exec(command)?.[1];
-if (base && !SHARED.test(base)) {
+// Every PR command in a chain is judged, not only the first.
+const base = [...command.matchAll(PR_WITH_BASE)]
+  .map((match) => match[1])
+  .find((name) => !SHARED.test(name));
+if (base) {
   deny(
-    `Blocked: a PR based on \`${base}\` is a stack. Use \`gh stack\` (gh extension install github/gh-stack): \`gh stack init\` or \`gh stack init <branches...>\`, \`gh stack add <branch>\`, then \`gh stack submit\`. Review each layer on its own; the merge bot merges.`,
+    `Blocked: a PR based on \`${base}\` is a stack. Use \`gh stack\` (gh extension install github/gh-stack): \`gh stack init\` or \`gh stack init <branches...>\`, \`gh stack add <branch>\`, then \`gh stack submit --auto\` (layers open as drafts). Review each layer on its own; the merge bot merges.`,
   );
 }
 process.exit(0);

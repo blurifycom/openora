@@ -9,8 +9,8 @@
 // outright: the merge bot merges. Git errors fail open, like every other guard.
 //
 // ponytail: trusts the state file, which an agent could write by hand, and checks the checked-out
-// HEAD, not a different ref named on the command line. It stops a forgotten review, not a hostile
-// one; the forge's own AI review is the gate an agent cannot write.
+// HEAD (or a PR/MR's named source branch), not a different ref named in a push refspec. It stops
+// a forgotten review, not a hostile one; the forge's own AI review is the gate an agent cannot write.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -48,6 +48,11 @@ const isHandMerge = (segment) => {
   );
 };
 const SOURCE = /\s(?:--head|-H|--source-branch|-s)(?:=|\s+)(\S+)/;
+// A git command that can move HEAD. The hook runs before the whole command, so a push chained
+// after one would be judged on the commit it starts from, not the one it sends.
+const MOVES_HEAD = new RegExp(
+  `${PREFIX}git(?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*\\s+(?:commit|merge|rebase|reset|checkout|switch|cherry-pick|revert|pull|am|stash)\\b`,
+);
 const DIR_FLAG = /\s-C\s+(\S+)/;
 
 const git = (cwd, ...args) => {
@@ -117,12 +122,21 @@ const reviewTarget = (segment, cwd) => {
   if (!opens) {
     return null;
   }
-  const source = SOURCE.exec(opens[1]);
-  if (source && SHARED.test(unquote(source[1]))) {
+  // `gh pr create --head owner:branch` names the fork too.
+  const named = SOURCE.exec(opens[1]);
+  const source = named ? unquote(named[1]).replace(/^[^:]+:/, '') : undefined;
+  if (source && SHARED.test(source)) {
     return null;
   }
-  return { dir: cwd, opensReview: true };
+  return { dir: cwd, opensReview: true, source };
 };
+
+// The commit a PR/MR sends: its named source branch (local, else the fetched remote one), or HEAD.
+const sentCommit = (dir, source) =>
+  source
+    ? git(dir, 'rev-parse', '--verify', '-q', `refs/heads/${source}^{commit}`) ||
+      git(dir, 'rev-parse', '--verify', '-q', `refs/remotes/origin/${source}^{commit}`)
+    : git(dir, 'rev-parse', 'HEAD');
 
 const isApproved = (dirs, head) =>
   dirs.some((dir) => {
@@ -136,10 +150,9 @@ const isApproved = (dirs, head) =>
         .some((name) => {
           try {
             const state = JSON.parse(readFileSync(join(reviews, name), 'utf8'));
-            const sha = String(state.sha ?? '').toLowerCase();
+            // The full SHA: an abbreviation could match an older reviewed commit.
             return (
-              /^[0-9a-f]{7,40}$/.test(sha) &&
-              head.startsWith(sha) &&
+              String(state.sha ?? '').toLowerCase() === head &&
               /^(?:APPROVED|GO\b)/i.test(String(state.verdict ?? ''))
             );
           } catch {
@@ -182,7 +195,7 @@ const pushesShared = (dir, pushArgs, branch) => {
   });
 };
 
-const check = ({ dir, opensReview, pushArgs, sendsNothingNew }) => {
+const check = ({ dir, opensReview, pushArgs, sendsNothingNew, source }) => {
   const branch = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
   if (pushArgs !== undefined && branch && pushesShared(dir, pushArgs, branch)) {
     deny(
@@ -194,8 +207,14 @@ const check = ({ dir, opensReview, pushArgs, sendsNothingNew }) => {
   }
   const top = git(dir, 'rev-parse', '--show-toplevel');
   const common = git(dir, 'rev-parse', '--git-common-dir');
-  const head = git(dir, 'rev-parse', 'HEAD');
-  if (!top || !common || !head || (opensReview && SHARED.test(branch))) {
+  const head = sentCommit(dir, source);
+  if (!top || !common || (opensReview && !source && SHARED.test(branch))) {
+    return;
+  }
+  if (!head) {
+    if (source) {
+      deny(`Blocked: \`${source}\` is not a local or fetched branch here; fetch it, then retry.`);
+    }
     return;
   }
   const mainCheckout = dirname(isAbsolute(common) ? common : resolve(dir, common));
@@ -209,6 +228,7 @@ const check = ({ dir, opensReview, pushArgs, sendsNothingNew }) => {
 const payload = readPayload();
 const rawCommand = extractCommand(payload);
 let cwd = payload.cwd ?? process.cwd();
+let headMoved = false;
 for (const segment of segments(rawCommand)) {
   const cd = /^cd\s+(\S+)$/.exec(segment);
   if (cd) {
@@ -220,8 +240,14 @@ for (const segment of segments(rawCommand)) {
     );
   }
   const target = reviewTarget(segment, cwd);
+  if (target && headMoved && !target.sendsNothingNew) {
+    deny(
+      'Blocked: an earlier command in this chain can move HEAD, and this check runs before any of it. Commit first, get the `review` skill to approve that commit, then push or open the merge/pull request as its own command.',
+    );
+  }
   if (target) {
     check(target);
   }
+  headMoved ||= MOVES_HEAD.test(segment);
 }
 process.exit(0);
