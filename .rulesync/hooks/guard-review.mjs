@@ -19,7 +19,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
 const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
-const PREFIX = String.raw`^(?:(?:env\s+)?\w+=\S*\s+)*(?:command\s+|env\s+)?(?:\S*/)?`;
+const PREFIX = String.raw`^(?:(?:env\s+)?\w+=\S*\s+)*(?:(?:command|env|time|nohup)\s+)?(?:\S*/)?`;
 const GIT_PUSH = new RegExp(`${PREFIX}git((?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*)\\s+push\\b(.*)$`);
 // `-R <repo>` goes before or after `pr`/`mr`; `new` is an alias of `create`.
 const REPO = String.raw`(?:\s+(?:-R\s*|--repo(?:=|\s+))\S+)?`;
@@ -60,12 +60,14 @@ const SOURCE_FLAG = {
 // new feature branch at HEAD move nothing; a new or renamed shared branch counts, since a push
 // after it would be judged against the branch checked out before it.
 const MOVES_HEAD = new RegExp(
-  `${PREFIX}(?:git(?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*\\s+(?:commit|merge|rebase|reset|checkout|switch|cherry-pick|revert|pull|am|stash|update-ref|symbolic-ref|bisect|branch\\s+(?:-[mM]|--move))|gh${REPO}\\s+pr${REPO}\\s+checkout|glab${REPO}\\s+mr${REPO}\\s+checkout)\\b`,
+  `${PREFIX}(?:git(?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*\\s+(?:commit|merge|rebase|reset|checkout|switch|cherry-pick|revert|pull|am|stash|update-ref|symbolic-ref\\s+(?:-m\\s+\\S+\\s+)?HEAD\\s+\\S+|bisect\\s+(?:start|good|bad|new|old|skip|reset|run|replay)|branch\\s+(?:-[mM]|--move))|gh${REPO}\\s+pr${REPO}\\s+checkout|glab${REPO}\\s+mr${REPO}\\s+checkout)\\b`,
 );
 const NEW_BRANCH = /\s(?:checkout\s+-[bB]|switch\s+-[cC])\s+(\S+)\s*$/;
 const movesNothing = (segment) => {
   const created = NEW_BRANCH.exec(segment);
-  return created ? !SHARED.test(unquote(created[1])) : /\sstash\s+(?:list|show)\b/.test(segment);
+  return created
+    ? !SHARED.test(created[1].replace(/['"\\]/g, ''))
+    : /\sstash\s+(?:list|show)\b/.test(segment);
 };
 const DIR_FLAG = /\s-C\s+(\S+)/;
 
