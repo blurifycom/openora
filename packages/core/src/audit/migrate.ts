@@ -10,7 +10,8 @@ import { runMigrations } from '@openora/core/server/migrate';
 // run as the owner (ADR-0052). The function keeps its
 // audit_log name from before it guarded the outbox tables too.
 const APPEND_ONLY_SQL = [
-  `CREATE OR REPLACE FUNCTION audit_log_deny_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+  `CREATE OR REPLACE FUNCTION audit_log_deny_mutation() RETURNS trigger LANGUAGE plpgsql
+   SET search_path = pg_catalog, public AS $$
    BEGIN
      RAISE EXCEPTION '% is append-only: % is not permitted', TG_TABLE_NAME, TG_OP;
    END;
@@ -32,12 +33,15 @@ const APPEND_ONLY_SQL = [
 // same id stand in for the real one. The rejected table is append-only like audit_log. Both outbox
 // tables come from the engine migration set, which runs before this one.
 //
+// Every function pins its search_path, so a schema or operator a role puts earlier on its own path
+// cannot stand in for the audit tables or the comparisons the guards make.
+//
 // audit_outbox_entry_chained compares an entry as the shipper writes it: snapshots as jsonb, a
 // JSON null or a missing snapshot as SQL NULL, createdAt to the millisecond a JS Date keeps. The
 // shipper calls it too, after appending, so a row it would not be allowed to delete moves aside.
 const OUTBOX_GUARD_SQL = [
   `CREATE OR REPLACE FUNCTION audit_outbox_entry_chained(chained_event_id uuid, entry jsonb)
-   RETURNS boolean LANGUAGE sql STABLE AS $$
+   RETURNS boolean LANGUAGE sql STABLE SET search_path = pg_catalog, public AS $$
      SELECT EXISTS (
        SELECT 1 FROM audit_log l
         WHERE l.event_id = chained_event_id
@@ -55,7 +59,7 @@ const OUTBOX_GUARD_SQL = [
           AND l.created_at = date_trunc('milliseconds', (entry->>'createdAt')::timestamptz))
    $$`,
   `CREATE OR REPLACE FUNCTION audit_outbox_deny_unshipped_delete() RETURNS trigger
-   LANGUAGE plpgsql AS $$
+   LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
    BEGIN
      -- Checked apart and first: a rejected entry may not parse, so it never reaches the cast below.
      IF EXISTS (SELECT 1 FROM audit_outbox_rejected WHERE outbox_id = OLD.id AND entry = OLD.entry) THEN

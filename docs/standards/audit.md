@@ -44,3 +44,16 @@ produced a bad entry: fix it, and record the missing change from `entry` through
 a change ticket. `event_id already chained with different content` means an `audit_log` row under
 that event id does not match the entry: treat it as possible tampering, compare the two, and keep
 both as evidence. Rejected rows are never deleted.
+
+**A shipper stuck on one row.** Every round fails on the same outbox row and the oldest pending age
+keeps growing. A rejected row under that `outbox_id` with other content, next to an `audit_log` row
+under its `event_id` with other content, means both were planted to launder the entry: the guard
+keeps it pending on purpose. Export the outbox row, the rejected row and the chain row as evidence,
+then resolve it under a change ticket as for a forked chain.
+
+**Known gap.** The app role can still divert a pending entry by copying it into
+`audit_outbox_rejected` under its own outbox id and deleting it: the content is kept but never
+chained, and only the rejected count shows it, which is why a rejected count above zero pages. A
+separate shipper database role, the only one that may insert into the rejected table and delete
+from the outbox, closes it; it is planned with moving the chain to its own database
+([ADR-0052](../adr/0052-audit-outbox-shipper.md)).

@@ -184,8 +184,6 @@ const toDto = (row: AuditLog) => serializeRow(row, { dateFields: ['createdAt'] }
 
 export type RecordInput = Parameters<AuditWritePort['record']>[0] & {
   result?: string | null;
-  /** When the audited event happened (its envelope's `occurredAt`); the entry's time, else now. */
-  occurredAt?: EventEnvelope['occurredAt'];
 };
 
 // What `audit_outbox.entry` holds: the entry with its correlation id and `createdAt` resolved at
@@ -207,7 +205,8 @@ export const OutboxEntrySchema = z.object({
   userAgent: z.string().nullish(),
   correlationId: z.string().nullable(),
   result: z.string().nullish(),
-  createdAt: z.iso.datetime(),
+  // Postgres has no year 0, so such an entry could never be chained: refused here, it moves aside.
+  createdAt: z.iso.datetime().refine((at) => !at.startsWith('0000'), 'year 0 cannot be stored'),
 });
 
 type OutboxEntry = z.infer<typeof OutboxEntrySchema>;
@@ -219,14 +218,15 @@ export type ShippableEntry = { eventId: string; entry: unknown };
 // rows stay well under it.
 const MAX_ROWS_PER_INSERT = 1_000;
 
-function outboxEntry(input: RecordInput): OutboxEntry {
+// `occurredAt` is the audited event's time, passed only by the audit plugin's event paths; any
+// other record is stamped now, and a time key on the record itself is dropped by the schema, so a
+// caller of `AUDIT_WRITER` cannot backdate its entry.
+function outboxEntry(input: RecordInput, occurredAt?: EventEnvelope['occurredAt']): OutboxEntry {
   // An entry that leaves the correlation id unset takes the one its context runs under, e.g. the
   // agent proposal an MCP execution writes for; an explicit value, null included, is kept.
   const correlationId =
     input.correlationId === undefined ? (getCurrentCorrelationId() ?? null) : input.correlationId;
-  const createdAt = (
-    input.occurredAt === undefined ? new Date() : new Date(input.occurredAt)
-  ).toISOString();
+  const createdAt = (occurredAt === undefined ? new Date() : new Date(occurredAt)).toISOString();
   return OutboxEntrySchema.parse({ ...input, correlationId, createdAt });
 }
 
@@ -268,8 +268,9 @@ export async function enqueueAuditInTransaction(
   txn: DrizzleTx,
   input: RecordInput,
   eventId: EventEnvelope['eventId'] = randomUUID(),
+  occurredAt?: EventEnvelope['occurredAt'],
 ): Promise<void> {
-  await enqueue(txn, [{ eventId: auditEventId(eventId), entry: outboxEntry(input) }]);
+  await enqueue(txn, [{ eventId: auditEventId(eventId), entry: outboxEntry(input, occurredAt) }]);
   noteAuditWrite(input.actorId);
 }
 
@@ -418,8 +419,14 @@ export class AuditService {
   ) {}
 
   /** Queues `input` in a transaction of its own; `eventId` makes a redelivered event a no-op. */
-  async record(input: RecordInput, eventId?: EventEnvelope['eventId']): Promise<void> {
-    await this.drizzle.db.transaction((tx) => enqueueAuditInTransaction(tx, input, eventId));
+  async record(
+    input: RecordInput,
+    eventId?: EventEnvelope['eventId'],
+    occurredAt?: EventEnvelope['occurredAt'],
+  ): Promise<void> {
+    await this.drizzle.db.transaction((tx) =>
+      enqueueAuditInTransaction(tx, input, eventId, occurredAt),
+    );
   }
 
   recordInTransaction(tx: unknown, input: RecordInput): Promise<void> {
