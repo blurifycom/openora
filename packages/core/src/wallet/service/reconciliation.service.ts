@@ -999,9 +999,10 @@ export class ReconciliationService {
             providerName: LEDGER_FINDING_LABEL,
             kind: 'ledger_invariant_breach',
             currency: pair.currency,
-            amount: drift,
+            // A finding's amount is never negative; which way the balance is off is in the detail.
+            amount: drift.replace(/^-/, ''),
             externalId: `wallet:${pair.walletId}:${pair.currency}:${drift}`,
-            detail: `wallet ${pair.walletId} holds ${pair.balance} ${pair.currency} but its ledger adds up to ${pair.expected}`,
+            detail: `wallet ${pair.walletId} holds ${pair.balance} ${pair.currency} but its ledger adds up to ${pair.expected}: the balance is ${drift.startsWith('-') ? 'short' : 'over'} by ${drift.replace(/^-/, '')}`,
           },
           this.audit,
         );

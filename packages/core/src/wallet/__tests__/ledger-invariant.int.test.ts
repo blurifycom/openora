@@ -24,6 +24,7 @@ import {
 import { WalletService } from '../service/wallet.service.js';
 import { WalletCommandsService } from '../service/wallet-commands.service.js';
 import { ReconciliationService } from '../service/reconciliation.service.js';
+import { WalletReconciliationFindingSchema } from '../contract/index.js';
 
 let db: TestDb;
 
@@ -385,7 +386,11 @@ describe('legacy rows and the baseline backfill (real PG)', () => {
 
     const found = await breaches();
     expect(found).toHaveLength(1);
-    expect(Number(found[0]?.amount)).toBe(-0.5);
+    expect(Number(found[0]?.amount)).toBe(0.5);
+    expect(found[0]?.detail).toContain('short by 0.5');
+    // The admin list serves it through the contract's schema, whose amount is non-negative.
+    const listed = await svc.listFindings({ page: 1, limit: 20, kind: 'ledger_invariant_breach' });
+    expect(WalletReconciliationFindingSchema.array().parse(listed.items)).toHaveLength(1);
   });
 
   it('prices a correction that re-collects a stake down to zero, so a later hand edit is a breach', async () => {
