@@ -30,7 +30,6 @@ import type {
   CommandChatMessage,
   AdminUserDirectory,
   AuditWritePort,
-  FriendshipDissolvedPayload,
   IdentityReader,
   SocialCommands,
   Uuid,
@@ -2155,46 +2154,44 @@ export class ChatService {
     // target: this table has exactly one unique constraint (the partial pair index).
     // Any active friendship dissolves on the same tx as the block insert, so a block
     // can never leave a friendship (and the blocked user) still reachable from
-    // /social/friends.
-    const { inserted, dissolvedFriendship } = await this.drizzle.db.transaction((tx) =>
+    // /social/friends. Both events go to the outbox on that tx: they exist if and
+    // only if the block committed.
+    const subject = await this.relationSubject(blockerId, blockedId, meta);
+    await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, chatBlockLockKey(blockerId, blockedId), async () => {
         const rows = await tx
           .insert(chatUserBlock)
           .values({ blockerId, blockedId })
           .onConflictDoNothing()
           .returning();
-        const dissolved: FriendshipDissolvedPayload | null =
-          rows.length > 0
-            ? ((await this.socialCommands?.dissolveFriendshipOnBlock(tx, blockerId, blockedId)) ??
-              null)
-            : null;
-        return { inserted: rows, dissolvedFriendship: dissolved };
+        if (rows.length === 0) {
+          return;
+        }
+        await this.events.emitInTransaction(tx, 'chat.user.blocked', {
+          blockerId,
+          blockedId,
+          ...subject,
+        });
+        const dissolved = await this.socialCommands?.dissolveFriendshipOnBlock(
+          tx,
+          blockerId,
+          blockedId,
+        );
+        if (dissolved) {
+          await this.events.emitInTransaction(tx, 'social.friendship.removed', dissolved);
+        }
       }),
     );
-
-    if (dissolvedFriendship) {
-      this.events.emit('social.friendship.removed', dissolvedFriendship);
-    }
-
-    if (inserted.length > 0) {
-      this.events.emit('chat.user.blocked', {
-        blockerId,
-        actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(blockerId),
-        blockedId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(blockedId),
-        ip: meta?.ip ?? null,
-        userAgent: meta?.userAgent ?? null,
-      });
-    }
     return { success: true } as const;
   }
 
   async unblockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
     // Soft-delete: the partial unique index guarantees at most one active (removedAt
     // IS NULL) row per pair, so this is that row, or no-op if already unblocked.
-    const removed = await this.drizzle.db.transaction((tx) =>
-      withAdvisoryXactLock(tx, chatBlockLockKey(blockerId, blockedId), () =>
-        tx
+    const subject = await this.relationSubject(blockerId, blockedId, meta);
+    await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, chatBlockLockKey(blockerId, blockedId), async () => {
+        const removed = await tx
           .update(chatUserBlock)
           .set({ removedAt: new Date() })
           .where(
@@ -2204,21 +2201,26 @@ export class ChatService {
               isNull(chatUserBlock.removedAt),
             ),
           )
-          .returning(),
-      ),
+          .returning();
+        if (removed.length > 0) {
+          await this.events.emitInTransaction(tx, 'chat.user.unblocked', {
+            blockerId,
+            blockedId,
+            ...subject,
+          });
+        }
+      }),
     );
-
-    if (removed.length > 0) {
-      this.events.emit('chat.user.unblocked', {
-        blockerId,
-        actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(blockerId),
-        blockedId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(blockedId),
-        ip: meta?.ip ?? null,
-        userAgent: meta?.userAgent ?? null,
-      });
-    }
     return { success: true } as const;
+  }
+
+  /** The audit fields a block or ignore event carries, resolved before its transaction opens. */
+  private async relationSubject(actorId: User['id'], subjectId: User['id'], meta?: ClientMeta) {
+    const [actorPlayerId, playerId] = await Promise.all([
+      this.identityReader.getPlayerIdByUserIdSafe(actorId),
+      this.identityReader.getPlayerIdByUserIdSafe(subjectId),
+    ]);
+    return { actorPlayerId, playerId, ip: meta?.ip ?? null, userAgent: meta?.userAgent ?? null };
   }
 
   async listIgnoredUsers({
@@ -2304,49 +2306,47 @@ export class ChatService {
     }
 
     // Idempotent + soft-delete-aware - see blockUser's comment, same pattern.
-    const inserted = await this.drizzle.db
-      .insert(chatUserIgnore)
-      .values({ ignorerId, ignoredId })
-      .onConflictDoNothing()
-      .returning();
-
-    if (inserted.length > 0) {
-      this.events.emit('chat.user.ignored', {
-        ignorerId,
-        actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(ignorerId),
-        ignoredId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(ignoredId),
-        ip: meta?.ip ?? null,
-        userAgent: meta?.userAgent ?? null,
-      });
-    }
+    const subject = await this.relationSubject(ignorerId, ignoredId, meta);
+    await this.drizzle.db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(chatUserIgnore)
+        .values({ ignorerId, ignoredId })
+        .onConflictDoNothing()
+        .returning();
+      if (inserted.length > 0) {
+        await this.events.emitInTransaction(tx, 'chat.user.ignored', {
+          ignorerId,
+          ignoredId,
+          ...subject,
+        });
+      }
+    });
     return { success: true } as const;
   }
 
   async unignoreUser(ignorerId: User['id'], ignoredId: User['id'], meta?: ClientMeta) {
     // Soft-delete - see unblockUser's comment, same pattern.
-    const removed = await this.drizzle.db
-      .update(chatUserIgnore)
-      .set({ removedAt: new Date() })
-      .where(
-        and(
-          eq(chatUserIgnore.ignorerId, ignorerId),
-          eq(chatUserIgnore.ignoredId, ignoredId),
-          isNull(chatUserIgnore.removedAt),
-        ),
-      )
-      .returning();
-
-    if (removed.length > 0) {
-      this.events.emit('chat.user.unignored', {
-        ignorerId,
-        actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(ignorerId),
-        ignoredId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(ignoredId),
-        ip: meta?.ip ?? null,
-        userAgent: meta?.userAgent ?? null,
-      });
-    }
+    const subject = await this.relationSubject(ignorerId, ignoredId, meta);
+    await this.drizzle.db.transaction(async (tx) => {
+      const removed = await tx
+        .update(chatUserIgnore)
+        .set({ removedAt: new Date() })
+        .where(
+          and(
+            eq(chatUserIgnore.ignorerId, ignorerId),
+            eq(chatUserIgnore.ignoredId, ignoredId),
+            isNull(chatUserIgnore.removedAt),
+          ),
+        )
+        .returning();
+      if (removed.length > 0) {
+        await this.events.emitInTransaction(tx, 'chat.user.unignored', {
+          ignorerId,
+          ignoredId,
+          ...subject,
+        });
+      }
+    });
     return { success: true } as const;
   }
 

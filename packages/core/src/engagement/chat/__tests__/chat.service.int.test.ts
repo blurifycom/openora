@@ -1223,7 +1223,7 @@ describe('ChatService block list (real PG)', () => {
     expect(dissolveFriendshipOnBlock).toHaveBeenCalledTimes(1);
   });
 
-  it('emits the dissolved-friendship event only after the block transaction commits', async () => {
+  it('emits the dissolved-friendship event on the block transaction', async () => {
     const payload: FriendshipDissolvedPayload = {
       friendshipId: randomUUID(),
       actorId: randomUUID(),
@@ -1241,7 +1241,11 @@ describe('ChatService block list (real PG)', () => {
 
     await svc.blockUser(blockerId, blockedId, NO_CLIENT_META);
 
-    expect(events.emit).toHaveBeenCalledWith('social.friendship.removed', payload);
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'social.friendship.removed',
+      payload,
+    );
   });
 
   it('does not emit a dissolved-friendship event when there was no active friendship to dissolve', async () => {
@@ -1255,9 +1259,11 @@ describe('ChatService block list (real PG)', () => {
 
     await svc.blockUser(blockerId, blockedId, NO_CLIENT_META);
 
-    expect(events.emit.mock.calls.some(([topic]) => topic === 'social.friendship.removed')).toBe(
-      false,
-    );
+    expect(
+      events.emitInTransaction.mock.calls.some(
+        ([, topic]) => topic === 'social.friendship.removed',
+      ),
+    ).toBe(false);
   });
 
   it('rolls back the block insert when the social port fails, instead of leaving a block with no dissolve', async () => {
@@ -1282,9 +1288,9 @@ describe('ChatService block list (real PG)', () => {
     await svc.blockUser(blockerId, blockedId, NO_CLIENT_META);
 
     expect(await db.drizzle.db.select().from(chatUserBlock)).toHaveLength(1);
-    expect(events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.blocked')).toHaveLength(
-      1,
-    );
+    expect(
+      events.emitInTransaction.mock.calls.filter(([, topic]) => topic === 'chat.user.blocked'),
+    ).toHaveLength(1);
   });
 
   it('emits on unblock only when a row was actually removed', async () => {
@@ -1301,7 +1307,7 @@ describe('ChatService block list (real PG)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.removedAt).not.toBeNull();
     expect(
-      events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.unblocked'),
+      events.emitInTransaction.mock.calls.filter(([, topic]) => topic === 'chat.user.unblocked'),
     ).toHaveLength(1);
   });
 
@@ -1317,9 +1323,9 @@ describe('ChatService block list (real PG)', () => {
     const rows = await db.drizzle.db.select().from(chatUserBlock);
     expect(rows).toHaveLength(2);
     expect(rows.filter((r) => r.removedAt === null)).toHaveLength(1);
-    expect(events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.blocked')).toHaveLength(
-      2,
-    );
+    expect(
+      events.emitInTransaction.mock.calls.filter(([, topic]) => topic === 'chat.user.blocked'),
+    ).toHaveLength(2);
     expect(await svc.getExcludedUserIds(blockerId)).toContain(blockedId);
   });
 
@@ -1500,9 +1506,9 @@ describe('ChatService ignore list (real PG)', () => {
     await svc.ignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
 
     expect(await db.drizzle.db.select().from(chatUserIgnore)).toHaveLength(1);
-    expect(events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.ignored')).toHaveLength(
-      1,
-    );
+    expect(
+      events.emitInTransaction.mock.calls.filter(([, topic]) => topic === 'chat.user.ignored'),
+    ).toHaveLength(1);
   });
 
   it('emits on unignore only when a row was actually removed', async () => {
@@ -1519,7 +1525,7 @@ describe('ChatService ignore list (real PG)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.removedAt).not.toBeNull();
     expect(
-      events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.unignored'),
+      events.emitInTransaction.mock.calls.filter(([, topic]) => topic === 'chat.user.unignored'),
     ).toHaveLength(1);
   });
 

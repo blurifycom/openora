@@ -114,6 +114,7 @@ describe('social plugin SOCIAL_COMMANDS wiring', () => {
 
     expect(dissolved).toMatchObject({ friendshipId: friendshipRow.id, reason: 'blocked' });
     expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
   });
 
   it('still dissolves correctly when resolved before the social router is mounted', async () => {

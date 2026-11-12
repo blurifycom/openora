@@ -1,7 +1,7 @@
 import { and, count, desc, eq, inArray, isNotNull, isNull, or, SQL, sql } from 'drizzle-orm';
 import {
-  type DrizzleDb,
   type DrizzleService,
+  type DrizzleTx,
   type EventBus,
   createDomainError,
   createLogger,
@@ -208,41 +208,41 @@ export class SocialService {
       }
     }
 
-    let inserted: FriendshipRow | undefined;
     try {
-      const rows = await this.drizzle.db
-        .insert(friendship)
-        .values({ requesterId: callerId, addresseeId: targetUserId })
-        .returning();
-      inserted = rows[0];
+      const inserted = await this.drizzle.db.transaction(async (tx) => {
+        const [row] = await tx
+          .insert(friendship)
+          .values({ requesterId: callerId, addresseeId: targetUserId })
+          .returning();
+        if (!row) {
+          throw new Error('Friend request insert returned no row');
+        }
+        await this.events.emitInTransaction(tx, 'social.friend_request.sent', {
+          friendshipId: row.id,
+          requesterId: row.requesterId,
+          addresseeId: row.addresseeId,
+          requesterUsername: callerPlayer.username,
+        });
+        return row;
+      });
+      return toFriendshipDto(inserted);
     } catch (error) {
       if (!isUniqueConstraintViolation(error)) {
         throw error;
       }
     }
 
-    if (inserted) {
-      this.events.emit('social.friend_request.sent', {
-        friendshipId: inserted.id,
-        requesterId: inserted.requesterId,
-        addresseeId: inserted.addresseeId,
-        requesterUsername: callerPlayer.username,
-      });
-      return toFriendshipDto(inserted);
-    }
-
-    const accepted = await this.resolveExistingPair(callerId, targetUserId);
-    this.events.emit('social.friend_request.accepted', {
-      friendshipId: accepted.id,
-      requesterId: accepted.requesterId,
-      addresseeId: accepted.addresseeId,
-      accepterId: callerId,
-      accepterUsername: callerPlayer.username,
-    });
-    return toFriendshipDto(accepted);
+    return toFriendshipDto(
+      await this.resolveExistingPair(callerId, targetUserId, callerPlayer.username),
+    );
   }
 
-  private async resolveExistingPair(callerId: Uuid, targetUserId: Uuid): Promise<FriendshipRow> {
+  /** Accepts the target's pending request to the caller, announcing it on the same tx. */
+  private async resolveExistingPair(
+    callerId: Uuid,
+    targetUserId: Uuid,
+    callerUsername: string,
+  ): Promise<FriendshipRow> {
     return this.drizzle.db.transaction(async (tx) => {
       const rows = await tx
         .select()
@@ -277,6 +277,13 @@ export class SocialService {
       if (!updated) {
         throw new RequestAlreadyPendingError();
       }
+      await this.events.emitInTransaction(tx, 'social.friend_request.accepted', {
+        friendshipId: updated.id,
+        requesterId: updated.requesterId,
+        addresseeId: updated.addresseeId,
+        accepterId: callerId,
+        accepterUsername: callerUsername,
+      });
       return updated;
     });
   }
@@ -383,7 +390,7 @@ export class SocialService {
   }
 
   private async dissolveFriendship(
-    tx: DrizzleDb,
+    tx: DrizzleTx,
     userA: Uuid,
     userB: Uuid,
     actorId: Uuid,
@@ -415,17 +422,19 @@ export class SocialService {
   }
 
   async removeFriend(callerId: Uuid, targetUserId: Uuid): Promise<void> {
-    const dissolved = await this.dissolveFriendship(
-      this.drizzle.db,
-      callerId,
-      targetUserId,
-      callerId,
-      'removed_by_player',
-    );
-    if (!dissolved) {
-      throw new FriendshipNotFoundError(targetUserId);
-    }
-    this.events.emit('social.friendship.removed', dissolved);
+    await this.drizzle.db.transaction(async (tx) => {
+      const dissolved = await this.dissolveFriendship(
+        tx,
+        callerId,
+        targetUserId,
+        callerId,
+        'removed_by_player',
+      );
+      if (!dissolved) {
+        throw new FriendshipNotFoundError(targetUserId);
+      }
+      await this.events.emitInTransaction(tx, 'social.friendship.removed', dissolved);
+    });
   }
 
   async dissolveFriendshipOnBlock(
@@ -434,7 +443,7 @@ export class SocialService {
     blockedId: Uuid,
   ): Promise<FriendshipDissolvedPayload | null> {
     const dissolved = await this.dissolveFriendship(
-      tx as DrizzleDb,
+      tx as DrizzleTx,
       blockerId,
       blockedId,
       blockerId,
@@ -545,24 +554,6 @@ export class SocialService {
       throw new FriendRequestUnavailableError();
     }
 
-    const rows = await this.drizzle.db
-      .update(friendship)
-      .set({ acceptedAt: new Date() })
-      .where(
-        and(
-          eq(friendship.id, friendshipId),
-          eq(friendship.addresseeId, callerId),
-          isNull(friendship.acceptedAt),
-          isNull(friendship.refusedAt),
-          isNull(friendship.removedAt),
-        ),
-      )
-      .returning();
-    const updated = rows[0];
-    if (!updated) {
-      throw new FriendRequestNotFoundError(friendshipId);
-    }
-
     const [callerPlayer] = await this.playersWithUsername(eq(player.userId, callerId));
     if (!callerPlayer) {
       // Invariant: an authenticated caller always has a player row (see
@@ -570,12 +561,31 @@ export class SocialService {
       throw new Error(`Player profile missing for authenticated caller: ${callerId}`);
     }
 
-    this.events.emit('social.friend_request.accepted', {
-      friendshipId: updated.id,
-      requesterId: updated.requesterId,
-      addresseeId: updated.addresseeId,
-      accepterId: callerId,
-      accepterUsername: callerPlayer.username,
+    const updated = await this.drizzle.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(friendship)
+        .set({ acceptedAt: new Date() })
+        .where(
+          and(
+            eq(friendship.id, friendshipId),
+            eq(friendship.addresseeId, callerId),
+            isNull(friendship.acceptedAt),
+            isNull(friendship.refusedAt),
+            isNull(friendship.removedAt),
+          ),
+        )
+        .returning();
+      if (!row) {
+        throw new FriendRequestNotFoundError(friendshipId);
+      }
+      await this.events.emitInTransaction(tx, 'social.friend_request.accepted', {
+        friendshipId: row.id,
+        requesterId: row.requesterId,
+        addresseeId: row.addresseeId,
+        accepterId: callerId,
+        accepterUsername: callerPlayer.username,
+      });
+      return row;
     });
     return toFriendshipDto(updated);
   }
@@ -606,28 +616,28 @@ export class SocialService {
     party: SQL,
     event: 'social.friend_request.declined' | 'social.friend_request.cancelled',
   ): Promise<void> {
-    const rows = await this.drizzle.db
-      .update(friendship)
-      .set({ removedAt: new Date() })
-      .where(
-        and(
-          eq(friendship.id, friendshipId),
-          party,
-          isNull(friendship.acceptedAt),
-          isNull(friendship.refusedAt),
-          isNull(friendship.removedAt),
-        ),
-      )
-      .returning();
-    const updated = rows[0];
-    if (!updated) {
-      throw new FriendRequestNotFoundError(friendshipId);
-    }
-
-    this.events.emit(event, {
-      friendshipId: updated.id,
-      requesterId: updated.requesterId,
-      addresseeId: updated.addresseeId,
+    await this.drizzle.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(friendship)
+        .set({ removedAt: new Date() })
+        .where(
+          and(
+            eq(friendship.id, friendshipId),
+            party,
+            isNull(friendship.acceptedAt),
+            isNull(friendship.refusedAt),
+            isNull(friendship.removedAt),
+          ),
+        )
+        .returning();
+      if (!updated) {
+        throw new FriendRequestNotFoundError(friendshipId);
+      }
+      await this.events.emitInTransaction(tx, event, {
+        friendshipId: updated.id,
+        requesterId: updated.requesterId,
+        addresseeId: updated.addresseeId,
+      });
     });
   }
 
