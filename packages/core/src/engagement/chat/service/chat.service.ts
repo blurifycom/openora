@@ -2806,8 +2806,12 @@ export class ChatService {
     return msg;
   }
 
+  // `roomId`, `actorId` and `username` are for the outbox writer; the row already holds them.
   async updateSystemMessage(args: {
     messageId: ChatMessage['id'];
+    roomId: ChatRoom['id'] | null;
+    actorId: User['id'];
+    username?: User['name'];
     metadata: CommandMetadata;
     tx?: unknown;
   }): Promise<CommandChatMessage> {
@@ -2818,8 +2822,12 @@ export class ChatService {
         metadata: args.metadata,
         version: sql`greatest(${chatMessage.version}, ${CHAT_SYSTEM_MESSAGE_VERSION.updated})`,
       })
-      .where(eq(chatMessage.id, args.messageId))
+      // Only a system card: an id that names a player's message never rewrites it.
+      .where(and(eq(chatMessage.id, args.messageId), eq(chatMessage.type, 'system')))
       .returning();
+    if (!record) {
+      throw new Error(`chat system card ${args.messageId} not found`);
+    }
     const message = toWrittenSystemMessage(record, args.metadata);
     if (!args.tx) {
       publishChatEvent(this.transport, message.roomId, message);

@@ -226,6 +226,11 @@ export default {
           { messageId: card.messageId, roomId: card.roomId },
           'chat system card dropped: its room no longer exists',
         );
+      } else if (outcome === 'stale') {
+        logger.debug(
+          { messageId: card.messageId, version: card.version },
+          'chat system card skipped: a same or newer version is stored',
+        );
       }
     });
 

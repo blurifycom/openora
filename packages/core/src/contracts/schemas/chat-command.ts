@@ -66,6 +66,8 @@ export const CHAT_SYSTEM_AUTHOR_USERNAME = 'system';
 
 // The generation of a system card. A replica applies an upsert only when its version is
 // higher than the stored one, so a late or redelivered post never reverts a settled card.
+// A card has one transition, post then one update (claimed, expired or refunded): a second,
+// different update carries the same version and is dropped as stale.
 export const CHAT_SYSTEM_MESSAGE_VERSION = { posted: 1, updated: 2 } as const;
 
 export const CHAT_MODERATION_SCOPES = [GLOBAL_CHAT_ROOM_ID, '__all_public', '__all'] as const;

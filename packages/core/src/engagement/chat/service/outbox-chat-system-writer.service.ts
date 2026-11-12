@@ -5,7 +5,7 @@ import {
   CHAT_SYSTEM_AUTHOR_USERNAME,
   CHAT_SYSTEM_MESSAGE_VERSION,
 } from '@openora/core/contracts';
-import type { EventBus } from '@openora/core/server';
+import type { DrizzleService, EventBus } from '@openora/core/server';
 import type { SystemCardUpsert } from './chat-system-card.service.js';
 
 type CardArgs = Parameters<ChatSystemWriter['updateSystemMessage']>[0];
@@ -13,17 +13,25 @@ type CardArgs = Parameters<ChatSystemWriter['updateSystemMessage']>[0];
 /**
  * `CHAT_SYSTEM_WRITER` for a service that does not run chat: the card travels as a
  * `chat.system_message.upserted` event written on the caller's transaction, so it exists if
- * and only if the money it reports committed. The returned message is built here, the same
- * shape the local writer returns; the caller still publishes it after commit.
+ * and only if the money it reports committed. Without a `tx` it writes the event in a
+ * transaction of its own. The returned message is built here, the same shape the local writer
+ * returns; it is never published here, the caller publishes it after commit.
  */
 export class OutboxChatSystemWriter implements ChatSystemWriter {
-  constructor(private readonly events: EventBus) {}
+  constructor(
+    private readonly events: EventBus,
+    private readonly drizzle: DrizzleService,
+  ) {}
 
   postSystemMessage(
     args: Parameters<ChatSystemWriter['postSystemMessage']>[0],
   ): Promise<CommandChatMessage> {
     return this.write(
-      { ...args, messageId: args.messageId ?? randomUUID() },
+      {
+        ...args,
+        messageId: args.messageId ?? randomUUID(),
+        actorId: args.actorId ?? CHAT_SYSTEM_AUTHOR_ID,
+      },
       CHAT_SYSTEM_MESSAGE_VERSION.posted,
     );
   }
@@ -36,21 +44,17 @@ export class OutboxChatSystemWriter implements ChatSystemWriter {
     args: CardArgs,
     version: SystemCardUpsert['version'],
   ): Promise<CommandChatMessage> {
-    if (args.tx === undefined) {
-      throw new Error('OutboxChatSystemWriter needs the caller transaction (tx)');
-    }
-    if (args.roomId === undefined) {
-      throw new Error('OutboxChatSystemWriter needs the card roomId');
-    }
     const card: SystemCardUpsert = {
       messageId: args.messageId,
       roomId: args.roomId,
-      actorId: args.actorId ?? CHAT_SYSTEM_AUTHOR_ID,
+      actorId: args.actorId,
       username: args.username ?? CHAT_SYSTEM_AUTHOR_USERNAME,
       metadata: args.metadata,
       version,
     };
-    await this.events.emitInTransaction(args.tx, 'chat.system_message.upserted', card);
+    await (args.tx === undefined
+      ? this.drizzle.db.transaction((tx) => this.emit(tx, card))
+      : this.emit(args.tx, card));
     return {
       id: card.messageId,
       roomId: card.roomId,
@@ -63,5 +67,9 @@ export class OutboxChatSystemWriter implements ChatSystemWriter {
       isDeleted: false,
       createdAt: new Date().toISOString(),
     };
+  }
+
+  private emit(tx: unknown, card: SystemCardUpsert): Promise<void> {
+    return this.events.emitInTransaction(tx, 'chat.system_message.upserted', card);
   }
 }
