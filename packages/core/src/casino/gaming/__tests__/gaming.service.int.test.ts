@@ -39,6 +39,7 @@ import {
   RgRestrictedError,
   InsufficientBalanceError,
   WinCreditFailedError,
+  WinAmountInvalidError,
   ExternalRoundOwnerMismatchError,
   GameGeoFiltersUnavailableError,
 } from '../service/gaming.service.js';
@@ -1842,6 +1843,27 @@ describe('GamingService.endRound (real PG)', () => {
     expect(unsettled?.status).toBe('active');
     expect(Number(unsettled?.winAmount)).toBe(0);
   });
+
+  it.each(['1e-7', '0.0000000000000000001', '-5', 'NaN'])(
+    'refuses a provider win of %j by name and leaves the round open, crediting nothing',
+    async (winAmount) => {
+      const created = await seedGame();
+      const round = await seedRound(created.id, userId);
+      const walletCommands = makeWalletCommands({
+        ok: true,
+        moved: false,
+        newBalance: '0',
+        currency: 'USD',
+      });
+      const svc = makeService({ provider: settlingProvider(winAmount), walletCommands });
+
+      await expect(svc.endRound(userId, round.id)).rejects.toBeInstanceOf(WinAmountInvalidError);
+
+      expect(walletCommands.credit).not.toHaveBeenCalled();
+      const [unsettled] = await db.drizzle.db.select().from(gameRound);
+      expect(unsettled?.status).toBe('active');
+    },
+  );
 });
 
 describe('GamingService.endRound wallet.balance.changed event (real PG)', () => {

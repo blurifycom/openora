@@ -207,7 +207,7 @@ describe('sportsbook ledger', () => {
   it('refuses and files a reserve whose wallet reference another request holds for good', async () => {
     const player = await fundedPlayer(app, '100');
     const providerTxId = txId();
-    await takeWalletRef(player, providerTxId);
+    const walletTransactionId = await takeWalletRef(player, providerTxId);
 
     expect(await ledgerOf(app).reserve({ ...reserveArgs(player.sessionId), providerTxId })).toEqual(
       { status: 'refused', reason: 'fingerprint_mismatch' },
@@ -220,7 +220,12 @@ describe('sportsbook ledger', () => {
       kind: 'fingerprint_mismatch',
       betId: null,
       userId: player.userId,
-      detail: { providerTxId, walletRefTaken: 'a stake' },
+      detail: {
+        providerTxId,
+        walletRefTaken: 'a stake',
+        walletRef: `sportsbook:${PROVIDER}/tx:${providerTxId}`,
+        walletTransactionId,
+      },
     });
     expect(await balanceOf(app, player.userId)).toBe('95.000000000000000000');
   });
@@ -267,7 +272,7 @@ describe('sportsbook ledger', () => {
         );
       }
       const providerTxId = txId();
-      await takeWalletRef(player, providerTxId);
+      const walletTransactionId = await takeWalletRef(player, providerTxId);
 
       expect(await move(reserve.providerBetId, providerTxId)).toEqual({
         status: 'refused',
@@ -281,7 +286,12 @@ describe('sportsbook ledger', () => {
         kind: 'fingerprint_mismatch',
         betId,
         userId: player.userId,
-        detail: { providerTxId, walletRefTaken },
+        detail: {
+          providerTxId,
+          walletRefTaken,
+          walletRef: `sportsbook:${PROVIDER}/tx:${providerTxId}`,
+          walletTransactionId,
+        },
       });
       expect((await betRow(betId!)).status).toBe(status);
       expect(await balanceOf(app, player.userId)).toBe('85.000000000000000000');
@@ -1304,8 +1314,9 @@ describe('provider disagreement', () => {
 });
 
 /** Plants a stake under the wallet reference a callback with `providerTxId` would move on. */
-const takeWalletRef = (player: SportsbookPlayer, providerTxId: string) =>
-  app.container.get(DRIZZLE).db.transaction((tx) =>
+/** Plants a stake on the wallet reference `providerTxId` maps to; returns the row holding it. */
+async function takeWalletRef(player: SportsbookPlayer, providerTxId: string): Promise<string> {
+  const taken = await app.container.get(DRIZZLE).db.transaction((tx) =>
     app.container.get(WALLET_COMMANDS).debit(tx, {
       userId: player.userId,
       amount: '5',
@@ -1313,6 +1324,11 @@ const takeWalletRef = (player: SportsbookPlayer, providerTxId: string) =>
       providerRef: { providerName: `sportsbook:${PROVIDER}`, providerRefId: `tx:${providerTxId}` },
     }),
   );
+  if (!taken.ok || !taken.moved) {
+    throw new Error('the planted stake did not move');
+  }
+  return taken.transactionId;
+}
 
 function settleWon(providerBetId: string, payout: string) {
   return ledgerOf(app).settle({
