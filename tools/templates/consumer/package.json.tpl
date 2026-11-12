@@ -9,7 +9,7 @@
     "check:types": "turbo run check:types",
     "check:lint": "oxlint .",
     "test:unit": "turbo run test:unit",
-    "verify": "turbo run check:types check:lint test:unit && node .rulesync/hooks/guard-mr.mjs --stamp",
+    "verify": "sh -c 'turbo run check:types check:lint test:unit \"$@\" && { [ $# -gt 0 ] || node .rulesync/hooks/guard-mr.mjs --stamp; }' verify",
     "gen:agents": "rulesync generate",
     "sync:agents": "node tools/sync-agents.mjs",
     "oss:worktree": "node tools/oss-worktree.mjs",

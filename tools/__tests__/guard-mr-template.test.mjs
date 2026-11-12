@@ -45,6 +45,14 @@ test('commands that do not open a review are allowed', () => {
   assert.equal(exitCode('gh api repos/o/r/pulls'), ALLOWED);
   assert.equal(exitCode('gh api repos/o/r/pulls -f state=open --method GET'), ALLOWED);
   assert.equal(exitCode('gh api repos/o/r/pulls/1/comments -f body=ok'), ALLOWED);
+  assert.equal(exitCode('rg "glab mr create" docs'), ALLOWED);
+  assert.equal(exitCode('git commit -m "docs: say gh pr create opens a draft"'), ALLOWED);
+  assert.equal(exitCode('rg createPullRequest src'), ALLOWED);
+});
+
+test('a promotion from a shared branch needs no stamp', () => {
+  assert.equal(exitCode('glab mr create --source-branch dev --target-branch stage'), ALLOWED);
+  assert.equal(exitCode('gh pr create --head stage --base prod'), ALLOWED);
 });
 
 test('opening an MR or PR without a verify stamp is denied', () => {
@@ -70,6 +78,7 @@ test('a stamp outside `pnpm verify` is refused', () => {
 test('a stamp of the clean HEAD allows it', () => {
   assert.equal(stamp(), 0);
   assert.equal(exitCode('glab mr create --fill'), ALLOWED);
+  git('branch', 'verified');
 });
 
 test('an uncommitted edit or a new commit invalidates the stamp', () => {
@@ -78,6 +87,14 @@ test('an uncommitted edit or a new commit invalidates the stamp', () => {
   git('add', 'a.txt');
   git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'a');
   assert.equal(exitCode('gh pr create'), DENIED);
+});
+
+test('a named source branch is judged by its own commit', () => {
+  git('branch', 'unverified');
+  assert.equal(exitCode('glab mr create --source-branch verified --target-branch dev'), ALLOWED);
+  assert.equal(exitCode('gh pr create --head me:verified'), ALLOWED);
+  assert.equal(exitCode('glab mr create --source-branch unverified'), DENIED);
+  assert.equal(exitCode('gh pr create --head missing'), DENIED);
 });
 
 test('a stamp taken on a dirty tree is not recorded', () => {

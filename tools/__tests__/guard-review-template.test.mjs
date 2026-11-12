@@ -74,8 +74,35 @@ test('an APPROVED or GO review of HEAD lets the push through', () => {
   assert.equal(exitCode('git push'), ALLOWED);
   saveReview(head, 'GO - 0 BLOCK');
   assert.equal(exitCode('gh pr create --fill'), ALLOWED);
-  saveReview(head.slice(0, 12), 'APPROVED');
+  saveReview(head.toUpperCase(), 'APPROVED');
   assert.equal(exitCode('git push'), ALLOWED);
+});
+
+test('an abbreviated SHA is not an approval', () => {
+  saveReview(head.slice(0, 12), 'APPROVED');
+  assert.equal(exitCode('git push'), DENIED);
+});
+
+test('a push chained after a command that moves HEAD is denied', () => {
+  saveReview(head, 'APPROVED');
+  assert.equal(exitCode('git commit -am "x" && git push'), DENIED);
+  assert.equal(exitCode('git -c a=b rebase origin/dev; gh pr create --fill'), DENIED);
+  assert.equal(exitCode('git status && git push'), ALLOWED);
+  assert.equal(exitCode('git commit -am "x" && git push origin --delete old'), ALLOWED);
+});
+
+test('a PR/MR naming its source branch is judged by that branch', () => {
+  git('branch', 'feat/unreviewed', 'HEAD');
+  git('checkout', '-q', '-b', 'main');
+  saveReview(head, 'APPROVED');
+  assert.equal(exitCode('gh pr create --head feat/x --base dev'), ALLOWED);
+  assert.equal(exitCode('glab mr create --source-branch feat/missing'), DENIED);
+  assert.equal(exitCode('glab mr create --fill'), ALLOWED);
+  git('checkout', '-q', 'feat/unreviewed');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'u');
+  git('checkout', '-q', 'main');
+  assert.equal(exitCode('gh pr create --head me:feat/unreviewed'), DENIED);
+  git('checkout', '-q', 'feat/x');
 });
 
 test('a hand merge is denied, quoted prose about one is not', () => {
