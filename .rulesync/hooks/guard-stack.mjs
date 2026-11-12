@@ -9,15 +9,19 @@
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
 const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
-// Each `gh pr create|edit` command up to the next separator, then every `--base`/`-B` in it,
-// glued (`-Bfeat/x`) or not: a repeated flag must not hide a feature base behind a shared one.
-const PR_COMMAND =
-  /(?:^|[;&|\n(]\s*)(?:(?:env\s+)?\w+=\S*\s+)*(?:command\s+)?(?:\S*\/)?gh(?:\s+(?:-R|--repo)\s+\S+)?\s+pr\s+(?:create|edit)\b([^;&|\n]*)/g;
-const BASE_FLAG = /\s(?:--base(?:=|\s+)|-B\s*)['"]?([^\s'"]+)/g;
+// Every `--base`/`-B` is judged, glued (`-Bfeat/x`) or not: a repeated flag must not hide a
+// feature base behind a shared one. `-R <repo>` goes before or after `pr`; `new` aliases `create`.
+const REPO = String.raw`(?:\s+(?:-R\s*|--repo(?:=|\s+))\S+)?`;
+const PR_COMMAND = new RegExp(
+  String.raw`(?:^|[;&|\n(]\s*)(?:(?:env\s+)?\w+=\S*\s+)*(?:command\s+|env\s+)?(?:\S*\/)?gh${REPO}\s+pr${REPO}\s+(?:create|new|edit)\b([^;&|\n]*)`,
+  'g',
+);
+const BASE_FLAG = /\s(?:--base(?:=|\s+)|-[defw]*B(?:=|\s*))['"]?([^\s'"]+)/g;
 
-// Quoted prose (a title or body) is blanked so a `--base` inside it never counts.
+// Quoted prose (a title or body) or a quoted separator is blanked so a `--base` inside it never
+// counts and never cuts a flag list short.
 const command = extractCommand(readPayload()).replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, (quoted) =>
-  /\s/.test(quoted) ? '""' : quoted,
+  /[\s;&|(){}]/.test(quoted) ? '""' : quoted,
 );
 // Every PR command in a chain is judged, not only the first.
 const base = [...command.matchAll(PR_COMMAND)]

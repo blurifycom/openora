@@ -38,4 +38,13 @@ test('every base in a command is judged, glued or repeated', () => {
   assert.equal(exitCode('gh pr create -Bfeat/a'), DENIED);
   assert.equal(exitCode('/usr/bin/gh pr edit 3 -B feat/a'), DENIED);
   assert.equal(exitCode('gh pr create -Bdev'), ALLOWED);
+  assert.equal(exitCode('gh pr create -B=dev'), ALLOWED);
+  assert.equal(exitCode('gh pr create -dB feat/a'), DENIED);
+  assert.equal(exitCode("gh pr create -t 'x;y' --base feat/a"), DENIED);
+});
+
+test('aliases and prefixes are read', () => {
+  assert.equal(exitCode('gh pr new --base feat/a'), DENIED);
+  assert.equal(exitCode('gh pr -R o/r create --base feat/a'), DENIED);
+  assert.equal(exitCode('env gh pr create --base feat/a'), DENIED);
 });

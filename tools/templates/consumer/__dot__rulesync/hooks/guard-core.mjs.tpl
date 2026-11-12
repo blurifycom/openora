@@ -73,7 +73,7 @@ const rawCommand = extractCommand(payload);
 const insideOss = (dir) => {
   try {
     const real = realpathSync(dir);
-    return [OSS, oss].some((root) => real === root || real.startsWith(root + sep));
+    return real === oss || real.startsWith(oss + sep);
   } catch {
     return false;
   }
