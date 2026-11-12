@@ -14,6 +14,7 @@ import { migrate as migrateAudit } from '@openora/core/audit/migrate';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { user } from '@openora/core/pam/schema/identity';
+import { auditOutbox } from '@openora/core/server';
 import { makeCache } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { SupportHistoryService } from '../service/support-history.service.js';
@@ -55,6 +56,8 @@ type Row = {
   /** Hours after registration the event claims, or a raw value, written into `after.changedAt`. */
   changedAt?: number | string;
   action?: string;
+  /** Still in `audit_outbox`, not yet shipped to `audit_log`. */
+  queued?: boolean;
 };
 
 /** A player whose current email is `account.email`; `name('a')` is another address of theirs. */
@@ -89,8 +92,8 @@ async function scenario(rows: Row[], { registeredEmail }: { registeredEmail?: st
   };
   for (const row of rows) {
     const subject = row.subject ?? 'player';
-    await db.drizzle.db.insert(auditLog).values({
-      actorType: 'player',
+    const record = {
+      actorType: 'player' as const,
       actorId: player.id,
       action: row.action ?? 'identity.email.changed',
       resourceType: subject === 'user' || subject === 'otherUser' ? 'user' : 'player',
@@ -99,10 +102,21 @@ async function scenario(rows: Row[], { registeredEmail }: { registeredEmail?: st
       ],
       before: side(row.before) ?? null,
       after: withChangedAt(side(row.after), row.changedAt),
+    };
+    const writtenAt = new Date(registeredAt.getTime() + row.at * HOUR);
+    if (row.queued) {
+      await db.drizzle.db.insert(auditOutbox).values({
+        eventId: randomUUID(),
+        entry: { ...record, correlationId: null, createdAt: writtenAt.toISOString() },
+      });
+      continue;
+    }
+    await db.drizzle.db.insert(auditLog).values({
+      ...record,
       // Off-chain rows: a distinct predecessor each, as the unique prev_hash requires.
       prevHash: randomUUID(),
       hash: randomUUID(),
-      createdAt: new Date(registeredAt.getTime() + row.at * HOUR),
+      createdAt: writtenAt,
     });
   }
   const at = (hours: number) => new Date(registeredAt.getTime() + hours * HOUR).toISOString();
@@ -333,6 +347,27 @@ describe('support history email windows from crafted audit rows (real PG)', () =
 
   it('trusts no window when another account took the address, whatever its case', async () => {
     const s = await scenario([{ subject: 'other', before: 'q', after: 'CUR', at: 5 }]);
+    expect(s.asked).toEqual([]);
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
+    warnedWithUserOnly(s.userId);
+  });
+
+  it('reads a change still queued for the audit chain after the shipped ones', async () => {
+    const s = await scenario([
+      { before: 'a', after: 'b', at: 10 },
+      { before: 'b', after: 'cur', at: 20, queued: true },
+    ]);
+    expect(s.asked).toEqual([
+      [s.win('a', 'registered', 10), s.win('b', 10, 20), s.win('cur', 20, null)],
+    ]);
+    expect(s.history.tickets).toEqual({ state: 'ok', items: [], complete: true });
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('trusts no window when another account took the address in a change still queued', async () => {
+    const s = await scenario([
+      { subject: 'other', before: 'q', after: 'CUR', at: 5, queued: true },
+    ]);
     expect(s.asked).toEqual([]);
     expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);

@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
 import {
+  auditOutbox,
   cached,
   createDomainError,
   createLogger,
@@ -219,6 +220,16 @@ const toEmailChange = ({
   };
 };
 
+// Email changes still queued in `audit_outbox`. The shipper moves a row into `audit_log` and
+// deletes it in one transaction, so one snapshot holds each change in exactly one of the two, and
+// the queued ones are chained after every row already in the log, in queue order.
+const queuedField = (key: string) => sql`${auditOutbox.entry}->>${key}`;
+const QUEUED_CHANGE = {
+  before: sql<Record<string, unknown> | null>`${auditOutbox.entry}->'before'`,
+  after: sql<Record<string, unknown> | null>`${auditOutbox.entry}->'after'`,
+  at: sql`(${auditOutbox.entry}->>'createdAt')::timestamptz`.mapWith(auditLog.createdAt),
+};
+
 type Section = { state: 'ok' | 'unavailable'; items: SupportHistoryItem[] };
 
 type SupportHistoryDeps = {
@@ -321,7 +332,20 @@ export class SupportHistoryService {
         ),
       )
       .orderBy(asc(auditLog.seq));
-    return rows.map(toEmailChange);
+    const queued = await tx
+      .select(QUEUED_CHANGE)
+      .from(auditOutbox)
+      .where(
+        and(
+          sql`${queuedField('action')} = 'identity.email.changed'`,
+          or(
+            sql`${queuedField('resourceType')} = 'player' AND ${queuedField('resourceId')} = ${playerId}`,
+            sql`${queuedField('resourceType')} = 'user' AND ${queuedField('resourceId')} = ${userId}`,
+          ),
+        ),
+      )
+      .orderBy(asc(auditOutbox.id));
+    return [...rows, ...queued].map(toEmailChange);
   }
 
   /**
@@ -353,7 +377,21 @@ export class SupportHistoryService {
           or(ne(auditLog.resourceType, 'user'), ne(auditLog.resourceId, userId)),
         ),
       );
-    return rows.map(toEmailChange);
+    const queued = await tx
+      .select(QUEUED_CHANGE)
+      .from(auditOutbox)
+      .where(
+        and(
+          sql`${queuedField('action')} = 'identity.email.changed'`,
+          or(
+            sql`lower(${auditOutbox.entry}->'before'->>'email') = lower(${email})`,
+            sql`lower(${auditOutbox.entry}->'after'->>'email') = lower(${email})`,
+          ),
+          sql`(${queuedField('resourceType')} <> 'player' OR ${queuedField('resourceId')} <> ${playerId})`,
+          sql`(${queuedField('resourceType')} <> 'user' OR ${queuedField('resourceId')} <> ${userId})`,
+        ),
+      );
+    return [...rows, ...queued].map(toEmailChange);
   }
 
   private async section(
