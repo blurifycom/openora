@@ -83,6 +83,7 @@ test('a promotion sent from a shared branch needs no branch review', () => {
   git('worktree', 'add', '-q', '-b', 'dev', trunk);
   after(() => rmSync(trunk, { recursive: true, force: true }));
   assert.equal(exitCode(`cd ${trunk} && gh pr create --base stage --fill`), ALLOWED);
+  assert.equal(exitCode(`cd ${trunk} && git push`), DENIED);
 });
 
 test('a review saved in the main checkout covers a linked worktree', () => {

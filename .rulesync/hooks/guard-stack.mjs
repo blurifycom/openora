@@ -10,7 +10,7 @@ import { deny, extractCommand, readPayload } from './_shared.mjs';
 
 const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
 const PR_WITH_BASE =
-  /(?:^|[;&|\n(]\s*)gh(?:\s+(?:-R|--repo)\s+\S+)?\s+pr\s+(?:create|edit)\b[^;&|\n]*?\s(?:--base|-B)(?:=|\s+)['"]?([^\s'"]+)/;
+  /(?:^|[;&|\n(]\s*)(?:(?:env\s+)?\w+=\S*\s+)*gh(?:\s+(?:-R|--repo)\s+\S+)?\s+pr\s+(?:create|edit)\b[^;&|\n]*?\s(?:--base|-B)(?:=|\s+)['"]?([^\s'"]+)/;
 
 // Quoted prose (a title or body) is blanked so a `--base` inside it never counts.
 const command = extractCommand(readPayload()).replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, (quoted) =>
