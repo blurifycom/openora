@@ -145,7 +145,7 @@ export { TAG_EVALUATION_COMMANDS } from './tag-evaluation-commands.js';
 
 export type { UserCommands } from './identity.js';
 export type { IdentityReader } from './identity-reader.js';
-export { userIdOfPlayer } from './identity-reader.js';
+export { userIdOfPlayer, userIdsOfPlayers } from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';
 
 export type {
@@ -490,7 +490,7 @@ export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js
 export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
 export type { PlayEligibilityPort, PlayRefusal } from './play-eligibility.js';
-export { PLAY_ELIGIBILITY, PLAY_REFUSALS } from './play-eligibility.js';
+export { PLAY_ELIGIBILITY, PLAY_REFUSALS, isPlayRefused } from './play-eligibility.js';
 export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
 export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
 export type {
@@ -509,6 +509,8 @@ export {
 } from './rg-standing-reader.js';
 export type { DepositHoldPolicy } from './deposit-hold.js';
 export { DEPOSIT_HOLD_POLICY } from './deposit-hold.js';
+export type { DepositAdmissionPolicy } from './deposit-admission.js';
+export { DEPOSIT_ADMISSION_POLICY, DepositRefusedError } from './deposit-admission.js';
 
 export type {
   ChatSystemMessage,

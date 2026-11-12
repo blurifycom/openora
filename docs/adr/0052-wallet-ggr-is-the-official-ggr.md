@@ -1,4 +1,4 @@
-# ADR-0050: Wallet GGR Is the Official GGR
+# ADR-0052: Wallet GGR Is the Official GGR
 
 **Date**: 2026-11-04
 **Status**: Accepted

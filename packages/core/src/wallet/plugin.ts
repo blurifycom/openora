@@ -20,9 +20,11 @@ import {
   PLATFORM_CONFIG,
   RATE_LIMITER,
   PLAYER_TAGS,
+  PLAYER_SEGMENT_READER,
   TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   RG_LIMITS,
+  DEPOSIT_ADMISSION_POLICY,
   DEPOSIT_HOLD_POLICY,
   KYC_WITHDRAWAL_POLICY,
   WITHDRAWAL_SECURITY,
@@ -47,7 +49,9 @@ import {
 } from '@openora/core/contracts';
 import {
   holdWithdrawalAction,
+  playersDepositCompareTool,
   walletActivityTool,
+  withdrawalsQueueTool,
   type WalletBalanceChangeReason,
 } from './contract/index.js';
 import {
@@ -56,6 +60,7 @@ import {
   WithdrawalNotPendingError,
 } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
+import { DepositCompareService, SegmentTooLargeError } from './service/deposit-compare.service.js';
 import {
   CustodySweepService,
   CUSTODY_SWEEP_QUEUE,
@@ -80,6 +85,13 @@ const DEFAULT_SWEEP_CRON = '*/15 * * * *';
 
 const WALLET_RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 const WalletReconciliationJobSchema = z.object({ runId: UuidSchema.optional() });
+
+function depositCompareRefusal(err: unknown): never {
+  if (err instanceof SegmentTooLargeError) {
+    throw new McpToolError('segment_too_large');
+  }
+  throw err;
+}
 
 function holdRefusalCode(err: unknown) {
   if (err instanceof WithdrawalNotFoundError) {
@@ -260,6 +272,10 @@ export default {
         withdrawalSecurity: c.has(WITHDRAWAL_SECURITY) ? c.get(WITHDRAWAL_SECURITY) : undefined,
         mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : undefined,
         depositHold: c.has(DEPOSIT_HOLD_POLICY) ? c.get(DEPOSIT_HOLD_POLICY) : undefined,
+        depositAdmission: c.has(DEPOSIT_ADMISSION_POLICY)
+          ? c.get(DEPOSIT_ADMISSION_POLICY)
+          : undefined,
+        playEligibility: c.get(PLAY_ELIGIBILITY),
         grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
         bonusLifecycle: c.has(BONUS_LIFECYCLE) ? c.get(BONUS_LIFECYCLE) : undefined,
       }));
@@ -279,6 +295,38 @@ export default {
         }
         return { playerId, ...(await wallet.getActivity({ userId, windowDays })) };
       };
+    });
+
+    ctx.mcp.tool(withdrawalsQueueTool, (c) => {
+      const wallet = walletService(c);
+      return (input) => wallet.withdrawalQueueOverview(input);
+    });
+
+    ctx.mcp.tool(playersDepositCompareTool, (c) => {
+      const identity = c.get(IDENTITY_READER);
+      if (!identity.getUserIdsByPlayerIds) {
+        logger.warn(
+          'the bound IDENTITY_READER has no getUserIdsByPlayerIds - players.deposit_compare will answer internal_error',
+        );
+      }
+      if (!c.has(PLAYER_SEGMENT_READER)) {
+        logger.warn(
+          'no PLAYER_SEGMENT_READER is bound (the tag module binds it) - players.deposit_compare will answer internal_error',
+        );
+        return async () => {
+          throw new Error('players.deposit_compare needs a bound PLAYER_SEGMENT_READER');
+        };
+      }
+      const deposits = new DepositCompareService({
+        drizzle: c.get(DRIZZLE),
+        segments: c.get(PLAYER_SEGMENT_READER),
+        identity,
+        rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+        pivotCurrency: resolveExchangeRatePivot(
+          c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).exchangeRate : undefined,
+        ),
+      });
+      return (input) => deposits.compare(input).catch(depositCompareRefusal);
     });
 
     ctx.actions.register(holdWithdrawalAction, (c) => {

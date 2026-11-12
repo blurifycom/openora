@@ -272,6 +272,7 @@ export const makeIdentityReader = (): IdentityReader =>
     getPlayerKycStatusByUserId: vi.fn().mockResolvedValue(null),
     getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([]),
     canReceiveLoginWithdrawalAlerts: vi.fn().mockResolvedValue(false),
+    getPlayerDateOfBirthByUserId: vi.fn().mockResolvedValue(null),
   });
 
 /** UserCommands double whose `createAdmin` answers a fresh id, for a test that does not read identity's rows. */

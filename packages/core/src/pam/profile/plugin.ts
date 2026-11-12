@@ -9,6 +9,7 @@ import {
   RATE_LIMITER,
   USER_COMMANDS,
   resolveDisplayCurrencies,
+  resolveMinPlayerAge,
 } from '@openora/core/contracts';
 import { ProfileService } from './service/profile.service.js';
 import { createProfileRouter } from './router/index.js';
@@ -22,6 +23,7 @@ const makeProfileService = (c: TypedContainer<CoreTokenCatalog>) =>
     userCommands: c.get(USER_COMMANDS),
     limiter: c.get(RATE_LIMITER),
     supportedDisplayCurrencies: resolveDisplayCurrencies(c.get(PLATFORM_CONFIG).displayCurrencies),
+    minPlayerAge: resolveMinPlayerAge(c.get(PLATFORM_CONFIG)),
     reservedUsernames: c.get(PLATFORM_CONFIG).reservedUsernames,
   });
 

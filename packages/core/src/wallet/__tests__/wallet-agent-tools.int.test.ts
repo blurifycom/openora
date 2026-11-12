@@ -13,8 +13,10 @@ import {
   ADMIN_USER_DIRECTORY,
   AUDIT_WRITER,
   IDENTITY_READER,
+  PLAY_ELIGIBILITY,
   RATE_LIMITER,
   type AdminUserDirectory,
+  type PlayEligibilityPort,
   type IdentityReader,
   type RateLimiterAdapter,
   type RunContext,
@@ -40,6 +42,7 @@ function bootKernel(identity: IdentityReader = playerDirectory()) {
   container.register(EVENT_BUS, () => makeEventBus());
   container.register(AUDIT_WRITER, () => domainAudit);
   container.register(IDENTITY_READER, () => identity);
+  container.register(PLAY_ELIGIBILITY, () => mock<PlayEligibilityPort>({}));
   container.register(ADMIN_USER_DIRECTORY, () => mock<AdminUserDirectory>({}));
   container.register(RATE_LIMITER, () => mock<RateLimiterAdapter<string>>({}));
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);

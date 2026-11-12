@@ -77,6 +77,11 @@ export type KycResult = {
    * routes the decision to `resubmission_requested` instead.
    */
   checks?: KycCheckResult[];
+  /**
+   * The ISO date of birth the vendor read off the verified document. Checked against the
+   * configured minimum age and the player's declared date of birth; never persisted.
+   */
+  dateOfBirth?: string;
 };
 
 /**

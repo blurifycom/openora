@@ -2,7 +2,7 @@
 
 The read side over money and player data other modules own: financial reports and the
 registration funnel. It owns no tables and moves no money. ADR-0033 records why it is its own
-domain, and ADR-0050 why the wallet's GGR is the official one.
+domain, and ADR-0052 why the wallet's GGR is the official one.
 
 `docs/catalog.json` is the exhaustive list of this module's routes and agent tools. This file does
 not repeat it.

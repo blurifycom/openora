@@ -35,6 +35,8 @@ import {
   type KycStatus,
   type RateLimiterAdapter,
   type RateLimitKey,
+  MoneyAmountSchema,
+  type WalletDepositStatusEventStatus,
   type WalletRail,
   railFor as sharedRailFor,
   resolveExchangeRatePivot,
@@ -47,6 +49,9 @@ import {
   type MailDispatchPort,
   type WithdrawalSecurity,
   type DepositHoldPolicy,
+  type DepositAdmissionPolicy,
+  type PlayEligibilityPort,
+  DepositRefusedError,
   type ExchangeRateReader,
   type AuditWritePort,
   type TagEvaluationCommands,
@@ -92,12 +97,14 @@ import {
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
   walletDepositAddress,
+  walletDepositStatusEvent,
   walletWithdrawalAddress,
   walletAsset,
   walletOnRampOrder,
   walletWithdrawalHold,
   type Wallet,
   type WalletDepositAddress,
+  type WalletDepositStatusEvent,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
@@ -130,8 +137,16 @@ import type {
   WithdrawalAddress,
   CreateWithdrawalAddressInput,
   WalletReferenceConversion,
+  QueuedWithdrawalStatus,
+  WithdrawalRiskTag,
+  WithdrawalsQueue,
+  WithdrawalsQueueInput,
 } from '../contract/index.js';
-import { OPEN_WITHDRAWALS_LIMIT } from '../contract/index.js';
+import {
+  OPEN_WITHDRAWALS_LIMIT,
+  QUEUED_WITHDRAWAL_STATUSES,
+  WITHDRAWAL_QUEUE_MAX_CURRENCIES,
+} from '../contract/index.js';
 
 const logger = createLogger('wallet');
 
@@ -380,6 +395,11 @@ const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually
 const isKycPassed = (status: KycStatus | null) =>
   status !== null && KYC_PASS_STATUSES.has(normalizeKycStatus(status));
 
+const MalformedDepositEventError = createDomainError<[externalId: string]>(
+  'MalformedDepositEventError',
+  (externalId) => `Deposit event ${externalId || '(empty id)'} carries no usable amount or id`,
+);
+
 export const AmbiguousDepositAddressError = createDomainError(
   'AmbiguousDepositAddressError',
   (address, network) =>
@@ -564,21 +584,27 @@ export function assertDepositAllowed(
   }
 }
 
+function depositFloor(assets: readonly DepositAsset[], network?: string) {
+  const wanted = network?.toUpperCase();
+  const applicable = wanted
+    ? assets.filter((asset) => asset.network.toUpperCase() === wanted)
+    : assets;
+  return applicable.reduce<DepositAsset | undefined>(
+    (lowest, asset) =>
+      !lowest || moneyCompare(asset.minDeposit, lowest.minDeposit) < 0 ? asset : lowest,
+    undefined,
+  );
+}
+
 export function assertAboveMinimumDeposit(
   assets: readonly DepositAsset[],
   amount: string,
   currency: string,
   network?: string,
 ): void {
-  const enabled = assets.filter((asset) => asset.depositEnabled);
-  const wanted = network?.toUpperCase();
-  const applicable = wanted
-    ? enabled.filter((asset) => asset.network.toUpperCase() === wanted)
-    : enabled;
-  const floor = applicable.reduce<DepositAsset | undefined>(
-    (lowest, asset) =>
-      !lowest || moneyCompare(asset.minDeposit, lowest.minDeposit) < 0 ? asset : lowest,
-    undefined,
+  const floor = depositFloor(
+    assets.filter((asset) => asset.depositEnabled),
+    network,
   );
   if (floor && moneyCompare(amount, floor.minDeposit) < 0) {
     throw new BelowMinimumDepositError(amount, floor.minDeposit, currency, floor.network);
@@ -782,6 +808,56 @@ export function providerRefCondition(
 }
 
 type DepositEvent = Extract<PaymentWebhookEvent, { kind: 'deposit' }>;
+type DepositStatusEvent = Extract<PaymentWebhookEvent, { kind: 'deposit_status' }>;
+type DepositAddressTarget = Pick<DepositEvent, 'address' | 'network' | 'tag'> &
+  Partial<Pick<DepositEvent, 'currency'>>;
+type DepositOutcome = {
+  event: Pick<DepositEvent, 'externalId' | 'amount' | 'currency'>;
+  network: string | null;
+  depositAddress: WalletDepositAddress;
+  playerId: Player['id'] | null;
+  detail: Record<string, string | null>;
+};
+
+export function isRecordableDeposit({
+  externalId,
+  amount,
+}: Pick<DepositEvent, 'externalId' | 'amount'>) {
+  return externalId.trim() !== '' && MoneyAmountSchema.safeParse(amount).success;
+}
+
+export function depositStatusIsNoOp(
+  seen: ReadonlySet<WalletDepositStatusEventStatus>,
+  status: WalletDepositStatusEventStatus,
+) {
+  return (
+    seen.has('below_minimum') || seen.has(status) || (status === 'detected' && seen.has('failed'))
+  );
+}
+
+function soleNetworkForCurrency(
+  rows: readonly Pick<WalletDepositAddress, 'currency' | 'network'>[],
+  currency: string,
+) {
+  const sameCurrency = rows.filter((row) => row.currency.toUpperCase() === currency.toUpperCase());
+  return sameCurrency.length === 1 ? (sameCurrency[0]?.network ?? undefined) : undefined;
+}
+
+function assertRecordableDeposit(event: Pick<DepositEvent, 'externalId' | 'amount'>) {
+  if (!isRecordableDeposit(event)) {
+    throw new MalformedDepositEventError(event.externalId);
+  }
+}
+
+function isAddressCurrencyMismatch(
+  event: Pick<DepositEvent, 'network' | 'currency'>,
+  depositAddress: Pick<WalletDepositAddress, 'currency'>,
+) {
+  return (
+    event.network === undefined &&
+    event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()
+  );
+}
 
 /** An on-chain deposit an admin settles by hand from a reconciliation finding. */
 export type HandDeposit = {
@@ -892,9 +968,10 @@ export const VELOCITY_IGNORED_STATUSES = [
   'cancelled',
 ] as const satisfies readonly WalletTransactionStatus[];
 
-// A withdrawal still waiting on a decision: the queue summary counts and totals only these, and
-// an admin may approve or reject only these.
-const QUEUED_WITHDRAWAL_STATUSES = ['pending', 'on_hold'] as const;
+// A held deposit reaches the balance when an operator releases it, which stamps reviewedAt;
+// every other completed deposit has no reviewedAt.
+export const depositedAt = () =>
+  sql<Date>`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`;
 
 export const IN_FLIGHT_TRANSACTION_STATUSES = [
   'pending',
@@ -905,6 +982,10 @@ export const IN_FLIGHT_TRANSACTION_STATUSES = [
 const ACTIVITY_TRANSACTION_TYPES = ['deposit', 'withdrawal', 'bet', 'win', 'win_reversal'] as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+/** A duration in hours to one decimal, never below zero. */
+const hoursIn = (ms: number) => Math.round((Math.max(0, ms) / HOUR_MS) * 10) / 10;
 
 const DAILY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -1074,6 +1155,10 @@ export type WalletServiceDeps = {
   mailDispatch?: MailDispatchPort;
   // Optional: bound by an operator. Absent = every attributed on-chain deposit is credited.
   depositHold?: DepositHoldPolicy;
+  // Optional: bound by an operator. Absent = every player PLAY_ELIGIBILITY admits may deposit.
+  depositAdmission?: DepositAdmissionPolicy;
+  // Optional for unit wiring only: the plugin always binds it. Absent = no account-state deposit gate.
+  playEligibility?: PlayEligibilityPort;
   // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
   grantLedger?: BonusGrantLedgerReader;
   // Optional: bound by the bonus module. Absent = there is no bonus a withdrawal could forfeit.
@@ -1106,6 +1191,8 @@ export class WalletService {
   private readonly withdrawalSecurity?: WithdrawalSecurity;
   private readonly mailDispatch?: MailDispatchPort;
   private readonly depositHold?: DepositHoldPolicy;
+  private readonly depositAdmission?: DepositAdmissionPolicy;
+  private readonly playEligibility?: PlayEligibilityPort;
 
   private readonly grantLedger?: BonusGrantLedgerReader;
   private readonly bonusLifecycle?: BonusLifecycleCommands;
@@ -1128,6 +1215,8 @@ export class WalletService {
     withdrawalSecurity,
     mailDispatch,
     depositHold,
+    depositAdmission,
+    playEligibility,
     grantLedger,
     bonusLifecycle,
   }: WalletServiceDeps) {
@@ -1148,6 +1237,8 @@ export class WalletService {
     this.withdrawalSecurity = withdrawalSecurity;
     this.mailDispatch = mailDispatch;
     this.depositHold = depositHold;
+    this.depositAdmission = depositAdmission;
+    this.playEligibility = playEligibility;
     this.grantLedger = grantLedger;
     this.bonusLifecycle = bonusLifecycle;
   }
@@ -1166,9 +1257,7 @@ export class WalletService {
       .where(eq(walletAsset.currency, currency.toUpperCase()));
   }
 
-  // `for('share')` blocks a concurrent deleteWalletAsset (which takes `for('update')` on
-  // the same rows) from removing the pair while a deposit is being gated against it.
-  private depositAssetsForCurrency(currency: string, db: DrizzleDb = this.drizzle.db) {
+  private selectDepositAssets(currency: string, db: DrizzleDb | DrizzleTx) {
     return db
       .select({
         network: walletAsset.network,
@@ -1176,8 +1265,13 @@ export class WalletService {
         depositEnabled: walletAsset.depositEnabled,
       })
       .from(walletAsset)
-      .where(eq(walletAsset.currency, currency.toUpperCase()))
-      .for('share');
+      .where(eq(walletAsset.currency, currency.toUpperCase()));
+  }
+
+  // `for('share')` blocks a concurrent deleteWalletAsset (which takes `for('update')` on
+  // the same rows) from removing the pair while a deposit is being gated against it.
+  private depositAssetsForCurrency(currency: string, db: DrizzleDb = this.drizzle.db) {
+    return this.selectDepositAssets(currency, db).for('share');
   }
 
   /**
@@ -1689,6 +1783,7 @@ export class WalletService {
     idempotencyKey?: string;
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
+    await this.assertDepositAdmitted(userId);
     await this.assertDepositable(currency, amount);
 
     // Short-circuit a replay BEFORE the PSP call - the common retry case (client
@@ -2502,42 +2597,21 @@ export class WalletService {
   }
 
   async listWithdrawals(filters: WithdrawalQueueFilter) {
-    const db = this.drizzle.db;
     const { page, limit } = filters;
     const { matching, byUserId } = await this.matchingWithdrawals(filters, { withPlayers: true });
 
     const start = pageToOffset(page, limit);
     const pageRows = matching.slice(start, start + limit);
 
-    // One batched velocity query for the page (no N+1); shares the window + threshold + query the auto-approval evaluator uses.
-    // The tag is a display hint, so an unseeded install (no config row) just drops it rather
-    // than failing the queue - the auto-approval read path is the one that fails closed.
-    const pageWalletIds = [...new Set(pageRows.map((r) => r.tx.walletId))];
-    const frequentWalletIds = await this.frequentWithdrawalWalletIds(
-      db,
-      pageWalletIds,
-      await this.getAutoWithdrawalConfigOrNull(),
-    );
-    const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
     const pageUserIds = [...new Set(pageRows.map((r) => r.userId))];
-    const [lockedUserIds, heldUserIds] = await Promise.all([
+    const [riskTags, lockedUserIds, heldUserIds] = await Promise.all([
+      this.withdrawalRiskTags(pageRows.map((r) => r.tx)),
       this.withdrawalLockedUserIds(pageUserIds),
       this.withdrawalHeldUserIds(pageUserIds),
     ]);
 
-    const items: WithdrawalQueueItem[] = await mapConcurrent(pageRows, 5, async (r) => {
+    const items: WithdrawalQueueItem[] = pageRows.map((r) => {
       const summary = byUserId.get(r.userId);
-      const riskTags: string[] = [];
-      // The queue tag is priced in the fx pivot, same as auto-approval - a raw compare let a
-      // 5000 DOGE withdrawal read as "large" next to a 5000 BTC one that dwarfs it. No rate
-      // for the coin flags it anyway: never let a compliance total quietly undercount.
-      const pivotAmount = await this.toPivotAmount(r.tx.amount, r.tx.currency, pivotCurrency);
-      if (pivotAmount === null || moneyCompare(pivotAmount, LARGE_WITHDRAWAL_THRESHOLD) >= 0) {
-        riskTags.push('large_amount');
-      }
-      if (frequentWalletIds.has(r.tx.walletId)) {
-        riskTags.push('high_frequency');
-      }
       return {
         transactionId: r.tx.id,
         userId: r.userId,
@@ -2550,7 +2624,7 @@ export class WalletService {
         rail: r.tx.rail ?? null,
         status: r.tx.status,
         kycStatus: summary?.kycStatus ?? null,
-        riskTags,
+        riskTags: riskTags.get(r.tx.id) ?? [],
         withdrawalLocked: lockedUserIds.has(r.userId),
         withdrawalHeld: heldUserIds.has(r.userId),
         requestedAt: r.tx.createdAt.toISOString(),
@@ -2561,6 +2635,110 @@ export class WalletService {
     });
 
     return { items, total: matching.length, page, limit };
+  }
+
+  /**
+   * The queue's headline figures across every player and the withdrawals waiting longest for a
+   * decision, oldest first, without the addresses, hashes, names or review notes the admin
+   * queue shows.
+   */
+  async withdrawalQueueOverview(
+    { status, limit }: WithdrawalsQueueInput,
+    now = new Date(),
+  ): Promise<WithdrawalsQueue> {
+    const [summary, oldest] = await Promise.all([
+      this.summarizeWithdrawals({}),
+      this.oldestQueuedWithdrawals(status ? [status] : QUEUED_WITHDRAWAL_STATUSES, limit),
+    ]);
+    return {
+      pendingCount: summary.pendingCount,
+      onHoldCount: summary.onHoldCount,
+      queuedTotals: summary.queuedTotals.slice(0, WITHDRAWAL_QUEUE_MAX_CURRENCIES),
+      avgPendingWaitHours:
+        summary.avgPendingWaitSeconds === null
+          ? null
+          : hoursIn(summary.avgPendingWaitSeconds * 1000),
+      oldest: oldest.map(({ requestedAt, ...item }) => ({
+        ...item,
+        requestedAt: requestedAt.toISOString(),
+        waitHours: hoursIn(now.getTime() - requestedAt.getTime()),
+      })),
+    };
+  }
+
+  private async oldestQueuedWithdrawals(
+    statuses: readonly QueuedWithdrawalStatus[],
+    limit: number,
+  ) {
+    const rows = await this.drizzle.db
+      .select({
+        id: walletTransaction.id,
+        walletId: walletTransaction.walletId,
+        amount: walletTransaction.amount,
+        currency: walletTransaction.currency,
+        status: walletTransaction.status,
+        createdAt: walletTransaction.createdAt,
+        userId: wallet.userId,
+      })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(
+        and(
+          eq(walletTransaction.type, 'withdrawal'),
+          inArray(walletTransaction.status, [...statuses]),
+        ),
+      )
+      .orderBy(asc(walletTransaction.createdAt), asc(walletTransaction.id))
+      .limit(limit);
+    const userIds = [...new Set(rows.map((row) => row.userId))];
+    const [players, riskTags] = await Promise.all([
+      this.directory && userIds.length > 0 ? this.directory.lookupPlayers(userIds) : [],
+      this.withdrawalRiskTags(rows),
+    ]);
+    const playerByUserId = new Map(players.map((player) => [player.userId, player]));
+    return rows.map((row) => {
+      const player = playerByUserId.get(row.userId);
+      return {
+        withdrawalId: row.id,
+        playerId: player?.playerId ?? null,
+        amount: row.amount,
+        currency: row.currency,
+        status: row.status,
+        requestedAt: row.createdAt,
+        kycStatus: player?.kycStatus ? normalizeKycStatus(player.kycStatus) : null,
+        riskTags: riskTags.get(row.id) ?? [],
+      };
+    });
+  }
+
+  /** The queue's risk tags of each withdrawal, keyed by its id. */
+  private async withdrawalRiskTags(
+    withdrawals: readonly Pick<WalletTransaction, 'id' | 'walletId' | 'amount' | 'currency'>[],
+  ): Promise<Map<WalletTransaction['id'], WithdrawalRiskTag[]>> {
+    // One batched velocity query for the page (no N+1); shares the window + threshold + query the auto-approval evaluator uses.
+    // The tag is a display hint, so an unseeded install (no config row) just drops it rather
+    // than failing the queue - the auto-approval read path is the one that fails closed.
+    const frequentWalletIds = await this.frequentWithdrawalWalletIds(
+      this.drizzle.db,
+      [...new Set(withdrawals.map((w) => w.walletId))],
+      await this.getAutoWithdrawalConfigOrNull(),
+    );
+    const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
+    const tags = await mapConcurrent(withdrawals, 5, async (w) => {
+      const riskTags: WithdrawalRiskTag[] = [];
+      // The queue tag is priced in the fx pivot, same as auto-approval - a raw compare let a
+      // 5000 DOGE withdrawal read as "large" next to a 5000 BTC one that dwarfs it. No rate
+      // for the coin flags it anyway: never let a compliance total quietly undercount.
+      const pivotAmount = await this.toPivotAmount(w.amount, w.currency, pivotCurrency);
+      if (pivotAmount === null || moneyCompare(pivotAmount, LARGE_WITHDRAWAL_THRESHOLD) >= 0) {
+        riskTags.push('large_amount');
+      }
+      if (frequentWalletIds.has(w.walletId)) {
+        riskTags.push('high_frequency');
+      }
+      return [w.id, riskTags] as const;
+    });
+    return new Map(tags);
   }
 
   /**
@@ -3970,11 +4148,33 @@ export class WalletService {
     }));
   }
 
+  async assertDepositAdmitted(userId: User['id']): Promise<void> {
+    const refusal = await this.playRefusal(userId);
+    if (refusal) {
+      throw new DepositRefusedError(refusal);
+    }
+    const reason = await this.depositAdmission?.refusalReason(userId);
+    if (typeof reason === 'string') {
+      throw new DepositRefusedError(reason);
+    }
+  }
+
+  private async playRefusal(userId: User['id']): Promise<string | null> {
+    if (!this.playEligibility) {
+      return null;
+    }
+    if (this.playEligibility.checkPlay) {
+      return this.playEligibility.checkPlay(userId);
+    }
+    return (await this.playEligibility.isRestricted(userId)) ? 'restricted' : null;
+  }
+
   async getOrCreateDepositAddress(
     userId: User['id'],
     currency: string,
     network?: string,
   ): Promise<DepositAddressResult> {
+    await this.assertDepositAdmitted(userId);
     await this.assertDepositable(currency, undefined, network);
 
     const existing = await this.findDepositAddress(userId, currency, network);
@@ -4027,6 +4227,7 @@ export class WalletService {
     event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
     providerName: string = DEFAULT_PAYMENT_PROVIDER,
   ): Promise<void> {
+    assertRecordableDeposit(event);
     const depositAddress = await this.findDepositAddressByAddress(event);
     if (!depositAddress) {
       // A known vendor defect hits this live: a token deposit reported under a sibling
@@ -4056,10 +4257,7 @@ export class WalletService {
       );
       return;
     }
-    if (
-      event.network === undefined &&
-      event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()
-    ) {
+    if (isAddressCurrencyMismatch(event, depositAddress)) {
       // Same "do not silently drop" discipline as the no-address branch above - this is
       // the push-path counterpart to the poll-path's currency_mismatch finding.
       logger.warn(
@@ -4099,14 +4297,6 @@ export class WalletService {
       if (await isRefundedDeposit(txn, depositAddress.providerName, event.externalId)) {
         return null;
       }
-      let [walletRecord] = await txn
-        .select()
-        .from(wallet)
-        .where(eq(wallet.userId, depositAddress.userId));
-      if (!walletRecord) {
-        walletRecord = await openWallet(txn, depositAddress.userId, event.currency);
-      }
-
       // A redelivery of a credited deposit must not depend on a rate being available now.
       const [credited] = await this.findDepositByProviderRef(
         txn,
@@ -4119,6 +4309,16 @@ export class WalletService {
           holdReason: heldReason(credited),
           refunded: credited.status === 'refunded',
         };
+      }
+      if (await this.refuseIfBelowMinimum(txn, { event, depositAddress, playerId })) {
+        return 'below_minimum' as const;
+      }
+      let [walletRecord] = await txn
+        .select()
+        .from(wallet)
+        .where(eq(wallet.userId, depositAddress.userId));
+      if (!walletRecord) {
+        walletRecord = await openWallet(txn, depositAddress.userId, event.currency);
       }
       // Throws when no fresh rate exists. The funds are on chain, so the deposit is not
       // dropped: nothing commits, the webhook answers an error and the vendor redelivers it,
@@ -4211,6 +4411,9 @@ export class WalletService {
         refunded: winner.status === 'refunded',
       };
     });
+    if (credit === 'below_minimum') {
+      return;
+    }
     if (credit === null) {
       logger.warn(
         { userId: depositAddress.userId, externalId: event.externalId },
@@ -4279,6 +4482,182 @@ export class WalletService {
         this.audit,
       );
     }
+  }
+
+  /**
+   * Audits that a vendor saw a deposit or reported it failed. Moves no money. A no-op once
+   * the deposit is credited, refunded or refused below minimum, and for a detection after the
+   * failure. An event no single player can be named for, or in another currency than its
+   * address, is only logged, and a malformed one throws so the vendor retries it.
+   */
+  async recordDepositStatus(event: DepositStatusEvent): Promise<void> {
+    assertRecordableDeposit(event);
+    const depositAddress = await this.findAttributableDepositAddress(event);
+    if (!depositAddress || isAddressCurrencyMismatch(event, depositAddress)) {
+      logger.warn(
+        { externalId: event.externalId, network: event.network, status: event.status },
+        'payment webhook: deposit status event names no single player or its address is in another currency, ignored',
+      );
+      return;
+    }
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId);
+    const { providerName } = depositAddress;
+    await this.drizzle.db.transaction(async (txn) => {
+      await lockVendorDeposit(txn, providerName, event.externalId);
+      if (await this.isDepositSettled(txn, providerName, event.externalId)) {
+        return;
+      }
+      const seen = await this.depositStatusesSeen(txn, providerName, event.externalId);
+      if (depositStatusIsNoOp(seen, event.status)) {
+        return;
+      }
+      await this.recordDepositOutcome(txn, event.status, {
+        event,
+        network: await this.reportedNetwork(event, txn),
+        depositAddress,
+        playerId,
+        detail: event.vendorStatus ? { vendorStatus: event.vendorStatus } : {},
+      });
+    });
+  }
+
+  /**
+   * Whether a polled deposit missing from the ledger is one the minimum refuses, auditing it
+   * the first time. One no single player can be named for answers false, as does one the
+   * webhook path would have filed as a currency mismatch, so both still reach a finding.
+   */
+  async recordDepositIfBelowMinimum(event: DepositEvent): Promise<boolean> {
+    const depositAddress = await this.findAttributableDepositAddress(event);
+    if (!depositAddress || isAddressCurrencyMismatch(event, depositAddress)) {
+      return false;
+    }
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId);
+    const { providerName } = depositAddress;
+    return this.drizzle.db.transaction(async (txn) => {
+      await lockVendorDeposit(txn, providerName, event.externalId);
+      if (await this.isDepositSettled(txn, providerName, event.externalId)) {
+        return false;
+      }
+      return this.refuseIfBelowMinimum(txn, { event, depositAddress, playerId });
+    });
+  }
+
+  private async refuseIfBelowMinimum(
+    txn: DrizzleTx,
+    deposit: Omit<DepositOutcome, 'event' | 'network' | 'detail'> & { event: DepositEvent },
+  ): Promise<boolean> {
+    const { event, depositAddress } = deposit;
+    const { providerName } = depositAddress;
+    const seen = await this.depositStatusesSeen(txn, providerName, event.externalId);
+    if (seen.has('below_minimum')) {
+      return true;
+    }
+    const network = await this.reportedNetwork(event, txn);
+    const assets = await this.selectDepositAssets(event.currency, txn);
+    // A network the catalog has no row for falls back to the currency's lowest minimum.
+    const floor = depositFloor(assets, network ?? undefined) ?? depositFloor(assets);
+    const refused =
+      !isPositiveMoney(event.amount) ||
+      (floor !== undefined && moneyCompare(event.amount, floor.minDeposit) < 0);
+    if (!refused) {
+      return false;
+    }
+    await this.recordDepositOutcome(txn, 'below_minimum', {
+      ...deposit,
+      network,
+      detail: { minDeposit: floor?.minDeposit ?? null },
+    });
+    await recordReconciliationFindingInTransaction(
+      txn,
+      {
+        runId: OUT_OF_CYCLE_RUN_ID,
+        providerName,
+        kind: 'below_minimum_deposit',
+        currency: event.currency,
+        network,
+        amount: event.amount,
+        address: event.address,
+        tag: event.tag ?? null,
+        txHash: event.txHash,
+        sourceAddress: event.sourceAddress ?? null,
+        externalId: event.externalId,
+        detail: floor ? `asset minimum ${floor.minDeposit}` : null,
+      },
+      this.audit,
+    );
+    return true;
+  }
+
+  private async isDepositSettled(
+    txn: DrizzleTx,
+    providerName: string,
+    externalId: WalletDepositStatusEvent['externalId'],
+  ) {
+    if (await isRefundedDeposit(txn, providerName, externalId)) {
+      return true;
+    }
+    const [row] = await this.findDepositByProviderRef(txn, providerName, externalId);
+    return row !== undefined;
+  }
+
+  private async reportedNetwork(
+    event: DepositAddressTarget & Pick<DepositEvent, 'currency'>,
+    db: DrizzleTx,
+  ) {
+    return (
+      event.network ??
+      soleNetworkForCurrency(await this.depositAddressRows(event, db), event.currency) ??
+      null
+    );
+  }
+
+  private async depositStatusesSeen(
+    txn: DrizzleTx,
+    providerName: string,
+    externalId: WalletDepositStatusEvent['externalId'],
+  ) {
+    const rows = await txn
+      .select({ status: walletDepositStatusEvent.status })
+      .from(walletDepositStatusEvent)
+      .where(
+        and(
+          eq(walletDepositStatusEvent.providerName, providerName),
+          eq(walletDepositStatusEvent.externalId, externalId),
+        ),
+      );
+    return new Set(rows.map((row) => row.status));
+  }
+
+  private async recordDepositOutcome(
+    txn: DrizzleTx,
+    status: WalletDepositStatusEventStatus,
+    { event, network, depositAddress, playerId, detail }: DepositOutcome,
+  ) {
+    const { providerName } = depositAddress;
+    const { externalId, amount, currency } = event;
+    const [inserted] = await txn
+      .insert(walletDepositStatusEvent)
+      .values({ providerName, externalId, status })
+      .onConflictDoNothing()
+      .returning({ id: walletDepositStatusEvent.id });
+    if (!inserted) {
+      return;
+    }
+    await this.audit.recordInTransaction(txn, {
+      actorType: 'system',
+      action: `wallet.deposit.${status}`,
+      resourceType: playerId ? 'player' : 'user',
+      resourceId: playerId ?? depositAddress.userId,
+      ...(status === 'detected' ? {} : { result: 'failure' }),
+      after: {
+        providerName,
+        externalId,
+        amount,
+        currency,
+        network,
+        ...detail,
+      },
+    });
   }
 
   /**
@@ -4385,9 +4764,7 @@ export class WalletService {
   }
 
   /** The player a deposit address was issued to, or undefined when it is nobody's. */
-  async depositAddressOwner(
-    target: Pick<DepositEvent, 'address' | 'network' | 'tag'>,
-  ): Promise<User['id'] | undefined> {
+  async depositAddressOwner(target: DepositAddressTarget): Promise<User['id'] | undefined> {
     return (await this.findDepositAddressByAddress(target))?.userId;
   }
 
@@ -4524,12 +4901,22 @@ export class WalletService {
     return row;
   }
 
-  private async findDepositAddressByAddress({
-    address,
-    network,
-    tag,
-  }: Pick<DepositEvent, 'address' | 'network' | 'tag'>) {
-    const rows = await this.drizzle.db
+  private async findAttributableDepositAddress(target: DepositAddressTarget) {
+    try {
+      return await this.findDepositAddressByAddress(target);
+    } catch (err) {
+      if (err instanceof AmbiguousDepositAddressError) {
+        return undefined;
+      }
+      throw err;
+    }
+  }
+
+  private depositAddressRows(
+    { address, network, tag }: DepositAddressTarget,
+    db: DrizzleDb | DrizzleTx = this.drizzle.db,
+  ) {
+    return db
       .select()
       .from(walletDepositAddress)
       .where(
@@ -4541,12 +4928,21 @@ export class WalletService {
             : or(eq(walletDepositAddress.network, network), isNull(walletDepositAddress.network)),
         ),
       );
+  }
+
+  private async findDepositAddressByAddress(target: DepositAddressTarget) {
+    const { address, network, currency } = target;
+    const rows = await this.depositAddressRows(target);
 
     const owners = new Set(rows.map((row) => row.userId));
     if (owners.size > 1) {
       throw new AmbiguousDepositAddressError(address, network);
     }
-    return rows.find((row) => row.network === network) ?? rows[0];
+    return (
+      rows.find((row) => row.network === network) ??
+      rows.find((row) => row.currency.toUpperCase() === currency?.toUpperCase()) ??
+      rows[0]
+    );
   }
 
   /**
