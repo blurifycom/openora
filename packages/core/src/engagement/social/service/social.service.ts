@@ -107,6 +107,16 @@ function toFriendshipDto(row: FriendshipRow) {
   });
 }
 
+function acceptedPayload(row: FriendshipRow, accepterId: Uuid, accepterUsername: string) {
+  return {
+    friendshipId: row.id,
+    requesterId: row.requesterId,
+    addresseeId: row.addresseeId,
+    accepterId,
+    accepterUsername,
+  };
+}
+
 // Finds the single row for a pair regardless of who is requester/addressee - the
 // canonical-pair unique index guarantees at most one match.
 function pairCondition(userA: Uuid, userB: Uuid) {
@@ -277,13 +287,11 @@ export class SocialService {
       if (!updated) {
         throw new RequestAlreadyPendingError();
       }
-      await this.events.emitInTransaction(tx, 'social.friend_request.accepted', {
-        friendshipId: updated.id,
-        requesterId: updated.requesterId,
-        addresseeId: updated.addresseeId,
-        accepterId: callerId,
-        accepterUsername: callerUsername,
-      });
+      await this.events.emitInTransaction(
+        tx,
+        'social.friend_request.accepted',
+        acceptedPayload(updated, callerId, callerUsername),
+      );
       return updated;
     });
   }
@@ -394,6 +402,7 @@ export class SocialService {
     userA: Uuid,
     userB: Uuid,
     actorId: Uuid,
+    actorPlayerId: string | null,
     reason: 'removed_by_player' | 'blocked',
   ): Promise<FriendshipDissolvedPayload | undefined> {
     const rows = await tx
@@ -415,19 +424,21 @@ export class SocialService {
     return {
       friendshipId: removed.id,
       actorId,
-      actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(actorId),
+      actorPlayerId,
       otherUserId: removed.requesterId === actorId ? removed.addresseeId : removed.requesterId,
       reason,
     };
   }
 
   async removeFriend(callerId: Uuid, targetUserId: Uuid): Promise<void> {
+    const callerPlayerId = await this.identityReader.getPlayerIdByUserIdSafe(callerId);
     await this.drizzle.db.transaction(async (tx) => {
       const dissolved = await this.dissolveFriendship(
         tx,
         callerId,
         targetUserId,
         callerId,
+        callerPlayerId,
         'removed_by_player',
       );
       if (!dissolved) {
@@ -441,12 +452,14 @@ export class SocialService {
     tx: unknown,
     blockerId: Uuid,
     blockedId: Uuid,
+    blockerPlayerId: string | null,
   ): Promise<FriendshipDissolvedPayload | null> {
     const dissolved = await this.dissolveFriendship(
       tx as DrizzleTx,
       blockerId,
       blockedId,
       blockerId,
+      blockerPlayerId,
       'blocked',
     );
     return dissolved ?? null;
@@ -578,13 +591,11 @@ export class SocialService {
       if (!row) {
         throw new FriendRequestNotFoundError(friendshipId);
       }
-      await this.events.emitInTransaction(tx, 'social.friend_request.accepted', {
-        friendshipId: row.id,
-        requesterId: row.requesterId,
-        addresseeId: row.addresseeId,
-        accepterId: callerId,
-        accepterUsername: callerPlayer.username,
-      });
+      await this.events.emitInTransaction(
+        tx,
+        'social.friend_request.accepted',
+        acceptedPayload(row, callerId, callerPlayer.username),
+      );
       return row;
     });
     return toFriendshipDto(updated);

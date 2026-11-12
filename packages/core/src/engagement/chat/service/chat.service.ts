@@ -2154,8 +2154,8 @@ export class ChatService {
     // target: this table has exactly one unique constraint (the partial pair index).
     // Any active friendship dissolves on the same tx as the block insert, so a block
     // can never leave a friendship (and the blocked user) still reachable from
-    // /social/friends. Both events go to the outbox on that tx: they exist if and
-    // only if the block committed.
+    // /social/friends. Both events go to the outbox on that tx, the friendship removal
+    // first: they exist if and only if the block committed.
     const subject = await this.relationSubject(blockerId, blockedId, meta);
     await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, chatBlockLockKey(blockerId, blockedId), async () => {
@@ -2167,19 +2167,20 @@ export class ChatService {
         if (rows.length === 0) {
           return;
         }
+        const dissolved = await this.socialCommands?.dissolveFriendshipOnBlock(
+          tx,
+          blockerId,
+          blockedId,
+          subject.actorPlayerId,
+        );
+        if (dissolved) {
+          await this.events.emitInTransaction(tx, 'social.friendship.removed', dissolved);
+        }
         await this.events.emitInTransaction(tx, 'chat.user.blocked', {
           blockerId,
           blockedId,
           ...subject,
         });
-        const dissolved = await this.socialCommands?.dissolveFriendshipOnBlock(
-          tx,
-          blockerId,
-          blockedId,
-        );
-        if (dissolved) {
-          await this.events.emitInTransaction(tx, 'social.friendship.removed', dissolved);
-        }
       }),
     );
     return { success: true } as const;

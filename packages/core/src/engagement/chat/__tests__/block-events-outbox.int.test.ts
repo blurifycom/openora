@@ -28,6 +28,7 @@ import {
   type FriendshipDissolvedPayload,
   type IdentityReader,
   type MessageBrokerAdapter,
+  type OutboxWriter,
   type RealtimeTransport,
   type SocialCommands,
 } from '@openora/core/contracts';
@@ -87,11 +88,28 @@ function subscribeAudit(bus: EventBus, identityReader: IdentityReader): void {
   }
 }
 
-function setup(socialCommands?: SocialCommands) {
+// The real outbox writer; with `failOn`, it writes that topic's row and then throws, so
+// the caller's transaction has to roll the row back with everything else.
+function outboxWriter(failOn?: string): OutboxWriter {
+  const writer = new DrizzleOutboxWriter();
+  return {
+    async write(tx, envelope) {
+      await writer.write(tx, envelope);
+      if (envelope.topic === failOn) {
+        throw new Error('outbox write failed');
+      }
+    },
+  };
+}
+
+function setup({
+  socialCommands,
+  failOutboxOn,
+}: { socialCommands?: SocialCommands; failOutboxOn?: string } = {}) {
   const broker = inlineBroker();
   const bus = createEventBus({
     broker,
-    outbox: new DrizzleOutboxWriter(),
+    outbox: outboxWriter(failOutboxOn),
     processedEvents: new DrizzleProcessedEventLog(db.drizzle.db),
   });
   const playerIds = new Map<string, string>();
@@ -177,9 +195,9 @@ describe('block and ignore events go through the outbox (real PG)', () => {
     const dissolveFriendshipOnBlock = async () => {
       throw new Error('social port down');
     };
-    const { svc, player, broker, relay } = setup(
-      mock<SocialCommands>({ dissolveFriendshipOnBlock }),
-    );
+    const { svc, player, broker, relay } = setup({
+      socialCommands: mock<SocialCommands>({ dissolveFriendshipOnBlock }),
+    });
 
     await expect(svc.blockUser(player(), player(), NO_CLIENT_META)).rejects.toThrow(
       'social port down',
@@ -189,6 +207,45 @@ describe('block and ignore events go through the outbox (real PG)', () => {
     expect(await db.drizzle.db.select().from(chatUserBlock)).toHaveLength(0);
     expect(await relay.drainOnce()).toBe(0);
     expect(broker.published).toHaveLength(0);
+  });
+
+  it('rolls the block back when its outbox write fails', async () => {
+    const { svc, player } = setup({ failOutboxOn: 'chat.user.blocked' });
+
+    await expect(svc.blockUser(player(), player(), NO_CLIENT_META)).rejects.toThrow(
+      'outbox write failed',
+    );
+
+    expect(await outboxRows()).toHaveLength(0);
+    expect(await db.drizzle.db.select().from(chatUserBlock)).toHaveLength(0);
+  });
+
+  it('writes one block row and one event for two concurrent blocks of the same pair', async () => {
+    const { svc, player } = setup();
+    const blockerId = player();
+    const blockedId = player();
+
+    await Promise.all([
+      svc.blockUser(blockerId, blockedId, NO_CLIENT_META),
+      svc.blockUser(blockerId, blockedId, NO_CLIENT_META),
+    ]);
+
+    expect(await db.drizzle.db.select().from(chatUserBlock)).toHaveLength(1);
+    expect((await outboxRows()).map((r) => r.topic)).toEqual(['chat.user.blocked']);
+  });
+
+  it('writes one ignore row and one event for two concurrent ignores of the same pair', async () => {
+    const { svc, player } = setup();
+    const ignorerId = player();
+    const ignoredId = player();
+
+    await Promise.all([
+      svc.ignoreUser(ignorerId, ignoredId, NO_CLIENT_META),
+      svc.ignoreUser(ignorerId, ignoredId, NO_CLIENT_META),
+    ]);
+
+    expect(await db.drizzle.db.select().from(chatUserIgnore)).toHaveLength(1);
+    expect((await outboxRows()).map((r) => r.topic)).toEqual(['chat.user.ignored']);
   });
 
   it('writes no outbox row for a re-block or an unblock of a pair that is not blocked', async () => {
@@ -243,9 +300,9 @@ describe('block and ignore events go through the outbox (real PG)', () => {
       otherUserId: randomUUID(),
       reason: 'blocked',
     };
-    const { svc } = setup(
-      mock<SocialCommands>({ dissolveFriendshipOnBlock: async () => dissolved }),
-    );
+    const { svc } = setup({
+      socialCommands: mock<SocialCommands>({ dissolveFriendshipOnBlock: async () => dissolved }),
+    });
 
     await svc.blockUser(blockerId, dissolved.otherUserId, NO_CLIENT_META);
 

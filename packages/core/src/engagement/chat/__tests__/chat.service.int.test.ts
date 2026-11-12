@@ -1208,7 +1208,13 @@ describe('ChatService block list (real PG)', () => {
     await svc.blockUser(blockerId, blockedId, NO_CLIENT_META);
 
     expect(dissolveFriendshipOnBlock).toHaveBeenCalledTimes(1);
-    expect(dissolveFriendshipOnBlock).toHaveBeenCalledWith(expect.anything(), blockerId, blockedId);
+    // The blocker's player id is resolved before the tx; this reader knows no player.
+    expect(dissolveFriendshipOnBlock).toHaveBeenCalledWith(
+      expect.anything(),
+      blockerId,
+      blockedId,
+      null,
+    );
   });
 
   it('does not call the social port again on a no-op re-block', async () => {
@@ -1246,6 +1252,10 @@ describe('ChatService block list (real PG)', () => {
       'social.friendship.removed',
       payload,
     );
+    expect(events.emitInTransaction.mock.calls.map(([, topic]) => topic)).toEqual([
+      'social.friendship.removed',
+      'chat.user.blocked',
+    ]);
   });
 
   it('does not emit a dissolved-friendship event when there was no active friendship to dissolve', async () => {

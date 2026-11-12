@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { IdentityReader, MessageBrokerAdapter } from '@openora/core/contracts';
+import type { IdentityReader, MessageBrokerAdapter, OutboxWriter } from '@openora/core/contracts';
 import {
   DrizzleOutboxWriter,
   DrizzleProcessedEventLog,
@@ -83,11 +83,21 @@ beforeEach(async () => {
 });
 
 // A bus over the real outbox writer: what a service emits in a transaction is a row in
-// event_outbox, committed or rolled back with it. The broker is never reached.
-function makeOutboxService() {
+// event_outbox, committed or rolled back with it. The broker is never reached. With
+// `failOn`, the writer writes that topic's row and then throws.
+function makeOutboxService(failOn?: string) {
+  const writer = new DrizzleOutboxWriter();
+  const outbox: OutboxWriter = {
+    async write(tx, envelope) {
+      await writer.write(tx, envelope);
+      if (envelope.topic === failOn) {
+        throw new Error('outbox write failed');
+      }
+    },
+  };
   const events = createEventBus({
     broker: mock<MessageBrokerAdapter>(),
-    outbox: new DrizzleOutboxWriter(),
+    outbox,
     processedEvents: new DrizzleProcessedEventLog(db.drizzle.db),
   });
   return new SocialService(db.drizzle, events, realIdentityReader());
@@ -129,6 +139,114 @@ describe('SocialService events through the outbox (real PG)', () => {
     );
 
     expect(await db.drizzle.db.select().from(eventOutbox)).toHaveLength(0);
+  });
+
+  it('writes one sent row carrying the request', async () => {
+    const svc = makeOutboxService();
+    const alice = await seedPlayer({ username: 'alice' });
+    const bob = await seedPlayer();
+
+    const request = await svc.sendFriendRequest(alice.userId, bob.userId);
+
+    const rows = await db.drizzle.db.select().from(eventOutbox);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      topic: 'social.friend_request.sent',
+      payload: {
+        friendshipId: request.id,
+        requesterId: alice.userId,
+        addresseeId: bob.userId,
+        requesterUsername: 'alice',
+      },
+    });
+  });
+
+  it('writes one accepted row when the addressee accepts the request', async () => {
+    const svc = makeOutboxService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer({ username: 'bob' });
+    const request = await svc.sendFriendRequest(alice.userId, bob.userId);
+
+    await svc.acceptFriendRequest(bob.userId, request.id);
+
+    const accepted = await outboxRowsFor('social.friend_request.accepted');
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0]?.payload).toEqual({
+      friendshipId: request.id,
+      requesterId: alice.userId,
+      addresseeId: bob.userId,
+      accepterId: bob.userId,
+      accepterUsername: 'bob',
+    });
+  });
+
+  it('writes one accepted row when a mutual request accepts the pending one', async () => {
+    const svc = makeOutboxService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer({ username: 'bob' });
+    const request = await svc.sendFriendRequest(alice.userId, bob.userId);
+
+    await svc.sendFriendRequest(bob.userId, alice.userId);
+
+    expect(await outboxRowsFor('social.friend_request.sent')).toHaveLength(1);
+    const accepted = await outboxRowsFor('social.friend_request.accepted');
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0]?.payload).toEqual({
+      friendshipId: request.id,
+      requesterId: alice.userId,
+      addresseeId: bob.userId,
+      accepterId: bob.userId,
+      accepterUsername: 'bob',
+    });
+  });
+
+  it('writes one declined row when the addressee declines', async () => {
+    const svc = makeOutboxService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    const request = await svc.sendFriendRequest(alice.userId, bob.userId);
+
+    await svc.declineFriendRequest(bob.userId, request.id);
+
+    const declined = await outboxRowsFor('social.friend_request.declined');
+    expect(declined).toHaveLength(1);
+    expect(declined[0]?.payload).toEqual({
+      friendshipId: request.id,
+      requesterId: alice.userId,
+      addresseeId: bob.userId,
+    });
+  });
+
+  it('writes one cancelled row when the requester cancels', async () => {
+    const svc = makeOutboxService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    const request = await svc.sendFriendRequest(alice.userId, bob.userId);
+
+    await svc.cancelFriendRequest(alice.userId, request.id);
+
+    const cancelled = await outboxRowsFor('social.friend_request.cancelled');
+    expect(cancelled).toHaveLength(1);
+    expect(cancelled[0]?.payload).toEqual({
+      friendshipId: request.id,
+      requesterId: alice.userId,
+      addresseeId: bob.userId,
+    });
+  });
+
+  it('rolls an accept back with its row when the outbox write fails', async () => {
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    const request = await makeOutboxService().sendFriendRequest(alice.userId, bob.userId);
+    const failing = makeOutboxService('social.friend_request.accepted');
+
+    await expect(failing.acceptFriendRequest(bob.userId, request.id)).rejects.toThrow(
+      'outbox write failed',
+    );
+
+    expect(await outboxRowsFor('social.friend_request.accepted')).toHaveLength(0);
+    const [row] = await db.drizzle.db.select().from(friendship);
+    expect(row?.acceptedAt).toBeNull();
   });
 
   it('writes no row for a duplicate friend request the unique index refuses', async () => {
@@ -568,7 +686,7 @@ describe('SocialService.dissolveFriendshipOnBlock (real PG)', () => {
     const bob = await seedPlayer();
 
     await expect(
-      svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId),
+      svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId, alice.id),
     ).resolves.toBeNull();
     expect(events.emitInTransaction).not.toHaveBeenCalled();
   });
@@ -581,7 +699,7 @@ describe('SocialService.dissolveFriendshipOnBlock (real PG)', () => {
     events.emitInTransaction.mockClear();
 
     await expect(
-      svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId),
+      svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId, alice.id),
     ).resolves.toBeNull();
 
     expect(events.emitInTransaction).not.toHaveBeenCalled();
@@ -596,7 +714,12 @@ describe('SocialService.dissolveFriendshipOnBlock (real PG)', () => {
     const friendshipRow = await makeFriends(svc, alice.userId, bob.userId);
     events.emitInTransaction.mockClear();
 
-    const dissolved = await svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId);
+    const dissolved = await svc.dissolveFriendshipOnBlock(
+      db.drizzle.db,
+      alice.userId,
+      bob.userId,
+      alice.id,
+    );
 
     // The row commits (or, on a caller-owned tx, may still roll back) before the
     // caller decides whether to publish - dissolveFriendshipOnBlock must never emit
