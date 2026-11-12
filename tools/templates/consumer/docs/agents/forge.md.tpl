@@ -2,7 +2,7 @@
 
 Code review for `{{gitRemotePath}}` happens on GitHub pull requests, driven by the [`gh`](https://cli.github.com) CLI. Every skill that opens, reads, or comments on a pull request reads this file instead of hardcoding commands, so a repo on a different forge rewrites this one file and the skills keep working.
 
-Swapping forge: keep the headings below and replace the commands. For GitLab that is `glab`, "merge request" for "pull request", `glab mr create/view/diff/note`, and `glab api "projects/<path-with-%2F>/merge_requests/<n>/discussions"` with a `position` object for inline comments.
+Swapping forge: keep the headings below and replace the commands. For GitLab that is `glab`, "merge request" for "pull request", `glab mr create --draft`, `glab mr update <n> --ready`, `glab mr view/diff/note`, and `glab api "projects/<path-with-%2F>/merge_requests/<n>/discussions"` with a `position` object for inline comments.
 
 ## Coordinates
 
@@ -18,8 +18,10 @@ Swapping forge: keep the headings below and replace the commands. For GitLab tha
 ## Open a pull request
 
 ```
-gh pr create --base <target> --head <current> --title "<type>: <summary>" --body "<body>"
+gh pr create --draft --base <target> --head <current> --title "<type>: <summary>" --body "<body>"
 ```
+
+A new pull request opens as a draft. Once its pipeline on the last commit is green, mark it ready for review: `gh pr ready <n>`. A red one stays a draft until it is fixed.
 
 Reuse an open PR for the same head -> base instead of opening a duplicate: `gh pr list --head <current> --base <target>`. Never delete a long-lived branch on merge.
 
