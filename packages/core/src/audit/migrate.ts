@@ -6,11 +6,12 @@ import { runMigrations } from '@openora/core/server/migrate';
 
 // Every UPDATE, DELETE and TRUNCATE on audit_log raises, for the table owner too. ENABLE ALWAYS
 // keeps the triggers firing under `session_replication_role = replica`, which skips ordinary
-// triggers, so only DDL (disabling or dropping one) gets past them.
+// triggers, so only DDL (disabling or dropping one) gets past them. The function keeps its
+// audit_log name from before it guarded the outbox tables too.
 const APPEND_ONLY_SQL = [
   `CREATE OR REPLACE FUNCTION audit_log_deny_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
    BEGIN
-     RAISE EXCEPTION 'audit_log is append-only: % is not permitted', TG_OP;
+     RAISE EXCEPTION '% is append-only: % is not permitted', TG_TABLE_NAME, TG_OP;
    END;
    $$`,
   `CREATE OR REPLACE TRIGGER audit_log_append_only
@@ -21,6 +22,44 @@ const APPEND_ONLY_SQL = [
      FOR EACH STATEMENT EXECUTE FUNCTION audit_log_deny_mutation()`,
   `ALTER TABLE audit_log ENABLE ALWAYS TRIGGER audit_log_append_only`,
   `ALTER TABLE audit_log ENABLE ALWAYS TRIGGER audit_log_no_truncate`,
+];
+
+// The outbox holds records that are not in the chain yet, so losing a row loses an audit record.
+// No UPDATE or TRUNCATE; a DELETE only of a row the shipper has finished with, one whose event is
+// in audit_log or was moved to audit_outbox_rejected. The rejected table is append-only like
+// audit_log. Both outbox tables come from the engine migration set, which runs before this one.
+const OUTBOX_GUARD_SQL = [
+  `CREATE OR REPLACE FUNCTION audit_outbox_deny_unshipped_delete() RETURNS trigger
+   LANGUAGE plpgsql AS $$
+   BEGIN
+     IF EXISTS (SELECT 1 FROM audit_log WHERE event_id = OLD.event_id)
+        OR EXISTS (SELECT 1 FROM audit_outbox_rejected WHERE event_id = OLD.event_id) THEN
+       RETURN OLD;
+     END IF;
+     RAISE EXCEPTION 'audit_outbox row % (event %) has not shipped: DELETE is not permitted',
+       OLD.id, OLD.event_id;
+   END;
+   $$`,
+  `CREATE OR REPLACE TRIGGER audit_outbox_no_update
+     BEFORE UPDATE ON audit_outbox
+     FOR EACH STATEMENT EXECUTE FUNCTION audit_log_deny_mutation()`,
+  `CREATE OR REPLACE TRIGGER audit_outbox_no_truncate
+     BEFORE TRUNCATE ON audit_outbox
+     FOR EACH STATEMENT EXECUTE FUNCTION audit_log_deny_mutation()`,
+  `CREATE OR REPLACE TRIGGER audit_outbox_shipped_delete
+     BEFORE DELETE ON audit_outbox
+     FOR EACH ROW EXECUTE FUNCTION audit_outbox_deny_unshipped_delete()`,
+  `CREATE OR REPLACE TRIGGER audit_outbox_rejected_append_only
+     BEFORE UPDATE OR DELETE ON audit_outbox_rejected
+     FOR EACH STATEMENT EXECUTE FUNCTION audit_log_deny_mutation()`,
+  `CREATE OR REPLACE TRIGGER audit_outbox_rejected_no_truncate
+     BEFORE TRUNCATE ON audit_outbox_rejected
+     FOR EACH STATEMENT EXECUTE FUNCTION audit_log_deny_mutation()`,
+  `ALTER TABLE audit_outbox ENABLE ALWAYS TRIGGER audit_outbox_no_update,
+     ENABLE ALWAYS TRIGGER audit_outbox_no_truncate,
+     ENABLE ALWAYS TRIGGER audit_outbox_shipped_delete`,
+  `ALTER TABLE audit_outbox_rejected ENABLE ALWAYS TRIGGER audit_outbox_rejected_append_only,
+     ENABLE ALWAYS TRIGGER audit_outbox_rejected_no_truncate`,
 ];
 
 // One row per seq, per event and per predecessor: a second writer that slipped past the chain
@@ -81,7 +120,12 @@ export function migrate(databaseUrl?: string) {
     migrationsFolder: fileURLToPath(new URL('./drizzle/migrations', import.meta.url)),
     migrationsTable: '__drizzle_migrations_audit',
     migrationsSchema: 'drizzle',
-    postSql: [...APPEND_ONLY_SQL, ...CHAIN_UNIQUE_SQL, ...EMAIL_CHANGE_INDEX_SQL],
+    postSql: [
+      ...APPEND_ONLY_SQL,
+      ...OUTBOX_GUARD_SQL,
+      ...CHAIN_UNIQUE_SQL,
+      ...EMAIL_CHANGE_INDEX_SQL,
+    ],
     ...(databaseUrl ? { databaseUrl } : {}),
   });
 }

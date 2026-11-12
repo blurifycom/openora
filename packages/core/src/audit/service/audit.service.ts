@@ -20,12 +20,14 @@ import {
   LimitTypeSchema,
   MoneyAmountSchema,
   type AuditWritePort,
+  type EventEnvelope,
   type IdentityReader,
   type User,
 } from '@openora/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import {
   AuditActorTypeSchema,
+  AuditSnapshotSchema,
   type AuditListFilters,
   type AuditExportFilters,
   type MyRgHistoryEntry,
@@ -184,18 +186,20 @@ export type RecordInput = Parameters<AuditWritePort['record']>[0] & {
   result?: string | null;
 };
 
-// What `audit_outbox.entry` holds: the entry with the time it was written and its correlation id
-// resolved at enqueue, inside the request that wrote it, so the shipper hashes when the change
-// committed, not when it shipped. Checked at enqueue, so a bad entry fails the business
-// transaction as an `audit_log` insert used to, instead of blocking the shipper behind it.
-const OutboxEntrySchema = z.object({
+// What `audit_outbox.entry` holds: the entry with its correlation id and `createdAt` resolved at
+// enqueue, inside the request that wrote it. `createdAt` is queue time: when the business
+// transaction wrote the record, not when it committed or shipped. `seq` is assigned at ship time
+// and is the authoritative order of the chain; `createdAt` is not monotonic in it. Checked at
+// enqueue, so a bad entry fails the business transaction as an `audit_log` insert used to; the
+// shipper checks each row again and moves one that fails aside instead of stopping behind it.
+export const OutboxEntrySchema = z.object({
   actorId: z.string().nullish(),
   actorType: AuditActorTypeSchema,
   action: z.string().min(1),
   resourceType: z.string().min(1),
   resourceId: z.string().nullish(),
-  before: z.record(z.string(), z.unknown()).nullish(),
-  after: z.record(z.string(), z.unknown()).nullish(),
+  before: AuditSnapshotSchema.optional(),
+  after: AuditSnapshotSchema.optional(),
   ip: z.string().nullish(),
   userAgent: z.string().nullish(),
   correlationId: z.string().nullable(),
@@ -232,6 +236,22 @@ async function enqueue(
   }
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * `eventId` as the uuid `event_id` column takes: a uuid as it is, anything else (an event id
+ * from a broker that does not mint uuids) as the sha1-based uuid of its text, so a redelivery
+ * maps to the same id and still dedups.
+ */
+export function auditEventId(eventId: EventEnvelope['eventId']): ShippableEntry['eventId'] {
+  if (UUID_PATTERN.test(eventId)) {
+    return eventId;
+  }
+  const hex = createHash('sha1').update(eventId).digest('hex');
+  const variant = ((Number.parseInt(hex.charAt(16), 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 /**
  * Queues one audit record inside the caller's transaction: it reaches `audit_log` once the
  * transaction commits and the audit shipper appends it to the hash chain, and never if it rolls
@@ -241,9 +261,9 @@ async function enqueue(
 export async function enqueueAuditInTransaction(
   txn: DrizzleTx,
   input: RecordInput,
-  eventId: ShippableEntry['eventId'] = randomUUID(),
+  eventId: EventEnvelope['eventId'] = randomUUID(),
 ): Promise<void> {
-  await enqueue(txn, [{ eventId, entry: outboxEntry(input) }]);
+  await enqueue(txn, [{ eventId: auditEventId(eventId), entry: outboxEntry(input) }]);
   noteAuditWrite(input.actorId);
 }
 
@@ -269,6 +289,11 @@ function latestChainHash(txn: DrizzleTx) {
     .then(([latest]) => latest?.hash ?? null);
 }
 
+// The column types audit_log's snapshots as records, which every reader indexes by key, but the
+// jsonb stores an array snapshot (a role's permission list) as is, as it always has.
+// ponytail: widen the column type once its readers narrow arrays themselves.
+const snapshot = (value: OutboxEntry['before']) => (value ?? null) as AuditLog['before'];
+
 /** The row `entry` appends at `seq` after `prevHash`, hashed over what is persisted. */
 function chainedRow(
   { eventId, entry }: { eventId: ShippableEntry['eventId']; entry: OutboxEntry },
@@ -276,6 +301,8 @@ function chainedRow(
 ) {
   const id = randomUUID();
   const createdAt = new Date(entry.createdAt);
+  const before = snapshot(entry.before);
+  const after = snapshot(entry.after);
   const hash = computeHash({
     id,
     actorId: entry.actorId ?? null,
@@ -283,14 +310,14 @@ function chainedRow(
     action: entry.action,
     resourceType: entry.resourceType,
     resourceId: entry.resourceId ?? null,
-    before: entry.before ?? null,
-    after: entry.after ?? null,
+    before,
+    after,
     result: entry.result ?? null,
     seq,
     createdAt: createdAt.toISOString(),
     prevHash,
   });
-  return { ...entry, eventId, id, seq, prevHash, createdAt, hash };
+  return { ...entry, before, after, eventId, id, seq, prevHash, createdAt, hash };
 }
 
 /**
@@ -357,9 +384,11 @@ export async function appendAuditEntries(
 
 /**
  * Appends one row to the hash chain straight away, inside the caller's transaction and holding
- * the chain lock until it commits. For a deploy step that runs outside the container and reads
- * its own row back; everything else queues with `enqueueAuditInTransaction`, which takes no lock.
- * Kept for one release while those steps move off it.
+ * the `audit_log` chain lock until it commits, so every other append waits on the caller's
+ * transaction. For a deploy step that runs outside the container and reads its own row back.
+ *
+ * @deprecated Use `enqueueAuditInTransaction`, which queues the record and takes no lock. Removed
+ * in the next minor release.
  */
 export async function recordAuditInTransaction(
   txn: DrizzleTx,
@@ -383,7 +412,7 @@ export class AuditService {
   ) {}
 
   /** Queues `input` in a transaction of its own; `eventId` makes a redelivered event a no-op. */
-  async record(input: RecordInput, eventId?: ShippableEntry['eventId']): Promise<void> {
+  async record(input: RecordInput, eventId?: EventEnvelope['eventId']): Promise<void> {
     await this.drizzle.db.transaction((tx) => enqueueAuditInTransaction(tx, input, eventId));
   }
 

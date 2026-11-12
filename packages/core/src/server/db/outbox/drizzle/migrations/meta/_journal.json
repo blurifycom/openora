@@ -36,6 +36,13 @@
       "when": 1794447394585,
       "tag": "0004_audit_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794456221273,
+      "tag": "0005_audit_outbox_rejected",
+      "breakpoints": true
     }
   ]
 }

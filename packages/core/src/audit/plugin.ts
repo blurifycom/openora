@@ -1432,6 +1432,9 @@ export async function mapEventToRecord(
 // group's pending entries and starts the new one at the stream tail.
 const AUDIT_CONSUMER_GROUP = 'audit';
 
+// The databases this process runs an audit shipper on.
+const shippedDatabases = new WeakSet<object>();
+
 // A published topic is audited when the subscriber records it or its writer already did at source;
 // an exempt one is not, so publishing it leaves the request's trail as bare as before.
 const AUDITED_TOPICS: ReadonlySet<string> = new Set([
@@ -1445,7 +1448,7 @@ const SUBSCRIBED: ReadonlySet<string> = new Set(SUBSCRIBED_TOPICS);
 
 // The record an audited event maps to, or null when the topic is not one the subscriber records
 // or its writer already recorded it at source.
-async function auditRecordFor(
+export async function auditRecordFor(
   topic: string,
   payload: unknown,
   envelope: Pick<EventEnvelope, 'correlationId'> | undefined,
@@ -1511,13 +1514,20 @@ export default {
           await enqueueAuditInTransaction(tx as DrizzleTx, record, envelope.eventId);
         }
       });
-      // Router factories run in every service that loads this plugin, routes or not, so each
-      // database a service writes audit records to gets a shipper.
-      const shipper = new AuditShipper(drizzle.db, drizzle.db, {
-        onError: (err) => createLogger('audit-shipper').error({ err }, 'audit shipping failed'),
-      });
-      shipper.start();
-      c.onDispose(() => shipper.stop());
+      // Plugins have no start hook; router factories run in every service that loads this plugin,
+      // routes or not, so each database a service writes audit records to gets a shipper. One
+      // per database per process, however often the factory runs.
+      if (!shippedDatabases.has(drizzle.db)) {
+        shippedDatabases.add(drizzle.db);
+        const shipper = new AuditShipper(drizzle.db, {
+          onError: (err) => createLogger('audit-shipper').error({ err }, 'audit shipping failed'),
+        });
+        shipper.start();
+        c.onDispose(async () => {
+          await shipper.stop();
+          shippedDatabases.delete(drizzle.db);
+        });
+      }
       return createAuditRouter(svc, c.get(ADMIN_GUARD));
     });
   },

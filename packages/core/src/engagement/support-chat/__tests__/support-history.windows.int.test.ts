@@ -9,6 +9,7 @@ import {
 } from '@openora/core/contracts';
 import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
 import { auditLog } from '@openora/core/audit/schema';
+import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -26,7 +27,7 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
 let db: TestDb;
 
 beforeAll(async () => {
-  db = await createTestDb([migrateIdentity, migrateProfile, migrateAudit, migrate]);
+  db = await createTestDb([migrateOutbox, migrateIdentity, migrateProfile, migrateAudit, migrate]);
 });
 
 afterAll(async () => {

@@ -65,6 +65,11 @@ export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'igaming'> & {
  *
  * `REALTIME_TRANSPORT` binds the same `RedisPubSubRealtimeTransport` production uses
  * (ADR-0031) - core ships no in-process fallback, so there is nothing else to bind.
+ *
+ * Audit records ship from `audit_outbox` after their write commits (ADR-0052). `app.request`
+ * flushes them before and after each call, so a test reads the log as if the write appended it.
+ * Every other entry point does not: a test that writes through `fetch`, a resolved service or a
+ * background job calls `flushAudit(app)` before it reads `audit_log`.
  */
 // Mirrors what the consumer composition root does. See ADR-0025.
 export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {

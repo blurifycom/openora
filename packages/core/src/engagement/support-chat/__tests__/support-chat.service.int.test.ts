@@ -11,6 +11,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
+import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -44,6 +45,7 @@ let db: TestDb;
 
 beforeAll(async () => {
   db = await createTestDb([
+    migrateOutbox,
     migrateIdentity,
     migrateProfile,
     migrateAudit,

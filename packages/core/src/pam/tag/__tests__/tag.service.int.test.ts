@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { AuditWritePort, PlayEligibilityPort, TagKey } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, withAuditGuardsLifted, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { auditLog } from '@openora/core/audit/schema';
@@ -111,15 +111,12 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  // audit_log refuses TRUNCATE for every role; the reset lifts that trigger inside its own
-  // transaction, so a failure cannot leave it off.
-  await db.drizzle.db.transaction(async (tx) => {
-    await tx.execute(sql`ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_truncate`);
-    await tx.execute(
+  // The audit tables refuse TRUNCATE for every role.
+  await withAuditGuardsLifted(db.drizzle.db, (tx) =>
+    tx.execute(
       sql`TRUNCATE ${playerTag}, ${tag}, ${player}, audit_log, audit_outbox RESTART IDENTITY CASCADE`,
-    );
-    await tx.execute(sql`ALTER TABLE audit_log ENABLE ALWAYS TRIGGER audit_log_no_truncate`);
-  });
+    ),
+  );
 });
 
 describe('TagService.createTag (real PG)', () => {
