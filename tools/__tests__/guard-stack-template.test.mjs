@@ -32,3 +32,10 @@ test('a PR based on a feature branch is denied', () => {
   assert.equal(exitCode('GH_REPO=o/r gh pr create --base feat/a'), DENIED);
   assert.equal(exitCode('gh pr create --base dev && gh pr create --base feat/a'), DENIED);
 });
+
+test('every base in a command is judged, glued or repeated', () => {
+  assert.equal(exitCode('gh pr create --base dev --base feat/a'), DENIED);
+  assert.equal(exitCode('gh pr create -Bfeat/a'), DENIED);
+  assert.equal(exitCode('/usr/bin/gh pr edit 3 -B feat/a'), DENIED);
+  assert.equal(exitCode('gh pr create -Bdev'), ALLOWED);
+});

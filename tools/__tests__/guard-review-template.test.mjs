@@ -198,3 +198,28 @@ test('a rejected or stale review is denied', () => {
   saveReview('0'.repeat(40), 'APPROVED');
   assert.equal(exitCode('git push'), DENIED);
 });
+
+test('a single & splits commands, and HEAD movers behind a path or prefix count', () => {
+  saveReview(head, 'APPROVED');
+  assert.equal(exitCode('git commit -am x & git push'), DENIED);
+  assert.equal(exitCode('command git commit -am x && git push'), DENIED);
+  assert.equal(exitCode('/usr/bin/git reset --hard HEAD~1; git push'), DENIED);
+  assert.equal(exitCode('git update-ref refs/heads/feat/x HEAD~1 && git push'), DENIED);
+  assert.equal(exitCode('gh pr checkout 12 && git push'), DENIED);
+  assert.equal(exitCode('git push 2>&1 | tail -3'), ALLOWED);
+  assert.equal(exitCode('git checkout -b feat/y && git push -u origin HEAD'), ALLOWED);
+  assert.equal(exitCode('git stash list && git push'), ALLOWED);
+});
+
+test('a glued or repeated source flag is read per CLI', () => {
+  saveReview(head, 'APPROVED');
+  git('branch', 'feat/other', 'HEAD');
+  git('checkout', '-q', 'feat/other');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'o');
+  git('checkout', '-q', 'feat/x');
+  assert.equal(exitCode('gh pr create -Hfeat/other'), DENIED);
+  assert.equal(exitCode('glab mr create -sfeat/other'), DENIED);
+  assert.equal(exitCode('gh pr create -H dev -H feat/x'), DENIED);
+  assert.equal(exitCode('glab mr create -H o/r --source-branch feat/x'), ALLOWED);
+  assert.equal(exitCode('gh pr create -Hfeat/x'), ALLOWED);
+});

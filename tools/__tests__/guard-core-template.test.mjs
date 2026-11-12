@@ -202,3 +202,30 @@ test('a shell command carrying patch text is still judged as a shell command', (
   assert.equal(exitCode({ command: heredoc }), DENIED);
   assert.equal(exitCode({ command: `printf '%s' '${patch()}' && rm -rf ../oss/packages` }), DENIED);
 });
+
+test('a symlink made from inside an OSS checkout reached through a symlink is denied', () => {
+  const box = realpathSync(mkdtempSync(join(tmpdir(), 'guard-core-link-')));
+  try {
+    const realOss = join(box, 'oss-real');
+    const worktree = join(realOss, '.worktrees', 'feat+z');
+    mkdirSync(worktree, { recursive: true });
+    mkdirSync(join(box, 'consumer', '.rulesync', 'hooks'), { recursive: true });
+    symlinkSync(realOss, join(box, 'oss'));
+    const linkedGuard = join(box, 'consumer', '.rulesync', 'hooks', 'guard-core.mjs');
+    copyFileSync(
+      join(hooks, '_shared.mjs'),
+      join(box, 'consumer', '.rulesync', 'hooks', '_shared.mjs'),
+    );
+    copyFileSync(guard, linkedGuard);
+    const status = spawnSync('node', [linkedGuard], {
+      input: JSON.stringify({
+        tool_name: 'Bash',
+        tool_input: { command: 'ln -s a b' },
+        cwd: worktree,
+      }),
+    }).status;
+    assert.equal(status, DENIED);
+  } finally {
+    rmSync(box, { recursive: true, force: true });
+  }
+});

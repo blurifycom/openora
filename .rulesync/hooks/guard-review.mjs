@@ -18,13 +18,14 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
 const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
-const PREFIX = String.raw`^(?:(?:env\s+)?\w+=\S*\s+)*`;
+// Env assignments, then `command`/`env` and a path before the program name.
+const PREFIX = String.raw`^(?:(?:env\s+)?\w+=\S*\s+)*(?:command\s+|env\s+)?(?:\S*/)?`;
 const GIT_PUSH = new RegExp(`${PREFIX}git((?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*)\\s+push\\b(.*)$`);
 const OPENS_REVIEW = new RegExp(
-  `${PREFIX}(?:gh(?:\\s+(?:-R|--repo)\\s+\\S+)?\\s+(?:pr\\s+create|stack\\s+(?:submit|push))|glab\\s+mr\\s+create)\\b(.*)$`,
+  `${PREFIX}(?:(gh)(?:\\s+(?:-R|--repo)\\s+\\S+)?\\s+(?:pr\\s+create|stack\\s+(?:submit|push))|(glab)\\s+mr\\s+create)\\b(.*)$`,
 );
 // A forge CLI (`gh`/`glab`, bare, by path or behind `command`) and its words after that prefix.
-const FORGE_CLI = new RegExp(`${PREFIX}(?:command\\s+)?(?:\\S*/)?(gh|glab)\\s+(.*)$`);
+const FORGE_CLI = new RegExp(`${PREFIX}(gh|glab)\\s+(.*)$`);
 const MERGE_API = /\/merge(?=$|[?\s"'])/;
 const API_WRITES =
   /\s(?:(?:-X\s*|--method[=\s]+)(?:PUT|POST)\b|(?:-f|-F|--field|--raw-field|--input)\b)/i;
@@ -47,12 +48,18 @@ const isHandMerge = (segment) => {
     (words.includes('api') && MERGE_API.test(cli[2]) && API_WRITES.test(` ${cli[2]}`))
   );
 };
-const SOURCE = /\s(?:--head|-H|--source-branch|-s)(?:=|\s+)(\S+)/;
-// A git command that can move HEAD. The hook runs before the whole command, so a push chained
-// after one would be judged on the commit it starts from, not the one it sends.
+// The source branch flag, glued (`-Hfeat/x`) or not. glab's `-H` names the head repository.
+const SOURCE_FLAG = {
+  gh: /\s(?:--head(?:=|\s+)|-H\s*)(\S+)/g,
+  glab: /\s(?:--source-branch(?:=|\s+)|-s\s*)(\S+)/g,
+};
+// A command that can move HEAD. The hook runs before the whole command, so a push chained after
+// one would be judged on the commit it starts from, not the one it sends. A new branch at HEAD
+// and a stash listing move nothing.
 const MOVES_HEAD = new RegExp(
-  `${PREFIX}git(?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*\\s+(?:commit|merge|rebase|reset|checkout|switch|cherry-pick|revert|pull|am|stash)\\b`,
+  `${PREFIX}(?:git(?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*\\s+(?:commit|merge|rebase|reset|checkout|switch|cherry-pick|revert|pull|am|stash|update-ref)|gh(?:\\s+(?:-R|--repo)\\s+\\S+)?\\s+pr\\s+checkout|glab\\s+mr\\s+checkout)\\b`,
 );
+const MOVES_NOTHING = /\s(?:(?:checkout\s+-[bB]|switch\s+-[cC])\s+\S+\s*$|stash\s+(?:list|show)\b)/;
 const DIR_FLAG = /\s-C\s+(\S+)/;
 
 const git = (cwd, ...args) => {
@@ -78,7 +85,7 @@ const within = (cwd, path) => {
 const segments = (command) =>
   command
     .replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, (quoted) => (/[\s;&|(){}]/.test(quoted) ? '""' : quoted))
-    .split(/&&|\|\||[;|\n(){}]/)
+    .split(/&&|\|\||(?<![>&])&(?![>&])|[;|\n(){}]/)
     .map((part) => part.replace(/(?:^|\s)#.*$/, '').trim())
     .filter(Boolean);
 
@@ -122,9 +129,20 @@ const reviewTarget = (segment, cwd) => {
   if (!opens) {
     return null;
   }
-  // `gh pr create --head owner:branch` names the fork too.
-  const named = SOURCE.exec(opens[1]);
-  const source = named ? unquote(named[1]).replace(/^[^:]+:/, '') : undefined;
+  // Every source branch it names; `gh pr create --head owner:branch` names the fork too.
+  const sources = [
+    ...new Set(
+      [...opens[3].matchAll(SOURCE_FLAG[opens[1] ?? opens[2]])].map((flag) =>
+        unquote(flag[1]).replace(/^[^:]+:/, ''),
+      ),
+    ),
+  ];
+  if (sources.length > 1) {
+    deny(
+      `Blocked: this command names more than one source branch (${sources.join(', ')}); name one.`,
+    );
+  }
+  const [source] = sources;
   if (source && SHARED.test(source)) {
     return null;
   }
@@ -248,6 +266,6 @@ for (const segment of segments(rawCommand)) {
   if (target) {
     check(target);
   }
-  headMoved ||= MOVES_HEAD.test(segment);
+  headMoved ||= MOVES_HEAD.test(segment) && !MOVES_NOTHING.test(segment);
 }
 process.exit(0);
