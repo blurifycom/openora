@@ -115,4 +115,19 @@ test('only the create command names the source branch, glued or repeated', () =>
   assert.equal(exitCode('glab mr create -H o/r --source-branch unverified'), DENIED);
   assert.equal(exitCode('git status -s && glab mr create --source-branch verified'), ALLOWED);
   assert.equal(exitCode('gh stack submit --auto'), DENIED);
+  assert.equal(exitCode('gh pr create -H verified && gh pr create -H unverified'), DENIED);
+  assert.equal(exitCode('gh pr create -H dev && gh pr create -H unverified'), DENIED);
+  assert.equal(exitCode('gh pr create -H verified && glab mr create -s verified'), ALLOWED);
+});
+
+test('aliases, combined short flags and quoted separators are read', () => {
+  assert.equal(exitCode('gh pr new -H unverified'), DENIED);
+  assert.equal(exitCode('glab mr new -s unverified'), DENIED);
+  assert.equal(exitCode('gh pr -R o/r create -H unverified'), DENIED);
+  assert.equal(exitCode('gh pr create -dH unverified'), DENIED);
+  assert.equal(exitCode('glab mr create -ys unverified'), DENIED);
+  assert.equal(exitCode('gh pr create -dH verified'), ALLOWED);
+  assert.equal(exitCode('gh pr create -H=dev'), ALLOWED);
+  assert.equal(exitCode("gh pr create -t 'x;y' -H unverified"), DENIED);
+  assert.equal(exitCode("gh pr create -t 'x;y' -H verified"), ALLOWED);
 });

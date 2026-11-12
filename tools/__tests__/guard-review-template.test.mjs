@@ -209,6 +209,11 @@ test('a single & splits commands, and HEAD movers behind a path or prefix count'
   assert.equal(exitCode('git push 2>&1 | tail -3'), ALLOWED);
   assert.equal(exitCode('git checkout -b feat/y && git push -u origin HEAD'), ALLOWED);
   assert.equal(exitCode('git stash list && git push'), ALLOWED);
+  assert.equal(exitCode('git switch -c main && git push -u origin HEAD'), DENIED);
+  assert.equal(exitCode('git checkout -b prod && git push origin HEAD'), DENIED);
+  assert.equal(exitCode('git checkout -b z feat/x && git push'), DENIED);
+  assert.equal(exitCode('git symbolic-ref HEAD refs/heads/dev && git push'), DENIED);
+  assert.equal(exitCode('git branch -m dev && git push'), DENIED);
 });
 
 test('a glued or repeated source flag is read per CLI', () => {
@@ -222,4 +227,10 @@ test('a glued or repeated source flag is read per CLI', () => {
   assert.equal(exitCode('gh pr create -H dev -H feat/x'), DENIED);
   assert.equal(exitCode('glab mr create -H o/r --source-branch feat/x'), ALLOWED);
   assert.equal(exitCode('gh pr create -Hfeat/x'), ALLOWED);
+  assert.equal(exitCode('gh pr new -H feat/other'), DENIED);
+  assert.equal(exitCode('glab mr new -s feat/other'), DENIED);
+  assert.equal(exitCode('gh pr -R o/r create -H feat/other'), DENIED);
+  assert.equal(exitCode('gh pr create -dH feat/other'), DENIED);
+  assert.equal(exitCode('gh pr create -dH feat/x'), ALLOWED);
+  assert.equal(exitCode('gh pr create -H=dev'), ALLOWED);
 });

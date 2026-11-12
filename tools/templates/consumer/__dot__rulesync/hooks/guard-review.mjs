@@ -2,7 +2,8 @@
 // PreToolUse guard: no push and no new merge/pull request until the `review` skill approved HEAD.
 // `review` (and `ship`, which runs it) saves `.claude/reviews/<pr or branch>.json` in the main
 // checkout with the reviewed `sha` and the `verdict`. A push, `gh stack submit|push`, or a new
-// MR/PR is denied unless one of those files records the current HEAD as APPROVED (or GO).
+// MR/PR is denied unless one of those files records the current HEAD as APPROVED (or GO). A
+// PR/MR that names two different source branches is denied.
 // Each command in a chain is judged on its own: a branch delete or a tag-only push passes, and
 // so does a PR/MR opened from a shared branch (a promotion, which no branch review covers). A
 // push to a shared branch and a hand merge (`gh pr|stack merge`, `glab mr merge`) are denied
@@ -18,11 +19,12 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
 const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
-// Env assignments, then `command`/`env` and a path before the program name.
 const PREFIX = String.raw`^(?:(?:env\s+)?\w+=\S*\s+)*(?:command\s+|env\s+)?(?:\S*/)?`;
 const GIT_PUSH = new RegExp(`${PREFIX}git((?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*)\\s+push\\b(.*)$`);
+// `-R <repo>` goes before or after `pr`/`mr`; `new` is an alias of `create`.
+const REPO = String.raw`(?:\s+(?:-R\s*|--repo(?:=|\s+))\S+)?`;
 const OPENS_REVIEW = new RegExp(
-  `${PREFIX}(?:(gh)(?:\\s+(?:-R|--repo)\\s+\\S+)?\\s+(?:pr\\s+create|stack\\s+(?:submit|push))|(glab)\\s+mr\\s+create)\\b(.*)$`,
+  `${PREFIX}(?:(gh)${REPO}\\s+(?:pr${REPO}\\s+(?:create|new)|stack\\s+(?:submit|push))|(glab)${REPO}\\s+mr${REPO}\\s+(?:create|new))\\b(.*)$`,
 );
 // A forge CLI (`gh`/`glab`, bare, by path or behind `command`) and its words after that prefix.
 const FORGE_CLI = new RegExp(`${PREFIX}(gh|glab)\\s+(.*)$`);
@@ -48,18 +50,23 @@ const isHandMerge = (segment) => {
     (words.includes('api') && MERGE_API.test(cli[2]) && API_WRITES.test(` ${cli[2]}`))
   );
 };
-// The source branch flag, glued (`-Hfeat/x`) or not. glab's `-H` names the head repository.
+// The source branch flag, glued (`-Hfeat/x`, `-dH x`) or not. glab's `-H` names the head repository.
 const SOURCE_FLAG = {
-  gh: /\s(?:--head(?:=|\s+)|-H\s*)(\S+)/g,
-  glab: /\s(?:--source-branch(?:=|\s+)|-s\s*)(\S+)/g,
+  gh: /\s(?:--head(?:=|\s+)|-[defw]*H(?:=|\s*))(\S+)/g,
+  glab: /\s(?:--source-branch(?:=|\s+)|-[fwy]*s(?:=|\s*))(\S+)/g,
 };
 // A command that can move HEAD. The hook runs before the whole command, so a push chained after
-// one would be judged on the commit it starts from, not the one it sends. A new branch at HEAD
-// and a stash listing move nothing.
+// one would be judged on the commit it starts from, not the one it sends. A stash listing and a
+// new feature branch at HEAD move nothing; a new or renamed shared branch counts, since a push
+// after it would be judged against the branch checked out before it.
 const MOVES_HEAD = new RegExp(
-  `${PREFIX}(?:git(?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*\\s+(?:commit|merge|rebase|reset|checkout|switch|cherry-pick|revert|pull|am|stash|update-ref)|gh(?:\\s+(?:-R|--repo)\\s+\\S+)?\\s+pr\\s+checkout|glab\\s+mr\\s+checkout)\\b`,
+  `${PREFIX}(?:git(?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*\\s+(?:commit|merge|rebase|reset|checkout|switch|cherry-pick|revert|pull|am|stash|update-ref|symbolic-ref|bisect|branch\\s+(?:-[mM]|--move))|gh${REPO}\\s+pr${REPO}\\s+checkout|glab${REPO}\\s+mr${REPO}\\s+checkout)\\b`,
 );
-const MOVES_NOTHING = /\s(?:(?:checkout\s+-[bB]|switch\s+-[cC])\s+\S+\s*$|stash\s+(?:list|show)\b)/;
+const NEW_BRANCH = /\s(?:checkout\s+-[bB]|switch\s+-[cC])\s+(\S+)\s*$/;
+const movesNothing = (segment) => {
+  const created = NEW_BRANCH.exec(segment);
+  return created ? !SHARED.test(unquote(created[1])) : /\sstash\s+(?:list|show)\b/.test(segment);
+};
 const DIR_FLAG = /\s-C\s+(\S+)/;
 
 const git = (cwd, ...args) => {
@@ -266,6 +273,6 @@ for (const segment of segments(rawCommand)) {
   if (target) {
     check(target);
   }
-  headMoved ||= MOVES_HEAD.test(segment) && !MOVES_NOTHING.test(segment);
+  headMoved ||= MOVES_HEAD.test(segment) && !movesNothing(segment);
 }
 process.exit(0);
