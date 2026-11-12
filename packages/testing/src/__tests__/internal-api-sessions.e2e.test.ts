@@ -1,7 +1,7 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { INTERNAL_API_HEADERS, loadExtensions, signInternalRequest } from '@openora/core/server';
+import { loadExtensions } from '@openora/core/server';
 import {
   asAdmin,
   bootE2e,
@@ -14,6 +14,9 @@ import {
 
 const SECRET = randomBytes(32).toString('hex');
 const WHOAMI = '/internal/v1/probe/whoami';
+const AS_ADMIN = '/internal/v1/probe/as-admin';
+// The app under test checks the signature against its own SERVICE_NAME.
+const AUDIENCE = process.env['SERVICE_NAME'] || 'monolith';
 
 let db: TestDb;
 let app: TestApp;
@@ -21,21 +24,15 @@ let admin: TestClient;
 let player: TestClient;
 const savedSecrets = process.env['INTERNAL_API_SECRETS'];
 
-function signedHeaders(): Record<string, string> {
+// Signed by hand, as another service would: the signing helper is not public API.
+function signedGet(path: string): Record<string, string> {
   const timestamp = String(Date.now());
+  const emptyBodyHash = createHash('sha256').update('').digest('hex');
+  const canonical = ['chat', AUDIENCE, timestamp, 'GET', path, '', emptyBodyHash].join('\n');
   return {
-    [INTERNAL_API_HEADERS.service]: 'chat',
-    [INTERNAL_API_HEADERS.timestamp]: timestamp,
-    [INTERNAL_API_HEADERS.signature]: signInternalRequest(
-      {
-        service: 'chat',
-        timestamp,
-        method: 'GET',
-        pathAndQuery: WHOAMI,
-        body: new Uint8Array(),
-      },
-      SECRET,
-    ),
+    'x-openora-service': 'chat',
+    'x-openora-timestamp': timestamp,
+    'x-openora-signature': createHmac('sha256', SECRET).update(canonical).digest('hex'),
   };
 }
 
@@ -79,10 +76,16 @@ describe('/internal/v1 and a signed-in session', () => {
     expect(await res.text()).toBe('');
   });
 
-  it('serves a signed call as the service alone, never as the session it carries', async () => {
-    const res = await admin.request(WHOAMI, { method: 'GET', headers: signedHeaders() });
+  it('serves a signed call as the service alone, with the session cookie stripped', async () => {
+    const res = await admin.request(WHOAMI, { method: 'GET', headers: signedGet(WHOAMI) });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ caller: 'chat', userId: null });
+    expect(await res.json()).toEqual({ caller: 'chat', cookieSeen: false });
+  });
+
+  it('refuses an admin check inside a signed call that carries an admin cookie', async () => {
+    const res = await admin.request(AS_ADMIN, { method: 'GET', headers: signedGet(AS_ADMIN) });
+
+    expect(res.status).toBe(401);
   });
 });

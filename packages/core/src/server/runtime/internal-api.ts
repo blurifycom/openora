@@ -3,7 +3,9 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 /**
  * Service-to-service request signing for the `/internal/v1` surface (ADR-0052). Every request
  * carries the caller's `SERVICE_NAME`, a unix-ms timestamp and an HMAC-SHA256 over
- * `service\ntimestamp\nMETHOD\npath+query\nsha256hex(body)` with a secret shared by the install.
+ * `service\naudience\ntimestamp\nMETHOD\npath+query\ncontent-type\nsha256hex(body)` with a
+ * secret shared by the install. The audience is the called service's `SERVICE_NAME`, so a
+ * request signed for one service is refused by every other.
  */
 export const INTERNAL_API_PREFIX = '/internal/v1';
 
@@ -15,7 +17,16 @@ export const INTERNAL_API_HEADERS = {
 
 export const INTERNAL_API_MAX_CLOCK_SKEW_MS = 60_000;
 
-export const INTERNAL_API_MAX_BODY_BYTES = 1_048_576;
+// Headers core resolves a session or an identity from. Stripped from an internal request before
+// any handler sees it, so nothing downstream (AdminGuard, the chat display name) can act for a
+// person on a service call.
+export const INTERNAL_API_SESSION_HEADERS = [
+  'cookie',
+  'authorization',
+  'proxy-authorization',
+  'x-user-id',
+  'x-username',
+] as const;
 
 const MIN_SECRET_LENGTH = 32;
 const SERVICE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -34,66 +45,85 @@ export function parseInternalApiSecrets(raw: string | undefined): readonly strin
     .filter(Boolean);
   if (secrets.some((secret) => secret.length < MIN_SECRET_LENGTH)) {
     throw new Error(
-      `[create-app] INTERNAL_API_SECRETS: every secret must be at least ${MIN_SECRET_LENGTH} ` +
+      `INTERNAL_API_SECRETS: every secret must be at least ${MIN_SECRET_LENGTH} ` +
         'characters. Generate one with `openssl rand -hex 32`.',
     );
   }
   return secrets;
 }
 
-export type SignedRequest = {
-  service: string;
-  timestamp: string;
+type SignedContent = {
+  audience: string;
   method: string;
   pathAndQuery: string;
+  contentType: string;
   body: Uint8Array;
 };
+
+export type SignedRequest = SignedContent & { service: string; timestamp: string };
 
 export function signInternalRequest(request: SignedRequest, secret: string): string {
   const bodyHash = createHash('sha256').update(request.body).digest('hex');
   const canonical = [
     request.service,
+    request.audience,
     request.timestamp,
     request.method.toUpperCase(),
     request.pathAndQuery,
+    request.contentType,
     bodyHash,
   ].join('\n');
   return createHmac('sha256', secret).update(canonical).digest('hex');
 }
 
-export type InternalRequest = {
-  headers: Headers;
-  method: string;
-  pathAndQuery: string;
-  body: Uint8Array;
-};
+export type InternalRefusalReason =
+  | 'disabled'
+  | 'missing_header'
+  | 'malformed_header'
+  | 'clock_skew'
+  | 'body_too_large'
+  | 'bad_signature';
 
-/** The calling service's name when the request is signed by one of `secrets`, else `null`. */
-export function verifyInternalRequest(
-  request: InternalRequest,
-  secrets: readonly string[],
+type SignatureHeaders = { service: string; timestamp: string; signature: string };
+
+/**
+ * The signature headers when they are present, well formed and inside the clock skew window.
+ * Checked before the body is read, so a stale or malformed call costs no body buffering.
+ */
+export function readSignatureHeaders(
+  headers: Headers,
   now: number,
-): string | null {
-  const service = request.headers.get(INTERNAL_API_HEADERS.service);
-  const timestamp = request.headers.get(INTERNAL_API_HEADERS.timestamp);
-  const signature = request.headers.get(INTERNAL_API_HEADERS.signature);
+): SignatureHeaders | InternalRefusalReason {
+  const service = headers.get(INTERNAL_API_HEADERS.service);
+  const timestamp = headers.get(INTERNAL_API_HEADERS.timestamp);
+  const signature = headers.get(INTERNAL_API_HEADERS.signature);
+  if (!service || !timestamp || !signature) {
+    return 'missing_header';
+  }
   if (
-    secrets.length === 0 ||
-    !service ||
     !SERVICE_NAME_PATTERN.test(service) ||
-    !timestamp ||
     !TIMESTAMP_PATTERN.test(timestamp) ||
-    Math.abs(now - Number(timestamp)) > INTERNAL_API_MAX_CLOCK_SKEW_MS ||
-    !signature ||
     !SIGNATURE_PATTERN.test(signature)
   ) {
-    return null;
+    return 'malformed_header';
   }
-  const given = Buffer.from(signature, 'hex');
-  const signed = { ...request, service, timestamp };
+  if (Math.abs(now - Number(timestamp)) > INTERNAL_API_MAX_CLOCK_SKEW_MS) {
+    return 'clock_skew';
+  }
+  return { service, timestamp, signature };
+}
+
+/** Whether one of `secrets` signed `content` as described by `headers`. */
+export function isSignedBy(
+  headers: SignatureHeaders,
+  content: SignedContent,
+  secrets: readonly string[],
+): boolean {
+  const given = Buffer.from(headers.signature, 'hex');
+  const signed = { ...content, service: headers.service, timestamp: headers.timestamp };
   // Every secret is tried, so the time taken does not tell which one matched.
   const matches = secrets.map((secret) =>
     timingSafeEqual(given, Buffer.from(signInternalRequest(signed, secret), 'hex')),
   );
-  return matches.includes(true) ? service : null;
+  return matches.includes(true);
 }

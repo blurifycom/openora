@@ -1,4 +1,9 @@
-import { INTERNAL_API_HEADERS, INTERNAL_API_PREFIX, signInternalRequest } from './internal-api.js';
+import {
+  INTERNAL_API_HEADERS,
+  INTERNAL_API_PREFIX,
+  parseInternalApiSecrets,
+  signInternalRequest,
+} from './internal-api.js';
 
 export type InternalApiErrorKind = 'timeout' | 'network' | 'client' | 'server';
 
@@ -30,16 +35,20 @@ export type InternalClientConfig = {
   baseUrl: string;
   /** This process's `SERVICE_NAME`, which the called route allow-lists. */
   serviceName: string;
-  /** The first entry of `INTERNAL_API_SECRETS`. */
-  secret: string;
+  /** The called service's `SERVICE_NAME`. A call signed for one service is refused by another. */
+  audience: string;
+  /** The `INTERNAL_API_SECRETS` value as set in the environment; its first secret signs. */
+  secrets: string | undefined;
   timeoutMs: number;
 };
 
 export type InternalClient = {
   /**
    * Calls `<baseUrl>/internal/v1<path>` once, without a retry, and resolves the JSON reply
-   * (`undefined` for an empty one). The reply is untrusted input: parse it with its schema. Put
-   * an idempotency key in `body`, which is signed, not in a header.
+   * (`undefined` for an empty one). `path` is sent as given: it starts with `/` and has no dot
+   * segment, query or fragment, and percent-encoding any segment is the caller's job. Inputs go
+   * in `body`, so a route that takes any is a POST. The reply is untrusted input: parse it with
+   * its schema. A call that moves money puts its idempotency key in `body`, which is signed.
    */
   request(method: string, path: string, body?: unknown): Promise<unknown>;
 };
@@ -48,21 +57,44 @@ function parseReply(text: string): unknown {
   return text === '' ? undefined : JSON.parse(text);
 }
 
+// The URL parser resolves `.` and `..` (also percent-encoded) and splits off `?` and `#`, so a
+// path it would change is one the caller did not mean to send.
+function isPlainPath(path: string, url: URL): boolean {
+  return (
+    path.startsWith('/') &&
+    !path.includes('?') &&
+    !path.includes('#') &&
+    url.pathname === `${INTERNAL_API_PREFIX}${path}`
+  );
+}
+
 export function createInternalClient(config: InternalClientConfig): InternalClient {
+  const [secret] = parseInternalApiSecrets(config.secrets);
+  if (secret === undefined) {
+    throw new Error(
+      'createInternalClient: INTERNAL_API_SECRETS is unset, so no call can be signed',
+    );
+  }
   return {
     async request(method, path, body) {
       const url = new URL(`${INTERNAL_API_PREFIX}${path}`, config.baseUrl);
+      if (!isPlainPath(path, url)) {
+        throw new InternalApiError('client', `Refusing to call ${JSON.stringify(path)}`);
+      }
       const payload = body === undefined ? '' : JSON.stringify(body);
+      const contentType = payload === '' ? '' : 'application/json';
       const timestamp = String(Date.now());
       const signature = signInternalRequest(
         {
           service: config.serviceName,
+          audience: config.audience,
           timestamp,
           method,
-          pathAndQuery: `${url.pathname}${url.search}`,
+          pathAndQuery: url.pathname,
+          contentType,
           body: new TextEncoder().encode(payload),
         },
-        config.secret,
+        secret,
       );
       const target = `${method.toUpperCase()} ${url.pathname}`;
 
@@ -75,7 +107,7 @@ export function createInternalClient(config: InternalClientConfig): InternalClie
             [INTERNAL_API_HEADERS.service]: config.serviceName,
             [INTERNAL_API_HEADERS.timestamp]: timestamp,
             [INTERNAL_API_HEADERS.signature]: signature,
-            ...(payload === '' ? {} : { 'content-type': 'application/json' }),
+            ...(contentType === '' ? {} : { 'content-type': contentType }),
           },
           ...(payload === '' ? {} : { body: payload }),
           // A redirect would change the signed path anyway; surface it rather than follow it.
