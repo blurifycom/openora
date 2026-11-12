@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { inspect } from 'node:util';
-import { eq } from 'drizzle-orm';
+import { eq, getTableName, sql } from 'drizzle-orm';
 import {
   type CacheAdapter,
   type SupportHistoryEmailWindow,
@@ -176,7 +176,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
   it('trusts no window when the account holds another email than it registered with and no row says so', async () => {
     const s = await scenario([], { registeredEmail: 'a' });
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
@@ -186,7 +186,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
       { before: 'a', after: 'b', at: 10 },
     ]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
@@ -221,7 +221,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
       { before: { email: '' }, after: { email: '' }, at: 12 },
     ]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
@@ -278,14 +278,14 @@ describe('support history email windows from crafted audit rows (real PG)', () =
       { before: 'b', after: 'cur', at: 20 },
     ]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
   it('trusts no window when a change time is later than its own audit write', async () => {
     const s = await scenario([{ before: 'a', after: 'cur', at: 10, changedAt: 11 }]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
   });
 
@@ -334,8 +334,59 @@ describe('support history email windows from crafted audit rows (real PG)', () =
   it('trusts no window when another account took the address, whatever its case', async () => {
     const s = await scenario([{ subject: 'other', before: 'q', after: 'CUR', at: 5 }]);
     expect(s.asked).toEqual([]);
-    expect(s.history.tickets).toEqual({ state: 'unavailable', items: [], complete: false });
+    expect(s.history.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
     warnedWithUserOnly(s.userId);
+  });
+
+  it('reads the account and its email trail from one snapshot when a change commits between the reads', async () => {
+    const { account, player } = await seedPlayerWithUser(db);
+    const asked: SupportHistoryEmailWindow[][] = [];
+    const service = new SupportHistoryService({
+      drizzle: db.drizzle,
+      cache: makeCache(),
+      reader: {
+        listTickets: async ({ windows }) => {
+          asked.push(windows);
+          return [];
+        },
+        listChats: async () => [],
+      },
+    });
+
+    const { reading } = await db.drizzle.db.transaction(async (change) => {
+      await change.execute(sql`LOCK TABLE ${auditLog} IN ACCESS EXCLUSIVE MODE`);
+      const reading = service.getHistory(account.id, false);
+      await vi.waitFor(
+        async () => {
+          const { rows } = await change.execute(sql`
+            SELECT 1 FROM pg_locks
+            WHERE NOT granted
+              AND relation = ${getTableName(auditLog)}::regclass
+              AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+          `);
+          expect(rows).toHaveLength(1);
+        },
+        { timeout: 10_000, interval: 20 },
+      );
+      const newEmail = `new-${account.id}@test.dev`;
+      await change.update(user).set({ email: newEmail }).where(eq(user.id, account.id));
+      await change.insert(auditLog).values({
+        actorType: 'player',
+        actorId: player.id,
+        action: 'identity.email.changed',
+        resourceType: 'player',
+        resourceId: player.id,
+        before: { email: account.email },
+        after: { email: newEmail },
+        hash: randomUUID(),
+      });
+      return { reading };
+    });
+    const history = await reading;
+
+    expect(history.tickets).toEqual({ state: 'ok', items: [], complete: true });
+    expect(asked.map((windows) => windows.map((w) => w.email))).toEqual([[account.email]]);
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it('reads no row of another subject, another player or another action', async () => {
@@ -432,6 +483,20 @@ describe('support history cache (real PG)', () => {
   const reader = (): SupportHistoryReader => ({
     listTickets: vi.fn(async () => []),
     listChats: vi.fn(async () => []),
+  });
+
+  it('does not serve an answer cached under the key from before the gap state', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    const cache = makeCache();
+    const oldAnswer = { fetchedAt: 'cached under the old key' };
+    await cache.set(`support-chat-history:${account.id}:false`, oldAnswer, { ttlMs: 60_000 });
+    const read = reader();
+    const service = new SupportHistoryService({ drizzle: db.drizzle, cache, reader: read });
+
+    const history = await service.getHistory(account.id, false);
+
+    expect(history).not.toEqual(oldAnswer);
+    expect(read.listTickets).toHaveBeenCalledOnce();
   });
 
   it('does not cache a missing player', async () => {
