@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import {
@@ -96,11 +96,13 @@ function setup() {
     allowedAttachmentHosts: [],
     contextSendPolicy: makeChatContextSendPolicy(),
   });
+  const publish = vi.fn();
   return {
     broker,
     outcomes,
     local,
-    writer: new OutboxChatSystemWriter(bus, db.drizzle),
+    publish,
+    writer: new OutboxChatSystemWriter(bus, db.drizzle, mock<RealtimeTransport>({ publish })),
     relay: new OutboxRelay(db.drizzle.db, broker),
   };
 }
@@ -269,7 +271,7 @@ describe('system cards through the outbox (real PG)', () => {
   });
 
   it('moves a player-authored card from v1 to v2 in order, the update on its own tx', async () => {
-    const { writer, relay, outcomes } = setup();
+    const { writer, relay, outcomes, publish } = setup();
     const roomId = await createRoom();
     const giftId = randomUUID();
     const senderId = randomUUID();
@@ -297,6 +299,11 @@ describe('system cards through the outbox (real PG)', () => {
     const [stored] = await messagesWithId(giftId);
     expect(outcomes).toEqual(['inserted', 'updated']);
     expect(stored).toMatchObject({ version: 2, metadata: claimed, userId: senderId });
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+    expect(publish).toHaveBeenCalledWith(
+      `chat:room:${roomId}`,
+      expect.objectContaining({ id: giftId, metadata: claimed }),
+    );
   });
 
   it('drops a card whose room was deleted or soft-deleted, and acknowledges the event', async () => {
@@ -486,7 +493,11 @@ describe('the chat plugin card handler (real PG)', () => {
     });
     return {
       handler: bootChatCardHandler(bus),
-      writer: new OutboxChatSystemWriter(bus, db.drizzle),
+      writer: new OutboxChatSystemWriter(
+        bus,
+        db.drizzle,
+        mock<RealtimeTransport>({ publish: vi.fn() }),
+      ),
       relay: new OutboxRelay(db.drizzle.db, broker),
     };
   }

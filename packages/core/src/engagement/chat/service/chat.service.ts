@@ -209,7 +209,11 @@ function emitMentions({
   });
 }
 
-function publishChatEvent<T>(transport: RealtimeTransport, roomId: string | null, event: T): void {
+export function publishChatEvent<T>(
+  transport: RealtimeTransport,
+  roomId: string | null,
+  event: T,
+): void {
   void Promise.resolve()
     .then(() => transport.publish(chatChannel(roomId), event))
     .catch((err: unknown) => {
