@@ -15,6 +15,7 @@ export {
   moneyEquals,
   moneyCompare,
   isPositiveMoney,
+  expandMoneyExponent,
   moneyScaleBy,
   moneyDivide,
   moneyAdd,
