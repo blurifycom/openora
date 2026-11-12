@@ -67,16 +67,16 @@ const service = (
   events: EventBus = makeOutboxEventBus(),
   wallet: WalletCommands = mock<WalletCommands>({ credit }),
 ) =>
-  new RacePayoutService(
-    db.drizzle,
-    mock<PlayEligibilityPort>({ isRestricted }),
+  new RacePayoutService({
+    drizzle: db.drizzle,
+    eligibility: mock<PlayEligibilityPort>({ isRestricted }),
     wallet,
-    mock<ExchangeRateReader>({ convert }),
+    rates: mock<ExchangeRateReader>({ convert }),
     payoutCurrency,
     audit,
     events,
     logger,
-  );
+  });
 
 // The wallet plugin's own WALLET_COMMANDS binding, so a payout writes a real ledger row.
 const realWallet = () => {

@@ -47,7 +47,7 @@ import type {
   RakebackSummary,
 } from '../contract/index.js';
 import { claimedByCurrency, priceRakeback, unclaimedRakeback } from '../shared/rakeback-totals.js';
-import { announceCashCredit } from '../shared/cash-credit-event.js';
+import { announceCashCredits } from '../shared/cash-credit-event.js';
 
 export const RakebackNothingToClaimError = makeConflictError(
   'RakebackNothingToClaimError',
@@ -403,9 +403,7 @@ export class RakebackClaimService {
     if (!events) {
       return;
     }
-    for (const credit of paid) {
-      await announceCashCredit(tx, events, { userId, ...credit });
-    }
+    await announceCashCredits(tx, events, userId, paid);
   }
 
   private async replay(tx: DrizzleTx, userId: Uuid, idempotencyKey: string) {

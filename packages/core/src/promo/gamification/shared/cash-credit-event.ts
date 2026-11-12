@@ -12,28 +12,41 @@ export type CashCredit = {
 };
 
 /**
- * Announces a gamification cash credit through the outbox, in the transaction that moved it, so the
- * balance event exists if and only if the credit committed.
+ * Announces gamification cash credits through the outbox, in the transaction that moved them, so
+ * each balance event exists if and only if its credit committed. The player is resolved once for
+ * the whole batch.
  */
-export async function announceCashCredit(
+export async function announceCashCredits(
   tx: DrizzleTx,
   events: EventBus,
-  { userId, amount, currency, transactionId }: CashCredit,
+  userId: Uuid,
+  credits: readonly Omit<CashCredit, 'userId'>[],
 ): Promise<void> {
-  if (!transactionId) {
+  if (credits.every((credit) => !credit.transactionId)) {
     return;
   }
   const [account] = await tx
     .select({ id: player.id })
     .from(player)
     .where(eq(player.userId, userId));
-  await events.emitInTransaction(tx, 'wallet.balance.changed', {
-    userId,
-    playerId: account?.id ?? null,
-    amount,
-    currency,
-    transactionId,
-    type: 'cashback',
-    direction: 'credit',
-  });
+  for (const { amount, currency, transactionId } of credits) {
+    if (!transactionId) {
+      continue;
+    }
+    await events.emitInTransaction(tx, 'wallet.balance.changed', {
+      userId,
+      playerId: account?.id ?? null,
+      amount,
+      currency,
+      transactionId,
+      type: 'cashback',
+      direction: 'credit',
+    });
+  }
 }
+
+export const announceCashCredit = (
+  tx: DrizzleTx,
+  events: EventBus,
+  { userId, ...credit }: CashCredit,
+): Promise<void> => announceCashCredits(tx, events, userId, [credit]);

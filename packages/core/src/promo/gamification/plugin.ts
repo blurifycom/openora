@@ -468,16 +468,16 @@ export default {
         events: c.get(EVENT_BUS),
         logger,
       });
-      racePayouts = new RacePayoutService(
-        c.get(DRIZZLE),
-        c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
-        c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
-        c.get(EXCHANGE_RATE_READER),
+      racePayouts = new RacePayoutService({
+        drizzle: c.get(DRIZZLE),
+        eligibility: c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        wallet: c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
+        rates: c.get(EXCHANGE_RATE_READER),
         payoutCurrency,
-        c.get(AUDIT_WRITER),
-        c.get(EVENT_BUS),
+        audit: c.get(AUDIT_WRITER),
+        events: c.get(EVENT_BUS),
         logger,
-      );
+      });
       rankChallengePayouts = new RankChallengePayoutService(
         c.get(DRIZZLE),
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
