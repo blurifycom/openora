@@ -81,6 +81,8 @@ export const chatMessage = pgTable(
     attachment: zodJsonb(ChatAttachmentSchema, 'chat_message.attachment')(),
     isDeleted: boolean().notNull().default(false),
     deletedAt: timestamp({ withTimezone: true }),
+    // A system card's generation (CHAT_SYSTEM_MESSAGE_VERSION); 1 on every other message.
+    version: integer().notNull().default(1),
     createdAt: timestamp({ withTimezone: true })
       .notNull()
       .default(sql`clock_timestamp()`),
