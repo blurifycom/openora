@@ -14,6 +14,7 @@ import {
   appendAuditEntries,
   auditEventId,
   enqueueAuditInTransaction,
+  enqueueEventAuditInTransaction,
   type RecordInput,
 } from '../service/audit.service.js';
 import {
@@ -123,7 +124,9 @@ describe('audit outbox capture (real PG)', () => {
     const eventId = randomUUID();
     const occurredAt = new Date().toISOString();
     const queue = () =>
-      main.transaction((tx) => enqueueAuditInTransaction(tx, entry('once'), eventId, occurredAt));
+      main.transaction((tx) =>
+        enqueueEventAuditInTransaction(tx, entry('once'), { eventId, occurredAt }),
+      );
 
     await queue();
     await queue();
@@ -149,9 +152,7 @@ describe('audit outbox capture (real PG)', () => {
     const payload = { roleId: randomUUID(), actorId: randomUUID(), before: [], after: [] };
     const queue = async () => {
       const record = await auditRecordFor('iam.role.permissions.changed', payload, envelope);
-      await main.transaction((tx) =>
-        enqueueAuditInTransaction(tx, record!, envelope.eventId, envelope.occurredAt),
-      );
+      await main.transaction((tx) => enqueueEventAuditInTransaction(tx, record!, envelope));
     };
 
     await queue();
@@ -169,7 +170,10 @@ describe('audit outbox capture (real PG)', () => {
     const occurredAt = new Date().toISOString();
     const queue = () =>
       main.transaction((tx) =>
-        enqueueAuditInTransaction(tx, entry('broker'), '1700000000000-0', occurredAt),
+        enqueueEventAuditInTransaction(tx, entry('broker'), {
+          eventId: '1700000000000-0',
+          occurredAt,
+        }),
       );
 
     await queue();
@@ -183,16 +187,23 @@ describe('audit outbox capture (real PG)', () => {
     expect(await count('audit_outbox_rejected')).toBe(0);
   });
 
+  it('keeps the event-dated enqueue out of the public audit entry point', async () => {
+    expect(Object.keys(await import('../server.js'))).not.toContain(
+      'enqueueEventAuditInTransaction',
+    );
+  });
+
   it('stamps a record written through the port now, whatever time key it carries', async () => {
     const backdated = { ...entry('backdated'), occurredAt: '2000-01-01T00:00:00.000Z' };
     const before = Date.now();
 
     await service().record(backdated);
     await main.transaction((tx) => service().recordInTransaction(tx, backdated));
+    await main.transaction((tx) => enqueueAuditInTransaction(tx, backdated));
     await drainAuditOutbox(main);
 
     const rows = await main.select({ createdAt: auditLog.createdAt }).from(auditLog);
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     for (const { createdAt } of rows) {
       expect(createdAt.getTime()).toBeGreaterThanOrEqual(before);
     }
@@ -252,7 +263,12 @@ describe('audit shipper (real PG)', () => {
 
   it('refuses a second row for an event even past the shipper, via the unique event_id', async () => {
     const eventId = randomUUID();
-    await main.transaction((tx) => enqueueAuditInTransaction(tx, entry('x'), eventId));
+    await main.transaction((tx) =>
+      enqueueEventAuditInTransaction(tx, entry('x'), {
+        eventId,
+        occurredAt: new Date().toISOString(),
+      }),
+    );
     await drainAuditOutbox(main);
     const [row] = await main.select().from(auditLog);
 
@@ -389,7 +405,12 @@ describe('audit shipper on a bad row (real PG)', () => {
         },
       ]),
     );
-    await main.transaction((tx) => enqueueAuditInTransaction(tx, entry('real'), eventId));
+    await main.transaction((tx) =>
+      enqueueEventAuditInTransaction(tx, entry('real'), {
+        eventId,
+        occurredAt: new Date().toISOString(),
+      }),
+    );
 
     await drainAuditOutbox(main);
 
@@ -472,7 +493,12 @@ describe('audit outbox guards (real PG)', () => {
 
   beforeEach(async () => {
     queuedId = randomUUID();
-    await main.transaction((tx) => enqueueAuditInTransaction(tx, entry('queued'), queuedId));
+    await main.transaction((tx) =>
+      enqueueEventAuditInTransaction(tx, entry('queued'), {
+        eventId: queuedId,
+        occurredAt: new Date().toISOString(),
+      }),
+    );
   });
 
   it('refuses UPDATE and TRUNCATE, with session_replication_role = replica too', async () => {
