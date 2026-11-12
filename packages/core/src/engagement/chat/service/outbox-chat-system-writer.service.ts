@@ -1,9 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  ChatSystemWriter,
-  CommandChatMessage,
-  RealtimeTransport,
-} from '@openora/core/contracts';
+import type { ChatSystemWriter, CommandChatMessage } from '@openora/core/contracts';
 import {
   CHAT_SYSTEM_AUTHOR_ID,
   CHAT_SYSTEM_AUTHOR_USERNAME,
@@ -11,7 +7,6 @@ import {
 } from '@openora/core/contracts';
 import type { DrizzleService, EventBus } from '@openora/core/server';
 import type { SystemCardUpsert } from './chat-system-card.service.js';
-import { publishChatEvent } from './chat.service.js';
 
 type CardArgs = Parameters<ChatSystemWriter['updateSystemMessage']>[0];
 
@@ -20,14 +15,13 @@ type CardArgs = Parameters<ChatSystemWriter['updateSystemMessage']>[0];
  * `chat.system_message.upserted` event written on the caller's transaction, so it exists if
  * and only if the money it reports committed. Without a `tx` it writes the event in a
  * transaction of its own. The returned message is built here, the same shape the local writer
- * returns. Like the local writer, it publishes only when it owns the transaction; with a `tx` the
- * caller publishes after commit.
+ * returns. It never publishes: the chat side publishes once it has stored the card, so a card it
+ * refuses never reaches a client.
  */
 export class OutboxChatSystemWriter implements ChatSystemWriter {
   constructor(
     private readonly events: EventBus,
     private readonly drizzle: DrizzleService,
-    private readonly transport: RealtimeTransport,
   ) {}
 
   postSystemMessage(
@@ -62,7 +56,7 @@ export class OutboxChatSystemWriter implements ChatSystemWriter {
     await (args.tx === undefined
       ? this.drizzle.db.transaction((tx) => this.emit(tx, card))
       : this.emit(args.tx, card));
-    const message: CommandChatMessage = {
+    return {
       id: card.messageId,
       roomId: card.roomId,
       actorId: card.actorId,
@@ -74,10 +68,6 @@ export class OutboxChatSystemWriter implements ChatSystemWriter {
       isDeleted: false,
       createdAt: new Date().toISOString(),
     };
-    if (args.tx === undefined) {
-      publishChatEvent(this.transport, message.roomId, message);
-    }
-    return message;
   }
 
   private emit(tx: unknown, card: SystemCardUpsert): Promise<void> {

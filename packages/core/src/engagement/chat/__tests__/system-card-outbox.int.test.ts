@@ -75,7 +75,8 @@ function setup() {
     outbox: new DrizzleOutboxWriter(),
     processedEvents: new DrizzleProcessedEventLog(db.drizzle.db),
   });
-  const cards = new ChatSystemCardService(db.drizzle);
+  const publish = vi.fn();
+  const cards = new ChatSystemCardService(db.drizzle, mock<RealtimeTransport>({ publish }));
   const outcomes: string[] = [];
   // The chat plugin's subscription: same topic, deduped per consumer through processed_events.
   bus.on(
@@ -96,18 +97,20 @@ function setup() {
     allowedAttachmentHosts: [],
     contextSendPolicy: makeChatContextSendPolicy(),
   });
-  const publish = vi.fn();
   return {
     broker,
     outcomes,
     local,
     publish,
-    writer: new OutboxChatSystemWriter(bus, db.drizzle, mock<RealtimeTransport>({ publish })),
+    writer: new OutboxChatSystemWriter(bus, db.drizzle),
     relay: new OutboxRelay(db.drizzle.db, broker),
   };
 }
 
 const CARD_TOPIC = 'chat.system_message.upserted';
+
+// publishChatEvent publishes on a later microtask; let it run before asserting nothing went out.
+const flushPublishes = () => new Promise((resolve) => setImmediate(resolve));
 
 // The chat plugin wired the way createApp wires it: registered, its router factory run (it
 // builds the card service), and its card handler subscribed under its own consumer id.
@@ -237,7 +240,7 @@ describe('system cards through the outbox (real PG)', () => {
   });
 
   it('leaves the card at v2 when the update is delivered before the post', async () => {
-    const { writer, relay, outcomes } = setup();
+    const { writer, relay, outcomes, publish } = setup();
     const roomId = await createRoom();
     const giftId = randomUUID();
     const actorId = randomUUID();
@@ -268,6 +271,7 @@ describe('system cards through the outbox (real PG)', () => {
     const [stored] = await messagesWithId(giftId);
     expect(stored).toMatchObject({ version: 2, metadata: claimed, userId: actorId });
     expect(outcomes).toEqual(['inserted', 'stale']);
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
   });
 
   it('moves a player-authored card from v1 to v2 in order, the update on its own tx', async () => {
@@ -299,15 +303,16 @@ describe('system cards through the outbox (real PG)', () => {
     const [stored] = await messagesWithId(giftId);
     expect(outcomes).toEqual(['inserted', 'updated']);
     expect(stored).toMatchObject({ version: 2, metadata: claimed, userId: senderId });
-    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
-    expect(publish).toHaveBeenCalledWith(
+    // Once per stored version, after the chat side stored it.
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
+    expect(publish).toHaveBeenLastCalledWith(
       `chat:room:${roomId}`,
-      expect.objectContaining({ id: giftId, metadata: claimed }),
+      expect.objectContaining({ id: giftId, metadata: claimed, type: 'system' }),
     );
   });
 
   it('drops a card whose room was deleted or soft-deleted, and acknowledges the event', async () => {
-    const { writer, relay, outcomes } = setup();
+    const { writer, relay, outcomes, publish } = setup();
     const gone = await createRoom();
     const closed = await createRoom();
     const goneCard = randomUUID();
@@ -337,6 +342,8 @@ describe('system cards through the outbox (real PG)', () => {
     expect(await messagesWithId(goneCard)).toHaveLength(0);
     expect(await messagesWithId(closedCard)).toHaveLength(0);
     expect(outcomes).toEqual(['room-gone', 'room-gone']);
+    await flushPublishes();
+    expect(publish).not.toHaveBeenCalled();
     expect(await db.drizzle.db.select().from(processedEvents)).toHaveLength(2);
   });
 
@@ -385,7 +392,7 @@ describe('system cards through the outbox (real PG)', () => {
   });
 
   it('refuses a card whose id names a message in another room, leaving that message intact', async () => {
-    const { writer, relay, outcomes } = setup();
+    const { writer, relay, outcomes, publish } = setup();
     const ownRoom = await createRoom();
     const otherRoom = await createRoom();
     const [existing] = await db.drizzle.db
@@ -405,6 +412,8 @@ describe('system cards through the outbox (real PG)', () => {
     await relay.drainOnce();
 
     expect(outcomes).toEqual(['conflict']);
+    await flushPublishes();
+    expect(publish).not.toHaveBeenCalled();
     expect(await messagesWithId(existing!.id)).toEqual([existing]);
   });
 
@@ -493,11 +502,7 @@ describe('the chat plugin card handler (real PG)', () => {
     });
     return {
       handler: bootChatCardHandler(bus),
-      writer: new OutboxChatSystemWriter(
-        bus,
-        db.drizzle,
-        mock<RealtimeTransport>({ publish: vi.fn() }),
-      ),
+      writer: new OutboxChatSystemWriter(bus, db.drizzle),
       relay: new OutboxRelay(db.drizzle.db, broker),
     };
   }

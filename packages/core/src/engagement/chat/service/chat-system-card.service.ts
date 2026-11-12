@@ -1,8 +1,9 @@
 import { eq } from 'drizzle-orm';
-import type { DomainEventPayload } from '@openora/core/contracts';
+import type { DomainEventPayload, RealtimeTransport } from '@openora/core/contracts';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import type { DrizzleService } from '@openora/core/server';
 import { chatMessage, chatRoom } from '../schema/index.js';
+import { publishChatEvent, toWrittenSystemMessage } from './chat.service.js';
 
 export type SystemCardUpsert = DomainEventPayload<'chat.system_message.upserted'>;
 
@@ -31,9 +32,30 @@ export function resolveSystemCardWrite(
 
 /** Applies `chat.system_message.upserted` to the chat table: idempotent and order-safe. */
 export class ChatSystemCardService {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly transport: RealtimeTransport,
+  ) {}
 
+  /**
+   * Publishes the card to realtime clients once it is stored, so a refused, stale or dropped
+   * card never reaches them, and a redelivery that changes nothing publishes nothing.
+   */
   async apply(card: SystemCardUpsert): Promise<SystemCardOutcome> {
+    const { outcome, record } = await this.write(card);
+    if (record) {
+      publishChatEvent(
+        this.transport,
+        record.roomId,
+        toWrittenSystemMessage(record, card.metadata),
+      );
+    }
+    return outcome;
+  }
+
+  private write(
+    card: SystemCardUpsert,
+  ): Promise<{ outcome: SystemCardOutcome; record?: typeof chatMessage.$inferSelect }> {
     return this.drizzle.db.transaction(async (tx) => {
       let roomId = card.roomId;
       if (roomId !== null) {
@@ -43,7 +65,7 @@ export class ChatSystemCardService {
           .where(eq(chatRoom.id, roomId))
           .limit(1);
         if (!room || room.deletedAt !== null) {
-          return 'room-gone';
+          return { outcome: 'room-gone' };
         }
         // The global room is stored as a null room id, as the local writer does.
         roomId = room.slug === GLOBAL_CHAT_ROOM_ID ? null : roomId;
@@ -61,9 +83,9 @@ export class ChatSystemCardService {
           version: card.version,
         })
         .onConflictDoNothing({ target: chatMessage.id })
-        .returning({ id: chatMessage.id });
+        .returning();
       if (inserted) {
-        return 'inserted';
+        return { outcome: 'inserted', record: inserted };
       }
       const [stored] = await tx
         .select({
@@ -80,13 +102,15 @@ export class ChatSystemCardService {
         throw new Error(`chat system card ${card.messageId} vanished mid-upsert`);
       }
       const outcome = resolveSystemCardWrite(stored, { ...card, roomId });
-      if (outcome === 'updated') {
-        await tx
-          .update(chatMessage)
-          .set({ metadata: card.metadata, version: card.version })
-          .where(eq(chatMessage.id, card.messageId));
+      if (outcome !== 'updated') {
+        return { outcome };
       }
-      return outcome;
+      const [updated] = await tx
+        .update(chatMessage)
+        .set({ metadata: card.metadata, version: card.version })
+        .where(eq(chatMessage.id, card.messageId))
+        .returning();
+      return { outcome, record: updated };
     });
   }
 }
