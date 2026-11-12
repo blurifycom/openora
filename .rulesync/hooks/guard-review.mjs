@@ -23,9 +23,25 @@ const GIT_PUSH = new RegExp(`${PREFIX}git((?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*)\\s+
 const OPENS_REVIEW = new RegExp(
   `${PREFIX}(?:gh(?:\\s+(?:-R|--repo)\\s+\\S+)?\\s+(?:pr\\s+create|stack\\s+(?:submit|push))|glab\\s+mr\\s+create)\\b(.*)$`,
 );
-const MERGES = new RegExp(
-  `${PREFIX}(?:gh(?:\\s+(?:-R|--repo)\\s+\\S+)?\\s+(?:pr|stack)\\s+merge|glab\\s+mr\\s+merge)\\b`,
-);
+// A forge CLI (`gh`/`glab`, bare, by path or behind `command`) and its words after that prefix.
+const FORGE_CLI = new RegExp(`${PREFIX}(?:command\\s+)?(?:\\S*/)?(gh|glab)\\s+(.*)$`);
+const MERGE_API = /\/merge(?=$|[?\s"'])/;
+const API_WRITES =
+  /\s(?:(?:-X\s*|--method[=\s]+)(?:PUT|POST)\b|(?:-f|-F|--field|--raw-field|--input)\b)/i;
+// GraphQL merges live in a quoted query, which `segments` blanks, so the raw command is checked.
+const GRAPHQL_MERGE = /\b(?:mergePullRequest|mergeRequestAccept|mergeQueue)\b/;
+const isHandMerge = (segment) => {
+  const cli = FORGE_CLI.exec(segment);
+  if (!cli) {
+    return false;
+  }
+  const words = cli[2].split(/\s+/);
+  const command = words.findIndex((word) => /^(?:pr|stack|mr)$/.test(word));
+  return (
+    (command >= 0 && words.slice(command + 1).includes('merge')) ||
+    (words.includes('api') && MERGE_API.test(cli[2]) && API_WRITES.test(` ${cli[2]}`))
+  );
+};
 const SOURCE = /\s(?:--head|-H|--source-branch|-s)(?:=|\s+)(\S+)/;
 const DIR_FLAG = /\s-C\s+(\S+)/;
 
@@ -75,11 +91,13 @@ const reviewTarget = (segment, cwd) => {
   }
   const push = GIT_PUSH.exec(segment);
   if (push) {
-    if (sendsNothingNew(push[2])) {
-      return null;
-    }
     const dir = DIR_FLAG.exec(push[1]);
-    return { dir: dir ? within(cwd, dir[1]) : cwd, opensReview: false, pushArgs: push[2] };
+    return {
+      dir: dir ? within(cwd, dir[1]) : cwd,
+      opensReview: false,
+      pushArgs: push[2],
+      sendsNothingNew: sendsNothingNew(push[2]),
+    };
   }
   const opens = OPENS_REVIEW.exec(segment);
   if (!opens) {
@@ -119,31 +137,45 @@ const isApproved = (dirs, head) =>
     }
   });
 
-// The branches a push writes: each refspec's destination, or the checked-out branch when the
-// command names none. `--all` and `--mirror` write every branch, a shared one included.
-const pushesShared = (pushArgs, branch) => {
+// The branches a push writes or deletes: each refspec's destination (`HEAD`/`@` is the checked-out
+// branch, a glob may be any branch), or with no refspec where git sends this branch (`@{push}`,
+// which follows push.default and remote.<name>.push). `--all` and `--mirror` write every branch.
+const pushesShared = (dir, pushArgs, branch) => {
   if (/\s--(?:all|mirror)\b/.test(pushArgs)) {
     return true;
   }
-  const refs = pushArgs
-    .trim()
-    .split(/\s+/)
-    .filter((arg) => arg && !arg.startsWith('-'))
-    .slice(1);
-  return (refs.length > 0 ? refs : [branch]).some((spec) => {
+  const args = pushArgs.trim().split(/\s+/).filter(Boolean);
+  const refs = args
+    .filter((arg) => !arg.startsWith('-'))
+    .slice(1)
+    .map(unquote);
+  if (refs.length === 0) {
+    if (args.includes('--tags')) {
+      return false;
+    }
+    const destination = git(dir, 'rev-parse', '--abbrev-ref', '@{push}').replace(/^[^/]+\//, '');
+    return SHARED.test(destination || branch);
+  }
+  return refs.some((spec) => {
     const destination = spec.replace(/^\+/, '').split(':').pop();
-    return SHARED.test(
-      (destination === 'HEAD' ? branch : destination).replace(/^refs\/heads\//, ''),
+    return (
+      destination.includes('*') ||
+      SHARED.test(
+        (/^(?:HEAD|@)$/.test(destination) ? branch : destination).replace(/^refs\/heads\//, ''),
+      )
     );
   });
 };
 
-const check = ({ dir, opensReview, pushArgs }) => {
+const check = ({ dir, opensReview, pushArgs, sendsNothingNew }) => {
   const branch = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
-  if (pushArgs !== undefined && branch && pushesShared(pushArgs, branch)) {
+  if (pushArgs !== undefined && branch && pushesShared(dir, pushArgs, branch)) {
     deny(
-      'Blocked: nobody pushes to a shared branch by hand. Push a topic branch and open a merge/pull request; the merge bot merges it. A person can still push from their own terminal.',
+      'Blocked: nobody pushes to or deletes a shared branch by hand. Push a topic branch and open a merge/pull request; the merge bot merges it. A person can still push from their own terminal.',
     );
+  }
+  if (sendsNothingNew) {
+    return;
   }
   const top = git(dir, 'rev-parse', '--show-toplevel');
   const common = git(dir, 'rev-parse', '--git-common-dir');
@@ -160,13 +192,14 @@ const check = ({ dir, opensReview, pushArgs }) => {
 };
 
 const payload = readPayload();
+const rawCommand = extractCommand(payload);
 let cwd = payload.cwd ?? process.cwd();
-for (const segment of segments(extractCommand(payload))) {
+for (const segment of segments(rawCommand)) {
   const cd = /^cd\s+(\S+)$/.exec(segment);
   if (cd) {
     cwd = within(cwd, cd[1]);
   }
-  if (MERGES.test(segment)) {
+  if (isHandMerge(segment) || (/\b(?:gh|glab)\s/.test(segment) && GRAPHQL_MERGE.test(rawCommand))) {
     deny(
       'Blocked: the merge bot merges, never an agent. Leave the merge/pull request to it; a person who has to merge by hand runs it from their own terminal (`! <command>` in Claude Code).',
     );

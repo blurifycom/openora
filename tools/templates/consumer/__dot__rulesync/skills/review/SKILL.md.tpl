@@ -28,7 +28,7 @@ Checklist - tick as you go:
 - `--agents N` - parallel reviewers (2-4); default 2 (§5).
 - `--base <ref>` - diff base; default `{{mrTarget}}`.
 - `--full` - ignore the previous review (§2a) and review the whole change.
-- `<number>` - a pull request: read its patch and intent with the commands in `docs/agents/forge.md`. Only your own: a pull request whose author is not the forge user you are logged in as is refused (say so and stop); a person reviews it, with the `pr-manual-review` skill when the repo has one. `--ci` (the forge bot) is exempt.
+- `<number>` - a pull request: read its patch and intent with the commands in `docs/agents/forge.md`. Only your own: a pull request whose author is not the forge user you are logged in as is refused (say so and stop); a person reviews it, with the `pr-manual-review` skill when the repo has one. `--ci` (the forge bot) is exempt. So `--post` only ever posts on your own pull request.
 - paths - restrict review to those files/dirs.
 - `--fix` - apply BLOCK/WARN fixes after the review; default report-only.
 - `--post` - publish findings to the pull request as inline diff-line comments + a one-line summary verdict (§8). Requires a pull-request number. Draft-and-confirm by default.
