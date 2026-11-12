@@ -170,7 +170,14 @@ async function redeliverEmailChange(
   const { id: _id, seq: _seq, hash: _hash, ...rest } = row;
   await drizzle()
     .insert(auditLog)
-    .values({ ...rest, after: rewrite(row.after ?? {}), hash: randomUUID() });
+    .values({
+      ...rest,
+      after: rewrite(row.after ?? {}),
+      // Off the chain: its own predecessor and no event, as the unique indexes require.
+      prevHash: randomUUID(),
+      eventId: null,
+      hash: randomUUID(),
+    });
 }
 
 async function registeredAt(userId: string) {
@@ -360,6 +367,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
         before: { email: `support-history-old-${randomUUID()}@e2e.test` },
         after: { email: `support-history-not-current-${randomUUID()}@e2e.test` },
         hash: randomUUID(),
+        prevHash: randomUUID(),
       });
 
     const body = await history(admin, p.userId);
@@ -383,6 +391,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
         before: { email: `support-history-old-${randomUUID()}@e2e.test` },
         after: { email: `support-history-not-current-${randomUUID()}@e2e.test` },
         hash: randomUUID(),
+        prevHash: randomUUID(),
       });
     const newEmail = `support-history-new-${randomUUID()}@e2e.test`;
     await changeEmail(p.client, newEmail);
@@ -416,6 +425,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
             before: { email: name(before) },
             after: { email: name(after) },
             hash: randomUUID(),
+            prevHash: randomUUID(),
             createdAt: new Date(start + hours * HOUR),
           })),
         );
@@ -488,6 +498,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
           before: { email: p.email },
           after: { email: q.email },
           hash: randomUUID(),
+          prevHash: randomUUID(),
         })
         .returning({ at: auditLog.createdAt });
       const ticket = item('ticket', '2026-03-01T00:00:00Z');

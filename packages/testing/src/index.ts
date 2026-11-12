@@ -1,6 +1,7 @@
 // Dev/test harness consumers run from a dev script. See ADR-0025.
 export { setupTestDb, applyMigrations, type TestDb } from './db.js';
 export { bootTestApp, type TestApp, type BootTestAppConfig } from './app.js';
+export { flushAudit } from './audit.js';
 export {
   asPlayer,
   asAdmin,

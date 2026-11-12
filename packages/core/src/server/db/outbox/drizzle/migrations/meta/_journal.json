@@ -29,6 +29,13 @@
       "when": 1793689698297,
       "tag": "0003_event_correlation",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794447394585,
+      "tag": "0004_audit_outbox",
+      "breakpoints": true
     }
   ]
 }

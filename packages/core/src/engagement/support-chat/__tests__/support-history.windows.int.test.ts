@@ -98,6 +98,8 @@ async function scenario(rows: Row[], { registeredEmail }: { registeredEmail?: st
       ],
       before: side(row.before) ?? null,
       after: withChangedAt(side(row.after), row.changedAt),
+      // Off-chain rows: a distinct predecessor each, as the unique prev_hash requires.
+      prevHash: randomUUID(),
       hash: randomUUID(),
       createdAt: new Date(registeredAt.getTime() + row.at * HOUR),
     });
@@ -350,42 +352,44 @@ describe('support history email windows from crafted audit rows (real PG)', () =
       hash: randomUUID(),
       createdAt: new Date(registeredAt.getTime() - HOUR),
     };
-    await db.drizzle.db.insert(auditLog).values([
-      // Another player's change, a player id carried by a user subject, a user id carried by a
-      // player subject, and a request that never took effect.
-      {
-        ...strange,
-        action: 'identity.email.changed',
-        resourceType: 'player',
-        resourceId: other.player.id,
-        before: { email: 'victim@test.dev' },
-        after: { email: 'x@test.dev' },
-      },
-      {
-        ...strange,
-        action: 'identity.email.changed',
-        resourceType: 'user',
-        resourceId: player.id,
-        before: { email: 'victim@test.dev' },
-        after: { email: account.email },
-      },
-      {
-        ...strange,
-        action: 'identity.email.changed',
-        resourceType: 'player',
-        resourceId: account.id,
-        before: { email: 'victim@test.dev' },
-        after: { email: account.email },
-      },
-      {
-        ...strange,
-        action: 'identity.email.change.requested',
-        resourceType: 'player',
-        resourceId: player.id,
-        before: { email: 'victim@test.dev' },
-        after: { email: account.email },
-      },
-    ]);
+    await db.drizzle.db.insert(auditLog).values(
+      [
+        // Another player's change, a player id carried by a user subject, a user id carried by a
+        // player subject, and a request that never took effect.
+        {
+          ...strange,
+          action: 'identity.email.changed',
+          resourceType: 'player',
+          resourceId: other.player.id,
+          before: { email: 'victim@test.dev' },
+          after: { email: 'x@test.dev' },
+        },
+        {
+          ...strange,
+          action: 'identity.email.changed',
+          resourceType: 'user',
+          resourceId: player.id,
+          before: { email: 'victim@test.dev' },
+          after: { email: account.email },
+        },
+        {
+          ...strange,
+          action: 'identity.email.changed',
+          resourceType: 'player',
+          resourceId: account.id,
+          before: { email: 'victim@test.dev' },
+          after: { email: account.email },
+        },
+        {
+          ...strange,
+          action: 'identity.email.change.requested',
+          resourceType: 'player',
+          resourceId: player.id,
+          before: { email: 'victim@test.dev' },
+          after: { email: account.email },
+        },
+      ].map((row) => ({ ...row, prevHash: randomUUID() })),
+    );
     const asked: SupportHistoryEmailWindow[][] = [];
     const service = new SupportHistoryService({
       drizzle: db.drizzle,

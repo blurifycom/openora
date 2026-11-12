@@ -1,7 +1,19 @@
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { AUDIT_WRITER, IDENTITY_READER } from '@openora/core/contracts';
-import { AuditService, type RecordInput } from './service/audit.service.js';
+import {
+  EVENT_BUS,
+  DRIZZLE,
+  ADMIN_GUARD,
+  createLogger,
+  type CoreTokenCatalog,
+  type DrizzleTx,
+  type Plugin,
+} from '@openora/core/server';
+import { AUDIT_WRITER, IDENTITY_READER, type EventEnvelope } from '@openora/core/contracts';
+import {
+  AuditService,
+  enqueueAuditInTransaction,
+  type RecordInput,
+} from './service/audit.service.js';
+import { AuditShipper } from './service/audit-shipper.service.js';
 import { createAuditRouter } from './router/index.js';
 import { AUDIT_COVERAGE_GAPS } from './contract/coverage.js';
 import { SUBSCRIBED_TOPICS } from './contract/subscribed-topics.js';
@@ -1413,9 +1425,9 @@ export async function mapEventToRecord(
 }
 
 // One broker consumer group for the whole deployment, not one per service: every service that
-// loads this plugin would otherwise get its own copy of each event and write a second audit
-// row (the table has no unique key on the event id). This is only the local part: createApp
-// scopes it to `<REALTIME_NAMESPACE>/audit`, so two deployments sharing one Redis do not
+// loads this plugin would otherwise get its own copy of each event to map and queue (the
+// `event_id` dedupe keeps the log to one row, but each copy costs a write). This is only the
+// local part: createApp scopes it to `<REALTIME_NAMESPACE>/audit`, so two deployments sharing one Redis do not
 // compete for each other's events. Renaming it, or changing the namespace, strands the old
 // group's pending entries and starts the new one at the stream tail.
 const AUDIT_CONSUMER_GROUP = 'audit';
@@ -1429,6 +1441,25 @@ const AUDITED_TOPICS: ReadonlySet<string> = new Set([
     .map(([topic]) => topic),
 ]);
 
+const SUBSCRIBED: ReadonlySet<string> = new Set(SUBSCRIBED_TOPICS);
+
+// The record an audited event maps to, or null when the topic is not one the subscriber records
+// or its writer already recorded it at source.
+async function auditRecordFor(
+  topic: string,
+  payload: unknown,
+  envelope: Pick<EventEnvelope, 'correlationId'> | undefined,
+): Promise<RecordInput | null> {
+  // KYC exemptions and game geo rule syncs append their audit record inside the state
+  // transaction, then publish this event for realtime and other consumers after commit.
+  if (!SUBSCRIBED.has(topic) || !isRecord(payload) || payload['auditRecorded'] === true) {
+    return null;
+  }
+  const record = await mapEventToRecord(topic, payload);
+  // A bulk operation's id, when the topic maps one, outranks the emitter's correlation id.
+  return { ...record, correlationId: record.correlationId ?? envelope?.correlationId ?? null };
+}
+
 export default {
   id: 'audit',
   register(ctx) {
@@ -1440,11 +1471,9 @@ export default {
       const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       return {
         auditedTopics: AUDITED_TOPICS,
-        record: (entry) => svc.record(entry).then(() => undefined),
-        recordInTransaction: (tx, entry) =>
-          svc.recordInTransaction(tx, entry).then(() => undefined),
-        recordManyInTransaction: (tx, entries) =>
-          svc.recordManyInTransaction(tx, entries).then(() => undefined),
+        record: (entry) => svc.record(entry),
+        recordInTransaction: (tx, entry) => svc.recordInTransaction(tx, entry),
+        recordManyInTransaction: (tx, entries) => svc.recordManyInTransaction(tx, entries),
       };
     });
 
@@ -1454,31 +1483,41 @@ export default {
       ctx.events.on(
         topic,
         async (payload, envelope) => {
-          if (!isRecord(payload)) {
-            return;
-          }
-          // KYC exemptions and game geo rule syncs append their audit record inside the state
-          // transaction, then publish this event for realtime and other consumers after commit.
-          if (payload['auditRecorded'] === true) {
+          const record = await auditRecordFor(topic, payload, envelope);
+          if (!record) {
             return;
           }
           if (!svcRef) {
             throw new Error(`audit record for '${topic}' skipped - service not constructed`);
           }
-          const record = await mapEventToRecord(topic, payload);
-          // A bulk operation's id, when the topic maps one, outranks the emitter's correlation id.
-          await svcRef.record({
-            ...record,
-            correlationId: record.correlationId ?? envelope?.correlationId ?? null,
-          });
+          // Keyed by the event id, so an event its emitter's transaction already queued through
+          // the tap below, or a redelivery, leaves one row.
+          await svcRef.record(record, envelope?.eventId);
         },
         { consumerGroup: AUDIT_CONSUMER_GROUP },
       );
     }
 
     ctx.routers.add('audit', (c) => {
-      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
+      const drizzle = c.get(DRIZZLE);
+      const events = c.get(EVENT_BUS);
+      const svc = new AuditService(drizzle, events, c.get(IDENTITY_READER));
       svcRef = svc;
+      // An audited event emitted in a transaction queues its record in that transaction, so the
+      // record commits with the change instead of waiting on broker delivery.
+      events.tapTransactional(async (tx, envelope) => {
+        const record = await auditRecordFor(envelope.topic, envelope.payload, envelope);
+        if (record) {
+          await enqueueAuditInTransaction(tx as DrizzleTx, record, envelope.eventId);
+        }
+      });
+      // Router factories run in every service that loads this plugin, routes or not, so each
+      // database a service writes audit records to gets a shipper.
+      const shipper = new AuditShipper(drizzle.db, drizzle.db, {
+        onError: (err) => createLogger('audit-shipper').error({ err }, 'audit shipping failed'),
+      });
+      shipper.start();
+      c.onDispose(() => shipper.stop());
       return createAuditRouter(svc, c.get(ADMIN_GUARD));
     });
   },

@@ -24,6 +24,7 @@ import {
 import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
 import { SseClientAuthorizer } from '@openora/core/testing';
 import { acquireTestRedisDatabase } from './redis.js';
+import { flushAudit } from './audit.js';
 import type { Hono } from 'hono';
 
 const REDIS_READY_TIMEOUT_MS = 10_000;
@@ -137,6 +138,17 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
     await Promise.allSettled([created?.close(), redisDatabase.release()]);
     throw err;
   }
+
+  // A write's audit record ships after its commit. Ship before the request, so the audit read
+  // route sees what a background job wrote, and before the response reaches the test, so a test
+  // reads the log straight after the request as it did when the write appended it.
+  const request = created.app.request;
+  created.app.request = async (...args) => {
+    await flushAudit(created);
+    const res = await request(...args);
+    await flushAudit(created);
+    return res;
+  };
 
   return {
     app: created.app,

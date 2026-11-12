@@ -6,8 +6,8 @@ import type { ChatContextRoom, EnsureChatContextRoomInput } from '../schemas/cha
 
 // With `tx` the write joins the caller's transaction and its realtime effects wait for
 // `afterCommit`, which the caller runs once that transaction commits. Without `tx` they
-// have already run when the call returns. A write holds the room lock, then the global audit lock,
-// until commit: a shared transaction should touch one context room, before its own audit rows.
+// have already run when the call returns. A write holds the room lock until commit, so a shared
+// transaction should touch one context room.
 export type ChatContextRoomWrite<T> = T & { afterCommit(): Promise<void> };
 
 /**

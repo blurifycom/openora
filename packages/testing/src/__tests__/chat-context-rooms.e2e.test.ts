@@ -21,6 +21,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   registerChatter,
 } from '../index.js';
 
@@ -37,6 +38,7 @@ async function contextRoomFor(...memberIds: string[]) {
 }
 
 async function contextRoomAudit(roomId: string) {
+  await flushAudit(app);
   return app.container
     .get(DRIZZLE)
     .db.select({

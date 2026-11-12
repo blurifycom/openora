@@ -12,7 +12,7 @@ import {
   sportsbookReconciliationFinding,
 } from '@openora/core/sportsbook/schema/betting';
 import { walletTransaction, wallet, walletWithdrawalHold } from '@openora/core/wallet/schema';
-import { closeE2e, type TestApp, type TestClient, type TestDb } from '../index.js';
+import { closeE2e, flushAudit, type TestApp, type TestClient, type TestDb } from '../index.js';
 import { mockSportsbookProviderState } from '../test-sportsbook-provider-plugin.js';
 import {
   PROVIDER,
@@ -803,6 +803,7 @@ describe('confirm at changed odds', () => {
     );
     expectApplied(await ledgerOf(app).reopen({ ...on, providerTxId: txId() }));
 
+    await flushAudit(app);
     const rows = await app.container
       .get(DRIZZLE)
       .db.select({ action: auditLog.action, actorType: auditLog.actorType, after: auditLog.after })
@@ -1171,6 +1172,7 @@ describe('provider disagreement', () => {
     expectApplied(await settleWon(second.args.providerBetId, '230'));
 
     const debt = await debtOf(player);
+    await flushAudit(app);
     const db = app.container.get(DRIZZLE).db;
     const debtEntries = await db
       .select({ before: auditLog.before, after: auditLog.after })

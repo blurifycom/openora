@@ -7,7 +7,8 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { auditLog } from '@openora/core/audit/schema';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
-import { AuditService } from '@openora/core/audit/server';
+import { AuditService, drainAuditOutbox } from '@openora/core/audit/server';
+import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { playerTag, tag } from '../schema/index.js';
@@ -38,8 +39,11 @@ const failingAudit = () =>
     },
   });
 
-const auditRowsFor = (playerId: string) =>
-  db.drizzle.db.select().from(auditLog).where(eq(auditLog.resourceId, playerId));
+// Ships what the writes queued, then reads the player's rows.
+async function auditRowsFor(playerId: string) {
+  await drainAuditOutbox(db.drizzle.db);
+  return db.drizzle.db.select().from(auditLog).where(eq(auditLog.resourceId, playerId));
+}
 
 async function seedTag(key: TagKey, isSticky = false) {
   const [row] = await db.drizzle.db.insert(tag).values({ key, isSticky }).returning();
@@ -89,7 +93,7 @@ async function activeAssignmentRow(playerId: string, tagId: string) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile, migrateAudit]);
+  db = await createTestDb([migrateOutbox, migrate, migrateProfile, migrateAudit]);
   // The real audit writer, so the audit rows are rows in audit_log on the tag write's own
   // transaction rather than calls on a spy.
   const svc = new AuditService(db.drizzle, makeEventBus(), makeIdentityReader());
@@ -107,9 +111,15 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(
-    sql`TRUNCATE ${playerTag}, ${tag}, ${player}, ${auditLog} RESTART IDENTITY CASCADE`,
-  );
+  // audit_log refuses TRUNCATE for every role; the reset lifts that trigger inside its own
+  // transaction, so a failure cannot leave it off.
+  await db.drizzle.db.transaction(async (tx) => {
+    await tx.execute(sql`ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_truncate`);
+    await tx.execute(
+      sql`TRUNCATE ${playerTag}, ${tag}, ${player}, audit_log, audit_outbox RESTART IDENTITY CASCADE`,
+    );
+    await tx.execute(sql`ALTER TABLE audit_log ENABLE ALWAYS TRIGGER audit_log_no_truncate`);
+  });
 });
 
 describe('TagService.createTag (real PG)', () => {

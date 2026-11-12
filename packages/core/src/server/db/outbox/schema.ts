@@ -10,6 +10,7 @@ import {
   boolean,
   uuid,
   check,
+  bigserial,
 } from 'drizzle-orm/pg-core';
 
 // Transactional outbox table. A service writes the event envelope here INSIDE the
@@ -39,6 +40,19 @@ export const eventOutbox = pgTable(
 );
 
 export type EventOutboxRow = typeof eventOutbox.$inferSelect;
+
+// Audit records waiting for the audit shipper. A writer inserts the entry INSIDE its business
+// transaction, so the record commits if and only if the change it describes does, without
+// taking the audit chain lock there. The shipper appends rows to `audit_log` in `id` order and
+// deletes them only after that append commits; `event_id` is the record's identity across a
+// re-ship, so a crash between the two commits never writes a row twice. Part of the engine set
+// so every database a service writes to carries one.
+export const auditOutbox = pgTable('audit_outbox', {
+  id: bigserial({ mode: 'number' }).primaryKey(),
+  eventId: uuid().notNull().unique('audit_outbox_event_id_unique'),
+  entry: jsonb().notNull(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
 
 // One row per deployment: the anonymous id the usage telemetry reports under. The check pins the
 // table to a single row, so replicas racing on first boot converge on one id.
