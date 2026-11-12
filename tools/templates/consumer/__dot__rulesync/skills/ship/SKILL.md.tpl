@@ -121,7 +121,7 @@ The code is final now, so the videos are recorded once, here, never in an earlie
 
 ### 5. Open the MR
 
-`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table, the 4b videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
+`--ask`: report the SHA and stop for "yes push". Then run **create-pr** (it opens the MR as a draft) with the tester's AC table, the 4b videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
 
 ### 6. Red CI and review comments
 
@@ -140,7 +140,7 @@ Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` as a back
 
 - `failed` or `conflicts` -> 6, then watch again. Still red after three fixes -> blocker comment, report, stop. Ten fix rounds in total after the push (pipeline and threads together) and the MR still is not ready -> blocker comment, report, stop: a person takes it from there.
 - `threads <ids>` (unanswered for two checks in a row, from a person or a bot) -> 6 for those, then watch again. A thread the forge's AI review opens is a blocker it found on this head: it counts like a person's.
-- `green` -> check the MR is ready (below), report "Ready for review:" and the MR URL, then watch again without `--until-green`.
+- `green` -> check the MR is ready (below); a draft that is ready is marked ready for review (`docs/agents/forge.md`), one that is not stays a draft and the report says what is missing. Report "Ready for review:" and the MR URL, then watch again without `--until-green`.
 - `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `error ...` -> report it, stop.
 
 Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table, the screenshots and the UNCHECKED rows.
