@@ -65,9 +65,12 @@ changing the route surface.
 
 ### Rotation
 
-1. Generate a new secret and prepend it on every service: `INTERNAL_API_SECRETS=new,old`.
-2. Deploy all of them. Callers now sign with `new`, and servers accept both.
-3. Remove `old` from every service and deploy again. Calls signed with `old` now get 401.
+1. Generate a new secret and append it on every service: `INTERNAL_API_SECRETS=old,new`.
+2. Deploy all of them. Every server now accepts both, and callers still sign with `old`, so a
+   service not yet redeployed keeps working.
+3. Once every service runs step 2, put `new` first on every service: `INTERNAL_API_SECRETS=new,old`,
+   and deploy again. Callers now sign with `new`.
+4. Remove `old` from every service and deploy again. Calls signed with `old` now get 401.
 
 ### Not covered here
 

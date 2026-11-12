@@ -335,6 +335,15 @@ describe('the /internal/v1 surface', () => {
     expect(JSON.stringify(internalApiLog.warn.mock.calls)).not.toContain(signature);
   });
 
+  it('keeps an internal router closed when it is mounted on the public surface', async () => {
+    const app = await boot(NEW_SECRET);
+
+    const res = await app.request('/probe-leak');
+
+    expect(res.status).toBe(404);
+    expect(internalProbeHits()['leak']).toBeUndefined();
+  });
+
   it('answers 401 to an unsigned call on any path, 404 only once signed', async () => {
     const app = await boot(NEW_SECRET);
     const missing = '/internal/v1/nothing-here';
@@ -458,6 +467,20 @@ describe('createInternalClient', () => {
       kind: 'client',
       status: undefined,
     });
+    expect(internalProbeHits()).toEqual({});
+  });
+
+  it('wraps a body JSON cannot serialize in a client error, before any request', async () => {
+    const baseUrl = await listen(await boot(NEW_SECRET));
+    const cycle: Record<string, unknown> = {};
+    cycle['self'] = cycle;
+
+    for (const body of [{ amount: 1n }, cycle]) {
+      await expect(client(baseUrl).request('POST', '/probe/echo', body)).rejects.toMatchObject({
+        name: 'InternalApiError',
+        kind: 'client',
+      });
+    }
     expect(internalProbeHits()).toEqual({});
   });
 

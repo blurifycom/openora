@@ -81,7 +81,20 @@ export function createInternalClient(config: InternalClientConfig): InternalClie
       if (!isPlainPath(path, url)) {
         throw new InternalApiError('client', `Refusing to call ${JSON.stringify(path)}`);
       }
-      const payload = body === undefined ? '' : JSON.stringify(body);
+      let payload = '';
+      if (body !== undefined) {
+        try {
+          payload = JSON.stringify(body);
+        } catch (err) {
+          throw new InternalApiError(
+            'client',
+            `Refusing to send an unserializable body to ${path}`,
+            {
+              cause: err,
+            },
+          );
+        }
+      }
       const contentType = payload === '' ? '' : 'application/json';
       const timestamp = String(Date.now());
       const signature = signInternalRequest(
