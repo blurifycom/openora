@@ -21,16 +21,11 @@ coverage
 /AGENTS.md
 /CLAUDE.md
 /.mcp.json
-.vscode/mcp.json
 .codex/
 .claude/agents/
 .claude/commands/
 .claude/worktrees/
 .claude/reviews/
-.github/copilot-instructions.md
-.github/agents/
-.github/prompts/
-.github/hooks/
 
 # Agent files rendered from the @openora/create consumer template on install.
 # The block below is rewritten by tools/sync-agents.mjs - do not edit by hand.

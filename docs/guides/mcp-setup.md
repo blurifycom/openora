@@ -48,13 +48,12 @@ The server uses stdio transport (no port). Add this to your editor's MCP config:
 
 ## Per-editor setup
 
-| Editor                       | Config location                                                                     | Notes                     |
-| ---------------------------- | ----------------------------------------------------------------------------------- | ------------------------- |
-| **Claude Code**              | `.mcp.json` at repo root (already present)                                          | Verify: `claude mcp list` |
-| **Cursor**                   | Settings > MCP, or `.cursor/mcp.json` at repo root                                  | Paste the snippet above   |
-| **Windsurf**                 | Cascade settings > MCP Servers                                                      | Paste the snippet above   |
-| **VS Code + GitHub Copilot** | `.vscode/mcp.json` at repo root                                                     | Paste the snippet above   |
-| **Any MCP client**           | `npx @modelcontextprotocol/inspector pnpm exec tsx apps/mcp-server-dev/src/main.ts` | Smoke-test in browser     |
+| Editor             | Config location                                                                     | Notes                     |
+| ------------------ | ----------------------------------------------------------------------------------- | ------------------------- |
+| **Claude Code**    | `.mcp.json` at repo root (already present)                                          | Verify: `claude mcp list` |
+| **Cursor**         | Settings > MCP, or `.cursor/mcp.json` at repo root                                  | Paste the snippet above   |
+| **Windsurf**       | Cascade settings > MCP Servers                                                      | Paste the snippet above   |
+| **Any MCP client** | `npx @modelcontextprotocol/inspector pnpm exec tsx apps/mcp-server-dev/src/main.ts` | Smoke-test in browser     |
 
 ## Available tools
 

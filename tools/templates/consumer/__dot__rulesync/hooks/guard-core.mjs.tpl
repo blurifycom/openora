@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PreToolUse guard (Claude / Copilot CLI / Codex CLI / Gemini CLI - rulesync renders the same
+// PreToolUse guard (Claude / Codex CLI / Gemini CLI -rulesync renders the same
 // script for every hook target, so the rule below holds identically in each tool).
 // Enforces the HARD RULE: the linked OSS checkout and node_modules are read-only. The one
 // exception is a git worktree under <oss>/.worktrees/ - the sanctioned place to change OSS
