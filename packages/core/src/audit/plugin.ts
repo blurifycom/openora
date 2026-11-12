@@ -1452,7 +1452,7 @@ const SUBSCRIBED: ReadonlySet<string> = new Set(SUBSCRIBED_TOPICS);
 export async function auditRecordFor(
   topic: string,
   payload: unknown,
-  envelope: Partial<Pick<EventEnvelope, 'correlationId' | 'occurredAt'>> | undefined,
+  envelope: Pick<EventEnvelope, 'correlationId'> | undefined,
 ): Promise<RecordInput | null> {
   // KYC exemptions and game geo rule syncs append their audit record inside the state
   // transaction, then publish this event for realtime and other consumers after commit.
@@ -1461,13 +1461,7 @@ export async function auditRecordFor(
   }
   const record = await mapEventToRecord(topic, payload);
   // A bulk operation's id, when the topic maps one, outranks the emitter's correlation id.
-  // The event's time, not the moment a path queued it, keeps the tap's and the consumer's entries
-  // for one event equal, as the outbox delete guard checks.
-  return {
-    ...record,
-    correlationId: record.correlationId ?? envelope?.correlationId ?? null,
-    occurredAt: envelope?.occurredAt,
-  };
+  return { ...record, correlationId: record.correlationId ?? envelope?.correlationId ?? null };
 }
 
 export default {
@@ -1502,7 +1496,9 @@ export default {
           }
           // Keyed by the event id, so an event its emitter's transaction already queued through
           // the tap below, or a redelivery, leaves one row.
-          await svcRef.record(record, envelope?.eventId);
+          // The event's time, not the moment this path queued it, keeps the tap's and the
+          // consumer's entries for one event equal, as the outbox delete guard checks.
+          await svcRef.record(record, envelope?.eventId, envelope?.occurredAt);
         },
         { consumerGroup: AUDIT_CONSUMER_GROUP },
       );
@@ -1518,7 +1514,12 @@ export default {
       events.tapTransactional(async (tx, envelope) => {
         const record = await auditRecordFor(envelope.topic, envelope.payload, envelope);
         if (record) {
-          await enqueueAuditInTransaction(tx as DrizzleTx, record, envelope.eventId);
+          await enqueueAuditInTransaction(
+            tx as DrizzleTx,
+            record,
+            envelope.eventId,
+            envelope.occurredAt,
+          );
         }
       });
       // Plugins have no start hook; router factories run in every service that loads this plugin,

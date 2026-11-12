@@ -43,7 +43,10 @@ two different entries under one `event_id` are both kept.
 `created_at` is the time the record was queued, inside the business transaction: it is the business
 time of the change, not its commit time, so two rows can carry `created_at` out of `seq` order. A
 record mapped from an event takes the event's `occurredAt`, so the tap and the consumer queue equal
-entries for one event and the redelivery is chained once.
+entries for one event and the redelivery is chained once. Only those two event paths pass that
+time; a record written through `AUDIT_WRITER` is stamped when it is queued, whatever keys it carries,
+so a caller cannot backdate it. An entry dated year 0, which Postgres cannot store, fails the entry
+schema and moves aside.
 
 **Guards.** `ENABLE ALWAYS` triggers deny UPDATE and TRUNCATE on `audit_outbox` and allow a DELETE only
 of a row whose content is kept elsewhere: a row in `audit_outbox_rejected` with the same `outbox_id`
@@ -55,7 +58,8 @@ delete the real one. `audit_outbox_rejected` is append-only like `audit_log`.
 The triggers stop DML from every role, under `session_replication_role = replica` too. They do not
 stop DDL: the table owner can still `ALTER TABLE ... DISABLE TRIGGER` and then change rows.
 Production must run the app as a role that does not own the audit tables, and run migrations as the
-owner.
+owner. Every guard function pins `search_path = pg_catalog, public`, so a role cannot put its own
+table or operator in front of the ones the guards read.
 
 ## Consequences
 
@@ -73,3 +77,12 @@ owner.
 - The chain still lives in the business database. Moving it to a database of its own is a follow-up:
   the shipper is the only writer, so it is the only code that has to change.
 - `audit_log_seq_key` (unique) replaces the plain `seq` index.
+- Known gap: the app role can still divert a pending entry by writing its exact copy into
+  `audit_outbox_rejected` under its outbox id and then deleting it. The content is kept, but it is
+  never chained, and only the rejected count of `auditOutboxBacklog` shows it. The fix is a separate
+  shipper database role that alone may INSERT into `audit_outbox_rejected` and DELETE from
+  `audit_outbox`, planned with moving the chain to a database of its own.
+- A rejected row planted under a real `outbox_id` with other content, plus a forged chain row under
+  its `event_id`, stalls the shipper on that row: the rejected insert is skipped and the delete
+  guard refuses. That fails safe and loud, an error log on every attempt and a growing oldest
+  pending age, and the operator follows the runbook in `docs/standards/audit.md`.

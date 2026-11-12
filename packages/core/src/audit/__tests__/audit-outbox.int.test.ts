@@ -123,9 +123,7 @@ describe('audit outbox capture (real PG)', () => {
     const eventId = randomUUID();
     const occurredAt = new Date().toISOString();
     const queue = () =>
-      main.transaction((tx) =>
-        enqueueAuditInTransaction(tx, entry('once', { occurredAt }), eventId),
-      );
+      main.transaction((tx) => enqueueAuditInTransaction(tx, entry('once'), eventId, occurredAt));
 
     await queue();
     await queue();
@@ -151,7 +149,9 @@ describe('audit outbox capture (real PG)', () => {
     const payload = { roleId: randomUUID(), actorId: randomUUID(), before: [], after: [] };
     const queue = async () => {
       const record = await auditRecordFor('iam.role.permissions.changed', payload, envelope);
-      await main.transaction((tx) => enqueueAuditInTransaction(tx, record!, envelope.eventId));
+      await main.transaction((tx) =>
+        enqueueAuditInTransaction(tx, record!, envelope.eventId, envelope.occurredAt),
+      );
     };
 
     await queue();
@@ -169,7 +169,7 @@ describe('audit outbox capture (real PG)', () => {
     const occurredAt = new Date().toISOString();
     const queue = () =>
       main.transaction((tx) =>
-        enqueueAuditInTransaction(tx, entry('broker', { occurredAt }), '1700000000000-0'),
+        enqueueAuditInTransaction(tx, entry('broker'), '1700000000000-0', occurredAt),
       );
 
     await queue();
@@ -181,6 +181,21 @@ describe('audit outbox capture (real PG)', () => {
     expect(rows).toEqual([{ eventId: auditEventId('1700000000000-0') }]);
     expect(rows[0]?.eventId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-/);
     expect(await count('audit_outbox_rejected')).toBe(0);
+  });
+
+  it('stamps a record written through the port now, whatever time key it carries', async () => {
+    const backdated = { ...entry('backdated'), occurredAt: '2000-01-01T00:00:00.000Z' };
+    const before = Date.now();
+
+    await service().record(backdated);
+    await main.transaction((tx) => service().recordInTransaction(tx, backdated));
+    await drainAuditOutbox(main);
+
+    const rows = await main.select({ createdAt: auditLog.createdAt }).from(auditLog);
+    expect(rows).toHaveLength(2);
+    for (const { createdAt } of rows) {
+      expect(createdAt.getTime()).toBeGreaterThanOrEqual(before);
+    }
   });
 
   it('records a role permission change, whose snapshots are arrays, through the outbox', async () => {
@@ -391,6 +406,26 @@ describe('audit shipper on a bad row (real PG)', () => {
     ]);
   });
 
+  it('moves aside an entry dated year 0, which Postgres cannot store, and ships the rest', async () => {
+    const yearZero = {
+      ...entry('year-zero'),
+      correlationId: null,
+      createdAt: '0000-06-15T00:00:00.000Z',
+    };
+    await main.insert(auditOutbox).values({ eventId: randomUUID(), entry: yearZero });
+    await main.transaction((tx) => service().recordInTransaction(tx, entry('after')));
+
+    await drainAuditOutbox(main);
+
+    const chained = await main.select({ resourceId: auditLog.resourceId }).from(auditLog);
+    expect(chained).toEqual([{ resourceId: 'after' }]);
+    expect(await count('audit_outbox')).toBe(0);
+    const rejected = await main.select().from(auditOutboxRejected);
+    expect(rejected).toEqual([
+      expect.objectContaining({ entry: yearZero, error: expect.stringContaining('year 0') }),
+    ]);
+  });
+
   it('keeps both of two different entries rejected under one event id', async () => {
     const eventId = randomUUID();
     for (const bad of [{ bad: 1 }, { bad: 2 }]) {
@@ -596,6 +631,19 @@ describe('audit migrate guards (real PG)', () => {
         'audit_outbox_rejected_no_truncate',
         'audit_outbox_shipped_delete',
       ].map((name) => ({ name, enabled: 'A' })),
+    );
+    const { rows: functions } = await main.execute<{ name: string; config: string[] | null }>(
+      sql`SELECT proname AS name, proconfig AS config FROM pg_proc
+          WHERE proname IN ('audit_log_deny_mutation', 'audit_outbox_entry_chained',
+                            'audit_outbox_deny_unshipped_delete')
+          ORDER BY proname`,
+    );
+    expect(functions).toEqual(
+      [
+        'audit_log_deny_mutation',
+        'audit_outbox_deny_unshipped_delete',
+        'audit_outbox_entry_chained',
+      ].map((name) => ({ name, config: ['search_path=pg_catalog, public'] })),
     );
   });
 
