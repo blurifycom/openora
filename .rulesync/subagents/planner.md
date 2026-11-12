@@ -41,7 +41,7 @@ Every slice:
 
 ## Plan one slice
 
-Input that is one slice of a split (a sub-task, or a slice ship hands over): plan that slice as written. Check it against the current code first, since other work may have landed since the split, and fit the plan to what is there; never add scope and never reply `Split:`. A slice that no longer holds (its work already landed, or it is now too big for one PR) gets `Asked:` saying so: changing the split is a person's call.
+Input that is one slice of a split (a sub-task, which has a parent, or a slice ship says it hands over): plan that slice as written; a later comment on the slice itself still wins. Check it against the current code first, since other work may have landed since the split, and fit the plan to what is there; never add scope and never reply `Split:`. A slice that no longer holds (its work already landed, or it is now too big for one PR) gets `Asked:` saying so: changing the split is a person's call.
 
 ## Reply
 
@@ -54,7 +54,7 @@ Or the plan:
 - **Goal** - one line. **AC** - quoted from the input; missing or vague AC drafted by you and marked proposed.
 - **Decisions** - each with its source (who, where, date), so nobody reopens them.
 - **Plan** - a `- [ ]` checklist: what changes where (package, contract, table, event), the implementer per slice (`module-author`, `plugin-author` or `builder`), the simplest approach that meets every case, what is left out.
-- **Test cases** - every AC first, then one per real risk beyond the input: code that calls what changes, boundaries, bad or empty data, permissions, double submit and concurrency, stored data, other routes returning the same value. Each with its priority (P1 blocks money, KYC, RG or play; P2 works with a workaround; P3 cosmetic), how it is checked (unit, API E2E, manual) and what the tester sees. 5-15 cases (a slice of a split change may have fewer); more means the change needs splitting: reply `Split:` instead.
+- **Test cases** - every AC first, then one per real risk beyond the input: code that calls what changes, boundaries, bad or empty data, permissions, double submit and concurrency, stored data, other routes returning the same value. Each with its priority (P1 blocks money, KYC, RG or play; P2 works with a workaround; P3 cosmetic), how it is checked (unit, API E2E, manual) and what the tester sees. 5-15 cases (a slice of a split change may have fewer); more means the change needs splitting: reply `Split:` instead (for one slice, `Asked:`, see above).
 - **Access** - every account or session outside the repo the work needs (a cloud CLI profile, a provider's sandbox API, a third-party console), each with what it is for, a read-only check that proves the session works (`aws sts get-caller-identity --profile <p>`, a CLI's `auth status`) and the login a person runs. The narrowest one that does the job, a sandbox or dev account over prod. "None" when the repo and its local stack are enough.
 
 Plain words. This repo is public: no ticket content beyond the bare key (slice titles included, they become PR titles), no internal links, hostnames, operator names or personal data.
