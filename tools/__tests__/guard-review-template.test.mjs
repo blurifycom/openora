@@ -86,10 +86,16 @@ test('a hand merge is denied, quoted prose about one is not', () => {
     'GH_REPO=o/r gh pr merge 1',
     'glab mr merge 5',
     'git status && glab mr merge 5',
+    'gh pr -R o/r merge 1',
+    'command gh pr merge 1',
+    '/opt/homebrew/bin/gh pr merge 1',
+    'gh api -X PUT repos/o/r/pulls/1/merge',
+    "gh api graphql -f query='mutation { mergePullRequest(input: {}) { clientMutationId } }'",
   ]) {
     assert.equal(exitCode(command), DENIED, command);
   }
   assert.equal(exitCode('git commit -m "run gh pr merge later"'), ALLOWED);
+  assert.equal(exitCode('gh api repos/o/r/pulls/1/merge'), ALLOWED);
 });
 
 test('a push to a shared branch is denied even on an approved HEAD', () => {
@@ -99,11 +105,35 @@ test('a push to a shared branch is denied even on an approved HEAD', () => {
     'git push -u origin HEAD:dev',
     'git push origin +feat/x:refs/heads/main',
     'git push --all origin',
+    'git push origin --delete dev',
+    'git push origin :dev',
+    'git push origin "HEAD:dev"',
+    "git push origin 'refs/heads/*:refs/heads/*'",
   ]) {
     assert.equal(exitCode(command), DENIED, command);
   }
   assert.equal(exitCode('git push -u origin HEAD'), ALLOWED);
   assert.equal(exitCode('git push origin feat/x:feat/x dev-notes'), ALLOWED);
+  assert.equal(exitCode('git push origin @'), ALLOWED);
+});
+
+test('a bare push is judged by where git sends it, not by the branch name', () => {
+  saveReview(head, 'APPROVED');
+  git('update-ref', 'refs/remotes/origin/dev', head);
+  git('config', 'remote.origin.url', repo);
+  git('config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*');
+  git('config', 'branch.feat/x.remote', 'origin');
+  git('config', 'branch.feat/x.merge', 'refs/heads/dev');
+  git('config', 'push.default', 'upstream');
+  try {
+    assert.equal(exitCode('git push'), DENIED);
+    assert.equal(exitCode('git push --tags'), ALLOWED);
+  } finally {
+    git('config', '--unset', 'push.default');
+    git('config', '--remove-section', 'branch.feat/x');
+    git('config', '--remove-section', 'remote.origin');
+    git('update-ref', '-d', 'refs/remotes/origin/dev');
+  }
 });
 
 test('a promotion sent from a shared branch needs no branch review', () => {
