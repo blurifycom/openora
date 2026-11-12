@@ -44,8 +44,9 @@ two different entries under one `event_id` are both kept.
 time of the change, not its commit time, so two rows can carry `created_at` out of `seq` order. A
 record mapped from an event takes the event's `occurredAt`, so the tap and the consumer queue equal
 entries for one event and the redelivery is chained once. Only those two event paths pass that
-time; a record written through `AUDIT_WRITER` is stamped when it is queued, whatever keys it carries,
-so a caller cannot backdate it. An entry dated year 0, which Postgres cannot store, fails the entry
+time, through `enqueueEventAuditInTransaction`, which `@openora/core/audit/server` does not export.
+A record written through `AUDIT_WRITER` or `enqueueAuditInTransaction(txn, input)` is stamped when
+it is queued under a fresh event id, whatever keys it carries, so a caller cannot backdate it. An entry dated year 0, which Postgres cannot store, fails the entry
 schema and moves aside.
 
 **Guards.** `ENABLE ALWAYS` triggers deny UPDATE and TRUNCATE on `audit_outbox` and allow a DELETE only

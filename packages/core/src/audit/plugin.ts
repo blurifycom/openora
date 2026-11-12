@@ -4,6 +4,7 @@ import {
   ADMIN_GUARD,
   createLogger,
   type CoreTokenCatalog,
+  type DrizzleDb,
   type DrizzleTx,
   type Plugin,
 } from '@openora/core/server';
@@ -11,6 +12,7 @@ import { AUDIT_WRITER, IDENTITY_READER, type EventEnvelope } from '@openora/core
 import {
   AuditService,
   enqueueAuditInTransaction,
+  enqueueEventAuditInTransaction,
   type RecordInput,
 } from './service/audit.service.js';
 import { AuditShipper } from './service/audit-shipper.service.js';
@@ -1467,8 +1469,8 @@ export default {
   id: 'audit',
   register(ctx) {
     // Subscriptions are wired before router factories run (create-app.ts boot order),
-    // so svcRef is null at registration but set before any real event arrives.
-    let svcRef: AuditService | null = null;
+    // so dbRef is null at registration but set before any real event arrives.
+    let dbRef: DrizzleDb | null = null;
 
     ctx.provideSealed(AUDIT_WRITER, (c) => {
       const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
@@ -1490,14 +1492,18 @@ export default {
           if (!record) {
             return;
           }
-          if (!svcRef) {
+          if (!dbRef) {
             throw new Error(`audit record for '${topic}' skipped - service not constructed`);
           }
           // Keyed by the event id, so an event its emitter's transaction already queued through
           // the tap below, or a redelivery, leaves one row.
           // The event's time, not the moment this path queued it, keeps the tap's and the
           // consumer's entries for one event equal, as the outbox delete guard checks.
-          await svcRef.record(record, envelope?.eventId, envelope?.occurredAt);
+          await dbRef.transaction((tx) =>
+            envelope
+              ? enqueueEventAuditInTransaction(tx, record, envelope)
+              : enqueueAuditInTransaction(tx, record),
+          );
         },
         { consumerGroup: AUDIT_CONSUMER_GROUP },
       );
@@ -1507,18 +1513,13 @@ export default {
       const drizzle = c.get(DRIZZLE);
       const events = c.get(EVENT_BUS);
       const svc = new AuditService(drizzle, events, c.get(IDENTITY_READER));
-      svcRef = svc;
+      dbRef = drizzle.db;
       // An audited event emitted in a transaction queues its record in that transaction, so the
       // record commits with the change instead of waiting on broker delivery.
       events.tapTransactional(async (tx, envelope) => {
         const record = await auditRecordFor(envelope.topic, envelope.payload, envelope);
         if (record) {
-          await enqueueAuditInTransaction(
-            tx as DrizzleTx,
-            record,
-            envelope.eventId,
-            envelope.occurredAt,
-          );
+          await enqueueEventAuditInTransaction(tx as DrizzleTx, record, envelope);
         }
       });
       // Plugins have no start hook; router factories run in every service that loads this plugin,

@@ -258,20 +258,37 @@ export function auditEventId(eventId: EventEnvelope['eventId']): ShippableEntry[
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
+async function enqueueOne(
+  txn: DrizzleTx,
+  input: RecordInput,
+  eventId: ShippableEntry['eventId'],
+  occurredAt?: EventEnvelope['occurredAt'],
+): Promise<void> {
+  await enqueue(txn, [{ eventId, entry: outboxEntry(input, occurredAt) }]);
+  noteAuditWrite(input.actorId);
+}
+
 /**
  * Queues one audit record inside the caller's transaction: it reaches `audit_log` once the
  * transaction commits and the audit shipper appends it to the hash chain, and never if it rolls
- * back. Takes no lock, so the business transaction never waits on the chain. `eventId` is the
- * record's identity: queueing the same one twice, before or after it ships, leaves one row.
+ * back. Takes no lock, so the business transaction never waits on the chain. The record is stamped
+ * now under a fresh event id, so a caller can neither backdate it nor key it to another record.
  */
-export async function enqueueAuditInTransaction(
+export function enqueueAuditInTransaction(txn: DrizzleTx, input: RecordInput): Promise<void> {
+  return enqueueOne(txn, input, randomUUID());
+}
+
+/**
+ * Queues the audit record of an event, keyed by its event id and dated by its `occurredAt`, so the
+ * tap, the consumer and a redelivery queue one equal entry. Only the audit plugin's event paths
+ * call it, and `audit/server` does not export it: no other caller may backdate a record (ADR-0053).
+ */
+export function enqueueEventAuditInTransaction(
   txn: DrizzleTx,
   input: RecordInput,
-  eventId: EventEnvelope['eventId'] = randomUUID(),
-  occurredAt?: EventEnvelope['occurredAt'],
+  { eventId, occurredAt }: Pick<EventEnvelope, 'eventId' | 'occurredAt'>,
 ): Promise<void> {
-  await enqueue(txn, [{ eventId: auditEventId(eventId), entry: outboxEntry(input, occurredAt) }]);
-  noteAuditWrite(input.actorId);
+  return enqueueOne(txn, input, auditEventId(eventId), occurredAt);
 }
 
 async function enqueueManyAuditInTransaction(
@@ -418,15 +435,9 @@ export class AuditService {
     private readonly identityReader: IdentityReader,
   ) {}
 
-  /** Queues `input` in a transaction of its own; `eventId` makes a redelivered event a no-op. */
-  async record(
-    input: RecordInput,
-    eventId?: EventEnvelope['eventId'],
-    occurredAt?: EventEnvelope['occurredAt'],
-  ): Promise<void> {
-    await this.drizzle.db.transaction((tx) =>
-      enqueueAuditInTransaction(tx, input, eventId, occurredAt),
-    );
+  /** Queues `input` in a transaction of its own, stamped now. */
+  async record(input: RecordInput): Promise<void> {
+    await this.drizzle.db.transaction((tx) => enqueueAuditInTransaction(tx, input));
   }
 
   recordInTransaction(tx: unknown, input: RecordInput): Promise<void> {
