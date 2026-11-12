@@ -4,8 +4,9 @@
 // checkout with the reviewed `sha` and the `verdict`. A push, `gh stack submit|push`, or a new
 // MR/PR is denied unless one of those files records the current HEAD as APPROVED (or GO).
 // Each command in a chain is judged on its own: a branch delete or a tag-only push passes, and
-// so does a PR/MR opened from a shared branch (a promotion, which no branch review covers). Git
-// errors fail open, like every other guard.
+// so does a PR/MR opened from a shared branch (a promotion, which no branch review covers). A
+// push to a shared branch and a hand merge (`gh pr|stack merge`, `glab mr merge`) are denied
+// outright: the merge bot merges. Git errors fail open, like every other guard.
 //
 // ponytail: trusts the state file, which an agent could write by hand, and checks the checked-out
 // HEAD, not a different ref named on the command line. It stops a forgotten review, not a hostile
@@ -21,6 +22,9 @@ const PREFIX = String.raw`^(?:(?:env\s+)?\w+=\S*\s+)*`;
 const GIT_PUSH = new RegExp(`${PREFIX}git((?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*)\\s+push\\b(.*)$`);
 const OPENS_REVIEW = new RegExp(
   `${PREFIX}(?:gh(?:\\s+(?:-R|--repo)\\s+\\S+)?\\s+(?:pr\\s+create|stack\\s+(?:submit|push))|glab\\s+mr\\s+create)\\b(.*)$`,
+);
+const MERGES = new RegExp(
+  `${PREFIX}(?:gh(?:\\s+(?:-R|--repo)\\s+\\S+)?\\s+(?:pr|stack)\\s+merge|glab\\s+mr\\s+merge)\\b`,
 );
 const SOURCE = /\s(?:--head|-H|--source-branch|-s)(?:=|\s+)(\S+)/;
 const DIR_FLAG = /\s-C\s+(\S+)/;
@@ -75,7 +79,7 @@ const reviewTarget = (segment, cwd) => {
       return null;
     }
     const dir = DIR_FLAG.exec(push[1]);
-    return { dir: dir ? within(cwd, dir[1]) : cwd, opensReview: false };
+    return { dir: dir ? within(cwd, dir[1]) : cwd, opensReview: false, pushArgs: push[2] };
   }
   const opens = OPENS_REVIEW.exec(segment);
   if (!opens) {
@@ -115,8 +119,32 @@ const isApproved = (dirs, head) =>
     }
   });
 
-const check = ({ dir, opensReview }) => {
+// The branches a push writes: each refspec's destination, or the checked-out branch when the
+// command names none. `--all` and `--mirror` write every branch, a shared one included.
+const pushesShared = (pushArgs, branch) => {
+  if (/\s--(?:all|mirror)\b/.test(pushArgs)) {
+    return true;
+  }
+  const refs = pushArgs
+    .trim()
+    .split(/\s+/)
+    .filter((arg) => arg && !arg.startsWith('-'))
+    .slice(1);
+  return (refs.length > 0 ? refs : [branch]).some((spec) => {
+    const destination = spec.replace(/^\+/, '').split(':').pop();
+    return SHARED.test(
+      (destination === 'HEAD' ? branch : destination).replace(/^refs\/heads\//, ''),
+    );
+  });
+};
+
+const check = ({ dir, opensReview, pushArgs }) => {
   const branch = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
+  if (pushArgs !== undefined && branch && pushesShared(pushArgs, branch)) {
+    deny(
+      'Blocked: nobody pushes to a shared branch by hand. Push a topic branch and open a merge/pull request; the merge bot merges it. A person can still push from their own terminal.',
+    );
+  }
   const top = git(dir, 'rev-parse', '--show-toplevel');
   const common = git(dir, 'rev-parse', '--git-common-dir');
   const head = git(dir, 'rev-parse', 'HEAD');
@@ -137,6 +165,11 @@ for (const segment of segments(extractCommand(payload))) {
   const cd = /^cd\s+(\S+)$/.exec(segment);
   if (cd) {
     cwd = within(cwd, cd[1]);
+  }
+  if (MERGES.test(segment)) {
+    deny(
+      'Blocked: the merge bot merges, never an agent. Leave the merge/pull request to it; a person who has to merge by hand runs it from their own terminal (`! <command>` in Claude Code).',
+    );
   }
   const target = reviewTarget(segment, cwd);
   if (target) {

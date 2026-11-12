@@ -19,7 +19,7 @@ const command = extractCommand(readPayload()).replace(/'[^']*'|"(?:[^"\\]|\\.)*"
 const base = PR_WITH_BASE.exec(command)?.[1];
 if (base && !SHARED.test(base)) {
   deny(
-    `Blocked: a PR based on \`${base}\` is a stack. Use \`gh stack\` (gh extension install github/gh-stack): \`gh stack init\` or \`gh stack init <branches...>\`, \`gh stack add <branch>\`, then \`gh stack submit\`. Review each layer on its own; merge with \`gh stack merge\` only when asked.`,
+    `Blocked: a PR based on \`${base}\` is a stack. Use \`gh stack\` (gh extension install github/gh-stack): \`gh stack init\` or \`gh stack init <branches...>\`, \`gh stack add <branch>\`, then \`gh stack submit\`. Review each layer on its own; the merge bot merges.`,
   );
 }
 process.exit(0);

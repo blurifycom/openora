@@ -17,6 +17,9 @@ Read this before a commit, PR, or branch operation.
 - On GitHub, a PR that builds on another feature branch goes up as a native stacked PR with
   `gh stack` (`init`, `add`, `submit`, `sync`); the `guard-stack` hook blocks a plain PR based on
   a feature branch. Each layer is reviewed on its own.
+- The merge bot merges. `guard-review` denies an agent's `gh pr merge`, `gh stack merge`,
+  `glab mr merge` and any push to a shared branch; a person who has to do one runs it from their
+  own terminal.
 - Branch off `dev`; never commit directly to a shared branch; never push without an explicit
   per-action "yes push", except the ticket branch `/ship` opens its MR from.
 - PR description carries intent: what / why / acceptance criteria / ticket link. No secrets,

@@ -78,6 +78,34 @@ test('an APPROVED or GO review of HEAD lets the push through', () => {
   assert.equal(exitCode('git push'), ALLOWED);
 });
 
+test('a hand merge is denied, quoted prose about one is not', () => {
+  for (const command of [
+    'gh pr merge 12 --squash',
+    'gh stack merge',
+    'gh -R o/r pr merge 1',
+    'GH_REPO=o/r gh pr merge 1',
+    'glab mr merge 5',
+    'git status && glab mr merge 5',
+  ]) {
+    assert.equal(exitCode(command), DENIED, command);
+  }
+  assert.equal(exitCode('git commit -m "run gh pr merge later"'), ALLOWED);
+});
+
+test('a push to a shared branch is denied even on an approved HEAD', () => {
+  saveReview(head, 'APPROVED');
+  for (const command of [
+    'git push origin dev',
+    'git push -u origin HEAD:dev',
+    'git push origin +feat/x:refs/heads/main',
+    'git push --all origin',
+  ]) {
+    assert.equal(exitCode(command), DENIED, command);
+  }
+  assert.equal(exitCode('git push -u origin HEAD'), ALLOWED);
+  assert.equal(exitCode('git push origin feat/x:feat/x dev-notes'), ALLOWED);
+});
+
 test('a promotion sent from a shared branch needs no branch review', () => {
   const trunk = `${repo}-dev`;
   git('worktree', 'add', '-q', '-b', 'dev', trunk);
