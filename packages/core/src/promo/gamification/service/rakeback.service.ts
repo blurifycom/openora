@@ -21,13 +21,17 @@ import {
   houseEdge,
   type DrizzleTx,
 } from '@openora/core/server';
+import type { StreakRakebackMode } from '../contract/index.js';
 import {
   promoPlayerRank,
+  promoPlayerStreak,
   promoRakebackAccrual,
   promoRankConfig,
   promoRankTier,
+  promoStreakConfig,
 } from '../schema/index.js';
 import { roundReversal } from '../shared/round-reversal.js';
+import { activeRakebackRate, isStreakLive, type StreakRate } from '../shared/streak-day.js';
 
 const ZERO = '0';
 
@@ -54,18 +58,56 @@ export function rakebackBase(realAmount: string, basis: RakebackBasis, rtp?: str
   return basis === 'stake' ? realAmount : houseEdge(realAmount, rtp);
 }
 
+/** `base × rate% × (1 + uplift%)`: the streak uplift multiplies the rank rate, it never adds to it. */
+export function rankedRakeback({
+  base,
+  ratePercent,
+  upliftPercent,
+}: {
+  base: string;
+  ratePercent: string;
+  upliftPercent: string;
+}): string {
+  return moneyDivide(
+    moneyScaleBy(moneyScaleBy(base, ratePercent), moneyAdd('100', upliftPercent)),
+    '10000',
+  );
+}
+
+/** A player with no rank earns `ratePercent` of the bet's theoretical GGR, its house edge; zero without a usable rtp. */
+export function unrankedRakeback({
+  realAmount,
+  rtp,
+  ratePercent,
+}: {
+  realAmount: string;
+  rtp?: string | null;
+  ratePercent: string;
+}): string {
+  return moneyDivide(moneyScaleBy(houseEdge(realAmount, rtp), ratePercent), '100');
+}
+
+type RakebackRate =
+  | { mode: 'ranked'; ratePercent: string; upliftPercent: string }
+  | { mode: 'unranked'; ratePercent: string };
+
 /**
- * Rank rakeback: a qualifying bet's own-money stake, or under the `margin` basis that stake times
- * the house edge of the game played (`1 − rtp`), times the player's rank rakeback percentage
- * (tier rate plus any active streak boost).
+ * Rakeback on a qualifying bet's own-money stake, or under the `margin` basis that stake times the
+ * house edge of the game played (`1 − rtp`). A ranked player earns their rank's percentage; a
+ * player's active streak milestone then multiplies it by `1 + uplift%`. A player holding no rank
+ * earns nothing from the ladder, but an active streak milestone pays them its unranked rate on the
+ * bet's theoretical GGR, the house edge, whatever the basis - so that formula always needs a usable
+ * rtp. The streak only counts on its own products, and only while the player's last qualifying day
+ * is today or yesterday; the rate is read from the current config when the bet settles.
  *
  * Under the `instant` payout it is credited to the real balance with the bet, and the `cashback`
  * wallet transaction is the whole record. Under `claim` it is written to `promo_rakeback_accrual`
  * and nothing moves until `RakebackClaimService` pays it out; a rollback of the round then takes
  * it back while it is still unclaimed.
  *
- * Runs after `RankService` in the composite, so a bet that also crosses a rank threshold pays
- * rakeback at the tier just reached.
+ * Runs after `RankService` and before `StreakService` in the composite, so a bet that also crosses
+ * a rank threshold pays rakeback at the tier just reached, and the bet that unlocks a streak
+ * milestone earns the previous milestone's rate.
  *
  * Own-money only: `args.realAmount` already excludes whatever part of the stake a bonus grant
  * paid for, so wagering a bonus never earns real-money rakeback on funds the player never risked.
@@ -135,36 +177,44 @@ export class RakebackService implements WagerTrackingCommands {
     if (!rate) {
       return [];
     }
-    if (this.settings.basis === 'margin' && !isUsableRtp(args.context.rtp)) {
+    const rtp = args.context.rtp;
+    if ((rate.mode === 'unranked' || this.settings.basis === 'margin') && !isUsableRtp(rtp)) {
       this.logger.warn(
         {
           userId: args.userId,
           provider: args.context.provider,
           gameId: args.context.gameId ?? null,
-          rtp: args.context.rtp ?? null,
+          rtp: rtp ?? null,
         },
-        'margin rakeback skipped: bet has no usable rtp',
+        rate.mode === 'unranked'
+          ? 'streak rakeback skipped: bet has no usable rtp'
+          : 'margin rakeback skipped: bet has no usable rtp',
       );
       return [];
     }
-    const base = rakebackBase(args.realAmount, this.settings.basis, args.context.rtp);
-    const rakeback = moneyDivide(
-      moneyScaleBy(base, moneyAdd(rate.ratePercent, rate.boostPercent)),
-      '100',
-    );
+    const rakeback =
+      rate.mode === 'unranked'
+        ? unrankedRakeback({ realAmount: args.realAmount, rtp, ratePercent: rate.ratePercent })
+        : rankedRakeback({
+            base: rakebackBase(args.realAmount, this.settings.basis, rtp),
+            ratePercent: rate.ratePercent,
+            upliftPercent: rate.upliftPercent,
+          });
     if (moneyCompare(rakeback, ZERO) <= 0) {
       return [];
     }
     if (this.settings.payout === 'claim') {
+      const streak = streakRecord(rate);
       await tx.insert(promoRakebackAccrual).values({
         userId: args.userId,
         currency: args.currency,
         amount: rakeback,
         stake: args.realAmount,
-        basis: this.settings.basis,
-        rtp: this.settings.basis === 'margin' ? (args.context.rtp ?? null) : null,
-        ratePercent: rate.ratePercent,
-        boostPercent: rate.boostPercent,
+        basis: rate.mode === 'unranked' ? 'margin' : this.settings.basis,
+        rtp: rate.mode === 'unranked' || this.settings.basis === 'margin' ? (rtp ?? null) : null,
+        ratePercent: rate.mode === 'unranked' ? ZERO : rate.ratePercent,
+        boostPercent: ZERO,
+        ...streak,
         gameId: args.context.gameId ?? null,
         providerGameKey: args.context.providerGameKey ?? null,
         providerName: args.round?.providerName ?? args.context.provider,
@@ -251,7 +301,15 @@ export class RakebackService implements WagerTrackingCommands {
   private async rateFor(
     tx: DrizzleTx,
     args: Pick<WagerTrackingArgs, 'userId' | 'context'>,
-  ): Promise<{ ratePercent: string; boostPercent: string } | null> {
+  ): Promise<RakebackRate | null> {
+    const [rank] = await tx
+      .select({ tierId: promoPlayerRank.tierId })
+      .from(promoPlayerRank)
+      .where(eq(promoPlayerRank.userId, args.userId));
+    const streak = await this.streakRateFor(tx, args);
+    if (!rank?.tierId) {
+      return streak ? { mode: 'unranked', ratePercent: streak.unrankedRatePercent } : null;
+    }
     const [config] = await tx
       .select({
         eligibleProducts: promoRankConfig.eligibleProducts,
@@ -265,17 +323,6 @@ export class RakebackService implements WagerTrackingCommands {
     ) {
       return null;
     }
-    const [rank] = await tx
-      .select({
-        tierId: promoPlayerRank.tierId,
-        rakebackBoostPercent: promoPlayerRank.rakebackBoostPercent,
-        rakebackBoostExpiresAt: promoPlayerRank.rakebackBoostExpiresAt,
-      })
-      .from(promoPlayerRank)
-      .where(eq(promoPlayerRank.userId, args.userId));
-    if (!rank?.tierId) {
-      return null;
-    }
     const [tier] = await tx
       .select({ rakebackPercent: promoRankTier.rakebackPercent })
       .from(promoRankTier)
@@ -283,11 +330,52 @@ export class RakebackService implements WagerTrackingCommands {
     if (!tier) {
       return null;
     }
-    const boostActive =
-      rank.rakebackBoostExpiresAt !== null && rank.rakebackBoostExpiresAt > new Date();
     return {
+      mode: 'ranked',
       ratePercent: tier.rakebackPercent,
-      boostPercent: boostActive ? (rank.rakebackBoostPercent ?? ZERO) : ZERO,
+      upliftPercent: streak?.rankedUpliftPercent ?? ZERO,
     };
   }
+
+  private async streakRateFor(
+    tx: DrizzleTx,
+    args: Pick<WagerTrackingArgs, 'userId' | 'context'>,
+  ): Promise<StreakRate | null> {
+    const [config] = await tx
+      .select({
+        enabled: promoStreakConfig.enabled,
+        rakebackMilestones: promoStreakConfig.rakebackMilestones,
+        eligibleProducts: promoStreakConfig.eligibleProducts,
+      })
+      .from(promoStreakConfig);
+    if (
+      !config?.enabled ||
+      config.rakebackMilestones.length === 0 ||
+      !countsToward(config.eligibleProducts, args.context.product)
+    ) {
+      return null;
+    }
+    const [streak] = await tx
+      .select({
+        current: promoPlayerStreak.current,
+        lastQualifyingDay: promoPlayerStreak.lastQualifyingDay,
+      })
+      .from(promoPlayerStreak)
+      .where(eq(promoPlayerStreak.userId, args.userId));
+    if (!streak || !isStreakLive(streak.lastQualifyingDay, new Date())) {
+      return null;
+    }
+    return activeRakebackRate(config.rakebackMilestones, streak.current);
+  }
+}
+
+function streakRecord(
+  rate: RakebackRate,
+):
+  | { streakMode: StreakRakebackMode; streakPercent: string }
+  | { streakMode: null; streakPercent: null } {
+  const percent = rate.mode === 'unranked' ? rate.ratePercent : rate.upliftPercent;
+  return moneyCompare(percent, ZERO) > 0
+    ? { streakMode: rate.mode, streakPercent: percent }
+    : { streakMode: null, streakPercent: null };
 }

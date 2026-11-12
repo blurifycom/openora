@@ -13,11 +13,11 @@ import {
 
 const CONFIG_PATH = '/backoffice/promo/streaks/config';
 const CONFIG = {
-  currency: 'USD',
+  enabled: true,
   dailyMinWager: '10.000000000000000000',
   eligibleProducts: ['casino', 'sportsbook'],
-  milestones: [{ day: 1, rewards: [{ kind: 'cash', amount: '5.000000000000000000' }] }],
-  resetAfterDay: 30,
+  rakebackMilestones: [],
+  fixedRewards: [],
 };
 
 let db: TestDb;

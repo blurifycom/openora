@@ -1,5 +1,5 @@
 {
-  "id": "2dfa83a4-7f9c-4dd5-b2ea-65dba84348d8",
+  "id": "14a5efbe-4e37-49ef-b7ca-b949a39a975a",
   "prevId": "8b2b9593-414d-4801-810d-5501646ba100",
   "version": "7",
   "dialect": "postgresql",
@@ -778,6 +778,19 @@
           "primaryKey": false,
           "notNull": true
         },
+        "streak_mode": {
+          "name": "streak_mode",
+          "type": "promo_streak_rakeback_mode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "streak_percent": {
+          "name": "streak_percent",
+          "type": "numeric(5, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "game_id": {
           "name": "game_id",
           "type": "text",
@@ -974,6 +987,10 @@
         "promo_rakeback_accrual_bounds": {
           "name": "promo_rakeback_accrual_bounds",
           "value": "\"promo_rakeback_accrual\".\"amount\" > 0 AND \"promo_rakeback_accrual\".\"stake\" >= 0 AND \"promo_rakeback_accrual\".\"rolled_back_stake\" >= 0 AND \"promo_rakeback_accrual\".\"rolled_back_stake\" <= \"promo_rakeback_accrual\".\"stake\" AND (\"promo_rakeback_accrual\".\"rtp\" is null OR (\"promo_rakeback_accrual\".\"rtp\" > 0 AND \"promo_rakeback_accrual\".\"rtp\" <= 1))"
+        },
+        "promo_rakeback_accrual_streak": {
+          "name": "promo_rakeback_accrual_streak",
+          "value": "(\"promo_rakeback_accrual\".\"streak_mode\" is null) = (\"promo_rakeback_accrual\".\"streak_percent\" is null)"
         },
         "promo_rakeback_accrual_settlement": {
           "name": "promo_rakeback_accrual_settlement",
@@ -1470,7 +1487,8 @@
           "name": "eligible_products",
           "type": "text[]",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "'{}'"
         },
         "rakeback_eligible_products": {
           "name": "rakeback_eligible_products",
@@ -1936,11 +1954,19 @@
           "notNull": true,
           "default": "'global'"
         },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "currency": {
           "name": "currency",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "'USD'"
         },
         "daily_min_wager": {
           "name": "daily_min_wager",
@@ -1952,7 +1978,22 @@
           "name": "eligible_products",
           "type": "text[]",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "'{}'"
+        },
+        "rakeback_milestones": {
+          "name": "rakeback_milestones",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "fixed_rewards": {
+          "name": "fixed_rewards",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
         },
         "milestones": {
           "name": "milestones",
@@ -2129,6 +2170,36 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rollover_multiplier": {
+          "name": "rollover_multiplier",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "claim_expiry_days": {
+          "name": "claim_expiry_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_bet": {
+          "name": "max_bet",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -2178,6 +2249,10 @@
         "promo_streak_milestone_grant_day_positive": {
           "name": "promo_streak_milestone_grant_day_positive",
           "value": "\"promo_streak_milestone_grant\".\"day\" > 0"
+        },
+        "promo_streak_milestone_grant_terms_valid": {
+          "name": "promo_streak_milestone_grant_terms_valid",
+          "value": "(\"promo_streak_milestone_grant\".\"amount\" is null OR \"promo_streak_milestone_grant\".\"amount\" > 0)\n        AND (\"promo_streak_milestone_grant\".\"rollover_multiplier\" is null OR \"promo_streak_milestone_grant\".\"rollover_multiplier\" > 0)\n        AND (\"promo_streak_milestone_grant\".\"claim_expiry_days\" is null OR \"promo_streak_milestone_grant\".\"claim_expiry_days\" > 0)\n        AND (\"promo_streak_milestone_grant\".\"max_bet\" is null OR \"promo_streak_milestone_grant\".\"max_bet\" > 0)"
         }
       },
       "isRLSEnabled": false
@@ -2320,6 +2395,11 @@
       "name": "promo_rakeback_claim_outcome",
       "schema": "public",
       "values": ["claimed", "auto_paid"]
+    },
+    "public.promo_streak_rakeback_mode": {
+      "name": "promo_streak_rakeback_mode",
+      "schema": "public",
+      "values": ["unranked", "ranked"]
     }
   },
   "schemas": {},

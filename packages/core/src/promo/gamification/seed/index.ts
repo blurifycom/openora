@@ -54,14 +54,17 @@ export async function seedRankLadder(
   await db.insert(promoRankConfig).values(ladder.config).onConflictDoNothing();
 }
 
-export type StreakSeed = StreakConfigInput;
+export type StreakSeed = Omit<StreakConfigInput, 'enabled'> & { enabled?: boolean };
 
 /**
  * Seeds the streak config, mirroring `seedRankLadder`: idempotent, never overwrites a setting an
- * operator has already edited.
+ * operator has already edited. The streak stays off unless the seed turns it on.
  */
 export async function seedStreakConfig(db: DrizzleDb, config: StreakSeed): Promise<void> {
-  await db.insert(promoStreakConfig).values(config).onConflictDoNothing();
+  await db
+    .insert(promoStreakConfig)
+    .values({ ...config, enabled: config.enabled ?? false })
+    .onConflictDoNothing();
 }
 
 export type RankChallengeTierSeed = {

@@ -159,8 +159,22 @@
     {
       "idx": 22,
       "version": "7",
-      "when": 1793808578400,
-      "tag": "0022_rank_streak_products_required",
+      "when": 1793975333249,
+      "tag": "0022_streak_milestone_rakeback",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793975347828,
+      "tag": "0023_streak_milestone_conversion",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794493225641,
+      "tag": "0024_rank_streak_products_required",
       "breakpoints": true
     }
   ]

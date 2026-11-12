@@ -7,7 +7,6 @@ import type {
   BonusGrantCommands,
   ExchangeRateReader,
   PlayEligibilityPort,
-  WalletCommands,
   WalletReader,
 } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
@@ -23,45 +22,29 @@ import {
   StreakPayoutService,
   type StreakMilestoneReached,
 } from '../service/streak-payout.service.js';
-import type { StreakMilestone } from '../contract/index.js';
 import { PayoutRateUnavailableError } from '../shared/payout-currency.js';
 
 let db: TestDb;
 const grant = vi.fn<BonusGrantCommands['grant']>();
 const isRestricted = vi.fn<PlayEligibilityPort['isRestricted']>();
-const credit = vi.fn<WalletCommands['credit']>();
 const convert = vi.fn<ExchangeRateReader['convert']>();
 const getBalances = vi.fn<WalletReader['getBalances']>();
 const audit = makeAuditWriter();
 const payoutLogger = { error: vi.fn() };
 
-const MILESTONES: StreakMilestone[] = [
-  { day: 3, rewards: [{ kind: 'cash', amount: '5' }] },
-  {
-    day: 7,
-    rewards: [
-      {
-        kind: 'bonus',
-        amount: '10',
-        terms: { wageringMultiplier: '5', expiryDays: 30, maxBet: '2' },
-      },
-    ],
-  },
-];
+const DAY_MS = 86_400_000;
+const MINUTE_MS = 60_000;
+const REWARD_AMOUNT = '10.000000000000000000';
 
-// The streak's own currency and the payout currency match by default, so most tests exercise
-// the no-conversion path - the currency-conversion behaviour has its own describe blocks below.
-const service = (payoutCurrency = 'USD') =>
+const service = () =>
   new StreakPayoutService({
     drizzle: db.drizzle,
     grants: mock<BonusGrantCommands>({ grant }),
     eligibility: mock<PlayEligibilityPort>({ isRestricted }),
     rates: mock<ExchangeRateReader>({ convert }),
     walletReader: mock<WalletReader>({ getBalances }),
-    payoutCurrency,
     audit,
     logger: payoutLogger,
-    wallet: mock<WalletCommands>({ credit }),
   });
 
 const announceReached = async () => {
@@ -72,17 +55,34 @@ const announceReached = async () => {
 
 const logger = { warn: vi.fn() };
 
-const yesterday = () => new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+const yesterday = () => new Date(Date.now() - DAY_MS).toISOString().slice(0, 10);
 
-const owe = async (userId: string, day: number) => {
+type Owed = {
+  amount: string;
+  rolloverMultiplier: string;
+  claimExpiryDays: number;
+  maxBet: string | null;
+  expiresAt: Date;
+  reachedAt: Date;
+};
+
+const owe = async (userId: string, day: number, overrides: Partial<Owed> = {}) => {
   const [row] = await db.drizzle.db
     .insert(promoStreakMilestoneGrant)
-    .values({ userId, day })
+    .values({
+      userId,
+      day,
+      amount: '10',
+      rolloverMultiplier: '5',
+      claimExpiryDays: 7,
+      expiresAt: new Date(Date.now() + 7 * DAY_MS),
+      ...overrides,
+    })
     .returning({ id: promoStreakMilestoneGrant.id });
   return row?.id ?? '';
 };
 
-const milestoneGrant = async (id: string) => {
+const rewardRow = async (id: string) => {
   const [row] = await db.drizzle.db
     .select({
       settledAt: promoStreakMilestoneGrant.settledAt,
@@ -106,7 +106,6 @@ afterAll(() => db.drop());
 beforeEach(async () => {
   vi.clearAllMocks();
   isRestricted.mockResolvedValue(false);
-  credit.mockResolvedValue({ ok: true, moved: true, transactionId: randomUUID(), newBalance: '5' });
   grant.mockImplementation(async () => ({ ok: true, created: true, grantId: randomUUID() }));
   playsIn('USD');
   await db.drizzle.db.delete(promoStreakMilestoneGrant);
@@ -114,99 +113,136 @@ beforeEach(async () => {
   await db.drizzle.db.delete(promoPlayerStreak);
   await db.drizzle.db.delete(promoStreakConfig);
   await db.drizzle.db.insert(promoStreakConfig).values({
-    currency: 'USD',
+    enabled: true,
     dailyMinWager: '1',
     eligibleProducts: ['casino', 'live-casino', 'sportsbook', 'pvp'],
-    milestones: MILESTONES,
-    resetAfterDay: 30,
+    rakebackMilestones: [],
+    fixedRewards: [{ day: 3, amount: '10', rolloverMultiplier: '5', claimExpiryDays: 7 }],
   });
 });
 
 describe('claiming a streak reward', () => {
-  it('pays a day reached again on a later run, after the first reach was claimed', async () => {
+  it('grants the bonus captured at unlock, with its rollover and a window as long as the claim expiry', async () => {
     const userId = randomUUID();
-    const streaks = new StreakService(db.drizzle, mock<ExchangeRateReader>({ convert }), logger);
-    const reachDayThree = async () => {
-      await db.drizzle.db
-        .insert(promoPlayerStreak)
-        .values({ userId, current: 2, best: 2, lastQualifyingDay: yesterday() })
-        .onConflictDoUpdate({
-          target: promoPlayerStreak.userId,
-          set: { current: 2, lastQualifyingDay: yesterday() },
-        });
-      await db.drizzle.db.transaction((tx) =>
-        streaks.recordWager(tx, {
-          userId,
-          currency: 'USD',
-          amount: '1',
-          weightedAmount: '1',
-          realAmount: '1',
-          context: { provider: 'aggregator', product: 'casino' },
-        }),
-      );
-      const [waiting] = (await streaks.getForPlayer(userId)).claimable;
-      return waiting?.id ?? '';
-    };
-
-    const first = await reachDayThree();
-    await service().claim(userId, first);
-    const second = await reachDayThree();
-
-    await expect(service().claim(userId, second)).resolves.toMatchObject({ outcome: 'granted' });
-
-    expect(second).toBe(first);
-    expect(credit).toHaveBeenCalledTimes(2);
-    const refs = credit.mock.calls.map((call) => call[1].providerRef?.providerRefId);
-    expect(new Set(refs).size).toBe(2);
-  });
-
-  it('refuses to settle a claim whose cash was already credited, and leaves it waiting', async () => {
-    const userId = randomUUID();
-    const id = await owe(userId, 3);
-    credit.mockResolvedValue({ ok: true, moved: false, newBalance: '5' });
-
-    await expect(service().claim(userId, id)).rejects.toThrow(/already credited/);
-
-    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
-  });
-
-  it('refuses to settle a claim whose bonus was already granted, and leaves it waiting', async () => {
-    const userId = randomUUID();
-    const id = await owe(userId, 7);
-    grant.mockResolvedValue({ ok: true, created: false, grantId: randomUUID() });
-
-    await expect(service().claim(userId, id)).rejects.toThrow(/already granted/);
-
-    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
-  });
-
-  it('credits a cash reward to the real balance, with no bonus grant, and settles the milestone', async () => {
-    const userId = randomUUID();
-    const id = await owe(userId, 3);
+    const id = await owe(userId, 3, { rolloverMultiplier: '30', claimExpiryDays: 14 });
 
     const claimed = await service().claim(userId, id);
 
     expect(claimed.outcome).toBe('granted');
-    expect(grant).not.toHaveBeenCalled();
-    expect(credit).toHaveBeenCalledTimes(1);
-    expect(credit.mock.calls[0]?.[1]).toMatchObject({
+    expect(grant).toHaveBeenCalledTimes(1);
+    expect(grant.mock.calls[0]?.[1]).toMatchObject({
       userId,
-      amount: '5',
       currency: 'USD',
-      type: 'cashback',
-      providerRef: {
-        providerName: 'promo-streak',
-        providerRefId: expect.stringMatching(new RegExp(`^streak-milestone:${id}:\\d+:0$`)),
-      },
+      amount: '10.000000000000000000',
+      source: 'streak',
+      actor: { type: 'system' },
+      terms: { wageringMultiplier: '30.000000000000000000', expiryDays: 14 },
+      sourceRef: expect.stringMatching(new RegExp(`^streak-milestone:${id}:\\d+:0$`)),
     });
-    await expect(milestoneGrant(id)).resolves.toMatchObject({ outcome: 'granted' });
+    expect(claimed.granted).toEqual([
+      expect.objectContaining({ userId, source: 'streak', wageringRequired: expect.any(String) }),
+    ]);
+    await expect(rewardRow(id)).resolves.toMatchObject({ outcome: 'granted' });
   });
 
-  it('audits a cash claim with the credit it paid, in the claim transaction', async () => {
+  it('requires the wagering that the captured rollover asks for', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3, { amount: '10', rolloverMultiplier: '2.5' });
+
+    const { granted } = await service().claim(userId, id);
+
+    expect(granted[0]?.wageringRequired).toBe('25.000000000000000000');
+  });
+
+  it('is unaffected by a config edit made after the reward was unlocked', async () => {
     const userId = randomUUID();
     const id = await owe(userId, 3);
-    const transactionId = randomUUID();
-    credit.mockResolvedValue({ ok: true, moved: true, transactionId, newBalance: '5' });
+    await db.drizzle.db.update(promoStreakConfig).set({
+      fixedRewards: [{ day: 3, amount: '999', rolloverMultiplier: '99', claimExpiryDays: 1 }],
+    });
+
+    await service().claim(userId, id);
+
+    expect(grant.mock.calls[0]?.[1]).toMatchObject({
+      amount: '10.000000000000000000',
+      terms: { wageringMultiplier: '5.000000000000000000', expiryDays: 7 },
+    });
+  });
+
+  it('still pays once the streak is disabled, or its config removed', async () => {
+    const disabled = randomUUID();
+    const removed = randomUUID();
+    const disabledId = await owe(disabled, 3);
+    const removedId = await owe(removed, 4);
+
+    await db.drizzle.db.update(promoStreakConfig).set({ enabled: false });
+    await expect(service().claim(disabled, disabledId)).resolves.toMatchObject({
+      outcome: 'granted',
+    });
+    await db.drizzle.db.delete(promoStreakConfig);
+    await expect(service().claim(removed, removedId)).resolves.toMatchObject({
+      outcome: 'granted',
+    });
+  });
+
+  it('pays the reward unlocked by a real qualifying bet', async () => {
+    const userId = randomUUID();
+    const streaks = new StreakService({
+      drizzle: db.drizzle,
+      rates: mock<ExchangeRateReader>({ convert }),
+      logger,
+      audit,
+    });
+    await db.drizzle.db
+      .insert(promoPlayerStreak)
+      .values({ userId, current: 2, best: 2, lastQualifyingDay: yesterday() });
+    await db.drizzle.db.transaction((tx) =>
+      streaks.recordWager(tx, {
+        userId,
+        currency: 'USD',
+        amount: '1',
+        weightedAmount: '1',
+        realAmount: '1',
+        context: { provider: 'aggregator', product: 'casino' },
+      }),
+    );
+    const [unlocked] = (await streaks.getForPlayer(userId)).fixedRewards;
+
+    await expect(service().claim(userId, unlocked?.grantId ?? '')).resolves.toMatchObject({
+      outcome: 'granted',
+    });
+
+    expect(grant.mock.calls[0]?.[1]).toMatchObject({
+      amount: '10.000000000000000000',
+      terms: { wageringMultiplier: '5.000000000000000000', expiryDays: 7 },
+    });
+  });
+
+  it('refuses to settle a claim whose bonus was already granted, and leaves it waiting', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+    grant.mockResolvedValue({ ok: true, created: false, grantId: randomUUID() });
+
+    await expect(service().claim(userId, id)).rejects.toThrow(/already granted/);
+
+    await expect(rewardRow(id)).resolves.toMatchObject({ settledAt: null });
+  });
+
+  it('leaves the reward waiting when the bonus engine refuses the grant', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+    grant.mockResolvedValue({ ok: false, reason: 'ineligible' });
+
+    await expect(service().claim(userId, id)).rejects.toThrow(/grant refused/);
+
+    await expect(rewardRow(id)).resolves.toMatchObject({ settledAt: null });
+  });
+
+  it('audits the claim with the grant it created, in the claim transaction', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+    const grantId = randomUUID();
+    grant.mockResolvedValue({ ok: true, created: true, grantId });
 
     await service().claim(userId, id);
 
@@ -218,12 +254,7 @@ describe('claiming a streak reward', () => {
       resourceType: 'promo_streak_milestone_grant',
       resourceId: id,
       before: { settledAt: null, outcome: null },
-      after: {
-        userId,
-        day: 3,
-        outcome: 'granted',
-        cashPaid: [{ userId, amount: '5', currency: 'USD', transactionId }],
-      },
+      after: { userId, day: 3, outcome: 'granted', grantIds: [grantId] },
     });
   });
 
@@ -238,7 +269,7 @@ describe('claiming a streak reward', () => {
     expect(audit.recordInTransaction).not.toHaveBeenCalled();
   });
 
-  it('pays once: a second claim of the same milestone is refused and credits nothing', async () => {
+  it('pays once: a second claim of the same reward is refused and grants nothing', async () => {
     const userId = randomUUID();
     const id = await owe(userId, 3);
 
@@ -247,7 +278,7 @@ describe('claiming a streak reward', () => {
     await expect(service().claim(userId, id)).rejects.toBeInstanceOf(
       StreakMilestoneNotClaimableError,
     );
-    expect(credit).toHaveBeenCalledTimes(1);
+    expect(grant).toHaveBeenCalledTimes(1);
   });
 
   it('pays once when two claims race', async () => {
@@ -257,13 +288,14 @@ describe('claiming a streak reward', () => {
     const results = await Promise.allSettled([
       service().claim(userId, id),
       service().claim(userId, id),
+      service().claim(userId, id),
     ]);
 
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
-    expect(credit).toHaveBeenCalledTimes(1);
+    expect(grant).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses a claim of another player's milestone and leaves it waiting for its owner", async () => {
+  it("refuses a claim of another player's reward and leaves it waiting for its owner", async () => {
     const owner = randomUUID();
     const id = await owe(owner, 3);
 
@@ -271,20 +303,21 @@ describe('claiming a streak reward', () => {
       StreakMilestoneNotClaimableError,
     );
 
-    expect(credit).not.toHaveBeenCalled();
-    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
+    expect(grant).not.toHaveBeenCalled();
+    await expect(rewardRow(id)).resolves.toMatchObject({ settledAt: null });
   });
 
-  it('refuses a milestone the config no longer pays and leaves it waiting', async () => {
+  it('refuses a row that carries no captured terms, which can never be claimed', async () => {
     const userId = randomUUID();
-    const id = await owe(userId, 5);
+    const [row] = await db.drizzle.db
+      .insert(promoStreakMilestoneGrant)
+      .values({ userId, day: 3 })
+      .returning({ id: promoStreakMilestoneGrant.id });
 
-    await expect(service().claim(userId, id)).rejects.toBeInstanceOf(
+    await expect(service().claim(userId, row?.id ?? '')).rejects.toBeInstanceOf(
       StreakMilestoneNotClaimableError,
     );
-
-    expect(credit).not.toHaveBeenCalled();
-    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null, outcome: null });
+    expect(grant).not.toHaveBeenCalled();
   });
 
   it('gives nothing to a player under a responsible-gambling restriction', async () => {
@@ -294,111 +327,163 @@ describe('claiming a streak reward', () => {
 
     const claimed = await service().claim(userId, id);
 
-    expect(claimed.outcome).toBe('restricted');
-    expect(credit).not.toHaveBeenCalled();
+    expect(claimed).toEqual({ outcome: 'restricted', granted: [] });
+    expect(grant).not.toHaveBeenCalled();
     expect(audit.recordInTransaction.mock.calls[0]?.[1]).toMatchObject({
       action: 'promo.streak.milestone.claimed',
-      after: { outcome: 'restricted', cashPaid: [], grantIds: [] },
+      after: { outcome: 'restricted', grantIds: [] },
     });
-    await expect(milestoneGrant(id)).resolves.toMatchObject({ outcome: 'restricted' });
-  });
-
-  it('leaves the milestone waiting, granting nothing, when the wallet credit fails', async () => {
-    const userId = randomUUID();
-    const id = await owe(userId, 3);
-    credit.mockResolvedValue({ ok: false, reason: 'wallet not found' });
-
-    await expect(service().claim(userId, id)).rejects.toThrow(/wallet not found/);
-
-    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
+    await expect(rewardRow(id)).resolves.toMatchObject({ outcome: 'restricted' });
   });
 });
 
-describe('crediting a cash reward in a currency the player can actually hold', () => {
-  it('converts the reward into the payout currency before crediting', async () => {
+describe('the claim window', () => {
+  it('accepts a claim a minute before the reward expires', async () => {
     const userId = randomUUID();
-    const id = await owe(userId, 3);
-    convert.mockResolvedValue('4.5');
+    const id = await owe(userId, 3, { expiresAt: new Date(Date.now() + MINUTE_MS) });
 
-    const { cashPaid } = await service('USDT').claim(userId, id);
-
-    expect(convert).toHaveBeenCalledWith('5', 'USD', 'USDT', expect.anything());
-    expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '4.5', currency: 'USDT' });
-    expect(cashPaid).toEqual([
-      expect.objectContaining({ userId, amount: '4.5', currency: 'USDT' }),
-    ]);
+    await expect(service().claim(userId, id)).resolves.toMatchObject({ outcome: 'granted' });
   });
 
-  it('leaves the milestone waiting when no rate is available, so the claim can be retried', async () => {
+  it('refuses a claim a minute after the reward expired, granting nothing', async () => {
     const userId = randomUUID();
-    const id = await owe(userId, 3);
-    convert.mockResolvedValue(null);
+    const id = await owe(userId, 3, { expiresAt: new Date(Date.now() - MINUTE_MS) });
 
-    await expect(service('USDT').claim(userId, id)).rejects.toBeInstanceOf(
-      PayoutRateUnavailableError,
+    await expect(service().claim(userId, id)).rejects.toBeInstanceOf(
+      StreakMilestoneNotClaimableError,
     );
 
-    expect(credit).not.toHaveBeenCalled();
-    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
+    expect(grant).not.toHaveBeenCalled();
+    await expect(rewardRow(id)).resolves.toMatchObject({ settledAt: null, outcome: null });
+  });
+
+  it('refuses a claim of a reward the sweep already expired', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3, { expiresAt: new Date(Date.now() - MINUTE_MS) });
+    await service().expireDue(new Date());
+
+    await expect(service().claim(userId, id)).rejects.toBeInstanceOf(
+      StreakMilestoneNotClaimableError,
+    );
   });
 });
 
-describe("granting a bonus reward in the player's active currency", () => {
-  it('converts the amount and the stake cap from the streak currency', async () => {
+describe("granting the bonus in the player's active currency", () => {
+  it('converts the dollar amount into the currency the player plays in', async () => {
     const userId = randomUUID();
-    const id = await owe(userId, 7);
+    const id = await owe(userId, 3);
     playsIn('USDT');
-    convert.mockImplementation(async (amount) => (amount === '10' ? '9.9' : '1.98'));
+    convert.mockResolvedValue('9.9');
 
     const { granted } = await service().claim(userId, id);
 
-    expect(grant.mock.calls[0]?.[1]).toMatchObject({
-      userId,
-      currency: 'USDT',
-      amount: '9.9',
-      terms: { maxBet: '1.98' },
-    });
-    expect(granted).toEqual([expect.objectContaining({ currency: 'USDT', grantedAmount: '9.9' })]);
+    expect(convert).toHaveBeenCalledWith('10.000000000000000000', 'USD', 'USDT', expect.anything());
+    expect(grant.mock.calls[0]?.[1]).toMatchObject({ userId, currency: 'USDT', amount: '9.9' });
+    expect(granted).toEqual([
+      expect.objectContaining({
+        currency: 'USDT',
+        grantedAmount: '9.9',
+        wageringRequired: expect.any(String),
+      }),
+    ]);
   });
 
-  it('grants unconverted when the player already plays in the streak currency', async () => {
+  it('grants unconverted when the player already plays in dollars', async () => {
     const userId = randomUUID();
-    const id = await owe(userId, 7);
+    const id = await owe(userId, 3);
 
     await service().claim(userId, id);
 
     expect(convert).not.toHaveBeenCalled();
-    expect(grant.mock.calls[0]?.[1]).toMatchObject({
-      currency: 'USD',
-      amount: '10',
-      terms: { maxBet: '2' },
-    });
+    expect(grant.mock.calls[0]?.[1]).toMatchObject({ currency: 'USD' });
   });
 
-  it('grants nothing and leaves the milestone waiting when no rate is available', async () => {
+  it('grants nothing and leaves the reward claimable when no rate is available', async () => {
     const userId = randomUUID();
-    const id = await owe(userId, 7);
+    const id = await owe(userId, 3);
     playsIn('USDT');
     convert.mockResolvedValue(null);
 
     await expect(service().claim(userId, id)).rejects.toBeInstanceOf(PayoutRateUnavailableError);
 
     expect(grant).not.toHaveBeenCalled();
-    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
+    await expect(rewardRow(id)).resolves.toMatchObject({ settledAt: null, outcome: null });
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+
+    convert.mockResolvedValue('9.9');
+    await expect(service().claim(userId, id)).resolves.toMatchObject({ outcome: 'granted' });
+  });
+});
+
+describe('the max bet of the bonus', () => {
+  it('carries the max bet captured at unlock into the grant terms', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3, { maxBet: '2' });
+
+    await service().claim(userId, id);
+
+    expect(grant.mock.calls[0]?.[1].terms).toMatchObject({ maxBet: '2.000000000000000000' });
+  });
+
+  it('prices the max bet into the currency the player plays in, like the amount', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3, { maxBet: '2' });
+    playsIn('USDT');
+    convert.mockImplementation(async (amount) => (amount.startsWith('10') ? '9.9' : '1.98'));
+
+    await service().claim(userId, id);
+
+    expect(grant.mock.calls[0]?.[1]).toMatchObject({
+      currency: 'USDT',
+      amount: '9.9',
+      terms: { maxBet: '1.98' },
+    });
+  });
+
+  it('sets no limit when none was captured', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+
+    await service().claim(userId, id);
+
+    expect(grant.mock.calls[0]?.[1].terms).not.toHaveProperty('maxBet');
+  });
+
+  it('leaves the reward claimable when the max bet cannot be priced', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3, { maxBet: '2' });
+    playsIn('USDT');
+    convert.mockImplementation(async (amount) => (amount.startsWith('10') ? '9.9' : null));
+
+    await expect(service().claim(userId, id)).rejects.toBeInstanceOf(PayoutRateUnavailableError);
+
+    expect(grant).not.toHaveBeenCalled();
+    await expect(rewardRow(id)).resolves.toMatchObject({ settledAt: null });
   });
 });
 
 describe('announcing a reward waiting to be claimed', () => {
-  it('announces each unclaimed milestone once', async () => {
+  it('announces each unclaimed reward once', async () => {
     const userId = randomUUID();
     const id = await owe(userId, 3);
 
     const first = await announceReached();
     const second = await announceReached();
 
-    expect(first).toEqual([{ userId, day: 3, grantId: null }]);
+    expect(first).toEqual([
+      { userId, day: 3, amount: REWARD_AMOUNT, currency: 'USD', grantId: null },
+    ]);
     expect(second).toEqual([]);
-    expect((await milestoneGrant(id))?.announcedAt).toBeInstanceOf(Date);
+    expect((await rewardRow(id))?.announcedAt).toBeInstanceOf(Date);
+  });
+
+  it('carries the amount captured at unlock, not the current config', async () => {
+    const userId = randomUUID();
+    await owe(userId, 3, { amount: '25' });
+
+    await expect(announceReached()).resolves.toEqual([
+      { userId, day: 3, amount: '25.000000000000000000', currency: 'USD', grantId: null },
+    ]);
   });
 
   it('does not invite a restricted player to claim, and settles the reward as restricted', async () => {
@@ -408,7 +493,7 @@ describe('announcing a reward waiting to be claimed', () => {
 
     await expect(announceReached()).resolves.toEqual([]);
 
-    await expect(milestoneGrant(id)).resolves.toMatchObject({
+    await expect(rewardRow(id)).resolves.toMatchObject({
       outcome: 'restricted',
       announcedAt: null,
     });
@@ -419,13 +504,24 @@ describe('announcing a reward waiting to be claimed', () => {
     });
   });
 
-  it('does not announce a milestone on a day the config no longer pays', async () => {
-    await owe(randomUUID(), 5);
+  it('does not announce a reward whose claim window has closed', async () => {
+    const id = await owe(randomUUID(), 3, { expiresAt: new Date(Date.now() - MINUTE_MS) });
 
     await expect(announceReached()).resolves.toEqual([]);
+
+    await expect(rewardRow(id)).resolves.toMatchObject({ announcedAt: null, settledAt: null });
   });
 
-  it('does not announce a milestone already claimed', async () => {
+  it('announces a reward whose day the config no longer pays, since the player holds it', async () => {
+    const userId = randomUUID();
+    await owe(userId, 5);
+
+    await expect(announceReached()).resolves.toEqual([
+      { userId, day: 5, amount: REWARD_AMOUNT, currency: 'USD', grantId: null },
+    ]);
+  });
+
+  it('does not announce a reward already claimed', async () => {
     const userId = randomUUID();
     const id = await owe(userId, 3);
     await service().claim(userId, id);
@@ -451,8 +547,8 @@ describe('announcing a batch with a row that fails', () => {
 
     expect(announced).toEqual(
       expect.arrayContaining([
-        { userId: first, day: 3, grantId: null },
-        { userId: last, day: 7, grantId: null },
+        { userId: first, day: 3, amount: REWARD_AMOUNT, currency: 'USD', grantId: null },
+        { userId: last, day: 7, amount: REWARD_AMOUNT, currency: 'USD', grantId: null },
       ]),
     );
     expect(announced).toHaveLength(2);
@@ -460,11 +556,11 @@ describe('announcing a batch with a row that fails', () => {
       expect.objectContaining({ milestoneGrantId: failingId }),
       'streak milestone announcement failed',
     );
-    await expect(milestoneGrant(failingId)).resolves.toMatchObject({
+    await expect(rewardRow(failingId)).resolves.toMatchObject({
       settledAt: null,
       announcedAt: null,
     });
-    expect((await milestoneGrant(lastId))?.announcedAt).toBeInstanceOf(Date);
+    expect((await rewardRow(lastId))?.announcedAt).toBeInstanceOf(Date);
   });
 
   it('announces the failed row once it succeeds on a later tick', async () => {
@@ -473,13 +569,18 @@ describe('announcing a batch with a row that fails', () => {
     isRestricted.mockRejectedValueOnce(new Error('eligibility lookup failed'));
 
     await expect(announceReached()).resolves.toEqual([]);
-    await expect(announceReached()).resolves.toEqual([{ userId, day: 3, grantId: null }]);
+    await expect(announceReached()).resolves.toEqual([
+      { userId, day: 3, amount: REWARD_AMOUNT, currency: 'USD', grantId: null },
+    ]);
   });
 });
 
 describe('a responsible-gambling block starting', () => {
-  const block = (userId: string, actor: { id: string; isAdmin: boolean } | null = null) =>
-    service().forfeitUnclaimed({ userId, reason: 'self_exclusion', actor });
+  const block = (
+    userId: string,
+    actor: { id: string; isAdmin: boolean } | null = null,
+    reason: 'self_exclusion' | 'cooling_off' = 'self_exclusion',
+  ) => service().forfeitUnclaimed({ userId, reason, actor });
 
   it("settles the player's unclaimed rewards as restricted and leaves claimed ones alone", async () => {
     const userId = randomUUID();
@@ -490,10 +591,27 @@ describe('a responsible-gambling block starting', () => {
 
     await expect(block(userId)).resolves.toBe(1);
 
-    await expect(milestoneGrant(claimed)).resolves.toMatchObject({ outcome: 'granted' });
-    await expect(milestoneGrant(waiting)).resolves.toMatchObject({ outcome: 'restricted' });
-    await expect(milestoneGrant(otherPlayers)).resolves.toMatchObject({ settledAt: null });
+    await expect(rewardRow(claimed)).resolves.toMatchObject({ outcome: 'granted' });
+    await expect(rewardRow(waiting)).resolves.toMatchObject({ outcome: 'restricted' });
+    await expect(rewardRow(otherPlayers)).resolves.toMatchObject({ settledAt: null });
   });
+
+  it.each(['self_exclusion', 'cooling_off'] as const)(
+    'sends no invitation and restores nothing after a %s: the reward is lost for good',
+    async (reason) => {
+      const userId = randomUUID();
+      const id = await owe(userId, 3);
+
+      await block(userId, null, reason);
+
+      await expect(announceReached()).resolves.toEqual([]);
+      await expect(service().claim(userId, id)).rejects.toBeInstanceOf(
+        StreakMilestoneNotClaimableError,
+      );
+      expect(grant).not.toHaveBeenCalled();
+      await expect(rewardRow(id)).resolves.toMatchObject({ outcome: 'restricted' });
+    },
+  );
 
   it('writes one audit row per forfeited reward, in the forfeit transaction', async () => {
     const userId = randomUUID();
@@ -553,6 +671,110 @@ describe('a responsible-gambling block starting', () => {
 
     await expect(block(userId)).rejects.toThrow(/audit unavailable/);
 
-    await expect(milestoneGrant(waiting)).resolves.toMatchObject({ settledAt: null });
+    await expect(rewardRow(waiting)).resolves.toMatchObject({ settledAt: null });
+  });
+});
+
+describe('the expiry sweep', () => {
+  const now = () => new Date();
+  const lapsed = () => new Date(Date.now() - MINUTE_MS);
+
+  it('settles an unclaimed reward past its window as expired, with an audit row', async () => {
+    const userId = randomUUID();
+    const reachedAt = new Date(Date.now() - 8 * DAY_MS);
+    const id = await owe(userId, 3, { reachedAt, expiresAt: lapsed() });
+
+    await expect(service().expireDue(now())).resolves.toBe(1);
+
+    await expect(rewardRow(id)).resolves.toMatchObject({ outcome: 'expired' });
+    expect((await rewardRow(id))?.settledAt).toBeInstanceOf(Date);
+    expect(audit.recordManyInTransaction).toHaveBeenCalledWith(expect.anything(), [
+      expect.objectContaining({
+        actorType: 'system',
+        action: 'promo.streak.milestone.expired',
+        resourceType: 'promo_streak_milestone_grant',
+        resourceId: id,
+        before: { settledAt: null, outcome: null },
+        after: expect.objectContaining({
+          userId,
+          day: 3,
+          outcome: 'expired',
+          reachedAt: reachedAt.toISOString(),
+        }),
+      }),
+    ]);
+  });
+
+  it('writes one audit row per expired reward', async () => {
+    await owe(randomUUID(), 3, { expiresAt: lapsed() });
+    await owe(randomUUID(), 3, { expiresAt: lapsed() });
+    await owe(randomUUID(), 7, { expiresAt: lapsed() });
+
+    await expect(service().expireDue(now())).resolves.toBe(3);
+
+    const entries = audit.recordManyInTransaction.mock.calls.flatMap(([, rows]) => rows);
+    expect(entries).toHaveLength(3);
+  });
+
+  it('does nothing a second time: no new settlement, no new audit row', async () => {
+    const id = await owe(randomUUID(), 3, { expiresAt: lapsed() });
+    await service().expireDue(now());
+    const settled = (await rewardRow(id))?.settledAt;
+    audit.recordManyInTransaction.mockClear();
+
+    await expect(service().expireDue(now())).resolves.toBe(0);
+
+    expect((await rewardRow(id))?.settledAt).toEqual(settled);
+    const entries = audit.recordManyInTransaction.mock.calls.flatMap(([, rows]) => rows);
+    expect(entries).toEqual([]);
+  });
+
+  it('leaves a reward still inside its window, a claimed one and a forfeited one alone', async () => {
+    const waiting = await owe(randomUUID(), 3);
+    const claimedUser = randomUUID();
+    const claimed = await owe(claimedUser, 3);
+    await service().claim(claimedUser, claimed);
+    const forfeitedUser = randomUUID();
+    const forfeited = await owe(forfeitedUser, 3, { expiresAt: lapsed() });
+    await service().forfeitUnclaimed({ userId: forfeitedUser, reason: 'cooling_off', actor: null });
+
+    await expect(service().expireDue(now())).resolves.toBe(0);
+
+    await expect(rewardRow(waiting)).resolves.toMatchObject({ settledAt: null });
+    await expect(rewardRow(claimed)).resolves.toMatchObject({ outcome: 'granted' });
+    await expect(rewardRow(forfeited)).resolves.toMatchObject({ outcome: 'restricted' });
+  });
+
+  it('settles a reward with no captured expiry, which nothing can claim', async () => {
+    const [row] = await db.drizzle.db
+      .insert(promoStreakMilestoneGrant)
+      .values({ userId: randomUUID(), day: 3 })
+      .returning({ id: promoStreakMilestoneGrant.id });
+
+    await expect(service().expireDue(now())).resolves.toBe(1);
+
+    await expect(rewardRow(row?.id ?? '')).resolves.toMatchObject({ outcome: 'expired' });
+  });
+
+  it('expires nothing, and audits nothing, when the audit write fails', async () => {
+    const id = await owe(randomUUID(), 3, { expiresAt: lapsed() });
+    audit.recordManyInTransaction.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    await expect(service().expireDue(now())).rejects.toThrow(/audit unavailable/);
+
+    await expect(rewardRow(id)).resolves.toMatchObject({ settledAt: null, outcome: null });
+  });
+
+  it('does not expire a reward a claim is settling at the same moment', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3, { expiresAt: new Date(Date.now() + 2000) });
+
+    const claim = service().claim(userId, id);
+    const sweep = service().expireDue(new Date(Date.now() + DAY_MS));
+    await Promise.allSettled([claim, sweep]);
+
+    const row = await rewardRow(id);
+    expect(['granted', 'expired']).toContain(row?.outcome);
+    expect(grant).toHaveBeenCalledTimes(row?.outcome === 'granted' ? 1 : 0);
   });
 });

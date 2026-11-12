@@ -226,89 +226,149 @@ export const SetRankConfigInputSchema = RankConfigSchema.extend({
 export type SetRankConfigInput = z.infer<typeof SetRankConfigInputSchema>;
 export type RankConfigInput = z.input<typeof SetRankConfigInputSchema>;
 
-/**
- * A daily-streak milestone reward. `bonus` and `giftDrop` both credit through BONUS_GRANTS;
- * `giftDrop` is a `bonus` whose amount is rolled fresh, between `min` and `max`, at settlement
- * time rather than fixed in the config - an operator names the range, not the number.
- * `rakebackBoost` is not a bonus grant: it raises the player's rank rakeback by `percentPoints`
- * for `days`, recorded on the rank the streak payout settles against. `cash` is not a bonus grant
- * either: real money, no wagering requirement, no expiry, credited to the balance directly - the
- * same wallet transaction type (`cashback`) rank rakeback uses, since both are an operator-funded
- * real-money credit that never carries a wagering requirement.
- */
-export const StreakRewardSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('bonus'), amount: MoneyAmountSchema, terms: RankRewardTermsSchema }),
-  z.object({
-    kind: z.literal('giftDrop'),
-    min: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
-    max: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
-    terms: RankRewardTermsSchema,
-  }),
-  z.object({
-    kind: z.literal('rakebackBoost'),
-    percentPoints: ContributionPercentSchema,
-    days: z.number().int().positive().max(90),
-  }),
-  z.object({
-    kind: z.literal('cash'),
-    amount: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
-  }),
-]);
-export type StreakReward = z.infer<typeof StreakRewardSchema>;
+/** Every streak amount and threshold is priced in this currency; a bet is converted into it when counted. */
+export const STREAK_CURRENCY = 'USD';
+/** The longest streak day an operator can attach a rate or a reward to. The count itself has no upper limit. */
+export const STREAK_MAX_DAY = 35;
+const STREAK_MAX_ROLLOVER_MULTIPLIER = 1000;
+const STREAK_MAX_CLAIM_EXPIRY_DAYS = 365;
 
-export const StreakMilestoneSchema = z.object({
-  /** The streak length this milestone pays at. Unique within the milestone list. */
-  day: z.number().int().positive().max(365),
-  rewards: z.array(StreakRewardSchema).min(1),
+export const STREAK_RAKEBACK_MODES = ['unranked', 'ranked'] as const;
+export const StreakRakebackModeSchema = z.enum(STREAK_RAKEBACK_MODES);
+export type StreakRakebackMode = z.infer<typeof StreakRakebackModeSchema>;
+
+export const STREAK_FIXED_REWARD_STATES = ['locked', 'claimable', 'claimed', 'expired'] as const;
+export const StreakFixedRewardStateSchema = z.enum(STREAK_FIXED_REWARD_STATES);
+export type StreakFixedRewardState = z.infer<typeof StreakFixedRewardStateSchema>;
+
+/** Why a streak reward row settled without paying: `reversed` is a same-day rollback of the day that unlocked it. */
+export const STREAK_GRANT_OUTCOMES = ['granted', 'restricted', 'reversed', 'expired'] as const;
+export type StreakGrantOutcome = (typeof STREAK_GRANT_OUTCOMES)[number];
+
+// Zod runs a refine even when the format check before it failed, so a malformed value reaches
+// here too; it passes, leaving the format error as the one reported.
+const isRolloverWithinLimit = (value: string) => {
+  const [whole = '0', fraction = ''] = value.split('.');
+  if (!/^\d+$/.test(whole)) {
+    return true;
+  }
+  const wholePart = BigInt(whole);
+  const limit = BigInt(STREAK_MAX_ROLLOVER_MULTIPLIER);
+  return wholePart < limit || (wholePart === limit && !/[1-9]/.test(fraction));
+};
+
+const StreakDaySchema = z.number().int().min(1).max(STREAK_MAX_DAY);
+
+/**
+ * From `day` on, a qualifying player earns rakeback at this rate until a later milestone replaces
+ * it. A player with no rank earns `unrankedRatePercent` of the theoretical gross gaming revenue
+ * of their bets; a ranked player's rank rakeback is multiplied by `1 + rankedUpliftPercent / 100`.
+ */
+export const StreakRakebackMilestoneSchema = z.object({
+  day: StreakDaySchema,
+  unrankedRatePercent: ContributionPercentSchema,
+  rankedUpliftPercent: ContributionPercentSchema,
 });
-export type StreakMilestone = z.infer<typeof StreakMilestoneSchema>;
+export type StreakRakebackMilestone = z.infer<typeof StreakRakebackMilestoneSchema>;
+
+/**
+ * A one-time bonus unlocked the first time a player's streak reaches `day`. The amount is in
+ * `STREAK_CURRENCY`; the rollover and the claim window are captured with it when the day is
+ * reached, so a later edit never changes a reward a player already holds.
+ */
+export const StreakFixedRewardSchema = z.object({
+  day: StreakDaySchema,
+  amount: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+  rolloverMultiplier: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero').refine(
+    isRolloverWithinLimit,
+    `must not exceed ${STREAK_MAX_ROLLOVER_MULTIPLIER}`,
+  ),
+  claimExpiryDays: z.number().int().min(1).max(STREAK_MAX_CLAIM_EXPIRY_DAYS),
+  /** Largest single stake allowed while the bonus is wagered, in `STREAK_CURRENCY`; absent for no limit. */
+  maxBet: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero').nullish(),
+});
+export type StreakFixedReward = z.infer<typeof StreakFixedRewardSchema>;
+
+const dayOrdered = <Item extends z.ZodType<{ day: number }>>(item: Item) =>
+  z
+    .array(item)
+    .max(STREAK_MAX_DAY)
+    .superRefine((rows, ctx) => {
+      rows.forEach((row, index) => {
+        const previous = rows[index - 1];
+        if (previous === undefined || row.day > previous.day) {
+          return;
+        }
+        ctx.addIssue({
+          code: 'custom',
+          message: row.day === previous.day ? 'two entries share a day' : 'days must ascend',
+          path: [index, 'day'],
+        });
+      });
+    });
 
 export const StreakConfigSchema = z.object({
-  /** What counts toward a qualifying day, and in what currency the threshold is priced. */
-  currency: CurrencyTickerSchema,
-  dailyMinWager: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+  /** Off, no day counts and no rate applies; rewards already unlocked stay claimable. */
+  enabled: z.boolean(),
+  /**
+   * What a player must wager in a day, priced in `STREAK_CURRENCY`, for the day to count. Zero
+   * means no threshold was ever set in dollars, as on a config converted from another currency;
+   * it can be read but not saved, and a streak with it counts nothing.
+   */
+  dailyMinWager: MoneyAmountSchema,
   /** Products whose stakes count toward the streak. */
   eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
-  milestones: z
-    .array(StreakMilestoneSchema)
-    .max(50)
-    .refine(
-      (milestones) => new Set(milestones.map((m) => m.day)).size === milestones.length,
-      'two milestones share a day',
-    ),
-  /** The day a streak that reaches its last milestone resets to, and pays its final reward. */
-  resetAfterDay: z.number().int().positive().max(365),
+  rakebackMilestones: dayOrdered(StreakRakebackMilestoneSchema),
+  fixedRewards: dayOrdered(StreakFixedRewardSchema),
 });
 export type StreakConfig = z.infer<typeof StreakConfigSchema>;
 
-/**
- * A run resets once it reaches `resetAfterDay`, so a milestone past it could never be reached -
- * an operator saving one would be promising a reward nobody can earn.
- */
 export const SetStreakConfigInputSchema = StreakConfigSchema.extend({
+  dailyMinWager: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
   eligibleProducts: EligibleProductsInputSchema,
-}).refine(
-  (config) => config.milestones.every((milestone) => milestone.day <= config.resetAfterDay),
-  {
-    message: 'a milestone falls after resetAfterDay and can never be reached',
-    path: ['milestones'],
-  },
-);
+});
 export type StreakConfigInput = z.input<typeof SetStreakConfigInputSchema>;
 
+export const StreakActiveRateSchema = z.object({
+  mode: StreakRakebackModeSchema,
+  percent: ContributionPercentSchema,
+});
+export type StreakActiveRate = z.infer<typeof StreakActiveRateSchema>;
+
+/** The next day above the current streak that earns a rate or unlocks a reward. */
+export const StreakNextMilestoneSchema = z.object({
+  day: StreakDaySchema,
+  rakeback: StreakRakebackMilestoneSchema.nullable(),
+  fixedReward: StreakFixedRewardSchema.nullable(),
+});
+export type StreakNextMilestone = z.infer<typeof StreakNextMilestoneSchema>;
+
+/**
+ * A fixed reward as the player sees it. Once unlocked the amount, rollover and claim window are
+ * the ones captured then, not the config's current ones. `expired` also covers a reward lost to a
+ * responsible-gambling block.
+ */
+export const PlayerStreakFixedRewardSchema = StreakFixedRewardSchema.extend({
+  state: StreakFixedRewardStateSchema,
+  grantId: UuidSchema.nullable(),
+  unlockedAt: TimestampSchema.nullable(),
+  expiresAt: TimestampSchema.nullable(),
+});
+export type PlayerStreakFixedReward = z.infer<typeof PlayerStreakFixedRewardSchema>;
+
 export const PlayerStreakSchema = z.object({
+  enabled: z.boolean(),
   current: z.number().int().nonnegative(),
   best: z.number().int().nonnegative(),
   todayWagered: MoneyAmountSchema,
   dailyMinWager: MoneyAmountSchema,
   currency: CurrencyTickerSchema,
-  milestones: z.array(StreakMilestoneSchema),
-  /**
-   * Milestones the player has reached and not claimed yet. They do not expire. One entry per
-   * milestone day at most: reaching a day again while its reward is still waiting adds no second
-   * reward, and the day pays again only once the waiting one is claimed.
-   */
-  claimable: z.array(z.object({ id: UuidSchema, day: StreakMilestoneSchema.shape.day })),
+  isRanked: z.boolean(),
+  /** The rate the player's next qualifying bet earns; null when none applies. */
+  activeRate: StreakActiveRateSchema.nullable(),
+  nextMilestone: StreakNextMilestoneSchema.nullable(),
+  rakebackMilestones: z.array(StreakRakebackMilestoneSchema),
+  fixedRewards: z.array(PlayerStreakFixedRewardSchema),
 });
 export type PlayerStreak = z.infer<typeof PlayerStreakSchema>;
 
@@ -621,7 +681,12 @@ export const RakebackAccrualSchema = z.object({
   /** Null under the stake basis. */
   rtp: z.string().nullable(),
   ratePercent: ContributionPercentSchema,
+  /** Always zero on a row priced after the additive boost was retired; kept for earlier rows. */
   boostPercent: ContributionPercentSchema,
+  /** Which streak formula raised this row; null when the streak did not change the amount. */
+  streakMode: StreakRakebackModeSchema.nullable(),
+  /** The unranked rate or the uplift the streak applied; null together with `streakMode`. */
+  streakPercent: ContributionPercentSchema.nullable(),
   gameId: z.string().nullable(),
   providerGameKey: z.string().nullable(),
   providerName: z.string().nullable(),

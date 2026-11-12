@@ -1310,11 +1310,11 @@ describe('wager tracking', () => {
   beforeAll(async () => {
     await adminCall(
       admin.put('/backoffice/promo/streaks/config', {
-        currency: 'USD',
+        enabled: true,
         dailyMinWager: '1000',
         eligibleProducts: ['casino', 'live-casino', 'sportsbook', 'pvp'],
-        milestones: [],
-        resetAfterDay: 30,
+        rakebackMilestones: [],
+        fixedRewards: [],
       }),
     );
   });
