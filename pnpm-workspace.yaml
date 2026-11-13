@@ -17,7 +17,7 @@ overrides:
   axios@<1.18.0: '>=1.18.0 <2' # GHSA-gcfj-64vw-6mp9
   brace-expansion@>=3.0.0 <5.0.7: '>=5.0.7 <6' # GHSA-3jxr-9vmj-r5cp
   fast-uri@>=3.0.0 <3.1.9: '>=3.1.9 <4' # GHSA-7p8r-x3mc-p8w7 + GHSA-p8qw-3xw2-6r9p + the 3.1.9 scheme and host fixes
-  '@hono/node-server@<1.19.15': '>=1.19.15 <2' # GHSA-4jw3-3xr5-hjhm (via rulesync>@modelcontextprotocol/sdk)
+  '@hono/node-server@<2.1.6': '>=2.1.6 <3' # GHSA-4jw3-3xr5-hjhm + GHSA-rmxm-3fg6-px4f + GHSA-jpvv-r467-5p4w + GHSA-qv5m-9pm6-hqp3; 1.x has no fix, the MCP SDK accepts ^2.0.5 (via rulesync>@modelcontextprotocol/sdk)
   body-parser@>=2.0.0 <2.4.0: '>=2.4.0 <3' # GHSA-v422-hmwv-36x6 + the 2.4.0 trailing-bytes DoS fix
   ip-address@<10.7.4: '>=10.7.4 <11' # GHSA-mwp4-54f8-5fhr + the 10.7.4 Address6 zone parsing fix
   js-yaml@>=3.0.0 <3.15.2: '>=3.15.2 <4' # GHSA-5p4m-2wfm-xmqj + GHSA-2883-xcg3-v3hh
@@ -25,10 +25,11 @@ overrides:
   js-yaml@>=5.0.0 <5.2.2: '>=5.2.2 <6' # GHSA-pm4m-ph32-ghv5
   nanoid@<3.3.18: '>=3.3.18 <4' # GHSA-2v37-7h3g-55p8
   postcss@<8.5.23: '>=8.5.23 <9' # GHSA-r28c-9q8g-f849
-  qs@<6.16.0: '>=6.16.0 <7' # GHSA-x5fp-wj9c-mxmx + GHSA-4mjr-xmp4-gh2g
+  qs@<6.16.1: '>=6.16.1 <7' # GHSA-x5fp-wj9c-mxmx + GHSA-4mjr-xmp4-gh2g + GHSA-6pq8-jhm2-2vcw
   smol-toml@<1.7.1: '>=1.7.1 <2' # GHSA-7w5x-hrqm-74c2 (via oxfmt/oxlint toolchain)
   zod@<4.6.6: '>=4.6.6 <5' # memory exhaustion on oversized constrained input (via rulesync)
-  follow-redirects@>=1.16.0 <1.16.1: '>=1.16.1 <2' # cross-origin credential leak (via rulesync>fastmcp>axios)
+  follow-redirects@>=1.16.0 <1.16.2: '>=1.16.2 <2' # cross-origin credential leak, GHSA-mrwp-f3q8-3g9p (via rulesync>fastmcp>axios)
+  minimatch@>=7.0.0 <11.0.1: '>=11.0.1 <12' # GHSA-g3hv-75wg-m249, no 10.x fix (via @stryker-mutator/core)
   # vite is an auto-installed peer of @vitest/mocker, which overrides do not reach, so the safe
   # version is also pinned as a root devDependency (same as valibot below).
   vite@>=8.0.0 <8.1.6: '>=8.1.6 <9' # server.fs.allow bypass and launch-editor fixes (via vitest)

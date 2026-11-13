@@ -13,7 +13,7 @@ overrides:
   axios@<1.18.0: '>=1.18.0 <2'
   brace-expansion@>=3.0.0 <5.0.7: '>=5.0.7 <6'
   fast-uri@>=3.0.0 <3.1.9: '>=3.1.9 <4'
-  '@hono/node-server@<1.19.15': '>=1.19.15 <2'
+  '@hono/node-server@<2.1.6': '>=2.1.6 <3'
   body-parser@>=2.0.0 <2.4.0: '>=2.4.0 <3'
   ip-address@<10.7.4: '>=10.7.4 <11'
   js-yaml@>=3.0.0 <3.15.2: '>=3.15.2 <4'
@@ -21,10 +21,11 @@ overrides:
   js-yaml@>=5.0.0 <5.2.2: '>=5.2.2 <6'
   nanoid@<3.3.18: '>=3.3.18 <4'
   postcss@<8.5.23: '>=8.5.23 <9'
-  qs@<6.16.0: '>=6.16.0 <7'
+  qs@<6.16.1: '>=6.16.1 <7'
   smol-toml@<1.7.1: '>=1.7.1 <2'
   zod@<4.6.6: '>=4.6.6 <5'
-  follow-redirects@>=1.16.0 <1.16.1: '>=1.16.1 <2'
+  follow-redirects@>=1.16.0 <1.16.2: '>=1.16.2 <2'
+  minimatch@>=7.0.0 <11.0.1: '>=11.0.1 <12'
   vite@>=8.0.0 <8.1.6: '>=8.1.6 <9'
   '@vitest/mocker@<4.1.12': '>=4.1.12 <5'
   tinypool@<2.1.2: '>=2.1.2 <3'
@@ -124,8 +125,8 @@ importers:
         specifier: 1.7.18
         version: 1.7.18(@better-auth/utils@0.5.1)(@better-fetch/fetch@1.3.3)(@opentelemetry/api@1.9.1)(better-call@1.4.5(zod@4.6.7))(jose@6.2.15)(kysely@0.29.8)(nanostores@1.5.5)
       '@hono/node-server':
-        specifier: 2.1.5
-        version: 2.1.5(hono@4.13.13)
+        specifier: 2.1.7
+        version: 2.1.7(hono@4.13.13)
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1
@@ -981,14 +982,8 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@hono/node-server@1.19.18':
-    resolution: {integrity: sha512-609kppIP9GITS+EwPyB6Kiq8z2yXONaYD1VHpo7MMP9celRJYbkFr9KakJncHwK0EK/XYtlogqmrLchDv5HX5w==}
-    engines: {node: '>=18.14.1'}
-    peerDependencies:
-      hono: ^4
-
-  '@hono/node-server@2.1.5':
-    resolution: {integrity: sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==}
+  '@hono/node-server@2.1.7':
+    resolution: {integrity: sha512-Wr0E6S+v2Bw9FkpGNP5BQ5QbJvclUa06UVehd65WFZe6XeJwbrKQQ5wPDevc0IC+QyzbO7v3Llh5uo45IZcSnA==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4 || ^5.0.0-0
@@ -1263,6 +1258,9 @@ packages:
 
   '@ioredis/commands@1.5.1':
     resolution: {integrity: sha512-JH8ZL/ywcJyR9MmJ5BNqZllXNZQqQbnVZOqpPQqE1vHiFgAw4NHbvE0FOduNU8IX9babitBT46571OnPTT0Zcw==}
+
+  '@isaacs/nonrecursive-glob-match@1.1.0':
+    resolution: {integrity: sha512-GPm/Dbvk5RLmhRnxXIa7nTpK0xtl4E0wj0MslsuNiJ1FIROU+2+9lgUC/dgF7Ey4QCWhfEsgxilMRMCdHPfDfw==}
 
   '@jridgewell/gen-mapping@0.4.0-beta.0':
     resolution: {integrity: sha512-JdGNkbE4GlNPYQhM0L95fBQr7ctLZJ276QXQLTad4t1oSdnnCI3fDq9DW3BqYAWv8Wc3+HS+4Gsii1oPMCfz1w==}
@@ -3612,9 +3610,9 @@ packages:
   minimalistic-assert@1.0.1:
     resolution: {integrity: sha512-UtJcAD4yEaGtjPezWuO9wC4nwUnVH/8/Im3yEHQP4b67cXlD/Qr9hdITCU1xDbSEXg2XKNaP8jsReV7vQd00/A==}
 
-  minimatch@10.2.6:
-    resolution: {integrity: sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==}
-    engines: {node: 18 || 20 || >=22}
+  minimatch@11.0.8:
+    resolution: {integrity: sha512-nFQuYSTVrGvysVBps5Ih+0BdnYFN/Cj3C816r6+p7yK+FHrVLGE4O4N9AFwykrlNlvM2HYt+Rad1Uiro6h88Ig==}
+    engines: {node: 20 || >=22}
 
   minimist@1.2.8:
     resolution: {integrity: sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==}
@@ -3676,6 +3674,7 @@ packages:
 
   node-abort-controller@3.1.1:
     resolution: {integrity: sha512-AGK2yQKIjRuqnc6VkX2Xj5d+QW8xZ87pa1UK6yA6ouUyuxfHuMP6umE5QK7UmTeOAymo+Zx1Fxiuw9rVx8taHQ==}
+    deprecated: This package is no longer needed on supported Node.js versions. Node.js 16+ includes AbortController and AbortSignal as built-in globals. All Node.js versions requiring this polyfill are end-of-life. Use the built-in globals instead.
 
   node-gyp-build-optional-packages@5.2.2:
     resolution: {integrity: sha512-s+w+rBWnpTMwSFbaE0UXsRlg7hU4FjekKU4eyAih5T8nJuNZT1nNsskXpxmeqSK9UzkBl6UgRlnKc8hz8IEqOw==}
@@ -5420,11 +5419,7 @@ snapshots:
     optionalDependencies:
       '@noble/hashes': 2.4.0
 
-  '@hono/node-server@1.19.18(hono@4.13.13)':
-    dependencies:
-      hono: 4.13.13
-
-  '@hono/node-server@2.1.5(hono@4.13.13)':
+  '@hono/node-server@2.1.7(hono@4.13.13)':
     dependencies:
       hono: 4.13.13
 
@@ -5674,6 +5669,8 @@ snapshots:
 
   '@ioredis/commands@1.5.1': {}
 
+  '@isaacs/nonrecursive-glob-match@1.1.0': {}
+
   '@jridgewell/gen-mapping@0.4.0-beta.0':
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
@@ -5708,7 +5705,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.1(zod@4.6.7)':
     dependencies:
-      '@hono/node-server': 1.19.18(hono@4.13.13)
+      '@hono/node-server': 2.1.7(hono@4.13.13)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -6347,7 +6344,7 @@ snapshots:
       execa: 9.6.1
       json-rpc-2.0: 1.8.1
       lodash.groupby: 4.6.0
-      minimatch: 10.2.6
+      minimatch: 11.0.8
       mutation-server-protocol: 0.4.1
       mutation-testing-elements: 3.8.4
       mutation-testing-metrics: 3.8.4
@@ -7722,8 +7719,9 @@ snapshots:
 
   minimalistic-assert@1.0.1: {}
 
-  minimatch@10.2.6:
+  minimatch@11.0.8:
     dependencies:
+      '@isaacs/nonrecursive-glob-match': 1.1.0
       brace-expansion: 5.0.12
 
   minimist@1.2.8: {}
