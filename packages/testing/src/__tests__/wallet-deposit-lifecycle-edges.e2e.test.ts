@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { DEFAULT_PAYMENT_PROVIDER } from '@openora/core/contracts';
@@ -269,15 +269,10 @@ describe('a deposit credited after the vendor reported it failed', () => {
     expect(await outboxPayloads('wallet.deposit.completed', credit!.id)).toEqual([
       expect.objectContaining({ userId: player.userId, amount: FLOOR, currency: player.currency }),
     ]);
-    await vi.waitFor(
-      async () => {
-        const completed = await drizzle().execute(
-          sql`select count(*)::int as n from audit_log where action = 'wallet.deposit.completed' and after::text like ${`%${credit!.id}%`}`,
-        );
-        expect(completed.rows[0]?.['n']).toBe(1);
-      },
-      { timeout: 15_000, interval: 250 },
+    const completed = await drizzle().execute(
+      sql`select count(*)::int as n from audit_log where action = 'wallet.deposit.completed' and after::text like ${`%${credit!.id}%`}`,
     );
+    expect(completed.rows[0]?.['n']).toBe(1);
   });
 });
 

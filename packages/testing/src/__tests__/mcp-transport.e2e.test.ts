@@ -608,6 +608,7 @@ describe('MCP tokens, oversight', () => {
       app.container.get(EVENT_BUS),
       app.container.get(IDENTITY_READER),
     );
+    await flushAudit(app);
     expect(await audit.verifyChain()).toEqual({ valid: true });
   });
 });

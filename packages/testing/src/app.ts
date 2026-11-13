@@ -66,8 +66,8 @@ export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'igaming'> & {
  * (ADR-0031) - core ships no in-process fallback, so there is nothing else to bind.
  *
  * Audit records ship from `audit_outbox` after their write commits (ADR-0053), on the app's
- * background shipper. A test that reads `audit_log`, or a route or service that reads it, calls
- * `flushAudit(app)` first rather than racing the shipper.
+ * background shipper. A test flushes with `flushAudit(app)` before it asserts on
+ * `audit_log`, directly or through a route that reads it, rather than racing the shipper.
  */
 // Mirrors what the consumer composition root does. See ADR-0025.
 export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
