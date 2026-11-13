@@ -35,6 +35,7 @@ import { GameTagService } from './service/game-tag.service.js';
 import { GameProviderService } from './service/game-provider.service.js';
 import { GameBulkService } from './service/game-bulk.service.js';
 import { GameFavoriteService } from './service/game-favorite.service.js';
+import { topGames } from './service/top-games.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
@@ -49,6 +50,7 @@ import {
   GAME_CATEGORY_RANK_SWEEP_QUEUE,
   GameCategoryRankJobSchema,
   GameCategoryRankSweepJobSchema,
+  topGamesTool,
 } from './contract/index.js';
 
 export default {
@@ -68,6 +70,11 @@ export default {
     ctx.provide(RNG_ADAPTER, () => new MockRngAdapter());
     ctx.provide(ADMIN_GAME_REPORTING, (c) => new DrizzleAdminGameReporting(c.get(DRIZZLE)));
     ctx.provide(GAME_CATALOG_READER, (c) => new GameCatalogReaderService(c.get(DRIZZLE)));
+
+    ctx.mcp.tool(topGamesTool, (c) => {
+      const reporting = c.get(ADMIN_GAME_REPORTING);
+      return (input) => topGames(reporting, input);
+    });
     // Replaceable (not sealed): an overlay can rebind this to add or remove sort
     // definitions - eg an attribute or stats sort - without touching this module.
     ctx.provide(GAME_SORT_CATALOG, (c) =>

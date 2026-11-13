@@ -48,6 +48,11 @@ fields. This file does not repeat it.
   its payout leaves the period it first settled in, even when the reversal was collected. The
   ledger books a stake at reserve, not acceptance, and is cash-basis for a reopened bet, so a
   reversal left as debt or written off makes the ledger GGR lower than the summary's (ADR-0047).
+- **Its agent surface.** `sportsbook.turnover_exposure`, a read tool under the `sportsbook` view
+  grant, totals every player's bets per currency by the player summary's rules, adds the open
+  bets' potential payout, and lists the largest open bets by player id, without their selections.
+  It leaves GGR to `financial.summary`, which follows the ledger. It is served only through the
+  MCP kernel (ADR-0042).
 - **Sportsbook debt.** What a reversed settlement could not take back, per player and currency,
   with the withdrawal hold that lives exactly as long as the debt.
 - **Reconciliation findings.** Everything the ledger noticed but could not decide on its own, for

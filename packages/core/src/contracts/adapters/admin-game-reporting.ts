@@ -93,6 +93,48 @@ export type GameRoundCount = {
   roundsPlayed: number;
 };
 
+/** The figures `listGamePerformance` reports, which a per-currency ranking orders by. */
+export type GameRankingSortBy = Exclude<GamePerformanceSortBy, 'name' | 'gameType'>;
+
+export type GameCurrencyRankingFilter = {
+  dateFrom: Date;
+  dateTo: Date;
+  currency?: string;
+  gameType?: GameType;
+  sortBy: GameRankingSortBy;
+  sortDir: 'asc' | 'desc';
+  /** Games listed per currency. */
+  limit: number;
+  /** Currencies listed, alphabetical; `truncated` says more had rounds. */
+  maxCurrencies: number;
+};
+
+export type GameRankingFigures = {
+  volume: string;
+  revenue: string;
+  roundsPlayed: number;
+  uniquePlayers: number;
+};
+
+/**
+ * Per currency, its totals over every game with a completed round in range and at most `limit`
+ * of those games by `sortBy`, ties by game id; a game with no such round is left out. The same
+ * round scoping as listGamePerformance, which without a currency sums across currencies.
+ */
+export type GameCurrencyRanking = {
+  currencies: {
+    currency: string;
+    totals: GameRankingFigures & { gamesPlayed: number };
+    games: (GameRankingFigures & {
+      gameId: string;
+      name: string;
+      provider: string;
+      gameType: GameType;
+    })[];
+  }[];
+  truncated: boolean;
+};
+
 export type PlayerGameStats = {
   totalWagered: string;
   totalBets: number;
@@ -112,6 +154,12 @@ export type AdminGameReporting = {
   rankGamesByRounds?(filter: GameRoundRankingFilter): Promise<GameRoundCount[]>;
   /** As `rankGamesByRounds`, over every game. Optional; without it, a caller lists the games to rank. */
   rankAllGamesByRounds?(filter: GameRoundTopFilter): Promise<GameRoundCount[]>;
+  /**
+   * The games ranked per currency (GameCurrencyRanking). Optional so an overlay that rebinds this
+   * port keeps compiling; without it the agent's game ranking is unavailable rather than read
+   * past the operator's report.
+   */
+  rankGamesPerCurrency?(filter: GameCurrencyRankingFilter): Promise<GameCurrencyRanking>;
 };
 
 export const ADMIN_GAME_REPORTING: Token<AdminGameReporting> = createToken('ADMIN_GAME_REPORTING');

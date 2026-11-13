@@ -452,3 +452,4 @@ export const bonusContract = {
       .output(paginated(PlayerGrantEntrySchema)),
   },
 };
+export * from './agent-tools.js';
