@@ -1014,6 +1014,11 @@ describe('ledger invariant run hygiene (real PG)', () => {
     expect(res).not.toBeNull();
     const row = await summaryOf(res?.runId ?? '');
     expect(row?.status).toBe('abandoned');
+    // The run that took it over reports; this one must not also claim it completed.
+    expect(audit.recordInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'wallet.ledger_invariant_run.completed' }),
+    );
   });
 });
 

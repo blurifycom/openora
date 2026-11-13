@@ -1126,7 +1126,10 @@ export class ReconciliationService {
       }
       await this.checkWalletBalances(runId, batchSize, counts);
       await this.drizzle.db.transaction(async (txn) => {
-        await this.finishRun(jobRunId, 'completed', counts, txn);
+        // Taken over as stale meanwhile: the run that took it over reports, not this one.
+        if (!(await this.finishRun(jobRunId, 'completed', counts, txn))) {
+          return;
+        }
         await this.audit.recordInTransaction(txn, {
           actorType: 'system',
           action: 'wallet.ledger_invariant_run.completed',
@@ -1978,7 +1981,7 @@ export class ReconciliationService {
     status: WalletJobRunStatus,
     summary: Record<string, unknown>,
     db: DrizzleDb | DrizzleTx = this.drizzle.db,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const finished = await db
       .update(walletJobRun)
       .set({ finishedAt: new Date(), status, summary })
@@ -1990,5 +1993,6 @@ export class ReconciliationService {
         'wallet job run was taken over as stale before it finished; its abandoned verdict stands',
       );
     }
+    return finished.length > 0;
   }
 }
