@@ -21,12 +21,14 @@ describe('admin permission catalog', () => {
       agent: ['view', 'create', 'update', 'publish', 'run'],
       'agent-proposal': ['view', 'approve', 'reject'],
       'agent-config': ['view', 'update'],
+      'agent-chat': ['use'],
     });
     expect(
       adminRole.authorize({
         agent: ['view', 'create', 'update', 'publish', 'run'],
         'agent-proposal': ['view', 'approve', 'reject'],
         'agent-config': ['view', 'update'],
+        'agent-chat': ['use'],
       }).success,
     ).toBe(true);
   });
@@ -53,8 +55,10 @@ describe('holdsGrant', () => {
 
   it('falls back to the static role table without an assignment', () => {
     expect(holdsGrant({ role: 'admin', grants: null }, 'mcp-access', 'use')).toBe(true);
+    expect(holdsGrant({ role: 'admin', grants: null }, 'agent-chat', 'use')).toBe(true);
     expect(holdsGrant({ role: 'support', grants: null }, 'player', 'view')).toBe(true);
     expect(holdsGrant({ role: 'support', grants: null }, 'mcp-access', 'use')).toBe(false);
+    expect(holdsGrant({ role: 'support', grants: null }, 'agent-chat', 'use')).toBe(false);
   });
 
   it('holds nothing for a role the static table does not know, grants or not', () => {

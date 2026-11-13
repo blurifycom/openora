@@ -862,6 +862,10 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     // Consecutive qualifying days that triggered the milestone.
     day: z.number().int().positive(),
+    // The fixed reward's amount captured at unlock, in `currency`. Absent on an event from before
+    // the amount was carried.
+    amount: MoneyAmountSchema.optional(),
+    currency: CurrencyTickerSchema.optional(),
     // Absent when the milestone's reward is not a bonus grant.
     grantId: UuidSchema.nullable(),
   }),

@@ -20,6 +20,7 @@ import {
   WALLET_JOB_RUN_STATUSES,
   WALLET_RECONCILIATION_FINDING_KINDS,
   WALLET_RECONCILIATION_FINDING_STATUSES,
+  WALLET_DEPOSIT_STATUS_EVENT_STATUSES,
   ON_RAMP_STATUSES,
   WAGER_PRODUCTS,
   type OnRampStatus,
@@ -605,6 +606,29 @@ export const walletRefundedDeposit = pgTable(
   ],
 );
 
+export const walletDepositStatusEventStatusEnum = pgEnum(
+  'wallet_deposit_status_event_status',
+  WALLET_DEPOSIT_STATUS_EVENT_STATUSES,
+);
+
+export const walletDepositStatusEvent = pgTable(
+  'wallet_deposit_status_event',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    providerName: text().notNull(),
+    externalId: text().notNull(),
+    status: walletDepositStatusEventStatusEnum().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('wallet_deposit_status_event_provider_external_id_status_idx').on(
+      t.providerName,
+      t.externalId,
+      t.status,
+    ),
+  ],
+);
+
 export const walletOnRampOrderStatusEnum = pgEnum('wallet_on_ramp_order_status', ON_RAMP_STATUSES);
 
 // A fiat purchase on a vendor's hosted checkout, delivered on-chain to `walletAddress`. Never a
@@ -662,4 +686,5 @@ export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
 export type WalletJobRun = typeof walletJobRun.$inferSelect;
 export type WalletReconciliationFinding = typeof walletReconciliationFinding.$inferSelect;
 export type WalletRefundedDeposit = typeof walletRefundedDeposit.$inferSelect;
+export type WalletDepositStatusEvent = typeof walletDepositStatusEvent.$inferSelect;
 export type WalletOnRampOrder = typeof walletOnRampOrder.$inferSelect;

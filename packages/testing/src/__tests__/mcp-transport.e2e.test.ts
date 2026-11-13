@@ -296,17 +296,21 @@ describe('MCP tokens', () => {
 });
 
 describe('MCP transport, happy path through the SDK client', () => {
-  it('lists the four read tools under model names, without propose tools or personal keys', async () => {
+  it('lists the read tools under model names, without propose tools or personal keys', async () => {
     const { token } = await issueToken(admin);
     const client = await connect(token);
 
     const { tools } = await client.listTools();
 
     expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'financial_summary',
       'ggr_summary',
       'kyc_status',
+      'payments_flow_daily',
       'player_summary',
+      'players_deposit_compare',
       'wallet_activity',
+      'withdrawals_queue',
     ]);
     const summary = tools.find((tool) => tool.name === 'player_summary');
     const properties = Object.keys(summary?.outputSchema?.properties ?? {});

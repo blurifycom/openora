@@ -1,4 +1,4 @@
-import { type DrizzleDb, DrizzleService, moneyCompare, sumInPivot } from '@openora/core/server';
+import { type DrizzleDb, DrizzleService, sumInPivot } from '@openora/core/server';
 import {
   type WalletReader,
   type WalletBalancesReading,
@@ -27,15 +27,12 @@ import { wallet, walletTransaction } from '../schema/index.js';
 import {
   IN_FLIGHT_TRANSACTION_STATUSES,
   VELOCITY_IGNORED_STATUSES,
+  depositedAt,
   providerRefCondition,
   readWalletBalances,
   resolveWalletBalance,
 } from '../service/wallet.service.js';
-
-// A held deposit reaches the balance when an operator releases it, which stamps reviewedAt;
-// every other completed deposit has no reviewedAt.
-const depositedAt = () =>
-  sql<Date>`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`;
+import { pricedInPivot } from '../service/pivot-pricing.service.js';
 
 type CurrencyTotal = { currency: string; total: string | null };
 
@@ -353,14 +350,7 @@ export class WalletReaderService implements WalletReader {
     };
   }
 
-  // A currency whose amounts cancel out needs no rate, so it cannot make the total unknown.
   private priced(rows: readonly CurrencyTotal[]): Promise<string | null> {
-    return sumInPivot(
-      rows
-        .map((row) => ({ currency: row.currency, total: row.total ?? '0' }))
-        .filter((row) => moneyCompare(row.total, '0') !== 0),
-      this.pivotCurrency,
-      this.exchangeRateReader,
-    );
+    return pricedInPivot(rows, this.pivotCurrency, this.exchangeRateReader);
   }
 }

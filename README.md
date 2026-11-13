@@ -163,7 +163,7 @@ Planned work and progress live on the public board: **[openora roadmap](https://
 `docs/` holds one folder per kind, plus the generated `catalog.json`.
 
 - **[docs/platform/](./docs/platform/)** - what the platform is: [introduction](./docs/platform/introduction.md), [core concepts](./docs/platform/core-concepts.md), [architecture](./docs/platform/architecture.md), [system design](./docs/platform/system-design.md), [usage telemetry](./docs/platform/telemetry.md), [glossary](./docs/platform/glossary.md).
-- **[docs/guides/](./docs/guides/)** - how to do a job: [quickstart](./docs/guides/quickstart.md), [agent quickstart](./docs/guides/agent-quickstart.md), [agentic workflow](./docs/guides/agentic-workflow.md), [consuming downstream](./docs/guides/downstream-consumer.md), [MCP setup](./docs/guides/mcp-setup.md).
+- **[docs/guides/](./docs/guides/)** - how to do a job: [quickstart](./docs/guides/quickstart.md), [agent quickstart](./docs/guides/agent-quickstart.md), [agentic workflow](./docs/guides/agentic-workflow.md), [consuming downstream](./docs/guides/downstream-consumer.md), [split deployment](./docs/guides/split-deployment.md), [MCP setup](./docs/guides/mcp-setup.md).
 - **[docs/standards/](./docs/standards/)** - the rules a change must follow (money, custody, database, types, testing...).
 - **[docs/adapters/](./docs/adapters/)** - binding a vendor behind a port (payment, custody, KYC, notification, error tracking).
 - **[docs/modules/](./docs/modules/)** - a module's own surface and invariants ([wallet](./docs/modules/wallet.md)).
