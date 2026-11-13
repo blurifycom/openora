@@ -5,6 +5,10 @@
 
 > **Update (2026-10-13)**: `SERVICE_MANIFEST=analytics` alone does not boot: the manifest must also list the modules analytics depends on (wallet, identity, profile, gaming) and theirs. The boot names every missing one ([ADR-0017](./0017-extraction-readiness-manifest-outbox-command-ports.md)).
 
+> **Update (2026-11-04)**: The ledger GGR this ADR names is now the official GGR, which also takes
+> off voided stakes and adds back wins taken back. The definition is in
+> [ADR-0052](./0052-wallet-ggr-is-the-official-ggr.md); the wallet ledger stays its source.
+
 ## Context
 
 A financial-analytics dashboard is requested (deposits/withdrawals by

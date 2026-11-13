@@ -3,6 +3,7 @@ import {
   asc,
   count,
   eq,
+  gt,
   gte,
   inArray,
   isNotNull,
@@ -162,7 +163,7 @@ export class FinancialAnalyticsService {
   ) {}
 
   async summary(query: FinancialSummaryQuery): Promise<FinancialSummary> {
-    return this.cached('financial.summary', query, () => this.computeSummary(query));
+    return this.cached('financial.summary.v2', query, () => this.computeSummary(query));
   }
 
   async ggr(query: FinancialGgrQuery): Promise<GgrSeries[]> {
@@ -289,9 +290,12 @@ export class FinancialAnalyticsService {
         )
         .groupBy(walletTransaction.currency, walletTransaction.rail);
 
-    const [deposits, withdrawals, byCurrency] = await Promise.all([
+    const [deposits, withdrawals, sportsbookPromotionCost, byCurrency] = await Promise.all([
       totalsByRail('deposit'),
       totalsByRail('withdrawal'),
+      this.hasSportsbookLedger().then((found) =>
+        found ? this.sportsbookPromotionCost({ dateFrom, dateTo, currency }) : [],
+      ),
       db
         .select({
           currency: walletTransaction.currency,
@@ -319,8 +323,32 @@ export class FinancialAnalyticsService {
       netDeposits: byCurrency.map((r) => ({ currency: r.currency, total: r.netDeposits })),
       ggr: byCurrency.map((r) => ({ currency: r.currency, total: r.ggr })),
       bonusCost: byCurrency.map((r) => ({ currency: r.currency, total: r.bonusCost })),
+      sportsbookPromotionCost,
       ngr: byCurrency.map((r) => ({ currency: r.currency, total: r.ngr })),
     };
+  }
+
+  private sportsbookPromotionCost(query: FinancialSummaryQuery) {
+    const tx = sportsbookBetTransaction;
+    const bet = sportsbookBet;
+    const partOf = (kind: 'settle' | 'reopen') =>
+      sql`coalesce(sum(${tx.promotionAmount}) filter (where ${tx.kind} = ${kind}), 0)`;
+    return this.drizzle.db
+      .select({
+        currency: bet.currency,
+        total: sql<string>`${partOf('settle')} - ${partOf('reopen')}`,
+      })
+      .from(tx)
+      .innerJoin(bet, eq(bet.id, tx.betId))
+      .where(
+        and(
+          gt(tx.promotionAmount, '0'),
+          isNotNull(bet.promotionType),
+          ...inRange(tx.createdAt, bet.currency, query),
+        ),
+      )
+      .groupBy(bet.currency)
+      .orderBy(bet.currency);
   }
 
   private async computeProducts(query: FinancialSummaryQuery): Promise<ProductRevenue[]> {

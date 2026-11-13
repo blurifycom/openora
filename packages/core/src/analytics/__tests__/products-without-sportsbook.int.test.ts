@@ -136,6 +136,10 @@ describe('revenue by product read from the database, with no sportsbook plugin l
     ]);
   });
 
+  it('reports no sportsbook promotion cost and never reads the sportsbook tables when they are absent', async () => {
+    await expect(service.summary({})).resolves.toMatchObject({ sportsbookPromotionCost: [] });
+  });
+
   it('keeps counting the catalog game while the sportsbook tables hold no bet', async () => {
     await migrateBetting(db.url);
 
