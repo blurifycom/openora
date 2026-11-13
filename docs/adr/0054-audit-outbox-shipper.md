@@ -77,17 +77,19 @@ table or operator in front of the ones the guards read.
   racing; the cost is one idle query per replica per poll.
 - The chain lives in the business database unless `AUDIT_DATABASE_URL` names one of its own. Then
   the shipper appends there as a role that may only read and append, and deletes the batch from
-  the outbox once that append has committed; the main database's delete guard, which cannot see
-  the chain, trusts the shipper lock instead (`docs/standards/audit.md`).
+  the outbox once that append has committed, as a shipper role of its own on the main database
+  (`AUDIT_SHIPPER_DATABASE_URL`); the main database's delete guard, which cannot see the chain,
+  lets a delete through only from a member of that role holding the shipper lock
+  (`docs/standards/audit.md`).
 - `audit_log_seq_key` (unique) is built next to the plain `audit_log_seq_idx`, which stays until
   the next minor release. Dropped in the same migrate run, the chain head lookup
   (`ORDER BY seq DESC LIMIT 1`) would scan the whole table while the unique index builds; a later
   migration drops it once every deployment has `audit_log_seq_key`.
 - Known gap: the app role can still divert a pending entry by writing its exact copy into
   `audit_outbox_rejected` under its outbox id and then deleting it. The content is kept, but it is
-  never chained, and only the rejected count of `auditOutboxBacklog` shows it. The fix is a separate
-  shipper database role that alone may INSERT into `audit_outbox_rejected` and DELETE from
-  `audit_outbox`, planned with moving the chain to a database of its own.
+  never chained, and only the rejected count of `auditOutboxBacklog` shows it, in the single-database
+  mode. With the chain in a database of its own, the shipper role alone may INSERT into
+  `audit_outbox_rejected` and DELETE from `audit_outbox`, which closes it.
 - A rejected row planted under a real `outbox_id` with other content, plus a forged chain row under
   its `event_id`, stalls the shipper on that row: the rejected insert is skipped and the delete
   guard refuses. That fails safe and loud, an error log on every attempt and a growing oldest
