@@ -698,6 +698,42 @@ describe('rolling baselines and their repair (real PG)', () => {
     expect(retamper?.summary).toMatchObject({ balanceBreaches: 1, newBreaches: 1 });
   });
 
+  it('refuses to re-baseline a breach whose drift grew since it was filed', async () => {
+    const w = await fundedWallet('100');
+    const svc = makeReconciliation();
+    await handEdit(w.id, '5');
+    await run(svc);
+    const [breach] = await breaches();
+    if (!breach) {
+      throw new Error('no breach filed');
+    }
+    await handEdit(w.id, '7');
+
+    await expect(
+      svc.resolveFinding(ADMIN_ID, breach.id, { outcome: 'rebaselined', note: 'owed 5' }),
+    ).rejects.toMatchObject({ data: { reason: 'drift_changed' } });
+    expect(await baselines(w.id)).toHaveLength(0);
+  });
+
+  it('refuses to re-baseline a breach measured from a baseline no longer in force', async () => {
+    const w = await fundedWallet('100');
+    const svc = makeReconciliation();
+    await handEdit(w.id, '7');
+    await run(svc);
+    const [breach] = await breaches();
+    if (!breach) {
+      throw new Error('no breach filed');
+    }
+    await handEdit(w.id, '-7');
+    await run(svc);
+    await handEdit(w.id, '7');
+
+    await expect(
+      svc.resolveFinding(ADMIN_ID, breach.id, { outcome: 'rebaselined', note: 'owed 7' }),
+    ).rejects.toMatchObject({ data: { reason: 'baseline_moved' } });
+    expect(await baselines(w.id)).toHaveLength(1);
+  });
+
   it('refuses to re-baseline a finding that is not about a ledger', async () => {
     const svc = makeReconciliation();
     const finding = findOneOrThrow(

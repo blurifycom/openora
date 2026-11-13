@@ -72,6 +72,8 @@ import {
   checkLedgerPage,
   ledgerBreachKey,
   ledgerPairKey,
+  lockAndCheckLedgerPair,
+  parseLedgerBreachKey,
   parseLedgerPairKey,
   rebaselinePair,
 } from './ledger-invariant.service.js';
@@ -118,7 +120,9 @@ export type ReconciliationRefusalReason =
   | 'ledger_deposit_not_completed'
   | 'not_a_ledger_pair'
   | 'unpriced_rows_after_cut'
-  | 'credit_already_used';
+  | 'credit_already_used'
+  | 'baseline_moved'
+  | 'drift_changed';
 
 export class ReconciliationOutcomeNotAllowedError extends Error {
   readonly data: { reason: ReconciliationRefusalReason };
@@ -165,6 +169,31 @@ function assertOutcomeAllowed(
         (outcome === 'refunded' && REFUNDABLE_FINDING_KINDS.has(kind));
   if (!allowed) {
     throw new ReconciliationOutcomeNotAllowedError(kind, outcome);
+  }
+}
+
+/**
+ * A re-baseline accepts the error a breach recorded, never a larger one that came after it nor
+ * one measured from a baseline since replaced: the pair must still drift by exactly what the
+ * finding's key says, from the baseline it names.
+ */
+async function assertBreachStands(
+  txn: DrizzleTx,
+  finding: WalletReconciliationFindingRow,
+  pair: { walletId: Wallet['id']; currency: string },
+): Promise<void> {
+  const filed = parseLedgerBreachKey(finding.externalId);
+  const now = await lockAndCheckLedgerPair(txn, pair.walletId, pair.currency);
+  const refuse = (reason: ReconciliationRefusalReason) =>
+    new ReconciliationOutcomeNotAllowedError(finding.kind, 'rebaselined', reason);
+  if (!filed || !now) {
+    throw refuse('not_a_ledger_pair');
+  }
+  if (now.baselineId !== filed.baselineId) {
+    throw refuse('baseline_moved');
+  }
+  if (!moneyEquals(now.drift, filed.drift)) {
+    throw refuse('drift_changed');
   }
 }
 
@@ -514,6 +543,9 @@ export class ReconciliationService {
             'rebaselined',
             'not_a_ledger_pair',
           );
+        }
+        if (finding.kind === 'ledger_invariant_breach') {
+          await assertBreachStands(txn, finding, pair);
         }
         baseline = await rebaselinePair(txn, pair.walletId, pair.currency, finding.id);
         if (!baseline) {

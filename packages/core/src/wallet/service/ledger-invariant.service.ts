@@ -128,6 +128,7 @@ export function backfillMismatchKey(
 }
 
 const PAIR_KEY = /^wallet:([0-9a-f-]{36}):([^:]+)(?::|$)/;
+const BREACH_KEY = /^wallet:[0-9a-f-]{36}:[^:]+:([0-9a-f-]{36}|none):(-?\d+(?:\.\d+)?)$/;
 
 /** The pair a ledger finding is about, read back from its key. */
 export function parseLedgerPairKey(
@@ -137,9 +138,30 @@ export function parseLedgerPairKey(
   return match?.[1] && match[2] ? { walletId: match[1], currency: match[2] } : null;
 }
 
+/** The baseline a breach was measured from and its signed drift, read back from its key. */
+export function parseLedgerBreachKey(
+  externalId: string | null,
+): { baselineId: LedgerPairCheck['baselineId']; drift: string } | null {
+  const match = externalId === null ? null : BREACH_KEY.exec(externalId);
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+  return { baselineId: match[1] === 'none' ? null : match[1], drift: match[2] };
+}
+
 // Same shape as `ledgerBreachKey`, built in SQL for the pair `c`.
 const breachKeyPrefix = sql`'wallet:' || c.wallet_id || ':' || c.currency || ':'
   || coalesce(c.baseline_id::text, 'none') || ':'`;
+
+/** Each pair of `pairs` beside its baseline in force and what its ledger adds up to from it. */
+function checkedPairs(pairs: SQL): SQL {
+  return sql`select p.id, p.wallet_id, p.currency, p.amount as balance, bl.id as baseline_id,
+      bl.as_of as base_as_of, coalesce(bl.amount, 0) + l.total as expected, l.unpriced,
+      ${cut} as cut
+    from (${pairs}) p
+    left join lateral ${latestBaseline} bl on true
+    cross join lateral ${ledgerAfter(sql`bl.as_of`)} l`;
+}
 
 export type LedgerPairCheck = {
   id: string;
@@ -178,14 +200,7 @@ export async function checkLedgerPage(
     advanced: boolean;
   }>(sql`
     with p as (${balancePage(afterId, limit)}),
-    c as (
-      select p.id, p.wallet_id, p.currency, p.amount as balance, bl.id as baseline_id,
-        bl.as_of as base_as_of, coalesce(bl.amount, 0) + l.total as expected, l.unpriced,
-        ${cut} as cut
-      from p
-      left join lateral ${latestBaseline} bl on true
-      cross join lateral ${ledgerAfter(sql`bl.as_of`)} l
-    ),
+    c as (${checkedPairs(sql`select * from p`)}),
     adv as (
       insert into wallet_balance_baseline (wallet_id, currency, amount, as_of, run_id)
       select c.wallet_id, c.currency, c.expected - a.total, c.cut, ${runId}
@@ -221,6 +236,37 @@ export async function checkLedgerPage(
     baselineId: row.baseline_id,
     advanced: row.advanced,
   }));
+}
+
+export type LedgerPairState = Pick<LedgerPairCheck, 'baselineId' | 'unpricedRows'> & {
+  /** Balance less what the ledger adds up to, signed. */
+  drift: string;
+};
+
+/**
+ * One pair checked now, as a run checks it, for an admin resolving a finding about it. Locks the
+ * pair's balance row until the caller's transaction ends, so nothing moves the drift between
+ * this check and what the resolution does about it. Null when the pair holds no balance.
+ */
+export async function lockAndCheckLedgerPair(
+  txn: DrizzleTx,
+  walletId: Wallet['id'],
+  currency: string,
+): Promise<LedgerPairState | null> {
+  const { rows } = await txn.execute<{
+    baseline_id: string | null;
+    drift: string;
+    unpriced: string;
+  }>(sql`
+    select c.baseline_id, (c.balance - c.expected)::text as drift, c.unpriced::text as unpriced
+    from (${checkedPairs(sql`
+      select b.id, b.wallet_id, b.currency, b.amount from wallet_balance b
+      where b.wallet_id = ${walletId} and b.currency = ${currency}
+      for update`)}) c`);
+  const [row] = rows;
+  return row
+    ? { baselineId: row.baseline_id, drift: row.drift, unpricedRows: Number(row.unpriced) }
+    : null;
 }
 
 export type BackfillMismatch = {
