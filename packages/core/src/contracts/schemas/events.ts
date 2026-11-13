@@ -716,9 +716,10 @@ export const domainEventSchemas = {
     providerIds: z.array(UuidSchema).max(1000),
   }),
   // The catalogue facts a round needs, its wagering inputs included, as committed, for the
-  // ledger side's `ledger_game` projection. Written to the outbox in the transaction that read them; `version` is the
-  // game row's ledger_version, drawn from a sequence, so a consumer keeps the highest one and
-  // ignores the rest. Not `gaming.games.changed`, which feeds the category triggers.
+  // ledger side's `ledger_game` projection. Written to the outbox in the transaction that read
+  // them; `version` is the game row's ledger_version, drawn from a sequence, so a consumer keeps
+  // the highest one and ignores the rest. Not `gaming.games.changed`, which feeds the category
+  // triggers.
   'gaming.ledger_game.projected': z.object({
     games: z
       .array(

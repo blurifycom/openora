@@ -1,5 +1,5 @@
 {
-  "id": "7fa99076-f530-4d40-8a28-ffcd88909fc4",
+  "id": "74a16771-8a5e-4a2b-889d-0b755e71a24e",
   "prevId": "9b4f5d94-93b6-44cc-9f6b-61bcbdc252ca",
   "version": "7",
   "dialect": "postgresql",
@@ -1018,12 +1018,7 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "game_round_rtp_range_check": {
-          "name": "game_round_rtp_range_check",
-          "value": "\"game_round\".\"rtp\" IS NULL OR (\"game_round\".\"rtp\" >= 0 AND \"game_round\".\"rtp\" <= 1)"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.game_tag": {

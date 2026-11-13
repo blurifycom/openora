@@ -302,12 +302,12 @@ export const gameRound = pgTable(
     endedAt: timestamp({ withTimezone: true }),
     externalRoundId: text(),
     // The wagering inputs every stake on the round is priced under, set once when the round is
-    // first seen (the caller's value ahead of `ledger_game`'s) and never changed after.
+    // first seen (`ledger_game`'s value ahead of the caller's) and never changed after. No CHECK:
+    // the writers validate rtp (`isWagerRtp`, and the `game` CHECK on the catalogue).
     wagerProduct: gameWagerProductEnum(),
     rtp: rtpColumn(),
   },
   (t) => [
-    rtpRangeCheck('game_round_rtp_range_check', t.rtp),
     index('game_round_user_id_started_at_idx').on(t.userId, t.startedAt),
     index('game_round_game_id_started_at_idx').on(t.gameId, t.startedAt),
     index('game_round_started_at_idx').on(t.startedAt),

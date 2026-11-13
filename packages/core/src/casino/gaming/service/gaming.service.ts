@@ -11,6 +11,7 @@ import {
   findOneOrThrow,
   isPositiveMoney,
   likeContains,
+  moneyCompare,
   pageToOffset,
   serializeRow,
   uniqueConstraintName,
@@ -849,8 +850,24 @@ export class GamingService {
         throw new GamingUnknownGameError(args.gameId);
       }
     }
-    const wagerProduct = args.wager?.product ?? projected?.product ?? null;
-    const rtp = args.wager?.rtp ?? projected?.rtp ?? null;
+    // The catalogue is the operator's record of the game, so it wins; the caller's value only
+    // fills what it lacks.
+    const sent = args.wager;
+    if (
+      (sent?.product && projected?.product && sent.product !== projected.product) ||
+      (sent?.rtp && projected?.rtp && moneyCompare(sent.rtp, projected.rtp) !== 0)
+    ) {
+      logger.warn(
+        {
+          gameId: args.gameId,
+          sent,
+          catalogue: { product: projected.product, rtp: projected.rtp },
+        },
+        'gaming: a round stake disagrees with the catalogue on product or rtp',
+      );
+    }
+    const wagerProduct = projected?.product ?? sent?.product ?? null;
+    const rtp = projected?.rtp ?? sent?.rtp ?? null;
     const winDelta = SignedMoneyAmountSchema.parse(args.winDelta ?? '0');
     const reversedStake = sql`greatest(-(${betDelta}::numeric), 0)`;
     const status = args.isFinal ? 'completed' : 'active';
@@ -882,9 +899,13 @@ export class GamingService {
           wagerProduct: sql`coalesce(${gameRound.wagerProduct}, excluded.wager_product)`,
           rtp: sql`coalesce(${gameRound.rtp}, excluded.rtp)`,
         },
-        // A conflicting row owned by a different game/user is left untouched (0 rows
+        // A conflicting row of another user, game or currency is left untouched (0 rows
         // returned) instead of merging deltas onto someone else's round.
-        setWhere: and(eq(gameRound.userId, args.userId), eq(gameRound.gameId, args.gameId)),
+        setWhere: and(
+          eq(gameRound.userId, args.userId),
+          eq(gameRound.gameId, args.gameId),
+          sql`upper(${gameRound.currency}) = ${args.currency.toUpperCase()}`,
+        ),
       })
       .returning({
         id: gameRound.id,

@@ -29,7 +29,8 @@ export type GamingAccumulateExternalRoundArgs = {
   isFinal?: boolean;
   /**
    * What the caller knows of the variant played (an aggregator's per-session rtp). Fills a round
-   * snapshot field the round does not hold yet, ahead of the catalogue's `ledger_game` value.
+   * snapshot field the round does not hold yet only where the catalogue's `ledger_game` has none;
+   * a value that differs from the catalogue's is logged and dropped.
    */
   wager?: Partial<GamingRoundWager>;
 };
@@ -82,8 +83,8 @@ export class GamingUnknownGameError extends Error {
 }
 
 /**
- * The `externalRoundId` is already a round of another game or player. Nothing was written: the
- * caller's transaction rolls back whole.
+ * The `externalRoundId` is already a round of another game, player or currency. Nothing was
+ * written: the caller's transaction rolls back whole.
  */
 export class GamingRoundOwnerMismatchError extends Error {
   readonly externalRoundId: string;
