@@ -48,6 +48,7 @@ import {
   ReconciliationFindingNotFoundError,
   type ReconciliationRefusalReason,
   ReconciliationRefundAmountError,
+  STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES,
 } from '../service/reconciliation.service.js';
 
 let db: TestDb;
@@ -575,6 +576,97 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
       .from(walletTransaction)
       .where(eq(walletTransaction.id, second.tx.id));
     expect(row?.status).toBe('completed');
+  });
+
+  it('holds a processing withdrawal while the vendor is down: one finding, no refund', async () => {
+    const providerRefId = randomUUID();
+    const { w, tx } = await seedStuckWithdrawal(providerRefId);
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      getWithdrawalStatus: vi.fn(async () => {
+        throw new Error('vendor unreachable');
+      }),
+    });
+    const { reconciliation } = makeServices(payment);
+
+    await reconciliation.runCycle();
+    await reconciliation.runCycle();
+
+    const findings = await findingRows();
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      kind: 'stuck_withdrawal_processing',
+      externalId: providerRefId,
+      transactionId: tx.id,
+    });
+    const [row] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, tx.id));
+    expect(row?.status).toBe('processing');
+    expect(await balanceOf(w.id)).toBe('5.000000000000000000');
+    // The withdrawal is still live, so a manual credit could pay it twice: dismissal only.
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), findings[0]?.id ?? '', {
+        outcome: 'credited',
+        transactionId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ name: 'ReconciliationOutcomeNotAllowedError' });
+  });
+
+  it('files an approved withdrawal never handed to a vendor as stuck_withdrawal_approved', async () => {
+    const { tx } = await seedStuckWithdrawal(null);
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ providerName: null })
+      .where(eq(walletTransaction.id, tx.id));
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      findWithdrawalByReference: vi.fn(async () => {
+        throw new Error('vendor unreachable');
+      }),
+    });
+    const { reconciliation } = makeServices(payment);
+
+    await reconciliation.runCycle();
+
+    const findings = await findingRows();
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'stuck_withdrawal_approved', externalId: tx.id });
+  });
+
+  it('files a withdrawal left requested past a day once, and leaves a fresher one alone', async () => {
+    const w = await seedWallet('BTC', '5');
+    const requested = (createdAt: Date) =>
+      db.drizzle.db
+        .insert(walletTransaction)
+        .values({
+          walletId: w.id,
+          type: 'withdrawal',
+          amount: '1',
+          currency: 'BTC',
+          status: 'pending',
+          rail: 'crypto',
+          createdAt,
+        })
+        .returning();
+    const [stale] = await requested(
+      new Date(Date.now() - (STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES + 5) * 60_000),
+    );
+    await requested(new Date(Date.now() - 60 * 60_000));
+    const payment = mock<PaymentAdapter>({ listTransactions: vi.fn(async () => []) });
+    const { reconciliation } = makeServices(payment);
+
+    await reconciliation.runCycle();
+    await reconciliation.runCycle();
+
+    const findings = await findingRows();
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      kind: 'stuck_withdrawal_requested',
+      externalId: stale?.id,
+    });
+    expect(await balanceOf(w.id)).toBe('5.000000000000000000');
   });
 });
 

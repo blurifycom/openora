@@ -170,6 +170,16 @@ const LEDGER_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new S
   'ledger_invariant_unchecked',
 ]);
 
+/**
+ * Reports of a withdrawal stuck in its saga (ADR-0057). The withdrawal itself is still live and
+ * settles through its own path, so a manual credit here would pay it twice: dismissal only.
+ */
+const STUCK_WITHDRAWAL_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
+  'stuck_withdrawal_requested',
+  'stuck_withdrawal_approved',
+  'stuck_withdrawal_processing',
+]);
+
 function assertOutcomeAllowed(
   kind: WalletReconciliationFindingKind,
   outcome: ReconciliationResolution['outcome'],
@@ -177,11 +187,13 @@ function assertOutcomeAllowed(
   const allowed =
     kind === 'held_deposit'
       ? outcome === 'released' || outcome === 'refunded'
-      : LEDGER_FINDING_KINDS.has(kind)
-        ? outcome === 'rebaselined' || outcome === 'dismissed'
-        : outcome === 'credited' ||
-          outcome === 'dismissed' ||
-          (outcome === 'refunded' && REFUNDABLE_FINDING_KINDS.has(kind));
+      : STUCK_WITHDRAWAL_FINDING_KINDS.has(kind)
+        ? outcome === 'dismissed'
+        : LEDGER_FINDING_KINDS.has(kind)
+          ? outcome === 'rebaselined' || outcome === 'dismissed'
+          : outcome === 'credited' ||
+            outcome === 'dismissed' ||
+            (outcome === 'refunded' && REFUNDABLE_FINDING_KINDS.has(kind));
   if (!allowed) {
     throw new ReconciliationOutcomeNotAllowedError(kind, outcome);
   }
@@ -360,6 +372,10 @@ const DEFAULT_LEDGER_INVARIANT_STALE_RUN_AFTER_MINUTES = 240;
 
 /** Fallback when reconciliation runs without a `wallet.sweep` config block. */
 const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
+
+// A requested withdrawal waits on a person, not a vendor, so it is stuck only once that wait
+// outruns a day. Approved and processing ones use `reconciliation.stuckAfterMinutes` (ADR-0057).
+export const STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES = 24 * 60;
 
 // A swap leg carries no payment provider name, but a finding needs one to be filed under.
 const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
@@ -1078,6 +1094,7 @@ export class ReconciliationService {
       unknownAtProvider: 0,
       stuckSweeps: 0,
       stuckSwaps: 0,
+      stuckWithdrawals: 0,
       swapFindingsClosed: 0,
       unreconciledHours: 0,
     };
@@ -1102,6 +1119,7 @@ export class ReconciliationService {
         }
 
         await this.reconcileStuckWithdrawals(runId, cfg.stuckAfterMinutes, cfg.batchSize, counts);
+        await this.reportStuckRequestedWithdrawals(runId, cfg.batchSize, counts);
 
         // Close first, then file: a leg the desk settled after it was reported stops
         // describing a situation that no longer exists before this cycle adds more.
@@ -1693,13 +1711,14 @@ export class ReconciliationService {
     runId: WalletJobRun['runId'],
     stuckAfterMinutes: number,
     batchSize: number,
-    counts: { unknownAtProvider: number },
+    counts: { unknownAtProvider: number; stuckWithdrawals: number },
   ): Promise<void> {
     const cutoff = new Date(Date.now() - stuckAfterMinutes * 60 * 1000);
     // Mirrors the externalId this loop files below, which is the findings dedup key.
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
-      WHERE ${walletReconciliationFinding.kind} = 'unknown_at_provider'
+      WHERE ${walletReconciliationFinding.kind} IN
+            ('unknown_at_provider', 'stuck_withdrawal_approved', 'stuck_withdrawal_processing')
         AND ${walletReconciliationFinding.providerName}
             = coalesce(${walletTransaction.providerName}, ${DEFAULT_PAYMENT_PROVIDER})
         AND ${walletReconciliationFinding.externalId}
@@ -1737,7 +1756,38 @@ export class ReconciliationService {
           { err, transactionId: tx.id },
           'reconciliation: stuck withdrawal check failed',
         );
+        await this.reportStuckWithdrawal(runId, tx, counts);
       }
+    }
+  }
+
+  /**
+   * The vendor could not be asked about a withdrawal past `stuckAfterMinutes` (ADR-0057): filed
+   * under its saga state, approved (never handed to a vendor) or processing (handed to one), so an
+   * outage still surfaces. A report only - never a refund, the payout may still have left.
+   */
+  private async reportStuckWithdrawal(
+    runId: WalletJobRun['runId'],
+    tx: WalletTransaction,
+    counts: { stuckWithdrawals: number },
+  ): Promise<void> {
+    const filed = await recordReconciliationFinding(
+      this.drizzle.db,
+      {
+        runId,
+        providerName: tx.providerName ?? DEFAULT_PAYMENT_PROVIDER,
+        kind: tx.providerName ? 'stuck_withdrawal_processing' : 'stuck_withdrawal_approved',
+        currency: tx.currency,
+        network: tx.network,
+        amount: tx.amount,
+        transactionId: tx.id,
+        externalId: tx.providerRefId ?? tx.id,
+        detail: `withdrawal processing since ${(tx.reviewedAt ?? tx.createdAt).toISOString()}; vendor check failed`,
+      },
+      this.audit,
+    );
+    if (filed) {
+      counts.stuckWithdrawals += 1;
     }
   }
 
@@ -1931,6 +1981,56 @@ export class ReconciliationService {
         },
         this.audit,
       );
+    }
+  }
+
+  /**
+   * A withdrawal requested more than STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES ago and still
+   * `pending` (ADR-0057): screening or review never decided it. A report only, one per withdrawal.
+   */
+  private async reportStuckRequestedWithdrawals(
+    runId: WalletJobRun['runId'],
+    batchSize: number,
+    counts: { stuckWithdrawals: number },
+  ): Promise<void> {
+    const cutoff = new Date(Date.now() - STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES * 60_000);
+    // Same starvation guard as reconcileStuckWithdrawals: reported rows sort last.
+    const alreadyReported = sql<boolean>`EXISTS (
+      SELECT 1 FROM ${walletReconciliationFinding}
+      WHERE ${walletReconciliationFinding.kind} = 'stuck_withdrawal_requested'
+        AND ${walletReconciliationFinding.externalId} = ${walletTransaction.id}::text
+    )`;
+    const stuck = await this.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.type, 'withdrawal'),
+          eq(walletTransaction.status, 'pending'),
+          lt(walletTransaction.createdAt, cutoff),
+        ),
+      )
+      .orderBy(asc(alreadyReported), asc(walletTransaction.createdAt))
+      .limit(batchSize);
+    for (const tx of stuck) {
+      const filed = await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId,
+          providerName: DEFAULT_PAYMENT_PROVIDER,
+          kind: 'stuck_withdrawal_requested',
+          currency: tx.currency,
+          network: tx.network,
+          amount: tx.amount,
+          transactionId: tx.id,
+          externalId: tx.id,
+          detail: `withdrawal requested ${tx.createdAt.toISOString()} and still undecided`,
+        },
+        this.audit,
+      );
+      if (filed) {
+        counts.stuckWithdrawals += 1;
+      }
     }
   }
 
