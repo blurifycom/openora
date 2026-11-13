@@ -14,6 +14,7 @@ import {
 } from '@openora/core/testing';
 import { makeIdentityReader } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
+import { drainAuditOutbox } from '../service/audit-shipper.service.js';
 
 type Service = Awaited<ReturnType<typeof createApp>>;
 
@@ -94,6 +95,7 @@ describe('audit trail with two services of one deployment up', () => {
 
     await vi.waitFor(
       async () => {
+        await drainAuditOutbox(db.drizzle.db);
         const { rows } = await db.drizzle.db.execute<{ rows: number }>(
           sql`select count(*)::int as rows from audit_log
               where action = 'tag.created' and after->>'actorId' = ${marker}`,
@@ -127,6 +129,7 @@ describe('audit trail with two services of one deployment up', () => {
     }
 
     const rowsPerMarker = async (): Promise<Map<string, number>> => {
+      await drainAuditOutbox(db.drizzle.db);
       const { rows } = await db.drizzle.db.execute<{ marker: string; rows: number }>(
         sql`select after->>'actorId' as marker, count(*)::int as rows
             from audit_log where action = 'tag.created' group by 1`,
@@ -195,8 +198,8 @@ describe('audit trail with two services of one deployment up', () => {
       const { rows: counted } = await db.drizzle.db.execute<{ n: number }>(query);
       return counted[0]?.n;
     };
-    // The subscriber has handled the delivered event too once its dedupe record is in, and
-    // whatever it queued has shipped once the outbox is empty.
+    // The subscriber has handled the delivered event too once its dedupe record is in; draining
+    // then ships whatever it queued.
     await vi.waitFor(
       async () =>
         expect(
@@ -205,10 +208,8 @@ describe('audit trail with two services of one deployment up', () => {
         ).toBe(1),
       { timeout: 10_000 },
     );
-    await vi.waitFor(
-      async () => expect(await count(sql`select count(*)::int as n from audit_outbox`)).toBe(0),
-      { timeout: 10_000 },
-    );
+    await drainAuditOutbox(db.drizzle.db);
+    expect(await count(sql`select count(*)::int as n from audit_outbox`)).toBe(0);
 
     expect(await rowsFor(kept)).toBe(1);
     expect(await rowsFor(lost)).toBe(0);

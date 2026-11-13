@@ -11,6 +11,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -73,6 +74,7 @@ async function backdateExclusionExpiry(
 }
 
 async function auditEntries(admin: TestClient, resourceId: string, action: string) {
+  await flushAudit(app);
   const res = await admin.get(
     `/audit/logs?resourceId=${resourceId}&action=${encodeURIComponent(action)}`,
   );
@@ -240,7 +242,7 @@ describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => 
     });
     expect(assignRes.status).toBe(200);
     expect(await activeTagKeys(admin, playerId)).toContain('multi_account');
-    // Written in the assignment's own transaction, so it is there once the request returns.
+    // Queued in the assignment's own transaction, so a flush ships it without polling.
     expect(await auditEntries(admin, playerId, 'tag.player.assigned')).toHaveLength(1);
 
     const removeRes = await admin.request(`/player/${playerId}/player-tag/multi_account`, {

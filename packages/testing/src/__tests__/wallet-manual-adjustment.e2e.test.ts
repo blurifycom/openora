@@ -7,6 +7,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -95,6 +96,7 @@ describe('manual wallet adjustment', () => {
       ]),
     );
 
+    await flushAudit(testApp);
     const auditRaw: unknown = await (
       await admin.get(
         `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.manual_adjustment.created`,

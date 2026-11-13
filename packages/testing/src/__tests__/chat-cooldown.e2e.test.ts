@@ -12,6 +12,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   registerChatter,
 } from '../index.js';
 
@@ -83,6 +84,7 @@ describe('chat: back-office player cooldowns', () => {
     expect((await admin.post('/backoffice/chat/cooldowns/lift', lift)).status).toBe(200);
     expect(await listCooldowns(player.userId)).toEqual([]);
     expect((await send()).status).toBe(200);
+    await flushAudit(app);
     const lifted = await app.container
       .get(DRIZZLE)
       .db.select({ after: auditLog.after })
@@ -140,6 +142,7 @@ describe('chat: back-office player cooldowns', () => {
     expect(await listCooldowns(player.userId)).toEqual([
       expect.objectContaining({ scope: '__all_public', cooldownSeconds: 120, reason: 'second' }),
     ]);
+    await flushAudit(app);
     const trail = await app.container
       .get(DRIZZLE)
       .db.select({ before: auditLog.before, after: auditLog.after })

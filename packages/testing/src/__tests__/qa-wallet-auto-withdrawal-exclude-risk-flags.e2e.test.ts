@@ -18,6 +18,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
   verifyKyc,
   assignTag,
@@ -370,6 +371,7 @@ describe('audit trail', () => {
       excludeRiskFlags: ['vip', 'large_depositor'],
     });
 
+    await flushAudit(appMain);
     const auditRes = await superAdmin.get(
       `/audit/logs?action=wallet.auto_withdrawal_config.set&limit=1`,
     );
@@ -407,6 +409,7 @@ describe('audit trail', () => {
     );
     expect(res.status).toBe('completed');
 
+    await flushAudit(appMain);
     const auditRes = await superAdmin.get(
       `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.withdrawal.auto_approved`,
     );

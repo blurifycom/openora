@@ -23,6 +23,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 import { WAIT, chatInviteHelpers } from '../chat-invite-helpers.js';
 
@@ -192,6 +193,7 @@ describe('chat room invites: who may invite', () => {
 
     for (const action of ['create', 'search', 'lookup']) {
       await vi.waitFor(async () => {
+        await flushAudit(app);
         const auditRes = await admin.get(
           `/audit/logs?actorId=${member.playerId}&resourceId=chat.room_invite:${action}&action=identity.user.unauthorized_access`,
         );
@@ -443,6 +445,7 @@ describe('chat room invites: accepting', () => {
     expect(sentMessage.status).toBe(200);
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${sent.id}&action=chat.room.invite.accepted`,
       );
@@ -670,6 +673,7 @@ describe('chat room invites: declining and expiry', () => {
     expect(await inviteRow(stale.id)).toMatchObject({ status: 'expired', respondedAt: null });
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${stale.id}&action=chat.room.invite.expired`,
       );

@@ -11,6 +11,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -72,6 +73,7 @@ async function tagIdsFor(gameId: string) {
 }
 
 async function bulkAuditEntriesFor(gameId: string) {
+  await flushAudit(app);
   const res = await admin.get(
     `/audit/logs?action=${encodeURIComponent('gaming.games.bulk_updated')}&resourceType=game&limit=100&sortOrder=desc`,
   );
@@ -116,6 +118,7 @@ async function waitForLaterBulkAuditRow(providerId: string) {
 }
 
 async function providerAuditEntriesFor(providerId: string) {
+  await flushAudit(app);
   const res = await admin.get(
     `/audit/logs?action=${encodeURIComponent('gaming.provider.updated')}&resourceType=game_provider&resourceId=${providerId}&limit=100&sortOrder=desc`,
   );
@@ -488,6 +491,7 @@ describe('gaming bulk catalog actions e2e', () => {
     expect((await app.app.request(`/gaming/games/${target.id}`)).status).toBe(200);
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await admin.get(
         `/audit/logs?action=${encodeURIComponent('gaming.games.reviewed')}&resourceType=game&resourceId=${target.id}&limit=10`,
       );

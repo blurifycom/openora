@@ -885,6 +885,7 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
     };
     await deliver(readable);
 
+    await flushAudit(app());
     const res = await adminClient().get(
       `/audit/logs?resourceId=${findingId}&action=wallet.reconciliation_finding.filled&limit=50`,
     );
@@ -933,6 +934,7 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
     const { event, findingId } = await reportedUnreadable(player);
     await reconcile([event]);
 
+    await flushAudit(app());
     const res = await adminClient().get(
       `/audit/logs?resourceId=${findingId}&action=wallet.reconciliation_finding.filled&limit=50`,
     );

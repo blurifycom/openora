@@ -19,6 +19,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   registerChatter,
 } from '../index.js';
 
@@ -306,6 +307,7 @@ describe('chat: message history', () => {
 });
 
 async function auditRows(action: string, resourceId: string) {
+  await flushAudit(app);
   return app.container
     .get(DRIZZLE)
     .db.select()

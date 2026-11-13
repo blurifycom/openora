@@ -13,6 +13,7 @@ import {
   type TestDb,
   type TestApp,
   type TestClient,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -77,6 +78,7 @@ function requestWithdrawal(client: TestClient) {
 }
 
 async function auditActions(grantId: string, action: string) {
+  await flushAudit(app);
   const body = await readJson(
     await admin.get(`/audit/logs?resourceId=${grantId}&action=${action}&limit=50`),
   );

@@ -14,6 +14,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -53,7 +54,10 @@ const ladderRows = () =>
     .from(promoRankTier)
     .orderBy(promoRankTier.position);
 
-const auditRows = () => drizzle().select().from(auditLog).where(eq(auditLog.action, LADDER_ACTION));
+const auditRows = async () => {
+  await flushAudit(app);
+  return drizzle().select().from(auditLog).where(eq(auditLog.action, LADDER_ACTION));
+};
 
 // audit_log is append-only, so a test counts what its own call added rather than clearing rows.
 const auditCount = async () => (await auditRows()).length;

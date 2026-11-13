@@ -709,6 +709,7 @@ describe('confirm at changed odds', () => {
   const acceptedAudit = async (betId: string) => {
     let after: Record<string, unknown> | undefined;
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const [row] = await app.container
         .get(DRIZZLE)
         .db.select({ after: auditLog.after })
@@ -824,11 +825,13 @@ describe('confirm at changed odds', () => {
 
   it('keeps one audit row when the broker redelivers a callback event', async () => {
     const drizzle = app.container.get(DRIZZLE).db;
-    const placedAudits = (betId: string) =>
-      drizzle
+    const placedAudits = async (betId: string) => {
+      await flushAudit(app);
+      return drizzle
         .select({ id: auditLog.id })
         .from(auditLog)
         .where(and(eq(auditLog.resourceId, betId), eq(auditLog.action, 'sportsbook.bet.placed')));
+    };
     const placedEvent = async (betId: string) => {
       const [row] = await drizzle
         .select()
@@ -1098,14 +1101,16 @@ describe('provider disagreement', () => {
   it('writes one audit row for an aligned step, not a second one from its event', async () => {
     const player = await fundedPlayer(app, '100');
     const { args, betId } = await acceptedBet(app, player);
-    const actions = async () =>
-      (
+    const actions = async () => {
+      await flushAudit(app);
+      return (
         await app.container
           .get(DRIZZLE)
           .db.select({ action: auditLog.action })
           .from(auditLog)
           .where(eq(auditLog.resourceId, betId))
       ).map((r) => r.action);
+    };
     await vi.waitFor(async () => expect(await actions()).toContain('sportsbook.bet.accepted'));
     mockSportsbookProviderState.statuses.set(args.providerBetId, {
       status: 'settled',
@@ -1118,6 +1123,7 @@ describe('provider disagreement', () => {
     const control = await acceptedBet(app, player);
     expectApplied(await settleWon(control.args.providerBetId, '25'));
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const rows = await app.container
         .get(DRIZZLE)
         .db.select({ action: auditLog.action })

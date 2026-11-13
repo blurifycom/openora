@@ -7,7 +7,15 @@ import { auditLog } from '@openora/core/audit/schema';
 import { countryRule } from '@openora/core/compliance/schema';
 import { promoOffer } from '@openora/core/promo/schema/bonus';
 import { user } from '@openora/core/pam/schema/identity';
-import { asAdmin, type TestApp, type TestDb, uniqueUsername, bootE2e, closeE2e } from '../index.js';
+import {
+  asAdmin,
+  type TestApp,
+  type TestDb,
+  uniqueUsername,
+  bootE2e,
+  closeE2e,
+  flushAudit,
+} from '../index.js';
 import { forceEmailVerified } from '../register.js';
 
 const BLOCKED_IP = '203.0.113.10';
@@ -47,7 +55,8 @@ function register(ip: string, email: string) {
   });
 }
 
-function geoAuditRows(action: string, countryCode: string) {
+async function geoAuditRows(action: string, countryCode: string) {
+  await flushAudit(app);
   return app.container
     .get(DRIZZLE)
     .db.select()

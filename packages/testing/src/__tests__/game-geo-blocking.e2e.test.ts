@@ -14,6 +14,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -54,12 +55,14 @@ function startFromBlockedCountry(gameId: string) {
 }
 
 async function auditEntries(resourceId: string, action: string) {
+  await flushAudit(app);
   const response = await admin.get(`/audit/logs?resourceId=${resourceId}&action=${action}`);
   expect(response.status).toBe(200);
   return (await readJson(response)).items as Array<Record<string, unknown>>;
 }
 
 async function bulkAuditEntries(gameId: string, operation: 'restrict' | 'unrestrict') {
+  await flushAudit(app);
   const response = await admin.get('/audit/logs?action=compliance.game-geo-rules.bulk_updated');
   expect(response.status).toBe(200);
   const entries = (await readJson(response)).items as Array<Record<string, unknown>>;
@@ -726,6 +729,7 @@ describe('background sync ownership', () => {
   }
 
   async function syncAuditEntries(gameId: string) {
+    await flushAudit(app);
     const response = await admin.get('/audit/logs?action=compliance.game-geo-rules.synced');
     expect(response.status).toBe(200);
     const entries = (await readJson(response)).items as Array<Record<string, unknown>>;
