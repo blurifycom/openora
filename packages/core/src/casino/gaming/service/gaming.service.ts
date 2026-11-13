@@ -835,7 +835,16 @@ export class GamingService {
     },
   ): Promise<{ roundId: GameRound['id']; betAmount: string; winAmount: string }> {
     const txn = tx as DrizzleDb;
-    await assertLedgerGame(txn, args.gameId);
+    // Only opening a round needs a game the ledger knows. A win, refund, rollback or final on a
+    // round that exists always lands: refusing it would lose money the provider already moved.
+    const [existing] = await txn
+      .select({ id: gameRound.id })
+      .from(gameRound)
+      .where(eq(gameRound.externalRoundId, args.externalRoundId))
+      .limit(1);
+    if (!existing) {
+      await assertLedgerGame(txn, args.gameId);
+    }
     const betDelta = args.betDelta ?? '0';
     const winDelta = args.winDelta ?? '0';
     const reversedStake = sql`greatest(-(${betDelta}::numeric), 0)`;

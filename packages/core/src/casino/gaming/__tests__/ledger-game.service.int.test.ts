@@ -6,7 +6,11 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { game, gameProvider, ledgerGame } from '../schema/index.js';
-import { applyLedgerGames, emitLedgerGames } from '../service/ledger-game.service.js';
+import {
+  applyLedgerGames,
+  backfillLedgerGamesAtBoot,
+  emitLedgerGames,
+} from '../service/ledger-game.service.js';
 import { backfillLedgerGames } from '../seed/index.js';
 
 let db: TestDb;
@@ -52,14 +56,14 @@ describe('game ledger_version trigger (real PG)', () => {
     const provider = await seedProvider();
     const other = await seedProvider();
     const created = await seedGame(provider.id);
-    expect(created.ledgerVersion).toBe(0);
+    expect(created.ledgerVersion).toBeGreaterThan(0);
 
     const [renamed] = await db.drizzle.db
       .update(game)
-      .set({ name: 'Renamed', ledgerVersion: 41 })
+      .set({ name: 'Renamed', ledgerVersion: 1_000_000 })
       .where(eq(game.id, created.id))
       .returning();
-    expect(renamed?.ledgerVersion).toBe(0);
+    expect(renamed?.ledgerVersion).toBe(created.ledgerVersion);
 
     const [moved] = await db.drizzle.db
       .update(game)
@@ -71,8 +75,37 @@ describe('game ledger_version trigger (real PG)', () => {
       .set({ gameType: 'original' })
       .where(eq(game.id, created.id))
       .returning();
-    expect(moved?.ledgerVersion).toBe(1);
-    expect(retyped?.ledgerVersion).toBe(2);
+    expect(moved?.ledgerVersion).toBeGreaterThan(created.ledgerVersion);
+    expect(retyped?.ledgerVersion).toBeGreaterThan(moved?.ledgerVersion ?? Infinity);
+  });
+
+  it('gives a game deleted and re-inserted under the same id a newer version than it had', async () => {
+    const provider = await seedProvider();
+    const other = await seedProvider();
+    const created = await seedGame(provider.id);
+    await backfillLedgerGames(db.drizzle.db);
+
+    await db.drizzle.db.delete(game).where(eq(game.id, created.id));
+    const reinserted = findOneOrThrow(
+      await db.drizzle.db
+        .insert(game)
+        .values({
+          id: created.id,
+          name: 'Game',
+          slug: `game-${randomUUID()}`,
+          providerId: other.id,
+          aggregator: 'agg',
+          ledgerVersion: 0,
+        })
+        .returning(),
+      new Error('seed: no game'),
+    );
+    await backfillLedgerGames(db.drizzle.db);
+
+    expect(reinserted.ledgerVersion).toBeGreaterThan(created.ledgerVersion);
+    expect(await projected(created.id)).toEqual([
+      expect.objectContaining({ providerId: other.id, version: reinserted.ledgerVersion }),
+    ]);
   });
 });
 
@@ -119,9 +152,16 @@ describe('ledger_game projection (real PG)', () => {
     expect(events.emitInTransaction).toHaveBeenCalledTimes(1);
     expect(events.emitInTransaction).toHaveBeenCalledWith(
       expect.anything(),
-      'gaming.game.changed',
+      'gaming.ledger_game.projected',
       {
-        games: [{ gameId: created.id, providerId: provider.id, gameType: 'casino', version: 0 }],
+        games: [
+          {
+            gameId: created.id,
+            providerId: provider.id,
+            gameType: 'casino',
+            version: created.ledgerVersion,
+          },
+        ],
       },
     );
   });
@@ -133,18 +173,39 @@ describe('backfillLedgerGames (real PG)', () => {
     const first = await seedGame(provider.id);
     const second = await seedGame(provider.id);
     const ahead = { gameId: second.id, providerId: randomUUID(), gameType: 'casino' as const };
-    await applyLedgerGames(db.drizzle.db, [{ ...ahead, version: 5 }]);
+    const aheadVersion = second.ledgerVersion + 1;
+    await applyLedgerGames(db.drizzle.db, [{ ...ahead, version: aheadVersion }]);
 
-    await backfillLedgerGames(db.drizzle.db);
+    await expect(backfillLedgerGames(db.drizzle.db)).resolves.toBe(1);
     const once = await db.drizzle.db.select().from(ledgerGame).orderBy(ledgerGame.gameId);
-    await backfillLedgerGames(db.drizzle.db);
+    await expect(backfillLedgerGames(db.drizzle.db)).resolves.toBe(0);
     const twice = await db.drizzle.db.select().from(ledgerGame).orderBy(ledgerGame.gameId);
 
     expect(twice).toEqual(once);
     expect(once).toHaveLength(2);
     expect(await projected(first.id)).toEqual([
-      expect.objectContaining({ providerId: provider.id, gameType: 'casino', version: 0 }),
+      expect.objectContaining({
+        providerId: provider.id,
+        gameType: 'casino',
+        version: first.ledgerVersion,
+      }),
     ]);
-    expect(await projected(second.id)).toEqual([expect.objectContaining({ ...ahead, version: 5 })]);
+    expect(await projected(second.id)).toEqual([
+      expect.objectContaining({ ...ahead, version: aheadVersion }),
+    ]);
+  });
+
+  it('runs at boot under a lock, so two processes booting together both succeed', async () => {
+    const provider = await seedProvider();
+    await seedGame(provider.id);
+    await seedGame(provider.id);
+
+    const counts = await Promise.all([
+      backfillLedgerGamesAtBoot(db.drizzle.db),
+      backfillLedgerGamesAtBoot(db.drizzle.db),
+    ]);
+
+    expect(counts.sort((a, b) => a - b)).toEqual([0, 2]);
+    expect(await db.drizzle.db.select().from(ledgerGame)).toHaveLength(2);
   });
 });

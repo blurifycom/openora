@@ -716,8 +716,9 @@ export const domainEventSchemas = {
   }),
   // The catalogue facts a round needs, as committed, for the ledger side's `ledger_game`
   // projection. Written to the outbox in the transaction that read them; `version` is the
-  // game row's ledger_version, so a consumer keeps the highest one and ignores the rest.
-  'gaming.game.changed': z.object({
+  // game row's ledger_version, drawn from a sequence, so a consumer keeps the highest one and
+  // ignores the rest. Not `gaming.games.changed`, which feeds the category triggers.
+  'gaming.ledger_game.projected': z.object({
     games: z
       .array(
         z.object({

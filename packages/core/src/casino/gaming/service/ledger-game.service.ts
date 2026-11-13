@@ -1,14 +1,21 @@
-// The round ledger's view of the catalogue: `ledger_game`, fed by `gaming.game.changed`.
+// The round ledger's view of the catalogue: `ledger_game`, fed by `gaming.ledger_game.projected`.
 // Round code reads this table, never `game`, so the ledger stops depending on the catalogue
 // schema. Every write keeps the highest `version`, so a redelivered or reordered event, and a
 // re-run backfill, leave a newer row as it is.
-import type { DrizzleDb, DrizzleTx, EventBus } from '@openora/core/server';
+import {
+  withAdvisoryXactLock,
+  type DrizzleDb,
+  type DrizzleTx,
+  type EventBus,
+} from '@openora/core/server';
 import { GamingUnknownGameError, type DomainEventPayload } from '@openora/core/contracts';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { GAMES_CHANGED_EVENT_BATCH } from '../contract/index.js';
 import { game, ledgerGame, type Game } from '../schema/index.js';
 
-type LedgerGameSnapshot = DomainEventPayload<'gaming.game.changed'>['games'][number];
+type LedgerGameSnapshot = DomainEventPayload<'gaming.ledger_game.projected'>['games'][number];
+
+const BACKFILL_LOCK_KEY = 'gaming:ledger_game:backfill';
 
 const keepNewest = {
   target: ledgerGame.gameId,
@@ -63,17 +70,17 @@ export async function emitLedgerGames(
       .from(game)
       .where(inArray(game.id, uniqueIds.slice(start, start + GAMES_CHANGED_EVENT_BATCH)));
     if (games.length > 0) {
-      await events.emitInTransaction(tx, 'gaming.game.changed', { games });
+      await events.emitInTransaction(tx, 'gaming.ledger_game.projected', { games });
     }
   }
 }
 
 /**
- * Projects every catalogue game into `ledger_game`. Convergent, so it runs after every
- * migrate: it seeds a fresh ledger and heals a projection that missed an event.
+ * Projects every catalogue game into `ledger_game` and returns how many rows it wrote.
+ * Convergent: it seeds a fresh ledger and heals a projection that missed an event.
  */
-export async function backfillLedgerGames(db: DrizzleDb): Promise<void> {
-  await db
+export async function backfillLedgerGames(db: DrizzleDb | DrizzleTx): Promise<number> {
+  const result = await db
     .insert(ledgerGame)
     .select(
       db
@@ -87,4 +94,12 @@ export async function backfillLedgerGames(db: DrizzleDb): Promise<void> {
         .from(game),
     )
     .onConflictDoUpdate(keepNewest);
+  return result.rowCount ?? 0;
+}
+
+/** The boot run of `backfillLedgerGames`: replicas booting together take turns, not race. */
+export function backfillLedgerGamesAtBoot(db: DrizzleDb): Promise<number> {
+  return db.transaction((tx) =>
+    withAdvisoryXactLock(tx, BACKFILL_LOCK_KEY, () => backfillLedgerGames(tx)),
+  );
 }

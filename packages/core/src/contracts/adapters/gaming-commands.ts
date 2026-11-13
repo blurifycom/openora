@@ -45,10 +45,12 @@ export type GamingNotifyGamesChangedArgs = {
 };
 
 /**
- * A round named a game the ledger has no `ledger_game` row for: the catalogue never reported
- * it, or the projection has not caught up. Thrown before any round row or money moves, so the
- * caller's transaction rolls back whole. A provider bridge answers it with a final, non-retry
- * "unknown game" code; a retry cannot succeed until the projection holds the game.
+ * A new round would open on a game the ledger has no `ledger_game` row for: the catalogue never
+ * reported it, or the projection has not caught up. Only opening a round is refused; a call on
+ * a round that already exists (a win, a refund, a rollback, a final) never is. Thrown before any
+ * round row or money moves, so the caller's transaction rolls back whole. A provider bridge
+ * answers it, on the stake that would open the round, with a final, non-retry "unknown game"
+ * code that refuses the bet.
  */
 export class GamingUnknownGameError extends Error {
   readonly gameId: string;
@@ -60,7 +62,11 @@ export class GamingUnknownGameError extends Error {
 }
 
 export type GamingCommands = {
-  /** Throws GamingUnknownGameError, before writing anything, for a game `ledger_game` lacks. */
+  /**
+   * Throws GamingUnknownGameError, before writing anything, when no round with this
+   * `externalRoundId` exists yet and `ledger_game` lacks the game. A call on an existing round
+   * is never refused for its game.
+   */
   accumulateExternalRound(
     tx: unknown,
     args: GamingAccumulateExternalRoundArgs,

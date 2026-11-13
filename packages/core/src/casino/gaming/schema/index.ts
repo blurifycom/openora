@@ -164,8 +164,9 @@ export const game = pgTable(
     reviewStatus: gameReviewStatusEnum().notNull().default('pending'),
     reviewedAt: timestamp({ withTimezone: true }),
     metadata: jsonb(),
-    // Bumped by the game_ledger_version trigger whenever a column `ledger_game` projects
-    // changes, from any writer, so a stale `gaming.game.changed` never overwrites a newer one.
+    // Drawn from game_ledger_version_seq by the game_ledger_version trigger on insert and
+    // whenever a column `ledger_game` projects changes, from any writer, so it only grows,
+    // across a delete and re-insert too, and a stale event never overwrites a newer one.
     ledgerVersion: integer().notNull().default(0),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     // Legacy pre-0003 free-text columns. Retained (unread, unwritten by new code)
@@ -273,7 +274,7 @@ export const gameRound = pgTable(
   {
     id: uuid().primaryKey().defaultRandom(),
     // No FK to the catalogue `game`: a round is ledger-side and resolves its game through
-    // `ledger_game`, the projection the catalogue feeds with `gaming.game.changed`.
+    // `ledger_game`, the projection the catalogue feeds with `gaming.ledger_game.projected`.
     gameId: uuid().notNull(),
     userId: uuid().notNull(),
     status: gameRoundStatusEnum().notNull().default('active'),
@@ -298,8 +299,9 @@ export const gameRound = pgTable(
 );
 
 // The ledger side's own copy of the catalogue facts a round needs, fed only by
-// `gaming.game.changed` and the reference seeder. Rows are never deleted, so a round on a
-// game the catalogue later drops still settles. See docs/modules/gaming.md.
+// `gaming.ledger_game.projected` and the boot backfill. Rows are never deleted, so a round on
+// a game the catalogue later drops still settles and still counts in reporting. See
+// docs/modules/gaming.md.
 export const ledgerGame = pgTable('ledger_game', {
   gameId: uuid().primaryKey(),
   providerId: uuid().notNull(),

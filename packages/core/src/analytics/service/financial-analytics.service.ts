@@ -20,7 +20,7 @@ import type {
   WalletTransactionStatus,
 } from '@openora/core/contracts';
 import { DrizzleService, moneyAdd, moneySubtract } from '@openora/core/server';
-import { game, gameRound } from '@openora/core/casino/schema/gaming';
+import { gameRound, ledgerGame } from '@openora/core/casino/schema/gaming';
 import { sportsbookBet, sportsbookBetTransaction } from '@openora/core/sportsbook/schema/betting';
 import { walletTransaction } from '@openora/core/wallet/schema';
 import {
@@ -330,25 +330,29 @@ export class FinancialAnalyticsService {
     const prior = alias(sportsbookBetTransaction, 'prior_settle');
     const sportsbook = await this.hasSportsbookLedger();
     const book = <T>(query: () => Promise<T[]>) => (sportsbook ? query() : []);
+    // Typed through the ledger's own `ledger_game`, never the catalogue, so a round on a game the
+    // catalogue deleted still counts; a left join and the column default keep even an
+    // unprojected game's rounds in the total.
+    const product = sql<GameType>`coalesce(${ledgerGame.gameType}, 'casino')`;
     const [rounds, bookStakes, bookPayouts, bookReversals] = await Promise.all([
       db
         .select({
-          product: game.gameType,
+          product,
           currency: gameRound.currency,
           stakes: total(gameRound.betAmount),
           payouts: total(gameRound.winAmount),
         })
         .from(gameRound)
-        .innerJoin(game, eq(game.id, gameRound.gameId))
+        .leftJoin(ledgerGame, eq(ledgerGame.gameId, gameRound.gameId))
         .where(
           and(
             eq(gameRound.status, COMPLETED_STATUS),
             // With the book in use its ledger is the sportsbook row, not a catalog game typed so.
-            ...(sportsbook ? [ne(game.gameType, 'sportsbook')] : []),
+            ...(sportsbook ? [ne(product, 'sportsbook')] : []),
             ...inRange(gameRound.startedAt, gameRound.currency, query),
           ),
         )
-        .groupBy(game.gameType, gameRound.currency),
+        .groupBy(product, gameRound.currency),
       book(() =>
         db
           .select({ currency: bet.currency, amount: total(bet.cashStake) })

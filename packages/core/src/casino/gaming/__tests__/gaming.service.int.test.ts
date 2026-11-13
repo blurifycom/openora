@@ -1239,10 +1239,15 @@ describe('GamingService.notifyGamesChanged (real PG)', () => {
 
     expect(events.emitInTransaction).toHaveBeenCalledWith(
       expect.anything(),
-      'gaming.game.changed',
+      'gaming.ledger_game.projected',
       {
         games: [
-          { gameId: changed.id, providerId: changed.providerId, gameType: 'casino', version: 0 },
+          {
+            gameId: changed.id,
+            providerId: changed.providerId,
+            gameType: 'casino',
+            version: changed.ledgerVersion,
+          },
         ],
       },
     );
@@ -1260,12 +1265,21 @@ describe('GamingService.updateGame round ledger feed (real PG)', () => {
     expect(events.emitInTransaction).not.toHaveBeenCalled();
 
     await svc.updateGame({ id: created.id, providerId: other.id, ...ACTOR });
+    const [moved] = await db.drizzle.db.select().from(game).where(eq(game.id, created.id));
+    expect(moved?.ledgerVersion).toBeGreaterThan(created.ledgerVersion);
     expect(events.emitInTransaction).toHaveBeenCalledTimes(1);
     expect(events.emitInTransaction).toHaveBeenCalledWith(
       expect.anything(),
-      'gaming.game.changed',
+      'gaming.ledger_game.projected',
       {
-        games: [{ gameId: created.id, providerId: other.id, gameType: 'casino', version: 1 }],
+        games: [
+          {
+            gameId: created.id,
+            providerId: other.id,
+            gameType: 'casino',
+            version: moved?.ledgerVersion,
+          },
+        ],
       },
     );
   });
@@ -2189,18 +2203,83 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
     await svc.accumulateExternalRound(db.drizzle.db, { ...args, isFinal: true });
     const [settled] = await db.drizzle.db.select().from(gameRound);
 
-    await db.drizzle.db
+    const [moved] = await db.drizzle.db
       .update(game)
       .set({ providerId: other.id, gameType: 'original' })
-      .where(eq(game.id, created.id));
+      .where(eq(game.id, created.id))
+      .returning();
     await backfillLedgerGames(db.drizzle.db);
 
     expect(await db.drizzle.db.select().from(gameRound)).toEqual([settled]);
     expect(
       await db.drizzle.db.select().from(ledgerGame).where(eq(ledgerGame.gameId, created.id)),
     ).toEqual([
-      expect.objectContaining({ providerId: other.id, gameType: 'original', version: 1 }),
+      expect.objectContaining({
+        providerId: other.id,
+        gameType: 'original',
+        version: moved?.ledgerVersion,
+      }),
     ]);
+  });
+
+  describe('on a round opened before the ledger lost its game', () => {
+    async function openRoundThenForgetGame(externalRoundId: string) {
+      const created = await seedGame({ name: 'Aces' });
+      const svc = makeService();
+      const args = {
+        gameId: created.id,
+        userId: '00000000-0000-0000-0000-000000000509',
+        currency: 'USD',
+        externalRoundId,
+      };
+      await svc.accumulateExternalRound(db.drizzle.db, { ...args, betDelta: '10' });
+      await db.drizzle.db.delete(ledgerGame).where(eq(ledgerGame.gameId, created.id));
+      return { svc, args };
+    }
+
+    async function round(externalRoundId: string) {
+      const [row] = await db.drizzle.db
+        .select()
+        .from(gameRound)
+        .where(eq(gameRound.externalRoundId, externalRoundId));
+      return row;
+    }
+
+    it('still books the win and the final call', async () => {
+      const { svc, args } = await openRoundThenForgetGame('ext-round-lost-win');
+
+      await svc.accumulateExternalRound(db.drizzle.db, { ...args, winDelta: '25', isFinal: true });
+
+      const row = await round('ext-round-lost-win');
+      expect(row).toMatchObject({ status: 'completed' });
+      expect(Number(row?.betAmount)).toBe(10);
+      expect(Number(row?.winAmount)).toBe(25);
+      expect(row?.endedAt).not.toBeNull();
+    });
+
+    it('still books a rollback of the stake', async () => {
+      const { svc, args } = await openRoundThenForgetGame('ext-round-lost-rollback');
+
+      await svc.accumulateExternalRound(db.drizzle.db, { ...args, betDelta: '-10', isFinal: true });
+
+      const row = await round('ext-round-lost-rollback');
+      expect(row).toMatchObject({ status: 'completed' });
+      expect(Number(row?.betAmount)).toBe(0);
+      expect(Number(row?.reversedAmount)).toBe(10);
+    });
+
+    it('still refuses to open a new round on that game', async () => {
+      const { svc, args } = await openRoundThenForgetGame('ext-round-lost-open');
+
+      await expect(
+        svc.accumulateExternalRound(db.drizzle.db, {
+          ...args,
+          externalRoundId: 'ext-round-lost-next',
+          betDelta: '10',
+        }),
+      ).rejects.toBeInstanceOf(GamingUnknownGameError);
+      expect(await round('ext-round-lost-next')).toBeUndefined();
+    });
   });
 
   it('rolls back the accumulated round together with the caller transaction', async () => {

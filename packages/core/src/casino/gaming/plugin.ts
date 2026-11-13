@@ -1,4 +1,4 @@
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
 import type {
   CoreTokenCatalog,
   DrizzleService,
@@ -41,7 +41,7 @@ import { GameTagService } from './service/game-tag.service.js';
 import { GameProviderService } from './service/game-provider.service.js';
 import { GameBulkService } from './service/game-bulk.service.js';
 import { GameFavoriteService } from './service/game-favorite.service.js';
-import { applyLedgerGames } from './service/ledger-game.service.js';
+import { applyLedgerGames, backfillLedgerGamesAtBoot } from './service/ledger-game.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
@@ -57,6 +57,8 @@ import {
   GameCategoryRankJobSchema,
   GameCategoryRankSweepJobSchema,
 } from './contract/index.js';
+
+const logger = createLogger('gaming');
 
 export default {
   id: 'gaming',
@@ -178,11 +180,11 @@ export default {
       requireMembership().triggers.gamesChanged(payload);
     });
     // The round ledger's projection: idempotent and order-proof by version, see ledger-game.service.ts.
-    ctx.events.on('gaming.game.changed', async (payload) => {
+    ctx.events.on('gaming.ledger_game.projected', async (payload) => {
       if (!drizzleRef) {
         throw new Error('gaming: ledger projection not constructed yet');
       }
-      const { games } = domainEventSchemas['gaming.game.changed'].parse(payload);
+      const { games } = domainEventSchemas['gaming.ledger_game.projected'].parse(payload);
       await applyLedgerGames(drizzleRef.db, games);
     });
     ctx.events.on('gaming.tag.deleted', (payload) =>
@@ -224,10 +226,17 @@ export default {
       },
     });
 
+    // createApp runs this factory in every process, a `:no-routes` or worker-only one included
+    // (module-registry.ts), synchronously before any event is delivered.
     ctx.routers.add('gaming', (c) => {
+      drizzleRef = c.get(DRIZZLE);
+      // Fails closed until it lands: a stake on a game not yet projected is refused, never played.
+      void backfillLedgerGamesAtBoot(drizzleRef.db).then(
+        (projected) => logger.info({ projected }, 'gaming: ledger_game backfilled at boot'),
+        (err: unknown) => logger.error({ err }, 'gaming: ledger_game boot backfill failed'),
+      );
       const jobQueue = c.get(JOB_QUEUE);
       catalogCacheRef = c.get(CACHE);
-      drizzleRef = c.get(DRIZZLE);
       const sortCatalog = c.get(GAME_SORT_CATALOG);
       const sorts = new GameSortService(sortCatalog);
       rankingRef = new GameSortRankingService(c.get(DRIZZLE), sorts);

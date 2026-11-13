@@ -7,11 +7,12 @@ import type {
   GameRoundCount,
   GameRoundRankingFilter,
   GameRoundTopFilter,
+  GameType,
   PlayerGameStats,
 } from '@openora/core/contracts';
 import { DrizzleService } from '@openora/core/server';
 import { and, asc, count, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
-import { game, gameRound } from './schema/index.js';
+import { game, gameRound, ledgerGame } from './schema/index.js';
 
 // See ADR-0017/0025.
 export class DrizzleAdminGameReporting implements AdminGameReporting {
@@ -24,8 +25,13 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     // so they live in the join condition, not WHERE - a game with zero completed rounds
     // in range still appears with all-zero metrics rather than being dropped from the
     // report. `gameType` narrows which GAMES appear at all, so it stays in WHERE.
+    // A game is in the catalogue, in the ledger's never-deleted `ledger_game`, or both: a game
+    // the catalogue dropped keeps its rounds in the report, under its id once it has no name.
+    const gameId = sql<string>`coalesce(${game.id}, ${ledgerGame.gameId})`;
+    const gameType = sql<GameType>`coalesce(${game.gameType}, ${ledgerGame.gameType})`;
+    const name = sql<string>`coalesce(${game.name}, ${ledgerGame.gameId}::text)`;
     const joinConditions = [
-      eq(gameRound.gameId, game.id),
+      eq(gameRound.gameId, gameId),
       eq(gameRound.status, 'completed'),
       filter.dateFrom ? gte(gameRound.startedAt, filter.dateFrom) : undefined,
       filter.dateTo ? lte(gameRound.startedAt, filter.dateTo) : undefined,
@@ -37,9 +43,9 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       return [];
     }
     const where = and(
-      filter.gameType ? eq(game.gameType, filter.gameType) : undefined,
+      filter.gameType ? eq(gameType, filter.gameType) : undefined,
       // One array parameter: the list can run to thousands of ids.
-      filter.gameIds ? sql`${game.id} = ANY(${sql.param([...filter.gameIds])}::uuid[])` : undefined,
+      filter.gameIds ? sql`${gameId} = ANY(${sql.param([...filter.gameIds])}::uuid[])` : undefined,
     );
 
     const volume = sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`;
@@ -49,8 +55,8 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     const roundsPlayed = sql<number>`count(${gameRound.id})`;
 
     const sortColumns = {
-      name: game.name,
-      gameType: game.gameType,
+      name,
+      gameType,
       volume,
       revenue,
       uniquePlayers,
@@ -59,21 +65,14 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     const order = filter.sortDir === 'asc' ? asc : desc;
 
     const rows = await db
-      .select({
-        gameId: game.id,
-        name: game.name,
-        gameType: game.gameType,
-        volume,
-        revenue,
-        uniquePlayers,
-        roundsPlayed,
-      })
+      .select({ gameId, name, gameType, volume, revenue, uniquePlayers, roundsPlayed })
       .from(game)
+      .fullJoin(ledgerGame, eq(ledgerGame.gameId, game.id))
       .leftJoin(gameRound, and(...joinConditions))
       .where(where)
-      .groupBy(game.id, game.name, game.gameType)
-      // game.id breaks ties so equal metrics always come back in the same order.
-      .orderBy(order(sortColumns[filter.sortBy ?? 'volume']), asc(game.id));
+      .groupBy(gameId, name, gameType)
+      // The game id breaks ties so equal metrics always come back in the same order.
+      .orderBy(order(sortColumns[filter.sortBy ?? 'volume']), asc(gameId));
 
     return rows.map((r) => ({
       gameId: r.gameId,
@@ -129,10 +128,12 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     filter: GamePerformanceTrendFilter,
   ): Promise<GamePerformanceTrend | null> {
     const db = this.drizzle.db;
+    // A game the catalogue dropped still has a trend while `ledger_game` remembers it.
     const [found] = await db
-      .select({ id: game.id })
+      .select({ found: sql<number>`1` })
       .from(game)
-      .where(eq(game.id, filter.gameId))
+      .fullJoin(ledgerGame, eq(ledgerGame.gameId, game.id))
+      .where(sql`coalesce(${game.id}, ${ledgerGame.gameId}) = ${filter.gameId}`)
       .limit(1);
     if (!found) {
       return null;

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE } from '@openora/core/server';
+import { loadExtensions, DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import { GAMING_COMMANDS } from '@openora/core/contracts';
 import { game, gameProvider, gameRound, ledgerGame } from '@openora/core/casino/schema/gaming';
 import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
@@ -12,6 +12,7 @@ import {
   type TestApp,
   type TestClient,
   bootE2e,
+  bootTestApp,
   closeE2e,
   readJson,
 } from '../index.js';
@@ -78,14 +79,14 @@ async function ledgerOf(userId: string) {
   return { balance: balances[0]?.amount, rows };
 }
 
+let bootPlugins: Awaited<ReturnType<typeof loadExtensions>>;
+
 beforeAll(async () => {
-  ({ db, app } = await bootE2e({
-    plugins: [
-      ...(await loadExtensions()),
-      { id: 'testing-exchange-rate-provider', path: exchangeRatePluginPath },
-    ],
-    seed: false,
-  }));
+  bootPlugins = [
+    ...(await loadExtensions()),
+    { id: 'testing-exchange-rate-provider', path: exchangeRatePluginPath },
+  ];
+  ({ db, app } = await bootE2e({ plugins: bootPlugins, seed: false }));
 }, 60_000);
 
 afterAll(async () => {
@@ -94,8 +95,9 @@ afterAll(async () => {
 
 describe('round ledger e2e', () => {
   it('refuses a round on a game the ledger has not been told about and moves no money', async () => {
-    const imported = await importGame('Unreported');
+    // Funded first, so the boot backfill has run and cannot project the game imported next.
     const { client, userId } = await fundedPlayer('unreported');
+    const imported = await importGame('Unreported');
     const before = await ledgerOf(userId);
 
     const res = await client.post('/gaming/rounds/start', {
@@ -115,7 +117,9 @@ describe('round ledger e2e', () => {
   it('plays a reported game, and a later catalogue change leaves the settled round as it was', async () => {
     const imported = await importGame('Reported');
     await app.container.get(GAMING_COMMANDS).notifyGamesCreated?.({ gameIds: [imported.id] });
-    await vi.waitFor(async () => expect(await projectedVersion(imported.id)).toBe(0));
+    await vi.waitFor(async () =>
+      expect(await projectedVersion(imported.id)).toBe(imported.ledgerVersion),
+    );
     const { client, userId } = await fundedPlayer('reported');
 
     const start = await client.post('/gaming/rounds/start', {
@@ -130,16 +134,42 @@ describe('round ledger e2e', () => {
     const settledLedger = await ledgerOf(userId);
     expect(settledLedger.balance).toBe('70.000000000000000000');
 
-    await drizzle()
+    const [moved] = await drizzle()
       .update(game)
       .set({ providerId: (await importGame('Acquirer')).providerId, gameType: 'original' })
-      .where(eq(game.id, imported.id));
+      .where(eq(game.id, imported.id))
+      .returning();
     await app.container.get(GAMING_COMMANDS).notifyGamesChanged?.({ gameIds: [imported.id] });
-    await vi.waitFor(async () => expect(await projectedVersion(imported.id)).toBe(1));
+    await vi.waitFor(async () =>
+      expect(await projectedVersion(imported.id)).toBe(moved?.ledgerVersion),
+    );
 
     expect(await drizzle().select().from(gameRound).where(eq(gameRound.id, roundId))).toEqual(
       settledRound,
     );
     expect(await ledgerOf(userId)).toEqual(settledLedger);
+  });
+
+  it('projects a snapshot delivered over the bus through the gaming handler', async () => {
+    const gameId = randomUUID();
+
+    app.container.get(EVENT_BUS).emit('gaming.ledger_game.projected', {
+      games: [{ gameId, providerId: randomUUID(), gameType: 'casino', version: 7 }],
+    });
+
+    await vi.waitFor(async () => expect(await projectedVersion(gameId)).toBe(7));
+  });
+
+  it('backfills at boot a game an importer wrote without notifying', async () => {
+    const imported = await importGame('Silent');
+    const rebooted = await bootTestApp({ plugins: bootPlugins, databaseUrl: db.url });
+
+    try {
+      await vi.waitFor(async () =>
+        expect(await projectedVersion(imported.id)).toBe(imported.ledgerVersion),
+      );
+    } finally {
+      await rebooted.close();
+    }
   });
 });
