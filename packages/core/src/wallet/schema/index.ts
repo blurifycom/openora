@@ -615,6 +615,10 @@ export const walletReconciliationFinding = pgTable(
       .where(sql`${t.externalId} IS NOT NULL`),
     index('wallet_reconciliation_finding_status_created_at_idx').on(t.status, t.createdAt),
     index('wallet_reconciliation_finding_run_id_idx').on(t.runId),
+    // Every ledger run looks up the open findings of one kind by key prefix, page by page.
+    index('wallet_reconciliation_finding_open_kind_external_id_idx')
+      .on(t.kind, t.providerName, t.externalId)
+      .where(sql`${t.status} = 'open'`),
   ],
 );
 
