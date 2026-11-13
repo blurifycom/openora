@@ -28,6 +28,7 @@ const ALLOW = [
   'git commit -m "x" 2>&1 | tail -1',
   'for i in 1 2; do gh pr view "$i"; done',
   'bash -c "gh pr view 5"',
+  'gh api repos/o/r/pulls/5/comments \\\n  --paginate',
 ];
 
 const DENY = [
@@ -60,6 +61,16 @@ const DENY = [
   '/opt/homebrew/bin/gh pr comment 5 -b x',
   'bash -c "glab mr note 2 -m x"',
   'git push & gh pr comment 5 -b x',
+  'gh api repos/o/r/pulls/1/comments \\\n  -f body=x',
+  'gh pr review 1 --approve -bLGTM',
+  "gh api graphql -f query='\nmutation { addPullRequestReviewThreadReply(input: {}) { comment { id } } }'",
+  'Q=x; gh api graphql -f query="$Q"',
+  'gh api graphql -f query="$(cat m.graphql)"',
+  'out=$(gh pr comment 1 -b x)',
+  'echo `glab mr note 2 -m x`',
+  'eval "gh pr comment 1 -b x"',
+  'pnpm exec gh pr comment 1 -b x',
+  'glab api -X POST "projects/1/merge_requests/2/discussions/" -f body=x',
   'glab api "projects/1/merge_requests/2/draft_notes" -f note=x',
   'glab api -X POST "projects/1/merge_requests/2/draft_notes/bulk_publish"',
   'glab api -X PUT "projects/1/merge_requests/2/draft_notes/3/publish"',

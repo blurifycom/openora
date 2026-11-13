@@ -130,13 +130,13 @@ Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-
 - Each thread is checked against the code on this branch first: correct | already handled | wrong on this branch | out of scope. Only a correct one changes code; the rest get an answer.
 - A red job is reproduced locally first; `builder` fixes its cause. Never skip or loosen a test.
 - Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched, and their clips replace the old ones in the MR description. Nothing is pushed untested.
-- Push the ticket branch without asking (a force-push only as above). Then draft one reply per thread in the user's voice, with what changed and the test that proves it, or why nothing changed, and print them for the user to post; never post them. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer. Add the last-comment id of every thread you handled (a drafted reply, or a bot note that needs none) to `drafted` in `.claude/reviews/<branch with / as +>.json` in the main checkout, so a resumed run still knows them.
+- Push the ticket branch without asking (a force-push only as above). Then draft one reply per thread in the user's voice, with what changed and the test that proves it, or why nothing changed, and print them for the user to post; never post them. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer. Add the last-comment id of every thread you handled (a drafted reply, or a bot note that needs none) to `.claude/reviews/<branch with / as +>.drafted.json` (a JSON array, its own file so a review save never drops it) in the main checkout, so a resumed run still knows them.
 
 Then 7.
 
 ### 7. Ready for review
 
-Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` (plus `--drafted <id,id>` with every id from `drafted` in `.claude/reviews/<branch with / as +>.json` in the main checkout, on every start and resume) as a background command, never a sleep loop in the session. It prints one line and exits when there is work:
+Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` (plus `--drafted <id,id>` with every id from `.claude/reviews/<branch with / as +>.drafted.json` (a JSON array, its own file so a review save never drops it) in the main checkout, on every start and resume) as a background command, never a sleep loop in the session. It prints one line and exits when there is work:
 
 - `failed` or `conflicts` -> 6, then watch again. Still red after three fixes -> blocker comment, report, stop.
 - `threads <ids>` (unanswered for two checks in a row, from a person or a bot) -> 6 for those, then watch again. A thread the forge's AI review opens is a blocker it found on this head: it counts like a person's.
