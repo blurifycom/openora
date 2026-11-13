@@ -38,11 +38,17 @@ async function seedProvider() {
   );
 }
 
-async function seedGame(providerId: string) {
+async function seedGame(providerId: string, overrides: Partial<typeof game.$inferInsert> = {}) {
   return findOneOrThrow(
     await db.drizzle.db
       .insert(game)
-      .values({ name: 'Game', slug: `game-${randomUUID()}`, providerId, aggregator: 'agg' })
+      .values({
+        name: 'Game',
+        slug: `game-${randomUUID()}`,
+        providerId,
+        aggregator: 'agg',
+        ...overrides,
+      })
       .returning(),
     new Error('seed: no game'),
   );
@@ -76,8 +82,14 @@ describe('game ledger_version trigger (real PG)', () => {
       .set({ gameType: 'original' })
       .where(eq(game.id, created.id))
       .returning();
+    const [repriced] = await db.drizzle.db
+      .update(game)
+      .set({ rtp: '0.95', wagerProduct: 'live-casino' })
+      .where(eq(game.id, created.id))
+      .returning();
     expect(moved?.ledgerVersion).toBeGreaterThan(created.ledgerVersion);
     expect(retyped?.ledgerVersion).toBeGreaterThan(moved?.ledgerVersion ?? Infinity);
+    expect(repriced?.ledgerVersion).toBeGreaterThan(retyped?.ledgerVersion ?? Infinity);
   });
 
   it('gives a game deleted and re-inserted under the same id a newer version than it had', async () => {
@@ -143,7 +155,7 @@ describe('ledger_game projection (real PG)', () => {
 
   it('writes the committed catalogue state to the outbox in the caller transaction', async () => {
     const provider = await seedProvider();
-    const created = await seedGame(provider.id);
+    const created = await seedGame(provider.id, { wagerProduct: 'live-casino', rtp: '0.95' });
     const events = makeEventBus();
 
     await db.drizzle.db.transaction((tx) =>
@@ -160,6 +172,8 @@ describe('ledger_game projection (real PG)', () => {
             gameId: created.id,
             providerId: provider.id,
             gameType: 'casino',
+            wagerProduct: 'live-casino',
+            rtp: '0.950000000000000000',
             version: created.ledgerVersion,
           },
         ],

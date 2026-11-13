@@ -118,8 +118,13 @@ export type {
   GamingNotifyGamesCreatedArgs,
   GamingNotifyGamesChangedArgs,
   GamingAccumulateExternalRoundOutcome,
+  GamingRoundWager,
 } from './gaming-commands.js';
-export { GAMING_COMMANDS, GamingUnknownGameError } from './gaming-commands.js';
+export {
+  GAMING_COMMANDS,
+  GamingRoundOwnerMismatchError,
+  GamingUnknownGameError,
+} from './gaming-commands.js';
 
 export type {
   CatalogCategoryWithGameCount,

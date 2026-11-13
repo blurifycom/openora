@@ -41,6 +41,10 @@ import {
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
+  type GamingAccumulateExternalRoundArgs,
+  type GamingAccumulateExternalRoundOutcome,
+  GamingRoundOwnerMismatchError,
+  GamingUnknownGameError,
   type GamingNotifyGamesChangedArgs,
   type GamingSetGameAvailabilityArgs,
   type GamingSetGameAvailabilityOutcome,
@@ -93,7 +97,7 @@ import {
   type ListGamesInput,
   type UpdateGameInput,
 } from '../contract/index.js';
-import { assertLedgerGame, emitLedgerGames } from './ledger-game.service.js';
+import { assertLedgerGame, emitLedgerGames, readLedgerGame } from './ledger-game.service.js';
 
 const logger = createLogger('gaming');
 
@@ -164,12 +168,6 @@ export const WinAmountInvalidError = createDomainError<[roundId: string, winAmou
   'WinAmountInvalidError',
   (roundId, winAmount) =>
     `round ${roundId} won ${JSON.stringify(winAmount)}, which is not a decimal with at most 18 places`,
-);
-
-export const ExternalRoundOwnerMismatchError = createDomainError<[externalRoundId: string]>(
-  'ExternalRoundOwnerMismatchError',
-  (externalRoundId) =>
-    `externalRoundId ${externalRoundId} is already tagged to a different game/user`,
 );
 
 // Reads the links through the caller's transaction so the snapshot matches the
@@ -646,7 +644,7 @@ export class GamingService {
     // Every event below commits with the debit through the outbox - see the module-level
     // comment on WalletCommandsService for why the port itself never emits them.
     const round = await this.drizzle.db.transaction(async (tx) => {
-      await assertLedgerGame(tx, gameId);
+      const { rtp } = await assertLedgerGame(tx, gameId);
       // The same currency the RG pre-check above weighed. Left off, the debit falls on the
       // player's active currency, and the two would then judge different moves.
       const outcome = await this.walletCommands.debit(tx, {
@@ -654,7 +652,12 @@ export class GamingService {
         amount: betAmount,
         currency,
         type: 'bet',
-        context: { provider: INTERNAL_ROUND_PROVIDER, product: INTERNAL_ROUND_PRODUCT, gameId },
+        context: {
+          provider: INTERNAL_ROUND_PROVIDER,
+          product: INTERNAL_ROUND_PRODUCT,
+          gameId,
+          ...(rtp === null ? {} : { rtp }),
+        },
         providerRef: {
           providerName: INTERNAL_ROUND_PROVIDER,
           providerRefId: `bet:${roundId}`,
@@ -674,6 +677,8 @@ export class GamingService {
             currency,
             betAmount,
             status: 'active',
+            wagerProduct: INTERNAL_ROUND_PRODUCT,
+            rtp,
           })
           .returning(),
         new GameRoundNotFoundError(gameId),
@@ -825,32 +830,27 @@ export class GamingService {
    */
   async accumulateExternalRound(
     tx: unknown,
-    args: {
-      gameId: Game['id'];
-      userId: User['id'];
-      currency: string;
-      externalRoundId: NonNullable<GameRound['externalRoundId']>;
-      betDelta?: string;
-      winDelta?: string;
-      isFinal?: boolean;
-    },
-  ): Promise<{ roundId: GameRound['id']; betAmount: string; winAmount: string }> {
+    args: GamingAccumulateExternalRoundArgs,
+  ): Promise<GamingAccumulateExternalRoundOutcome> {
     const txn = tx as DrizzleDb;
     // Canonical form first: `::numeric` reads '1e1' or ' 10' as a stake the guard below would miss.
     const betDelta = SignedMoneyAmountSchema.parse(args.betDelta ?? '0');
+    const projected = await readLedgerGame(txn, args.gameId);
     // Only a stake that opens a round needs a game the ledger knows. A win, refund, rollback or
     // final always lands, also as a round's first call (a free-round result, a settle that beats
     // its bet): refusing it would lose money the provider already moved.
-    if (isPositiveMoney(betDelta)) {
+    if (isPositiveMoney(betDelta) && !projected) {
       const [existing] = await txn
         .select({ id: gameRound.id })
         .from(gameRound)
         .where(eq(gameRound.externalRoundId, args.externalRoundId))
         .limit(1);
       if (!existing) {
-        await assertLedgerGame(txn, args.gameId);
+        throw new GamingUnknownGameError(args.gameId);
       }
     }
+    const wagerProduct = args.wager?.product ?? projected?.product ?? null;
+    const rtp = args.wager?.rtp ?? projected?.rtp ?? null;
     const winDelta = SignedMoneyAmountSchema.parse(args.winDelta ?? '0');
     const reversedStake = sql`greatest(-(${betDelta}::numeric), 0)`;
     const status = args.isFinal ? 'completed' : 'active';
@@ -867,6 +867,8 @@ export class GamingService {
         reversedAmount: reversedStake,
         status,
         endedAt,
+        wagerProduct,
+        rtp,
       })
       .onConflictDoUpdate({
         target: gameRound.externalRoundId,
@@ -876,6 +878,9 @@ export class GamingService {
           winAmount: sql`${gameRound.winAmount} + ${winDelta}::numeric`,
           reversedAmount: sql`${gameRound.reversedAmount} + ${reversedStake}`,
           ...(args.isFinal ? { status, endedAt } : {}),
+          // First seen wins: a round keeps the snapshot it has, and only fills one it lacks.
+          wagerProduct: sql`coalesce(${gameRound.wagerProduct}, excluded.wager_product)`,
+          rtp: sql`coalesce(${gameRound.rtp}, excluded.rtp)`,
         },
         // A conflicting row owned by a different game/user is left untouched (0 rows
         // returned) instead of merging deltas onto someone else's round.
@@ -885,11 +890,18 @@ export class GamingService {
         id: gameRound.id,
         betAmount: gameRound.betAmount,
         winAmount: gameRound.winAmount,
+        wagerProduct: gameRound.wagerProduct,
+        rtp: gameRound.rtp,
       });
     if (!row) {
-      throw new ExternalRoundOwnerMismatchError(args.externalRoundId);
+      throw new GamingRoundOwnerMismatchError(args.externalRoundId);
     }
-    return { roundId: row.id, betAmount: row.betAmount, winAmount: row.winAmount };
+    return {
+      roundId: row.id,
+      betAmount: row.betAmount,
+      winAmount: row.winAmount,
+      wager: { product: row.wagerProduct, rtp: row.rtp },
+    };
   }
 
   async getUserRounds(userId: User['id']) {

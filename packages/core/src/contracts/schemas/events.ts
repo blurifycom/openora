@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { isWagerRtp, WagerProductSchema } from '../adapters/wager-context.js';
 import {
   ClientMetaSchema,
   CurrencyTickerSchema,
@@ -714,8 +715,8 @@ export const domainEventSchemas = {
     tagIds: z.array(UuidSchema).max(1000),
     providerIds: z.array(UuidSchema).max(1000),
   }),
-  // The catalogue facts a round needs, as committed, for the ledger side's `ledger_game`
-  // projection. Written to the outbox in the transaction that read them; `version` is the
+  // The catalogue facts a round needs, its wagering inputs included, as committed, for the
+  // ledger side's `ledger_game` projection. Written to the outbox in the transaction that read them; `version` is the
   // game row's ledger_version, drawn from a sequence, so a consumer keeps the highest one and
   // ignores the rest. Not `gaming.games.changed`, which feeds the category triggers.
   'gaming.ledger_game.projected': z.object({
@@ -725,6 +726,9 @@ export const domainEventSchemas = {
           gameId: UuidSchema,
           providerId: UuidSchema,
           gameType: z.enum(GAME_TYPES),
+          // Optional so an event a previous release wrote still parses; absent reads as null.
+          wagerProduct: WagerProductSchema.nullable().optional(),
+          rtp: z.string().refine(isWagerRtp, 'decimal fraction in [0, 1]').nullable().optional(),
           version: z.number().int().nonnegative(),
         }),
       )

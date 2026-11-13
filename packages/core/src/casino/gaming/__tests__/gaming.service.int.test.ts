@@ -2,6 +2,7 @@ import * as z from 'zod';
 import {
   createGameSortCatalog,
   defineGameSort,
+  GamingRoundOwnerMismatchError,
   GamingUnknownGameError,
 } from '@openora/core/contracts';
 import { GameSortService } from '../service/game-sort.service.js';
@@ -47,7 +48,6 @@ import {
   InsufficientBalanceError,
   WinCreditFailedError,
   WinAmountInvalidError,
-  ExternalRoundOwnerMismatchError,
   GameGeoFiltersUnavailableError,
 } from '../service/gaming.service.js';
 import { GameProviderNotFoundError } from '../service/game-provider.service.js';
@@ -1246,6 +1246,8 @@ describe('GamingService.notifyGamesChanged (real PG)', () => {
             gameId: changed.id,
             providerId: changed.providerId,
             gameType: 'casino',
+            wagerProduct: null,
+            rtp: null,
             version: changed.ledgerVersion,
           },
         ],
@@ -1277,6 +1279,8 @@ describe('GamingService.updateGame round ledger feed (real PG)', () => {
             gameId: created.id,
             providerId: other.id,
             gameType: 'casino',
+            wagerProduct: null,
+            rtp: null,
             version: moved?.ledgerVersion,
           },
         ],
@@ -2451,7 +2455,7 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
         externalRoundId: 'ext-round-6',
         betDelta: '5',
       }),
-    ).rejects.toThrow(ExternalRoundOwnerMismatchError);
+    ).rejects.toThrow(GamingRoundOwnerMismatchError);
 
     const rows = await db.drizzle.db
       .select()

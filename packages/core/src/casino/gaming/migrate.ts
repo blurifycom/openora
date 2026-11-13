@@ -6,6 +6,8 @@ import { appendOnlyTableSql, runMigrations } from '@openora/core/server/migrate'
 
 const GAME_ROUND_RECORD_SQL = appendOnlyTableSql('game_round', {
   mutableColumns: ['status', 'bet_amount', 'win_amount', 'reversed_amount', 'ended_at'],
+  // The wagering snapshot: a round first seen without it may take it once, then never again.
+  setOnceColumns: ['wager_product', 'rtp'],
   // A settled round still takes late aggregator deltas (`accumulateExternalRound`), so its totals
   // stay writable but only upwards, and it cannot return to `active`. A stake the aggregator
   // reverses leaves `bet_amount` only by landing in `reversed_amount`, so the stake as first
@@ -29,7 +31,9 @@ const GAME_LEDGER_VERSION_SQL = `CREATE SEQUENCE IF NOT EXISTS game_ledger_versi
    BEGIN
      IF TG_OP = 'INSERT'
        OR NEW.provider_id IS DISTINCT FROM OLD.provider_id
-       OR NEW.game_type IS DISTINCT FROM OLD.game_type THEN
+       OR NEW.game_type IS DISTINCT FROM OLD.game_type
+       OR NEW.wager_product IS DISTINCT FROM OLD.wager_product
+       OR NEW.rtp IS DISTINCT FROM OLD.rtp THEN
        NEW.ledger_version := nextval('game_ledger_version_seq');
      ELSE
        NEW.ledger_version := OLD.ledger_version;

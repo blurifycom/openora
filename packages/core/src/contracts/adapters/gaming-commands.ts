@@ -5,6 +5,18 @@
  */
 import type { DomainEventPayload } from '../schemas/events.js';
 import { createToken, type Token } from './token.js';
+import type { WagerProduct } from './wager-context.js';
+
+/**
+ * The wagering inputs a round is priced under, snapshotted on the round row the first time it is
+ * seen and never changed after, so a later catalogue edit cannot reprice a placed or settled round.
+ * Null when neither the caller nor the catalogue named it.
+ */
+export type GamingRoundWager = {
+  product: WagerProduct | null;
+  /** Decimal fraction in [0, 1], as `WagerContext.rtp`. */
+  rtp: string | null;
+};
 
 export type GamingAccumulateExternalRoundArgs = {
   gameId: string;
@@ -15,12 +27,19 @@ export type GamingAccumulateExternalRoundArgs = {
   betDelta?: string;
   winDelta?: string;
   isFinal?: boolean;
+  /**
+   * What the caller knows of the variant played (an aggregator's per-session rtp). Fills a round
+   * snapshot field the round does not hold yet, ahead of the catalogue's `ledger_game` value.
+   */
+  wager?: Partial<GamingRoundWager>;
 };
 
 export type GamingAccumulateExternalRoundOutcome = {
   roundId: string;
   betAmount: string;
   winAmount: string;
+  /** The round's snapshot once this call landed: what every stake on it is priced under. */
+  wager: GamingRoundWager;
 };
 
 export type GamingSetGameAvailabilityArgs = {
@@ -62,11 +81,25 @@ export class GamingUnknownGameError extends Error {
   }
 }
 
+/**
+ * The `externalRoundId` is already a round of another game or player. Nothing was written: the
+ * caller's transaction rolls back whole.
+ */
+export class GamingRoundOwnerMismatchError extends Error {
+  readonly externalRoundId: string;
+  constructor(externalRoundId: string) {
+    super(`externalRoundId ${externalRoundId} is already tagged to a different game/user`);
+    this.name = 'GamingRoundOwnerMismatchError';
+    this.externalRoundId = externalRoundId;
+  }
+}
+
 export type GamingCommands = {
   /**
    * Throws GamingUnknownGameError, before writing anything, when the call carries a positive
    * `betDelta`, no round with this `externalRoundId` exists yet, and `ledger_game` lacks the
    * game. A call with no stake, or on an existing round, is never refused for its game.
+   * Throws GamingRoundOwnerMismatchError when the round belongs to another game or player.
    */
   accumulateExternalRound(
     tx: unknown,
