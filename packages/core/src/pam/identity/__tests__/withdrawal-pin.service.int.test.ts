@@ -411,6 +411,24 @@ describe('WithdrawalPinService.verifyPin (real PG)', () => {
     });
   });
 
+  it('reports the lockout through pinLockedUntil, and null once it ends', async () => {
+    const { accountUser, svc } = await withPin();
+    expect(await svc.pinLockedUntil(accountUser.id)).toBeNull();
+    for (let i = 0; i < 5; i++) {
+      await svc.verifyPin({ userId: accountUser.id, pin: WRONG_PIN });
+    }
+
+    const lockedUntil = await svc.pinLockedUntil(accountUser.id);
+    expect(lockedUntil?.getTime()).toBeGreaterThan(Date.now());
+    expect((await readUser(accountUser.id))?.withdrawalPinLockedUntil).toEqual(lockedUntil);
+
+    await db.drizzle.db
+      .update(user)
+      .set({ withdrawalPinLockedUntil: new Date(Date.now() - 1000) })
+      .where(eq(user.id, accountUser.id));
+    expect(await svc.pinLockedUntil(accountUser.id)).toBeNull();
+  });
+
   it('resets the count on a right PIN, so the wrong ones must be in a row', async () => {
     const { accountUser, svc } = await withPin();
     for (let i = 0; i < 4; i++) {

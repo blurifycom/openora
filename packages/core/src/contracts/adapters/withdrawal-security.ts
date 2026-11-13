@@ -30,6 +30,13 @@ export type WithdrawalSecurity = {
   }): Promise<WithdrawalPinVerdict>;
 
   /**
+   * When the PIN lockout ends, or null when withdrawals are not PIN-locked. Read again at
+   * approval and right before the payout: wrong guesses after the request mean the session that
+   * asked may not be the owner's, so the payout waits for the lock to clear.
+   */
+  pinLockedUntil(userId: string): Promise<Date | null>;
+
+  /**
    * The password, plus a fresh second-factor code when the account has one, for an action that
    * must be the account owner and not a stolen session. Throws the same errors as setting the PIN.
    */

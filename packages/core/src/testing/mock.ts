@@ -138,6 +138,7 @@ export const makeWithdrawalSecurity = (
   overrides: Partial<WithdrawalSecurity> = {},
 ): WithdrawalSecurity => ({
   verifyPin: vi.fn<WithdrawalSecurity['verifyPin']>(async () => ({ status: 'not_set' })),
+  pinLockedUntil: vi.fn<WithdrawalSecurity['pinLockedUntil']>(async () => null),
   assertReauthentication: vi.fn<WithdrawalSecurity['assertReauthentication']>(
     async () => undefined,
   ),
