@@ -9,12 +9,10 @@ import {
   type PlayerMatch,
   type PlayerSearch,
 } from '@openora/core/contracts';
-import { mapConcurrent, type InternalClient } from '@openora/core/server';
+import { mapConcurrent, TtlCache, type InternalClient } from '@openora/core/server';
 
 // How stale a role, status or exclusion may be on a read that does not ask for `fresh`.
 export const ACCOUNT_CACHE_TTL_MS = 30_000;
-// ponytail: per-process cache with oldest-first eviction; move it to the shared CACHE port if
-// replicas multiply the identity load or need one view of a demotion.
 const ACCOUNT_CACHE_MAX_ENTRIES = 10_000;
 // Batches of one big read in flight at once, so a large roster does not queue them one by one.
 const BATCH_CONCURRENCY = 4;
@@ -27,56 +25,50 @@ const BATCH_CONCURRENCY = 4;
  * restriction".
  */
 export class RemoteAccountReader implements AccountReader {
-  private readonly cache = new Map<string, { account: Account; expiresAt: number }>();
-  // Cold reads in flight, by id, so concurrent reads of one id make one call. A fresh read
-  // neither joins nor registers here; a miss is not remembered once the call settles.
-  private readonly inFlight = new Map<string, Promise<Map<string, Account>>>();
+  // Accounts by lower-case id, and the cold reads in flight, so concurrent reads of one id make
+  // one call. A fresh read neither joins nor registers one; a miss is not remembered.
+  private readonly cache: TtlCache<Account, Map<string, Account>>;
 
   constructor(
     private readonly client: InternalClient,
-    private readonly now: () => number = Date.now,
-  ) {}
+    now: () => number = Date.now,
+  ) {
+    this.cache = new TtlCache({
+      ttlMs: ACCOUNT_CACHE_TTL_MS,
+      maxEntries: ACCOUNT_CACHE_MAX_ENTRIES,
+      now,
+    });
+  }
 
   async getAccounts(
     userIds: readonly string[],
     options: AccountReadOptions = {},
   ): Promise<Map<string, Account>> {
-    const now = this.now();
     const found = new Map<string, Account>();
     const joined = new Map<string, Promise<Map<string, Account>>>();
     const missing: string[] = [];
     for (const id of new Set(userIds.map((userId) => userId.toLowerCase()))) {
       const cached = options.fresh ? undefined : this.cache.get(id);
-      const inFlight = options.fresh ? undefined : this.inFlight.get(id);
-      if (cached && cached.expiresAt > now) {
-        found.set(id, cached.account);
+      const inFlight = options.fresh ? undefined : this.cache.pending(id);
+      if (cached) {
+        found.set(id, cached);
       } else if (inFlight) {
         joined.set(id, inFlight);
       } else {
         missing.push(id);
       }
     }
-    const fetched = this.fetch(missing, now);
+    const fetched = this.fetch(missing);
     if (!options.fresh) {
-      for (const id of missing) {
-        this.inFlight.set(id, fetched);
-      }
+      this.cache.track(missing, fetched);
     }
-    try {
-      for (const [id, account] of await fetched) {
+    for (const [id, account] of await fetched) {
+      found.set(id, account);
+    }
+    for (const [id, pending] of joined) {
+      const account = (await pending).get(id);
+      if (account) {
         found.set(id, account);
-      }
-      for (const [id, pending] of joined) {
-        const account = (await pending).get(id);
-        if (account) {
-          found.set(id, account);
-        }
-      }
-    } finally {
-      for (const id of missing) {
-        if (this.inFlight.get(id) === fetched) {
-          this.inFlight.delete(id);
-        }
       }
     }
     return new Map(
@@ -109,7 +101,7 @@ export class RemoteAccountReader implements AccountReader {
   }
 
   /** Reads `ids` (lower case) in batches; caches and answers only the ids asked for. */
-  private async fetch(ids: readonly string[], now: number): Promise<Map<string, Account>> {
+  private async fetch(ids: readonly string[]): Promise<Map<string, Account>> {
     if (ids.length === 0) {
       return new Map();
     }
@@ -127,20 +119,9 @@ export class RemoteAccountReader implements AccountReader {
       const key = account.userId.toLowerCase();
       if (requested.has(key)) {
         accounts.set(key, account);
-        this.remember(key, account, now);
+        this.cache.set(key, account);
       }
     }
     return accounts;
-  }
-
-  private remember(key: string, account: Account, now: number) {
-    this.cache.delete(key);
-    this.cache.set(key, { account, expiresAt: now + ACCOUNT_CACHE_TTL_MS });
-    if (this.cache.size > ACCOUNT_CACHE_MAX_ENTRIES) {
-      const oldest = this.cache.keys().next();
-      if (!oldest.done) {
-        this.cache.delete(oldest.value);
-      }
-    }
   }
 }

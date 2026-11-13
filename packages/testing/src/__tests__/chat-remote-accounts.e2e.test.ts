@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
+import { REALTIME_TRANSPORT } from '@openora/core/contracts';
 import {
   createInternalClient,
   DRIZZLE,
@@ -39,6 +40,12 @@ const SHARED_ENV = {
   ACCOUNT_READER_CALLERS: CHAT_SERVICE_NAME,
   SESSION_RESOLVER_CALLERS: CHAT_SERVICE_NAME,
 };
+// The events that end a session, which chat purges its cache on.
+const SESSION_ENDING_EVENTS = [
+  'identity.session.revoked',
+  'identity.sessions.revoked_all',
+  'identity.user.deactivated',
+] as const;
 const CHAT_ENV = {
   // What the boot asks for on top of chat, social and identity:no-routes.
   SERVICE_MANIFEST: [
@@ -65,7 +72,7 @@ let db: TestDb;
 let identityApp: TestApp;
 let chatApp: TestApp;
 let identity: IdentityMode = 'up';
-let stopBridge: (() => void) | undefined;
+let stopBridge: (() => void)[] = [];
 const identityCalls: string[] = [];
 const realFetch = globalThis.fetch;
 
@@ -178,16 +185,18 @@ beforeAll(async () => {
     bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url }),
   );
   // Each booted app owns a Redis database, so the two apps do not share a broker as the two
-  // services do in production. This carries the one event the suite needs across the gap.
-  stopBridge = identityApp.container
-    .get(EVENT_BUS)
-    .on('identity.sessions.revoked_all', (payload) =>
-      chatApp.container.get(EVENT_BUS).emit('identity.sessions.revoked_all', payload),
-    );
+  // services do in production. This carries the events that end a session across the gap.
+  stopBridge = SESSION_ENDING_EVENTS.map((topic) =>
+    identityApp.container
+      .get(EVENT_BUS)
+      .on(topic, (payload) => chatApp.container.get(EVENT_BUS).emit(topic, payload)),
+  );
 }, 90_000);
 
 afterAll(async () => {
-  stopBridge?.();
+  for (const stop of stopBridge) {
+    stop();
+  }
   vi.unstubAllGlobals();
   for (const key of Object.keys(SHARED_ENV)) {
     delete process.env[key];
@@ -376,14 +385,41 @@ describe('chat on its own service, resolving sessions through the identity servi
 
     await vi.waitFor(
       async () => expect((await account.client.get('/chat/rooms/moderated')).status).toBe(401),
-      {
-        timeout: 3_000,
-      },
+      { timeout: 1_000 },
     );
     expect((await bystander.client.get('/chat/rooms/moderated')).status).toBe(200);
   });
 
-  it('answers 401 while identity is down or failing, and recovers when it is back', async () => {
+  it('refuses a session by purge when one device is revoked or the account is deactivated', async () => {
+    const single = await chatter('revokeone');
+    const deactivated = await chatter('deactivated');
+    expect((await single.client.get('/chat/rooms/moderated')).status).toBe(200);
+    expect((await deactivated.client.get('/chat/rooms/moderated')).status).toBe(200);
+    const events = identityApp.container.get(EVENT_BUS);
+    // The sessions end in the identity database; only the events tell chat to drop its copy.
+    for (const { userId } of [single, deactivated]) {
+      await sql().update(session).set({ expiresAt: new Date() }).where(eq(session.userId, userId));
+    }
+
+    events.emit('identity.session.revoked', {
+      userId: single.userId,
+      playerId: null,
+      sessionId: randomUUID(),
+    });
+    events.emit('identity.user.deactivated', {
+      userId: deactivated.userId,
+      actorId: randomUUID(),
+    });
+
+    for (const account of [single, deactivated]) {
+      await vi.waitFor(
+        async () => expect((await account.client.get('/chat/rooms/moderated')).status).toBe(401),
+        { timeout: 1_000 },
+      );
+    }
+  });
+
+  it('answers 503 while identity is down or failing, 401 when it refuses, and recovers when it is back', async () => {
     const account = await chatter('outage');
 
     const down = await whileIdentity('down', () => account.client.get('/chat/rooms/moderated'));
@@ -391,8 +427,37 @@ describe('chat on its own service, resolving sessions through the identity servi
     const upstream4xx = await whileIdentity(400, () => account.client.get('/chat/rooms/moderated'));
     const recovered = await account.client.get('/chat/rooms/moderated');
 
-    expect([down.status, upstream5xx.status, upstream4xx.status]).toEqual([401, 401, 401]);
+    expect([down.status, upstream5xx.status, upstream4xx.status]).toEqual([503, 503, 401]);
     expect(recovered.status).toBe(200);
+  });
+
+  it('ignores a purge announcement that is not a user id', async () => {
+    const account = await chatter('malformedpurge');
+    expect((await account.client.get('/chat/rooms/moderated')).status).toBe(200);
+
+    await chatApp.container
+      .get(REALTIME_TRANSPORT)
+      .publish('chat:session-purge', { userId: 42, extra: 'junk' });
+    await chatApp.container.get(REALTIME_TRANSPORT).publish('chat:session-purge', 'junk');
+
+    expect((await account.client.get('/chat/rooms/moderated')).status).toBe(200);
+  });
+
+  it('forwards only the session cookie to identity, and makes no call for a jar without one', async () => {
+    const account = await chatter('jar');
+    const cookie = await signIn(`${account.username}@e2e.test`);
+    identityCalls.length = 0;
+
+    const noise = await chatApp.app.request('/chat/rooms/moderated', {
+      headers: { cookie: '_ga=GA1.2.3; consent=yes' },
+    });
+    const withJar = await chatApp.app.request('/chat/rooms/moderated', {
+      headers: { cookie: `_ga=GA1.2.3; ${cookie}; consent=yes` },
+    });
+
+    expect(noise.status).toBe(401);
+    expect(withJar.status).toBe(200);
+    expect(sessionCalls()).toBe(1);
   });
 
   it('refuses a session the idle window ended, on that request and the next', async () => {

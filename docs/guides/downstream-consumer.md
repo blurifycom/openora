@@ -137,8 +137,9 @@ and each job reaches one of them.
 - Setting `IDENTITY_SERVICE_URL` on a process that serves identity itself fails the boot.
 - Chat resolves every request's session through the identity service, which runs the same
   chain as a local request: the session, the idle window, the second-factor enrolment flag and
-  the player's last-seen stamp. The session cookie and `Authorization` header travel to identity
-  in the signed body, so the https rule above also protects them. Chat keeps a session identity
+  the player's last-seen stamp. Only the session cookie and `Authorization` header travel to identity
+  in the signed body (the rest of a cookie jar stays in chat), so the https rule above also protects
+  them; a request with neither is unauthenticated without a call. Chat keeps a session identity
   confirmed for 5 seconds, in a cache of 10,000 sessions keyed by a hash of the credential; a
   refusal (unknown, expired or idle session) is never cached.
 - A revocation reaches chat as an event (`identity.session.revoked`, `identity.sessions.revoked_all`,
@@ -147,11 +148,14 @@ and each job reaches one of them.
   own sign-out emits no event, so a signed-out session still works on chat for up to the 5
   seconds. So does a change to the second-factor enrolment requirement, and the idle clock chat
   reads is as old as the cache.
-- While identity is down (a timeout, a network failure or any non-2xx answer), chat treats the
-  request as unauthenticated: protected routes answer 401, public routes still serve, and a
-  signed-in player is signed out of chat until identity is back, not kept on a stale answer.
-  Chat logs one error line per failed call. A caller missing from `SESSION_RESOLVER_CALLERS`
-  looks the same, so check that list first when every chat request is 401.
+- Admin security (second-factor enrolment, device binding, IP policy) on chat's admin routes is
+  decided by identity on every call and never cached, so it follows identity's configuration, not
+  chat's. While identity is down those routes answer 503.
+- While identity is down (a timeout, a network failure or a 5xx), protected chat routes answer
+  503, public routes still serve, and a signed-in player is not kept on a stale answer. Chat logs
+  the first failure, then one summary line per 30 seconds with the count. A 4xx from identity
+  answers 401, so a caller missing from `SESSION_RESOLVER_CALLERS` shows as 401 on every
+  protected chat route: check that list first.
 
 ## Seeding reference data (production)
 

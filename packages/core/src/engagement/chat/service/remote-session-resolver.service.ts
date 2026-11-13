@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import {
   createLogger,
+  InternalApiError,
   SESSION_RESOLVER_ROUTE,
   SessionResolverWire,
+  TtlCache,
   type AuthContext,
   type InternalClient,
   type RequestSessionResolver,
@@ -14,70 +16,91 @@ import {
 // stale the idle clock identity keeps (its shortest window is 15 minutes, its write throttle
 // 60 seconds).
 export const SESSION_CACHE_TTL_MS = 5_000;
-// ponytail: per-process cache with oldest-first eviction; past this many live credentials the
-// oldest are asked again early, which is only slower, never wrong.
 const SESSION_CACHE_MAX_ENTRIES = 10_000;
+// While identity is down every request fails; one line per this long says so, with the count.
+export const FAILURE_LOG_INTERVAL_MS = 30_000;
 
-const logger = createLogger('chat-remote-session');
+// The cookies that carry a better-auth session: its token, and the `__Secure-` form it uses over
+// https. The rest of a jar (analytics, consent, other apps on the domain) is neither forwarded
+// nor part of the cache key, so it neither reaches identity nor splits one session's cache.
+const SESSION_COOKIE_NAMES = new Set([
+  'better-auth.session_token',
+  '__Secure-better-auth.session_token',
+]);
+
+const sessionCookiesOf = (cookieHeader: string) =>
+  cookieHeader
+    .split(';')
+    .map((pair) => pair.trim())
+    .filter((pair) => SESSION_COOKIE_NAMES.has(pair.slice(0, pair.indexOf('='))))
+    .join('; ');
 
 // Keyed by a digest, so a credential never sits in this process's memory as a map key, and a
 // heap dump does not hand out session tokens. The separator keeps ("a", "b") and ("ab", "") apart.
 const credentialKey = (cookie: string, authorization: string) =>
   createHash('sha256').update(`${cookie}\0${authorization}`).digest('hex');
 
-type CachedSession = { auth: AuthContext; expiresAt: number };
+// Identity could not be asked (timeout, no connection, 5xx), as opposed to answering no.
+const isUnreachable = (err: unknown) => err instanceof InternalApiError && err.kind !== 'client';
+
+const logger = createLogger('chat-remote-session');
 
 /**
  * {@link RequestSessionResolver} over the identity service's internal API, for a service whose
  * database has no session tables. Identity runs the whole chain (session, idle window,
- * second-factor flag, last-seen stamp) on the forwarded credentials. A confirmed session is kept
- * for {@link SESSION_CACHE_TTL_MS}; a refusal (no session, idle, expired) is never kept, so a
- * session that was just refused or has just been re-established is asked again on the next
- * request. Any failed call resolves as unauthenticated: a request is never served on a stale or
- * guessed identity because identity could not be reached.
+ * second-factor flag, last-seen stamp) on the forwarded session credentials. A confirmed session
+ * is kept for {@link SESSION_CACHE_TTL_MS}; a refusal (no session, idle, expired) is never kept,
+ * so a session that was just refused or has just been re-established is asked again on the next
+ * request. A request with no session cookie and no `authorization` is unauthenticated without a
+ * call. A call that fails resolves with no identity, never a stale or guessed one: `unavailable`
+ * when identity could not be reached (the caller answers 503), plain unauthenticated when it
+ * refused or answered something unreadable.
  */
 export class RemoteSessionResolver implements RequestSessionResolver {
-  private readonly cache = new Map<string, CachedSession>();
-  // Calls in flight, by credential, so a page's burst of parallel requests makes one call.
-  private readonly inFlight = new Map<string, Promise<SessionOutcome>>();
+  private readonly cache: TtlCache<AuthContext, SessionOutcome>;
   // Bumped by every purge: an answer read before a purge must not be cached after it.
   private purges = 0;
+  private failuresSinceLog = 0;
+  private lastLoggedAt: number | undefined;
 
   constructor(
     private readonly client: InternalClient,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.cache = new TtlCache({
+      ttlMs: SESSION_CACHE_TTL_MS,
+      maxEntries: SESSION_CACHE_MAX_ENTRIES,
+      now,
+    });
+  }
 
   async resolve(headers: Headers): Promise<SessionOutcome> {
-    const cookie = headers.get('cookie') ?? '';
+    const cookie = sessionCookiesOf(headers.get('cookie') ?? '');
     const authorization = headers.get('authorization') ?? '';
     if (!cookie && !authorization) {
       return {};
     }
     const key = credentialKey(cookie, authorization);
     const cached = this.cache.get(key);
-    if (cached && cached.expiresAt > this.now()) {
-      return { auth: cached.auth };
+    if (cached) {
+      return { auth: cached };
     }
-    const pending = this.inFlight.get(key) ?? this.ask(key, cookie, authorization);
-    this.inFlight.set(key, pending);
-    try {
-      return await pending;
-    } finally {
-      if (this.inFlight.get(key) === pending) {
-        this.inFlight.delete(key);
-      }
+    const joined = this.cache.pending(key);
+    if (joined) {
+      return joined;
     }
+    const call = this.ask(key, cookie, authorization);
+    this.cache.track([key], call);
+    return call;
   }
 
   /** Drops every session of `userId`: it was revoked, or may no longer be served. */
   purgeUser(userId: AuthContext['userId']) {
     this.purges += 1;
-    for (const [key, { auth }] of this.cache) {
-      if (auth.userId === userId) {
-        this.cache.delete(key);
-      }
-    }
+    this.cache.deleteWhere((auth) => auth.userId === userId);
+    // A call already in flight may be about to say the session is fine: later requests must not
+    // join it, and its answer is not cached (the purge count moved).
+    this.cache.clearPending();
   }
 
   private async ask(key: string, cookie: string, authorization: string): Promise<SessionOutcome> {
@@ -95,23 +118,32 @@ export class RemoteSessionResolver implements RequestSessionResolver {
         ...(reply.sessionEndedReason ? { sessionEndedReason: reply.sessionEndedReason } : {}),
       };
     } catch (err) {
-      logger.error({ err }, 'identity could not resolve a session; the request is unauthenticated');
-      return {};
+      this.noteFailure(err);
+      return isUnreachable(err) ? { unavailable: true } : {};
     }
     if (outcome.auth && purgesBefore === this.purges) {
-      this.remember(key, outcome.auth);
+      this.cache.set(key, outcome.auth);
     }
     return outcome;
   }
 
-  private remember(key: string, auth: AuthContext) {
-    this.cache.delete(key);
-    this.cache.set(key, { auth, expiresAt: this.now() + SESSION_CACHE_TTL_MS });
-    if (this.cache.size > SESSION_CACHE_MAX_ENTRIES) {
-      const oldest = this.cache.keys().next();
-      if (!oldest.done) {
-        this.cache.delete(oldest.value);
-      }
+  // The first failure is logged in full; while failures continue, one summary per interval with
+  // how many it stands for and the kind of the latest, so an outage is one line, not one per request.
+  private noteFailure(err: unknown) {
+    const now = this.now();
+    if (this.lastLoggedAt !== undefined && now - this.lastLoggedAt < FAILURE_LOG_INTERVAL_MS) {
+      this.failuresSinceLog += 1;
+      return;
     }
+    logger.error(
+      {
+        err,
+        kind: err instanceof InternalApiError ? err.kind : 'invalid_reply',
+        suppressedSinceLastLog: this.failuresSinceLog,
+      },
+      'identity could not resolve a session; the request is not authenticated',
+    );
+    this.lastLoggedAt = now;
+    this.failuresSinceLog = 0;
   }
 }

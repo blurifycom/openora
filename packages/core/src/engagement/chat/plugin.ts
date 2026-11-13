@@ -6,6 +6,7 @@ import {
   createInternalClient,
   createLogger,
   REMOTE_SESSION_RESOLVER,
+  AuthContextSchema,
   mapErrors,
   parseServiceManifest,
 } from '@openora/core/server';
@@ -18,6 +19,7 @@ import {
   CHAT_REALTIME_TRANSPORT,
   CHAT_REALTIME_CLIENT_AUTHORIZER,
   RATE_LIMITER,
+  ADMIN_SECURITY_POLICY,
   CHAT_SYSTEM_WRITER,
   CHAT_BLOCK_WRITER,
   CHAT_CONTEXT_ROOMS,
@@ -50,6 +52,7 @@ import { ChatRoomRestrictionService } from './service/chat-room-restriction.serv
 import { ChatModerationExpiryService } from './service/chat-moderation-expiry.service.js';
 import { ChatRoomPurgeService } from './service/chat-room-purge.service.js';
 import { RemoteAccountReader } from './service/remote-account-reader.service.js';
+import { RemoteAdminSecurityPolicy } from './service/remote-admin-security.service.js';
 import { RemoteSessionResolver } from './service/remote-session-resolver.service.js';
 import { createChatRouter } from './router/index.js';
 
@@ -125,7 +128,8 @@ function identityClient(): InternalClient | null {
 // A session the identity service ended: every chat replica drops what it cached for the user.
 // Fanned out on the realtime transport because a domain event reaches one replica only.
 const SESSION_PURGE_CHANNEL = 'chat:session-purge';
-type SessionPurge = { userId: string };
+const SessionPurgeSchema = AuthContextSchema.pick({ userId: true });
+type SessionPurge = z.infer<typeof SessionPurgeSchema>;
 const SESSION_ENDING_EVENTS = [
   'identity.session.revoked',
   'identity.sessions.revoked_all',
@@ -140,14 +144,24 @@ export default {
     if (identity) {
       const remoteAccounts = new RemoteAccountReader(identity);
       ctx.provide(ACCOUNT_READER, () => remoteAccounts);
+      // Identity decides the admin checks (mandatory second factor, device binding): the rows
+      // they read are not in this database, and a missing row would silently skip the binding.
+      ctx.provide(ADMIN_SECURITY_POLICY, () => new RemoteAdminSecurityPolicy(identity));
       const remoteSessions = new RemoteSessionResolver(identity);
       let announcePurge: ((userId: string) => void | Promise<void>) | undefined;
       ctx.provide(REMOTE_SESSION_RESOLVER, (c) => {
         const transport = c.get(REALTIME_TRANSPORT);
+        // The channel is shared with whatever else publishes on the transport, so the payload is
+        // checked, not trusted.
         c.onDispose(
-          transport.subscribe<SessionPurge>(SESSION_PURGE_CHANNEL, ({ userId }) =>
-            remoteSessions.purgeUser(userId),
-          ),
+          transport.subscribe<unknown>(SESSION_PURGE_CHANNEL, (payload) => {
+            const purge = SessionPurgeSchema.safeParse(payload);
+            if (purge.success) {
+              remoteSessions.purgeUser(purge.data.userId);
+            } else {
+              logger.warn({ issues: purge.error.issues }, 'ignored a malformed session purge');
+            }
+          }),
         );
         announcePurge = (userId) =>
           transport.publish<SessionPurge>(SESSION_PURGE_CHANNEL, { userId });
