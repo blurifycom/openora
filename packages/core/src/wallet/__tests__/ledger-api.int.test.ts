@@ -5,6 +5,7 @@ import {
   AUDIT_WRITER,
   BONUS_WAGERING,
   GAMING_COMMANDS,
+  GamingInvalidRtpError,
   IDENTITY_READER,
   LEDGER_API_V1,
   PLAY_ELIGIBILITY,
@@ -707,6 +708,25 @@ describe('Round wager snapshot (real PG)', () => {
     const filled = await roundOf(fromBridge.externalRoundId);
     expect(filled.wagerProduct).toBe('casino');
     expect(moneyEquals(filled.rtp ?? '', '0.5')).toBe(true);
+  });
+
+  it('refuses an out-of-range rtp from an in-process caller, writing no round', async () => {
+    const { game: g, userId } = await setup('100', null);
+    const externalRoundId = `round-${randomUUID()}`;
+
+    await expect(
+      db.drizzle.db.transaction((tx) =>
+        gamingCommands.accumulateExternalRound(tx, {
+          gameId: g.id,
+          userId,
+          currency: 'USD',
+          externalRoundId,
+          betDelta: '10',
+          wager: { rtp: '96' },
+        }),
+      ),
+    ).rejects.toBeInstanceOf(GamingInvalidRtpError);
+    expect(await roundsOf(externalRoundId)).toHaveLength(0);
   });
 
   it('carries the wager inputs on the projected event, as a fraction only', () => {

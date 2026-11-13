@@ -123,6 +123,7 @@ export type {
 } from './gaming-commands.js';
 export {
   GAMING_COMMANDS,
+  GamingInvalidRtpError,
   GamingRoundOwnerMismatchError,
   GamingUnknownGameError,
 } from './gaming-commands.js';

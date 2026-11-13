@@ -95,12 +95,26 @@ export class GamingRoundOwnerMismatchError extends Error {
   }
 }
 
+/**
+ * The caller's `wager.rtp` is not a decimal fraction in [0, 1]. Thrown before anything is
+ * written, whether or not the catalogue's rtp would have won.
+ */
+export class GamingInvalidRtpError extends Error {
+  readonly rtp: string;
+  constructor(rtp: string) {
+    super(`rtp ${rtp} is not a decimal fraction in [0, 1]`);
+    this.name = 'GamingInvalidRtpError';
+    this.rtp = rtp;
+  }
+}
+
 export type GamingCommands = {
   /**
    * Throws GamingUnknownGameError, before writing anything, when the call carries a positive
    * `betDelta`, no round with this `externalRoundId` exists yet, and `ledger_game` lacks the
    * game. A call with no stake, or on an existing round, is never refused for its game.
    * Throws GamingRoundOwnerMismatchError when the round belongs to another game or player.
+   * Throws GamingInvalidRtpError, before writing anything, on an out-of-range `wager.rtp`.
    */
   accumulateExternalRound(
     tx: unknown,

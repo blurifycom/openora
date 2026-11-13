@@ -44,6 +44,7 @@ import {
   type GameGeoDecision,
   type GamingAccumulateExternalRoundArgs,
   type GamingAccumulateExternalRoundOutcome,
+  GamingInvalidRtpError,
   GamingRoundOwnerMismatchError,
   GamingUnknownGameError,
   type GamingNotifyGamesChangedArgs,
@@ -55,6 +56,7 @@ import {
   type IdentityReader,
   type User,
   isPlayRefused,
+  isWagerRtp,
   SignedMoneyAmountSchema,
 } from '@openora/core/contracts';
 import {
@@ -836,6 +838,11 @@ export class GamingService {
     const txn = tx as DrizzleDb;
     // Canonical form first: `::numeric` reads '1e1' or ' 10' as a stake the guard below would miss.
     const betDelta = SignedMoneyAmountSchema.parse(args.betDelta ?? '0');
+    // The range the dropped `game_round` CHECK held, for every in-process caller, not only the API.
+    const sentRtp = args.wager?.rtp;
+    if (typeof sentRtp === 'string' && !isWagerRtp(sentRtp)) {
+      throw new GamingInvalidRtpError(sentRtp);
+    }
     const projected = await readLedgerGame(txn, args.gameId);
     // Only a stake that opens a round needs a game the ledger knows. A win, refund, rollback or
     // final always lands, also as a round's first call (a free-round result, a settle that beats
