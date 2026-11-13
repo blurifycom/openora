@@ -130,7 +130,7 @@ export async function seedMinimal(
     await backfillLedgerGames(drizzleSvc.db);
     // After the demo users exist: the ledger refuses a stake from a user it has not projected.
     await backfillPlayEligibility(drizzleSvc.db, ledgerPlayEligibilityProjection(drizzleSvc.db));
-    // A limit the ledger has not projected refuses nothing, so the gate refuses every move.
+    // After any seeded limit: the ledger does not enforce a limit it has not projected.
     await backfillRgLimits(drizzleSvc.db, ledgerRgLimits(drizzleSvc.db));
     return result;
   } finally {

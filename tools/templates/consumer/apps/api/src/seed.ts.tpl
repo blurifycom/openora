@@ -47,7 +47,7 @@ async function main() {
   await backfillLedgerGames(db);
   // The ledger refuses a stake from a user it has not projected; this projects every user.
   await backfillPlayEligibility(db, ledgerPlayEligibilityProjection(db));
-  // The same for responsible-gambling limits: an unprojected limit refuses every move.
+  // The same for responsible-gambling limits: the ledger does not enforce an unprojected one.
   await backfillRgLimits(db, ledgerRgLimits(db));
   console.log('Reference data seeded.');
 }

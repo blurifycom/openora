@@ -98,4 +98,5 @@ route refuses and nothing else changes.
 An overlay plugin in the consumer's repo binds the adapter and, for webhooks, the matching
 verifier. Scaffold it with `/scaffold-plugin`, and register it after the wallet module. Core binds
 neither. The on-ramp stays off, with a warning at boot, unless `GEO_CHECK_COMMANDS` and `RG_LIMITS` are
-bound too; the compliance module binds both.
+bound too: the compliance module binds the first, and the wallet binds the second over its own limits
+projection (ADR-0055).
