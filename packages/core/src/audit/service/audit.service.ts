@@ -568,8 +568,9 @@ export class AuditService {
   /**
    * Player self-service RG limit history, the changes still queued for the chain included, so a
    * player sees a change as soon as it commits. Queued records come after every chained one, as the
-   * shipper will chain them. Returns an empty page, not an error, when the caller has no player
-   * profile.
+   * shipper will chain them. A record's `id` is its event id, queued or chained, so it keeps it
+   * across the ship; a record chained before event ids existed keeps its row id. Returns an empty
+   * page, not an error, when the caller has no player profile.
    */
   async listMyRgHistory(userId: User['id'], filters: MyRgHistoryFilters) {
     const { page, limit } = filters;
@@ -621,7 +622,7 @@ export class AuditService {
                   offset: Math.max(0, offset - lead.length),
                   limit: room,
                 })
-              ).map(toDto)
+              ).map((row) => ({ ...toDto(row), id: row.eventId ?? row.id }))
             : [];
         const tailStart = Math.max(0, offset - lead.length - chained);
         const fromTail = tail.slice(tailStart, tailStart + room - rows.length);
@@ -636,8 +637,8 @@ export class AuditService {
     );
   }
 
-  // The player's RG limit records still in `audit_outbox`, oldest first, each under its event id
-  // until the chain gives it a row id. An entry that fails its schema never reaches the chain and is
+  // The player's RG limit records still in `audit_outbox`, oldest first, each under its event id,
+  // the id it keeps once chained. An entry that fails its schema never reaches the chain and is
   // left out here too.
   private async queuedRgHistory(playerId: Uuid) {
     const rows = await this.drizzle.db

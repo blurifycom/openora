@@ -1,5 +1,10 @@
-export { DrizzleService, DRIZZLE, AUDIT_DRIZZLE } from './drizzle.service.js';
-export { createDrizzleDb, type DrizzleDb, type DrizzleTx } from './drizzle.js';
+export {
+  DrizzleService,
+  DRIZZLE,
+  AUDIT_DRIZZLE,
+  AUDIT_SHIPPER_DRIZZLE,
+} from './drizzle.service.js';
+export { createDrizzleDb, type DrizzleDb, type DrizzleTx, type PoolMax } from './drizzle.js';
 export { zodJsonb } from './zod-jsonb.js';
 export {
   findOneOrThrow,

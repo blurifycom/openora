@@ -68,6 +68,20 @@ async function linkedPlayer() {
 const warned = () => log.warn.mock.calls.map(([fields]) => fields as unknown);
 
 describe('SupportHistoryService logging (real PG)', () => {
+  it('loads an incomplete history again on the next call instead of serving it from the cache', async () => {
+    const p = await linkedPlayer();
+    const listTickets = vi
+      .fn<SupportHistoryReader['listTickets']>()
+      .mockRejectedValueOnce(new SupportHistoryProviderError('rate_limited'))
+      .mockResolvedValue([TICKET]);
+    const history = service({ listTickets });
+
+    expect((await history.getHistory(p.userId, false)).tickets).toMatchObject({ complete: false });
+    expect((await history.getHistory(p.userId, false)).tickets).toMatchObject({ complete: true });
+    await history.getHistory(p.userId, false);
+    expect(listTickets).toHaveBeenCalledTimes(2);
+  });
+
   it('logs a provider error reason with the user and section only', async () => {
     const p = await linkedPlayer();
     const history = await service({

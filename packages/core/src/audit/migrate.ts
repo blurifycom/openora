@@ -3,8 +3,18 @@
 // tarball ('files') and loads via an import.meta.url-relative path. See ADR-0020/0027.
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { runMigrations, withMigrationAdvisoryLock } from '@openora/core/server/migrate';
+
+// The comment split `migrate` leaves on the main database's outbox guard, so migrate, the shipper
+// and a single-database migrate can tell a main database whose chain moved out from one whose chain
+// it still holds.
+const CHAIN_SPLIT_MARK = 'audit chain in a database of its own';
+
+/** One row, `split`: true once split `migrate` has run against this database. */
+export const CHAIN_SPLIT_SQL = `SELECT coalesce(obj_description(
+     to_regprocedure('audit_outbox_deny_unshipped_delete()'), 'pg_proc') = '${CHAIN_SPLIT_MARK}',
+   false) AS split`;
 
 // Every UPDATE, DELETE and TRUNCATE on audit_log raises, whatever the role. ENABLE ALWAYS keeps the
 // triggers firing under `session_replication_role = replica`, which skips ordinary triggers, so
@@ -45,10 +55,13 @@ const APPEND_ONLY_SQL = [
 // shipper calls it too, after appending, so a row it would not be allowed to delete moves aside.
 //
 // With the chain in a database of its own, the outbox's database cannot see audit_log, so the
-// guard there takes a delete only from a session holding the shipper lock, which the shipper
-// takes before it reads a batch and keeps until it has deleted the batch, after its append
-// committed in the chain's database. Weaker than the content check: advisory locks need no
-// privilege, so a role that can delete from the outbox can take the lock too.
+// guard there takes a delete only from the shipper role (AUDIT_SHIPPER_DATABASE_URL), and only
+// while that session holds the shipper lock, which the shipper takes before it reads a batch and
+// keeps until it has deleted the batch, after its append committed in the chain's database. The
+// lock alone proves nothing, as any role may take an advisory lock; the role is what the guard
+// trusts, so it refuses the tables' owner too, and only the shipper role holds DELETE on the
+// outbox and INSERT on the rejected table. Weaker than the content check still: a shipper whose
+// append failed unseen could delete what never reached the chain.
 const CHAIN_MATCH_SQL = `CREATE OR REPLACE FUNCTION audit_outbox_entry_chained(chained_event_id uuid, entry jsonb)
    RETURNS boolean LANGUAGE sql STABLE SET search_path = pg_catalog, public AS $$
      SELECT EXISTS (
@@ -75,10 +88,20 @@ const SHIPPER_HOLDS_LOCK = `EXISTS (
         WHERE locktype = 'advisory' AND granted AND pid = pg_backend_pid() AND objsubid = 1
           AND ((classid::bigint << 32) | objid::bigint) = hashtext('audit_shipper')::bigint)`;
 
-const outboxGuardSql = (shipped: string) => [
+// `deleter`, when given, is checked before anything else: a session that fails it may not delete
+// even a row that has shipped.
+const outboxGuardSql = (shipped: string, deleter?: string) => [
   `CREATE OR REPLACE FUNCTION audit_outbox_deny_unshipped_delete() RETURNS trigger
    LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
-   BEGIN
+   BEGIN${
+     deleter
+       ? `
+     IF NOT (${deleter}) THEN
+       RAISE EXCEPTION 'audit_outbox row % (event %) is the audit shipper''s to delete: DELETE is not permitted',
+         OLD.id, OLD.event_id;
+     END IF;`
+       : ''
+   }
      -- Checked apart and first: a rejected entry may not parse, so it never reaches the cast below.
      IF EXISTS (SELECT 1 FROM audit_outbox_rejected WHERE outbox_id = OLD.id AND entry = OLD.entry) THEN
        RETURN OLD;
@@ -181,10 +204,47 @@ const writerGrantsSql = (database: string, role: string) => [
   `GRANT USAGE ON SEQUENCE audit_log_seq_seq TO ${role}`,
 ];
 
+// What the shipper role may do in the main database: read the outbox, delete what it shipped, and
+// move aside what the chain cannot take. It alone keeps DELETE on the outbox and INSERT on the
+// rejected table: they are revoked from PUBLIC and from every other role, the tables' owner
+// included (a superuser keeps them whatever its grants). It reads the main database's own audit_log,
+// when one is left from before the split, to refuse to start a chain while that one still holds rows.
+const shipperGrantsSql = (role: LoginRole) => [
+  `GRANT USAGE ON SCHEMA public TO ${role.quoted}`,
+  `GRANT SELECT, DELETE ON audit_outbox TO ${role.quoted}`,
+  `GRANT SELECT, INSERT ON audit_outbox_rejected TO ${role.quoted}`,
+  `GRANT USAGE ON SEQUENCE audit_outbox_rejected_id_seq TO ${role.quoted}`,
+  `DO $$
+   DECLARE
+     target record;
+   BEGIN
+     IF to_regclass('public.audit_log') IS NOT NULL THEN
+       GRANT SELECT ON audit_log TO ${role.quoted};
+     END IF;
+     REVOKE DELETE ON audit_outbox FROM PUBLIC;
+     REVOKE INSERT ON audit_outbox_rejected FROM PUBLIC;
+     FOR target IN
+       SELECT p.privilege, p.rel::text AS rel, h.holder::regrole::text AS holder
+         FROM (VALUES ('audit_outbox'::regclass, 'DELETE'), ('audit_outbox_rejected'::regclass, 'INSERT'))
+              AS p(rel, privilege)
+         JOIN pg_class c ON c.oid = p.rel
+         CROSS JOIN LATERAL (
+           SELECT a.grantee AS holder FROM aclexplode(c.relacl) a
+            WHERE a.privilege_type = p.privilege AND a.grantee <> 0
+           UNION
+           SELECT c.relowner) h
+        WHERE h.holder <> '${role.name}'::regrole
+     LOOP
+       EXECUTE format('REVOKE %s ON %s FROM %s', target.privilege, target.rel, target.holder);
+     END LOOP;
+   END $$`,
+];
+
 // The writer role must not reach the main database, and PUBLIC holds CONNECT on every database
-// by default, so PUBLIC loses it there. Every role that owns or holds a grant on a table in its
-// public schema, the app's own among them, keeps it by name. A role added later that only
-// connects needs its own GRANT CONNECT.
+// by default, so PUBLIC loses it there, on the first split migrate only: a later run must not undo
+// what an operator revoked since. Every role that owns or holds a grant on a table in its public
+// schema, the app's own among them, keeps it by name. A role added later that only connects
+// (monitoring, backup) needs its own GRANT CONNECT.
 const MAIN_CONNECT_SQL = `DO $$
    DECLARE holder text;
    BEGIN
@@ -199,21 +259,100 @@ const MAIN_CONNECT_SQL = `DO $$
      EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database());
    END $$`;
 
-const WRITER_CONNECTION_LIMIT = 20;
+// On every run: the writer never connects to the main database, the shipper always may.
+const mainConnectByRoleSql = (writer: LoginRole, shipper: LoginRole) => `DO $$
+   BEGIN
+     EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM ${writer.quoted}', current_database());
+     EXECUTE format('GRANT CONNECT ON DATABASE %I TO ${shipper.quoted}', current_database());
+   END $$`;
+
+const MARK_SPLIT_SQL = `COMMENT ON FUNCTION audit_outbox_deny_unshipped_delete() IS '${CHAIN_SPLIT_MARK}'`;
+
+// Per audit role. Each replica opens up to AUDIT_DATABASE_POOL_MAX connections as each role, so
+// replicas x AUDIT_DATABASE_POOL_MAX must stay within it.
+const ROLE_CONNECTION_LIMIT = 20;
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 // What CREATE DATABASE raises when a concurrent migrate created it first.
 const ALREADY_EXISTS = new Set(['42P04', '23505']);
 
+const ROLE_STATE_SQL = `SELECT r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication
+            OR r.rolbypassrls AS privileged,
+          EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid) AS grouped
+     FROM pg_roles r WHERE r.rolname = $1`;
+
+type LoginRole = { name: string; quoted: string; password: string; database: string };
+
 function identifier(value: string, part: string): string {
   if (!IDENTIFIER.test(value)) {
-    throw new Error(`audit database url ${part} '${value}' must match ${IDENTIFIER}`);
+    throw new Error(`${part} '${value}' must match ${IDENTIFIER}`);
   }
   return `"${value}"`;
 }
 
+const databaseOf = (url: string) => decodeURIComponent(new URL(url).pathname.slice(1));
+const userOf = (url: string) => decodeURIComponent(new URL(url).username);
+
+function loginRole(url: string, env: string): LoginRole {
+  const name = userOf(url);
+  const password = decodeURIComponent(new URL(url).password);
+  if (!password) {
+    throw new Error(`${env} must carry the password of its role`);
+  }
+  return { name, quoted: identifier(name, `${env} user`), password, database: databaseOf(url) };
+}
+
+/**
+ * Creates `role` as a login with no attribute that reaches past its grants, or takes the existing
+ * one when it has none either and belongs to no other role, then sets its password and connection
+ * limit. ALTER does not restate the attributes: an admin that is not a superuser, as on a managed
+ * Postgres, may not name SUPERUSER, CREATEDB, REPLICATION or BYPASSRLS even to turn them off.
+ */
+async function ensureLoginRole(client: PoolClient, role: LoginRole): Promise<void> {
+  await client.query(`DO $$ BEGIN
+       CREATE ROLE ${role.quoted} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+     EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+     END $$`);
+  const { rows } = await client.query<{ privileged: boolean; grouped: boolean }>(ROLE_STATE_SQL, [
+    role.name,
+  ]);
+  if (rows[0]?.privileged) {
+    throw new Error(
+      `audit role ${role.name} holds SUPERUSER, CREATEDB, CREATEROLE, REPLICATION or BYPASSRLS: drop the attribute and migrate again`,
+    );
+  }
+  if (rows[0]?.grouped) {
+    throw new Error(
+      `audit role ${role.name} is a member of another role: revoke the membership and migrate again`,
+    );
+  }
+  await client.query(
+    `ALTER ROLE ${role.quoted} WITH LOGIN CONNECTION LIMIT ${ROLE_CONNECTION_LIMIT} PASSWORD '${scramVerifier(role.password)}'`,
+  );
+}
+
+async function inTransaction(client: PoolClient, statements: string[]): Promise<void> {
+  await client.query('BEGIN');
+  try {
+    for (const statement of statements) {
+      await client.query(statement);
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  }
+}
+
+async function isSplit(client: Pool | PoolClient): Promise<boolean> {
+  const { rows } = await client.query<{ split: boolean }>(CHAIN_SPLIT_SQL);
+  return rows[0]?.split ?? false;
+}
+
 /**
  * The SCRAM-SHA-256 verifier Postgres stores for `password`, so ALTER ROLE never carries the
- * password itself into a statement log.
+ * password itself. The verifier still reaches a log that records DDL (`log_statement = ddl` or
+ * `all`), and it is enough to try passwords against offline, so keep such logs as secret as the
+ * password.
  */
 function scramVerifier(password: string): string {
   const iterations = 4096;
@@ -239,20 +378,45 @@ export type AuditMigrateTarget = {
    * and the login role and password to set up for it. Omitted, the chain stays in the main one.
    */
   auditUrl?: string;
+  /**
+   * The main database as the shipper reaches it (AUDIT_SHIPPER_DATABASE_URL): the login role and
+   * password to set up as the one role that may delete shipped rows from the outbox. Required with
+   * `auditUrl`.
+   */
+  shipperUrl?: string;
 };
 
 /**
  * Apply the audit module migrations (idempotent: drizzle skips already-recorded ones). A string is
- * the admin url of a deployment whose chain shares the main database.
+ * the admin url of a deployment whose chain shares the main database. Refuses a main database
+ * whose chain has moved to its own: migrating it as one database would put the content guard back
+ * on an outbox that ships elsewhere.
  *
  * With `auditUrl`, the chain gets a database of its own: created when missing, with the url's role
- * as its only other login, which may connect, read the chain and append to it. Its password and
- * connection limit are set on every run, so rotating the secret is a migrate away. The main
- * database keeps the outbox and gets the outbox guard that needs no audit_log beside it.
+ * as its only other login, which may connect, read the chain and append to it. With `shipperUrl`,
+ * the main database gets a login that alone may delete shipped rows from the outbox, and the guard
+ * that needs no audit_log beside it. Both roles' passwords and connection limits are set on every
+ * run, so rotating a secret is a migrate away. Runs under the audit migration lock on the main
+ * database, so concurrent migrates of one deployment take turns.
  */
 export async function migrate(target?: string | AuditMigrateTarget): Promise<void> {
-  const { adminUrl, auditUrl } = typeof target === 'string' ? { adminUrl: target } : (target ?? {});
+  const { adminUrl, auditUrl, shipperUrl } =
+    typeof target === 'string' ? { adminUrl: target } : (target ?? {});
+  const mainUrl = adminUrl ?? process.env['DATABASE_ADMIN_URL'] ?? process.env['DATABASE_URL'];
+  if (!mainUrl) {
+    throw new Error('Cannot run migrations: set DATABASE_URL (or DATABASE_ADMIN_URL).');
+  }
   if (!auditUrl) {
+    const probe = new Pool({ connectionString: mainUrl });
+    try {
+      if (await isSplit(probe)) {
+        throw new Error(
+          'the audit chain of this database lives in a database of its own: migrate with auditUrl (AUDIT_DATABASE_URL) and shipperUrl (AUDIT_SHIPPER_DATABASE_URL)',
+        );
+      }
+    } finally {
+      await probe.end();
+    }
     return runMigrations({
       ...MIGRATIONS,
       postSql: [
@@ -262,73 +426,82 @@ export async function migrate(target?: string | AuditMigrateTarget): Promise<voi
         ...CHAIN_UNIQUE_SQL,
         ...EMAIL_CHANGE_INDEX_SQL,
       ],
-      ...(adminUrl ? { databaseUrl: adminUrl } : {}),
+      databaseUrl: mainUrl,
     });
   }
-  const mainUrl = adminUrl ?? process.env['DATABASE_ADMIN_URL'] ?? process.env['DATABASE_URL'];
-  if (!mainUrl) {
-    throw new Error('Cannot run migrations: set DATABASE_URL (or DATABASE_ADMIN_URL).');
+  if (!shipperUrl) {
+    throw new Error(
+      'a chain in its own database needs shipperUrl (AUDIT_SHIPPER_DATABASE_URL): the role that alone deletes shipped outbox rows',
+    );
   }
-  const audit = new URL(auditUrl);
-  const databaseName = decodeURIComponent(audit.pathname.slice(1));
-  const database = identifier(databaseName, 'database');
-  const role = identifier(decodeURIComponent(audit.username), 'user');
-  const password = decodeURIComponent(audit.password);
-  if (!password) {
-    throw new Error('audit database url must carry the password of its role');
+  const writer = loginRole(auditUrl, 'AUDIT_DATABASE_URL');
+  const shipper = loginRole(shipperUrl, 'AUDIT_SHIPPER_DATABASE_URL');
+  const auditDatabase = identifier(writer.database, 'AUDIT_DATABASE_URL database');
+  const mainDatabase = databaseOf(mainUrl);
+  if (writer.database === mainDatabase || shipper.database !== mainDatabase) {
+    throw new Error(
+      `AUDIT_DATABASE_URL must name a database other than the main one '${mainDatabase}', AUDIT_SHIPPER_DATABASE_URL the main one`,
+    );
+  }
+  const mainRoles = new Set([userOf(mainUrl)]);
+  const appUrl = process.env['DATABASE_URL'];
+  if (appUrl) {
+    mainRoles.add(userOf(appUrl));
+  }
+  if (writer.name === shipper.name || mainRoles.has(writer.name) || mainRoles.has(shipper.name)) {
+    throw new Error(
+      'AUDIT_DATABASE_URL and AUDIT_SHIPPER_DATABASE_URL each need a role of their own, not the main database admin or app role',
+    );
   }
 
   const admin = new Pool({ connectionString: mainUrl });
+  const client = await admin.connect();
   try {
-    const { rowCount } = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [
-      databaseName,
-    ]);
-    if (rowCount === 0) {
-      await admin.query(`CREATE DATABASE ${database}`).catch((err: { code?: string }) => {
-        if (!ALREADY_EXISTS.has(err.code ?? '')) {
-          throw err;
+    await withMigrationAdvisoryLock(
+      client,
+      `${MIGRATIONS.migrationsSchema}.${MIGRATIONS.migrationsTable}`,
+      async () => {
+        const { rowCount } = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [
+          writer.database,
+        ]);
+        if (rowCount === 0) {
+          await client.query(`CREATE DATABASE ${auditDatabase}`).catch((err: { code?: string }) => {
+            if (!ALREADY_EXISTS.has(err.code ?? '')) {
+              throw err;
+            }
+          });
         }
-      });
-    }
-    await admin.query(`DO $$ BEGIN
-       CREATE ROLE ${role} LOGIN;
-     EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
-     END $$`);
-    await admin.query(
-      `ALTER ROLE ${role} WITH LOGIN CONNECTION LIMIT ${WRITER_CONNECTION_LIMIT} PASSWORD '${scramVerifier(password)}'`,
+        await ensureLoginRole(client, writer);
+        await ensureLoginRole(client, shipper);
+
+        await runMigrations({
+          ...MIGRATIONS,
+          databaseUrl: withDatabase(mainUrl, writer.database),
+          postSql: [
+            ...APPEND_ONLY_SQL,
+            CHAIN_MATCH_SQL,
+            ...CHAIN_UNIQUE_SQL,
+            ...EMAIL_CHANGE_INDEX_SQL,
+            ...writerGrantsSql(auditDatabase, writer.quoted),
+          ],
+        });
+
+        const firstSplit = !(await isSplit(client));
+        await inTransaction(client, [
+          DENY_MUTATION_FN_SQL,
+          ...outboxGuardSql(
+            SHIPPER_HOLDS_LOCK,
+            `pg_has_role(session_user, '${shipper.name}', 'MEMBER')`,
+          ),
+          MARK_SPLIT_SQL,
+          ...shipperGrantsSql(shipper),
+          ...(firstSplit ? [MAIN_CONNECT_SQL] : []),
+          mainConnectByRoleSql(writer, shipper),
+        ]);
+      },
     );
-
-    await runMigrations({
-      ...MIGRATIONS,
-      databaseUrl: withDatabase(mainUrl, databaseName),
-      postSql: [
-        ...APPEND_ONLY_SQL,
-        CHAIN_MATCH_SQL,
-        ...CHAIN_UNIQUE_SQL,
-        ...EMAIL_CHANGE_INDEX_SQL,
-        ...writerGrantsSql(database, role),
-      ],
-    });
-
-    const client = await admin.connect();
-    try {
-      await withMigrationAdvisoryLock(
-        client,
-        `${MIGRATIONS.migrationsSchema}.${MIGRATIONS.migrationsTable}`,
-        async () => {
-          for (const statement of [
-            DENY_MUTATION_FN_SQL,
-            ...outboxGuardSql(SHIPPER_HOLDS_LOCK),
-            MAIN_CONNECT_SQL,
-          ]) {
-            await client.query(statement);
-          }
-        },
-      );
-    } finally {
-      client.release();
-    }
   } finally {
+    client.release();
     await admin.end();
   }
 }

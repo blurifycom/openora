@@ -226,7 +226,8 @@ export class SupportHistoryService {
 
   /**
    * A player's vendor tickets and chat threads, cached whole per `(userId, includeResolved)` for
-   * a minute, `fetchedAt` included. Each section fails on its own, its reason to the log only.
+   * a minute, `fetchedAt` included, unless the tickets come back incomplete. Each section fails on
+   * its own, its reason to the log only.
    */
   async getHistory(userId: User['id'], includeResolved: boolean) {
     // The audit log keeps ids as text, so an uppercase id would miss its rows and split the cache.
@@ -236,6 +237,9 @@ export class SupportHistoryService {
       `support-chat-history:v2:${id}:${includeResolved}`,
       HISTORY_CACHE_TTL_MS,
       () => this.load(id, includeResolved),
+      // An incomplete trail may only lag a change still on its way to the audit chain, so the
+      // next call reads it again instead of serving it for the whole TTL.
+      ({ tickets }) => tickets.complete,
     );
   }
 
