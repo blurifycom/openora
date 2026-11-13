@@ -15,6 +15,9 @@ export type RankTierSeed = {
   dailyBonus?: string | null;
   weeklyBonus?: string | null;
   monthlyBonus?: string | null;
+  dailyBonusPercent?: string | null;
+  weeklyBonusPercent?: string | null;
+  monthlyBonusPercent?: string | null;
   levelUpBonus?: string | null;
 };
 

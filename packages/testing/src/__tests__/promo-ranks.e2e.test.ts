@@ -77,7 +77,7 @@ describe('a player reading their rank', () => {
     expect(res.status).toBe(200);
     expect(body.currency).toBe('USDT');
     expect(body.tiers.map((tier: { key: string }) => tier.key)).toEqual(LADDER_KEYS);
-    expect(Object.keys(body)).toEqual(['currency', 'tiers']);
+    expect(Object.keys(body)).toEqual(['currency', 'periodicBasis', 'tiers']);
   });
 });
 

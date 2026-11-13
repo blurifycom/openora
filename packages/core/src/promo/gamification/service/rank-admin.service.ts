@@ -1,5 +1,5 @@
 import { asc, eq, inArray } from 'drizzle-orm';
-import type { AuditWritePort, Uuid } from '@openora/core/contracts';
+import type { AuditWritePort, RankPeriodicBasis, Uuid } from '@openora/core/contracts';
 import {
   createDomainError,
   findOneOrThrow,
@@ -113,6 +113,7 @@ export class RankAdminService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly audit: AuditWritePort,
+    private readonly periodicBasis: RankPeriodicBasis = 'flat',
   ) {}
 
   async get() {
@@ -124,7 +125,7 @@ export class RankAdminService {
     if (!lowest) {
       throw new RankLadderNotConfiguredError('default');
     }
-    return toLadder(lowest.currency, tiers);
+    return toLadder(lowest.currency, tiers, this.periodicBasis);
   }
 
   async set(adminId: Uuid, input: SetRankLadderInput) {
@@ -135,7 +136,7 @@ export class RankAdminService {
         .orderBy(asc(promoRankTier.position))
         .for('update');
       const [lowest] = locked;
-      const before = toLadder(lowest?.currency ?? input.currency, locked);
+      const before = toLadder(lowest?.currency ?? input.currency, locked, this.periodicBasis);
 
       assertKnownTiers(new Set(locked.map((tier) => tier.id)), input.tiers);
       assertLadderHolds(input.tiers);
@@ -156,7 +157,7 @@ export class RankAdminService {
         .select({ ...TIER_COLUMNS, currency: promoRankTier.currency })
         .from(promoRankTier)
         .orderBy(asc(promoRankTier.position));
-      const ladder = toLadder(input.currency, saved);
+      const ladder = toLadder(input.currency, saved, this.periodicBasis);
       await this.audit.recordInTransaction(tx, {
         actorId: adminId,
         actorType: 'admin',
@@ -259,6 +260,12 @@ async function writeTiers(tx: DrizzleTx, input: SetRankLadderInput) {
       await tx.update(promoRankTier).set(values).where(eq(promoRankTier.id, tier.id));
     }
   } catch (err) {
+    // An update keeps any percent the input left out, so only the row as written shows the total.
+    if (uniqueConstraintName(err) === 'promo_rank_tier_total_percent') {
+      throw new RankLadderInvalidError(
+        'rakeback and the bonus percents of a tier add up to at most 100',
+      );
+    }
     if (uniqueConstraintName(err) === null) {
       throw err;
     }

@@ -848,6 +848,10 @@ describe('notificationEventMap', () => {
         dailyBonus: '1',
         weeklyBonus: '5',
         monthlyBonus: '20',
+        dailyBonusPercent: '10.00',
+        weeklyBonusPercent: '15.00',
+        monthlyBonusPercent: '20.00',
+        periodicBasis: 'margin',
       },
       'promo.streak.milestone.reached': {
         userId: id(),
