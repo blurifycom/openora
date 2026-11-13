@@ -286,8 +286,11 @@ nothing else, so the provider may retry it or treat it as final.
   undid a void and left part of the stake as debt, the next void credits what that reopen
   collected plus what offsets and collects took of its shortfall, and the system cancels what is
   left of it: the debt's `owed` drops by that amount, the change is audited with actor `system`
-  and cause `voided`, and the hold is released once nothing is outstanding. A part an admin wrote
-  off stays written off. A cancel only applies to a reserved bet, so after a reopen it is refused
+  and cause `voided`, and the hold is released once nothing is outstanding. Only that reopen's
+  `bet` shortfall is touched; a `win_reversal` shortfall of the same bet stays owed. A part an
+  admin wrote off stays written off. The debt's `collected` keeps the offsets and collects the void
+  refunded; the `voided` audit row records them as `refunded`, with the `shortfallId`. A void that
+  finds no such shortfall is refused `illegal_transition` and filed as a `provider_mismatch`. A cancel only applies to a reserved bet, so after a reopen it is refused
   `illegal_transition`. A wallet refusal on a settlement or cancel is final: refused
   `illegal_transition` and filed as a `provider_mismatch` finding.
 - **Reports are cash-basis for a reopened bet.** GGR and responsible-gambling spend count what was

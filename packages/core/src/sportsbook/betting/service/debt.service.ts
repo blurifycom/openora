@@ -84,6 +84,8 @@ export type DebtChange = {
   holdActive: boolean;
   actor: AdminCaller | null;
   reason?: string;
+  /** A void's cancel: the shortfall it ended and what of it the void refunded. */
+  voided?: { shortfallId: string; refunded: string };
 };
 
 export type DebtMove = { transactionId: Uuid; amount: string; type: WalletCorrectionDebitType };
@@ -251,14 +253,16 @@ export class SportsbookDebtService {
   }
 
   /**
-   * A void undid the reopen that recorded the bet's latest shortfall, so the system cancels what is
-   * left of it: never owed after all. Answers what offsets and collections already took of that
-   * shortfall, for the void to return with the rest; a write-off of it stays written off.
+   * A void undid the reopen that left part of this bet's stake as debt (its latest `bet`
+   * shortfall: only a reopen of a void records one), so the system cancels what is left of it:
+   * never owed after all. Answers what offsets and collections already took of that shortfall, for
+   * the void to return with the rest; a write-off of it stays written off. Undefined when the bet
+   * has no such shortfall.
    */
   async cancelForVoid(
     tx: DrizzleTx,
     bet: Pick<SportsbookBetRow, 'id' | 'userId' | 'currency' | 'provider' | 'providerBetId'>,
-  ): Promise<{ change: DebtChange | undefined; collected: string }> {
+  ): Promise<{ change: DebtChange | undefined; collected: string } | undefined> {
     const [before] = await tx
       .select()
       .from(sportsbookPlayerDebt)
@@ -272,11 +276,13 @@ export class SportsbookDebtService {
     const [shortfall] = await tx
       .select()
       .from(sportsbookDebtShortfall)
-      .where(eq(sportsbookDebtShortfall.betId, bet.id))
+      .where(
+        and(eq(sportsbookDebtShortfall.betId, bet.id), eq(sportsbookDebtShortfall.type, 'bet')),
+      )
       .orderBy(desc(sportsbookDebtShortfall.seq))
       .limit(1);
     if (!before || shortfall?.debtId !== before.id) {
-      throw new Error('sportsbook debt: a reopen recorded no shortfall for the bet it left owing');
+      return undefined;
     }
     const [taken] = await tx
       .select({ total: sum(walletTransaction.amount) })
@@ -295,28 +301,33 @@ export class SportsbookDebtService {
       ? ((await this.outstandingShortfalls(tx, before)).find((s) => s.id === shortfall.id)
           ?.remaining ?? '0')
       : '0';
-    if (!isPositiveMoney(remaining)) {
+    if (!isPositiveMoney(remaining) && !isPositiveMoney(collected)) {
       return { change: undefined, collected };
     }
-    // Cutting the shortfall to what was consumed of it keeps the oldest-first walk over the rest.
-    if (moneyEquals(remaining, shortfall.amount)) {
-      await tx.delete(sportsbookDebtShortfall).where(eq(sportsbookDebtShortfall.id, shortfall.id));
-    } else {
-      await tx
-        .update(sportsbookDebtShortfall)
-        .set({ amount: moneySubtract(shortfall.amount, remaining) })
-        .where(eq(sportsbookDebtShortfall.id, shortfall.id));
+    let debt = before;
+    if (isPositiveMoney(remaining)) {
+      // Cutting the shortfall to what was consumed of it keeps the oldest-first walk over the rest.
+      if (moneyEquals(remaining, shortfall.amount)) {
+        await tx
+          .delete(sportsbookDebtShortfall)
+          .where(eq(sportsbookDebtShortfall.id, shortfall.id));
+      } else {
+        await tx
+          .update(sportsbookDebtShortfall)
+          .set({ amount: moneySubtract(shortfall.amount, remaining) })
+          .where(eq(sportsbookDebtShortfall.id, shortfall.id));
+      }
+      const rows = await tx
+        .update(sportsbookPlayerDebt)
+        .set({
+          owed: sql`${sportsbookPlayerDebt.owed} - ${remaining}`,
+          outstanding: sql`${sportsbookPlayerDebt.outstanding} - ${remaining}`,
+          status: sql`case when ${sportsbookPlayerDebt.outstanding} - ${remaining} = 0 then 'cleared' else 'open' end::sportsbook_debt_status`,
+        })
+        .where(eq(sportsbookPlayerDebt.id, before.id))
+        .returning();
+      debt = findOneOrThrow(rows, new SportsbookDebtNotFoundError(before.id));
     }
-    const rows = await tx
-      .update(sportsbookPlayerDebt)
-      .set({
-        owed: sql`${sportsbookPlayerDebt.owed} - ${remaining}`,
-        outstanding: sql`${sportsbookPlayerDebt.outstanding} - ${remaining}`,
-        status: sql`case when ${sportsbookPlayerDebt.outstanding} - ${remaining} = 0 then 'cleared' else 'open' end::sportsbook_debt_status`,
-      })
-      .where(eq(sportsbookPlayerDebt.id, before.id))
-      .returning();
-    const debt = findOneOrThrow(rows, new SportsbookDebtNotFoundError(before.id));
     return {
       change: {
         before,
@@ -326,6 +337,8 @@ export class SportsbookDebtService {
         holdActive: await this.releaseHoldIfClear(tx, debt.userId),
         actor: null,
         reason: `cancelled by a void of sportsbook bet ${bet.id}`,
+        // The debt keeps the refunded offsets in `collected`; the audit row records them.
+        voided: { shortfallId: shortfall.id, refunded: collected },
       },
       collected,
     };
@@ -690,7 +703,7 @@ export class SportsbookDebtService {
   /** Inside the change's transaction, after every other write: audit_log is the last lock. */
   async writeAudit(
     tx: DrizzleTx,
-    { before, debt, cause, amount, actor, reason }: DebtChange,
+    { before, debt, cause, amount, actor, reason, voided }: DebtChange,
   ): Promise<void> {
     await this.audit.recordInTransaction(tx, {
       actorId: actor?.userId ?? null,
@@ -699,7 +712,7 @@ export class SportsbookDebtService {
       resourceType: 'sportsbook_player_debt',
       resourceId: debt.id,
       before: snapshot(before),
-      after: { ...snapshot(debt), cause, amount, ...(reason ? { reason } : {}) },
+      after: { ...snapshot(debt), cause, amount, ...(reason ? { reason } : {}), ...voided },
       ip: actor?.ip,
       userAgent: actor?.userAgent,
     });

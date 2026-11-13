@@ -552,19 +552,21 @@ async function stakeToReverse(
   return stake;
 }
 
-/** The wallet would not return a stake or pay a settlement: final, and filed for an operator. */
-function walletRefused(
+/**
+ * The wallet or the debt does not hold what the ledger expects of a settlement or cancel: final,
+ * and filed for an operator.
+ */
+function ledgerMismatch(
   { provider, providerTxId }: TxKey,
-  move: 'a stake refund' | 'a payout',
-  reason: string,
   owner: Pick<SportsbookFindingArgs, 'betId' | 'userId'>,
+  detail: Record<string, string>,
 ): LedgerRefusal {
   return new LedgerRefusal('illegal_transition', {
     kind: 'provider_mismatch',
     dedupeKey: `provider_mismatch:${provider}:${providerTxId}`,
     provider,
     ...owner,
-    detail: { providerTxId, move, walletRefusal: reason },
+    detail: { providerTxId, ...detail },
   });
 }
 
@@ -1296,10 +1298,11 @@ export class SportsbookLedgerService {
           }),
         );
         if (!credit.ok) {
-          throw walletRefused(args, 'a stake refund', credit.reason, {
-            betId: cancelled.id,
-            userId: cancelled.userId,
-          });
+          throw ledgerMismatch(
+            args,
+            { betId: cancelled.id, userId: cancelled.userId },
+            { move: 'a stake refund', walletRefusal: credit.reason },
+          );
         }
         if (!credit.moved) {
           throw raceLost(credit.replayedTransactionId);
@@ -1511,6 +1514,13 @@ export class SportsbookLedgerService {
         // and returns only what the player paid, the reopen's part and what was taken of the debt.
         if (isPositiveMoney(stake.uncollected)) {
           const cancelled = await this.debts.cancelForVoid(tx, settled);
+          if (!cancelled) {
+            throw ledgerMismatch(
+              args,
+              { betId: settled.id, userId: settled.userId },
+              { uncollected: stake.uncollected, missing: 'stake shortfall' },
+            );
+          }
           debtChange = cancelled.change;
           credited = moneyAdd(moneySubtract(payout, stake.uncollected), cancelled.collected);
           // More than the reopen's stake row: the round cap bounds it instead.
@@ -1540,10 +1550,11 @@ export class SportsbookLedgerService {
           }),
         );
         if (!credit.ok) {
-          throw walletRefused(args, 'a payout', credit.reason, {
-            betId: settled.id,
-            userId: settled.userId,
-          });
+          throw ledgerMismatch(
+            args,
+            { betId: settled.id, userId: settled.userId },
+            { move: 'a payout', walletRefusal: credit.reason },
+          );
         }
         if (!credit.moved) {
           throw raceLost(credit.replayedTransactionId);
