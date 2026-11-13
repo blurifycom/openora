@@ -58,7 +58,16 @@ import {
   DrizzleProcessedEventLog,
   OutboxRelay,
 } from '../db/index.js';
-import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
+import {
+  AdminGuard,
+  ADMIN_GUARD,
+  SessionResolver,
+  AUTH_SESSION,
+  LOCAL_SESSION_RESOLVER,
+  REMOTE_SESSION_RESOLVER,
+  resolveSessionChain,
+  type RequestSessionResolver,
+} from '../auth/index.js';
 import { loadPlugins, parseServiceManifest, type PluginEntry } from '../plugin-host/index.js';
 import { importPlugin } from '../plugin-host/load-plugins.js';
 import {
@@ -427,6 +436,18 @@ type InternalApiMount = {
   trustedProxies: TrustedProxies;
 };
 
+// The admin guard's session lookup over a resolver that answers through the chain.
+function remoteSessionLookup(
+  resolver: RequestSessionResolver,
+): Pick<SessionResolver, 'resolveSession'> {
+  return {
+    async resolveSession(headers) {
+      const { auth } = await resolver.resolve(headers);
+      return auth ? { userId: auth.userId, sessionId: auth.sessionId } : undefined;
+    },
+  };
+}
+
 // `/internal/v1/*` answers here and never falls through, so no player or admin route can be
 // reached under it, and the session headers are stripped before a handler runs. An unsigned
 // request gets an empty 401 whether or not a route matches, so the surface cannot be enumerated
@@ -611,12 +632,34 @@ async function bootApp(
   // no second createAuth() over the same DB. authSchema is injected (not imported) because
   // the engine is domain-agnostic (ADR-0019/0025).
   container.register(AUTH_SESSION, (c) => new SessionResolver(c.get(DRIZZLE), config.authSchema));
+  // Ports are read per request, as plugins bind them after this registration.
+  container.register(
+    LOCAL_SESSION_RESOLVER,
+    (c): RequestSessionResolver => ({
+      resolve: (headers) =>
+        resolveSessionChain(
+          () => ({
+            sessions: c.get(AUTH_SESSION),
+            idlePolicy: c.has(SESSION_IDLE_POLICY) ? c.get(SESSION_IDLE_POLICY) : undefined,
+            twoFactorPolicy: c.has(TWO_FACTOR_SETUP_POLICY)
+              ? c.get(TWO_FACTOR_SETUP_POLICY)
+              : undefined,
+            activity: c.has(PLAYER_ACTIVITY_TRACKER) ? c.get(PLAYER_ACTIVITY_TRACKER) : undefined,
+          }),
+          headers,
+        ),
+    }),
+  );
   container.register(
     ADMIN_GUARD,
     (c) =>
       new AdminGuard(
         c.get(DRIZZLE),
-        c.get(AUTH_SESSION),
+        // A service with no session tables asks the identity service, which has already run
+        // the chain for this request's credentials: the answer is cached, so this is free.
+        c.has(REMOTE_SESSION_RESOLVER)
+          ? remoteSessionLookup(c.get(REMOTE_SESSION_RESOLVER))
+          : c.get(AUTH_SESSION),
         // has() avoids throwing on an unbound token so boot works without the iam module.
         c.has(ADMIN_PERMISSION_RESOLVER) ? c.get(ADMIN_PERMISSION_RESOLVER) : undefined,
         c.get(EVENT_BUS),
@@ -917,7 +960,15 @@ async function bootApp(
     });
   }
 
-  const sessions = container.get(AUTH_SESSION);
+  // Read once at boot: a remote resolver subscribes to its purge channel when built, and the
+  // local chain builds its better-auth instance now, so a bad auth config fails the boot.
+  const remoteSessions = container.has(REMOTE_SESSION_RESOLVER)
+    ? container.get(REMOTE_SESSION_RESOLVER)
+    : undefined;
+  if (!remoteSessions) {
+    container.get(AUTH_SESSION);
+  }
+  const sessions = remoteSessions ?? container.get(LOCAL_SESSION_RESOLVER);
 
   app.use('/*', async (c, next) => {
     const { headers, clientMeta, traceId } = requestMeta(c, trustedProxies);
@@ -927,8 +978,15 @@ async function bootApp(
       rawBody: await captureRawBody(c.req.raw),
     };
 
-    // Never identify from a client-supplied `x-user-id` header (W1, ADR-0019).
-    const resolved = await sessions.resolveSession(c.req.raw.headers);
+    const { auth, sessionEndedReason } = await sessions.resolve(c.req.raw.headers);
+    // No auth: context.auth stays undefined so getUserId 401s. Auth and public routes still
+    // work.
+    if (auth) {
+      context.auth = auth;
+    }
+    if (sessionEndedReason) {
+      context.sessionEndedReason = sessionEndedReason;
+    }
 
     const runHandler = async (): Promise<Response> => {
       const { matched, response } = await handler.handle(c.req.raw, { context });
@@ -939,75 +997,10 @@ async function bootApp(
       return c.res;
     };
 
-    if (!resolved) {
-      // No valid session - context.auth stays undefined so getUserId 401s. Auth and
-      // public routes still work. Run inside the request context for trace correlation.
-      return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
-    }
-
-    const { userId, sessionId } = resolved;
-
-    // The player's "auto-logout when inactive" window. Checked before the session is
-    // published onto the context, so an idled-out request falls through to the
-    // unauthenticated path above rather than being served and 401ing somewhere deeper.
-    // A DB error here takes the same path as an expired session rather than throwing: it
-    // is a security check, so a transient failure must not serve the request anyway, but
-    // it must also not turn into a 500 on every authenticated route the moment this one
-    // query blips - the client should see "not signed in", the same honest answer an
-    // actually-idle session gets, not "server broken".
-    if (sessionId && container.has(SESSION_IDLE_POLICY)) {
-      let state: 'active' | 'expired' | 'idle';
-      try {
-        state = await container.get(SESSION_IDLE_POLICY).touch(userId, sessionId);
-      } catch (err) {
-        createLogger('session-idle').error({ err }, 'touch failed');
-        state = 'expired';
-      }
-      if (state !== 'active') {
-        if (state === 'idle') {
-          context.sessionEndedReason = 'idle_timeout';
-        }
-        return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
-      }
-    }
-
-    // Published as a flag rather than answered here: getUserId refuses it unless a route
-    // opts in, and the identity router holds its own routes to an enrolment allowlist. A
-    // DB error takes the unauthenticated path, as above.
-    let twoFactorSetupRequired = false;
-    if (container.has(TWO_FACTOR_SETUP_POLICY)) {
-      try {
-        twoFactorSetupRequired = await container
-          .get(TWO_FACTOR_SETUP_POLICY)
-          .isSetupRequired(userId);
-      } catch (err) {
-        createLogger('two-factor-setup').error({ err }, 'setup check failed');
-        return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
-      }
-    }
-
-    context.auth = twoFactorSetupRequired ? { ...resolved, twoFactorSetupRequired } : resolved;
-
-    if (container.has(PLAYER_ACTIVITY_TRACKER)) {
-      // Awaited, not fire-and-forget. Modules and overlays read this stamp to decide
-      // whether a player is online, so a request that refreshes presence must not be able
-      // to return before the write lands: a second caller acting on the answer would
-      // otherwise read a value the completed request had already superseded. The adapter
-      // narrows the update to rows older than its throttle, so the statement is a
-      // no-op most of the time; the cost is the round trip, on the same path that already
-      // awaits SESSION_IDLE_POLICY above.
-      //
-      // A failure is still swallowed: presence is a hint, never authorisation, and losing
-      // the stamp must not fail the request it rode in on.
-      await container
-        .get(PLAYER_ACTIVITY_TRACKER)
-        .touchLastSeen(userId)
-        .catch((err: unknown) =>
-          createLogger('player-activity').error({ err }, 'touchLastSeen failed'),
-        );
-    }
-
-    return withRequestContext({ userId, traceId, clientMeta: context.clientMeta }, runHandler);
+    return withRequestContext(
+      { ...(auth ? { userId: auth.userId } : {}), traceId, clientMeta: context.clientMeta },
+      runHandler,
+    );
   });
 
   const port = config.port ?? Number(process.env['PORT_API'] ?? 3001);

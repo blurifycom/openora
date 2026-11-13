@@ -12,7 +12,7 @@ import {
 } from '@openora/core/contracts';
 import { DrizzleService, mapConcurrent } from '../db/index.js';
 import { sql } from 'drizzle-orm';
-import { SessionResolver } from './session-resolver.js';
+import type { SessionResolver } from './session-resolver.js';
 import { holdsGrant, isRoleName, type ResourceName, type ActionOf } from './permissions.js';
 import type { OssContext, EventBus } from '../kernel/index.js';
 import { createLogger } from '../kernel/logger.js';
@@ -54,7 +54,7 @@ export class AdminGuard {
   // Uses the shared SessionResolver (one better-auth init for the whole app) rather than a second createAuth over the same DB.
   constructor(
     private readonly drizzle: DrizzleService,
-    private readonly sessions: SessionResolver,
+    private readonly sessions: Pick<SessionResolver, 'resolveSession'>,
     // When bound (iam module loaded), grants come from DB only; otherwise static roles decide.
     private readonly permissionResolver?: AdminPermissionResolver,
     private readonly events?: EventBus,

@@ -29,7 +29,14 @@ import {
   domainEventSchemas,
   type RealtimeTransport,
 } from '@openora/core/contracts';
-import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, AUTH_SESSION, createLogger } from '@openora/core/server';
+import {
+  ADMIN_GUARD,
+  EVENT_BUS,
+  DRIZZLE,
+  AUTH_SESSION,
+  LOCAL_SESSION_RESOLVER,
+  createLogger,
+} from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import { DrizzleUserCommands } from './service/user-commands.service.js';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
@@ -49,6 +56,10 @@ import {
   accountReaderCallers,
   createInternalAccountsRouter,
 } from './router/internal-accounts.router.js';
+import {
+  createInternalSessionRouter,
+  sessionResolverCallers,
+} from './router/internal-sessions.router.js';
 import {
   createIdentityRouter,
   sessionEventsChannel,
@@ -252,12 +263,17 @@ export default {
     // client of these very routes. Unset ACCOUNT_READER_CALLERS refuses every caller.
     ctx.provide(ACCOUNT_READER, (c) => new DrizzleAccountReader(c.get(DRIZZLE)));
     const accountReaderCallerNames = accountReaderCallers(process.env['ACCOUNT_READER_CALLERS']);
-    ctx.routers.addInternal('identity', (c) =>
-      createInternalAccountsRouter(
+    const sessionResolverCallerNames = sessionResolverCallers(
+      process.env['SESSION_RESOLVER_CALLERS'],
+    );
+    ctx.routers.addInternal('identity', (c) => ({
+      ...createInternalAccountsRouter(
         new DrizzleAccountReader(c.get(DRIZZLE)),
         accountReaderCallerNames,
       ),
-    );
+      // The local chain, never a remote resolver. Unset SESSION_RESOLVER_CALLERS refuses every caller.
+      ...createInternalSessionRouter(c.get(LOCAL_SESSION_RESOLVER), sessionResolverCallerNames),
+    }));
     // RG login-block writer. compliance drives it through the port, never the schema.
     ctx.provide(
       LOGIN_ENFORCEMENT,
