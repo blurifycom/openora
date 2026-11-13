@@ -117,7 +117,8 @@ export type ReconciliationRefusalReason =
   | 'refund_without_vendor_id'
   | 'ledger_deposit_not_completed'
   | 'not_a_ledger_pair'
-  | 'unpriced_rows_after_cut';
+  | 'unpriced_rows_after_cut'
+  | 'credit_already_used';
 
 export class ReconciliationOutcomeNotAllowedError extends Error {
   readonly data: { reason: ReconciliationRefusalReason };
@@ -407,10 +408,12 @@ export class ReconciliationService {
               'credit_names_no_transaction',
             );
           }
+          // Locked, so two findings resolving at once cannot both claim the same credit.
           const [tx] = await txn
             .select()
             .from(walletTransaction)
-            .where(eq(walletTransaction.id, resolution.transactionId));
+            .where(eq(walletTransaction.id, resolution.transactionId))
+            .for('update');
           if (!tx) {
             throw new ReconciliationCreditTransactionNotFoundError(resolution.transactionId);
           }
@@ -422,6 +425,19 @@ export class ReconciliationService {
             !moneyEquals(tx.amount, finding.amount)
           ) {
             throw new ReconciliationCreditMismatchError();
+          }
+          // One credit pays for one finding: reused, the same money would close two of them.
+          const [claimed] = await txn
+            .select({ id: walletReconciliationFinding.id })
+            .from(walletReconciliationFinding)
+            .where(eq(walletReconciliationFinding.transactionId, tx.id))
+            .limit(1);
+          if (claimed) {
+            throw new ReconciliationOutcomeNotAllowedError(
+              finding.kind,
+              'credited',
+              'credit_already_used',
+            );
           }
           transactionId = tx.id;
           // Crediting a player for a withdrawal whose vendor outcome is unknown settles it by

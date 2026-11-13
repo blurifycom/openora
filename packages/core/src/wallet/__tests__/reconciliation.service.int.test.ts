@@ -932,6 +932,32 @@ describe('ReconciliationService.resolveFinding', () => {
     expect(resolved.transactionId).toBe(creditTx.transactionId);
   });
 
+  it('refuses a manual credit that already closed another finding', async () => {
+    const [first, second] = [await seedFinding(), await seedFinding()];
+    const w = await seedWallet('BTC', '0');
+    const { wallet: walletSvc, reconciliation } = makeServices(listTransactionsReturning([]), {
+      identityReader: playerReader(),
+    });
+    const creditTx = await walletSvc.manualAdjust({
+      adminId: randomUUID(),
+      userId: w.userId,
+      direction: 'credit',
+      amount: '1',
+      currency: 'BTC',
+      reason: 'reconciliation credit',
+      idempotencyKey: randomUUID(),
+      ip: null,
+      userAgent: null,
+    });
+    const credit = { outcome: 'credited', transactionId: creditTx.transactionId } as const;
+    await reconciliation.resolveFinding(randomUUID(), first.id, credit);
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), second.id, credit),
+    ).rejects.toMatchObject(refusedFor('credit_already_used'));
+    expect((await findingById(second.id))?.status).toBe('open');
+  });
+
   it('refuses a non-deposit credited resolution that names no manual credit', async () => {
     const finding = await seedFinding();
     const { reconciliation } = makeServices(listTransactionsReturning([]));
