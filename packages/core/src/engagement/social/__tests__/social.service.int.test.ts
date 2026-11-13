@@ -21,7 +21,8 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
-import { makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
+import { makeEventBus, mock } from '../../../testing/mock.js';
+import { DrizzleAccountReader } from '@openora/core/pam/server';
 import { migrate } from '../migrate.js';
 import { friendship } from '../schema/index.js';
 import {
@@ -39,22 +40,12 @@ import {
 
 let db: TestDb;
 
-function realIdentityReader(): IdentityReader {
-  return {
-    ...makeIdentityReader(),
-    getPlayerIdByUserIdSafe: async (userId) => {
-      const [row] = await db.drizzle.db
-        .select({ id: player.id })
-        .from(player)
-        .where(eq(player.userId, userId));
-      return row?.id ?? null;
-    },
-  };
-}
-
 function makeService() {
   const events = makeEventBus();
-  return { svc: new SocialService(db.drizzle, events, realIdentityReader()), events };
+  return {
+    svc: new SocialService(db.drizzle, events, new DrizzleAccountReader(db.drizzle)),
+    events,
+  };
 }
 
 const seedPlayer = async (overrides: SeedPlayerOverrides = {}) =>

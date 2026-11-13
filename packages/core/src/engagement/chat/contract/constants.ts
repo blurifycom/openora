@@ -27,6 +27,9 @@ export const CHAT_ROOM_ROLES = ['member', 'moderator', 'owner'] as const;
 
 export const STAFF_USER_ROLES = ['admin', 'super-admin'] as const;
 
+// The name a roster shows for a member whose account the identity service does not know.
+export const UNKNOWN_PLAYER_USERNAME = 'Unknown player';
+
 export const CHAT_ROOM_RESTRICTION_TYPES = ['mute', 'ban', 'cooldown'] as const;
 // `admin`: set by staff through the backoffice. `room`: set by the room's owner or a moderator.
 export const CHAT_ROOM_RESTRICTION_SOURCES = ['admin', 'room'] as const;

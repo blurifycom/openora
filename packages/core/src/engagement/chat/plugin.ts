@@ -1,5 +1,12 @@
 import * as z from 'zod';
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger, mapErrors } from '@openora/core/server';
+import {
+  EVENT_BUS,
+  DRIZZLE,
+  ADMIN_GUARD,
+  createInternalClient,
+  createLogger,
+  mapErrors,
+} from '@openora/core/server';
 import type { CoreTokenCatalog, DrizzleService, DrizzleTx, Plugin } from '@openora/core/server';
 import type { ChatContextRooms, JobQueueAdapter } from '@openora/core/contracts';
 import {
@@ -17,14 +24,13 @@ import {
   CHAT_CONTEXT_SEND_POLICY,
   CHAT_MODERATION,
   CHAT_ROOM_ACCESS,
-  ADMIN_USER_DIRECTORY,
+  ACCOUNT_READER,
   SOCIAL_COMMANDS,
   REALTIME_TRANSPORT,
   REALTIME_CLIENT_AUTHORIZER,
   AUDIT_WRITER,
-  IDENTITY_READER,
   PLATFORM_CONFIG,
-  PLAY_ELIGIBILITY,
+  playerIdsOf,
   CHAT_MODERATION_EXPIRY_DEFAULT_CRON,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -44,6 +50,7 @@ import { ChatModerationExpiryService } from './service/chat-moderation-expiry.se
 import { ChatRoomPurgeService } from './service/chat-room-purge.service.js';
 import { ChatSystemCardService } from './service/chat-system-card.service.js';
 import { applyContextRoomCommand } from './service/chat-context-room-command.service.js';
+import { RemoteAccountReader } from './service/remote-account-reader.service.js';
 import { createChatRouter } from './router/index.js';
 
 const CHAT_MODERATION_EXPIRY_QUEUE = queue('chat-moderation-expiry');
@@ -73,10 +80,25 @@ const AccountReopenedJobSchema = z.object({ userId: UuidSchema });
 
 const logger = createLogger('chat');
 
+// An identity call slower than this fails, and the read it serves refuses.
+const IDENTITY_CALL_TIMEOUT_MS = 500;
+
 export default {
   id: 'chat',
   dependsOn: ['identity', 'audit'],
   register(ctx) {
+    // Chat on a database of its own reads accounts from the identity service instead.
+    const identityServiceUrl = process.env['IDENTITY_SERVICE_URL'];
+    if (identityServiceUrl) {
+      const client = createInternalClient({
+        baseUrl: identityServiceUrl,
+        serviceName: process.env['SERVICE_NAME'] || 'monolith',
+        audience: process.env['IDENTITY_SERVICE_NAME'] || 'monolith',
+        secrets: process.env['INTERNAL_API_SECRETS'],
+        timeoutMs: IDENTITY_CALL_TIMEOUT_MS,
+      });
+      ctx.provide(ACCOUNT_READER, () => new RemoteAccountReader(client));
+    }
     let expiryRef: ChatModerationExpiryService | undefined;
     let inviteRef: ChatRoomInviteService | undefined;
     ctx.provide(CHAT_REALTIME_TRANSPORT, (c) => c.get(REALTIME_TRANSPORT));
@@ -99,10 +121,9 @@ export default {
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
         transport: c.get(CHAT_REALTIME_TRANSPORT),
-        directory: c.get(ADMIN_USER_DIRECTORY),
         audit: c.get(AUDIT_WRITER),
         moderation: c.get(CHAT_MODERATION),
-        identityReader: c.get(IDENTITY_READER),
+        accounts: c.get(ACCOUNT_READER),
         allowedAttachmentHosts: c.has(PLATFORM_CONFIG)
           ? c.get(PLATFORM_CONFIG).chat.allowedAttachmentHosts
           : [],
@@ -117,7 +138,7 @@ export default {
         c.get(EVENT_BUS),
         c.get(AUDIT_WRITER),
         c.get(CHAT_REALTIME_TRANSPORT),
-        c.get(IDENTITY_READER),
+        c.get(ACCOUNT_READER),
       );
     ctx.provide(CHAT_SYSTEM_WRITER, createChatService);
     ctx.provide(CHAT_BLOCK_WRITER, createChatService);
@@ -129,7 +150,7 @@ export default {
           drizzle: c.get(DRIZZLE),
           audit: c.get(AUDIT_WRITER),
           events: c.get(EVENT_BUS),
-          identityReader: c.get(IDENTITY_READER),
+          accounts: c.get(ACCOUNT_READER),
           transport: c.get(CHAT_REALTIME_TRANSPORT),
           systemWriter: c.get(CHAT_SYSTEM_WRITER),
         }),
@@ -408,9 +429,8 @@ export default {
       inviteRef = new ChatRoomInviteService(
         c.get(DRIZZLE),
         c.get(EVENT_BUS),
-        c.get(IDENTITY_READER),
+        c.get(ACCOUNT_READER),
         membershipService,
-        c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
       );
       void jobQueueRef
         .schedule(
@@ -429,13 +449,10 @@ export default {
           c.get(EVENT_BUS),
           c.get(AUDIT_WRITER),
           c.get(CHAT_REALTIME_TRANSPORT),
-          c.get(IDENTITY_READER),
+          playerIdsOf(c.get(ACCOUNT_READER)),
         ),
         roomMuteService: new ChatRoomMuteService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
-        restrictionService: new ChatRoomRestrictionService(
-          c.get(DRIZZLE),
-          c.get(ADMIN_USER_DIRECTORY),
-        ),
+        restrictionService: new ChatRoomRestrictionService(c.get(DRIZZLE), c.get(ACCOUNT_READER)),
         moderationService: c.get(CHAT_MODERATION),
         authorizer: c.get(CHAT_REALTIME_CLIENT_AUTHORIZER),
         adminGuard: c.get(ADMIN_GUARD),
