@@ -176,6 +176,9 @@ export const WITHDRAWAL_REQUEUE_REASONS = [
   'kyc_required',
   // A control's port threw after the flip, so it could not be shown clear.
   'control_check_failed',
+  // Reconciliation found it approved past the cutoff with no provider recorded: no vendor was
+  // asked to pay it, so it goes back for a person to approve again.
+  'never_dispatched',
 ] as const;
 export type WithdrawalRequeueReason = (typeof WITHDRAWAL_REQUEUE_REASONS)[number];
 

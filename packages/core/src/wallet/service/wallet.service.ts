@@ -85,6 +85,7 @@ import {
   isNull,
   or,
   gt,
+  lt,
   notExists,
   type SQL,
 } from 'drizzle-orm';
@@ -2891,7 +2892,57 @@ export class WalletService {
     return blocked;
   }
 
+  /**
+   * Sends an approved withdrawal that no vendor was ever asked to pay back to the queue as
+   * `pending` (ADR-0057), with reason `never_dispatched`, so the approval controls run again
+   * when a person approves it. Only a row still `processing` with no provider and approved before
+   * `approvedBefore` moves; returns whether it did. A dispatch racing it loses on the provider
+   * stamp and never calls the vendor.
+   */
+  async requeueNeverDispatched(
+    transactionId: WalletTransaction['id'],
+    approvedBefore: Date,
+  ): Promise<boolean> {
+    return this.drizzle.db.transaction(async (txn) => {
+      const [stranded] = await txn
+        .select({ tx: walletTransaction, userId: wallet.userId })
+        .from(walletTransaction)
+        .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+        .where(
+          and(
+            eq(walletTransaction.id, transactionId),
+            eq(walletTransaction.type, 'withdrawal'),
+            eq(walletTransaction.status, 'processing'),
+            isNull(walletTransaction.providerName),
+            lt(
+              sql`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`,
+              approvedBefore,
+            ),
+          ),
+        )
+        .for('update', { of: walletTransaction });
+      if (!stranded) {
+        return false;
+      }
+      const { tx, userId } = stranded;
+      const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+      return this.restoreQueued(
+        txn,
+        {
+          ...tx,
+          status: 'pending',
+          reviewedBy: null,
+          reviewedAt: null,
+          reviewReason: null,
+          autoApprovalPivotAmount: null,
+        },
+        { userId, playerId, reason: 'never_dispatched' },
+      );
+    });
+  }
+
   // The approval's audit row and event already went out, so the way back to the queue leaves its own.
+  // Only a row no vendor was handed moves: once the provider is stamped, the payout may be out.
   private async restoreQueued(
     txn: DrizzleTx,
     queued: WalletTransaction,
@@ -2900,7 +2951,7 @@ export class WalletService {
       playerId,
       reason,
     }: { userId: User['id']; playerId: Player['id'] | null; reason: WithdrawalRequeueReason },
-  ): Promise<void> {
+  ): Promise<boolean> {
     const [restored] = await txn
       .update(walletTransaction)
       .set({
@@ -2910,10 +2961,16 @@ export class WalletService {
         reviewReason: queued.reviewReason,
         autoApprovalPivotAmount: queued.autoApprovalPivotAmount,
       })
-      .where(and(eq(walletTransaction.id, queued.id), eq(walletTransaction.status, 'processing')))
+      .where(
+        and(
+          eq(walletTransaction.id, queued.id),
+          eq(walletTransaction.status, 'processing'),
+          isNull(walletTransaction.providerName),
+        ),
+      )
       .returning({ id: walletTransaction.id });
     if (!restored) {
-      return;
+      return false;
     }
     await this.audit.recordInTransaction(txn, {
       actorType: 'system',
@@ -2930,6 +2987,7 @@ export class WalletService {
       transactionId: queued.id,
       reason,
     });
+    return true;
   }
 
   // Phase two: settle a `processing` withdrawal via the vendor (see approveWithdrawal for the outcomes).
@@ -2948,19 +3006,32 @@ export class WalletService {
     // not the default one, or "no record there" could be mistaken for "never paid".
     // The stamp is the dispatch point: a hold commits before it and puts the row back as queued,
     // or waits on the wallet lock until it has committed and applies from the next withdrawal.
-    const held = await this.drizzle.db.transaction(async (txn) => {
+    // Guarded on no provider yet: a row reconciliation sent back to the queue, or one another
+    // dispatch already stamped, changes nothing here and is never handed to the vendor.
+    const dispatch = await this.drizzle.db.transaction(async (txn) => {
       if (await this.isWithdrawalHeldLocked(txn, userId)) {
         await this.restoreQueued(txn, queued, { userId, playerId, reason: 'withdrawal_hold' });
-        return true;
+        return 'held' as const;
       }
-      await txn
+      const stamped = await txn
         .update(walletTransaction)
         .set({ providerName })
-        .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')));
-      return false;
+        .where(
+          and(
+            eq(walletTransaction.id, tx.id),
+            eq(walletTransaction.status, 'processing'),
+            isNull(walletTransaction.providerName),
+          ),
+        )
+        .returning({ id: walletTransaction.id });
+      return stamped.length > 0 ? ('stamped' as const) : ('gone' as const);
     });
-    if (held) {
+    if (dispatch === 'held') {
       throw new WithdrawalHeldError();
+    }
+    if (dispatch === 'gone') {
+      logger.warn({ transactionId: tx.id }, 'withdrawal left processing before dispatch, not paid');
+      return this.withdrawalResult(tx.id);
     }
 
     let result: Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
@@ -3049,14 +3120,18 @@ export class WalletService {
       return true;
     });
     if (!completed) {
-      const [current] = await this.drizzle.db
-        .select({ status: walletTransaction.status })
-        .from(walletTransaction)
-        .where(eq(walletTransaction.id, tx.id));
-      return { transactionId: tx.id, status: current?.status ?? 'processing' };
+      return this.withdrawalResult(tx.id);
     }
 
     return { transactionId: tx.id, status: 'completed' };
+  }
+
+  private async withdrawalResult(id: WalletTransaction['id']): Promise<TransactionResult> {
+    const [current] = await this.drizzle.db
+      .select({ status: walletTransaction.status })
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, id));
+    return { transactionId: id, status: current?.status ?? 'processing' };
   }
 
   private async finalizeFailedWithdrawal({

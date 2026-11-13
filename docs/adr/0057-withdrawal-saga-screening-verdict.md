@@ -93,7 +93,13 @@ kind, deduplicated on (kind, provider, external id):
 - `stuck_withdrawal_approved`: `processing` with no provider past
   `wallet.reconciliation.stuckAfterMinutes`, counted from approval. Dispatch stamps the provider
   before the vendor call, so no vendor was asked to pay it, and reconciliation files it without
-  asking one.
+  asking one ("no provider recorded", which also covers a row a pre-upgrade crash left). In the
+  same step the system sends it back to the queue as `pending` with reason `never_dispatched`,
+  through the requeue path guarded on `processing` with no provider, with its audit row and
+  event in that transaction. The approval controls run again when a person approves it, and the
+  finding closes on the next cycle. A dispatch still running loses the race on the provider
+  stamp, which changes only a `processing` row with no provider yet, and never calls the
+  vendor.
 - `stuck_withdrawal_processing`: `processing` with a provider past the same cutoff, when the status
   check failed. The vendor answering "no record" keeps filing `unknown_at_provider` as before.
 

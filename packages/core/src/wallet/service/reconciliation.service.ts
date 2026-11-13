@@ -450,8 +450,8 @@ export type ReconciliationServiceDeps = {
  * Owns the reconciliation job cycle (claim -> per-provider diff -> stuck-withdrawal /
  * stuck-sweep sweep -> finish + audit + alert) and the admin surface over its findings
  * (list/resolve). A finding is a report; the cycle never credits anything itself. Money
- * moves only through `WalletService`: `reconcileWithdrawalStatus` (already idempotent) in
- * the cycle, and in a resolution the deposit credit or release (after the deposit hold
+ * moves only through `WalletService`: `reconcileWithdrawalStatus` (already idempotent) and
+ * `requeueNeverDispatched` (a status move back to the queue, no money) in the cycle, and in a resolution the deposit credit or release (after the deposit hold
  * policy) or the manual-adjustment row a non-deposit `credited` resolution references.
  */
 export class ReconciliationService {
@@ -1781,8 +1781,10 @@ export class ReconciliationService {
           await this.reconcileStuckWithdrawal(runId, tx, counts);
         } else {
           // Dispatch stamps the vendor before calling it, so no vendor was asked to pay this one
-          // and there is nothing to look up: it waits on a human.
-          await this.reportStuckWithdrawal(runId, tx, 'never handed to a vendor', counts);
+          // and there is nothing to look up. Reported, then sent back to the queue so a person
+          // approves it again; its finding closes once it has left processing.
+          await this.reportStuckWithdrawal(runId, tx, 'no provider recorded', counts);
+          await this.wallet.requeueNeverDispatched(tx.id, cutoff);
         }
       } catch (err) {
         logger.error(
