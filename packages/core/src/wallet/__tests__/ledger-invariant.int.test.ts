@@ -1,12 +1,20 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { findOneOrThrow } from '@openora/core/server';
-import type {
-  PaymentAdapter,
-  PlatformConfig,
-  PlayEligibilityPort,
-  WalletReconciliationFindingKind,
+import {
+  Container,
+  ModuleRegistryImpl,
+  findOneOrThrow,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
+import {
+  AUDIT_WRITER,
+  BONUS_GRANTS,
+  BONUS_WAGERING,
+  type PaymentAdapter,
+  type PlatformConfig,
+  type PlayEligibilityPort,
+  type WalletReconciliationFindingKind,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
@@ -18,6 +26,9 @@ import {
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
+import { migrate as promoMigrate } from '@openora/core/promo/migrate/bonus';
+import { promoWeight, promoWeightProfile } from '@openora/core/promo/schema/bonus';
+import bonusPlugin from '@openora/core/promo/plugins/bonus';
 import {
   wallet,
   walletBalance,
@@ -34,7 +45,7 @@ import { WalletReconciliationFindingSchema } from '../contract/index.js';
 let db: TestDb;
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, promoMigrate]);
 });
 
 afterAll(async () => {
@@ -47,13 +58,11 @@ beforeEach(async () => {
   );
 });
 
-const commands = new WalletCommandsService(
-  mock<PlayEligibilityPort>({
-    isRestricted: vi.fn().mockResolvedValue(false),
-    checkPlay: vi.fn().mockResolvedValue(null),
-  }),
-  makeAuditWriter(),
-);
+const playEligibility = mock<PlayEligibilityPort>({
+  isRestricted: vi.fn().mockResolvedValue(false),
+  checkPlay: vi.fn().mockResolvedValue(null),
+});
+const commands = new WalletCommandsService(playEligibility, makeAuditWriter());
 
 function makeReconciliation({
   batchSize = 200,
@@ -787,5 +796,140 @@ describe('ledger invariant run hygiene (real PG)', () => {
     expect(res).not.toBeNull();
     const row = await summaryOf(res?.runId ?? '');
     expect(row?.status).toBe('abandoned');
+  });
+});
+
+// The bonus module's own services, resolved the way the platform wires them.
+function bootBonusModule() {
+  const container = new Container<CoreTokenCatalog>();
+  container.register(AUDIT_WRITER, () => makeAuditWriter());
+  const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
+  registry.setOwner('bonus');
+  bonusPlugin.register(registry);
+  return container;
+}
+
+describe('bonus-split play through the real wagering engine (real PG)', () => {
+  const bonus = bootBonusModule();
+  const bonusCommands = new WalletCommandsService(playEligibility, makeAuditWriter(), {
+    bonusWagering: bonus.get(BONUS_WAGERING),
+  });
+  const CASINO = { provider: 'dice', product: 'casino' } as const;
+
+  async function grantBonus(userId: string, amount: string) {
+    const profile = findOneOrThrow(
+      await db.drizzle.db
+        .insert(promoWeightProfile)
+        .values({ name: `profile-${randomUUID()}` })
+        .returning(),
+      new Error('weight profile: no row'),
+    );
+    await db.drizzle.db.insert(promoWeight).values({
+      profileId: profile.id,
+      scope: 'default',
+      scopeRef: null,
+      contributionPercent: '100',
+    });
+    const outcome = await db.drizzle.db.transaction((txn) =>
+      bonus.get(BONUS_GRANTS).grant(txn, {
+        userId,
+        currency: 'USD',
+        amount,
+        source: 'deposit',
+        sourceRef: randomUUID(),
+        actor: { type: 'system' },
+        terms: { wageringMultiplier: '5', expiryDays: 30, weightProfileId: profile.id },
+      }),
+    );
+    if (!outcome.ok) {
+      throw new Error('grant was refused');
+    }
+  }
+
+  it('prices a bonus-split bet, reversal and win and a correction to zero by their real parts', async () => {
+    const w = await fundedWallet('20');
+    await grantBonus(w.userId, '100');
+    const roundOf = () => ({ providerName: 'dice', externalRoundId: randomUUID() });
+    const first = roundOf();
+    const second = roundOf();
+    const leg = (round: typeof first) => ({ ...round, providerRefId: randomUUID() });
+    const rowOf = async (id: string | undefined) =>
+      findOneOrThrow(
+        await db.drizzle.db
+          .select()
+          .from(walletTransaction)
+          .where(eq(walletTransaction.id, id ?? randomUUID())),
+        new Error('ledger row missing'),
+      );
+    const svc = makeReconciliation();
+
+    // 20 real and 10 bonus, then the round rolled back: each balance gets its own part back.
+    const bet = await db.drizzle.db.transaction((txn) =>
+      bonusCommands.debit(txn, {
+        userId: w.userId,
+        amount: '30',
+        type: 'bet',
+        context: CASINO,
+        providerRef: leg(first),
+      }),
+    );
+    const reversal = await db.drizzle.db.transaction((txn) =>
+      bonusCommands.credit(txn, {
+        userId: w.userId,
+        amount: '30',
+        currency: 'USD',
+        type: 'bet_reversal',
+        providerRef: leg(first),
+      }),
+    );
+    const afterSplit = await run(svc);
+    // The provider takes the rollback back: the real balance is re-collected down to zero.
+    const correction = await db.drizzle.db.transaction((txn) =>
+      bonusCommands.correctionDebit(txn, {
+        userId: w.userId,
+        amount: '20',
+        currency: 'USD',
+        type: 'bet',
+        providerRef: leg(first),
+      }),
+    );
+    const afterCorrection = await run(svc);
+    // A stake paid from bonus alone, and its win split between the two balances.
+    await db.drizzle.db.transaction((txn) =>
+      bonusCommands.debit(txn, {
+        userId: w.userId,
+        amount: '10',
+        type: 'bet',
+        context: CASINO,
+        providerRef: leg(second),
+      }),
+    );
+    const win = await db.drizzle.db.transaction((txn) =>
+      bonusCommands.credit(txn, {
+        userId: w.userId,
+        amount: '45',
+        currency: 'USD',
+        type: 'win',
+        providerRef: leg(second),
+      }),
+    );
+    const afterWin = await run(svc);
+    await handEdit(w.id, '3');
+    const tampered = await run(svc);
+
+    if (!bet.ok || !bet.moved || !reversal.ok || !reversal.moved || !win.ok || !win.moved) {
+      throw new Error('a play command was refused or replayed');
+    }
+    expect(Number((await rowOf(bet.transactionId)).realShare)).toBe(20);
+    expect(Number((await rowOf(reversal.transactionId)).realShare)).toBe(20);
+    expect(Number((await rowOf(win.transactionId)).realShare)).toBeLessThan(45);
+    expect(correction).toMatchObject({ moved: true });
+    expect(Number(correction.collected)).toBe(20);
+    expect(Number(correction.newBalance)).toBe(0);
+    for (const summary of [afterSplit, afterCorrection, afterWin]) {
+      expect(summary?.summary).toMatchObject({ needsBaseline: 0, balanceBreaches: 0 });
+    }
+    expect(tampered?.summary).toMatchObject({ needsBaseline: 0, balanceBreaches: 1 });
+    expect((await breaches()).map((f) => Number(f.amount))).toEqual([3]);
   });
 });
