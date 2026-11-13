@@ -652,6 +652,32 @@ describe('rolling baselines and their repair (real PG)', () => {
     expect(found[1]?.externalId).toContain(`:${baseline?.id}:`);
   });
 
+  it('finds a breach filed under a baseline by the key the scan builds in SQL', async () => {
+    const w = await seedWallet('100', [
+      {
+        type: 'deposit',
+        amount: '100',
+        status: 'completed',
+        balanceAfter: '100',
+        createdAt: hoursAgo(2),
+      },
+    ]);
+    const svc = makeReconciliation();
+    await run(svc);
+    const [baseline] = await baselines(w.id);
+    await handEdit(w.id, '7');
+    await run(svc);
+    await handEdit(w.id, '-7');
+
+    // Nothing settled since the baseline, so only the breach filed under it moves it on.
+    const repaired = await run(svc);
+
+    const found = await breaches();
+    expect(found).toHaveLength(1);
+    expect(found[0]?.externalId).toContain(`:${baseline?.id}:`);
+    expect(repaired?.summary).toMatchObject({ balanceBreaches: 0, baselinesAdvanced: 1 });
+  });
+
   it('dismisses a breach only once its pair checks clean, never credits one, and files its return', async () => {
     const w = await fundedWallet('100');
     const audit = makeAuditWriter();
