@@ -76,7 +76,9 @@ import {
   ledgerPairKey,
   ledgerUncheckedKey,
   lockAndCheckLedgerPair,
+  type BaselineMove,
   type LedgerPairCheck,
+  type LedgerPairState,
   parseLedgerBreachKey,
   parseLedgerUncheckedKey,
   lockAndEstimateBackfill,
@@ -237,14 +239,23 @@ async function assertLedgerFindingStands(
 async function settleCleanLedgerPair(
   txn: DrizzleTx,
   finding: WalletReconciliationFindingRow,
-): Promise<Awaited<ReturnType<typeof rebaselinePair>>> {
+): Promise<{ check: LedgerPairState; baseline: BaselineMove | null }> {
   const pair = parseLedgerPairKey(finding.externalId);
-  const now = pair && (await lockAndCheckLedgerPair(txn, pair.walletId, pair.currency));
+  const check = pair && (await lockAndCheckLedgerPair(txn, pair.walletId, pair.currency));
   const breach = finding.kind === 'ledger_invariant_breach';
-  if (!pair || !now || now.unpricedRows > 0 || (breach && !moneyEquals(now.drift, '0'))) {
-    throw new ReconciliationOutcomeNotAllowedError(finding.kind, 'dismissed', 'pair_not_clean');
+  const refuse = (reason: ReconciliationRefusalReason) =>
+    new ReconciliationOutcomeNotAllowedError(finding.kind, 'dismissed', reason);
+  if (!pair || !check || check.unpricedRows > 0 || (breach && !moneyEquals(check.drift, '0'))) {
+    throw refuse('pair_not_clean');
   }
-  return breach ? rebaselinePair(txn, pair.walletId, pair.currency, finding.id) : null;
+  if (!breach) {
+    return { check, baseline: null };
+  }
+  const baseline = await rebaselinePair(txn, pair.walletId, pair.currency, finding.id);
+  if (!baseline) {
+    throw refuse('unpriced_rows_after_cut');
+  }
+  return { check, baseline };
 }
 
 // Lowercased: an EVM address is the same account whatever its checksum casing.
@@ -470,7 +481,8 @@ export class ReconciliationService {
       let refundedDepositId: string | null = null;
       let creditedDeposit: CreditedDeposit | undefined;
       let releasedDeposit: CreditedDeposit | undefined;
-      let baseline: Awaited<ReturnType<typeof rebaselinePair>> = null;
+      let baseline: BaselineMove | null = null;
+      let cleanCheck: LedgerPairState | undefined;
 
       if (resolution.outcome === 'credited') {
         if (DEPOSIT_FINDING_KINDS.has(finding.kind)) {
@@ -615,7 +627,7 @@ export class ReconciliationService {
         resolutionNote = resolution.note;
       } else {
         if (LEDGER_FINDING_KINDS.has(finding.kind)) {
-          baseline = await settleCleanLedgerPair(txn, finding);
+          ({ check: cleanCheck, baseline } = await settleCleanLedgerPair(txn, finding));
         }
         resolutionNote = resolution.note;
       }
@@ -653,7 +665,11 @@ export class ReconciliationService {
         action: 'wallet.reconciliation_finding.resolved',
         resourceType: 'wallet_reconciliation_finding',
         resourceId: row.id,
-        before: { status: 'open', transactionId: finding.transactionId },
+        before: {
+          status: 'open',
+          transactionId: finding.transactionId,
+          ...(cleanCheck ? { check: cleanCheck } : {}),
+        },
         after: {
           status: row.status,
           outcome: resolution.outcome,
@@ -1235,13 +1251,14 @@ export class ReconciliationService {
       await this.closeBaselinedUnchecked(
         runId,
         page.filter(
-          (pair) => pair.unpricedRows === 0 && (pair.baselineId !== null || pair.advanced),
+          (pair) =>
+            pair.unpricedRows === 0 && (pair.baselineId !== null || pair.advancedTo !== null),
         ),
       );
       const findings: ReconciliationFindingInput[] = [];
       for (const pair of page) {
         counts.pairsChecked += 1;
-        if (pair.advanced) {
+        if (pair.advancedTo !== null) {
           counts.baselinesAdvanced += 1;
         }
         if (pair.unpricedRows > 0) {
@@ -1295,7 +1312,13 @@ export class ReconciliationService {
     if (pairs.length === 0) {
       return;
     }
-    const keys = pairs.map((pair) => ledgerPairKey(pair.walletId, pair.currency));
+    const baselineOf = new Map(
+      pairs.map((pair) => [
+        ledgerPairKey(pair.walletId, pair.currency),
+        pair.advancedTo ?? pair.baselineId,
+      ]),
+    );
+    const pairKey = sql<string>`substring(${walletReconciliationFinding.externalId} from '^wallet:[^:]+:[^:]+')`;
     await this.drizzle.db.transaction(async (txn) => {
       const closed = await txn
         .update(walletReconciliationFinding)
@@ -1309,23 +1332,25 @@ export class ReconciliationService {
             eq(walletReconciliationFinding.kind, 'ledger_invariant_unchecked'),
             eq(walletReconciliationFinding.providerName, LEDGER_FINDING_LABEL),
             eq(walletReconciliationFinding.status, 'open'),
-            inArray(
-              sql`substring(${walletReconciliationFinding.externalId} from '^wallet:[^:]+:[^:]+')`,
-              keys,
-            ),
+            inArray(pairKey, [...baselineOf.keys()]),
             // A flagged backfill closes only by a super admin, never by a baseline that hides it.
             notLike(walletReconciliationFinding.externalId, '%:backfill:%'),
           ),
         )
-        .returning({ id: walletReconciliationFinding.id });
-      for (const { id } of closed) {
+        .returning({ id: walletReconciliationFinding.id, pairKey });
+      for (const { id, pairKey: key } of closed) {
         await this.audit.recordInTransaction(txn, {
           actorType: 'system',
           action: 'wallet.reconciliation_finding.resolved',
           resourceType: 'wallet_reconciliation_finding',
           resourceId: id,
           before: { status: 'open' },
-          after: { status: 'resolved', outcome: 'baselined', runId },
+          after: {
+            status: 'resolved',
+            outcome: 'baselined',
+            runId,
+            baselineId: baselineOf.get(key) ?? null,
+          },
         });
       }
     });

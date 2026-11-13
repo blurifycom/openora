@@ -728,6 +728,20 @@ describe('rolling baselines and their repair (real PG)', () => {
     expect(back?.summary).toMatchObject({ balanceBreaches: 1, newBreaches: 1 });
     const [baseline] = await baselines(w.id);
     expect(baseline).toMatchObject({ findingId: breach.id });
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.reconciliation_finding.resolved',
+        resourceId: breach.id,
+        before: expect.objectContaining({
+          status: 'open',
+          check: expect.objectContaining({
+            drift: expect.stringMatching(/^0(\.0+)?$/),
+            unpricedRows: 0,
+          }),
+        }),
+      }),
+    );
   });
 
   it('keeps an unchecked pair open to neither dismissal nor credit, and closes it once a run baselines it', async () => {
@@ -768,7 +782,11 @@ describe('rolling baselines and their repair (real PG)', () => {
         actorType: 'system',
         action: 'wallet.reconciliation_finding.resolved',
         resourceId: unchecked.id,
-        after: expect.objectContaining({ status: 'resolved', outcome: 'baselined' }),
+        after: expect.objectContaining({
+          status: 'resolved',
+          outcome: 'baselined',
+          baselineId: (await baselines(w.id))[0]?.id,
+        }),
       }),
     );
   });

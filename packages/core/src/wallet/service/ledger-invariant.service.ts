@@ -216,8 +216,8 @@ export type LedgerPairCheck = {
   unpricedRows: number;
   /** The baseline `expected` starts from, null when the pair has none. */
   baselineId: string | null;
-  /** The check came out clean and moved the pair's baseline to the cut. */
-  advanced: boolean;
+  /** The baseline the check moved the pair to when it came out clean, else null. */
+  advancedTo: string | null;
 };
 
 /**
@@ -241,7 +241,7 @@ export async function checkLedgerPage(
     expected: string;
     unpriced_rows: string;
     baseline_id: string | null;
-    advanced: boolean;
+    advanced_to: string | null;
   }>(sql`
     with p as (${balancePage(afterId, limit)}),
     c as (${checkedPairs(sql`select * from p`)}),
@@ -262,12 +262,12 @@ export async function checkLedgerPage(
             select 1 from wallet_reconciliation_finding f
             where f.kind = 'ledger_invariant_breach' and f.provider_name = ${LEDGER_FINDING_LABEL}
               and starts_with(f.external_id, ${breachKeyPrefix})))
-      returning wallet_id, currency
+      returning id, wallet_id, currency
     )
     select c.id, c.wallet_id, c.currency, c.balance, c.expected::text as expected,
       c.unpriced::text as unpriced_rows, c.baseline_id,
-      exists (select 1 from adv where adv.wallet_id = c.wallet_id and adv.currency = c.currency)
-        as advanced
+      (select adv.id from adv where adv.wallet_id = c.wallet_id and adv.currency = c.currency)
+        as advanced_to
     from c
     order by c.id`);
   return rows.map((row) => ({
@@ -278,7 +278,7 @@ export async function checkLedgerPage(
     expected: row.expected,
     unpricedRows: Number(row.unpriced_rows),
     baselineId: row.baseline_id,
-    advanced: row.advanced,
+    advancedTo: row.advanced_to,
   }));
 }
 
