@@ -1,8 +1,8 @@
 # Code forge: GitHub
 
-Code review for `{{gitRemotePath}}` happens on GitHub pull requests, driven by the [`gh`](https://cli.github.com) CLI. Every skill that opens, reads, or comments on a pull request reads this file instead of hardcoding commands, so a repo on a different forge rewrites this one file and the skills keep working.
+Code review for `{{gitRemotePath}}` happens on GitHub pull requests, driven by the [`gh`](https://cli.github.com) CLI. Every skill that opens or reads a pull request reads this file instead of hardcoding commands, so a repo on a different forge rewrites this one file and the skills keep working.
 
-Swapping forge: keep the headings below and replace the commands. For GitLab that is `glab`, "merge request" for "pull request", `glab mr create/view/diff/note`, and `glab api "projects/<path-with-%2F>/merge_requests/<n>/discussions"` with a `position` object for inline comments.
+Swapping forge: keep the headings below and replace the commands. For GitLab that is `glab`, "merge request" for "pull request", `glab mr create/view/diff`, `glab api "projects/<path-with-%2F>/merge_requests/<n>/discussions"` to read threads, and `glab api -X PUT ".../discussions/<id>" -f resolved=true` to resolve one.
 
 ## Coordinates
 
@@ -36,19 +36,18 @@ Reuse an open PR for the same head -> base instead of opening a duplicate: `gh p
 
 `gh` has no command to upload an image. Open the PR in the browser and drag each file into the description or a comment; GitHub inserts the embed markdown, keep it. If a file cannot be uploaded, say in the description that it is available from the author. Never paste a local path.
 
-## Inline review comments
+## Review comments
 
-Anchor each comment to a line of the diff on the head commit:
+Agent sessions never post on a pull request: no inline comment, reply, review, or verdict note. A PreToolUse hook (`.rulesync/hooks/guard-comments.mjs`) blocks the CLI and API calls. Draft each comment as `file:line` (the NEW-file line of an added line on the head commit) plus its text, and print them for the user to post by hand.
+
+Resolving a thread your fix addressed stays allowed:
 
 ```
-gh api "repos/{{gitRemotePath}}/pulls/<n>/comments" \
-  -f body="<comment>" -f commit_id="<head-sha>" -f path="<file>" -F line=<new-line> -f side=RIGHT
+gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<thread-node-id>"}) { thread { isResolved } } }'
 ```
-
-Take `<head-sha>` from `gh pr view <n> --json headRefOid`. Anchor on the NEW-file line of an added line. Verify the response carries a non-null `line`; if it came back as a plain issue comment, delete it and retry rather than leaving an unanchored note. Post the verdict itself as one summary comment: `gh pr comment <n> --body "<one sentence>"`.
 
 ## Rules
 
 - Never push without an explicit per-action confirmation from the user.
 - Never merge a pull request unless the user asks for that exact action.
-- Never resolve someone else's review thread.
+- Resolve only a thread your fix addressed; a question or a disagreement stays open for the reviewer.

@@ -1,7 +1,7 @@
 # Review workflow
 
 One skill, `/review`, for a context-aware, convention-grounded review of the current branch or a given PR.
-Report only unless `--fix` or `--post` is passed.
+Report only unless `--fix` is passed. It never posts to the PR: findings come back as draft comments a person posts by hand.
 
 ## Arguments
 
@@ -10,9 +10,7 @@ Report only unless `--fix` or `--post` is passed.
 - Paths limit the review scope.
 - `--agents N` selects two to four reviewers; default two (step 6). N = 3 adds a second `quality-reviewer` split by file group, and the report states the split. N = 4 also gives contracts and boundaries back to `contract-reviewer`, so `security-reviewer` drops focus `risk`. N < 2 is refused: run the two and say so in the report. `operator` joins on top of N only when the ticket has acceptance criteria.
 - `--fix` applies BLOCK and WARN fixes in the working tree after the report.
-- `--post` publishes the findings to the PR; it needs a PR number.
-- `--yes` skips the confirmation before posting.
-- `--ci` runs without questions: never ask, never post, never fix; print only the machine-readable block below. The model cannot set the process exit code; the CI job derives it from the last line, for example `claude -p '/review --ci' | tee review.txt | grep -q '^VERDICT: GO'`.
+- `--ci` runs without questions: never ask, never fix; print only the machine-readable block below. The model cannot set the process exit code; the CI job derives it from the last line, for example `claude -p '/review --ci' | tee review.txt | grep -q '^VERDICT: GO'`.
 
 ## Workflow
 
@@ -92,7 +90,7 @@ A consumer that builds on this repo may pair a PR here with a change of its own 
 
 ### What gets a comment
 
-Every verified finding is posted unless it matches one of these, and the report names which:
+Every verified finding becomes a draft comment unless it matches one of these, and the report names which:
 
 - D1 the code does not do what the finding says;
 - D2 a duplicate - merge it into the other;
@@ -107,9 +105,9 @@ A finding gets its own inline comment only when a concrete trigger leads to wron
 
 ## Output
 
-Default and `--post`: a human-readable report, and the same drafts are what `--post` publishes.
+Default: a human-readable report whose draft comments a person posts by hand.
 
-1. Draft comments per "What gets a comment", most important first, in conversational language without severity markers; each names its `file:line`.
+1. Draft comments per "What gets a comment" and "Draft comments" below, most important first; each is a `file:line` followed by the comment text, ready to paste.
 2. One `TRACE:` line per traced entry point, as below.
 3. One status line per acceptance criterion: met, not met, or not verifiable. A UI criterion backed by a design screenshot is met only after comparing the rendered UI against it. A diff that crosses the ticket's out-of-scope line, or decides an open question in code without recording it on the ticket, is a draft comment citing that line.
 4. Exactly one GO or NO-GO sentence, last.
@@ -126,15 +124,13 @@ VERDICT: <GO|NO-GO> - <counts by severity> - <most critical finding>
 - Order findings BLOCK, WARN, INFO; exactly one `VERDICT:` line, last.
 - In both forms, money, authz, data-loss, contract-break, unmet-acceptance, or trace BLOCK findings force NO-GO.
 
-## Posting to the PR
+## Draft comments
 
-Report only by default. `--post` publishes the findings to the PR; it needs a PR number.
+Agent sessions never post on a PR (no review, comment, reply, or verdict note); a hook blocks it. A person posts the drafts.
 
-1. Read every existing review thread and comment on the PR (`gh api --paginate "repos/blurifycom/openora/pulls/<n>/comments"` and `gh api --paginate "repos/blurifycom/openora/issues/<n>/comments"`; without `--paginate` only the first 30 come back). Drop a draft an existing comment already raises, even worded differently; when it adds a new fact, reply in that thread instead. Post nothing when every draft was dropped.
-2. Show the exact comment bodies and their anchors, then stop for confirmation. `--yes` skips that stop.
-3. Post inline with `gh api "repos/blurifycom/openora/pulls/<n>/comments"`, one per finding, anchored to `path` and `line` on the head commit.
-4. Post the GO or NO-GO line as a single summary review.
-5. Write every comment in the user's voice: when their instructions name a voice or writing guide, read it before drafting. Plain, direct, no severity markers, no internal ticket text or names. Each comment is 1-3 sentences: what breaks, the trigger, the fix. No mechanism chain, no secondary evidence, no add-ons - the author asks if unclear. Most comments start straight with the point; soften at most one in three, never with the same opener twice in a pull request.
+1. On a PR, read every existing review thread and comment (`gh api --paginate "repos/blurifycom/openora/pulls/<n>/comments"` and `gh api --paginate "repos/blurifycom/openora/issues/<n>/comments"`; without `--paginate` only the first 30 come back). Drop a draft an existing comment already raises, even worded differently; when it adds a new fact, draft it as a reply to that thread and name the thread.
+2. Anchor each inline draft to a `path` and `line` on the head commit, and end with a draft summary: the GO or NO-GO line.
+3. Write every comment in the user's voice: when their instructions name a voice or writing guide, read it before drafting. Plain, direct, no severity markers, no internal ticket text or names. Each comment is 1-3 sentences: what breaks, the trigger, the fix. No mechanism chain, no secondary evidence, no add-ons - the author asks if unclear. Most comments start straight with the point; soften at most one in three, never with the same opener twice in a pull request.
 
 ## Fix mode
 

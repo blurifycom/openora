@@ -31,7 +31,7 @@ The orchestrator: one ticket key in, a green MR in Code Review out. You own the 
 - Git: commits on the ticket branch `<type>/{{trackerKey}}-XXX/<slug>` and pushing it. Never a push to `{{mrTarget}}`, `stage`, `prod` or any shared branch.
 - Force-push: only `git push --force-with-lease` on the ticket branch, and only while every commit on the remote branch past `{{mrTarget}}` is your own (`git log --format=%ae origin/{{mrTarget}}..origin/<branch>` shows only your `git config user.email`). Someone else's commit there: merge, never push over it. Never a plain `--force`.
 - Merging: into a feature branch only (`{{mrTarget}}` merged into the ticket branch to clear conflicts, a stacked MR into its parent ticket branch). Never into `{{mrTarget}}`, `dev`, `develop`, `stage`, `staging`, `prod`, `production`, `main` or `master`.
-- The forge: opening the MR for that branch and replying on its review threads. Every comment you leave starts with `Agent:`, so `watch-pr.mjs` and other tools never take it for one to answer.
+- The forge: opening the MR for that branch and resolving a thread the fix addressed. Never a comment, reply, review or verdict note on it (a hook blocks them): replies are drafts the user posts by hand.
 - Slack: nothing. Announcing the MR is the forge integration's job, so ship never drafts a notice.
 
 ## Do what the work needs, inside the worktree
@@ -106,7 +106,7 @@ Start `tester` in the worktree with the plan's test cases, for its verify pass: 
 
 ### 4. Review
 
-Run the **review** skill on the branch against `{{mrTarget}}`, without `--post`: its precheck, risk tier, request trace and evidence gate run before any reviewer reads the diff. Hand its reviewers the tester's AC table, mutation rows included, so they dig where testing could not reach. This is the self-review the MR is opened on: people reviewing the MR later read it by hand and do not run an AI review again, so nothing goes out that this step has not passed.
+Run the **review** skill on the branch against `{{mrTarget}}`: its precheck, risk tier, request trace and evidence gate run before any reviewer reads the diff. Hand its reviewers the tester's AC table, mutation rows included, so they dig where testing could not reach. This is the self-review the MR is opened on: people reviewing the MR later read it by hand and do not run an AI review again, so nothing goes out that this step has not passed.
 
 Every finding with a fix gets fixed, whatever its severity, but only once it holds. Dedupe across reviewers, then check each yourself before anything changes: open its `file:line` and confirm the evidence on this branch. One that doesn't hold (wrong line, the code already handles it, a claim the code doesn't show) is dropped and goes to the MR description with why. A product call the ticket doesn't settle goes to `expert`, then is fixed or rides along as an open question. Send the rest to `builder` in one go, then 3 for the cases they touch and 4 again. A later round of 4 reviews only the commits since the last one and whether each sent finding is fixed. Clean means the review skill says **APPROVED** and no finding is left that holds; only then 4b.
 
@@ -130,20 +130,20 @@ Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-
 - Each thread is checked against the code on this branch first: correct | already handled | wrong on this branch | out of scope. Only a correct one changes code; the rest get an answer.
 - A red job is reproduced locally first; `builder` fixes its cause. Never skip or loosen a test.
 - Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched, and their clips replace the old ones in the MR description. Nothing is pushed untested.
-- Push the ticket branch without asking (a force-push only as above). Reply per thread, in the thread itself, with what changed and the test that proves it, or why nothing changed. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer.
+- Push the ticket branch without asking (a force-push only as above). Then draft one reply per thread in the user's voice, with what changed and the test that proves it, or why nothing changed, and print them for the user to post; never post them. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer. Add the last-comment id of every thread you handled (a drafted reply, or a bot note that needs none) to `.claude/reviews/<branch with / as +>.drafted.json` (a JSON array, its own file so a review save never drops it) in the main checkout, so a resumed run still knows them.
 
 Then 7.
 
 ### 7. Ready for review
 
-Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` as a background command, never a sleep loop in the session. It prints one line and exits when there is work:
+Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` (plus `--drafted <id,id>` with every id from `.claude/reviews/<branch with / as +>.drafted.json` (a JSON array, its own file so a review save never drops it) in the main checkout, on every start and resume) as a background command, never a sleep loop in the session. It prints one line and exits when there is work:
 
 - `failed` or `conflicts` -> 6, then watch again. Still red after three fixes -> blocker comment, report, stop.
 - `threads <ids>` (unanswered for two checks in a row, from a person or a bot) -> 6 for those, then watch again. A thread the forge's AI review opens is a blocker it found on this head: it counts like a person's.
 - `green` -> check the MR is ready (below), report "Ready for review:" and the MR URL, then watch again without `--until-green`.
 - `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `error ...` -> report it, stop.
 
-Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table, the screenshots and the UNCHECKED rows.
+Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer or a drafted reply listed in the report as waiting for the user to post, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table, the screenshots and the UNCHECKED rows.
 
 Keep watching until the MR merges or closes, for as long as the session lives. You never merge it: who approves and who merges is in `docs/agents/forge.md`. A caller that says it watches the MR itself (a headless run) gets the report at `green`, and you stop there; it brings the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
 

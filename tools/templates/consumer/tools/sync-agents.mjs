@@ -238,9 +238,14 @@ if (owned.length > 0) {
   );
 }
 
-// Both files are tracked by every consumer, so a template bump cannot wire the verify gate in.
+// Both files are tracked by every consumer, so a template bump cannot wire these hooks in.
 const missingWiring = [
   ['.claude/settings.json', 'guard-mr.mjs', 'a PreToolUse "Bash" hook running guard-mr.mjs'],
+  [
+    '.claude/settings.json',
+    'guard-comments.mjs',
+    'a PreToolUse "Bash" hook running guard-comments.mjs',
+  ],
   [
     'package.json',
     'guard-mr.mjs --stamp',
@@ -251,7 +256,5 @@ const missingWiring = [
   return existsSync(target) && !readFileSync(target, 'utf8').includes(marker);
 });
 for (const [path, , fix] of missingWiring) {
-  console.warn(
-    `sync:agents - ${path} is missing the verify gate: ${fix} (see the template's copy).`,
-  );
+  console.warn(`sync:agents - ${path} is missing a hook: ${fix} (see the template's copy).`);
 }

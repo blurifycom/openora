@@ -1,7 +1,7 @@
 ---
 name: review
 targets: ['*']
-description: Multi-agent code review of the working branch against this repo's conventions, OSS-core boundaries, frontend rules, security, and operator-domain fit. Fans out a configurable number of parallel reviewers, each grounded in the rule docs, then synthesizes one verdict. Use on "review this", "code review", "/review", optionally "--agents N", "--base <ref>", "--fix", "--post" (publish findings to the pull request as inline comments + a summary verdict), "--yes" (post without confirming), "--ci" (non-interactive, exit code from the verdict), a pull-request number, or paths.
+description: Multi-agent code review of the working branch against this repo's conventions, OSS-core boundaries, frontend rules, security, and operator-domain fit. Fans out a configurable number of parallel reviewers, each grounded in the rule docs, then synthesizes one verdict. Use on "review this", "code review", "/review", optionally "--agents N", "--base <ref>", "--fix", "--ci" (non-interactive, exit code from the verdict), a pull-request number, or paths. Findings come back as draft comments (file:line + text) for a person to post; it never posts.
 ---
 
 # review ({{name}})
@@ -11,7 +11,7 @@ You are the orchestrator: scope the diff, fan out N reviewers across dimensions,
 Checklist - tick as you go:
 
 ```
-- [ ] 1. Parse args (--agents / --base / MR# / paths / --fix / --post / --yes / --ci)
+- [ ] 1. Parse args (--agents / --base / MR# / paths / --fix / --ci)
 - [ ] 2. Run the precheck: scope, mechanical facts, domain hits; if empty, ask (or APPROVED under --ci)
 - [ ] 2a. Previous review? Go incremental from its SHA and carry its findings
 - [ ] 3. Collect task context (ticket AC + MR discussion)
@@ -20,7 +20,7 @@ Checklist - tick as you go:
 - [ ] 4. Cover all seven dimensions; spawn the two-lens roster in ONE message, whatever the diff size
 - [ ] 5. Dedup + apply the evidence gate
 - [ ] 6. Report one DIMENSION line per dimension + one verdict (+ apply fixes only if --fix)
-- [ ] 7. Post to the MR as inline comments + summary (only if --post)
+- [ ] 7. Draft the comments + summary for a person to post (§8)
 ```
 
 ## 1. Parse `$ARGUMENTS`
@@ -31,9 +31,7 @@ Checklist - tick as you go:
 - `<number>` - a pull request: read its patch and intent with the commands in `docs/agents/forge.md`.
 - paths - restrict review to those files/dirs.
 - `--fix` - apply BLOCK/WARN fixes after the review; default report-only.
-- `--post` - publish findings to the pull request as inline diff-line comments + a one-line summary verdict (§8). Requires a pull-request number. Draft-and-confirm by default.
-- `--yes` - with `--post`, skip the confirmation and publish straight away.
-- `--ci` - non-interactive: never ask, never post, never fix; print only the §7 machine block. Implies `--full`: a gate never trusts a prior-review marker, since anyone who can comment on the pull request can post one for the current head. The model cannot set the process exit code; the CI job derives it from the output, e.g. `claude -p '/review --ci' > review.txt; [ "$(grep -c '^DIMENSION: ' review.txt)" -eq 7 ] && grep -q '^VERDICT: APPROVED' review.txt` - a review that skipped a dimension fails the job even when it approves. An empty diff is APPROVED with zero findings.
+- `--ci` - non-interactive: never ask, never draft, never fix; print only the §7 machine block. Implies `--full`: a gate never trusts a prior-review marker, since anyone who can comment on the pull request can post one for the current head. The model cannot set the process exit code; the CI job derives it from the output, e.g. `claude -p '/review --ci' > review.txt; [ "$(grep -c '^DIMENSION: ' review.txt)" -eq 7 ] && grep -q '^VERDICT: APPROVED' review.txt` - a review that skipped a dimension fails the job even when it approves. An empty diff is APPROVED with zero findings.
 
 ## 2. Scope the diff
 
@@ -209,7 +207,7 @@ Dedup by `file:line`, order BLOCK -> WARN -> INFO.
 
 **Save the state** after every review, `--ci` included: write `.claude/reviews/<pr or branch>.json` in the main checkout with the reviewed HEAD SHA, base, verdict, every open finding (new, `still open`, `carried`), and the `DIMENSION:` lines.
 
-Default and `--post`: a human-readable report - one line per finding `[SEV] file:line - finding - evidence - rule cited - fix`, one `TRACE:` line per traced entry point (format below), one status line per AC bullet, the `PRIOR:` lines, the `SKIPPED:` count, the seven `DIMENSION:` lines, and **APPROVED** / **CHANGES REQUESTED** with the most critical finding last. `--post` rewrites those findings into the §8 comments.
+Default: a human-readable report - one line per finding `[SEV] file:line - finding - evidence - rule cited - fix`, one `TRACE:` line per traced entry point (format below), one status line per AC bullet, the `PRIOR:` lines, the `SKIPPED:` count, the seven `DIMENSION:` lines, and **APPROVED** / **CHANGES REQUESTED** with the most critical finding last, then the §8 drafts.
 
 `--ci`: print exactly this block and nothing else - a CI job parses it line by line:
 
@@ -230,11 +228,11 @@ Severities: `[BLOCK]` must fix before merge (core edit, boundary break, authz/se
 
 If `--fix`: apply BLOCK + WARN fixes in the working tree (smallest diff satisfying the cited rule), run `/check`, report green/red. Leave INFO untouched. Never commit or push.
 
-## 8. Post to the pull request (`--post`)
+## 8. Draft comments for the pull request
 
-Only when `--post` is set and the target is a pull-request number. Turns findings into terse review comments: one line each, brief why, backtick every identifier.
+Agent sessions never post on a pull request: no inline comment, reply, review, or verdict note (a hook blocks it). Turn findings into terse draft comments a person posts by hand: one line each, brief why, backtick every identifier.
 
-**What gets a comment.** Severity decides the verdict, not what gets posted. Every verified finding is posted unless it matches one of these, and the report names which:
+**What gets a comment.** Severity decides the verdict, not what gets drafted. Every verified finding becomes a draft unless it matches one of these, and the report names which:
 
 - D1 the code does not do what the finding says;
 - D2 a duplicate - merge it into the other;
@@ -245,15 +243,13 @@ Only when `--post` is set and the target is a pull-request number. Turns finding
 
 Nothing else is a drop reason: not "theoretical", "unlikely", "no consumer yet", "a sibling does the same", "by design", "the lockfile pins it", or "performance only".
 
-A finding gets its own inline comment only when a concrete trigger leads to wrong or stranded money (a debit or hold that cannot be reversed, a credit that is blocked), an authz or security bypass, a compliance gap (audit, RG, KYC, geo), data loss, a crash or 5xx, a broken public contract or declared rule (a type not exported where its siblings are, an undeclared audit action, untyped error data, a loose dependency pin), a race that persists state breaking an invariant the change adds, request-path work that grows with table size, a test that passes with the feature removed or its mock unconfigured, an unmet AC, or code that does not do what the title claims. Everything else - test gaps, naming, boundary nits, actor metadata, a weaker variant of a posted defect - joins an inline comment on the same file or becomes one line in the summary note. Merging never launders: each merged point passes the same bar on its own. A merged comment leads with its most severe finding, anchors on its line, and keeps its strongest fix. At most six inline comments.
+A finding gets its own inline comment only when a concrete trigger leads to wrong or stranded money (a debit or hold that cannot be reversed, a credit that is blocked), an authz or security bypass, a compliance gap (audit, RG, KYC, geo), data loss, a crash or 5xx, a broken public contract or declared rule (a type not exported where its siblings are, an undeclared audit action, untyped error data, a loose dependency pin), a race that persists state breaking an invariant the change adds, request-path work that grows with table size, a test that passes with the feature removed or its mock unconfigured, an unmet AC, or code that does not do what the title claims. Everything else - test gaps, naming, boundary nits, actor metadata, a weaker variant of a drafted defect - joins an inline comment on the same file or becomes one line in the summary note. Merging never launders: each merged point passes the same bar on its own. A merged comment leads with its most severe finding, anchors on its line, and keeps its strongest fix. At most six inline comments.
 
-1. **Draft.** Rewrite each finding as a terse comment keyed to its `file:line`, in the posting user's voice: when their instructions name a voice or writing guide, read it before drafting. Each comment is 1-3 sentences: what breaks, the trigger, the fix. No mechanism chain, no secondary evidence, no add-ons - the author asks if unclear. Most comments start straight with the point; soften at most one in three, never with the same opener twice in a pull request. Compose the summary as ONE sentence stating whether the changes block prod/push, e.g. `Not a blocker for push - a few cleanups worth doing.` or `Blocker: the finding in `x.ts` must be fixed before we push.` Then one short line per minor finding.
-2. **Dedupe.** Read every existing thread on the pull request, resolved or not, per `docs/agents/forge.md`. Drop a draft that an existing thread already raises, even worded differently; when it adds a new fact, reply to that thread instead of opening a new one. Drop the summary when every finding was dropped.
-3. **Confirm.** Show all drafted comments + the summary and stop for approval - UNLESS `--yes`, then skip straight to posting.
-4. **Post inline comments** anchored to the diff, using the "Inline review comments" command in `docs/agents/forge.md`. Anchor on the NEW-file line of an added (`+`) line (`git show <src-branch>:<file> | grep -n`), and verify each response actually carries a line anchor - an unanchored fallback comment must be deleted and retried, never left behind.
-5. **Post the summary** as one general comment on the pull request, per the same file, ending with the hidden marker `<!-- review:sha=<reviewed HEAD SHA> -->` so the next review on any machine can go incremental (§2a).
-6. Report back the count posted + the summary verdict. Never resolve threads; never push.
-7. `[oss]` findings go to the paired OSS PR instead, by `<worktree>/docs/standards/skills/review.md` "Posting to the PR", after their own confirmation. That PR is public: no operator name, no internal URL, no ticket text beyond the bare key.
+1. **Draft.** Rewrite each finding as a terse comment keyed to its `file:line`, in the user's voice: when their instructions name a voice or writing guide, read it before drafting. Each comment is 1-3 sentences: what breaks, the trigger, the fix. No mechanism chain, no secondary evidence, no add-ons - the author asks if unclear. Most comments start straight with the point; soften at most one in three, never with the same opener twice in a pull request. Compose the summary as ONE sentence stating whether the changes block prod/push, e.g. `Not a blocker for push - a few cleanups worth doing.` or `Blocker: the finding in `x.ts` must be fixed before we push.` Then one short line per minor finding.
+2. **Dedupe.** On a pull request, read every existing thread, resolved or not, per `docs/agents/forge.md`. Drop a draft that an existing thread already raises, even worded differently; when it adds a new fact, draft it as a reply to that thread and name the thread. Drop the summary when every finding was dropped.
+3. **Anchor.** Key each inline draft to the NEW-file line of an added (`+`) line (`git show <src-branch>:<file> | grep -n`), so it pastes onto the right diff line.
+4. **Print** the drafts as `file:line` followed by the comment text, then the summary ending with the hidden marker `<!-- review:sha=<reviewed HEAD SHA> -->` so the next review on any machine can go incremental (§2a) once the person posts it. Never post, never resolve threads, never push.
+5. `[oss]` findings are drafted for the paired OSS PR instead, by `<worktree>/docs/standards/skills/review.md` "Draft comments". That PR is public: no operator name, no internal URL, no ticket text beyond the bare key.
 
 ## 9. Several pull requests in one run
 
