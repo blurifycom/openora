@@ -1,6 +1,6 @@
 import * as z from 'zod';
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger, mapErrors } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
+import type { CoreTokenCatalog, DrizzleTx, Plugin } from '@openora/core/server';
 import type { JobQueueAdapter } from '@openora/core/contracts';
 import {
   JOB_QUEUE,
@@ -133,13 +133,14 @@ export default {
         }),
     );
     ctx.provide(CHAT_ROOM_ACCESS, (c) => ({
-      verifyRoomAccess: async (roomId, viewerId) => {
+      verifyRoomAccess: async (roomId, viewerId, tx) => {
         await mapErrors(
           {
             NOT_FOUND: ChatRoomNotFoundError,
             FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
           },
-          () => createChatService(c).verifyRoomAccess(roomId, viewerId),
+          () =>
+            createChatService(c).verifyRoomAccess(roomId, viewerId, tx as DrizzleTx | undefined),
         );
       },
     }));

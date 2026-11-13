@@ -21,7 +21,6 @@ export default {
       CHAT_TRANSFER_CHECK,
       (c) =>
         new ChatTransferCheckService({
-          drizzle: c.get(DRIZZLE),
           roomAccess: c.get(CHAT_ROOM_ACCESS),
           contextSendPolicy: c.get(CHAT_CONTEXT_SEND_POLICY),
         }),
