@@ -65,21 +65,41 @@ is `SPORTSBOOK_LEDGER` unchanged.
   sends the bet with `reverseRef`; the stake is then taken and returned in one transaction, and the
   rollback's own key answers `replayed` from then on.
 - **A reverse returns the whole stake once.** A second key naming the same bet is refused
-  `already_reversed`. The wallet enforces it too: a `bet_reversal` credit that names its bet
-  (`reversesTransactionId`, stored set-once in `wallet_transaction.reversed_transaction_id` under a
-  unique index) is refused `WALLET_BET_ALREADY_REVERSED` when another reversal named that bet, and
-  any `bet_reversal` with a round id is refused the same when the round holds a stake and its
-  reversals would exceed its stakes. So a bet a bridge reversed straight through `WALLET_COMMANDS`
-  is not reversed again here. A reversal on a round with no stake in the wallet still credits, so
-  a rollback whose round id differs from its bet's is not stranded.
+  `already_reversed`. The wallet enforces it too, so a bet a bridge reversed straight through
+  `WALLET_COMMANDS` is not reversed again here, and the reverse here is not repeated there:
+  - A `bet_reversal` credit that names its bet (`reversesTransactionId`, stored set-once in
+    `wallet_transaction.reversed_transaction_id` under a unique index) is refused
+    `WALLET_BET_ALREADY_REVERSED` when another reversal named that bet. It is refused
+    `WALLET_REVERSAL_UNMATCHED` when the row is not a completed bet of this wallet, is on another
+    provider, round or currency, or is smaller than the reversal.
+  - A `bet_reversal` that names no bet is refused `WALLET_REVERSAL_UNMATCHED` when it carries no
+    round id or its round has no stake in its currency.
+  - Every `bet_reversal` on a round, named or not, is refused `WALLET_BET_ALREADY_REVERSED` when
+    the round's reversals would exceed its stakes.
+  - A reversal always runs in a transaction, opened for a caller that passes a bare db, so all of
+    this is read under the wallet row lock and concurrent reversals of one round see each other.
+  - Every in-core reversal names its bet: this API's `reverse` and `bet` with `reverseRef`, and
+    a sportsbook cancel or void, which names the reserve's stake or the stake its last reopen
+    re-collected. A rollback that carries another round id than its bet goes through `reverse`
+    here, which finds the bet by `targetRefId`.
+  - `WALLET_REVERSAL_UNMATCHED` is final, and this API answers it `bet_not_found`. A bridge that
+    credits reversals straight through `WALLET_COMMANDS` maps it to a code its provider does not
+    retry; an unmapped one usually answers a server error, which the provider retries forever.
+  - A partial unnamed reversal followed by a `reverse` of its bet here returns only the partial
+    amount: the round cap counts it, so the `reverse` of the whole stake is refused
+    `already_reversed`.
 - **A stored answer carries the balance from the first apply.** A bridge that needs live funds
   calls `balance()`.
+- **The `reversed_transaction_id` unique index is built without `CONCURRENTLY`**, as the
+  `wallet_transaction` indexes of migrations 0029 and 0035 were: the column is new and empty, but
+  the build still holds a write lock on `wallet_transaction` for one scan of the table.
 - **`ledger_api_request` is the reverse-once guard for this API's own keys.** A TRUNCATE of it
   removes that guard (the wallet's own guard above stays). The table grows with every key and has
   no retention yet.
 - **`closeRound` on an `externalRoundId` the ledger has not seen** opens that round empty and
-  closes it, as a provider's end-of-round for a round of zero legs would. A round of another
-  player, game or currency is refused `round_mismatch`.
+  closes it, as a provider's end-of-round for a round of zero legs would. A later bet, win or
+  reverse on that round still lands and updates its totals, though the round stays closed. A round
+  of another player, game or currency is refused `round_mismatch`.
 - **A round is one currency.** A bet or win in another currency on it is refused
   `round_mismatch`, so a win can open a new currency balance only on a round with no stake, a
   free-round result.

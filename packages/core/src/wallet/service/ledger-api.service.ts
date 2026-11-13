@@ -17,6 +17,7 @@ import {
   MONEY_SCALE,
   RgLimitExceededError,
   WALLET_BET_ALREADY_REVERSED,
+  WALLET_REVERSAL_UNMATCHED,
   WalletCommandAmountError,
   WalletReplayMismatchError,
   type DomainEventName,
@@ -605,6 +606,9 @@ export class LedgerApiService implements LedgerApiV1 {
       }
       if (credit.reason === WALLET_BET_ALREADY_REVERSED) {
         throw new LedgerRefusal('already_reversed');
+      }
+      if (credit.reason === WALLET_REVERSAL_UNMATCHED) {
+        throw new LedgerRefusal('bet_not_found');
       }
       throw new Error(`ledger api: credit refused: ${credit.reason}`);
     }

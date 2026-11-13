@@ -51,6 +51,7 @@ export type {
 export {
   WALLET_BET_ALREADY_REVERSED,
   WALLET_COMMANDS,
+  WALLET_REVERSAL_UNMATCHED,
   WALLET_CORRECTION_DEBIT_TYPES,
   WalletCommandAmountError,
   WalletCorrectionExceedsRoundError,

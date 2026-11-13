@@ -101,8 +101,11 @@ export type WalletCreditArgs = {
    */
   terms?: BonusGrantTerms;
   /**
-   * A `bet_reversal` only: the bet row it returns. A bet is reversed at most once, so a second
-   * reversal naming it answers `WALLET_BET_ALREADY_REVERSED`.
+   * A `bet_reversal` only: the bet row it returns, a completed `bet` debit of this wallet with the
+   * same `providerName` and `externalRoundId`, and no less than `amount`. A bet is reversed at
+   * most once, so a second reversal naming it answers `WALLET_BET_ALREADY_REVERSED`. Name it
+   * whenever the bet is known: an unnamed reversal is only accepted on a round of this wallet
+   * that still holds that much unreversed stake.
    */
   reversesTransactionId?: string;
 };
@@ -112,6 +115,14 @@ export type WalletCreditArgs = {
  * a bet another reversal named, or the round's reversals would exceed its stakes.
  */
 export const WALLET_BET_ALREADY_REVERSED = 'bet already reversed';
+
+/**
+ * The `reason` of a `bet_reversal` credit that matches no stake: it named a row that is not a
+ * completed bet of this wallet's round, or more than that bet, or it named no bet and carries no
+ * round id or one with no stake in its currency. Final: a retry gets the same answer, so a bridge
+ * maps it to a code its provider does not retry.
+ */
+export const WALLET_REVERSAL_UNMATCHED = 'bet reversal matches no stake';
 
 /** `moved` as on `WalletDebitOutcome`; `moved: false` is a replayed `providerRef`. */
 export type WalletCreditOutcome =

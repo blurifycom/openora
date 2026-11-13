@@ -690,6 +690,32 @@ describe('sportsbook ledger', () => {
     expect(await balanceOf(app, player.userId)).toBe('115.000000000000000000');
   });
 
+  it('voids a reopened void again, returning the stake the reopen re-collected', async () => {
+    const player = await fundedPlayer(app, '100');
+    const { args } = await acceptedBet(app, player);
+    const voidAt = (expectedVersion: number) =>
+      ledgerOf(app).settle({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: args.providerBetId,
+        result: 'void',
+        payout: '10',
+        expectedVersion,
+      });
+    expectApplied(await voidAt(1));
+    expectApplied(
+      await ledgerOf(app).reopen({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: args.providerBetId,
+        expectedVersion: 1,
+      }),
+    );
+
+    expectApplied(await voidAt(2));
+    expect(await balanceOf(app, player.userId)).toBe('100.000000000000000000');
+  });
+
   it('keeps each currency on its own balance', async () => {
     const player = await fundedPlayer(app, '50', 'EUR');
     const { args } = await acceptedBet(app, player, { currency: 'EUR', stake: '20' });

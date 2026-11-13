@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, eq, isNull, min, ne, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, min, ne, or } from 'drizzle-orm';
 import {
   createLogger,
   findOneOrThrow,
@@ -514,6 +514,32 @@ export function isValidPromotionAmount(
 async function hasWallet(tx: DrizzleTx, userId: SportsbookBetRow['userId']): Promise<boolean> {
   const [row] = await tx.select({ id: wallet.id }).from(wallet).where(eq(wallet.userId, userId));
   return row !== undefined;
+}
+
+/**
+ * The stake row a void or cancel at the bet's current version returns, for the wallet to reverse
+ * exactly once: the reserve's debit, or the stake a reopen re-collected after a void. Undefined
+ * when that reopen collected nothing; the wallet then matches the reversal to the round's stakes.
+ */
+async function stakeToReverse(
+  tx: DrizzleTx,
+  bet: Pick<SportsbookBetRow, 'id' | 'version'>,
+): Promise<string | undefined> {
+  const t = sportsbookBetTransaction;
+  const rows = await tx
+    .select({ kind: t.kind, result: t.result, version: t.betVersion, ids: t.walletTransactionIds })
+    .from(t)
+    .where(and(eq(t.betId, bet.id), inArray(t.kind, ['reserve', 'settle', 'reopen'])));
+  const at = (kind: SportsbookTransactionKind, version: number) =>
+    rows.find((r) => r.kind === kind && r.version === version);
+  let stake = rows.find((r) => r.kind === 'reserve')?.ids[0];
+  // A reopen bumps the version; it re-collected a stake only when it undid a void.
+  for (let version = 1; version <= bet.version; version++) {
+    if (at('settle', version - 1)?.result === 'void') {
+      stake = at('reopen', version)?.ids[0];
+    }
+  }
+  return stake;
 }
 
 /** A provider callback for a bet core already moved past it, or dropped: refused and filed. */
@@ -1240,6 +1266,7 @@ export class SportsbookLedgerService {
             type: 'bet_reversal',
             allowNewCurrency: true,
             providerRef: walletRef(args),
+            reversesTransactionId: await stakeToReverse(tx, cancelled),
           }),
         );
         if (!credit.ok) {
@@ -1463,6 +1490,8 @@ export class SportsbookLedgerService {
             type: creditType,
             allowNewCurrency: true,
             providerRef: walletRef(args),
+            reversesTransactionId:
+              creditType === 'bet_reversal' ? await stakeToReverse(tx, settled) : undefined,
           }),
         );
         if (!credit.ok) {

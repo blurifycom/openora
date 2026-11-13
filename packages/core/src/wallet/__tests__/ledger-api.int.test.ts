@@ -12,6 +12,7 @@ import {
   RG_LIMITS,
   WALLET_BET_ALREADY_REVERSED,
   WALLET_COMMANDS,
+  WALLET_REVERSAL_UNMATCHED,
   domainEventSchemas,
   type BonusWageringCommands,
   type GamingCommands,
@@ -579,6 +580,130 @@ describe('Ledger API v1 reverse (real PG)', () => {
         targetRefId: bet.providerRefId,
       }),
     ).toEqual({ status: 'refused', reason: 'bet_not_found' });
+  });
+});
+
+describe('Ledger API v1 reverse beside direct wallet reversals (real PG)', () => {
+  const reverseOf = (userId: string, gameId: string, targetRefId: string) =>
+    api.reverse({
+      providerName: PROVIDER,
+      providerRefId: `rb-${randomUUID()}`,
+      userId,
+      gameId,
+      targetRefId,
+    });
+  const unnamed = (userId: string, externalRoundId: string | undefined) =>
+    walletCommands.credit(db.drizzle.db, {
+      userId,
+      amount: '10',
+      currency: 'USD',
+      type: 'bet_reversal',
+      providerRef: {
+        providerName: PROVIDER,
+        providerRefId: `rb-${randomUUID()}`,
+        ...(externalRoundId ? { externalRoundId } : {}),
+      },
+    });
+  const shapes = [
+    { shape: 'no round id', round: () => undefined },
+    { shape: 'a round with no stake', round: () => `round-${randomUUID()}` },
+    { shape: 'the bet round', round: (betRound: string) => betRound },
+  ];
+  const cases = shapes.flatMap((s) => [
+    { ...s, order: 'before' },
+    { ...s, order: 'after' },
+  ]);
+
+  it.each(cases)(
+    'returns the stake once for an unnamed reversal on $shape, $order the API reverse',
+    async ({ round, order }) => {
+      const { walletId, userId, game: g, betArgs } = await setup();
+      const bet = betArgs();
+      await api.bet(bet);
+      const direct = () => unnamed(userId, round(bet.externalRoundId));
+      const viaApi = () => reverseOf(userId, g.id, bet.providerRefId);
+
+      if (order === 'before') {
+        await direct();
+        await viaApi();
+      } else {
+        await viaApi();
+        await direct();
+      }
+
+      expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
+      expect(await txCount(walletId)).toBe(2);
+    },
+  );
+
+  it('refuses an unnamed reversal with no round or no stake as unmatched', async () => {
+    const { walletId, userId } = await setup();
+
+    expect(await unnamed(userId, undefined)).toEqual({
+      ok: false,
+      reason: WALLET_REVERSAL_UNMATCHED,
+    });
+    expect(await unnamed(userId, `round-${randomUUID()}`)).toEqual({
+      ok: false,
+      reason: WALLET_REVERSAL_UNMATCHED,
+    });
+    expect(await txCount(walletId)).toBe(0);
+  });
+
+  it('returns the stake once when an unnamed reversal races the API reverse', async () => {
+    const { walletId, userId, game: g, betArgs } = await setup();
+    const bet = betArgs();
+    await api.bet(bet);
+
+    await Promise.all([
+      unnamed(userId, bet.externalRoundId),
+      reverseOf(userId, g.id, bet.providerRefId),
+    ]);
+
+    expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
+    expect(await txCount(walletId)).toBe(2);
+  });
+
+  it('moves one of two concurrent unnamed reversals made without a transaction', async () => {
+    const { walletId, userId, betArgs } = await setup();
+    const bet = betArgs();
+    await api.bet(bet);
+
+    const outcomes = await Promise.all([
+      unnamed(userId, bet.externalRoundId),
+      unnamed(userId, bet.externalRoundId),
+    ]);
+
+    expect(outcomes.filter((o) => o.ok)).toHaveLength(1);
+    expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
+  });
+
+  it('refuses a named reversal of a missing, foreign or smaller bet, moving nothing', async () => {
+    const { walletId, userId, betArgs } = await setup();
+    const bet = betArgs();
+    const placed = expectMoved(await api.bet(bet), 'applied');
+    const other = await setup();
+    const foreign = expectMoved(await api.bet(other.betArgs()), 'applied');
+    const named = (reversesTransactionId: string, amount = '10') =>
+      walletCommands.credit(db.drizzle.db, {
+        userId,
+        amount,
+        currency: 'USD',
+        type: 'bet_reversal',
+        providerRef: {
+          providerName: PROVIDER,
+          providerRefId: `rb-${randomUUID()}`,
+          externalRoundId: bet.externalRoundId,
+        },
+        reversesTransactionId,
+      });
+    const unmatched = { ok: false, reason: WALLET_REVERSAL_UNMATCHED };
+
+    expect(await named(randomUUID())).toEqual(unmatched);
+    expect(await named(foreign.transactionId ?? '')).toEqual(unmatched);
+    expect(await named(placed.transactionId ?? '', '500')).toEqual(unmatched);
+    expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
+    expect(await txCount(walletId)).toBe(1);
   });
 });
 

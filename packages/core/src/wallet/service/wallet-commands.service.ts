@@ -2,6 +2,7 @@ import {
   MaxBetExceededError,
   RgLimitExceededError,
   WALLET_BET_ALREADY_REVERSED,
+  WALLET_REVERSAL_UNMATCHED,
   WALLET_CORRECTION_DEBIT_TYPES,
   WalletCommandAmountError,
   WalletCorrectionExceedsRoundError,
@@ -154,8 +155,12 @@ function assertReplayMatches(
   }
 }
 
-/** Rolls a refused reversal's savepoint back, row included; `credit()` answers it as a refusal. */
-class BetAlreadyReversed extends Error {}
+/** Rolls a refused reversal's savepoint back, row included; `credit()` answers `reason`. */
+class ReversalRefused extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+  }
+}
 
 export type WalletCommandsPorts = {
   platformConfig?: PlatformConfig;
@@ -551,8 +556,15 @@ export class WalletCommandsService implements WalletCommands {
     return credited.amount;
   }
 
-  async credit(
-    tx: unknown,
+  credit(tx: unknown, args: WalletCreditArgs): Promise<WalletCreditOutcome> {
+    // A reversal's checks read under the wallet row lock, which a bare db would release at once.
+    return args.type === 'bet_reversal'
+      ? (tx as DrizzleDb).transaction((t) => this.creditIn(t, args))
+      : this.creditIn(tx as DrizzleDb, args);
+  }
+
+  private async creditIn(
+    txn: DrizzleDb,
     {
       userId,
       amount,
@@ -565,8 +577,6 @@ export class WalletCommandsService implements WalletCommands {
       reversesTransactionId,
     }: WalletCreditArgs,
   ): Promise<WalletCreditOutcome> {
-    const txn = tx as DrizzleDb;
-
     if (type === 'win_reversal') {
       throw new WalletCorrectionTypeError(type);
     }
@@ -596,6 +606,10 @@ export class WalletCommandsService implements WalletCommands {
     // row is written, the same as `debit()` refuses before writing anything.
     if (this.ports.bonusWagering && type === 'bet_reversal' && !providerRef?.externalRoundId) {
       return { ok: false, reason: 'bonus-funded reversal is missing a round id' };
+    }
+    // An unnamed reversal is matched to its round's stakes; with no round it matches nothing.
+    if (type === 'bet_reversal' && !reversesTransactionId && !providerRef?.externalRoundId) {
+      return { ok: false, reason: WALLET_REVERSAL_UNMATCHED };
     }
 
     const creditRow = { ...row, currency: balanceKey(currency) };
@@ -644,7 +658,11 @@ export class WalletCommandsService implements WalletCommands {
     const move = await txn
       .transaction(async (sp) => {
         if (type === 'bet_reversal' && reversesTransactionId) {
-          await this.assertReversible(sp, row.id, reversesTransactionId, providerRef);
+          await this.assertReversible(sp, row.id, reversesTransactionId, {
+            amount,
+            currency: creditRow.currency,
+            providerRef,
+          });
         }
         // The wallet row lock above orders a credit before a correction or hold in the same
         // transaction, and its NO KEY UPDATE strength still lets another transaction insert a ledger row.
@@ -662,15 +680,11 @@ export class WalletCommandsService implements WalletCommands {
           assertReplayMatches(ledgerRow, request, providerRef);
           return { replayedId: ledgerRow.id };
         }
-        if (
-          type === 'bet_reversal' &&
-          providerRef?.externalRoundId &&
-          (await this.roundOverReversed(sp, row.id, creditRow.currency, {
+        if (type === 'bet_reversal' && providerRef?.externalRoundId) {
+          await this.assertRoundCovers(sp, row.id, creditRow.currency, {
             ...providerRef,
             externalRoundId: providerRef.externalRoundId,
-          }))
-        ) {
-          throw new BetAlreadyReversed();
+          });
         }
 
         // Locked before the settlement engine below ever locks `promo_grant`, so this path and
@@ -711,8 +725,8 @@ export class WalletCommandsService implements WalletCommands {
         return { ledgerRow, realShare: settlement.realShare, newBalance: credited.amount };
       })
       .catch((err: unknown) => {
-        if (err instanceof BetAlreadyReversed) {
-          return { alreadyReversed: true } as const;
+        if (err instanceof ReversalRefused) {
+          return { refused: err.reason };
         }
         throw err;
       });
@@ -724,8 +738,8 @@ export class WalletCommandsService implements WalletCommands {
         replayedTransactionId: move.replayedId,
       };
     }
-    if ('alreadyReversed' in move) {
-      return { ok: false, reason: WALLET_BET_ALREADY_REVERSED };
+    if ('refused' in move) {
+      return { ok: false, reason: move.refused };
     }
     const { ledgerRow, realShare, newBalance } = move;
     const balanceBefore = moneySubtract(newBalance, realShare);
@@ -969,11 +983,17 @@ export class WalletCommandsService implements WalletCommands {
     txn: DrizzleDb,
     walletId: Wallet['id'],
     betId: WalletTransaction['id'],
-    providerRef: WalletProviderRef | undefined,
+    reversal: { amount: string; currency: string; providerRef: WalletProviderRef | undefined },
   ): Promise<void> {
     const t = walletTransaction;
+    const { providerRef } = reversal;
     const [bet] = await txn
-      .select({ id: t.id })
+      .select({
+        amount: t.amount,
+        currency: t.currency,
+        providerName: t.providerName,
+        externalRoundId: t.externalRoundId,
+      })
       .from(t)
       .where(
         and(
@@ -984,33 +1004,39 @@ export class WalletCommandsService implements WalletCommands {
           eq(t.status, 'completed'),
         ),
       );
-    if (!bet) {
-      throw new Error(`wallet bet reversal: ${betId} is not a completed bet of this wallet`);
+    // Its round is the bet's, so the round check below also counts it against unnamed reversals.
+    const matches =
+      bet &&
+      bet.providerName === (providerRef?.providerName ?? null) &&
+      bet.externalRoundId === (providerRef?.externalRoundId ?? null) &&
+      balanceKey(bet.currency) === reversal.currency &&
+      moneyCompare(reversal.amount, bet.amount) <= 0;
+    if (!matches) {
+      throw new ReversalRefused(WALLET_REVERSAL_UNMATCHED);
     }
-    const [reversal] = await txn
+    const [previous] = await txn
       .select({ providerName: t.providerName, providerRefId: t.providerRefId })
       .from(t)
       .where(eq(t.reversedTransactionId, betId));
     // The same reference is a retry of that reversal, answered as a replay.
     const retry =
-      reversal?.providerName === providerRef?.providerName &&
-      reversal?.providerRefId === providerRef?.providerRefId;
-    if (reversal && !retry) {
-      throw new BetAlreadyReversed();
+      previous?.providerName === providerRef?.providerName &&
+      previous?.providerRefId === providerRef?.providerRefId;
+    if (previous && !retry) {
+      throw new ReversalRefused(WALLET_BET_ALREADY_REVERSED);
     }
   }
 
-  // A reversal that named no bet cannot be matched to one, so the round caps them all: what its
-  // reversals returned never exceeds what its stakes took, a re-collected stake included. A round
-  // with no stake on this wallet is left alone: a bridge whose rollback carries another round id
-  // than its bet must still be able to refund it.
-  // ponytail: per-round cap, not per-bet; a bridge that names the bet gets the exact check.
-  private async roundOverReversed(
+  // Every reversal on a round, named or not, fits under its stakes, a re-collected stake included:
+  // a round with no stake in this currency matches no reversal, and what its reversals returned
+  // never exceeds what its stakes took. Read after the row is written, so it counts itself.
+  // ponytail: per-round cap, not per-bet; a caller that names the bet also gets the exact check.
+  private async assertRoundCovers(
     txn: DrizzleDb,
     walletId: Wallet['id'],
     currency: string,
     providerRef: WalletProviderRef & { externalRoundId: string },
-  ): Promise<boolean> {
+  ): Promise<void> {
     const t = walletTransaction;
     const [round] = await txn
       .select({
@@ -1028,7 +1054,12 @@ export class WalletCommandsService implements WalletCommands {
         ),
       );
     const staked = round?.staked ?? '0';
-    return isPositiveMoney(staked) && moneyCompare(round?.reversed ?? '0', staked) > 0;
+    if (!isPositiveMoney(staked)) {
+      throw new ReversalRefused(WALLET_REVERSAL_UNMATCHED);
+    }
+    if (moneyCompare(round?.reversed ?? '0', staked) > 0) {
+      throw new ReversalRefused(WALLET_BET_ALREADY_REVERSED);
+    }
   }
 
   // Read under the wallet lock every correction takes, so two corrections of one round cannot both fit.
