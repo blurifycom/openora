@@ -27,15 +27,18 @@ module behind one not loaded, its check was skipped.
    `{ userId, transactionId, reviewRequired }` (`TagService.screenWithdrawal`). `reviewRequired`
    is this withdrawal's own amount against the threshold, whether or not the tag was already on
    the player.
-3. The wallet consumes the verdict. When `reviewRequired` is true, or absent (a verdict from a
-   producer older than the field, during a rolling deploy), the withdrawal stays for a human.
-   Otherwise it runs the existing auto-approval (`autoApproveScreenedWithdrawal`), which reads the
-   player's tags again.
+3. The wallet consumes the verdict and runs the existing auto-approval
+   (`autoApproveScreenedWithdrawal`), which reads the player's tags again. When `reviewRequired`
+   is true, or absent (a verdict from a producer older than the field, during a rolling deploy),
+   the withdrawal stays for a human while `withdrawal_review` is in the effective
+   `excludeRiskFlags`, as it is by default. An operator who removed it from that list chose to
+   auto-approve over-threshold withdrawals, and then only the other gates apply.
 
 This is race-free because the review decision travels in the verdict itself, committed with any tag
 it assigned. The wallet does not infer it from the player's tags at consume time, so a tag cleared
 for an earlier withdrawal before the verdict is consumed cannot let this one through. The wallet
-never auto-approves without a verdict, and never on one that asks for a review.
+never auto-approves without a verdict, and never on one that asks for a review while the config
+excludes `withdrawal_review`.
 
 **No verdict means manual review.** A withdrawal stays `pending` in the admin queue when:
 
@@ -119,8 +122,8 @@ Limits of the dedup:
 - A withdrawal nobody decides is surfaced after a day instead of waiting silently.
 - Apps that share a database share an outbox, and any one of them may deliver a verdict. Installs
   that differ in auto-withdrawal config must not share a database.
-- Rolling deploy: a verdict from an old tag replica has no `reviewRequired`, so the wallet leaves
-  that withdrawal for a human. The three new finding kinds come with a migration, and an old
+- Rolling deploy: a verdict from an old tag replica has no `reviewRequired`, so the wallet treats
+  it as asking for a review. The three new finding kinds come with a migration, and an old
   replica may not serialise them: run the migration and replace every replica that reads findings
   before relying on them.
 

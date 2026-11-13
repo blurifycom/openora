@@ -719,6 +719,30 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(await txById(requested.transactionId)).toMatchObject({ status: 'pending' });
   });
 
+  it('auto-approves a verdict marked for review once the operator took withdrawal_review out of excludeRiskFlags', async () => {
+    const { svc, psp } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      excludeRiskFlags: ['bonus_abuser'],
+    });
+    const w = await seedWallet();
+    const requested = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    const screened = await svc.autoApproveScreenedWithdrawal({
+      userId: w.userId,
+      transactionId: requested.transactionId,
+      reviewRequired: true,
+    });
+
+    expect(screened?.status).toBe('completed');
+    expect(psp.processWithdrawal).toHaveBeenCalledTimes(1);
+  });
+
   it('auto-approves when the player carries only unrelated tags', async () => {
     const { svc } = await makeService({
       autoWithdrawal: {},

@@ -207,10 +207,10 @@ is `SPORTSBOOK_LEDGER` unchanged.
 - **Only the tag module's screening verdict can auto-approve a withdrawal (ADR-0057).** A
   request always answers `pending`. The tag module consumes `wallet.withdrawal.requested`,
   assigns `withdrawal_review` when it is due, and emits `tag.withdrawal.screened` in the same
-  transaction. The verdict carries `reviewRequired` for this withdrawal's own amount, and the
-  wallet runs auto-approval only on a verdict where it is `false`. A withdrawal whose verdict
-  never arrives, asks for a review or lacks the field stays in the manual queue, and a
-  redelivered verdict changes nothing.
+  transaction. The verdict carries `reviewRequired` for this withdrawal's own amount. A
+  withdrawal whose verdict never arrives stays in the manual queue, and so does one whose verdict
+  asks for a review or lacks the field while `withdrawal_review` is in the effective
+  `excludeRiskFlags` (the default). A redelivered verdict changes nothing.
 - **A withdrawal stuck in one state is reported, never refunded (ADR-0057).** Reconciliation
   files `stuck_withdrawal_requested` for one still `pending` or `on_hold` after 24 hours,
   `stuck_withdrawal_approved` for one approved past `reconciliation.stuckAfterMinutes` but

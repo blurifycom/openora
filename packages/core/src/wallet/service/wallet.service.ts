@@ -2382,10 +2382,10 @@ export class WalletService {
   }
 
   /**
-   * The wallet's half of screening: runs auto-approval once the tag module's verdict says the
-   * withdrawal was screened and needs no review. A verdict that asks for a review, or predates
-   * `reviewRequired`, leaves the row for a human whatever tags the player holds by now. A
-   * withdrawal no longer pending, or not this user's, is left alone, so a redelivered verdict is
+   * The wallet's half of screening: runs auto-approval once the tag module's verdict arrives. A
+   * verdict that asks for a review, or predates `reviewRequired`, leaves the row for a human
+   * whatever tags the player holds by now, while `withdrawal_review` is in the effective
+   * `excludeRiskFlags` (see `evaluateAutoApproval`). A withdrawal no longer pending, or not this user's, is left alone, so a redelivered verdict is
    * a no-op. Once the row is read, any failure leaves it for the manual queue; a failure of that
    * first read throws, and the handler's event is redelivered.
    */
@@ -2398,10 +2398,6 @@ export class WalletService {
     transactionId: WalletTransaction['id'];
     reviewRequired?: boolean;
   }): Promise<TransactionResult | undefined> {
-    if (reviewRequired !== false) {
-      logger.info({ userId, transactionId, gate: 'review_required' }, 'auto-withdrawal skipped');
-      return undefined;
-    }
     const [row] = await this.drizzle.db
       .select({
         amount: walletTransaction.amount,
@@ -2422,7 +2418,7 @@ export class WalletService {
     if (!row?.rail) {
       return undefined;
     }
-    return this.maybeAutoApprove({ userId, transactionId, ...row, rail: row.rail });
+    return this.maybeAutoApprove({ userId, transactionId, reviewRequired, ...row, rail: row.rail });
   }
 
   /**
@@ -3177,6 +3173,7 @@ export class WalletService {
     transactionId: WalletTransaction['id'];
     walletId: Wallet['id'];
     rail: WalletRail;
+    reviewRequired: boolean | undefined;
   }): Promise<TransactionResult | undefined> {
     if (!this.platformConfig?.autoWithdrawal?.enabled) {
       return undefined;
@@ -3313,6 +3310,7 @@ export class WalletService {
     transactionId,
     walletId,
     rail,
+    reviewRequired,
   }: {
     userId: User['id'];
     amount: string;
@@ -3320,6 +3318,7 @@ export class WalletService {
     transactionId: WalletTransaction['id'];
     walletId: Wallet['id'];
     rail: WalletRail;
+    reviewRequired: boolean | undefined;
   }): Promise<AutoApprovalGates | null> {
     // Every gate fails closed; the log names the one that did, so a manual-queue withdrawal is explainable.
     const skip = (gate: string): null => {
@@ -3351,6 +3350,12 @@ export class WalletService {
     }
 
     const effectiveExcludeTags = threshold.config.excludeRiskFlags;
+    // The verdict's review decision stands in for the tag, so a tag cleared before the verdict
+    // is consumed cannot let this withdrawal through. Missing (an older producer) counts as a
+    // review. An operator who took withdrawal_review out of the list auto-approves either way.
+    if (reviewRequired !== false && effectiveExcludeTags.includes('withdrawal_review')) {
+      return skip('review_required');
+    }
 
     const riskTags = await this.autoApprovalRiskTags(userId);
     // Not a configurable exclusion: a hold placed after the request passed its own check
