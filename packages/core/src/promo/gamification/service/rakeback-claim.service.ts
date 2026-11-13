@@ -455,14 +455,16 @@ export class RakebackClaimService {
     if (!eligibility) {
       throw new Error('rakeback claim needs PLAY_ELIGIBILITY bound');
     }
-    if (await eligibility.isRestricted(userId, tx)) {
-      throw new RakebackClaimRestrictedError();
-    }
+    // The player row before the user row: a status writer holds the player row while identity
+    // republishes play eligibility, which takes the user row, so the other order deadlocks.
     const [account] = await tx
       .select({ status: player.status })
       .from(player)
       .where(eq(player.userId, userId))
       .for('share');
+    if (await eligibility.isRestricted(userId, tx)) {
+      throw new RakebackClaimRestrictedError();
+    }
     if (!account || account.status === 'self_excluded') {
       throw new RakebackClaimRestrictedError();
     }
