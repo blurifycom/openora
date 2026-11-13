@@ -19,7 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const templateRoot = join(here, '..', 'template');
 const TELEMETRY_URL = 'https://telemetry.openora.ai/api/send';
 const TELEMETRY_DOCS_URL = 'https://openora.ai/documentation/telemetry';
-const UMAMI_WEBSITE_ID = '6c0c7f10-66e1-4100-a9b4-b5640982674d';
+const UMAMI_WEBSITE_ID = 'c61455d3-0d38-40b9-a7b9-f25978360ff6';
 const PING_TIMEOUT_MS = 2000;
 const CORE_RELEASE = VERSIONS.coreVersion.replace(/^[\^~]/, '');
 
