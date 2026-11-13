@@ -123,3 +123,16 @@ describe('registration.minPlayerAge', () => {
     expect(resolveMinPlayerAge(config)).toBe(18);
   });
 });
+
+describe('wallet.reconciliation.batchSize', () => {
+  // A page's findings go in one insert at 13 bind parameters a row, under Postgres's 65535.
+  it('accepts up to 1000 rows a page and refuses more', () => {
+    expect(
+      definePlatformConfig({ wallet: { reconciliation: { batchSize: 1000 } } }).wallet
+        ?.reconciliation?.batchSize,
+    ).toBe(1000);
+    expect(() => definePlatformConfig({ wallet: { reconciliation: { batchSize: 1001 } } })).toThrow(
+      /reconciliation\.batchSize/,
+    );
+  });
+});

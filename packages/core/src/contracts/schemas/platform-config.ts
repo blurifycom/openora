@@ -159,7 +159,8 @@ export const WalletConfigSchema = z
       .object({
         cron: z.string().default('0 * * * *'),
         lookbackHours: z.number().int().positive().default(24),
-        batchSize: z.number().int().positive().default(200),
+        /** Rows a page; its findings are filed in one insert, which caps it under the bind limit. */
+        batchSize: z.number().int().positive().max(1000).default(200),
         stuckAfterMinutes: z.number().int().positive().default(60),
         /**
          * Swaps get their own cutoff because `processing` is a legitimate resting state
