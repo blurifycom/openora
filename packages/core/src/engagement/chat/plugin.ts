@@ -5,10 +5,11 @@ import {
   ADMIN_GUARD,
   createInternalClient,
   createLogger,
+  REMOTE_SESSION_RESOLVER,
   mapErrors,
   parseServiceManifest,
 } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
+import type { CoreTokenCatalog, InternalClient, Plugin } from '@openora/core/server';
 import type { JobQueueAdapter } from '@openora/core/contracts';
 import {
   JOB_QUEUE,
@@ -49,6 +50,7 @@ import { ChatRoomRestrictionService } from './service/chat-room-restriction.serv
 import { ChatModerationExpiryService } from './service/chat-moderation-expiry.service.js';
 import { ChatRoomPurgeService } from './service/chat-room-purge.service.js';
 import { RemoteAccountReader } from './service/remote-account-reader.service.js';
+import { RemoteSessionResolver } from './service/remote-session-resolver.service.js';
 import { createChatRouter } from './router/index.js';
 
 const CHAT_MODERATION_EXPIRY_QUEUE = queue('chat-moderation-expiry');
@@ -82,12 +84,12 @@ const logger = createLogger('chat');
 const IDENTITY_CALL_TIMEOUT_MS = 500;
 
 /**
- * Chat on a database of its own reads accounts from the identity service: set
- * `IDENTITY_SERVICE_URL`. A process that serves identity itself (no SERVICE_MANIFEST, or one
- * naming identity without `:no-routes`) has the accounts locally, so the variable there is a
- * misconfiguration and the boot fails.
+ * Chat on a database of its own reads accounts and resolves sessions through the identity
+ * service: set `IDENTITY_SERVICE_URL`. A process that serves identity itself (no
+ * SERVICE_MANIFEST, or one naming identity without `:no-routes`) has both locally, so the
+ * variable there is a misconfiguration and the boot fails.
  */
-function remoteAccountReader(): RemoteAccountReader | null {
+function identityClient(): InternalClient | null {
   const url = process.env['IDENTITY_SERVICE_URL'];
   if (!url) {
     return null;
@@ -105,29 +107,65 @@ function remoteAccountReader(): RemoteAccountReader | null {
     process.env['IDENTITY_SERVICE_ALLOW_HTTP'] !== 'true'
   ) {
     throw new Error(
-      'IDENTITY_SERVICE_URL is not https in production, so account reads would cross the ' +
-        'network in clear text. Use https, or set IDENTITY_SERVICE_ALLOW_HTTP=true where a ' +
-        'service mesh inside the private network encrypts the hop.',
+      'IDENTITY_SERVICE_URL is not https in production, so account reads and the session ' +
+        'cookies chat forwards would cross the network in clear text. Use https, or set ' +
+        'IDENTITY_SERVICE_ALLOW_HTTP=true where a service mesh inside the private network ' +
+        'encrypts the hop.',
     );
   }
-  return new RemoteAccountReader(
-    createInternalClient({
-      baseUrl: url,
-      serviceName: process.env['SERVICE_NAME'] || 'monolith',
-      audience: process.env['IDENTITY_SERVICE_NAME'] || 'monolith',
-      secrets: process.env['INTERNAL_API_SECRETS'],
-      timeoutMs: IDENTITY_CALL_TIMEOUT_MS,
-    }),
-  );
+  return createInternalClient({
+    baseUrl: url,
+    serviceName: process.env['SERVICE_NAME'] || 'monolith',
+    audience: process.env['IDENTITY_SERVICE_NAME'] || 'monolith',
+    secrets: process.env['INTERNAL_API_SECRETS'],
+    timeoutMs: IDENTITY_CALL_TIMEOUT_MS,
+  });
 }
+
+// A session the identity service ended: every chat replica drops what it cached for the user.
+// Fanned out on the realtime transport because a domain event reaches one replica only.
+const SESSION_PURGE_CHANNEL = 'chat:session-purge';
+type SessionPurge = { userId: string };
+const SESSION_ENDING_EVENTS = [
+  'identity.session.revoked',
+  'identity.sessions.revoked_all',
+  'identity.user.deactivated',
+] as const;
 
 export default {
   id: 'chat',
   dependsOn: ['identity', 'audit'],
   register(ctx) {
-    const remoteAccounts = remoteAccountReader();
-    if (remoteAccounts) {
+    const identity = identityClient();
+    if (identity) {
+      const remoteAccounts = new RemoteAccountReader(identity);
       ctx.provide(ACCOUNT_READER, () => remoteAccounts);
+      const remoteSessions = new RemoteSessionResolver(identity);
+      let announcePurge: ((userId: string) => void | Promise<void>) | undefined;
+      ctx.provide(REMOTE_SESSION_RESOLVER, (c) => {
+        const transport = c.get(REALTIME_TRANSPORT);
+        c.onDispose(
+          transport.subscribe<SessionPurge>(SESSION_PURGE_CHANNEL, ({ userId }) =>
+            remoteSessions.purgeUser(userId),
+          ),
+        );
+        announcePurge = (userId) =>
+          transport.publish<SessionPurge>(SESSION_PURGE_CHANNEL, { userId });
+        return remoteSessions;
+      });
+      for (const topic of SESSION_ENDING_EVENTS) {
+        // Thrown, not skipped, while the resolver is not built: the event is redelivered.
+        ctx.events.on(topic, async (payload) => {
+          const parsed = domainEventSchemas[topic].safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
+          if (!announcePurge) {
+            throw new Error('chat session purge: resolver not constructed yet');
+          }
+          await announcePurge(parsed.data.userId);
+        });
+      }
     }
     let expiryRef: ChatModerationExpiryService | undefined;
     let inviteRef: ChatRoomInviteService | undefined;
