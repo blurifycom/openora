@@ -11,6 +11,7 @@ import {
   boolean,
   jsonb,
   integer,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 import {
   WALLET_RAILS,
@@ -23,6 +24,7 @@ import {
   WALLET_DEPOSIT_STATUS_EVENT_STATUSES,
   ON_RAMP_STATUSES,
   WAGER_PRODUCTS,
+  LEDGER_V1_KEYED_OPERATIONS,
   type OnRampStatus,
   type WalletRail,
   type WalletTransactionStatus,
@@ -721,6 +723,31 @@ export type WalletBonusCredit = typeof walletBonusCredit.$inferSelect;
 export type WalletBonusRolloverConfig = typeof walletBonusRolloverConfig.$inferSelect;
 export type WalletAssetRow = typeof walletAsset.$inferSelect;
 export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
+export const ledgerApiOperationEnum = pgEnum('ledger_api_operation', LEDGER_V1_KEYED_OPERATIONS);
+
+// Ledger API v1 idempotency: one row per key a bet, win or reverse applied, written in the
+// transaction that moved the money, with the request's fingerprint and the answer it got, so a
+// retry is answered from here and a reused key with another request is told apart. Append-only.
+// `target_ref_id` is the bet a reverse returned; unique per provider, so a stake comes back once.
+export const ledgerApiRequest = pgTable(
+  'ledger_api_request',
+  {
+    providerName: text().notNull(),
+    providerRefId: text().notNull(),
+    operation: ledgerApiOperationEnum().notNull(),
+    fingerprint: text().notNull(),
+    targetRefId: text(),
+    response: jsonb().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.providerName, t.providerRefId] }),
+    uniqueIndex('ledger_api_request_target_ref_key')
+      .on(t.providerName, t.targetRefId)
+      .where(sql`${t.targetRefId} IS NOT NULL`),
+  ],
+);
+
 export type WalletJobRun = typeof walletJobRun.$inferSelect;
 export type WalletReconciliationFinding = typeof walletReconciliationFinding.$inferSelect;
 export type WalletRefundedDeposit = typeof walletRefundedDeposit.$inferSelect;

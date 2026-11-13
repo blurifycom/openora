@@ -45,6 +45,33 @@ does not repeat it.
   when it reached the balance, so a held one counts from its release, and a withdrawal request
   counts exactly when the auto-approval velocity check would count it.
 
+## Ledger API v1
+
+`LEDGER_API_V1` (contracts) is the surface a casino provider bridge and the sportsbook move money
+through, so neither imports wallet or round tables. Arguments and answers are the plain schemas in
+`contracts/schemas/ledger.ts`; a later HTTP transport carries the same ones. It orders the
+`WALLET_COMMANDS` and `GAMING_COMMANDS` calls and holds no money logic of its own; `sportsbook.*`
+is `SPORTSBOOK_LEDGER` unchanged.
+
+- **One transaction per keyed op.** `bet`, `win` and `reverse` each lock their key, move the money,
+  add it to the round, write the outbox events and store their answer in `ledger_api_request`, all
+  in one transaction. A refusal stores nothing, so a retry is decided again.
+- **The key is (`providerName`, `providerRefId`) plus a fingerprint.** The fingerprint is a hash of
+  the whole request with amounts canonicalised, so `10` and `10.00` are one request. The same key
+  and fingerprint answers `replayed` with the stored answer, balance included, even after the
+  balance moved on. The same key with any other field changed is refused `fingerprint_mismatch`.
+  `providerName` may not be `internal` and may not hold a `:`.
+- **A rollback that arrives before its bet** is refused `bet_not_found`. The bridge records it and
+  sends the bet with `reverseRef`; the stake is then taken and returned in one transaction, and the
+  rollback's own key answers `replayed` from then on.
+- **A reverse returns the whole stake once.** A second key naming the same bet is refused
+  `already_reversed`. A bet reversed outside this API is not seen by that check.
+- **A key the wallet already holds from a direct `WALLET_COMMANDS` call** answers `replayed` with
+  what the wallet reports and stores nothing.
+- **Refusals are typed.** A malformed amount, zero or negative stake is `invalid_amount`; RG,
+  bonus max bet, balance, unknown game or product and round ownership each have their own reason.
+  Any other malformed field throws: it is the caller's bug.
+
 ## Rules that are easy to get wrong here
 
 - **A bet reversal always leaves an audit row, written in the credit's transaction.** A bet or win

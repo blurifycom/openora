@@ -16,6 +16,9 @@ import {
   REALTIME_TRANSPORT,
   WALLET_COMMANDS,
   WALLET_READER,
+  LEDGER_API_V1,
+  GAMING_COMMANDS,
+  SPORTSBOOK_LEDGER,
   WALLET_ASSET_CATALOG,
   PLATFORM_CONFIG,
   RATE_LIMITER,
@@ -60,6 +63,7 @@ import {
   WithdrawalNotPendingError,
 } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
+import { LedgerApiService } from './service/ledger-api.service.js';
 import { DepositCompareService, SegmentTooLargeError } from './service/deposit-compare.service.js';
 import {
   CustodySweepService,
@@ -442,6 +446,20 @@ export default {
           bonusWagering: c.has(BONUS_WAGERING) ? c.get(BONUS_WAGERING) : undefined,
           bonusGrants: c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
           identityReader: c.get(IDENTITY_READER),
+        }),
+    );
+    // The versioned surface provider bridges and the sportsbook move money through. Gaming and
+    // sportsbook load after wallet and are optional, so their ports resolve on each call.
+    ctx.provide(
+      LEDGER_API_V1,
+      (c) =>
+        new LedgerApiService({
+          drizzle: c.get(DRIZZLE),
+          events: c.get(EVENT_BUS),
+          walletCommands: c.get(WALLET_COMMANDS),
+          identityReader: c.get(IDENTITY_READER),
+          gamingCommands: () => c.get(GAMING_COMMANDS),
+          sportsbookLedger: () => c.get(SPORTSBOOK_LEDGER),
         }),
     );
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.

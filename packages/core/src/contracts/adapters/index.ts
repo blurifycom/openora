@@ -629,6 +629,8 @@ export type {
   SportsbookSessionOutcome,
 } from './sportsbook-ledger.js';
 export { SPORTSBOOK_LEDGER } from './sportsbook-ledger.js';
+export type { LedgerApiV1 } from './ledger-api.js';
+export { LEDGER_API_V1 } from './ledger-api.js';
 export type {
   SportsbookProvider,
   SportsbookProviderSession,
