@@ -15,6 +15,13 @@
       "when": 1792137000604,
       "tag": "0001_conscious_tigra",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794447386728,
+      "tag": "0002_audit_event_id",
+      "breakpoints": true
     }
   ]
 }

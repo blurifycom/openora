@@ -29,6 +29,27 @@
       "when": 1793689698297,
       "tag": "0003_event_correlation",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794447394585,
+      "tag": "0004_audit_outbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794456221273,
+      "tag": "0005_audit_outbox_rejected",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794458069189,
+      "tag": "0006_audit_outbox_rejected_per_row",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,7 @@ import { DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { AuditService } from '@openora/core/audit/server';
 import { walletDepositAddress, walletJobRun } from '@openora/core/wallet/schema';
+import { flushAudit } from '../index.js';
 import { setTestPaymentTransactions } from '../test-payment-webhook-plugin.js';
 import {
   BELOW_FLOOR,
@@ -313,6 +314,7 @@ describe('a polled deposit whose amount cannot be read', () => {
     expect(run.status).toBe('completed');
     const [finding, ...others] = await findings(event.externalId);
     expect(others).toHaveLength(0);
+    await flushAudit(app());
     const audits = await drizzle()
       .select()
       .from(auditLog)
@@ -376,8 +378,9 @@ describe('a polled deposit whose amount cannot be read', () => {
 });
 
 describe('a readable report of a deposit first seen with an unreadable amount', () => {
-  const filledAudits = (findingId: string) =>
-    drizzle()
+  const filledAudits = async (findingId: string) => {
+    await flushAudit(app());
+    return drizzle()
       .select()
       .from(auditLog)
       .where(
@@ -386,6 +389,7 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
           eq(auditLog.resourceId, findingId),
         ),
       );
+  };
 
   async function reportedUnreadable(player: DepositPlayer, overrides: Partial<DepositEvent> = {}) {
     const event = player.deposit(overrides);
@@ -591,7 +595,10 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
       address: `unknown-${randomUUID()}`,
     });
     await withFailingTrigger(
-      { table: 'audit_log', when: "new.action = 'wallet.reconciliation_finding.filled'" },
+      {
+        table: 'audit_outbox',
+        when: "new.entry->>'action' = 'wallet.reconciliation_finding.filled'",
+      },
       async () => {
         expect((await deliver(event)).ok).toBe(false);
         const [unfilled] = await findings(event.externalId);
@@ -786,7 +793,10 @@ describe('a readable report of a deposit first seen with an unreadable amount', 
     const player = await setup();
     const { event, findingId } = await reportedUnreadable(player);
     await withFailingTrigger(
-      { table: 'audit_log', when: "new.action = 'wallet.reconciliation_finding.filled'" },
+      {
+        table: 'audit_outbox',
+        when: "new.entry->>'action' = 'wallet.reconciliation_finding.filled'",
+      },
       async () => {
         setTestPaymentTransactions([event]);
         const started = await adminClient().post('/wallet/reconciliation/run', {});

@@ -1,0 +1,2 @@
+ALTER TABLE "audit_outbox_rejected" DROP CONSTRAINT "audit_outbox_rejected_event_id_unique";--> statement-breakpoint
+ALTER TABLE "audit_outbox_rejected" ADD CONSTRAINT "audit_outbox_rejected_outbox_id_unique" UNIQUE("outbox_id");

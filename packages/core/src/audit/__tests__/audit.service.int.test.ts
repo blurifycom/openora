@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { eq, gt, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { withRequestContext } from '@openora/core/server';
+import { withAuditGuardsLifted } from '../../testing/audit-guards.js';
+import { withRequestContext, type DrizzleTx } from '@openora/core/server';
+import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type { IdentityReader } from '@openora/core/contracts';
@@ -10,17 +12,33 @@ import { makeEventBus, makeIdentityReader, mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { mapEventToRecord } from '../plugin.js';
 import { auditLog } from '../schema/index.js';
-import { AuditService, computeHash, startOfDayUtc, endOfDayUtc } from '../service/audit.service.js';
+import {
+  AuditService,
+  computeHash,
+  startOfDayUtc,
+  endOfDayUtc,
+  type RecordInput,
+} from '../service/audit.service.js';
+import { drainAuditOutbox } from '../service/audit-shipper.service.js';
 import { AuditListFiltersSchema } from '../contract/index.js';
 
-const tamper = async (mutate: () => Promise<unknown>) => {
-  await db.drizzle.db.execute(sql`ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only`);
-  try {
-    await mutate();
-  } finally {
-    await db.drizzle.db.execute(sql`ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only`);
-  }
-};
+// Gets past the append-only triggers the only way left: DDL that disables them.
+const tamper = (mutate: (tx: DrizzleTx) => Promise<unknown>) =>
+  withAuditGuardsLifted(db.drizzle.db, mutate);
+
+// Runs `write`, ships what it queued, and returns the rows it appended, oldest first.
+async function shipped(write: () => Promise<unknown>) {
+  const [head] = await db.drizzle.db
+    .select({ seq: sql<number>`coalesce(max(${auditLog.seq}), 0)::int` })
+    .from(auditLog);
+  await write();
+  await drainAuditOutbox(db.drizzle.db);
+  return db.drizzle.db
+    .select()
+    .from(auditLog)
+    .where(gt(auditLog.seq, head?.seq ?? 0))
+    .orderBy(auditLog.seq);
+}
 
 describe('computeHash canonical form', () => {
   it('matches the frozen golden vector', () => {
@@ -98,8 +116,19 @@ describe('computeHash canonical form', () => {
 
 let db: TestDb;
 
+// `recordShipped` records, ships and returns the row as the API serves it.
+class ShippedAuditService extends AuditService {
+  async recordShipped(input: RecordInput) {
+    const [row] = await shipped(() => this.record(input));
+    if (!row) {
+      throw new Error('record() appended no row');
+    }
+    return { ...row, createdAt: row.createdAt.toISOString() };
+  }
+}
+
 function makeService(identityReader = makeIdentityReader()) {
-  return new AuditService(db.drizzle, makeEventBus(), identityReader);
+  return new ShippedAuditService(db.drizzle, makeEventBus(), identityReader);
 }
 
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
@@ -111,7 +140,7 @@ async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile]);
+  db = await createTestDb([migrateOutbox, migrate, migrateProfile]);
 });
 
 afterAll(async () => {
@@ -119,12 +148,16 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${auditLog}, ${player} RESTART IDENTITY CASCADE`);
+  await tamper((tx) =>
+    tx.execute(
+      sql`TRUNCATE audit_log, audit_outbox, audit_outbox_rejected, ${player} RESTART IDENTITY CASCADE`,
+    ),
+  );
 });
 
 describe('AuditService.record() (real PG)', () => {
   it('inserts with prevHash=null for the first row and stores a real sha256 hash', async () => {
-    const result = await makeService().record({
+    const result = await makeService().recordShipped({
       actorType: 'system',
       action: 'identity.user.registered',
       resourceType: 'identity',
@@ -152,12 +185,12 @@ describe('AuditService.record() (real PG)', () => {
 
   it('chains prevHash from the latest existing row across sequential appends', async () => {
     const svc = makeService();
-    const first = await svc.record({
+    const first = await svc.recordShipped({
       actorType: 'system',
       action: 'identity.user.registered',
       resourceType: 'identity',
     });
-    const second = await svc.record({
+    const second = await svc.recordShipped({
       actorType: 'system',
       action: 'wallet.deposit.completed',
       resourceType: 'wallet',
@@ -174,7 +207,7 @@ describe('AuditService.record() (real PG)', () => {
     const requesterId = randomUUID();
     const addresseeId = randomUUID();
 
-    const result = await makeService().record({
+    const result = await makeService().recordShipped({
       actorType: 'player',
       actorId: requesterId,
       action: 'social.friend_request.sent',
@@ -199,7 +232,7 @@ describe('AuditService.record() (real PG)', () => {
     const friendshipId = randomUUID();
     const accepterId = randomUUID();
 
-    const result = await makeService().record({
+    const result = await makeService().recordShipped({
       actorType: 'player',
       actorId: accepterId,
       action: 'social.friend_request.accepted',
@@ -228,9 +261,11 @@ describe('AuditService correlation id from the request context (real PG)', () =>
 
   it('fills an unset correlation id from the context, for single and bulk appends', async () => {
     const svc = makeService();
-    const single = await inCorrelation(() => svc.record(entry));
-    const bulk = await inCorrelation(() =>
-      db.drizzle.db.transaction((tx) => svc.recordManyInTransaction(tx, [entry, entry])),
+    const single = await inCorrelation(() => svc.recordShipped(entry));
+    const bulk = await shipped(() =>
+      inCorrelation(() =>
+        db.drizzle.db.transaction((tx) => svc.recordManyInTransaction(tx, [entry, entry])),
+      ),
     );
 
     expect([single, ...bulk].map((row) => row.correlationId)).toEqual([
@@ -243,8 +278,10 @@ describe('AuditService correlation id from the request context (real PG)', () =>
 
   it('keeps an explicit correlation id, null included, over the context one', async () => {
     const svc = makeService();
-    const explicit = await inCorrelation(() => svc.record({ ...entry, correlationId: 'bulk-1' }));
-    const none = await inCorrelation(() => svc.record({ ...entry, correlationId: null }));
+    const explicit = await inCorrelation(() =>
+      svc.recordShipped({ ...entry, correlationId: 'bulk-1' }),
+    );
+    const none = await inCorrelation(() => svc.recordShipped({ ...entry, correlationId: null }));
 
     expect(explicit.correlationId).toBe('bulk-1');
     expect(none.correlationId).toBeNull();
@@ -252,8 +289,10 @@ describe('AuditService correlation id from the request context (real PG)', () =>
 
   it('writes none outside a context, or in a request context that sets none', async () => {
     const svc = makeService();
-    const outside = await svc.record(entry);
-    const request = await withRequestContext({ traceId: 'trace-2' }, () => svc.record(entry));
+    const outside = await svc.recordShipped(entry);
+    const request = await withRequestContext({ traceId: 'trace-2' }, () =>
+      svc.recordShipped(entry),
+    );
 
     expect(outside.correlationId).toBeNull();
     expect(request.correlationId).toBeNull();
@@ -262,7 +301,7 @@ describe('AuditService correlation id from the request context (real PG)', () =>
 
 describe('AuditService.verifyChain() (real PG)', () => {
   async function seedRow(input: Parameters<AuditService['record']>[0]) {
-    return makeService().record(input);
+    return makeService().recordShipped(input);
   }
 
   it('returns valid:true for an empty chain', async () => {
@@ -290,11 +329,8 @@ describe('AuditService.verifyChain() (real PG)', () => {
       action: 'identity.user.registered',
       resourceType: 'identity',
     });
-    await tamper(() =>
-      db.drizzle.db
-        .update(auditLog)
-        .set({ hash: 'tampered-wrong-hash' })
-        .where(eq(auditLog.id, row.id)),
+    await tamper((tx) =>
+      tx.update(auditLog).set({ hash: 'tampered-wrong-hash' }).where(eq(auditLog.id, row.id)),
     );
 
     const result = await makeService().verifyChain();
@@ -317,8 +353,8 @@ describe('AuditService.verifyChain() (real PG)', () => {
       after: { role: 'player' },
       result: 'success',
     });
-    await tamper(() =>
-      db.drizzle.db
+    await tamper((tx) =>
+      tx
         .update(auditLog)
         .set({ after: { role: 'admin' } })
         .where(eq(auditLog.id, row.id)),
@@ -343,11 +379,8 @@ describe('AuditService.verifyChain() (real PG)', () => {
       action: 'wallet.deposit.completed',
       resourceType: 'wallet',
     });
-    await tamper(() =>
-      db.drizzle.db
-        .update(auditLog)
-        .set({ prevHash: 'wrong-prev-hash' })
-        .where(eq(auditLog.id, second.id)),
+    await tamper((tx) =>
+      tx.update(auditLog).set({ prevHash: 'wrong-prev-hash' }).where(eq(auditLog.id, second.id)),
     );
 
     const result = await makeService().verifyChain();
@@ -377,10 +410,19 @@ describe('AuditService.recordManyInTransaction() (real PG)', () => {
   });
 
   const appendMany = (entries: Entry[]) =>
-    db.drizzle.db.transaction((tx) => makeService().recordManyInTransaction(tx, entries));
+    shipped(() =>
+      db.drizzle.db.transaction((tx) => makeService().recordManyInTransaction(tx, entries)),
+    );
 
-  const appendOne = (input: Entry) =>
-    db.drizzle.db.transaction((tx) => makeService().recordInTransaction(tx, input));
+  const appendOne = async (input: Entry) => {
+    const [row] = await shipped(() =>
+      db.drizzle.db.transaction((tx) => makeService().recordInTransaction(tx, input)),
+    );
+    if (!row) {
+      throw new Error('recordInTransaction() appended no row');
+    }
+    return row;
+  };
 
   const chain = () => db.drizzle.db.select().from(auditLog).orderBy(auditLog.seq);
 
@@ -406,6 +448,7 @@ describe('AuditService.recordManyInTransaction() (real PG)', () => {
     prevHash: _prevHash,
     hash: _hash,
     createdAt: _createdAt,
+    eventId: _eventId,
     ...fields
   }: typeof auditLog.$inferSelect) => fields;
 
@@ -503,7 +546,7 @@ describe('AuditService.list() (real PG)', () => {
   async function seed(inputs: Parameters<AuditService['record']>[0][]) {
     const svc = makeService();
     for (const input of inputs) {
-      await svc.record(input);
+      await svc.recordShipped(input);
     }
   }
 
@@ -666,7 +709,7 @@ describe('AuditService.exportCsv() (real PG)', () => {
   async function seed(inputs: Parameters<AuditService['record']>[0][]) {
     const svc = makeService();
     for (const input of inputs) {
-      await svc.record(input);
+      await svc.recordShipped(input);
     }
   }
 
@@ -710,7 +753,7 @@ describe('mapEventToRecord() player.id resolution', () => {
   async function mapAndRecord(topic: string, payload: Record<string, unknown>) {
     const svc = makeService();
     const record = await mapEventToRecord(topic, payload);
-    return svc.record(record);
+    return svc.recordShipped(record);
   }
 
   it('compliance.kyc.updated: resourceId is the player.id, not the event userId', async () => {
@@ -1151,7 +1194,7 @@ describe('AuditService.listMyRgHistory() (real PG)', () => {
     p: { id: string; userId: string },
     overrides: Partial<Parameters<AuditService['record']>[0]> = {},
   ) {
-    return makeService().record({
+    return makeService().recordShipped({
       actorType: 'player',
       actorId: p.userId,
       action: 'rg.limit.set',
@@ -1193,7 +1236,7 @@ describe('AuditService.listMyRgHistory() (real PG)', () => {
   it('excludes non-rg.limit. audit rows for the same player', async () => {
     const p = await seedPlayer();
     await seedRgRow(p);
-    await makeService().record({
+    await makeService().recordShipped({
       actorType: 'system',
       action: 'compliance.kyc.updated',
       resourceType: 'player',

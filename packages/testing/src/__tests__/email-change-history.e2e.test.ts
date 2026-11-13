@@ -192,7 +192,7 @@ describe('email change history', () => {
     let probe: { tbl: string; op: string; txid: string; pid: number }[] = [];
 
     await withTriggers(
-      [...AUTH_TABLES, 'audit_log', 'event_outbox'],
+      [...AUTH_TABLES, 'audit_outbox', 'event_outbox'],
       {
         events: 'INSERT OR UPDATE OR DELETE',
         body: `INSERT INTO tx_probe(tbl, op, txid, pid) VALUES (TG_TABLE_NAME, TG_OP, txid_current(), pg_backend_pid());`,
@@ -204,7 +204,7 @@ describe('email change history', () => {
       },
     );
 
-    const audit = probe.find((r) => r.tbl === 'audit_log');
+    const audit = probe.find((r) => r.tbl === 'audit_outbox');
     const outboxInsert = probe.findIndex((r) => r.tbl === 'event_outbox' && r.op === 'INSERT');
     expect(audit).toBeDefined();
     for (const r of probe.slice(0, outboxInsert + 1)) {
@@ -215,12 +215,12 @@ describe('email change history', () => {
       });
     }
     expect(probe.slice(0, outboxInsert + 1).map((r) => `${r.tbl}:${r.op}`)).toEqual(
-      expect.arrayContaining(['user:UPDATE', 'audit_log:INSERT', 'event_outbox:INSERT']),
+      expect.arrayContaining(['user:UPDATE', 'audit_outbox:INSERT', 'event_outbox:INSERT']),
     );
   });
 
   it.each([
-    ['audit row', 'audit_log', `NEW.action = 'identity.email.changed'`],
+    ['audit row', 'audit_outbox', `NEW.entry->>'action' = 'identity.email.changed'`],
     ['outbox event', 'event_outbox', `NEW.topic = 'identity.email.changed'`],
   ])(
     'saves nothing when the %s cannot be written, and the same code works once it can',

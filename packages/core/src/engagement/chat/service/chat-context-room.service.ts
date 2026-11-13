@@ -239,7 +239,7 @@ export class ChatContextRoomService implements ChatContextRooms {
     return { ...result, afterCommit };
   }
 
-  // Same lock as player joins and leaves; taken before any audit write, whose lock is global.
+  // Same lock as player joins and leaves.
   private async withRoom<T>(
     t: DrizzleTx,
     ref: string,

@@ -58,7 +58,7 @@ function toFinding(
   };
 }
 
-/** Inside a ledger transaction, file it before any audit write: audit_log is always the last lock. */
+/** Files a finding, inside the ledger transaction when one is passed. */
 export async function fileFinding(
   db: DrizzleDb | DrizzleTx,
   { kind, dedupeKey, provider, betId, userId, detail }: SportsbookFindingArgs,

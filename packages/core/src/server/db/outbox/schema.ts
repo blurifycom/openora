@@ -10,6 +10,8 @@ import {
   boolean,
   uuid,
   check,
+  bigserial,
+  bigint,
 } from 'drizzle-orm/pg-core';
 
 // Transactional outbox table. A service writes the event envelope here INSIDE the
@@ -39,6 +41,33 @@ export const eventOutbox = pgTable(
 );
 
 export type EventOutboxRow = typeof eventOutbox.$inferSelect;
+
+// Audit records waiting for the audit shipper. A writer inserts the entry INSIDE its business
+// transaction, so the record commits if and only if the change it describes does, without
+// taking the audit chain lock there. The shipper appends rows to `audit_log` in `id` order and
+// deletes them only after that append commits; `event_id` is the record's identity across a
+// re-ship, so a crash between the two commits never writes a row twice. Part of the engine set
+// so every database a service writes to carries one.
+export const auditOutbox = pgTable('audit_outbox', {
+  id: bigserial({ mode: 'number' }).primaryKey(),
+  eventId: uuid().notNull().unique('audit_outbox_event_id_unique'),
+  entry: jsonb().notNull(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// `audit_outbox` rows the shipper could not chain, moved aside as they were with the reason, so
+// the rest keep shipping: an entry that fails its schema, or one whose event id the chain already
+// holds with other content. One row per outbox row; an event id may repeat. Append-only: the audit
+// migration denies UPDATE, DELETE and TRUNCATE on it.
+export const auditOutboxRejected = pgTable('audit_outbox_rejected', {
+  id: bigserial({ mode: 'number' }).primaryKey(),
+  outboxId: bigint({ mode: 'number' }).notNull().unique('audit_outbox_rejected_outbox_id_unique'),
+  eventId: uuid().notNull(),
+  entry: jsonb().notNull(),
+  error: text().notNull(),
+  createdAt: timestamp({ withTimezone: true }).notNull(),
+  rejectedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
 
 // One row per deployment: the anonymous id the usage telemetry reports under. The check pins the
 // table to a single row, so replicas racing on first boot converge on one id.
