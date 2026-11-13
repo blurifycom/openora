@@ -26,6 +26,7 @@ import type {
   ExchangeRateReader,
   RgLimitLedgerPort,
 } from '@openora/core/contracts';
+import { player } from '@openora/core/pam/schema/profile';
 import { RgLimitsPublisher } from './rg-limits-publisher.service.js';
 import { userLimit, rgExclusion, SESSION_LIMIT_CURRENCY } from '../schema/index.js';
 import { LimitNotFoundError } from './compliance.service.js';
@@ -305,6 +306,22 @@ export async function readLimitSlot(
 }
 
 /**
+ * A limit in the currency it is compared in. A row with no currency is read in the player's
+ * current currency, the one 0017 would have pinned, so the admin override that repairs it stays
+ * reduce-only; null when the player record is gone.
+ */
+async function comparableLimit(tx: Tx, row: LimitRow): Promise<ResolvedLimitRow | null> {
+  if (row.currency !== null) {
+    return requireLimitCurrency(row);
+  }
+  const [owner] = await tx
+    .select({ currency: player.currency })
+    .from(player)
+    .where(eq(player.userId, row.userId));
+  return owner ? { ...row, currency: owner.currency } : null;
+}
+
+/**
  * Refuses to repair a NULL-currency row into a currency its slot already holds, which the unique
  * index would reject; the other row stays enforced, so the override picks another currency.
  */
@@ -447,14 +464,19 @@ export class RgService {
     const row = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
         const existing = await readLimitSlot(tx, userId, input.type, input.period);
-        // A row with no currency refuses every move and has no amount to compare against: the
-        // override replaces it in the input's currency, which is the operator fix.
-        const resolvedExisting =
-          existing && existing.currency !== null ? requireLimitCurrency(existing) : undefined;
-        if (existing && !resolvedExisting) {
+        if (existing?.currency === null) {
           await assertNoTwinIn(tx, existing, toDbCurrency(input.type, input.currency));
         }
-        if (resolvedExisting && (await isWeakening(resolvedExisting, input, this.rates, tx))) {
+        const resolvedExisting = existing && (await comparableLimit(tx, existing));
+        if (existing && resolvedExisting === null) {
+          // Its player is gone, so no currency to compare in: only a zero limit is surely no raise.
+          if (input.amount === null || moneyCompare(input.amount, '0') !== 0) {
+            throw new LimitRaiseNotAllowedError(existing, input);
+          }
+        } else if (
+          resolvedExisting &&
+          (await isWeakening(resolvedExisting, input, this.rates, tx))
+        ) {
           throw new LimitRaiseNotAllowedError(resolvedExisting, input);
         }
         // Reduce-only doesn't exempt ordering: an admin can still drop e.g. weekly

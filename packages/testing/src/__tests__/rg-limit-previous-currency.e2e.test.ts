@@ -338,7 +338,7 @@ describe('player self-service limit change', () => {
 });
 
 describe('a limit 0017 left without a currency', () => {
-  it('refuses the player with 409 and lets an admin override set its currency', async () => {
+  it('refuses the player with 409 and lets an admin lower it, reduce-only, into a currency', async () => {
     const p = await registerAndMaterializePlayer(app, {
       email: `rgpc-unpinned-${randomUUID()}@e2e.test`,
     });
@@ -358,14 +358,18 @@ describe('a limit 0017 left without a currency', () => {
     expect(player.status).toBe(409);
     expect(JSON.stringify(await readJson(player))).toContain('operator fix is required');
 
+    // Read in the player's currency (USD): 500 is a raise, 80 a lowering.
     expect(
       (await setLimit(p.userId, { type: 'deposit', amount: '500', currency: 'USD' })).status,
+    ).toBe(409);
+    expect(
+      (await setLimit(p.userId, { type: 'deposit', amount: '80', currency: 'USD' })).status,
     ).toBe(200);
     const [repaired] = await app.container
       .get(DRIZZLE)
       .db.select()
       .from(userLimit)
       .where(eq(userLimit.id, row!.id));
-    expect(repaired).toMatchObject({ currency: 'USD', amount: '500.000000000000000000' });
+    expect(repaired).toMatchObject({ currency: 'USD', amount: '80.000000000000000000' });
   });
 });

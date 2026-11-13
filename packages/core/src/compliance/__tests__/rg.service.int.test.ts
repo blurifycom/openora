@@ -852,13 +852,32 @@ describe('legacy null-currency limits (real PG)', () => {
     expect(() => requireLimitCurrency(orphan)).toThrow(RgLimitCurrencyUnresolvedError);
   });
 
-  const override = (userId: string, period: 'daily' | 'weekly', currency: string) =>
-    makeService().svc.setPlayerLimit(
+  // 1 USD = 150 JPY; any other pair has no rate.
+  const yenRates = mock<ExchangeRateReader>({
+    getRate: vi.fn(async () => null),
+    convert: vi.fn(async (amount: string, from: string, to: string) => {
+      if (from === to) {
+        return amount;
+      }
+      return from === 'USD' && to === 'JPY' ? (Number(amount) * 150).toFixed(8) : null;
+    }),
+  });
+
+  const override = (
+    userId: string,
+    {
+      amount,
+      currency,
+      period = 'daily',
+    }: { amount: string; currency: string; period?: 'daily' | 'weekly' },
+    rates: ExchangeRateReader = identityRates(),
+  ) =>
+    makeService(undefined, rates).svc.setPlayerLimit(
       userId,
       {
         userId,
         type: 'deposit',
-        amount: '500',
+        amount,
         minutes: null,
         currency,
         period,
@@ -869,28 +888,91 @@ describe('legacy null-currency limits (real PG)', () => {
       'admin',
     );
 
-  it('lets an admin override set the currency of an unpinned row, beside another unpinned one', async () => {
-    const userId = randomUUID();
-    const daily = await insertNullCurrencyLimit(userId);
-    const weekly = await insertNullCurrencyLimit(userId, { period: 'weekly', amount: '50' });
+  const seedPlayer = (userId: string, currency: string) =>
+    db.drizzle.db.insert(player).values({ userId, currency });
 
-    // 500 is above the legacy 100: the row refused every move, so this is a repair, not a raise.
-    await override(userId, 'daily', 'USD');
+  it("refuses an admin repair above the unpinned amount, read in the player's currency", async () => {
+    const userId = randomUUID();
+    await seedPlayer(userId, 'USD');
+    const row = await insertNullCurrencyLimit(userId);
+
+    await expect(override(userId, { amount: '500', currency: 'USD' })).rejects.toBeInstanceOf(
+      LimitRaiseNotAllowedError,
+    );
+
+    expect((await reread(row.id))?.currency).toBeNull();
+  });
+
+  it('repairs an unpinned row at or below its amount, beside another unpinned one', async () => {
+    const userId = randomUUID();
+    await seedPlayer(userId, 'USD');
+    const daily = await insertNullCurrencyLimit(userId);
+    const weekly = await insertNullCurrencyLimit(userId, { period: 'weekly', amount: '500' });
+
+    await override(userId, { amount: '100', currency: 'USD' });
+    await override(userId, { amount: '400', currency: 'USD', period: 'weekly' });
 
     expect(await reread(daily.id)).toMatchObject({
       currency: 'USD',
-      amount: '500.000000000000000000',
+      amount: '100.000000000000000000',
     });
-    expect((await reread(weekly.id))?.currency).toBeNull();
+    expect(await reread(weekly.id)).toMatchObject({
+      currency: 'USD',
+      amount: '400.000000000000000000',
+    });
+  });
+
+  it("checks a cross-currency repair through the rate into the player's currency", async () => {
+    const userId = randomUUID();
+    await seedPlayer(userId, 'JPY');
+    const row = await insertNullCurrencyLimit(userId, { amount: '15000' });
+
+    // 200 USD is 30,000 JPY, a raise; 50 USD is 7,500 JPY.
+    await expect(
+      override(userId, { amount: '200', currency: 'USD' }, yenRates),
+    ).rejects.toBeInstanceOf(LimitRaiseNotAllowedError);
+    await override(userId, { amount: '50', currency: 'USD' }, yenRates);
+
+    expect(await reread(row.id)).toMatchObject({
+      currency: 'USD',
+      amount: '50.000000000000000000',
+    });
+  });
+
+  it('refuses a cross-currency repair with no rate', async () => {
+    const userId = randomUUID();
+    await seedPlayer(userId, 'JPY');
+    const row = await insertNullCurrencyLimit(userId, { amount: '15000' });
+
+    await expect(
+      override(userId, { amount: '1', currency: 'EUR' }, yenRates),
+    ).rejects.toBeInstanceOf(LimitRaiseNotAllowedError);
+
+    expect((await reread(row.id))?.currency).toBeNull();
+  });
+
+  it('lets an admin set only a zero limit on an unpinned row whose player is gone', async () => {
+    const userId = randomUUID();
+    const row = await insertNullCurrencyLimit(userId);
+
+    await expect(override(userId, { amount: '1', currency: 'USD' })).rejects.toBeInstanceOf(
+      LimitRaiseNotAllowedError,
+    );
+    await override(userId, { amount: '0', currency: 'USD' });
+
+    expect(await reread(row.id)).toMatchObject({ currency: 'USD', amount: '0.000000000000000000' });
   });
 
   it('repairs the NULL twin of a slot, never its pinned row, and refuses its currency', async () => {
     const userId = randomUUID();
+    await seedPlayer(userId, 'USD');
     const pinned = await insertNullCurrencyLimit(userId, { currency: 'EUR', amount: '40' });
     const twin = await insertNullCurrencyLimit(userId);
 
-    await expect(override(userId, 'daily', 'EUR')).rejects.toBeInstanceOf(LimitTwinCurrencyError);
-    await override(userId, 'daily', 'USD');
+    await expect(override(userId, { amount: '50', currency: 'EUR' })).rejects.toBeInstanceOf(
+      LimitTwinCurrencyError,
+    );
+    await override(userId, { amount: '50', currency: 'USD' });
 
     expect((await reread(twin.id))?.currency).toBe('USD');
     expect(await reread(pinned.id)).toMatchObject({

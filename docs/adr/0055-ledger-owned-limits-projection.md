@@ -38,7 +38,10 @@ then never depends on the player's currency, and nothing outside compliance publ
 player is gone, or whose slot already holds that currency, stays without one and is enforced
 fail-closed: 0017 counts these rows in a `NOTICE` and every boot backfill logs a warning with their
 count. A player change to such a row is refused with `CONFLICT`; the admin override is the fix and
-replaces it in the override's currency, audited and published like any override. A slot read puts
+replaces it in the override's currency, audited and published like any override. The repair stays
+reduce-only: the row's amount is read in the player's current currency, the one 0017 would have
+pinned, and checked like any override, so a raise or a missing rate is refused. With no player
+record left, the repair may only set a zero limit. A slot read puts
 the NULL row first, so with a pinned twin beside it the outcome does not depend on the planner.
 
 **`user_limit.amount` is always the limit in force.** A raise waits in `pending*` until its
