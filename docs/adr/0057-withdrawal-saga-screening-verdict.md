@@ -63,7 +63,8 @@ checked at three points:
 | `KYC_WITHDRAWAL_POLICY` | KYC is required and not passed    | `KycRequiredError`         | refused, or requeued with reason `kyc_required`          |
 
 A port that throws refuses the request or the approval. Auto-approval catches the throw and leaves
-the withdrawal for a human. `pinLockedUntil` is new on `WITHDRAWAL_SECURITY`. It reads the lockout
+the withdrawal for a human. A throw after the flip sends the withdrawal back to the queue with
+reason `control_check_failed` and its own audit row, for admin and auto-approval alike. `pinLockedUntil` is new on `WITHDRAWAL_SECURITY`. It reads the lockout
 without counting a guess.
 
 **The saga reuses the existing statuses.** No new enum value is added:
@@ -103,7 +104,5 @@ can only be dismissed: the withdrawal is still live, so a manual credit could pa
 - Apps that share a database share an outbox, and any one of them may deliver a verdict. Installs
   that differ in auto-withdrawal config must not share a database.
 - Known gaps:
-- If a port throws after the flip, the row stays `processing` without a vendor call.
-  `stuck_withdrawal_approved` reports it.
 - Bonus forfeiture still runs inside the withdraw transaction (`BONUS_LIFECYCLE`).
 - The review threshold compares raw amounts across currencies, as before.

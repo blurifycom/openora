@@ -2877,9 +2877,17 @@ export class WalletService {
 
   // The approval controls are read before the flip's transaction, so a lock, PIN lockout or KYC
   // requirement landing right after it would otherwise reach the PSP. Re-read them once the flip
-  // has committed - the payout step's check. Holds are re-checked at dispatch instead.
+  // has committed - the payout step's check. Holds are re-checked at dispatch instead. A control
+  // that throws is a block too: the row goes back to the queue with its trail rather than sitting
+  // in `processing` with no vendor call, and the admin path rethrows the port's error.
   private async revertFlipIfBlocked(userId: User['id'], queued: WalletTransaction) {
-    const blocked = await this.approvalBlock(userId, queued);
+    const blocked = await this.approvalBlock(userId, queued).catch((err: unknown) => {
+      logger.error({ err, transactionId: queued.id }, 'withdrawal control check failed after flip');
+      return {
+        reason: 'control_check_failed' as const,
+        error: err instanceof Error ? err : new Error(String(err)),
+      };
+    });
     if (!blocked) {
       return null;
     }

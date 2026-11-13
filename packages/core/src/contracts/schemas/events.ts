@@ -174,6 +174,8 @@ export const WITHDRAWAL_REQUEUE_REASONS = [
   'withdrawal_lock',
   'withdrawal_pin_locked',
   'kyc_required',
+  // A control's port threw after the flip, so it could not be shown clear.
+  'control_check_failed',
 ] as const;
 export type WithdrawalRequeueReason = (typeof WITHDRAWAL_REQUEUE_REASONS)[number];
 

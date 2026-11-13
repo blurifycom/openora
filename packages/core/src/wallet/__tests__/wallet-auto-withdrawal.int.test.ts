@@ -548,6 +548,46 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     );
   });
 
+  it('requeues an auto-approval flip with a trail when a control check throws after it', async () => {
+    const w = await seedWallet();
+    // Readable for the request check and the gates, down once the flip has committed.
+    const playerTags = mock<PlayerTags>({
+      getActiveTagKeys: vi
+        .fn<PlayerTags['getActiveTagKeys']>()
+        .mockResolvedValueOnce(new Map())
+        .mockResolvedValueOnce(new Map())
+        .mockRejectedValue(new Error('tags down')),
+    });
+    const { svc, psp, audit } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      excludeRiskFlags: [],
+      playerTags,
+    });
+
+    const result = await withdrawScreened(svc, {
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+    expect(await txById(result.transactionId)).toMatchObject({
+      status: 'pending',
+      providerName: null,
+      reviewReason: null,
+    });
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.withdrawal.requeued',
+        after: expect.objectContaining({ status: 'pending', reason: 'control_check_failed' }),
+      }),
+    );
+  });
+
   it('never auto-approves before the screening verdict, and reads the tags the screening committed', async () => {
     const assignedTags = new Set<TagKey>();
     const { svc, psp } = await makeService({

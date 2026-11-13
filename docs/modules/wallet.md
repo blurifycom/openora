@@ -202,7 +202,8 @@ is `SPORTSBOOK_LEDGER` unchanged.
   `WITHDRAWAL_SECURITY`, `KYC_WITHDRAWAL_POLICY` and `PLAYER_TAGS`. The lock, the PIN lockout
   and KYC are read at request, at approval (admin or auto) and once more after the approval
   flip, before the payout. One that lands after the flip sends the withdrawal back to the queue
-  with reason `withdrawal_lock`, `withdrawal_pin_locked` or `kyc_required`.
+  with reason `withdrawal_lock`, `withdrawal_pin_locked` or `kyc_required`, or
+  `control_check_failed` when a port throws.
 - **Only the tag module's screening verdict can auto-approve a withdrawal (ADR-0057).** A
   request always answers `pending`. The tag module consumes `wallet.withdrawal.requested`,
   assigns `withdrawal_review` when it is due, and emits `tag.withdrawal.screened` in the same

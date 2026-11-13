@@ -478,4 +478,32 @@ describe('WalletService.approveWithdrawal PIN lockout re-check (real PG)', () =>
     const approved = await svc.approveWithdrawal(randomUUID(), transactionId);
     expect(approved.status).toBe('completed');
   });
+
+  it('requeues an approved withdrawal with a trail when the lockout read throws after the flip', async () => {
+    const security = makeWithdrawalSecurity();
+    const audit = makeAuditWriter();
+    const { svc } = makeService(security, { audit });
+    const w = await seedWallet('BTC');
+    await seedMatureWithdrawalAddress(db, { userId: w.userId, currency: 'BTC', address: ADDRESS });
+    const { transactionId } = await svc.withdraw(btcWithdrawal(w.userId));
+    // Readable before the flip, down once it has committed.
+    vi.mocked(security.pinLockedUntil)
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('identity down'));
+
+    const refused = await svc
+      .approveWithdrawal(randomUUID(), transactionId)
+      .catch((err: unknown) => err);
+
+    expect(refused).toEqual(new Error('identity down'));
+    const [queued] = await withdrawalRows();
+    expect(queued).toMatchObject({ status: 'pending', providerName: null, reviewedBy: null });
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.withdrawal.requeued',
+        after: expect.objectContaining({ reason: 'control_check_failed' }),
+      }),
+    );
+  });
 });
