@@ -678,6 +678,28 @@ describe('rolling baselines and their repair (real PG)', () => {
     expect(repaired?.summary).toMatchObject({ balanceBreaches: 0, baselinesAdvanced: 1 });
   });
 
+  it('keeps every baseline as written: no update or delete reaches the table', async () => {
+    const w = await fundedWallet('100');
+    await handEdit(w.id, '7');
+    await run(makeReconciliation());
+    await handEdit(w.id, '-7');
+    await run(makeReconciliation());
+    expect(await baselines(w.id)).toHaveLength(1);
+    const appendOnly = {
+      cause: expect.objectContaining({ message: expect.stringContaining('append-only') }),
+    };
+
+    await expect(
+      db.drizzle.db.execute(
+        sql`update wallet_balance_baseline set amount = amount + 1 where wallet_id = ${w.id}`,
+      ),
+    ).rejects.toMatchObject(appendOnly);
+    await expect(
+      db.drizzle.db.execute(sql`delete from wallet_balance_baseline where wallet_id = ${w.id}`),
+    ).rejects.toMatchObject(appendOnly);
+    expect(await baselines(w.id)).toHaveLength(1);
+  });
+
   it('dismisses a breach only once its pair checks clean, never credits one, and files its return', async () => {
     const w = await fundedWallet('100');
     const audit = makeAuditWriter();
