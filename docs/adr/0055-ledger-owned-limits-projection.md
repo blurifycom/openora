@@ -35,7 +35,11 @@ before compliance migration 0005 had none and was resolved to the player's curre
 something touched it, so a currency change could re-denominate an untouched one. Compliance
 migration 0017 pins them all to the player's current currency, keeping `updated_at`; the projection
 then never depends on the player's currency, and nothing outside compliance publishes. A row whose
-player is gone stays without a currency and is enforced fail-closed.
+player is gone, or whose slot already holds that currency, stays without one and is enforced
+fail-closed: 0017 counts these rows in a `NOTICE` and every boot backfill logs a warning with their
+count. A player change to such a row is refused with `CONFLICT`; the admin override is the fix and
+replaces it in the override's currency, audited and published like any override. A slot read puts
+the NULL row first, so with a pinned twin beside it the outcome does not depend on the planner.
 
 **`user_limit.amount` is always the limit in force.** A raise waits in `pending*` until its
 cool-down ends and the player confirms (ADR-0036), so a decrease reaches the ledger at once and an
@@ -45,7 +49,10 @@ increase only on confirmation.
 missing projection or a strictly older one, never an equal version. The backfill compares instead:
 `RG_LIMIT_LEDGER.drifted` returns the users whose projection is missing, at another version, or at
 the same version with other rows, and compliance re-publishes each in its own short transaction, so
-a repair always lands under a new version and a late delivery of the old one is ignored.
+a repair always lands under a new version and a late delivery of the old one is ignored. This is
+where it departs from ADR-0054, whose backfill reconciles at an equal version: a writer that skips
+the publisher changes the limits without bumping the version, so an event still in the outbox
+carries other rows at that same version, and an equal-version write would let it undo the repair.
 Compliance holds the version row lock when it writes, so its version is the truth: a held version
 ahead of it came from outside compliance. `write` overwrites it with compliance's next version and
 logs an error. It does not move compliance past the held one: a foreign write at the top of the
@@ -64,7 +71,9 @@ the wallet row, then the slot lock. Writers never lock the wallet row, so no cyc
    agree and the boot backfill finds nothing to repair.
 2. Compliance runs `backfillRgLimits` (`@openora/core/compliance/seed`) at boot. It walks
    `rg_limit_version` by its key in batches of read-only snapshots, after giving a version row to
-   any user with a limit and none, and the seed scripts run it after direct writes.
+   any user with a limit and none, and the seed scripts run it after direct writes. Only this full
+   pass repairs a user whose limits were all deleted: the heal below finds users by a changed row,
+   and a deleted row leaves none.
 3. Each `rg-monitor` tick first re-projects the users whose limits changed in the last ten minutes
    (read off `user_limit_updated_at_idx`), in its own error boundary. A replica from before this
    ADR, still serving during the rolling deploy, writes limits without publishing; the tick
