@@ -72,6 +72,21 @@ test('a worktree path cannot climb back into the main checkout or reach node_mod
   );
 });
 
+test('a worktree path cannot smuggle a second target or point git at the main repo', () => {
+  const core = join(oss, 'packages/a.ts');
+  for (const command of [
+    `echo x > ../oss/.worktrees/feat+x/a><${core}`,
+    `echo x | tee {../oss/.worktrees/feat+x/a,${core}}`,
+    `echo x > ../oss/.worktrees/feat+x/$(echo>${core})a`,
+    'git -C ../oss/.worktrees/ checkout -- :/',
+    'ln -sfn ../../packages ../oss/.worktrees/feat+x/p && echo x > ../oss/.worktrees/feat+x/p/a.ts',
+    'cd ../oss/.worktrees/feat+x && ln -s ../../packages p && echo x > p/a.ts',
+    `git -C ${join(oss, '.worktrees/./')} reset --hard`,
+  ]) {
+    assert.equal(exitCode({ command }), DENIED, command);
+  }
+});
+
 test('shell writes are judged per path: worktree allowed, main checkout denied', () => {
   assert.equal(
     exitCode({ command: `sed -i s/a/b/ ${join(oss, '.worktrees/feat+x/a.ts')}` }),
@@ -110,6 +125,19 @@ test('copies out of the checkout or into a worktree, and git reads, pass', () =>
   ]) {
     assert.equal(exitCode({ command }), ALLOWED, command);
   }
+});
+
+test('a symlink made from a cwd inside the OSS checkout is denied', () => {
+  const worktree = join(oss, '.worktrees', 'feat+y');
+  mkdirSync(worktree, { recursive: true });
+  const run = (command, cwd) =>
+    spawnSync('node', [guard], {
+      cwd: consumer,
+      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd }),
+    }).status;
+  assert.equal(run('ln -s ../../packages p', worktree), DENIED);
+  assert.equal(run('ln -s overlay/a.ts b.ts', consumer), ALLOWED);
+  assert.equal(run('grep -ln x src', worktree), ALLOWED);
 });
 
 test('a symlink into the checkout does not make a core path look local', () => {
@@ -173,4 +201,31 @@ test('a shell command carrying patch text is still judged as a shell command', (
   const heredoc = `cat > ../oss/packages/a.ts <<'EOF'\n${patch('*** Add File: apps/a.ts')}\nEOF`;
   assert.equal(exitCode({ command: heredoc }), DENIED);
   assert.equal(exitCode({ command: `printf '%s' '${patch()}' && rm -rf ../oss/packages` }), DENIED);
+});
+
+test('a symlink made from inside an OSS checkout reached through a symlink is denied', () => {
+  const box = realpathSync(mkdtempSync(join(tmpdir(), 'guard-core-link-')));
+  try {
+    const realOss = join(box, 'oss-real');
+    const worktree = join(realOss, '.worktrees', 'feat+z');
+    mkdirSync(worktree, { recursive: true });
+    mkdirSync(join(box, 'consumer', '.rulesync', 'hooks'), { recursive: true });
+    symlinkSync(realOss, join(box, 'oss'));
+    const linkedGuard = join(box, 'consumer', '.rulesync', 'hooks', 'guard-core.mjs');
+    copyFileSync(
+      join(hooks, '_shared.mjs'),
+      join(box, 'consumer', '.rulesync', 'hooks', '_shared.mjs'),
+    );
+    copyFileSync(guard, linkedGuard);
+    const status = spawnSync('node', [linkedGuard], {
+      input: JSON.stringify({
+        tool_name: 'Bash',
+        tool_input: { command: 'ln -s a b' },
+        cwd: worktree,
+      }),
+    }).status;
+    assert.equal(status, DENIED);
+  } finally {
+    rmSync(box, { recursive: true, force: true });
+  }
 });

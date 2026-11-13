@@ -121,7 +121,7 @@ The code is final now, so the videos are recorded once, here, never in an earlie
 
 ### 5. Open the MR
 
-`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table, the 4b videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
+The pushed HEAD is the commit step 4 approved: anything committed after it, 4b specs included, goes back to 4 first (`guard-review` blocks the push otherwise). That round counts against the budget of three, and 4b is not repeated unless app code changed. `--ask`: report the SHA and stop for "yes push". Then run **create-pr** (it opens the MR as a draft) with the tester's AC table, the 4b videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
 
 ### 6. Red CI and review comments
 
@@ -138,9 +138,9 @@ Then 7.
 
 Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` as a background command, never a sleep loop in the session. It prints one line and exits when there is work:
 
-- `failed` or `conflicts` -> 6, then watch again. Still red after three fixes -> blocker comment, report, stop.
+- `failed` or `conflicts` -> 6, then watch again. Still red after three fixes -> blocker comment, report, stop. Ten fix rounds in total after the push (pipeline and threads together) and the MR still is not ready -> blocker comment, report, stop: a person takes it from there.
 - `threads <ids>` (unanswered for two checks in a row, from a person or a bot) -> 6 for those, then watch again. A thread the forge's AI review opens is a blocker it found on this head: it counts like a person's.
-- `green` -> check the MR is ready (below), report "Ready for review:" and the MR URL, then watch again without `--until-green`.
+- `green` -> check the MR is ready (below). Ready: mark the draft ready for review (`docs/agents/forge.md`), report "Ready for review:" and the MR URL, then watch again without `--until-green`. Not ready: it stays a draft. Fix what is yours (the description, an unanswered thread) and watch again with `--until-green`; what only a person can supply (an UNCHECKED row) -> report "Draft, missing:" and the list, stop.
 - `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `error ...` -> report it, stop.
 
 Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table, the screenshots and the UNCHECKED rows.

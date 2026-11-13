@@ -45,6 +45,14 @@ test('commands that do not open a review are allowed', () => {
   assert.equal(exitCode('gh api repos/o/r/pulls'), ALLOWED);
   assert.equal(exitCode('gh api repos/o/r/pulls -f state=open --method GET'), ALLOWED);
   assert.equal(exitCode('gh api repos/o/r/pulls/1/comments -f body=ok'), ALLOWED);
+  assert.equal(exitCode('rg "glab mr create" docs'), ALLOWED);
+  assert.equal(exitCode('git commit -m "docs: say gh pr create opens a draft"'), ALLOWED);
+  assert.equal(exitCode('rg createPullRequest src'), ALLOWED);
+});
+
+test('a promotion from a shared branch needs no stamp', () => {
+  assert.equal(exitCode('glab mr create --source-branch dev --target-branch stage'), ALLOWED);
+  assert.equal(exitCode('gh pr create --head stage --base prod'), ALLOWED);
 });
 
 test('opening an MR or PR without a verify stamp is denied', () => {
@@ -70,6 +78,7 @@ test('a stamp outside `pnpm verify` is refused', () => {
 test('a stamp of the clean HEAD allows it', () => {
   assert.equal(stamp(), 0);
   assert.equal(exitCode('glab mr create --fill'), ALLOWED);
+  git('branch', 'verified');
 });
 
 test('an uncommitted edit or a new commit invalidates the stamp', () => {
@@ -80,9 +89,45 @@ test('an uncommitted edit or a new commit invalidates the stamp', () => {
   assert.equal(exitCode('gh pr create'), DENIED);
 });
 
+test('a named source branch is judged by its own commit', () => {
+  git('branch', 'unverified');
+  assert.equal(exitCode('glab mr create --source-branch verified --target-branch dev'), ALLOWED);
+  assert.equal(exitCode('gh pr create --head me:verified'), ALLOWED);
+  assert.equal(exitCode('glab mr create --source-branch unverified'), DENIED);
+  assert.equal(exitCode('gh pr create --head missing'), DENIED);
+});
+
 test('a stamp taken on a dirty tree is not recorded', () => {
   writeFileSync(join(repo, 'b.txt'), 'b');
   stamp();
   rmSync(join(repo, 'b.txt'));
   assert.equal(exitCode('gh pr create'), DENIED);
+});
+
+test('only the create command names the source branch, glued or repeated', () => {
+  assert.equal(exitCode('glab mr create -sverified'), ALLOWED);
+  assert.equal(exitCode('gh pr create -Hverified'), ALLOWED);
+  assert.equal(exitCode('gh pr create -Hunverified'), DENIED);
+  assert.equal(exitCode('glab mr create -sunverified'), DENIED);
+  assert.equal(exitCode('ls -s dev && gh pr create'), DENIED);
+  assert.equal(exitCode('gh pr create && echo --head dev'), DENIED);
+  assert.equal(exitCode('gh pr create -H dev -H unverified'), DENIED);
+  assert.equal(exitCode('glab mr create -H o/r --source-branch unverified'), DENIED);
+  assert.equal(exitCode('git status -s && glab mr create --source-branch verified'), ALLOWED);
+  assert.equal(exitCode('gh stack submit --auto'), DENIED);
+  assert.equal(exitCode('gh pr create -H verified && gh pr create -H unverified'), DENIED);
+  assert.equal(exitCode('gh pr create -H dev && gh pr create -H unverified'), DENIED);
+  assert.equal(exitCode('gh pr create -H verified && glab mr create -s verified'), ALLOWED);
+});
+
+test('aliases, combined short flags and quoted separators are read', () => {
+  assert.equal(exitCode('gh pr new -H unverified'), DENIED);
+  assert.equal(exitCode('glab mr new -s unverified'), DENIED);
+  assert.equal(exitCode('gh pr -R o/r create -H unverified'), DENIED);
+  assert.equal(exitCode('gh pr create -dH unverified'), DENIED);
+  assert.equal(exitCode('glab mr create -ys unverified'), DENIED);
+  assert.equal(exitCode('gh pr create -dH verified'), ALLOWED);
+  assert.equal(exitCode('gh pr create -H=dev'), ALLOWED);
+  assert.equal(exitCode("gh pr create -t 'x;y' -H unverified"), DENIED);
+  assert.equal(exitCode("gh pr create -t 'x;y' -H verified"), ALLOWED);
 });

@@ -34,9 +34,11 @@ const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const OSS_PATH = `(?:${escape(OSS)}|${escape(OSS_RELATIVE)})`;
 const PROTECTED = `(?:${OSS_PATH}|node_modules\\b)`;
 // A path into a worktree with no `..` hop and no node_modules segment is sanctioned; it is
-// masked out before the write checks run, so the rest of the command is still judged.
+// masked out before the write checks run, so the rest of the command is still judged. The mask
+// takes plain path characters only and needs a worktree name: a `>`, `$(`, `{a,b}` or a bare
+// `.worktrees/` (where git resolves to the main repo) is left for the checks to see.
 const WORKTREE_TOKEN = new RegExp(
-  String.raw`${OSS_PATH}/\.worktrees/(?![^\s'"|;&]*(?:\.\.|node_modules))[^\s'"|;&]*`,
+  String.raw`${OSS_PATH}/\.worktrees/(?![^\s'"|;&]*(?:\.\.|node_modules))[\w+@%=:-][\w.+@%=:/-]*`,
   'g',
 );
 // cp, install, and rsync write only to their last argument, so copying out of core stays a read.
@@ -48,8 +50,41 @@ const HOW_TO_CHANGE_OSS =
   `${OSS_RELATIVE}/.worktrees/ (rule: oss-boundaries). Otherwise extend from the OUTSIDE ` +
   '(overlay plugin, adapter rebinding, UI plugin, config).';
 
+// The path on disk, symlinks followed, so a link in this repo that points into the checkout
+// does not pass as a local path. A file not yet created resolves through its nearest existing
+// ancestor.
+const physical = (path) => {
+  try {
+    return realpathSync(path);
+  } catch {
+    const parent = dirname(path);
+    return parent === path ? path : join(physical(parent), basename(path));
+  }
+};
+
+// The checkout itself may sit behind a symlink (a linked home or projects folder).
+const oss = physical(OSS);
+
 // 1) Shell command writing into a protected path (sed -i, redirect, tee, cp, rm, git, ...).
-const command = extractCommand(payload).replace(WORKTREE_TOKEN, '<oss-worktree>');
+const rawCommand = extractCommand(payload);
+// A symlink planted in a worktree would carry later shell writes into the main checkout, and no
+// worktree needs one, so `ln` is judged before the worktree mask, against the whole command and
+// the cwd: `cd <oss>/.worktrees/x && ln -s ../../packages p` names no protected path itself.
+const insideOss = (dir) => {
+  try {
+    const real = realpathSync(dir);
+    return real === oss || real.startsWith(oss + sep);
+  } catch {
+    return false;
+  }
+};
+if (
+  /(?<![\w-])ln\s/.test(rawCommand) &&
+  (new RegExp(PROTECTED).test(rawCommand) || (payload.cwd && insideOss(payload.cwd)))
+) {
+  deny(`Blocked: this symlink points into or lives in the OSS checkout or node_modules. ${HOW_TO_CHANGE_OSS}`);
+}
+const command = rawCommand.replace(WORKTREE_TOKEN, '<oss-worktree>');
 if (command) {
   const writeToCore = [
     [new RegExp(String.raw`\b(?:sed|perl)\b[^|;&]*\s-\w*i\w*\b[^|;&]*${PROTECTED}`), 'in-place edit (sed/perl -i)'],
@@ -65,20 +100,7 @@ if (command) {
   }
 }
 
-// The path on disk, symlinks followed, so a link in this repo that points into the checkout
-// does not pass as a local path. A file not yet created resolves through its nearest existing
-// ancestor.
-const physical = (path) => {
-  try {
-    return realpathSync(path);
-  } catch {
-    const parent = dirname(path);
-    return parent === path ? path : join(physical(parent), basename(path));
-  }
-};
-
 // 2) Direct file edit/write whose target resolves inside a protected path.
-const oss = physical(OSS);
 for (const filePath of extractFilePaths(payload)) {
   const written = resolve(payload.cwd ?? process.cwd(), filePath);
   const target = physical(written);
