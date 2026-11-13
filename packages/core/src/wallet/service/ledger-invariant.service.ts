@@ -455,7 +455,7 @@ export async function backfillBaselinePage(
   };
 }
 
-export type BaselinePoint = { id: string; amount: string; asOf: string };
+type BaselinePoint = { id: string; amount: string; asOf: string };
 
 export type BaselineMove = {
   before: BaselinePoint | null;
