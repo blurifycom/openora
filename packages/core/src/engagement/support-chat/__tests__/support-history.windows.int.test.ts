@@ -9,7 +9,7 @@ import {
 } from '@openora/core/contracts';
 import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
 import { auditLog } from '@openora/core/audit/schema';
-import { drainAuditOutbox } from '@openora/core/audit/server';
+import { AuditReaderService, drainAuditOutbox } from '@openora/core/audit/server';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
@@ -142,13 +142,20 @@ async function scenario(rows: Row[], { registeredEmail }: { registeredEmail?: st
     },
     listChats: async () => [],
   };
-  const service = new SupportHistoryService({ drizzle: db.drizzle, cache: makeCache(), reader });
+  const service = new SupportHistoryService({
+    drizzle: db.drizzle,
+    audit: new AuditReaderService(db.drizzle, db.drizzle),
+    cache: makeCache(),
+    reader,
+  });
   const history = await service.getHistory(account.id, false);
   const readAgain = () =>
-    new SupportHistoryService({ drizzle: db.drizzle, cache: makeCache(), reader }).getHistory(
-      account.id,
-      false,
-    );
+    new SupportHistoryService({
+      drizzle: db.drizzle,
+      audit: new AuditReaderService(db.drizzle, db.drizzle),
+      cache: makeCache(),
+      reader,
+    }).getHistory(account.id, false);
   return { history, asked, win, userId: account.id, readAgain };
 }
 
@@ -258,6 +265,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     await db.drizzle.db.update(user).set({ email: '' }).where(eq(user.id, account.id));
     const service = new SupportHistoryService({
       drizzle: db.drizzle,
+      audit: new AuditReaderService(db.drizzle, db.drizzle),
       cache: makeCache(),
       reader: { listTickets: async () => [], listChats: async () => [] },
     });
@@ -405,6 +413,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     const asked: SupportHistoryEmailWindow[][] = [];
     const service = new SupportHistoryService({
       drizzle: db.drizzle,
+      audit: new AuditReaderService(db.drizzle, db.drizzle),
       cache: makeCache(),
       reader: {
         listTickets: async ({ windows }) => {
@@ -507,6 +516,7 @@ describe('support history email windows from crafted audit rows (real PG)', () =
     const asked: SupportHistoryEmailWindow[][] = [];
     const service = new SupportHistoryService({
       drizzle: db.drizzle,
+      audit: new AuditReaderService(db.drizzle, db.drizzle),
       cache: makeCache(),
       reader: {
         listTickets: async ({ windows }) => {
@@ -553,7 +563,12 @@ describe('support history cache (real PG)', () => {
     const oldAnswer = { fetchedAt: 'cached under the old key' };
     await cache.set(`support-chat-history:${account.id}:false`, oldAnswer, { ttlMs: 60_000 });
     const read = reader();
-    const service = new SupportHistoryService({ drizzle: db.drizzle, cache, reader: read });
+    const service = new SupportHistoryService({
+      drizzle: db.drizzle,
+      audit: new AuditReaderService(db.drizzle, db.drizzle),
+      cache,
+      reader: read,
+    });
 
     const history = await service.getHistory(account.id, false);
 
@@ -565,6 +580,7 @@ describe('support history cache (real PG)', () => {
     const { cache, calls } = countingCache();
     const service = new SupportHistoryService({
       drizzle: db.drizzle,
+      audit: new AuditReaderService(db.drizzle, db.drizzle),
       cache,
       reader: reader(),
     });

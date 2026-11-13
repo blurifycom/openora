@@ -1,14 +1,22 @@
 import {
   EVENT_BUS,
   DRIZZLE,
+  AUDIT_DRIZZLE,
   ADMIN_GUARD,
+  DrizzleService,
   createLogger,
   type CoreTokenCatalog,
   type DrizzleDb,
   type DrizzleTx,
   type Plugin,
 } from '@openora/core/server';
-import { AUDIT_WRITER, IDENTITY_READER, type EventEnvelope } from '@openora/core/contracts';
+import {
+  AUDIT_READER,
+  AUDIT_WRITER,
+  IDENTITY_READER,
+  type EventEnvelope,
+} from '@openora/core/contracts';
+import { AuditReaderService } from './service/audit-reader.service.js';
 import {
   AuditService,
   enqueueAuditInTransaction,
@@ -1472,6 +1480,19 @@ export default {
     // so dbRef is null at registration but set before any real event arrives.
     let dbRef: DrizzleDb | null = null;
 
+    // The chain's own database when AUDIT_DATABASE_URL names one (as the audit_writer role
+    // `migrate` creates), else the main one: the same instance, which is what "not split" means.
+    ctx.provideSealed(AUDIT_DRIZZLE, (c) => {
+      const url = process.env['AUDIT_DATABASE_URL'];
+      if (!url) {
+        return c.get(DRIZZLE);
+      }
+      const svc = new DrizzleService(url);
+      c.onDispose(() => svc.dispose());
+      return svc;
+    });
+    ctx.provide(AUDIT_READER, (c) => new AuditReaderService(c.get(DRIZZLE), c.get(AUDIT_DRIZZLE)));
+
     ctx.provideSealed(AUDIT_WRITER, (c) => {
       const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       return {
@@ -1512,7 +1533,8 @@ export default {
     ctx.routers.add('audit', (c) => {
       const drizzle = c.get(DRIZZLE);
       const events = c.get(EVENT_BUS);
-      const svc = new AuditService(drizzle, events, c.get(IDENTITY_READER));
+      const auditDrizzle = c.get(AUDIT_DRIZZLE);
+      const svc = new AuditService(drizzle, events, c.get(IDENTITY_READER), auditDrizzle);
       dbRef = drizzle.db;
       // An audited event emitted in a transaction queues its record in that transaction, so the
       // record commits with the change instead of waiting on broker delivery.
@@ -1528,6 +1550,7 @@ export default {
       if (!shippedDatabases.has(drizzle.db)) {
         shippedDatabases.add(drizzle.db);
         const shipper = new AuditShipper(drizzle.db, {
+          chainDb: auditDrizzle.db,
           onError: (err) => createLogger('audit-shipper').error({ err }, 'audit shipping failed'),
         });
         shipper.start();

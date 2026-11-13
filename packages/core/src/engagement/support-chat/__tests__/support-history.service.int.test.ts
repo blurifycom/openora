@@ -9,6 +9,7 @@ import {
 import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
+import { AuditReaderService } from '@openora/core/audit/server';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeCache } from '../../../testing/mock.js';
@@ -51,6 +52,7 @@ beforeEach(() => {
 const service = (reader: Partial<SupportHistoryReader>) =>
   new SupportHistoryService({
     drizzle: db.drizzle,
+    audit: new AuditReaderService(db.drizzle, db.drizzle),
     cache: makeCache(),
     reader: { listTickets: async () => [TICKET], listChats: async () => [], ...reader },
   });
