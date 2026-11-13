@@ -17,6 +17,7 @@ import type {
   UserCommands,
   RateLimiterAdapter,
   RateLimitKey,
+  RgLimitsPublisherPort,
 } from '@openora/core/contracts';
 import {
   RATE_LIMIT_KEYS,
@@ -117,6 +118,8 @@ export type ProfileServiceDeps = {
   supportedDisplayCurrencies: readonly string[];
   minPlayerAge: number;
   reservedUsernames?: readonly string[];
+  /** Re-projects the player's limits when their currency, which an unresolved limit is in, moves. */
+  rgLimitsPublisher?: RgLimitsPublisherPort | null;
 };
 
 export class ProfileService implements PlayerProvisioning {
@@ -129,6 +132,7 @@ export class ProfileService implements PlayerProvisioning {
   private readonly supportedDisplayCurrencies: readonly string[];
   private readonly minPlayerAge: number;
   private readonly reservedUsernames?: readonly string[];
+  private readonly rgLimitsPublisher: RgLimitsPublisherPort | null;
 
   constructor({
     drizzle,
@@ -140,6 +144,7 @@ export class ProfileService implements PlayerProvisioning {
     supportedDisplayCurrencies,
     minPlayerAge,
     reservedUsernames,
+    rgLimitsPublisher = null,
   }: ProfileServiceDeps) {
     this.drizzle = drizzle;
     this.walletReader = walletReader;
@@ -150,6 +155,7 @@ export class ProfileService implements PlayerProvisioning {
     this.supportedDisplayCurrencies = supportedDisplayCurrencies;
     this.minPlayerAge = minPlayerAge;
     this.reservedUsernames = reservedUsernames;
+    this.rgLimitsPublisher = rgLimitsPublisher;
   }
 
   /**
@@ -342,6 +348,9 @@ export class ProfileService implements PlayerProvisioning {
           throw new Error('Profile update returned no row');
         }
         updated = written;
+      }
+      if ('currency' in updates) {
+        await this.rgLimitsPublisher?.publish(tx, userId);
       }
 
       await this.audit.recordInTransaction(tx, {

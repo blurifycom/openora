@@ -11,6 +11,7 @@ import {
   type EventBus,
 } from '@openora/core/server';
 import { and, eq, or, gt, lte, desc, inArray } from 'drizzle-orm';
+import { limitSlotKey } from '@openora/core/contracts';
 import type {
   AuditWritePort,
   LoginEnforcementPort,
@@ -23,7 +24,9 @@ import type {
   ClientMeta,
   LimitType,
   ExchangeRateReader,
+  RgLimitLedgerPort,
 } from '@openora/core/contracts';
+import { RgLimitsPublisher } from './rg-limits-publisher.service.js';
 import { userLimit, rgExclusion, SESSION_LIMIT_CURRENCY } from '../schema/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 import { LimitNotFoundError } from './compliance.service.js';
@@ -228,8 +231,7 @@ function isOrderingPeriod(period: LimitRow['period']): period is OrderingPeriod 
 
 const HOUR_MS = 60 * 60 * 1000;
 
-export const limitSlotKey = (userId: User['id'], type: string, period: string) =>
-  `rg-limit:${userId}:${type}:${period}`;
+export { limitSlotKey };
 // Serialises every change to a player's exclusions with the login block recomputed from them.
 const exclusionLockKey = (userId: User['id']) => `rg:exclusion:${userId}`;
 export const NO_PENDING_CHANGE = {
@@ -277,9 +279,11 @@ export async function resolveLimitCurrencyInTx(tx: Tx, row: LimitRow): Promise<R
   if (!playerRow) {
     throw new RgLimitCurrencyUnresolvedError(row.userId);
   }
+  // The limit itself did not change, so neither does its `updatedAt`, which orders the reference
+  // currency; the ledger projected this row in the player's currency already.
   const [updated] = await tx
     .update(userLimit)
-    .set({ currency: playerRow.currency })
+    .set({ currency: playerRow.currency, updatedAt: current.updatedAt })
     .where(eq(userLimit.id, row.id))
     .returning();
   return { ...(updated ?? current), currency: playerRow.currency };
@@ -375,6 +379,8 @@ export type RgServiceDeps = {
   mailDispatch?: MailDispatchPort | null;
   audit?: AuditWritePort | null;
   rates: ExchangeRateReader;
+  /** The ledger's limits projection, written in every limit change's own transaction. */
+  limitsLedger: Pick<RgLimitLedgerPort, 'write'>;
 };
 
 /**
@@ -394,6 +400,8 @@ export class RgService {
   private readonly mailDispatch: MailDispatchPort | null;
   private readonly audit: AuditWritePort | null;
   private readonly rates: ExchangeRateReader;
+  /** Every writer of a deposit or wager limit publishes through this, in its transaction. */
+  readonly limitsPublisher: RgLimitsPublisher;
 
   constructor(deps: RgServiceDeps) {
     this.drizzle = deps.drizzle;
@@ -403,6 +411,7 @@ export class RgService {
     this.mailDispatch = deps.mailDispatch ?? null;
     this.audit = deps.audit ?? null;
     this.rates = deps.rates;
+    this.limitsPublisher = new RgLimitsPublisher(deps.limitsLedger, deps.events);
   }
 
   /**
@@ -484,6 +493,7 @@ export class RgService {
           ip: meta?.ip ?? null,
           userAgent: meta?.userAgent ?? null,
         });
+        await this.limitsPublisher.publish(tx, userId);
         return written;
       }),
     );

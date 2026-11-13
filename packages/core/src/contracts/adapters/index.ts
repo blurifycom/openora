@@ -513,8 +513,22 @@ export {
   isPlayRefused,
   playRefusalOf,
 } from './play-eligibility.js';
-export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
-export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
+export type {
+  RgLimitsPort,
+  RgLimitDecision,
+  RgLimitExceededData,
+  RgLimitLedgerPort,
+  RgLimitsPublisherPort,
+} from './rg-limits.js';
+export {
+  RG_LIMITS,
+  RG_LIMIT_LEDGER,
+  RG_LIMITS_PUBLISHER,
+  RgLimitExceededError,
+  RgRateUnavailableError,
+  limitSlotKey,
+  periodWindow,
+} from './rg-limits.js';
 export type {
   RgStanding,
   RgStandingExclusion,

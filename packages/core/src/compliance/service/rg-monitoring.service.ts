@@ -2,49 +2,30 @@ import {
   DrizzleService,
   createLogger,
   pageToOffset,
-  moneyAdd,
   moneyToNumber,
   mapConcurrent,
   type DrizzleDb,
   type DrizzleTx,
 } from '@openora/core/server';
 import { and, eq, or, gt, gte, lte, isNull, inArray, asc, desc, sql, type SQL } from 'drizzle-orm';
-import type {
-  AdminUserDirectory,
-  ExchangeRateReader,
-  LimitType,
-  LimitPeriod,
-  User,
+import {
+  RgRateUnavailableError,
+  type AdminUserDirectory,
+  type LimitType,
+  type LimitPeriod,
+  type RgLimitLedgerPort,
+  type User,
 } from '@openora/core/contracts';
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
 import { resolveLimitCurrency, RgLimitCurrencyUnresolvedError } from './rg.service.js';
-import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { session } from '@openora/core/pam/schema/identity';
 import type { RgFlagListItem, ListRgFlagsInput, RgFlagDetail } from '../contract/index.js';
-import {
-  periodWindow,
-  isAtThreshold,
-  thresholdPct,
-  LOSS_LEGS,
-  WAGER_LEGS,
-  type PlayLeg,
-} from './rg-eval.js';
+import { periodWindow, isAtThreshold, thresholdPct } from './rg-eval.js';
 
 const logger = createLogger('compliance-rg-monitoring');
 
-export class RgRateUnavailableError extends Error {
-  constructor(
-    readonly limitType: LimitType,
-    readonly period: LimitPeriod,
-    readonly missingCurrency: string,
-    readonly limitCurrency: string,
-  ) {
-    super(
-      `No exchange rate available to convert ${missingCurrency} into ${limitCurrency} for the ${period} ${limitType} limit`,
-    );
-    this.name = 'RgRateUnavailableError';
-  }
-}
+// Moved to contracts with the spend query; re-exported for the compliance callers.
+export { RgRateUnavailableError };
 
 /** Every sportsbook money leg moves loss-limit spend, an admin debt collect included, so each one re-evaluates the thresholds. */
 export const SPORTSBOOK_RG_EVAL_TOPICS = [
@@ -73,18 +54,18 @@ const SWEEP_CONCURRENCY = 10;
 export type RgMonitoringDeps = {
   drizzle: DrizzleService;
   directory?: AdminUserDirectory | null;
-  rates: ExchangeRateReader;
+  ledger: Pick<RgLimitLedgerPort, 'spendFor'>;
 };
 
 export class RgMonitoringService {
   private readonly drizzle: DrizzleService;
   private readonly directory: AdminUserDirectory | null;
-  private readonly rates: ExchangeRateReader;
+  private readonly ledger: Pick<RgLimitLedgerPort, 'spendFor'>;
 
   constructor(deps: RgMonitoringDeps) {
     this.drizzle = deps.drizzle;
     this.directory = deps.directory ?? null;
-    this.rates = deps.rates;
+    this.ledger = deps.ledger;
   }
 
   async evaluateUser(userId: User['id'], trigger: RgEvalTrigger) {
@@ -274,154 +255,19 @@ export class RgMonitoringService {
 
   /**
    * Spend counted against one money limit inside its period window, converted into
-   * `limitCurrency` and returned as a decimal string. Throws `RgRateUnavailableError`
-   * when a source currency has no available conversion rate, rather than treating that
-   * group as zero.
+   * `limitCurrency` and returned as a decimal string. The ledger owns the query (ADR-0055).
+   * Throws `RgRateUnavailableError` when a source currency has no available conversion rate,
+   * rather than treating that group as zero.
    */
-  async spendFor(
+  spendFor(
     db: DrizzleDb | DrizzleTx,
     userId: User['id'],
     type: LimitType,
     period: LimitPeriod,
     from: Date,
-    limitCurrency: string,
-  ) {
-    if (type === 'deposit') {
-      return this.convertedTotal(
-        db,
-        await this.depositsByCurrency(db, userId, from),
-        type,
-        period,
-        limitCurrency,
-      );
-    }
-    return this.convertedTotal(
-      db,
-      await this.playByCurrency(db, userId, from, type === 'loss' ? LOSS_LEGS : WAGER_LEGS),
-      type,
-      period,
-      limitCurrency,
-    );
-  }
-
-  private async convertedTotal(
-    db: DrizzleDb | DrizzleTx,
-    groups: { currency: string; total: string }[],
-    type: LimitType,
-    period: LimitPeriod,
     limitCurrency: string,
   ): Promise<string> {
-    let total = '0';
-    for (const group of groups) {
-      if (group.currency === limitCurrency) {
-        total = moneyAdd(total, group.total);
-        continue;
-      }
-      const converted = await this.rates.convert(group.total, group.currency, limitCurrency, db);
-      if (converted === null) {
-        throw new RgRateUnavailableError(type, period, group.currency, limitCurrency);
-      }
-      total = moneyAdd(total, converted);
-    }
-    return total;
-  }
-
-  private async depositsByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
-    const depositedAt = sql<Date>`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`;
-    return db
-      .select({
-        currency: walletTransaction.currency,
-        total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
-      })
-      .from(walletTransaction)
-      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
-      .where(
-        and(
-          eq(wallet.userId, userId),
-          eq(walletTransaction.type, 'deposit'),
-          // A pending deposit is a reservation the wallet took under the player's deposit
-          // lock before charging the PSP. Counting it is what stops two concurrent deposits
-          // from spending the same headroom; it is released to `failed` if the charge fails.
-          inArray(walletTransaction.status, ['completed', 'pending']),
-          // A held deposit an operator released later is spent when it reached the balance
-          // (reviewedAt), not when it landed on chain; every other deposit has no reviewedAt.
-          gte(depositedAt, from),
-          // The database stamps createdAt, so the upper bound reads the same clock. An
-          // app-side new Date() that trails the database by a millisecond would drop a
-          // just-committed deposit out of the player's spend.
-          lte(depositedAt, sql`now()`),
-        ),
-      )
-      .groupBy(walletTransaction.currency);
-  }
-
-  /**
-   * Play from the wallet ledger, whatever product it was on, netted per round. The ledger does not
-   * say which bet a reversal reverses, so a round's reversals, wins and win reversals count only
-   * when every bet of it was placed inside the window. A round that started before it adds its
-   * stakes plus whatever its win reversals here take back beyond its wins here, so a resettled
-   * payout lands in the period it is collected (ADR-0046). A round's stake never nets below 0, and
-   * a leg without a round id never offsets one.
-   */
-  private async playByCurrency(
-    db: DrizzleDb | DrizzleTx,
-    userId: User['id'],
-    from: Date,
-    legs: readonly PlayLeg[],
-  ) {
-    const types = sql.join(
-      legs.map((leg) => sql`(${leg.type}, ${leg.direction})`),
-      sql`, `,
-    );
-    const result = await db.execute<{ currency: string; total: string }>(sql`
-      with legs as (
-        select t.wallet_id, t.provider_name, t.external_round_id, t.currency, t.type,
-          case when t.direction = 'debit' then t.amount else -t.amount end as signed
-        from ${walletTransaction} t
-        join ${wallet} w on w.id = t.wallet_id
-        where w.user_id = ${userId}
-          and t.status = 'completed'
-          and t.created_at >= ${from}
-          and (t.type, t.direction) in (${types})
-      ),
-      rounds as (
-        select wallet_id, provider_name, external_round_id, currency,
-          coalesce(sum(signed) filter (where type = 'bet'), 0) as stake,
-          coalesce(sum(signed) filter (where type in ('bet', 'bet_reversal')), 0) as net_stake,
-          coalesce(sum(signed) filter (where type not in ('bet', 'bet_reversal')), 0) as net_win,
-          coalesce(sum(signed) filter (where type = 'win_reversal'), 0) as reclaimed,
-          coalesce(sum(signed) filter (where type = 'win'), 0) as paid,
-          external_round_id is not null
-            and count(*) filter (where type = 'bet') > 0
-            and count(*) filter (where type <> 'bet') > 0 as nets
-        from legs
-        group by wallet_id, provider_name, external_round_id, currency
-      ),
-      opened_before as (
-        select distinct p.wallet_id, p.provider_name, p.external_round_id
-        from ${walletTransaction} p
-        join ${wallet} w on w.id = p.wallet_id
-        join rounds r on r.wallet_id = p.wallet_id
-          and r.provider_name = p.provider_name
-          and r.external_round_id = p.external_round_id
-        where w.user_id = ${userId}
-          and r.nets
-          and p.type = 'bet'
-          and p.status = 'completed'
-          and p.created_at < ${from}
-      )
-      select r.currency,
-        greatest(sum(
-          case when r.nets and o.wallet_id is null then greatest(r.net_stake, 0) + r.net_win
-          else r.stake + greatest(r.reclaimed + r.paid, 0) end
-        ), 0) as total
-      from rounds r
-      left join opened_before o on o.wallet_id = r.wallet_id
-        and o.provider_name = r.provider_name
-        and o.external_round_id = r.external_round_id
-      group by r.currency
-    `);
-    return result.rows;
+    return this.ledger.spendFor(db, userId, type, period, from, limitCurrency);
   }
 
   clearLimitThresholdFlag(userId: User['id'], limitType: string): Promise<void> {

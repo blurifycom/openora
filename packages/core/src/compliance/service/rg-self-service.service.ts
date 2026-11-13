@@ -170,6 +170,7 @@ export class RgSelfServiceService {
           await this.assertOrdering(tx, userId, input);
           const parked = await this.park(tx, existing, 'increase', input);
           await this.emitRequested(tx, userId, playerId, existing, parked, meta);
+          await this.publish(tx, userId);
           return { applied: false as const, row: parked };
         }
         await this.assertOrdering(tx, userId, input);
@@ -199,6 +200,7 @@ export class RgSelfServiceService {
           ip: meta?.ip ?? null,
           userAgent: meta?.userAgent ?? null,
         });
+        await this.publish(tx, userId);
         return { applied: true as const, row };
       }),
     );
@@ -227,6 +229,7 @@ export class RgSelfServiceService {
           currency: null,
         });
         await this.emitRequested(tx, userId, playerId, current, parked, meta);
+        await this.publish(tx, userId);
         return parked;
       }),
     );
@@ -269,6 +272,7 @@ export class RgSelfServiceService {
             'rg.limit.change_expired',
             this.lapsedPayload(userId, playerId, current),
           );
+          await this.publish(tx, userId);
           return { kind: 'expired' as const, existing: current };
         }
 
@@ -286,6 +290,7 @@ export class RgSelfServiceService {
           if (deleted.length === 0) {
             throw new NoPendingLimitChangeError(limitId);
           }
+          await this.publish(tx, userId);
           return { kind: 'removed' as const, existing: current };
         }
 
@@ -320,6 +325,7 @@ export class RgSelfServiceService {
           ip: meta?.ip ?? null,
           userAgent: meta?.userAgent ?? null,
         });
+        await this.publish(tx, userId);
         return { kind: 'raised' as const, existing: current, row };
       }),
     );
@@ -364,6 +370,7 @@ export class RgSelfServiceService {
           'rg.limit.change_cancelled',
           this.actedPayload(userId, playerId, current, meta),
         );
+        await this.publish(tx, userId);
         return cleared;
       }),
     );
@@ -456,7 +463,19 @@ export class RgSelfServiceService {
           expiresAt: (row.pendingExpiresAt ?? now).toISOString(),
         });
       }
+      // In user id order, so two sweeps lock the version rows in the same order.
+      const users = [
+        ...new Set(candidates.filter((row) => clearedIds.has(row.id)).map((row) => row.userId)),
+      ].sort();
+      for (const userId of users) {
+        await this.publish(tx, userId);
+      }
     });
+  }
+
+  /** Re-projects the user's limits into the ledger, in the transaction that changed one. */
+  private publish(tx: DrizzleTx, userId: User['id']): Promise<void> {
+    return this.rg.limitsPublisher.publish(tx, userId);
   }
 
   private async assertOrdering(

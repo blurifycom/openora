@@ -3,6 +3,9 @@ import {
   BONUS_WAGERING,
   LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
+  RG_LIMITS,
+  RG_LIMIT_LEDGER,
+  RG_LIMITS_PUBLISHER,
   createSealedToken,
   type SealedToken,
 } from '@openora/core/contracts';
@@ -111,6 +114,11 @@ export const SEALED_TOKENS: readonly SealedToken<unknown>[] = [
   // The ledger's stake gate and its writer: rebinding either could turn off a self-exclusion.
   LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
+  // The deposit and wager limit gate, its projection's writer, and the republish a player's
+  // currency change triggers: rebinding any could loosen a limit the player set.
+  RG_LIMITS,
+  RG_LIMIT_LEDGER,
+  RG_LIMITS_PUBLISHER,
 ];
 
 // Sealed identities that currently have a real owning-module implementation bound

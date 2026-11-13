@@ -67,7 +67,8 @@ describe('a split service booted from the pnpm create:service example', () => {
     );
 
     expect(refusal).toMatch(/- identity \(required by wallet/);
-    expect(refusal).toMatch(/- wallet runs without RG_LIMITS \(bound by compliance\)/);
+    // The stake gate is the wallet's own (ADR-0055): no limits control is missing from it.
+    expect(refusal).not.toMatch(/RG_LIMITS/);
     expect(refusal).toMatch(/- identity requires MAIL_DISPATCH \(bound by mail\)/);
     expect(SUGGESTED_MANIFEST.exec(refusal)?.[1]).toBe(createServiceExample.manifest.join(','));
   });

@@ -9,8 +9,10 @@ import type {
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { player } from '@openora/core/pam/schema/profile';
 import { makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
+import { ledgerRgLimits } from '@openora/core/wallet/seed';
 import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion } from '../schema/index.js';
 import {
@@ -69,6 +71,7 @@ function makeService(notifier?: Notifier, rates: ExchangeRateReader = identityRa
     audit,
     identityReader: makeIdentityReader(),
     rates,
+    limitsLedger: ledgerRgLimits(db.drizzle.db, rates),
   });
   return { svc, events, enforcement, audit };
 }
@@ -98,7 +101,7 @@ const future = () => new Date(Date.now() + 200 * 24 * HOURS);
 const past = () => new Date(Date.now() - 1000);
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile]);
+  db = await createTestDb([migrate, migrateProfile, migrateWallet]);
 });
 
 afterAll(async () => {
@@ -186,7 +189,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     expect(rows).toHaveLength(1);
     expect(Number(rows[0]?.amount)).toBe(50);
-    expect(events.emitInTransaction).toHaveBeenLastCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       'rg.limit.set',
       expect.objectContaining({

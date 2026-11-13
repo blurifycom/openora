@@ -26,6 +26,7 @@ import {
   makeAuditWriter,
   testContext,
 } from '../../testing/mock.js';
+import { ledgerRgLimits } from '@openora/core/wallet/seed';
 import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion, rgFlag } from '../schema/index.js';
 import { createComplianceRouter } from '../router/index.js';
@@ -87,8 +88,12 @@ function build(adminGuard: AdminGuard) {
     }),
     identityReader: makeIdentityReader(),
     rates: identityRates(),
+    limitsLedger: ledgerRgLimits(db.drizzle.db, identityRates()),
   });
-  const rgMonitoring = new RgMonitoringService({ drizzle: db.drizzle, rates: identityRates() });
+  const rgMonitoring = new RgMonitoringService({
+    drizzle: db.drizzle,
+    ledger: ledgerRgLimits(db.drizzle.db, identityRates()),
+  });
   const rgSelfService = new RgSelfServiceService({
     drizzle: db.drizzle,
     events,

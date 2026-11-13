@@ -71,7 +71,7 @@ nothing to enforce, so a full boot runs without it, as before. A split service i
 module runs in another process of the same install, and a split that skipped the control would
 let through what that process refuses. A plugin declares such a port in `controlPorts`, with the
 module that binds it, and a `SERVICE_MANIFEST` boot refuses to start while one is unbound and the
-plugin list has that module. Declared today: `RG_LIMITS` (wallet, gaming), `GAME_GEO_CHECK`
+plugin list has that module. Declared today: `RG_LIMITS_PUBLISHER` (profile), `GAME_GEO_CHECK`
 (gaming), `GEO_CHECK_COMMANDS` (identity, bonus, notifications), `MCP_TOKEN_REVOCATION` (identity)
 and `AUDIT_WRITER` (mail). A port whose absence already fails closed - no KYC policy means every
 gated withdrawal needs KYC, no risk tags send auto-approval to a human - is not a control port.

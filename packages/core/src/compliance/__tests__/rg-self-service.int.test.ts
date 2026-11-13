@@ -20,6 +20,7 @@ import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { player } from '@openora/core/pam/schema/profile';
 import { makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
+import { ledgerRgLimits } from '@openora/core/wallet/seed';
 import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion, rgFlag } from '../schema/index.js';
 import { RgService, LimitOrderingViolationError } from '../service/rg.service.js';
@@ -63,8 +64,12 @@ function makeService(
     loginEnforcement: enforcement,
     identityReader: makeIdentityReader(),
     rates,
+    limitsLedger: ledgerRgLimits(db.drizzle.db, rates),
   });
-  const monitoring = new RgMonitoringService({ drizzle: db.drizzle, rates });
+  const monitoring = new RgMonitoringService({
+    drizzle: db.drizzle,
+    ledger: ledgerRgLimits(db.drizzle.db, rates),
+  });
   const svc = new RgSelfServiceService({
     drizzle: db.drizzle,
     events,

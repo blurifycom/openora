@@ -10,7 +10,9 @@ import type {
   UserCommands,
   RateLimiterAdapter,
   RateLimitKey,
+  RgLimitsPublisherPort,
 } from '@openora/core/contracts';
+import type { DrizzleTx } from '@openora/core/server';
 import { player } from '../schema/index.js';
 import { migrate } from '../migrate.js';
 import {
@@ -32,6 +34,7 @@ function makeService(
     supported?: string[];
     reservedUsernames?: string[];
     minPlayerAge?: number;
+    rgLimitsPublisher?: RgLimitsPublisherPort;
   } = {},
 ): ProfileService {
   return new ProfileService({
@@ -46,6 +49,7 @@ function makeService(
     supportedDisplayCurrencies: overrides.supported ?? DEFAULT_SUPPORTED,
     minPlayerAge: overrides.minPlayerAge ?? MIN_PLAYER_AGE_YEARS,
     reservedUsernames: overrides.reservedUsernames,
+    rgLimitsPublisher: overrides.rgLimitsPublisher,
   });
 }
 
@@ -137,6 +141,47 @@ describe('ProfileService.updateMyProfile (real PG)', () => {
       expect(row?.username).toBe('keeper_handle');
     },
   );
+
+  it("re-projects the player's limits in the transaction that changes their currency", async () => {
+    const seen: (string | undefined)[] = [];
+    const svc = makeService({
+      rgLimitsPublisher: {
+        publish: async (tx, userId) => {
+          const [row] = await (tx as DrizzleTx)
+            .select({ currency: player.currency })
+            .from(player)
+            .where(eq(player.userId, userId));
+          seen.push(row?.currency);
+        },
+      },
+    });
+    const account = await seedUser(db);
+    await seedPlayer(account.id, { currency: 'EUR' });
+
+    await svc.updateMyProfile(account.id, { country: 'US' });
+    await svc.updateMyProfile(account.id, { currency: 'GBP' });
+
+    expect(seen).toEqual(['GBP']);
+  });
+
+  it('keeps the old currency when re-projecting the limits fails', async () => {
+    const svc = makeService({
+      rgLimitsPublisher: {
+        publish: async () => {
+          throw new Error('projection down');
+        },
+      },
+    });
+    const account = await seedUser(db);
+    await seedPlayer(account.id, { currency: 'EUR' });
+
+    await expect(svc.updateMyProfile(account.id, { currency: 'GBP' })).rejects.toThrow(
+      'projection down',
+    );
+
+    const [row] = await playersFor(account.id);
+    expect(row?.currency).toBe('EUR');
+  });
 
   it('materializes the profile first when update is the first call for a user', async () => {
     const svc = makeService();

@@ -38,6 +38,11 @@ export const AUDIT_COVERAGE_GAPS = {
     reason:
       'a projection feed for the ledger; the change behind it is audited as the RG exclusion, the player status change or the account (de)activation that wrote it',
   },
+  'compliance.rg_limits.changed': {
+    kind: 'exempt',
+    reason:
+      'a projection feed for the ledger; the change behind it is audited as the rg.limit.* event or the profile update that wrote it',
+  },
   'gaming.ledger_game.projected': {
     kind: 'exempt',
     reason:

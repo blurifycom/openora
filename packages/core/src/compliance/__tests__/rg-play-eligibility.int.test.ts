@@ -30,6 +30,7 @@ import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { wallet, walletBalance } from '@openora/core/wallet/schema';
 import walletPlugin from '@openora/core/wallet/plugin';
 import { makeAuditWriter, makeEventBus, makeIdentityReader, mock } from '../../testing/mock.js';
+import { ledgerRgLimits } from '@openora/core/wallet/seed';
 import { migrate } from '../migrate.js';
 import { rgExclusion } from '../schema/index.js';
 import { RgService } from '../service/rg.service.js';
@@ -64,6 +65,7 @@ function rg(parkOn?: string) {
     loginEnforcement: container.get(LOGIN_ENFORCEMENT),
     identityReader: makeIdentityReader(),
     rates,
+    limitsLedger: ledgerRgLimits(db.drizzle.db),
   });
   return { svc, parked, release };
 }
