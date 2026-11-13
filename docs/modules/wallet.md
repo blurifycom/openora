@@ -192,12 +192,27 @@ is `SPORTSBOOK_LEDGER` unchanged.
   the full amount, the row records the fee, and the provider pays out the amount minus the fee. An
   amount that does not exceed the fee is refused. A refund returns the full debited amount.
 - **Whether a withdrawal needs KYC is compliance's decision, asked through `KYC_WITHDRAWAL_POLICY`.**
-  `kyc.gateWithdrawals` switches the request-time check on; auto-approval always asks. Without a
-  bound policy, every gated withdrawal needs an approved KYC status.
+  `kyc.gateWithdrawals` switches the request-time check on; auto-approval always asks. An admin
+  approval asks again, so KYC revoked while the withdrawal waited refuses it.
 - **A player carrying the `withdrawal_lock` tag cannot take money out.** The request is refused
   before any debit, and neither an admin nor auto-approval can approve a withdrawal that was
   already waiting when the lock landed; it stays queued and can still be rejected. The tag is
-  read through `PLAYER_TAGS`; with no tag module bound, no player can be locked.
+  read through `PLAYER_TAGS`.
+- **The withdrawal controls are required ports (ADR-0057).** The wallet refuses to boot without
+  `WITHDRAWAL_SECURITY`, `KYC_WITHDRAWAL_POLICY` and `PLAYER_TAGS`. The lock, the PIN lockout
+  and KYC are read at request, at approval (admin or auto) and once more after the approval
+  flip, before the payout. One that lands after the flip sends the withdrawal back to the queue
+  with reason `withdrawal_lock`, `withdrawal_pin_locked` or `kyc_required`.
+- **Only the tag module's screening verdict can auto-approve a withdrawal (ADR-0057).** A
+  request always answers `pending`. The tag module consumes `wallet.withdrawal.requested`,
+  assigns `withdrawal_review` when it is due, and emits `tag.withdrawal.screened` in the same
+  transaction. The wallet runs auto-approval on that verdict only. A withdrawal whose verdict
+  never arrives stays in the manual queue, and a redelivered verdict changes nothing.
+- **A withdrawal stuck in one state is reported, never refunded (ADR-0057).** Reconciliation
+  files `stuck_withdrawal_requested` for one still `pending` after 24 hours, and
+  `stuck_withdrawal_approved` or `stuck_withdrawal_processing` for one past
+  `reconciliation.stuckAfterMinutes` whose vendor check failed. Each is filed once per
+  withdrawal and can only be dismissed.
 - **A module's withdrawal hold blocks every withdrawal the same way, under its own reason.** A
   module places and releases its hold through `WALLET_COMMANDS` in its own transaction, keyed by
   (player, source), and releases only its own. The wallet audits each change in that transaction.
