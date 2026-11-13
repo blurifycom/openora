@@ -28,6 +28,9 @@ const BATCH_CONCURRENCY = 4;
  */
 export class RemoteAccountReader implements AccountReader {
   private readonly cache = new Map<string, { account: Account; expiresAt: number }>();
+  // Cold reads in flight, by id, so concurrent reads of one id make one call. A fresh read
+  // neither joins nor registers here; a miss is not remembered once the call settles.
+  private readonly inFlight = new Map<string, Promise<Map<string, Account>>>();
 
   constructor(
     private readonly client: InternalClient,
@@ -40,27 +43,41 @@ export class RemoteAccountReader implements AccountReader {
   ): Promise<Map<string, Account>> {
     const now = this.now();
     const found = new Map<string, Account>();
-    const missing = new Set<string>();
+    const joined = new Map<string, Promise<Map<string, Account>>>();
+    const missing: string[] = [];
     for (const id of new Set(userIds.map((userId) => userId.toLowerCase()))) {
       const cached = options.fresh ? undefined : this.cache.get(id);
+      const inFlight = options.fresh ? undefined : this.inFlight.get(id);
       if (cached && cached.expiresAt > now) {
         found.set(id, cached.account);
+      } else if (inFlight) {
+        joined.set(id, inFlight);
       } else {
-        missing.add(id);
+        missing.push(id);
       }
     }
-    const ids = [...missing];
-    const batches = Array.from({ length: Math.ceil(ids.length / ACCOUNTS_BATCH_MAX) }, (_, i) =>
-      ids.slice(i * ACCOUNTS_BATCH_MAX, (i + 1) * ACCOUNTS_BATCH_MAX),
-    );
-    const replies = await mapConcurrent(batches, BATCH_CONCURRENCY, async (batch) =>
-      AccountReaderWire.accounts.output.parse(
-        await this.client.request('POST', ACCOUNT_READER_ROUTES.accounts, { userIds: batch }),
-      ),
-    );
-    for (const account of replies.flatMap((reply) => reply.accounts)) {
-      found.set(account.userId.toLowerCase(), account);
-      this.remember(account, now);
+    const fetched = this.fetch(missing, now);
+    if (!options.fresh) {
+      for (const id of missing) {
+        this.inFlight.set(id, fetched);
+      }
+    }
+    try {
+      for (const [id, account] of await fetched) {
+        found.set(id, account);
+      }
+      for (const [id, pending] of joined) {
+        const account = (await pending).get(id);
+        if (account) {
+          found.set(id, account);
+        }
+      }
+    } finally {
+      for (const id of missing) {
+        if (this.inFlight.get(id) === fetched) {
+          this.inFlight.delete(id);
+        }
+      }
     }
     return new Map(
       userIds.flatMap((userId) => {
@@ -91,8 +108,32 @@ export class RemoteAccountReader implements AccountReader {
     return reply.userId;
   }
 
-  private remember(account: Account, now: number) {
-    const key = account.userId.toLowerCase();
+  /** Reads `ids` (lower case) in batches; caches and answers only the ids asked for. */
+  private async fetch(ids: readonly string[], now: number): Promise<Map<string, Account>> {
+    if (ids.length === 0) {
+      return new Map();
+    }
+    const batches = Array.from({ length: Math.ceil(ids.length / ACCOUNTS_BATCH_MAX) }, (_, i) =>
+      ids.slice(i * ACCOUNTS_BATCH_MAX, (i + 1) * ACCOUNTS_BATCH_MAX),
+    );
+    const replies = await mapConcurrent(batches, BATCH_CONCURRENCY, async (batch) =>
+      AccountReaderWire.accounts.output.parse(
+        await this.client.request('POST', ACCOUNT_READER_ROUTES.accounts, { userIds: batch }),
+      ),
+    );
+    const requested = new Set(ids);
+    const accounts = new Map<string, Account>();
+    for (const account of replies.flatMap((reply) => reply.accounts)) {
+      const key = account.userId.toLowerCase();
+      if (requested.has(key)) {
+        accounts.set(key, account);
+        this.remember(key, account, now);
+      }
+    }
+    return accounts;
+  }
+
+  private remember(key: string, account: Account, now: number) {
     this.cache.delete(key);
     this.cache.set(key, { account, expiresAt: now + ACCOUNT_CACHE_TTL_MS });
     if (this.cache.size > ACCOUNT_CACHE_MAX_ENTRIES) {

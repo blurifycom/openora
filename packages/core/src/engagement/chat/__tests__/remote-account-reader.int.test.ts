@@ -241,6 +241,46 @@ describe('RemoteAccountReader', () => {
     expect(seen.paths).toHaveLength(2);
   });
 
+  it('shares one call between concurrent cold reads of an id, but not with a fresh read', async () => {
+    const shared = await seedPlayerWithUser(db);
+    const other = await seedPlayerWithUser(db);
+    const seen = traffic();
+    const remote = new RemoteAccountReader(identityService(seen));
+    const sharedId = shared.account.id;
+
+    const [first, joined, fresh] = await Promise.all([
+      remote.getAccounts([sharedId]),
+      remote.getAccounts([sharedId.toUpperCase(), other.account.id]),
+      remote.getAccounts([sharedId], { fresh: true }),
+    ]);
+    await remote.getAccounts([sharedId, other.account.id]);
+
+    expect(seen.paths).toHaveLength(3);
+    expect(first.get(sharedId)?.userId).toBe(sharedId);
+    expect(joined.get(sharedId.toUpperCase())?.userId).toBe(sharedId);
+    expect(joined.get(other.account.id)?.userId).toBe(other.account.id);
+    expect(fresh.get(sharedId)?.userId).toBe(sharedId);
+  });
+
+  it('caches only the ids it asked for, not extra accounts in a reply', async () => {
+    const asked = await seedPlayerWithUser(db);
+    const extra = await seedPlayerWithUser(db);
+    const seen = traffic();
+    const service = identityService(seen);
+    const remote = new RemoteAccountReader({
+      request: (method, path, body) =>
+        service.request(method, path, {
+          userIds: [...AccountReaderWire.accounts.input.parse(body).userIds, extra.account.id],
+        }),
+    });
+
+    const first = await remote.getAccounts([asked.account.id]);
+    await remote.getAccounts([extra.account.id]);
+
+    expect([...first.keys()]).toEqual([asked.account.id]);
+    expect(seen.paths).toHaveLength(2);
+  });
+
   it('refuses a service the identity service does not list as a caller', async () => {
     const remote = new RemoteAccountReader(identityService(traffic(), 'wallet'));
 

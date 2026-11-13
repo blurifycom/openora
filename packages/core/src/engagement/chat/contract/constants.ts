@@ -27,6 +27,9 @@ export const CHAT_ROOM_ROLES = ['member', 'moderator', 'owner'] as const;
 
 export const STAFF_USER_ROLES = ['admin', 'super-admin'] as const;
 
+export const isStaffRole = (role: string | undefined) =>
+  STAFF_USER_ROLES.some((staffRole) => staffRole === role);
+
 // The name a roster shows for a member whose account the identity service does not know.
 export const UNKNOWN_PLAYER_USERNAME = 'Unknown player';
 
