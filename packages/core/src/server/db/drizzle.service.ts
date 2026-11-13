@@ -6,7 +6,7 @@ import {
 } from '@openora/core/contracts';
 import type { Pool } from 'pg';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { createPool, type PoolMax } from './drizzle.js';
+import { createPool, type PoolSizeEnv } from './drizzle.js';
 import { withReplicas } from 'drizzle-orm/pg-core';
 import { createLogger } from '../kernel/logger.js';
 
@@ -45,16 +45,16 @@ export class DrizzleService {
 
   /**
    * `url` opens that database alone, without replicas; omitted, `DATABASE_URL` and its replicas.
-   * `poolMax` sizes each pool by another env variable than `DATABASE_POOL_MAX`.
+   * `poolSize` sizes each pool by another env variable than `DATABASE_POOL_MAX`.
    */
-  constructor(url?: string, { poolMax }: { poolMax?: PoolMax } = {}) {
+  constructor(url?: string, { poolSize }: { poolSize?: PoolSizeEnv } = {}) {
     const primaryUrl = url ?? process.env['DATABASE_URL'];
     if (!primaryUrl) {
       throw new Error('DATABASE_URL is required');
     }
     const replicaUrls = url ? [] : parseReplicaUrls(process.env['DATABASE_REPLICA_URLS']);
 
-    this.pools = [primaryUrl, ...replicaUrls].map((pooled) => openPool(pooled, poolMax));
+    this.pools = [primaryUrl, ...replicaUrls].map((pooled) => openPool(pooled, poolSize));
     const [primary, ...replicas] = this.pools.map((pool) =>
       drizzle(pool, { casing: 'snake_case' }),
     );
@@ -67,8 +67,8 @@ export class DrizzleService {
   }
 }
 
-function openPool(connectionString: string, poolMax?: PoolMax): Pool {
-  const pool = createPool(connectionString, poolMax);
+function openPool(connectionString: string, poolSize?: PoolSizeEnv): Pool {
+  const pool = createPool(connectionString, poolSize);
   // A pg Pool emits 'error' when an idle backend connection dies (DB restart,
   // failover, network drop). With no listener Node escalates it to an
   // uncaughtException and crashes the process, so log it - which reports it via

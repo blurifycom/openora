@@ -5,16 +5,7 @@ import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Pool, type PoolClient } from 'pg';
 import { runMigrations, withMigrationAdvisoryLock } from '@openora/core/server/migrate';
-
-// The comment split `migrate` leaves on the main database's outbox guard, so migrate, the shipper
-// and a single-database migrate can tell a main database whose chain moved out from one whose chain
-// it still holds.
-const CHAIN_SPLIT_MARK = 'audit chain in a database of its own';
-
-/** One row, `split`: true once split `migrate` has run against this database. */
-export const CHAIN_SPLIT_SQL = `SELECT coalesce(obj_description(
-     to_regprocedure('audit_outbox_deny_unshipped_delete()'), 'pg_proc') = '${CHAIN_SPLIT_MARK}',
-   false) AS split`;
+import { CHAIN_SPLIT_MARK, CHAIN_SPLIT_SQL } from './schema/index.js';
 
 // Every UPDATE, DELETE and TRUNCATE on audit_log raises, whatever the role. ENABLE ALWAYS keeps the
 // triggers firing under `session_replication_role = replica`, which skips ordinary triggers, so
@@ -58,10 +49,12 @@ const APPEND_ONLY_SQL = [
 // guard there takes a delete only from the shipper role (AUDIT_SHIPPER_DATABASE_URL), and only
 // while that session holds the shipper lock, which the shipper takes before it reads a batch and
 // keeps until it has deleted the batch, after its append committed in the chain's database. The
-// lock alone proves nothing, as any role may take an advisory lock; the role is what the guard
-// trusts, so it refuses the tables' owner too, and only the shipper role holds DELETE on the
-// outbox and INSERT on the rejected table. Weaker than the content check still: a shipper whose
-// append failed unseen could delete what never reached the chain.
+// lock alone proves nothing, as any role may take an advisory lock; the session's own role is
+// what the guard trusts, the shipper role by exact name and not any member of it, so it refuses
+// the tables' owner too. Only the shipper role holds DELETE on the outbox and INSERT on the
+// rejected table, and migrate refuses it while a member inherits it or may SET it. Weaker than
+// the content check still: a shipper whose append failed unseen could delete what never reached
+// the chain.
 const CHAIN_MATCH_SQL = `CREATE OR REPLACE FUNCTION audit_outbox_entry_chained(chained_event_id uuid, entry jsonb)
    RETURNS boolean LANGUAGE sql STABLE SET search_path = pg_catalog, public AS $$
      SELECT EXISTS (
@@ -195,14 +188,17 @@ const MIGRATIONS = {
 
 // What the writer role may do in the chain's database: connect, read the chain and append to it.
 // No UPDATE, DELETE or TRUNCATE privilege on top of the triggers, and no CREATE anywhere.
-const writerGrantsSql = (database: string, role: string) => [
-  `REVOKE ALL ON DATABASE ${database} FROM PUBLIC`,
-  `GRANT CONNECT ON DATABASE ${database} TO ${role}`,
-  `REVOKE CREATE ON SCHEMA public FROM PUBLIC`,
-  `GRANT USAGE ON SCHEMA public TO ${role}`,
-  `GRANT SELECT, INSERT ON audit_log TO ${role}`,
-  `GRANT USAGE ON SEQUENCE audit_log_seq_seq TO ${role}`,
-];
+const writerGrantsSql = (role: LoginRole) => {
+  const database = identifier(role.database, 'AUDIT_DATABASE_URL database');
+  return [
+    `REVOKE ALL ON DATABASE ${database} FROM PUBLIC`,
+    `GRANT CONNECT ON DATABASE ${database} TO ${role.quoted}`,
+    `REVOKE CREATE ON SCHEMA public FROM PUBLIC`,
+    `GRANT USAGE ON SCHEMA public TO ${role.quoted}`,
+    `GRANT SELECT, INSERT ON audit_log TO ${role.quoted}`,
+    `GRANT USAGE ON SEQUENCE audit_log_seq_seq TO ${role.quoted}`,
+  ];
+};
 
 // What the shipper role may do in the main database: read the outbox, delete what it shipped, and
 // move aside what the chain cannot take. It alone keeps DELETE on the outbox and INSERT on the
@@ -277,7 +273,13 @@ const ALREADY_EXISTS = new Set(['42P04', '23505']);
 
 const ROLE_STATE_SQL = `SELECT r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication
             OR r.rolbypassrls AS privileged,
-          EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid) AS grouped
+          EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid) AS grouped,
+          -- PG16 makes a CREATEROLE admin that is not a superuser a member of each role it creates,
+          -- with ADMIN only: that grant neither inherits nor may SET, so it passes. Before PG16
+          -- every membership inherits and may SET (the columns are missing there, hence to_jsonb).
+          EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.roleid = r.oid
+                     AND coalesce((to_jsonb(m)->>'inherit_option')::boolean
+                                  OR (to_jsonb(m)->>'set_option')::boolean, true)) AS shared
      FROM pg_roles r WHERE r.rolname = $1`;
 
 type LoginRole = { name: string; quoted: string; password: string; database: string };
@@ -303,18 +305,20 @@ function loginRole(url: string, env: string): LoginRole {
 
 /**
  * Creates `role` as a login with no attribute that reaches past its grants, or takes the existing
- * one when it has none either and belongs to no other role, then sets its password and connection
- * limit. ALTER does not restate the attributes: an admin that is not a superuser, as on a managed
- * Postgres, may not name SUPERUSER, CREATEDB, REPLICATION or BYPASSRLS even to turn them off.
+ * one when it has none either, belongs to no other role and has no member that inherits it or
+ * may SET it, then sets its password and connection limit. ALTER does not restate the attributes:
+ * an admin that is not a superuser, as on a managed Postgres, may not name SUPERUSER, CREATEDB,
+ * REPLICATION or BYPASSRLS even to turn them off.
  */
 async function ensureLoginRole(client: PoolClient, role: LoginRole): Promise<void> {
   await client.query(`DO $$ BEGIN
        CREATE ROLE ${role.quoted} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
      EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
      END $$`);
-  const { rows } = await client.query<{ privileged: boolean; grouped: boolean }>(ROLE_STATE_SQL, [
-    role.name,
-  ]);
+  const { rows } = await client.query<{ privileged: boolean; grouped: boolean; shared: boolean }>(
+    ROLE_STATE_SQL,
+    [role.name],
+  );
   if (rows[0]?.privileged) {
     throw new Error(
       `audit role ${role.name} holds SUPERUSER, CREATEDB, CREATEROLE, REPLICATION or BYPASSRLS: drop the attribute and migrate again`,
@@ -323,6 +327,11 @@ async function ensureLoginRole(client: PoolClient, role: LoginRole): Promise<voi
   if (rows[0]?.grouped) {
     throw new Error(
       `audit role ${role.name} is a member of another role: revoke the membership and migrate again`,
+    );
+  }
+  if (rows[0]?.shared) {
+    throw new Error(
+      `audit role ${role.name} has members that inherit it or may SET it: revoke the membership and migrate again`,
     );
   }
   await client.query(
@@ -482,17 +491,14 @@ export async function migrate(target?: string | AuditMigrateTarget): Promise<voi
             CHAIN_MATCH_SQL,
             ...CHAIN_UNIQUE_SQL,
             ...EMAIL_CHANGE_INDEX_SQL,
-            ...writerGrantsSql(auditDatabase, writer.quoted),
+            ...writerGrantsSql(writer),
           ],
         });
 
         const firstSplit = !(await isSplit(client));
         await inTransaction(client, [
           DENY_MUTATION_FN_SQL,
-          ...outboxGuardSql(
-            SHIPPER_HOLDS_LOCK,
-            `pg_has_role(session_user, '${shipper.name}', 'MEMBER')`,
-          ),
+          ...outboxGuardSql(SHIPPER_HOLDS_LOCK, `session_user = '${shipper.name}'`),
           MARK_SPLIT_SQL,
           ...shipperGrantsSql(shipper),
           ...(firstSplit ? [MAIN_CONNECT_SQL] : []),

@@ -2,7 +2,7 @@ import * as z from 'zod';
 import { auditOutbox, createLogger, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
 import { asc, inArray, sql } from 'drizzle-orm';
 import { appendAuditEntries, OutboxEntrySchema, type ShippableEntry } from './audit.service.js';
-import { CHAIN_SPLIT_SQL } from '../migrate.js';
+import { CHAIN_SPLIT_SQL } from '../schema/index.js';
 
 const BATCH_SIZE = 1_000;
 const SHIPPER_LOCK_KEY = 'audit_shipper';
@@ -71,8 +71,8 @@ async function refuseChainBeforeCopy(main: DrizzleTx, chainTx: DrizzleTx): Promi
 }
 
 /**
- * Moves one batch of `audit_outbox` rows from `db` into the hash chain in `chainDb` (the same
- * database unless the chain has its own), oldest first, in one transaction on `db` that holds the
+ * Moves one batch of `audit_outbox` rows from `db` into the hash chain in `chainDb` (default `db`,
+ * the single-database layout), oldest first, in one transaction on `db` that holds the
  * shipper lock, so one shipper per database ships at a time; returns null when another holds it
  * and `wait` is false. A row the chain cannot take as it is moves to `audit_outbox_rejected`,
  * copied unchanged with the reason, and the rest ship: an entry that fails its schema, or one
@@ -82,9 +82,11 @@ async function refuseChainBeforeCopy(main: DrizzleTx, chainTx: DrizzleTx): Promi
  * ships the whole batch again and the append skips every `event_id` the log already has.
  *
  * With the chain in its own database, `db` must reach the main one as the shipper role
- * (`AUDIT_SHIPPER_DRIZZLE`), the only role its outbox guard lets delete. Throws instead of shipping
- * when `chainDb` is left as `db` there, and before the first append into an empty chain while the
- * main database still holds the old one.
+ * (`AUDIT_SHIPPER_DRIZZLE`), the only role its outbox guard lets delete. Nothing checks that
+ * `chainDb` points at the chain's database; the split mark split `migrate` leaves on the main
+ * database is the guard: with `chainDb` left as `db` there, this throws instead of shipping. It
+ * also throws before the first append into an empty chain while the main database still holds the
+ * old one.
  */
 export async function shipAuditBatch(
   db: DrizzleDb,
@@ -217,7 +219,7 @@ export async function auditOutboxBacklog(db: DrizzleDb): Promise<{
 }
 
 export type AuditShipperOptions = {
-  /** The database holding the chain, when not the one holding the outbox. */
+  /** The database holding the chain; defaults to the one holding the outbox. */
   chainDb?: DrizzleDb;
   /** Idle wait between polls, in ms. */
   intervalMs?: number;
