@@ -197,10 +197,9 @@ async function assertLedgerFindingStands(
 ): Promise<void> {
   const refuse = (reason: ReconciliationRefusalReason) =>
     new ReconciliationOutcomeNotAllowedError(finding.kind, 'rebaselined', reason);
-  const filed =
-    finding.kind === 'ledger_invariant_breach'
-      ? parseLedgerBreachKey(finding.externalId)
-      : parseLedgerUncheckedKey(finding.externalId);
+  const isBreach = finding.kind === 'ledger_invariant_breach';
+  const breach = isBreach ? parseLedgerBreachKey(finding.externalId) : null;
+  const filed = isBreach ? breach : parseLedgerUncheckedKey(finding.externalId);
   if (!filed) {
     throw refuse('not_a_ledger_pair');
   }
@@ -224,7 +223,7 @@ async function assertLedgerFindingStands(
   if (now.baselineId !== filed.baselineId) {
     throw refuse('baseline_moved');
   }
-  if ('drift' in filed && !moneyEquals(now.drift, filed.drift)) {
+  if (breach && !moneyEquals(now.drift, breach.drift)) {
     throw refuse('drift_changed');
   }
 }
