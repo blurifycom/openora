@@ -1019,7 +1019,10 @@ export const walletContract = {
       .route({
         method: 'POST',
         path: '/wallet/reconciliation/{id}/resolve',
-        summary: 'Resolve a reconciliation finding as credited or dismissed',
+        summary:
+          'Resolve a reconciliation finding as credited, released, refunded, dismissed or rebaselined',
+        description:
+          'The outcomes a finding allows depend on its kind; a ledger invariant finding allows only rebaselined or dismissed.',
       })
       .input(ResolveReconciliationFindingInputSchema)
       .output(WalletReconciliationFindingSchema),
