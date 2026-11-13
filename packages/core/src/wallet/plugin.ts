@@ -259,7 +259,7 @@ export default {
       await playEligibility.reconcile([snapshot]);
     });
     // The limits gate's projection: compliance writes it in its own transaction; this replays the
-    // committed limits, keeping the newest version, for a split process and as the repair path.
+    // committed limits for a split process, writing only a strictly newer version.
     ctx.events.on('compliance.rg_limits.changed', async (payload) => {
       if (!rgLimitsRef) {
         throw new Error('wallet: limits projection not constructed yet');

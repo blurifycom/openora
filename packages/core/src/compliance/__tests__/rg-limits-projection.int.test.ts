@@ -57,12 +57,24 @@ import { backfillRgLimits } from '../service/rg-limits-publisher.service.js';
 let db: TestDb;
 let container: Container<CoreTokenCatalog>;
 
+// Units of `to` per one `from`; any other pair has no rate.
+const FX: Partial<Record<string, number>> = { 'USD->JPY': 150, 'JPY->USD': 1 / 150 };
+const rateOf = (from: string, to: string) => (from === to ? 1 : FX[`${from}->${to}`]);
 const rates = mock<ExchangeRateReader>({
-  getRate: vi.fn(async (from: string, to: string) =>
-    from === to ? { rate: '1', asOf: new Date().toISOString() } : null,
-  ),
-  convert: vi.fn(async (amount: string, from: string, to: string) => (from === to ? amount : null)),
+  getRate: vi.fn(async (from: string, to: string) => {
+    const rate = rateOf(from, to);
+    return rate === undefined ? null : { rate: String(rate), asOf: new Date().toISOString() };
+  }),
+  convert: vi.fn(async (amount: string, from: string, to: string) => {
+    const rate = rateOf(from, to);
+    return rate === undefined ? null : (Number(amount) * rate).toFixed(8);
+  }),
 });
+
+const migrationSql = (path: string) =>
+  sql.raw(readFileSync(new URL(path, import.meta.url), 'utf8'));
+const PIN_LEGACY_CURRENCY = '../drizzle/migrations/0017_pin_legacy_limit_currency.sql';
+const SEED_LEDGER = '../../wallet/drizzle/migrations/0047_seed_ledger_user_limit.sql';
 
 const HOUR = 60 * 60 * 1000;
 
@@ -102,13 +114,16 @@ async function fundedPlayer(currency = 'USD') {
     .returning();
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row!.id, currency: 'USD', amount: '1000' });
+    .values({ walletId: row!.id, currency: 'USD', amount: '100000' });
   await backfillPlayEligibility(db.drizzle.db, container.get(PLAY_ELIGIBILITY_PROJECTION));
   return account.id;
 }
 
+// A stake as production makes it: in its own transaction.
 const bet = (userId: string, amount = '10') =>
-  container.get(WALLET_COMMANDS).debit(db.drizzle.db, { userId, amount, type: 'bet' });
+  db.drizzle.db.transaction((tx) =>
+    container.get(WALLET_COMMANDS).debit(tx, { userId, amount, type: 'bet' }),
+  );
 
 const refused = { name: 'RgLimitExceededError', data: { reason: 'wager_limit_exceeded' } };
 
@@ -118,7 +133,11 @@ async function projected(userId: string) {
     .from(ledgerUserLimitVersion)
     .where(eq(ledgerUserLimitVersion.userId, userId));
   const rows = await db.drizzle.db
-    .select({ amount: ledgerUserLimit.amount, currency: ledgerUserLimit.currency })
+    .select({
+      type: ledgerUserLimit.type,
+      amount: ledgerUserLimit.amount,
+      currency: ledgerUserLimit.currency,
+    })
     .from(ledgerUserLimit)
     .where(eq(ledgerUserLimit.userId, userId));
   return { version: version?.version, amounts: rows.map((row) => Number(row.amount)), rows };
@@ -191,15 +210,16 @@ describe('a limit change reaches the ledger in its own transaction (real PG)', (
     await expect(bet(userId, '15')).resolves.toMatchObject({ ok: true });
   });
 
-  it('lets exactly one of two concurrent stakes through at the edge of the limit', async () => {
+  it('lets exactly one of three concurrent stakes through at the edge of the limit', async () => {
     const userId = await fundedPlayer();
     await services().selfService.upsertLimit(userId, wagerLimit('15'));
 
-    const results = await Promise.allSettled([bet(userId), bet(userId)]);
+    const results = await Promise.allSettled([bet(userId), bet(userId), bet(userId)]);
 
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    const [rejection] = results.filter((result) => result.status === 'rejected');
-    expect(rejection?.reason).toMatchObject(refused);
+    for (const rejection of results.filter((result) => result.status === 'rejected')) {
+      expect(rejection.reason).toMatchObject(refused);
+    }
   });
 
   it('never deadlocks a limit change against a stake on the same player', async () => {
@@ -270,6 +290,51 @@ describe('a limit change reaches the ledger in its own transaction (real PG)', (
     expect(await projected(userId)).toMatchObject({ version: 2, amounts: [15] });
     await expect(bet(userId, '20')).rejects.toMatchObject(refused);
   });
+
+  it('never lets a late event undo a repair made at the same version', async () => {
+    const userId = await fundedPlayer();
+    const { selfService, events } = services();
+    await selfService.upsertLimit(userId, wagerLimit('100'));
+    const [pending] = publishedSnapshots(events);
+    // A writer that skipped the publisher lowers the limit; the heal repairs it.
+    await db.drizzle.db.update(userLimit).set({ amount: '15' }).where(eq(userLimit.userId, userId));
+    await backfillRgLimits(db.drizzle.db, container.get(RG_LIMIT_LEDGER), {
+      changedSince: new Date(Date.now() - HOUR),
+    });
+
+    await expect(container.get(RG_LIMIT_LEDGER).reconcile([pending!])).resolves.toBe(0);
+
+    expect((await projected(userId)).amounts).toEqual([15]);
+    await expect(bet(userId, '20')).rejects.toMatchObject(refused);
+  });
+
+  it('lets a player lower a limit while another of their rows fails the snapshot contract', async () => {
+    const userId = await fundedPlayer();
+    await db.drizzle.db.execute(
+      sql`insert into ${userLimit} (user_id, type, amount, currency, period, updated_at)
+          values (${userId}, 'deposit', 100, '', 'daily', now())`,
+    );
+
+    await services().selfService.upsertLimit(userId, wagerLimit('15'));
+
+    await expect(bet(userId, '20')).rejects.toMatchObject(refused);
+    await expect(
+      container.get(RG_LIMITS).checkDeposit(db.drizzle.db, userId, '1', 'USD'),
+    ).resolves.toMatchObject({ allowed: false, limitType: 'deposit', currency: null });
+  });
+
+  it('skips a snapshot the contract rejects and replays the rest of the batch', async () => {
+    const userId = await fundedPlayer();
+    const { selfService, events } = services();
+    await selfService.upsertLimit(userId, wagerLimit('15'));
+    const [snapshot] = publishedSnapshots(events);
+    await db.drizzle.db.execute(sql`TRUNCATE ${ledgerUserLimit}, ${ledgerUserLimitVersion}`);
+    const invalid = { ...snapshot!, userId: 'not-a-uuid' };
+
+    await expect(container.get(RG_LIMIT_LEDGER).reconcile([invalid, snapshot!])).resolves.toBe(1);
+
+    expect((await projected(userId)).amounts).toEqual([15]);
+  });
 });
 
 describe('the projection outside a limit write (real PG)', () => {
@@ -306,17 +371,8 @@ describe('the projection outside a limit write (real PG)', () => {
     const userId = await fundedPlayer();
     await db.drizzle.db.insert(userLimit).values({ userId, ...wagerLimit('15') });
 
-    await db.drizzle.db.execute(
-      sql.raw(
-        readFileSync(
-          new URL(
-            '../../wallet/drizzle/migrations/0047_seed_ledger_user_limit.sql',
-            import.meta.url,
-          ),
-          'utf8',
-        ),
-      ),
-    );
+    await db.drizzle.db.execute(migrationSql(PIN_LEGACY_CURRENCY));
+    await db.drizzle.db.execute(migrationSql(SEED_LEDGER));
 
     await expect(bet(userId)).resolves.toMatchObject({ ok: true });
     await expect(bet(userId)).rejects.toMatchObject(refused);
@@ -390,25 +446,50 @@ describe('the projection outside a limit write (real PG)', () => {
     expect((await projected(old!)).amounts).toEqual([100]);
   });
 
-  it("re-projects an unresolved limit when the player's currency changes", async () => {
-    const userId = await fundedPlayer('EUR');
-    const { rg } = services();
-    await db.drizzle.db.insert(userLimit).values({ userId, ...wagerLimit('100'), currency: null });
+  it('repairs a projection a foreign writer froze at the highest version', async () => {
+    const userId = await fundedPlayer();
+    await services().selfService.upsertLimit(userId, wagerLimit('15'));
+    await db.drizzle.db.transaction((tx) =>
+      container.get(RG_LIMIT_LEDGER).write({ userId, version: 2147483647, limits: [] }, tx),
+    );
+    await expect(bet(userId, '20')).resolves.toMatchObject({ ok: true });
+
+    await expect(backfillRgLimits(db.drizzle.db, container.get(RG_LIMIT_LEDGER))).resolves.toBe(1);
+
+    expect(await projected(userId)).toMatchObject({ version: 2, amounts: [15] });
+    await expect(bet(userId)).rejects.toMatchObject(refused);
+    await expect(backfillRgLimits(db.drizzle.db, container.get(RG_LIMIT_LEDGER))).resolves.toBe(0);
+  });
+
+  it('reaches, on a full run, a user whose limits a writer that skipped the publisher removed', async () => {
+    const userId = await fundedPlayer();
+    await db.drizzle.db.insert(userLimit).values({ userId, ...wagerLimit('15') });
+    await db.drizzle.db.execute(migrationSql(PIN_LEGACY_CURRENCY));
+    await db.drizzle.db.execute(migrationSql(SEED_LEDGER));
+
+    await db.drizzle.db.delete(userLimit).where(eq(userLimit.userId, userId));
+    await expect(backfillRgLimits(db.drizzle.db, container.get(RG_LIMIT_LEDGER))).resolves.toBe(1);
+
+    expect((await projected(userId)).amounts).toEqual([]);
+    await expect(bet(userId, '20')).resolves.toMatchObject({ ok: true });
+  });
+
+  it("keeps a legacy limit in the player's currency after they switch to another", async () => {
+    const userId = await fundedPlayer('JPY');
+    // Before 0005: 100,000 JPY intended, the currency never stored.
+    await db.drizzle.db
+      .insert(userLimit)
+      .values({ userId, ...wagerLimit('100000'), currency: null });
+    await db.drizzle.db.execute(migrationSql(PIN_LEGACY_CURRENCY));
+    await db.drizzle.db.execute(migrationSql(SEED_LEDGER));
+
+    await db.drizzle.db.update(player).set({ currency: 'USD' }).where(eq(player.userId, userId));
+    await services().selfService.upsertLimit(userId, { ...wagerLimit('100000'), type: 'deposit' });
     await backfillRgLimits(db.drizzle.db, container.get(RG_LIMIT_LEDGER));
-    const gate = container.get(RG_LIMITS);
-    await expect(gate.referenceCurrency(db.drizzle.db, userId)).resolves.toBe('EUR');
 
-    // What the profile service does on a currency change (its own test covers that it does).
-    await db.drizzle.db.transaction(async (tx) => {
-      await tx.update(player).set({ currency: 'GBP' }).where(eq(player.userId, userId));
-      await rg.limitsPublisher.publish(tx, userId);
-    });
-
-    await expect(gate.referenceCurrency(db.drizzle.db, userId)).resolves.toBe('GBP');
-    await services().selfService.upsertLimit(userId, {
-      ...wagerLimit('50'),
-      type: 'deposit',
-    });
-    await expect(gate.referenceCurrency(db.drizzle.db, userId)).resolves.toBe('USD');
+    const wager = (await projected(userId)).rows.find((row) => row.type === 'wager');
+    expect(wager).toMatchObject({ currency: 'JPY' });
+    // 5,000 USD is 750,000 JPY.
+    await expect(bet(userId, '5000')).rejects.toMatchObject(refused);
   });
 });

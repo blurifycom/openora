@@ -35,7 +35,6 @@ import {
   REALTIME_TRANSPORT,
   RG_EXCLUSION_READER,
   RG_LIMIT_LEDGER,
-  RG_LIMITS_PUBLISHER,
   RG_STANDING_READER,
   UuidSchema,
   defaultResponsibleGamingConfig,
@@ -89,7 +88,8 @@ function backfillRgLimitsAtBoot(c: TypedContainer<CoreTokenCatalog>) {
   const db = c.get(DRIZZLE).db;
   const abort = new AbortController();
   c.onDispose(() => abort.abort());
-  void retryUntilDone(() => backfillRgLimits(db, ledger, { signal: abort.signal }), {
+  const events = c.get(EVENT_BUS);
+  void retryUntilDone(() => backfillRgLimits(db, ledger, { signal: abort.signal, events }), {
     signal: abort.signal,
     onFailure: (err, retryInMs) =>
       logger.error({ err, retryInMs }, 'compliance: rg limits boot backfill failed, retrying'),
@@ -204,8 +204,6 @@ export default {
         rates: c.get(EXCHANGE_RATE_READER),
         limitsLedger: c.get(RG_LIMIT_LEDGER),
       }));
-    // For a writer outside compliance whose change moves a projected limit: a player's currency.
-    ctx.provideSealed(RG_LIMITS_PUBLISHER, (c) => rgService(c).limitsPublisher);
     ctx.provide(RG_EXCLUSION_READER, (c) => ({
       getExclusionState: async (userId, tx) => {
         const { selfExclusion, coolingOff } = await rgService(c).getActiveExclusions(userId, tx);
@@ -386,6 +384,15 @@ export default {
       queue: RG_MONITOR_QUEUE,
       schema: RgMonitorJobSchema,
       handler: async () => {
+        // First and on its own: a failing step below must not starve the projection heal, and a
+        // failing heal must not skip the expiries.
+        if (healRecentLimitsRef) {
+          try {
+            await healRecentLimitsRef();
+          } catch (err) {
+            logger.error({ err }, 'compliance: rg limits heal failed');
+          }
+        }
         if (rgRef) {
           await rgRef.expireLapsedCoolingOffs();
         }
@@ -394,9 +401,6 @@ export default {
         }
         if (monitorRef) {
           await monitorRef.sweep();
-        }
-        if (healRecentLimitsRef) {
-          await healRecentLimitsRef();
         }
       },
     });
@@ -452,6 +456,7 @@ export default {
       healRecentLimitsRef = () =>
         backfillRgLimits(c.get(DRIZZLE).db, c.get(RG_LIMIT_LEDGER), {
           changedSince: new Date(Date.now() - RECENT_LIMIT_CHANGE_MS),
+          events: c.get(EVENT_BUS),
         });
       const kyc = kycVerification(c);
       const compliance = makeComplianceService(c);

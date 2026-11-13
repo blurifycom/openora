@@ -133,10 +133,16 @@ export type RgLimitLedgerPort = {
    */
   write(snapshot: RgLimitsSnapshot, tx: unknown): Promise<void>;
   /**
-   * The repair path (outbox redelivery, backfill): keeps the newest version, writes only the users
-   * that are missing, older, or at the same version but different, and returns how many it wrote.
+   * The outbox replay: keeps the newest version per user, writes only the users whose projection
+   * is missing or strictly older, and returns how many it wrote. Never overwrites an equal version.
    */
   reconcile(snapshots: readonly RgLimitsSnapshot[]): Promise<number>;
+  /**
+   * Unlocked read for the backfill: the users whose projection does not match `snapshots` -
+   * missing, at another version, or at the same version with other rows. Compliance repairs each
+   * one through `write` under a fresh version, never by an equal-version overwrite.
+   */
+  drifted(snapshots: readonly RgLimitsSnapshot[]): Promise<string[]>;
   /**
    * Spend counted against one money limit since `from`, converted into `limitCurrency`, from the
    * wallet ledger. Throws `RgRateUnavailableError` when a source currency has no rate.
@@ -153,15 +159,3 @@ export type RgLimitLedgerPort = {
 
 export const RG_LIMIT_LEDGER: SealedToken<RgLimitLedgerPort> =
   createSealedToken<RgLimitLedgerPort>('RG_LIMIT_LEDGER');
-
-/**
- * Re-projects one user's limits, in the caller's transaction. Bound by compliance, for a writer
- * outside it whose change moves a projected value: a player's currency, which an unresolved
- * limit is denominated in.
- */
-export type RgLimitsPublisherPort = {
-  publish(tx: unknown, userId: string): Promise<void>;
-};
-
-export const RG_LIMITS_PUBLISHER: SealedToken<RgLimitsPublisherPort> =
-  createSealedToken<RgLimitsPublisherPort>('RG_LIMITS_PUBLISHER');

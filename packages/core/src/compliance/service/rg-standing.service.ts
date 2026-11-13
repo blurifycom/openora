@@ -9,7 +9,7 @@ import {
   type User,
 } from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
-import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { LOSS_LEGS, wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
   rgExclusion,
   rgFlag,
@@ -17,7 +17,7 @@ import {
   type RgExclusion,
   type UserLimit,
 } from '../schema/index.js';
-import { LOSS_LEGS, pendingChangeStatus } from './rg-eval.js';
+import { pendingChangeStatus } from './rg-eval.js';
 
 export type RgMoneyMetric = keyof NonNullable<RgStandingWindow['totals']>;
 
@@ -150,8 +150,7 @@ export async function readActiveFlags(
 }
 
 /**
- * Resolves a limit stored without a currency to the player's own currency for the reading only:
- * the write that fills it in belongs to the limit's own lock (`resolveLimitCurrencyInTx`).
+ * Reads a limit stored without a currency in the player's own currency, for the reading only.
  */
 export async function readLimits(
   tx: DrizzleTx,

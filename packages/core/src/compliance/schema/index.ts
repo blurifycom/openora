@@ -80,6 +80,8 @@ export const userLimit = pgTable(
     ),
     index('user_limit_user_id_idx').on(t.userId),
     index('user_limit_pending_expires_at_idx').on(t.pendingExpiresAt),
+    // The rg-monitor heal reads the limits changed in its window.
+    index('user_limit_updated_at_idx').on(t.updatedAt),
   ],
 );
 

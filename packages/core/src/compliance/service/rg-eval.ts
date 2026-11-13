@@ -1,9 +1,6 @@
 import { RG_FLAG_THRESHOLD_PCT } from '@openora/core/contracts';
 
-// Pure, DB-free RG evaluation helpers. The period window and the play legs moved to where the
-// spend query now lives (contracts, wallet); re-exported for the compliance callers.
-export { periodWindow } from '@openora/core/contracts';
-export { WAGER_LEGS, LOSS_LEGS, type PlayLeg } from '@openora/core/wallet/schema';
+// Pure, DB-free RG evaluation helpers.
 
 export function thresholdPct(actual: number, limit: number): number {
   if (limit <= 0) {

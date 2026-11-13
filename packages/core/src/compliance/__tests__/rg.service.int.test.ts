@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { eq, sql } from 'drizzle-orm';
 import type {
   AuditWritePort,
@@ -14,7 +15,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
 import { ledgerRgLimits } from '@openora/core/wallet/seed';
 import { migrate } from '../migrate.js';
-import { userLimit, rgExclusion } from '../schema/index.js';
+import { userLimit, rgExclusion, rgLimitVersion } from '../schema/index.js';
 import {
   RgService,
   ActiveExclusionError,
@@ -24,7 +25,7 @@ import {
   LimitRaiseNotAllowedError,
   LimitOrderingViolationError,
   isWeakening,
-  resolveLimitCurrency,
+  requireLimitCurrency,
   RgLimitCurrencyUnresolvedError,
   type LimitRow,
   type ResolvedLimitRow,
@@ -796,10 +797,11 @@ describe('isWeakening across currencies', () => {
   });
 });
 
-describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
-  async function insertPlayer(userId: string, currency: string) {
-    await db.drizzle.db.insert(player).values({ userId, currency });
-  }
+describe('legacy null-currency limits (real PG)', () => {
+  const pinMigration = readFileSync(
+    new URL('../drizzle/migrations/0017_pin_legacy_limit_currency.sql', import.meta.url),
+    'utf8',
+  );
 
   async function insertNullCurrencyLimit(userId: string, overrides: Partial<LimitRow> = {}) {
     const [row] = await db.drizzle.db
@@ -811,97 +813,55 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
         amount: '100',
         minutes: null,
         currency: null,
+        updatedAt: new Date('2020-01-01T00:00:00Z'),
         ...overrides,
       })
       .returning();
     return row!;
   }
 
+  const reread = async (id: string) =>
+    (await db.drizzle.db.select().from(userLimit).where(eq(userLimit.id, id)))[0];
+
   afterEach(async () => {
     await db.drizzle.db.execute(sql`TRUNCATE ${player} RESTART IDENTITY CASCADE`);
   });
 
-  it('resolves a null-currency row to the player currency on first touch, and persists it', async () => {
+  it("pins a money row to the player's currency and keeps its updated_at", async () => {
     const userId = randomUUID();
-    await insertPlayer(userId, 'JPY');
+    await db.drizzle.db.insert(player).values({ userId, currency: 'JPY' });
     const row = await insertNullCurrencyLimit(userId);
 
-    const resolved = await resolveLimitCurrency(db.drizzle, row);
-    expect(resolved.currency).toBe('JPY');
+    await db.drizzle.db.execute(sql.raw(pinMigration));
 
-    const [persisted] = await db.drizzle.db
-      .select()
-      .from(userLimit)
-      .where(eq(userLimit.id, row.id));
-    expect(persisted?.currency).toBe('JPY');
+    expect(await reread(row.id)).toMatchObject({ currency: 'JPY', updatedAt: row.updatedAt });
   });
 
-  it('resolves exactly once - a second touch does not re-resolve from the player', async () => {
+  it('leaves a row without a player, or whose slot already holds that currency, unpinned', async () => {
+    const orphan = await insertNullCurrencyLimit(randomUUID());
     const userId = randomUUID();
-    await insertPlayer(userId, 'JPY');
-    const row = await insertNullCurrencyLimit(userId);
+    await db.drizzle.db.insert(player).values({ userId, currency: 'EUR' });
+    await insertNullCurrencyLimit(userId, { currency: 'EUR' });
+    const twin = await insertNullCurrencyLimit(userId);
 
-    const first = await resolveLimitCurrency(db.drizzle, row);
-    expect(first.currency).toBe('JPY');
+    await db.drizzle.db.execute(sql.raw(pinMigration));
 
-    await db.drizzle.db.update(player).set({ currency: 'EUR' }).where(eq(player.userId, userId));
-    const [reread] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.id, row.id));
-    const second = await resolveLimitCurrency(db.drizzle, reread!);
-    expect(second.currency).toBe('JPY');
+    expect((await reread(orphan.id))?.currency).toBeNull();
+    expect((await reread(twin.id))?.currency).toBeNull();
+    expect(() => requireLimitCurrency(orphan)).toThrow(RgLimitCurrencyUnresolvedError);
   });
 
-  it('fails closed when the player currency cannot be determined, and leaves the row null', async () => {
+  it('gives every user with a limit a version row, so the full backfill reaches them', async () => {
     const userId = randomUUID();
-    const row = await insertNullCurrencyLimit(userId);
+    await insertNullCurrencyLimit(userId, { currency: 'EUR' });
 
-    await expect(resolveLimitCurrency(db.drizzle, row)).rejects.toThrow(
-      RgLimitCurrencyUnresolvedError,
-    );
+    await db.drizzle.db.execute(sql.raw(pinMigration));
 
-    const [persisted] = await db.drizzle.db
+    const [version] = await db.drizzle.db
       .select()
-      .from(userLimit)
-      .where(eq(userLimit.id, row.id));
-    expect(persisted?.currency).toBeNull();
-  });
-
-  it('resolves two concurrent touches of the same row consistently, never a split brain', async () => {
-    const userId = randomUUID();
-    await insertPlayer(userId, 'GBP');
-    const row = await insertNullCurrencyLimit(userId);
-
-    const [a, b] = await Promise.all([
-      resolveLimitCurrency(db.drizzle, row),
-      resolveLimitCurrency(db.drizzle, row),
-    ]);
-    expect(a.currency).toBe('GBP');
-    expect(b.currency).toBe('GBP');
-
-    const [persisted] = await db.drizzle.db
-      .select()
-      .from(userLimit)
-      .where(eq(userLimit.id, row.id));
-    expect(persisted?.currency).toBe('GBP');
-  });
-
-  it('leaves a session-type row (already carrying the sentinel) unaffected', async () => {
-    const userId = randomUUID();
-    const row = await insertNullCurrencyLimit(userId, {
-      type: 'session',
-      period: 'session',
-      amount: null,
-      minutes: 60,
-      currency: 'SESSION',
-    });
-
-    const resolved = await resolveLimitCurrency(db.drizzle, row);
-    expect(resolved.currency).toBe('SESSION');
-
-    const [persisted] = await db.drizzle.db
-      .select()
-      .from(userLimit)
-      .where(eq(userLimit.id, row.id));
-    expect(persisted?.currency).toBe('SESSION');
+      .from(rgLimitVersion)
+      .where(eq(rgLimitVersion.userId, userId));
+    expect(version?.version).toBe(0);
   });
 });
 

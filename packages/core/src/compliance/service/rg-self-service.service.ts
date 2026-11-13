@@ -25,7 +25,7 @@ import type {
   ResponsibleGamingConfig,
   User,
 } from '@openora/core/contracts';
-import { MONEY_SCALE } from '@openora/core/contracts';
+import { MONEY_SCALE, RgRateUnavailableError, periodWindow } from '@openora/core/contracts';
 import { userLimit } from '../schema/index.js';
 import { LimitNotFoundError, LimitOwnershipError } from './compliance.service.js';
 import {
@@ -35,15 +35,14 @@ import {
   isWeakening,
   toDbCurrency,
   toWireCurrency,
-  resolveLimitCurrency,
-  resolveLimitCurrencyInTx,
+  requireLimitCurrency,
   writeLimitRow,
   assertLimitOrdering,
   RgLimitCurrencyUnresolvedError,
   type LimitRow,
 } from './rg.service.js';
-import { RgMonitoringService, RgRateUnavailableError } from './rg-monitoring.service.js';
-import { periodWindow, pendingChangeStatus, thresholdPct } from './rg-eval.js';
+import { RgMonitoringService } from './rg-monitoring.service.js';
+import { pendingChangeStatus, thresholdPct } from './rg-eval.js';
 import type {
   LimitView,
   RgExclusion,
@@ -159,7 +158,7 @@ export class RgSelfServiceService {
           )
           .limit(1);
 
-        const resolvedExisting = existing && (await resolveLimitCurrencyInTx(tx, existing));
+        const resolvedExisting = existing && requireLimitCurrency(existing);
         if (
           existing &&
           resolvedExisting &&
@@ -251,7 +250,7 @@ export class RgSelfServiceService {
     const outcome = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
         const reread = await this.reread(tx, limitId, userId);
-        const current = await resolveLimitCurrencyInTx(tx, reread);
+        const current = requireLimitCurrency(reread);
         const now = new Date();
         const status = pendingChangeStatus(current, now);
 
@@ -662,7 +661,7 @@ export class RgSelfServiceService {
     let used: string | null = null;
     if (isMoneyLimit) {
       try {
-        const resolved = await resolveLimitCurrency(this.drizzle, row);
+        const resolved = requireLimitCurrency(row);
         resolvedCurrency = resolved.currency;
         used = await this.monitoring.spendFor(
           this.drizzle.db,

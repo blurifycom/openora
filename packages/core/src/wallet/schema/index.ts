@@ -799,7 +799,7 @@ export const ledgerPlayEligibility = pgTable('ledger_play_eligibility', {
 // through RG_LIMIT_LEDGER in the transaction that changes a limit, replays it with the
 // `compliance.rg_limits.changed` event and heals it with its boot backfill (ADR-0055). The gate
 // reads these rows, never `user_limit`. One row per limit, keyed by the compliance limit id.
-// `currency` is null when neither the limit nor the player had one, which the gate refuses.
+// `currency` is null when the limit has none (or fails the snapshot contract): the gate refuses.
 export const ledgerUserLimit = pgTable(
   'ledger_user_limit',
   {

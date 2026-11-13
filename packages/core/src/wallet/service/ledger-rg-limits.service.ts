@@ -25,7 +25,7 @@ import {
   type RgLimitsSnapshot,
   type User,
 } from '@openora/core/contracts';
-import { and, asc, desc, eq, gte, inArray, lte, notInArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, lte, notInArray, sql } from 'drizzle-orm';
 import {
   LOSS_LEGS,
   WAGER_LEGS,
@@ -250,19 +250,26 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
     await replaceRows(db, parsed.userId, rowsOf(parsed));
   }
 
-  async reconcile(snapshots: readonly RgLimitsSnapshot[]): Promise<number> {
+  /** The newest valid snapshot per user; a snapshot the contract rejects is logged and skipped. */
+  private newestPerUser(snapshots: readonly RgLimitsSnapshot[]): Map<User['id'], RgLimitsSnapshot> {
     const newest = new Map<User['id'], RgLimitsSnapshot>();
-    for (const snapshot of snapshots.map((s) => RgLimitsSnapshotSchema.parse(s))) {
+    for (const candidate of snapshots) {
+      const parsed = RgLimitsSnapshotSchema.safeParse(candidate);
+      if (!parsed.success) {
+        log.error({ issues: parsed.error.issues }, 'invalid rg limits snapshot skipped');
+        continue;
+      }
+      const snapshot = parsed.data;
       if ((newest.get(snapshot.userId)?.version ?? -1) < snapshot.version) {
         newest.set(snapshot.userId, snapshot);
       }
     }
-    if (newest.size === 0) {
-      return 0;
-    }
+    return newest;
+  }
+
+  /** Unlocked reads of the held versions and rows of `userIds`. */
+  private async held(userIds: User['id'][]) {
     const db = this.drizzle.db;
-    const userIds = [...newest.keys()];
-    // Unlocked: a user whose projection already matches is never locked.
     const [versions, rows] = await Promise.all([
       db
         .select()
@@ -270,44 +277,50 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
         .where(inArray(ledgerUserLimitVersion.userId, userIds)),
       db.select().from(ledgerUserLimit).where(inArray(ledgerUserLimit.userId, userIds)),
     ]);
-    const versionOf = new Map(versions.map((row) => [row.userId, row.version]));
     const rowsOfUser = new Map<User['id'], LimitRow[]>();
     for (const row of rows) {
       rowsOfUser.set(row.userId, [...(rowsOfUser.get(row.userId) ?? []), row]);
     }
-    const isStale = (snapshot: RgLimitsSnapshot, version: number | undefined, held: LimitRow[]) =>
-      version === undefined ||
-      version < snapshot.version ||
-      (version === snapshot.version && !sameRows(held, rowsOf(snapshot)));
-    const stale = [...newest.values()].filter((snapshot) =>
-      isStale(snapshot, versionOf.get(snapshot.userId), rowsOfUser.get(snapshot.userId) ?? []),
+    return {
+      versionOf: new Map(versions.map((row) => [row.userId, row.version])),
+      rowsOf: (userId: User['id']) => rowsOfUser.get(userId) ?? [],
+    };
+  }
+
+  async reconcile(snapshots: readonly RgLimitsSnapshot[]): Promise<number> {
+    const newest = this.newestPerUser(snapshots);
+    if (newest.size === 0) {
+      return 0;
+    }
+    // Unlocked: a user already at or past the snapshot's version is never locked. Only a strictly
+    // newer version is written; an equal one may be a late delivery of rows a repair replaced.
+    const { versionOf } = await this.held([...newest.keys()]);
+    const newer = [...newest.values()].filter(
+      (snapshot) => (versionOf.get(snapshot.userId) ?? -1) < snapshot.version,
     );
 
     let written = 0;
-    for (const snapshot of stale) {
-      const wrote = await db.transaction(async (tx) => {
+    for (const snapshot of newer) {
+      const wrote = await this.drizzle.db.transaction(async (tx) => {
         const inserted = await tx
           .insert(ledgerUserLimitVersion)
           .values({ userId: snapshot.userId, version: snapshot.version })
           .onConflictDoNothing()
           .returning({ userId: ledgerUserLimitVersion.userId });
         if (inserted.length === 0) {
-          const [held] = await tx
-            .select({ version: ledgerUserLimitVersion.version })
-            .from(ledgerUserLimitVersion)
-            .where(eq(ledgerUserLimitVersion.userId, snapshot.userId))
-            .for('update');
-          const heldRows = await tx
-            .select()
-            .from(ledgerUserLimit)
-            .where(eq(ledgerUserLimit.userId, snapshot.userId));
-          if (!isStale(snapshot, held?.version, heldRows)) {
-            return false;
-          }
-          await tx
+          const updated = await tx
             .update(ledgerUserLimitVersion)
             .set({ version: snapshot.version, updatedAt: sql`now()` })
-            .where(eq(ledgerUserLimitVersion.userId, snapshot.userId));
+            .where(
+              and(
+                eq(ledgerUserLimitVersion.userId, snapshot.userId),
+                lt(ledgerUserLimitVersion.version, snapshot.version),
+              ),
+            )
+            .returning({ userId: ledgerUserLimitVersion.userId });
+          if (updated.length === 0) {
+            return false;
+          }
         }
         await replaceRows(tx, snapshot.userId, rowsOf(snapshot));
         return true;
@@ -315,6 +328,21 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
       written += wrote ? 1 : 0;
     }
     return written;
+  }
+
+  async drifted(snapshots: readonly RgLimitsSnapshot[]): Promise<User['id'][]> {
+    const newest = this.newestPerUser(snapshots);
+    if (newest.size === 0) {
+      return [];
+    }
+    const { versionOf, rowsOf: heldRowsOf } = await this.held([...newest.keys()]);
+    return [...newest.values()]
+      .filter(
+        (snapshot) =>
+          (versionOf.get(snapshot.userId) ?? 0) !== snapshot.version ||
+          !sameRows(heldRowsOf(snapshot.userId), rowsOf(snapshot)),
+      )
+      .map((snapshot) => snapshot.userId);
   }
 
   async spendFor(

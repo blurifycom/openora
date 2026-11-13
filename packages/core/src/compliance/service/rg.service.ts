@@ -28,7 +28,6 @@ import type {
 } from '@openora/core/contracts';
 import { RgLimitsPublisher } from './rg-limits-publisher.service.js';
 import { userLimit, rgExclusion, SESSION_LIMIT_CURRENCY } from '../schema/index.js';
-import { player } from '@openora/core/pam/schema/profile';
 import { LimitNotFoundError } from './compliance.service.js';
 import type {
   Limit,
@@ -186,7 +185,7 @@ export async function assertLimitOrdering(
     if (!isOrderingPeriod(period) || period === changedPeriod || row.amount === null) {
       continue;
     }
-    const resolved = await resolveLimitCurrencyInTx(tx, row);
+    const resolved = requireLimitCurrency(row);
     const own = { amount: resolved.amount as string, currency: resolved.currency };
     const compare =
       resolved.currency === changedValue.currency
@@ -249,64 +248,21 @@ const SWEEP_CONCURRENCY = 10;
 
 export class RgLimitCurrencyUnresolvedError extends Error {
   constructor(readonly userId: User['id']) {
-    super(
-      `Cannot resolve a currency for this responsible-gambling limit: no player record found for ${userId}`,
-    );
+    super(`This responsible-gambling limit of ${userId} has no currency`);
     this.name = 'RgLimitCurrencyUnresolvedError';
   }
 }
 
 /**
- * Resolves and persists a pre-existing row's null currency to the player's own
- * `player.currency`. Caller must already hold the transaction and advisory lock for
- * this limit's slot (`limitSlotKey`).
+ * Narrows a money limit to its currency. Every writer sets one and compliance migration 0017
+ * pinned the legacy rows to the player's currency; a row still without one (its player record
+ * is gone) cannot be compared and throws `RgLimitCurrencyUnresolvedError`.
  */
-export async function resolveLimitCurrencyInTx(tx: Tx, row: LimitRow): Promise<ResolvedLimitRow> {
-  if (row.currency !== null) {
-    return row as ResolvedLimitRow;
-  }
-  const [current] = await tx.select().from(userLimit).where(eq(userLimit.id, row.id));
-  if (!current) {
-    throw new LimitNotFoundError(row.id);
-  }
-  if (current.currency !== null) {
-    return current as ResolvedLimitRow;
-  }
-  const [playerRow] = await tx
-    .select({ currency: player.currency })
-    .from(player)
-    .where(eq(player.userId, row.userId));
-  if (!playerRow) {
+export function requireLimitCurrency(row: LimitRow): ResolvedLimitRow {
+  if (row.currency === null) {
     throw new RgLimitCurrencyUnresolvedError(row.userId);
   }
-  // The limit itself did not change, so neither does its `updatedAt`, which orders the reference
-  // currency; the ledger projected this row in the player's currency already.
-  const [updated] = await tx
-    .update(userLimit)
-    .set({ currency: playerRow.currency, updatedAt: current.updatedAt })
-    .where(eq(userLimit.id, row.id))
-    .returning();
-  return { ...(updated ?? current), currency: playerRow.currency };
-}
-
-/**
- * Same resolution, for a caller that holds no transaction: opens its own transaction and
- * takes the lock itself. Never call from inside an already-open transaction on the same
- * slot - use `resolveLimitCurrencyInTx` there instead, or a second connection taking the
- * same advisory lock self-deadlocks.
- */
-export async function resolveLimitCurrency(
-  drizzle: DrizzleService,
-  row: LimitRow,
-): Promise<ResolvedLimitRow> {
-  if (row.currency !== null) {
-    return row as ResolvedLimitRow;
-  }
-  return drizzle.db.transaction((tx) =>
-    withAdvisoryXactLock(tx, limitSlotKey(row.userId, row.type, row.period), () =>
-      resolveLimitCurrencyInTx(tx, row),
-    ),
-  );
+  return { ...row, currency: row.currency };
 }
 
 /**
@@ -440,7 +396,7 @@ export class RgService {
             ),
           )
           .limit(1);
-        const resolvedExisting = existing && (await resolveLimitCurrencyInTx(tx, existing));
+        const resolvedExisting = existing && requireLimitCurrency(existing);
         if (resolvedExisting && (await isWeakening(resolvedExisting, input, this.rates, tx))) {
           throw new LimitRaiseNotAllowedError(resolvedExisting, input);
         }

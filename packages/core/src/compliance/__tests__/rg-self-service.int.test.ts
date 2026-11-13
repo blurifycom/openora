@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { and, eq, sql } from 'drizzle-orm';
 import type {
   ExchangeRateReader,
@@ -34,6 +35,16 @@ import {
 import { LimitOwnershipError } from '../service/compliance.service.js';
 
 let db: TestDb;
+
+const pinLegacyCurrencies = () =>
+  db.drizzle.db.execute(
+    sql.raw(
+      readFileSync(
+        new URL('../drizzle/migrations/0017_pin_legacy_limit_currency.sql', import.meta.url),
+        'utf8',
+      ),
+    ),
+  );
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -737,28 +748,14 @@ describe('RgSelfServiceService exclusions (real PG)', () => {
   });
 });
 
-describe('RgSelfServiceService lazy currency resolution (real PG)', () => {
-  it('resolves a null-currency row to the player currency on first read, and persists it', async () => {
-    const { svc } = makeService();
-    const userId = randomUUID();
-    await seedPlayer(userId, 'JPY');
-    const seeded = await seedUnresolvedLimit(userId, '100000');
-    expect(seeded.currency).toBeNull();
-
-    const [view] = await svc.getLimits(userId);
-
-    expect(view?.currency).toBe('JPY');
-    const persisted = await limitRow(userId);
-    expect(persisted.currency).toBe('JPY');
-  });
-
-  it('resolves exactly once: a second read does not re-resolve against a changed player currency', async () => {
+describe('RgSelfServiceService legacy null-currency limits (real PG)', () => {
+  it("reads a legacy row in the currency the migration pinned, not the player's current one", async () => {
     const { svc } = makeService();
     const userId = randomUUID();
     await seedPlayer(userId, 'JPY');
     await seedUnresolvedLimit(userId, '100000');
+    await pinLegacyCurrencies();
 
-    await svc.getLimits(userId);
     await db.drizzle.db.update(player).set({ currency: 'EUR' }).where(eq(player.userId, userId));
     const [view] = await svc.getLimits(userId);
 
@@ -778,19 +775,6 @@ describe('RgSelfServiceService lazy currency resolution (real PG)', () => {
     expect(view?.remaining).toBeNull();
     expect(view?.pct).toBeNull();
     expect((await limitRow(userId)).currency).toBeNull();
-  });
-
-  it('resolves two concurrent reads of the same unresolved row to the same currency, no split-brain', async () => {
-    const { svc } = makeService();
-    const userId = randomUUID();
-    await seedPlayer(userId, 'GBP');
-    await seedUnresolvedLimit(userId, '100000');
-
-    const [viewsA, viewsB] = await Promise.all([svc.getLimits(userId), svc.getLimits(userId)]);
-
-    expect(viewsA[0]?.currency).toBe('GBP');
-    expect(viewsB[0]?.currency).toBe('GBP');
-    expect((await limitRow(userId)).currency).toBe('GBP');
   });
 
   it('never resolves or touches the player table for a session-type limit', async () => {

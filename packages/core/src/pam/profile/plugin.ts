@@ -7,7 +7,6 @@ import {
   AUDIT_WRITER,
   PLATFORM_CONFIG,
   RATE_LIMITER,
-  RG_LIMITS_PUBLISHER,
   USER_COMMANDS,
   resolveDisplayCurrencies,
   resolveMinPlayerAge,
@@ -26,19 +25,11 @@ const makeProfileService = (c: TypedContainer<CoreTokenCatalog>) =>
     supportedDisplayCurrencies: resolveDisplayCurrencies(c.get(PLATFORM_CONFIG).displayCurrencies),
     minPlayerAge: resolveMinPlayerAge(c.get(PLATFORM_CONFIG)),
     reservedUsernames: c.get(PLATFORM_CONFIG).reservedUsernames,
-    rgLimitsPublisher: c.has(RG_LIMITS_PUBLISHER) ? c.get(RG_LIMITS_PUBLISHER) : null,
   });
 
 export default {
   id: 'profile',
   dependsOn: ['wallet', 'exchange-rate', 'audit', 'identity'],
-  controlPorts: [
-    {
-      port: RG_LIMITS_PUBLISHER,
-      without: "a player's currency change leaves an unresolved limit projected in the old one",
-      boundBy: 'compliance',
-    },
-  ],
   register(ctx) {
     ctx.provide(PLAYER_PROVISIONING, makeProfileService);
     ctx.routers.add('profile', (c) => createProfileRouter(makeProfileService(c)));

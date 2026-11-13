@@ -10,6 +10,7 @@ import {
 import { and, eq, or, gt, gte, lte, isNull, inArray, asc, desc, sql, type SQL } from 'drizzle-orm';
 import {
   RgRateUnavailableError,
+  periodWindow,
   type AdminUserDirectory,
   type LimitType,
   type LimitPeriod,
@@ -17,15 +18,12 @@ import {
   type User,
 } from '@openora/core/contracts';
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
-import { resolveLimitCurrency, RgLimitCurrencyUnresolvedError } from './rg.service.js';
+import { requireLimitCurrency, RgLimitCurrencyUnresolvedError } from './rg.service.js';
 import { session } from '@openora/core/pam/schema/identity';
 import type { RgFlagListItem, ListRgFlagsInput, RgFlagDetail } from '../contract/index.js';
-import { periodWindow, isAtThreshold, thresholdPct } from './rg-eval.js';
+import { isAtThreshold, thresholdPct } from './rg-eval.js';
 
 const logger = createLogger('compliance-rg-monitoring');
-
-// Moved to contracts with the spend query; re-exported for the compliance callers.
-export { RgRateUnavailableError };
 
 /** Every sportsbook money leg moves loss-limit spend, an admin debt collect included, so each one re-evaluates the thresholds. */
 export const SPORTSBOOK_RG_EVAL_TOPICS = [
@@ -103,7 +101,7 @@ export class RgMonitoringService {
       const { from } = periodWindow(limit.period as LimitPeriod, now);
       let actualAmount: string;
       try {
-        const limitCurrency = (await resolveLimitCurrency(this.drizzle, limit)).currency;
+        const limitCurrency = requireLimitCurrency(limit).currency;
         actualAmount = await this.spendFor(
           this.drizzle.db,
           userId,

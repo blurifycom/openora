@@ -518,12 +518,10 @@ export type {
   RgLimitDecision,
   RgLimitExceededData,
   RgLimitLedgerPort,
-  RgLimitsPublisherPort,
 } from './rg-limits.js';
 export {
   RG_LIMITS,
   RG_LIMIT_LEDGER,
-  RG_LIMITS_PUBLISHER,
   RgLimitExceededError,
   RgRateUnavailableError,
   limitSlotKey,

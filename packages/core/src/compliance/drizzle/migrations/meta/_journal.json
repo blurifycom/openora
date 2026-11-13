@@ -113,6 +113,20 @@
       "when": 1794597577986,
       "tag": "0015_purple_captain_flint",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794599978121,
+      "tag": "0016_long_nitro",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794600000370,
+      "tag": "0017_pin_legacy_limit_currency",
+      "breakpoints": true
     }
   ]
 }
