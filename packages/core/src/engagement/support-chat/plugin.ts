@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import {
+  AUDIT_READER,
   AUDIT_WRITER,
   CACHE,
   IDENTITY_READER,
@@ -193,6 +194,7 @@ export default {
             drizzle,
             cache: c.get(CACHE),
             reader: c.get(SUPPORT_HISTORY_READER),
+            audit: c.get(AUDIT_READER),
           })
         : null;
       if (!history) {

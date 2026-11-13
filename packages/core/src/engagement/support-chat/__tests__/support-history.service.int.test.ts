@@ -9,6 +9,7 @@ import {
 import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
+import { AuditReaderService, enqueueAuditInTransaction } from '@openora/core/audit/server';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeCache } from '../../../testing/mock.js';
@@ -51,6 +52,7 @@ beforeEach(() => {
 const service = (reader: Partial<SupportHistoryReader>) =>
   new SupportHistoryService({
     drizzle: db.drizzle,
+    audit: new AuditReaderService(db.drizzle, db.drizzle),
     cache: makeCache(),
     reader: { listTickets: async () => [TICKET], listChats: async () => [], ...reader },
   });
@@ -60,12 +62,45 @@ async function linkedPlayer() {
   await db.drizzle.db
     .insert(supportChatCustomer)
     .values({ playerId: player.id, providerCustomerId: `customer-${randomUUID()}` });
-  return { userId: account.id };
+  return { userId: account.id, playerId: player.id };
 }
 
 const warned = () => log.warn.mock.calls.map(([fields]) => fields as unknown);
 
 describe('SupportHistoryService logging (real PG)', () => {
+  it('serves a rate-limited history from the cache instead of asking the vendor again', async () => {
+    const p = await linkedPlayer();
+    const listTickets = vi
+      .fn<SupportHistoryReader['listTickets']>()
+      .mockRejectedValueOnce(new SupportHistoryProviderError('rate_limited'))
+      .mockResolvedValue([TICKET]);
+    const history = service({ listTickets });
+
+    expect((await history.getHistory(p.userId, false)).tickets).toMatchObject({ complete: false });
+    expect((await history.getHistory(p.userId, false)).tickets).toMatchObject({ complete: false });
+    expect(listTickets).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads a history with an email gap again while a change of it is still queued for the chain', async () => {
+    const p = await linkedPlayer();
+    await db.drizzle.db.transaction((tx) =>
+      enqueueAuditInTransaction(tx, {
+        actorType: 'system',
+        action: 'identity.email.changed',
+        resourceType: 'player',
+        resourceId: p.playerId,
+        before: { email: `old-${randomUUID()}@example.test` },
+        after: { email: `not-current-${randomUUID()}@example.test` },
+      }),
+    );
+    const listChats = vi.fn<SupportHistoryReader['listChats']>().mockResolvedValue([]);
+    const history = service({ listChats });
+
+    expect((await history.getHistory(p.userId, false)).tickets).toMatchObject({ complete: false });
+    await history.getHistory(p.userId, false);
+    expect(listChats).toHaveBeenCalledTimes(2);
+  });
+
   it('logs a provider error reason with the user and section only', async () => {
     const p = await linkedPlayer();
     const history = await service({

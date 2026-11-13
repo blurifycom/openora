@@ -1,7 +1,8 @@
 import * as z from 'zod';
-import { auditOutbox, createLogger, type DrizzleDb } from '@openora/core/server';
-import { and, asc, inArray, sql } from 'drizzle-orm';
+import { auditOutbox, createLogger, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
+import { asc, inArray, sql } from 'drizzle-orm';
 import { appendAuditEntries, OutboxEntrySchema, type ShippableEntry } from './audit.service.js';
+import { CHAIN_SPLIT_SQL } from '../schema/index.js';
 
 const BATCH_SIZE = 1_000;
 const SHIPPER_LOCK_KEY = 'audit_shipper';
@@ -14,19 +15,82 @@ type Rejection = { outboxId: number; eventId: string; error: string };
 
 const CHAINED_WITH_OTHER_CONTENT = 'event_id already chained with different content';
 
+type Shippable = ShippableEntry & { outboxId: number; raw: string };
+
 /**
- * Moves one batch of `audit_outbox` rows into the hash chain, oldest first, in one transaction
- * that holds the shipper lock, so one shipper per database ships at a time; returns null when
- * another holds it and `wait` is false. A row the chain cannot take as it is moves to
- * `audit_outbox_rejected`, copied unchanged with the reason, and the rest ship: an entry that fails
- * its schema, or one whose event id the chain already holds with other content (a forged or
- * colliding row), which is never dropped as a duplicate. The rows are deleted in the same
- * transaction as the append, so a crash ships the whole batch again and the append skips every
- * `event_id` the log already has.
+ * Appends `shippable` to the chain `txn` reaches and returns the rows the chain holds with other
+ * content. Each entry is compared as the outbox's own jsonb text, never a JS round trip of it.
+ */
+async function chain(txn: DrizzleTx, shippable: Shippable[]): Promise<Rejection[]> {
+  await appendAuditEntries(txn, shippable);
+  if (shippable.length === 0) {
+    return [];
+  }
+  const rows = shippable.map(({ outboxId, eventId, raw }) => ({ outboxId, eventId, entry: raw }));
+  const { rows: unmatched } = await txn.execute<{ outboxId: string; eventId: string }>(sql`
+    SELECT r."outboxId", r."eventId"
+      FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS r("outboxId" bigint, "eventId" uuid, entry text)
+     WHERE NOT audit_outbox_entry_chained(r."eventId", r.entry::jsonb)`);
+  return unmatched.map(({ outboxId, eventId }) => ({
+    outboxId: Number(outboxId),
+    eventId,
+    error: CHAINED_WITH_OTHER_CONTENT,
+  }));
+}
+
+// True once split migrate has moved this database's chain out, so shipping into it would build a
+// second chain the readers never see.
+async function chainMovedOut(tx: DrizzleTx): Promise<boolean> {
+  const { rows } = await tx.execute<{ split: boolean }>(sql.raw(CHAIN_SPLIT_SQL));
+  return rows[0]?.split ?? false;
+}
+
+// A chain started empty while the main database still holds the old one would fork the history:
+// the old rows are copied over first (the audit-copy runbook), and only then may the shipper append.
+async function refuseChainBeforeCopy(main: DrizzleTx, chainTx: DrizzleTx): Promise<void> {
+  const { rows: chain } = await chainTx.execute<{ empty: boolean }>(
+    sql`SELECT NOT EXISTS (SELECT 1 FROM audit_log) AS empty`,
+  );
+  if (!chain[0]?.empty) {
+    return;
+  }
+  const { rows: legacy } = await main.execute<{ present: boolean }>(
+    sql`SELECT to_regclass('public.audit_log') IS NOT NULL AS present`,
+  );
+  if (!legacy[0]?.present) {
+    return;
+  }
+  const { rows: held } = await main.execute<{ held: boolean }>(
+    sql`SELECT EXISTS (SELECT 1 FROM audit_log) AS held`,
+  );
+  if (held[0]?.held) {
+    throw new Error(
+      'the audit database is empty while the main database still holds audit_log rows: copy the chain over before shipping',
+    );
+  }
+}
+
+/**
+ * Moves one batch of `audit_outbox` rows from `db` into the hash chain in `chainDb` (default `db`,
+ * the single-database layout), oldest first, in one transaction on `db` that holds the
+ * shipper lock, so one shipper per database ships at a time; returns null when another holds it
+ * and `wait` is false. A row the chain cannot take as it is moves to `audit_outbox_rejected`,
+ * copied unchanged with the reason, and the rest ship: an entry that fails its schema, or one
+ * whose event id the chain already holds with other content (a forged or colliding row), which is
+ * never dropped as a duplicate. The rows are deleted once the append has committed, in the same
+ * transaction when the chain shares the database and right after its own otherwise, so a crash
+ * ships the whole batch again and the append skips every `event_id` the log already has.
+ *
+ * With the chain in its own database, `db` must reach the main one as the shipper role
+ * (`AUDIT_SHIPPER_DRIZZLE`), the only role its outbox guard lets delete. Nothing checks that
+ * `chainDb` points at the chain's database; the split mark split `migrate` leaves on the main
+ * database is the guard: with `chainDb` left as `db` there, this throws instead of shipping. It
+ * also throws before the first append into an empty chain while the main database still holds the
+ * old one.
  */
 export async function shipAuditBatch(
   db: DrizzleDb,
-  { wait = false }: { wait?: boolean } = {},
+  { wait = false, chainDb = db }: { wait?: boolean; chainDb?: DrizzleDb } = {},
 ): Promise<number | null> {
   const result = await db.transaction(async (tx) => {
     const { rows } = await tx.execute<{ locked: boolean }>(
@@ -38,16 +102,26 @@ export async function shipAuditBatch(
       return null;
     }
     const batch = await tx
-      .select({ id: auditOutbox.id, eventId: auditOutbox.eventId, entry: auditOutbox.entry })
+      .select({
+        id: auditOutbox.id,
+        eventId: auditOutbox.eventId,
+        entry: auditOutbox.entry,
+        raw: sql<string>`${auditOutbox.entry}::text`,
+      })
       .from(auditOutbox)
       .orderBy(asc(auditOutbox.id))
       .limit(BATCH_SIZE);
-    const shippable: (ShippableEntry & { outboxId: number })[] = [];
+    const shippable: Shippable[] = [];
     const rejected: Rejection[] = [];
     for (const row of batch) {
       const parsed = OutboxEntrySchema.safeParse(row.entry);
       if (parsed.success) {
-        shippable.push({ outboxId: row.id, eventId: row.eventId, entry: parsed.data });
+        shippable.push({
+          outboxId: row.id,
+          eventId: row.eventId,
+          entry: parsed.data,
+          raw: row.raw,
+        });
       } else {
         rejected.push({
           outboxId: row.id,
@@ -56,23 +130,24 @@ export async function shipAuditBatch(
         });
       }
     }
-    await appendAuditEntries(tx, shippable);
     // What the delete guard checks: a row whose event id is chained with other content, already
     // or just now, is moved aside rather than deleted as shipped.
-    if (shippable.length > 0) {
-      const unmatched = await tx
-        .select({ outboxId: auditOutbox.id, eventId: auditOutbox.eventId })
-        .from(auditOutbox)
-        .where(
-          and(
-            inArray(
-              auditOutbox.id,
-              shippable.map(({ outboxId }) => outboxId),
-            ),
-            sql`NOT audit_outbox_entry_chained(${auditOutbox.eventId}, ${auditOutbox.entry})`,
-          ),
+    if (chainDb === db) {
+      if (batch.length > 0 && (await chainMovedOut(tx))) {
+        throw new Error(
+          'the audit chain of this database lives in a database of its own: ship with its chainDb (AUDIT_DRIZZLE) as the shipper role (AUDIT_SHIPPER_DRIZZLE)',
         );
-      rejected.push(...unmatched.map((row) => ({ ...row, error: CHAINED_WITH_OTHER_CONTENT })));
+      }
+      rejected.push(...(await chain(tx, shippable)));
+    } else {
+      rejected.push(
+        ...(await chainDb.transaction(async (chainTx) => {
+          if (shippable.length > 0) {
+            await refuseChainBeforeCopy(tx, chainTx);
+          }
+          return chain(chainTx, shippable);
+        })),
+      );
     }
     if (rejected.length > 0) {
       // Copied in SQL, so the entry the guard compares is the outbox's own jsonb, not a JS round
@@ -105,11 +180,12 @@ export async function shipAuditBatch(
 }
 
 /**
- * Ships everything queued in `db` before the call, waiting for a running shipper rather than
- * skipping. For tests and tools that read `audit_log` straight after a write.
+ * Ships everything queued in `db` before the call into the chain in `chainDb`, waiting for a
+ * running shipper rather than skipping. For tests and tools that read `audit_log` straight after a
+ * write.
  */
-export async function drainAuditOutbox(db: DrizzleDb): Promise<void> {
-  while ((await shipAuditBatch(db, { wait: true })) === BATCH_SIZE) {
+export async function drainAuditOutbox(db: DrizzleDb, chainDb: DrizzleDb = db): Promise<void> {
+  while ((await shipAuditBatch(db, { wait: true, chainDb })) === BATCH_SIZE) {
     // A full batch may have left more behind.
   }
 }
@@ -143,6 +219,8 @@ export async function auditOutboxBacklog(db: DrizzleDb): Promise<{
 }
 
 export type AuditShipperOptions = {
+  /** The database holding the chain; defaults to the one holding the outbox. */
+  chainDb?: DrizzleDb;
   /** Idle wait between polls, in ms. */
   intervalMs?: number;
   onError?: (err: unknown) => void;
@@ -204,7 +282,10 @@ export class AuditShipper {
   private async drain(generation: number): Promise<void> {
     const current = () => generation === this.generation;
     try {
-      while (current() && (await shipAuditBatch(this.db)) === BATCH_SIZE) {
+      while (
+        current() &&
+        (await shipAuditBatch(this.db, { chainDb: this.opts.chainDb ?? this.db })) === BATCH_SIZE
+      ) {
         // Keep going while batches come back full, so a backlog clears at append speed.
       }
       this.failures = 0;

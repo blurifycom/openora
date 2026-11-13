@@ -1,11 +1,33 @@
-import { createToken, type Token } from '@openora/core/contracts';
+import {
+  createSealedToken,
+  createToken,
+  type SealedToken,
+  type Token,
+} from '@openora/core/contracts';
 import type { Pool } from 'pg';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { createPool } from './drizzle.js';
+import { createPool, type PoolSizeEnv } from './drizzle.js';
 import { withReplicas } from 'drizzle-orm/pg-core';
 import { createLogger } from '../kernel/logger.js';
 
 export const DRIZZLE: Token<DrizzleService> = createToken('DRIZZLE');
+
+/**
+ * The database that holds the audit chain (`audit_log`). Only the audit module binds it: a pool of
+ * its own on `AUDIT_DATABASE_URL` when that is set, the `DRIZZLE` service itself otherwise. Sealed,
+ * so no overlay can point the chain somewhere else. `audit_outbox` always stays in `DRIZZLE`.
+ */
+export const AUDIT_DRIZZLE: SealedToken<DrizzleService> =
+  createSealedToken<DrizzleService>('AUDIT_DRIZZLE');
+
+/**
+ * The main database as the audit shipper reaches it to delete what it shipped from `audit_outbox`.
+ * With the chain in its own database, a pool of its own on `AUDIT_SHIPPER_DATABASE_URL`, the one
+ * role the outbox guard lets delete there; the `DRIZZLE` service itself otherwise. Sealed, like
+ * `AUDIT_DRIZZLE`.
+ */
+export const AUDIT_SHIPPER_DRIZZLE: SealedToken<DrizzleService> =
+  createSealedToken<DrizzleService>('AUDIT_SHIPPER_DRIZZLE');
 
 /**
  * One primary pool plus optional read replicas (single-tenant, ADR-0026). Holds the
@@ -21,14 +43,18 @@ export class DrizzleService {
   readonly db: NodePgDatabase;
   readonly replica: NodePgDatabase;
 
-  constructor() {
-    const url = process.env['DATABASE_URL'];
-    if (!url) {
+  /**
+   * `url` opens that database alone, without replicas; omitted, `DATABASE_URL` and its replicas.
+   * `poolSize` sizes each pool by another env variable than `DATABASE_POOL_MAX`.
+   */
+  constructor(url?: string, { poolSize }: { poolSize?: PoolSizeEnv } = {}) {
+    const primaryUrl = url ?? process.env['DATABASE_URL'];
+    if (!primaryUrl) {
       throw new Error('DATABASE_URL is required');
     }
-    const replicaUrls = parseReplicaUrls(process.env['DATABASE_REPLICA_URLS']);
+    const replicaUrls = url ? [] : parseReplicaUrls(process.env['DATABASE_REPLICA_URLS']);
 
-    this.pools = [url, ...replicaUrls].map(openPool);
+    this.pools = [primaryUrl, ...replicaUrls].map((pooled) => openPool(pooled, poolSize));
     const [primary, ...replicas] = this.pools.map((pool) =>
       drizzle(pool, { casing: 'snake_case' }),
     );
@@ -41,8 +67,8 @@ export class DrizzleService {
   }
 }
 
-function openPool(connectionString: string): Pool {
-  const pool = createPool(connectionString);
+function openPool(connectionString: string, poolSize?: PoolSizeEnv): Pool {
+  const pool = createPool(connectionString, poolSize);
   // A pg Pool emits 'error' when an idle backend connection dies (DB restart,
   // failover, network drop). With no listener Node escalates it to an
   // uncaughtException and crashes the process, so log it - which reports it via

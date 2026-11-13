@@ -9,6 +9,7 @@ import {
   pageToOffset,
   serializeRow,
   withAdvisoryXactLock,
+  type DrizzleDb,
   type DrizzleTx,
   type EventBus,
   type SerializedRow,
@@ -23,6 +24,7 @@ import {
   type EventEnvelope,
   type IdentityReader,
   type User,
+  type Uuid,
 } from '@openora/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import {
@@ -48,7 +50,15 @@ function pick<T>(
   return result.success ? (result.data ?? null) : null;
 }
 
-function toMyRgHistoryEntry(row: SerializedRow<AuditLog, 'createdAt'>): MyRgHistoryEntry {
+// A chained row, or a queued record under its event id.
+type RgHistoryRow = Pick<
+  SerializedRow<AuditLog, 'createdAt'>,
+  'id' | 'action' | 'actorType' | 'createdAt'
+> & {
+  after: unknown;
+};
+
+function toMyRgHistoryEntry(row: RgHistoryRow): MyRgHistoryEntry {
   const after = isRecord(row.after) ? row.after : {};
   const isSet = row.action === 'rg.limit.set';
   const newAmountRaw = isSet ? after['amount'] : after['requestedAmount'];
@@ -178,6 +188,29 @@ function buildWhere(filters: AuditExportFilters) {
     fromDate ? gte(auditLog.createdAt, startOfDayUtc(fromDate)) : undefined,
     toDate ? lte(auditLog.createdAt, endOfDayUtc(toDate)) : undefined,
   );
+}
+
+function chainPage(
+  db: DrizzleDb | DrizzleTx,
+  filters: AuditExportFilters,
+  { offset, limit }: { offset: number; limit: number },
+) {
+  const dir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
+  return db
+    .select()
+    .from(auditLog)
+    .where(buildWhere(filters))
+    .orderBy(dir(AUDIT_SORT_COLS[filters.sortBy ?? 'createdAt']), dir(auditLog.seq))
+    .limit(limit)
+    .offset(offset);
+}
+
+async function chainCount(db: DrizzleDb | DrizzleTx, filters: AuditExportFilters) {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(auditLog)
+    .where(buildWhere(filters));
+  return row?.count ?? 0;
 }
 
 const toDto = (row: AuditLog) => serializeRow(row, { dateFields: ['createdAt'] });
@@ -428,11 +461,86 @@ export async function recordAuditInTransaction(
   return row;
 }
 
+const hashOf = (row: AuditLog) =>
+  computeHash({
+    id: row.id,
+    actorId: row.actorId ?? null,
+    actorType: row.actorType,
+    action: row.action,
+    resourceType: row.resourceType,
+    resourceId: row.resourceId ?? null,
+    before: row.before ?? null,
+    after: row.after ?? null,
+    result: row.result ?? null,
+    seq: row.seq,
+    createdAt: row.createdAt.toISOString(),
+    prevHash: row.prevHash ?? null,
+  });
+
+const VERIFY_CHUNK_SIZE = 1_000;
+
+/** Where an earlier check left a chain it found intact: the last row it checked. */
+export type AuditChainAnchor = { fromSeq: AuditLog['seq']; fromHash: AuditLog['hash'] };
+
+export type AuditChainVerdict =
+  | { valid: true }
+  // `rowId` is null when the anchored row itself is gone.
+  | { valid: false; firstBrokenSeq: AuditLog['seq']; rowId: AuditLog['id'] | null };
+
+/**
+ * Checks the hash chain in `db`: every row links to the one before it and hashes to its stored
+ * hash. From `anchor`, the check starts at that row, which must still be there with the hash the
+ * anchor kept, and covers it and every later row; without one, the whole chain from its head.
+ * Keyset-paged, so a large chain verifies in constant memory.
+ */
+export async function verifyAuditChain(
+  db: DrizzleDb,
+  anchor?: AuditChainAnchor,
+): Promise<AuditChainVerdict> {
+  let expectedPrevHash: string | null = null;
+  let cursor: number | null = null;
+  if (anchor) {
+    const [row] = await db.select().from(auditLog).where(eq(auditLog.seq, anchor.fromSeq)).limit(1);
+    if (!row || row.hash !== anchor.fromHash || row.hash !== hashOf(row)) {
+      return { valid: false, firstBrokenSeq: anchor.fromSeq, rowId: row?.id ?? null };
+    }
+    expectedPrevHash = row.hash;
+    cursor = row.seq;
+  }
+  for (;;) {
+    const rows = await db
+      .select()
+      .from(auditLog)
+      .where(cursor === null ? undefined : gt(auditLog.seq, cursor))
+      .orderBy(auditLog.seq)
+      .limit(VERIFY_CHUNK_SIZE);
+    for (const row of rows) {
+      if (row.prevHash !== expectedPrevHash || row.hash !== hashOf(row)) {
+        return { valid: false, firstBrokenSeq: row.seq, rowId: row.id };
+      }
+      expectedPrevHash = row.hash;
+      cursor = row.seq;
+    }
+    if (rows.length < VERIFY_CHUNK_SIZE) {
+      return { valid: true };
+    }
+  }
+}
+
+/**
+ * Reads, eventually consistent with the writes: `list` and `exportCsv` read the chain, which a
+ * record reaches only once the shipper has moved it from `audit_outbox`, so a record shows a
+ * moment after the transaction that wrote it commits. `listMyRgHistory` also reads the player's
+ * queued records, so a player sees a limit change straight away. The chain is read through
+ * `auditDrizzle`, the outbox through `drizzle`; they are the same unless the chain has a database of
+ * its own.
+ */
 export class AuditService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly identityReader: IdentityReader,
+    private readonly auditDrizzle: DrizzleService = drizzle,
   ) {}
 
   /** Queues `input` in a transaction of its own, stamped now. */
@@ -449,76 +557,123 @@ export class AuditService {
   }
 
   async list(filters: AuditListFilters) {
-    const db = this.drizzle.db;
     const { page, limit } = filters;
-    const offset = pageToOffset(page, limit);
-
-    const where = buildWhere(filters);
-    const sortBy = filters.sortBy ?? 'createdAt';
-    const dir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
-
-    const [rows, countResult] = await Promise.all([
-      db
-        .select()
-        .from(auditLog)
-        .where(where)
-        .orderBy(dir(AUDIT_SORT_COLS[sortBy]), dir(auditLog.seq))
-        .limit(limit)
-        .offset(offset),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(auditLog)
-        .where(where),
+    const [rows, total] = await Promise.all([
+      chainPage(this.auditDrizzle.db, filters, { offset: pageToOffset(page, limit), limit }),
+      chainCount(this.auditDrizzle.db, filters),
     ]);
-
-    return {
-      items: rows.map(toDto),
-      total: countResult[0]?.count ?? 0,
-      page,
-      limit,
-    };
+    return { items: rows.map(toDto), total, page, limit };
   }
 
-  /** Player self-service RG limit history. Returns an empty page, not an error,
-   * when the caller has no player profile. */
+  /**
+   * Player self-service RG limit history, the changes still queued for the chain included, so a
+   * player sees a change as soon as it commits. Queued records come after every chained one, as the
+   * shipper will chain them. A record's `id` is its event id, queued or chained, so it keeps it
+   * across the ship; a record chained before event ids existed keeps its row id. Returns an empty
+   * page, not an error, when the caller has no player profile.
+   */
   async listMyRgHistory(userId: User['id'], filters: MyRgHistoryFilters) {
     const { page, limit } = filters;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
     if (!playerId) {
       return { items: [], total: 0, page, limit };
     }
-
-    const { items, total } = await this.list({
-      page,
-      limit,
+    const scope = {
       resourceType: 'player',
       resourceId: playerId,
       actionPrefix: RG_LIMIT_ACTION_PREFIX,
       sortOrder: filters.sortOrder,
-    });
+    };
+    // Read before the chain: a record shipped in between is then found in the chain's snapshot
+    // and counted there once.
+    const queued = await this.queuedRgHistory(playerId);
+    const offset = pageToOffset(page, limit);
+    const newestFirst = (filters.sortOrder ?? 'desc') === 'desc';
+    return this.auditDrizzle.db.transaction(
+      async (tx) => {
+        const chainedIds = new Set(
+          queued.length === 0
+            ? []
+            : (
+                await tx
+                  .select({ eventId: auditLog.eventId })
+                  .from(auditLog)
+                  .where(
+                    inArray(
+                      auditLog.eventId,
+                      queued.map(({ eventId }) => eventId),
+                    ),
+                  )
+              ).map(({ eventId }) => eventId),
+        );
+        const pending = queued
+          .filter(({ eventId }) => !chainedIds.has(eventId))
+          .map(({ row }) => row);
+        const chained = await chainCount(tx, scope);
+        // Newest first, the queued records open the list; oldest first, they close it.
+        const lead = newestFirst ? pending.reverse() : [];
+        const tail = newestFirst ? [] : pending;
+        const fromLead = lead.slice(offset, offset + limit);
+        const room = limit - fromLead.length;
+        const rows =
+          room > 0
+            ? (
+                await chainPage(tx, scope, {
+                  offset: Math.max(0, offset - lead.length),
+                  limit: room,
+                })
+              ).map((row) => ({ ...toDto(row), id: row.eventId ?? row.id }))
+            : [];
+        const tailStart = Math.max(0, offset - lead.length - chained);
+        const fromTail = tail.slice(tailStart, tailStart + room - rows.length);
+        return {
+          items: [...fromLead, ...rows, ...fromTail].map(toMyRgHistoryEntry),
+          total: chained + pending.length,
+          page,
+          limit,
+        };
+      },
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
+  }
 
-    return { items: items.map(toMyRgHistoryEntry), total, page, limit };
+  // The player's RG limit records still in `audit_outbox`, oldest first, each under its event id,
+  // the id it keeps once chained. An entry that fails its schema never reaches the chain and is
+  // left out here too.
+  private async queuedRgHistory(playerId: Uuid) {
+    const rows = await this.drizzle.db
+      .select({ eventId: auditOutbox.eventId, entry: auditOutbox.entry })
+      .from(auditOutbox)
+      .where(
+        and(
+          sql`${auditOutbox.entry}->>'resourceType' = 'player'`,
+          sql`${auditOutbox.entry}->>'resourceId' = ${playerId}`,
+          sql`${auditOutbox.entry}->>'action' LIKE ${likePrefix(RG_LIMIT_ACTION_PREFIX)}`,
+        ),
+      )
+      .orderBy(asc(auditOutbox.id));
+    return rows.flatMap(({ eventId, entry }) => {
+      const parsed = OutboxEntrySchema.safeParse(entry);
+      if (!parsed.success) {
+        return [];
+      }
+      const { action, actorType, after, createdAt } = parsed.data;
+      const row: RgHistoryRow = { id: eventId, action, actorType, after, createdAt };
+      return [{ eventId, row }];
+    });
   }
 
   // Hard cap to prevent unbounded bulk extraction / OOM; exports exceeding it are
   // truncated to the latest rows. Use verifyChain for full-chain integrity.
   static readonly EXPORT_MAX_ROWS = 50_000;
 
-  static readonly VERIFY_CHUNK_SIZE = 1_000;
+  static readonly VERIFY_CHUNK_SIZE = VERIFY_CHUNK_SIZE;
 
   async exportCsv(filters: AuditExportFilters) {
-    const db = this.drizzle.db;
-    const where = buildWhere(filters);
-
-    const sortBy = filters.sortBy ?? 'createdAt';
-    const dir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
-
-    const rows = await db
-      .select()
-      .from(auditLog)
-      .where(where)
-      .orderBy(dir(AUDIT_SORT_COLS[sortBy]), dir(auditLog.seq))
-      .limit(AuditService.EXPORT_MAX_ROWS);
+    const rows = await chainPage(this.auditDrizzle.db, filters, {
+      offset: 0,
+      limit: AuditService.EXPORT_MAX_ROWS,
+    });
 
     const header =
       'id,actorId,actorType,action,resourceType,resourceId,ip,correlationId,result,seq,prevHash,hash,createdAt';
@@ -545,54 +700,8 @@ export class AuditService {
     return [header, ...lines].join('\n');
   }
 
-  async verifyChain(): Promise<
-    { valid: true } | { valid: false; firstBrokenSeq: number; rowId: string }
-  > {
-    let expectedPrevHash: string | null = null;
-    let cursor: number | null = null;
-    let hasMore = true;
-
-    // Keyset-paged so a large chain verifies in constant memory; VERIFY_CHUNK_SIZE
-    // caps how many rows are held per round-trip.
-    while (hasMore) {
-      const rows = await this.drizzle.db
-        .select()
-        .from(auditLog)
-        .where(cursor === null ? undefined : gt(auditLog.seq, cursor))
-        .orderBy(auditLog.seq)
-        .limit(AuditService.VERIFY_CHUNK_SIZE);
-
-      for (const row of rows) {
-        if (row.prevHash !== expectedPrevHash) {
-          return { valid: false, firstBrokenSeq: row.seq, rowId: row.id };
-        }
-
-        const expected = computeHash({
-          id: row.id,
-          actorId: row.actorId ?? null,
-          actorType: row.actorType,
-          action: row.action,
-          resourceType: row.resourceType,
-          resourceId: row.resourceId ?? null,
-          before: row.before ?? null,
-          after: row.after ?? null,
-          result: row.result ?? null,
-          seq: row.seq,
-          createdAt: row.createdAt.toISOString(),
-          prevHash: row.prevHash ?? null,
-        });
-
-        if (row.hash !== expected) {
-          return { valid: false, firstBrokenSeq: row.seq, rowId: row.id };
-        }
-
-        expectedPrevHash = row.hash;
-        cursor = row.seq;
-      }
-
-      hasMore = rows.length === AuditService.VERIFY_CHUNK_SIZE;
-    }
-
-    return { valid: true };
+  /** See `verifyAuditChain`. */
+  verifyChain(anchor?: AuditChainAnchor): Promise<AuditChainVerdict> {
+    return verifyAuditChain(this.auditDrizzle.db, anchor);
   }
 }

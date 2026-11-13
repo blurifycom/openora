@@ -1,7 +1,6 @@
 import * as z from 'zod';
-import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import {
-  auditOutbox,
   cached,
   createDomainError,
   createLogger,
@@ -13,14 +12,15 @@ import {
   SUPPORT_CHAT_STATUSES,
   SUPPORT_TICKET_STATUSES,
   SupportHistoryItemSchema,
+  type AuditEmailChange,
+  type AuditReader,
   type CacheAdapter,
   type SupportHistoryEmailWindow,
   type SupportHistoryItem,
   type SupportHistoryReader,
 } from '@openora/core/contracts';
-import { auditLog } from '@openora/core/audit/schema';
 import { user, type User } from '@openora/core/pam/schema/identity';
-import { player, type Player } from '@openora/core/pam/schema/profile';
+import { player } from '@openora/core/pam/schema/profile';
 import { supportChatCustomer } from '../schema/index.js';
 import { reasonOf, type ProviderFailureReason } from './provider-reason.service.js';
 import { SupportChatPlayerNotFoundError } from './support-chat.service.js';
@@ -201,15 +201,7 @@ const changedAtOf = (after: Record<string, unknown> | null) => {
 const emailOf = (side: Record<string, unknown> | null) =>
   typeof side?.['email'] === 'string' && side['email'] ? side['email'] : null;
 
-const toEmailChange = ({
-  before,
-  after,
-  at,
-}: {
-  before: Record<string, unknown> | null;
-  after: Record<string, unknown> | null;
-  at: Date;
-}): EmailChange => {
+const toEmailChange = ({ before, after, at }: AuditEmailChange): EmailChange => {
   const changedAt = changedAtOf(after);
   return {
     before: emailOf(before),
@@ -220,27 +212,13 @@ const toEmailChange = ({
   };
 };
 
-// Email changes still queued in `audit_outbox`. The shipper moves a row into `audit_log` and
-// deletes it in one transaction, so one snapshot holds each change in exactly one of the two, and
-// the queued ones are chained after every row already in the log. Two changes of one account are
-// serialized by its `user` row lock, so their queue order is their commit order.
-// ponytail: seq scan of the outbox, fine while the shipper keeps it near empty; if a stalled
-// shipper makes history slow, add a partial index on (entry->>'resourceId') for email changes.
-// The key goes in as a literal so such an expression index can match.
-const queuedField = (key: 'action' | 'resourceType' | 'resourceId') =>
-  sql`${auditOutbox.entry}->>${sql.raw(`'${key}'`)}`;
-const QUEUED_CHANGE = {
-  before: sql<Record<string, unknown> | null>`${auditOutbox.entry}->'before'`,
-  after: sql<Record<string, unknown> | null>`${auditOutbox.entry}->'after'`,
-  at: sql`(${auditOutbox.entry}->>'createdAt')::timestamptz`.mapWith(auditLog.createdAt),
-};
-
 type Section = { state: 'ok' | 'unavailable'; items: SupportHistoryItem[] };
 
 type SupportHistoryDeps = {
   drizzle: DrizzleService;
   cache: CacheAdapter;
   reader: SupportHistoryReader;
+  audit: AuditReader;
 };
 
 export class SupportHistoryService {
@@ -248,24 +226,35 @@ export class SupportHistoryService {
 
   /**
    * A player's vendor tickets and chat threads, cached whole per `(userId, includeResolved)` for
-   * a minute, `fetchedAt` included. Each section fails on its own, its reason to the log only.
+   * a minute, `fetchedAt` included, unless the email trail has a gap while a change of it is still
+   * queued for the audit chain. Each section fails on its own, its reason to the log only.
    */
   async getHistory(userId: User['id'], includeResolved: boolean) {
     // The audit log keeps ids as text, so an uppercase id would miss its rows and split the cache.
     const id = userId.toLowerCase();
+    let lagging = false;
     return cached(
       this.deps.cache,
       `support-chat-history:v2:${id}:${includeResolved}`,
       HISTORY_CACHE_TTL_MS,
-      () => this.load(id, includeResolved),
+      async () => {
+        const { lagging: lags, ...history } = await this.load(id, includeResolved);
+        lagging = lags;
+        return history;
+      },
+      // A gap the audit chain may close once a queued change ships is read again on the next
+      // call; any other gap (vendor down, the email cap, a contradicting trail) stays one, so it
+      // is cached like a full answer and the vendor is not asked again on every view.
+      () => !lagging,
     );
   }
 
   private async load(userId: User['id'], includeResolved: boolean) {
-    const { customerId, windows, complete, broken } = await this.deps.drizzle.db.transaction(
-      (tx) => this.readEmailTrail(tx, userId),
-      { isolationLevel: 'repeatable read', accessMode: 'read only' },
-    );
+    const { customerId, windows, complete, broken, queued } =
+      await this.deps.drizzle.db.transaction((tx) => this.readEmailTrail(tx, userId), {
+        isolationLevel: 'repeatable read',
+        accessMode: 'read only',
+      });
     if (broken) {
       logger.warn({ userId }, 'support history email trail inconsistent');
     }
@@ -283,7 +272,12 @@ export class SupportHistoryService {
         ? { state: 'not_linked' as const, items: [] }
         : this.section(userId, 'chat', () => this.deps.reader.listChats({ customerId })),
     ]);
-    return { tickets, chats, fetchedAt: new Date().toISOString() };
+    return {
+      tickets,
+      chats,
+      fetchedAt: new Date().toISOString(),
+      lagging: queued && (!complete || broken),
+    };
   }
 
   private async readEmailTrail(tx: DrizzleTx, userId: User['id']) {
@@ -303,100 +297,25 @@ export class SupportHistoryService {
     if (!row) {
       throw new SupportChatPlayerNotFoundError(userId);
     }
+    // The audit subject is the player when the account has one, the user otherwise. Each change is
+    // timed by the change time it carries, or by its write time when it carries none.
+    const subject = { playerId: row.playerId, userId };
+    const changes = await this.deps.audit.emailChanges(subject, tx);
     const built = buildEmailWindows({
       currentEmail: row.email,
       registeredEmail: row.registeredEmail,
       registeredAt: row.registeredAt,
-      changes: await this.emailChanges(tx, userId, row.playerId),
+      changes: changes.map(toEmailChange),
     });
     const first = built.complete ? built.windows[0] : undefined;
-    const bounded = boundFirstWindow(
-      built,
-      row.registeredAt,
-      first ? await this.othersEmailChanges(tx, first.email, userId, row.playerId) : [],
-    );
-    return { customerId: row.customerId, ...bounded };
-  }
-
-  /**
-   * The player's email changes from the audit log and the audit outbox, in the order they were written, each timed by
-   * the change time the row carries, or by its write time when it carries none.
-   */
-  private async emailChanges(tx: DrizzleTx, userId: User['id'], playerId: Player['id']) {
-    // The audit subject is the player when the account has one, the user otherwise.
-    const rows = await tx
-      .select({ before: auditLog.before, after: auditLog.after, at: auditLog.createdAt })
-      .from(auditLog)
-      .where(
-        and(
-          eq(auditLog.action, 'identity.email.changed'),
-          or(
-            and(eq(auditLog.resourceType, 'player'), eq(auditLog.resourceId, playerId)),
-            and(eq(auditLog.resourceType, 'user'), eq(auditLog.resourceId, userId)),
-          ),
-        ),
-      )
-      .orderBy(asc(auditLog.seq));
-    const queued = await tx
-      .select(QUEUED_CHANGE)
-      .from(auditOutbox)
-      .where(
-        and(
-          sql`${queuedField('action')} = 'identity.email.changed'`,
-          or(
-            sql`${queuedField('resourceType')} = 'player' AND ${queuedField('resourceId')} = ${playerId}`,
-            sql`${queuedField('resourceType')} = 'user' AND ${queuedField('resourceId')} = ${userId}`,
-          ),
-        ),
-      )
-      .orderBy(asc(auditOutbox.id));
-    return [...rows, ...queued].map(toEmailChange);
-  }
-
-  /**
-   * Email changes of every other account that left or took `email`, case-insensitively, timed
-   * like the player's own. The player's own rows, under either subject, are left out.
-   */
-  private async othersEmailChanges(
-    tx: DrizzleTx,
-    email: string,
-    userId: User['id'],
-    playerId: Player['id'],
-  ) {
-    const rows = await tx
-      .select({ before: auditLog.before, after: auditLog.after, at: auditLog.createdAt })
-      .from(auditLog)
-      .where(
-        and(
-          // A literal, not a bound parameter, and the email expressions as the audit migration
-          // declares its partial indexes: only then can a generic plan prove it may use them.
-          sql`${auditLog.action} = 'identity.email.changed'`,
-          or(
-            sql`lower(${auditLog.before}->>'email') = lower(${email})`,
-            sql`lower(${auditLog.after}->>'email') = lower(${email})`,
-          ),
-          // Defense in depth: the player's own rows of a complete trail fall at or after the oldest
-          // window's `to` and are ignored anyway. Both clauses stay, since excluding by subject
-          // type alone would drop other accounts.
-          or(ne(auditLog.resourceType, 'player'), ne(auditLog.resourceId, playerId)),
-          or(ne(auditLog.resourceType, 'user'), ne(auditLog.resourceId, userId)),
-        ),
-      );
-    const queued = await tx
-      .select(QUEUED_CHANGE)
-      .from(auditOutbox)
-      .where(
-        and(
-          sql`${queuedField('action')} = 'identity.email.changed'`,
-          or(
-            sql`lower(${auditOutbox.entry}->'before'->>'email') = lower(${email})`,
-            sql`lower(${auditOutbox.entry}->'after'->>'email') = lower(${email})`,
-          ),
-          sql`(${queuedField('resourceType')} <> 'player' OR ${queuedField('resourceId')} <> ${playerId})`,
-          sql`(${queuedField('resourceType')} <> 'user' OR ${queuedField('resourceId')} <> ${userId})`,
-        ),
-      );
-    return [...rows, ...queued].map(toEmailChange);
+    // Defense in depth: the player's own rows of a complete trail fall at or after the oldest
+    // window's `to` and are ignored anyway, yet the reader leaves them out too.
+    const others = first
+      ? await this.deps.audit.othersEmailChanges({ ...subject, email: first.email }, tx)
+      : [];
+    const bounded = boundFirstWindow(built, row.registeredAt, others.map(toEmailChange));
+    const queued = [...changes, ...others].some((change) => change.queued);
+    return { customerId: row.customerId, queued, ...bounded };
   }
 
   private async section(
