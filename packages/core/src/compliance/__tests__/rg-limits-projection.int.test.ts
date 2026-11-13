@@ -56,6 +56,7 @@ import { backfillRgLimits } from '../service/rg-limits-publisher.service.js';
 
 let db: TestDb;
 let container: Container<CoreTokenCatalog>;
+let walletModule: ModuleRegistryImpl<CoreTokenCatalog>;
 
 // Units of `to` per one `from`; any other pair has no rate.
 const FX: Partial<Record<string, number>> = { 'USD->JPY': 150, 'JPY->USD': 1 / 150 };
@@ -159,7 +160,8 @@ beforeAll(async () => {
   container.register(EXCHANGE_RATE_READER, () => rates);
   vi.stubEnv('WITHDRAWAL_PIN_HMAC_SECRET', 'x'.repeat(32));
   identityPlugin.register(new ModuleRegistryImpl<CoreTokenCatalog>(container));
-  walletPlugin.register(new ModuleRegistryImpl<CoreTokenCatalog>(container));
+  walletModule = new ModuleRegistryImpl<CoreTokenCatalog>(container);
+  walletPlugin.register(walletModule);
 });
 
 afterAll(async () => {
@@ -321,6 +323,22 @@ describe('a limit change reaches the ledger in its own transaction (real PG)', (
     await expect(
       container.get(RG_LIMITS).checkDeposit(db.drizzle.db, userId, '1', 'USD'),
     ).resolves.toMatchObject({ allowed: false, limitType: 'deposit', currency: null });
+  });
+
+  it('drops a malformed event without failing the handler, so the outbox never retries it', async () => {
+    const userId = await fundedPlayer();
+    const { selfService, events } = services();
+    await selfService.upsertLimit(userId, wagerLimit('15'));
+    const [snapshot] = publishedSnapshots(events);
+    await db.drizzle.db.execute(sql`TRUNCATE ${ledgerUserLimit}, ${ledgerUserLimitVersion}`);
+    const [subscription] = walletModule.events.getAll().get('compliance.rg_limits.changed') ?? [];
+
+    await expect(
+      subscription!.handler({ ...snapshot!, userId: 'not-a-uuid' }),
+    ).resolves.toBeUndefined();
+    await subscription!.handler(snapshot!);
+
+    expect((await projected(userId)).amounts).toEqual([15]);
   });
 
   it('skips a snapshot the contract rejects and replays the rest of the batch', async () => {

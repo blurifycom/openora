@@ -259,13 +259,18 @@ export default {
       await playEligibility.reconcile([snapshot]);
     });
     // The limits gate's projection: compliance writes it in its own transaction; this replays the
-    // committed limits for a split process, writing only a strictly newer version.
+    // committed limits for a split process, writing only a strictly newer version. A malformed
+    // payload is logged and dropped, never retried: no retry can make it valid.
     ctx.events.on('compliance.rg_limits.changed', async (payload) => {
       if (!rgLimitsRef) {
         throw new Error('wallet: limits projection not constructed yet');
       }
-      const snapshot = domainEventSchemas['compliance.rg_limits.changed'].parse(payload);
-      await rgLimitsRef.reconcile([snapshot]);
+      const parsed = domainEventSchemas['compliance.rg_limits.changed'].safeParse(payload);
+      if (!parsed.success) {
+        logger.error({ issues: parsed.error.issues }, 'wallet: invalid rg limits snapshot dropped');
+        return;
+      }
+      await rgLimitsRef.reconcile([parsed.data]);
     });
     ctx.events.on('wallet.balance.changed', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.balance.changed'].safeParse(payload);
