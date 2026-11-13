@@ -169,7 +169,12 @@ const walletTxnBase = z.object({
 });
 
 // Why a withdrawal already flipped to `processing` went back to the queue before reaching the PSP.
-export const WITHDRAWAL_REQUEUE_REASONS = ['withdrawal_hold', 'withdrawal_lock'] as const;
+export const WITHDRAWAL_REQUEUE_REASONS = [
+  'withdrawal_hold',
+  'withdrawal_lock',
+  'withdrawal_pin_locked',
+  'kyc_required',
+] as const;
 export type WithdrawalRequeueReason = (typeof WITHDRAWAL_REQUEUE_REASONS)[number];
 
 const limitChangeBase = authContextBase.extend({
@@ -535,8 +540,8 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     adminId: UuidSchema.nullable(),
   }),
-  // A hold or `withdrawal_lock` landed after the approval flip, so the withdrawal went back to the
-  // status it was approved from before reaching the PSP. No money moved; it waits for a decision again.
+  // A hold, `withdrawal_lock`, PIN lockout or KYC requirement landed after the approval flip, so the
+  // withdrawal went back to the status it was approved from before reaching the PSP. No money moved; it waits for a decision again.
   'wallet.withdrawal.requeued': walletTxnBase.extend({
     playerId: UuidSchema.nullable(),
     reason: z.enum(WITHDRAWAL_REQUEUE_REASONS),
@@ -1431,6 +1436,10 @@ export const domainEventSchemas = {
   // actorId is the user performing the action (SYSTEM_ACTOR_ID for automated ops).
   'tag.player.assigned': tagPlayerEventBase,
   'tag.player.removed': tagPlayerEventBase,
+  // The tag module screened a requested withdrawal: any `withdrawal_review` tag it called for
+  // committed in the same transaction. The wallet auto-approves only after this verdict, so a
+  // withdrawal it never arrives for stays in the manual queue (ADR-0057).
+  'tag.withdrawal.screened': z.object({ userId: UuidSchema, transactionId: UuidSchema }),
   // Emitted after an admin creates or updates a tag rule configuration.
   'tag.rule.upserted': authContextBase.extend({
     tagKey: TagKeySchema,

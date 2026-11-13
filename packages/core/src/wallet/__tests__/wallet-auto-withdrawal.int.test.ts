@@ -14,7 +14,6 @@ import {
   type PlatformConfig,
   type AdminPlayerSummary,
   type PlayerTags,
-  type TagEvaluationCommands,
   type TagKey,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
@@ -182,6 +181,20 @@ async function makeService({
   return { svc, events, psp, audit };
 }
 
+// The production path: withdraw() leaves the row pending, the tag module screens it, and its
+// `tag.withdrawal.screened` verdict runs auto-approval. Stands in for that event round trip.
+async function withdrawScreened(
+  svc: WalletService,
+  args: Parameters<WalletService['withdraw']>[0],
+) {
+  const requested = await svc.withdraw(args);
+  const screened = await svc.autoApproveScreenedWithdrawal({
+    userId: args.userId,
+    transactionId: requested.transactionId,
+  });
+  return screened ?? requested;
+}
+
 async function seedWallet({
   balance = '100000',
   ...overrides
@@ -229,7 +242,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -259,7 +272,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
           threshold: '1000.000000000000000000',
           thresholdSource: 'global',
           kycStatus: 'verified',
-          pivotAmount: '40',
+          pivotAmount: '40.000000000000000000',
           pivotCurrency: 'USD',
           cumulativeCountUsed: 0,
         }),
@@ -272,7 +285,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     audit.record.mockRejectedValueOnce(new Error('audit sink down'));
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -293,7 +306,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '10' });
     const w = await seedWallet({ balance: '100' });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -312,7 +325,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     const { svc, psp } = await makeService({ autoWithdrawal: {}, fiatThreshold: '10' });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -327,7 +340,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     const { svc } = await makeService({ autoWithdrawal: {} });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -345,7 +358,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -359,7 +372,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     const { svc, audit } = await makeService();
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -378,7 +391,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -398,7 +411,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -408,7 +421,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(result.status).toBe('completed');
     expect(requiresKycForWithdrawal).toHaveBeenCalledWith({
       userId: w.userId,
-      pivotAmount: '40',
+      pivotAmount: '40.000000000000000000',
       pivotCurrency: 'USD',
     });
   });
@@ -422,7 +435,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -440,7 +453,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -459,7 +472,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -485,7 +498,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       playerTags,
     });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -513,7 +526,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       playerTags,
     });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -534,85 +547,80 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     );
   });
 
-  it('awaits the synchronous tag evaluation (TAG_EVALUATION_COMMANDS) before reading risk tags, so a withdrawal_review assignment it makes is honored by auto-approval instead of raced by the async event handler', async () => {
-    const callOrder: string[] = [];
-    // Stands in for TagEvaluationService.evaluateWithdrawalRequested committing a
-    // withdrawal_review assignment on the caller's own tx (see wallet.service.ts's
-    // withdraw()) - by the time this resolves, the tag must be visible to any later read.
+  it('never auto-approves before the screening verdict, and reads the tags the screening committed', async () => {
     const assignedTags = new Set<TagKey>();
-    const tagEvaluationCommands = mock<TagEvaluationCommands>({
-      evaluateWithdrawalRequested: vi.fn(async () => {
-        callOrder.push('evaluateWithdrawalRequested');
-        assignedTags.add('withdrawal_review');
-      }),
-    });
-    const riskTags = mock<PlayerTags>({
-      getActiveTagKeys: vi.fn(async (ids: readonly string[]) => {
-        callOrder.push('getActiveTagKeys');
-        return new Map(ids.map((id) => [id, [...assignedTags]]));
-      }),
-    });
-    const directory = mock<AdminUserDirectory>({
-      lookupPlayers: vi.fn(async (ids: string[]) =>
-        ids.map((userId) =>
-          mock<AdminPlayerSummary>({ userId, username: 'player', kycStatus: 'verified' }),
-        ),
-      ),
-    });
-    await db.drizzle.db.insert(walletAutoWithdrawalConfig).values({
-      singletonKey: 'global',
+    const { svc, psp } = await makeService({
+      autoWithdrawal: {},
       fiatThreshold: '1000',
-      cryptoThreshold: '0',
       excludeRiskFlags: ['withdrawal_review'],
-    });
-    const platformConfig = mock<PlatformConfig>({
-      autoWithdrawal: {
-        enabled: true,
-      },
-    });
-    const payment = mock<PaymentAdapter>({
-      processWithdrawal: vi.fn(async () => ({
-        externalId: randomUUID(),
-        status: 'completed' as const,
-      })),
-    });
-    const svc = new WalletService({
-      drizzle: db.drizzle,
-      events: makeEventBus(),
-      payment,
-      paymentProviders: makePaymentProviderRegistry(),
-      audit: mock<AuditWritePort>(makeAuditWriter()),
-      identityReader: makeIdentityReader(),
-      directory,
-      platformConfig,
-      riskTags,
-      tagEvaluationCommands,
+      playerTags: mock<PlayerTags>({
+        getActiveTagKeys: vi.fn(
+          async (ids: readonly string[]) => new Map(ids.map((id) => [id, [...assignedTags]])),
+        ),
+      }),
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const requested = await svc.withdraw({
       userId: w.userId,
       amount: '40',
       currency: 'USD',
       ...NO_CLIENT_META,
     });
 
-    // Ordering proof: the synchronous command-port call happened, and completed, before
-    // auto-approval's risk-tag read - never the reverse, and never concurrent/unawaited.
-    // The first read is the request's own withdrawal-lock check, before any debit.
-    expect(callOrder).toEqual([
-      'getActiveTagKeys',
-      'evaluateWithdrawalRequested',
-      'getActiveTagKeys',
-    ]);
-    expect(tagEvaluationCommands.evaluateWithdrawalRequested).toHaveBeenCalledWith(
-      expect.anything(),
-      { userId: w.userId, amount: '40' },
-    );
-    // Causality proof: auto-approval saw the tag the synchronous call just assigned and
-    // declined to pay out - the exact race the fire-and-forget event emit alone could lose.
-    expect(result.status).toBe('pending');
-    expect(payment.processWithdrawal).not.toHaveBeenCalled();
+    expect(requested.status).toBe('pending');
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(await txById(requested.transactionId)).toMatchObject({ status: 'pending' });
+
+    // Screening tags the withdrawal, then its verdict arrives: the wallet honors the tag.
+    assignedTags.add('withdrawal_review');
+    const screened = await svc.autoApproveScreenedWithdrawal({
+      userId: w.userId,
+      transactionId: requested.transactionId,
+    });
+
+    expect(screened).toBeUndefined();
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(await txById(requested.transactionId)).toMatchObject({ status: 'pending' });
+  });
+
+  it('treats a redelivered verdict as a no-op once the withdrawal left pending', async () => {
+    const { svc, psp } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+    const w = await seedWallet();
+
+    const result = await withdrawScreened(svc, {
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    const redelivered = await svc.autoApproveScreenedWithdrawal({
+      userId: w.userId,
+      transactionId: result.transactionId,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(redelivered).toBeUndefined();
+    expect(psp.processWithdrawal).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a verdict naming another user', async () => {
+    const { svc, psp } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+    const w = await seedWallet();
+    const requested = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    const screened = await svc.autoApproveScreenedWithdrawal({
+      userId: randomUUID(),
+      transactionId: requested.transactionId,
+    });
+
+    expect(screened).toBeUndefined();
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
   });
 
   it('auto-approves when the player carries only unrelated tags', async () => {
@@ -626,7 +634,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -645,7 +653,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -670,7 +678,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -694,7 +702,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       createdBy: randomUUID(),
     });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -716,7 +724,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '100000' });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '5000',
       currency: 'USD',
@@ -734,7 +742,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'completed' },
     ]);
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -756,7 +764,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'completed' },
     ]);
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -783,13 +791,13 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
     });
 
-    const inside = await svc.withdraw({
+    const inside = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
       ...NO_CLIENT_META,
     });
-    const second = await svc.withdraw({
+    const second = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -809,7 +817,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'cancelled' },
     ]);
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -831,7 +839,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: second },
     ]);
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -864,7 +872,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       },
     ]);
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -882,7 +890,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -907,7 +915,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       reviewReason: 'auto-approved',
     });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -933,7 +941,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       autoApprovalPivotAmount: '20',
     });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -958,7 +966,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       reviewReason: 'auto-approved',
     });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -983,7 +991,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       reviewReason: 'manual sign-off',
     });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -1015,13 +1023,13 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     await prior(inside.id, 24 * HOUR - MINUTE);
     await prior(outside.id, 24 * HOUR + MINUTE);
 
-    const capped = await svc.withdraw({
+    const capped = await withdrawScreened(svc, {
       userId: inside.userId,
       amount: '40',
       currency: 'USD',
       ...NO_CLIENT_META,
     });
-    const free = await svc.withdraw({
+    const free = await withdrawScreened(svc, {
       userId: outside.userId,
       amount: '40',
       currency: 'USD',
@@ -1051,13 +1059,13 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       });
     }
 
-    const atCap = await svc.withdraw({
+    const atCap = await withdrawScreened(svc, {
       userId: exact.userId,
       amount: '40',
       currency: 'USD',
       ...NO_CLIENT_META,
     });
-    const overCap = await svc.withdraw({
+    const overCap = await withdrawScreened(svc, {
       userId: over.userId,
       amount: '40.01',
       currency: 'USD',
@@ -1076,8 +1084,8 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     const w = await seedWallet();
 
     const results = await Promise.all([
-      svc.withdraw({ userId: w.userId, amount: '40', currency: 'USD', ...NO_CLIENT_META }),
-      svc.withdraw({ userId: w.userId, amount: '41', currency: 'USD', ...NO_CLIENT_META }),
+      withdrawScreened(svc, { userId: w.userId, amount: '40', currency: 'USD', ...NO_CLIENT_META }),
+      withdrawScreened(svc, { userId: w.userId, amount: '41', currency: 'USD', ...NO_CLIENT_META }),
     ]);
 
     expect(results.filter((r) => r.status === 'completed')).toHaveLength(1);
@@ -1095,7 +1103,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
       currency: 'BTC',
       address: 'bc1qexample',
     });
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '1',
       currency: 'BTC',
@@ -1115,7 +1123,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
       currency: 'BTC',
       address: 'bc1qexample',
     });
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '1',
       currency: 'BTC',
@@ -1140,7 +1148,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
       currency: 'BTC',
       address: 'bc1qexample',
     });
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '1',
       currency: 'BTC',
@@ -1160,7 +1168,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
       currency: 'BTC',
       address: 'bc1qexample',
     });
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '2',
       currency: 'BTC',
@@ -1185,7 +1193,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
       address: 'bc1qexample',
     });
     await expect(
-      svc.withdraw({
+      withdrawScreened(svc, {
         userId: w.userId,
         amount: '1',
         currency: 'BTC',
@@ -1209,7 +1217,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
       address: '0xexample',
     });
     await expect(
-      svc.withdraw({
+      withdrawScreened(svc, {
         userId: w.userId,
         amount: '1',
         currency: 'ETH',
@@ -1241,7 +1249,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
       currency: 'BTC',
       address: 'bc1qexample',
     });
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '0.2',
       currency: 'BTC',
@@ -1265,7 +1273,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
       currency: 'BTC',
       address: 'bc1qexample',
     });
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '1',
       currency: 'BTC',
@@ -1288,7 +1296,7 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
       createdBy: randomUUID(),
     });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -1308,7 +1316,7 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
       createdBy: randomUUID(),
     });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -1337,7 +1345,7 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
       createdBy: randomUUID(),
     });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -1362,7 +1370,7 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
       currency: 'BTC',
       address: 'bc1qexample',
     });
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '1',
       currency: 'BTC',
@@ -1383,7 +1391,7 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
       createdBy: randomUUID(),
     });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -1510,7 +1518,7 @@ describe('WalletService.withdraw network fee (real PG)', () => {
     const { svc, psp } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
     const w = await seedWallet({ balance: '100' });
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -1540,7 +1548,12 @@ describe('WalletService.withdraw network fee (real PG)', () => {
     const w = await seedWallet({ balance: '100' });
 
     await expect(
-      svc.withdraw({ userId: w.userId, amount: '40.125', currency: 'USD', ...NO_CLIENT_META }),
+      withdrawScreened(svc, {
+        userId: w.userId,
+        amount: '40.125',
+        currency: 'USD',
+        ...NO_CLIENT_META,
+      }),
     ).rejects.toBeInstanceOf(WithdrawalPrecisionError);
     expect(psp.withdrawalDecimals).toHaveBeenCalledWith('USD', 'SEPA');
     const rows = await db.drizzle.db
@@ -1556,7 +1569,12 @@ describe('WalletService.withdraw network fee (real PG)', () => {
     const w = await seedWallet({ balance: '100' });
 
     await expect(
-      svc.withdraw({ userId: w.userId, amount: '2.5', currency: 'USD', ...NO_CLIENT_META }),
+      withdrawScreened(svc, {
+        userId: w.userId,
+        amount: '2.5',
+        currency: 'USD',
+        ...NO_CLIENT_META,
+      }),
     ).rejects.toBeInstanceOf(WithdrawalAmountNotAboveFeeError);
     const rows = await db.drizzle.db
       .select()
@@ -1571,7 +1589,7 @@ describe('WalletService.withdraw auto-approval edges (real PG)', () => {
     const { svc, psp } = await makeService({ autoWithdrawal: {}, fiatThreshold: '40' });
     const w = await seedWallet();
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -1597,7 +1615,7 @@ describe('WalletService.withdraw auto-approval edges (real PG)', () => {
       })),
     );
 
-    const result = await svc.withdraw({
+    const result = await withdrawScreened(svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -1611,7 +1629,7 @@ describe('WalletService.withdraw auto-approval edges (real PG)', () => {
     const idempotencyKey = randomUUID();
     const queued = await makeService();
     const w = await seedWallet();
-    const first = await queued.svc.withdraw({
+    const first = await withdrawScreened(queued.svc, {
       userId: w.userId,
       amount: '40',
       currency: 'USD',
@@ -1620,6 +1638,7 @@ describe('WalletService.withdraw auto-approval edges (real PG)', () => {
     });
     const auto = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
 
+    // A replay emits no new withdrawal.requested, so no verdict follows it.
     const replay = await auto.svc.withdraw({
       userId: w.userId,
       amount: '40',

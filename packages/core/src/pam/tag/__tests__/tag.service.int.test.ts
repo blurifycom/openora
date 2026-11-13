@@ -406,213 +406,91 @@ describe('TagService tag change audit (real PG)', () => {
   });
 });
 
-describe('TagService.assignPlayerTagInTx (real PG)', () => {
-  it('writes on the caller-supplied transaction only - rolling back the outer transaction rolls back the assignment too', async () => {
-    const { svc } = makeService();
-    await seedTag('high_roller');
+describe('TagService.screenWithdrawal (real PG)', () => {
+  const review = (playerId: string) => ({
+    playerId,
+    tagKey: 'withdrawal_review' as const,
+    assignReason: 'single withdrawal attempt exceeded review threshold',
+    assignActor: 'scheduled' as const,
+    assignActorUserId: null,
+  });
+
+  it('assigns the review tag and emits it together with the screening verdict', async () => {
+    const { svc, events } = makeService();
+    await seedTag('withdrawal_review');
     const p = await seedPlayer();
-    const actorId = randomUUID();
-    const rollbackError = new Error('deliberate rollback');
+    const transactionId = randomUUID();
+
+    const assigned = await svc.screenWithdrawal({
+      userId: p.userId,
+      transactionId,
+      review: review(p.id),
+    });
+
+    expect(assigned).toBe(true);
+    expect(await playerTagsOf(p.id)).toHaveLength(1);
+    expect(events.emitInTransaction.mock.calls.map(([, topic]) => topic)).toEqual([
+      'tag.player.assigned',
+      'tag.withdrawal.screened',
+    ]);
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'tag.withdrawal.screened',
+      { userId: p.userId, transactionId },
+    );
+  });
+
+  it('emits only the verdict when no review is due', async () => {
+    const { svc, events } = makeService();
+    const p = await seedPlayer();
+
+    const assigned = await svc.screenWithdrawal({
+      userId: p.userId,
+      transactionId: randomUUID(),
+      review: null,
+    });
+
+    expect(assigned).toBe(false);
+    expect(await playerTagsOf(p.id)).toHaveLength(0);
+    expect(events.emitInTransaction.mock.calls.map(([, topic]) => topic)).toEqual([
+      'tag.withdrawal.screened',
+    ]);
+  });
+
+  it('still emits the verdict when the review tag is already active', async () => {
+    const { svc, events } = makeService();
+    await seedTag('withdrawal_review');
+    const p = await seedPlayer();
+    await svc.assignPlayerTag(review(p.id));
+
+    const assigned = await svc.screenWithdrawal({
+      userId: p.userId,
+      transactionId: randomUUID(),
+      review: review(p.id),
+    });
+
+    expect(assigned).toBe(false);
+    expect(await playerTagsOf(p.id)).toHaveLength(1);
+    expect(events.emitInTransaction.mock.calls.map(([, topic]) => topic)).toEqual([
+      'tag.withdrawal.screened',
+    ]);
+  });
+
+  it('commits no review tag when the verdict cannot be written', async () => {
+    const { svc, events } = makeService();
+    await seedTag('withdrawal_review');
+    const p = await seedPlayer();
+    events.emitInTransaction.mockImplementation(async (_trx, topic) => {
+      if (topic === 'tag.withdrawal.screened') {
+        throw new Error('outbox down');
+      }
+    });
 
     await expect(
-      db.drizzle.db.transaction(async (trx) => {
-        await svc.assignPlayerTagInTx(trx, {
-          playerId: p.id,
-          tagKey: 'high_roller',
-          assignReason: 'test reason',
-          assignActor: 'scheduled',
-          assignActorUserId: actorId,
-        });
-        throw rollbackError;
-      }),
-    ).rejects.toThrow(rollbackError);
+      svc.screenWithdrawal({ userId: p.userId, transactionId: randomUUID(), review: review(p.id) }),
+    ).rejects.toThrow('outbox down');
 
     expect(await playerTagsOf(p.id)).toHaveLength(0);
-  });
-
-  it('assigns, returns PlayerTagWithTag, and emits tag.player.assigned once the outer transaction commits', async () => {
-    const { svc, events } = makeService();
-    await seedTag('high_roller');
-    const p = await seedPlayer();
-    const actorId = randomUUID();
-
-    const result = await db.drizzle.db.transaction((trx) =>
-      svc.assignPlayerTagInTx(trx, {
-        playerId: p.id,
-        tagKey: 'high_roller',
-        assignReason: 'test reason',
-        assignActor: 'scheduled',
-        assignActorUserId: actorId,
-      }),
-    );
-
-    expect(result).toMatchObject({ playerId: p.id, tag: { key: 'high_roller' } });
-    expect(await playerTagsOf(p.id)).toHaveLength(1);
-    expect(events.emit).toHaveBeenCalledWith(
-      'tag.player.assigned',
-      expect.objectContaining({ playerId: p.id, tagKey: 'high_roller', actorId }),
-    );
-  });
-
-  it('throws TagAlreadyInUseError and does not emit when already active', async () => {
-    const { svc, events } = makeService();
-    await seedTag('high_roller');
-    const p = await seedPlayer();
-    const actorId = randomUUID();
-    await svc.assignPlayerTag(assignment(p.id, 'high_roller', actorId));
-    events.emit.mockClear();
-
-    await expect(
-      db.drizzle.db.transaction((trx) =>
-        svc.assignPlayerTagInTx(trx, {
-          playerId: p.id,
-          tagKey: 'high_roller',
-          assignReason: 'test reason',
-          assignActor: 'scheduled',
-          assignActorUserId: actorId,
-        }),
-      ),
-    ).rejects.toBeInstanceOf(TagAlreadyInUseError);
-    expect(events.emit).not.toHaveBeenCalled();
-  });
-
-  it('merges a newly-observed breach dimension into an already-active row before throwing', async () => {
-    const { svc, events } = makeService();
-    await seedTag('high_risk');
-    const p = await seedPlayer();
-    const actorId = randomUUID();
-    const existingCountBreach = { count: 5, thresholdCount: 3, thresholdDays: 30 };
-    await svc.assignPlayerTag({
-      playerId: p.id,
-      tagKey: 'high_risk',
-      assignReason: 'count breach',
-      assignActor: 'scheduled',
-      assignActorUserId: actorId,
-      assignMetadata: { amountBreach: null, countBreach: existingCountBreach },
-    });
-    events.emit.mockClear();
-    const incomingAmountBreach = { amount: '500.00', threshold: '400.00' };
-
-    await db.drizzle.db.transaction((trx) =>
-      expect(
-        svc.assignPlayerTagInTx(trx, {
-          playerId: p.id,
-          tagKey: 'high_risk',
-          assignReason: 'test reason',
-          assignActor: 'scheduled',
-          assignActorUserId: actorId,
-          assignMetadata: { amountBreach: incomingAmountBreach, countBreach: null },
-        }),
-      ).rejects.toBeInstanceOf(TagAlreadyInUseError),
-    );
-
-    const [row] = await playerTagsOf(p.id);
-    expect(row?.assignMetadata).toEqual({
-      amountBreach: incomingAmountBreach,
-      countBreach: existingCountBreach,
-    });
-    expect(events.emit).not.toHaveBeenCalled();
-  });
-
-  it('does not update when the incoming metadata is already fully covered by existing', async () => {
-    const { svc, events } = makeService();
-    await seedTag('high_risk');
-    const p = await seedPlayer();
-    const actorId = randomUUID();
-    const existingAssignMetadata = {
-      amountBreach: { amount: '500.00', threshold: '400.00' },
-      countBreach: { count: 5, thresholdCount: 3, thresholdDays: 30 },
-    };
-    await svc.assignPlayerTag({
-      playerId: p.id,
-      tagKey: 'high_risk',
-      assignReason: 'both breaches',
-      assignActor: 'scheduled',
-      assignActorUserId: actorId,
-      assignMetadata: existingAssignMetadata,
-    });
-    const [before] = await playerTagsOf(p.id);
-    events.emit.mockClear();
-
-    await db.drizzle.db.transaction((trx) =>
-      expect(
-        svc.assignPlayerTagInTx(trx, {
-          playerId: p.id,
-          tagKey: 'high_risk',
-          assignReason: 'test reason',
-          assignActor: 'scheduled',
-          assignActorUserId: actorId,
-          assignMetadata: { amountBreach: null, countBreach: existingAssignMetadata.countBreach },
-        }),
-      ).rejects.toBeInstanceOf(TagAlreadyInUseError),
-    );
-
-    const [after] = await playerTagsOf(p.id);
-    expect(after?.updatedAt).toEqual(before?.updatedAt);
-    expect(after?.assignMetadata).toEqual(existingAssignMetadata);
-    expect(events.emit).not.toHaveBeenCalled();
-  });
-
-  it('sets metadata directly to incoming when the existing row has none', async () => {
-    const { svc, events } = makeService();
-    await seedTag('high_risk');
-    const p = await seedPlayer();
-    const actorId = randomUUID();
-    await svc.assignPlayerTag({
-      playerId: p.id,
-      tagKey: 'high_risk',
-      assignReason: 'no metadata yet',
-      assignActor: 'scheduled',
-      assignActorUserId: actorId,
-    });
-    events.emit.mockClear();
-    const incomingAssignMetadata = {
-      amountBreach: null,
-      countBreach: { count: 5, thresholdCount: 3, thresholdDays: 30 },
-    };
-
-    await db.drizzle.db.transaction((trx) =>
-      expect(
-        svc.assignPlayerTagInTx(trx, {
-          playerId: p.id,
-          tagKey: 'high_risk',
-          assignReason: 'test reason',
-          assignActor: 'scheduled',
-          assignActorUserId: actorId,
-          assignMetadata: incomingAssignMetadata,
-        }),
-      ).rejects.toBeInstanceOf(TagAlreadyInUseError),
-    );
-
-    const [row] = await playerTagsOf(p.id);
-    expect(row?.assignMetadata).toEqual(incomingAssignMetadata);
-    expect(events.emit).not.toHaveBeenCalled();
-  });
-
-  it('does not update at all when the assign call carries no metadata (every non-high_risk tag)', async () => {
-    const { svc, events } = makeService();
-    await seedTag('high_roller');
-    const p = await seedPlayer();
-    const actorId = randomUUID();
-    await svc.assignPlayerTag(assignment(p.id, 'high_roller', actorId));
-    const [before] = await playerTagsOf(p.id);
-    events.emit.mockClear();
-
-    await db.drizzle.db.transaction((trx) =>
-      expect(
-        svc.assignPlayerTagInTx(trx, {
-          playerId: p.id,
-          tagKey: 'high_roller',
-          assignReason: 'test reason',
-          assignActor: 'scheduled',
-          assignActorUserId: actorId,
-        }),
-      ).rejects.toBeInstanceOf(TagAlreadyInUseError),
-    );
-
-    const [after] = await playerTagsOf(p.id);
-    expect(after?.updatedAt).toEqual(before?.updatedAt);
-    expect(events.emit).not.toHaveBeenCalled();
   });
 });
 

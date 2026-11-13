@@ -72,4 +72,20 @@ describe('a split service booted from the pnpm create:service example', () => {
     expect(refusal).toMatch(/- identity requires MAIL_DISPATCH \(bound by mail\)/);
     expect(SUGGESTED_MANIFEST.exec(refusal)?.[1]).toBe(createServiceExample.manifest.join(','));
   });
+
+  it('refuses a wallet without the ports its withdrawal checks read (ADR-0057)', async () => {
+    const refusal = await bootSplit('wallet,identity,audit,mail').then(
+      async (booted) => {
+        await booted.close();
+        return 'wallet booted without its withdrawal controls';
+      },
+      (err: unknown) => (err instanceof Error ? err.message : String(err)),
+    );
+
+    expect(refusal).toMatch(/- wallet requires PLAYER_TAGS \(bound by tag\)/);
+    // KYC_WITHDRAWAL_POLICY is compliance's, a module this refusal already adds for identity.
+    expect(SUGGESTED_MANIFEST.exec(refusal)?.[1]?.split(',')).toEqual(
+      expect.arrayContaining(['tag', 'compliance']),
+    );
+  });
 });

@@ -9,7 +9,6 @@ import {
 import {
   PLAYER_SEGMENT_READER,
   PLAYER_TAGS,
-  TAG_EVALUATION_COMMANDS,
   WALLET_READER,
   IDENTITY_READER,
   ADMIN_USER_DIRECTORY,
@@ -96,16 +95,13 @@ export default {
         c.get(AUDIT_WRITER),
       ));
 
-    // One memoized instance backs the router closure and the TAG_EVALUATION_COMMANDS port.
+    // One memoized instance backs the router closure and the evaluation service.
     let ruleSvc: TagRuleService | null = null;
     const ruleService = (c: TypedContainer<CoreTokenCatalog>) =>
       (ruleSvc ??= new TagRuleService(c.get(DRIZZLE), c.get(EVENT_BUS)));
 
-    // One memoized instance backs the daily job, the event subscriptions below, and the
-    // TAG_EVALUATION_COMMANDS port - constructed lazily on first access (via either the
-    // provide() factory or the router factory, whichever runs first) rather than only
-    // inside the router factory, so wallet's synchronous TAG_EVALUATION_COMMANDS call is
-    // never blocked on this module's own router having mounted first.
+    // One memoized instance backs the daily job and the event subscriptions below,
+    // constructed in the router factory.
     let evalSvc: TagEvaluationService | null = null;
     const tagEvaluationService = (c: TypedContainer<CoreTokenCatalog>) =>
       (evalSvc ??= new TagEvaluationService({
@@ -118,13 +114,6 @@ export default {
 
     ctx.provide(PLAYER_TAGS, tagService);
     ctx.provide(PLAYER_SEGMENT_READER, (c) => new PlayerSegmentReaderService(c.get(DRIZZLE)));
-    // Synchronous counterpart to the wallet.withdrawal.requested subscription below - see
-    // TagEvaluationService.evaluateWithdrawalRequested for why auto-approval can't rely on
-    // the async event handler alone. ADR-0017.
-    ctx.provide(TAG_EVALUATION_COMMANDS, (c) => ({
-      evaluateWithdrawalRequested: (tx, args) =>
-        tagEvaluationService(c).evaluateWithdrawalRequested(tx, args),
-    }));
 
     // Throws rather than no-ops before construction, so the event is redelivered instead of
     // being recorded as handled (ADR-0045).
@@ -139,6 +128,7 @@ export default {
     ctx.events.on('wallet.withdrawal.completed', (p) =>
       requireEvaluation().onWithdrawalCompleted(p),
     );
+    // Screening: the verdict it commits is what lets the wallet auto-approve (ADR-0057).
     ctx.events.on('wallet.withdrawal.requested', (p) =>
       requireEvaluation().onWithdrawalRequested(p),
     );

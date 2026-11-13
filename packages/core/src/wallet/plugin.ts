@@ -26,7 +26,6 @@ import {
   RATE_LIMITER,
   PLAYER_TAGS,
   PLAYER_SEGMENT_READER,
-  TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   RG_LIMITS,
   RG_LIMIT_LEDGER,
@@ -120,12 +119,13 @@ function holdRefusalCode(err: unknown) {
 }
 
 export default {
-  // NOT dependsOn 'tag': that would cycle (tag hard-depends on wallet's WALLET_READER).
-  // wallet's use of tag's PLAYER_TAGS / TAG_EVALUATION_COMMANDS is optional and resolved
-  // lazily in the router factory (`c.has(...)`), which runs after every plugin has
-  // registered - so both ports are bound by then regardless of load order.
+  // NOT dependsOn 'tag' or 'compliance': both depend on wallet, so that would cycle. Their ports
+  // are required instead - checked once every plugin has registered and resolved in the router
+  // factory - so a withdrawal can never skip the withdrawal_lock, PIN or KYC check because the
+  // module behind it is not loaded (ADR-0057).
   id: 'wallet',
   dependsOn: ['identity', 'audit'],
+  requiresPorts: [WITHDRAWAL_SECURITY, PLAYER_TAGS, KYC_WITHDRAWAL_POLICY],
   register(ctx) {
     // Set inside the router factory (container access); the job worker's handler
     // closes over this ref, same shape as pam/tag's evalSvc - subscriptions/workers
@@ -195,6 +195,19 @@ export default {
         'withdrawal',
         envelope.eventId,
       );
+    });
+    // The tag module's screening verdict is the only trigger for auto-approval (ADR-0057).
+    // Throws before the service exists, so the event is redelivered rather than recorded handled.
+    ctx.events.on('tag.withdrawal.screened', async (payload) => {
+      const parsed = domainEventSchemas['tag.withdrawal.screened'].safeParse(payload);
+      if (!parsed.success) {
+        logger.error({ issues: parsed.error.issues }, 'malformed tag.withdrawal.screened dropped');
+        return;
+      }
+      if (!walletSvc) {
+        throw new Error('wallet service not constructed');
+      }
+      await walletSvc.autoApproveScreenedWithdrawal(parsed.data);
     });
     ctx.events.on('wallet.withdrawal.failed', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.withdrawal.failed'].safeParse(payload);
@@ -309,15 +322,12 @@ export default {
         directory: c.get(ADMIN_USER_DIRECTORY),
         platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
         limiter: c.get(RATE_LIMITER),
-        riskTags: c.has(PLAYER_TAGS) ? c.get(PLAYER_TAGS) : undefined,
-        tagEvaluationCommands: c.has(TAG_EVALUATION_COMMANDS)
-          ? c.get(TAG_EVALUATION_COMMANDS)
-          : undefined,
+        riskTags: c.get(PLAYER_TAGS),
         audit: c.get(AUDIT_WRITER),
         rgLimits: c.get(RG_LIMITS),
         rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
-        kycPolicy: c.has(KYC_WITHDRAWAL_POLICY) ? c.get(KYC_WITHDRAWAL_POLICY) : undefined,
-        withdrawalSecurity: c.has(WITHDRAWAL_SECURITY) ? c.get(WITHDRAWAL_SECURITY) : undefined,
+        kycPolicy: c.get(KYC_WITHDRAWAL_POLICY),
+        withdrawalSecurity: c.get(WITHDRAWAL_SECURITY),
         mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : undefined,
         depositHold: c.has(DEPOSIT_HOLD_POLICY) ? c.get(DEPOSIT_HOLD_POLICY) : undefined,
         depositAdmission: c.has(DEPOSIT_ADMISSION_POLICY)

@@ -165,7 +165,15 @@ function makeServices(
     identityReader,
     adminUserDirectory,
   });
-  return { service, tagService, ruleService, walletReader, identityReader, adminUserDirectory };
+  return {
+    service,
+    tagService,
+    ruleService,
+    walletReader,
+    identityReader,
+    adminUserDirectory,
+    events,
+  };
 }
 
 function depositPayload(userId: string, amount: number) {
@@ -439,69 +447,65 @@ describe('TagEvaluationService.onWithdrawalRequested (real PG)', () => {
   });
 });
 
-describe('TagEvaluationService.evaluateWithdrawalRequested (real PG)', () => {
-  it('assigns withdrawal_review on the caller-supplied tx when the amount meets threshold', async () => {
-    const userId = randomUUID();
-    const { service } = makeServices();
-    await seedRule('withdrawal_review', { threshold: '5000' });
+describe('TagEvaluationService withdrawal screening verdict (real PG)', () => {
+  const verdictTopics = (events: ReturnType<typeof makeServices>['events']) =>
+    events.emitInTransaction.mock.calls
+      .map(([, topic]) => topic)
+      .filter((topic) => topic === 'tag.withdrawal.screened');
 
-    await db.drizzle.db.transaction(async (trx) => {
-      await service.evaluateWithdrawalRequested(trx, { userId, amount: '5000' });
-    });
+  it('emits the verdict after assigning withdrawal_review over the threshold', async () => {
+    const userId = randomUUID();
+    const { service, events } = makeServices();
+    await seedRule('withdrawal_review', { threshold: '5000' });
+    const payload = withdrawalPayload(userId, 5000);
+
+    await service.onWithdrawalRequested(payload);
 
     expect(await activeTagKeys(userId)).toContain('withdrawal_review');
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'tag.withdrawal.screened',
+      { userId, transactionId: payload.transactionId },
+    );
   });
 
-  it('does not assign when the amount is below threshold', async () => {
-    const userId = randomUUID();
-    const { service } = makeServices();
+  it('emits the verdict below the threshold too', async () => {
+    const { service, events } = makeServices();
     await seedRule('withdrawal_review', { threshold: '5000' });
 
-    await db.drizzle.db.transaction(async (trx) => {
-      await service.evaluateWithdrawalRequested(trx, { userId, amount: '4999' });
-    });
+    await service.onWithdrawalRequested(withdrawalPayload(randomUUID(), 4999));
 
-    expect(await activeTagKeys(userId)).not.toContain('withdrawal_review');
+    expect(verdictTopics(events)).toHaveLength(1);
   });
 
-  it('does nothing when the rule is disabled or absent', async () => {
-    const userId = randomUUID();
-    const { service } = makeServices();
-
-    await db.drizzle.db.transaction(async (trx) => {
-      await service.evaluateWithdrawalRequested(trx, { userId, amount: '99999' });
+  it('emits no verdict when a review is due but the player cannot be resolved', async () => {
+    const { service, events } = makeServices({
+      identityReader: { getPlayerIdByUserId: vi.fn().mockResolvedValue(null) },
     });
-
-    expect(await activeTagKeys(userId)).toEqual([]);
-  });
-
-  it('is idempotent - swallows TagAlreadyInUseError when already assigned', async () => {
-    const userId = randomUUID();
-    const { service } = makeServices();
     await seedRule('withdrawal_review', { threshold: '5000' });
+
+    await service.onWithdrawalRequested(withdrawalPayload(randomUUID(), 5000));
+
+    expect(verdictTopics(events)).toHaveLength(0);
+  });
+
+  it('drops a malformed payload without a verdict', async () => {
+    const { service, events } = makeServices();
+
+    await service.onWithdrawalRequested({ userId: 'not-a-uuid' });
+
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rethrows a screening failure so the event is redelivered, with no verdict', async () => {
+    const { service, tagService, events } = makeServices();
+    await seedRule('withdrawal_review', { threshold: '5000' });
+    vi.spyOn(tagService, 'screenWithdrawal').mockRejectedValueOnce(new Error('db unavailable'));
 
     await expect(
-      db.drizzle.db.transaction(async (trx) => {
-        await service.evaluateWithdrawalRequested(trx, { userId, amount: '5000' });
-        await service.evaluateWithdrawalRequested(trx, { userId, amount: '5000' });
-      }),
-    ).resolves.toBeUndefined();
-
-    const rows = await db.drizzle.db.select().from(playerTag);
-    expect(rows).toHaveLength(1);
-  });
-
-  it('propagates an unexpected error (fail-closed: a review-gate failure must block the caller, not silently skip review)', async () => {
-    const userId = randomUUID();
-    const { service, tagService } = makeServices();
-    await seedRule('withdrawal_review', { threshold: '5000' });
-    vi.spyOn(tagService, 'assignPlayerTagInTx').mockRejectedValueOnce(new Error('db unavailable'));
-
-    await expect(
-      db.drizzle.db.transaction(async (trx) => {
-        await service.evaluateWithdrawalRequested(trx, { userId, amount: '5000' });
-      }),
+      service.onWithdrawalRequested(withdrawalPayload(randomUUID(), 5000)),
     ).rejects.toThrow('db unavailable');
+    expect(verdictTopics(events)).toHaveLength(0);
   });
 });
 

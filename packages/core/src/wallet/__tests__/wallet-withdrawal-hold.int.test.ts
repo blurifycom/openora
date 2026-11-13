@@ -426,12 +426,18 @@ describe('WalletService auto-approval against held withdrawals (real PG)', () =>
     const { svc, psp } = makeAutoService();
     const w = await seedWallet('100');
 
-    const result = await svc.withdraw({
+    const requested = await svc.withdraw({
       userId: w.userId,
       amount: '40',
       currency: 'USD',
       ...NO_CLIENT_META,
     });
+    // The tag module's screening verdict is what runs auto-approval (ADR-0057).
+    const result =
+      (await svc.autoApproveScreenedWithdrawal({
+        userId: w.userId,
+        transactionId: requested.transactionId,
+      })) ?? requested;
 
     expect(result.status).toBe('completed');
     expect(psp.processWithdrawal).toHaveBeenCalledTimes(1);
@@ -453,12 +459,18 @@ describe('WalletService auto-approval against held withdrawals (real PG)', () =>
     });
     service.svc = svc;
 
-    const result = await svc.withdraw({
+    const requested = await svc.withdraw({
       userId: w.userId,
       amount: '40',
       currency: 'USD',
       ...NO_CLIENT_META,
     });
+    // The tag module's screening verdict is what runs auto-approval (ADR-0057).
+    const result =
+      (await svc.autoApproveScreenedWithdrawal({
+        userId: w.userId,
+        transactionId: requested.transactionId,
+      })) ?? requested;
 
     expect(psp.processWithdrawal).not.toHaveBeenCalled();
     expect(await txById(result.transactionId)).toMatchObject({

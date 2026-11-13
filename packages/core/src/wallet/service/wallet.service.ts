@@ -54,7 +54,6 @@ import {
   DepositRefusedError,
   type ExchangeRateReader,
   type AuditWritePort,
-  type TagEvaluationCommands,
   type TagKey,
   WITHDRAWAL_LOCK_TAG,
   type User,
@@ -1136,11 +1135,6 @@ export type WalletServiceDeps = {
   limiter?: RateLimiterAdapter<RateLimitKey>;
   // Optional: bound by the tag module. If risk-flag exclusions are configured but this is absent, auto-approval fails closed.
   riskTags?: PlayerTags;
-  // Optional: bound by the tag module. Not hard-`dependsOn`-wired (would cycle - tag
-  // depends on wallet's WALLET_READER), resolved lazily like riskTags/PLAYER_TAGS above.
-  // Absent = withdrawal_review evaluation is simply skipped (matches the pre-existing
-  // async-event-only behavior when the tag module isn't loaded).
-  tagEvaluationCommands?: TagEvaluationCommands;
   // Required: the auto-approval audit trail is a regulatory invariant, so wallet hard-depends on audit.
   audit: AuditWritePort;
   rgLimits?: RgLimitsPort;
@@ -1183,7 +1177,6 @@ export class WalletService {
   private readonly platformConfig?: PlatformConfig;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly riskTags?: PlayerTags;
-  private readonly tagEvaluationCommands?: TagEvaluationCommands;
   private readonly audit: AuditWritePort;
   private readonly rgLimits?: RgLimitsPort;
   private readonly rates?: ExchangeRateReader;
@@ -1207,7 +1200,6 @@ export class WalletService {
     platformConfig,
     limiter,
     riskTags,
-    tagEvaluationCommands,
     audit,
     rgLimits,
     rates,
@@ -1229,7 +1221,6 @@ export class WalletService {
     this.platformConfig = platformConfig;
     this.limiter = limiter;
     this.riskTags = riskTags;
-    this.tagEvaluationCommands = tagEvaluationCommands;
     this.audit = audit;
     this.rgLimits = rgLimits;
     this.rates = rates;
@@ -1470,17 +1461,50 @@ export class WalletService {
   // `kyc.gateWithdrawals` is the operator's master switch; once on, the compliance policy
   // decides per withdrawal. Runs before any debit, so a refused withdrawal moves no funds.
   private async assertKycForWithdrawal(userId: User['id'], amount: string, currency: string) {
+    if (await this.kycBlocksWithdrawal(userId, amount, currency)) {
+      throw new KycRequiredError();
+    }
+  }
+
+  private async kycBlocksWithdrawal(
+    userId: User['id'],
+    amount: string,
+    currency: string,
+  ): Promise<boolean> {
     if (!this.platformConfig?.kyc?.gateWithdrawals) {
-      return;
+      return false;
     }
     const pivotCurrency = resolveExchangeRatePivot(this.platformConfig.exchangeRate);
     const pivotAmount = await this.toPivotAmount(amount, currency, pivotCurrency);
     if (!(await this.withdrawalNeedsKyc(userId, pivotAmount, pivotCurrency))) {
-      return;
+      return false;
     }
-    if (!isKycPassed(await this.autoApprovalKycStatus(userId))) {
-      throw new KycRequiredError();
+    return !isKycPassed(await this.autoApprovalKycStatus(userId));
+  }
+
+  /**
+   * The request-time controls read again at approval and once more after the approval flip, right
+   * before the payout: a withdrawal_lock, a PIN lockout or a KYC requirement that landed while the
+   * withdrawal waited stops it. Null when none does. Holds are checked under the wallet lock instead.
+   */
+  private async approvalBlock(
+    userId: User['id'],
+    { amount, currency }: Pick<WalletTransaction, 'amount' | 'currency'>,
+  ): Promise<{ reason: WithdrawalRequeueReason; error: Error } | null> {
+    if (await this.isWithdrawalLocked(userId)) {
+      return { reason: 'withdrawal_lock', error: new WithdrawalLockedError() };
     }
+    const pinLockedUntil = await this.withdrawalSecurity?.pinLockedUntil(userId);
+    if (pinLockedUntil) {
+      return {
+        reason: 'withdrawal_pin_locked',
+        error: new WithdrawalPinLockedError(pinLockedUntil),
+      };
+    }
+    if (await this.kycBlocksWithdrawal(userId, amount, currency)) {
+      return { reason: 'kyc_required', error: new KycRequiredError() };
+    }
+    return null;
   }
 
   private withdrawalNeedsKyc(
@@ -1518,13 +1542,6 @@ export class WalletService {
       .from(walletWithdrawalHold)
       .where(inArray(walletWithdrawalHold.userId, [...userIds]));
     return new Set(rows.map((r) => r.userId));
-  }
-
-  private async assertWithdrawalsNotBlocked(userId: User['id']) {
-    await this.assertWithdrawalsNotLocked(userId);
-    if (await this.isWithdrawalHeld(this.drizzle.db, userId)) {
-      throw new WithdrawalHeldError();
-    }
   }
 
   private async findCommittedWithdrawal({
@@ -1645,16 +1662,20 @@ export class WalletService {
     );
   }
 
-  private async withdrawalOwnerId(withdrawalId: WalletTransaction['id']): Promise<User['id']> {
+  private async withdrawalOwner(withdrawalId: WalletTransaction['id']) {
     const [row] = await this.drizzle.db
-      .select({ userId: wallet.userId })
+      .select({
+        userId: wallet.userId,
+        amount: walletTransaction.amount,
+        currency: walletTransaction.currency,
+      })
       .from(walletTransaction)
       .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
       .where(eq(walletTransaction.id, withdrawalId));
     if (!row) {
       throw new WithdrawalNotFoundError(withdrawalId);
     }
-    return row.userId;
+    return row;
   }
 
   getBalance(userId: User['id']) {
@@ -2275,129 +2296,127 @@ export class WalletService {
     }
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
-    const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
-      async (txn) => {
-        // FOR UPDATE serializes concurrent withdrawals against a double-debit TOCTOU under READ COMMITTED.
-        const current = findOneOrThrow(
-          await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
-          new WalletNotFoundError(userId),
+    return this.drizzle.db.transaction(async (txn) => {
+      // FOR UPDATE serializes concurrent withdrawals against a double-debit TOCTOU under READ COMMITTED.
+      const current = findOneOrThrow(
+        await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
+        new WalletNotFoundError(userId),
+      );
+      // Replay of an already-committed key: return the original untouched. The new-key race is caught by the insert below.
+      if (idempotencyKey) {
+        const existing = await this.findByIdempotencyKey(
+          txn,
+          current.id,
+          namespacedIdempotencyKey(WITHDRAW_IDEMPOTENCY_NAMESPACE, idempotencyKey),
         );
-        // Replay of an already-committed key: return the original untouched. The new-key race is caught by the insert below.
-        if (idempotencyKey) {
-          const existing = await this.findByIdempotencyKey(
-            txn,
-            current.id,
-            namespacedIdempotencyKey(WITHDRAW_IDEMPOTENCY_NAMESPACE, idempotencyKey),
-          );
-          if (existing) {
-            this.assertReplayMatches(existing, amount, currency);
-            return {
-              transactionId: existing.id,
-              status: existing.status,
-              replayed: true,
-              walletId: current.id,
-              rail: this.resolveRail(currency),
-            };
-          }
+        if (existing) {
+          this.assertReplayMatches(existing, amount, currency);
+          return { transactionId: existing.id, status: existing.status };
         }
-        // Read after the wallet row lock, which `placeWithdrawalHold` also takes.
-        if (await this.isWithdrawalHeld(txn, userId)) {
-          throw new WithdrawalHeldError();
-        }
+      }
+      // Read after the wallet row lock, which `placeWithdrawalHold` also takes.
+      if (await this.isWithdrawalHeld(txn, userId)) {
+        throw new WithdrawalHeldError();
+      }
 
-        const { row, replayed } = await this.insertIdempotentTransaction(txn, {
-          namespace: WITHDRAW_IDEMPOTENCY_NAMESPACE,
-          userId,
+      const { row, replayed } = await this.insertIdempotentTransaction(txn, {
+        namespace: WITHDRAW_IDEMPOTENCY_NAMESPACE,
+        userId,
+        walletId: current.id,
+        rawIdempotencyKey: idempotencyKey,
+        amount,
+        currency,
+        values: {
           walletId: current.id,
-          rawIdempotencyKey: idempotencyKey,
+          type: 'withdrawal',
           amount,
           currency,
-          values: {
-            walletId: current.id,
-            type: 'withdrawal',
-            amount,
-            currency,
-            status: 'pending',
-            direction: 'debit',
-            rail: this.resolveRail(currency),
-            network: settlementNetwork,
-            destinationAddress: destinationAddress ?? null,
-            destinationTag: destinationTag ?? null,
-            destinationWalletId,
-            fee,
-          },
-        });
-
-        if (replayed) {
-          return {
-            transactionId: row.id,
-            status: row.status,
-            replayed,
-            walletId: current.id,
-            rail: this.resolveRail(currency),
-          };
-        }
-
-        // No bonus-lock subtraction: bonus funds live on their grant and never enter
-        // `wallet_balance`, so everything this row holds is the player's to withdraw.
-        const [debited] = await debitWalletBalance(txn, current.id, currency, amount);
-        if (!debited) {
-          throw new InsufficientBalanceError(
-            await readWalletBalance(txn, current.id, currency),
-            amount,
-          );
-        }
-        await stampBalanceAfter(txn, row.id, debited.amount);
-        // A player may not cash out while a bonus is live, and the rule holds in every currency.
-        // On this transaction, after the balance lock, so a bet cannot convert the bonus between
-        // the request and the forfeit, and the lock order matches a bet's. A rejected withdrawal
-        // does not bring the bonus back.
-        await this.bonusLifecycle?.forfeitHeld(txn, {
-          userId,
-          reason: 'withdrawal_while_active',
-          actor: { id: userId, isAdmin: false },
-          note: `withdrawal ${row.id}`,
-          meta: { ip: ip ?? null, userAgent: userAgent ?? null },
-        });
-
-        if (this.tagEvaluationCommands) {
-          await this.tagEvaluationCommands.evaluateWithdrawalRequested(txn, { userId, amount });
-        }
-
-        await this.events.emitInTransaction(txn, 'wallet.withdrawal.requested', {
-          userId,
-          playerId,
-          amount,
-          currency,
-          transactionId: row.id,
-          ip: ip ?? null,
-          userAgent: userAgent ?? null,
-        });
-
-        return {
-          transactionId: row.id,
-          status: row.status,
-          replayed,
-          walletId: current.id,
+          status: 'pending',
+          direction: 'debit',
           rail: this.resolveRail(currency),
-        };
-      },
-    );
+          network: settlementNetwork,
+          destinationAddress: destinationAddress ?? null,
+          destinationTag: destinationTag ?? null,
+          destinationWalletId,
+          fee,
+        },
+      });
 
-    if (replayed) {
-      return { transactionId, status };
-    }
+      if (replayed) {
+        return { transactionId: row.id, status: row.status };
+      }
 
-    // Fail-closed post-step: decides who approves (system vs manual queue), never throws out of withdraw() - failure leaves the row pending.
-    const auto = await this.maybeAutoApprove({
-      userId,
-      amount,
-      currency,
-      transactionId,
-      walletId,
-      rail,
+      // No bonus-lock subtraction: bonus funds live on their grant and never enter
+      // `wallet_balance`, so everything this row holds is the player's to withdraw.
+      const [debited] = await debitWalletBalance(txn, current.id, currency, amount);
+      if (!debited) {
+        throw new InsufficientBalanceError(
+          await readWalletBalance(txn, current.id, currency),
+          amount,
+        );
+      }
+      await stampBalanceAfter(txn, row.id, debited.amount);
+      // A player may not cash out while a bonus is live, and the rule holds in every currency.
+      // On this transaction, after the balance lock, so a bet cannot convert the bonus between
+      // the request and the forfeit, and the lock order matches a bet's. A rejected withdrawal
+      // does not bring the bonus back.
+      await this.bonusLifecycle?.forfeitHeld(txn, {
+        userId,
+        reason: 'withdrawal_while_active',
+        actor: { id: userId, isAdmin: false },
+        note: `withdrawal ${row.id}`,
+        meta: { ip: ip ?? null, userAgent: userAgent ?? null },
+      });
+
+      // Screening runs in the tag module off this event, never in this transaction; only its
+      // verdict lets the withdrawal be auto-approved (autoApproveScreenedWithdrawal, ADR-0057).
+      await this.events.emitInTransaction(txn, 'wallet.withdrawal.requested', {
+        userId,
+        playerId,
+        amount,
+        currency,
+        transactionId: row.id,
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+
+      return { transactionId: row.id, status: row.status };
     });
-    return auto ?? { transactionId, status };
+  }
+
+  /**
+   * The wallet's half of screening: runs auto-approval once the tag module's verdict says the
+   * withdrawal was screened. A withdrawal no longer pending, or not this user's, is left alone, so
+   * a redelivered verdict is a no-op. Never throws - any failure leaves the row for the manual queue.
+   */
+  async autoApproveScreenedWithdrawal({
+    userId,
+    transactionId,
+  }: {
+    userId: User['id'];
+    transactionId: WalletTransaction['id'];
+  }): Promise<TransactionResult | undefined> {
+    const [row] = await this.drizzle.db
+      .select({
+        amount: walletTransaction.amount,
+        currency: walletTransaction.currency,
+        walletId: walletTransaction.walletId,
+        rail: walletTransaction.rail,
+      })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(
+        and(
+          eq(walletTransaction.id, transactionId),
+          eq(walletTransaction.type, 'withdrawal'),
+          eq(walletTransaction.status, 'pending'),
+          eq(wallet.userId, userId),
+        ),
+      );
+    if (!row?.rail) {
+      return undefined;
+    }
+    return this.maybeAutoApprove({ userId, transactionId, ...row, rail: row.rail });
   }
 
   /**
@@ -2751,8 +2770,15 @@ export class WalletService {
     withdrawalId: WalletTransaction['id'],
     meta?: ClientMeta,
   ): Promise<TransactionResult> {
-    const ownerId = await this.withdrawalOwnerId(withdrawalId);
-    await this.assertWithdrawalsNotBlocked(ownerId);
+    const owner = await this.withdrawalOwner(withdrawalId);
+    const ownerId = owner.userId;
+    const blocked = await this.approvalBlock(ownerId, owner);
+    if (blocked) {
+      throw blocked.error;
+    }
+    if (await this.isWithdrawalHeld(this.drizzle.db, ownerId)) {
+      throw new WithdrawalHeldError();
+    }
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
     // `approved` is admin-attributed and committed with the flip; the system auto path skips
@@ -2780,8 +2806,9 @@ export class WalletService {
       });
       return decided;
     });
-    if (await this.revertFlipIfLocked(ownerId, queued)) {
-      throw new WithdrawalLockedError();
+    const blockedAfterFlip = await this.revertFlipIfBlocked(ownerId, queued);
+    if (blockedAfterFlip) {
+      throw blockedAfterFlip.error;
     }
     return this.settleApproved(flipped, queued, adminId);
   }
@@ -2839,20 +2866,19 @@ export class WalletService {
     return this.isWithdrawalHeld(txn, userId);
   }
 
-  // The lock is read before the flip's transaction, so one placed right after it would otherwise
-  // reach the PSP. Re-read it once the flip has committed. Holds are re-checked at dispatch instead.
-  private async revertFlipIfLocked(
-    userId: User['id'],
-    queued: WalletTransaction,
-  ): Promise<boolean> {
-    if (!(await this.isWithdrawalLocked(userId))) {
-      return false;
+  // The approval controls are read before the flip's transaction, so a lock, PIN lockout or KYC
+  // requirement landing right after it would otherwise reach the PSP. Re-read them once the flip
+  // has committed - the payout step's check. Holds are re-checked at dispatch instead.
+  private async revertFlipIfBlocked(userId: User['id'], queued: WalletTransaction) {
+    const blocked = await this.approvalBlock(userId, queued);
+    if (!blocked) {
+      return null;
     }
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     await this.drizzle.db.transaction((txn) =>
-      this.restoreQueued(txn, queued, { userId, playerId, reason: 'withdrawal_lock' }),
+      this.restoreQueued(txn, queued, { userId, playerId, reason: blocked.reason }),
     );
-    return true;
+    return blocked;
   }
 
   // The approval's audit row and event already went out, so the way back to the queue leaves its own.
@@ -3190,9 +3216,10 @@ export class WalletService {
       if (!decided) {
         return undefined;
       }
-      if (await this.revertFlipIfLocked(args.userId, decided.queued)) {
+      const blocked = await this.revertFlipIfBlocked(args.userId, decided.queued);
+      if (blocked) {
         logger.info(
-          { userId: args.userId, walletId: args.walletId, gate: 'withdrawal_lock' },
+          { userId: args.userId, walletId: args.walletId, gate: blocked.reason },
           'auto-withdrawal skipped',
         );
         return undefined;

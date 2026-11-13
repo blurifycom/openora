@@ -12,10 +12,8 @@ import { user } from '@openora/core/pam/schema/identity';
 import { walletAutoWithdrawalConfig, walletWithdrawalAddress } from '@openora/core/wallet/schema';
 import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 import {
-  bootTestApp,
   registerAndMaterializePlayer,
   asAdmin,
-  seedMinimal,
   waitForEmail,
   type TestDb,
   type TestApp,
@@ -23,18 +21,24 @@ import {
   bootE2e,
   closeE2e,
   readJson,
+  screenedWithdrawalStatus,
   verifyKyc,
   assignTag,
 } from '../index.js';
 
 /**
- * E2E for ABC-214 (wallet ledger + auto-withdrawal) over real HTTP + Postgres. Three apps share one db:
+ * E2E for ABC-214 (wallet ledger + auto-withdrawal) over real HTTP + Postgres. Three apps, each on
+ * its own db: any app's outbox relay may deliver a withdrawal's screening verdict, and the app that
+ * handles it decides auto-approval with its own config (ADR-0057), so apps that differ in config
+ * must not share outbox rows.
  * - `appDefault`: stock stack, autoWithdrawal off (manual approve/reject, rule-route authz).
  * - `appGated`: autoWithdrawal enabled, fiatThreshold 2, high caps - single-shot gate scenarios.
  * - `appCapGated`: dailyCapCount 1 - the daily-cap scenario isolated from the velocity heuristic.
  */
 
 let db: TestDb;
+let gatedDb: TestDb;
+let capGatedDb: TestDb;
 let appDefault: TestApp;
 let appGated: TestApp;
 let appCapGated: TestApp;
@@ -74,60 +78,58 @@ async function pendingWithdrawalIds(admin: TestClient, currency = 'USD') {
   return new Set((body.items as Array<{ transactionId: string }>).map((i) => i.transactionId));
 }
 
-beforeAll(async () => {
-  const basePlugins = await loadExtensions();
-
-  ({ db, app: appDefault } = await bootE2e({ plugins: basePlugins, seed: false }));
-
-  const gatedFixture = fileURLToPath(
-    new URL('./fixtures/test-wallet-auto-withdrawal-config-plugin.ts', import.meta.url),
-  );
-  appGated = await bootTestApp({
-    plugins: [
-      ...basePlugins,
-      { id: 'test-wallet-auto-withdrawal-config', path: gatedFixture },
-      // The crypto-rail scenario deposits BTC, which needs a BTC rate to snapshot its reference value.
-      {
-        id: 'testing-exchange-rate-provider',
-        path: fileURLToPath(new URL('../test-exchange-rate-provider-plugin.ts', import.meta.url)),
-      },
-    ],
-    databaseUrl: db.url,
-  });
-
-  const capFixture = fileURLToPath(
-    new URL('./fixtures/test-wallet-auto-withdrawal-cap-config-plugin.ts', import.meta.url),
-  );
-  appCapGated = await bootTestApp({
-    plugins: [...basePlugins, { id: 'test-wallet-auto-withdrawal-cap-config', path: capFixture }],
-    databaseUrl: db.url,
-  });
-
-  // The global fiat/crypto threshold moved from static PLATFORM_CONFIG to the
-  // DB-backed wallet_auto_withdrawal_config singleton. appGated/appCapGated share this
-  // physical database with appDefault, so seeding it once here (fiatThreshold '2', matching
-  // what the two fixtures used to set statically) covers both single-shot gate and daily-cap
-  // scenarios below - the seed default ('0'/'0') would otherwise leave auto-approval off.
-  // Delete any pre-existing row first: this suite's excluded-risk-tag scenario below relies
-  // on the column's migration DEFAULT for excludeRiskFlags, and this file's apps share one
-  // physical test database with every other e2e file in the run (per @openora/testing's
-  // AGENTS.md) - a sibling suite may have already left the singleton with an admin-edited
-  // excludeRiskFlags value that no longer includes the tag this suite tests.
-  const configDb = appDefault.container.get(DRIZZLE).db;
+// The seed default ('0'/'0') leaves auto-approval off; the gated scenarios need fiatThreshold '2'.
+async function seedGatedAutoWithdrawalConfig(app: TestApp) {
+  const configDb = app.container.get(DRIZZLE).db;
   await configDb.delete(walletAutoWithdrawalConfig);
   await seedAutoWithdrawalConfig(configDb);
   await configDb
     .update(walletAutoWithdrawalConfig)
     .set({ fiatThreshold: '2' })
     .where(eq(walletAutoWithdrawalConfig.singletonKey, 'global'));
+}
 
-  await seedMinimal(appDefault.container, { playerCount: 0 });
-}, 60_000);
+beforeAll(async () => {
+  const basePlugins = await loadExtensions();
+
+  ({ db, app: appDefault } = await bootE2e({ plugins: basePlugins }));
+
+  ({ db: gatedDb, app: appGated } = await bootE2e({
+    plugins: [
+      ...basePlugins,
+      {
+        id: 'test-wallet-auto-withdrawal-config',
+        path: fileURLToPath(
+          new URL('./fixtures/test-wallet-auto-withdrawal-config-plugin.ts', import.meta.url),
+        ),
+      },
+      // The crypto-rail scenario deposits BTC, which needs a BTC rate to snapshot its reference value.
+      {
+        id: 'testing-exchange-rate-provider',
+        path: fileURLToPath(new URL('../test-exchange-rate-provider-plugin.ts', import.meta.url)),
+      },
+    ],
+  }));
+  await seedGatedAutoWithdrawalConfig(appGated);
+
+  ({ db: capGatedDb, app: appCapGated } = await bootE2e({
+    plugins: [
+      ...basePlugins,
+      {
+        id: 'test-wallet-auto-withdrawal-cap-config',
+        path: fileURLToPath(
+          new URL('./fixtures/test-wallet-auto-withdrawal-cap-config-plugin.ts', import.meta.url),
+        ),
+      },
+    ],
+  }));
+  await seedGatedAutoWithdrawalConfig(appCapGated);
+}, 90_000);
 
 afterAll(async () => {
-  await appDefault?.close();
-  await appGated?.close();
-  await closeE2e({ app: appCapGated, db });
+  await closeE2e({ app: appDefault, db });
+  await closeE2e({ app: appGated, db: gatedDb });
+  await closeE2e({ app: appCapGated, db: capGatedDb });
 });
 
 describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () => {
@@ -151,7 +153,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     });
     expect(res.status).toBe(200);
     const body = await readJson(res);
-    expect(body.status).toBe('completed');
+    expect(await screenedWithdrawalStatus(appGated, body.transactionId)).toBe('completed');
 
     const balance = (await readJson(await client.get('/wallet/balance'))).balance;
     expect(balance).toBe('4.500000000000000000');
@@ -191,7 +193,8 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       currency: 'USD',
     });
     expect(res.status).toBe(200);
-    expect((await readJson(res)).status).toBe('completed');
+    const { transactionId } = await readJson(res);
+    expect(await screenedWithdrawalStatus(appGated, transactionId)).toBe('completed');
   });
 
   it('stays pending when KYC is required but not approved, even though kyc.gateWithdrawals is off', async () => {
@@ -215,7 +218,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       expect(res.status).toBe(200);
       const body = await readJson(res);
       // ...but auto-approval asks the KYC policy regardless and fails closed to manual.
-      expect(body.status).toBe('pending');
+      expect(await screenedWithdrawalStatus(appGated, body.transactionId)).toBe('pending');
 
       const pending = await pendingWithdrawalIds(admin);
       expect(pending.has(body.transactionId)).toBe(true);
@@ -243,10 +246,53 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     });
     expect(res.status).toBe(200);
     const body = await readJson(res);
-    expect(body.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appGated, body.transactionId)).toBe('pending');
 
     const pending = await pendingWithdrawalIds(admin);
     expect(pending.has(body.transactionId)).toBe(true);
+  });
+
+  it('never auto-approves a withdrawal over the review threshold: screening tags it first', async () => {
+    const email = `auto-screened-${randomUUID()}@e2e.test`;
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appGated, { email });
+    const admin = await asAdmin(appGated.app);
+    await verifyKyc(admin, userId);
+    const setReviewRule = async (isEnabled: boolean) => {
+      const res = await admin.put('/tag-rule/withdrawal_review', {
+        tagKey: 'withdrawal_review',
+        isEnabled,
+        threshold: isEnabled ? '1' : null,
+        thresholdDays: null,
+        thresholdCount: null,
+      });
+      expect(res.status).toBe(200);
+    };
+
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '5',
+      currency: 'USD',
+    });
+    await setReviewRule(true);
+    try {
+      // Under the auto-approval threshold of 2, over the review threshold of 1.
+      const res = await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '1.5',
+        currency: 'USD',
+      });
+      expect(res.status).toBe(200);
+      const body = await readJson(res);
+      expect(body.status).toBe('pending');
+      expect(await screenedWithdrawalStatus(appGated, body.transactionId)).toBe('pending');
+    } finally {
+      await setReviewRule(false);
+    }
+
+    const tags = await readJson(await admin.get(`/player/${playerId}/player-tag`));
+    expect((tags.items as Array<{ tag: { key: string } }>).map((t) => t.tag.key)).toContain(
+      'withdrawal_review',
+    );
   });
 
   it('stays pending when the amount exceeds the resolved threshold', async () => {
@@ -267,7 +313,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     });
     expect(res.status).toBe(200);
     const body = await readJson(res);
-    expect(body.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appGated, body.transactionId)).toBe('pending');
 
     const pending = await pendingWithdrawalIds(admin);
     expect(pending.has(body.transactionId)).toBe(true);
@@ -304,7 +350,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     });
     expect(res.status).toBe(200);
     const body = await readJson(res);
-    expect(body.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appGated, body.transactionId)).toBe('pending');
 
     const pending = await pendingWithdrawalIds(admin, 'BTC');
     expect(pending.has(body.transactionId)).toBe(true);
@@ -334,7 +380,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       currency: 'USD',
     });
     const body = await readJson(res);
-    expect(body.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appGated, body.transactionId)).toBe('pending');
   });
 
   it('a higher per-player rule allows what the global threshold would block', async () => {
@@ -363,7 +409,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       currency: 'USD',
     });
     const body = await readJson(res);
-    expect(body.status).toBe('completed');
+    expect(await screenedWithdrawalStatus(appGated, body.transactionId)).toBe('completed');
 
     await vi.waitFor(async () => {
       const auditRes = await admin.get(
@@ -398,7 +444,7 @@ describe('Auto-withdrawal: daily cap (appCapGated - dailyCapCount 1)', () => {
         currency: 'USD',
       }),
     );
-    expect(first.status).toBe('completed');
+    expect(await screenedWithdrawalStatus(appCapGated, first.transactionId)).toBe('completed');
 
     const second = await readJson(
       await client.post('/wallet/withdraw', {
@@ -407,7 +453,7 @@ describe('Auto-withdrawal: daily cap (appCapGated - dailyCapCount 1)', () => {
         currency: 'USD',
       }),
     );
-    expect(second.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appCapGated, second.transactionId)).toBe('pending');
 
     const pending = await pendingWithdrawalIds(admin);
     expect(pending.has(second.transactionId)).toBe(true);

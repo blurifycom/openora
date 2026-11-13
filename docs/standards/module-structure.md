@@ -56,11 +56,11 @@ Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a toke
 // bad - reaches into another module's service; check:boundaries fails
 import { TagService } from '../../pam/tag/service/tag.service.js';
 // good - the owner binds a command port, the caller resolves the token
-const tags = ctx.container.get(TAG_EVALUATION_COMMANDS);
-await tags.evaluate(tx, { playerId });
+const wallet = ctx.container.get(WALLET_COMMANDS);
+await wallet.debit(tx, { userId, amount, currency });
 ```
 
-Canonical seams to copy: `wallet -> tag` via `TAG_EVALUATION_COMMANDS` (optional port, resolved lazily with `c.has(...)` in the router factory), `compliance -> pam` via the `kyc.status.changed` domain event.
+Canonical seams to copy: `wallet -> tag` via `PLAYER_TAGS` (a required port, resolved lazily in the router factory), `tag -> wallet` via the `tag.withdrawal.screened` domain event (ADR-0057), `compliance -> pam` via the `kyc.status.changed` domain event.
 
 A port whose absence only degrades a feature, or already fails closed, goes in the plugin's `optionalPorts` with what the module skips without it; the boot logs each one left unbound. A port whose absence skips a money, compliance, authorization or audit control - an RG limit, a geo check, an audit record, a token revocation - goes in `controlPorts` instead, with the module that binds it (`wallet`, `gaming`, `identity`, `mail`). A full boot logs it the same way, since an install without that module has nothing to enforce; a `SERVICE_MANIFEST` boot refuses to start while it is unbound and the plugin list has that module, because another process of the install enforces the control.
 

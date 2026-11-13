@@ -455,3 +455,27 @@ describe('WalletService.withdraw - the 24-hour wait on a payout address (real PG
     });
   });
 });
+
+describe('WalletService.approveWithdrawal PIN lockout re-check (real PG)', () => {
+  it('refuses to approve while the PIN is locked out, and approves once the lockout ends', async () => {
+    const lockedUntil = new Date(Date.now() + 30 * 60 * 1000);
+    const security = makeWithdrawalSecurity();
+    const { svc } = makeService(security);
+    const w = await seedWallet('BTC');
+    await seedMatureWithdrawalAddress(db, { userId: w.userId, currency: 'BTC', address: ADDRESS });
+    const { transactionId } = await svc.withdraw(btcWithdrawal(w.userId));
+    vi.mocked(security.pinLockedUntil).mockResolvedValue(lockedUntil);
+
+    const refused = await svc
+      .approveWithdrawal(randomUUID(), transactionId)
+      .catch((err: unknown) => err);
+
+    expect(refused).toBeInstanceOf(WithdrawalPinLockedError);
+    const [queued] = await withdrawalRows();
+    expect(queued?.status).toBe('pending');
+
+    vi.mocked(security.pinLockedUntil).mockResolvedValue(null);
+    const approved = await svc.approveWithdrawal(randomUUID(), transactionId);
+    expect(approved.status).toBe('completed');
+  });
+});
