@@ -157,6 +157,23 @@ export function backfillMismatchKey(
   return `${ledgerPairKey(walletId, currency)}:backfill:${drift}`;
 }
 
+/**
+ * An unchecked pair's detail, carrying the balance it held when filed: the key does not, so a
+ * rerun still dedups onto it, and a re-baseline later shows what that balance became.
+ */
+export function ledgerUncheckedDetail(
+  pair: Pick<LedgerPairCheck, 'walletId' | 'currency' | 'balance' | 'unpricedRows'>,
+): string {
+  return `wallet ${pair.walletId} holds ${pair.unpricedRows} ${pair.currency} ledger rows nothing prices and no baseline covers them; run the baseline backfill (balance at filing: ${pair.balance})`;
+}
+
+const BALANCE_AT_FILING = /\(balance at filing: (-?\d+(?:\.\d+)?)\)$/;
+
+/** The balance an unchecked pair held when filed, null for one filed before it was recorded. */
+export function parseBalanceAtFiling(detail: string | null): string | null {
+  return (detail === null ? null : BALANCE_AT_FILING.exec(detail)?.[1]) ?? null;
+}
+
 const PAIR_KEY = /^wallet:([0-9a-f-]{36}):([^:]+)(?::|$)/;
 const BREACH_KEY = /^wallet:[0-9a-f-]{36}:[^:]+:([0-9a-f-]{36}|none):(-?\d+(?:\.\d+)?)$/;
 

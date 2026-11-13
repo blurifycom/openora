@@ -959,6 +959,42 @@ describe('rolling baselines and their repair (real PG)', () => {
     expect(await baselines(w.id)).toHaveLength(1);
   });
 
+  it('records the balance an unchecked pair held when filed beside the baseline it is re-baselined at', async () => {
+    const w = await seedWallet('300', [
+      {
+        type: 'deposit',
+        amount: '300',
+        status: 'completed',
+        balanceAfter: null,
+        createdAt: hoursAgo(48),
+      },
+    ]);
+    const audit = makeAuditWriter();
+    const svc = makeReconciliation({ audit });
+    await run(svc);
+    const [unchecked] = await findings('ledger_invariant_unchecked');
+    if (!unchecked) {
+      throw new Error('no unchecked finding filed');
+    }
+    await handEdit(w.id, '1000');
+
+    await svc.resolveFinding(ADMIN_ID, unchecked.id, { outcome: 'rebaselined', note: 'confirmed' });
+
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.reconciliation_finding.resolved',
+        resourceId: unchecked.id,
+        after: expect.objectContaining({
+          balanceAtFiling: expect.stringMatching(/^300(\.0+)?$/),
+          baseline: expect.objectContaining({
+            after: expect.objectContaining({ amount: expect.stringMatching(/^1300(\.0+)?$/) }),
+          }),
+        }),
+      }),
+    );
+  });
+
   it('records what the stamped ledger says beside a re-baselined unchecked pair', async () => {
     // Its balance was edited by 10 after the bet stamped 260, before anything priced it.
     const w = await seedWallet('270', [
@@ -1076,7 +1112,7 @@ describe('rolling baselines and their repair (real PG)', () => {
     );
   });
 
-  it('holds a pair whose backfill was flagged, even once a later stamp agrees with its balance', async () => {
+  it('holds a pair whose backfill was flagged, even once a later stamp agrees with its balance, and records its drift on the way out', async () => {
     const w = await seedWallet('270', [
       {
         type: 'deposit',
@@ -1095,7 +1131,8 @@ describe('rolling baselines and their repair (real PG)', () => {
         createdAt: hoursAgo(30),
       },
     ]);
-    const svc = makeReconciliation();
+    const audit = makeAuditWriter();
+    const svc = makeReconciliation({ audit });
     await run(svc, true);
     // A bet stamped off the edited balance: the stamps now carry the +10 forward as if it were real.
     await db.drizzle.db.insert(walletTransaction).values({
@@ -1132,6 +1169,24 @@ describe('rolling baselines and their repair (real PG)', () => {
       f.externalId?.includes(':backfill:'),
     );
     expect(flagged?.status).toBe('open');
+    if (!flagged) {
+      throw new Error('no backfill flag filed');
+    }
+
+    // The pair now checks clean, so the flag can be dismissed: both rows still carry the 10.
+    await svc.resolveFinding(ADMIN_ID, flagged.id, { outcome: 'dismissed', note: 'accepted' });
+    const resolved = (id: string) =>
+      audit.recordInTransaction.mock.calls
+        .map(([, entry]) => entry)
+        .find((e) => e.action === 'wallet.reconciliation_finding.resolved' && e.resourceId === id);
+    expect(resolved(plain.id)?.after).toMatchObject({
+      openBackfillFlags: [
+        { externalId: flagged.externalId, drift: expect.stringMatching(/^10(\.0+)?$/) },
+      ],
+    });
+    expect(resolved(flagged.id)?.before).toMatchObject({
+      filedDrift: expect.stringMatching(/^10(\.0+)?$/),
+    });
   });
 
   it('keeps the alert of a breach filed before the run failed', async () => {

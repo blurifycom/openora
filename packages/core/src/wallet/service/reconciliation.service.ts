@@ -74,6 +74,7 @@ import {
   checkLedgerPage,
   ledgerBreachKey,
   ledgerPairKey,
+  ledgerUncheckedDetail,
   ledgerUncheckedKey,
   lockAndCheckLedgerPair,
   type BaselineMove,
@@ -82,6 +83,7 @@ import {
   parseLedgerBreachKey,
   parseLedgerUncheckedKey,
   lockAndEstimateBackfill,
+  parseBalanceAtFiling,
   parseLedgerPairKey,
   rebaselinePair,
 } from './ledger-invariant.service.js';
@@ -228,6 +230,57 @@ async function assertLedgerFindingStands(
   if (breach && !moneyEquals(now.drift, breach.drift)) {
     throw refuse('drift_changed');
   }
+}
+
+const backfillDriftOf = (finding: WalletReconciliationFindingRow): string | undefined => {
+  const filed =
+    finding.kind === 'ledger_invariant_unchecked'
+      ? parseLedgerUncheckedKey(finding.externalId)
+      : null;
+  return filed && 'backfillDrift' in filed ? filed.backfillDrift : undefined;
+};
+
+type PlainUncheckedFiling = {
+  balanceAtFiling: string | null;
+  openBackfillFlags: { externalId: string; drift: string }[];
+};
+
+/**
+ * What a re-baselined plain unchecked pair was filed at, and every flagged backfill still open on
+ * it: the re-baseline accepts the balance as it is now, so its record keeps what it differed by.
+ */
+async function plainUncheckedFiling(
+  txn: DrizzleTx,
+  finding: WalletReconciliationFindingRow,
+  pair: { walletId: Wallet['id']; currency: string },
+): Promise<PlainUncheckedFiling | undefined> {
+  const filed =
+    finding.kind === 'ledger_invariant_unchecked'
+      ? parseLedgerUncheckedKey(finding.externalId)
+      : null;
+  if (!filed || 'backfillDrift' in filed) {
+    return undefined;
+  }
+  const flags = await txn
+    .select({ externalId: walletReconciliationFinding.externalId })
+    .from(walletReconciliationFinding)
+    .where(
+      and(
+        eq(walletReconciliationFinding.status, 'open'),
+        eq(walletReconciliationFinding.kind, 'ledger_invariant_unchecked'),
+        eq(walletReconciliationFinding.providerName, LEDGER_FINDING_LABEL),
+        sql`starts_with(${walletReconciliationFinding.externalId}, ${`${ledgerPairKey(pair.walletId, pair.currency)}:backfill:`})`,
+      ),
+    );
+  return {
+    balanceAtFiling: parseBalanceAtFiling(finding.detail),
+    openBackfillFlags: flags.flatMap(({ externalId }) => {
+      const flag = parseLedgerUncheckedKey(externalId);
+      return externalId && flag && 'backfillDrift' in flag
+        ? [{ externalId, drift: flag.backfillDrift }]
+        : [];
+    }),
+  };
 }
 
 /**
@@ -483,6 +536,8 @@ export class ReconciliationService {
       let releasedDeposit: CreditedDeposit | undefined;
       let baseline: BaselineMove | null = null;
       let cleanCheck: LedgerPairState | undefined;
+      let filedDrift: string | undefined;
+      let plainFiling: PlainUncheckedFiling | undefined;
 
       if (resolution.outcome === 'credited') {
         if (DEPOSIT_FINDING_KINDS.has(finding.kind)) {
@@ -616,6 +671,7 @@ export class ReconciliationService {
           );
         }
         await assertLedgerFindingStands(txn, finding, pair);
+        plainFiling = await plainUncheckedFiling(txn, finding, pair);
         baseline = await rebaselinePair(txn, pair.walletId, pair.currency, finding.id);
         if (!baseline) {
           throw new ReconciliationOutcomeNotAllowedError(
@@ -628,6 +684,7 @@ export class ReconciliationService {
       } else {
         if (LEDGER_FINDING_KINDS.has(finding.kind)) {
           ({ check: cleanCheck, baseline } = await settleCleanLedgerPair(txn, finding));
+          filedDrift = backfillDriftOf(finding);
         }
         resolutionNote = resolution.note;
       }
@@ -669,6 +726,7 @@ export class ReconciliationService {
           status: 'open',
           transactionId: finding.transactionId,
           ...(cleanCheck ? { check: cleanCheck } : {}),
+          ...(filedDrift ? { filedDrift } : {}),
         },
         after: {
           status: row.status,
@@ -680,6 +738,7 @@ export class ReconciliationService {
           creditedDeposit: creditedDeposit ?? null,
           refundedDepositId,
           ...(baseline ? { baseline } : {}),
+          ...plainFiling,
           ...(resolution.outcome === 'refunded'
             ? {
                 refundAmount: resolution.amount,
@@ -1270,7 +1329,7 @@ export class ReconciliationService {
             kind: 'ledger_invariant_unchecked',
             currency: pair.currency,
             externalId: ledgerUncheckedKey(pair.walletId, pair.currency, pair.baselineId),
-            detail: `wallet ${pair.walletId} holds ${pair.unpricedRows} ${pair.currency} ledger rows nothing prices and no baseline covers them; run the baseline backfill`,
+            detail: ledgerUncheckedDetail(pair),
           });
           continue;
         }
