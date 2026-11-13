@@ -1,4 +1,4 @@
-# ADR-0052: Ledger-owned play eligibility projection
+# ADR-0054: Ledger-owned play eligibility projection
 
 **Date**: 2026-11-13
 **Status**: Accepted. Supersedes in part [ADR-0032](./0032-rg-enforcement-at-wager-time.md): a stake no longer reads `PLAY_ELIGIBILITY` and the identity `user` row.

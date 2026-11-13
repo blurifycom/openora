@@ -123,7 +123,7 @@ is `SPORTSBOOK_LEDGER` unchanged.
   bounded block is judged at read time. A script that writes the RG, `isActive`, ban or player
   status columns directly must run `backfillPlayEligibility` (`@openora/core/pam/identity/seed`)
   after it; identity also runs it at every boot. Deposits, payouts and other non-stake paths
-  still read `PLAY_ELIGIBILITY`. See ADR-0052.
+  still read `PLAY_ELIGIBILITY`. See ADR-0054.
 
 ## Rules that are easy to get wrong here
 

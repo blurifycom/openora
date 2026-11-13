@@ -1,7 +1,7 @@
 // The ledger's view of whether a user may stake: `ledger_play_eligibility`. Identity, the owner
 // of every input, writes it through PLAY_ELIGIBILITY_PROJECTION in the transaction that changes
 // one, and repairs it from the `identity.play_eligibility.changed` outbox event and its backfill.
-// A stake reads this table, never the identity tables. See ADR-0052.
+// A stake reads this table, never the identity tables. See ADR-0054.
 import { createLogger, type DrizzleService, type DrizzleTx } from '@openora/core/server';
 import {
   PlayEligibilitySnapshotSchema,

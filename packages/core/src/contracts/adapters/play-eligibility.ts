@@ -95,7 +95,7 @@ export const LEDGER_PLAY_ELIGIBILITY: Token<Required<PlayEligibilityPort>> =
 /**
  * Writes to the ledger's `ledger_play_eligibility` projection. Wallet-internal: bound by wallet,
  * called only by identity, the owner of every input. Not part of the Ledger API a provider
- * bridge sees. See ADR-0052.
+ * bridge sees. See ADR-0054.
  */
 export type PlayEligibilityProjectionPort = {
   /**
