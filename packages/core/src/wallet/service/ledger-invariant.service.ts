@@ -66,6 +66,24 @@ const unpriced = sql`(t.amount <> 0 and (${moves}) and (
 
 const pairRows = sql`t.wallet_id = p.wallet_id and upper(t.currency) = p.currency`;
 
+/**
+ * What the pair `p` held at `asOf` by the ledger's own stamps: the last `balance_after` of a row
+ * that moved money at or before it, carried forward by the rows after that one. No row when
+ * nothing was stamped.
+ */
+function stampedEstimate(asOf: SQL): SQL {
+  return sql`(
+    select r.balance_after + (
+        select coalesce(sum(${effect}), 0) from wallet_transaction t
+        where ${pairRows} and t.created_at <= ${asOf}
+          and (t.created_at, t.id) > (r.created_at, r.id)) as estimate
+    from (
+      select t.created_at, t.id, t.balance_after from wallet_transaction t
+      where ${pairRows} and t.created_at <= ${asOf} and t.balance_after is not null
+        and (${moves})
+      order by t.created_at desc, t.id desc limit 1) r)`;
+}
+
 /** Sum of effects and count of unpriced rows for the pair `p`, over rows after `asOf`. */
 function ledgerAfter(asOf: SQL): SQL {
   return sql`(
@@ -329,17 +347,10 @@ export async function backfillBaselinePage(
     ),
     priced as (
       select p.id, p.wallet_id, p.currency, p.amount - l.total as amount, p.as_of, l.unpriced,
-        r.balance_after + (
-          select coalesce(sum(${effect}), 0) from wallet_transaction t
-          where ${pairRows} and t.created_at <= p.as_of
-            and (t.created_at, t.id) > (r.created_at, r.id)) as estimate
+        e.estimate
       from needs p
       cross join lateral ${ledgerAfter(sql`p.as_of`)} l
-      left join lateral (
-        select t.created_at, t.id, t.balance_after from wallet_transaction t
-        where ${pairRows} and t.created_at <= p.as_of and t.balance_after is not null
-          and (${moves})
-        order by t.created_at desc, t.id desc limit 1) r on true
+      left join lateral ${stampedEstimate(sql`p.as_of`)} e on true
     ),
     ins as (
       insert into wallet_balance_baseline (wallet_id, currency, amount, as_of, run_id)
@@ -381,18 +392,29 @@ export async function backfillBaselinePage(
 
 export type BaselinePoint = { id: string; amount: string; asOf: string };
 
+export type BaselineMove = {
+  before: BaselinePoint | null;
+  after: BaselinePoint;
+  balance: string;
+  /** What the ledger's own stamps carry forward to at the new baseline, null when none. */
+  estimate: string | null;
+  /** The new baseline less that estimate: what the re-baseline vouches for beyond the stamps. */
+  mismatch: string | null;
+};
+
 /**
  * Re-baselines one pair at the balance it holds now, for a super admin resolving a ledger
  * finding against it: the new baseline sits at the cut (never before the one in force) at the
- * balance less every row after it, linked to the finding. Null when a row after the cut is
- * unpriced, so nothing could be baselined.
+ * balance less every row after it, linked to the finding, beside the backfill's cross-check
+ * against the ledger's stamps for the record. Null when a row after the cut is unpriced, so
+ * nothing could be baselined.
  */
 export async function rebaselinePair(
   db: DrizzleDb | DrizzleTx,
   walletId: Wallet['id'],
   currency: string,
   findingId: WalletReconciliationFinding['id'],
-): Promise<{ before: BaselinePoint | null; after: BaselinePoint } | null> {
+): Promise<BaselineMove | null> {
   const { rows } = await db.execute<{
     prior_id: string | null;
     prior_amount: string | null;
@@ -400,6 +422,9 @@ export async function rebaselinePair(
     id: string;
     amount: string;
     as_of: string;
+    balance: string;
+    estimate: string | null;
+    mismatch: string | null;
   }>(sql`
     with p as (
       select b.wallet_id, b.currency, b.amount from wallet_balance b
@@ -417,9 +442,11 @@ export async function rebaselinePair(
       where l.unpriced = 0
       returning id, amount, as_of
     )
-    select c.prior_id, c.prior_amount::text as prior_amount, c.prior_as_of::text as prior_as_of,
-      ins.id, ins.amount::text as amount, ins.as_of::text as as_of
-    from c cross join ins`);
+    select p.prior_id, p.prior_amount::text as prior_amount, p.prior_as_of::text as prior_as_of,
+      ins.id, ins.amount::text as amount, ins.as_of::text as as_of, p.amount::text as balance,
+      e.estimate::text as estimate, (ins.amount - e.estimate)::text as mismatch
+    from c p cross join ins
+    left join lateral ${stampedEstimate(sql`p.as_of`)} e on true`);
   const [row] = rows;
   if (!row) {
     return null;
@@ -430,5 +457,8 @@ export async function rebaselinePair(
         ? { id: row.prior_id, amount: row.prior_amount, asOf: row.prior_as_of }
         : null,
     after: { id: row.id, amount: row.amount, asOf: row.as_of },
+    balance: row.balance,
+    estimate: row.estimate,
+    mismatch: row.mismatch,
   };
 }

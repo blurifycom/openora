@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
+import * as z from 'zod';
 import {
   Container,
   ModuleRegistryImpl,
@@ -796,6 +797,51 @@ describe('rolling baselines and their repair (real PG)', () => {
     await expect(
       svc.resolveFinding(ADMIN_ID, breach.id, { outcome: 'rebaselined', note: 'owed 7' }),
     ).rejects.toMatchObject({ data: { reason: 'baseline_moved' } });
+    expect(await baselines(w.id)).toHaveLength(1);
+  });
+
+  it('records what the stamped ledger says beside a re-baselined unchecked pair', async () => {
+    // Its balance was edited by 10 after the bet stamped 260, before anything priced it.
+    const w = await seedWallet('270', [
+      {
+        type: 'deposit',
+        amount: '300',
+        status: 'completed',
+        balanceAfter: null,
+        createdAt: hoursAgo(48),
+      },
+      {
+        type: 'bet',
+        amount: '40',
+        status: 'completed',
+        direction: 'debit',
+        realShare: '40',
+        balanceAfter: '260',
+        createdAt: hoursAgo(30),
+      },
+    ]);
+    const audit = makeAuditWriter();
+    const svc = makeReconciliation({ audit });
+    await run(svc);
+    const [unchecked] = await findings('ledger_invariant_unchecked');
+    if (!unchecked) {
+      throw new Error('no unchecked finding filed');
+    }
+
+    await svc.resolveFinding(ADMIN_ID, unchecked.id, {
+      outcome: 'rebaselined',
+      note: 'balance confirmed against the old system',
+    });
+
+    const resolvedAudit = audit.recordInTransaction.mock.calls
+      .map(([, entry]) => entry)
+      .find((entry) => entry.action === 'wallet.reconciliation_finding.resolved');
+    const baseline = z
+      .object({ balance: z.string(), estimate: z.string(), mismatch: z.string() })
+      .parse((resolvedAudit?.after as { baseline?: unknown } | undefined)?.baseline);
+    expect([baseline.balance, baseline.estimate, baseline.mismatch].map(Number)).toEqual([
+      270, 260, 10,
+    ]);
     expect(await baselines(w.id)).toHaveLength(1);
   });
 
