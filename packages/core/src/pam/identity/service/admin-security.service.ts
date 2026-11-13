@@ -149,13 +149,19 @@ export class AdminSecurityService implements AdminSecurityPolicy {
         ipAddress: session.ipAddress,
         userAgent: session.userAgent,
         lastSeenAt: session.lastSeenAt,
+        live: sql<boolean>`${session.expiresAt} > now()`,
       })
       .from(session)
       .where(and(eq(session.id, sessionId), eq(session.userId, userId)))
       .limit(1);
 
-    if (!row) {
-      return;
+    // The caller resolved this session a moment ago, possibly from a cache in another service,
+    // so a session ended since (revoked, expired, deleted) is refused here rather than served.
+    if (!row?.live) {
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Authentication required',
+        data: { reason: AuthGuardReasonSchema.enum.authentication_required },
+      });
     }
 
     if (!isSameDevice(row.userAgent, userAgent)) {

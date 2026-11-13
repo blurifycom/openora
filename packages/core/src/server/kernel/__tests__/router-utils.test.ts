@@ -51,6 +51,20 @@ describe('getUserId', () => {
     expect(getUserId(context, { allowPendingTwoFactorSetup: true })).toBe('user-1');
   });
 
+  it('answers 503, not 401, when the session service could not be asked', () => {
+    const context = withRequest({ sessionUnavailable: true });
+
+    expect(() => getUserId(context)).toThrow(
+      expect.objectContaining({ code: 'SERVICE_UNAVAILABLE', status: 503 }),
+    );
+  });
+
+  it('serves a caller that resolved even when the flag is set', () => {
+    const context = withRequest({ sessionUnavailable: true, auth: { userId: 'user-1' } });
+
+    expect(getUserId(context)).toBe('user-1');
+  });
+
   it('throws UNAUTHORIZED rather than a bare Error', () => {
     expect(() => getUserId(undefined)).toThrow(ORPCError);
   });
