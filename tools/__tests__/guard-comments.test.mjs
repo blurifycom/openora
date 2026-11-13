@@ -25,6 +25,9 @@ const ALLOW = [
   'gh api -X DELETE repos/o/r/pulls/comments/9',
   'git commit -m "docs: never post on the PR, gh pr comment is blocked"',
   'glab mr view 2',
+  'git commit -m "x" 2>&1 | tail -1',
+  'for i in 1 2; do gh pr view "$i"; done',
+  'bash -c "gh pr view 5"',
 ];
 
 const DENY = [
@@ -49,6 +52,20 @@ const DENY = [
   `gh api graphql -f query='mutation { addComment(input: {subjectId: "P", body: "x"}) { clientMutationId } }'`,
   `glab api graphql -f query='mutation { createNote(input: {noteableId: "x", body: "y"}) { note { id } } }'`,
   'git push && glab mr note 2 -m "pushed"',
+  'for id in 1 2; do glab mr note 2 -m "fixed $id"; done',
+  'if true; then gh pr comment 5 -b x; fi',
+  '{ gh pr comment 5 -b x; }',
+  'env GH_TOKEN=t gh pr comment 5 -b x',
+  'sudo -E glab mr note 2 -m x',
+  '/opt/homebrew/bin/gh pr comment 5 -b x',
+  'bash -c "glab mr note 2 -m x"',
+  'git push & gh pr comment 5 -b x',
+  'glab api "projects/1/merge_requests/2/draft_notes" -f note=x',
+  'glab api -X POST "projects/1/merge_requests/2/draft_notes/bulk_publish"',
+  'glab api -X PUT "projects/1/merge_requests/2/draft_notes/3/publish"',
+  `glab api graphql -f query='mutation { createDiscussion(input: {noteableId: "x", body: "y"}) { note { id } } }'`,
+  'gh api -X POST graphql -f query=@mutation.graphql',
+  `gh api --hostname github.com graphql -f query='mutation { addComment(input: {}) { clientMutationId } }'`,
 ];
 
 const exitCode = (guard, command) =>
