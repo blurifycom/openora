@@ -46,7 +46,7 @@ import {
   ReconciliationAttributionError,
   ReconciliationCreditMismatchError,
   ReconciliationFindingNotFoundError,
-  ReconciliationOutcomeNotAllowedError,
+  type ReconciliationRefusalReason,
   ReconciliationRefundAmountError,
 } from '../service/reconciliation.service.js';
 
@@ -173,6 +173,13 @@ async function waitForOpenClaim(jobName: string, timeoutMs = 2000): Promise<void
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+
+// The error class and the reason a client is told, so each refusal pins its own path.
+const refusedFor = (reason: ReconciliationRefusalReason) =>
+  expect.objectContaining({
+    name: 'ReconciliationOutcomeNotAllowedError',
+    data: { reason },
+  });
 
 describe('ReconciliationService.runCycle - internal transfer exclusion', () => {
   it('produces zero findings for a sweep that appears in the vendor transaction list', async () => {
@@ -507,7 +514,7 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
         outcome: 'credited',
         transactionId: credit.transactionId,
       }),
-    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    ).rejects.toMatchObject(refusedFor('withdrawal_not_processing'));
     const [still] = await findingRows();
     expect(still?.status).toBe('open');
   });
@@ -931,7 +938,7 @@ describe('ReconciliationService.resolveFinding', () => {
 
     await expect(
       reconciliation.resolveFinding(randomUUID(), finding.id, { outcome: 'credited' }),
-    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    ).rejects.toMatchObject(refusedFor('credit_names_no_transaction'));
   });
 
   it('refuses to close a deposit finding with a manual credit made before the hold policy ran', async () => {
@@ -943,7 +950,7 @@ describe('ReconciliationService.resolveFinding', () => {
         outcome: 'credited',
         transactionId: randomUUID(),
       }),
-    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    ).rejects.toMatchObject(refusedFor('deposit_credit_names_a_transaction'));
   });
 
   it('credits a missing deposit as a deposit the limit window counts, keyed on the vendor id', async () => {
@@ -1068,7 +1075,7 @@ describe('ReconciliationService.resolveFinding', () => {
       const finding = await seedFinding(kind);
       await expect(
         reconciliation.resolveFinding(randomUUID(), finding.id, refund()),
-      ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+      ).rejects.toMatchObject(refusedFor('outcome_not_allowed_for_kind'));
     }
   });
 
@@ -1090,7 +1097,7 @@ describe('ReconciliationService.resolveFinding', () => {
 
     await expect(
       reconciliation.resolveFinding(randomUUID(), finding.id, refund('1', 'bc1qelsewhere')),
-    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    ).rejects.toMatchObject(refusedFor('refund_destination_without_note'));
     expect((await findingById(finding.id))?.status).toBe('open');
 
     const resolved = await reconciliation.resolveFinding(
@@ -1466,7 +1473,7 @@ describe('ReconciliationService.resolveFinding', () => {
         outcome: 'dismissed',
         note: 'refunded on chain',
       }),
-    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    ).rejects.toMatchObject(refusedFor('outcome_not_allowed_for_kind'));
     expect(await statusOf(held.id)).toBe('on_hold');
   });
 
@@ -1480,7 +1487,7 @@ describe('ReconciliationService.resolveFinding', () => {
         outcome: 'credited',
         transactionId: randomUUID(),
       }),
-    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    ).rejects.toMatchObject(refusedFor('outcome_not_allowed_for_kind'));
   });
 
   it('releases a held deposit to the balance once the hold policy lets it in', async () => {

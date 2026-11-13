@@ -107,12 +107,31 @@ export const ReconciliationAttributionError = createDomainError<[reason: string]
   (reason) => `The deposit cannot be credited to this player: ${reason}`,
 );
 
-export const ReconciliationOutcomeNotAllowedError = createDomainError<
-  [kind: string, outcome: string]
->(
-  'ReconciliationOutcomeNotAllowedError',
-  (kind, outcome) => `A ${kind} finding cannot be resolved as ${outcome}`,
-);
+/** Why a resolution was refused, served to the client as `data.reason`. */
+export type ReconciliationRefusalReason =
+  | 'outcome_not_allowed_for_kind'
+  | 'deposit_credit_names_a_transaction'
+  | 'credit_names_no_transaction'
+  | 'withdrawal_not_processing'
+  | 'refund_destination_without_note'
+  | 'refund_without_vendor_id'
+  | 'ledger_deposit_not_completed'
+  | 'not_a_ledger_pair'
+  | 'unpriced_rows_after_cut';
+
+export class ReconciliationOutcomeNotAllowedError extends Error {
+  readonly data: { reason: ReconciliationRefusalReason };
+
+  constructor(
+    kind: WalletReconciliationFindingKind,
+    outcome: ReconciliationResolution['outcome'],
+    reason: ReconciliationRefusalReason = 'outcome_not_allowed_for_kind',
+  ) {
+    super(`A ${kind} finding cannot be resolved as ${outcome}: ${reason}`);
+    this.name = 'ReconciliationOutcomeNotAllowedError';
+    this.data = { reason };
+  }
+}
 
 /**
  * Deposits whose money is in custody and on no player's balance, so sending it back on chain
@@ -367,7 +386,11 @@ export class ReconciliationService {
       if (resolution.outcome === 'credited') {
         if (DEPOSIT_FINDING_KINDS.has(finding.kind)) {
           if (resolution.transactionId) {
-            throw new ReconciliationOutcomeNotAllowedError(finding.kind, 'a manual credit');
+            throw new ReconciliationOutcomeNotAllowedError(
+              finding.kind,
+              'credited',
+              'deposit_credit_names_a_transaction',
+            );
           }
           creditedDeposit = await this.creditDepositFinding(
             txn,
@@ -380,7 +403,8 @@ export class ReconciliationService {
           if (!resolution.transactionId) {
             throw new ReconciliationOutcomeNotAllowedError(
               finding.kind,
-              'credited without a manual credit',
+              'credited',
+              'credit_names_no_transaction',
             );
           }
           const [tx] = await txn
@@ -415,7 +439,8 @@ export class ReconciliationService {
             if (withdrawal?.type !== 'withdrawal' || withdrawal.status !== 'processing') {
               throw new ReconciliationOutcomeNotAllowedError(
                 finding.kind,
-                'credited for a withdrawal no longer processing',
+                'credited',
+                'withdrawal_not_processing',
               );
             }
             if (tx.walletId !== withdrawal.walletId) {
@@ -443,7 +468,8 @@ export class ReconciliationService {
         ) {
           throw new ReconciliationOutcomeNotAllowedError(
             finding.kind,
-            'refunded to an address other than its sender without a note',
+            'refunded',
+            'refund_destination_without_note',
           );
         }
         await this.recordRefund(txn, finding);
@@ -467,13 +493,18 @@ export class ReconciliationService {
         // finding reports is accepted, which is why it takes a super admin and a note.
         const pair = parseLedgerPairKey(finding.externalId);
         if (!pair) {
-          throw new ReconciliationOutcomeNotAllowedError(finding.kind, 'rebaselined');
+          throw new ReconciliationOutcomeNotAllowedError(
+            finding.kind,
+            'rebaselined',
+            'not_a_ledger_pair',
+          );
         }
         baseline = await rebaselinePair(txn, pair.walletId, pair.currency, finding.id);
         if (!baseline) {
           throw new ReconciliationOutcomeNotAllowedError(
             finding.kind,
-            'rebaselined while rows after the cut are unpriced',
+            'rebaselined',
+            'unpriced_rows_after_cut',
           );
         }
         resolutionNote = resolution.note;
@@ -606,7 +637,8 @@ export class ReconciliationService {
       ) {
         throw new ReconciliationOutcomeNotAllowedError(
           finding.kind,
-          'credited while its ledger deposit is not a completed one in the same currency',
+          'credited',
+          'ledger_deposit_not_completed',
         );
       }
       amount = moneySubtract(finding.amount, ledger.amount);
@@ -656,7 +688,8 @@ export class ReconciliationService {
     if (!finding.externalId) {
       throw new ReconciliationOutcomeNotAllowedError(
         finding.kind,
-        'refunded without a vendor transaction id',
+        'refunded',
+        'refund_without_vendor_id',
       );
     }
     if (finding.kind !== 'held_deposit') {
