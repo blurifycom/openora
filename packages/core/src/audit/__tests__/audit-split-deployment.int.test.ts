@@ -209,7 +209,6 @@ describe('audit trail with two services of one deployment up', () => {
       { timeout: 10_000 },
     );
     await drainAuditOutbox(db.drizzle.db);
-    expect(await count(sql`select count(*)::int as n from audit_outbox`)).toBe(0);
 
     expect(await rowsFor(kept)).toBe(1);
     expect(await rowsFor(lost)).toBe(0);

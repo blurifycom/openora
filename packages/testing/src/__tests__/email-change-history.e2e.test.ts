@@ -209,7 +209,7 @@ describe('email change history', () => {
       },
     );
 
-    const audit = probe.find((r) => r.tbl === 'audit_outbox');
+    const audit = probe.find((r) => r.tbl === 'audit_outbox' && r.op === 'INSERT');
     const outboxInsert = probe.findIndex((r) => r.tbl === 'event_outbox' && r.op === 'INSERT');
     expect(audit).toBeDefined();
     for (const r of probe.slice(0, outboxInsert + 1)) {
