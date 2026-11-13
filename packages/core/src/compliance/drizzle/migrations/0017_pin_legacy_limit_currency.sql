@@ -5,8 +5,11 @@
 -- `updated_at` kept because the limit itself did not change. A row whose player is gone stays
 -- NULL and is enforced fail-closed. A row whose slot already holds that currency stays NULL too,
 -- rather than break the unique index. `player` belongs to the profile module, which migrates after
--- this one: on a fresh database it does not exist yet and there is nothing to pin.
+-- this one: on a fresh database it does not exist yet and there is nothing to pin. The rows left
+-- NULL are counted in a NOTICE; an admin override sets their currency.
 DO $$
+DECLARE
+  unpinned bigint;
 BEGIN
   IF to_regclass('player') IS NULL THEN
     RETURN;
@@ -27,6 +30,11 @@ BEGIN
           AND sibling.currency = p.currency
       )
   $sql$;
+  SELECT count(*) INTO unpinned FROM user_limit
+  WHERE currency IS NULL AND amount IS NOT NULL AND type <> 'session';
+  IF unpinned > 0 THEN
+    RAISE NOTICE 'user_limit: % money limits left without a currency refuse every move until an admin override sets one (ADR-0055)', unpinned;
+  END IF;
 END $$;
 --> statement-breakpoint
 -- Every user with a limit gets a version row, so the full backfill, which walks this table, reaches

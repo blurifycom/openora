@@ -1,7 +1,7 @@
 // Compliance owns every deposit and wager limit, so it is the only writer of the ledger's limits
 // projection. Every limit writer calls `publish` in its own transaction, after its change; the
 // backfill repairs what a writer that skipped it left behind, through `publish` too.
-import { sql, and, asc, gt, gte, inArray, isNotNull } from 'drizzle-orm';
+import { sql, and, asc, count, gt, gte, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { createLogger, type DrizzleDb, type DrizzleTx, type EventBus } from '@openora/core/server';
 import {
   GATED_LIMIT_PERIODS,
@@ -167,6 +167,16 @@ export async function backfillRgLimits(
       select distinct ${userLimit.userId}, 0 from ${userLimit}
       on conflict do nothing
     `);
+    const [unpinned] = await db
+      .select({ rows: count() })
+      .from(userLimit)
+      .where(and(isNull(userLimit.currency), isNotNull(userLimit.amount)));
+    if (unpinned && unpinned.rows > 0) {
+      log.warn(
+        { rows: unpinned.rows },
+        'money limits without a currency refuse every move until an admin override sets one',
+      );
+    }
   }
   let repaired = 0;
   for await (const userIds of userBatches(db, batchSize, changedSince)) {
