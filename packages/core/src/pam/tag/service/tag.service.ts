@@ -391,7 +391,9 @@ export class TagService implements PlayerTags {
    * Records that a requested withdrawal was screened: the withdrawal_review tag when `review` asks
    * for it, then the `tag.withdrawal.screened` verdict, in one transaction. The wallet
    * auto-approves only on that verdict, so it can never read the player's tags before a review
-   * tag due for this withdrawal has committed. True when the review tag was newly assigned.
+   * tag due for this withdrawal has committed. The verdict says whether this withdrawal needed a
+   * review, so a tag cleared before the wallet reads it cannot let it through. True when the
+   * review tag was newly assigned.
    */
   public async screenWithdrawal({
     userId,
@@ -413,7 +415,11 @@ export class TagService implements PlayerTags {
         });
         await this.event.emitInTransaction(trx, 'tag.player.assigned', event);
       }
-      await this.event.emitInTransaction(trx, 'tag.withdrawal.screened', { userId, transactionId });
+      await this.event.emitInTransaction(trx, 'tag.withdrawal.screened', {
+        userId,
+        transactionId,
+        reviewRequired: review !== null,
+      });
       return assigned?.status === 'created';
     });
   }

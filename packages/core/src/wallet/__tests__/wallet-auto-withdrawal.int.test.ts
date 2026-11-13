@@ -191,6 +191,7 @@ async function withdrawScreened(
   const screened = await svc.autoApproveScreenedWithdrawal({
     userId: args.userId,
     transactionId: requested.transactionId,
+    reviewRequired: false,
   });
   return screened ?? requested;
 }
@@ -577,6 +578,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     const screened = await svc.autoApproveScreenedWithdrawal({
       userId: w.userId,
       transactionId: requested.transactionId,
+      reviewRequired: false,
     });
 
     expect(screened).toBeUndefined();
@@ -597,6 +599,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     const redelivered = await svc.autoApproveScreenedWithdrawal({
       userId: w.userId,
       transactionId: result.transactionId,
+      reviewRequired: false,
     });
 
     expect(result.status).toBe('completed');
@@ -617,10 +620,65 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     const screened = await svc.autoApproveScreenedWithdrawal({
       userId: randomUUID(),
       transactionId: requested.transactionId,
+      reviewRequired: false,
     });
 
     expect(screened).toBeUndefined();
     expect(psp.processWithdrawal).not.toHaveBeenCalled();
+  });
+
+  it('keeps a withdrawal its verdict marked for review even after the review tag was cleared', async () => {
+    // The player still carries withdrawal_review from an earlier withdrawal, so screening this one
+    // assigns nothing new; compliance clears the tag before the wallet consumes the verdict.
+    const assignedTags = new Set<TagKey>(['withdrawal_review']);
+    const { svc, psp } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      excludeRiskFlags: ['withdrawal_review'],
+      playerTags: mock<PlayerTags>({
+        getActiveTagKeys: vi.fn(
+          async (ids: readonly string[]) => new Map(ids.map((id) => [id, [...assignedTags]])),
+        ),
+      }),
+    });
+    const w = await seedWallet();
+    const requested = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    assignedTags.delete('withdrawal_review');
+    const screened = await svc.autoApproveScreenedWithdrawal({
+      userId: w.userId,
+      transactionId: requested.transactionId,
+      reviewRequired: true,
+    });
+
+    expect(screened).toBeUndefined();
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(await txById(requested.transactionId)).toMatchObject({ status: 'pending' });
+  });
+
+  it('never auto-approves on a verdict without reviewRequired (a producer older than the field)', async () => {
+    const { svc, psp } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+    const w = await seedWallet();
+    const requested = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    const screened = await svc.autoApproveScreenedWithdrawal({
+      userId: w.userId,
+      transactionId: requested.transactionId,
+    });
+
+    expect(screened).toBeUndefined();
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(await txById(requested.transactionId)).toMatchObject({ status: 'pending' });
   });
 
   it('auto-approves when the player carries only unrelated tags', async () => {

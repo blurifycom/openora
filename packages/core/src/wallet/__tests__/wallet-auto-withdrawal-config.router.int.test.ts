@@ -362,6 +362,7 @@ describe('wallet auto-withdrawal-config routes', () => {
       (await service.autoApproveScreenedWithdrawal({
         userId: below.userId,
         transactionId: belowRequested.transactionId,
+        reviewRequired: false,
       })) ?? belowRequested;
     expect(belowResult.status).toBe('completed');
 
@@ -376,6 +377,7 @@ describe('wallet auto-withdrawal-config routes', () => {
       (await service.autoApproveScreenedWithdrawal({
         userId: above.userId,
         transactionId: aboveRequested.transactionId,
+        reviewRequired: false,
       })) ?? aboveRequested;
     expect(aboveResult.status).toBe('pending');
 

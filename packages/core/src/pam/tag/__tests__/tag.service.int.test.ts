@@ -436,43 +436,53 @@ describe('TagService.screenWithdrawal (real PG)', () => {
     expect(events.emitInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       'tag.withdrawal.screened',
-      { userId: p.userId, transactionId },
+      { userId: p.userId, transactionId, reviewRequired: true },
     );
   });
 
   it('emits only the verdict when no review is due', async () => {
     const { svc, events } = makeService();
     const p = await seedPlayer();
+    const transactionId = randomUUID();
 
-    const assigned = await svc.screenWithdrawal({
-      userId: p.userId,
-      transactionId: randomUUID(),
-      review: null,
-    });
+    const assigned = await svc.screenWithdrawal({ userId: p.userId, transactionId, review: null });
 
     expect(assigned).toBe(false);
     expect(await playerTagsOf(p.id)).toHaveLength(0);
     expect(events.emitInTransaction.mock.calls.map(([, topic]) => topic)).toEqual([
       'tag.withdrawal.screened',
     ]);
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'tag.withdrawal.screened',
+      { userId: p.userId, transactionId, reviewRequired: false },
+    );
   });
 
-  it('still emits the verdict when the review tag is already active', async () => {
+  // The tag may be cleared for the earlier withdrawal before the wallet reads it, so the verdict
+  // itself must carry this withdrawal's review.
+  it('marks the verdict reviewRequired when the review tag was already active', async () => {
     const { svc, events } = makeService();
     await seedTag('withdrawal_review');
     const p = await seedPlayer();
     await svc.assignPlayerTag(review(p.id));
+    events.emitInTransaction.mockClear();
+    const transactionId = randomUUID();
 
     const assigned = await svc.screenWithdrawal({
       userId: p.userId,
-      transactionId: randomUUID(),
+      transactionId,
       review: review(p.id),
     });
 
     expect(assigned).toBe(false);
     expect(await playerTagsOf(p.id)).toHaveLength(1);
-    expect(events.emitInTransaction.mock.calls.map(([, topic]) => topic)).toEqual([
-      'tag.withdrawal.screened',
+    expect(events.emitInTransaction.mock.calls).toEqual([
+      [
+        expect.anything(),
+        'tag.withdrawal.screened',
+        { userId: p.userId, transactionId, reviewRequired: true },
+      ],
     ]);
   });
 

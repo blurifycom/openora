@@ -437,6 +437,7 @@ describe('WalletService auto-approval against held withdrawals (real PG)', () =>
       (await svc.autoApproveScreenedWithdrawal({
         userId: w.userId,
         transactionId: requested.transactionId,
+        reviewRequired: false,
       })) ?? requested;
 
     expect(result.status).toBe('completed');
@@ -470,6 +471,7 @@ describe('WalletService auto-approval against held withdrawals (real PG)', () =>
       (await svc.autoApproveScreenedWithdrawal({
         userId: w.userId,
         transactionId: requested.transactionId,
+        reviewRequired: false,
       })) ?? requested;
 
     expect(psp.processWithdrawal).not.toHaveBeenCalled();

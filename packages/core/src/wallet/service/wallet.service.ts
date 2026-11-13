@@ -2386,16 +2386,25 @@ export class WalletService {
 
   /**
    * The wallet's half of screening: runs auto-approval once the tag module's verdict says the
-   * withdrawal was screened. A withdrawal no longer pending, or not this user's, is left alone, so
-   * a redelivered verdict is a no-op. Never throws - any failure leaves the row for the manual queue.
+   * withdrawal was screened and needs no review. A verdict that asks for a review, or predates
+   * `reviewRequired`, leaves the row for a human whatever tags the player holds by now. A
+   * withdrawal no longer pending, or not this user's, is left alone, so a redelivered verdict is
+   * a no-op. Once the row is read, any failure leaves it for the manual queue; a failure of that
+   * first read throws, and the handler's event is redelivered.
    */
   async autoApproveScreenedWithdrawal({
     userId,
     transactionId,
+    reviewRequired,
   }: {
     userId: User['id'];
     transactionId: WalletTransaction['id'];
+    reviewRequired?: boolean;
   }): Promise<TransactionResult | undefined> {
+    if (reviewRequired !== false) {
+      logger.info({ userId, transactionId, gate: 'review_required' }, 'auto-withdrawal skipped');
+      return undefined;
+    }
     const [row] = await this.drizzle.db
       .select({
         amount: walletTransaction.amount,

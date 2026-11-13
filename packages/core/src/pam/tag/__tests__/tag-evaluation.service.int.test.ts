@@ -465,7 +465,7 @@ describe('TagEvaluationService withdrawal screening verdict (real PG)', () => {
     expect(events.emitInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       'tag.withdrawal.screened',
-      { userId, transactionId: payload.transactionId },
+      { userId, transactionId: payload.transactionId, reviewRequired: true },
     );
   });
 
@@ -473,9 +473,17 @@ describe('TagEvaluationService withdrawal screening verdict (real PG)', () => {
     const { service, events } = makeServices();
     await seedRule('withdrawal_review', { threshold: '5000' });
 
-    await service.onWithdrawalRequested(withdrawalPayload(randomUUID(), 4999));
+    const userId = randomUUID();
+    const payload = withdrawalPayload(userId, 4999);
+
+    await service.onWithdrawalRequested(payload);
 
     expect(verdictTopics(events)).toHaveLength(1);
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'tag.withdrawal.screened',
+      { userId, transactionId: payload.transactionId, reviewRequired: false },
+    );
   });
 
   it('emits no verdict when a review is due but the player cannot be resolved', async () => {

@@ -1438,8 +1438,14 @@ export const domainEventSchemas = {
   'tag.player.removed': tagPlayerEventBase,
   // The tag module screened a requested withdrawal: any `withdrawal_review` tag it called for
   // committed in the same transaction. The wallet auto-approves only after this verdict, so a
-  // withdrawal it never arrives for stays in the manual queue (ADR-0057).
-  'tag.withdrawal.screened': z.object({ userId: UuidSchema, transactionId: UuidSchema }),
+  // withdrawal it never arrives for stays in the manual queue (ADR-0057). `reviewRequired` is this
+  // withdrawal's own amount against the review threshold; optional only so a verdict from a
+  // producer older than the field still parses, and the wallet reads its absence as true.
+  'tag.withdrawal.screened': z.object({
+    userId: UuidSchema,
+    transactionId: UuidSchema,
+    reviewRequired: z.boolean().optional(),
+  }),
   // Emitted after an admin creates or updates a tag rule configuration.
   'tag.rule.upserted': authContextBase.extend({
     tagKey: TagKeySchema,

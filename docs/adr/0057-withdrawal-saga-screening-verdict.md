@@ -24,12 +24,18 @@ module behind one not loaded, its check was skipped.
    outbox in the same transaction. It no longer runs auto-approval and always answers `pending`.
 2. The tag module consumes the event. In one transaction it assigns `withdrawal_review` when the
    amount crosses the rule's threshold, and emits `tag.withdrawal.screened`
-   `{ userId, transactionId }` (`TagService.screenWithdrawal`).
-3. The wallet consumes the verdict and runs the existing auto-approval
-   (`autoApproveScreenedWithdrawal`), which reads the player's tags again.
+   `{ userId, transactionId, reviewRequired }` (`TagService.screenWithdrawal`). `reviewRequired`
+   is this withdrawal's own amount against the threshold, whether or not the tag was already on
+   the player.
+3. The wallet consumes the verdict. When `reviewRequired` is true, or absent (a verdict from a
+   producer older than the field, during a rolling deploy), the withdrawal stays for a human.
+   Otherwise it runs the existing auto-approval (`autoApproveScreenedWithdrawal`), which reads the
+   player's tags again.
 
-This is race-free because the verdict and the tag commit together: any reader that has seen the
-verdict also sees the tag, on any process. The wallet never auto-approves without a verdict.
+This is race-free because the review decision travels in the verdict itself, committed with any tag
+it assigned. The wallet does not infer it from the player's tags at consume time, so a tag cleared
+for an earlier withdrawal before the verdict is consumed cannot let this one through. The wallet
+never auto-approves without a verdict, and never on one that asks for a review.
 
 **No verdict means manual review.** A withdrawal stays `pending` in the admin queue when:
 
