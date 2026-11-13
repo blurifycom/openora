@@ -194,7 +194,7 @@ export class WalletReaderService implements WalletReader {
     return [...deposits.map((row) => ({ ...row, metric: 'deposits' as const })), ...play];
   }
 
-  async hasWallet(userId: string, tx?: unknown): Promise<boolean> {
+  async hasWallet(userId: string, tx: unknown): Promise<boolean> {
     const [row] = await this.on(tx)
       .select({ id: wallet.id })
       .from(wallet)
@@ -204,7 +204,7 @@ export class WalletReaderService implements WalletReader {
 
   async sumProviderTransactions(
     query: WalletProviderTransactionQuery,
-    tx?: unknown,
+    tx: unknown,
   ): Promise<string> {
     const [row] = await this.on(tx)
       .select({ total: sum(walletTransaction.amount) })

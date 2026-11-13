@@ -85,7 +85,11 @@ export type WalletProviderTransactionQuery = {
   providerName: string;
   externalRoundId: string;
   type: WalletTransactionType;
-  /** Matches a `providerRefId` ending in `:<providerRefSuffix>`, taken literally. */
+  /**
+   * Matches a `providerRefId` ending in `:<providerRefSuffix>`, taken literally (`%` and `_` are
+   * not wildcards). The `<prefix>:<id>` ref shape is the writer's convention, shared with the
+   * sportsbook's debt collections.
+   */
   providerRefSuffix: string;
 };
 
@@ -94,7 +98,9 @@ export type WalletProviderTransactionQuery = {
  * across currencies is priced into the reader's reference currency, the fx pivot, at today's
  * rates rather than the rate on the day the money moved. A method without a `tx` parameter reads
  * on a pool connection of its own, so call it outside a transaction: taking a second connection
- * while holding the first is how the pool deadlocks under a burst.
+ * while holding the first is how the pool deadlocks under a burst. An implementation that cannot
+ * read on a `tx` it is given (a remote reader) must throw rather than read on its own connection:
+ * the caller relies on that transaction's snapshot, uncommitted writes and row locks.
  */
 export type WalletReader = {
   /**
@@ -181,10 +187,16 @@ export type WalletReader = {
     windowStarts: readonly Date[],
     tx?: unknown,
   ): Promise<WalletWindowTotals[]>;
-  /** Whether the player has a wallet row: a later credit to them has somewhere to land. */
-  hasWallet(userId: string, tx?: unknown): Promise<boolean>;
-  /** Sum of the completed moves matching `query`, in their currency; '0' when none match. */
-  sumProviderTransactions(query: WalletProviderTransactionQuery, tx?: unknown): Promise<string>;
+  /**
+   * Whether the player has a wallet row: a later credit to them has somewhere to land. Read on
+   * the caller's transaction, so a wallet it created is seen.
+   */
+  hasWallet(userId: string, tx: unknown): Promise<boolean>;
+  /**
+   * Sum of the completed moves matching `query`, in their currency; '0' when none match. Read on
+   * the caller's transaction, under the locks it holds.
+   */
+  sumProviderTransactions(query: WalletProviderTransactionQuery, tx: unknown): Promise<string>;
 };
 
 export const WALLET_READER = createToken<WalletReader>('WALLET_READER');

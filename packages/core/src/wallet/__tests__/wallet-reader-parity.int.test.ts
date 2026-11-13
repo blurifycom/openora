@@ -290,10 +290,14 @@ describe('WalletReaderService parity with the reads it replaced (real PG)', () =
   it('has wallet: the sportsbook reserve read', async () => {
     const stranger = randomUUID();
 
-    expect(await reader.hasWallet(userId)).toBe(await oldHasWallet(db.drizzle.db, userId));
-    expect(await reader.hasWallet(stranger)).toBe(await oldHasWallet(db.drizzle.db, stranger));
-    expect(await reader.hasWallet(userId)).toBe(true);
-    expect(await reader.hasWallet(stranger)).toBe(false);
+    expect(await reader.hasWallet(userId, db.drizzle.db)).toBe(
+      await oldHasWallet(db.drizzle.db, userId),
+    );
+    expect(await reader.hasWallet(stranger, db.drizzle.db)).toBe(
+      await oldHasWallet(db.drizzle.db, stranger),
+    );
+    expect(await reader.hasWallet(userId, db.drizzle.db)).toBe(true);
+    expect(await reader.hasWallet(stranger, db.drizzle.db)).toBe(false);
   });
 
   it('provider transaction sum: the sportsbook debt collection read', async () => {
@@ -305,14 +309,19 @@ describe('WalletReaderService parity with the reads it replaced (real PG)', () =
     };
     const unknown = { ...query, providerRefSuffix: randomUUID() };
 
-    expect(await reader.sumProviderTransactions(query)).toBe(
+    expect(await reader.sumProviderTransactions(query, db.drizzle.db)).toBe(
       await oldCollected(db.drizzle.db, PROVIDER, ROUND, debtId),
     );
-    expect(await reader.sumProviderTransactions(unknown)).toBe(
+    expect(await reader.sumProviderTransactions(unknown, db.drizzle.db)).toBe(
       await oldCollected(db.drizzle.db, PROVIDER, ROUND, unknown.providerRefSuffix),
     );
-    expect(Number(await reader.sumProviderTransactions(query))).toBe(6.5);
-    expect(await reader.sumProviderTransactions(unknown)).toBe('0');
+    expect(Number(await reader.sumProviderTransactions(query, db.drizzle.db))).toBe(6.5);
+    expect(await reader.sumProviderTransactions(unknown, db.drizzle.db)).toBe('0');
+    const wildcard = { ...query, providerRefSuffix: '%' };
+    const oneCharWildcard = { ...query, providerRefSuffix: `_${debtId.slice(1)}` };
+    expect(Number(await oldCollected(db.drizzle.db, PROVIDER, ROUND, '%'))).toBeGreaterThan(0);
+    expect(await reader.sumProviderTransactions(wildcard, db.drizzle.db)).toBe('0');
+    expect(await reader.sumProviderTransactions(oneCharWildcard, db.drizzle.db)).toBe('0');
   });
 
   it('reads on the caller transaction, seeing its uncommitted writes as the old reads did', async () => {
