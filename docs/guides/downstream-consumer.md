@@ -130,8 +130,8 @@ and each job reaches one of them.
 - Chat keeps each account it reads for 30 seconds in a cache of 10,000 accounts. Admin
   checks, room invites, a roster viewer's staff check and social's privacy gates always read
   fresh. Past 10,000 accounts online, rosters and online counts read cold on every call.
-- While identity is down, chat answers 503, history shows no avatars and a new message shows
-  the sender's name as sent. A 4xx from identity (a caller missing from
+- While identity is down, chat answers 503, history shows no avatars and a new message is
+  stored under the name `Unknown player`, never a name the client sent. A 4xx from identity (a caller missing from
   `ACCOUNT_READER_CALLERS`, or clock skew past the signature window) shows as 500 on every
   chat route: check both first.
 - Setting `IDENTITY_SERVICE_URL` on a process that serves identity itself fails the boot.
