@@ -80,7 +80,14 @@ export default {
         }
         const wallet = c.get(WALLET_COMMANDS);
         const config = new SportsbookConfigService(drizzle, audit);
-        const debts = new SportsbookDebtService({ drizzle, events, audit, identity, wallet });
+        const debts = new SportsbookDebtService({
+          drizzle,
+          events,
+          audit,
+          identity,
+          wallet,
+          walletReader,
+        });
         const sessions = new SportsbookSessionService({
           drizzle,
           audit,
