@@ -125,7 +125,7 @@ async function waitForAdvisoryLockWaiter() {
 }
 
 function send(services: Services, roomId: string, userId: string, content = 'gg') {
-  return services.chat.sendRoomMessage({ userId, username: 'player', roomId, content });
+  return services.chat.sendRoomMessage({ userId, roomId, content });
 }
 
 beforeAll(async () => {

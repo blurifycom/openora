@@ -615,9 +615,10 @@ export class ChatService {
     );
   }
 
-  // The name and avatar a new message carries. Cosmetic only, so an identity service that is
-  // down falls back to the name the caller sent instead of failing the send.
-  private async resolveAuthor(userId: User['id'], fallback: string) {
+  // The name and avatar a new message carries, stored with it for good. An identity service that
+  // is down or does not know the account gives a fixed placeholder, never a client-sent name:
+  // other players read the name to decide who is talking.
+  private async resolveAuthor(userId: User['id']) {
     const account = await this.accounts
       .getAccounts([userId])
       .then((accounts) => accounts.get(userId))
@@ -626,7 +627,7 @@ export class ChatService {
         return undefined;
       });
     return {
-      username: account?.username.trim() || fallback || 'anonymous',
+      username: account?.username.trim() || UNKNOWN_PLAYER_USERNAME,
       avatarUrl: account?.avatarUrl ?? null,
     };
   }
@@ -1934,7 +1935,6 @@ export class ChatService {
 
   async sendRoomMessage({
     userId,
-    username,
     roomId,
     content,
     attachment = null,
@@ -1942,7 +1942,6 @@ export class ChatService {
     userAgent,
   }: {
     userId: User['id'];
-    username: string;
     roomId: ChatRoom['id'];
     content: string;
     attachment?: ChatAttachment | null;
@@ -1950,7 +1949,7 @@ export class ChatService {
     // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     const room = await this.verifyRoomAccess(roomId, userId);
     if (isGlobalRoom(room)) {
-      return this.postToGlobalRoom({ userId, username, content, attachment });
+      return this.postToGlobalRoom({ userId, content, attachment });
     }
     const slowMode = await this.roomSendSettings(roomId);
     await this.moderation.assertCanSend(userId, roomId, room.isPublic);
@@ -1963,7 +1962,7 @@ export class ChatService {
 
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
-    const author = await this.resolveAuthor(userId, username);
+    const author = await this.resolveAuthor(userId);
     const record = await this.insertUserMessage(
       { roomId, userId, username: author.username, content: safeContent, attachment },
       throttle,
@@ -2053,7 +2052,6 @@ export class ChatService {
 
   async sendGlobalMessage(input: {
     userId: User['id'];
-    username: string;
     content: string;
     attachment?: ChatAttachment | null;
   }) {
@@ -2063,12 +2061,10 @@ export class ChatService {
 
   private async postToGlobalRoom({
     userId,
-    username,
     content,
     attachment = null,
   }: {
     userId: User['id'];
-    username: string;
     content: string;
     attachment?: ChatAttachment | null;
   }) {
@@ -2078,7 +2074,7 @@ export class ChatService {
     const throttle = await this.sendThrottle({ userId, roomId: null, reach: 'global', slowMode });
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
-    const author = await this.resolveAuthor(userId, username);
+    const author = await this.resolveAuthor(userId);
     const record = await this.insertUserMessage(
       { roomId: null, userId, username: author.username, content: safeContent, attachment },
       throttle,

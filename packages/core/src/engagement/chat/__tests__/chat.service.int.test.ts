@@ -402,13 +402,12 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
 });
 
 describe('ChatService.sendGlobalMessage (real PG)', () => {
-  it('stores the username from the verified user, ignoring the header fallback', async () => {
+  it('stores the username from the verified user', async () => {
     const { svc, events } = makeService();
     const account = await seedUser(db, { name: 'Platform Admin', username: 'platform_admin' });
 
     const msg = await svc.sendGlobalMessage({
       userId: account.id,
-      username: 'spoofed-header-name',
       content: 'hi',
     });
 
@@ -428,23 +427,31 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
 
     const msg = await svc.sendGlobalMessage({
       userId: account.id,
-      username: 'alice',
       content: 'hi',
     });
 
     expect(msg).toMatchObject({ avatarUrl: 'https://cdn.test/a.png' });
   });
 
-  it('falls back to the passed name, then anonymous, when no user row exists', async () => {
+  it('stores the placeholder name when identity does not know the account', async () => {
     const { svc } = makeService();
-    const userId = randomUUID();
 
-    expect(
-      (await svc.sendGlobalMessage({ userId, username: 'fallback', content: 'hi' })).username,
-    ).toBe('fallback');
-    expect((await svc.sendGlobalMessage({ userId, username: '', content: 'hi' })).username).toBe(
-      'anonymous',
-    );
+    const msg = await svc.sendGlobalMessage({ userId: randomUUID(), content: 'hi' });
+
+    expect(msg.username).toBe(UNKNOWN_PLAYER_USERNAME);
+  });
+
+  it('stores the placeholder name, and still sends, when identity is down', async () => {
+    const real = new DrizzleAccountReader(db.drizzle);
+    const down: AccountReader = Object.assign(Object.create(real) as AccountReader, {
+      getAccounts: () => Promise.reject(new Error('identity down')),
+    });
+    const { svc } = makeService(down);
+    const account = await seedUser(db, { username: 'alice' });
+
+    const msg = await svc.sendGlobalMessage({ userId: account.id, content: 'hi' });
+
+    expect(msg).toMatchObject({ username: UNKNOWN_PLAYER_USERNAME, avatarUrl: null });
   });
 
   it('blocks profane messages before they are stored or published', async () => {
@@ -453,7 +460,7 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     transport.subscribe<ChatMessage>('chat:global', (m) => delivered.push(m));
 
     await expect(
-      svc.sendGlobalMessage({ userId: randomUUID(), username: 'Alice', content: 'this is shit' }),
+      svc.sendGlobalMessage({ userId: randomUUID(), content: 'this is shit' }),
     ).rejects.toThrow(ChatMessageBlockedError);
 
     expect(delivered).toHaveLength(0);
@@ -465,7 +472,6 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
 
     const msg = await svc.sendGlobalMessage({
       userId: randomUUID(),
-      username: 'Alice',
       content: 'click javascript:alert(1)',
     });
 
@@ -482,7 +488,6 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
 
     const msg = await svc.sendGlobalMessage({
       userId: randomUUID(),
-      username: 'Alice',
       content: 'hello',
     });
     await waitFor(() => delivered.length === 1);
@@ -508,7 +513,6 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
 
     const msg = await svc.sendGlobalMessage({
       userId: randomUUID(),
-      username: 'Alice',
       content: '',
       attachment,
     });
@@ -529,7 +533,6 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     await expect(
       svc.sendGlobalMessage({
         userId: randomUUID(),
-        username: 'Alice',
         content: '',
         attachment: {
           kind: 'gif' as const,
@@ -701,7 +704,6 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
 
     const msg = await svc.sendRoomMessage({
       userId: account.id,
-      username: 'ignored',
       roomId: room.id,
       content: 'hello room',
     });
@@ -735,7 +737,6 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
     const second = svc
       .sendRoomMessage({
         userId: account.id,
-        username: 'alice',
         roomId: room.id,
         content: 'second',
       })
@@ -756,7 +757,6 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
     await expect(
       svc.sendRoomMessage({
         userId: randomUUID(),
-        username: 'a',
         roomId: room.id,
         content: 'hi',
       }),
@@ -784,7 +784,6 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
 
     const msg = await svc.sendRoomMessage({
       userId: account.id,
-      username: 'ignored',
       roomId: room.id,
       content: '',
       attachment,
@@ -808,7 +807,6 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
     await expect(
       svc.sendRoomMessage({
         userId: account.id,
-        username: 'ignored',
         roomId: room.id,
         content: '',
         attachment: {
@@ -834,12 +832,14 @@ describe('ChatService @mention detection (real PG)', () => {
 
   it('resolves an @username in a room message and emits chat.user.mentioned', async () => {
     const bobId = randomUUID();
-    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    const authorId = randomUUID();
+    const { svc, events } = makeService(
+      mentionDirectory([summaryFor(bobId, 'bob'), summaryFor(authorId, 'alice')]),
+    );
     const room = await seedRoom();
 
     const msg = await svc.sendRoomMessage({
-      userId: randomUUID(),
-      username: 'alice',
+      userId: authorId,
       roomId: room.id,
       content: 'hello @bob, welcome',
     });
@@ -858,12 +858,13 @@ describe('ChatService @mention detection (real PG)', () => {
 
   it('resolves an @username in a global message with a null roomId', async () => {
     const bobId = randomUUID();
-    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
     const authorId = randomUUID();
+    const { svc, events } = makeService(
+      mentionDirectory([summaryFor(bobId, 'bob'), summaryFor(authorId, 'alice')]),
+    );
 
     const msg = await svc.sendGlobalMessage({
       userId: authorId,
-      username: 'alice',
       content: 'hey @bob',
     });
 
@@ -885,7 +886,6 @@ describe('ChatService @mention detection (real PG)', () => {
 
     await svc.sendGlobalMessage({
       userId: authorId,
-      username: 'alice',
       content: 'talking to myself @alice',
     });
 
@@ -899,7 +899,6 @@ describe('ChatService @mention detection (real PG)', () => {
 
     await svc.sendGlobalMessage({
       userId: randomUUID(),
-      username: 'alice',
       content: '@bob @bob are you there @Bob?',
     });
 
@@ -916,7 +915,7 @@ describe('ChatService @mention detection (real PG)', () => {
     const { svc, events } = makeService(mentionDirectory([]));
 
     await expect(
-      svc.sendGlobalMessage({ userId: randomUUID(), username: 'alice', content: 'hello @nobody' }),
+      svc.sendGlobalMessage({ userId: randomUUID(), content: 'hello @nobody' }),
     ).resolves.toBeDefined();
 
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -930,7 +929,6 @@ describe('ChatService @mention detection (real PG)', () => {
     await expect(
       svc.sendGlobalMessage({
         userId: randomUUID(),
-        username: 'alice',
         content: 'contact me at info@acme.com',
       }),
     ).resolves.toBeDefined();
@@ -945,7 +943,7 @@ describe('ChatService @mention detection (real PG)', () => {
     const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
     await svc.blockUser(bobId, authorId);
 
-    await svc.sendGlobalMessage({ userId: authorId, username: 'alice', content: 'hello @bob' });
+    await svc.sendGlobalMessage({ userId: authorId, content: 'hello @bob' });
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
@@ -957,7 +955,7 @@ describe('ChatService @mention detection (real PG)', () => {
     const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
     await svc.ignoreUser(bobId, authorId);
 
-    await svc.sendGlobalMessage({ userId: authorId, username: 'alice', content: 'hello @bob' });
+    await svc.sendGlobalMessage({ userId: authorId, content: 'hello @bob' });
 
     await settle();
     expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
@@ -972,7 +970,6 @@ describe('ChatService @mention detection (real PG)', () => {
 
     await svc.sendRoomMessage({
       userId: authorId,
-      username: 'alice',
       roomId: room.id,
       content: 'hello @bob',
     });
@@ -984,7 +981,9 @@ describe('ChatService @mention detection (real PG)', () => {
   it('does not emit chat.user.mentioned for a non-member mentioned in a private room', async () => {
     const bobId = randomUUID();
     const authorId = randomUUID();
-    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    const { svc, events } = makeService(
+      mentionDirectory([summaryFor(bobId, 'bob'), summaryFor(authorId, 'alice')]),
+    );
     const room = await seedRoom({ isPublic: false, category: 'private-channels' });
     await db.drizzle.db
       .insert(chatRoomMember)
@@ -992,7 +991,6 @@ describe('ChatService @mention detection (real PG)', () => {
 
     await svc.sendRoomMessage({
       userId: authorId,
-      username: 'alice',
       roomId: room.id,
       content: 'hello @bob',
     });
@@ -1004,7 +1002,9 @@ describe('ChatService @mention detection (real PG)', () => {
   it('emits chat.user.mentioned for a member mentioned in a private room', async () => {
     const bobId = randomUUID();
     const authorId = randomUUID();
-    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    const { svc, events } = makeService(
+      mentionDirectory([summaryFor(bobId, 'bob'), summaryFor(authorId, 'alice')]),
+    );
     const room = await seedRoom({ isPublic: false, category: 'private-channels' });
     await db.drizzle.db.insert(chatRoomMember).values([
       { roomId: room.id, userId: authorId, role: 'owner' },
@@ -1013,7 +1013,6 @@ describe('ChatService @mention detection (real PG)', () => {
 
     const msg = await svc.sendRoomMessage({
       userId: authorId,
-      username: 'alice',
       roomId: room.id,
       content: 'hello @bob',
     });
@@ -1035,7 +1034,11 @@ describe('ChatService @mention detection (real PG)', () => {
     const carolId = randomUUID();
     const authorId = randomUUID();
     const { svc, events } = makeService(
-      mentionDirectory([summaryFor(bobId, 'bob'), summaryFor(carolId, 'carol')]),
+      mentionDirectory([
+        summaryFor(bobId, 'bob'),
+        summaryFor(carolId, 'carol'),
+        summaryFor(authorId, 'alice'),
+      ]),
     );
     const room = await seedRoom({
       kind: 'context',
@@ -1050,7 +1053,6 @@ describe('ChatService @mention detection (real PG)', () => {
 
     const msg = await svc.sendRoomMessage({
       userId: authorId,
-      username: 'alice',
       roomId: room.id,
       content: 'hello @bob and @carol',
     });
@@ -1087,7 +1089,6 @@ describe('ChatService @mention detection (real PG)', () => {
 
     await svc.sendRoomMessage({
       userId: authorId,
-      username: 'alice',
       roomId: room.id,
       content: 'hello @bob',
     });
@@ -1101,7 +1102,7 @@ describe('ChatService @mention detection (real PG)', () => {
     const { svc, events } = makeService(mentionDirectory([summaryFor('not-a-valid-uuid', 'bob')]));
 
     await expect(
-      svc.sendGlobalMessage({ userId: authorId, username: 'alice', content: 'hello @bob' }),
+      svc.sendGlobalMessage({ userId: authorId, content: 'hello @bob' }),
     ).resolves.toBeDefined();
 
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -2994,7 +2995,7 @@ describe('ChatService moderation (real PG)', () => {
 
     await expect(svc.getRoomMessages({ roomId: room.id, viewerId: userId })).resolves.toEqual([]);
     await expect(
-      svc.sendRoomMessage({ userId, username: 'Muted', roomId: room.id, content: 'hello' }),
+      svc.sendRoomMessage({ userId, roomId: room.id, content: 'hello' }),
     ).rejects.toBeInstanceOf(ChatPlayerMutedError);
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),
@@ -3011,7 +3012,7 @@ describe('ChatService moderation (real PG)', () => {
     });
 
     await expect(
-      svc.sendGlobalMessage({ userId: randomUUID(), username: 'ReadOnly', content: 'hello' }),
+      svc.sendGlobalMessage({ userId: randomUUID(), content: 'hello' }),
     ).rejects.toBeInstanceOf(ChatPlayerMutedError);
   });
 
@@ -3030,7 +3031,7 @@ describe('ChatService moderation (real PG)', () => {
       const [mute] = await db.drizzle.db.select().from(chatMute).limit(1);
 
       await expect(
-        svc.sendGlobalMessage({ userId: mute.userId, username: 'Muted', content: 'hello' }),
+        svc.sendGlobalMessage({ userId: mute.userId, content: 'hello' }),
       ).rejects.toBeInstanceOf(ChatPlayerMutedError);
     },
   );
@@ -3050,9 +3051,9 @@ describe('ChatService moderation (real PG)', () => {
       }),
     ).resolves.toEqual({ success: true });
 
-    await expect(
-      svc.sendGlobalMessage({ userId, username: 'Muted', content: 'hello' }),
-    ).rejects.toBeInstanceOf(ChatPlayerMutedError);
+    await expect(svc.sendGlobalMessage({ userId, content: 'hello' })).rejects.toBeInstanceOf(
+      ChatPlayerMutedError,
+    );
   });
 
   it('enforces an all-chat mute in private rooms', async () => {
@@ -3070,7 +3071,7 @@ describe('ChatService moderation (real PG)', () => {
     });
 
     await expect(
-      svc.sendRoomMessage({ userId, username: 'Muted', roomId: room.id, content: 'hello' }),
+      svc.sendRoomMessage({ userId, roomId: room.id, content: 'hello' }),
     ).rejects.toBeInstanceOf(ChatPlayerMutedError);
   });
 
@@ -3115,11 +3116,11 @@ describe('ChatService moderation (real PG)', () => {
       ...NO_CLIENT_META,
     });
 
+    await expect(svc.sendGlobalMessage({ userId, content: 'hello' })).rejects.toBeInstanceOf(
+      ChatPlayerBannedError,
+    );
     await expect(
-      svc.sendGlobalMessage({ userId, username: 'Banned', content: 'hello' }),
-    ).rejects.toBeInstanceOf(ChatPlayerBannedError);
-    await expect(
-      svc.sendRoomMessage({ userId, username: 'Banned', roomId: room.id, content: 'hello' }),
+      svc.sendRoomMessage({ userId, roomId: room.id, content: 'hello' }),
     ).resolves.toMatchObject({ userId });
 
     await moderation.unban({
@@ -3128,9 +3129,7 @@ describe('ChatService moderation (real PG)', () => {
       actorId: randomUUID(),
       ...NO_CLIENT_META,
     });
-    await expect(
-      svc.sendGlobalMessage({ userId, username: 'Banned', content: 'hello' }),
-    ).resolves.toMatchObject({
+    await expect(svc.sendGlobalMessage({ userId, content: 'hello' })).resolves.toMatchObject({
       userId,
     });
   });
@@ -3502,13 +3501,12 @@ describe('ChatService: the global room under its row id (real PG)', () => {
       ...NO_CLIENT_META,
     });
 
-    await expect(
-      svc.sendGlobalMessage({ userId: playerId, username: 'p', content: 'hi' }),
-    ).rejects.toBeInstanceOf(ChatPlayerMutedError);
+    await expect(svc.sendGlobalMessage({ userId: playerId, content: 'hi' })).rejects.toBeInstanceOf(
+      ChatPlayerMutedError,
+    );
     await expect(
       svc.sendRoomMessage({
         userId: playerId,
-        username: 'p',
         roomId: globalRoom.id,
         content: 'hi',
       }),
@@ -3524,9 +3522,9 @@ describe('ChatService: the global room under its row id (real PG)', () => {
       ...NO_CLIENT_META,
     });
 
-    await expect(
-      svc.sendGlobalMessage({ userId: playerId, username: 'p', content: 'hi' }),
-    ).rejects.toBeInstanceOf(ChatPlayerBannedError);
+    await expect(svc.sendGlobalMessage({ userId: playerId, content: 'hi' })).rejects.toBeInstanceOf(
+      ChatPlayerBannedError,
+    );
     await expect(svc.getGlobalMessages(undefined, playerId)).rejects.toBeInstanceOf(
       ChatPlayerBannedError,
     );
@@ -3657,7 +3655,6 @@ describe('ChatService moderation follow-through (real PG)', () => {
     const refused = await svc
       .sendRoomMessage({
         userId: memberId,
-        username: 'member',
         roomId: room.id,
         content: 'hi',
         attachment: {
@@ -3765,9 +3762,7 @@ describe('ChatService send path under a player cooldown (real PG)', () => {
     const last = await seedMessage({ userId: account.id, createdAt: secondsAgo(10) });
     await seedCooldown(account.id, { scope: GLOBAL_CHAT_ROOM_ID });
 
-    const refused = await refusal(
-      svc.sendGlobalMessage({ userId: account.id, username: 'alice', content: 'again' }),
-    );
+    const refused = await refusal(svc.sendGlobalMessage({ userId: account.id, content: 'again' }));
 
     expect(refused).toBeInstanceOf(ChatPlayerMutedError);
     const { data } = refused as ChatPlayerMutedError;
@@ -3791,11 +3786,11 @@ describe('ChatService send path under a player cooldown (real PG)', () => {
     await seedCooldown(account.id, { scope: '__all_public' });
     await seedMessage({ userId: account.id, roomId: first.id });
     const send = (roomId: string) =>
-      svc.sendRoomMessage({ userId: account.id, username: 'alice', roomId, content: 'hi' });
+      svc.sendRoomMessage({ userId: account.id, roomId, content: 'hi' });
 
     expect(await refusal(send(second.id))).toBeInstanceOf(ChatPlayerMutedError);
     expect(
-      await refusal(svc.sendGlobalMessage({ userId: account.id, username: 'a', content: 'hi' })),
+      await refusal(svc.sendGlobalMessage({ userId: account.id, content: 'hi' })),
     ).toBeInstanceOf(ChatPlayerMutedError);
     expect(await send(privateRoom.id)).toMatchObject({ roomId: privateRoom.id });
   });
@@ -3806,7 +3801,7 @@ describe('ChatService send path under a player cooldown (real PG)', () => {
     const [cooled, other] = [await seedRoom(), await seedRoom()];
     await seedCooldown(account.id, { scope: 'room', roomId: cooled.id });
     const send = (roomId: string) =>
-      svc.sendRoomMessage({ userId: account.id, username: 'alice', roomId, content: 'hi' });
+      svc.sendRoomMessage({ userId: account.id, roomId, content: 'hi' });
 
     await send(cooled.id);
 
@@ -3826,7 +3821,7 @@ describe('ChatService send path under a player cooldown (real PG)', () => {
     const last = await seedMessage({ userId: account.id, roomId: room.id });
 
     const refused = await refusal(
-      svc.sendRoomMessage({ userId: account.id, username: 'a', roomId: room.id, content: 'hi' }),
+      svc.sendRoomMessage({ userId: account.id, roomId: room.id, content: 'hi' }),
     );
 
     expect((refused as ChatPlayerMutedError).data.until).toBe(
@@ -3844,8 +3839,7 @@ describe('ChatService send path under a player cooldown (real PG)', () => {
     await db.drizzle.db
       .insert(chatRoomMember)
       .values({ roomId: room.id, userId: account.id, role: 'moderator' });
-    const send = () =>
-      svc.sendRoomMessage({ userId: account.id, username: 'a', roomId: room.id, content: 'hi' });
+    const send = () => svc.sendRoomMessage({ userId: account.id, roomId: room.id, content: 'hi' });
 
     await send();
     await send();
@@ -3876,7 +3870,6 @@ describe('ChatService send path under a player cooldown (real PG)', () => {
     const second = refusal(
       svc.sendRoomMessage({
         userId: account.id,
-        username: 'alice',
         roomId: roomB.id,
         content: 'second',
       }),
@@ -3908,9 +3901,7 @@ describe('ChatService send path under a player cooldown (real PG)', () => {
       await firstHeld;
     });
     await locked;
-    const second = refusal(
-      svc.sendGlobalMessage({ userId: account.id, username: 'alice', content: 'hi' }),
-    );
+    const second = refusal(svc.sendGlobalMessage({ userId: account.id, content: 'hi' }));
     await waitForAdvisoryLockWaiter(db);
     releaseFirst();
     await first;
@@ -3925,8 +3916,8 @@ describe('ChatService send path under a player cooldown (real PG)', () => {
     await seedCooldown(account.id, { scope: '__all_public', expiresAt: secondsAgo(1) });
     await seedMessage({ userId: account.id });
 
-    expect(
-      await svc.sendGlobalMessage({ userId: account.id, username: 'alice', content: 'hi' }),
-    ).toMatchObject({ roomId: null });
+    expect(await svc.sendGlobalMessage({ userId: account.id, content: 'hi' })).toMatchObject({
+      roomId: null,
+    });
   });
 });

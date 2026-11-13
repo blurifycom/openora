@@ -102,14 +102,6 @@ const SEND_MESSAGE_RATE_LIMIT = {
   onUnavailable: 'allow',
 } as const;
 
-function resolveUsername(context: OssContext, fallback = 'anonymous') {
-  const val = context.request.headers['x-username'];
-  if (Array.isArray(val)) {
-    return val[0] ?? fallback;
-  }
-  return typeof val === 'string' ? val : fallback;
-}
-
 // Reads work for anonymous viewers; when authenticated, the id drives per-viewer
 // block filtering (ABC-45 AC11). Sourced from server-verified `auth`, never a header.
 function resolveViewerId(context: OssContext) {
@@ -229,7 +221,6 @@ export function createChatRouter({
 
     sendRoomMessage: os.sendRoomMessage.handler(async ({ input, context }) => {
       const userId = getUserId(context);
-      const username = resolveUsername(context);
       await assertRateLimit(
         limiter,
         makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_SEND, userId),
@@ -249,7 +240,6 @@ export function createChatRouter({
         () =>
           chatService.sendRoomMessage({
             userId,
-            username,
             roomId: input.roomId,
             content: input.content,
             attachment: input.attachment ?? null,
@@ -304,7 +294,6 @@ export function createChatRouter({
 
     sendGlobalMessage: os.sendGlobalMessage.handler(async ({ input, context }) => {
       const userId = getUserId(context);
-      const username = resolveUsername(context);
       await assertRateLimit(
         limiter,
         makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_SEND, userId),
@@ -318,7 +307,6 @@ export function createChatRouter({
         () =>
           chatService.sendGlobalMessage({
             userId,
-            username,
             content: input.content,
             attachment: input.attachment ?? null,
           }),
