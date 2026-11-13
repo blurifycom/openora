@@ -27,8 +27,8 @@ const FIELDS = /\s(?:-f|-F|--field|--raw-field|--input)\b/;
 const COMMENT_MUTATION =
   /\b(?:addComment|addPullRequestReview\w*|submitPullRequestReview|updateIssueComment|updatePullRequestReview\w*|create(?:Diff|ImageDiff)?Note|createDiscussion|updateNote)\b/;
 // A query read from a file, stdin, a variable or a substitution cannot be inspected, so it counts
-// as a mutation.
-const OPAQUE_QUERY = /query=["']?(?:[@$`]|$)|--input\b/;
+// as a mutation. A heredoc is inline, so the mutation check already sees it.
+const OPAQUE_QUERY = /query=["']?(?:@|\$(?!\(cat\s*<<)|`)|--input\b/;
 // `bash -c '<script>'` runs its script as calls of its own.
 const SHELL_SCRIPT = /\b(?:ba|z|da)?sh\s+-\w*c\s+(["'])([\s\S]*?)\1/g;
 
@@ -43,8 +43,8 @@ const postsComment = (call) => {
     return false;
   }
   if (GRAPHQL.test(call)) {
-    // A query spans lines and variables, so the mutation is looked for in the whole command.
-    return COMMENT_MUTATION.test(command) || OPAQUE_QUERY.test(call);
+    // A query spans lines, variables and substitutions, so the whole command is checked.
+    return COMMENT_MUTATION.test(command) || OPAQUE_QUERY.test(command);
   }
   const method = methodOf(call);
   return (
@@ -54,7 +54,7 @@ const postsComment = (call) => {
 };
 
 // ponytail: splits on shell separators without parsing quotes; a body with `;` before the path slips
-// through, a quoted `sh -c '...'` in a commit message is denied, and curl, `xargs -I {}` and a script
+// through, a quoted `sh -c '...'` or a backticked call in a commit message is denied, and curl, `xargs -I {}` and a script
 // piped into a shell are not seen
 const command = extractCommand(readPayload())
   .replace(/\\\r?\n/g, ' ')
