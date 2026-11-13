@@ -38,8 +38,23 @@ export { createLogger } from './logger.js';
 export { setErrorReporter, reportError } from './error-reporter.js';
 export type { ErrorReporter } from './error-reporter.js';
 
-export { getUserId, getSessionId, extractClientMeta, internalProcedure } from './router-utils.js';
-export type { OssContext, InternalContext, AuthContext, NodeHeaders } from './router-utils.js';
+export {
+  getUserId,
+  getSessionId,
+  extractClientMeta,
+  internalProcedure,
+  AuthContextSchema,
+  SessionEndedReasonSchema,
+} from './router-utils.js';
+export type {
+  OssContext,
+  InternalContext,
+  AuthContext,
+  SessionEndedReason,
+  NodeHeaders,
+} from './router-utils.js';
+export { TtlCache } from './ttl-cache.js';
+export type { TtlCacheOptions } from './ttl-cache.js';
 export {
   createDomainError,
   makeNotFoundError,

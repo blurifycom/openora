@@ -436,18 +436,6 @@ type InternalApiMount = {
   trustedProxies: TrustedProxies;
 };
 
-// The admin guard's session lookup over a resolver that answers through the chain.
-function remoteSessionLookup(
-  resolver: RequestSessionResolver,
-): Pick<SessionResolver, 'resolveSession'> {
-  return {
-    async resolveSession(headers) {
-      const { auth } = await resolver.resolve(headers);
-      return auth ? { userId: auth.userId, sessionId: auth.sessionId } : undefined;
-    },
-  };
-}
-
 // `/internal/v1/*` answers here and never falls through, so no player or admin route can be
 // reached under it, and the session headers are stripped before a handler runs. An unsigned
 // request gets an empty 401 whether or not a route matches, so the surface cannot be enumerated
@@ -655,11 +643,9 @@ async function bootApp(
     (c) =>
       new AdminGuard(
         c.get(DRIZZLE),
-        // A service with no session tables asks the identity service, which has already run
-        // the chain for this request's credentials: the answer is cached, so this is free.
-        c.has(REMOTE_SESSION_RESOLVER)
-          ? remoteSessionLookup(c.get(REMOTE_SESSION_RESOLVER))
-          : c.get(AUTH_SESSION),
+        // A service with no session tables has no session lookup of its own: the request
+        // middleware already resolved the session through the identity service.
+        c.has(REMOTE_SESSION_RESOLVER) ? undefined : c.get(AUTH_SESSION),
         // has() avoids throwing on an unbound token so boot works without the iam module.
         c.has(ADMIN_PERMISSION_RESOLVER) ? c.get(ADMIN_PERMISSION_RESOLVER) : undefined,
         c.get(EVENT_BUS),
@@ -978,7 +964,7 @@ async function bootApp(
       rawBody: await captureRawBody(c.req.raw),
     };
 
-    const { auth, sessionEndedReason } = await sessions.resolve(c.req.raw.headers);
+    const { auth, sessionEndedReason, unavailable } = await sessions.resolve(c.req.raw.headers);
     // No auth: context.auth stays undefined so getUserId 401s. Auth and public routes still
     // work.
     if (auth) {
@@ -986,6 +972,9 @@ async function bootApp(
     }
     if (sessionEndedReason) {
       context.sessionEndedReason = sessionEndedReason;
+    }
+    if (unavailable) {
+      context.sessionUnavailable = true;
     }
 
     const runHandler = async (): Promise<Response> => {

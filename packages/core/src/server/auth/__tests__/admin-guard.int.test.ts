@@ -104,6 +104,45 @@ describe('AdminGuard.assert - authentication (real PG)', () => {
   });
 });
 
+describe('AdminGuard.assert - sessions resolved by the request middleware (real PG)', () => {
+  // No session lookup of its own: a service with no session tables reads `context.auth`.
+  const remoteGuard = (securityPolicy?: AdminSecurityPolicy) =>
+    new AdminGuard(db.drizzle, undefined, undefined, makeEventBus(), undefined, securityPolicy);
+
+  it('takes the caller and session from context.auth, with the address and device of the request', async () => {
+    const userId = await seedUser('admin');
+    const sessionId = randomUUID();
+    const securityPolicy = mock<AdminSecurityPolicy>({
+      assertEnrolled: vi.fn(async () => {}),
+      assertSessionIntact: vi.fn(async () => {}),
+    });
+
+    const caller = await remoteGuard(securityPolicy).assert({
+      ...requestContext(ADMIN_HEADERS),
+      auth: { userId, sessionId },
+    });
+
+    expect(caller).toMatchObject({ userId, role: 'admin', ip: '127.0.0.1' });
+    expect(securityPolicy.assertSessionIntact).toHaveBeenCalledWith({
+      userId,
+      sessionId,
+      ip: '127.0.0.1',
+      userAgent: 'Mozilla/5.0',
+    });
+  });
+
+  it('refuses a request with no resolved caller, as 401 or as 503 when identity was unreachable', async () => {
+    const guard = remoteGuard();
+
+    await expect(guard.assert(requestContext(ADMIN_HEADERS))).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    await expect(
+      guard.assert({ ...requestContext(ADMIN_HEADERS), sessionUnavailable: true }),
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+  });
+});
+
 describe('AdminGuard.assert - no permission resolver bound, static roles decide (real PG)', () => {
   it('returns the caller for an admin with a granted permission', async () => {
     const userId = await seedUser('admin');

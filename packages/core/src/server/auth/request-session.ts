@@ -7,7 +7,12 @@ import {
   type TwoFactorSetupPolicy,
 } from '@openora/core/contracts';
 import { createLogger } from '../kernel/logger.js';
-import type { AuthContext } from '../kernel/router-utils.js';
+import {
+  AuthContextSchema,
+  SessionEndedReasonSchema,
+  type AuthContext,
+  type SessionEndedReason,
+} from '../kernel/router-utils.js';
 import type { SessionResolver } from './session-resolver.js';
 
 /** What the request middleware learns from a request's credentials. */
@@ -15,7 +20,13 @@ export type SessionOutcome = {
   /** Absent: unauthenticated, for a missing, expired, idle or otherwise refused session. */
   auth?: AuthContext;
   /** Set when the idle policy ended the session on this very request. */
-  sessionEndedReason?: 'idle_timeout';
+  sessionEndedReason?: SessionEndedReason;
+  /**
+   * Set when the session could not be looked up at all (the service that owns sessions timed out,
+   * was unreachable or failed), as opposed to refused. The request carries no identity, and a
+   * route that needs one answers 503 so the client retries instead of treating it as signed out.
+   */
+  unavailable?: true;
 };
 
 export type RequestSessionResolver = {
@@ -130,13 +141,7 @@ export const SessionResolverWire = {
     authorization: z.string().max(CREDENTIAL_MAX_LENGTH).optional(),
   }),
   output: z.object({
-    auth: z
-      .object({
-        userId: z.string(),
-        sessionId: z.string().optional(),
-        twoFactorSetupRequired: z.boolean().optional(),
-      })
-      .nullable(),
-    sessionEndedReason: z.literal('idle_timeout').optional(),
+    auth: AuthContextSchema.nullable(),
+    sessionEndedReason: SessionEndedReasonSchema.optional(),
   }),
 } as const;
