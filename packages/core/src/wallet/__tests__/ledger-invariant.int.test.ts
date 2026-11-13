@@ -1140,6 +1140,25 @@ describe('rolling baselines and their repair (real PG)', () => {
     expect(alerts).toHaveLength(1);
   });
 
+  it('alerts once for a page of new breaches, with their count', async () => {
+    for (const delta of ['7', '9', '-3']) {
+      await handEdit((await fundedWallet('100')).id, delta);
+    }
+    const events = makeEventBus();
+    const svc = makeReconciliation({ events });
+
+    const first = await run(svc);
+    await run(svc);
+
+    const alerts = events.emitInTransaction.mock.calls.filter(
+      ([, topic]) => topic === 'wallet.reconciliation.alert',
+    );
+    expect(first?.summary).toMatchObject({ balanceBreaches: 3, newBreaches: 3 });
+    expect(alerts.map(([, , payload]) => payload)).toEqual([
+      expect.objectContaining({ openFindings: 3, threshold: 0 }),
+    ]);
+  });
+
   it('alerts once on a new breach, below the open-findings threshold, and not again on a rerun', async () => {
     const w = await fundedWallet('100');
     const events = makeEventBus();

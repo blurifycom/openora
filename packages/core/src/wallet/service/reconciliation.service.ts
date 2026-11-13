@@ -63,8 +63,8 @@ import {
   isRefundedDeposit,
   lockVendorDeposit,
   recordReconciliationFinding,
-  recordReconciliationFindingInTransaction,
   recordReconciliationFindingsInTransaction,
+  type ReconciliationFindingInput,
   rgDecisionForLandedCredit,
 } from './reconciliation-finding.service.js';
 import {
@@ -1238,29 +1238,23 @@ export class ReconciliationService {
           (pair) => pair.unpricedRows === 0 && (pair.baselineId !== null || pair.advanced),
         ),
       );
-      const unchecked = page.filter((pair) => pair.unpricedRows > 0);
-      // One per pair and baseline in force, whatever the run: the key carries no count.
-      await this.drizzle.db.transaction((txn) =>
-        recordReconciliationFindingsInTransaction(
-          txn,
-          unchecked.map((pair) => ({
-            runId,
-            providerName: LEDGER_FINDING_LABEL,
-            kind: 'ledger_invariant_unchecked',
-            currency: pair.currency,
-            externalId: ledgerUncheckedKey(pair.walletId, pair.currency, pair.baselineId),
-            detail: `wallet ${pair.walletId} holds ${pair.unpricedRows} ${pair.currency} ledger rows nothing prices and no baseline covers them; run the baseline backfill`,
-          })),
-          this.audit,
-        ),
-      );
-      counts.needsBaseline += unchecked.length;
+      const findings: ReconciliationFindingInput[] = [];
       for (const pair of page) {
         counts.pairsChecked += 1;
         if (pair.advanced) {
           counts.baselinesAdvanced += 1;
         }
         if (pair.unpricedRows > 0) {
+          counts.needsBaseline += 1;
+          // One per pair and baseline in force, whatever the run: the key carries no count.
+          findings.push({
+            runId,
+            providerName: LEDGER_FINDING_LABEL,
+            kind: 'ledger_invariant_unchecked',
+            currency: pair.currency,
+            externalId: ledgerUncheckedKey(pair.walletId, pair.currency, pair.baselineId),
+            detail: `wallet ${pair.walletId} holds ${pair.unpricedRows} ${pair.currency} ledger rows nothing prices and no baseline covers them; run the baseline backfill`,
+          });
           continue;
         }
         const drift = moneySubtract(pair.balance, pair.expected);
@@ -1269,14 +1263,19 @@ export class ReconciliationService {
         }
         counts.balanceBreaches += 1;
         logger.error({ runId, ...pair, drift }, 'ledger invariant: wallet balance off its ledger');
-        await this.fileLedgerBreach(runId, counts, {
-          walletId: pair.walletId,
+        // A finding's amount is never negative; which way the balance is off is in the detail.
+        const amount = drift.replace(/^-/, '');
+        findings.push({
+          runId,
+          providerName: LEDGER_FINDING_LABEL,
+          kind: 'ledger_invariant_breach',
           currency: pair.currency,
-          drift,
+          amount,
           externalId: ledgerBreachKey(pair.walletId, pair.currency, pair.baselineId, drift),
-          detail: `wallet ${pair.walletId} holds ${pair.balance} ${pair.currency} but its ledger adds up to ${pair.expected}`,
+          detail: `wallet ${pair.walletId} holds ${pair.balance} ${pair.currency} but its ledger adds up to ${pair.expected}: the balance is ${drift.startsWith('-') ? 'short' : 'over'} by ${amount}`,
         });
       }
+      counts.newBreaches += await this.fileLedgerFindings(runId, findings);
       const last = page.at(-1);
       if (page.length < batchSize || !last) {
         return;
@@ -1332,48 +1331,27 @@ export class ReconciliationService {
     });
   }
 
-  private async fileLedgerBreach(
+  /**
+   * A ledger breach is money no one can account for: a page's new ones are already the alert,
+   * over a threshold of zero, committed with the findings themselves. A run failing later cannot
+   * lose it, and a rerun finds them on file and alerts nothing. Returns the new breaches.
+   */
+  private async fileLedgerFindings(
     runId: WalletJobRun['runId'],
-    counts: LedgerInvariantCounts,
-    breach: {
-      walletId: Wallet['id'];
-      currency: string;
-      drift: string;
-      externalId: NonNullable<WalletReconciliationFindingRow['externalId']>;
-      detail: string;
-    },
-  ): Promise<void> {
-    const amount = breach.drift.replace(/^-/, '');
-    // A ledger breach is money no one can account for: each new one is already the alert, over a
-    // threshold of zero, committed with the finding itself. A run failing later cannot lose it,
-    // and a rerun finds the finding on file and alerts nothing.
-    const filed = await this.drizzle.db.transaction(async (txn) => {
-      const inserted = await recordReconciliationFindingInTransaction(
-        txn,
-        {
-          runId,
-          providerName: LEDGER_FINDING_LABEL,
-          kind: 'ledger_invariant_breach',
-          currency: breach.currency,
-          // A finding's amount is never negative; which way the balance is off is in the detail.
-          amount,
-          externalId: breach.externalId,
-          detail: `${breach.detail}: the balance is ${breach.drift.startsWith('-') ? 'short' : 'over'} by ${amount}`,
-        },
-        this.audit,
-      );
-      if (inserted) {
+    findings: readonly ReconciliationFindingInput[],
+  ): Promise<number> {
+    return this.drizzle.db.transaction(async (txn) => {
+      const filed = await recordReconciliationFindingsInTransaction(txn, findings, this.audit);
+      const newBreaches = filed.filter((f) => f.kind === 'ledger_invariant_breach').length;
+      if (newBreaches > 0) {
         await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
           runId,
-          openFindings: 1,
+          openFindings: newBreaches,
           threshold: 0,
         });
       }
-      return inserted;
+      return newBreaches;
     });
-    if (filed) {
-      counts.newBreaches += 1;
-    }
   }
 
   private async reconcileProvider(

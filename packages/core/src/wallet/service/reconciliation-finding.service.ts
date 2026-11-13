@@ -85,30 +85,36 @@ export async function recordReconciliationFindingInTransaction(
 
 /**
  * Files a batch of non-deposit findings in one insert and audits only the ones it filed, in the
- * caller's transaction: a report already on file stays silent, and none lands unaudited.
+ * caller's transaction: a report already on file stays silent, and none lands unaudited. Returns
+ * the inputs it filed.
  */
 export async function recordReconciliationFindingsInTransaction(
   txn: DrizzleTx,
   inputs: readonly ReconciliationFindingInput[],
   audit: AuditWritePort,
-): Promise<void> {
+): Promise<ReconciliationFindingInput[]> {
   if (inputs.length === 0) {
-    return;
+    return [];
   }
+  const byKey = new Map(inputs.map((input) => [`${input.kind}:${input.externalId}`, input]));
   const filed = await txn
     .insert(walletReconciliationFinding)
     .values(inputs.map(findingValues))
     .onConflictDoNothing()
     .returning({
       id: walletReconciliationFinding.id,
+      kind: walletReconciliationFinding.kind,
       externalId: walletReconciliationFinding.externalId,
     });
+  const recorded: ReconciliationFindingInput[] = [];
   for (const row of filed) {
-    const input = inputs.find((candidate) => candidate.externalId === row.externalId);
+    const input = byKey.get(`${row.kind}:${row.externalId}`);
     if (input) {
       await audit.recordInTransaction(txn, findingRecordedAudit(row.id, input));
+      recorded.push(input);
     }
   }
+  return recorded;
 }
 
 /**
