@@ -29,7 +29,7 @@ import {
   CHAT_MEMBER_JOINED_SIGNAL,
   CHAT_ROOM_CLOSED_SIGNAL,
   CONTEXT_ROOM_SLUG_PREFIX,
-  STAFF_USER_ROLES,
+  isStaffRole,
 } from '../contract/constants.js';
 import { ChatContextRoomNotFoundError } from './errors/chat-moderation.errors.js';
 import { revokeChannelBestEffort } from './channel-revoke.service.js';
@@ -308,7 +308,7 @@ export class ChatContextRoomService implements ChatContextRooms {
         userAgent: null,
       });
       // The member list hides staff from ordinary viewers, so their joins are not signalled.
-      if (accounts && !STAFF_USER_ROLES.some((role) => role === account?.role)) {
+      if (accounts && !isStaffRole(account?.role)) {
         const payload: ChatMemberJoinedSignal = { roomId, userId };
         await this.signal(roomId, CHAT_MEMBER_JOINED_SIGNAL, payload);
       }

@@ -37,7 +37,7 @@ import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
   CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL,
   OWNERLESS_ROOM_RETENTION_DAYS,
-  STAFF_USER_ROLES,
+  isStaffRole,
 } from '../contract/constants.js';
 import {
   ChatRoomBannedError,
@@ -183,7 +183,7 @@ export class ChatRoomMembershipService {
         userAgent: meta.userAgent ?? null,
       });
       // The member list hides staff from ordinary viewers, so their joins are not signalled.
-      const staff = STAFF_USER_ROLES.some((role) => role === joiner?.role);
+      const staff = isStaffRole(joiner?.role);
       if (!room.isPublic && accounts && !staff) {
         await this.signalMemberJoined(roomId, userId);
       }

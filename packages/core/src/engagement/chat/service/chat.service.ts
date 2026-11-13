@@ -123,7 +123,7 @@ import {
   JOIN_CODE_LENGTH,
   MAX_PRIVATE_ROOMS_PER_PLAYER,
   PRIVATE_ROOM_SLUG_PREFIX,
-  STAFF_USER_ROLES,
+  isStaffRole,
   UNKNOWN_PLAYER_USERNAME,
 } from '../contract/constants.js';
 import { platformScopesFor, roomReach, validateAttachment } from '../moderation/index.js';
@@ -147,9 +147,6 @@ function parseMentionedUsernames(content: string): string[] {
   }
   return [...usernames];
 }
-
-const isStaffRole = (role: string | undefined) =>
-  (STAFF_USER_ROLES as readonly (string | undefined)[]).includes(role);
 
 // A staff member stays out of a room's roster unless they own or created it, or the viewer is
 // staff too. An account the identity service does not know is listed, as "Unknown player".
@@ -577,6 +574,9 @@ export class ChatService {
     };
   }
 
+  // ponytail: one account read per online member. Over the identity service that is a batch of
+  // ACCOUNTS_BATCH_MAX ids per call, and past the remote cache cap (10k) every count reads cold;
+  // a room that big needs an identity-side staff count instead.
   async getOnlineCount(roomId: ChatRoom['id'] | null) {
     const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(roomId));
     const onlineUsers = await this.accounts.getAccounts(onlineUserIds);
@@ -615,8 +615,16 @@ export class ChatService {
     );
   }
 
+  // The name and avatar a new message carries. Cosmetic only, so an identity service that is
+  // down falls back to the name the caller sent instead of failing the send.
   private async resolveAuthor(userId: User['id'], fallback: string) {
-    const account = (await this.accounts.getAccounts([userId])).get(userId);
+    const account = await this.accounts
+      .getAccounts([userId])
+      .then((accounts) => accounts.get(userId))
+      .catch((err: unknown) => {
+        logger.warn({ err, userId }, 'chat author profile unavailable');
+        return undefined;
+      });
     return {
       username: account?.username.trim() || fallback || 'anonymous',
       avatarUrl: account?.avatarUrl ?? null,
@@ -637,6 +645,15 @@ export class ChatService {
       message,
       avatarUrl: accounts.get(message.userId)?.avatarUrl ?? null,
     }));
+  }
+
+  // Whether the viewer is staff, who sees staff in a roster. Read fresh: it decides visibility.
+  private async canSeeAdminUsers(viewerId: User['id'] | undefined) {
+    if (!viewerId) {
+      return false;
+    }
+    const viewer = (await this.accounts.getAccounts([viewerId], { fresh: true })).get(viewerId);
+    return isStaffRole(viewer?.role);
   }
 
   // The usernames a roster shows: an account the identity service does not know shows as
@@ -1443,9 +1460,9 @@ export class ChatService {
         and(eq(chatRoomMember.roomId, roomId), role ? eq(chatRoomMember.role, role) : undefined),
       )
       .orderBy(asc(chatRoomMember.joinedAt));
-    const accounts = await this.accounts.getAccounts([actorId, ...rows.map((m) => m.userId)]);
+    const accounts = await this.accounts.getAccounts(rows.map((m) => m.userId));
     const roster = {
-      canSeeAdminUsers: isStaffRole(accounts.get(actorId)?.role),
+      canSeeAdminUsers: await this.canSeeAdminUsers(actorId),
       creatorId: room?.creatorId ?? null,
     };
     const members = rows.filter((member) => visibleInRoster(member, accounts, roster));
@@ -2855,12 +2872,9 @@ export class ChatService {
       .from(chatRoomMember)
       .where(eq(chatRoomMember.roomId, roomId))
       .orderBy(asc(chatRoomMember.joinedAt));
-    const accounts = await this.accounts.getAccounts([
-      ...(viewerId ? [viewerId] : []),
-      ...rows.map((m) => m.userId),
-    ]);
+    const accounts = await this.accounts.getAccounts(rows.map((m) => m.userId));
     const roster = {
-      canSeeAdminUsers: viewerId ? isStaffRole(accounts.get(viewerId)?.role) : false,
+      canSeeAdminUsers: await this.canSeeAdminUsers(viewerId),
       creatorId: room.creatorId,
     };
     const members = rows.filter((member) => visibleInRoster(member, accounts, roster));

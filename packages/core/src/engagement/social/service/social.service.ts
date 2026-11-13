@@ -146,9 +146,13 @@ export class SocialService {
     return { rows, total: Number(countRows[0]?.n ?? 0) };
   }
 
-  /** Player profiles widened with the identity-owned handle; an id with no profile is left out. */
+  /**
+   * Player profiles widened with the identity-owned handle; an id with no profile is left out.
+   * Read fresh: `closed`, `allowFriendRequests` and `showOnlineStatusToFriends` are privacy gates
+   * on every caller here.
+   */
   private async playersWithUsername(userIds: readonly Uuid[]) {
-    const accounts = await this.accounts.getAccounts(userIds);
+    const accounts = await this.accounts.getAccounts(userIds, { fresh: true });
     return [...accounts.values()].flatMap(({ userId, username, player }) =>
       player ? [{ ...player, userId, username }] : [],
     );

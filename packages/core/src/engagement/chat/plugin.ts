@@ -99,11 +99,15 @@ function remoteAccountReader(): RemoteAccountReader | null {
         'Unset it, or run chat with a SERVICE_MANIFEST that names identity:no-routes.',
     );
   }
-  const origin = new URL(url);
-  if (process.env['NODE_ENV'] === 'production' && origin.protocol !== 'https:') {
-    logger.warn(
-      { identityService: origin.origin },
-      'IDENTITY_SERVICE_URL is not https: account reads cross the network in clear text',
+  if (
+    process.env['NODE_ENV'] === 'production' &&
+    new URL(url).protocol !== 'https:' &&
+    process.env['IDENTITY_SERVICE_ALLOW_HTTP'] !== 'true'
+  ) {
+    throw new Error(
+      'IDENTITY_SERVICE_URL is not https in production, so account reads would cross the ' +
+        'network in clear text. Use https, or set IDENTITY_SERVICE_ALLOW_HTTP=true where a ' +
+        'service mesh inside the private network encrypts the hop.',
     );
   }
   return new RemoteAccountReader(

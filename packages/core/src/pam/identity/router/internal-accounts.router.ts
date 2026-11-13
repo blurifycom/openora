@@ -18,8 +18,9 @@ export function accountReaderCallers(raw: string | undefined): ReadonlySet<strin
 
 /**
  * The internal API behind `ACCOUNT_READER`, for a service that runs on a database of its own.
- * Only the services named in `callers` may read; any other signed caller is refused, so a
- * leaked secret on an unrelated service does not open every account's standing.
+ * Only the services named in `callers` may read; any other signed caller is refused. This
+ * guards against misconfiguration only, not a compromised service: one install-wide secret
+ * signs as any caller name.
  */
 export function createInternalAccountsRouter(reader: AccountReader, callers: ReadonlySet<string>) {
   const procedure = internalProcedure.use(({ context, next }) => {

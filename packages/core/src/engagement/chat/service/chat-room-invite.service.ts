@@ -461,7 +461,7 @@ export class ChatRoomInviteService {
   }
 
   async listMyRoomInvites(userId: Uuid) {
-    if (await this.isExcluded(userId)) {
+    if (await this.isExcluded(userId, { fresh: true })) {
       return [];
     }
     const db = this.drizzle.db;
