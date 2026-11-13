@@ -20,20 +20,20 @@ function positiveIntegerEnv(name: string, fallback: number): number {
 }
 
 /** The env variable that sizes a pool, and the size when it is unset. */
-export type PoolMax = { env: string; fallback: number };
+export type PoolSizeEnv = { env: string; fallback: number };
 
-const MAIN_POOL_MAX: PoolMax = { env: 'DATABASE_POOL_MAX', fallback: DEFAULT_POOL_MAX };
+const MAIN_POOL_SIZE_ENV: PoolSizeEnv = { env: 'DATABASE_POOL_MAX', fallback: DEFAULT_POOL_MAX };
 
 /**
- * Sized by `DATABASE_POOL_MAX`, or the env `max` names. `DATABASE_POOL_ACQUIRE_TIMEOUT_MS` bounds
+ * Sized by `DATABASE_POOL_MAX`, or the env `size` names. `DATABASE_POOL_ACQUIRE_TIMEOUT_MS` bounds
  * the wait for a free connection: an exhausted pool fails the waiting query instead of hanging it
  * forever, so a caller that takes a second connection while holding a transaction surfaces as an
  * error.
  */
-export function createPool(connectionString: string, max: PoolMax = MAIN_POOL_MAX): Pool {
+export function createPool(connectionString: string, size: PoolSizeEnv = MAIN_POOL_SIZE_ENV): Pool {
   return new Pool({
     connectionString,
-    max: positiveIntegerEnv(max.env, max.fallback),
+    max: positiveIntegerEnv(size.env, size.fallback),
     connectionTimeoutMillis: positiveIntegerEnv(
       'DATABASE_POOL_ACQUIRE_TIMEOUT_MS',
       DEFAULT_POOL_ACQUIRE_TIMEOUT_MS,

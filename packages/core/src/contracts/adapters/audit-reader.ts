@@ -8,11 +8,15 @@ import { createToken, type Token } from './token.js';
 /** The account whose records are read: its player, and its user for older records. */
 export type AuditSubject = { playerId: Uuid; userId: Uuid };
 
-/** One `identity.email.changed` record: its snapshots as written, `at` when it was written. */
+/**
+ * One `identity.email.changed` record: its snapshots as written, `at` when it was written,
+ * `queued` while it still waits in the outbox for the chain.
+ */
 export type AuditEmailChange = {
   before: Record<string, unknown> | null;
   after: Record<string, unknown> | null;
   at: Date;
+  queued: boolean;
 };
 
 export type AuditReader = {

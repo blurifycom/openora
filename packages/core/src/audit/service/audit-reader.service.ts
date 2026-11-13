@@ -10,7 +10,7 @@ import { auditLog } from '../schema/index.js';
 
 const EMAIL_CHANGED = 'identity.email.changed';
 
-type Change = AuditEmailChange & { eventId: string | null };
+type Change = Omit<AuditEmailChange, 'queued'> & { eventId: string | null };
 
 // ponytail: seq scan of the outbox, fine while the shipper keeps it near empty; if a stalled
 // shipper makes these reads slow, add a partial index on (entry->>'resourceId') for email changes.
@@ -124,8 +124,12 @@ export class AuditReaderService implements AuditReader {
     const pending = await queued(main);
     const logged = await chained(this.auditDrizzle === this.drizzle ? main : this.auditDrizzle.db);
     const loggedIds = new Set(logged.map(({ eventId }) => eventId));
-    return [...logged, ...pending.filter(({ eventId }) => !loggedIds.has(eventId))].map(
-      ({ before, after, at }) => ({ before, after, at }),
-    );
+    const entry =
+      (queued: boolean) =>
+      ({ before, after, at }: Change): AuditEmailChange => ({ before, after, at, queued });
+    return [
+      ...logged.map(entry(false)),
+      ...pending.filter(({ eventId }) => !loggedIds.has(eventId)).map(entry(true)),
+    ];
   }
 }

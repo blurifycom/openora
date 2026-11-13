@@ -340,6 +340,66 @@ describe('audit chain in a database of its own', () => {
     ]);
   });
 
+  it('refuses a delete from a member of the shipper role, and migrate while it is one', async () => {
+    const member = newRole('member');
+    await asAdmin(
+      `CREATE ROLE "${member.user}" LOGIN PASSWORD '${member.password}'`,
+      `GRANT CONNECT ON DATABASE "${mainDatabase}" TO "${member.user}"`,
+      `GRANT "${shipper.user}" TO "${member.user}"`,
+    );
+    const id = randomUUID();
+    await queue(id);
+    const asMember = new Pool({ connectionString: urlFor(mainDatabase, member) });
+    try {
+      const client = await asMember.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`SELECT pg_advisory_xact_lock(hashtext('audit_shipper'))`);
+        // The member inherits the shipper's DELETE grant; the guard takes the shipper alone.
+        await expect(
+          client.query(`DELETE FROM audit_outbox WHERE entry->>'resourceId' = $1`, [id]),
+        ).rejects.toThrow(/audit shipper's to delete/);
+      } finally {
+        await client.query('ROLLBACK');
+        client.release();
+      }
+    } finally {
+      await asMember.end();
+    }
+
+    await expect(migrateSplit()).rejects.toThrow(/members that inherit it or may SET it/);
+    await asAdmin(`REVOKE "${shipper.user}" FROM "${member.user}"`);
+    await migrateSplit();
+    await ship();
+    expect(await chainOf(auditWriter.db, id)).toHaveLength(1);
+  });
+
+  it('takes a shipper role made by an admin that is not a superuser, its implicit membership kept', async () => {
+    const creator = newRole('creator');
+    const created = newRole('created');
+    await asAdmin(
+      `CREATE ROLE "${creator.user}" LOGIN CREATEROLE PASSWORD '${creator.password}'`,
+      `GRANT CONNECT ON DATABASE "${mainDatabase}" TO "${creator.user}"`,
+    );
+    const asCreator = new Pool({ connectionString: urlFor(mainDatabase, creator) });
+    try {
+      await asCreator.query(`CREATE ROLE "${created.user}" LOGIN PASSWORD '${created.password}'`);
+    } finally {
+      await asCreator.end();
+    }
+    // PG16 grants the creator membership with ADMIN only: it neither inherits nor may SET.
+    const { rows } = await main.drizzle.db.execute<{ creators: number }>(sql`
+      SELECT count(*)::int AS creators FROM pg_auth_members
+       WHERE roleid = ${created.user}::regrole AND member = ${creator.user}::regrole`);
+    expect(rows[0]?.creators).toBe(1);
+
+    try {
+      await migrate({ adminUrl: main.url, auditUrl, shipperUrl: urlFor(mainDatabase, created) });
+    } finally {
+      await migrateSplit();
+    }
+  });
+
   it('resumes verification from an anchor and finds a row tampered after it', async () => {
     const id = randomUUID();
     for (let i = 0; i < 3; i += 1) {
@@ -498,11 +558,11 @@ describe('audit chain in a database of its own', () => {
     const changes = () => reader.emailChanges({ playerId: randomUUID(), userId });
 
     await queue(userId, 'identity.email.changed', { resourceType: 'user' });
-    expect(await changes()).toHaveLength(1);
+    expect(await changes()).toMatchObject([{ queued: true }]);
     await chainWithoutShipping(userId);
-    expect(await changes()).toHaveLength(1);
+    expect(await changes()).toMatchObject([{ queued: false }]);
     await ship();
-    expect(await changes()).toHaveLength(1);
+    expect(await changes()).toMatchObject([{ queued: false }]);
   });
 
   it('refuses the single-database paths on a split main, and shipping before the copy', async () => {

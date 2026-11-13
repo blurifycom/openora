@@ -55,3 +55,13 @@ export const auditLog = pgTable(
 
 export type AuditLog = typeof auditLog.$inferSelect;
 export type AuditLogInsert = typeof auditLog.$inferInsert;
+
+// The comment split `migrate` leaves on the main database's outbox guard, so migrate, the shipper
+// and a single-database migrate can tell a main database whose chain moved out from one whose chain
+// it still holds. Here, not in migrate.ts, so the shipper reads it without the migrate runner.
+export const CHAIN_SPLIT_MARK = 'audit chain in a database of its own';
+
+/** One row, `split`: true once split `migrate` has run against this database. */
+export const CHAIN_SPLIT_SQL = `SELECT coalesce(obj_description(
+     to_regprocedure('audit_outbox_deny_unshipped_delete()'), 'pg_proc') = '${CHAIN_SPLIT_MARK}',
+   false) AS split`;

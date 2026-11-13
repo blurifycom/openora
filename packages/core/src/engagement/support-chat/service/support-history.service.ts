@@ -226,28 +226,35 @@ export class SupportHistoryService {
 
   /**
    * A player's vendor tickets and chat threads, cached whole per `(userId, includeResolved)` for
-   * a minute, `fetchedAt` included, unless the tickets come back incomplete. Each section fails on
-   * its own, its reason to the log only.
+   * a minute, `fetchedAt` included, unless the email trail has a gap while a change of it is still
+   * queued for the audit chain. Each section fails on its own, its reason to the log only.
    */
   async getHistory(userId: User['id'], includeResolved: boolean) {
     // The audit log keeps ids as text, so an uppercase id would miss its rows and split the cache.
     const id = userId.toLowerCase();
+    let lagging = false;
     return cached(
       this.deps.cache,
       `support-chat-history:v2:${id}:${includeResolved}`,
       HISTORY_CACHE_TTL_MS,
-      () => this.load(id, includeResolved),
-      // An incomplete trail may only lag a change still on its way to the audit chain, so the
-      // next call reads it again instead of serving it for the whole TTL.
-      ({ tickets }) => tickets.complete,
+      async () => {
+        const { lagging: lags, ...history } = await this.load(id, includeResolved);
+        lagging = lags;
+        return history;
+      },
+      // A gap the audit chain may close once a queued change ships is read again on the next
+      // call; any other gap (vendor down, the email cap, a contradicting trail) stays one, so it
+      // is cached like a full answer and the vendor is not asked again on every view.
+      () => !lagging,
     );
   }
 
   private async load(userId: User['id'], includeResolved: boolean) {
-    const { customerId, windows, complete, broken } = await this.deps.drizzle.db.transaction(
-      (tx) => this.readEmailTrail(tx, userId),
-      { isolationLevel: 'repeatable read', accessMode: 'read only' },
-    );
+    const { customerId, windows, complete, broken, queued } =
+      await this.deps.drizzle.db.transaction((tx) => this.readEmailTrail(tx, userId), {
+        isolationLevel: 'repeatable read',
+        accessMode: 'read only',
+      });
     if (broken) {
       logger.warn({ userId }, 'support history email trail inconsistent');
     }
@@ -265,7 +272,12 @@ export class SupportHistoryService {
         ? { state: 'not_linked' as const, items: [] }
         : this.section(userId, 'chat', () => this.deps.reader.listChats({ customerId })),
     ]);
-    return { tickets, chats, fetchedAt: new Date().toISOString() };
+    return {
+      tickets,
+      chats,
+      fetchedAt: new Date().toISOString(),
+      lagging: queued && (!complete || broken),
+    };
   }
 
   private async readEmailTrail(tx: DrizzleTx, userId: User['id']) {
@@ -288,11 +300,12 @@ export class SupportHistoryService {
     // The audit subject is the player when the account has one, the user otherwise. Each change is
     // timed by the change time it carries, or by its write time when it carries none.
     const subject = { playerId: row.playerId, userId };
+    const changes = await this.deps.audit.emailChanges(subject, tx);
     const built = buildEmailWindows({
       currentEmail: row.email,
       registeredEmail: row.registeredEmail,
       registeredAt: row.registeredAt,
-      changes: (await this.deps.audit.emailChanges(subject, tx)).map(toEmailChange),
+      changes: changes.map(toEmailChange),
     });
     const first = built.complete ? built.windows[0] : undefined;
     // Defense in depth: the player's own rows of a complete trail fall at or after the oldest
@@ -301,7 +314,8 @@ export class SupportHistoryService {
       ? await this.deps.audit.othersEmailChanges({ ...subject, email: first.email }, tx)
       : [];
     const bounded = boundFirstWindow(built, row.registeredAt, others.map(toEmailChange));
-    return { customerId: row.customerId, ...bounded };
+    const queued = [...changes, ...others].some((change) => change.queued);
+    return { customerId: row.customerId, queued, ...bounded };
   }
 
   private async section(

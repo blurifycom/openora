@@ -1477,7 +1477,7 @@ export async function auditRecordFor(
 
 // Each audit pool's size per replica; replicas x this must stay within the audit roles'
 // connection limit (20, set by migrate).
-const AUDIT_POOL_MAX = { env: 'AUDIT_DATABASE_POOL_MAX', fallback: 3 };
+const AUDIT_POOL_SIZE_ENV = { env: 'AUDIT_DATABASE_POOL_MAX', fallback: 3 };
 
 function splitAuditUrls(): { audit: string; shipper: string } | null {
   const audit = process.env['AUDIT_DATABASE_URL'];
@@ -1506,7 +1506,7 @@ export default {
     // shipper url fails at boot.
     const split = splitAuditUrls();
     const ownPool = (c: Pick<Container<CoreTokenCatalog>, 'onDispose'>, url: string) => {
-      const svc = new DrizzleService(url, { poolMax: AUDIT_POOL_MAX });
+      const svc = new DrizzleService(url, { poolSize: AUDIT_POOL_SIZE_ENV });
       c.onDispose(() => svc.dispose());
       return svc;
     };

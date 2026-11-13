@@ -79,7 +79,8 @@ table or operator in front of the ones the guards read.
   the shipper appends there as a role that may only read and append, and deletes the batch from
   the outbox once that append has committed, as a shipper role of its own on the main database
   (`AUDIT_SHIPPER_DATABASE_URL`); the main database's delete guard, which cannot see the chain,
-  lets a delete through only from a member of that role holding the shipper lock
+  lets a delete through only from a session of that role itself (`session_user`, not a member)
+  holding the shipper lock
   (`docs/standards/audit.md`).
 - `audit_log_seq_key` (unique) is built next to the plain `audit_log_seq_idx`, which stays until
   the next minor release. Dropped in the same migrate run, the chain head lookup

@@ -548,7 +548,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       expect(readSupportHistoryCalls().listTickets).toEqual([]);
     });
 
-    it('answers email_gap when another account took the address, loaded again rather than cached on a repeat by uppercase id', async () => {
+    it('answers email_gap when another account took the address, from the cache on a repeat by uppercase id', async () => {
       const p = await newPlayer();
       const q = await newPlayer();
       await auditEmailChange({
@@ -562,9 +562,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
       const again = await history(admin, p.userId.toUpperCase());
 
       expect(first.tickets).toEqual({ state: 'email_gap', items: [], complete: false });
-      // An incomplete trail is never cached: the repeat reads it again.
-      expect(again).toEqual({ ...first, fetchedAt: expect.any(String) });
-      expect(again.fetchedAt).not.toBe(first.fetchedAt);
+      expect(again).toEqual(first);
       expect(readSupportHistoryCalls().listTickets).toEqual([]);
     });
 
