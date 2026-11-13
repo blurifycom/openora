@@ -308,7 +308,7 @@ describe('LobbyService layout cache', () => {
     });
     const first = await svc.getLayout();
     expect(first).toMatchObject([{ type: 'text', data: { value: 'first' } }]);
-    expect(await redis.client.pTTL('cache:lobby:layout')).toBeGreaterThan(0);
+    expect(await redis.client.pTTL('cache:lobby:layout:global')).toBeGreaterThan(0);
 
     const admin = await svc.getAdminLayout();
     await svc.replaceLayout({
@@ -318,5 +318,40 @@ describe('LobbyService layout cache', () => {
       userAgent: null,
     });
     expect(await svc.getLayout()).toMatchObject([{ type: 'text', data: { value: 'second' } }]);
+  });
+
+  it('caches and invalidates each layout under its own key', async () => {
+    const catalog = createLobbySectionCatalog([
+      {
+        type: 'text',
+        parseConfig: (config) => configSchema.parse(config),
+        async resolve(sections) {
+          return new Map(sections.map((section) => [section.id, section.config]));
+        },
+      },
+    ]);
+    const svc = new LobbyService(db.drizzle, makeEventBus(), catalog, new RedisCache(redis.client));
+    const text = (value: string) => ({ type: 'text', config: { value }, isEnabled: true });
+    await svc.replaceLayout({ version: 0, sections: [text('casino')], ip: null, userAgent: null });
+    await svc.replaceLayout({
+      layoutKey: 'home',
+      version: 0,
+      sections: [text('home')],
+      ip: null,
+      userAgent: null,
+    });
+    expect(await svc.getLayout()).toMatchObject([{ data: { value: 'casino' } }]);
+    expect(await svc.getLayout('home')).toMatchObject([{ data: { value: 'home' } }]);
+
+    await svc.replaceLayout({
+      layoutKey: 'home',
+      version: 1,
+      sections: [text('home 2')],
+      ip: null,
+      userAgent: null,
+    });
+    expect(await redis.client.exists('cache:lobby:layout:global')).toBe(1);
+    expect(await svc.getLayout('home')).toMatchObject([{ data: { value: 'home 2' } }]);
+    expect(await svc.getLayout()).toMatchObject([{ data: { value: 'casino' } }]);
   });
 });

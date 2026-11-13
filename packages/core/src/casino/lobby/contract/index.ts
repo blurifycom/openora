@@ -1,6 +1,8 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
+  DEFAULT_LOBBY_LAYOUT_KEY,
+  LobbyLayoutKeySchema,
   LobbyLayoutSectionSnapshotSchema,
   LobbyLayoutSnapshotSchema,
   LobbySectionConfigSchema,
@@ -73,12 +75,18 @@ export const LobbySectionSaveInputSchema = z
   .strict();
 export type LobbySectionSaveInput = z.infer<typeof LobbySectionSaveInputSchema>;
 
+const LayoutKeyInputSchema = LobbyLayoutKeySchema.default(DEFAULT_LOBBY_LAYOUT_KEY);
+
+export const LobbyLayoutKeyInputSchema = z.object({ layoutKey: LayoutKeyInputSchema });
+export type LobbyLayoutKeyInput = z.infer<typeof LobbyLayoutKeyInputSchema>;
+
 export const ReplaceLobbyLayoutInputSchema = z
   .object({
+    layoutKey: LayoutKeyInputSchema,
     version: z.number().int().min(0),
     sections: z.array(LobbySectionSaveInputSchema).max(LOBBY_SECTION_COUNT_MAX),
   })
-  .describe('Complete lobby layout replacement; omitted existing sections are deleted.');
+  .describe('Complete replacement of one lobby layout; its omitted existing sections are deleted.');
 export type ReplaceLobbyLayoutInput = z.infer<typeof ReplaceLobbyLayoutInputSchema>;
 
 export const LobbyResolvedSectionSchema = z.object({
@@ -109,10 +117,12 @@ export const lobbyContract = {
 
   getLayout: oc
     .route({ method: 'GET', path: '/lobby/layout' })
+    .input(LobbyLayoutKeyInputSchema)
     .output(z.array(LobbyResolvedSectionSchema)),
 
   getAdminLayout: oc
     .route({ method: 'GET', path: '/backoffice/lobby/layout' })
+    .input(LobbyLayoutKeyInputSchema)
     .output(LobbyAdminLayoutSchema),
 
   replaceLayout: oc
