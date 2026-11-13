@@ -7,6 +7,7 @@ import {
   getUserId,
   AdminGuard,
   assertRateLimit,
+  upstreamDownAs503,
   type OssContext,
 } from '@openora/core/server';
 import {
@@ -152,7 +153,15 @@ export function createChatRouter({
   adminGuard: AdminGuard;
   limiter: RateLimiterAdapter;
 }) {
-  const os = implement(chat).$context<OssContext>();
+  const os = implement(chat)
+    .$context<OssContext>()
+    .use(async ({ next }) => {
+      try {
+        return await next();
+      } catch (err) {
+        throw upstreamDownAs503(err);
+      }
+    });
 
   // Private-room streams require membership; public-room and global streams are readable anonymously.
   const authorizeChannel = (input: { roomId?: ChatRoom['id'] | null }, context: OssContext) =>

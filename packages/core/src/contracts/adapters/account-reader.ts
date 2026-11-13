@@ -1,8 +1,7 @@
 import * as z from 'zod';
 import { createToken, type Token } from './token.js';
-import { PLAY_REFUSALS } from './play-eligibility.js';
 import type { IdentityReader } from './identity-reader.js';
-import { PlayerStatusSchema, type Player } from '../schemas/player.js';
+import type { Player } from '../schemas/player.js';
 import { UuidSchema } from '../schemas/common.js';
 
 /**
@@ -20,13 +19,17 @@ export const AccountSchema = z.object({
   avatarUrl: z.string().nullable(),
   role: z.string(),
   isActive: z.boolean(),
-  /** Why the account may not play now, as `PLAY_ELIGIBILITY.checkPlay` names it; null = it may. */
-  playRefusal: z.enum(PLAY_REFUSALS).nullable(),
+  /**
+   * True while `PLAY_ELIGIBILITY.checkPlay` would refuse the account (RG block, closed,
+   * suspended, inactive or banned). The reason stays with identity: it is RG data.
+   */
+  excluded: z.boolean(),
   /** Null for an account with no player profile (staff, or a player not provisioned yet). */
   player: z
     .object({
       playerId: z.string(),
-      status: PlayerStatusSchema,
+      /** Suspended or closed: out of the social graph. Self-exclusion shows only as `excluded`. */
+      closed: z.boolean(),
       lastSeenAt: z.coerce.date().nullable(),
       allowFriendRequests: z.boolean(),
       showOnlineStatusToFriends: z.boolean(),
@@ -34,6 +37,14 @@ export const AccountSchema = z.object({
     .nullable(),
 });
 export type Account = z.infer<typeof AccountSchema>;
+
+/** A player a search or a mention finds: only what is shown next to the name. */
+export const PlayerMatchSchema = AccountSchema.pick({
+  userId: true,
+  username: true,
+  avatarUrl: true,
+});
+export type PlayerMatch = z.infer<typeof PlayerMatchSchema>;
 
 export const PLAYER_SEARCH_MAX_LIMIT = 50;
 
@@ -44,13 +55,27 @@ export type PlayerSearch = {
   limit: number;
 };
 
+export type AccountReadOptions = {
+  /**
+   * Skip any cache. Set by an access decision that must see a demotion, a deactivation or an
+   * exclusion on the very next call: the admin guard, and creating or accepting an invite.
+   */
+  fresh?: boolean;
+};
+
 export type AccountReader = {
-  /** Keyed by user id. An id that names no account is absent: the caller shows it as unknown. */
-  getAccounts(userIds: readonly string[]): Promise<Map<string, Account>>;
-  /** The player account whose username matches exactly, ignoring case. */
-  findPlayerByUsername(username: string): Promise<Account | null>;
-  /** Player accounts (role `player`, with a profile) whose username contains `query`. */
-  searchPlayers(search: PlayerSearch): Promise<Account[]>;
+  /**
+   * Keyed by user id as passed (ids match ignoring case). An id that names no account is absent:
+   * the caller shows it as unknown.
+   */
+  getAccounts(
+    userIds: readonly string[],
+    options?: AccountReadOptions,
+  ): Promise<Map<string, Account>>;
+  /** The player whose username matches exactly, ignoring case. */
+  findPlayerByUsername(username: string): Promise<PlayerMatch | null>;
+  /** Players (role `player`, with a profile) whose username contains `query`. */
+  searchPlayers(search: PlayerSearch): Promise<PlayerMatch[]>;
   findUserIdByPlayerId(playerId: Player['id']): Promise<string | null>;
 };
 
@@ -75,7 +100,7 @@ export const AccountReaderWire = {
   },
   byUsername: {
     input: z.object({ username: z.string().min(1).max(100) }),
-    output: z.object({ account: AccountSchema.nullable() }),
+    output: z.object({ account: PlayerMatchSchema.nullable() }),
   },
   search: {
     input: z.object({
@@ -83,7 +108,7 @@ export const AccountReaderWire = {
       excludeUserId: UuidSchema,
       limit: z.number().int().min(1).max(PLAYER_SEARCH_MAX_LIMIT),
     }),
-    output: z.object({ accounts: z.array(AccountSchema) }),
+    output: z.object({ accounts: z.array(PlayerMatchSchema) }),
   },
   byPlayer: {
     input: z.object({ playerId: UuidSchema }),

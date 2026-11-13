@@ -1,3 +1,4 @@
+import { ORPCError } from '@orpc/server';
 import {
   INTERNAL_API_HEADERS,
   INTERNAL_API_PREFIX,
@@ -28,6 +29,21 @@ export class InternalApiError extends Error {
     this.status = details.status;
     this.body = details.body;
   }
+}
+
+/**
+ * For a route's catch: a call to another service that timed out, never connected or got a 5xx
+ * answers 503, so the client retries later instead of reading a server bug. A refused call
+ * (4xx) is a bug on this side and stays a 500. Anything else passes through unchanged.
+ */
+export function upstreamDownAs503(err: unknown): unknown {
+  if (err instanceof InternalApiError && err.kind !== 'client') {
+    return new ORPCError('SERVICE_UNAVAILABLE', {
+      message: 'A service this route depends on is unavailable',
+      cause: err,
+    });
+  }
+  return err;
 }
 
 export type InternalClientConfig = {
