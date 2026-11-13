@@ -141,16 +141,17 @@ export class PlayEligibilityPublisher {
  * Hands every user's committed play eligibility to the ledger in keyset batches, and returns
  * how many rows the ledger wrote. Heals a user registered by a replica that predates the
  * publisher, or a direct write that skipped it. Locks nothing on this side; the ledger rewrites
- * only rows that are missing or behind.
+ * only rows that are missing or behind. An aborted `signal` stops it between batches.
  */
 export async function backfillPlayEligibility(
   db: DrizzleDb,
   projection: PlayEligibilityProjectionPort,
-  batchSize = 500,
+  { batchSize = 500, signal }: { batchSize?: number; signal?: AbortSignal } = {},
 ): Promise<number> {
   let written = 0;
   let after: User['id'] | undefined;
   for (;;) {
+    signal?.throwIfAborted();
     const rows = await db
       .select({
         userId: user.id,

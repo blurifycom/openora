@@ -185,7 +185,7 @@ export type Plugin<C extends TokenCatalog> = {
   id: string;
   dependsOn?: readonly string[];
   // Verified once after all plugins register - a missing port fails fast. See ADR-0024.
-  requiresPorts?: readonly (C[keyof C] & Token<unknown>)[];
+  requiresPorts?: readonly C[keyof C][];
   // Checked at the same point; an unbound one is logged, not fatal.
   optionalPorts?: readonly OptionalPort<C>[];
   // Logged like optionalPorts, but an unbound one fails a SERVICE_MANIFEST boot.

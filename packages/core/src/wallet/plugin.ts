@@ -454,9 +454,9 @@ export default {
       names: () => [DEFAULT_PAYMENT_PROVIDER],
     }));
     // What a stake is checked against: the ledger's own projection, not the identity tables.
-    ctx.provide(LEDGER_PLAY_ELIGIBILITY, sharedPlayEligibility);
+    ctx.provideSealed(LEDGER_PLAY_ELIGIBILITY, sharedPlayEligibility);
     // Its writer, for identity only: not part of the Ledger API a provider bridge sees.
-    ctx.provide(PLAY_ELIGIBILITY_PROJECTION, sharedPlayEligibility);
+    ctx.provideSealed(PLAY_ELIGIBILITY_PROJECTION, sharedPlayEligibility);
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
     ctx.provide(
       WALLET_COMMANDS,

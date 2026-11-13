@@ -520,12 +520,12 @@ export class RgService {
     initiatedBy: RgInitiator,
     meta?: ClientMeta,
   ): Promise<RgExclusion> {
-    await this.assertNoActiveExclusion(userId, 'cooling_off');
     const now = new Date();
     const expiresAt = new Date(now.getTime() + input.durationHours * HOUR_MS);
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const row = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, exclusionLockKey(userId), async () => {
+        await this.assertNoActiveExclusion(tx, userId, 'cooling_off');
         const lapsedRows = await this.expireLapsedCoolingOff(userId, tx, now);
         const r = findOneOrThrow(
           await tx
@@ -590,7 +590,6 @@ export class RgService {
     initiatedBy: RgInitiator,
     meta?: ClientMeta,
   ): Promise<RgExclusion> {
-    await this.assertNoActiveExclusion(userId, 'self_exclusion');
     const now = new Date();
     const expiresAt =
       input.isPermanent || input.durationMonths === undefined
@@ -599,6 +598,7 @@ export class RgService {
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const row = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, exclusionLockKey(userId), async () => {
+        await this.assertNoActiveExclusion(tx, userId, 'self_exclusion');
         const r = findOneOrThrow(
           await tx
             .insert(rgExclusion)
@@ -660,31 +660,30 @@ export class RgService {
     actorId: User['id'],
     meta?: ClientMeta,
   ): Promise<RgExclusion> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(rgExclusion)
-      .where(
-        and(
-          eq(rgExclusion.userId, userId),
-          eq(rgExclusion.kind, 'self_exclusion'),
-          eq(rgExclusion.status, 'active'),
-        ),
-      )
-      .limit(1);
-    if (!existing) {
-      throw new ExclusionNotFoundError(userId);
-    }
-    if (existing.isPermanent || existing.expiresAt === null) {
-      throw new PermanentExclusionLiftError();
-    }
-    if (new Date() < existing.expiresAt) {
-      throw new ExclusionPeriodNotElapsedError();
-    }
-
     const now = new Date();
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const row = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, exclusionLockKey(userId), async () => {
+        const [existing] = await tx
+          .select()
+          .from(rgExclusion)
+          .where(
+            and(
+              eq(rgExclusion.userId, userId),
+              eq(rgExclusion.kind, 'self_exclusion'),
+              eq(rgExclusion.status, 'active'),
+            ),
+          )
+          .limit(1);
+        if (!existing) {
+          throw new ExclusionNotFoundError(userId);
+        }
+        if (existing.isPermanent || existing.expiresAt === null) {
+          throw new PermanentExclusionLiftError();
+        }
+        if (new Date() < existing.expiresAt) {
+          throw new ExclusionPeriodNotElapsedError();
+        }
         const r = findOneOrThrow(
           await tx
             .update(rgExclusion)
@@ -729,25 +728,24 @@ export class RgService {
     actorId: User['id'],
     meta?: ClientMeta,
   ): Promise<RgExclusion> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(rgExclusion)
-      .where(
-        and(
-          eq(rgExclusion.userId, userId),
-          eq(rgExclusion.kind, 'cooling_off'),
-          eq(rgExclusion.status, 'active'),
-        ),
-      )
-      .limit(1);
-    if (!existing) {
-      throw new ExclusionNotFoundError(userId);
-    }
-
     const now = new Date();
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const row = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, exclusionLockKey(userId), async () => {
+        const [existing] = await tx
+          .select()
+          .from(rgExclusion)
+          .where(
+            and(
+              eq(rgExclusion.userId, userId),
+              eq(rgExclusion.kind, 'cooling_off'),
+              eq(rgExclusion.status, 'active'),
+            ),
+          )
+          .limit(1);
+        if (!existing) {
+          throw new ExclusionNotFoundError(userId);
+        }
         const r = findOneOrThrow(
           await tx
             .update(rgExclusion)
@@ -906,7 +904,7 @@ export class RgService {
     await this.loginEnforcement.unblock(userId, tx);
   }
 
-  private async assertNoActiveExclusion(userId: User['id'], kind: RgExclusion['kind']) {
+  private async assertNoActiveExclusion(tx: Tx, userId: User['id'], kind: RgExclusion['kind']) {
     const now = new Date();
     const conditions = [
       eq(rgExclusion.userId, userId),
@@ -918,7 +916,7 @@ export class RgService {
     if (kind === 'cooling_off') {
       conditions.push(gt(rgExclusion.expiresAt, now));
     }
-    const [existing] = await this.drizzle.db
+    const [existing] = await tx
       .select({ id: rgExclusion.id })
       .from(rgExclusion)
       .where(and(...conditions))

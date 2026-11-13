@@ -9,11 +9,14 @@ import {
   PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
   WALLET_COMMANDS,
+  definePlatformConfig,
   domainEventSchemas,
   type McpTokenRevocation,
+  type PlayerProvisioning,
   type PlayEligibilityPort,
   type PlayEligibilityProjectionPort,
   type PlayEligibilitySnapshot,
+  type SmsAdapter,
 } from '@openora/core/contracts';
 import {
   Container,
@@ -21,22 +24,34 @@ import {
   EVENT_BUS,
   ModuleRegistryImpl,
   type CoreTokenCatalog,
+  type DrizzleDb,
 } from '@openora/core/server';
 import { createTestDb, seedPlayerWithUser, seedUser, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { ledgerPlayEligibility, wallet, walletBalance } from '@openora/core/wallet/schema';
 import walletPlugin from '@openora/core/wallet/plugin';
+import { ledgerPlayEligibilityProjection } from '@openora/core/wallet/seed';
 import { makeAuditWriter, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
 import { DrizzleAdminUserDirectory } from '../admin-user-directory.js';
 import { migrate } from '../migrate.js';
 import { user } from '../schema/index.js';
+import { IdentityService } from '../service/identity.service.js';
 import { LoginEnforcementService } from '../service/login-enforcement.service.js';
 import {
   backfillPlayEligibility,
   PlayEligibilityPublisher,
 } from '../service/play-eligibility.service.js';
 import { SessionService } from '../service/session.service.js';
+import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
+
+// Better Auth's sign-up stands in for a stub that commits the user row the way it does.
+const authApi = vi.hoisted(() => ({ signUpEmail: vi.fn(), sendVerificationOTP: vi.fn() }));
+vi.mock('@openora/core/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@openora/core/server')>();
+  return { ...actual, createAuth: vi.fn(() => ({ api: authApi })) };
+});
 
 let db: TestDb;
 let container: Container<CoreTokenCatalog>;
@@ -233,7 +248,20 @@ describe('the ledger play eligibility projection (real PG)', () => {
 
     // A direct write that skipped the publisher: same version, different state.
     await db.drizzle.db.update(user).set({ isActive: false }).where(eq(user.id, clear.id));
-    await expect(backfill()).resolves.toBe(1);
+    const shareNowait = (userId: string) =>
+      db.drizzle.db
+        .select({ userId: ledgerPlayEligibility.userId })
+        .from(ledgerPlayEligibility)
+        .where(eq(ledgerPlayEligibility.userId, userId))
+        .for('share', { noWait: true });
+    await db.drizzle.db.transaction(async (tx) => {
+      const inTx = ledgerPlayEligibilityProjection(tx as unknown as DrizzleDb);
+      await expect(backfillPlayEligibility(tx as unknown as DrizzleDb, inTx)).resolves.toBe(1);
+      // The stale row's upsert is still uncommitted: a stake on it waits, one on any other row
+      // never does.
+      await expect(shareNowait(clear.id)).rejects.toMatchObject({ cause: { code: '55P03' } });
+      await expect(shareNowait(excluded.id)).resolves.toHaveLength(1);
+    });
     await expect(projection.checkPlay(clear.id)).resolves.toBe('account_inactive');
   });
 
@@ -259,5 +287,63 @@ describe('an admin deactivation reaches the ledger (real PG)', () => {
 
     await directory().update(userId, { isActive: true }, randomUUID());
     await expect(bet(userId)).resolves.toMatchObject(allowed);
+  });
+});
+
+describe('a new registration reaches the ledger (real PG)', () => {
+  it('writes the ledger row with the player row, with no boot backfill to heal it', async () => {
+    const email = `${randomUUID()}@test.dev`;
+    authApi.signUpEmail.mockImplementation(async () =>
+      Response.json({ user: { id: (await seedUser(db, { email })).id } }),
+    );
+    authApi.sendVerificationOTP.mockResolvedValue(new Response(null));
+    // The profile module's provisioning: the player row and the caller's hook in one transaction.
+    const createForRegistration = vi.fn<PlayerProvisioning['createForRegistration']>(
+      async (record, onCreated) =>
+        db.drizzle.db.transaction(async (tx) => {
+          const [row] = await tx
+            .insert(player)
+            .values({ userId: record.userId })
+            .returning({ id: player.id });
+          await onCreated?.(tx, row!.id);
+          return { created: true, playerId: row!.id };
+        }),
+    );
+    const { events, publisher } = identity();
+    const registration = new IdentityService({
+      drizzle: db.drizzle,
+      events,
+      audit: makeAuditWriter(),
+      identityReader: makeIdentityReader(),
+      platformConfig: definePlatformConfig({
+        registration: { termsVersion: 'test-v1', requireEmailVerification: false },
+      }),
+      playerProvisioning: mock<PlayerProvisioning>({ createForRegistration }),
+      twoFactorDelivery: new TwoFactorDeliveryService({
+        drizzle: db.drizzle,
+        sms: mock<SmsAdapter>({ sendOtp: vi.fn() }),
+      }),
+      playEligibility: publisher,
+    });
+
+    await expect(
+      registration.register(
+        {
+          email,
+          password: 'password1234',
+          username: 'newplayer',
+          acceptedTerms: true,
+          acceptedAge: true,
+        },
+        {},
+      ),
+    ).resolves.toEqual({ status: 'check-email' });
+
+    const [account] = await db.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, email));
+    // A user the ledger has no row for is refused as inactive, so `null` means the row landed.
+    await expect(container.get(LEDGER_PLAY_ELIGIBILITY).checkPlay(account!.id)).resolves.toBeNull();
   });
 });

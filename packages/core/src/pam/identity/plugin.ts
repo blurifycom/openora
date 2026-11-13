@@ -127,7 +127,7 @@ function backfillPlayEligibilityAtBoot(c: IdentityContainer) {
   const db = c.get(DRIZZLE).db;
   const abort = new AbortController();
   c.onDispose(() => abort.abort());
-  void retryUntilDone(() => backfillPlayEligibility(db, projection), {
+  void retryUntilDone(() => backfillPlayEligibility(db, projection, { signal: abort.signal }), {
     signal: abort.signal,
     onFailure: (err, retryInMs) =>
       logger.error({ err, retryInMs }, 'identity: play eligibility boot backfill failed, retrying'),

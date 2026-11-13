@@ -1,6 +1,6 @@
 import type { PlayEligibilitySnapshot } from '../schemas/ledger.js';
 import type { PlayerStatus } from '../schemas/player.js';
-import { createToken, type Token } from './token.js';
+import { createSealedToken, createToken, type SealedToken, type Token } from './token.js';
 
 /**
  * Read port for Responsible-Gambling play enforcement. Owned + bound by the identity
@@ -87,10 +87,11 @@ export const PLAY_ELIGIBILITY: Token<PlayEligibilityPort> =
 /**
  * The ledger's own answer for a stake, from the `ledger_play_eligibility` projection the wallet
  * module keeps, never the identity tables. Bound by wallet; only the money paths that take a
- * stake read it. A user the projection has no row for is refused `account_inactive`.
+ * stake read it. A user the projection has no row for is refused `account_inactive`. Sealed: an
+ * overlay can neither rebind the stake gate nor the writer that lifts a restriction.
  */
-export const LEDGER_PLAY_ELIGIBILITY: Token<Required<PlayEligibilityPort>> =
-  createToken<Required<PlayEligibilityPort>>('LEDGER_PLAY_ELIGIBILITY');
+export const LEDGER_PLAY_ELIGIBILITY: SealedToken<Required<PlayEligibilityPort>> =
+  createSealedToken<Required<PlayEligibilityPort>>('LEDGER_PLAY_ELIGIBILITY');
 
 /**
  * Writes to the ledger's `ledger_play_eligibility` projection. Wallet-internal: bound by wallet,
@@ -111,5 +112,5 @@ export type PlayEligibilityProjectionPort = {
   reconcile(snapshots: readonly PlayEligibilitySnapshot[]): Promise<number>;
 };
 
-export const PLAY_ELIGIBILITY_PROJECTION: Token<PlayEligibilityProjectionPort> =
-  createToken<PlayEligibilityProjectionPort>('PLAY_ELIGIBILITY_PROJECTION');
+export const PLAY_ELIGIBILITY_PROJECTION: SealedToken<PlayEligibilityProjectionPort> =
+  createSealedToken<PlayEligibilityProjectionPort>('PLAY_ELIGIBILITY_PROJECTION');
