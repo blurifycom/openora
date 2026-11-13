@@ -19,6 +19,11 @@
       },
       {
         "type": "command",
+        "matcher": "Bash",
+        "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-comments.mjs\""
+      },
+      {
+        "type": "command",
         "matcher": "Task|Agent",
         "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-subagent.mjs\""
       }
