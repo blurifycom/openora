@@ -27,6 +27,7 @@ import {
   isWeakening,
   requireLimitCurrency,
   RgLimitCurrencyUnresolvedError,
+  LimitTwinCurrencyError,
   type LimitRow,
   type ResolvedLimitRow,
 } from '../service/rg.service.js';
@@ -849,6 +850,53 @@ describe('legacy null-currency limits (real PG)', () => {
     expect((await reread(orphan.id))?.currency).toBeNull();
     expect((await reread(twin.id))?.currency).toBeNull();
     expect(() => requireLimitCurrency(orphan)).toThrow(RgLimitCurrencyUnresolvedError);
+  });
+
+  const override = (userId: string, period: 'daily' | 'weekly', currency: string) =>
+    makeService().svc.setPlayerLimit(
+      userId,
+      {
+        userId,
+        type: 'deposit',
+        amount: '500',
+        minutes: null,
+        currency,
+        period,
+        reason: 'legacy limit with no currency',
+        confirm: true,
+      },
+      randomUUID(),
+      'admin',
+    );
+
+  it('lets an admin override set the currency of an unpinned row, beside another unpinned one', async () => {
+    const userId = randomUUID();
+    const daily = await insertNullCurrencyLimit(userId);
+    const weekly = await insertNullCurrencyLimit(userId, { period: 'weekly', amount: '50' });
+
+    // 500 is above the legacy 100: the row refused every move, so this is a repair, not a raise.
+    await override(userId, 'daily', 'USD');
+
+    expect(await reread(daily.id)).toMatchObject({
+      currency: 'USD',
+      amount: '500.000000000000000000',
+    });
+    expect((await reread(weekly.id))?.currency).toBeNull();
+  });
+
+  it('repairs the NULL twin of a slot, never its pinned row, and refuses its currency', async () => {
+    const userId = randomUUID();
+    const pinned = await insertNullCurrencyLimit(userId, { currency: 'EUR', amount: '40' });
+    const twin = await insertNullCurrencyLimit(userId);
+
+    await expect(override(userId, 'daily', 'EUR')).rejects.toBeInstanceOf(LimitTwinCurrencyError);
+    await override(userId, 'daily', 'USD');
+
+    expect((await reread(twin.id))?.currency).toBe('USD');
+    expect(await reread(pinned.id)).toMatchObject({
+      currency: 'EUR',
+      amount: '40.000000000000000000',
+    });
   });
 
   it('gives every user with a limit a version row, so the full backfill reaches them', async () => {

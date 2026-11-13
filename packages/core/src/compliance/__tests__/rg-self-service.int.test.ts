@@ -24,7 +24,11 @@ import { makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
 import { ledgerRgLimits } from '@openora/core/wallet/seed';
 import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion, rgFlag } from '../schema/index.js';
-import { RgService, LimitOrderingViolationError } from '../service/rg.service.js';
+import {
+  RgService,
+  LimitOrderingViolationError,
+  RgLimitCurrencyUnresolvedError,
+} from '../service/rg.service.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 import {
   RgSelfServiceService,
@@ -775,6 +779,63 @@ describe('RgSelfServiceService legacy null-currency limits (real PG)', () => {
     expect(view?.remaining).toBeNull();
     expect(view?.pct).toBeNull();
     expect((await limitRow(userId)).currency).toBeNull();
+  });
+
+  it('refuses a player change to an unpinned row, even beside a pinned twin, and leaves both', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const [pinned] = await db.drizzle.db
+      .insert(userLimit)
+      .values({
+        userId,
+        type: 'deposit',
+        amount: '40',
+        minutes: null,
+        currency: 'EUR',
+        period: 'daily',
+      })
+      .returning();
+    const twin = await seedUnresolvedLimit(userId, '100');
+
+    for (const currency of ['EUR', 'USD']) {
+      await expect(
+        svc.upsertLimit(userId, { ...deposit100, amount: '10', currency }),
+      ).rejects.toBeInstanceOf(RgLimitCurrencyUnresolvedError);
+    }
+
+    const rows = await allLimitRows(userId);
+    expect(rows.find((row) => row.id === twin.id)?.currency).toBeNull();
+    expect(rows.find((row) => row.id === pinned!.id)?.amount).toBe('40.000000000000000000');
+  });
+
+  it('refuses to confirm a parked raise of an unpinned row', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const [row] = await db.drizzle.db
+      .insert(userLimit)
+      .values({
+        userId,
+        type: 'deposit',
+        amount: '100',
+        minutes: null,
+        currency: null,
+        period: 'daily',
+        pendingKind: 'increase',
+        pendingAmount: '500',
+        pendingCurrency: 'USD',
+        pendingRequestedAt: new Date(Date.now() - 2 * 24 * 3600_000),
+        pendingEffectiveAt: new Date(Date.now() - 1000),
+        pendingExpiresAt: new Date(Date.now() + 24 * 3600_000),
+      })
+      .returning();
+
+    await expect(svc.confirmPendingChange(row!.id, userId)).rejects.toBeInstanceOf(
+      RgLimitCurrencyUnresolvedError,
+    );
+    expect(await limitRow(userId)).toMatchObject({
+      amount: '100.000000000000000000',
+      currency: null,
+    });
   });
 
   it('never resolves or touches the player table for a session-type limit', async () => {

@@ -10,7 +10,7 @@ import {
   withAdvisoryXactLock,
   type EventBus,
 } from '@openora/core/server';
-import { and, eq, or, gt, lte, desc, inArray } from 'drizzle-orm';
+import { sql, and, eq, or, gt, lte, desc, inArray } from 'drizzle-orm';
 import { limitSlotKey } from '@openora/core/contracts';
 import type {
   AuditWritePort,
@@ -121,6 +121,15 @@ export class LimitRaiseNotAllowedError extends Error {
   }
 }
 
+export class LimitTwinCurrencyError extends Error {
+  constructor(readonly currency: string) {
+    super(
+      `This limit has no currency and its slot already holds a ${currency} limit; set the override in another currency`,
+    );
+    this.name = 'LimitTwinCurrencyError';
+  }
+}
+
 // Periods ordering is enforced over. `session` is a duration, not a money bound - never
 // part of this chain.
 const LIMIT_ORDERING_PERIODS = ['daily', 'weekly', 'monthly'] as const;
@@ -182,7 +191,14 @@ export async function assertLimitOrdering(
 
   for (const row of siblingRows) {
     const period = row.period;
-    if (!isOrderingPeriod(period) || period === changedPeriod || row.amount === null) {
+    // A sibling with no currency refuses every move already, so no bound can cross it; skipping
+    // it lets the admin override repair one such row while another is still unpinned.
+    if (
+      !isOrderingPeriod(period) ||
+      period === changedPeriod ||
+      row.amount === null ||
+      row.currency === null
+    ) {
       continue;
     }
     const resolved = requireLimitCurrency(row);
@@ -248,7 +264,7 @@ const SWEEP_CONCURRENCY = 10;
 
 export class RgLimitCurrencyUnresolvedError extends Error {
   constructor(readonly userId: User['id']) {
-    super(`This responsible-gambling limit of ${userId} has no currency`);
+    super('This responsible-gambling limit has no currency; an operator fix is required');
     this.name = 'RgLimitCurrencyUnresolvedError';
   }
 }
@@ -256,13 +272,58 @@ export class RgLimitCurrencyUnresolvedError extends Error {
 /**
  * Narrows a money limit to its currency. Every writer sets one and compliance migration 0017
  * pinned the legacy rows to the player's currency; a row still without one (its player record
- * is gone) cannot be compared and throws `RgLimitCurrencyUnresolvedError`.
+ * is gone, or its slot already held that currency) cannot be compared and throws
+ * `RgLimitCurrencyUnresolvedError`. The admin override is its fix.
  */
 export function requireLimitCurrency(row: LimitRow): ResolvedLimitRow {
   if (row.currency === null) {
     throw new RgLimitCurrencyUnresolvedError(row.userId);
   }
   return { ...row, currency: row.currency };
+}
+
+/**
+ * The limit in one slot. A slot holds one row, except where 0017 left a NULL-currency twin beside
+ * a pinned one; the NULL row comes first, so the admin override repairs it and a player is
+ * refused on it, never on whichever row the planner happens to return.
+ */
+export async function readLimitSlot(
+  tx: Tx,
+  userId: User['id'],
+  type: LimitType,
+  period: LimitRow['period'],
+): Promise<LimitRow | undefined> {
+  const [row] = await tx
+    .select()
+    .from(userLimit)
+    .where(
+      and(eq(userLimit.userId, userId), eq(userLimit.type, type), eq(userLimit.period, period)),
+    )
+    .orderBy(sql`${userLimit.currency} asc nulls first`, userLimit.id)
+    .limit(1);
+  return row;
+}
+
+/**
+ * Refuses to repair a NULL-currency row into a currency its slot already holds, which the unique
+ * index would reject; the other row stays enforced, so the override picks another currency.
+ */
+async function assertNoTwinIn(tx: Tx, row: LimitRow, currency: string): Promise<void> {
+  const [twin] = await tx
+    .select({ id: userLimit.id })
+    .from(userLimit)
+    .where(
+      and(
+        eq(userLimit.userId, row.userId),
+        eq(userLimit.type, row.type),
+        eq(userLimit.period, row.period),
+        eq(userLimit.currency, currency),
+      ),
+    )
+    .limit(1);
+  if (twin) {
+    throw new LimitTwinCurrencyError(currency);
+  }
 }
 
 /**
@@ -385,18 +446,14 @@ export class RgService {
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const row = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
-        const [existing] = await tx
-          .select()
-          .from(userLimit)
-          .where(
-            and(
-              eq(userLimit.userId, userId),
-              eq(userLimit.type, input.type),
-              eq(userLimit.period, input.period),
-            ),
-          )
-          .limit(1);
-        const resolvedExisting = existing && requireLimitCurrency(existing);
+        const existing = await readLimitSlot(tx, userId, input.type, input.period);
+        // A row with no currency refuses every move and has no amount to compare against: the
+        // override replaces it in the input's currency, which is the operator fix.
+        const resolvedExisting =
+          existing && existing.currency !== null ? requireLimitCurrency(existing) : undefined;
+        if (existing && !resolvedExisting) {
+          await assertNoTwinIn(tx, existing, toDbCurrency(input.type, input.currency));
+        }
         if (resolvedExisting && (await isWeakening(resolvedExisting, input, this.rates, tx))) {
           throw new LimitRaiseNotAllowedError(resolvedExisting, input);
         }

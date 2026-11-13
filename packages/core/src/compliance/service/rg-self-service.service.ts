@@ -35,6 +35,7 @@ import {
   isWeakening,
   toDbCurrency,
   toWireCurrency,
+  readLimitSlot,
   requireLimitCurrency,
   writeLimitRow,
   assertLimitOrdering,
@@ -146,17 +147,7 @@ export class RgSelfServiceService {
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const outcome = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
-        const [existing] = await tx
-          .select()
-          .from(userLimit)
-          .where(
-            and(
-              eq(userLimit.userId, userId),
-              eq(userLimit.type, input.type),
-              eq(userLimit.period, input.period),
-            ),
-          )
-          .limit(1);
+        const existing = await readLimitSlot(tx, userId, input.type, input.period);
 
         const resolvedExisting = existing && requireLimitCurrency(existing);
         if (
@@ -623,23 +614,6 @@ export class RgSelfServiceService {
     );
     assertOwnership(existing.userId, userId, new LimitOwnershipError());
     return existing;
-  }
-
-  private async viewOne(
-    userId: User['id'],
-    type: UpsertLimitInput['type'],
-    period: UpsertLimitInput['period'],
-  ): Promise<LimitView> {
-    const row = findOneOrThrow(
-      await this.drizzle.db
-        .select()
-        .from(userLimit)
-        .where(
-          and(eq(userLimit.userId, userId), eq(userLimit.type, type), eq(userLimit.period, period)),
-        ),
-      new LimitNotFoundError(userId),
-    );
-    return this.toView(userId, row);
   }
 
   private async toViews(userId: User['id'], rows: LimitRow[]): Promise<LimitView[]> {

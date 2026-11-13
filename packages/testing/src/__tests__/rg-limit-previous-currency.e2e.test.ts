@@ -336,3 +336,36 @@ describe('player self-service limit change', () => {
     await expectNoPlayerChangeNotification(p);
   });
 });
+
+describe('a limit 0017 left without a currency', () => {
+  it('refuses the player with 409 and lets an admin override set its currency', async () => {
+    const p = await registerAndMaterializePlayer(app, {
+      email: `rgpc-unpinned-${randomUUID()}@e2e.test`,
+    });
+    const [row] = await app.container
+      .get(DRIZZLE)
+      .db.insert(userLimit)
+      .values({ userId: p.userId, type: 'deposit', period: 'daily', amount: '100', currency: null })
+      .returning();
+
+    const player = await p.client.put('/compliance/limits', {
+      type: 'deposit',
+      amount: '10',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+    });
+    expect(player.status).toBe(409);
+    expect(JSON.stringify(await readJson(player))).toContain('operator fix is required');
+
+    expect(
+      (await setLimit(p.userId, { type: 'deposit', amount: '500', currency: 'USD' })).status,
+    ).toBe(200);
+    const [repaired] = await app.container
+      .get(DRIZZLE)
+      .db.select()
+      .from(userLimit)
+      .where(eq(userLimit.id, row!.id));
+    expect(repaired).toMatchObject({ currency: 'USD', amount: '500.000000000000000000' });
+  });
+});
