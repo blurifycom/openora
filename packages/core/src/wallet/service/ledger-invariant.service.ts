@@ -26,15 +26,16 @@ const TERMINAL_STATUSES = sql.raw(`('completed', 'failed', 'rejected', 'cancelle
 export const LEDGER_FINDING_LABEL = 'ledger';
 
 // The finding of an `unknown_at_provider` withdrawal is filed under the withdrawal's provider and
-// reference (its id when it has none); resolving it overwrites the finding's transaction id with
-// the manual credit, so the key is the only link back to the withdrawal.
+// reference, or its id when it had none yet (a reference may land after); resolving it overwrites
+// the finding's transaction id with the manual credit, so the key is the only link back to the
+// withdrawal.
 const settledByHand = sql`exists (
   select 1 from wallet_reconciliation_finding f
   join wallet_transaction m on m.id = f.transaction_id
   where f.kind = 'unknown_at_provider' and f.status = 'resolved' and m.type = 'manual_credit'
     and m.wallet_id = t.wallet_id
     and f.provider_name = coalesce(t.provider_name, ${DEFAULT_PAYMENT_PROVIDER})
-    and f.external_id = coalesce(t.provider_ref_id, t.id::text))`;
+    and f.external_id in (t.provider_ref_id, t.id::text))`;
 
 const moves = sql`case
   when t.type = 'deposit' then t.status = 'completed'

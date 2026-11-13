@@ -286,7 +286,10 @@ describe('ledger invariant scan (real PG)', () => {
   });
 
   /** A failed withdrawal whose `unknown_at_provider` finding was resolved by a manual credit. */
-  async function settleFailedWithdrawalByHand(creditWalletId?: Wallet['id']) {
+  async function settleFailedWithdrawalByHand({
+    creditWalletId,
+    vendorRefAfterFiling = false,
+  }: { creditWalletId?: Wallet['id']; vendorRefAfterFiling?: boolean } = {}) {
     // The withdrawal took 40 and never gave it back; the manual credit returns it to its wallet.
     const w = await seedWallet(creditWalletId ? '960' : '1000', [
       { type: 'deposit', amount: '1000', status: 'completed', balanceAfter: '1000' },
@@ -323,6 +326,12 @@ describe('ledger invariant scan (real PG)', () => {
       transactionId: manual.id,
       status: 'resolved',
     });
+    if (vendorRefAfterFiling) {
+      await db.drizzle.db
+        .update(walletTransaction)
+        .set({ providerRefId: randomUUID() })
+        .where(eq(walletTransaction.id, withdrawal.id));
+    }
     return w;
   }
 
@@ -334,9 +343,17 @@ describe('ledger invariant scan (real PG)', () => {
     expect(await breaches()).toHaveLength(0);
   });
 
+  it('still finds a hand settlement filed under the withdrawal id once a vendor reference lands', async () => {
+    await settleFailedWithdrawalByHand({ vendorRefAfterFiling: true });
+
+    await run(makeReconciliation());
+
+    expect(await breaches()).toHaveLength(0);
+  });
+
   it('does not count a manual credit to another wallet as settling the withdrawal', async () => {
     const other = await seedWallet('40');
-    const w = await settleFailedWithdrawalByHand(other.id);
+    const w = await settleFailedWithdrawalByHand({ creditWalletId: other.id });
 
     await run(makeReconciliation());
 
