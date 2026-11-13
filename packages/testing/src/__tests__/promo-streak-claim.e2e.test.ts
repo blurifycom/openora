@@ -16,6 +16,7 @@ import {
   asAdmin,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
   registerAndMaterializePlayer,
   type TestApp,
@@ -78,8 +79,10 @@ const bonusesFor = (userId: string) =>
 
 const streakOf = async (client: TestClient) => readJson(await client.get('/promo/streaks'));
 
-const configAudits = () =>
-  drizzle().select().from(auditLog).where(eq(auditLog.action, CONFIG_ACTION));
+const configAudits = async () => {
+  await flushAudit(app);
+  return drizzle().select().from(auditLog).where(eq(auditLog.action, CONFIG_ACTION));
+};
 
 async function playerWithWaitingReward() {
   const player = await registerAndMaterializePlayer(app, {
@@ -425,14 +428,16 @@ describe('a streak day through real wallet bets', () => {
   });
 });
 
-const forfeitAudit = async (milestoneGrantId: string) =>
-  (
+const forfeitAudit = async (milestoneGrantId: string) => {
+  await flushAudit(app);
+  return (
     await readJson(
       await admin.get(
         `/audit/logs?resourceId=${milestoneGrantId}&action=promo.streak.milestone.forfeited`,
       ),
     )
   ).items;
+};
 
 const outcomeOf = async (milestoneGrantId: string) => {
   const [row] = await drizzle()

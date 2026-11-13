@@ -11,6 +11,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -72,6 +73,7 @@ describe('PUT /profile/display-currency', () => {
     const readBack = await player.get('/profile/display-currency');
     expect((await readBack.json()) as { currency: string }).toMatchObject({ currency: 'EUR' });
 
+    await flushAudit(app);
     const rows = await app.container
       .get(DRIZZLE)
       .db.select()
@@ -105,6 +107,7 @@ describe('PUT /profile/display-decimal-places', () => {
       decimalPlaces: 6,
     });
 
+    await flushAudit(app);
     const rows = await app.container
       .get(DRIZZLE)
       .db.select()

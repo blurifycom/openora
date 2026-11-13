@@ -7,7 +7,14 @@ import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { CHAT_CONTEXT_ROOMS, ChatContextSendDeniedDataSchema } from '@openora/core/contracts';
 import { ChatMessageSchema } from '@openora/core/engagement/contracts/chat';
-import { type TestDb, type TestApp, bootE2e, closeE2e, registerChatter } from '../index.js';
+import {
+  type TestDb,
+  type TestApp,
+  bootE2e,
+  closeE2e,
+  flushAudit,
+  registerChatter,
+} from '../index.js';
 import { DENIED_CONTEXT_REF_PREFIX } from './fixtures/test-chat-context-send-policy-plugin.js';
 
 const SendRefusalSchema = z.object({ code: z.string(), data: ChatContextSendDeniedDataSchema });
@@ -70,6 +77,7 @@ describe('chat: context room send policy', () => {
     expect(refused.status).toBe(403);
     await vi.waitFor(
       async () => {
+        await flushAudit(app);
         const rows = await app.container
           .get(DRIZZLE)
           .db.select()

@@ -37,6 +37,7 @@ import {
   bootE2e,
   clearCapturedEmails,
   closeE2e,
+  flushAudit,
   registerAndMaterializePlayer,
   waitForEmail,
   type TestApp,
@@ -566,6 +567,7 @@ describe('POST /support-chat/session', () => {
     expect(rows).toHaveLength(1);
     expect(new Set(customers)).toEqual(new Set([rows[0]?.providerCustomerId]));
 
+    await flushAudit(testApp);
     const audits = await testApp.container
       .get(DRIZZLE)
       .db.select()

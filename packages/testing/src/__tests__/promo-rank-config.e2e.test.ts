@@ -13,6 +13,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 import { EXAMPLE_RANK_LADDER } from '../seed.js';
@@ -64,7 +65,10 @@ async function adminWithRole(roleKey: string) {
 }
 
 // audit_log is append-only, so a test counts what its own call added rather than clearing rows.
-const auditRows = () => drizzle().select().from(auditLog).where(eq(auditLog.action, CONFIG_ACTION));
+const auditRows = async () => {
+  await flushAudit(app);
+  return drizzle().select().from(auditLog).where(eq(auditLog.action, CONFIG_ACTION));
+};
 
 const wager = (userId: string, amount: string, product: WagerProduct) =>
   drizzle().transaction((tx) =>

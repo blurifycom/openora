@@ -19,6 +19,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -48,19 +49,23 @@ async function grantBonus(userId: string, amount: string) {
   return outcome.grantId;
 }
 
-const forfeitRows = (grantId: string) =>
-  drizzle()
+const forfeitRows = async (grantId: string) => {
+  await flushAudit(app);
+  return drizzle()
     .select()
     .from(auditLog)
     .where(and(eq(auditLog.action, 'promo.bonus.forfeited'), eq(auditLog.resourceId, grantId)));
+};
 
-const refusalRows = (grantId: string) =>
-  drizzle()
+const refusalRows = async (grantId: string) => {
+  await flushAudit(app);
+  return drizzle()
     .select()
     .from(auditLog)
     .where(
       and(eq(auditLog.action, 'promo.bonus.forfeit_refused'), eq(auditLog.resourceId, grantId)),
     );
+};
 
 async function adminWithRole(roleKey: string) {
   const { client, userId } = await registerAndMaterializePlayer(app, {

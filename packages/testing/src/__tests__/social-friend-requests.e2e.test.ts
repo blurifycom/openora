@@ -14,6 +14,7 @@ import {
   uniqueUsername,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -169,6 +170,7 @@ describe('AC: recipient gets an in-app notification, type round-trips, and audit
     });
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${sent.id}&action=social.friend_request.sent`,
       );

@@ -18,6 +18,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   secretFromTotpUri,
   totpCode,
 } from '../index.js';
@@ -456,12 +457,14 @@ describe('backup-code recovery - real better-auth', () => {
 
     // A teardown authorised by a recovery code must read differently in the audit
     // trail from one authorised by the authenticator.
-    const auditedAfter = (action: string) =>
-      app.container
+    const auditedAfter = async (action: string) => {
+      await flushAudit(app);
+      return app.container
         .get(DRIZZLE)
         .db.select({ after: auditLog.after })
         .from(auditLog)
         .where(and(eq(auditLog.action, action), sql`${auditLog.after}->>'userId' = ${userId}`));
+    };
     await vi.waitFor(async () => {
       expect(await auditedAfter('identity.2fa.disabled')).toEqual([
         { after: expect.objectContaining({ method: 'totp', stepUpMethod: 'backup_code' }) },

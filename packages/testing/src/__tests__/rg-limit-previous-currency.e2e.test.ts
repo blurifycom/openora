@@ -14,6 +14,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -74,6 +75,7 @@ function setLimit(userId: string, body: Record<string, unknown>) {
 type AuditRow = { before: Record<string, unknown> | null; after: Record<string, unknown> };
 
 async function auditRows(playerId: string, action = 'rg.limit.set'): Promise<AuditRow[]> {
+  await flushAudit(app);
   const res = await admin.get(`/audit/logs?resourceId=${playerId}&action=${action}`);
   return ((await readJson(res)) as { items: AuditRow[] }).items;
 }

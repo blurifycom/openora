@@ -283,6 +283,7 @@ describe('gaming category reorder e2e (PUT /backoffice/gaming/categories/{id}/ga
     expect(positionById.get(second.id)).toBe(2);
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await admin.get('/audit/logs?action=gaming.category.games_reordered');
       expect(res.status).toBe(200);
       const body = await readJson(res);
@@ -441,6 +442,7 @@ describe('gaming category pins e2e (PUT /backoffice/gaming/categories/{id}/games
     expect(reader.map((g) => g.id)).toEqual([charlie.id, alpha.id, bravo.id]);
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await admin.get('/audit/logs?action=gaming.category.pins_updated');
       expect(res.status).toBe(200);
       const body = await readJson(res);

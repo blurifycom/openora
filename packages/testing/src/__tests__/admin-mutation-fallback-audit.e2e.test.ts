@@ -15,6 +15,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -26,12 +27,14 @@ let inactiveGameId: string;
 
 const drizzle = () => testApp.container.get(DRIZZLE).db;
 
-const fallbackRows = (action?: string) =>
-  drizzle()
+const fallbackRows = async (action?: string) => {
+  await flushAudit(testApp);
+  return drizzle()
     .select()
     .from(auditLog)
     .where(like(auditLog.action, action ?? 'admin.%'))
     .orderBy(auditLog.seq);
+};
 
 async function seedGame(isActive: boolean) {
   const [provider] = await drizzle()
@@ -92,12 +95,14 @@ describe('fallback audit for admin mutations', () => {
 
   it('writes nothing extra when the mutation already audits', async () => {
     const before = (await fallbackRows()).length;
-    const countRows = async () =>
-      (
+    const countRows = async () => {
+      await flushAudit(testApp);
+      return (
         await drizzle()
           .select({ n: sql<number>`count(*)::int` })
           .from(auditLog)
       )[0]!.n;
+    };
     const rowsBefore = await countRows();
 
     const res = await admin.post('/backoffice/gaming/games/bulk/active', {

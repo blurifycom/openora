@@ -17,6 +17,7 @@ import {
 import {
   assignIamRoleByKey,
   closeE2e,
+  flushAudit,
   readJson,
   registerAndMaterializePlayer,
   type TestApp,
@@ -78,8 +79,9 @@ const del = (client: TestClient, path: string, body: unknown) =>
     body: JSON.stringify(body),
   });
 
-const auditRows = (action: string, resourceId?: string) =>
-  app.container
+const auditRows = async (action: string, resourceId?: string) => {
+  await flushAudit(app);
+  return app.container
     .get(DRIZZLE)
     .db.select()
     .from(auditLog)
@@ -90,6 +92,7 @@ const auditRows = (action: string, resourceId?: string) =>
       ),
     )
     .orderBy(desc(auditLog.seq));
+};
 
 const auditCount = async (action: string) => (await auditRows(action)).length;
 
