@@ -21,3 +21,8 @@ export function chatBlockLockKey(blockerId: string, blockedId: string): string {
 }
 
 export const CHAT_BLOCK_WRITER: Token<ChatBlockWriter> = createToken('CHAT_BLOCK_WRITER');
+
+/** The read a module outside chat needs (player search, mentions), apart from the writes. */
+export type ChatBlockReader = Pick<ChatBlockWriter, 'getExcludedUserIds'>;
+
+export const CHAT_BLOCK_READER: Token<ChatBlockReader> = createToken('CHAT_BLOCK_READER');

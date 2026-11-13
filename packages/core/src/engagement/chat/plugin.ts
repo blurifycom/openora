@@ -10,6 +10,7 @@ import {
   CHAT_REALTIME_CLIENT_AUTHORIZER,
   RATE_LIMITER,
   CHAT_SYSTEM_WRITER,
+  CHAT_BLOCK_READER,
   CHAT_BLOCK_WRITER,
   CHAT_CONTEXT_ROOMS,
   CHAT_CONTEXT_SEND_POLICY,
@@ -118,6 +119,7 @@ export default {
       );
     ctx.provide(CHAT_SYSTEM_WRITER, createChatService);
     ctx.provide(CHAT_BLOCK_WRITER, createChatService);
+    ctx.provide(CHAT_BLOCK_READER, createChatService);
     ctx.provide(
       CHAT_CONTEXT_ROOMS,
       (c) =>

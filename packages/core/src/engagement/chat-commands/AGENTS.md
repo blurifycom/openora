@@ -36,13 +36,23 @@ audit entry via `AUDIT_WRITER`.
 
 `mention` does not go through a dedicated post route. The `@username` pattern is typed inline in a
 message; `GET /chat-command/mention-search` powers the type-ahead, excluding any player the caller
-has blocked or ignored via `CHAT_BLOCK_WRITER.getExcludedUserIds(viewerId)`.
+has blocked or ignored via `CHAT_BLOCK_READER.getExcludedUserIds(viewerId)`.
+
+## Transfer check
+
+The module binds `CHAT_TRANSFER_CHECK`, the one read an overlay's money transfer (gift, claim, rain,
+donate) makes of chat state: the command row is enabled, the actor may post to the room, a context
+room's send policy allows it, and which counterparts are in a block with the actor. It reads through
+the caller's transaction and takes a shared `chatBlockLockKey` lock per direction, so a concurrent
+`blockUser` waits for the money to commit. It moves no money; the overlay refuses on the verdict.
 
 ## Ports consumed
 
 - `ADMIN_USER_DIRECTORY` - `findPlayerIds`/`lookupPlayers` for `@mention` autocomplete.
-- `CHAT_BLOCK_WRITER` - `getExcludedUserIds(viewerId)` to filter blocked and ignored players out of
+- `CHAT_BLOCK_READER` - `getExcludedUserIds(viewerId)` to filter blocked and ignored players out of
   mention search.
+- `CHAT_ROOM_ACCESS`, `CHAT_CONTEXT_SEND_POLICY` - room access and the context send policy, for
+  `CHAT_TRANSFER_CHECK`.
 - `AUDIT_WRITER` - `record(...)` for `adminUpdateCommand`'s `chat.command.updated` audit entry.
 
 ## Don't

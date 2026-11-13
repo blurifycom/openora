@@ -519,8 +519,14 @@ export type {
 } from './chat-system-writer.js';
 export { CHAT_SYSTEM_WRITER } from './chat-system-writer.js';
 
-export type { ChatBlockWriter } from './chat-block-writer.js';
-export { CHAT_BLOCK_WRITER, chatBlockLockKey } from './chat-block-writer.js';
+export type { ChatBlockReader, ChatBlockWriter } from './chat-block-writer.js';
+export { CHAT_BLOCK_READER, CHAT_BLOCK_WRITER, chatBlockLockKey } from './chat-block-writer.js';
+export type { ChatTransferCheck } from './chat-transfer-check.js';
+export {
+  CHAT_TRANSFER_CHECK,
+  ChatTransferCheckUnavailableError,
+  checkChatTransfer,
+} from './chat-transfer-check.js';
 export type { ChatRoomAccess } from './chat-room-access.js';
 export { CHAT_ROOM_ACCESS } from './chat-room-access.js';
 export type { ChatContextRooms, ChatContextRoomWrite } from './chat-context-rooms.js';
