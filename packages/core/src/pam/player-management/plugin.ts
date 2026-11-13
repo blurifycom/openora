@@ -15,6 +15,7 @@ import {
   domainEventSchemas,
   queue,
   UuidSchema,
+  WALLET_READER,
 } from '@openora/core/contracts';
 import type { JobQueueAdapter } from '@openora/core/contracts';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
@@ -34,6 +35,7 @@ function makePlayerService(c: TypedContainer<CoreTokenCatalog>) {
     c.get(CHAT_BLOCK_WRITER),
     c.get(SESSION_COMMANDS),
     c.get(USER_COMMANDS),
+    c.get(WALLET_READER),
     c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
   );
 }
@@ -44,6 +46,7 @@ const TotalDepositsJobSchema = z.object({ userId: UuidSchema });
 export default {
   id: 'player-management',
   dependsOn: ['chat', 'gaming', 'audit', 'identity'],
+  requiresPorts: [WALLET_READER],
   register(ctx) {
     // One memoized instance backs the tracker port, the router and the deposit job.
     let svc: PlayerService | null = null;

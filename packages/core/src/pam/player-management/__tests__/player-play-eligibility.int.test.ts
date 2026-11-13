@@ -6,6 +6,7 @@ import {
   PLAY_ELIGIBILITY_PROJECTION,
   USER_COMMANDS,
   WALLET_COMMANDS,
+  WALLET_READER,
   type AdminGameReporting,
   type AdminUserDirectory,
   type ChatBlockWriter,
@@ -45,6 +46,7 @@ const players = () =>
     mock<ChatBlockWriter>({}),
     mock<SessionCommands>({ revokeAll: vi.fn(async () => ({ success: true })) }),
     container.get(USER_COMMANDS),
+    container.get(WALLET_READER),
   );
 
 async function fundedPlayer() {
