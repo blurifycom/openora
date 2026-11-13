@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE, EVENT_BUS } from '@openora/core/server';
-import { GAMING_COMMANDS } from '@openora/core/contracts';
+import { GAMING_COMMANDS, GamingUnknownGameError, WALLET_COMMANDS } from '@openora/core/contracts';
 import { game, gameProvider, gameRound, ledgerGame } from '@openora/core/casino/schema/gaming';
 import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
 import {
@@ -112,6 +112,60 @@ describe('round ledger e2e', () => {
     expect(await drizzle().select().from(gameRound).where(eq(gameRound.userId, userId))).toEqual(
       [],
     );
+  });
+
+  it('credits a win that opens a round on an unreported game, and refuses a stake there', async () => {
+    const { userId } = await fundedPlayer('win-first');
+    const imported = await importGame('Free Rounds');
+    const commands = {
+      wallet: app.container.get(WALLET_COMMANDS),
+      gaming: app.container.get(GAMING_COMMANDS),
+    };
+    const round = { gameId: imported.id, userId, currency: 'USD' };
+    const providerRef = (externalRoundId: string) => ({
+      providerName: 'round-ledger',
+      providerRefId: randomUUID(),
+      externalRoundId,
+    });
+
+    await drizzle().transaction(async (tx) => {
+      await commands.wallet.credit(tx, {
+        userId,
+        amount: '25',
+        currency: 'USD',
+        type: 'win',
+        providerRef: providerRef('free-round'),
+      });
+      await commands.gaming.accumulateExternalRound(tx, {
+        ...round,
+        externalRoundId: 'free-round',
+        winDelta: '25',
+        isFinal: true,
+      });
+    });
+    const afterWin = await ledgerOf(userId);
+    expect(afterWin.balance).toBe('125.000000000000000000');
+
+    await expect(
+      drizzle().transaction(async (tx) => {
+        await commands.wallet.debit(tx, {
+          userId,
+          amount: '10',
+          currency: 'USD',
+          type: 'bet',
+          providerRef: providerRef('paid-round'),
+        });
+        await commands.gaming.accumulateExternalRound(tx, {
+          ...round,
+          externalRoundId: 'paid-round',
+          betDelta: '10',
+        });
+      }),
+    ).rejects.toBeInstanceOf(GamingUnknownGameError);
+    expect(await ledgerOf(userId)).toEqual(afterWin);
+    expect(await drizzle().select().from(gameRound).where(eq(gameRound.userId, userId))).toEqual([
+      expect.objectContaining({ externalRoundId: 'free-round', status: 'completed' }),
+    ]);
   });
 
   it('plays a reported game, and a later catalogue change leaves the settled round as it was', async () => {

@@ -21,6 +21,7 @@ import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
+import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import { makeAuditWriter, makeCache } from '../../testing/mock.js';
 import { PAYMENTS_FLOW_MAX_ROWS } from '../contract/index.js';
 import { FinancialAnalyticsService } from '../service/financial-analytics.service.js';
@@ -106,6 +107,7 @@ async function seedCasinoRound(betAmount: string, winAmount: string, startedAt: 
       .returning(),
     new Error('seed: no game'),
   );
+  await backfillLedgerGames(db.drizzle.db);
   await db.drizzle.db.insert(gameRound).values({
     gameId: row.id,
     userId: randomUUID(),

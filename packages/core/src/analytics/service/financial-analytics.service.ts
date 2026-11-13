@@ -13,12 +13,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import { alias, type PgColumn } from 'drizzle-orm/pg-core';
-import type {
-  CacheAdapter,
-  GameType,
-  Granularity,
-  WalletTransactionStatus,
-} from '@openora/core/contracts';
+import type { CacheAdapter, Granularity, WalletTransactionStatus } from '@openora/core/contracts';
 import { DrizzleService, moneyAdd, moneySubtract } from '@openora/core/server';
 import { gameRound, ledgerGame } from '@openora/core/casino/schema/gaming';
 import { sportsbookBet, sportsbookBetTransaction } from '@openora/core/sportsbook/schema/betting';
@@ -31,6 +26,7 @@ import {
   resolveFinancialSummaryRange,
   resolveGgrSummaryRange,
   resolvePaymentsFlowRange,
+  UNCLASSIFIED_PRODUCT,
   type FinancialCurrencyTotals,
   type FinancialSummaryInput,
   type FinancialSummaryOverview,
@@ -331,9 +327,11 @@ export class FinancialAnalyticsService {
     const sportsbook = await this.hasSportsbookLedger();
     const book = <T>(query: () => Promise<T[]>) => (sportsbook ? query() : []);
     // Typed through the ledger's own `ledger_game`, never the catalogue, so a round on a game the
-    // catalogue deleted still counts; a left join and the column default keep even an
-    // unprojected game's rounds in the total.
-    const product = sql<GameType>`coalesce(${ledgerGame.gameType}, 'casino')`;
+    // catalogue deleted still counts; the left join keeps an unprojected game's rounds, unclassified.
+    // An inline literal, not a bind parameter, so the select and the group by are one expression.
+    const product = sql<
+      ProductRevenue['product']
+    >`coalesce(${ledgerGame.gameType}::text, ${sql.raw(`'${UNCLASSIFIED_PRODUCT}'`)})`;
     const [rounds, bookStakes, bookPayouts, bookReversals] = await Promise.all([
       db
         .select({
@@ -388,7 +386,12 @@ export class FinancialAnalyticsService {
     ]);
 
     const rows = new Map<string, ProductRevenue>();
-    const add = (product: GameType, currency: string, stakes: string, payouts: string) => {
+    const add = (
+      product: ProductRevenue['product'],
+      currency: string,
+      stakes: string,
+      payouts: string,
+    ) => {
       const key = `${product}:${currency}`;
       const row = rows.get(key) ?? { product, currency, stakes: '0', payouts: '0', ggr: '0' };
       row.stakes = moneyAdd(row.stakes, stakes);

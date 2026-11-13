@@ -1,7 +1,6 @@
 import * as z from 'zod';
 import {
   CurrencyTickerSchema,
-  GameTypeSchema,
   GranularitySchema,
   MoneyAmountSchema,
   SignedMoneyAmountSchema,
@@ -10,7 +9,7 @@ import {
   WalletTransactionTypeSchema,
   defineMcpTool,
 } from '@openora/core/contracts';
-import { GgrSeriesSchema } from './financial.js';
+import { GgrSeriesSchema, ProductRevenueSchema } from './financial.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GGR_SUMMARY_DEFAULT_DAYS = 30;
@@ -211,17 +210,7 @@ export const FinancialSummaryOutputSchema = z.object({
   dateFrom: z.iso.date(),
   dateTo: z.iso.date(),
   currencies: z.array(FinancialCurrencyTotalsSchema).max(FINANCIAL_SUMMARY_MAX_CURRENCIES),
-  products: z
-    .array(
-      z.object({
-        product: GameTypeSchema,
-        currency: CurrencyTickerSchema,
-        stakes: MoneyAmountSchema,
-        payouts: SignedMoneyAmountSchema,
-        ggr: SignedMoneyAmountSchema,
-      }),
-    )
-    .max(FINANCIAL_SUMMARY_MAX_PRODUCT_ROWS),
+  products: z.array(ProductRevenueSchema).max(FINANCIAL_SUMMARY_MAX_PRODUCT_ROWS),
   truncated: z.boolean(),
 });
 export type FinancialSummaryOverview = z.infer<typeof FinancialSummaryOutputSchema>;
@@ -237,7 +226,8 @@ export const financialSummaryTool = defineMcpTool({
     '(GGR minus bonus cost). Bonus cost is bonus money converted to cash once its wagering ' +
     'completed; rakeback and race, streak and rank-challenge rewards are paid as cashback and ' +
     'are not in it. products splits stakes, payouts and GGR by product from game rounds and the ' +
-    'sportsbook ledger, so its GGR need not match the ledger GGR. At most 100 currencies and 300 ' +
+    'sportsbook ledger, so its GGR need not match the ledger GGR; rounds on a game the round ' +
+    'ledger has not typed yet are product unclassified. At most 100 currencies and 300 ' +
     'product rows; truncated is true when a list was cut. Amounts are decimal strings, can be ' +
     'negative and are never summed across currencies.',
   class: 'read',

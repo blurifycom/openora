@@ -10,6 +10,7 @@ import {
   applyLedgerGames,
   backfillLedgerGamesAtBoot,
   emitLedgerGames,
+  retryUntilDone,
 } from '../service/ledger-game.service.js';
 import { backfillLedgerGames } from '../seed/index.js';
 
@@ -207,5 +208,48 @@ describe('backfillLedgerGames (real PG)', () => {
 
     expect(counts.sort((a, b) => a - b)).toEqual([0, 2]);
     expect(await db.drizzle.db.select().from(ledgerGame)).toHaveLength(2);
+  });
+
+  it('retries a failed boot run until one fills the table', async () => {
+    const provider = await seedProvider();
+    const seeded = await seedGame(provider.id);
+    const failures: number[] = [];
+    let attempts = 0;
+
+    const projectedCount = await retryUntilDone(
+      () => {
+        attempts += 1;
+        return attempts < 3
+          ? Promise.reject(new Error('database unreachable'))
+          : backfillLedgerGamesAtBoot(db.drizzle.db);
+      },
+      {
+        signal: new AbortController().signal,
+        onFailure: (_err, retryInMs) => failures.push(retryInMs),
+        firstDelayMs: 5,
+        maxDelayMs: 8,
+      },
+    );
+
+    expect(projectedCount).toBe(1);
+    expect(failures).toEqual([5, 8]);
+    expect(await projected(seeded.id)).toHaveLength(1);
+  });
+
+  it('stops retrying once aborted', async () => {
+    const controller = new AbortController();
+    let attempts = 0;
+
+    const result = await retryUntilDone(
+      () => {
+        attempts += 1;
+        controller.abort();
+        return Promise.reject(new Error('database unreachable'));
+      },
+      { signal: controller.signal, onFailure: () => undefined, firstDelayMs: 5 },
+    );
+
+    expect(result).toBeUndefined();
+    expect(attempts).toBe(1);
   });
 });

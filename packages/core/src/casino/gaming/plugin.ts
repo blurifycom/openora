@@ -41,7 +41,11 @@ import { GameTagService } from './service/game-tag.service.js';
 import { GameProviderService } from './service/game-provider.service.js';
 import { GameBulkService } from './service/game-bulk.service.js';
 import { GameFavoriteService } from './service/game-favorite.service.js';
-import { applyLedgerGames, backfillLedgerGamesAtBoot } from './service/ledger-game.service.js';
+import {
+  applyLedgerGames,
+  backfillLedgerGamesAtBoot,
+  retryUntilDone,
+} from './service/ledger-game.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
@@ -231,10 +235,18 @@ export default {
     ctx.routers.add('gaming', (c) => {
       drizzleRef = c.get(DRIZZLE);
       // Fails closed until it lands: a stake on a game not yet projected is refused, never played.
-      void backfillLedgerGamesAtBoot(drizzleRef.db).then(
-        (projected) => logger.info({ projected }, 'gaming: ledger_game backfilled at boot'),
-        (err: unknown) => logger.error({ err }, 'gaming: ledger_game boot backfill failed'),
-      );
+      const bootBackfill = new AbortController();
+      c.onDispose(() => bootBackfill.abort());
+      const db = drizzleRef.db;
+      void retryUntilDone(() => backfillLedgerGamesAtBoot(db), {
+        signal: bootBackfill.signal,
+        onFailure: (err, retryInMs) =>
+          logger.error({ err, retryInMs }, 'gaming: ledger_game boot backfill failed, retrying'),
+      }).then((projected) => {
+        if (projected !== undefined) {
+          logger.info({ projected }, 'gaming: ledger_game backfilled at boot');
+        }
+      });
       const jobQueue = c.get(JOB_QUEUE);
       catalogCacheRef = c.get(CACHE);
       const sortCatalog = c.get(GAME_SORT_CATALOG);

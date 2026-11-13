@@ -2222,6 +2222,56 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
     ]);
   });
 
+  describe('as the first call of a round on a game the ledger has not projected', () => {
+    async function unprojectedGame(externalRoundId: string) {
+      const created = await seedGame({ name: 'Aces' });
+      await db.drizzle.db.delete(ledgerGame).where(eq(ledgerGame.gameId, created.id));
+      return {
+        gameId: created.id,
+        userId: '00000000-0000-0000-0000-000000000510',
+        currency: 'USD',
+        externalRoundId,
+      };
+    }
+
+    it('books a win-only call', async () => {
+      const args = await unprojectedGame('ext-round-unprojected-win');
+
+      const result = await makeService().accumulateExternalRound(db.drizzle.db, {
+        ...args,
+        winDelta: '25',
+        isFinal: true,
+      });
+
+      expect(Number(result.betAmount)).toBe(0);
+      expect(Number(result.winAmount)).toBe(25);
+      const [row] = await db.drizzle.db.select().from(gameRound);
+      expect(row).toMatchObject({ id: result.roundId, status: 'completed' });
+    });
+
+    it('books a refund-only call', async () => {
+      const args = await unprojectedGame('ext-round-unprojected-refund');
+
+      await makeService().accumulateExternalRound(db.drizzle.db, { ...args, betDelta: '-10' });
+
+      const [row] = await db.drizzle.db.select().from(gameRound);
+      expect(Number(row?.reversedAmount)).toBe(10);
+    });
+
+    it('refuses a stake and writes no round', async () => {
+      const args = await unprojectedGame('ext-round-unprojected-stake');
+
+      await expect(
+        makeService().accumulateExternalRound(db.drizzle.db, {
+          ...args,
+          betDelta: '10',
+          winDelta: '5',
+        }),
+      ).rejects.toBeInstanceOf(GamingUnknownGameError);
+      expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+    });
+  });
+
   describe('on a round opened before the ledger lost its game', () => {
     async function openRoundThenForgetGame(externalRoundId: string) {
       const created = await seedGame({ name: 'Aces' });

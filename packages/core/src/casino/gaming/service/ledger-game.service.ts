@@ -2,6 +2,7 @@
 // Round code reads this table, never `game`, so the ledger stops depending on the catalogue
 // schema. Every write keeps the highest `version`, so a redelivered or reordered event, and a
 // re-run backfill, leave a newer row as it is.
+import { setTimeout as sleep } from 'node:timers/promises';
 import {
   withAdvisoryXactLock,
   type DrizzleDb,
@@ -102,4 +103,33 @@ export function backfillLedgerGamesAtBoot(db: DrizzleDb): Promise<number> {
   return db.transaction((tx) =>
     withAdvisoryXactLock(tx, BACKFILL_LOCK_KEY, () => backfillLedgerGames(tx)),
   );
+}
+
+/**
+ * Runs `attempt` until it lands, waiting `firstDelayMs` doubling to `maxDelayMs` between failures,
+ * or gives up with `undefined` once `signal` aborts. Stakes on unprojected games stay refused
+ * meanwhile, so a failed boot backfill fails closed and heals by itself.
+ */
+export async function retryUntilDone<T>(
+  attempt: () => Promise<T>,
+  options: {
+    signal: AbortSignal;
+    onFailure: (err: unknown, retryInMs: number) => void;
+    firstDelayMs?: number;
+    maxDelayMs?: number;
+  },
+): Promise<T | undefined> {
+  const { signal, onFailure, firstDelayMs = 1_000, maxDelayMs = 60_000 } = options;
+  for (let delay = firstDelayMs; !signal.aborted; delay = Math.min(delay * 2, maxDelayMs)) {
+    try {
+      return await attempt();
+    } catch (err) {
+      if (signal.aborted) {
+        return undefined;
+      }
+      onFailure(err, delay);
+    }
+    await sleep(delay, undefined, { signal }).catch(() => undefined);
+  }
+  return undefined;
 }
