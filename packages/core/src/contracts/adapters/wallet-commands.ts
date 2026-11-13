@@ -118,9 +118,10 @@ export const WALLET_BET_ALREADY_REVERSED = 'bet already reversed';
 
 /**
  * The `reason` of a `bet_reversal` credit that matches no stake: it named a row that is not a
- * completed bet of this wallet's round, or more than that bet, or it named no bet and carries no
- * round id or one with no stake in its currency. Final: a retry gets the same answer, so a bridge
- * maps it to a code its provider does not retry.
+ * completed bet of this wallet's round (or not a uuid), or more than that bet, or it named no bet
+ * and carries no round id or one with no stake in its currency. With bonus wagering on, any
+ * reversal with no round id. Final: a retry gets the same answer, so a bridge maps it to a code
+ * its provider does not retry.
  */
 export const WALLET_REVERSAL_UNMATCHED = 'bet reversal matches no stake';
 

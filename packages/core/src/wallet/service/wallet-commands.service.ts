@@ -32,6 +32,7 @@ import {
   isPlayRefused,
   type WagerContext,
   isWagerRtp,
+  UuidSchema,
   WalletReplayMismatchError,
 } from '@openora/core/contracts';
 import {
@@ -597,18 +598,24 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: false, reason: 'currency mismatch' };
     }
 
-    // A win on a round that drew bonus funds belongs to the grant that funded it, or a forfeit
-    // could never take "the winnings from that bonus" with it.
-    //
-    // Unlike a win, a reversal fails closed on a missing round id (mirroring `debit()`'s own
-    // guard): defaulting to a full real credit here would release an un-wagered bonus stake as
-    // cash while the wagering progress it bought stays on the grant. Checked before the ledger
-    // row is written, the same as `debit()` refuses before writing anything.
-    if (this.ports.bonusWagering && type === 'bet_reversal' && !providerRef?.externalRoundId) {
-      return { ok: false, reason: 'bonus-funded reversal is missing a round id' };
-    }
     // An unnamed reversal is matched to its round's stakes; with no round it matches nothing.
-    if (type === 'bet_reversal' && !reversesTransactionId && !providerRef?.externalRoundId) {
+    //
+    // With bonus wagering on, a named one needs its round too, mirroring `debit()`'s own guard: a
+    // win on a round that drew bonus funds belongs to the grant that funded it, and defaulting a
+    // reversal to a full real credit would release an un-wagered bonus stake as cash while the
+    // wagering progress it bought stays on the grant. Refused before any row is written.
+    if (
+      type === 'bet_reversal' &&
+      !providerRef?.externalRoundId &&
+      (this.ports.bonusWagering || !reversesTransactionId)
+    ) {
+      return { ok: false, reason: WALLET_REVERSAL_UNMATCHED };
+    }
+    // A wallet row id is a uuid, so anything else names no stake.
+    if (
+      reversesTransactionId !== undefined &&
+      !UuidSchema.safeParse(reversesTransactionId).success
+    ) {
       return { ok: false, reason: WALLET_REVERSAL_UNMATCHED };
     }
 

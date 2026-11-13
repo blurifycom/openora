@@ -7,6 +7,7 @@ import {
   MaxBetExceededError,
   WalletCommandAmountError,
   WalletReplayMismatchError,
+  WALLET_REVERSAL_UNMATCHED,
   type WalletCreditArgs,
   type WalletDebitArgs,
   type BonusGrantCommands,
@@ -1346,7 +1347,7 @@ describe('WalletCommandsService.credit bonus settlement (real PG)', () => {
       providerRef: { providerName: 'agg', providerRefId: 'r1' },
     });
 
-    expect(res).toEqual({ ok: false, reason: 'bonus-funded reversal is missing a round id' });
+    expect(res).toEqual({ ok: false, reason: WALLET_REVERSAL_UNMATCHED });
     expect(settle).not.toHaveBeenCalled();
     expect(await balanceOf(w.userId)).toBe(0);
     expect(await txRows(w.id)).toHaveLength(0);

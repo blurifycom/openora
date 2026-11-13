@@ -678,7 +678,7 @@ describe('Ledger API v1 reverse beside direct wallet reversals (real PG)', () =>
     expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
   });
 
-  it('refuses a named reversal of a missing, foreign or smaller bet, moving nothing', async () => {
+  it('refuses a named reversal of a missing, malformed, foreign or smaller bet, moving nothing', async () => {
     const { walletId, userId, betArgs } = await setup();
     const bet = betArgs();
     const placed = expectMoved(await api.bet(bet), 'applied');
@@ -700,6 +700,7 @@ describe('Ledger API v1 reverse beside direct wallet reversals (real PG)', () =>
     const unmatched = { ok: false, reason: WALLET_REVERSAL_UNMATCHED };
 
     expect(await named(randomUUID())).toEqual(unmatched);
+    expect(await named('not-a-uuid')).toEqual(unmatched);
     expect(await named(foreign.transactionId ?? '')).toEqual(unmatched);
     expect(await named(placed.transactionId ?? '', '500')).toEqual(unmatched);
     expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);

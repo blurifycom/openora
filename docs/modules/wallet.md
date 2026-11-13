@@ -71,14 +71,16 @@ is `SPORTSBOOK_LEDGER` unchanged.
     `wallet_transaction.reversed_transaction_id` under a unique index) is refused
     `WALLET_BET_ALREADY_REVERSED` when another reversal named that bet. It is refused
     `WALLET_REVERSAL_UNMATCHED` when the row is not a completed bet of this wallet, is on another
-    provider, round or currency, or is smaller than the reversal.
+    provider, round or currency, or is smaller than the reversal. A `reversesTransactionId` that is
+    not a uuid names no row and is refused the same.
   - A `bet_reversal` that names no bet is refused `WALLET_REVERSAL_UNMATCHED` when it carries no
-    round id or its round has no stake in its currency.
+    round id or its round has no stake in its currency. With bonus wagering on, a named one with no
+    round id is refused the same, so a bonus-funded stake is never returned as cash.
   - Every `bet_reversal` on a round, named or not, is refused `WALLET_BET_ALREADY_REVERSED` when
     the round's reversals would exceed its stakes.
   - A reversal always runs in a transaction, opened for a caller that passes a bare db, so all of
     this is read under the wallet row lock and concurrent reversals of one round see each other.
-  - Every in-core reversal names its bet: this API's `reverse` and `bet` with `reverseRef`, and
+ - Every in-core reversal names its bet: this API's `reverse` and `bet` with `reverseRef`, and
     a sportsbook cancel or void, which names the reserve's stake or the stake its last reopen
     re-collected. A rollback that carries another round id than its bet goes through `reverse`
     here, which finds the bet by `targetRefId`.
