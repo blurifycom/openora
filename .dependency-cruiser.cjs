@@ -88,6 +88,17 @@ module.exports = {
       },
     },
     {
+      name: 'no-chat-schema-outside-chat',
+      severity: 'error',
+      comment:
+        'Chat, chat-commands and social move to their own database together, so no other module may read their tables, even through the read-only /schema subpath no-cross-domain allows. A money transfer in chat asks CHAT_TRANSFER_CHECK; a block list comes from CHAT_BLOCK_READER.',
+      from: {
+        path: '^packages/core/src/',
+        pathNot: '^packages/core/src/engagement/(?:chat|chat-commands|social)/',
+      },
+      to: { path: '^packages/core/src/engagement/(?:chat|chat-commands|social)/schema/' },
+    },
+    {
       name: 'no-deep-package-import',
       severity: 'error',
       comment:
