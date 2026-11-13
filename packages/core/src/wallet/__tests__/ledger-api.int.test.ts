@@ -8,6 +8,7 @@ import {
   GamingInvalidRtpError,
   IDENTITY_READER,
   LEDGER_API_V1,
+  LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY,
   RG_LIMITS,
   WALLET_BET_ALREADY_REVERSED,
@@ -49,7 +50,7 @@ let gamingCommands: GamingCommands;
 const events = makeEventBus();
 const PROVIDER = 'acme-games';
 
-const unrestricted = mock<PlayEligibilityPort>({
+const unrestricted = mock<Required<PlayEligibilityPort>>({
   isRestricted: vi.fn().mockResolvedValue(false),
   checkPlay: vi.fn().mockResolvedValue(null),
 });
@@ -62,10 +63,12 @@ function boot(register: (container: Container<CoreTokenCatalog>) => void = () =>
   container.register(AUDIT_WRITER, () => makeAuditWriter());
   container.register(IDENTITY_READER, () => makeIdentityReader());
   container.register(PLAY_ELIGIBILITY, () => unrestricted);
-  register(container);
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   walletPlugin.register(registry);
   gamingPlugin.register(registry);
+  // After the plugins: the last registration wins, and the wallet binds its own projection.
+  container.register(LEDGER_PLAY_ELIGIBILITY, () => unrestricted);
+  register(container);
   return container;
 }
 
@@ -290,8 +293,8 @@ describe('Ledger API v1 bet (real PG)', () => {
     it('a self-excluded player as player_blocked', () =>
       refusedBy(
         (c) =>
-          c.register(PLAY_ELIGIBILITY, () =>
-            mock<PlayEligibilityPort>({
+          c.register(LEDGER_PLAY_ELIGIBILITY, () =>
+            mock<Required<PlayEligibilityPort>>({
               isRestricted: vi.fn().mockResolvedValue(true),
               checkPlay: vi.fn().mockResolvedValue('self_excluded'),
             }),

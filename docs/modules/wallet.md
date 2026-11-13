@@ -114,6 +114,14 @@ is `SPORTSBOOK_LEDGER` unchanged.
   Any other malformed field throws: it is the caller's bug. UUIDs are compared in lower case.
 - **Only `wager` is strict.** A misspelt wager key fails rather than vanishing; the other argument
   objects ignore unknown keys, so a newer bridge can send a field an older ledger does not read.
+- **A stake reads `ledger_play_eligibility`, never the identity tables.** Identity pushes a
+  restriction through `setPlayEligibility` before its own commit (a throw fails the restriction),
+  and a lift after it; the `identity.play_eligibility.changed` outbox event repairs a lost push.
+  Every write keeps the highest per-user `version`. A user without a row is refused, and a time
+  bounded block is judged at read time. A script that writes the RG, `isActive`, ban or player
+  status columns directly must run `backfillLedgerPlayEligibility` (`@openora/core/wallet/seed`)
+  after it; the wallet also runs it at every boot. Deposits, payouts and other non-stake paths
+  still read `PLAY_ELIGIBILITY`.
 
 ## Rules that are easy to get wrong here
 

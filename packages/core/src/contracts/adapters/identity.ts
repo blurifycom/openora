@@ -58,6 +58,12 @@ export type UserCommands = {
     input: { email: string; name: string; password: string },
     tx?: unknown,
   ): Promise<{ id: string }>;
+  /**
+   * Pushes the user's play eligibility to the ledger after the caller changed an input to it
+   * (the player status) on `tx`. A restriction reaches the ledger before the caller commits and
+   * a throw must fail the caller's change; call `afterCommit` once it committed.
+   */
+  publishPlayEligibility(userId: string, tx: unknown): Promise<{ afterCommit(): Promise<void> }>;
 };
 
 export const USER_COMMANDS: Token<UserCommands> = createToken<UserCommands>('USER_COMMANDS');

@@ -20,6 +20,7 @@ import { and, eq, isNull, lte, ne, sql } from 'drizzle-orm';
 import * as z from 'zod';
 import { user, session, account, verification, twoFactor, type Session } from '../schema/index.js';
 import { captureTimezone } from './capture-timezone.service.js';
+import type { PlayEligibilityPublisher } from './play-eligibility.service.js';
 import type { SessionService } from './session.service.js';
 import type { TrustedDeviceService } from './trusted-device.service.js';
 import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
@@ -510,6 +511,8 @@ export type IdentityServiceDeps = {
   // Used by the step-up self-service routes (disable 2FA, regenerate backup codes) to
   // tear down live sessions once the account's standing credentials have changed.
   sessions?: SessionService;
+  // Projects a new account into the ledger's play eligibility, without which it cannot stake.
+  playEligibility: PlayEligibilityPublisher;
 };
 
 /**
@@ -544,6 +547,7 @@ export class IdentityService {
   private readonly twoFactorLockout?: TwoFactorLockoutService;
   private readonly twoFactorDelivery: TwoFactorDeliveryService;
   private readonly sessions?: SessionService;
+  private readonly playEligibility: PlayEligibilityPublisher;
 
   constructor({
     drizzle,
@@ -561,6 +565,7 @@ export class IdentityService {
     twoFactorLockout,
     twoFactorDelivery,
     sessions,
+    playEligibility,
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -577,6 +582,7 @@ export class IdentityService {
     this.twoFactorLockout = twoFactorLockout;
     this.twoFactorDelivery = twoFactorDelivery;
     this.sessions = sessions;
+    this.playEligibility = playEligibility;
     this.auth = createAuth({
       db: drizzle.db,
       schema: AUTH_SCHEMA,
@@ -887,6 +893,7 @@ export class IdentityService {
     // After the consent write, which is what materialises the player row the zone lands on.
     // No session yet, but the browser is here now and a first login may be days away.
     await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
+    await this.playEligibility.sync(body.user.id);
     // The player row already existed, or the provisioning adapter predates `onCreated`.
     if (!registeredEmitted) {
       this.events.emit(

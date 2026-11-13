@@ -8,6 +8,7 @@ import {
   KYC_ADAPTER,
   LOGIN_ENFORCEMENT,
   PLAY_ELIGIBILITY,
+  LEDGER_API_V1,
   MAIL_DISPATCH,
   MAIL_RECIPIENT_DIRECTORY,
   MCP_TOKEN_REVOCATION,
@@ -56,7 +57,10 @@ import { SessionIdleService } from './service/session-idle.service.js';
 import { TwoFactorLockoutService } from './service/two-factor-lockout.service.js';
 import { FreshReauthenticationService } from './service/fresh-reauthentication.service.js';
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
-import { PlayEligibilityService } from './service/play-eligibility.service.js';
+import {
+  PlayEligibilityPublisher,
+  PlayEligibilityService,
+} from './service/play-eligibility.service.js';
 import { TwoFactorSetupPolicyService } from './service/two-factor-setup-policy.service.js';
 
 type IdentityContainer = TypedContainer<CoreTokenCatalog>;
@@ -97,6 +101,12 @@ function makeSessionService(c: IdentityContainer) {
     identityReader: c.get(IDENTITY_READER),
     mcpTokens: mcpTokenRevocation(c),
   });
+}
+
+function makePlayEligibilityPublisher(c: IdentityContainer) {
+  return new PlayEligibilityPublisher(c.get(DRIZZLE), c.get(EVENT_BUS), () =>
+    c.has(LEDGER_API_V1) ? c.get(LEDGER_API_V1) : undefined,
+  );
 }
 
 function makeTrustedDevices(c: IdentityContainer) {
@@ -236,7 +246,13 @@ export default {
     // The back-office depends on this port, not on the identity schema directly.
     ctx.provide(
       ADMIN_USER_DIRECTORY,
-      (c) => new DrizzleAdminUserDirectory(c.get(DRIZZLE), c.get(EVENT_BUS), mcpTokenRevocation(c)),
+      (c) =>
+        new DrizzleAdminUserDirectory(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          makePlayEligibilityPublisher(c),
+          mcpTokenRevocation(c),
+        ),
     );
     ctx.provide(MAIL_RECIPIENT_DIRECTORY, (c) => new DrizzleMailRecipientDirectory(c.get(DRIZZLE)));
     // Read-only session queries for cross-module consumers (eg tag inactive evaluation).
@@ -244,7 +260,12 @@ export default {
     // RG login-block writer. compliance drives it through the port, never the schema.
     ctx.provide(
       LOGIN_ENFORCEMENT,
-      (c) => new LoginEnforcementService(c.get(DRIZZLE), makeSessionService(c)),
+      (c) =>
+        new LoginEnforcementService(
+          c.get(DRIZZLE),
+          makeSessionService(c),
+          makePlayEligibilityPublisher(c),
+        ),
     );
     // Per-player "auto-logout when inactive". The request middleware resolves this on
     // every authenticated request; leaving it unbound turns the idle check off entirely.
@@ -276,7 +297,10 @@ export default {
     // admin request; leaving it unbound turns both checks off, which is why it is bound
     // here rather than behind a feature flag.
     ctx.provide(ADMIN_SECURITY_POLICY, (c) => resolveAdminSecurity(c));
-    ctx.provide(USER_COMMANDS, (c) => new DrizzleUserCommands(c.get(DRIZZLE)));
+    ctx.provide(
+      USER_COMMANDS,
+      (c) => new DrizzleUserCommands(c.get(DRIZZLE), makePlayEligibilityPublisher(c)),
+    );
     ctx.provide(SESSION_COMMANDS, (c) => {
       const sessionSvc = makeSessionService(c);
       return {
@@ -310,6 +334,7 @@ export default {
             sms: c.get(SMS_ADAPTER),
           }),
           sessions,
+          playEligibility: makePlayEligibilityPublisher(c),
         }),
         sessions,
         new PhoneLoginService({

@@ -8,6 +8,7 @@ import { makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js
 import { migrate } from '../migrate.js';
 import { user, session } from '../schema/index.js';
 import { LoginEnforcementService } from '../service/login-enforcement.service.js';
+import { PlayEligibilityPublisher } from '../service/play-eligibility.service.js';
 import { SessionService } from '../service/session.service.js';
 
 const HOUR = 3600_000;
@@ -23,7 +24,12 @@ function makeService() {
     identityReader: makeIdentityReader(),
     mcpTokens: mock<McpTokenRevocation>({ revokeAllForUser }),
   });
-  return { svc: new LoginEnforcementService(db.drizzle, sessions), events, revokeAllForUser };
+  const publisher = new PlayEligibilityPublisher(db.drizzle, events, () => undefined);
+  return {
+    svc: new LoginEnforcementService(db.drizzle, sessions, publisher),
+    events,
+    revokeAllForUser,
+  };
 }
 
 async function seedActiveSession(userId: string) {

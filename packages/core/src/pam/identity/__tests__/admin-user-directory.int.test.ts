@@ -24,6 +24,7 @@ import {
 import { migrate } from '../migrate.js';
 import { session, user } from '../schema/index.js';
 import { DrizzleAdminUserDirectory } from '../admin-user-directory.js';
+import { PlayEligibilityPublisher } from '../service/play-eligibility.service.js';
 
 let db: TestDb;
 
@@ -37,6 +38,7 @@ function makeDirectory() {
     dir: new DrizzleAdminUserDirectory(
       db.drizzle,
       mock<EventBus>({ emit, on: vi.fn() }),
+      new PlayEligibilityPublisher(db.drizzle, makeEventBus(), () => undefined),
       mock<McpTokenRevocation>({ revokeAllForUser }),
     ),
     emit,
@@ -57,7 +59,12 @@ function makeDirectoryWithTokens() {
   const revokeAllForUser = vi.spyOn(tokens, 'revokeAllForUser');
   const emit = vi.fn();
   return {
-    dir: new DrizzleAdminUserDirectory(db.drizzle, mock<EventBus>({ emit, on: vi.fn() }), tokens),
+    dir: new DrizzleAdminUserDirectory(
+      db.drizzle,
+      mock<EventBus>({ emit, on: vi.fn() }),
+      new PlayEligibilityPublisher(db.drizzle, makeEventBus(), () => undefined),
+      tokens,
+    ),
     audit,
     emit,
     revokeAllForUser,

@@ -26,6 +26,10 @@ import {
   and,
 } from 'drizzle-orm';
 import { user } from './schema/index.js';
+import type {
+  PlayEligibilityPublication,
+  PlayEligibilityPublisher,
+} from './service/play-eligibility.service.js';
 import { expireActiveSessions } from './service/session.service.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
@@ -97,6 +101,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly playEligibility: PlayEligibilityPublisher,
     private readonly mcpTokens?: McpTokenRevocation,
   ) {}
 
@@ -194,6 +199,11 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       // A deactivated account keeps no session: its sessions end with the change, so no open
       // Backoffice or player tab outlives it. Keyed on the state written, as the tokens are.
       const sessionsEnded = patch.isActive === false ? await expireActiveSessions(tx, id) : 0;
+      // A deactivation reaches the ledger before it commits, a reactivation once it has.
+      const playEligibility: PlayEligibilityPublication | null =
+        patch.isActive !== undefined && patch.isActive !== existing.isActive
+          ? await this.playEligibility.publish(tx, id)
+          : null;
       if (mcpRevokeReason) {
         await this.mcpTokens?.revokeAllForUser(
           { userId: id, reason: mcpRevokeReason, actorId, ip, userAgent },
@@ -209,11 +219,13 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
         updated,
         sessionsEnded,
         playerId: account?.playerId ?? null,
+        playEligibility,
       };
     });
     if (!written) {
       return null;
     }
+    await written.playEligibility?.afterCommit();
 
     // Emit only on an actual active-status flip, after the commit. Literal topics
     // (not a ternary) so the catalog generator's emit-scanner picks them up.

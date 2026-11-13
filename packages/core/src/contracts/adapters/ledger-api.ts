@@ -17,6 +17,7 @@ import type {
   LedgerV1CloseRoundOutcome,
   LedgerV1MoveOutcome,
   LedgerV1ReverseArgs,
+  LedgerV1SetPlayEligibilityArgs,
   LedgerV1WinArgs,
 } from '../schemas/ledger.js';
 import type { SportsbookLedger } from './sportsbook-ledger.js';
@@ -32,6 +33,11 @@ export type LedgerApiV1 = {
   closeRound(args: LedgerV1CloseRoundArgs): Promise<LedgerV1CloseRoundOutcome>;
   /** The real balance only; bonus funds live on the grant. Read-only. */
   balance(args: LedgerV1BalanceArgs): Promise<LedgerV1BalanceOutcome>;
+  /**
+   * Writes the user's play eligibility to the ledger's projection, the only thing a stake is
+   * checked against. Idempotent and versioned: a snapshot older than the one held is ignored.
+   */
+  setPlayEligibility(args: LedgerV1SetPlayEligibilityArgs): Promise<void>;
   /** The sportsbook ledger's own ops, unchanged. Throws when no sportsbook module is installed. */
   sportsbook: Pick<SportsbookLedger, 'reserve' | 'confirm' | 'cancel' | 'settle' | 'reopen'>;
 };

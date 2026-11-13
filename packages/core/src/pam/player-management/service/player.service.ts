@@ -317,9 +317,14 @@ export class PlayerService implements PlayerActivityTracker {
           previousStatus: locked.status,
           newStatus: data.status,
         });
+        return {
+          ...locked,
+          playEligibility: await this.userCommands.publishPlayEligibility(locked.userId, trx),
+        };
       }
-      return locked;
+      return { ...locked, playEligibility: null };
     });
+    await before.playEligibility?.afterCommit();
 
     // A transition into a blocking status must kill every active session immediately -
     // AC: "Blocking a player immediately prevents login and all platform activity."
@@ -344,7 +349,7 @@ export class PlayerService implements PlayerActivityTracker {
    * keeps its status.
    */
   async suspendBySystem(userId: User['id']): Promise<void> {
-    await this.drizzle.db.transaction(async (trx) => {
+    const playEligibility = await this.drizzle.db.transaction(async (trx) => {
       const [locked] = await trx
         .select()
         .from(player)
@@ -354,7 +359,7 @@ export class PlayerService implements PlayerActivityTracker {
         throw new PlayerNotFoundError(userId);
       }
       if (locked.status === 'self_excluded' || BLOCKING_PLAYER_STATUSES.has(locked.status)) {
-        return;
+        return null;
       }
       await trx.update(player).set({ status: 'suspended' }).where(eq(player.id, locked.id));
       await this.events.emitInTransaction(trx, 'player.status.changed', {
@@ -364,7 +369,9 @@ export class PlayerService implements PlayerActivityTracker {
         previousStatus: locked.status,
         newStatus: 'suspended',
       });
+      return this.userCommands.publishPlayEligibility(userId, trx);
     });
+    await playEligibility?.afterCommit();
     // Also on a redelivery that finds the player already blocked: the revoke may be what failed.
     await this.sessionCommands.revokeAll(userId);
   }
@@ -424,17 +431,22 @@ export class PlayerService implements PlayerActivityTracker {
         new PlayerNotFoundError(playerId),
       );
       await trx.update(player).set({ status: 'closed' }).where(eq(player.id, playerId));
-      if (locked.status !== 'closed') {
-        await this.emitStatusTransition(trx, {
-          playerId,
-          userId: locked.userId,
-          actorId,
-          previousStatus: locked.status,
-          newStatus: 'closed',
-        });
+      if (locked.status === 'closed') {
+        return { ...locked, playEligibility: null };
       }
-      return locked;
+      await this.emitStatusTransition(trx, {
+        playerId,
+        userId: locked.userId,
+        actorId,
+        previousStatus: locked.status,
+        newStatus: 'closed',
+      });
+      return {
+        ...locked,
+        playEligibility: await this.userCommands.publishPlayEligibility(locked.userId, trx),
+      };
     });
+    await before.playEligibility?.afterCommit();
     await this.sessionCommands.revokeAll(before.userId, actorId);
     return { success: true };
   }

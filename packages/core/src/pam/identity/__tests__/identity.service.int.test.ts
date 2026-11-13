@@ -34,6 +34,7 @@ import { SessionService } from '../service/session.service.js';
 import { TwoFactorLockoutService } from '../service/two-factor-lockout.service.js';
 import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
 import { makeAuditWriter, makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
+import type { PlayEligibilityPublisher } from '../service/play-eligibility.service.js';
 
 const {
   signInEmailMock,
@@ -149,6 +150,7 @@ function buildService(deps: Partial<IdentityServiceDeps> = {}) {
       drizzle: db.drizzle,
       sms: mock<SmsAdapter>({ sendOtp: vi.fn() }),
     }),
+    playEligibility: mock<PlayEligibilityPublisher>({ sync: vi.fn(async () => undefined) }),
     ...deps,
   });
 }

@@ -8,6 +8,7 @@ import { auditLog } from '@openora/core/audit/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { player as playerProfile } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { backfillLedgerPlayEligibility } from '@openora/core/wallet/seed';
 import {
   sportsbookBet,
   sportsbookBetTransaction,
@@ -459,15 +460,21 @@ describe('sportsbook availability route', () => {
 });
 
 describe('sportsbook refusal reasons', () => {
-  const setUser = (userId: string, values: Partial<typeof user.$inferInsert>) =>
-    app.container.get(DRIZZLE).db.update(user).set(values).where(eq(user.id, userId));
+  // A direct write bypasses identity's publisher, so it re-projects as a script would.
+  const setUser = async (userId: string, values: Partial<typeof user.$inferInsert>) => {
+    const { db } = app.container.get(DRIZZLE);
+    await db.update(user).set(values).where(eq(user.id, userId));
+    await backfillLedgerPlayEligibility(db);
+  };
 
-  const setPlayerStatus = (userId: string, status: typeof playerProfile.$inferInsert.status) =>
-    app.container
-      .get(DRIZZLE)
-      .db.update(playerProfile)
-      .set({ status })
-      .where(eq(playerProfile.userId, userId));
+  const setPlayerStatus = async (
+    userId: string,
+    status: typeof playerProfile.$inferInsert.status,
+  ) => {
+    const { db } = app.container.get(DRIZZLE);
+    await db.update(playerProfile).set({ status }).where(eq(playerProfile.userId, userId));
+    await backfillLedgerPlayEligibility(db);
+  };
 
   // Blocking through the platform's routes also ends the login, so these write the state
   // directly: a block that reached the account while its login lived on.

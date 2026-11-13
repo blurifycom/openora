@@ -1,0 +1,74 @@
+import { describe, it, expect } from 'vitest';
+import { playRefusalOf, type PlayEligibilityState } from '@openora/core/contracts';
+import { stricterOf } from '../service/ledger-play-eligibility.service.js';
+
+const NOW = new Date('2026-06-01T12:00:00.000Z');
+const LATER = new Date('2026-06-02T12:00:00.000Z');
+const EARLIER = new Date('2026-05-31T12:00:00.000Z');
+
+const clear: PlayEligibilityState = {
+  rgBlocked: false,
+  rgBlockedUntil: null,
+  isActive: true,
+  banned: false,
+  banExpires: null,
+  status: 'active',
+};
+
+describe('playRefusalOf', () => {
+  it('lets a clear account play', () => {
+    expect(playRefusalOf(clear, NOW)).toBeNull();
+  });
+
+  it('refuses an RG block by its end: none is self-exclusion, a future one cooling-off', () => {
+    expect(playRefusalOf({ ...clear, rgBlocked: true }, NOW)).toBe('self_excluded');
+    expect(playRefusalOf({ ...clear, rgBlocked: true, rgBlockedUntil: LATER }, NOW)).toBe(
+      'cooling_off',
+    );
+  });
+
+  it('lets a player whose block has ended play before any sweep lifts it', () => {
+    expect(playRefusalOf({ ...clear, rgBlocked: true, rgBlockedUntil: EARLIER }, NOW)).toBeNull();
+  });
+
+  it('refuses by player status', () => {
+    expect(playRefusalOf({ ...clear, status: 'self_excluded' }, NOW)).toBe('self_excluded');
+    expect(playRefusalOf({ ...clear, status: 'suspended' }, NOW)).toBe('account_suspended');
+    expect(playRefusalOf({ ...clear, status: 'closed' }, NOW)).toBe('account_closed');
+  });
+
+  it('refuses an inactive account and a ban until it expires', () => {
+    expect(playRefusalOf({ ...clear, isActive: false }, NOW)).toBe('account_inactive');
+    expect(playRefusalOf({ ...clear, banned: true }, NOW)).toBe('account_inactive');
+    expect(playRefusalOf({ ...clear, banned: true, banExpires: LATER }, NOW)).toBe(
+      'account_inactive',
+    );
+    expect(playRefusalOf({ ...clear, banned: true, banExpires: EARLIER }, NOW)).toBeNull();
+  });
+});
+
+describe('stricterOf', () => {
+  it('keeps a held block that the incoming state would lift', () => {
+    const held = { ...clear, rgBlocked: true, isActive: false, status: 'suspended' as const };
+
+    expect(stricterOf(held, clear)).toEqual(held);
+  });
+
+  it('takes the incoming restriction over a clear held state', () => {
+    const incoming = {
+      ...clear,
+      rgBlocked: true,
+      rgBlockedUntil: LATER,
+      status: 'closed' as const,
+    };
+
+    expect(stricterOf(clear, incoming)).toEqual(incoming);
+  });
+
+  it('keeps the later end of two blocks, where no end is the latest', () => {
+    const until = (rgBlockedUntil: Date | null) => ({ ...clear, rgBlocked: true, rgBlockedUntil });
+
+    expect(stricterOf(until(EARLIER), until(LATER)).rgBlockedUntil).toEqual(LATER);
+    expect(stricterOf(until(null), until(LATER)).rgBlockedUntil).toBeNull();
+  });
+});

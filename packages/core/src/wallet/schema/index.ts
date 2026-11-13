@@ -25,6 +25,7 @@ import {
   ON_RAMP_STATUSES,
   WAGER_PRODUCTS,
   LEDGER_V1_KEYED_OPERATIONS,
+  PLAYER_STATUSES,
   type OnRampStatus,
   type WalletRail,
   type WalletTransactionStatus,
@@ -752,6 +753,25 @@ export const ledgerApiRequest = pgTable(
       .where(sql`${t.targetRefId} IS NOT NULL`),
   ],
 );
+
+export const ledgerPlayerStatusEnum = pgEnum('ledger_player_status', PLAYER_STATUSES);
+
+// The ledger's own view of whether a user may stake: identity's play eligibility inputs, fed
+// by `LedgerApiV1.setPlayEligibility` and the `identity.play_eligibility.changed` event, healed
+// by the boot backfill. A stake reads this row `FOR SHARE` in its own transaction and is refused
+// without one. Every write keeps the highest `version`. `status` is null for a user without a
+// player profile. Time-bounded blocks keep their end and are judged when read.
+export const ledgerPlayEligibility = pgTable('ledger_play_eligibility', {
+  userId: uuid().primaryKey(),
+  rgBlocked: boolean().notNull(),
+  rgBlockedUntil: timestamp({ withTimezone: true }),
+  isActive: boolean().notNull(),
+  banned: boolean().notNull(),
+  banExpires: timestamp({ withTimezone: true }),
+  status: ledgerPlayerStatusEnum(),
+  version: integer().notNull(),
+  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
 
 export type WalletJobRun = typeof walletJobRun.$inferSelect;
 export type WalletReconciliationFinding = typeof walletReconciliationFinding.$inferSelect;
