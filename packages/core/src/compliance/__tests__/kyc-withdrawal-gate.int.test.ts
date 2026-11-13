@@ -2,10 +2,11 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { findOneOrThrow, moneyScaleBy } from '@openora/core/server';
-import type { ExchangeRateReader } from '@openora/core/contracts';
+import type { ExchangeRateReader, WalletReader } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
+import { WalletReaderService } from '@openora/core/wallet/seed';
 import { mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { globalKycConfig } from '../schema/index.js';
@@ -20,7 +21,12 @@ const rates = mock<ExchangeRateReader>({
   ),
 });
 
-const gate = () => new KycWithdrawalGate(db.drizzle, rates);
+const gate = (
+  walletReader: WalletReader = new WalletReaderService({
+    drizzle: db.drizzle,
+    pivotCurrency: 'USD',
+  }),
+) => new KycWithdrawalGate(db.drizzle, rates, walletReader);
 
 async function setConfig(values: Partial<typeof globalKycConfig.$inferInsert>) {
   await db.drizzle.db.insert(globalKycConfig).values({ singletonKey: 'global', ...values });
@@ -111,5 +117,19 @@ describe('KycWithdrawalGate (real PG)', () => {
     const userId = await seedPlayer([{ amount: '1', currency: 'XYZ' }]);
 
     expect(await ask(userId, '10')).toBe(true);
+  });
+
+  it('rejects when the deposits read fails, so the withdrawal is refused or left to a human', async () => {
+    await setConfig({ enabled: true });
+    const userId = await seedPlayer();
+    const failing = mock<WalletReader>({
+      getDepositsByCurrency: vi.fn(async () => {
+        throw new Error('wallet reader unavailable');
+      }),
+    });
+
+    await expect(
+      gate(failing).requiresKycForWithdrawal({ userId, pivotAmount: '10', pivotCurrency: 'USD' }),
+    ).rejects.toThrow('wallet reader unavailable');
   });
 });

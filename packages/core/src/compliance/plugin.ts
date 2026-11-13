@@ -35,6 +35,7 @@ import {
   REALTIME_TRANSPORT,
   RG_EXCLUSION_READER,
   RG_LIMIT_LEDGER,
+  WALLET_READER,
   RG_STANDING_READER,
   UuidSchema,
   defaultResponsibleGamingConfig,
@@ -146,14 +147,15 @@ function enhancedKycRefusalCode(err: unknown) {
 export default {
   id: 'compliance',
   dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit', 'exchange-rate'],
-  requiresPorts: [LOGIN_ENFORCEMENT, RG_LIMIT_LEDGER],
+  requiresPorts: [LOGIN_ENFORCEMENT, RG_LIMIT_LEDGER, WALLET_READER],
   register(ctx) {
     ctx.provide(GEO_CHECK_COMMANDS, makeComplianceService);
     ctx.provide(GAME_GEO_CHECK, makeComplianceService);
     ctx.provide(GAME_GEO_RULE_COMMANDS, makeComplianceService);
     ctx.provide(
       KYC_WITHDRAWAL_POLICY,
-      (c) => new KycWithdrawalGate(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER)),
+      (c) =>
+        new KycWithdrawalGate(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), c.get(WALLET_READER)),
     );
     ctx.provide(
       RG_STANDING_READER,
@@ -162,6 +164,7 @@ export default {
           drizzle: c.get(DRIZZLE),
           eligibility: c.get(PLAY_ELIGIBILITY),
           rates: c.get(EXCHANGE_RATE_READER),
+          walletReader: c.get(WALLET_READER),
           pivotCurrency: resolveExchangeRatePivot(
             c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).exchangeRate : undefined,
           ),
@@ -222,6 +225,7 @@ export default {
         identityReader: c.get(IDENTITY_READER),
         platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
         exchangeRateReader: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+        walletReader: c.get(WALLET_READER),
       }));
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeTransport: RealtimeTransport | null = null;

@@ -14,15 +14,15 @@ import {
   type RgStandingReader,
   type RgStandingWindow,
   type User,
+  type WalletReader,
+  type WalletWindowMetric,
+  type WalletWindowTotals,
 } from '@openora/core/contracts';
 import {
   readActiveFlags,
   readExclusionFacts,
   readLimits,
-  readMoneyByWindow,
   readPlayerCurrency,
-  type RgMoneyMetric,
-  type RgMoneyRow,
 } from '../service/rg-standing.service.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -31,6 +31,7 @@ export type RgStandingReaderServiceDeps = {
   drizzle: DrizzleService;
   eligibility: PlayEligibilityPort;
   rates: ExchangeRateReader;
+  walletReader: WalletReader;
   /** The fx pivot every window is priced into (`resolveExchangeRatePivot`). */
   pivotCurrency: string;
 };
@@ -49,11 +50,14 @@ function assertWindowDays(windowDays: readonly number[]): void {
 }
 
 type StandingFacts = Omit<RgStanding, 'restricted' | 'pivotCurrency' | 'windows'> & {
-  money: RgMoneyRow[];
+  money: WalletWindowTotals[];
 };
 
+// The wallet reads on the same snapshot, so its money and compliance's facts agree. A failed
+// wallet read rejects the whole standing: never a window that reads as no money.
 async function readStandingFacts(
   tx: DrizzleTx,
+  walletReader: WalletReader,
   userId: User['id'],
   now: Date,
   windowStarts: readonly Date[],
@@ -66,7 +70,7 @@ async function readStandingFacts(
     ...(await readExclusionFacts(tx, userId, now)),
     activeFlags: await readActiveFlags(tx, userId),
     limits: await readLimits(tx, userId, playerCurrency, now),
-    money: await readMoneyByWindow(tx, userId, windowStarts),
+    money: await walletReader.getMoneyByWindow(userId, windowStarts, tx),
   };
 }
 
@@ -85,7 +89,7 @@ export class RgStandingReaderService implements RgStandingReader {
     const now = new Date();
     const windowStarts = windowDays.map((days) => new Date(now.getTime() - days * DAY_MS));
     const facts = await this.deps.drizzle.db.transaction(
-      (tx) => readStandingFacts(tx, userId, now, windowStarts),
+      (tx) => readStandingFacts(tx, this.deps.walletReader, userId, now, windowStarts),
       { isolationLevel: 'repeatable read', accessMode: 'read only' },
     );
     if (facts === null) {
@@ -101,7 +105,7 @@ export class RgStandingReaderService implements RgStandingReader {
   }
 
   private async windowTotals(
-    money: readonly RgMoneyRow[],
+    money: readonly WalletWindowTotals[],
     index: number,
   ): Promise<RgStandingWindow['totals']> {
     const deposits = await this.priced(money, 'deposits', index);
@@ -114,7 +118,7 @@ export class RgStandingReaderService implements RgStandingReader {
   }
 
   // A currency with nothing in this window needs no rate, so it cannot make the window unknown.
-  private priced(money: readonly RgMoneyRow[], metric: RgMoneyMetric, index: number) {
+  private priced(money: readonly WalletWindowTotals[], metric: WalletWindowMetric, index: number) {
     const rows = money
       .filter((row) => row.metric === metric)
       .map((row) => ({ currency: row.currency, total: row.totals.at(index) ?? '0' }))

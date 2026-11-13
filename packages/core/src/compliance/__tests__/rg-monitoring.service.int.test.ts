@@ -283,6 +283,31 @@ describe('RgMonitoringService.evaluateUser - deposit limits (real PG)', () => {
   });
 });
 
+describe('RgMonitoringService.evaluateUser - failed ledger read (real PG)', () => {
+  it('rejects, so the job retries, and leaves an active flag standing', async () => {
+    const userId = randomUUID();
+    await seedDepositLimit(userId, '100');
+    await seedDeposit(userId, '80');
+    await makeService().evaluateUser(userId, 'wallet.deposit.completed');
+    await db.drizzle.db.execute(sql`TRUNCATE ${walletTransaction}`);
+    const failing = new RgMonitoringService({
+      drizzle: db.drizzle,
+      ledger: {
+        spendFor: vi.fn(async () => {
+          throw new Error('wallet ledger unavailable');
+        }),
+      },
+    });
+
+    await expect(failing.evaluateUser(userId, 'wallet.deposit.completed')).rejects.toThrow(
+      'wallet ledger unavailable',
+    );
+
+    const [flag] = await flagsOf(userId);
+    expect(flag).toMatchObject({ flagType: 'limit_threshold', status: 'active' });
+  });
+});
+
 describe('RgMonitoringService.evaluateUser - wager limits (real PG)', () => {
   it('sums stakes for a wager limit', async () => {
     const userId = randomUUID();
