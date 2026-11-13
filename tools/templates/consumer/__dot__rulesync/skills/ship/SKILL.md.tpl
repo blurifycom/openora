@@ -130,18 +130,18 @@ Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-
 - Each thread is checked against the code on this branch first: correct | already handled | wrong on this branch | out of scope. Only a correct one changes code; the rest get an answer.
 - A red job is reproduced locally first; `builder` fixes its cause. Never skip or loosen a test.
 - Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched, and their clips replace the old ones in the MR description. Nothing is pushed untested.
-- Push the ticket branch without asking (a force-push only as above). React per thread: `thumbsup` and resolve when the fix addressed it, `question` when it needs an answer or you disagree; that thread stays open and its question goes in the ticket's questions comment, the single place for open questions. Also draft one reply per thread in the user's voice, with what changed and the test that proves it, or why nothing changed, and print them for the user to post; never post them. Add the last-comment id of every thread you handled (a drafted reply, or a bot note that needs none) to `.claude/reviews/<branch with / as +>.drafted.json` (a JSON array, its own file so a review save never drops it) in the main checkout, so a resumed run still knows them.
+- Push the ticket branch without asking (a force-push only as above). Then draft one reply per thread in the user's voice, with what changed and the test that proves it, or why nothing changed, and print them for the user to post; never post them. React per thread too: `thumbsup` and resolve when the fix addressed it, `question` when it needs an answer or you disagree (that thread stays open and its question goes in the ticket's questions comment, the single place for open questions). Record every thread you handled (a drafted reply, or a bot note that needs none) as the babysit skill does, in `.claude/reviews/<branch with / as +>.replies.md` and `.drafted.json`, so the watcher and a resumed run skip it.
 
 Then 7.
 
 ### 7. Ready for review
 
-Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` (plus `--drafted <id,id>` with every id from `.claude/reviews/<branch with / as +>.drafted.json` (a JSON array, its own file so a review save never drops it) in the main checkout, on every start and resume) as a background command, never a sleep loop in the session. It prints one line and exits when there is work:
+Run the **babysit** skill's loop on the MR, with step 6 above as its fix rules: start `node <babysit skill's folder>/babysit.mjs <branch> --until-green` as a background command, never a sleep loop in the session. It prints one line and exits when there is work:
 
 - `failed` or `conflicts` -> 6, then watch again. Still red after three fixes -> blocker comment, report, stop. Ten fix rounds in total after the push (pipeline and threads together) and the MR still is not ready -> blocker comment, report, stop: a person takes it from there.
 - `threads <ids>` (unanswered for two checks in a row, from a person or a bot) -> 6 for those, then watch again. A thread the forge's AI review opens is a blocker it found on this head: it counts like a person's.
 - `green` -> check the MR is ready (below). Ready: mark the draft ready for review (`docs/agents/forge.md`), report "Ready for review:" and the MR URL, then watch again without `--until-green`. Not ready: it stays a draft. Fix what is yours (the description, an unanswered thread) and watch again with `--until-green`; what only a person can supply (an UNCHECKED row) -> report "Draft, missing:" and the list, stop.
-- `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `error ...` -> report it, stop.
+- `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `watched` (another session has it) or `error ...` -> report it, stop.
 
 Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer or a drafted reply listed in the report as waiting for the user to post, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table, the screenshots and the UNCHECKED rows.
 
