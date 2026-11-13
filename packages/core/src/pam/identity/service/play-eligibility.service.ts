@@ -1,6 +1,6 @@
 import { DrizzleService, type DrizzleDb } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
-import type { PlayEligibilityPort, PlayRefusal, User } from '@openora/core/contracts';
+import type { PlayEligibilityPort, PlayerStatus, PlayRefusal, User } from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '../schema/index.js';
 import { isRgBlocked } from './rg-guard.service.js';
@@ -36,11 +36,8 @@ export class PlayEligibilityService implements PlayEligibilityPort {
       .where(eq(user.id, userId))
       .limit(1);
     const [account] = tx ? await accountQuery.for('share') : await accountQuery;
-    if (!account) {
-      return 'account_inactive';
-    }
-    if (isRgBlocked(account)) {
-      return account.rgBlockedUntil === null ? 'self_excluded' : 'cooling_off';
+    if (!account || isRgBlocked(account)) {
+      return playRefusalOf(account, undefined);
     }
     const profileQuery = db
       .select({ status: player.status })
@@ -48,16 +45,38 @@ export class PlayEligibilityService implements PlayEligibilityPort {
       .where(eq(player.userId, userId))
       .limit(1);
     const [profile] = tx ? await profileQuery.for('share') : await profileQuery;
-    switch (profile?.status) {
-      case 'self_excluded':
-        return 'self_excluded';
-      case 'suspended':
-        return 'account_suspended';
-      case 'closed':
-        return 'account_closed';
-    }
-    const banned =
-      account.banned === true && (account.banExpires === null || account.banExpires > new Date());
-    return !account.isActive || banned ? 'account_inactive' : null;
+    return playRefusalOf(account, profile?.status);
   }
+}
+
+export type PlayStanding = {
+  rgBlocked: boolean;
+  rgBlockedUntil: Date | null;
+  isActive: boolean;
+  banned: boolean | null;
+  banExpires: Date | null;
+};
+
+/** `checkPlay` over an account and its profile status already read; no account = inactive. */
+export function playRefusalOf(
+  account: PlayStanding | undefined,
+  status: PlayerStatus | undefined,
+): PlayRefusal | null {
+  if (!account) {
+    return 'account_inactive';
+  }
+  if (isRgBlocked(account)) {
+    return account.rgBlockedUntil === null ? 'self_excluded' : 'cooling_off';
+  }
+  switch (status) {
+    case 'self_excluded':
+      return 'self_excluded';
+    case 'suspended':
+      return 'account_suspended';
+    case 'closed':
+      return 'account_closed';
+  }
+  const banned =
+    account.banned === true && (account.banExpires === null || account.banExpires > new Date());
+  return !account.isActive || banned ? 'account_inactive' : null;
 }
