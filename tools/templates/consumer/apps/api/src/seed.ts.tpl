@@ -9,6 +9,7 @@
  * Does NOT include demo data (fixtures, fake players) - that is dev-only.
  */
 import { createDrizzleDb } from '@openora/core/server';
+import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import { seedRoles } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
@@ -35,6 +36,9 @@ async function main() {
   // Without it, a bonus with no offer behind it - a gift, a rain drop, a hand-issued grant -
   // resolves no weight profile and is refused.
   await seedDefaultWeightProfile(db);
+  // The round ledger refuses a round on a game it has not projected; this projects every
+  // catalogue game, so run it after each import that bypassed GAMING_COMMANDS.notifyGames*.
+  await backfillLedgerGames(db);
   console.log('Reference data seeded.');
 }
 

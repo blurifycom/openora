@@ -8,6 +8,7 @@ import {
   Container,
   type CoreTokenCatalog,
 } from '@openora/core/server';
+import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
@@ -112,7 +113,7 @@ export async function seedMinimal(
     await seedTag(drizzleSvc.db);
     await seedDefaultWeightProfile(drizzleSvc.db);
     await seedRankLadder(drizzleSvc.db, EXAMPLE_RANK_LADDER);
-    return await seedDemoData({
+    const result = await seedDemoData({
       db: drizzleSvc.db,
       auth,
       playerCount: options.playerCount ?? 4,
@@ -122,6 +123,9 @@ export async function seedMinimal(
         name: 'Platform Admin',
       },
     });
+    // After the demo games exist: the round ledger only plays games it has projected.
+    await backfillLedgerGames(drizzleSvc.db);
+    return result;
   } finally {
     await authPool.end();
   }

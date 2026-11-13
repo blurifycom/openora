@@ -288,6 +288,14 @@ Approve sets the game live the same way an enable does: it re-ranks the game's c
 - A clause whose definition sets `exposesReporting`, the built-in `most_played` included, also needs `report:view`, as on the category routes.
 - The rule may match at most `ADMIN_GAME_RULE_MATCH_MAX` (20,000) games, checked after every clause and before the other filters narrow anything, so the narrowest clause belongs first. Above it the route answers 400 with `GameSearchRuleTooBroadError`, whose `data` is `{ reason: 'rule_filter_too_broad', matchedCount, max }`. An unknown key or unparsable params is 400, and a definition that throws is 503, as on the rule preview.
 
+## Round ledger and `ledger_game`
+
+Round code (`startRound`, `GAMING_COMMANDS.accumulateExternalRound`) resolves a game through `ledger_game`, never the catalogue `game` table, and `game_round.game_id` carries no foreign key to `game`. A round on a game `ledger_game` lacks is refused with `GamingUnknownGameError` (contracts; `404` on the start route) before any round row or money moves. A provider bridge must answer it with a final, non-retry code.
+
+`ledger_game` holds `provider_id`, `game_type` and a `version`, and is fed only by `gaming.game.changed`, a batch of game snapshots written to the outbox in the transaction that read them: `updateGame` emits one when the provider or game type moved, and `notifyGamesCreated` / `notifyGamesChanged` emit one for every game they report. `game.ledger_version` is bumped by a trigger whenever `provider_id` or `game_type` changes, from any writer, and cannot be set by hand. The projection keeps the highest version it has seen, so a redelivered or reordered event is a no-op. Rows are never deleted.
+
+An importer that writes `game` rows and reports them through neither notify method leaves them unplayable until `backfillLedgerGames` (`@openora/core/casino/seed/gaming`) runs. Run it with the other reference seeders after every migrate; it converges and also heals a projection that missed an event (an importer crash between its commit and its notify).
+
 ## Audited events
 
 Every admin change to sort config, order, or pins emits an event carrying the actor's id, the before/after state, and optional request-origin metadata.

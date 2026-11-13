@@ -119,7 +119,7 @@ export type {
   GamingNotifyGamesChangedArgs,
   GamingAccumulateExternalRoundOutcome,
 } from './gaming-commands.js';
-export { GAMING_COMMANDS } from './gaming-commands.js';
+export { GAMING_COMMANDS, GamingUnknownGameError } from './gaming-commands.js';
 
 export type {
   CatalogCategoryWithGameCount,

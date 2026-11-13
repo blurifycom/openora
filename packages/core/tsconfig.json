@@ -28,6 +28,7 @@
       "@openora/core/casino/plugins/lobby": ["./src/casino/lobby/plugin.ts"],
       "@openora/core/casino/schema/gaming": ["./src/casino/gaming/schema/index.ts"],
       "@openora/core/casino/schema/lobby": ["./src/casino/lobby/schema/index.ts"],
+      "@openora/core/casino/seed/gaming": ["./src/casino/gaming/seed/index.ts"],
       "@openora/core/casino/server": ["./src/casino/server.ts"],
       "@openora/core/cms": ["./src/cms/index.ts"],
       "@openora/core/cms/contract": ["./src/cms/contract/index.ts"],

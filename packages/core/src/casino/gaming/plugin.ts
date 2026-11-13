@@ -1,5 +1,10 @@
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
+import type {
+  CoreTokenCatalog,
+  DrizzleService,
+  Plugin,
+  TypedContainer,
+} from '@openora/core/server';
 import {
   ADMIN_GAME_REPORTING,
   GAME_ADAPTER,
@@ -17,6 +22,7 @@ import {
   WALLET_COMMANDS,
   createGameSortCatalog,
   createGameCategoryRuleCatalog,
+  domainEventSchemas,
   CACHE,
   type CacheAdapter,
 } from '@openora/core/contracts';
@@ -35,6 +41,7 @@ import { GameTagService } from './service/game-tag.service.js';
 import { GameProviderService } from './service/game-provider.service.js';
 import { GameBulkService } from './service/game-bulk.service.js';
 import { GameFavoriteService } from './service/game-favorite.service.js';
+import { applyLedgerGames } from './service/ledger-game.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
@@ -133,6 +140,7 @@ export default {
     let rankingRef: GameSortRankingService | null = null;
     let triggersRef: GameSortTriggerService | null = null;
     let catalogCacheRef: CacheAdapter | undefined;
+    let drizzleRef: DrizzleService | undefined;
     const requireTriggers = () => {
       if (!triggersRef) {
         throw new Error('gaming: sort trigger service not constructed yet');
@@ -168,6 +176,14 @@ export default {
     ctx.events.on('gaming.games.changed', (payload) => {
       requireTriggers().gamesChanged(payload);
       requireMembership().triggers.gamesChanged(payload);
+    });
+    // The round ledger's projection: idempotent and order-proof by version, see ledger-game.service.ts.
+    ctx.events.on('gaming.game.changed', async (payload) => {
+      if (!drizzleRef) {
+        throw new Error('gaming: ledger projection not constructed yet');
+      }
+      const { games } = domainEventSchemas['gaming.game.changed'].parse(payload);
+      await applyLedgerGames(drizzleRef.db, games);
     });
     ctx.events.on('gaming.tag.deleted', (payload) =>
       requireMembership().triggers.tagDeleted(payload),
@@ -211,6 +227,7 @@ export default {
     ctx.routers.add('gaming', (c) => {
       const jobQueue = c.get(JOB_QUEUE);
       catalogCacheRef = c.get(CACHE);
+      drizzleRef = c.get(DRIZZLE);
       const sortCatalog = c.get(GAME_SORT_CATALOG);
       const sorts = new GameSortService(sortCatalog);
       rankingRef = new GameSortRankingService(c.get(DRIZZLE), sorts);
@@ -244,7 +261,10 @@ export default {
       setGameAvailability: (args) => gamingService(c).setGameAvailability(args),
       setGameAvailabilityInTransaction: (tx, args) =>
         gamingService(c).setGameAvailabilityInTransaction(tx, args),
-      notifyGamesCreated: (args) => membershipServices(c).triggers.notifyGamesCreated(args.gameIds),
+      notifyGamesCreated: async (args) => {
+        await gamingService(c).projectLedgerGames(args.gameIds);
+        await membershipServices(c).triggers.notifyGamesCreated(args.gameIds);
+      },
       notifyGamesChanged: (args) => gamingService(c).notifyGamesChanged(args),
     }));
   },

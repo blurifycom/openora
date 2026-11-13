@@ -19,6 +19,7 @@
  * since ADR-0026 - one DB role, no RLS.
  */
 import { createAuth, createDrizzleDb } from '@openora/core/server';
+import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
@@ -69,6 +70,9 @@ async function main() {
     },
     log: (m) => console.log(`  ${m}`),
   });
+  // After the demo games exist: the round ledger only plays games it has projected.
+  await backfillLedgerGames(db);
+  console.log('  Round ledger games projected.');
 
   console.log('\n=== Seed complete ===');
   console.log(`  Users:        ${result.users} (1 admin + ${result.players} players)`);

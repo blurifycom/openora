@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { GAME_GEO_RULE_COMMANDS } from '@openora/core/contracts';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
+import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import { user } from '@openora/core/pam/schema/identity';
 import {
   asAdmin,
@@ -92,6 +93,7 @@ async function seedGame(label: string): Promise<SeededGame> {
   if (!created) {
     throw new Error(`failed to seed a game for the ${label} geo E2E flow`);
   }
+  await backfillLedgerGames(drizzle);
   return { gameId: created.id, providerId: provider.id };
 }
 

@@ -44,7 +44,23 @@ export type GamingNotifyGamesChangedArgs = {
   providerIds?: readonly string[];
 };
 
+/**
+ * A round named a game the ledger has no `ledger_game` row for: the catalogue never reported
+ * it, or the projection has not caught up. Thrown before any round row or money moves, so the
+ * caller's transaction rolls back whole. A provider bridge answers it with a final, non-retry
+ * "unknown game" code; a retry cannot succeed until the projection holds the game.
+ */
+export class GamingUnknownGameError extends Error {
+  readonly gameId: string;
+  constructor(gameId: string) {
+    super(`game ${gameId} is unknown to the round ledger`);
+    this.name = 'GamingUnknownGameError';
+    this.gameId = gameId;
+  }
+}
+
 export type GamingCommands = {
+  /** Throws GamingUnknownGameError, before writing anything, for a game `ledger_game` lacks. */
   accumulateExternalRound(
     tx: unknown,
     args: GamingAccumulateExternalRoundArgs,

@@ -529,6 +529,11 @@
       "import": "./dist/casino/lobby/migrate.js",
       "default": "./dist/casino/lobby/migrate.js"
     },
+    "./casino/seed/gaming": {
+      "types": "./dist/casino/gaming/seed/index.d.ts",
+      "import": "./dist/casino/gaming/seed/index.js",
+      "default": "./dist/casino/gaming/seed/index.js"
+    },
     "./engagement/migrate/chat": {
       "types": "./dist/engagement/chat/migrate.d.ts",
       "import": "./dist/engagement/chat/migrate.js",
