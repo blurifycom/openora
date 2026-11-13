@@ -28,6 +28,8 @@ const ALLOW = [
   'git commit -m "x" 2>&1 | tail -1',
   'for i in 1 2; do gh pr view "$i"; done',
   'bash -c "gh pr view 5"',
+  'gh api graphql -f query=\'\nmutation { resolveReviewThread(input: {threadId: "T"}) { thread { isResolved } } }\'',
+  `gh api graphql -f query="$(cat <<'EOF'\nquery { viewer { login } }\nEOF\n)"`,
   'gh api repos/o/r/pulls/5/comments \\\n  --paginate',
 ];
 
