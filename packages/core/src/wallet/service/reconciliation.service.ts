@@ -63,6 +63,7 @@ import {
   isRefundedDeposit,
   lockVendorDeposit,
   recordReconciliationFinding,
+  recordReconciliationFindingInTransaction,
   rgDecisionForLandedCredit,
 } from './reconciliation-finding.service.js';
 import {
@@ -1082,8 +1083,8 @@ export class ReconciliationService {
    * `needsBaseline` and filed once as `ledger_invariant_unchecked`, never as a breach.
    * `backfillBaselines` first baselines those pairs: the operator's explicit step, never run by
    * the schedule, because a baseline taken over a wallet that is already wrong makes its error
-   * the new zero. A run that files a breach not on file before alerts at once, whatever the
-   * open-findings threshold.
+   * the new zero. Each breach not on file before alerts at once, in the commit that files it,
+   * whatever the open-findings threshold.
    */
   async runLedgerInvariant(
     runId: WalletJobRun['runId'] = randomUUID(),
@@ -1133,15 +1134,6 @@ export class ReconciliationService {
           resourceId: runId,
           after: { runId, backfillBaselines, ...counts },
         });
-        // A ledger breach is money no one can account for: one new breach is already the alert,
-        // reported as new breaches over a threshold of zero.
-        if (counts.newBreaches > 0) {
-          await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
-            runId,
-            openFindings: counts.newBreaches,
-            threshold: 0,
-          });
-        }
       });
     } catch (err) {
       await this.finishRun(jobRunId, 'failed', {
@@ -1323,20 +1315,33 @@ export class ReconciliationService {
     },
   ): Promise<void> {
     const amount = breach.drift.replace(/^-/, '');
-    const filed = await recordReconciliationFinding(
-      this.drizzle.db,
-      {
-        runId,
-        providerName: LEDGER_FINDING_LABEL,
-        kind: 'ledger_invariant_breach',
-        currency: breach.currency,
-        // A finding's amount is never negative; which way the balance is off is in the detail.
-        amount,
-        externalId: breach.externalId,
-        detail: `${breach.detail}: the balance is ${breach.drift.startsWith('-') ? 'short' : 'over'} by ${amount}`,
-      },
-      this.audit,
-    );
+    // A ledger breach is money no one can account for: each new one is already the alert, over a
+    // threshold of zero, committed with the finding itself. A run failing later cannot lose it,
+    // and a rerun finds the finding on file and alerts nothing.
+    const filed = await this.drizzle.db.transaction(async (txn) => {
+      const inserted = await recordReconciliationFindingInTransaction(
+        txn,
+        {
+          runId,
+          providerName: LEDGER_FINDING_LABEL,
+          kind: 'ledger_invariant_breach',
+          currency: breach.currency,
+          // A finding's amount is never negative; which way the balance is off is in the detail.
+          amount,
+          externalId: breach.externalId,
+          detail: `${breach.detail}: the balance is ${breach.drift.startsWith('-') ? 'short' : 'over'} by ${amount}`,
+        },
+        this.audit,
+      );
+      if (inserted) {
+        await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
+          runId,
+          openFindings: 1,
+          threshold: 0,
+        });
+      }
+      return inserted;
+    });
     if (filed) {
       counts.newBreaches += 1;
     }

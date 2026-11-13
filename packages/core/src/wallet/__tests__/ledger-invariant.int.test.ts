@@ -917,6 +917,30 @@ describe('rolling baselines and their repair (real PG)', () => {
     );
   });
 
+  it('keeps the alert of a breach filed before the run failed', async () => {
+    await handEdit((await fundedWallet('100')).id, '7');
+    await handEdit((await fundedWallet('100')).id, '9');
+    const audit = makeAuditWriter();
+    const events = makeEventBus();
+    let filed = 0;
+    const failSecondFiling = async (entry: { action: string }) => {
+      if (entry.action === 'wallet.reconciliation_finding.recorded' && ++filed === 2) {
+        throw new Error('audit store down');
+      }
+    };
+    audit.record.mockImplementation(failSecondFiling);
+    audit.recordInTransaction.mockImplementation((_txn, entry) => failSecondFiling(entry));
+    const svc = makeReconciliation({ batchSize: 1, audit, events });
+
+    await expect(svc.runLedgerInvariant(randomUUID())).rejects.toThrow('audit store down');
+
+    const alerts = events.emitInTransaction.mock.calls.filter(
+      ([, topic]) => topic === 'wallet.reconciliation.alert',
+    );
+    expect(await breaches()).toHaveLength(1);
+    expect(alerts).toHaveLength(1);
+  });
+
   it('alerts once on a new breach, below the open-findings threshold, and not again on a rerun', async () => {
     const w = await fundedWallet('100');
     const events = makeEventBus();
@@ -977,7 +1001,7 @@ describe('ledger invariant run hygiene (real PG)', () => {
     await handEdit(w.id, '7');
     const audit = makeAuditWriter();
     // Another worker takes the run over while it files its finding.
-    audit.record.mockImplementation(async () => {
+    audit.recordInTransaction.mockImplementationOnce(async () => {
       await db.drizzle.db
         .update(walletJobRun)
         .set({ status: 'abandoned', finishedAt: new Date() })

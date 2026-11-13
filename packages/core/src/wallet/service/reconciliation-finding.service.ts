@@ -75,11 +75,12 @@ export async function recordReconciliationFindingInTransaction(
   txn: DrizzleTx,
   input: ReconciliationFindingInput,
   audit: AuditWritePort,
-): Promise<void> {
+): Promise<boolean> {
   const row = await insertFinding(txn, input);
   if (row) {
     await audit.recordInTransaction(txn, findingRecordedAudit(row.id, input));
   }
+  return row !== undefined;
 }
 
 /**
