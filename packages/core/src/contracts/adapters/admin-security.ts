@@ -47,7 +47,8 @@ export const AdminSecurityWire = {
     userId: z.string().max(64),
     sessionId: z.string().max(64).nullable(),
     ip: z.string().max(128).nullable(),
-    userAgent: z.string().max(2048).nullable(),
+    // As long as the credential cap: the check compares it whole, so truncating it would end the session.
+    userAgent: z.string().max(16_384).nullable(),
   }),
   output: z.object({
     refusal: z

@@ -431,6 +431,21 @@ describe('chat on its own service, resolving sessions through the identity servi
     expect(recovered.status).toBe(200);
   });
 
+  it('answers 503 on a signed-in read that also serves guests while identity is down', async () => {
+    const owner = await chatter('outagereader');
+    const room = await createRoom(owner);
+    // A second sign-in: its session is not in chat's cache yet, so the read has to ask identity.
+    const freshDevice = await chatClientFor(`${owner.username}@e2e.test`);
+
+    const [roomRead, globalRead] = await whileIdentity('down', () =>
+      Promise.all([freshDevice.get(`/chat/rooms/${room.id}`), freshDevice.get('/chat/global')]),
+    );
+
+    expect(await errorOf(roomRead)).toEqual({ status: 503, code: 'SERVICE_UNAVAILABLE' });
+    expect(await errorOf(globalRead)).toEqual({ status: 503, code: 'SERVICE_UNAVAILABLE' });
+    expect((await freshDevice.get(`/chat/rooms/${room.id}`)).status).toBe(200);
+  });
+
   it('ignores a purge announcement that is not a user id', async () => {
     const account = await chatter('malformedpurge');
     expect((await account.client.get('/chat/rooms/moderated')).status).toBe(200);

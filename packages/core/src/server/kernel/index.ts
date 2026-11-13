@@ -41,6 +41,7 @@ export type { ErrorReporter } from './error-reporter.js';
 export {
   getUserId,
   getSessionId,
+  throwIfSessionUnavailable,
   extractClientMeta,
   internalProcedure,
   AuthContextSchema,
