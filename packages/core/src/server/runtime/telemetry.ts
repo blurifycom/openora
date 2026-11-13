@@ -14,7 +14,7 @@ import type { CoreTokenCatalog } from './core-token-catalog.js';
 const TELEMETRY_DEFAULT_URL = 'https://telemetry.openora.ai/api/send';
 const TELEMETRY_DOCS_URL = 'https://openora.ai/documentation/telemetry';
 // Public by design: an Umami website id ships in every browser tracking snippet.
-const UMAMI_WEBSITE_ID = '6c0c7f10-66e1-4100-a9b4-b5640982674d';
+const UMAMI_WEBSITE_ID = 'c61455d3-0d38-40b9-a7b9-f25978360ff6';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
