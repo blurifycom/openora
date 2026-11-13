@@ -35,7 +35,6 @@ routeTree.gen.ts
 # `pnpm check:drift` fails when it goes stale.
 CLAUDE.md
 /.mcp.json
-.vscode/mcp.json
 .codex/
 .agents/
 .ai/mcp

@@ -152,7 +152,7 @@ generator and fails on an uncommitted diff. So if you touched schemas or routes,
 - ASCII only in code. Short dashes (-) only.
 - Don't hand-edit generated files: drizzle migrations, `docs/catalog.json`,
   and the rulesync-generated agent files (`AGENTS.md`, `CLAUDE.md`, `.codex/config.toml`,
-  `.github/copilot-instructions.md`, and the `.claude/`, `.github/` mirrors) - edit
+  and the `.claude/` mirrors) - edit
   `.rulesync/` and run `pnpm gen:agents`.
 
 ## License and contributions

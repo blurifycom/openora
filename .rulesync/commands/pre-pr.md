@@ -10,7 +10,7 @@ Run the same gate CI enforces. Stop at the first failure and report it.
 
 `check:drift` verifies tsconfig paths are in sync and regenerates the catalog. `docs/catalog.json` is gitignored and rebuilt on install, on merge and on checkout, so it cannot drift.
 
-The rulesync-generated agent files (CLAUDE.md, .codex/config.toml, Copilot mirrors) are gitignored and regenerated from `.rulesync/` on `pnpm install`, so they can't drift. The root AGENTS.md is the exception: it is committed for hosted reviewers, and `check:drift` regenerates it and fails when the committed copy is stale. If you changed agent instructions, edit `.rulesync/`, run `pnpm gen:agents`, and commit the regenerated AGENTS.md.
+The rulesync-generated agent files (CLAUDE.md, .codex/config.toml, .claude/ mirrors) are gitignored and regenerated from `.rulesync/` on `pnpm install`, so they can't drift. The root AGENTS.md is the exception: it is committed for hosted reviewers, and `check:drift` regenerates it and fails when the committed copy is stale. If you changed agent instructions, edit `.rulesync/`, run `pnpm gen:agents`, and commit the regenerated AGENTS.md.
 
 After running:
 
