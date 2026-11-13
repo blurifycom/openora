@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { and, eq, sql } from 'drizzle-orm';
 import { MESSAGE_BROKER } from '@openora/core/contracts';
 import { DRIZZLE, eventOutbox } from '@openora/core/server';
@@ -22,8 +23,14 @@ import {
  * limit's own currency, and the player's in-app `rg.limit.admin_updated` notification
  * and the audit row show it. Driven over the real app and a real Postgres db; the only
  * rows written behind the app are the exchange-rate quotes (no provider is wired in
- * tests) and a legacy NULL-currency limit row (the API can no longer create one).
+ * tests) and a legacy NULL-currency limit row (the API can no longer create one), which the
+ * compliance migration that pins legacy currencies then pins.
  */
+
+const PIN_LEGACY_CURRENCY = new URL(
+  '../../../core/src/compliance/drizzle/migrations/0017_pin_legacy_limit_currency.sql',
+  import.meta.url,
+);
 
 let db: TestDb;
 let app: TestApp;
@@ -152,6 +159,7 @@ describe('admin limit override carries the old limit currency', () => {
       minutes: null,
       currency: null,
     });
+    await app.container.get(DRIZZLE).db.execute(sql.raw(readFileSync(PIN_LEGACY_CURRENCY, 'utf8')));
 
     // 100 EUR = 110 USD, so 50 USD is a lowering. Player currency (EUR) is neither side's new one.
     const res = await setLimit(p.userId, { type: 'deposit', amount: '50', currency: 'USD' });
