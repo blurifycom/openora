@@ -11,6 +11,7 @@ import {
   makeEventBus,
   makeIdentityReader,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -32,6 +33,7 @@ let redis: TestRedis;
 
 const makeService = () =>
   new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events,
     payment,

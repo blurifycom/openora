@@ -19,6 +19,7 @@ import {
   makeExchangeRateReader,
   makeAuditWriter,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -92,6 +93,7 @@ function makeServices(
     wallet: { reconciliation: RECONCILIATION_CONFIG, ...overrides.platformConfig },
   });
   const wallet = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment,

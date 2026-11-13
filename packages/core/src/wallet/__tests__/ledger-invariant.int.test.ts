@@ -26,6 +26,7 @@ import {
   makeExchangeRateReader,
   makeIdentityReader,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { migrate as promoMigrate } from '@openora/core/promo/migrate/bonus';
@@ -92,6 +93,7 @@ function makeReconciliation({
     },
   });
   const walletSvc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment,

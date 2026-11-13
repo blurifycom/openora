@@ -23,6 +23,7 @@ import {
   makeAuditWriter,
   makeExchangeRateReader,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { seedMatureWithdrawalAddress } from '../../testing/seed-wallet.js';
 import { migrate } from '../migrate.js';
@@ -79,6 +80,7 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
   const psp = makePsp();
   const audit = makeAuditWriter();
   const svc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: events,
     payment: mock<PaymentAdapter>(psp),

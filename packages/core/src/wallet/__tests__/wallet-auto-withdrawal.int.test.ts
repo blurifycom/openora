@@ -25,6 +25,7 @@ import {
   NO_CLIENT_META,
   makeAuditWriter,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { seedMatureWithdrawalAddress } from '../../testing/seed-wallet.js';
 import { migrate } from '../migrate.js';
@@ -99,7 +100,7 @@ type ServiceOptions = {
   skipConfigSeed?: boolean;
   kycStatus?: KycStatus | null;
   directoryThrows?: boolean;
-  riskTags?: TagKey[] | 'unbound';
+  riskTags?: TagKey[];
   // Replaces the fixed `riskTags` stub, for a test that changes the tags between reads.
   playerTags?: PlayerTags;
   kycPolicy?: KycWithdrawalPolicy;
@@ -156,6 +157,7 @@ async function makeService({
     autoWithdrawal ? { autoWithdrawal: { enabled: true, ...autoWithdrawal } } : {},
   );
   const svc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: events,
     payment: mock<PaymentAdapter>(psp),
@@ -165,18 +167,14 @@ async function makeService({
     directory,
     platformConfig,
     ...(rates === 'unbound' ? {} : { rates }),
-    kycPolicy,
-    ...(riskTags === 'unbound'
-      ? {}
-      : {
-          riskTags:
-            playerTags ??
-            mock<PlayerTags>({
-              getActiveTagKeys: vi.fn(
-                async (ids: readonly string[]) => new Map(ids.map((id) => [id, riskTags])),
-              ),
-            }),
-        }),
+    ...(kycPolicy ? { kycPolicy } : {}),
+    riskTags:
+      playerTags ??
+      mock<PlayerTags>({
+        getActiveTagKeys: vi.fn(
+          async (ids: readonly string[]) => new Map(ids.map((id) => [id, riskTags])),
+        ),
+      }),
   });
   return { svc, events, psp, audit };
 }
@@ -740,25 +738,6 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
 
     expect(result.status).toBe('completed');
-  });
-
-  it('fails closed to pending when risk flags are configured but the tags port is unbound', async () => {
-    const { svc } = await makeService({
-      autoWithdrawal: {},
-      fiatThreshold: '1000',
-      excludeRiskFlags: ['bonus_abuser'],
-      riskTags: 'unbound',
-    });
-    const w = await seedWallet();
-
-    const result = await withdrawScreened(svc, {
-      userId: w.userId,
-      amount: '40',
-      currency: 'USD',
-      ...NO_CLIENT_META,
-    });
-
-    expect(result.status).toBe('pending');
   });
 
   it('setAutoWithdrawalConfig clearing excludeRiskFlags to [] lets a high_risk-tagged player auto-approve', async () => {

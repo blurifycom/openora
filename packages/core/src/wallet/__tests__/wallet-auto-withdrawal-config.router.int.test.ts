@@ -26,6 +26,7 @@ import {
   makeJobQueue,
   makePaymentProviderRegistry,
   NO_CLIENT_META,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -99,6 +100,7 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
   });
   const paymentProviders = makePaymentProviderRegistry();
   const service = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({

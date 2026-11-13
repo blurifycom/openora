@@ -20,9 +20,11 @@ import {
   type FreshReauthenticationVerdict,
   type IdentityReader,
   type JobQueueAdapter,
+  type KycWithdrawalPolicy,
   type PaymentAdapter,
   type PaymentProviderRegistry,
   type PaymentWebhookVerifier,
+  type PlayerTags,
   type RateLimitKey,
   type RateLimiterAdapter,
   type RealtimeTransport,
@@ -143,6 +145,21 @@ export const makeWithdrawalSecurity = (
     async () => undefined,
   ),
   ...overrides,
+});
+
+/**
+ * The three withdrawal-control ports every WalletService requires (ADR-0057): no active tags, no
+ * PIN and no lockout, and KYC required for every gated withdrawal (the policy's fail-closed
+ * answer). A test of one control passes its own double after this spread.
+ */
+export const makeWithdrawalPorts = (): {
+  riskTags: PlayerTags;
+  kycPolicy: KycWithdrawalPolicy;
+  withdrawalSecurity: WithdrawalSecurity;
+} => ({
+  riskTags: { getActiveTagKeys: vi.fn(async () => new Map()) },
+  kycPolicy: { requiresKycForWithdrawal: vi.fn(async () => true) },
+  withdrawalSecurity: makeWithdrawalSecurity(),
 });
 
 /**

@@ -1133,18 +1133,17 @@ export type WalletServiceDeps = {
   directory?: AdminUserDirectory;
   platformConfig?: PlatformConfig;
   limiter?: RateLimiterAdapter<RateLimitKey>;
-  // Optional: bound by the tag module. If risk-flag exclusions are configured but this is absent, auto-approval fails closed.
-  riskTags?: PlayerTags;
+  // The three withdrawal controls (ADR-0057): required, so a missing module refuses boot instead
+  // of skipping its check. Bound by the tag module, compliance and identity.
+  riskTags: PlayerTags;
   // Required: the auto-approval audit trail is a regulatory invariant, so wallet hard-depends on audit.
   audit: AuditWritePort;
   rgLimits?: RgLimitsPort;
   // Optional: bound by the fx module. Auto-approval thresholds and caps are denominated in
   // the fx pivot; without a reader, a withdrawal in any other currency is never auto-approved.
   rates?: ExchangeRateReader;
-  // Optional: bound by compliance. Absent = every gated withdrawal requires KYC (fail closed).
-  kycPolicy?: KycWithdrawalPolicy;
-  // Optional: bound by identity. Absent = no PIN can exist, so no withdrawal is asked for one.
-  withdrawalSecurity?: WithdrawalSecurity;
+  kycPolicy: KycWithdrawalPolicy;
+  withdrawalSecurity: WithdrawalSecurity;
   // Optional: bound by mail. Absent = the new-address notice is skipped, never the address.
   mailDispatch?: MailDispatchPort;
   // Optional: bound by an operator. Absent = every attributed on-chain deposit is credited.
@@ -1176,12 +1175,12 @@ export class WalletService {
   private readonly directory?: AdminUserDirectory;
   private readonly platformConfig?: PlatformConfig;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
-  private readonly riskTags?: PlayerTags;
+  private readonly riskTags: PlayerTags;
   private readonly audit: AuditWritePort;
   private readonly rgLimits?: RgLimitsPort;
   private readonly rates?: ExchangeRateReader;
-  private readonly kycPolicy?: KycWithdrawalPolicy;
-  private readonly withdrawalSecurity?: WithdrawalSecurity;
+  private readonly kycPolicy: KycWithdrawalPolicy;
+  private readonly withdrawalSecurity: WithdrawalSecurity;
   private readonly mailDispatch?: MailDispatchPort;
   private readonly depositHold?: DepositHoldPolicy;
   private readonly depositAdmission?: DepositAdmissionPolicy;
@@ -1494,7 +1493,7 @@ export class WalletService {
     if (await this.isWithdrawalLocked(userId)) {
       return { reason: 'withdrawal_lock', error: new WithdrawalLockedError() };
     }
-    const pinLockedUntil = await this.withdrawalSecurity?.pinLockedUntil(userId);
+    const pinLockedUntil = await this.withdrawalSecurity.pinLockedUntil(userId);
     if (pinLockedUntil) {
       return {
         reason: 'withdrawal_pin_locked',
@@ -1512,9 +1511,7 @@ export class WalletService {
     pivotAmount: string | null,
     pivotCurrency: string,
   ): Promise<boolean> {
-    return this.kycPolicy
-      ? this.kycPolicy.requiresKycForWithdrawal({ userId, pivotAmount, pivotCurrency })
-      : Promise.resolve(true);
+    return this.kycPolicy.requiresKycForWithdrawal({ userId, pivotAmount, pivotCurrency });
   }
 
   // Runs before any debit and again before any approval, so a lock placed while a withdrawal
@@ -1582,8 +1579,8 @@ export class WalletService {
     pin: string | undefined,
     meta: Partial<ClientMeta>,
   ) {
-    const verdict = await this.withdrawalSecurity?.verifyPin({ userId, pin, meta });
-    switch (verdict?.status) {
+    const verdict = await this.withdrawalSecurity.verifyPin({ userId, pin, meta });
+    switch (verdict.status) {
       case 'missing':
         throw new WithdrawalPinRequiredError();
       case 'incorrect':
@@ -1653,7 +1650,7 @@ export class WalletService {
   }
 
   private async withdrawalLockedUserIds(userIds: readonly User['id'][]): Promise<Set<string>> {
-    if (!this.riskTags || userIds.length === 0) {
+    if (userIds.length === 0) {
       return new Set();
     }
     const byUser = await this.riskTags.getActiveTagKeys(userIds);
@@ -3355,11 +3352,7 @@ export class WalletService {
 
     const effectiveExcludeTags = threshold.config.excludeRiskFlags;
 
-    const riskTags = await this.autoApprovalRiskTags(userId, effectiveExcludeTags);
-    // null = exclusions configured but the lookup port is unavailable => fail closed.
-    if (riskTags === null) {
-      return skip('risk_tags_unavailable');
-    }
+    const riskTags = await this.autoApprovalRiskTags(userId);
     // Not a configurable exclusion: a hold placed after the request passed its own check
     // still keeps the payout for a human.
     if (riskTags.includes(WITHDRAWAL_LOCK_TAG)) {
@@ -3750,16 +3743,8 @@ export class WalletService {
     return summary?.kycStatus ?? null;
   }
 
-  // Active tag keys, read even with no exclusions configured so the withdrawal lock is always
-  // seen; [] when the port is unbound and nothing is excluded, null when exclusions are
-  // configured but the port is unbound (fail closed).
-  private async autoApprovalRiskTags(
-    userId: User['id'],
-    excludeRiskFlags: readonly TagKey[],
-  ): Promise<TagKey[] | null> {
-    if (!this.riskTags) {
-      return excludeRiskFlags.length === 0 ? [] : null;
-    }
+  // Active tag keys, read even with no exclusions configured so the withdrawal lock is always seen.
+  private async autoApprovalRiskTags(userId: User['id']): Promise<TagKey[]> {
     const byUser = await this.riskTags.getActiveTagKeys([userId]);
     return byUser.get(userId) ?? [];
   }

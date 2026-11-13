@@ -17,6 +17,7 @@ import {
   makeAuditWriter,
   makePaymentProviderRegistry,
   NO_CLIENT_META,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -54,6 +55,7 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
   const psp = makePsp();
   const audit = makeAuditWriter();
   const svc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events,
     payment: mock<PaymentAdapter>(psp),

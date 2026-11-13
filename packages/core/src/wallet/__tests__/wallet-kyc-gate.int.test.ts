@@ -19,6 +19,7 @@ import {
   NO_CLIENT_META,
   makeAuditWriter,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
@@ -39,6 +40,7 @@ function makeService(
     ),
   });
   const svc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({ processWithdrawal: vi.fn() }),
@@ -47,7 +49,7 @@ function makeService(
     identityReader: makeIdentityReader(),
     directory,
     platformConfig: mock<PlatformConfig>({ kyc: { gateWithdrawals } }),
-    kycPolicy,
+    ...(kycPolicy ? { kycPolicy } : {}),
   });
   return { svc, directory };
 }
@@ -223,6 +225,7 @@ describe('WalletService.approveWithdrawal KYC re-check (real PG)', () => {
     });
     const processWithdrawal = vi.fn();
     const svc = new WalletService({
+      ...makeWithdrawalPorts(),
       drizzle: db.drizzle,
       events: makeEventBus(),
       payment: mock<PaymentAdapter>({ processWithdrawal }),

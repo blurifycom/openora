@@ -25,6 +25,7 @@ import {
   mock,
   NO_CLIENT_META,
   testContext,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { seedMatureWithdrawalAddress } from '../../testing/seed-wallet.js';
 import { migrate } from '../migrate.js';
@@ -83,6 +84,7 @@ function makeService(
     processWithdrawal: vi.fn(async () => ({ externalId: randomUUID(), status: 'completed' })),
   };
   const svc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>(psp),
