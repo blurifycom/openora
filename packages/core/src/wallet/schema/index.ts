@@ -81,6 +81,7 @@ export const walletTransactionDirectionEnum = pgEnum(
 );
 
 export const walletWagerProductEnum = pgEnum('wallet_wager_product', WAGER_PRODUCTS);
+export const ledgerApiOperationEnum = pgEnum('ledger_api_operation', LEDGER_V1_KEYED_OPERATIONS);
 
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
@@ -221,6 +222,9 @@ export const walletTransaction = pgTable(
     // gone to the grant; NULL when all of `amount` was real. On a bet, the part of the stake the
     // real balance paid, written on every bet (NULL only on bets older than that).
     realShare: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    // A `bet_reversal` that named the bet it returns: that bet's row. Unique, so one bet is
+    // reversed at most once. NULL on every other row and on a reversal that named no bet.
+    reversedTransactionId: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -253,6 +257,9 @@ export const walletTransaction = pgTable(
     uniqueIndex('wallet_transaction_wallet_id_idempotency_key_idx')
       .on(t.walletId, t.idempotencyKey)
       .where(sql`${t.idempotencyKey} IS NOT NULL`),
+    uniqueIndex('wallet_transaction_reversed_transaction_id_idx')
+      .on(t.reversedTransactionId)
+      .where(sql`${t.reversedTransactionId} IS NOT NULL`),
   ],
 );
 
@@ -723,8 +730,6 @@ export type WalletBonusCredit = typeof walletBonusCredit.$inferSelect;
 export type WalletBonusRolloverConfig = typeof walletBonusRolloverConfig.$inferSelect;
 export type WalletAssetRow = typeof walletAsset.$inferSelect;
 export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
-export const ledgerApiOperationEnum = pgEnum('ledger_api_operation', LEDGER_V1_KEYED_OPERATIONS);
-
 // Ledger API v1 idempotency: one row per key a bet, win or reverse applied, written in the
 // transaction that moved the money, with the request's fingerprint and the answer it got, so a
 // retry is answered from here and a reused key with another request is told apart. Append-only.

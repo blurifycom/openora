@@ -65,12 +65,31 @@ is `SPORTSBOOK_LEDGER` unchanged.
   sends the bet with `reverseRef`; the stake is then taken and returned in one transaction, and the
   rollback's own key answers `replayed` from then on.
 - **A reverse returns the whole stake once.** A second key naming the same bet is refused
-  `already_reversed`. A bet reversed outside this API is not seen by that check.
+  `already_reversed`. The wallet enforces it too: a `bet_reversal` credit that names its bet
+  (`reversesTransactionId`, stored set-once in `wallet_transaction.reversed_transaction_id` under a
+  unique index) is refused `WALLET_BET_ALREADY_REVERSED` when another reversal named that bet, and
+  any `bet_reversal` with a round id is refused the same when the round holds a stake and its
+  reversals would exceed its stakes. So a bet a bridge reversed straight through `WALLET_COMMANDS`
+  is not reversed again here. A reversal on a round with no stake in the wallet still credits, so
+  a rollback whose round id differs from its bet's is not stranded.
+- **A stored answer carries the balance from the first apply.** A bridge that needs live funds
+  calls `balance()`.
+- **`ledger_api_request` is the reverse-once guard for this API's own keys.** A TRUNCATE of it
+  removes that guard (the wallet's own guard above stays). The table grows with every key and has
+  no retention yet.
+- **`closeRound` on an `externalRoundId` the ledger has not seen** opens that round empty and
+  closes it, as a provider's end-of-round for a round of zero legs would. A round of another
+  player, game or currency is refused `round_mismatch`.
+- **A round is one currency.** A bet or win in another currency on it is refused
+  `round_mismatch`, so a win can open a new currency balance only on a round with no stake, a
+  free-round result.
 - **A key the wallet already holds from a direct `WALLET_COMMANDS` call** answers `replayed` with
   what the wallet reports and stores nothing.
 - **Refusals are typed.** A malformed amount, zero or negative stake is `invalid_amount`; RG,
   bonus max bet, balance, unknown game or product and round ownership each have their own reason.
-  Any other malformed field throws: it is the caller's bug.
+  Any other malformed field throws: it is the caller's bug. UUIDs are compared in lower case.
+- **Only `wager` is strict.** A misspelt wager key fails rather than vanishing; the other argument
+  objects ignore unknown keys, so a newer bridge can send a field an older ledger does not read.
 
 ## Rules that are easy to get wrong here
 

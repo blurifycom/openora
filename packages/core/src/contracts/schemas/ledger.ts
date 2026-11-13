@@ -8,6 +8,8 @@ import { isWagerRtp, WagerProductSchema } from '../adapters/wager-context.js';
 import {
   CurrencyTickerInputSchema,
   CurrencyTickerSchema,
+  MONEY_PRECISION,
+  MONEY_SCALE,
   MoneyAmountSchema,
   UuidSchema,
 } from './common.js';
@@ -33,6 +35,15 @@ export const LedgerProviderNameSchema = z
 
 /** An id the provider minted: a transaction id or a round id. */
 export const LedgerProviderRefSchema = z.string().trim().min(1).max(128);
+
+/**
+ * A money amount without the leading zeros `MoneyAmountSchema` tolerates: the round adds it as a
+ * signed amount, which caps the integer digits, so a longer one is refused `invalid_amount`.
+ */
+const LedgerAmountSchema = MoneyAmountSchema.regex(
+  new RegExp(`^\\d{1,${MONEY_PRECISION - MONEY_SCALE}}(\\.\\d+)?$`),
+  'at most the integer digits a round amount holds',
+);
 
 /** Operations answered from `ledger_api_request` on a retry. */
 export const LEDGER_V1_KEYED_OPERATIONS = ['bet', 'win', 'reverse'] as const;
@@ -78,9 +89,11 @@ const roundRef = {
 };
 
 /**
- * What the bridge knows of the variant played. `product` and `rtp` fill the round's snapshot only
- * when the round has none yet, ahead of the catalogue's value; a later stake never changes it.
- * `categorySlug` and `providerGameKey` go on each stake's wager context as sent.
+ * What the bridge knows of the variant played. The catalogue's `product` and `rtp` win: the
+ * bridge's fill the round's snapshot only where the catalogue has none, and a difference is
+ * logged. A later stake never changes the snapshot. `categorySlug` and `providerGameKey` go on
+ * each stake's wager context as sent. Strict, so a misspelt key fails rather than vanishing;
+ * the other argument objects ignore unknown keys.
  */
 export const LedgerV1WagerSchema = z
   .object({
@@ -99,7 +112,7 @@ export const LedgerV1WagerSchema = z
 export const LedgerV1BetArgsSchema = z.object({
   ...ledgerKey,
   ...roundRef,
-  amount: MoneyAmountSchema,
+  amount: LedgerAmountSchema,
   reverseRef: LedgerProviderRefSchema.optional(),
   wager: LedgerV1WagerSchema.optional(),
 });
@@ -109,7 +122,7 @@ export type LedgerV1BetArgs = z.input<typeof LedgerV1BetArgsSchema>;
 export const LedgerV1WinArgsSchema = z.object({
   ...ledgerKey,
   ...roundRef,
-  amount: MoneyAmountSchema,
+  amount: LedgerAmountSchema,
   isFinal: z.boolean().optional(),
 });
 export type LedgerV1WinArgs = z.input<typeof LedgerV1WinArgsSchema>;
@@ -123,7 +136,11 @@ export const LedgerV1ReverseArgsSchema = z.object({
 });
 export type LedgerV1ReverseArgs = z.input<typeof LedgerV1ReverseArgsSchema>;
 
-/** Ends a round that moves no more money. Unkeyed: closing a closed round changes nothing. */
+/**
+ * Ends a round that moves no more money. Unkeyed: closing a closed round changes nothing. An
+ * `externalRoundId` the ledger has not seen opens the round empty and closes it, as a provider's
+ * end-of-round for a round whose every leg was zero would.
+ */
 export const LedgerV1CloseRoundArgsSchema = z.object(roundRef);
 export type LedgerV1CloseRoundArgs = z.input<typeof LedgerV1CloseRoundArgsSchema>;
 
@@ -167,6 +184,13 @@ export const LedgerV1RoundSchema = z.object({
   winAmount: MoneyAmountSchema,
 });
 export type LedgerV1Round = z.infer<typeof LedgerV1RoundSchema>;
+
+/** Refused `round_mismatch` when the round is another player's, game's or currency's. */
+export const LedgerV1CloseRoundOutcomeSchema = z.discriminatedUnion('status', [
+  LedgerV1RoundSchema.extend({ status: z.literal('closed') }),
+  LedgerV1RefusedSchema,
+]);
+export type LedgerV1CloseRoundOutcome = z.infer<typeof LedgerV1CloseRoundOutcomeSchema>;
 
 export const LedgerV1BalanceOutcomeSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('ok'), balance: MoneyAmountSchema, currency: CurrencyTickerSchema }),

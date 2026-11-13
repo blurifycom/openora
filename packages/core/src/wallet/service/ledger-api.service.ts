@@ -16,6 +16,7 @@ import {
   MaxBetExceededError,
   MONEY_SCALE,
   RgLimitExceededError,
+  WALLET_BET_ALREADY_REVERSED,
   WalletCommandAmountError,
   WalletReplayMismatchError,
   type DomainEventName,
@@ -27,12 +28,13 @@ import {
   type LedgerV1BalanceOutcome,
   type LedgerV1BetArgs,
   type LedgerV1CloseRoundArgs,
+  type LedgerV1CloseRoundOutcome,
   type LedgerV1KeyedOperation,
   type LedgerV1Move,
   type LedgerV1MoveOutcome,
   type LedgerV1RefusalReason,
+  type LedgerV1Refused,
   type LedgerV1ReverseArgs,
-  type LedgerV1Round,
   type LedgerV1WinArgs,
   type SportsbookLedger,
   type Uuid,
@@ -121,8 +123,17 @@ function fingerprint(parts: readonly unknown[]): string {
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 }
 
+/** A UUID's case is not part of it, so `A1..` and `a1..` are one request. */
+const uuid = (id: string) => id.toLowerCase();
+
 function reverseFingerprint(args: ReverseKey): string {
-  return fingerprint(['reverse', args.providerName, args.userId, args.gameId, args.targetRefId]);
+  return fingerprint([
+    'reverse',
+    args.providerName,
+    uuid(args.userId),
+    uuid(args.gameId),
+    args.targetRefId,
+  ]);
 }
 
 type LedgerKey = Pick<LedgerV1BetArgs, 'providerName' | 'providerRefId'>;
@@ -154,8 +165,8 @@ export class LedgerApiService implements LedgerApiV1 {
       const print = fingerprint([
         'bet',
         providerName,
-        userId,
-        gameId,
+        uuid(userId),
+        uuid(gameId),
         externalRoundId,
         currency,
         canonicalDecimal(args.amount),
@@ -170,6 +181,16 @@ export class LedgerApiService implements LedgerApiV1 {
       const lockRefs = args.reverseRef === undefined ? [] : [args.reverseRef];
 
       return this.keyed(providerRef, 'bet', print, lockRefs, async (tx) => {
+        const reverseKey =
+          args.reverseRef === undefined
+            ? undefined
+            : { providerName, providerRefId: args.reverseRef };
+        if (reverseKey && (await this.findRequest(tx, reverseKey))) {
+          throw new LedgerRefusal('fingerprint_mismatch');
+        }
+        if (reverseKey && (await this.isReversed(tx, providerName, providerRefId))) {
+          throw new LedgerRefusal('already_reversed');
+        }
         const round = await this.deps.gamingCommands().accumulateExternalRound(tx, {
           gameId,
           userId,
@@ -218,21 +239,18 @@ export class LedgerApiService implements LedgerApiV1 {
           balance: debit.newBalance,
           currency: debit.currency,
         };
-        if (args.reverseRef === undefined) {
+        if (!reverseKey) {
           return { move };
         }
 
         // The provider rolled this bet back before it arrived: return the stake in this same
         // transaction, and answer the rollback's own key from now on.
-        const reverseKey = { providerName, providerRefId: args.reverseRef };
-        if (await this.findRequest(tx, reverseKey)) {
-          throw new LedgerRefusal('fingerprint_mismatch');
-        }
         const reversal = await this.returnStake(tx, {
           userId,
           playerId,
           gameId,
           providerRef: { ...reverseKey, externalRoundId },
+          betTransactionId: debit.transactionId,
           amount: args.amount,
           currency: debit.currency,
         });
@@ -265,8 +283,8 @@ export class LedgerApiService implements LedgerApiV1 {
       const print = fingerprint([
         'win',
         providerName,
-        userId,
-        gameId,
+        uuid(userId),
+        uuid(gameId),
         externalRoundId,
         currency,
         canonicalDecimal(args.amount),
@@ -340,21 +358,12 @@ export class LedgerApiService implements LedgerApiV1 {
         print,
         [targetRefId],
         async (tx) => {
-          const [reversed] = await tx
-            .select({ providerRefId: ledgerApiRequest.providerRefId })
-            .from(ledgerApiRequest)
-            .where(
-              and(
-                eq(ledgerApiRequest.providerName, providerName),
-                eq(ledgerApiRequest.targetRefId, targetRefId),
-              ),
-            )
-            .limit(1);
-          if (reversed) {
+          if (await this.isReversed(tx, providerName, targetRefId)) {
             throw new LedgerRefusal('already_reversed');
           }
           const [bet] = await tx
             .select({
+              id: walletTransaction.id,
               amount: walletTransaction.amount,
               currency: walletTransaction.currency,
               externalRoundId: walletTransaction.externalRoundId,
@@ -379,6 +388,7 @@ export class LedgerApiService implements LedgerApiV1 {
             playerId,
             gameId,
             providerRef: { providerName, providerRefId, externalRoundId: bet.externalRoundId },
+            betTransactionId: bet.id,
             amount: bet.amount,
             currency: bet.currency,
           });
@@ -388,19 +398,26 @@ export class LedgerApiService implements LedgerApiV1 {
     });
   }
 
-  async closeRound(input: LedgerV1CloseRoundArgs): Promise<LedgerV1Round> {
-    const args = LedgerV1CloseRoundArgsSchema.parse(input);
-    const playerId = await this.deps.identityReader.getPlayerIdByUserIdSafe(args.userId);
-    return this.deps.drizzle.db.transaction(async (tx) => {
-      const round = await this.deps
-        .gamingCommands()
-        .accumulateExternalRound(tx, { ...args, isFinal: true });
-      await this.emit(tx, 'gaming.round.ended', {
-        roundId: round.roundId,
-        userId: args.userId,
-        playerId,
+  closeRound(input: LedgerV1CloseRoundArgs): Promise<LedgerV1CloseRoundOutcome> {
+    return this.answer(async () => {
+      const args = LedgerV1CloseRoundArgsSchema.parse(input);
+      const playerId = await this.deps.identityReader.getPlayerIdByUserIdSafe(args.userId);
+      return this.deps.drizzle.db.transaction(async (tx) => {
+        const round = await this.deps
+          .gamingCommands()
+          .accumulateExternalRound(tx, { ...args, isFinal: true });
+        await this.emit(tx, 'gaming.round.ended', {
+          roundId: round.roundId,
+          userId: args.userId,
+          playerId,
+        });
+        return {
+          status: 'closed' as const,
+          roundId: round.roundId,
+          betAmount: round.betAmount,
+          winAmount: round.winAmount,
+        };
       });
-      return { roundId: round.roundId, betAmount: round.betAmount, winAmount: round.winAmount };
     });
   }
 
@@ -421,13 +438,10 @@ export class LedgerApiService implements LedgerApiV1 {
   }
 
   /** Turns a refusal, or a known port error, into a typed answer; anything else is thrown. */
-  private async answer(run: () => Promise<LedgerV1MoveOutcome>): Promise<LedgerV1MoveOutcome> {
+  private async answer<T>(run: () => Promise<T>): Promise<T | LedgerV1Refused> {
     try {
       return await run();
     } catch (err) {
-      if (err instanceof WalletLevelReplay) {
-        return { status: 'replayed', ...err.move };
-      }
       if (err instanceof LedgerRefusal) {
         return {
           status: 'refused',
@@ -454,26 +468,55 @@ export class LedgerApiService implements LedgerApiV1 {
     move: (tx: DrizzleTx) => Promise<{ move: LedgerV1Move; targetRefId?: string }>,
   ): Promise<LedgerV1MoveOutcome> {
     const keys = [key.providerRefId, ...lockRefs].map((ref) => lockKey(key.providerName, ref));
-    return this.deps.drizzle.db.transaction((tx) =>
-      withAdvisoryXactLocks(tx, keys, async (): Promise<LedgerV1MoveOutcome> => {
-        const stored = await this.findRequest(tx, key);
-        if (stored) {
-          if (stored.fingerprint !== print) {
-            log.warn({ ...key, operation }, 'ledger api: a key was reused by a different request');
-            throw new LedgerRefusal('fingerprint_mismatch');
+    return this.deps.drizzle.db
+      .transaction((tx) =>
+        withAdvisoryXactLocks(tx, keys, async (): Promise<LedgerV1MoveOutcome> => {
+          const stored = await this.findRequest(tx, key);
+          if (stored) {
+            if (stored.fingerprint !== print) {
+              log.warn(
+                { ...key, operation },
+                'ledger api: a key was reused by a different request',
+              );
+              throw new LedgerRefusal('fingerprint_mismatch');
+            }
+            return { status: 'replayed', ...LedgerV1MoveSchema.parse(stored.response) };
           }
-          return { status: 'replayed', ...LedgerV1MoveSchema.parse(stored.response) };
+          const applied = await move(tx);
+          await this.storeRequest(tx, key, {
+            operation,
+            fingerprint: print,
+            targetRefId: applied.targetRefId ?? null,
+            response: applied.move,
+          });
+          return { status: 'applied', ...applied.move };
+        }),
+      )
+      .catch((err: unknown): LedgerV1MoveOutcome => {
+        if (err instanceof WalletLevelReplay) {
+          return { status: 'replayed', ...err.move };
         }
-        const applied = await move(tx);
-        await this.storeRequest(tx, key, {
-          operation,
-          fingerprint: print,
-          targetRefId: applied.targetRefId ?? null,
-          response: applied.move,
-        });
-        return { status: 'applied', ...applied.move };
-      }),
-    );
+        throw err;
+      });
+  }
+
+  /** A reversal through this API already took `targetRefId`'s stake back. */
+  private async isReversed(
+    tx: DrizzleTx,
+    providerName: LedgerKey['providerName'],
+    targetRefId: LedgerKey['providerRefId'],
+  ): Promise<boolean> {
+    const [reversal] = await tx
+      .select({ providerRefId: ledgerApiRequest.providerRefId })
+      .from(ledgerApiRequest)
+      .where(
+        and(
+          eq(ledgerApiRequest.providerName, providerName),
+          eq(ledgerApiRequest.targetRefId, targetRefId),
+        ),
+      )
+      .limit(1);
+    return reversal !== undefined;
   }
 
   private async findRequest(
@@ -513,6 +556,7 @@ export class LedgerApiService implements LedgerApiV1 {
       playerId: string | null;
       gameId: Uuid;
       providerRef: LedgerKey & { externalRoundId: LedgerV1BetArgs['externalRoundId'] };
+      betTransactionId: Uuid;
       amount: string;
       currency: string;
     },
@@ -532,6 +576,7 @@ export class LedgerApiService implements LedgerApiV1 {
       type: 'bet_reversal',
       allowNewCurrency: true,
       providerRef,
+      reversesTransactionId: args.betTransactionId,
     });
     const moved = this.assertCredited(credit, round.roundId, currency);
     await this.emitMove(tx, userId, playerId, {
@@ -557,6 +602,9 @@ export class LedgerApiService implements LedgerApiV1 {
     if (!credit.ok) {
       if (credit.reason === 'wallet not found') {
         throw new LedgerRefusal('wallet_not_found');
+      }
+      if (credit.reason === WALLET_BET_ALREADY_REVERSED) {
+        throw new LedgerRefusal('already_reversed');
       }
       throw new Error(`ledger api: credit refused: ${credit.reason}`);
     }

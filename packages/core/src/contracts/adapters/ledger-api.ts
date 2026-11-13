@@ -14,9 +14,9 @@ import type {
   LedgerV1BalanceOutcome,
   LedgerV1BetArgs,
   LedgerV1CloseRoundArgs,
+  LedgerV1CloseRoundOutcome,
   LedgerV1MoveOutcome,
   LedgerV1ReverseArgs,
-  LedgerV1Round,
   LedgerV1WinArgs,
 } from '../schemas/ledger.js';
 import type { SportsbookLedger } from './sportsbook-ledger.js';
@@ -29,7 +29,7 @@ export type LedgerApiV1 = {
   win(args: LedgerV1WinArgs): Promise<LedgerV1MoveOutcome>;
   /** Returns the whole stake of a bet the API took, once, whichever key asks first. */
   reverse(args: LedgerV1ReverseArgs): Promise<LedgerV1MoveOutcome>;
-  closeRound(args: LedgerV1CloseRoundArgs): Promise<LedgerV1Round>;
+  closeRound(args: LedgerV1CloseRoundArgs): Promise<LedgerV1CloseRoundOutcome>;
   /** The real balance only; bonus funds live on the grant. Read-only. */
   balance(args: LedgerV1BalanceArgs): Promise<LedgerV1BalanceOutcome>;
   /** The sportsbook ledger's own ops, unchanged. Throws when no sportsbook module is installed. */

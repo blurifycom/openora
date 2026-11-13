@@ -100,7 +100,18 @@ export type WalletCreditArgs = {
    * terms.
    */
   terms?: BonusGrantTerms;
+  /**
+   * A `bet_reversal` only: the bet row it returns. A bet is reversed at most once, so a second
+   * reversal naming it answers `WALLET_BET_ALREADY_REVERSED`.
+   */
+  reversesTransactionId?: string;
 };
+
+/**
+ * The `reason` of a `bet_reversal` credit refused because its bet was already reversed: it named
+ * a bet another reversal named, or the round's reversals would exceed its stakes.
+ */
+export const WALLET_BET_ALREADY_REVERSED = 'bet already reversed';
 
 /** `moved` as on `WalletDebitOutcome`; `moved: false` is a replayed `providerRef`. */
 export type WalletCreditOutcome =

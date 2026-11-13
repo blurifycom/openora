@@ -3,15 +3,22 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import {
   AUDIT_WRITER,
+  BONUS_WAGERING,
+  GAMING_COMMANDS,
   IDENTITY_READER,
   LEDGER_API_V1,
   PLAY_ELIGIBILITY,
+  RG_LIMITS,
+  WALLET_BET_ALREADY_REVERSED,
   WALLET_COMMANDS,
   domainEventSchemas,
+  type BonusWageringCommands,
+  type GamingCommands,
   type LedgerApiV1,
   type LedgerV1BetArgs,
   type LedgerV1MoveOutcome,
   type PlayEligibilityPort,
+  type RgLimitsPort,
   type WalletCommands,
 } from '@openora/core/contracts';
 import {
@@ -36,6 +43,7 @@ import walletPlugin from '../plugin.js';
 let db: TestDb;
 let api: LedgerApiV1;
 let walletCommands: WalletCommands;
+let gamingCommands: GamingCommands;
 const events = makeEventBus();
 const PROVIDER = 'acme-games';
 
@@ -44,27 +52,34 @@ const unrestricted = mock<PlayEligibilityPort>({
   checkPlay: vi.fn().mockResolvedValue(null),
 });
 
-beforeAll(async () => {
-  db = await createTestDb([migrate, migrateGaming]);
-  // The real wallet and gaming plugins, so the test also covers how LEDGER_API_V1 is bound.
+/** The real wallet and gaming plugins, so the test also covers how LEDGER_API_V1 is bound. */
+function boot(register: (container: Container<CoreTokenCatalog>) => void = () => {}) {
   const container = new Container<CoreTokenCatalog>();
   container.register(DRIZZLE, () => db.drizzle);
   container.register(EVENT_BUS, () => events);
   container.register(AUDIT_WRITER, () => makeAuditWriter());
   container.register(IDENTITY_READER, () => makeIdentityReader());
   container.register(PLAY_ELIGIBILITY, () => unrestricted);
+  register(container);
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   walletPlugin.register(registry);
   gamingPlugin.register(registry);
+  return container;
+}
+
+beforeAll(async () => {
+  db = await createTestDb([migrate, migrateGaming]);
+  const container = boot();
   api = container.get(LEDGER_API_V1);
   walletCommands = container.get(WALLET_COMMANDS);
+  gamingCommands = container.get(GAMING_COMMANDS);
 });
 
 afterAll(async () => {
   await db.drop();
 });
 
-async function seedGame(rtp = '0.96') {
+async function seedGame(rtp: string | null = '0.96') {
   const provider = findOneOrThrow(
     await db.drizzle.db
       .insert(gameProvider)
@@ -104,12 +119,26 @@ async function seedPlayer(balance = '100') {
   return { userId, walletId: row.id };
 }
 
-async function balanceOf(walletId: string) {
+async function balanceOf(walletId: string, currency = 'USD') {
   const [row] = await db.drizzle.db
     .select({ amount: walletBalance.amount })
     .from(walletBalance)
-    .where(and(eq(walletBalance.walletId, walletId), eq(walletBalance.currency, 'USD')));
+    .where(and(eq(walletBalance.walletId, walletId), eq(walletBalance.currency, currency)));
   return row?.amount ?? '0';
+}
+
+async function storedKeys(providerRefId: string) {
+  return db.drizzle.db
+    .select()
+    .from(ledgerApiRequest)
+    .where(eq(ledgerApiRequest.providerRefId, providerRefId));
+}
+
+async function roundsOf(externalRoundId: string) {
+  return db.drizzle.db
+    .select()
+    .from(gameRound)
+    .where(eq(gameRound.externalRoundId, externalRoundId));
 }
 
 async function txCount(walletId: string) {
@@ -130,8 +159,8 @@ async function roundOf(externalRoundId: string) {
   );
 }
 
-async function setup(balance = '100') {
-  const g = await seedGame();
+async function setup(balance = '100', rtp: string | null = '0.96') {
+  const g = await seedGame(rtp);
   const player = await seedPlayer(balance);
   const betArgs = (overrides: Partial<LedgerV1BetArgs> = {}): LedgerV1BetArgs => ({
     providerName: PROVIDER,
@@ -213,14 +242,102 @@ describe('Ledger API v1 bet (real PG)', () => {
     expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
   });
 
-  it.each(['0', '-5', 'abc'])('refuses a stake of %s as invalid_amount', async (amount) => {
-    const { walletId, betArgs } = await setup();
+  it.each(['0', '-5', 'abc', '000000000000000000001'])(
+    'refuses a stake of %s as invalid_amount',
+    async (amount) => {
+      const { walletId, betArgs } = await setup();
 
-    expect(await api.bet(betArgs({ amount }))).toEqual({
-      status: 'refused',
-      reason: 'invalid_amount',
-    });
-    expect(await txCount(walletId)).toBe(0);
+      expect(await api.bet(betArgs({ amount }))).toEqual({
+        status: 'refused',
+        reason: 'invalid_amount',
+      });
+      expect(await txCount(walletId)).toBe(0);
+    },
+  );
+
+  it('reads an id in any case as one request', async () => {
+    const { walletId, betArgs } = await setup();
+    const args = betArgs();
+    await api.bet(args);
+
+    expect(
+      await api.bet({
+        ...args,
+        userId: args.userId.toUpperCase(),
+        gameId: args.gameId.toUpperCase(),
+      }),
+    ).toMatchObject({ status: 'replayed' });
+    expect(await txCount(walletId)).toBe(1);
+  });
+
+  describe('refused by the player standing, leaving no round and no key behind', () => {
+    const refusedBy = async (
+      register: (container: Container<CoreTokenCatalog>) => void,
+      reason: string,
+    ) => {
+      const guarded = boot(register).get(LEDGER_API_V1);
+      const { walletId, betArgs } = await setup();
+      const args = betArgs();
+
+      expect(await guarded.bet(args)).toEqual({ status: 'refused', reason });
+      expect(await roundsOf(args.externalRoundId)).toHaveLength(0);
+      expect(await storedKeys(args.providerRefId)).toHaveLength(0);
+      expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
+    };
+
+    it('a self-excluded player as player_blocked', () =>
+      refusedBy(
+        (c) =>
+          c.register(PLAY_ELIGIBILITY, () =>
+            mock<PlayEligibilityPort>({
+              isRestricted: vi.fn().mockResolvedValue(true),
+              checkPlay: vi.fn().mockResolvedValue('self_excluded'),
+            }),
+          ),
+        'player_blocked',
+      ));
+
+    it('a reached wager limit as limit', () =>
+      refusedBy(
+        (c) =>
+          c.register(RG_LIMITS, () =>
+            mock<RgLimitsPort>({
+              checkWager: vi.fn().mockResolvedValue({
+                allowed: false,
+                limitType: 'wager',
+                period: 'daily',
+                limit: '5',
+                used: '0',
+              }),
+            }),
+          ),
+        'limit',
+      ));
+
+    it('a stake over the bonus max bet as max_bet_exceeded', () =>
+      refusedBy(
+        (c) =>
+          c.register(BONUS_WAGERING, () =>
+            mock<BonusWageringCommands>({
+              wager: vi
+                .fn()
+                .mockResolvedValue({ ok: false, reason: 'max_bet_exceeded', maxBet: '5' }),
+            }),
+          ),
+        'max_bet_exceeded',
+      ));
+  });
+
+  it('refuses a stake in another currency on the same round as round_mismatch', async () => {
+    const { walletId, betArgs } = await setup();
+    const args = betArgs();
+    await api.bet(args);
+
+    expect(
+      await api.bet({ ...args, providerRefId: `tx-${randomUUID()}`, currency: 'EUR' }),
+    ).toEqual({ status: 'refused', reason: 'round_mismatch' });
+    expect(moneyEquals((await roundOf(args.externalRoundId)).betAmount, '10')).toBe(true);
+    expect(await txCount(walletId)).toBe(1);
   });
 
   it('refuses a stake above the balance and leaves no round behind', async () => {
@@ -344,6 +461,108 @@ describe('Ledger API v1 reverse (real PG)', () => {
     expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
   });
 
+  it('refuses a reverse of a bet already reversed straight through the wallet', async () => {
+    const { walletId, userId, game: g, betArgs } = await setup();
+    const bet = betArgs();
+    await api.bet(bet);
+    const direct = await walletCommands.credit(db.drizzle.db, {
+      userId,
+      amount: '10',
+      currency: 'USD',
+      type: 'bet_reversal',
+      providerRef: {
+        providerName: PROVIDER,
+        providerRefId: `rb-${randomUUID()}`,
+        externalRoundId: bet.externalRoundId,
+      },
+    });
+    expect(direct).toMatchObject({ ok: true, moved: true });
+
+    expect(
+      await api.reverse({
+        providerName: PROVIDER,
+        providerRefId: `rb-${randomUUID()}`,
+        userId,
+        gameId: g.id,
+        targetRefId: bet.providerRefId,
+      }),
+    ).toEqual({ status: 'refused', reason: 'already_reversed' });
+    expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
+    expect(await txCount(walletId)).toBe(2);
+  });
+
+  it('lets the wallet reverse a bet once, whether or not the reversal names it', async () => {
+    const { walletId, userId, betArgs } = await setup();
+    const { externalRoundId } = betArgs();
+    const bet = expectMoved(await api.bet(betArgs({ externalRoundId })), 'applied');
+    const reversal = (reversesTransactionId?: string) =>
+      walletCommands.credit(db.drizzle.db, {
+        userId,
+        amount: '10',
+        currency: 'USD',
+        type: 'bet_reversal',
+        providerRef: {
+          providerName: PROVIDER,
+          providerRefId: `rb-${randomUUID()}`,
+          externalRoundId,
+        },
+        ...(reversesTransactionId ? { reversesTransactionId } : {}),
+      });
+
+    expect(await reversal(bet.transactionId ?? '')).toMatchObject({ ok: true, moved: true });
+    expect(await reversal(bet.transactionId ?? '')).toEqual({
+      ok: false,
+      reason: WALLET_BET_ALREADY_REVERSED,
+    });
+    expect(await reversal()).toEqual({ ok: false, reason: WALLET_BET_ALREADY_REVERSED });
+    expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
+    expect(await txCount(walletId)).toBe(2);
+  });
+
+  it('refuses a bet whose rollback key comes after its stake was already returned', async () => {
+    const { walletId, userId, game: g, betArgs } = await setup();
+    const bet = betArgs();
+    // A bet a bridge placed straight through the ports, then reversed through the API.
+    await db.drizzle.db.transaction(async (tx) => {
+      await gamingCommands.accumulateExternalRound(tx, {
+        gameId: g.id,
+        userId,
+        currency: 'USD',
+        externalRoundId: bet.externalRoundId,
+        betDelta: '10',
+      });
+      await walletCommands.debit(tx, {
+        userId,
+        amount: '10',
+        currency: 'USD',
+        type: 'bet',
+        context: { provider: PROVIDER, product: 'casino', gameId: g.id },
+        providerRef: {
+          providerName: PROVIDER,
+          providerRefId: bet.providerRefId,
+          externalRoundId: bet.externalRoundId,
+        },
+      });
+    });
+    expectMoved(
+      await api.reverse({
+        providerName: PROVIDER,
+        providerRefId: `rb-${randomUUID()}`,
+        userId,
+        gameId: g.id,
+        targetRefId: bet.providerRefId,
+      }),
+      'applied',
+    );
+
+    expect(await api.bet({ ...bet, reverseRef: `rb-${randomUUID()}` })).toEqual({
+      status: 'refused',
+      reason: 'already_reversed',
+    });
+    expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
+    expect(await txCount(walletId)).toBe(2);
+  });
+
   it('refuses a reverse of another player bet as bet_not_found', async () => {
     const { game: g, betArgs } = await setup();
     const bet = betArgs();
@@ -397,12 +616,54 @@ describe('Ledger API v1 win and round (real PG)', () => {
       currency: 'USD',
     });
 
-    expect(moneyEquals(closed.betAmount, '10')).toBe(true);
-    expect(moneyEquals(closed.winAmount, '0')).toBe(true);
+    expect(closed).toMatchObject({ status: 'closed', roundId: expect.any(String) });
+    expect(closed.status === 'closed' && moneyEquals(closed.betAmount, '10')).toBe(true);
+    expect(closed.status === 'closed' && moneyEquals(closed.winAmount, '0')).toBe(true);
     expect(await api.balance({ userId: randomUUID(), currency: 'USD' })).toEqual({
       status: 'refused',
       reason: 'wallet_not_found',
     });
+  });
+
+  it('refuses to close another player round as round_mismatch', async () => {
+    const { game: g, betArgs } = await setup();
+    const bet = betArgs();
+    await api.bet(bet);
+    const other = await seedPlayer();
+
+    expect(
+      await api.closeRound({
+        userId: other.userId,
+        gameId: g.id,
+        externalRoundId: bet.externalRoundId,
+        currency: 'USD',
+      }),
+    ).toEqual({ status: 'refused', reason: 'round_mismatch' });
+    expect((await roundOf(bet.externalRoundId)).status).toBe('active');
+  });
+
+  it('refuses a win in a currency the round did not stake, opening no balance', async () => {
+    const { walletId, betArgs } = await setup();
+    const bet = betArgs();
+    await api.bet(bet);
+
+    expect(
+      await api.win({ ...bet, providerRefId: `w-${randomUUID()}`, currency: 'EUR', amount: '50' }),
+    ).toEqual({ status: 'refused', reason: 'round_mismatch' });
+    const eur = await db.drizzle.db
+      .select()
+      .from(walletBalance)
+      .where(and(eq(walletBalance.walletId, walletId), eq(walletBalance.currency, 'EUR')));
+    expect(eur).toHaveLength(0);
+    expect(await txCount(walletId)).toBe(1);
+  });
+
+  it('pays a free-round win with no stake in a currency the player does not hold yet', async () => {
+    const { walletId, betArgs } = await setup();
+
+    expectMoved(await api.win({ ...betArgs(), currency: 'EUR', amount: '5' }), 'applied');
+
+    expect(moneyEquals(await balanceOf(walletId, 'EUR'), '5')).toBe(true);
   });
 
   it('refuses a negative win as invalid_amount', async () => {
@@ -429,6 +690,23 @@ describe('Round wager snapshot (real PG)', () => {
 
     expect(moneyEquals((await roundOf(first.externalRoundId)).rtp ?? '', '0.96')).toBe(true);
     expect(moneyEquals((await roundOf(next.externalRoundId)).rtp ?? '', '0.9')).toBe(true);
+  });
+
+  it('snapshots the catalogue values over the bridge ones, and the bridge ones where it has none', async () => {
+    const wager = { product: 'live-casino', rtp: '0.5' } as const;
+    const catalogued = await setup();
+    const priced = catalogued.betArgs({ wager });
+    await api.bet(priced);
+    const unpriced = await setup('100', null);
+    const fromBridge = unpriced.betArgs({ wager });
+    await api.bet(fromBridge);
+
+    const kept = await roundOf(priced.externalRoundId);
+    expect(kept.wagerProduct).toBe('casino');
+    expect(moneyEquals(kept.rtp ?? '', '0.96')).toBe(true);
+    const filled = await roundOf(fromBridge.externalRoundId);
+    expect(filled.wagerProduct).toBe('casino');
+    expect(moneyEquals(filled.rtp ?? '', '0.5')).toBe(true);
   });
 
   it('carries the wager inputs on the projected event, as a fraction only', () => {

@@ -1,5 +1,5 @@
 {
-  "id": "ac3a2149-f090-4ac3-91f8-21474d3b1c67",
+  "id": "5763d2f1-425d-4eb8-8430-035c8206d968",
   "prevId": "03d1eefc-8004-4510-8a96-b64c4b585e52",
   "version": "7",
   "dialect": "postgresql",
@@ -2133,6 +2133,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "reversed_transaction_id": {
+          "name": "reversed_transaction_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -2456,6 +2462,22 @@
           ],
           "isUnique": true,
           "where": "\"wallet_transaction\".\"idempotency_key\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "wallet_transaction_reversed_transaction_id_idx": {
+          "name": "wallet_transaction_reversed_transaction_id_idx",
+          "columns": [
+            {
+              "expression": "reversed_transaction_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"wallet_transaction\".\"reversed_transaction_id\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}

@@ -49,6 +49,7 @@ export type {
   WalletWithdrawalHoldArgs,
 } from './wallet-commands.js';
 export {
+  WALLET_BET_ALREADY_REVERSED,
   WALLET_COMMANDS,
   WALLET_CORRECTION_DEBIT_TYPES,
   WalletCommandAmountError,
