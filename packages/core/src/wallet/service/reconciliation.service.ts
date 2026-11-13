@@ -1925,6 +1925,8 @@ export class ReconciliationService {
    * transaction itself. Without it a slow-but-healthy swap, or a withdrawal a human took days
    * to review, leaves an `open` finding describing a situation that no longer exists, and since
    * `countOpenFindings` feeds `alertThreshold`, a growing pile of them alerts on nothing.
+   * The close and its audit rows commit together. A failure is logged and closes nothing, so the
+   * cycle still files what it finds and the next cycle tries again.
    */
   private async resolveFindingsLeftBehind(
     kind: WalletReconciliationFindingKind,
@@ -1937,32 +1939,39 @@ export class ReconciliationService {
       WHERE ${walletTransaction.id} = ${walletReconciliationFinding.transactionId}
         AND NOT (${stillStuck})
     )`;
-    const closed = await this.drizzle.db
-      .update(walletReconciliationFinding)
-      .set({ status: 'resolved', resolvedAt: new Date(), resolutionNote })
-      .where(
-        and(
-          eq(walletReconciliationFinding.kind, kind),
-          eq(walletReconciliationFinding.status, 'open'),
-          left,
-        ),
-      )
-      .returning({ id: walletReconciliationFinding.id });
+    try {
+      return await this.drizzle.db.transaction(async (txn) => {
+        const closed = await txn
+          .update(walletReconciliationFinding)
+          .set({ status: 'resolved', resolvedAt: new Date(), resolutionNote })
+          .where(
+            and(
+              eq(walletReconciliationFinding.kind, kind),
+              eq(walletReconciliationFinding.status, 'open'),
+              left,
+            ),
+          )
+          .returning({ id: walletReconciliationFinding.id });
 
-    // `resolvedBy` stays null: no admin acted, and the audit entry's system actor is
-    // what says who did. A finding closed here never carries a `credited` outcome,
-    // because nothing on this path moves money.
-    for (const row of closed) {
-      await this.audit.record({
-        actorType: 'system',
-        action: 'wallet.reconciliation_finding.resolved',
-        resourceType: 'wallet_reconciliation_finding',
-        resourceId: row.id,
-        before: { status: 'open' },
-        after: { status: 'resolved', outcome },
+        // `resolvedBy` stays null: no admin acted, and the audit entry's system actor is
+        // what says who did. A finding closed here never carries a `credited` outcome,
+        // because nothing on this path moves money.
+        for (const row of closed) {
+          await this.audit.recordInTransaction(txn, {
+            actorType: 'system',
+            action: 'wallet.reconciliation_finding.resolved',
+            resourceType: 'wallet_reconciliation_finding',
+            resourceId: row.id,
+            before: { status: 'open' },
+            after: { status: 'resolved', outcome },
+          });
+        }
+        return closed.length;
       });
+    } catch (err) {
+      logger.error({ err, kind }, 'reconciliation: closing findings failed');
+      return 0;
     }
-    return closed.length;
   }
 
   // ponytail: findings dedupe on (kind, provider, external id) whatever their status, so a

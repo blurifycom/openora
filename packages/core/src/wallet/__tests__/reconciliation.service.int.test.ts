@@ -648,6 +648,45 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
     });
   });
 
+  it('keeps findings open when their close cannot be audited, and still files this cycle', async () => {
+    const { tx } = await seedApprovedNeverDispatched();
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      getWithdrawalStatus: vi.fn(async () => {
+        throw new Error('vendor unreachable');
+      }),
+    });
+    const { reconciliation, audit } = makeServices(payment);
+    await reconciliation.runCycle();
+    // Settled since: its finding is due to close.
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ status: 'completed' })
+      .where(eq(walletTransaction.id, tx.id));
+    audit.recordInTransaction.mockImplementation(
+      async (_txn: unknown, entry: { action: string }) => {
+        if (entry.action === 'wallet.reconciliation_finding.resolved') {
+          throw new Error('audit store down');
+        }
+      },
+    );
+    const dispatched = await seedStuckWithdrawal(randomUUID());
+
+    await reconciliation.runCycle();
+
+    const findings = await findingRows();
+    expect(findings.map(({ kind, status }) => ({ kind, status }))).toEqual(
+      expect.arrayContaining([
+        { kind: 'stuck_withdrawal_approved', status: 'open' },
+        { kind: 'stuck_withdrawal_processing', status: 'open' },
+      ]),
+    );
+    expect(findings).toHaveLength(2);
+    expect(findings.find((f) => f.kind === 'stuck_withdrawal_processing')?.transactionId).toBe(
+      dispatched.tx.id,
+    );
+  });
+
   it('closes each stuck withdrawal finding once the withdrawal leaves that state, moving no money', async () => {
     const { w, tx } = await seedApprovedNeverDispatched();
     const vendorRefId = randomUUID();
@@ -681,7 +720,8 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
       ]),
     );
     expect(findings).toHaveLength(2);
-    expect(audit.record).toHaveBeenCalledWith(
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
         action: 'wallet.reconciliation_finding.resolved',
         after: { status: 'resolved', outcome: 'withdrawal_moved_on' },

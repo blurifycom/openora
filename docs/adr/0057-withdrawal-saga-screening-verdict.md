@@ -99,9 +99,10 @@ kind, deduplicated on (kind, provider, external id):
 
 These findings are reports only. They never refund, because a payout may still have left. They
 can only be dismissed: the withdrawal is still live, so a manual credit could pay it twice. Each
-closes by itself, as a system resolution with its own audit row, once the withdrawal leaves the
-state it reports, so a long but legitimate manual review does not count toward `alertThreshold`
-for ever.
+closes by itself, as a system resolution with its audit row in the same transaction, once the
+withdrawal leaves the state it reports, so a long but legitimate manual review does not count
+toward `alertThreshold` for ever. A close that fails is logged and retried on the next cycle,
+and never stops the cycle from filing.
 
 Limits of the dedup:
 
