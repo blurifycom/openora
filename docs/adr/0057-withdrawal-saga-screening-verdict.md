@@ -65,8 +65,8 @@ checked at three points:
 
 A port that throws refuses the request or the approval. Auto-approval catches the throw and leaves
 the withdrawal for a human. A throw after the flip sends the withdrawal back to the queue with
-reason `control_check_failed` and its own audit row, for admin and auto-approval alike. `pinLockedUntil` is new on `WITHDRAWAL_SECURITY`. It reads the lockout
-without counting a guess.
+reason `control_check_failed` and its own audit row, for admin and auto-approval alike.
+`pinLockedUntil` is new on `WITHDRAWAL_SECURITY`. It reads the lockout without counting a guess.
 
 **The saga reuses the existing statuses.** No new enum value is added:
 
@@ -123,6 +123,8 @@ Limits of the dedup:
   that withdrawal for a human. The three new finding kinds come with a migration, and an old
   replica may not serialise them: run the migration and replace every replica that reads findings
   before relying on them.
-- Known gaps:
+
+Known gaps:
+
 - Bonus forfeiture still runs inside the withdraw transaction (`BONUS_LIFECYCLE`).
 - The review threshold compares raw amounts across currencies, as before.
