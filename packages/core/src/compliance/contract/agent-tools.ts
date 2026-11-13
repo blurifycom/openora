@@ -16,6 +16,7 @@ import {
   UuidSchema,
   defineActionType,
   defineMcpTool,
+  type KycStatus,
 } from '@openora/core/contracts';
 import { KYC_DOCUMENT_TYPES, KycDocumentTypeSchema, KycTriggeredBySchema } from './enums.js';
 
@@ -235,8 +236,17 @@ export const rgFlagsQueueTool = defineMcpTool({
   errors: [],
 });
 
+/** The KYC statuses the queue counts and lists: awaiting a decision, or the player's resubmission. */
+export const KYC_QUEUE_STATUSES = [
+  'pending',
+  'resubmission_requested',
+] as const satisfies readonly KycStatus[];
+export const KycQueueStatusSchema = z.enum(KYC_QUEUE_STATUSES);
+export type KycQueueStatus = z.infer<typeof KycQueueStatusSchema>;
+
 export const KycQueueInputSchema = z.object({
   tier: KycTierSchema.optional(),
+  status: KycQueueStatusSchema.optional(),
   limit: z.coerce.number().int().min(1).max(COMPLIANCE_QUEUE_MAX_ITEMS).default(10),
 });
 export type KycQueueInput = z.infer<typeof KycQueueInputSchema>;
@@ -260,7 +270,7 @@ export const KycQueueOutputSchema = z.object({
         verificationId: UuidSchema,
         playerId: UuidSchema.nullable(),
         tier: KycTierSchema,
-        status: KycStatusSchema,
+        status: KycQueueStatusSchema,
         triggeredBy: KycTriggeredBySchema,
         documentTypes: z.array(KycDocumentTypeSchema).max(KYC_DOCUMENT_TYPES.length),
         submittedAt: TimestampSchema,
@@ -276,12 +286,13 @@ export const kycQueueTool = defineMcpTool({
   title: 'KYC queue',
   description:
     "The KYC verifications waiting across all players, each player's latest per tier: how many " +
-    'are pending (awaiting a decision) and how many wait for the player to resubmit, per tier ' +
-    '(basic, or advanced - enhanced KYC), the average hours the pending ones have waited, and the ' +
-    'pending ones waiting longest, oldest first (limit 1 to 20, default 10; tier narrows them), ' +
-    'each with its verificationId, playerId, tier, status, what triggered it, the document types ' +
-    "submitted and hours waited. Use kyc.status for one player's standing. No decision reason, " +
-    'document or personal data is returned.',
+    'are pending (awaiting a decision) and how many are resubmission_requested (waiting for the ' +
+    'player to resubmit), per tier (basic, or advanced - enhanced KYC), the average hours the ' +
+    'pending ones have waited, and the waiting ones submitted longest ago, oldest first (limit 1 ' +
+    'to 20, default 10; both statuses unless status names one, tier narrows them too). Each ' +
+    'listed one carries its verificationId and playerId, tier, status, what triggered it, the ' +
+    "document types submitted and hours since submission. Use kyc.status for one player's " +
+    'standing. No decision reason, document or personal data is returned.',
   class: 'read',
   schemaVersion: 1,
   iam: { resource: 'compliance', action: 'view' },

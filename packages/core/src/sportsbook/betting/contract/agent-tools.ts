@@ -1,7 +1,13 @@
 import * as z from 'zod';
 import {
   CurrencyTickerSchema,
+  FIND_TOOL_MAX_LIMIT,
+  FindToolLimitSchema,
   MoneyAmountSchema,
+  MoneyThresholdSchema,
+  SPORTSBOOK_BET_RESULTS,
+  SPORTSBOOK_BET_STATUSES,
+  SportsbookBetResultSchema,
   SportsbookBetStatusSchema,
   TimestampSchema,
   UuidSchema,
@@ -95,5 +101,89 @@ export const turnoverExposureTool = defineMcpTool({
   inputSchema: TurnoverExposureInputSchema,
   outputSchema: TurnoverExposureOutputSchema,
   redact: { allow: ['dateFrom', 'dateTo', 'currencies', 'truncated'] },
+  errors: [],
+});
+
+const BETS_FIND_DEFAULT_DAYS = 30;
+export const BETS_FIND_MAX_DAYS = 92;
+
+export const BETS_FIND_SORT_FIELDS = ['placedAt', 'stake', 'potentialPayout'] as const;
+export const BetsFindSortBySchema = z.enum(BETS_FIND_SORT_FIELDS);
+export type BetsFindSortBy = z.infer<typeof BetsFindSortBySchema>;
+
+/** sportsbook.bets_find's days: `placedTo` defaults to the day of `now`, `placedFrom` to 30 days ending on it. */
+export function resolveBetsFindRange(
+  { placedFrom, placedTo }: { placedFrom?: string; placedTo?: string },
+  now = new Date(),
+) {
+  return resolveDayRange({ dateFrom: placedFrom, dateTo: placedTo }, BETS_FIND_DEFAULT_DAYS, now);
+}
+
+export const BetsFindInputSchema = z
+  .object({
+    status: z.array(SportsbookBetStatusSchema).max(SPORTSBOOK_BET_STATUSES.length).optional(),
+    result: z.array(SportsbookBetResultSchema).max(SPORTSBOOK_BET_RESULTS.length).optional(),
+    playerId: UuidSchema.optional(),
+    currency: CurrencyTickerSchema.max(10).optional(),
+    placedFrom: z.iso.date().optional(),
+    placedTo: z.iso.date().optional(),
+    minStake: MoneyThresholdSchema.optional(),
+    sortBy: BetsFindSortBySchema.default('placedAt'),
+    sortDir: z.enum(['desc', 'asc']).default('desc'),
+    limit: FindToolLimitSchema,
+  })
+  .superRefine((input, ctx) =>
+    checkDayRange(resolveBetsFindRange(input), BETS_FIND_MAX_DAYS, ctx, {
+      from: 'placedFrom',
+      to: 'placedTo',
+    }),
+  );
+export type BetsFindInput = z.infer<typeof BetsFindInputSchema>;
+
+export const BetsFindOutputSchema = z.object({
+  placedFrom: z.iso.date(),
+  placedTo: z.iso.date(),
+  total: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  bets: z
+    .array(
+      z.object({
+        betId: UuidSchema,
+        playerId: UuidSchema.nullable(),
+        status: SportsbookBetStatusSchema,
+        result: SportsbookBetResultSchema.nullable(),
+        currency: CurrencyTickerSchema,
+        stake: MoneyAmountSchema,
+        potentialPayout: MoneyAmountSchema,
+        payoutTotal: MoneyAmountSchema,
+        legs: z.number().int().nonnegative(),
+        placedAt: TimestampSchema,
+        settledAt: TimestampSchema.nullable(),
+      }),
+    )
+    .max(FIND_TOOL_MAX_LIMIT),
+});
+export type BetsFind = z.infer<typeof BetsFindOutputSchema>;
+
+export const betsFindTool = defineMcpTool({
+  id: 'sportsbook.bets_find',
+  title: 'Find sportsbook bets',
+  description:
+    'Lists the sportsbook bets placed over whole UTC days from placedFrom through placedTo ' +
+    '(defaults to the 30 days ending today, at most 92 days; both are returned) that match ' +
+    'every filter given: status (any of reserved, accepted, cancelled, settled), result (any of ' +
+    'won, lost, void, half_won, half_lost, cashed_out), playerId, currency and minStake. Each ' +
+    'carries its betId and playerId, status, result (null until settled), currency, stake, ' +
+    'potential payout, what its settlement paid, number of legs, when it was placed and ' +
+    'settled. sortBy placedAt (default), stake or potentialPayout, sortDir desc (default) or ' +
+    'asc. Lists at most limit bets (1 to 50, default 20); total counts every match and truncated ' +
+    'is true when more matched. Amounts are decimal strings in the bet currency; narrow by ' +
+    'currency to compare them. No selection, event or market is returned.',
+  class: 'read',
+  schemaVersion: 1,
+  iam: { resource: 'sportsbook', action: 'view' },
+  inputSchema: BetsFindInputSchema,
+  outputSchema: BetsFindOutputSchema,
+  redact: { allow: ['placedFrom', 'placedTo', 'total', 'truncated', 'bets'] },
   errors: [],
 });

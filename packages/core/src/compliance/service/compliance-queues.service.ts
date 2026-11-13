@@ -9,7 +9,9 @@ import {
 } from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
 import {
+  KYC_QUEUE_STATUSES,
   KycDocumentTypeSchema,
+  KycQueueStatusSchema,
   type KycQueue,
   type KycQueueInput,
   type RgFlagsQueue,
@@ -27,9 +29,6 @@ const hoursBetween = (from: Date, now: Date) =>
 /** A flag's limit as it was stored, kept only when it is a limit type compliance knows. */
 const limitTypeOf = (value: string | null): LimitType | null =>
   LimitTypeSchema.safeParse(value).data ?? null;
-
-/** A KYC status the queue counts: awaiting a decision, or waiting for the player to resubmit. */
-const QUEUED_KYC_STATUSES = ['pending', 'resubmission_requested'] as const satisfies KycStatus[];
 
 /**
  * The compliance queues an agent reads across all players: the open responsible-gambling flags
@@ -88,7 +87,10 @@ export class ComplianceQueuesService {
    * Counts each player's latest verification per tier: an older one a later attempt superseded
    * waits for nothing.
    */
-  async kycQueue({ tier, limit }: KycQueueInput, now: Date = new Date()): Promise<KycQueue> {
+  async kycQueue(
+    { tier, status, limit }: KycQueueInput,
+    now: Date = new Date(),
+  ): Promise<KycQueue> {
     const db = this.drizzle.db;
     const latest = db
       .selectDistinctOn([kycVerification.userId, kycVerification.tier], {
@@ -112,7 +114,7 @@ export class ComplianceQueuesService {
       db
         .select({ tier: latest.tier, status: latest.status, count: count(), waitHours })
         .from(latest)
-        .where(inArray(latest.status, [...QUEUED_KYC_STATUSES]))
+        .where(inArray(latest.status, [...KYC_QUEUE_STATUSES]))
         .groupBy(latest.tier, latest.status),
       db
         .select({
@@ -126,12 +128,17 @@ export class ComplianceQueuesService {
         })
         .from(latest)
         .leftJoin(player, eq(player.userId, latest.userId))
-        .where(and(eq(latest.status, 'pending'), tier ? eq(latest.tier, tier) : undefined))
+        .where(
+          and(
+            status ? eq(latest.status, status) : inArray(latest.status, [...KYC_QUEUE_STATUSES]),
+            tier ? eq(latest.tier, tier) : undefined,
+          ),
+        )
         .orderBy(asc(latest.submittedAt), asc(latest.id))
         .limit(limit),
     ]);
-    const countOf = (rowTier: KycTier, status: KycStatus) =>
-      counts.find((row) => row.tier === rowTier && row.status === status)?.count ?? 0;
+    const countOf = (rowTier: KycTier, rowStatus: KycStatus) =>
+      counts.find((row) => row.tier === rowTier && row.status === rowStatus)?.count ?? 0;
     const pending = counts.filter((row) => row.status === 'pending');
     const pendingCount = pending.reduce((sum, row) => sum + row.count, 0);
     const pendingWait = pending.reduce((sum, row) => sum + (row.waitHours ?? 0) * row.count, 0);
@@ -153,7 +160,7 @@ export class ComplianceQueuesService {
         verificationId: row.verificationId,
         playerId: row.playerId,
         tier: row.tier,
-        status: row.status,
+        status: KycQueueStatusSchema.parse(row.status),
         triggeredBy: row.triggeredBy,
         documentTypes: row.documentTypes.filter(
           (type) => KycDocumentTypeSchema.safeParse(type).success,

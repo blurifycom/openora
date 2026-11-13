@@ -15,9 +15,17 @@ import {
   type RunContext,
 } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
-import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameRound,
+} from '@openora/core/casino/schema/gaming';
+import { bannerConfiguration, bannerImage } from '@openora/core/cms/schema';
 import { kycVerification, rgExclusion, rgFlag, userLimit } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
+import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
 import { promoGrant, promoGrantEntry } from '@openora/core/promo/schema/bonus';
 import { sportsbookBet, sportsbookSession } from '@openora/core/sportsbook/schema/betting';
@@ -47,18 +55,25 @@ const REVIEWED = 'Reviewed, no issues.';
 const NOTE_ROUTE_KEYS = ['actorId', 'content', 'createdAt', 'id', 'playerId', 'updatedAt'];
 
 const EXPECTED_TOOL_OWNERS = {
+  'bonus.grants_find': 'bonus',
   'bonus.grants_summary': 'bonus',
+  'cms.banners': 'cms',
   'financial.summary': 'analytics',
+  'games.categories': 'gaming',
+  'games.find': 'gaming',
   'gaming.top_games': 'gaming',
   'ggr.summary': 'analytics',
   'kyc.queue': 'compliance',
   'kyc.status': 'compliance',
   'payments.flow_daily': 'analytics',
   'player.summary': 'player-management',
+  'players.find': 'player-management',
   'rg.flags_queue': 'compliance',
   'rg.player_state': 'compliance',
   'players.deposit_compare': 'wallet',
+  'sportsbook.bets_find': 'betting',
   'sportsbook.turnover_exposure': 'betting',
+  'transactions.find': 'wallet',
   'wallet.activity': 'wallet',
   'withdrawals.queue': 'wallet',
 } as const;
@@ -339,7 +354,7 @@ afterAll(async () => {
 });
 
 describe('MCP kernel registries match the generated catalog', () => {
-  it('serves exactly the eight read tools and five action types, each under its owning plugin', () => {
+  it('serves exactly the expected read tools and five action types, each under its owning plugin', () => {
     const tools = kernel.listTools();
     const actions = kernel.listActionTypes();
 
@@ -1344,12 +1359,15 @@ describe('compliance read tools serve RG and KYC facts by player id, under compl
   const DECISION_REASON = 'selfie does not match the passport photo';
   let marketer: Awaited<ReturnType<typeof newStaff>>;
   let flagged: Awaited<ReturnType<typeof newPlayer>>;
+  let resubmitting: Awaited<ReturnType<typeof newPlayer>>;
   let flagId: string;
   let verificationId: string;
+  let resubmissionId: string;
 
   beforeAll(async () => {
     marketer = await newStaff(app, 'mcp-no-compliance', 'marketing-banners');
     flagged = await newPlayer('rg-flagged');
+    resubmitting = await newPlayer('kyc-resubmitting');
     await drizzle().insert(userLimit).values({
       userId: flagged.userId,
       type: 'deposit',
@@ -1391,8 +1409,24 @@ describe('compliance read tools serve RG and KYC facts by player id, under compl
         createdAt: new Date(LONG_AGO),
       })
       .returning({ id: kycVerification.id });
+    const [resubmission] = await drizzle()
+      .insert(kycVerification)
+      .values({
+        userId: resubmitting.userId,
+        provider: 'vendor',
+        referenceId: `mcp-kyc-resubmit-${randomUUID()}`,
+        tier: 'basic',
+        status: 'resubmission_requested',
+        documentTypes: ['passport'],
+        decisionReason: DECISION_REASON,
+        triggeredBy: 'submission',
+        submittedAt: new Date(LONG_AGO),
+        createdAt: new Date(LONG_AGO),
+      })
+      .returning({ id: kycVerification.id });
     flagId = flag?.id ?? '';
     verificationId = verification?.id ?? '';
+    resubmissionId = resubmission?.id ?? '';
   });
 
   it("answers rg.player_state with the player's exclusion, flag and limit, and no reason", async () => {
@@ -1479,6 +1513,34 @@ describe('compliance read tools serve RG and KYC facts by player id, under compl
       ok: false,
       error: 'invalid_input',
     });
+  });
+
+  it('answers kyc.queue with the players asked to resubmit, by player id', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'kyc.queue',
+        { status: 'resubmission_requested', tier: 'basic', limit: 1 },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(listField(output, 'oldest')).toEqual([
+      {
+        verificationId: resubmissionId,
+        playerId: resubmitting.playerId,
+        tier: 'basic',
+        status: 'resubmission_requested',
+        triggeredBy: 'submission',
+        documentTypes: ['passport'],
+        submittedAt: LONG_AGO,
+        waitHours: expect.any(Number),
+      },
+    ]);
+    expect(Number(output['resubmissionRequestedCount'])).toBeGreaterThanOrEqual(1);
+    const served = JSON.stringify(output);
+    expect(served).not.toContain(DECISION_REASON);
+    expect(served).not.toContain(resubmitting.userId);
+    expect(served).not.toContain(resubmitting.email);
   });
 
   it.each([
@@ -1718,6 +1780,371 @@ describe('gaming, sportsbook and bonus read tools serve operator-wide figures pe
     ['gaming.top_games', 'report:view', () => support],
     ['sportsbook.turnover_exposure', 'sportsbook:view', () => officer],
     ['bonus.grants_summary', 'bonus:view', () => officer],
+  ] as const)('refuses %s to an admin whose roles lack %s', async (toolId, _grant, staff) => {
+    const run = adminRun(staff().userId);
+
+    expect(await kernel.invokeTool(toolId, {}, run)).toEqual({ ok: false, error: 'forbidden' });
+    const rows = await auditRowsOfCall(run.correlationId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ action: 'mcp.tool.failed', resourceId: toolId });
+  });
+});
+
+describe('entity find tools list each entity by the id its key names, under their own grants', () => {
+  // A currency, a month and names no other suite writes, so every list is this suite's alone.
+  const CURRENCY = 'MCPF';
+  const RANGE = { from: '2021-03-01', to: '2021-03-31' };
+  const PLACED = { placedFrom: RANGE.from, placedTo: RANGE.to };
+  const IN_RANGE = new Date('2021-03-10T12:00:00.000Z');
+  const GAME_NAME = `MCP Find ${randomUUID()}`;
+  const PLACEMENT = `mcp-find-${randomUUID()}`;
+  const EVENT_NAME = 'Hidden Find Final';
+  const FORFEIT_NOTE = 'admin note that must stay out';
+  const IMAGE_URL = 'https://cdn.example/mcp-find-banner.png';
+  let support: Awaited<ReturnType<typeof newStaff>>;
+  let officer: Awaited<ReturnType<typeof newStaff>>;
+  let marketer: Awaited<ReturnType<typeof newStaff>>;
+  let found: Awaited<ReturnType<typeof newPlayer>>;
+  let gameId: string;
+  let gameCategoryId: string;
+  let betId: string;
+  let transactionId: string;
+  let grantId: string;
+  let bannerId: string;
+
+  const notServed = (output: Record<string, unknown>) => {
+    const served = JSON.stringify(output);
+    for (const hidden of [found.userId, found.email]) {
+      expect(served).not.toContain(hidden);
+    }
+  };
+
+  beforeAll(async () => {
+    support = await newStaff(app, 'mcp-find-no-games', 'customer-support-agent');
+    officer = await newStaff(app, 'mcp-find-no-sportsbook', 'kyc-aml-officer');
+    marketer = await newStaff(app, 'mcp-find-no-players', 'marketing-banners');
+    found = await newPlayer('entity-find');
+    await depositUsd(found.client, '1');
+    await drizzle()
+      .update(player)
+      .set({ currency: CURRENCY, country: 'MT', level: 3 })
+      .where(eq(player.id, found.playerId));
+    await assignTag(admin, found.playerId, 'vip');
+
+    const [provider] = await drizzle()
+      .insert(gameProvider)
+      .values({ slug: `mcp-find-studio-${randomUUID()}`, name: 'MCP Find Studio' })
+      .returning({ id: gameProvider.id });
+    const [gameRow] = await drizzle()
+      .insert(game)
+      .values({
+        name: GAME_NAME,
+        slug: `mcp-find-${randomUUID()}`,
+        providerId: provider?.id ?? '',
+        aggregator: 'direct',
+        reviewStatus: 'approved',
+        isActive: true,
+      })
+      .returning({ id: game.id });
+    gameId = gameRow?.id ?? '';
+    const [category] = await drizzle()
+      .insert(gameCategory)
+      .values({ name: 'MCP Find Category', slug: `mcp-find-${randomUUID()}`, isActive: false })
+      .returning({ id: gameCategory.id });
+    gameCategoryId = category?.id ?? '';
+    await drizzle().insert(gameCategoryGame).values({ gameId, categoryId: gameCategoryId });
+
+    const [session] = await drizzle()
+      .insert(sportsbookSession)
+      .values({
+        userId: found.userId,
+        provider: 'book',
+        currency: CURRENCY,
+        countryCode: 'MT',
+        expiresAt: new Date(Date.now() + 60_000),
+      })
+      .returning({ id: sportsbookSession.id });
+    const [bet] = await drizzle()
+      .insert(sportsbookBet)
+      .values({
+        userId: found.userId,
+        provider: 'book',
+        providerBetId: randomUUID(),
+        sessionId: session?.id ?? '',
+        currency: CURRENCY,
+        currencyDecimals: 2,
+        status: 'settled',
+        result: 'won',
+        stake: '20',
+        cashStake: '20',
+        voidPayout: '20',
+        potentialPayout: '50',
+        payoutTotal: '50',
+        legs: [
+          {
+            eventId: 'mcp-find-event',
+            eventName: EVENT_NAME,
+            startsAt: '2021-03-11T00:00:00.000Z',
+          },
+        ],
+        lastLegStartsAt: new Date('2021-03-11T00:00:00.000Z'),
+        createdAt: IN_RANGE,
+        acceptedAt: IN_RANGE,
+        settledAt: new Date('2021-03-11T02:00:00.000Z'),
+      })
+      .returning({ id: sportsbookBet.id });
+    betId = bet?.id ?? '';
+
+    const [transaction] = await drizzle()
+      .insert(walletTransaction)
+      .values({
+        walletId: await walletIdOf(found.userId),
+        type: 'withdrawal',
+        amount: '75',
+        currency: CURRENCY,
+        status: 'on_hold',
+        rail: 'crypto',
+        reviewReason: FORFEIT_NOTE,
+        destinationAddress: 'bc1qmcpfinddestination0000000000000000',
+        createdAt: IN_RANGE,
+      })
+      .returning({ id: walletTransaction.id });
+    transactionId = transaction?.id ?? '';
+
+    const [grant] = await drizzle()
+      .insert(promoGrant)
+      .values({
+        userId: found.userId,
+        currency: CURRENCY,
+        source: 'manual',
+        sourceRef: `mcp-find-${randomUUID()}`,
+        terms: { wageringMultiplier: '3', expiryDays: 14, weights: [] },
+        grantedAmount: '30',
+        status: 'forfeited',
+        forfeitReason: 'admin',
+        forfeitedBy: adminId,
+        forfeitNote: FORFEIT_NOTE,
+        wageringRequired: '90',
+        activatedAt: IN_RANGE,
+        expiresAt: new Date('2021-03-24T12:00:00.000Z'),
+        closedAt: new Date('2021-03-12T12:00:00.000Z'),
+      })
+      .returning({ id: promoGrant.id });
+    grantId = grant?.id ?? '';
+
+    const [banner] = await drizzle()
+      .insert(bannerConfiguration)
+      .values({ placement: PLACEMENT, layout: 'single', isDefault: true, createdBy: adminId })
+      .returning({ id: bannerConfiguration.id });
+    bannerId = banner?.id ?? '';
+    await drizzle().insert(bannerImage).values({
+      bannerConfigurationId: bannerId,
+      sortOrder: 0,
+      desktopImageUrl: IMAGE_URL,
+      mobileImageUrl: IMAGE_URL,
+    });
+  });
+
+  it('answers players.find with the player by playerId and no identity data', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'players.find',
+        { currency: CURRENCY, tagKeys: ['vip'], country: 'mt' },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('players.find'));
+    expect(output).toEqual({
+      total: 1,
+      truncated: false,
+      players: [
+        expect.objectContaining({
+          playerId: found.playerId,
+          status: 'active',
+          country: 'MT',
+          currency: CURRENCY,
+          level: 3,
+          tagKeys: ['vip'],
+        }),
+      ],
+    });
+    notServed(output);
+  });
+
+  it('answers games.find and games.categories with the game and its category by id', async () => {
+    const games = outputOf(
+      await kernel.invokeTool('games.find', { search: GAME_NAME }, adminRun(adminId)),
+    );
+
+    expect(Object.keys(games).sort()).toEqual(allowListOf('games.find'));
+    expect(games).toEqual({
+      total: 1,
+      truncated: false,
+      games: [
+        expect.objectContaining({
+          gameId,
+          name: GAME_NAME,
+          provider: 'MCP Find Studio',
+          isActive: true,
+          categories: [{ gameCategoryId, name: 'MCP Find Category' }],
+        }),
+      ],
+    });
+
+    const categories = outputOf(
+      await kernel.invokeTool('games.categories', { active: false }, adminRun(adminId)),
+    );
+    expect(Object.keys(categories).sort()).toEqual(allowListOf('games.categories'));
+    expect(listField(categories, 'categories')).toContainEqual(
+      expect.objectContaining({ gameCategoryId, isActive: false, gameCount: 1 }),
+    );
+  });
+
+  it('answers sportsbook.bets_find with the bet by betId and playerId, without its event', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'sportsbook.bets_find',
+        { ...PLACED, currency: CURRENCY },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('sportsbook.bets_find'));
+    expect(output).toEqual({
+      ...PLACED,
+      total: 1,
+      truncated: false,
+      bets: [
+        {
+          betId,
+          playerId: found.playerId,
+          status: 'settled',
+          result: 'won',
+          currency: CURRENCY,
+          stake: expect.stringMatching(wholeAmount(20)),
+          potentialPayout: expect.stringMatching(wholeAmount(50)),
+          payoutTotal: expect.stringMatching(wholeAmount(50)),
+          legs: 1,
+          placedAt: IN_RANGE.toISOString(),
+          settledAt: '2021-03-11T02:00:00.000Z',
+        },
+      ],
+    });
+    expect(JSON.stringify(output)).not.toContain(EVENT_NAME);
+    notServed(output);
+  });
+
+  it('answers transactions.find with the withdrawal by transactionId, without its address or note', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'transactions.find',
+        { ...RANGE, currency: CURRENCY, type: ['withdrawal'] },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('transactions.find'));
+    expect(output).toEqual({
+      ...RANGE,
+      total: 1,
+      truncated: false,
+      transactions: [
+        {
+          transactionId,
+          playerId: found.playerId,
+          type: 'withdrawal',
+          status: 'on_hold',
+          amount: expect.stringMatching(wholeAmount(75)),
+          currency: CURRENCY,
+          rail: 'crypto',
+          createdAt: IN_RANGE.toISOString(),
+        },
+      ],
+    });
+    const served = JSON.stringify(output);
+    expect(served).not.toContain(FORFEIT_NOTE);
+    expect(served).not.toContain('bc1qmcpfind');
+    notServed(output);
+  });
+
+  it('answers bonus.grants_find with the grant by grantId, without the forfeit note', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'bonus.grants_find',
+        { currency: CURRENCY, playerId: found.playerId },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('bonus.grants_find'));
+    expect(output).toEqual({
+      total: 1,
+      truncated: false,
+      grants: [
+        expect.objectContaining({
+          grantId,
+          playerId: found.playerId,
+          status: 'forfeited',
+          source: 'manual',
+          forfeitReason: 'admin',
+          grantedAmount: expect.stringMatching(wholeAmount(30)),
+        }),
+      ],
+    });
+    expect(JSON.stringify(output)).not.toContain(FORFEIT_NOTE);
+    notServed(output);
+  });
+
+  it('answers cms.banners with the live default banner by bannerId, without its image', async () => {
+    const output = outputOf(
+      await kernel.invokeTool('cms.banners', { placement: PLACEMENT }, adminRun(adminId)),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('cms.banners'));
+    expect(output).toEqual({
+      banners: [
+        {
+          bannerId,
+          placement: PLACEMENT,
+          layout: 'single',
+          isDefault: true,
+          imageCount: 1,
+          locales: ['default'],
+          liveNow: true,
+          nextStartsAt: null,
+        },
+      ],
+      truncated: false,
+    });
+    const served = JSON.stringify(output);
+    expect(served).not.toContain(IMAGE_URL);
+    expect(served).not.toContain(adminId);
+  });
+
+  it('refuses a find over its bounds', async () => {
+    for (const [toolId, input] of [
+      ['players.find', { limit: 51 }],
+      ['sportsbook.bets_find', { placedFrom: '2021-01-01', placedTo: '2021-04-03' }],
+      ['transactions.find', { from: '2021-01-01', to: '2021-04-03' }],
+      ['bonus.grants_find', { expiringWithinDays: 91 }],
+      ['games.find', { search: 'x'.repeat(101) }],
+    ] as const) {
+      expect(await kernel.invokeTool(toolId, input, adminRun(adminId))).toMatchObject({
+        ok: false,
+        error: 'invalid_input',
+      });
+    }
+  });
+
+  it.each([
+    ['players.find', 'player:view', () => marketer],
+    ['games.find', 'game-config:view', () => support],
+    ['games.categories', 'game-config:view', () => support],
+    ['sportsbook.bets_find', 'sportsbook:view', () => officer],
+    ['transactions.find', 'transaction:view', () => marketer],
+    ['bonus.grants_find', 'bonus:view', () => officer],
+    ['cms.banners', 'content:update', () => officer],
   ] as const)('refuses %s to an admin whose roles lack %s', async (toolId, _grant, staff) => {
     const run = adminRun(staff().userId);
 

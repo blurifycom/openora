@@ -1,16 +1,25 @@
 import * as z from 'zod';
 import {
   CurrencyTickerSchema,
+  FIND_TOOL_MAX_LIMIT,
+  FindToolLimitSchema,
   KycStatusSchema,
   MoneyAmountSchema,
+  MoneyThresholdSchema,
   NonEmptyReasonSchema,
   SignedMoneyAmountSchema,
   TagKeySchema,
   TimestampSchema,
   UuidSchema,
+  WALLET_TRANSACTION_STATUSES,
+  WALLET_TRANSACTION_TYPES,
+  WalletRailSchema,
   WalletTransactionStatusSchema,
+  WalletTransactionTypeSchema,
+  checkDayRange,
   defineActionType,
   defineMcpTool,
+  resolveDayRange,
   type WalletTransactionStatus,
 } from '@openora/core/contracts';
 
@@ -239,6 +248,91 @@ export const playersDepositCompareTool = defineMcpTool({
     ],
   },
   errors: ['segment_too_large'],
+});
+
+const TRANSACTIONS_FIND_DEFAULT_DAYS = 30;
+export const TRANSACTIONS_FIND_MAX_DAYS = 92;
+
+export const TRANSACTIONS_FIND_SORT_FIELDS = ['createdAt', 'amount'] as const;
+export const TransactionsFindSortBySchema = z.enum(TRANSACTIONS_FIND_SORT_FIELDS);
+export type TransactionsFindSortBy = z.infer<typeof TransactionsFindSortBySchema>;
+
+/** transactions.find's days: `to` defaults to the day of `now`, `from` to 30 days ending on it. */
+export function resolveTransactionsFindRange(
+  { from, to }: { from?: string; to?: string },
+  now = new Date(),
+) {
+  return resolveDayRange({ dateFrom: from, dateTo: to }, TRANSACTIONS_FIND_DEFAULT_DAYS, now);
+}
+
+export const TransactionsFindInputSchema = z
+  .object({
+    type: z.array(WalletTransactionTypeSchema).max(WALLET_TRANSACTION_TYPES.length).optional(),
+    status: z
+      .array(WalletTransactionStatusSchema)
+      .max(WALLET_TRANSACTION_STATUSES.length)
+      .optional(),
+    playerId: UuidSchema.optional(),
+    currency: CurrencyTickerSchema.max(10).optional(),
+    from: z.iso.date().optional(),
+    to: z.iso.date().optional(),
+    minAmount: MoneyThresholdSchema.optional(),
+    sortBy: TransactionsFindSortBySchema.default('createdAt'),
+    sortDir: z.enum(['desc', 'asc']).default('desc'),
+    limit: FindToolLimitSchema,
+  })
+  .superRefine((input, ctx) =>
+    checkDayRange(resolveTransactionsFindRange(input), TRANSACTIONS_FIND_MAX_DAYS, ctx, {
+      from: 'from',
+      to: 'to',
+    }),
+  );
+export type TransactionsFindInput = z.infer<typeof TransactionsFindInputSchema>;
+
+export const TransactionsFindOutputSchema = z.object({
+  from: z.iso.date(),
+  to: z.iso.date(),
+  total: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  transactions: z
+    .array(
+      z.object({
+        transactionId: UuidSchema,
+        playerId: UuidSchema.nullable(),
+        type: WalletTransactionTypeSchema,
+        status: WalletTransactionStatusSchema,
+        amount: MoneyAmountSchema,
+        currency: CurrencyTickerSchema,
+        rail: WalletRailSchema.nullable(),
+        createdAt: TimestampSchema,
+      }),
+    )
+    .max(FIND_TOOL_MAX_LIMIT),
+});
+export type TransactionsFind = z.infer<typeof TransactionsFindOutputSchema>;
+
+export const transactionsFindTool = defineMcpTool({
+  id: 'transactions.find',
+  title: 'Find wallet transactions',
+  description:
+    'Lists the wallet transactions created over whole UTC days from from through to (defaults ' +
+    'to the 30 days ending today, at most 92 days; both are returned) that match every filter ' +
+    'given: type (any of deposit, withdrawal, bet, win, bonus, cashback, manual_credit, ' +
+    'manual_debit, ...), status (any of pending, processing, completed, failed, rejected, ' +
+    'on_hold, cancelled, refunded), playerId, currency and minAmount. Each carries its ' +
+    'transactionId and playerId, type, status, amount, currency, rail (crypto or fiat, null for ' +
+    'an internal one) and when it was created; a withdrawal transactionId is the withdrawalId ' +
+    'hold_withdrawal takes. sortBy createdAt (default) or amount, sortDir desc (default) or asc. ' +
+    'Lists at most limit (1 to 50, default 20); total counts every match and truncated is true ' +
+    'when more matched. Amounts are decimal strings in the row currency; narrow by currency to ' +
+    'compare them. No address, hash, provider reference or review note is returned.',
+  class: 'read',
+  schemaVersion: 1,
+  iam: { resource: 'transaction', action: 'view' },
+  inputSchema: TransactionsFindInputSchema,
+  outputSchema: TransactionsFindOutputSchema,
+  redact: { allow: ['from', 'to', 'total', 'truncated', 'transactions'] },
+  errors: [],
 });
 
 export const HoldWithdrawalPayloadSchema = z.object({

@@ -12,6 +12,7 @@ describe('wallet agent surface registration', () => {
     expect(registry.mcp.getTools().map((tool) => tool.contract.id)).toEqual([
       'wallet.activity',
       'withdrawals.queue',
+      'transactions.find',
       'players.deposit_compare',
     ]);
     expect(registry.actions.getAll().map((action) => action.contract.id)).toEqual([

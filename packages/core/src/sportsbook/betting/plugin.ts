@@ -23,10 +23,12 @@ import {
   SPORTSBOOK_RG_REVOKE_TRIGGERS,
   SportsbookReconcileJobSchema,
   SportsbookRgRevokeJobSchema,
+  betsFindTool,
   turnoverExposureTool,
 } from './contract/index.js';
 import { createSportsbookRouter } from './router/index.js';
 import { SportsbookAlignService } from './service/align.service.js';
+import { BetsFindService } from './service/bets-find.service.js';
 import { SportsbookBetQueryService } from './service/bet-query.service.js';
 import { SportsbookConfigService } from './service/config.service.js';
 import { SportsbookDebtService } from './service/debt.service.js';
@@ -128,6 +130,10 @@ export default {
     ctx.mcp.tool(turnoverExposureTool, (c) => {
       const turnover = new SportsbookTurnoverService(c.get(DRIZZLE));
       return (input) => turnover.turnoverExposure(input);
+    });
+    ctx.mcp.tool(betsFindTool, (c) => {
+      const bets = new BetsFindService(c.get(DRIZZLE));
+      return (input) => bets.find(input);
     });
 
     for (const topic of SPORTSBOOK_RG_REVOKE_TRIGGERS) {
