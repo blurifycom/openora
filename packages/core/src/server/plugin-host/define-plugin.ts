@@ -127,7 +127,14 @@ export type ModuleRegistry<C extends TokenCatalog> = {
   ): void;
   routers: {
     add(namespace: string, factory: RouterFactory<C>): void;
+    // Served under `/internal/v1` to the other services of the install only: every request needs
+    // a valid HMAC signature (ADR-0052), no session is read, and the handler's context is an
+    // `InternalContext` naming the calling service. Never listed in `/openapi.json`. Build its
+    // procedures on `internalProcedure`, which refuses a request with no `internalCaller`, so
+    // the same router passed to `add` stays closed on the public surface.
+    addInternal(namespace: string, factory: RouterFactory<C>): void;
     getAll(): Map<string, RouterFactory<C>>;
+    getInternal(): Map<string, RouterFactory<C>>;
   };
   events: {
     on(event: string, handler: EventHandler, options?: EventSubscriptionOptions): void;
