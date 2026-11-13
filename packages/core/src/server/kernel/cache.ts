@@ -6,11 +6,13 @@ const logger = createLogger('cache');
 // ponytail: no single-flight guard - concurrent misses on the same key each run
 // `loader`, so a hot key can stampede on cache-miss. Acceptable for the TTLs this
 // is bound at (seconds); add a per-key in-flight promise map if that ever changes.
+/** `keep` false returns a loaded value without storing it, so the next call loads it again. */
 export async function cached<T>(
   cache: CacheAdapter | undefined,
   key: string,
   ttlMs: number,
   loader: () => Promise<T>,
+  keep: (value: T) => boolean = () => true,
 ): Promise<T> {
   if (!cache) {
     return loader();
@@ -28,6 +30,9 @@ export async function cached<T>(
   }
 
   const value = await loader();
+  if (!keep(value)) {
+    return value;
+  }
   try {
     await cache.set(key, value, { ttlMs });
   } catch (err) {

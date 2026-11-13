@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { auditOutbox, createLogger, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
 import { asc, inArray, sql } from 'drizzle-orm';
 import { appendAuditEntries, OutboxEntrySchema, type ShippableEntry } from './audit.service.js';
+import { CHAIN_SPLIT_SQL } from '../migrate.js';
 
 const BATCH_SIZE = 1_000;
 const SHIPPER_LOCK_KEY = 'audit_shipper';
@@ -37,6 +38,38 @@ async function chain(txn: DrizzleTx, shippable: Shippable[]): Promise<Rejection[
   }));
 }
 
+// True once split migrate has moved this database's chain out, so shipping into it would build a
+// second chain the readers never see.
+async function chainMovedOut(tx: DrizzleTx): Promise<boolean> {
+  const { rows } = await tx.execute<{ split: boolean }>(sql.raw(CHAIN_SPLIT_SQL));
+  return rows[0]?.split ?? false;
+}
+
+// A chain started empty while the main database still holds the old one would fork the history:
+// the old rows are copied over first (the audit-copy runbook), and only then may the shipper append.
+async function refuseChainBeforeCopy(main: DrizzleTx, chainTx: DrizzleTx): Promise<void> {
+  const { rows: chain } = await chainTx.execute<{ empty: boolean }>(
+    sql`SELECT NOT EXISTS (SELECT 1 FROM audit_log) AS empty`,
+  );
+  if (!chain[0]?.empty) {
+    return;
+  }
+  const { rows: legacy } = await main.execute<{ present: boolean }>(
+    sql`SELECT to_regclass('public.audit_log') IS NOT NULL AS present`,
+  );
+  if (!legacy[0]?.present) {
+    return;
+  }
+  const { rows: held } = await main.execute<{ held: boolean }>(
+    sql`SELECT EXISTS (SELECT 1 FROM audit_log) AS held`,
+  );
+  if (held[0]?.held) {
+    throw new Error(
+      'the audit database is empty while the main database still holds audit_log rows: copy the chain over before shipping',
+    );
+  }
+}
+
 /**
  * Moves one batch of `audit_outbox` rows from `db` into the hash chain in `chainDb` (the same
  * database unless the chain has its own), oldest first, in one transaction on `db` that holds the
@@ -47,6 +80,11 @@ async function chain(txn: DrizzleTx, shippable: Shippable[]): Promise<Rejection[
  * never dropped as a duplicate. The rows are deleted once the append has committed, in the same
  * transaction when the chain shares the database and right after its own otherwise, so a crash
  * ships the whole batch again and the append skips every `event_id` the log already has.
+ *
+ * With the chain in its own database, `db` must reach the main one as the shipper role
+ * (`AUDIT_SHIPPER_DRIZZLE`), the only role its outbox guard lets delete. Throws instead of shipping
+ * when `chainDb` is left as `db` there, and before the first append into an empty chain while the
+ * main database still holds the old one.
  */
 export async function shipAuditBatch(
   db: DrizzleDb,
@@ -92,11 +130,23 @@ export async function shipAuditBatch(
     }
     // What the delete guard checks: a row whose event id is chained with other content, already
     // or just now, is moved aside rather than deleted as shipped.
-    rejected.push(
-      ...(chainDb === db
-        ? await chain(tx, shippable)
-        : await chainDb.transaction((chainTx) => chain(chainTx, shippable))),
-    );
+    if (chainDb === db) {
+      if (batch.length > 0 && (await chainMovedOut(tx))) {
+        throw new Error(
+          'the audit chain of this database lives in a database of its own: ship with its chainDb (AUDIT_DRIZZLE) as the shipper role (AUDIT_SHIPPER_DRIZZLE)',
+        );
+      }
+      rejected.push(...(await chain(tx, shippable)));
+    } else {
+      rejected.push(
+        ...(await chainDb.transaction(async (chainTx) => {
+          if (shippable.length > 0) {
+            await refuseChainBeforeCopy(tx, chainTx);
+          }
+          return chain(chainTx, shippable);
+        })),
+      );
+    }
     if (rejected.length > 0) {
       // Copied in SQL, so the entry the guard compares is the outbox's own jsonb, not a JS round
       // trip of it.
