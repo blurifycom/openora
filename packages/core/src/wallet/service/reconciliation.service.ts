@@ -64,6 +64,7 @@ import {
   lockVendorDeposit,
   recordReconciliationFinding,
   recordReconciliationFindingInTransaction,
+  recordReconciliationFindingsInTransaction,
   rgDecisionForLandedCredit,
 } from './reconciliation-finding.service.js';
 import {
@@ -1217,26 +1218,29 @@ export class ReconciliationService {
           (pair) => pair.unpricedRows === 0 && (pair.baselineId !== null || pair.advanced),
         ),
       );
+      const unchecked = page.filter((pair) => pair.unpricedRows > 0);
+      // One per pair and baseline in force, whatever the run: the key carries no count.
+      await this.drizzle.db.transaction((txn) =>
+        recordReconciliationFindingsInTransaction(
+          txn,
+          unchecked.map((pair) => ({
+            runId,
+            providerName: LEDGER_FINDING_LABEL,
+            kind: 'ledger_invariant_unchecked',
+            currency: pair.currency,
+            externalId: ledgerUncheckedKey(pair.walletId, pair.currency, pair.baselineId),
+            detail: `wallet ${pair.walletId} holds ${pair.unpricedRows} ${pair.currency} ledger rows nothing prices and no baseline covers them; run the baseline backfill`,
+          })),
+          this.audit,
+        ),
+      );
+      counts.needsBaseline += unchecked.length;
       for (const pair of page) {
         counts.pairsChecked += 1;
         if (pair.advanced) {
           counts.baselinesAdvanced += 1;
         }
         if (pair.unpricedRows > 0) {
-          counts.needsBaseline += 1;
-          // One per pair and baseline in force, whatever the run: the key carries no count.
-          await recordReconciliationFinding(
-            this.drizzle.db,
-            {
-              runId,
-              providerName: LEDGER_FINDING_LABEL,
-              kind: 'ledger_invariant_unchecked',
-              currency: pair.currency,
-              externalId: ledgerUncheckedKey(pair.walletId, pair.currency, pair.baselineId),
-              detail: `wallet ${pair.walletId} holds ${pair.unpricedRows} ${pair.currency} ledger rows nothing prices and no baseline covers them; run the baseline backfill`,
-            },
-            this.audit,
-          );
           continue;
         }
         const drift = moneySubtract(pair.balance, pair.expected);

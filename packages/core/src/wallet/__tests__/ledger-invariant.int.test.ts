@@ -437,6 +437,34 @@ describe('legacy rows and the baseline backfill (real PG)', () => {
     expect(WalletReconciliationFindingSchema.array().parse(listed.items)).toHaveLength(1);
   });
 
+  it('files a page of unchecked pairs with their audit or not at all, and audits each once', async () => {
+    await legacyWallet();
+    await legacyWallet();
+    const audit = makeAuditWriter();
+    const refuse = async (entry: { action: string }) => {
+      if (entry.action === 'wallet.reconciliation_finding.recorded') {
+        throw new Error('audit store down');
+      }
+    };
+    audit.record.mockImplementation(refuse);
+    audit.recordInTransaction.mockImplementation((_txn, entry) => refuse(entry));
+    const svc = makeReconciliation({ audit });
+
+    await expect(svc.runLedgerInvariant(randomUUID())).rejects.toThrow('audit store down');
+    expect(await findings('ledger_invariant_unchecked')).toHaveLength(0);
+
+    audit.record.mockReset();
+    audit.recordInTransaction.mockReset();
+    await run(svc);
+    await run(svc);
+    const recorded = [
+      ...audit.record.mock.calls.map(([entry]) => entry),
+      ...audit.recordInTransaction.mock.calls.map(([, entry]) => entry),
+    ].filter((entry) => entry.action === 'wallet.reconciliation_finding.recorded');
+    expect(await findings('ledger_invariant_unchecked')).toHaveLength(2);
+    expect(recorded).toHaveLength(2);
+  });
+
   it('baselines a legacy wallet, then checks play after it, and a rerun of the backfill is a no-op', async () => {
     const w = await legacyWallet();
     const healthy = await fundedWallet('50');

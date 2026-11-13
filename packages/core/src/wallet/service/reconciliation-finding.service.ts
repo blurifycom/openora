@@ -84,6 +84,34 @@ export async function recordReconciliationFindingInTransaction(
 }
 
 /**
+ * Files a batch of non-deposit findings in one insert and audits only the ones it filed, in the
+ * caller's transaction: a report already on file stays silent, and none lands unaudited.
+ */
+export async function recordReconciliationFindingsInTransaction(
+  txn: DrizzleTx,
+  inputs: readonly ReconciliationFindingInput[],
+  audit: AuditWritePort,
+): Promise<void> {
+  if (inputs.length === 0) {
+    return;
+  }
+  const filed = await txn
+    .insert(walletReconciliationFinding)
+    .values(inputs.map(findingValues))
+    .onConflictDoNothing()
+    .returning({
+      id: walletReconciliationFinding.id,
+      externalId: walletReconciliationFinding.externalId,
+    });
+  for (const row of filed) {
+    const input = inputs.find((candidate) => candidate.externalId === row.externalId);
+    if (input) {
+      await audit.recordInTransaction(txn, findingRecordedAudit(row.id, input));
+    }
+  }
+}
+
+/**
  * A poll that could not read a deposit's amount files `missing_deposit` with no amount, which
  * takes the deposit's only slot in the unique index. The first readable report completes that
  * row instead of being dropped by the conflict, or by `SAME_DEPOSIT_KIND` for a webhook.
@@ -261,24 +289,28 @@ async function insertFinding(db: DrizzleDb | DrizzleTx, input: ReconciliationFin
   }
   const [row] = await db
     .insert(walletReconciliationFinding)
-    .values({
-      runId: input.runId,
-      providerName: input.providerName,
-      kind: input.kind,
-      currency: input.currency ?? null,
-      network: input.network ?? null,
-      amount: input.amount ?? null,
-      address: input.address ?? null,
-      tag: input.tag ?? null,
-      txHash: input.txHash ?? null,
-      sourceAddress: input.sourceAddress ?? null,
-      externalId: input.externalId ?? null,
-      transactionId: input.transactionId ?? null,
-      detail: input.detail ?? null,
-    })
+    .values(findingValues(input))
     .onConflictDoNothing()
     .returning();
   return row;
+}
+
+function findingValues(input: ReconciliationFindingInput) {
+  return {
+    runId: input.runId,
+    providerName: input.providerName,
+    kind: input.kind,
+    currency: input.currency ?? null,
+    network: input.network ?? null,
+    amount: input.amount ?? null,
+    address: input.address ?? null,
+    tag: input.tag ?? null,
+    txHash: input.txHash ?? null,
+    sourceAddress: input.sourceAddress ?? null,
+    externalId: input.externalId ?? null,
+    transactionId: input.transactionId ?? null,
+    detail: input.detail ?? null,
+  };
 }
 
 /**
