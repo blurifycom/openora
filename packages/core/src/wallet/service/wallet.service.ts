@@ -1516,7 +1516,7 @@ export class WalletService {
   }
 
   // Runs before any debit and again before any approval, so a lock placed while a withdrawal
-  // waits in the queue still stops the payout. No tag module bound = no lock can exist.
+  // waits in the queue still stops the payout.
   private async assertWithdrawalsNotLocked(userId: User['id']) {
     if (await this.isWithdrawalLocked(userId)) {
       throw new WithdrawalLockedError();
@@ -3333,6 +3333,7 @@ export class WalletService {
             transactionId: args.transactionId,
             amount: args.amount,
             currency: args.currency,
+            reviewRequired: args.reviewRequired ?? null,
             ...decision,
           },
         });

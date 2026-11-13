@@ -720,7 +720,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('auto-approves a verdict marked for review once the operator took withdrawal_review out of excludeRiskFlags', async () => {
-    const { svc, psp } = await makeService({
+    const { svc, psp, audit } = await makeService({
       autoWithdrawal: {},
       fiatThreshold: '1000',
       excludeRiskFlags: ['bonus_abuser'],
@@ -741,6 +741,13 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
 
     expect(screened?.status).toBe('completed');
     expect(psp.processWithdrawal).toHaveBeenCalledTimes(1);
+    // The trail says the verdict asked for a review the config chose not to require.
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'wallet.withdrawal.auto_approved',
+        after: expect.objectContaining({ reviewRequired: true }),
+      }),
+    );
   });
 
   it('auto-approves when the player carries only unrelated tags', async () => {
