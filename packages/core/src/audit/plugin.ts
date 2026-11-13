@@ -959,6 +959,7 @@ export async function mapEventToRecord(
         name: p['name'] ?? null,
         aggregatorMappings: p['aggregatorMappings'] ?? [],
         logoUrl: p['logoUrl'] ?? null,
+        customLogoUrl: p['customLogoUrl'] ?? null,
         metadata: p['metadata'] ?? null,
         isActive: p['isActive'] ?? null,
         autoApproveNewGames: p['autoApproveNewGames'] ?? false,

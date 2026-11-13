@@ -111,6 +111,7 @@ function toGameSummary(row: {
       slug: row.provider.slug,
       name: row.provider.name,
       logoUrl: row.provider.logoUrl,
+      customLogoUrl: row.provider.customLogoUrl,
     },
     categories: row.categories.map(toCategorySummary),
     tags: row.tags.map(toGameTagSummary),

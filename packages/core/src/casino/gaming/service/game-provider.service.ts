@@ -11,7 +11,7 @@ import {
   uniqueConstraintName,
 } from '@openora/core/server';
 import { eq, and, asc, count, ilike, inArray, ne, or } from 'drizzle-orm';
-import type { GameProviderAggregatorMapping } from '@openora/core/contracts';
+import { isAllowedHost, type GameProviderAggregatorMapping } from '@openora/core/contracts';
 import { game, gameProvider, gameProviderAggregatorMapping } from '../schema/index.js';
 import type { CreateProviderInput, UpdateProviderInput } from '../contract/index.js';
 import {
@@ -31,6 +31,10 @@ export const GameProviderVendorIdTakenError = makeConflictError(
   'GameProviderVendorIdTakenError',
   'A provider with this vendor ID already exists for the aggregator',
 );
+export const GameProviderLogoHostNotAllowedError = createDomainError<[host: string]>(
+  'GameProviderLogoHostNotAllowedError',
+  (host) => `Custom logo URL rejected: host not allowed: ${host}`,
+);
 export const GameProviderMappingInUseError = createDomainError<
   [providerId: string, aggregator: string]
 >(
@@ -45,6 +49,7 @@ function toProviderSummary(record: typeof gameProvider.$inferSelect) {
     slug: record.slug,
     name: record.name,
     logoUrl: record.logoUrl,
+    customLogoUrl: record.customLogoUrl,
   };
 }
 
@@ -57,6 +62,7 @@ export function providerSnapshot(
     name: record.name,
     aggregatorMappings: [...aggregatorMappings],
     logoUrl: record.logoUrl,
+    customLogoUrl: record.customLogoUrl,
     metadata: record.metadata ?? null,
     isActive: record.isActive,
     autoApproveNewGames: record.autoApproveNewGames,
@@ -92,6 +98,7 @@ export class GameProviderService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly allowedLogoHosts: readonly string[] = [],
   ) {}
 
   async listActiveProviders({ page, limit }: { page: number; limit: number }) {
@@ -254,6 +261,13 @@ export class GameProviderService {
     aggregatorMappings,
     ...patchInput
   }: UpdateProviderInput & CatalogActor) {
+    // The only writer of `custom_logo_url`; any new write path must repeat this host check.
+    if (patchInput.customLogoUrl !== undefined && patchInput.customLogoUrl !== null) {
+      const host = new URL(patchInput.customLogoUrl).hostname;
+      if (!isAllowedHost(host, this.allowedLogoHosts)) {
+        throw new GameProviderLogoHostNotAllowedError(host);
+      }
+    }
     const outcome = await this.drizzle.db
       .transaction(async (tx) => {
         const existing = findOneOrThrow(
