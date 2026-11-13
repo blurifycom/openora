@@ -438,7 +438,8 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
     expect(findings[0]).toMatchObject({ kind: 'unknown_at_provider', externalId: tx.id });
   });
 
-  it('closes the held withdrawal when its finding is credited by hand, so a late vendor answer cannot pay twice', async () => {
+  /** A held withdrawal the vendor has no record of, its finding, and a matching manual credit. */
+  async function unknownWithdrawalWithCredit(creditUserId?: string) {
     const { w, tx } = await seedStuckWithdrawal(null);
     const findWithdrawalByReference = vi.fn<
       NonNullable<PaymentAdapter['findWithdrawalByReference']>
@@ -454,10 +455,13 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
       }),
     });
     await reconciliation.runCycle();
-    const [finding] = await findingRows();
+    const finding = findOneOrThrow(
+      await findingRows(),
+      new Error('no unknown_at_provider finding'),
+    );
     const credit = await walletSvc.manualAdjust({
       adminId: randomUUID(),
-      userId: w.userId,
+      userId: creditUserId ?? w.userId,
       direction: 'credit',
       amount: '1',
       currency: 'BTC',
@@ -466,8 +470,14 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
       ip: null,
       userAgent: null,
     });
+    return { w, tx, finding, credit, reconciliation, findWithdrawalByReference };
+  }
 
-    await reconciliation.resolveFinding(randomUUID(), finding!.id, {
+  it('closes the held withdrawal when its finding is credited by hand, so a late vendor answer cannot pay twice', async () => {
+    const { w, tx, finding, credit, reconciliation, findWithdrawalByReference } =
+      await unknownWithdrawalWithCredit();
+
+    await reconciliation.resolveFinding(randomUUID(), finding.id, {
       outcome: 'credited',
       transactionId: credit.transactionId,
     });
@@ -483,6 +493,40 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
       .where(eq(walletTransaction.id, tx.id));
     expect(row?.status).toBe('failed');
     expect(await balanceOf(w.id)).toBe('6.000000000000000000');
+  });
+
+  it('refuses to credit a withdrawal settled another way since its finding was filed', async () => {
+    const { tx, finding, credit, reconciliation } = await unknownWithdrawalWithCredit();
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ status: 'completed' })
+      .where(eq(walletTransaction.id, tx.id));
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), finding.id, {
+        outcome: 'credited',
+        transactionId: credit.transactionId,
+      }),
+    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    const [still] = await findingRows();
+    expect(still?.status).toBe('open');
+  });
+
+  it("refuses a manual credit to a wallet other than the withdrawal's", async () => {
+    const other = await seedWallet('BTC', '0');
+    const { tx, finding, credit, reconciliation } = await unknownWithdrawalWithCredit(other.userId);
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), finding.id, {
+        outcome: 'credited',
+        transactionId: credit.transactionId,
+      }),
+    ).rejects.toBeInstanceOf(ReconciliationCreditMismatchError);
+    const [row] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, tx.id));
+    expect(row?.status).toBe('processing');
   });
 
   it('measures stuck time from approval, not from the request', async () => {

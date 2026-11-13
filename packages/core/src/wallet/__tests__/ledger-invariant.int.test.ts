@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import {
   Container,
   ModuleRegistryImpl,
@@ -11,6 +11,7 @@ import {
   AUDIT_WRITER,
   BONUS_GRANTS,
   BONUS_WAGERING,
+  DEFAULT_PAYMENT_PROVIDER,
   type PaymentAdapter,
   type PlatformConfig,
   type PlayEligibilityPort,
@@ -36,10 +37,12 @@ import {
   walletJobRun,
   walletReconciliationFinding,
   walletTransaction,
+  type Wallet,
 } from '../schema/index.js';
 import { WalletService } from '../service/wallet.service.js';
 import { WalletCommandsService } from '../service/wallet-commands.service.js';
 import { ReconciliationService } from '../service/reconciliation.service.js';
+import { parseLedgerPairKey } from '../service/ledger-invariant.service.js';
 import { WalletReconciliationFindingSchema } from '../contract/index.js';
 
 let db: TestDb;
@@ -282,20 +285,25 @@ describe('ledger invariant scan (real PG)', () => {
     expect(await breaches()).toHaveLength(0);
   });
 
-  it('keeps a hand-settled failed withdrawal debited, since its manual credit returned the money', async () => {
-    const w = await seedWallet('1000', [
+  /** A failed withdrawal whose `unknown_at_provider` finding was resolved by a manual credit. */
+  async function settleFailedWithdrawalByHand(creditWalletId?: Wallet['id']) {
+    // The withdrawal took 40 and never gave it back; the manual credit returns it to its wallet.
+    const w = await seedWallet(creditWalletId ? '960' : '1000', [
       { type: 'deposit', amount: '1000', status: 'completed', balanceAfter: '1000' },
       { type: 'withdrawal', amount: '40', status: 'failed', balanceAfter: '960' },
     ]);
-    const [withdrawal] = await db.drizzle.db
-      .select({ id: walletTransaction.id })
-      .from(walletTransaction)
-      .where(eq(walletTransaction.type, 'withdrawal'));
+    const withdrawal = findOneOrThrow(
+      await db.drizzle.db
+        .select({ id: walletTransaction.id })
+        .from(walletTransaction)
+        .where(and(eq(walletTransaction.walletId, w.id), eq(walletTransaction.type, 'withdrawal'))),
+      new Error('withdrawal: no row'),
+    );
     const manual = findOneOrThrow(
       await db.drizzle.db
         .insert(walletTransaction)
         .values({
-          walletId: w.id,
+          walletId: creditWalletId ?? w.id,
           currency: 'USD',
           type: 'manual_credit',
           amount: '40',
@@ -308,17 +316,33 @@ describe('ledger invariant scan (real PG)', () => {
     );
     await db.drizzle.db.insert(walletReconciliationFinding).values({
       runId: randomUUID(),
-      providerName: 'mock',
+      providerName: DEFAULT_PAYMENT_PROVIDER,
       kind: 'unknown_at_provider',
       currency: 'USD',
-      externalId: withdrawal?.id,
+      externalId: withdrawal.id,
       transactionId: manual.id,
       status: 'resolved',
     });
+    return w;
+  }
+
+  it('keeps a hand-settled failed withdrawal debited, since its manual credit returned the money', async () => {
+    await settleFailedWithdrawalByHand();
 
     await run(makeReconciliation());
 
     expect(await breaches()).toHaveLength(0);
+  });
+
+  it('does not count a manual credit to another wallet as settling the withdrawal', async () => {
+    const other = await seedWallet('40');
+    const w = await settleFailedWithdrawalByHand(other.id);
+
+    await run(makeReconciliation());
+
+    const filed = await breaches();
+    expect(filed.map((f) => parseLedgerPairKey(f.externalId)?.walletId)).toEqual([w.id]);
+    expect(Number(filed[0]?.amount)).toBe(40);
   });
 
   it('files one finding for a balance edited by hand, and a rerun or more play does not duplicate it', async () => {

@@ -1,5 +1,6 @@
 import { sql, type SQL } from 'drizzle-orm';
 import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
+import { DEFAULT_PAYMENT_PROVIDER } from '@openora/core/contracts';
 import type { Wallet, WalletJobRun, WalletReconciliationFinding } from '../schema/index.js';
 
 /**
@@ -12,8 +13,9 @@ import type { Wallet, WalletJobRun, WalletReconciliationFinding } from '../schem
  * A row's effect, as the code that writes it moves the balance:
  * - deposit: +amount once `completed`; pending, failed, held and refunded ones never credited.
  * - withdrawal: -amount from the request on; `failed`/`rejected` put it back, except a failure
- *   an admin settled by hand with a manual credit (an `unknown_at_provider` finding resolved
- *   that way), which returns nothing because the manual credit row carries the money.
+ *   an admin settled by hand with a manual credit to the same wallet (an `unknown_at_provider`
+ *   finding resolved that way), which returns nothing because the manual credit row carries the
+ *   money.
  * - swap_out: -amount from the request on; `failed` puts it back.
  * - anything else: only when `completed`, signed by `direction`, by `real_share` when set (a
  *   bonus-split bet, win or reversal moves the real balance by that part only) else `amount`.
@@ -23,11 +25,16 @@ const TERMINAL_STATUSES = sql.raw(`('completed', 'failed', 'rejected', 'cancelle
 /** Findings the platform files about its own ledger, not about a vendor's report. */
 export const LEDGER_FINDING_LABEL = 'ledger';
 
+// The finding of an `unknown_at_provider` withdrawal is filed under the withdrawal's provider and
+// reference (its id when it has none); resolving it overwrites the finding's transaction id with
+// the manual credit, so the key is the only link back to the withdrawal.
 const settledByHand = sql`exists (
   select 1 from wallet_reconciliation_finding f
   join wallet_transaction m on m.id = f.transaction_id
   where f.kind = 'unknown_at_provider' and f.status = 'resolved' and m.type = 'manual_credit'
-    and f.external_id in (t.id::text, t.provider_ref_id))`;
+    and m.wallet_id = t.wallet_id
+    and f.provider_name = coalesce(t.provider_name, ${DEFAULT_PAYMENT_PROVIDER})
+    and f.external_id = coalesce(t.provider_ref_id, t.id::text))`;
 
 const moves = sql`case
   when t.type = 'deposit' then t.status = 'completed'

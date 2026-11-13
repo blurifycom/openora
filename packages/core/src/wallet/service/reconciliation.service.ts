@@ -402,9 +402,26 @@ export class ReconciliationService {
           transactionId = tx.id;
           // Crediting a player for a withdrawal whose vendor outcome is unknown settles it by
           // hand. The held row must leave `processing` with it, or the next reconciliation
-          // run (or a late webhook) can still refund or complete it on top of the credit.
+          // run (or a late webhook) can still refund or complete it on top of the credit; one
+          // that already left it was settled another way, and the credit would pay it twice.
           if (finding.kind === 'unknown_at_provider') {
-            heldWithdrawalId = finding.transactionId;
+            const [withdrawal] = finding.transactionId
+              ? await txn
+                  .select()
+                  .from(walletTransaction)
+                  .where(eq(walletTransaction.id, finding.transactionId))
+                  .for('update')
+              : [];
+            if (withdrawal?.type !== 'withdrawal' || withdrawal.status !== 'processing') {
+              throw new ReconciliationOutcomeNotAllowedError(
+                finding.kind,
+                'credited for a withdrawal no longer processing',
+              );
+            }
+            if (tx.walletId !== withdrawal.walletId) {
+              throw new ReconciliationCreditMismatchError();
+            }
+            heldWithdrawalId = withdrawal.id;
           }
         }
       } else if (resolution.outcome === 'released') {
