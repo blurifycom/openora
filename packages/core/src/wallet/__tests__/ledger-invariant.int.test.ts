@@ -865,7 +865,7 @@ describe('rolling baselines and their repair (real PG)', () => {
     ).rejects.toMatchObject({ name: 'ReconciliationOutcomeNotAllowedError' });
   });
 
-  it('refuses a backfill that disagrees with the balance the ledger last stamped, and files it', async () => {
+  it('refuses a backfill that disagrees with the balance the ledger last stamped, and files it unchecked', async () => {
     const legacy = (balance: string, betBalanceAfter: string) =>
       seedWallet(balance, [
         {
@@ -897,17 +897,23 @@ describe('rolling baselines and their repair (real PG)', () => {
       baselinesInserted: 1,
       baselineMismatches: 1,
       needsBaseline: 1,
-      newBreaches: 1,
+      newBreaches: 0,
     });
     expect(await baselines(agrees.id)).toHaveLength(1);
     expect(await baselines(edited.id)).toHaveLength(0);
-    const [breach] = await breaches();
-    expect(breach?.externalId).toBe(`wallet:${edited.id}:USD:backfill:10.000000000000000000`);
-    expect(breach?.detail).toContain('over by 10');
-    expect(events.emitInTransaction).toHaveBeenCalledWith(
+    // Stamps written as the row was created, not as it completed, may order wrong: an estimate
+    // off them is a reason to look, not proof money is missing.
+    expect(await breaches()).toHaveLength(0);
+    const mismatch = (await findings('ledger_invariant_unchecked')).find((f) =>
+      f.externalId?.includes(':backfill:'),
+    );
+    expect(mismatch?.externalId).toBe(`wallet:${edited.id}:USD:backfill:10.000000000000000000`);
+    expect(mismatch?.detail).toContain('at 270');
+    expect(mismatch?.detail).toContain('to 260');
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
       expect.anything(),
       'wallet.reconciliation.alert',
-      expect.objectContaining({ openFindings: 1, threshold: 0 }),
+      expect.anything(),
     );
   });
 

@@ -1182,16 +1182,24 @@ export class ReconciliationService {
       const page = await backfillBaselinePage(this.drizzle.db, afterId, batchSize, runId);
       counts.baselinesInserted += page.inserted;
       counts.baselinesSkipped += page.skipped;
+      // Unchecked, not a breach: `balance_after` is stamped as a row is written, and rows are
+      // ordered by when they were created, so a row created early and completed late can put
+      // the estimate off where no money is missing. It still blocks the baseline for a human look.
       for (const pair of page.mismatches) {
         counts.baselineMismatches += 1;
         const drift = moneySubtract(pair.amount, pair.estimate);
-        await this.fileLedgerBreach(runId, counts, {
-          walletId: pair.walletId,
-          currency: pair.currency,
-          drift,
-          externalId: backfillMismatchKey(pair.walletId, pair.currency, drift),
-          detail: `wallet ${pair.walletId} would be baselined at ${pair.amount} ${pair.currency} but its ledger last stamped a balance that carries forward to ${pair.estimate}, so it was not baselined`,
-        });
+        await recordReconciliationFinding(
+          this.drizzle.db,
+          {
+            runId,
+            providerName: LEDGER_FINDING_LABEL,
+            kind: 'ledger_invariant_unchecked',
+            currency: pair.currency,
+            externalId: backfillMismatchKey(pair.walletId, pair.currency, drift),
+            detail: `wallet ${pair.walletId} would be baselined at ${pair.amount} ${pair.currency} (its balance less the rows after the cut) but its ledger last stamped a balance that carries forward to ${pair.estimate}, so it was not baselined`,
+          },
+          this.audit,
+        );
       }
       if (page.scanned < batchSize || page.lastId === null) {
         return;
