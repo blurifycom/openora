@@ -24,23 +24,46 @@ const CALLER_ID = '9a2f7c11-0000-4000-8000-0000000000bb';
 const FINDING_ID = '9a2f7c11-0000-4000-8000-0000000000cc';
 const CALLER_META = { ip: '203.0.113.7', userAgent: 'ledger-test-agent' };
 
+const DISMISSED = {
+  id: FINDING_ID,
+  runId: '00000000-0000-0000-0000-000000000000',
+  providerName: 'default',
+  kind: 'stuck_sweep' as const,
+  currency: null,
+  network: null,
+  amount: null,
+  address: null,
+  tag: null,
+  txHash: null,
+  sourceAddress: null,
+  externalId: null,
+  transactionId: null,
+  detail: null,
+  status: 'resolved' as const,
+  resolvedBy: CALLER_ID,
+  resolvedAt: new Date().toISOString(),
+  resolutionNote: 'reverted by hand',
+  createdAt: new Date().toISOString(),
+};
+
 // Holds wallet-reconciliation:run, is not a super admin.
 const staffGuard = () =>
   makeAdminGuard({ superAdmin: false, caller: { userId: CALLER_ID, role: 'support' } });
 
 const superAdminGuard = () => makeAdminGuard({ caller: { userId: CALLER_ID, ...CALLER_META } });
 
-function routerWith(adminGuard: AdminGuard) {
+function routerWith(adminGuard: AdminGuard, { ledgerFinding = true } = {}) {
   const audit = makeAuditWriter();
   const jobQueue = makeJobQueue();
-  const resolveFinding = vi.fn(async () => undefined);
+  const resolveFinding = vi.fn(async () => DISMISSED);
+  const isLedgerFinding = vi.fn(async () => ledgerFinding);
   const router = createWalletRouter({
     wallet: mock<WalletService>({}),
     adminGuard,
     audit,
     withdrawalSecurity: makeWithdrawalSecurity(),
     paymentProviders: makePaymentProviderRegistry(),
-    reconciliation: mock<ReconciliationService>({ resolveFinding }),
+    reconciliation: mock<ReconciliationService>({ resolveFinding, isLedgerFinding }),
     jobQueue,
     reconciliationQueue: queue('wallet-reconciliation'),
     realtime: makeRealtimeTransport(),
@@ -104,5 +127,22 @@ describe('ledger invariant routes', () => {
       ),
     ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
     expect(resolveFinding).not.toHaveBeenCalled();
+  });
+
+  it('refuses to staff the dismissal of a ledger finding, but not of a vendor one', async () => {
+    const dismiss = {
+      id: FINDING_ID,
+      resolution: { outcome: 'dismissed', note: 'reverted by hand' },
+    } as const;
+    const ledger = routerWith(staffGuard());
+    const vendor = routerWith(staffGuard(), { ledgerFinding: false });
+
+    await expect(
+      call(ledger.router.reconciliation.resolve, dismiss, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    await call(vendor.router.reconciliation.resolve, dismiss, { context: CTX });
+
+    expect(ledger.resolveFinding).not.toHaveBeenCalled();
+    expect(vendor.resolveFinding).toHaveBeenCalledOnce();
   });
 });

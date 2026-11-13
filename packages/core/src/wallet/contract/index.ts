@@ -686,9 +686,10 @@ export type ListReconciliationFindingsInput = z.infer<typeof ListReconciliationF
 // Every way to close a finding carries its evidence: a credit (credited), the held deposit
 // itself credited after a fresh policy check (released), the on-chain transaction that sent
 // the money back and how much it sent (refunded), or a mandatory note explaining why it is
-// a non-issue (dismissed). Never a bare status flip with no evidence. A ledger finding may also
-// close by re-baselining its wallet at the balance it holds now (rebaselined), with a note on why
-// that balance is the right one.
+// a non-issue (dismissed). Never a bare status flip with no evidence. A ledger finding closes
+// only by re-baselining its wallet at the balance it holds now (rebaselined), with a note on why
+// that balance is the right one, or by a dismissal once its pair checks clean again; both take a
+// super admin.
 //
 // `credited` means two things by finding kind. A deposit finding names no transaction: the
 // resolution credits the deposit itself, after the deposit hold policy, and `userId` is the

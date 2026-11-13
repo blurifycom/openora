@@ -118,6 +118,18 @@ export function ledgerBreachKey(
   return `${ledgerPairKey(walletId, currency)}:${baselineId ?? 'none'}:${drift}`;
 }
 
+/**
+ * A pair nothing can check yet, keyed on the baseline in force: a pair that is checked again
+ * and later falls back to unchecked is filed anew, not matched to the closed finding.
+ */
+export function ledgerUncheckedKey(
+  walletId: Wallet['id'],
+  currency: string,
+  baselineId: LedgerPairCheck['baselineId'],
+): string {
+  return `${ledgerPairKey(walletId, currency)}:${baselineId ?? 'none'}`;
+}
+
 /** A backfill whose amount disagrees with the balance the ledger last stamped. */
 export function backfillMismatchKey(
   walletId: Wallet['id'],

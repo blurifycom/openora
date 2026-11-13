@@ -763,11 +763,14 @@ export function createWalletRouter({
         } = await adminGuard.assert(context, 'wallet-reconciliation', 'resolve');
         // `credited` on a deposit finding and `released` put custody money on a player's
         // balance, so they need what any other hand credit (`manualAdjustment`) needs.
-        // `rebaselined` moves the point a wallet's ledger is counted from, as a backfill does.
+        // `rebaselined` moves the point a wallet's ledger is counted from, as a backfill does,
+        // and dismissing a ledger finding closes the only report of money no one accounts for.
+        const { outcome } = input.resolution;
         if (
-          input.resolution.outcome === 'credited' ||
-          input.resolution.outcome === 'released' ||
-          input.resolution.outcome === 'rebaselined'
+          outcome === 'credited' ||
+          outcome === 'released' ||
+          outcome === 'rebaselined' ||
+          (outcome === 'dismissed' && (await reconciliation.isLedgerFinding(input.id)))
         ) {
           await adminGuard.assertSuperAdmin(context);
         }

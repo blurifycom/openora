@@ -72,7 +72,9 @@ import {
   checkLedgerPage,
   ledgerBreachKey,
   ledgerPairKey,
+  ledgerUncheckedKey,
   lockAndCheckLedgerPair,
+  type LedgerPairCheck,
   parseLedgerBreachKey,
   parseLedgerPairKey,
   rebaselinePair,
@@ -122,7 +124,8 @@ export type ReconciliationRefusalReason =
   | 'unpriced_rows_after_cut'
   | 'credit_already_used'
   | 'baseline_moved'
-  | 'drift_changed';
+  | 'drift_changed'
+  | 'pair_not_clean';
 
 export class ReconciliationOutcomeNotAllowedError extends Error {
   readonly data: { reason: ReconciliationRefusalReason };
@@ -150,7 +153,10 @@ const REFUNDABLE_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = n
   'below_minimum_deposit',
 ]);
 
-/** Findings about a wallet's own ledger, the only ones a re-baseline can close. */
+/**
+ * Findings about a wallet's own ledger. Only a re-baseline (accepting the error) or a dismissal
+ * once the pair checks clean closes one: no credit settles a ledger that does not add up.
+ */
 const LEDGER_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
   'ledger_invariant_breach',
   'ledger_invariant_unchecked',
@@ -163,10 +169,11 @@ function assertOutcomeAllowed(
   const allowed =
     kind === 'held_deposit'
       ? outcome === 'released' || outcome === 'refunded'
-      : outcome === 'credited' ||
-        outcome === 'dismissed' ||
-        (outcome === 'rebaselined' && LEDGER_FINDING_KINDS.has(kind)) ||
-        (outcome === 'refunded' && REFUNDABLE_FINDING_KINDS.has(kind));
+      : LEDGER_FINDING_KINDS.has(kind)
+        ? outcome === 'rebaselined' || outcome === 'dismissed'
+        : outcome === 'credited' ||
+          outcome === 'dismissed' ||
+          (outcome === 'refunded' && REFUNDABLE_FINDING_KINDS.has(kind));
   if (!allowed) {
     throw new ReconciliationOutcomeNotAllowedError(kind, outcome);
   }
@@ -195,6 +202,25 @@ async function assertBreachStands(
   if (!moneyEquals(now.drift, filed.drift)) {
     throw refuse('drift_changed');
   }
+}
+
+/**
+ * A ledger finding is dismissed only once its pair checks clean: nothing unpriced after the
+ * baseline in force and, for a breach, no drift. A breach's pair is then re-baselined at that
+ * clean balance, as the next clean check would, so the same error coming back before that check
+ * is filed again instead of matching the dismissed finding's key.
+ */
+async function settleCleanLedgerPair(
+  txn: DrizzleTx,
+  finding: WalletReconciliationFindingRow,
+): Promise<Awaited<ReturnType<typeof rebaselinePair>>> {
+  const pair = parseLedgerPairKey(finding.externalId);
+  const now = pair && (await lockAndCheckLedgerPair(txn, pair.walletId, pair.currency));
+  const breach = finding.kind === 'ledger_invariant_breach';
+  if (!pair || !now || now.unpricedRows > 0 || (breach && !moneyEquals(now.drift, '0'))) {
+    throw new ReconciliationOutcomeNotAllowedError(finding.kind, 'dismissed', 'pair_not_clean');
+  }
+  return breach ? rebaselinePair(txn, pair.walletId, pair.currency, finding.id) : null;
 }
 
 // Lowercased: an EVM address is the same account whatever its checksum casing.
@@ -335,6 +361,15 @@ export class ReconciliationService {
     this.audit = audit;
     this.platformConfig = platformConfig;
     this.rgLimits = rgLimits;
+  }
+
+  /** Whether a finding is about a wallet's own ledger, whose dismissal takes a super admin. */
+  async isLedgerFinding(id: WalletReconciliationFindingRow['id']): Promise<boolean> {
+    const [row] = await this.drizzle.db
+      .select({ kind: walletReconciliationFinding.kind })
+      .from(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.id, id));
+    return row !== undefined && LEDGER_FINDING_KINDS.has(row.kind);
   }
 
   async listFindings(filter: ListReconciliationFindingsInput) {
@@ -557,6 +592,9 @@ export class ReconciliationService {
         }
         resolutionNote = resolution.note;
       } else {
+        if (LEDGER_FINDING_KINDS.has(finding.kind)) {
+          baseline = await settleCleanLedgerPair(txn, finding);
+        }
         resolutionNote = resolution.note;
       }
 
@@ -1170,6 +1208,12 @@ export class ReconciliationService {
     let afterId: string | null = null;
     for (;;) {
       const page = await checkLedgerPage(this.drizzle.db, afterId, batchSize, runId);
+      await this.closeBaselinedUnchecked(
+        runId,
+        page.filter(
+          (pair) => pair.unpricedRows === 0 && (pair.baselineId !== null || pair.advanced),
+        ),
+      );
       for (const pair of page) {
         counts.pairsChecked += 1;
         if (pair.advanced) {
@@ -1177,7 +1221,7 @@ export class ReconciliationService {
         }
         if (pair.unpricedRows > 0) {
           counts.needsBaseline += 1;
-          // One per pair, whatever the run: the key carries no baseline or count.
+          // One per pair and baseline in force, whatever the run: the key carries no count.
           await recordReconciliationFinding(
             this.drizzle.db,
             {
@@ -1185,7 +1229,7 @@ export class ReconciliationService {
               providerName: LEDGER_FINDING_LABEL,
               kind: 'ledger_invariant_unchecked',
               currency: pair.currency,
-              externalId: ledgerPairKey(pair.walletId, pair.currency),
+              externalId: ledgerUncheckedKey(pair.walletId, pair.currency, pair.baselineId),
               detail: `wallet ${pair.walletId} holds ${pair.unpricedRows} ${pair.currency} ledger rows nothing prices and no baseline covers them; run the baseline backfill`,
             },
             this.audit,
@@ -1212,6 +1256,51 @@ export class ReconciliationService {
       }
       afterId = last.id;
     }
+  }
+
+  /**
+   * A pair filed as unchecked that a run now finds baselined and fully priced is checked like any
+   * other from here on, so its open unchecked findings close themselves, on the audit trail.
+   */
+  private async closeBaselinedUnchecked(
+    runId: WalletJobRun['runId'],
+    pairs: readonly LedgerPairCheck[],
+  ): Promise<void> {
+    if (pairs.length === 0) {
+      return;
+    }
+    const keys = pairs.map((pair) => ledgerPairKey(pair.walletId, pair.currency));
+    await this.drizzle.db.transaction(async (txn) => {
+      const closed = await txn
+        .update(walletReconciliationFinding)
+        .set({
+          status: 'resolved',
+          resolvedAt: new Date(),
+          resolutionNote: `baselined; checked by ledger invariant run ${runId}`,
+        })
+        .where(
+          and(
+            eq(walletReconciliationFinding.kind, 'ledger_invariant_unchecked'),
+            eq(walletReconciliationFinding.providerName, LEDGER_FINDING_LABEL),
+            eq(walletReconciliationFinding.status, 'open'),
+            inArray(
+              sql`substring(${walletReconciliationFinding.externalId} from '^wallet:[^:]+:[^:]+')`,
+              keys,
+            ),
+          ),
+        )
+        .returning({ id: walletReconciliationFinding.id });
+      for (const { id } of closed) {
+        await this.audit.recordInTransaction(txn, {
+          actorType: 'system',
+          action: 'wallet.reconciliation_finding.resolved',
+          resourceType: 'wallet_reconciliation_finding',
+          resourceId: id,
+          before: { status: 'open' },
+          after: { status: 'resolved', outcome: 'baselined', runId },
+        });
+      }
+    });
   }
 
   private async fileLedgerBreach(

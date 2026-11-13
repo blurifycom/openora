@@ -602,14 +602,6 @@ describe('rolling baselines and their repair (real PG)', () => {
 
     await handEdit(w.id, '7');
     await run(svc);
-    const [first] = await breaches();
-    if (!first) {
-      throw new Error('no breach filed');
-    }
-    await svc.resolveFinding(ADMIN_ID, first.id, {
-      outcome: 'dismissed',
-      note: 'the edit was reverted by hand',
-    });
     await handEdit(w.id, '-7');
     const clean = await run(svc);
     await handEdit(w.id, '7');
@@ -625,10 +617,83 @@ describe('rolling baselines and their repair (real PG)', () => {
     expect(settled?.summary).toMatchObject({ balanceBreaches: 1, newBreaches: 0 });
     const found = await breaches();
     expect(found.map((f) => [f.status, Number(f.amount)])).toEqual([
-      ['resolved', 7],
+      ['open', 7],
       ['open', 7],
     ]);
     expect(found[1]?.externalId).toContain(`:${baseline?.id}:`);
+  });
+
+  it('dismisses a breach only once its pair checks clean, never credits one, and files its return', async () => {
+    const w = await fundedWallet('100');
+    const audit = makeAuditWriter();
+    const svc = makeReconciliation({ audit });
+    await handEdit(w.id, '7');
+    await run(svc);
+    const [breach] = await breaches();
+    if (!breach) {
+      throw new Error('no breach filed');
+    }
+    const dismiss = { outcome: 'dismissed', note: 'the edit was reverted by hand' } as const;
+
+    await expect(svc.resolveFinding(ADMIN_ID, breach.id, dismiss)).rejects.toMatchObject({
+      data: { reason: 'pair_not_clean' },
+    });
+    await expect(
+      svc.resolveFinding(ADMIN_ID, breach.id, { outcome: 'credited', transactionId: randomUUID() }),
+    ).rejects.toMatchObject({ data: { reason: 'outcome_not_allowed_for_kind' } });
+    await handEdit(w.id, '-7');
+    const dismissed = await svc.resolveFinding(ADMIN_ID, breach.id, dismiss);
+    // The same error coming back before any run checks the pair again is still a new finding.
+    await handEdit(w.id, '7');
+    const back = await run(svc);
+
+    expect(dismissed).toMatchObject({ status: 'resolved' });
+    expect(back?.summary).toMatchObject({ balanceBreaches: 1, newBreaches: 1 });
+    const [baseline] = await baselines(w.id);
+    expect(baseline).toMatchObject({ findingId: breach.id });
+  });
+
+  it('keeps an unchecked pair open to neither dismissal nor credit, and closes it once a run baselines it', async () => {
+    const w = await seedWallet('300', [
+      {
+        type: 'deposit',
+        amount: '300',
+        status: 'completed',
+        balanceAfter: null,
+        createdAt: hoursAgo(48),
+      },
+    ]);
+    const audit = makeAuditWriter();
+    const svc = makeReconciliation({ audit });
+    await run(svc);
+    const [unchecked] = await findings('ledger_invariant_unchecked');
+    if (!unchecked) {
+      throw new Error('no unchecked finding filed');
+    }
+
+    await expect(
+      svc.resolveFinding(ADMIN_ID, unchecked.id, { outcome: 'dismissed', note: 'looks fine' }),
+    ).rejects.toMatchObject({ data: { reason: 'pair_not_clean' } });
+    await expect(
+      svc.resolveFinding(ADMIN_ID, unchecked.id, {
+        outcome: 'credited',
+        transactionId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ data: { reason: 'outcome_not_allowed_for_kind' } });
+    await run(svc, true);
+
+    const [closed] = await findings('ledger_invariant_unchecked');
+    expect(closed).toMatchObject({ status: 'resolved', resolvedBy: null });
+    expect(await baselines(w.id)).toHaveLength(1);
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorType: 'system',
+        action: 'wallet.reconciliation_finding.resolved',
+        resourceId: unchecked.id,
+        after: expect.objectContaining({ status: 'resolved', outcome: 'baselined' }),
+      }),
+    );
   });
 
   it('absorbs settled rows into the baseline from the ledger, never from the balance', async () => {
