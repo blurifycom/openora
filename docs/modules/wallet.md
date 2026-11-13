@@ -212,10 +212,11 @@ is `SPORTSBOOK_LEDGER` unchanged.
   never arrives, asks for a review or lacks the field stays in the manual queue, and a
   redelivered verdict changes nothing.
 - **A withdrawal stuck in one state is reported, never refunded (ADR-0057).** Reconciliation
-  files `stuck_withdrawal_requested` for one still `pending` after 24 hours, and
-  `stuck_withdrawal_approved` or `stuck_withdrawal_processing` for one past
-  `reconciliation.stuckAfterMinutes` whose vendor check failed. Each is filed once per
-  withdrawal and can only be dismissed.
+  files `stuck_withdrawal_requested` for one still `pending` or `on_hold` after 24 hours,
+  `stuck_withdrawal_approved` for one approved past `reconciliation.stuckAfterMinutes` but
+  never handed to a vendor, and `stuck_withdrawal_processing` for one handed to a vendor past
+  that cutoff whose status check failed. Each is filed once per withdrawal, can only be
+  dismissed, and closes by itself once the withdrawal leaves that state.
 - **A module's withdrawal hold blocks every withdrawal the same way, under its own reason.** A
   module places and releases its hold through `WALLET_COMMANDS` in its own transaction, keyed by
   (player, source), and releases only its own. The wallet audits each change in that transaction.

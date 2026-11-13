@@ -83,14 +83,29 @@ for withdrawals.
 **Each stuck state files its own finding.** Reconciliation files one finding per withdrawal and
 kind, deduplicated on (kind, provider, external id):
 
-- `stuck_withdrawal_requested`: still `pending` after `STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES`
-  (24 hours). Screening or review never decided it. The external id is the transaction id.
-- `stuck_withdrawal_approved` and `stuck_withdrawal_processing`: `processing` past
-  `wallet.reconciliation.stuckAfterMinutes`, counted from approval, and the vendor check failed.
-  The vendor answering "no record" keeps filing `unknown_at_provider` as before.
+- `stuck_withdrawal_requested`: still `pending` or `on_hold` after
+  `STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES` (24 hours). Screening or review never decided it. The
+  external id is the transaction id.
+- `stuck_withdrawal_approved`: `processing` with no provider past
+  `wallet.reconciliation.stuckAfterMinutes`, counted from approval. Dispatch stamps the provider
+  before the vendor call, so no vendor was asked to pay it, and reconciliation files it without
+  asking one.
+- `stuck_withdrawal_processing`: `processing` with a provider past the same cutoff, when the status
+  check failed. The vendor answering "no record" keeps filing `unknown_at_provider` as before.
 
 These findings are reports only. They never refund, because a payout may still have left. They
-can only be dismissed: the withdrawal is still live, so a manual credit could pay it twice.
+can only be dismissed: the withdrawal is still live, so a manual credit could pay it twice. Each
+closes by itself, as a system resolution with its own audit row, once the withdrawal leaves the
+state it reports, so a long but legitimate manual review does not count toward `alertThreshold`
+for ever.
+
+Limits of the dedup:
+
+- A finding is never filed twice for the same withdrawal and kind, open or closed. A withdrawal
+  that returns to a state it was already reported in, for example requeued after approval, is
+  not reported again.
+- A dispatched withdrawal that already holds an `unknown_at_provider` finding sorts with the
+  reported rows, so a later `stuck_withdrawal_processing` for it waits for room in the batch.
 
 ## Consequences
 

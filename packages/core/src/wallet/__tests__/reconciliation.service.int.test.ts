@@ -614,45 +614,101 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
     ).rejects.toMatchObject({ name: 'ReconciliationOutcomeNotAllowedError' });
   });
 
-  it('files an approved withdrawal never handed to a vendor as stuck_withdrawal_approved', async () => {
-    const { tx } = await seedStuckWithdrawal(null);
+  async function seedApprovedNeverDispatched() {
+    const seeded = await seedStuckWithdrawal(null);
     await db.drizzle.db
       .update(walletTransaction)
       .set({ providerName: null })
-      .where(eq(walletTransaction.id, tx.id));
+      .where(eq(walletTransaction.id, seeded.tx.id));
+    return seeded;
+  }
+
+  it('files an approved withdrawal never handed to a vendor as stuck_withdrawal_approved, without asking the vendor', async () => {
+    const { tx } = await seedApprovedNeverDispatched();
+    // The vendor is up and has no record: that must not read as unknown_at_provider.
     const payment = mock<PaymentAdapter>({
       listTransactions: vi.fn(async () => []),
-      findWithdrawalByReference: vi.fn(async () => {
-        throw new Error('vendor unreachable');
-      }),
+      findWithdrawalByReference: vi.fn(async () => null),
+      getWithdrawalStatus: vi.fn(async () => null),
     });
     const { reconciliation } = makeServices(payment);
 
     await reconciliation.runCycle();
+    await reconciliation.runCycle();
 
+    expect(payment.findWithdrawalByReference).not.toHaveBeenCalled();
     const findings = await findingRows();
     expect(findings).toHaveLength(1);
-    expect(findings[0]).toMatchObject({ kind: 'stuck_withdrawal_approved', externalId: tx.id });
+    expect(findings[0]).toMatchObject({
+      kind: 'stuck_withdrawal_approved',
+      externalId: tx.id,
+      status: 'open',
+    });
   });
 
-  it('files a withdrawal left requested past a day once, and leaves a fresher one alone', async () => {
-    const w = await seedWallet('BTC', '5');
-    const requested = (createdAt: Date) =>
-      db.drizzle.db
-        .insert(walletTransaction)
-        .values({
-          walletId: w.id,
-          type: 'withdrawal',
-          amount: '1',
-          currency: 'BTC',
-          status: 'pending',
-          rail: 'crypto',
-          createdAt,
-        })
-        .returning();
-    const [stale] = await requested(
-      new Date(Date.now() - (STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES + 5) * 60_000),
+  it('closes each stuck withdrawal finding once the withdrawal leaves that state, moving no money', async () => {
+    const { w, tx } = await seedApprovedNeverDispatched();
+    const vendorRefId = randomUUID();
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      getWithdrawalStatus: vi.fn(async () => {
+        throw new Error('vendor unreachable');
+      }),
+    });
+    const { reconciliation, audit } = makeServices(payment);
+    await reconciliation.runCycle();
+
+    // Dispatched: approved closes, processing is filed for the vendor outage.
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ providerName: 'default', providerRefId: vendorRefId })
+      .where(eq(walletTransaction.id, tx.id));
+    await reconciliation.runCycle();
+    // Settled by its webhook: processing closes too.
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ status: 'completed' })
+      .where(eq(walletTransaction.id, tx.id));
+    await reconciliation.runCycle();
+
+    const findings = await findingRows();
+    expect(findings.map(({ kind, status }) => ({ kind, status }))).toEqual(
+      expect.arrayContaining([
+        { kind: 'stuck_withdrawal_approved', status: 'resolved' },
+        { kind: 'stuck_withdrawal_processing', status: 'resolved' },
+      ]),
     );
+    expect(findings).toHaveLength(2);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'wallet.reconciliation_finding.resolved',
+        after: { status: 'resolved', outcome: 'withdrawal_moved_on' },
+      }),
+    );
+    expect(await balanceOf(w.id)).toBe('5.000000000000000000');
+  });
+
+  it('files a withdrawal left requested past a day once, held or not, and leaves a fresher one alone', async () => {
+    const w = await seedWallet('BTC', '5');
+    const requested = async (createdAt: Date, status: 'pending' | 'on_hold' = 'pending') =>
+      findOneOrThrow(
+        await db.drizzle.db
+          .insert(walletTransaction)
+          .values({
+            walletId: w.id,
+            type: 'withdrawal',
+            amount: '1',
+            currency: 'BTC',
+            status,
+            rail: 'crypto',
+            createdAt,
+          })
+          .returning(),
+        new Error('requested: no row'),
+      );
+    const dayAgo = new Date(Date.now() - (STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES + 5) * 60_000);
+    const stale = await requested(dayAgo);
+    const held = await requested(dayAgo, 'on_hold');
     await requested(new Date(Date.now() - 60 * 60_000));
     const payment = mock<PaymentAdapter>({ listTransactions: vi.fn(async () => []) });
     const { reconciliation } = makeServices(payment);
@@ -661,12 +717,25 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
     await reconciliation.runCycle();
 
     const findings = await findingRows();
-    expect(findings).toHaveLength(1);
-    expect(findings[0]).toMatchObject({
-      kind: 'stuck_withdrawal_requested',
-      externalId: stale?.id,
-    });
+    expect(findings).toHaveLength(2);
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'stuck_withdrawal_requested', externalId: stale.id }),
+        expect.objectContaining({ kind: 'stuck_withdrawal_requested', externalId: held.id }),
+      ]),
+    );
     expect(await balanceOf(w.id)).toBe('5.000000000000000000');
+
+    // A human decided the pending one: its finding closes, the held one's stays open.
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ status: 'rejected' })
+      .where(eq(walletTransaction.id, stale.id));
+    await reconciliation.runCycle();
+
+    const after = await findingRows();
+    expect(after.find((f) => f.externalId === stale.id)?.status).toBe('resolved');
+    expect(after.find((f) => f.externalId === held.id)?.status).toBe('open');
   });
 });
 
