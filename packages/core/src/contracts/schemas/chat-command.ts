@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import {
   CurrencyTickerInputSchema,
+  CurrencyTickerSchema,
   MoneyAmountSchema,
   TimestampSchema,
   UuidSchema,
@@ -116,6 +117,19 @@ export const ChatMoneyCommandInputSchema = z.object({
   roomId: ChatRoomIdSchema,
   idempotencyKey: UuidSchema,
 });
+
+const CurrencyAmountSchema = z.object({
+  currency: CurrencyTickerSchema,
+  amount: MoneyAmountSchema,
+});
+
+/** Operator limits on one chat command, stored in its `chat_command_config` row. */
+export const CommandConfigSchema = z.object({
+  maxAmount: CurrencyAmountSchema.optional(),
+  minAmount: CurrencyAmountSchema.optional(),
+  maxRecipients: z.number().int().positive().optional(),
+});
+export type CommandConfig = z.infer<typeof CommandConfigSchema>;
 
 /** Canonical chat channel name used by both the chat and chat-commands modules. */
 export function chatChannel(roomId: string | null): string {
