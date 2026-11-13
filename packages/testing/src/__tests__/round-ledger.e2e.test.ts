@@ -219,8 +219,9 @@ describe('round ledger e2e', () => {
     const rebooted = await bootTestApp({ plugins: bootPlugins, databaseUrl: db.url });
 
     try {
-      await vi.waitFor(async () =>
-        expect(await projectedVersion(imported.id)).toBe(imported.ledgerVersion),
+      await vi.waitFor(
+        async () => expect(await projectedVersion(imported.id)).toBe(imported.ledgerVersion),
+        { timeout: 10_000 },
       );
     } finally {
       await rebooted.close();

@@ -2189,6 +2189,24 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
     expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
   });
 
+  it.each(['1e1', '+10', ' 10', '.5'])(
+    'refuses a non-canonical stake %j before it can skip the game check',
+    async (betDelta) => {
+      const svc = makeService();
+
+      await expect(
+        svc.accumulateExternalRound(db.drizzle.db, {
+          gameId: randomUUID(),
+          userId: '00000000-0000-0000-0000-000000000507',
+          currency: 'USD',
+          externalRoundId: `ext-round-noncanonical-${betDelta}`,
+          betDelta,
+        }),
+      ).rejects.toThrow();
+      expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+    },
+  );
+
   it('keeps a settled round as it was when the catalogue later moves its game', async () => {
     const created = await seedGame({ name: 'Aces' });
     const other = await seedProvider({ name: 'Other' });

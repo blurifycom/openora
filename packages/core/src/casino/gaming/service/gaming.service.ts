@@ -50,6 +50,7 @@ import {
   type IdentityReader,
   type User,
   isPlayRefused,
+  SignedMoneyAmountSchema,
 } from '@openora/core/contracts';
 import {
   game,
@@ -835,7 +836,8 @@ export class GamingService {
     },
   ): Promise<{ roundId: GameRound['id']; betAmount: string; winAmount: string }> {
     const txn = tx as DrizzleDb;
-    const betDelta = args.betDelta ?? '0';
+    // Canonical form first: `::numeric` reads '1e1' or ' 10' as a stake the guard below would miss.
+    const betDelta = SignedMoneyAmountSchema.parse(args.betDelta ?? '0');
     // Only a stake that opens a round needs a game the ledger knows. A win, refund, rollback or
     // final always lands, also as a round's first call (a free-round result, a settle that beats
     // its bet): refusing it would lose money the provider already moved.
@@ -849,7 +851,7 @@ export class GamingService {
         await assertLedgerGame(txn, args.gameId);
       }
     }
-    const winDelta = args.winDelta ?? '0';
+    const winDelta = SignedMoneyAmountSchema.parse(args.winDelta ?? '0');
     const reversedStake = sql`greatest(-(${betDelta}::numeric), 0)`;
     const status = args.isFinal ? 'completed' : 'active';
     const endedAt = args.isFinal ? new Date() : undefined;
