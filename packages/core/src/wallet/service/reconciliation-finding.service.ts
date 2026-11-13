@@ -53,19 +53,21 @@ export type ReconciliationFindingInput = {
  * across WalletService and ReconciliationService (both import this, neither imports the
  * other, so there is no cycle). A finding is a report, never a credit instruction (see
  * the schema's own comment): this never touches a balance or a transaction row, only
- * records that something needs a human look.
+ * records that something needs a human look. True when it filed a new finding, false when the
+ * report was already on file.
  */
 export async function recordReconciliationFinding(
   db: DrizzleDb | DrizzleTx,
   input: ReconciliationFindingInput,
   audit?: AuditWritePort,
-): Promise<void> {
+): Promise<boolean> {
   const row = await insertFinding(db, input);
   if (row && audit) {
     await audit.record(findingRecordedAudit(row.id, input));
   } else if (!row && audit) {
     await fillUnreadableFinding(db, input, audit);
   }
+  return row !== undefined;
 }
 
 /** As `recordReconciliationFinding`, with the audit row committed in the caller's transaction. */

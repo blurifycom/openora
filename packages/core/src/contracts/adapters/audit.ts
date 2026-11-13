@@ -61,6 +61,7 @@ export type DirectAuditAction =
   | 'wallet.reconciliation_run.completed'
   | 'wallet.reconciliation_run.failed'
   | 'wallet.ledger_invariant_run.requested'
+  | 'wallet.ledger_invariant_run.skipped'
   | 'wallet.ledger_invariant_run.completed'
   | 'wallet.ledger_invariant_run.failed'
   | 'wallet.reconciliation_finding.resolved'

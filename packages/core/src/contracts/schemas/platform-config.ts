@@ -178,6 +178,11 @@ export const WalletConfigSchema = z
          * at 03:30.
          */
         ledgerInvariantCron: z.string().optional(),
+        /**
+         * Run-claim takeover threshold for the ledger invariant scan, which reads every wallet's
+         * whole history and outlives the vendor diff's. Absent: 240.
+         */
+        ledgerInvariantStaleRunAfterMinutes: z.number().int().positive().optional(),
       })
       .strict()
       .optional(),

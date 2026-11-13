@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
-import type { PaymentAdapter, PlatformConfig, PlayEligibilityPort } from '@openora/core/contracts';
+import type {
+  PaymentAdapter,
+  PlatformConfig,
+  PlayEligibilityPort,
+  WalletReconciliationFindingKind,
+} from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
@@ -50,10 +55,17 @@ const commands = new WalletCommandsService(
   makeAuditWriter(),
 );
 
-function makeReconciliation({ batchSize = 200 }: { batchSize?: number } = {}) {
+function makeReconciliation({
+  batchSize = 200,
+  audit = makeAuditWriter(),
+  events = makeEventBus(),
+}: {
+  batchSize?: number;
+  audit?: ReturnType<typeof makeAuditWriter>;
+  events?: ReturnType<typeof makeEventBus>;
+} = {}) {
   const payment = mock<PaymentAdapter>({});
   const paymentProviders = makePaymentProviderRegistry({ adapter: payment });
-  const audit = makeAuditWriter();
   const platformConfig = mock<PlatformConfig>({
     wallet: {
       reconciliation: {
@@ -78,7 +90,7 @@ function makeReconciliation({ batchSize = 200 }: { batchSize?: number } = {}) {
   });
   return new ReconciliationService({
     drizzle: db.drizzle,
-    events: makeEventBus(),
+    events,
     wallet: walletSvc,
     paymentProviders,
     audit,
@@ -126,12 +138,30 @@ async function summaryOf(runId: string) {
   return row;
 }
 
-async function breaches() {
+async function findings(kind: WalletReconciliationFindingKind) {
   return db.drizzle.db
     .select()
     .from(walletReconciliationFinding)
-    .where(eq(walletReconciliationFinding.kind, 'ledger_invariant_breach'));
+    .where(eq(walletReconciliationFinding.kind, kind))
+    .orderBy(walletReconciliationFinding.createdAt);
 }
+
+const breaches = () => findings('ledger_invariant_breach');
+
+async function baselines(walletId: string) {
+  return db.drizzle.db
+    .select()
+    .from(walletBalanceBaseline)
+    .where(eq(walletBalanceBaseline.walletId, walletId))
+    .orderBy(walletBalanceBaseline.asOf, walletBalanceBaseline.createdAt);
+}
+
+const handEdit = (walletId: string, delta: string) =>
+  db.drizzle.db.execute(
+    sql`update wallet_balance set amount = amount + ${delta}::numeric where wallet_id = ${walletId}`,
+  );
+
+const ADMIN_ID = randomUUID();
 
 async function run(svc: ReconciliationService, backfillBaselines = false) {
   const res = await svc.runLedgerInvariant(randomUUID(), { backfillBaselines });
@@ -334,7 +364,9 @@ describe('legacy rows and the baseline backfill (real PG)', () => {
       { type: 'loss', amount: '0', status: 'completed', direction: 'debit', balanceAfter: null },
     ]);
 
-    const summary = await run(makeReconciliation());
+    const svc = makeReconciliation();
+    const summary = await run(svc);
+    await run(svc);
 
     expect(summary?.summary).toMatchObject({
       pairsChecked: 2,
@@ -342,6 +374,16 @@ describe('legacy rows and the baseline backfill (real PG)', () => {
       balanceBreaches: 0,
     });
     expect(await breaches()).toHaveLength(0);
+    // Filed once per pair, however many runs find it still unchecked.
+    const unchecked = await findings('ledger_invariant_unchecked');
+    expect(unchecked).toHaveLength(1);
+    expect(unchecked[0]).toMatchObject({ providerName: 'ledger', currency: 'USD', amount: null });
+    const listed = await svc.listFindings({
+      page: 1,
+      limit: 20,
+      kind: 'ledger_invariant_unchecked',
+    });
+    expect(WalletReconciliationFindingSchema.array().parse(listed.items)).toHaveLength(1);
   });
 
   it('baselines a legacy wallet, then checks play after it, and a rerun of the backfill is a no-op', async () => {
@@ -493,9 +535,257 @@ describe('legacy rows and the baseline backfill (real PG)', () => {
 
     const summary = await run(svc);
 
-    const [baseline] = await db.drizzle.db.select().from(walletBalanceBaseline);
-    expect(baseline?.asOf.getTime()).toBeLessThan(hoursAgo(24).getTime());
-    expect(summary?.summary).toMatchObject({ balanceBreaches: 0 });
+    const [backfilled, advanced] = await baselines(w.id);
+    expect(backfilled?.asOf.getTime()).toBeLessThan(hoursAgo(24).getTime());
+    expect(summary?.summary).toMatchObject({ balanceBreaches: 0, baselinesAdvanced: 1 });
+    // The settled withdrawal now lies before the cut, so the clean check moves the baseline over it.
+    expect(Number(advanced?.amount)).toBe(300);
+    expect(advanced?.asOf.getTime()).toBeGreaterThan(hoursAgo(24).getTime());
     expect(await breaches()).toHaveLength(0);
+  });
+});
+
+describe('rolling baselines and their repair (real PG)', () => {
+  it('moves the baseline on after a clean check, so an error that comes back is filed again', async () => {
+    const w = await fundedWallet('100');
+    const svc = makeReconciliation();
+
+    await handEdit(w.id, '7');
+    await run(svc);
+    const [first] = await breaches();
+    if (!first) {
+      throw new Error('no breach filed');
+    }
+    await svc.resolveFinding(ADMIN_ID, first.id, {
+      outcome: 'dismissed',
+      note: 'the edit was reverted by hand',
+    });
+    await handEdit(w.id, '-7');
+    const clean = await run(svc);
+    await handEdit(w.id, '7');
+    const again = await run(svc);
+    const settled = await run(svc);
+
+    expect(clean?.summary).toMatchObject({ balanceBreaches: 0, baselinesAdvanced: 1 });
+    // Priced from the ledger: the deposit sits after the cut, so nothing is absorbed yet.
+    const [baseline] = await baselines(w.id);
+    expect(Number(baseline?.amount)).toBe(0);
+    expect(baseline?.runId).not.toBeNull();
+    expect(again?.summary).toMatchObject({ balanceBreaches: 1, newBreaches: 1 });
+    expect(settled?.summary).toMatchObject({ balanceBreaches: 1, newBreaches: 0 });
+    const found = await breaches();
+    expect(found.map((f) => [f.status, Number(f.amount)])).toEqual([
+      ['resolved', 7],
+      ['open', 7],
+    ]);
+    expect(found[1]?.externalId).toContain(`:${baseline?.id}:`);
+  });
+
+  it('absorbs settled rows into the baseline from the ledger, never from the balance', async () => {
+    const w = await seedWallet('70', [
+      {
+        type: 'deposit',
+        amount: '100',
+        status: 'completed',
+        balanceAfter: '100',
+        createdAt: hoursAgo(5),
+      },
+      {
+        type: 'bet',
+        amount: '30',
+        status: 'completed',
+        direction: 'debit',
+        balanceAfter: '70',
+        realShare: '30',
+        createdAt: hoursAgo(4),
+      },
+    ]);
+    const svc = makeReconciliation();
+
+    const first = await run(svc);
+    const second = await run(svc);
+
+    expect(first?.summary).toMatchObject({ balanceBreaches: 0, baselinesAdvanced: 1 });
+    // Nothing new before the cut since: no second row.
+    expect(second?.summary).toMatchObject({ baselinesAdvanced: 0 });
+    const history = await baselines(w.id);
+    expect(history).toHaveLength(1);
+    expect(Number(history[0]?.amount)).toBe(70);
+  });
+
+  it('re-baselines a breached wallet at its balance for a super admin, recording old and new', async () => {
+    const w = await fundedWallet('100');
+    const audit = makeAuditWriter();
+    const svc = makeReconciliation({ audit });
+    await handEdit(w.id, '7');
+    await run(svc);
+    const [breach] = await breaches();
+    if (!breach) {
+      throw new Error('no breach filed');
+    }
+
+    const resolved = await svc.resolveFinding(ADMIN_ID, breach.id, {
+      outcome: 'rebaselined',
+      note: 'player was owed 7 from a support case',
+    });
+    const after = await run(svc);
+    await handEdit(w.id, '7');
+    const retamper = await run(svc);
+
+    expect(resolved).toMatchObject({ status: 'resolved' });
+    const [baseline] = await baselines(w.id);
+    expect(baseline).toMatchObject({ findingId: breach.id, runId: null });
+    // 107 held, less the 100 deposit after the cut.
+    expect(Number(baseline?.amount)).toBe(7);
+    const resolvedAudit = audit.recordInTransaction.mock.calls
+      .map(([, entry]) => entry)
+      .find((entry) => entry.action === 'wallet.reconciliation_finding.resolved');
+    expect(resolvedAudit?.after).toMatchObject({
+      outcome: 'rebaselined',
+      baseline: { before: null, after: { id: baseline?.id } },
+    });
+    expect(after?.summary).toMatchObject({ balanceBreaches: 0 });
+    expect(retamper?.summary).toMatchObject({ balanceBreaches: 1, newBreaches: 1 });
+  });
+
+  it('refuses to re-baseline a finding that is not about a ledger', async () => {
+    const svc = makeReconciliation();
+    const finding = findOneOrThrow(
+      await db.drizzle.db
+        .insert(walletReconciliationFinding)
+        .values({
+          runId: randomUUID(),
+          providerName: 'mock',
+          kind: 'stuck_sweep',
+          externalId: randomUUID(),
+        })
+        .returning(),
+      new Error('finding: no row'),
+    );
+
+    await expect(
+      svc.resolveFinding(ADMIN_ID, finding.id, { outcome: 'rebaselined', note: 'n' }),
+    ).rejects.toMatchObject({ name: 'ReconciliationOutcomeNotAllowedError' });
+  });
+
+  it('refuses a backfill that disagrees with the balance the ledger last stamped, and files it', async () => {
+    const legacy = (balance: string, betBalanceAfter: string) =>
+      seedWallet(balance, [
+        {
+          type: 'deposit',
+          amount: '300',
+          status: 'completed',
+          balanceAfter: null,
+          createdAt: hoursAgo(48),
+        },
+        {
+          type: 'bet',
+          amount: '40',
+          status: 'completed',
+          direction: 'debit',
+          realShare: '40',
+          balanceAfter: betBalanceAfter,
+          createdAt: hoursAgo(30),
+        },
+      ]);
+    const agrees = await legacy('260', '260');
+    // The balance was edited by 10 before the backfill: it must not become the new zero.
+    const edited = await legacy('270', '260');
+    const events = makeEventBus();
+    const svc = makeReconciliation({ events });
+
+    const summary = await run(svc, true);
+
+    expect(summary?.summary).toMatchObject({
+      baselinesInserted: 1,
+      baselineMismatches: 1,
+      needsBaseline: 1,
+      newBreaches: 1,
+    });
+    expect(await baselines(agrees.id)).toHaveLength(1);
+    expect(await baselines(edited.id)).toHaveLength(0);
+    const [breach] = await breaches();
+    expect(breach?.externalId).toBe(`wallet:${edited.id}:USD:backfill:10.000000000000000000`);
+    expect(breach?.detail).toContain('over by 10');
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'wallet.reconciliation.alert',
+      expect.objectContaining({ openFindings: 1, threshold: 0 }),
+    );
+  });
+
+  it('alerts once on a new breach, below the open-findings threshold, and not again on a rerun', async () => {
+    const w = await fundedWallet('100');
+    const events = makeEventBus();
+    const svc = makeReconciliation({ events });
+    await handEdit(w.id, '7');
+
+    await run(svc);
+    await run(svc);
+
+    const alerts = events.emitInTransaction.mock.calls.filter(
+      ([, topic]) => topic === 'wallet.reconciliation.alert',
+    );
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.[2]).toMatchObject({ openFindings: 1, threshold: 0 });
+  });
+});
+
+describe('ledger invariant run hygiene (real PG)', () => {
+  async function inFlight(minutesAgo: number) {
+    await db.drizzle.db.insert(walletJobRun).values({
+      jobName: 'wallet-ledger-invariant',
+      runId: randomUUID(),
+      startedAt: new Date(Date.now() - minutesAgo * 60_000),
+    });
+  }
+
+  it('waits out a ledger run longer than the vendor diff would, then takes it over', async () => {
+    const svc = makeReconciliation();
+    await inFlight(45);
+    expect(await svc.runLedgerInvariant(randomUUID())).toBeNull();
+
+    await db.drizzle.db.execute(sql`TRUNCATE ${walletJobRun}`);
+    await inFlight(300);
+    expect(await svc.runLedgerInvariant(randomUUID())).not.toBeNull();
+  });
+
+  it('audits a backfill that could not run because another run holds the slot', async () => {
+    const audit = makeAuditWriter();
+    const svc = makeReconciliation({ audit });
+    await inFlight(1);
+
+    await svc.runLedgerInvariant(randomUUID());
+    expect(audit.record).not.toHaveBeenCalled();
+    const runId = randomUUID();
+    expect(await svc.runLedgerInvariant(runId, { backfillBaselines: true })).toBeNull();
+
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'wallet.ledger_invariant_run.skipped',
+        resourceId: runId,
+        after: expect.objectContaining({ backfillBaselines: true }),
+      }),
+    );
+  });
+
+  it('leaves a run taken over as stale abandoned when it finishes late', async () => {
+    const w = await fundedWallet('100');
+    await handEdit(w.id, '7');
+    const audit = makeAuditWriter();
+    // Another worker takes the run over while it files its finding.
+    audit.record.mockImplementation(async () => {
+      await db.drizzle.db
+        .update(walletJobRun)
+        .set({ status: 'abandoned', finishedAt: new Date() })
+        .where(eq(walletJobRun.status, 'running'));
+    });
+    const svc = makeReconciliation({ audit });
+
+    const res = await svc.runLedgerInvariant(randomUUID());
+
+    expect(res).not.toBeNull();
+    const row = await summaryOf(res?.runId ?? '');
+    expect(row?.status).toBe('abandoned');
   });
 });

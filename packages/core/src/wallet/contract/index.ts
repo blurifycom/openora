@@ -686,7 +686,9 @@ export type ListReconciliationFindingsInput = z.infer<typeof ListReconciliationF
 // Every way to close a finding carries its evidence: a credit (credited), the held deposit
 // itself credited after a fresh policy check (released), the on-chain transaction that sent
 // the money back and how much it sent (refunded), or a mandatory note explaining why it is
-// a non-issue (dismissed). Never a bare status flip with no evidence.
+// a non-issue (dismissed). Never a bare status flip with no evidence. A ledger finding may also
+// close by re-baselining its wallet at the balance it holds now (rebaselined), with a note on why
+// that balance is the right one.
 //
 // `credited` means two things by finding kind. A deposit finding names no transaction: the
 // resolution credits the deposit itself, after the deposit hold policy, and `userId` is the
@@ -707,6 +709,7 @@ export const ReconciliationResolutionSchema = z.discriminatedUnion('outcome', [
     note: z.string().trim().min(1).optional(),
   }),
   z.object({ outcome: z.literal('dismissed'), note: z.string().trim().min(1) }),
+  z.object({ outcome: z.literal('rebaselined'), note: z.string().trim().min(1) }),
 ]);
 export type ReconciliationResolution = z.infer<typeof ReconciliationResolutionSchema>;
 

@@ -1,5 +1,5 @@
 {
-  "id": "aee17ebb-40e2-4d39-89ea-71194446a751",
+  "id": "8dbbf4e7-2c89-4986-b954-fbb55da8d54a",
   "prevId": "2cc5d562-8ffd-4282-a3b7-b1604f9268cc",
   "version": "7",
   "dialect": "postgresql",
@@ -447,6 +447,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finding_id": {
+          "name": "finding_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -456,8 +468,8 @@
         }
       },
       "indexes": {
-        "wallet_balance_baseline_wallet_id_currency_idx": {
-          "name": "wallet_balance_baseline_wallet_id_currency_idx",
+        "wallet_balance_baseline_wallet_id_currency_as_of_idx": {
+          "name": "wallet_balance_baseline_wallet_id_currency_as_of_idx",
           "columns": [
             {
               "expression": "wallet_id",
@@ -470,9 +482,15 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last"
+            },
+            {
+              "expression": "as_of",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
             }
           ],
-          "isUnique": true,
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -484,6 +502,15 @@
           "tableFrom": "wallet_balance_baseline",
           "tableTo": "wallet",
           "columnsFrom": ["wallet_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "wallet_balance_baseline_finding_id_wallet_reconciliation_finding_id_fk": {
+          "name": "wallet_balance_baseline_finding_id_wallet_reconciliation_finding_id_fk",
+          "tableFrom": "wallet_balance_baseline",
+          "tableTo": "wallet_reconciliation_finding",
+          "columnsFrom": ["finding_id"],
           "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -2601,7 +2628,8 @@
         "stuck_swap",
         "held_deposit",
         "below_minimum_deposit",
-        "ledger_invariant_breach"
+        "ledger_invariant_breach",
+        "ledger_invariant_unchecked"
       ]
     },
     "public.wallet_reconciliation_finding_status": {

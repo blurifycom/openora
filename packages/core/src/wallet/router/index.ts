@@ -763,7 +763,12 @@ export function createWalletRouter({
         } = await adminGuard.assert(context, 'wallet-reconciliation', 'resolve');
         // `credited` on a deposit finding and `released` put custody money on a player's
         // balance, so they need what any other hand credit (`manualAdjustment`) needs.
-        if (input.resolution.outcome === 'credited' || input.resolution.outcome === 'released') {
+        // `rebaselined` moves the point a wallet's ledger is counted from, as a backfill does.
+        if (
+          input.resolution.outcome === 'credited' ||
+          input.resolution.outcome === 'released' ||
+          input.resolution.outcome === 'rebaselined'
+        ) {
           await adminGuard.assertSuperAdmin(context);
         }
         return mapErrors(
@@ -810,7 +815,10 @@ export function createWalletRouter({
         );
         const runId = randomUUID();
         if (input.backfillBaselines) {
-          await adminGuard.assertSuperAdmin(context);
+          const { ip, userAgent } = await adminGuard.assertSuperAdmin(context, {
+            resource: 'wallet-reconciliation',
+            action: 'ledgerInvariant',
+          });
           await audit.record({
             actorId: adminId,
             actorType: 'admin',
@@ -818,6 +826,8 @@ export function createWalletRouter({
             resourceType: 'wallet_job_run',
             resourceId: runId,
             after: { runId, backfillBaselines: true },
+            ip,
+            userAgent,
           });
         }
         await jobQueue.enqueue(LEDGER_INVARIANT_QUEUE, {

@@ -107,12 +107,15 @@ export const walletBalance = pgTable(
   (t) => [uniqueIndex('wallet_balance_wallet_id_currency_idx').on(t.walletId, t.currency)],
 );
 
-// Where the ledger invariant starts counting for a (wallet, currency) whose history holds rows
-// it cannot price: ones written before `balance_after`, `direction` or a bet's `real_share`
-// existed. `amount` is the balance the rows up to `asOf` add up to, so the invariant is
+// Where the ledger invariant starts counting for a (wallet, currency): `amount` is the balance
+// the rows up to `asOf` add up to, so the invariant is
 // `amount + effect(rows created after asOf) = wallet_balance.amount`. Every row at or before
 // `asOf` was in a terminal status when it was taken, so none of them can move money again.
-// Written once by the operator-run backfill, never updated.
+// Append-only history; the latest `asOf` (then `createdAt`) is the one in force. Three writers:
+// - the operator-run backfill, over rows nothing can price (written before `balance_after`,
+//   `direction` or a bet's `real_share` existed), taken from the balance;
+// - the scan itself, rolling a pair that checked clean forward from the ledger alone (`runId`);
+// - a super admin resolving a breach by vouching for the current balance (`findingId`).
 export const walletBalanceBaseline = pgTable(
   'wallet_balance_baseline',
   {
@@ -123,9 +126,18 @@ export const walletBalanceBaseline = pgTable(
     currency: text().notNull(),
     amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     asOf: timestamp({ withTimezone: true }).notNull(),
+    // The ledger invariant run that took it; NULL when an admin did.
+    runId: uuid(),
+    findingId: uuid().references(() => walletReconciliationFinding.id),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('wallet_balance_baseline_wallet_id_currency_idx').on(t.walletId, t.currency)],
+  (t) => [
+    index('wallet_balance_baseline_wallet_id_currency_as_of_idx').on(
+      t.walletId,
+      t.currency,
+      t.asOf,
+    ),
+  ],
 );
 
 export const walletTransaction = pgTable(

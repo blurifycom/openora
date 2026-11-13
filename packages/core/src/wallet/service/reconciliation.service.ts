@@ -40,6 +40,7 @@ import {
   walletReconciliationFinding,
   walletRefundedDeposit,
   walletTransaction,
+  type Wallet,
   type WalletJobRun,
   type WalletReconciliationFinding as WalletReconciliationFindingRow,
   type WalletTransaction,
@@ -64,7 +65,16 @@ import {
   recordReconciliationFinding,
   rgDecisionForLandedCredit,
 } from './reconciliation-finding.service.js';
-import { backfillBaselinePage, checkLedgerPage } from './ledger-invariant.service.js';
+import {
+  LEDGER_FINDING_LABEL,
+  backfillBaselinePage,
+  backfillMismatchKey,
+  checkLedgerPage,
+  ledgerBreachKey,
+  ledgerPairKey,
+  parseLedgerPairKey,
+  rebaselinePair,
+} from './ledger-invariant.service.js';
 
 const logger = createLogger('wallet-reconciliation');
 
@@ -116,6 +126,12 @@ const REFUNDABLE_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = n
   'below_minimum_deposit',
 ]);
 
+/** Findings about a wallet's own ledger, the only ones a re-baseline can close. */
+const LEDGER_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
+  'ledger_invariant_breach',
+  'ledger_invariant_unchecked',
+]);
+
 function assertOutcomeAllowed(
   kind: WalletReconciliationFindingKind,
   outcome: ReconciliationResolution['outcome'],
@@ -125,6 +141,7 @@ function assertOutcomeAllowed(
       ? outcome === 'released' || outcome === 'refunded'
       : outcome === 'credited' ||
         outcome === 'dismissed' ||
+        (outcome === 'rebaselined' && LEDGER_FINDING_KINDS.has(kind)) ||
         (outcome === 'refunded' && REFUNDABLE_FINDING_KINDS.has(kind));
   if (!allowed) {
     throw new ReconciliationOutcomeNotAllowedError(kind, outcome);
@@ -175,6 +192,8 @@ const PROVIDER_REF_LOOKUP_CHUNK_SIZE = 1000;
 // than still working, so the next tick may mark it `abandoned` and take the slot over.
 // Distinct from the vendor-side ambiguity thresholds: this one is about our own worker.
 const DEFAULT_STALE_RUN_AFTER_MINUTES = 30;
+// The ledger invariant reads every wallet's whole history, so a healthy run outlives the above.
+const DEFAULT_LEDGER_INVARIANT_STALE_RUN_AFTER_MINUTES = 240;
 
 /** Fallback when reconciliation runs without a `wallet.sweep` config block. */
 const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
@@ -190,8 +209,19 @@ export const LedgerInvariantJobSchema = z.object({
   backfillBaselines: z.boolean().optional(),
 });
 
-// A breach is the platform's own ledger disagreeing with itself, not a vendor's report.
-const LEDGER_FINDING_LABEL = 'ledger';
+type LedgerInvariantCounts = {
+  baselinesInserted: number;
+  baselinesSkipped: number;
+  /** Pairs the backfill refused because the ledger's own stamped balance disagrees. */
+  baselineMismatches: number;
+  /** Pairs a clean check moved forward to the run's cut. */
+  baselinesAdvanced: number;
+  pairsChecked: number;
+  needsBaseline: number;
+  balanceBreaches: number;
+  /** Breaches filed by this run that were not on file before. */
+  newBreaches: number;
+};
 
 /** Page size when reconciliation runs without a `wallet.reconciliation` config block. */
 const DEFAULT_BATCH_SIZE = 200;
@@ -332,6 +362,7 @@ export class ReconciliationService {
       let refundedDepositId: string | null = null;
       let creditedDeposit: CreditedDeposit | undefined;
       let releasedDeposit: CreditedDeposit | undefined;
+      let baseline: Awaited<ReturnType<typeof rebaselinePair>> = null;
 
       if (resolution.outcome === 'credited') {
         if (DEPOSIT_FINDING_KINDS.has(finding.kind)) {
@@ -414,6 +445,21 @@ export class ReconciliationService {
         } else if (finding.kind === 'missing_deposit' || finding.kind === 'below_minimum_deposit') {
           refundedDepositId = await this.recordMissingDepositRefunded(txn, finding, adminId);
         }
+      } else if (resolution.outcome === 'rebaselined') {
+        // The balance it holds now becomes the zero its ledger counts from: the error this
+        // finding reports is accepted, which is why it takes a super admin and a note.
+        const pair = parseLedgerPairKey(finding.externalId);
+        if (!pair) {
+          throw new ReconciliationOutcomeNotAllowedError(finding.kind, 'rebaselined');
+        }
+        baseline = await rebaselinePair(txn, pair.walletId, pair.currency, finding.id);
+        if (!baseline) {
+          throw new ReconciliationOutcomeNotAllowedError(
+            finding.kind,
+            'rebaselined while rows after the cut are unpriced',
+          );
+        }
+        resolutionNote = resolution.note;
       } else {
         resolutionNote = resolution.note;
       }
@@ -461,6 +507,7 @@ export class ReconciliationService {
           releasedDepositId: releasedDeposit?.transactionId ?? null,
           creditedDeposit: creditedDeposit ?? null,
           refundedDepositId,
+          ...(baseline ? { baseline } : {}),
           ...(resolution.outcome === 'refunded'
             ? {
                 refundAmount: resolution.amount,
@@ -896,29 +943,49 @@ export class ReconciliationService {
    * over the money tables and page by page, each page one statement on one snapshot, so it never
    * blocks play and never sees half of a move. A pair holding rows nothing prices (legacy ones,
    * see `ledger-invariant.service.ts`) and no baseline covering them is counted as
-   * `needsBaseline`, never filed as a breach. `backfillBaselines` first baselines those pairs:
-   * the operator's explicit step, never run by the schedule, because a baseline taken over a
-   * wallet that is already wrong makes its error the new zero.
+   * `needsBaseline` and filed once as `ledger_invariant_unchecked`, never as a breach.
+   * `backfillBaselines` first baselines those pairs: the operator's explicit step, never run by
+   * the schedule, because a baseline taken over a wallet that is already wrong makes its error
+   * the new zero. A run that files a breach not on file before alerts at once, whatever the
+   * open-findings threshold.
    */
   async runLedgerInvariant(
     runId: WalletJobRun['runId'] = randomUUID(),
     { backfillBaselines = false }: { backfillBaselines?: boolean } = {},
   ): Promise<{ runId: WalletJobRun['runId'] } | null> {
-    const jobRunId = await this.claimRun(runId, LEDGER_INVARIANT_JOB_NAME);
+    const jobRunId = await this.claimRun(
+      runId,
+      LEDGER_INVARIANT_JOB_NAME,
+      this.platformConfig?.wallet?.reconciliation?.ledgerInvariantStaleRunAfterMinutes ??
+        DEFAULT_LEDGER_INVARIANT_STALE_RUN_AFTER_MINUTES,
+    );
     if (!jobRunId) {
+      // An operator asked for a backfill and it did not happen: that must be on the record.
+      if (backfillBaselines) {
+        await this.audit.record({
+          actorType: 'system',
+          action: 'wallet.ledger_invariant_run.skipped',
+          resourceType: 'wallet_job_run',
+          resourceId: runId,
+          after: { runId, backfillBaselines, reason: 'another ledger invariant run is in flight' },
+        });
+      }
       return null;
     }
     const batchSize = this.platformConfig?.wallet?.reconciliation?.batchSize ?? DEFAULT_BATCH_SIZE;
-    const counts = {
+    const counts: LedgerInvariantCounts = {
       baselinesInserted: 0,
       baselinesSkipped: 0,
+      baselineMismatches: 0,
+      baselinesAdvanced: 0,
       pairsChecked: 0,
       needsBaseline: 0,
       balanceBreaches: 0,
+      newBreaches: 0,
     };
     try {
       if (backfillBaselines) {
-        await this.backfillBaselines(batchSize, counts);
+        await this.backfillBaselines(runId, batchSize, counts);
       }
       await this.checkWalletBalances(runId, batchSize, counts);
       await this.drizzle.db.transaction(async (txn) => {
@@ -930,6 +997,15 @@ export class ReconciliationService {
           resourceId: runId,
           after: { runId, backfillBaselines, ...counts },
         });
+        // A ledger breach is money no one can account for: one new breach is already the alert,
+        // reported as new breaches over a threshold of zero.
+        if (counts.newBreaches > 0) {
+          await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
+            runId,
+            openFindings: counts.newBreaches,
+            threshold: 0,
+          });
+        }
       });
     } catch (err) {
       await this.finishRun(jobRunId, 'failed', {
@@ -945,6 +1021,12 @@ export class ReconciliationService {
       });
       throw err;
     }
+    if (counts.newBreaches > 0) {
+      logger.error(
+        { runId, newBreaches: counts.newBreaches },
+        'ledger invariant: wallet balances off their ledger',
+      );
+    }
     if (counts.needsBaseline > 0) {
       logger.warn(
         { runId, needsBaseline: counts.needsBaseline },
@@ -955,14 +1037,26 @@ export class ReconciliationService {
   }
 
   private async backfillBaselines(
+    runId: WalletJobRun['runId'],
     batchSize: number,
-    counts: { baselinesInserted: number; baselinesSkipped: number },
+    counts: LedgerInvariantCounts,
   ): Promise<void> {
     let afterId: string | null = null;
     for (;;) {
-      const page = await backfillBaselinePage(this.drizzle.db, afterId, batchSize);
+      const page = await backfillBaselinePage(this.drizzle.db, afterId, batchSize, runId);
       counts.baselinesInserted += page.inserted;
       counts.baselinesSkipped += page.skipped;
+      for (const pair of page.mismatches) {
+        counts.baselineMismatches += 1;
+        const drift = moneySubtract(pair.amount, pair.estimate);
+        await this.fileLedgerBreach(runId, counts, {
+          walletId: pair.walletId,
+          currency: pair.currency,
+          drift,
+          externalId: backfillMismatchKey(pair.walletId, pair.currency, drift),
+          detail: `wallet ${pair.walletId} would be baselined at ${pair.amount} ${pair.currency} but its ledger last stamped a balance that carries forward to ${pair.estimate}, so it was not baselined`,
+        });
+      }
       if (page.scanned < batchSize || page.lastId === null) {
         return;
       }
@@ -973,15 +1067,31 @@ export class ReconciliationService {
   private async checkWalletBalances(
     runId: WalletJobRun['runId'],
     batchSize: number,
-    counts: { pairsChecked: number; needsBaseline: number; balanceBreaches: number },
+    counts: LedgerInvariantCounts,
   ): Promise<void> {
     let afterId: string | null = null;
     for (;;) {
-      const page = await checkLedgerPage(this.drizzle.db, afterId, batchSize);
+      const page = await checkLedgerPage(this.drizzle.db, afterId, batchSize, runId);
       for (const pair of page) {
         counts.pairsChecked += 1;
+        if (pair.advanced) {
+          counts.baselinesAdvanced += 1;
+        }
         if (pair.unpricedRows > 0) {
           counts.needsBaseline += 1;
+          // One per pair, whatever the run: the key carries no baseline or count.
+          await recordReconciliationFinding(
+            this.drizzle.db,
+            {
+              runId,
+              providerName: LEDGER_FINDING_LABEL,
+              kind: 'ledger_invariant_unchecked',
+              currency: pair.currency,
+              externalId: ledgerPairKey(pair.walletId, pair.currency),
+              detail: `wallet ${pair.walletId} holds ${pair.unpricedRows} ${pair.currency} ledger rows nothing prices and no baseline covers them; run the baseline backfill`,
+            },
+            this.audit,
+          );
           continue;
         }
         const drift = moneySubtract(pair.balance, pair.expected);
@@ -990,28 +1100,50 @@ export class ReconciliationService {
         }
         counts.balanceBreaches += 1;
         logger.error({ runId, ...pair, drift }, 'ledger invariant: wallet balance off its ledger');
-        // Keyed on the drift, which play after it leaves unchanged: a rerun files nothing new,
-        // while a further, different error on the same wallet does.
-        await recordReconciliationFinding(
-          this.drizzle.db,
-          {
-            runId,
-            providerName: LEDGER_FINDING_LABEL,
-            kind: 'ledger_invariant_breach',
-            currency: pair.currency,
-            // A finding's amount is never negative; which way the balance is off is in the detail.
-            amount: drift.replace(/^-/, ''),
-            externalId: `wallet:${pair.walletId}:${pair.currency}:${drift}`,
-            detail: `wallet ${pair.walletId} holds ${pair.balance} ${pair.currency} but its ledger adds up to ${pair.expected}: the balance is ${drift.startsWith('-') ? 'short' : 'over'} by ${drift.replace(/^-/, '')}`,
-          },
-          this.audit,
-        );
+        await this.fileLedgerBreach(runId, counts, {
+          walletId: pair.walletId,
+          currency: pair.currency,
+          drift,
+          externalId: ledgerBreachKey(pair.walletId, pair.currency, pair.baselineId, drift),
+          detail: `wallet ${pair.walletId} holds ${pair.balance} ${pair.currency} but its ledger adds up to ${pair.expected}`,
+        });
       }
       const last = page.at(-1);
       if (page.length < batchSize || !last) {
         return;
       }
       afterId = last.id;
+    }
+  }
+
+  private async fileLedgerBreach(
+    runId: WalletJobRun['runId'],
+    counts: LedgerInvariantCounts,
+    breach: {
+      walletId: Wallet['id'];
+      currency: string;
+      drift: string;
+      externalId: NonNullable<WalletReconciliationFindingRow['externalId']>;
+      detail: string;
+    },
+  ): Promise<void> {
+    const amount = breach.drift.replace(/^-/, '');
+    const filed = await recordReconciliationFinding(
+      this.drizzle.db,
+      {
+        runId,
+        providerName: LEDGER_FINDING_LABEL,
+        kind: 'ledger_invariant_breach',
+        currency: breach.currency,
+        // A finding's amount is never negative; which way the balance is off is in the detail.
+        amount,
+        externalId: breach.externalId,
+        detail: `${breach.detail}: the balance is ${breach.drift.startsWith('-') ? 'short' : 'over'} by ${amount}`,
+      },
+      this.audit,
+    );
+    if (filed) {
+      counts.newBreaches += 1;
     }
   }
 
@@ -1590,6 +1722,8 @@ export class ReconciliationService {
   private async claimRun(
     runId: WalletJobRun['runId'],
     jobName: string = JOB_NAME,
+    staleAfterMinutes: number = this.platformConfig?.wallet?.reconciliation?.staleRunAfterMinutes ??
+      DEFAULT_STALE_RUN_AFTER_MINUTES,
   ): Promise<WalletJobRun['id'] | null> {
     const claimed = await this.retryClaim(runId, jobName);
     if (claimed) {
@@ -1604,9 +1738,7 @@ export class ReconciliationService {
       // The blocking run finished between our insert conflict and this read - retry once.
       return this.retryClaim(runId, jobName);
     }
-    const staleAfterMs =
-      (this.platformConfig?.wallet?.reconciliation?.staleRunAfterMinutes ??
-        DEFAULT_STALE_RUN_AFTER_MINUTES) * 60_000;
+    const staleAfterMs = staleAfterMinutes * 60_000;
     if (existing.startedAt.getTime() >= Date.now() - staleAfterMs) {
       // A live run genuinely owns the claim - return immediately, no retry loop.
       return null;
@@ -1639,16 +1771,24 @@ export class ReconciliationService {
   // Keyed on the claimed row's own id, never on runId: a job retried by the queue
   // carries the same runId as the attempt that failed, so `WHERE run_id = ...` would
   // reach back and rewrite that earlier row's `failed`/`abandoned` verdict to
-  // `completed` - erasing the only evidence that the first attempt went wrong.
+  // `completed` - erasing the only evidence that the first attempt went wrong. Only a run still
+  // `running` is finished: one a later claim took over as stale keeps its `abandoned` verdict.
   private async finishRun(
     jobRunId: WalletJobRun['id'],
     status: WalletJobRunStatus,
     summary: Record<string, unknown>,
     db: DrizzleDb | DrizzleTx = this.drizzle.db,
   ): Promise<void> {
-    await db
+    const finished = await db
       .update(walletJobRun)
       .set({ finishedAt: new Date(), status, summary })
-      .where(eq(walletJobRun.id, jobRunId));
+      .where(and(eq(walletJobRun.id, jobRunId), eq(walletJobRun.status, 'running')))
+      .returning({ id: walletJobRun.id });
+    if (finished.length === 0) {
+      logger.warn(
+        { jobRunId, status },
+        'wallet job run was taken over as stale before it finished; its abandoned verdict stands',
+      );
+    }
   }
 }
