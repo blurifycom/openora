@@ -7,7 +7,7 @@ import {
 } from '@openora/core/server';
 import type {
   Uuid,
-  ChatBlockWriter,
+  ChatBlockReader,
   AdminUserDirectory,
   RealtimeTransport,
   AuditWritePort,
@@ -48,7 +48,7 @@ export class ChatCommandsService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly directory: AdminUserDirectory,
-    private readonly blockWriter: ChatBlockWriter,
+    private readonly blockReader: ChatBlockReader,
     private readonly transport: RealtimeTransport,
     private readonly audit: AuditWritePort,
     private readonly roomAccess: ChatRoomAccess,
@@ -156,7 +156,7 @@ export class ChatCommandsService {
     }
 
     const onlineIds = new Set(onlineUserIds);
-    const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
+    const excluded = new Set(await this.blockReader.getExcludedUserIds(viewerId));
     excluded.add(viewerId);
     const canSeeAdminUsers = await this.canSeeAdminUsers(viewerId);
     let ids =
