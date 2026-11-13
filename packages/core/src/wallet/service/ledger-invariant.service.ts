@@ -179,6 +179,20 @@ export function parseLedgerBreachKey(
   return { baselineId: match[1] === 'none' ? null : match[1], drift: match[2] };
 }
 
+const UNCHECKED_KEY =
+  /^wallet:[0-9a-f-]{36}:[^:]+:(?:([0-9a-f-]{36}|none)|backfill:(-?\d+(?:\.\d+)?))$/;
+
+/** What an unchecked finding was filed against, read back from its key. */
+export function parseLedgerUncheckedKey(
+  externalId: string | null,
+): { baselineId: LedgerPairCheck['baselineId'] } | { backfillDrift: string } | null {
+  const match = externalId === null ? null : UNCHECKED_KEY.exec(externalId);
+  if (match?.[1]) {
+    return { baselineId: match[1] === 'none' ? null : match[1] };
+  }
+  return match?.[2] ? { backfillDrift: match[2] } : null;
+}
+
 // Same shape as `ledgerBreachKey`, built in SQL for the pair `c`.
 const breachKeyPrefix = sql`'wallet:' || c.wallet_id || ':' || c.currency || ':'
   || coalesce(c.baseline_id::text, 'none') || ':'`;
@@ -297,6 +311,31 @@ export async function lockAndCheckLedgerPair(
   return row
     ? { baselineId: row.baseline_id, drift: row.drift, unpricedRows: Number(row.unpriced) }
     : null;
+}
+
+/**
+ * The backfill's cross-check of one pair now, for an admin resolving a flagged backfill: the
+ * balance less the rows after the cut, less what the ledger's stamps carry forward to at the cut
+ * (null when nothing was stamped), beside the baseline in force. Locks the balance row as
+ * `lockAndCheckLedgerPair` does. Null when the pair holds no balance.
+ */
+export async function lockAndEstimateBackfill(
+  txn: DrizzleTx,
+  walletId: Wallet['id'],
+  currency: string,
+): Promise<{ baselineId: LedgerPairCheck['baselineId']; drift: string | null } | null> {
+  const { rows } = await txn.execute<{ baseline_id: string | null; drift: string | null }>(sql`
+    select bl.id as baseline_id, (p.amount - l.total - e.estimate)::text as drift
+    from (
+      select p.*, ${cut} as as_of from (
+        select b.wallet_id, b.currency, b.amount from wallet_balance b
+        where b.wallet_id = ${walletId} and b.currency = ${currency}
+        for update) p) p
+    cross join lateral ${ledgerAfter(sql`p.as_of`)} l
+    left join lateral ${stampedEstimate(sql`p.as_of`)} e on true
+    left join lateral ${latestBaseline} bl on true`);
+  const [row] = rows;
+  return row ? { baselineId: row.baseline_id, drift: row.drift } : null;
 }
 
 export type BackfillMismatch = {

@@ -78,6 +78,8 @@ import {
   lockAndCheckLedgerPair,
   type LedgerPairCheck,
   parseLedgerBreachKey,
+  parseLedgerUncheckedKey,
+  lockAndEstimateBackfill,
   parseLedgerPairKey,
   rebaselinePair,
 } from './ledger-invariant.service.js';
@@ -182,26 +184,47 @@ function assertOutcomeAllowed(
 }
 
 /**
- * A re-baseline accepts the error a breach recorded, never a larger one that came after it nor
- * one measured from a baseline since replaced: the pair must still drift by exactly what the
- * finding's key says, from the baseline it names.
+ * A re-baseline accepts the error a finding recorded, never a larger one that came after it nor
+ * one measured from a baseline since replaced: a breach must still drift by exactly what its key
+ * says from the baseline it names, a flagged backfill must still disagree with the ledger's stamps
+ * by its own drift with no baseline yet, and a plain unchecked pair must still sit on the baseline
+ * it was filed under.
  */
-async function assertBreachStands(
+async function assertLedgerFindingStands(
   txn: DrizzleTx,
   finding: WalletReconciliationFindingRow,
   pair: { walletId: Wallet['id']; currency: string },
 ): Promise<void> {
-  const filed = parseLedgerBreachKey(finding.externalId);
-  const now = await lockAndCheckLedgerPair(txn, pair.walletId, pair.currency);
   const refuse = (reason: ReconciliationRefusalReason) =>
     new ReconciliationOutcomeNotAllowedError(finding.kind, 'rebaselined', reason);
-  if (!filed || !now) {
+  const filed =
+    finding.kind === 'ledger_invariant_breach'
+      ? parseLedgerBreachKey(finding.externalId)
+      : parseLedgerUncheckedKey(finding.externalId);
+  if (!filed) {
+    throw refuse('not_a_ledger_pair');
+  }
+  if ('backfillDrift' in filed) {
+    const now = await lockAndEstimateBackfill(txn, pair.walletId, pair.currency);
+    if (!now) {
+      throw refuse('not_a_ledger_pair');
+    }
+    if (now.baselineId !== null) {
+      throw refuse('baseline_moved');
+    }
+    if (now.drift === null || !moneyEquals(now.drift, filed.backfillDrift)) {
+      throw refuse('drift_changed');
+    }
+    return;
+  }
+  const now = await lockAndCheckLedgerPair(txn, pair.walletId, pair.currency);
+  if (!now) {
     throw refuse('not_a_ledger_pair');
   }
   if (now.baselineId !== filed.baselineId) {
     throw refuse('baseline_moved');
   }
-  if (!moneyEquals(now.drift, filed.drift)) {
+  if ('drift' in filed && !moneyEquals(now.drift, filed.drift)) {
     throw refuse('drift_changed');
   }
 }
@@ -581,9 +604,7 @@ export class ReconciliationService {
             'not_a_ledger_pair',
           );
         }
-        if (finding.kind === 'ledger_invariant_breach') {
-          await assertBreachStands(txn, finding, pair);
-        }
+        await assertLedgerFindingStands(txn, finding, pair);
         baseline = await rebaselinePair(txn, pair.walletId, pair.currency, finding.id);
         if (!baseline) {
           throw new ReconciliationOutcomeNotAllowedError(

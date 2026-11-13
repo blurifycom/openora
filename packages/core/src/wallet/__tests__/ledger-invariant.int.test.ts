@@ -876,6 +876,71 @@ describe('rolling baselines and their repair (real PG)', () => {
     expect(await baselines(w.id)).toHaveLength(1);
   });
 
+  it('refuses to re-baseline a flagged backfill whose drift changed since it was filed', async () => {
+    const w = await seedWallet('270', [
+      {
+        type: 'deposit',
+        amount: '300',
+        status: 'completed',
+        balanceAfter: null,
+        createdAt: hoursAgo(48),
+      },
+      {
+        type: 'bet',
+        amount: '40',
+        status: 'completed',
+        direction: 'debit',
+        realShare: '40',
+        balanceAfter: '260',
+        createdAt: hoursAgo(30),
+      },
+    ]);
+    const svc = makeReconciliation();
+    await run(svc, true);
+    const flagged = (await findings('ledger_invariant_unchecked')).find((f) =>
+      f.externalId?.includes(':backfill:'),
+    );
+    if (!flagged) {
+      throw new Error('no backfill mismatch filed');
+    }
+    await handEdit(w.id, '3');
+
+    await expect(
+      svc.resolveFinding(ADMIN_ID, flagged.id, { outcome: 'rebaselined', note: 'owed 10' }),
+    ).rejects.toMatchObject({ data: { reason: 'drift_changed' } });
+    expect(await baselines(w.id)).toHaveLength(0);
+
+    await handEdit(w.id, '-3');
+    await svc.resolveFinding(ADMIN_ID, flagged.id, { outcome: 'rebaselined', note: 'owed 10' });
+    expect(await baselines(w.id)).toHaveLength(1);
+  });
+
+  it('refuses to re-baseline an unchecked pair filed under a baseline no longer in force', async () => {
+    const w = await seedWallet('300', [
+      {
+        type: 'deposit',
+        amount: '300',
+        status: 'completed',
+        balanceAfter: null,
+        createdAt: hoursAgo(48),
+      },
+    ]);
+    const svc = makeReconciliation();
+    await run(svc);
+    const [unchecked] = await findings('ledger_invariant_unchecked');
+    if (!unchecked) {
+      throw new Error('no unchecked finding filed');
+    }
+    await db.drizzle.db
+      .insert(walletBalanceBaseline)
+      .values({ walletId: w.id, currency: 'USD', amount: '300', asOf: hoursAgo(47) });
+
+    await expect(
+      svc.resolveFinding(ADMIN_ID, unchecked.id, { outcome: 'rebaselined', note: 'confirmed' }),
+    ).rejects.toMatchObject({ data: { reason: 'baseline_moved' } });
+    expect(await baselines(w.id)).toHaveLength(1);
+  });
+
   it('records what the stamped ledger says beside a re-baselined unchecked pair', async () => {
     // Its balance was edited by 10 after the bet stamped 260, before anything priced it.
     const w = await seedWallet('270', [
