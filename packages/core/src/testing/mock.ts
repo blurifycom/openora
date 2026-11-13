@@ -281,7 +281,7 @@ export const makeUserCommands = (): UserCommands & {
 } => ({
   setUsername: vi.fn(async () => ({ success: true })),
   createAdmin: vi.fn(async () => ({ id: randomUUID() })),
-  publishPlayEligibility: vi.fn(async () => ({ afterCommit: async () => undefined })),
+  publishPlayEligibility: vi.fn(async () => undefined),
 });
 
 const matches = (refs: readonly string[], resource: string, action: string) =>

@@ -499,10 +499,16 @@ export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js
 
 export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
-export type { PlayEligibilityPort, PlayEligibilityState, PlayRefusal } from './play-eligibility.js';
+export type {
+  PlayEligibilityPort,
+  PlayEligibilityProjectionPort,
+  PlayEligibilityState,
+  PlayRefusal,
+} from './play-eligibility.js';
 export {
   LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY_PROJECTION,
   PLAY_REFUSALS,
   isPlayRefused,
   playRefusalOf,

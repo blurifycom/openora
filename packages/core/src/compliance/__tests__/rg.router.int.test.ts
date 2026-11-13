@@ -363,7 +363,7 @@ describe('compliance RG router writes', () => {
       liftedBy: CALLER,
       liftedReason: 'raised in error',
     });
-    expect(enforcement.unblock).toHaveBeenCalledWith(USER);
+    expect(enforcement.unblock).toHaveBeenCalledWith(USER, expect.anything());
   });
 
   it('maps a min-period lift rejection to a CONFLICT error', async () => {
@@ -529,7 +529,7 @@ describe('compliance router - player self-service', () => {
     );
 
     expect(exclusion).toMatchObject({ userId: USER, kind: 'cooling_off' });
-    expect(enforcement.block).toHaveBeenCalledWith(USER, expect.anything());
+    expect(enforcement.block).toHaveBeenCalledWith(USER, expect.anything(), expect.anything());
   });
 
   it('requestSelfExclusion is a CONFLICT when one is already active', async () => {

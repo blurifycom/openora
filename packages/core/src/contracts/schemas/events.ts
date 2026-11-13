@@ -458,13 +458,13 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
-  // An admin toggled a user's active status (the only user-lifecycle flow today;
-  // users are deactivated, never hard-deleted). userId = subject, actorId = the
-  // admin who acted (for a complete audit trail).
   // A user's play eligibility as committed, for the ledger's `ledger_play_eligibility`
   // projection. Written to the outbox by every writer of an input, in its own transaction; the
   // consumer keeps the highest `version`, since delivery order is not guaranteed.
   'identity.play_eligibility.changed': PlayEligibilitySnapshotSchema,
+  // An admin toggled a user's active status (the only user-lifecycle flow today;
+  // users are deactivated, never hard-deleted). userId = subject, actorId = the
+  // admin who acted (for a complete audit trail).
   'identity.user.deactivated': authContextBase.extend({ userId: UuidSchema, actorId: UuidSchema }),
   'identity.user.reactivated': authContextBase.extend({ userId: UuidSchema, actorId: UuidSchema }),
   'identity.session.revoked': authContextBase.extend({

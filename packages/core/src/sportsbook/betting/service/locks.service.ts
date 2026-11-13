@@ -3,8 +3,11 @@ import type { DrizzleTx } from '@openora/core/server';
 import type { Uuid } from '@openora/core/contracts';
 import type { SportsbookBetRow } from '../schema/index.js';
 
-// Lock order, every path: config -> player -> bet -> identity user row (FOR SHARE, taken
-// by PLAY_ELIGIBILITY) -> wallet and debt rows -> audit_log. Wallet and debt rows are only touched
+// Lock order, every path: config -> player -> bet -> eligibility row (FOR SHARE: the identity user
+// row through PLAY_ELIGIBILITY on a session issue, the `ledger_play_eligibility` row through
+// LEDGER_PLAY_ELIGIBILITY on a stake) -> wallet and debt rows -> audit_log. Identity's publisher
+// takes the user row, then the ledger row exclusively, and never a sportsbook lock, so it cannot
+// close a cycle with a stake (ADR-0052). Wallet and debt rows are only touched
 // under the player lock, which is what makes their relative order free; the wallet's own advisory
 // locks (the bare user id, `promo-round-settle:`) come after ours. Findings are written before any
 // audit row. Each helper takes one transaction-scoped advisory lock, released at commit or rollback.

@@ -1,18 +1,19 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import {
   AUDIT_WRITER,
   IDENTITY_READER,
-  LEDGER_API_V1,
   LEDGER_PLAY_ELIGIBILITY,
+  PLAYER_STATUSES,
   PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY_PROJECTION,
   WALLET_COMMANDS,
   domainEventSchemas,
-  type LedgerApiV1,
-  type LedgerV1SetPlayEligibilityArgs,
   type McpTokenRevocation,
   type PlayEligibilityPort,
+  type PlayEligibilityProjectionPort,
+  type PlayEligibilitySnapshot,
 } from '@openora/core/contracts';
 import {
   Container,
@@ -24,21 +25,27 @@ import {
 import { createTestDb, seedPlayerWithUser, seedUser, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
-import { wallet, walletBalance } from '@openora/core/wallet/schema';
-import { backfillLedgerPlayEligibility } from '@openora/core/wallet/seed';
+import { ledgerPlayEligibility, wallet, walletBalance } from '@openora/core/wallet/schema';
 import walletPlugin from '@openora/core/wallet/plugin';
 import { makeAuditWriter, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
+import { DrizzleAdminUserDirectory } from '../admin-user-directory.js';
 import { migrate } from '../migrate.js';
 import { user } from '../schema/index.js';
 import { LoginEnforcementService } from '../service/login-enforcement.service.js';
-import { PlayEligibilityPublisher } from '../service/play-eligibility.service.js';
+import {
+  backfillPlayEligibility,
+  PlayEligibilityPublisher,
+} from '../service/play-eligibility.service.js';
 import { SessionService } from '../service/session.service.js';
 
 let db: TestDb;
 let container: Container<CoreTokenCatalog>;
 
+type Projection = () => PlayEligibilityProjectionPort | undefined;
+const ledger: Projection = () => container.get(PLAY_ELIGIBILITY_PROJECTION);
+
 /** Identity's writers against the real wallet plugin, which owns the projection a stake reads. */
-function enforcement(ledger: () => LedgerApiV1 | undefined = () => container.get(LEDGER_API_V1)) {
+function identity(projection: Projection = ledger) {
   const events = makeEventBus();
   const sessions = new SessionService({
     drizzle: db.drizzle,
@@ -46,46 +53,54 @@ function enforcement(ledger: () => LedgerApiV1 | undefined = () => container.get
     identityReader: makeIdentityReader(),
     mcpTokens: mock<McpTokenRevocation>({ revokeAllForUser: vi.fn(async () => ({ revoked: 0 })) }),
   });
-  const publisher = new PlayEligibilityPublisher(db.drizzle, events, ledger);
-  return { svc: new LoginEnforcementService(db.drizzle, sessions, publisher), events };
+  const publisher = new PlayEligibilityPublisher(db.drizzle, events, projection);
+  const enforcement = new LoginEnforcementService(sessions, publisher);
+  return {
+    events,
+    publisher,
+    enforcement,
+    block: (userId: string) =>
+      db.drizzle.db.transaction((tx) => enforcement.block(userId, { until: null }, tx)),
+    unblock: (userId: string) => db.drizzle.db.transaction((tx) => enforcement.unblock(userId, tx)),
+  };
 }
 
-/** Only the push made before the writer commits: what a stake sees before any event lands. */
-const restrictOnly = (): LedgerApiV1 => {
-  const real = container.get(LEDGER_API_V1);
-  return mock<LedgerApiV1>({
-    setPlayEligibility: (args: LedgerV1SetPlayEligibilityArgs) =>
-      args.mode === 'restrict' ? real.setPlayEligibility(args) : Promise.resolve(),
-  });
-};
+const directory = () =>
+  new DrizzleAdminUserDirectory(db.drizzle, makeEventBus(), identity().publisher);
 
-/** Delivers what the outbox carried, the way the wallet's event handler applies it. */
+const backfill = () =>
+  backfillPlayEligibility(db.drizzle.db, container.get(PLAY_ELIGIBILITY_PROJECTION));
+
+/** Delivers what the outbox carried, the way the wallet's event handler replays it. */
 const deliver = (payload: unknown) =>
-  container.get(LEDGER_API_V1).setPlayEligibility({
-    ...domainEventSchemas['identity.play_eligibility.changed'].parse(payload),
-    mode: 'apply',
-  });
+  container
+    .get(PLAY_ELIGIBILITY_PROJECTION)
+    .reconcile([domainEventSchemas['identity.play_eligibility.changed'].parse(payload)]);
 
 const emitted = (events: ReturnType<typeof makeEventBus>) =>
-  events.emitInTransaction.mock.calls.map(([, , payload]) => payload);
+  events.emitInTransaction.mock.calls
+    .filter(([, topic]) => topic === 'identity.play_eligibility.changed')
+    .map(([, , payload]) => payload);
 
-async function fundedPlayer() {
-  const account = await seedUser(db);
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: account.id, currency: 'USD' })
-    .returning();
+async function fund(userId: string) {
+  const [row] = await db.drizzle.db.insert(wallet).values({ userId, currency: 'USD' }).returning();
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row!.id, currency: 'USD', amount: '100' });
-  await backfillLedgerPlayEligibility(db.drizzle.db);
-  return account.id;
+    .values({ walletId: row!.id, currency: 'USD', amount: '1000' });
+}
+
+async function fundedPlayer() {
+  const { account, player } = await seedPlayerWithUser(db, { status: 'active' });
+  await fund(account.id);
+  await backfill();
+  return { userId: account.id, playerId: player.id };
 }
 
 const bet = (userId: string) =>
   container.get(WALLET_COMMANDS).debit(db.drizzle.db, { userId, amount: '10', type: 'bet' });
 
 const refused = { name: 'WalletRgRestrictedError' };
+const allowed = { ok: true };
 
 beforeAll(async () => {
   db = await createTestDb([migrate, migrateProfile, migrateWallet]);
@@ -104,80 +119,145 @@ afterAll(async () => {
 
 describe('the ledger play eligibility projection (real PG)', () => {
   it('refuses a bet right after a self-exclusion, before the outbox event is delivered', async () => {
-    const userId = await fundedPlayer();
-    await expect(bet(userId)).resolves.toMatchObject({ ok: true });
-    const { svc } = enforcement(restrictOnly);
+    const { userId } = await fundedPlayer();
+    await expect(bet(userId)).resolves.toMatchObject(allowed);
 
-    await svc.block(userId, { until: null });
+    await identity().block(userId);
 
     await expect(bet(userId)).rejects.toMatchObject(refused);
   });
 
+  it('leaves the ledger as it was when the block rolls back with its caller', async () => {
+    const { userId } = await fundedPlayer();
+    const { enforcement } = identity();
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await enforcement.block(userId, { until: null }, tx);
+        throw new Error('the RG write failed');
+      }),
+    ).rejects.toThrow('the RG write failed');
+
+    const [account] = await db.drizzle.db.select().from(user).where(eq(user.id, userId));
+    expect(account).toMatchObject({ rgBlocked: false, playEligibilityVersion: 0 });
+    await expect(bet(userId)).resolves.toMatchObject(allowed);
+  });
+
+  it('fails the block when the ledger write throws', async () => {
+    const { userId } = await fundedPlayer();
+    const { block, events } = identity(() =>
+      mock<PlayEligibilityProjectionPort>({
+        write: () => Promise.reject(new Error('ledger down')),
+      }),
+    );
+
+    await expect(block(userId)).rejects.toThrow('ledger down');
+
+    const [account] = await db.drizzle.db.select().from(user).where(eq(user.id, userId));
+    expect(account).toMatchObject({ rgBlocked: false, playEligibilityVersion: 0 });
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+  });
+
   it('keeps the newer state when the events arrive out of order', async () => {
-    const userId = await fundedPlayer();
-    const { svc, events } = enforcement(() => undefined);
-    await svc.block(userId, { until: null });
-    await svc.unblock(userId);
+    const { userId } = await fundedPlayer();
+    // Identity in a process without the wallet: only the outbox carries the change.
+    const { block, unblock, events } = identity(() => undefined);
+    await block(userId);
+    await unblock(userId);
     const [blocked, lifted] = emitted(events);
 
     await deliver(lifted);
     await deliver(blocked);
 
-    await expect(bet(userId)).resolves.toMatchObject({ ok: true });
+    await expect(bet(userId)).resolves.toMatchObject(allowed);
   });
 
-  it('fails the self-exclusion when the ledger write throws', async () => {
-    const userId = await fundedPlayer();
-    const { svc, events } = enforcement(() =>
-      mock<LedgerApiV1>({ setPlayEligibility: () => Promise.reject(new Error('ledger down')) }),
-    );
-
-    await expect(svc.block(userId, { until: null })).rejects.toThrow('ledger down');
-
-    const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, userId));
-    expect(row).toMatchObject({ rgBlocked: false, playEligibilityVersion: 0 });
-    expect(events.emitInTransaction).not.toHaveBeenCalled();
-  });
-
-  it('lifts the projection on a lift, and ignores a lift older than a newer restriction', async () => {
-    const userId = await fundedPlayer();
-    const { svc, events } = enforcement();
-    await svc.block(userId, { until: null });
-    await svc.unblock(userId);
-    await expect(bet(userId)).resolves.toMatchObject({ ok: true });
-
-    await svc.block(userId, { until: null });
+  it('ignores a lift delivered after a newer restriction', async () => {
+    const { userId } = await fundedPlayer();
+    const { block, unblock, events } = identity();
+    await block(userId);
+    await unblock(userId);
+    await block(userId);
     const [, staleLift] = emitted(events);
-    await deliver(staleLift);
+
+    await expect(deliver(staleLift)).resolves.toBe(0);
 
     await expect(bet(userId)).rejects.toMatchObject(refused);
+  });
+
+  it('overwrites a version the ledger holds ahead of identity, so a restriction still lands', async () => {
+    const { userId } = await fundedPlayer();
+    const poisoned: PlayEligibilitySnapshot = {
+      userId,
+      rgBlocked: false,
+      rgBlockedUntil: null,
+      isActive: true,
+      banned: false,
+      banExpires: null,
+      status: 'active',
+      version: 1_000,
+    };
+    await container.get(PLAY_ELIGIBILITY_PROJECTION).reconcile([poisoned]);
+
+    await identity().block(userId);
+
+    await expect(bet(userId)).rejects.toMatchObject(refused);
+    const [row] = await db.drizzle.db
+      .select()
+      .from(ledgerPlayEligibility)
+      .where(eq(ledgerPlayEligibility.userId, userId));
+    expect(row).toMatchObject({ rgBlocked: true, version: 1 });
   });
 
   it('refuses a bet from a user the ledger has no row for', async () => {
     const userId = randomUUID();
-    const [row] = await db.drizzle.db
-      .insert(wallet)
-      .values({ userId, currency: 'USD' })
-      .returning();
-    await db.drizzle.db
-      .insert(walletBalance)
-      .values({ walletId: row!.id, currency: 'USD', amount: '100' });
+    await fund(userId);
 
     await expect(bet(userId)).rejects.toMatchObject(refused);
   });
 
-  it('backfills existing restricted users as restricted', async () => {
+  it('backfills restricted users as restricted, then rewrites only rows that fell behind', async () => {
     const excluded = await seedUser(db, { rgBlocked: true });
     const suspended = await seedPlayerWithUser(db, { status: 'suspended' });
     const inactive = await seedUser(db, { isActive: false });
     const clear = await seedUser(db);
 
-    await backfillLedgerPlayEligibility(db.drizzle.db);
+    await backfill();
 
     const projection = container.get(LEDGER_PLAY_ELIGIBILITY);
     await expect(projection.checkPlay(excluded.id)).resolves.toBe('self_excluded');
     await expect(projection.checkPlay(suspended.account.id)).resolves.toBe('account_suspended');
     await expect(projection.checkPlay(inactive.id)).resolves.toBe('account_inactive');
     await expect(projection.checkPlay(clear.id)).resolves.toBeNull();
+    await expect(backfill()).resolves.toBe(0);
+
+    // A direct write that skipped the publisher: same version, different state.
+    await db.drizzle.db.update(user).set({ isActive: false }).where(eq(user.id, clear.id));
+    await expect(backfill()).resolves.toBe(1);
+    await expect(projection.checkPlay(clear.id)).resolves.toBe('account_inactive');
+  });
+
+  it('keeps the ledger status enum in step with the player status enum', async () => {
+    const values = async (type: string) => {
+      const { rows } = await db.drizzle.db.execute<{ value: string }>(
+        sql`select unnest(enum_range(null::${sql.raw(type)}))::text as value`,
+      );
+      return rows.map((row) => row.value);
+    };
+
+    await expect(values('ledger_player_status')).resolves.toEqual([...PLAYER_STATUSES]);
+    await expect(values('player_status')).resolves.toEqual([...PLAYER_STATUSES]);
+  });
+});
+
+describe('an admin deactivation reaches the ledger (real PG)', () => {
+  it('refuses a deactivated account and lets it back once reactivated', async () => {
+    const { userId } = await fundedPlayer();
+
+    await directory().update(userId, { isActive: false }, randomUUID());
+    await expect(bet(userId)).rejects.toMatchObject(refused);
+
+    await directory().update(userId, { isActive: true }, randomUUID());
+    await expect(bet(userId)).resolves.toMatchObject(allowed);
   });
 });

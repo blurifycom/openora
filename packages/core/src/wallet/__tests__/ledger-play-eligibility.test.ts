@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { playRefusalOf, type PlayEligibilityState } from '@openora/core/contracts';
-import { stricterOf } from '../service/ledger-play-eligibility.service.js';
 
 const NOW = new Date('2026-06-01T12:00:00.000Z');
 const LATER = new Date('2026-06-02T12:00:00.000Z');
@@ -44,31 +43,5 @@ describe('playRefusalOf', () => {
       'account_inactive',
     );
     expect(playRefusalOf({ ...clear, banned: true, banExpires: EARLIER }, NOW)).toBeNull();
-  });
-});
-
-describe('stricterOf', () => {
-  it('keeps a held block that the incoming state would lift', () => {
-    const held = { ...clear, rgBlocked: true, isActive: false, status: 'suspended' as const };
-
-    expect(stricterOf(held, clear)).toEqual(held);
-  });
-
-  it('takes the incoming restriction over a clear held state', () => {
-    const incoming = {
-      ...clear,
-      rgBlocked: true,
-      rgBlockedUntil: LATER,
-      status: 'closed' as const,
-    };
-
-    expect(stricterOf(clear, incoming)).toEqual(incoming);
-  });
-
-  it('keeps the later end of two blocks, where no end is the latest', () => {
-    const until = (rgBlockedUntil: Date | null) => ({ ...clear, rgBlocked: true, rgBlockedUntil });
-
-    expect(stricterOf(until(EARLIER), until(LATER)).rgBlockedUntil).toEqual(LATER);
-    expect(stricterOf(until(null), until(LATER)).rgBlockedUntil).toBeNull();
   });
 });

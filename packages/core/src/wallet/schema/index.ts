@@ -756,9 +756,9 @@ export const ledgerApiRequest = pgTable(
 
 export const ledgerPlayerStatusEnum = pgEnum('ledger_player_status', PLAYER_STATUSES);
 
-// The ledger's own view of whether a user may stake: identity's play eligibility inputs, fed
-// by `LedgerApiV1.setPlayEligibility` and the `identity.play_eligibility.changed` event, healed
-// by the boot backfill. A stake reads this row `FOR SHARE` in its own transaction and is refused
+// The ledger's own view of whether a user may stake: identity's play eligibility inputs, written
+// through PLAY_ELIGIBILITY_PROJECTION in identity's transaction, replayed by the
+// `identity.play_eligibility.changed` event and healed by identity's boot backfill (ADR-0052). A stake reads this row `FOR SHARE` in its own transaction and is refused
 // without one. Every write keeps the highest `version`. `status` is null for a user without a
 // player profile. Time-bounded blocks keep their end and are judged when read.
 export const ledgerPlayEligibility = pgTable('ledger_play_eligibility', {

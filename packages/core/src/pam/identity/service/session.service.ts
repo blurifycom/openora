@@ -17,6 +17,7 @@ import {
   type User,
   type PaginationOptions,
 } from '@openora/core/contracts';
+import { player } from '@openora/core/pam/schema/profile';
 import { session, user, type Session } from '../schema/index.js';
 import { type ActiveSessionItem, type SessionItem, type SessionSortBy } from '../contract/index.js';
 
@@ -268,6 +269,29 @@ export class SessionService {
   }
 
   /**
+   * `revokeAllSessions` on the caller's `tx`, for a block that must end the sessions only if it
+   * commits. The sign-out event goes to the outbox with it. Reads through `tx` alone, so it never
+   * takes a second pool connection while the caller holds one.
+   */
+  async revokeAllSessionsIn(tx: DrizzleTx, userId: User['id']): Promise<void> {
+    await expireActiveSessions(tx, userId);
+    await (
+      await this.mcpTokensOf(userId, tx)
+    )?.revokeAllForUser(sessionsRevoked({ userId, actorId: undefined, meta: undefined }), tx);
+    const [profile] = await tx
+      .select({ id: player.id })
+      .from(player)
+      .where(eq(player.userId, userId))
+      .limit(1);
+    await this.events.emitInTransaction(tx, 'identity.sessions.revoked_all', {
+      userId,
+      playerId: profile?.id ?? null,
+      ip: null,
+      userAgent: null,
+    });
+  }
+
+  /**
    * After a password reset: ends the account's sessions and revokes its MCP tokens in one
    * transaction, then signs its open tabs out. better-auth deletes the sessions only once its
    * reset hook returns, so a session still live after the revocation could issue a token the
@@ -323,14 +347,11 @@ export class SessionService {
     await mcpTokens?.revokeAllForUser(sessionsRevoked({ userId, actorId, meta }));
   }
 
-  private async mcpTokensOf(userId: User['id']) {
+  private async mcpTokensOf(userId: User['id'], db: DrizzleDb | DrizzleTx = this.drizzle.db) {
     if (!this.mcpTokens) {
       return undefined;
     }
-    const [account] = await this.drizzle.db
-      .select({ role: user.role })
-      .from(user)
-      .where(eq(user.id, userId));
+    const [account] = await db.select({ role: user.role }).from(user).where(eq(user.id, userId));
     return account?.role === 'player' ? undefined : this.mcpTokens;
   }
 }

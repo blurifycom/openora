@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { and, asc, desc, eq, like } from 'drizzle-orm';
-import type { Paginated } from '@openora/core/contracts';
+import { PLAY_ELIGIBILITY_PROJECTION, type Paginated } from '@openora/core/contracts';
 import { DRIZZLE } from '@openora/core/server';
 import type { betting } from '@openora/core/sportsbook/contracts';
 import { auditLog } from '@openora/core/audit/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { player as playerProfile } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
-import { backfillLedgerPlayEligibility } from '@openora/core/wallet/seed';
+import { backfillPlayEligibility } from '@openora/core/pam/identity/seed';
 import {
   sportsbookBet,
   sportsbookBetTransaction,
@@ -464,7 +464,7 @@ describe('sportsbook refusal reasons', () => {
   const setUser = async (userId: string, values: Partial<typeof user.$inferInsert>) => {
     const { db } = app.container.get(DRIZZLE);
     await db.update(user).set(values).where(eq(user.id, userId));
-    await backfillLedgerPlayEligibility(db);
+    await backfillPlayEligibility(db, app.container.get(PLAY_ELIGIBILITY_PROJECTION));
   };
 
   const setPlayerStatus = async (
@@ -473,7 +473,7 @@ describe('sportsbook refusal reasons', () => {
   ) => {
     const { db } = app.container.get(DRIZZLE);
     await db.update(playerProfile).set({ status }).where(eq(playerProfile.userId, userId));
-    await backfillLedgerPlayEligibility(db);
+    await backfillPlayEligibility(db, app.container.get(PLAY_ELIGIBILITY_PROJECTION));
   };
 
   // Blocking through the platform's routes also ends the login, so these write the state

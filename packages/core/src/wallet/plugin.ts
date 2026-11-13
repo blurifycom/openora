@@ -1,10 +1,4 @@
-import {
-  ADMIN_GUARD,
-  EVENT_BUS,
-  DRIZZLE,
-  createLogger,
-  retryUntilDone,
-} from '@openora/core/server';
+import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, createLogger } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import * as z from 'zod';
 import {
@@ -24,6 +18,7 @@ import {
   WALLET_READER,
   LEDGER_API_V1,
   LEDGER_PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY_PROJECTION,
   GAMING_COMMANDS,
   SPORTSBOOK_LEDGER,
   WALLET_ASSET_CATALOG,
@@ -71,10 +66,7 @@ import {
 } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
 import { LedgerApiService } from './service/ledger-api.service.js';
-import {
-  backfillLedgerPlayEligibilityAtBoot,
-  LedgerPlayEligibilityService,
-} from './service/ledger-play-eligibility.service.js';
+import { LedgerPlayEligibilityService } from './service/ledger-play-eligibility.service.js';
 import { DepositCompareService, SegmentTooLargeError } from './service/deposit-compare.service.js';
 import {
   CustodySweepService,
@@ -146,8 +138,11 @@ export default {
     // publish. Subscriptions wire before router factories run, but are set before any
     // real event arrives.
     let realtimeTransport: RealtimeTransport | null = null;
-    // Set inside the router factory, which runs in every process before any event is delivered.
-    let playEligibilityRef: LedgerPlayEligibilityService | null = null;
+    // One instance behind both play eligibility ports; the router factory constructs it, and runs
+    // in every process before any event is delivered.
+    let playEligibility: LedgerPlayEligibilityService | null = null;
+    const sharedPlayEligibility = (c: TypedContainer<CoreTokenCatalog>) =>
+      (playEligibility ??= new LedgerPlayEligibilityService(c.get(DRIZZLE)));
 
     // Publishes a change *signal*, never the balance itself - see the comment on
     // WalletBalanceUpdateSchema. Only wired to events that actually move a settled
@@ -248,14 +243,14 @@ export default {
         envelope.eventId,
       );
     });
-    // The stake gate's projection: idempotent and order-proof by version, see
-    // ledger-play-eligibility.service.ts. Repairs a push the writer could not make after commit.
+    // The stake gate's projection: identity writes it in its own transaction; this replays the
+    // committed state, keeping the newest version, for a split process and as the repair path.
     ctx.events.on('identity.play_eligibility.changed', async (payload) => {
-      if (!playEligibilityRef) {
+      if (!playEligibility) {
         throw new Error('wallet: play eligibility projection not constructed yet');
       }
       const snapshot = domainEventSchemas['identity.play_eligibility.changed'].parse(payload);
-      await playEligibilityRef.set({ ...snapshot, mode: 'apply' });
+      await playEligibility.reconcile([snapshot]);
     });
     ctx.events.on('wallet.balance.changed', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.balance.changed'].safeParse(payload);
@@ -459,7 +454,9 @@ export default {
       names: () => [DEFAULT_PAYMENT_PROVIDER],
     }));
     // What a stake is checked against: the ledger's own projection, not the identity tables.
-    ctx.provide(LEDGER_PLAY_ELIGIBILITY, (c) => new LedgerPlayEligibilityService(c.get(DRIZZLE)));
+    ctx.provide(LEDGER_PLAY_ELIGIBILITY, sharedPlayEligibility);
+    // Its writer, for identity only: not part of the Ledger API a provider bridge sees.
+    ctx.provide(PLAY_ELIGIBILITY_PROJECTION, sharedPlayEligibility);
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
     ctx.provide(
       WALLET_COMMANDS,
@@ -482,7 +479,6 @@ export default {
           events: c.get(EVENT_BUS),
           walletCommands: c.get(WALLET_COMMANDS),
           identityReader: c.get(IDENTITY_READER),
-          playEligibility: new LedgerPlayEligibilityService(c.get(DRIZZLE)),
           gamingCommands: () => c.get(GAMING_COMMANDS),
           sportsbookLedger: () => c.get(SPORTSBOOK_LEDGER),
         }),
@@ -508,23 +504,7 @@ export default {
     ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
     ctx.routers.add('wallet', (c) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
-      const db = c.get(DRIZZLE).db;
-      playEligibilityRef = new LedgerPlayEligibilityService(c.get(DRIZZLE));
-      // Fails closed until it lands: a user the projection lacks is refused a stake, never let in.
-      const bootBackfill = new AbortController();
-      c.onDispose(() => bootBackfill.abort());
-      void retryUntilDone(() => backfillLedgerPlayEligibilityAtBoot(db), {
-        signal: bootBackfill.signal,
-        onFailure: (err, retryInMs) =>
-          logger.error(
-            { err, retryInMs },
-            'wallet: ledger_play_eligibility boot backfill failed, retrying',
-          ),
-      }).then((projected) => {
-        if (projected !== undefined) {
-          logger.info({ projected }, 'wallet: ledger_play_eligibility backfilled at boot');
-        }
-      });
+      sharedPlayEligibility(c);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       // A licence-facing gate that is simply absent is the kind of thing an audit asks
       // about, so say it once at bind time rather than letting every deposit pass

@@ -36,7 +36,6 @@ import {
   type LedgerV1RefusalReason,
   type LedgerV1Refused,
   type LedgerV1ReverseArgs,
-  type LedgerV1SetPlayEligibilityArgs,
   type LedgerV1WinArgs,
   type SportsbookLedger,
   type Uuid,
@@ -56,7 +55,6 @@ import {
 import { and, eq } from 'drizzle-orm';
 import type * as z from 'zod';
 import { ledgerApiRequest, wallet, walletTransaction } from '../schema/index.js';
-import type { LedgerPlayEligibilityService } from './ledger-play-eligibility.service.js';
 import { WalletRgRestrictedError } from './wallet-commands.service.js';
 import { providerRefCondition, readWalletBalance } from './wallet.service.js';
 
@@ -67,7 +65,6 @@ export type LedgerApiDeps = {
   events: EventBus;
   walletCommands: WalletCommands;
   identityReader: IdentityReader;
-  playEligibility: Pick<LedgerPlayEligibilityService, 'set'>;
   /** Resolved per call: the gaming and sportsbook modules load after wallet, and are optional. */
   gamingCommands: () => GamingCommands;
   sportsbookLedger: () => SportsbookLedger;
@@ -423,10 +420,6 @@ export class LedgerApiService implements LedgerApiV1 {
         };
       });
     });
-  }
-
-  setPlayEligibility(args: LedgerV1SetPlayEligibilityArgs): Promise<void> {
-    return this.deps.playEligibility.set(args);
   }
 
   async balance(input: LedgerV1BalanceArgs): Promise<LedgerV1BalanceOutcome> {

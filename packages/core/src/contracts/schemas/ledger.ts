@@ -218,16 +218,6 @@ export const PlayEligibilitySnapshotSchema = z.object({
 });
 export type PlayEligibilitySnapshot = z.infer<typeof PlayEligibilitySnapshotSchema>;
 
-/**
- * `restrict` is sent before the writer commits a restriction: the ledger keeps the stricter of
- * what it holds and this, so a writer that then fails to commit leaves the player shut out, never
- * let in. `apply` is the committed state, sent after the commit and replayed by the outbox event.
- */
-export const LedgerV1SetPlayEligibilityArgsSchema = PlayEligibilitySnapshotSchema.extend({
-  mode: z.enum(['restrict', 'apply']),
-});
-export type LedgerV1SetPlayEligibilityArgs = z.input<typeof LedgerV1SetPlayEligibilityArgsSchema>;
-
 /** The sportsbook ops keep the sportsbook ledger's own shapes, under the v1 names. */
 export const LedgerV1SportsbookReserveArgsSchema = SportsbookReserveArgsSchema;
 export const LedgerV1SportsbookConfirmArgsSchema = SportsbookConfirmArgsSchema;

@@ -1,3 +1,4 @@
+import type { PlayEligibilitySnapshot } from '../schemas/ledger.js';
 import type { PlayerStatus } from '../schemas/player.js';
 import { createToken, type Token } from './token.js';
 
@@ -90,3 +91,25 @@ export const PLAY_ELIGIBILITY: Token<PlayEligibilityPort> =
  */
 export const LEDGER_PLAY_ELIGIBILITY: Token<Required<PlayEligibilityPort>> =
   createToken<Required<PlayEligibilityPort>>('LEDGER_PLAY_ELIGIBILITY');
+
+/**
+ * Writes to the ledger's `ledger_play_eligibility` projection. Wallet-internal: bound by wallet,
+ * called only by identity, the owner of every input. Not part of the Ledger API a provider
+ * bridge sees. See ADR-0052.
+ */
+export type PlayEligibilityProjectionPort = {
+  /**
+   * The authoritative write, on the writer's `tx` under its user row lock, so the projection
+   * commits or rolls back with the change it reflects. A stored row at a higher version than
+   * `snapshot` is overwritten and logged as an error: only a foreign writer can have put it there.
+   */
+  write(snapshot: PlayEligibilitySnapshot, tx: unknown): Promise<void>;
+  /**
+   * The repair path (outbox redelivery, backfill): keeps the newest version, writes only the rows
+   * that are missing, older, or at the same version but different, and returns how many it wrote.
+   */
+  reconcile(snapshots: readonly PlayEligibilitySnapshot[]): Promise<number>;
+};
+
+export const PLAY_ELIGIBILITY_PROJECTION: Token<PlayEligibilityProjectionPort> =
+  createToken<PlayEligibilityProjectionPort>('PLAY_ELIGIBILITY_PROJECTION');

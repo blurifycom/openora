@@ -72,7 +72,7 @@ function build(
         await db.drizzle.db.update(user).set({ username }).where(eq(user.id, userId));
         return { success: true };
       }),
-      publishPlayEligibility: vi.fn(async () => ({ afterCommit: async () => undefined })),
+      publishPlayEligibility: vi.fn(async () => undefined),
     }),
   );
   const audit = makeAuditWriter();

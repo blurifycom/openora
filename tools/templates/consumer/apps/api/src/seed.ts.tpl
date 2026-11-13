@@ -11,9 +11,10 @@
 import { createDrizzleDb } from '@openora/core/server';
 import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import { seedRoles } from '@openora/core/iam/seed';
+import { backfillPlayEligibility } from '@openora/core/pam/identity/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import {
-  backfillLedgerPlayEligibility,
+  ledgerPlayEligibilityProjection,
   seedAutoWithdrawalConfig,
 } from '@openora/core/wallet/seed';
 import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
@@ -43,7 +44,7 @@ async function main() {
   // catalogue game, so run it after each import that bypassed GAMING_COMMANDS.notifyGames*.
   await backfillLedgerGames(db);
   // The ledger refuses a stake from a user it has not projected; this projects every user.
-  await backfillLedgerPlayEligibility(db);
+  await backfillPlayEligibility(db, ledgerPlayEligibilityProjection(db));
   console.log('Reference data seeded.');
 }
 

@@ -9,7 +9,8 @@ import {
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
-import { backfillLedgerPlayEligibility } from '@openora/core/wallet/seed';
+import { ledgerPlayEligibilityProjection } from '@openora/core/wallet/seed';
+import { backfillPlayEligibility } from '@openora/core/pam/identity/seed';
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
@@ -127,7 +128,7 @@ export async function seedMinimal(
     // After the demo games exist: the round ledger only plays games it has projected.
     await backfillLedgerGames(drizzleSvc.db);
     // After the demo users exist: the ledger refuses a stake from a user it has not projected.
-    await backfillLedgerPlayEligibility(drizzleSvc.db);
+    await backfillPlayEligibility(drizzleSvc.db, ledgerPlayEligibilityProjection(drizzleSvc.db));
     return result;
   } finally {
     await authPool.end();
