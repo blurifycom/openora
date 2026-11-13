@@ -18,6 +18,7 @@ import {
   type TestApp,
   type TestClient,
   type TestDb,
+  flushAudit,
 } from '../index.js';
 
 const PASSWORD = 'password1234';
@@ -110,7 +111,8 @@ function tokensOf(userId: string) {
     .where(eq(mcpToken.adminUserId, userId));
 }
 
-function mcpAccessDenialsOf(userId: string) {
+async function mcpAccessDenialsOf(userId: string) {
+  await flushAudit(app);
   return drizzle()
     .select()
     .from(auditLog)
@@ -125,6 +127,7 @@ function mcpAccessDenialsOf(userId: string) {
 
 async function secondFactorFailuresOf(userId: string) {
   const playerId = await app.container.get(IDENTITY_READER).getPlayerIdByUserIdSafe(userId);
+  await flushAudit(app);
   return drizzle()
     .select()
     .from(auditLog)

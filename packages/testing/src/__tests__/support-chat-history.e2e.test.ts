@@ -23,6 +23,7 @@ import {
   bootE2e,
   clearCapturedEmails,
   closeE2e,
+  flushAudit,
   registerAndMaterializePlayer,
   waitForEmail,
   type TestApp,
@@ -127,6 +128,7 @@ async function changeEmail(client: TestClient, newEmail: string) {
 
 const emailChangeAuditedAt = (resourceType: 'player' | 'user', resourceId: string) =>
   vi.waitFor(async () => {
+    await flushAudit(testApp);
     const [row] = await drizzle()
       .select({ after: auditLog.after })
       .from(auditLog)
@@ -178,6 +180,7 @@ async function redeliverEmailChange(
   playerId: string,
   rewrite: (after: Record<string, unknown>) => Record<string, unknown> = (after) => after,
 ) {
+  await flushAudit(testApp);
   const [row] = await drizzle()
     .select()
     .from(auditLog)
@@ -316,6 +319,7 @@ describe('GET /support-chat/admin/players/{userId}/history', () => {
     const again = await asPlayer(testApp.app, { email: second, password: PASSWORD });
     await changeEmail(again, third);
     const rows = await vi.waitFor(async () => {
+      await flushAudit(testApp);
       const found = await drizzle()
         .select({ after: auditLog.after })
         .from(auditLog)

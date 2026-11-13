@@ -12,6 +12,7 @@ import {
   uniqueUsername,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 type AuditItem = {
@@ -30,6 +31,7 @@ let admin: TestClient;
 let adminUserId: string;
 
 async function statusChanges(playerId: string): Promise<AuditItem[]> {
+  await flushAudit(testApp);
   const res = await admin.get(
     `/audit/logs?resourceType=player&resourceId=${playerId}&action=player.status.changed&sortOrder=asc`,
   );

@@ -15,6 +15,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -123,6 +124,7 @@ describe('POST /identity/admin-security/2fa/reset-player', () => {
     expect(row).toEqual({ twoFactorEnabled: false, requireTwoFactorOnLogin: true });
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const audits = await drizzle()
         .select({ after: auditLog.after })
         .from(auditLog)

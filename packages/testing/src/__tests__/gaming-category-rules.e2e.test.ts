@@ -22,6 +22,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -197,6 +198,7 @@ describe('rule-based category membership e2e', () => {
     );
     expect(evaluated.status).toBe(400);
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const failures = await drizzle()
         .select({ result: auditLog.result, after: auditLog.after })
         .from(auditLog)

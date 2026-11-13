@@ -14,6 +14,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -94,6 +95,7 @@ async function runDailySweep(container: Container<CoreTokenCatalog>) {
 
 async function auditHasEntry(admin: TestClient, playerId: string, action: string) {
   await vi.waitFor(async () => {
+    await flushAudit(app);
     const res = await admin.get(`/audit/logs?resourceId=${playerId}&action=${action}`);
     const body = await readJson(res);
     expect(body.items.length).toBeGreaterThanOrEqual(1);

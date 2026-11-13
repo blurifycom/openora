@@ -15,6 +15,7 @@ import {
   type TestApp,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 import { readSupportHistoryCalls, resetSupportHistory } from '../test-support-history-plugin.js';
 
@@ -71,8 +72,9 @@ const userRow = async (userId: string) => {
 
 const emailOf = async (userId: string) => (await userRow(userId))?.email;
 
-const auditRows = (playerId: string) =>
-  drizzle()
+const auditRows = async (playerId: string) => {
+  await flushAudit(app);
+  return drizzle()
     .select({ id: auditLog.id, before: auditLog.before, after: auditLog.after })
     .from(auditLog)
     .where(
@@ -82,6 +84,7 @@ const auditRows = (playerId: string) =>
         eq(auditLog.resourceId, playerId),
       ),
     );
+};
 
 const outboxRows = (userId: string) =>
   drizzle()
@@ -189,6 +192,8 @@ describe('email change history', () => {
       `CREATE TABLE IF NOT EXISTS tx_probe (id bigserial PRIMARY KEY, tbl text, op text, txid bigint, pid int)`,
     );
     await exec(`TRUNCATE tx_probe`);
+    // Ship what the request queued now, so the shipper deletes no audit_outbox row inside the probe.
+    await flushAudit(app);
     let probe: { tbl: string; op: string; txid: string; pid: number }[] = [];
 
     await withTriggers(
@@ -204,7 +209,7 @@ describe('email change history', () => {
       },
     );
 
-    const audit = probe.find((r) => r.tbl === 'audit_outbox');
+    const audit = probe.find((r) => r.tbl === 'audit_outbox' && r.op === 'INSERT');
     const outboxInsert = probe.findIndex((r) => r.tbl === 'event_outbox' && r.op === 'INSERT');
     expect(audit).toBeDefined();
     for (const r of probe.slice(0, outboxInsert + 1)) {

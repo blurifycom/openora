@@ -18,6 +18,7 @@ import {
   bootE2e,
   closeE2e,
   asPlayer,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -288,6 +289,7 @@ describe('registration email verification', () => {
     expect(res.status).toBe(409);
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const rows = await app.container
         .get(DRIZZLE)
         .db.select()
@@ -396,6 +398,7 @@ describe('registration email verification', () => {
         .from(player)
         .where(eq(player.userId, userId));
 
+      await flushAudit(app);
       const [recorded] = await db
         .select()
         .from(auditLog)
@@ -416,6 +419,7 @@ describe('registration email verification', () => {
       expect(JSON.stringify(recorded?.after)).not.toContain(acquisition.params.aff_id);
 
       await vi.waitFor(async () => {
+        await flushAudit(app);
         const rows = await db
           .select()
           .from(auditLog)

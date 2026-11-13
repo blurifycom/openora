@@ -16,6 +16,7 @@ import {
   type TestDb,
   type TestApp,
   type TestClient,
+  flushAudit,
 } from '../index.js';
 
 const INVITEE_PASSWORD = 'invitee-chosen-passphrase';
@@ -113,6 +114,7 @@ describe('admin invitation', () => {
       .from(adminInvitation)
       .where(eq(adminInvitation.tokenHash, tokenHash(token)));
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const rows = await drizzle()
         .select({ action: auditLog.action, actorId: auditLog.actorId })
         .from(auditLog)

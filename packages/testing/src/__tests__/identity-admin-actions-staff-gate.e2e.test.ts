@@ -13,6 +13,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -106,6 +107,7 @@ describe('POST /identity/unlock', () => {
     expect((await superAdmin.post(UNLOCK, { userId: staffId })).status).toBe(200);
     expect(await lockoutOf(staffId)).toBeNull();
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const rows = await drizzle()
         .select({ actorId: auditLog.actorId })
         .from(auditLog)

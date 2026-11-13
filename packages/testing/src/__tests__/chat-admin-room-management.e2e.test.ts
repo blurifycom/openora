@@ -23,6 +23,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   registerChatter,
 } from '../index.js';
 
@@ -72,6 +73,7 @@ async function listRules(roomId: string) {
 }
 
 async function auditRows(action: string, resourceId: string) {
+  await flushAudit(app);
   return app.container
     .get(DRIZZLE)
     .db.select()

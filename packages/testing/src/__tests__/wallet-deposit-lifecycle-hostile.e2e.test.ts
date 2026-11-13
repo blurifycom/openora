@@ -402,6 +402,7 @@ describe('the audit chain after all of the above', () => {
       app().container.get(IDENTITY_READER),
     );
 
+    await flushAudit(app());
     expect(await audit.verifyChain()).toEqual({ valid: true });
   });
 });

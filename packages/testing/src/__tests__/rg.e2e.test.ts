@@ -23,6 +23,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -446,6 +447,7 @@ describe('RG cooling-off lift', () => {
     });
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.cooling_off.lifted`,
       );
@@ -500,6 +502,7 @@ describe('RG cooling-off expiry', () => {
     await triggerRgMonitorSweep(app.container);
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.cooling_off.expired`,
       );
@@ -806,6 +809,7 @@ describe('RG audit trail', () => {
     expect(liftRes.status).toBe(200);
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await admin.get(`/audit/logs?resourceId=${playerId}&action=rg.limit.set`);
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
@@ -814,6 +818,7 @@ describe('RG audit trail', () => {
     });
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.cooling_off.activated`,
       );
@@ -823,6 +828,7 @@ describe('RG audit trail', () => {
     });
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.self_exclusion.activated`,
       );
@@ -840,6 +846,7 @@ describe('RG audit trail', () => {
     });
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.self_exclusion.lifted`,
       );
@@ -862,6 +869,7 @@ describe('RG audit trail', () => {
     expect((await attemptLogin(email, 'password1234')).status).toBe(403);
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.exclusion.login_blocked`,
       );
@@ -889,6 +897,7 @@ describe('RG audit trail', () => {
     expect(limitRes.status).toBe(200);
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await admin.get(`/audit/logs?resourceId=${playerId}&action=rg.limit.set`);
       expect((await readJson(res)).items).toHaveLength(1);
     });
@@ -936,6 +945,7 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
     });
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await mine.client.get('/audit/me/rg-history');
       expect(res.status).toBe(200);
       const body = await readJson(res);
@@ -999,6 +1009,7 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
     });
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const res = await client.get(
         `/audit/me/rg-history?resourceId=someone-else&actionPrefix=&q=admin`,
       );

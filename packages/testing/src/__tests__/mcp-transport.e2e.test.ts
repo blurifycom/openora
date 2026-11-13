@@ -23,6 +23,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 import { MCP_TEST_RATE_LIMIT } from './fixtures/test-mcp-transport-plugin.js';
 import { holdNextRevocation } from './fixtures/test-gated-mcp-token-revocation-plugin.js';
@@ -146,7 +147,8 @@ function rawPost({
   );
 }
 
-function notExposedAuditRows(tokenId: string) {
+async function notExposedAuditRows(tokenId: string) {
+  await flushAudit(app);
   return drizzle()
     .select()
     .from(auditLog)
@@ -167,7 +169,8 @@ function tokenIdsOf(adminUserId: string) {
     .where(eq(mcpToken.adminUserId, adminUserId));
 }
 
-function mcpAccessDenialsOf(userId: string) {
+async function mcpAccessDenialsOf(userId: string) {
+  await flushAudit(app);
   return drizzle()
     .select()
     .from(auditLog)
@@ -197,7 +200,8 @@ function holdRowLocks(lock: (tx: DrizzleTx) => Promise<unknown>) {
   return { held, release, committed };
 }
 
-function toolAuditRows(tokenId: string) {
+async function toolAuditRows(tokenId: string) {
+  await flushAudit(app);
   return drizzle()
     .select()
     .from(auditLog)
@@ -246,6 +250,7 @@ describe('MCP tokens', () => {
     expect(listed).not.toContain(hash);
 
     const audit = await vi.waitFor(async () => {
+      await flushAudit(app);
       const rows = await drizzle()
         .select()
         .from(auditLog)
@@ -570,6 +575,7 @@ describe('MCP tokens, oversight', () => {
     expect(res.status).toBe(200);
     const { revoked } = z.object({ revoked: z.number() }).parse(await res.json());
     expect(revoked).toBeGreaterThanOrEqual(issued.length);
+    await flushAudit(app);
     const rows = await drizzle()
       .select()
       .from(auditLog)
@@ -602,6 +608,7 @@ describe('MCP tokens, oversight', () => {
       app.container.get(EVENT_BUS),
       app.container.get(IDENTITY_READER),
     );
+    await flushAudit(app);
     expect(await audit.verifyChain()).toEqual({ valid: true });
   });
 });
