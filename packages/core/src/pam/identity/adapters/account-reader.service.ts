@@ -1,33 +1,52 @@
 import { DrizzleService, likeContains, likePrefix } from '@openora/core/server';
-import type { Account, AccountReader, Player, PlayerSearch } from '@openora/core/contracts';
+import type {
+  Account,
+  AccountReader,
+  Player,
+  PlayerMatch,
+  PlayerSearch,
+} from '@openora/core/contracts';
 import { and, asc, eq, ilike, inArray, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '../schema/index.js';
 import { playRefusalOf } from '../service/play-eligibility.service.js';
+
+const toMatch = ({ userId, username, avatarUrl }: Account): PlayerMatch => ({
+  userId,
+  username,
+  avatarUrl,
+});
 
 /** {@link AccountReader} on the identity database, read live on every call. */
 export class DrizzleAccountReader implements AccountReader {
   constructor(private readonly drizzle: DrizzleService) {}
 
   async getAccounts(userIds: readonly string[]): Promise<Map<string, Account>> {
-    const ids = [...new Set(userIds)];
+    const ids = [...new Set(userIds.map((id) => id.toLowerCase()))];
     if (ids.length === 0) {
       return new Map();
     }
-    const accounts = await this.select(inArray(user.id, ids));
-    return new Map(accounts.map((account) => [account.userId, account]));
+    const found = new Map(
+      (await this.select(inArray(user.id, ids))).map((account) => [account.userId, account]),
+    );
+    return new Map(
+      userIds.flatMap((id) => {
+        const account = found.get(id.toLowerCase());
+        return account ? [[id, account] as const] : [];
+      }),
+    );
   }
 
-  async findPlayerByUsername(username: string): Promise<Account | null> {
+  async findPlayerByUsername(username: string): Promise<PlayerMatch | null> {
     const [account] = await this.select(
       and(sql`lower(${user.username}) = lower(${username})`, eq(user.role, 'player')),
       { playersOnly: true, limit: 1 },
     );
-    return account ?? null;
+    return account ? toMatch(account) : null;
   }
 
-  searchPlayers({ query, excludeUserId, limit }: PlayerSearch): Promise<Account[]> {
-    return this.select(
+  async searchPlayers({ query, excludeUserId, limit }: PlayerSearch): Promise<PlayerMatch[]> {
+    const accounts = await this.select(
       and(
         ne(user.id, excludeUserId),
         ilike(user.username, likeContains(query)),
@@ -42,6 +61,7 @@ export class DrizzleAccountReader implements AccountReader {
         ],
       },
     );
+    return accounts.map(toMatch);
   }
 
   async findUserIdByPlayerId(playerId: Player['id']): Promise<string | null> {
@@ -89,13 +109,13 @@ export class DrizzleAccountReader implements AccountReader {
       avatarUrl: row.avatarUrl,
       role: row.role,
       isActive: row.isActive,
-      playRefusal: playRefusalOf(row, row.status ?? undefined),
+      excluded: playRefusalOf(row, row.status ?? undefined) !== null,
       player:
         row.playerId === null || row.status === null
           ? null
           : {
               playerId: row.playerId,
-              status: row.status,
+              closed: row.status === 'suspended' || row.status === 'closed',
               lastSeenAt: row.lastSeenAt,
               allowFriendRequests: row.allowFriendRequests ?? true,
               showOnlineStatusToFriends: row.showOnlineStatusToFriends ?? true,

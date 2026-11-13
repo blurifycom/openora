@@ -19,11 +19,14 @@ import {
 } from '@openora/core/server';
 import type { DrizzleDb, DrizzleTx, EventBus } from '@openora/core/server';
 import {
+  isPlayRefused,
   playerIdsOf,
   type Account,
   type AccountReader,
+  type AccountReadOptions,
   type ClientMeta,
   type IdentityReader,
+  type PlayEligibilityPort,
   type Uuid,
 } from '@openora/core/contracts';
 import {
@@ -232,7 +235,7 @@ const isInvitablePlayer = (account: Account | undefined): account is Account =>
   account?.role === 'player' && account.player !== null;
 
 // An excluded player neither sees nor accepts invites, and an invite to them is withheld.
-const isExcluded = (account: Account | undefined) => !account || account.playRefusal !== null;
+const isExcluded = (account: Account | undefined) => !account || account.excluded;
 
 export class ChatRoomInviteService {
   private readonly identityReader: Pick<IdentityReader, 'getPlayerIdByUserIdSafe'>;
@@ -242,8 +245,14 @@ export class ChatRoomInviteService {
     private readonly events: EventBus,
     private readonly accounts: AccountReader,
     private readonly membership: Pick<ChatRoomMembershipService, 'joinByInvite' | 'findMemberRoom'>,
+    // When bound, an operator's own play rule (an overlay rebinding) also withholds invites.
+    private readonly playEligibility?: PlayEligibilityPort,
   ) {
     this.identityReader = playerIdsOf(accounts);
+  }
+
+  private async isPlayRefused(userId: Uuid) {
+    return this.playEligibility ? isPlayRefused(this.playEligibility, userId) : false;
   }
 
   private async invitingRoom(db: Db, actorId: Uuid, roomId: Uuid) {
@@ -294,8 +303,11 @@ export class ChatRoomInviteService {
     }
   }
 
-  private async isExcluded(userId: Uuid) {
-    return isExcluded((await this.accounts.getAccounts([userId])).get(userId));
+  private async isExcluded(userId: Uuid, options?: AccountReadOptions) {
+    return (
+      isExcluded((await this.accounts.getAccounts([userId], options)).get(userId)) ||
+      (await this.isPlayRefused(userId))
+    );
   }
 
   async inviteToRoom({
@@ -308,9 +320,11 @@ export class ChatRoomInviteService {
     if (actorId === userId) {
       throw new ChatRoomInviteSelfError();
     }
-    // Read before the transaction, so an unreachable identity service refuses before any write.
-    const accounts = await this.accounts.getAccounts([actorId, userId]);
+    // Read uncached and before the transaction: an exclusion bites at once, and an unreachable
+    // identity service refuses before any write.
+    const accounts = await this.accounts.getAccounts([actorId, userId], { fresh: true });
     const target = accounts.get(userId);
+    const playRefused = await this.isPlayRefused(userId);
     const banLocks = [chatPlatformBanLockKey(actorId), chatPlatformBanLockKey(userId)];
     const outcome = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, () =>
@@ -344,6 +358,7 @@ export class ChatRoomInviteService {
             }
             const withheld =
               isExcluded(target) ||
+              playRefused ||
               (await hasActivePlatformBan(t, userId, roomId, now)) ||
               (await hasActiveBlock(t, userId, actorId));
             // A lapsed invite still holds the one-pending slot in the partial unique index.
@@ -520,7 +535,7 @@ export class ChatRoomInviteService {
       }
       return room;
     }
-    if (await this.isExcluded(userId)) {
+    if (await this.isExcluded(userId, { fresh: true })) {
       throw new ChatRoomInviteNotFoundError(inviteId);
     }
     const room = await this.joinByInvite(userId, inviteId, invite, addressedToCaller, {

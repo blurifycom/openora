@@ -118,6 +118,14 @@ and each job reaches one of them.
   private network. For rotation and limits, see
   [ADR-0052](../adr/0052-signed-internal-api-for-service-calls.md).
 
+- **Chat on a database of its own.** On the chat service set `IDENTITY_SERVICE_URL` to the
+  identity service's private origin (https in production) and `IDENTITY_SERVICE_NAME` to its
+  `SERVICE_NAME`; on the identity service set `ACCOUNT_READER_CALLERS` to the chat service's
+  `SERVICE_NAME` (unset refuses every caller). Chat keeps each account it reads for 30 seconds,
+  except for admin checks and room invites, which always read fresh. While identity is down,
+  chat answers 503 and history shows no avatars. Setting `IDENTITY_SERVICE_URL` on a process
+  that serves identity itself fails the boot.
+
 ## Seeding reference data (production)
 
 Migrations carry **structure only** (DDL: tables, indexes, constraints) - never data.

@@ -1,3 +1,4 @@
+import { ORPCError } from '@orpc/server';
 import { internalProcedure } from '@openora/core/server';
 import {
   ACCOUNT_READER_ROUTES,
@@ -5,33 +6,49 @@ import {
   type AccountReader,
 } from '@openora/core/contracts';
 
+/** The services allowed to read accounts: `ACCOUNT_READER_CALLERS`, a comma list of names. */
+export function accountReaderCallers(raw: string | undefined): ReadonlySet<string> {
+  return new Set(
+    (raw ?? '')
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean),
+  );
+}
+
 /**
  * The internal API behind `ACCOUNT_READER`, for a service that runs on a database of its own.
- * Every signed caller may read: the answers are what chat already shows its players, and the
- * signature is what keeps the public internet out.
+ * Only the services named in `callers` may read; any other signed caller is refused, so a
+ * leaked secret on an unrelated service does not open every account's standing.
  */
-export function createInternalAccountsRouter(reader: AccountReader) {
+export function createInternalAccountsRouter(reader: AccountReader, callers: ReadonlySet<string>) {
+  const procedure = internalProcedure.use(({ context, next }) => {
+    if (!callers.has(context.internalCaller)) {
+      throw new ORPCError('FORBIDDEN', { message: 'This service may not read accounts' });
+    }
+    return next();
+  });
   return {
-    accounts: internalProcedure
+    accounts: procedure
       .route({ method: 'POST', path: ACCOUNT_READER_ROUTES.accounts })
       .input(AccountReaderWire.accounts.input)
       .output(AccountReaderWire.accounts.output)
       .handler(async ({ input }) => ({
         accounts: [...(await reader.getAccounts(input.userIds)).values()],
       })),
-    byUsername: internalProcedure
+    byUsername: procedure
       .route({ method: 'POST', path: ACCOUNT_READER_ROUTES.byUsername })
       .input(AccountReaderWire.byUsername.input)
       .output(AccountReaderWire.byUsername.output)
       .handler(async ({ input }) => ({
         account: await reader.findPlayerByUsername(input.username),
       })),
-    search: internalProcedure
+    search: procedure
       .route({ method: 'POST', path: ACCOUNT_READER_ROUTES.search })
       .input(AccountReaderWire.search.input)
       .output(AccountReaderWire.search.output)
       .handler(async ({ input }) => ({ accounts: await reader.searchPlayers(input) })),
-    byPlayer: internalProcedure
+    byPlayer: procedure
       .route({ method: 'POST', path: ACCOUNT_READER_ROUTES.byPlayer })
       .input(AccountReaderWire.byPlayer.input)
       .output(AccountReaderWire.byPlayer.output)

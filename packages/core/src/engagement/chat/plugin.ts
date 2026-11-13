@@ -6,6 +6,7 @@ import {
   createInternalClient,
   createLogger,
   mapErrors,
+  parseServiceManifest,
 } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import type { JobQueueAdapter } from '@openora/core/contracts';
@@ -28,6 +29,7 @@ import {
   REALTIME_CLIENT_AUTHORIZER,
   AUDIT_WRITER,
   PLATFORM_CONFIG,
+  PLAY_ELIGIBILITY,
   playerIdsOf,
   CHAT_MODERATION_EXPIRY_DEFAULT_CRON,
   UuidSchema,
@@ -79,21 +81,49 @@ const logger = createLogger('chat');
 // An identity call slower than this fails, and the read it serves refuses.
 const IDENTITY_CALL_TIMEOUT_MS = 500;
 
+/**
+ * Chat on a database of its own reads accounts from the identity service: set
+ * `IDENTITY_SERVICE_URL`. A process that serves identity itself (no SERVICE_MANIFEST, or one
+ * naming identity without `:no-routes`) has the accounts locally, so the variable there is a
+ * misconfiguration and the boot fails.
+ */
+function remoteAccountReader(): RemoteAccountReader | null {
+  const url = process.env['IDENTITY_SERVICE_URL'];
+  if (!url) {
+    return null;
+  }
+  const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
+  if (!manifest || manifest.some((entry) => entry.id === 'identity' && !entry.noRoutes)) {
+    throw new Error(
+      'IDENTITY_SERVICE_URL is set, but this process serves the identity module itself. ' +
+        'Unset it, or run chat with a SERVICE_MANIFEST that names identity:no-routes.',
+    );
+  }
+  const origin = new URL(url);
+  if (process.env['NODE_ENV'] === 'production' && origin.protocol !== 'https:') {
+    logger.warn(
+      { identityService: origin.origin },
+      'IDENTITY_SERVICE_URL is not https: account reads cross the network in clear text',
+    );
+  }
+  return new RemoteAccountReader(
+    createInternalClient({
+      baseUrl: url,
+      serviceName: process.env['SERVICE_NAME'] || 'monolith',
+      audience: process.env['IDENTITY_SERVICE_NAME'] || 'monolith',
+      secrets: process.env['INTERNAL_API_SECRETS'],
+      timeoutMs: IDENTITY_CALL_TIMEOUT_MS,
+    }),
+  );
+}
+
 export default {
   id: 'chat',
   dependsOn: ['identity', 'audit'],
   register(ctx) {
-    // Chat on a database of its own reads accounts from the identity service instead.
-    const identityServiceUrl = process.env['IDENTITY_SERVICE_URL'];
-    if (identityServiceUrl) {
-      const client = createInternalClient({
-        baseUrl: identityServiceUrl,
-        serviceName: process.env['SERVICE_NAME'] || 'monolith',
-        audience: process.env['IDENTITY_SERVICE_NAME'] || 'monolith',
-        secrets: process.env['INTERNAL_API_SECRETS'],
-        timeoutMs: IDENTITY_CALL_TIMEOUT_MS,
-      });
-      ctx.provide(ACCOUNT_READER, () => new RemoteAccountReader(client));
+    const remoteAccounts = remoteAccountReader();
+    if (remoteAccounts) {
+      ctx.provide(ACCOUNT_READER, () => remoteAccounts);
     }
     let expiryRef: ChatModerationExpiryService | undefined;
     let inviteRef: ChatRoomInviteService | undefined;
@@ -376,6 +406,7 @@ export default {
         c.get(EVENT_BUS),
         c.get(ACCOUNT_READER),
         membershipService,
+        c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
       );
       void jobQueueRef
         .schedule(

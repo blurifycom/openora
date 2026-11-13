@@ -147,7 +147,13 @@ export type { UserCommands } from './identity.js';
 export type { IdentityReader } from './identity-reader.js';
 export { userIdOfPlayer, userIdsOfPlayers } from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';
-export type { Account, AccountReader, PlayerSearch } from './account-reader.js';
+export type {
+  Account,
+  AccountReader,
+  AccountReadOptions,
+  PlayerMatch,
+  PlayerSearch,
+} from './account-reader.js';
 export {
   ACCOUNT_READER,
   ACCOUNT_READER_ROUTES,
@@ -155,6 +161,7 @@ export {
   AccountReaderWire,
   AccountSchema,
   PLAYER_SEARCH_MAX_LIMIT,
+  PlayerMatchSchema,
   playerIdsOf,
 } from './account-reader.js';
 

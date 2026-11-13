@@ -167,7 +167,7 @@ export class SocialService {
     if (!targetPlayer) {
       throw new FriendRequestTargetNotFoundError(targetUserId);
     }
-    if (targetPlayer.status === 'suspended' || targetPlayer.status === 'closed') {
+    if (targetPlayer.closed) {
       throw new FriendRequestUnavailableError();
     }
     if (!callerPlayer) {
@@ -337,12 +337,7 @@ export class SocialService {
 
     return targetUserIds.map((userId): Relationship => {
       const targetPlayer = playerByUserId.get(userId);
-      if (
-        !targetPlayer ||
-        targetPlayer.status === 'suspended' ||
-        targetPlayer.status === 'closed' ||
-        blockedByTarget.has(userId)
-      ) {
+      if (!targetPlayer || targetPlayer.closed || blockedByTarget.has(userId)) {
         return { userId, status: 'unavailable', friendshipId: null, canSendRequest: false };
       }
       if (blockedByMe.has(userId)) {
@@ -476,7 +471,7 @@ export class SocialService {
         );
         return [];
       }
-      if (targetPlayer.status === 'suspended' || targetPlayer.status === 'closed') {
+      if (targetPlayer.closed) {
         return [];
       }
       // A hidden status blanks `lastSeenAt` too - the status is derivable from it.
@@ -679,7 +674,7 @@ export class SocialService {
         );
         return [];
       }
-      if (counterpartPlayer.status === 'suspended' || counterpartPlayer.status === 'closed') {
+      if (counterpartPlayer.closed) {
         return [];
       }
       if (blockedCounterpartIds.has(counterpartId)) {

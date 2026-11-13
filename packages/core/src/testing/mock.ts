@@ -285,10 +285,10 @@ export const makeAccount = (userId: string, overrides: Partial<Account> = {}): A
   avatarUrl: null,
   role: 'player',
   isActive: true,
-  playRefusal: null,
+  excluded: false,
   player: {
     playerId: randomUUID(),
-    status: 'active',
+    closed: false,
     lastSeenAt: null,
     allowFriendRequests: true,
     showOnlineStatusToFriends: true,
@@ -298,18 +298,23 @@ export const makeAccount = (userId: string, overrides: Partial<Account> = {}): A
 
 /** AccountReader over a fixed list, for a test whose ids name no `user` row. */
 export const makeAccountReader = (accounts: readonly Account[] = []): AccountReader => {
-  const byId = new Map(accounts.map((account) => [account.userId, account]));
+  const byId = new Map(accounts.map((account) => [account.userId.toLowerCase(), account]));
   const players = accounts.filter((account) => account.role === 'player' && account.player);
+  const toMatch = ({ userId, username, avatarUrl }: Account) => ({ userId, username, avatarUrl });
   return {
     getAccounts: async (userIds) =>
       new Map(
         userIds.flatMap((id) => {
-          const account = byId.get(id);
+          const account = byId.get(id.toLowerCase());
           return account ? [[id, account] as const] : [];
         }),
       ),
-    findPlayerByUsername: async (username) =>
-      players.find((account) => account.username.toLowerCase() === username.toLowerCase()) ?? null,
+    findPlayerByUsername: async (username) => {
+      const found = players.find(
+        (account) => account.username.toLowerCase() === username.toLowerCase(),
+      );
+      return found ? toMatch(found) : null;
+    },
     searchPlayers: async ({ query, excludeUserId, limit }) =>
       players
         .filter(
@@ -317,7 +322,8 @@ export const makeAccountReader = (accounts: readonly Account[] = []): AccountRea
             account.userId !== excludeUserId &&
             account.username.toLowerCase().includes(query.toLowerCase()),
         )
-        .slice(0, limit),
+        .slice(0, limit)
+        .map(toMatch),
     findUserIdByPlayerId: async (playerId) =>
       accounts.find((account) => account.player?.playerId === playerId)?.userId ?? null,
   };

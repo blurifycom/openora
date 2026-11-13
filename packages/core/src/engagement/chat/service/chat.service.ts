@@ -623,10 +623,16 @@ export class ChatService {
     };
   }
 
-  // Author avatars for a page of messages, read in one batch; a sender the identity service
-  // does not know shows no avatar.
+  // Author avatars for a page of messages, read in one batch. A sender the identity service
+  // does not know, or an identity service that is down, shows no avatar: history keeps the
+  // username stored with each message, and no access decision rides on this read.
   private async withAvatars<T extends { userId: string }>(messages: T[]) {
-    const accounts = await this.accounts.getAccounts(messages.map((m) => m.userId));
+    const accounts = await this.accounts
+      .getAccounts(messages.map((m) => m.userId))
+      .catch((err: unknown) => {
+        logger.warn({ err }, 'chat history avatars unavailable');
+        return new Map<string, Account>();
+      });
     return messages.map((message) => ({
       message,
       avatarUrl: accounts.get(message.userId)?.avatarUrl ?? null,

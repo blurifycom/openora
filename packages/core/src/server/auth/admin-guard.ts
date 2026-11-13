@@ -66,7 +66,8 @@ export class AdminGuard {
     // session's device fingerprint. Same layering reason as identityReader.
     private readonly securityPolicy?: AdminSecurityPolicy,
     // When bound (identity module loaded, or the identity service read remotely), roles and the
-    // active flag come from it; the raw read below is the fallback for an identity-less boot.
+    // active flag come from it, always `fresh` so a demotion bites on the next call; the raw
+    // read below is the fallback for an identity-less boot.
     private readonly accounts?: AccountReader,
   ) {}
 
@@ -292,7 +293,7 @@ export class AdminGuard {
 
   private async activeRoles(userIds: readonly string[]): Promise<{ id: string; role: string }[]> {
     if (this.accounts) {
-      const accounts = await this.accounts.getAccounts(userIds);
+      const accounts = await this.accounts.getAccounts(userIds, { fresh: true });
       return [...accounts.values()]
         .filter((account) => account.isActive)
         .map((account) => ({ id: canonicalUserId(account.userId), role: account.role }));
@@ -305,7 +306,7 @@ export class AdminGuard {
 
   private async findAccount(userId: string) {
     const row = this.accounts
-      ? (await this.accounts.getAccounts([userId])).get(canonicalUserId(userId))
+      ? (await this.accounts.getAccounts([userId], { fresh: true })).get(userId)
       : await this.drizzle.db
           .execute<{ role: string; isActive: boolean }>(
             sql`SELECT role, is_active AS "isActive" FROM "user" WHERE id = ${userId} LIMIT 1`,
