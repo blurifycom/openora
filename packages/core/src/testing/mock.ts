@@ -11,6 +11,8 @@ import {
 } from '@openora/core/server';
 import {
   DEFAULT_PAYMENT_PROVIDER,
+  type Account,
+  type AccountReader,
   type AuditWritePort,
   type CacheAdapter,
   type ChatContextSendPolicy,
@@ -274,6 +276,58 @@ export const makeIdentityReader = (): IdentityReader =>
     canReceiveLoginWithdrawalAlerts: vi.fn().mockResolvedValue(false),
     getPlayerDateOfBirthByUserId: vi.fn().mockResolvedValue(null),
   });
+
+/** A player account with a profile, for {@link makeAccountReader}. */
+export const makeAccount = (userId: string, overrides: Partial<Account> = {}): Account => ({
+  userId,
+  username: `player_${userId.slice(0, 8)}`,
+  name: `Player ${userId.slice(0, 8)}`,
+  avatarUrl: null,
+  role: 'player',
+  isActive: true,
+  excluded: false,
+  player: {
+    playerId: randomUUID(),
+    closed: false,
+    lastSeenAt: null,
+    allowFriendRequests: true,
+    showOnlineStatusToFriends: true,
+  },
+  ...overrides,
+});
+
+/** AccountReader over a fixed list, for a test whose ids name no `user` row. */
+export const makeAccountReader = (accounts: readonly Account[] = []): AccountReader => {
+  const byId = new Map(accounts.map((account) => [account.userId.toLowerCase(), account]));
+  const players = accounts.filter((account) => account.role === 'player' && account.player);
+  const toMatch = ({ userId, username, avatarUrl }: Account) => ({ userId, username, avatarUrl });
+  return {
+    getAccounts: async (userIds) =>
+      new Map(
+        userIds.flatMap((id) => {
+          const account = byId.get(id.toLowerCase());
+          return account ? [[id, account] as const] : [];
+        }),
+      ),
+    findPlayerByUsername: async (username) => {
+      const found = players.find(
+        (account) => account.username.toLowerCase() === username.toLowerCase(),
+      );
+      return found ? toMatch(found) : null;
+    },
+    searchPlayers: async ({ query, excludeUserId, limit }) =>
+      players
+        .filter(
+          (account) =>
+            account.userId !== excludeUserId &&
+            account.username.toLowerCase().includes(query.toLowerCase()),
+        )
+        .slice(0, limit)
+        .map(toMatch),
+    findUserIdByPlayerId: async (playerId) =>
+      accounts.find((account) => account.player?.playerId === playerId)?.userId ?? null,
+  };
+};
 
 /** UserCommands double whose `createAdmin` answers a fresh id, for a test that does not read identity's rows. */
 export const makeUserCommands = (): UserCommands & {

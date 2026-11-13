@@ -7,7 +7,7 @@ import {
   EVENT_BUS,
   type CoreTokenCatalog,
 } from '@openora/core/server';
-import { IDENTITY_READER, SOCIAL_COMMANDS } from '@openora/core/contracts';
+import { ACCOUNT_READER, SOCIAL_COMMANDS } from '@openora/core/contracts';
 import {
   createTestDb,
   seedPlayerWithUser,
@@ -19,7 +19,8 @@ import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
+import { makeEventBus } from '../../../testing/mock.js';
+import { DrizzleAccountReader } from '@openora/core/pam/server';
 import { migrate } from '../migrate.js';
 import { friendship } from '../schema/index.js';
 import { SocialService } from '../service/social.service.js';
@@ -49,7 +50,7 @@ function boot() {
   const events = makeEventBus();
   container.register(DRIZZLE, () => db.drizzle);
   container.register(EVENT_BUS, () => events);
-  container.register(IDENTITY_READER, () => makeIdentityReader());
+  container.register(ACCOUNT_READER, () => new DrizzleAccountReader(db.drizzle));
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
 
   socialPlugin.register(registry);
@@ -60,7 +61,7 @@ function boot() {
 
 async function makeFriends(alice: string, bob: string) {
   const eventsForSetup = makeEventBus();
-  const svc = new SocialService(db.drizzle, eventsForSetup, makeIdentityReader());
+  const svc = new SocialService(db.drizzle, eventsForSetup, new DrizzleAccountReader(db.drizzle));
   const first = await svc.sendFriendRequest(alice, bob);
   await svc.sendFriendRequest(bob, alice); // mutual auto-accept
   return first;
@@ -121,7 +122,7 @@ describe('social plugin SOCIAL_COMMANDS wiring', () => {
     const events = makeEventBus();
     container.register(DRIZZLE, () => db.drizzle);
     container.register(EVENT_BUS, () => events);
-    container.register(IDENTITY_READER, () => makeIdentityReader());
+    container.register(ACCOUNT_READER, () => new DrizzleAccountReader(db.drizzle));
     const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
 
     socialPlugin.register(registry);

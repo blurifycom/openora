@@ -1,5 +1,6 @@
 import type { TokenCatalog } from '@openora/core/contracts';
 import {
+  ACCOUNT_READER,
   ADMIN_GAME_REPORTING,
   ADMIN_PERMISSION_RESOLVER,
   ADMIN_PLAYER_ACTIVITY,
@@ -100,6 +101,7 @@ import { DRIZZLE } from '../db/index.js';
 import { EVENT_BUS } from '../kernel/index.js';
 
 const coreTokenCatalog = {
+  ACCOUNT_READER,
   ADMIN_GAME_REPORTING,
   ADMIN_GUARD,
   ADMIN_PERMISSION_RESOLVER,

@@ -3,7 +3,7 @@ import { unionAll } from 'drizzle-orm/pg-core';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import {
   GLOBAL_CHAT_ROOM_ID,
-  type AdminUserDirectory,
+  type AccountReader,
   type ChatModerationScope,
   type Uuid,
 } from '@openora/core/contracts';
@@ -151,7 +151,7 @@ type RestrictionRow = Awaited<ReturnType<typeof restrictionsReaching>>[number];
 export class ChatRoomRestrictionService {
   constructor(
     private readonly drizzle: DrizzleService,
-    private readonly directory: AdminUserDirectory,
+    private readonly accounts: AccountReader,
   ) {}
 
   async listRoomRestrictions({ roomId, type, page, limit }: ListRoomRestrictionsInput) {
@@ -187,20 +187,18 @@ export class ChatRoomRestrictionService {
 
   // A room moderator is a player and shows by username; staff show by account name.
   private async withNames(rows: RestrictionRow[]): Promise<ChatRoomRestriction[]> {
-    const playerIds = rows.flatMap((row) =>
-      row.source === 'room' ? [row.userId, row.setById] : [row.userId],
+    const accounts = await this.accounts.getAccounts(
+      rows.flatMap((row) => [row.userId, row.setById]),
     );
-    const staffIds = rows.filter((row) => row.source === 'admin').map((row) => row.setById);
-    const [players, staff] = await Promise.all([
-      this.directory.lookupPlayers([...new Set(playerIds)]),
-      this.directory.lookupUsers([...new Set(staffIds)]),
-    ]);
-    const usernames = new Map(players.map((summary) => [summary.userId, summary.username]));
-    const staffNames = new Map(staff.map((account) => [account.id, account.name]));
+    const usernameOf = (userId: Uuid) => {
+      const account = accounts.get(userId);
+      return account?.role === 'player' && account.player ? account.username : null;
+    };
     return rows.map(({ setById, createdAt, expiresAt, ...row }) => ({
       ...row,
-      username: usernames.get(row.userId) ?? null,
-      setByName: (row.source === 'room' ? usernames.get(setById) : staffNames.get(setById)) ?? null,
+      username: usernameOf(row.userId),
+      setByName:
+        row.source === 'room' ? usernameOf(setById) : (accounts.get(setById)?.name ?? null),
       createdAt: createdAt.toISOString(),
       expiresAt: expiresAt?.toISOString() ?? null,
     }));

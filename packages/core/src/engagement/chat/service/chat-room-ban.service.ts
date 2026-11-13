@@ -24,7 +24,7 @@ export class ChatRoomBanService {
     private readonly events: EventBus,
     private readonly audit: AuditWritePort,
     private readonly transport: RealtimeTransport,
-    private readonly identityReader: IdentityReader,
+    private readonly identityReader: Pick<IdentityReader, 'getPlayerIdByUserIdSafe'>,
   ) {}
 
   async banMember({

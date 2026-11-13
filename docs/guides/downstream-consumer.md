@@ -118,6 +118,24 @@ and each job reaches one of them.
   private network. For rotation and limits, see
   [ADR-0052](../adr/0052-signed-internal-api-for-service-calls.md).
 
+- **Chat on a database of its own.** On the chat service set `IDENTITY_SERVICE_URL` to the
+  identity service's private origin and `IDENTITY_SERVICE_NAME` to its `SERVICE_NAME`, and name
+  `identity:no-routes` in its `SERVICE_MANIFEST`; on the identity service set
+  `ACCOUNT_READER_CALLERS` to the chat service's `SERVICE_NAME` (unset refuses every caller).
+  That list guards against misconfiguration only: one install-wide secret signs as any caller.
+  In production the URL must be https, or the boot fails; set `IDENTITY_SERVICE_ALLOW_HTTP=true`
+  only where a service mesh encrypts the hop inside the private network.
+- Only the chat plugin binds the remote reader. Run social in the same process as chat, or
+  keep social on the identity database.
+- Chat keeps each account it reads for 30 seconds in a cache of 10,000 accounts. Admin
+  checks, room invites, a roster viewer's staff check and social's privacy gates always read
+  fresh. Past 10,000 accounts online, rosters and online counts read cold on every call.
+- While identity is down, chat answers 503, history shows no avatars and a new message is
+  stored under the name `Unknown player`, never a name the client sent. A 4xx from identity (a caller missing from
+  `ACCOUNT_READER_CALLERS`, or clock skew past the signature window) shows as 500 on every
+  chat route: check both first.
+- Setting `IDENTITY_SERVICE_URL` on a process that serves identity itself fails the boot.
+
 ## Seeding reference data (production)
 
 Migrations carry **structure only** (DDL: tables, indexes, constraints) - never data.

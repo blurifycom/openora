@@ -28,7 +28,8 @@ import type {
   CommandMetadata,
   ChatSystemMessage,
   CommandChatMessage,
-  AdminUserDirectory,
+  Account,
+  AccountReader,
   AuditWritePort,
   FriendshipDissolvedPayload,
   IdentityReader,
@@ -45,6 +46,7 @@ import {
   chatBlockLockKey,
   chatChannel,
   GLOBAL_CHAT_ROOM_ID,
+  playerIdsOf,
 } from '@openora/core/contracts';
 import {
   eq,
@@ -55,7 +57,6 @@ import {
   lt,
   desc,
   asc,
-  notInArray,
   inArray,
   count,
   ne,
@@ -63,10 +64,9 @@ import {
   sql,
   gte,
   getTableColumns,
+  notInArray,
   type SQL,
 } from 'drizzle-orm';
-import { user } from '@openora/core/pam/schema/identity';
-import { player } from '@openora/core/pam/schema/profile';
 import type { User } from '@openora/core/pam/schema/identity';
 import {
   chatRoom,
@@ -123,6 +123,8 @@ import {
   JOIN_CODE_LENGTH,
   MAX_PRIVATE_ROOMS_PER_PLAYER,
   PRIVATE_ROOM_SLUG_PREFIX,
+  isStaffRole,
+  UNKNOWN_PLAYER_USERNAME,
 } from '../contract/constants.js';
 import { platformScopesFor, roomReach, validateAttachment } from '../moderation/index.js';
 import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
@@ -146,21 +148,24 @@ function parseMentionedUsernames(content: string): string[] {
   return [...usernames];
 }
 
-function hideStaffExceptOwner(canSeeAdminUsers: boolean, creatorId: User['id'] | null) {
-  if (canSeeAdminUsers) {
-    return undefined;
-  }
-  return or(
-    isNull(user.id),
-    notInArray(user.role, ['admin', 'super-admin']),
-    eq(chatRoomMember.role, 'owner'),
-    creatorId ? eq(chatRoomMember.userId, creatorId) : undefined,
+// A staff member stays out of a room's roster unless they own or created it, or the viewer is
+// staff too. An account the identity service does not know is listed, as "Unknown player".
+function visibleInRoster(
+  member: { userId: User['id']; role: string },
+  accounts: Map<string, Account>,
+  { canSeeAdminUsers, creatorId }: { canSeeAdminUsers: boolean; creatorId: User['id'] | null },
+) {
+  return (
+    canSeeAdminUsers ||
+    !isStaffRole(accounts.get(member.userId)?.role) ||
+    member.role === 'owner' ||
+    member.userId === creatorId
   );
 }
 
 function emitMentions({
   events,
-  directory,
+  accounts,
   isMentionSuppressed,
   content,
   byUserId,
@@ -169,7 +174,7 @@ function emitMentions({
   messageId,
 }: {
   events: EventBus;
-  directory: AdminUserDirectory;
+  accounts: AccountReader;
   isMentionSuppressed: (mentionedUserId: User['id']) => Promise<boolean>;
   content: string;
   byUserId: User['id'];
@@ -182,7 +187,7 @@ function emitMentions({
     return;
   }
   void mapConcurrent(usernames, MENTION_RESOLVE_CONCURRENCY, async (username) => {
-    const summary = await directory.getPlayerByUsername(username).catch((err: unknown) => {
+    const summary = await accounts.findPlayerByUsername(username).catch((err: unknown) => {
       logger.error({ err, username, messageId }, 'chat mention lookup failed');
       return null;
     });
@@ -277,10 +282,9 @@ type ChatServiceDependencies = {
   drizzle: DrizzleService;
   events: EventBus;
   transport: RealtimeTransport;
-  directory: AdminUserDirectory;
+  accounts: AccountReader;
   audit: AuditWritePort;
   moderation: ChatModeration;
-  identityReader: IdentityReader;
   allowedAttachmentHosts: readonly string[];
   socialCommands?: SocialCommands;
   contextSendPolicy: ChatContextSendPolicy;
@@ -457,10 +461,10 @@ export class ChatService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly transport: RealtimeTransport;
-  private readonly directory: AdminUserDirectory;
+  private readonly accounts: AccountReader;
   private readonly audit: AuditWritePort;
   private readonly moderation: ChatModeration;
-  private readonly identityReader: IdentityReader;
+  private readonly identityReader: Pick<IdentityReader, 'getPlayerIdByUserIdSafe'>;
   private readonly allowedAttachmentHosts: readonly string[];
   private readonly socialCommands?: SocialCommands;
   private readonly contextSendPolicy: ChatContextSendPolicy;
@@ -469,10 +473,9 @@ export class ChatService {
     drizzle,
     events,
     transport,
-    directory,
+    accounts,
     audit,
     moderation,
-    identityReader,
     allowedAttachmentHosts,
     socialCommands,
     contextSendPolicy,
@@ -480,10 +483,10 @@ export class ChatService {
     this.drizzle = drizzle;
     this.events = events;
     this.transport = transport;
-    this.directory = directory;
+    this.accounts = accounts;
     this.audit = audit;
     this.moderation = moderation;
-    this.identityReader = identityReader;
+    this.identityReader = playerIdsOf(accounts);
     this.allowedAttachmentHosts = allowedAttachmentHosts;
     this.socialCommands = socialCommands;
     this.contextSendPolicy = contextSendPolicy;
@@ -571,12 +574,13 @@ export class ChatService {
     };
   }
 
+  // ponytail: one account read per online member. Over the identity service that is a batch of
+  // ACCOUNTS_BATCH_MAX ids per call, and past the remote cache cap (10k) every count reads cold;
+  // a room that big needs an identity-side staff count instead.
   async getOnlineCount(roomId: ChatRoom['id'] | null) {
     const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(roomId));
-    const onlineUsers = await this.directory.lookupUsers(onlineUserIds);
-    const playerCount = onlineUsers.filter(
-      (onlineUser) => onlineUser.role !== 'admin' && onlineUser.role !== 'super-admin',
-    ).length;
+    const onlineUsers = await this.accounts.getAccounts(onlineUserIds);
+    const playerCount = [...onlineUsers.values()].filter(({ role }) => !isStaffRole(role)).length;
     return { count: playerCount };
   }
 
@@ -605,20 +609,58 @@ export class ChatService {
   }
 
   private async usernamesFor(userIds: readonly User['id'][]) {
-    const summaries = await this.directory.lookupPlayers(userIds);
-    return new Map(summaries.map((s) => [s.userId, s.username]));
+    const accounts = await this.accounts.getAccounts(userIds);
+    return new Map(
+      [...accounts.values()].flatMap((a) => (a.player ? [[a.userId, a.username] as const] : [])),
+    );
   }
 
-  private async resolveAuthor(userId: User['id'], fallback: string) {
-    const [row] = await this.drizzle.db
-      .select({ username: user.username, avatarUrl: user.image })
-      .from(user)
-      .where(eq(user.id, userId))
-      .limit(1);
+  // The name and avatar a new message carries, stored with it for good. An identity service that
+  // is down or does not know the account gives a fixed placeholder, never a client-sent name:
+  // other players read the name to decide who is talking.
+  private async resolveAuthor(userId: User['id']) {
+    const account = await this.accounts
+      .getAccounts([userId])
+      .then((accounts) => accounts.get(userId))
+      .catch((err: unknown) => {
+        logger.warn({ err, userId }, 'chat author profile unavailable');
+        return undefined;
+      });
     return {
-      username: row?.username.trim() || fallback || 'anonymous',
-      avatarUrl: row?.avatarUrl ?? null,
+      username: account?.username.trim() || UNKNOWN_PLAYER_USERNAME,
+      avatarUrl: account?.avatarUrl ?? null,
     };
+  }
+
+  // Author avatars for a page of messages, read in one batch. A sender the identity service
+  // does not know, or an identity service that is down, shows no avatar: history keeps the
+  // username stored with each message, and no access decision rides on this read.
+  private async withAvatars<T extends { userId: string }>(messages: T[]) {
+    const accounts = await this.accounts
+      .getAccounts(messages.map((m) => m.userId))
+      .catch((err: unknown) => {
+        logger.warn({ err }, 'chat history avatars unavailable');
+        return new Map<string, Account>();
+      });
+    return messages.map((message) => ({
+      message,
+      avatarUrl: accounts.get(message.userId)?.avatarUrl ?? null,
+    }));
+  }
+
+  // Whether the viewer is staff, who sees staff in a roster. Read fresh: it decides visibility.
+  private async canSeeAdminUsers(viewerId: User['id'] | undefined) {
+    if (!viewerId) {
+      return false;
+    }
+    const viewer = (await this.accounts.getAccounts([viewerId], { fresh: true })).get(viewerId);
+    return isStaffRole(viewer?.role);
+  }
+
+  // The usernames a roster shows: an account the identity service does not know shows as
+  // "Unknown player" instead of a raw id.
+  private rosterUsername(accounts: Map<string, Account>, userId: User['id']) {
+    return accounts.get(userId)?.username ?? UNKNOWN_PLAYER_USERNAME;
   }
 
   /** Throws ChatRoomNotFoundError or ChatRoomNotMemberError; returns the room on success. */
@@ -1306,7 +1348,7 @@ export class ChatService {
       }),
     );
     if (!updated) {
-      await emitAccessRefused(this.drizzle.db, this.events, {
+      await emitAccessRefused(this.accounts, this.events, {
         actorId,
         resource: 'chat.room_configuration',
         action: 'update',
@@ -1407,24 +1449,24 @@ export class ChatService {
   }) {
     await assertRoomModerator(this.drizzle.db, roomId, actorId);
     const role = status === 'all' ? undefined : status;
-    const canSeeAdminUsers = await this.canSeeAdminUsers(actorId);
     const [room] = await this.drizzle.db
       .select({ creatorId: chatRoom.creatorId })
       .from(chatRoom)
       .where(eq(chatRoom.id, roomId))
       .limit(1);
-    const members = await this.drizzle.db
-      .select({ member: chatRoomMember, username: user.username })
+    const rows = await this.drizzle.db
+      .select()
       .from(chatRoomMember)
-      .leftJoin(user, eq(user.id, chatRoomMember.userId))
       .where(
-        and(
-          eq(chatRoomMember.roomId, roomId),
-          role ? eq(chatRoomMember.role, role) : undefined,
-          hideStaffExceptOwner(canSeeAdminUsers, room?.creatorId ?? null),
-        ),
+        and(eq(chatRoomMember.roomId, roomId), role ? eq(chatRoomMember.role, role) : undefined),
       )
       .orderBy(asc(chatRoomMember.joinedAt));
+    const accounts = await this.accounts.getAccounts(rows.map((m) => m.userId));
+    const roster = {
+      canSeeAdminUsers: await this.canSeeAdminUsers(actorId),
+      creatorId: room?.creatorId ?? null,
+    };
+    const members = rows.filter((member) => visibleInRoster(member, accounts, roster));
     const bans = await this.drizzle.db
       .select()
       .from(chatRoomBan)
@@ -1435,14 +1477,12 @@ export class ChatService {
         .filter((ban) => !ban.expiresAt || ban.expiresAt.getTime() > now)
         .map((ban) => [ban.userId, ban]),
     );
-    const names = await this.directory.lookupPlayers(members.map(({ member }) => member.userId));
-    const nameById = new Map(names.map((name) => [name.userId, name.username]));
-    return members.map(({ member, username }) => {
+    return members.map((member) => {
       const ban = activeBans.get(member.userId);
       return serializeRow(
         {
           userId: member.userId,
-          username: nameById.get(member.userId) ?? username ?? null,
+          username: this.rosterUsername(accounts, member.userId),
           role: member.role,
           joinedAt: member.joinedAt,
           blocked: Boolean(ban),
@@ -1502,13 +1542,12 @@ export class ChatService {
     }
     await this.appendExcludedSendersFilter(conditions, viewerId);
     const messages = await this.drizzle.db
-      .select({ message: chatMessage, avatarUrl: user.image })
+      .select()
       .from(chatMessage)
-      .leftJoin(user, eq(user.id, chatMessage.userId))
       .where(and(...conditions))
       .orderBy(desc(chatMessage.createdAt))
       .limit(limit);
-    return toPublicMessages(messages);
+    return toPublicMessages(await this.withAvatars(messages));
   }
 
   private async isGlobalRoomId(
@@ -1551,32 +1590,32 @@ export class ChatService {
       throw new ChatRoomNotFoundError(roomId);
     }
 
+    const playerSender = await this.playerSenderCondition(playerId);
+    if (playerSender === null) {
+      return { items: [], total: 0, page, limit };
+    }
     const where = and(
       isGlobalRoom(room) ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, room.id),
       includeDeleted ? undefined : eq(chatMessage.isDeleted, false),
       senderId ? eq(chatMessage.userId, senderId) : undefined,
-      playerId ? eq(player.id, playerId) : undefined,
+      playerSender,
     );
     const [rows, [{ n }]] = await Promise.all([
       this.drizzle.db
-        .select({ message: chatMessage, playerId: player.id, avatarUrl: user.image })
+        .select()
         .from(chatMessage)
-        .leftJoin(player, eq(player.userId, chatMessage.userId))
-        .leftJoin(user, eq(user.id, chatMessage.userId))
         .where(where)
         .orderBy(desc(chatMessage.createdAt))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
-      this.drizzle.db
-        .select({ n: count() })
-        .from(chatMessage)
-        .leftJoin(player, eq(player.userId, chatMessage.userId))
-        .where(where),
+      this.drizzle.db.select({ n: count() }).from(chatMessage).where(where),
     ]);
+    const accounts = await this.accounts.getAccounts(rows.map((m) => m.userId));
     return {
-      items: rows.flatMap(({ message, playerId, avatarUrl }) => {
-        const mapped = toPublicMessage(message, avatarUrl);
-        return mapped ? [{ ...mapped, playerId }] : [];
+      items: rows.flatMap((message) => {
+        const account = accounts.get(message.userId);
+        const mapped = toPublicMessage(message, account?.avatarUrl ?? null);
+        return mapped ? [{ ...mapped, playerId: account?.player?.playerId ?? null }] : [];
       }),
       total: Number(n),
       page,
@@ -1609,11 +1648,15 @@ export class ChatService {
         : roomId
           ? eq(chatMessage.roomId, roomId)
           : undefined;
+    const playerSender = await this.playerSenderCondition(playerId);
+    if (playerSender === null) {
+      return { items: [], total: 0, page, limit };
+    }
     const where = and(
       eq(chatMessage.type, 'user'),
       roomCondition,
       senderId ? eq(chatMessage.userId, senderId) : undefined,
-      playerId ? eq(player.id, playerId) : undefined,
+      playerSender,
       search ? ilike(chatMessage.content, `%${search}%`) : undefined,
       includeDeleted
         ? undefined
@@ -1626,13 +1669,12 @@ export class ChatService {
           id: chatMessage.id,
           createdAt: chatMessage.createdAt,
           roomId: chatMessage.roomId,
-          playerId: player.id,
+          userId: chatMessage.userId,
           roomName: chatRoom.name,
           content: chatMessage.content,
           attachment: chatMessage.attachment,
         })
         .from(chatMessage)
-        .leftJoin(player, eq(player.userId, chatMessage.userId))
         .leftJoin(chatRoom, eq(chatRoom.id, chatMessage.roomId))
         .where(where)
         .orderBy(direction(chatMessage.createdAt))
@@ -1641,10 +1683,10 @@ export class ChatService {
       this.drizzle.db
         .select({ n: count() })
         .from(chatMessage)
-        .leftJoin(player, eq(player.userId, chatMessage.userId))
         .leftJoin(chatRoom, eq(chatRoom.id, chatMessage.roomId))
         .where(where),
     ]);
+    const accounts = await this.accounts.getAccounts(rows.map((row) => row.userId));
     return {
       items: rows.map((row) => {
         const date = row.createdAt.toISOString();
@@ -1652,7 +1694,7 @@ export class ChatService {
           id: row.id,
           date,
           roomId: row.roomId ?? GLOBAL_CHAT_ROOM_ID,
-          playerId: row.playerId,
+          playerId: accounts.get(row.userId)?.player?.playerId ?? null,
           roomName: row.roomName ?? 'Global',
           content: row.content,
           attachment: row.attachment,
@@ -1893,7 +1935,6 @@ export class ChatService {
 
   async sendRoomMessage({
     userId,
-    username,
     roomId,
     content,
     attachment = null,
@@ -1901,7 +1942,6 @@ export class ChatService {
     userAgent,
   }: {
     userId: User['id'];
-    username: string;
     roomId: ChatRoom['id'];
     content: string;
     attachment?: ChatAttachment | null;
@@ -1909,7 +1949,7 @@ export class ChatService {
     // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     const room = await this.verifyRoomAccess(roomId, userId);
     if (isGlobalRoom(room)) {
-      return this.postToGlobalRoom({ userId, username, content, attachment });
+      return this.postToGlobalRoom({ userId, content, attachment });
     }
     const slowMode = await this.roomSendSettings(roomId);
     await this.moderation.assertCanSend(userId, roomId, room.isPublic);
@@ -1922,14 +1962,14 @@ export class ChatService {
 
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
-    const author = await this.resolveAuthor(userId, username);
+    const author = await this.resolveAuthor(userId);
     const record = await this.insertUserMessage(
       { roomId, userId, username: author.username, content: safeContent, attachment },
       throttle,
       room,
     ).catch(async (err: unknown) => {
       if (err instanceof ChatRoomNotMemberError || err instanceof ChatContextSendDeniedError) {
-        await emitAccessRefused(this.drizzle.db, this.events, {
+        await emitAccessRefused(this.accounts, this.events, {
           actorId: userId,
           resource: 'chat.message',
           action: 'send',
@@ -1950,7 +1990,7 @@ export class ChatService {
     publishChatEvent(this.transport, roomId, message);
     emitMentions({
       events: this.events,
-      directory: this.directory,
+      accounts: this.accounts,
       isMentionSuppressed: (mentionedUserId) =>
         this.isMentionSuppressed(mentionedUserId, userId, roomId),
       content: safeContent,
@@ -1981,7 +2021,7 @@ export class ChatService {
     }
     await assertRoomModerator(this.drizzle.db, roomId, userId);
     if (message.type === 'system') {
-      await emitAccessRefused(this.drizzle.db, this.events, {
+      await emitAccessRefused(this.accounts, this.events, {
         actorId: userId,
         resource: 'chat.message',
         action: 'delete',
@@ -2002,18 +2042,16 @@ export class ChatService {
     ];
     await this.appendExcludedSendersFilter(conditions, viewerId);
     const messages = await this.drizzle.db
-      .select({ message: chatMessage, avatarUrl: user.image })
+      .select()
       .from(chatMessage)
-      .leftJoin(user, eq(user.id, chatMessage.userId))
       .where(and(...conditions))
       .orderBy(desc(chatMessage.createdAt))
       .limit(limit);
-    return toPublicMessages(messages);
+    return toPublicMessages(await this.withAvatars(messages));
   }
 
   async sendGlobalMessage(input: {
     userId: User['id'];
-    username: string;
     content: string;
     attachment?: ChatAttachment | null;
   }) {
@@ -2023,12 +2061,10 @@ export class ChatService {
 
   private async postToGlobalRoom({
     userId,
-    username,
     content,
     attachment = null,
   }: {
     userId: User['id'];
-    username: string;
     content: string;
     attachment?: ChatAttachment | null;
   }) {
@@ -2038,7 +2074,7 @@ export class ChatService {
     const throttle = await this.sendThrottle({ userId, roomId: null, reach: 'global', slowMode });
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
-    const author = await this.resolveAuthor(userId, username);
+    const author = await this.resolveAuthor(userId);
     const record = await this.insertUserMessage(
       { roomId: null, userId, username: author.username, content: safeContent, attachment },
       throttle,
@@ -2054,7 +2090,7 @@ export class ChatService {
     publishChatEvent(this.transport, null, message);
     emitMentions({
       events: this.events,
-      directory: this.directory,
+      accounts: this.accounts,
       isMentionSuppressed: (mentionedUserId) =>
         this.isMentionSuppressed(mentionedUserId, userId, null),
       content: safeContent,
@@ -2822,31 +2858,27 @@ export class ChatService {
 
   async listRoomMembers({ roomId, viewerId }: { roomId: ChatRoom['id']; viewerId?: User['id'] }) {
     const room = await this.verifyRoomAccess(roomId, viewerId);
-    const canSeeAdminUsers = viewerId ? await this.canSeeAdminUsers(viewerId) : false;
-    const members = await this.drizzle.db
+    const rows = await this.drizzle.db
       .select({
         userId: chatRoomMember.userId,
         role: chatRoomMember.role,
         joinedAt: chatRoomMember.joinedAt,
         accountClosedAt: chatRoomMember.accountClosedAt,
-        username: user.username,
       })
       .from(chatRoomMember)
-      .leftJoin(user, eq(user.id, chatRoomMember.userId))
-      .where(
-        and(
-          eq(chatRoomMember.roomId, roomId),
-          hideStaffExceptOwner(canSeeAdminUsers, room.creatorId),
-        ),
-      )
+      .where(eq(chatRoomMember.roomId, roomId))
       .orderBy(asc(chatRoomMember.joinedAt));
-    const summaries = await this.directory.lookupPlayers(members.map((m) => m.userId));
-    const usernameByUserId = new Map(summaries.map((s) => [s.userId, s.username]));
+    const accounts = await this.accounts.getAccounts(rows.map((m) => m.userId));
+    const roster = {
+      canSeeAdminUsers: await this.canSeeAdminUsers(viewerId),
+      creatorId: room.creatorId,
+    };
+    const members = rows.filter((member) => visibleInRoster(member, accounts, roster));
     return members.map(({ accountClosedAt, ...m }) =>
       serializeRow(
         {
           ...m,
-          username: usernameByUserId.get(m.userId) ?? m.username ?? null,
+          username: this.rosterUsername(accounts, m.userId),
           isDeletedAccount: accountClosedAt !== null,
         },
         { dateFields: ['joinedAt'] },
@@ -2854,12 +2886,13 @@ export class ChatService {
     );
   }
 
-  private async canSeeAdminUsers(viewerId: User['id']) {
-    const [viewer] = await this.drizzle.db
-      .select({ role: user.role })
-      .from(user)
-      .where(eq(user.id, viewerId))
-      .limit(1);
-    return viewer?.role === 'admin' || viewer?.role === 'super-admin';
+  // The admin listings' player filter as a sender condition: undefined = no filter, null = the
+  // player id names no account, so nothing matches.
+  private async playerSenderCondition(playerId: Uuid | undefined) {
+    if (!playerId) {
+      return undefined;
+    }
+    const userId = await this.accounts.findUserIdByPlayerId(playerId);
+    return userId ? eq(chatMessage.userId, userId) : null;
   }
 }

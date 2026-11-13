@@ -1,4 +1,5 @@
 import {
+  ACCOUNT_READER,
   ADMIN_SECURITY_POLICY,
   AUDIT_WRITER,
   ADMIN_USER_DIRECTORY,
@@ -43,6 +44,11 @@ import {
   DrizzleMailRecipientDirectory,
 } from './admin-user-directory.js';
 import { IdentityReaderService } from './adapters/identity-reader.service.js';
+import { DrizzleAccountReader } from './adapters/account-reader.service.js';
+import {
+  accountReaderCallers,
+  createInternalAccountsRouter,
+} from './router/internal-accounts.router.js';
 import {
   createIdentityRouter,
   sessionEventsChannel,
@@ -241,6 +247,17 @@ export default {
     ctx.provide(MAIL_RECIPIENT_DIRECTORY, (c) => new DrizzleMailRecipientDirectory(c.get(DRIZZLE)));
     // Read-only session queries for cross-module consumers (eg tag inactive evaluation).
     ctx.provide(IDENTITY_READER, (c) => new IdentityReaderService(c.get(DRIZZLE)));
+    // Accounts as chat, social and the admin guard see them. The internal routes serve the
+    // identity database itself, never the bound reader, which a split service rebinds to a
+    // client of these very routes. Unset ACCOUNT_READER_CALLERS refuses every caller.
+    ctx.provide(ACCOUNT_READER, (c) => new DrizzleAccountReader(c.get(DRIZZLE)));
+    const accountReaderCallerNames = accountReaderCallers(process.env['ACCOUNT_READER_CALLERS']);
+    ctx.routers.addInternal('identity', (c) =>
+      createInternalAccountsRouter(
+        new DrizzleAccountReader(c.get(DRIZZLE)),
+        accountReaderCallerNames,
+      ),
+    );
     // RG login-block writer. compliance drives it through the port, never the schema.
     ctx.provide(
       LOGIN_ENFORCEMENT,

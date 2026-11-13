@@ -1,4 +1,4 @@
-import { IDENTITY_READER, SOCIAL_COMMANDS } from '@openora/core/contracts';
+import { ACCOUNT_READER, SOCIAL_COMMANDS } from '@openora/core/contracts';
 import { EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import { SocialService } from './service/social.service.js';
@@ -10,7 +10,7 @@ export default {
   register(ctx) {
     let svc: SocialService | null = null;
     const socialService = (c: TypedContainer<CoreTokenCatalog>) =>
-      (svc ??= new SocialService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER)));
+      (svc ??= new SocialService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(ACCOUNT_READER)));
 
     ctx.provide(SOCIAL_COMMANDS, (c) => ({
       dissolveFriendshipOnBlock: (tx, blockerId, blockedId) =>
