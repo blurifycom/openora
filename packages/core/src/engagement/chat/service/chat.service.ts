@@ -626,8 +626,9 @@ export class ChatService {
   }
 
   /** Throws ChatRoomNotFoundError or ChatRoomNotMemberError; returns the room on success. */
-  async verifyRoomAccess(roomId: ChatRoom['id'], viewerId?: User['id']) {
-    const [room] = await this.drizzle.db
+  async verifyRoomAccess(roomId: ChatRoom['id'], viewerId?: User['id'], tx?: DrizzleTx) {
+    const db = tx ?? this.drizzle.db;
+    const [room] = await db
       .select()
       .from(chatRoom)
       .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
@@ -637,7 +638,7 @@ export class ChatService {
     }
     if (viewerId) {
       const now = new Date();
-      const [roomBan] = await this.drizzle.db
+      const [roomBan] = await db
         .select({ expiresAt: chatRoomBan.expiresAt })
         .from(chatRoomBan)
         .where(
@@ -652,7 +653,7 @@ export class ChatService {
       if (roomBan) {
         throw new ChatPlayerBannedError(roomBan.expiresAt);
       }
-      const [platformBan] = await this.drizzle.db
+      const [platformBan] = await db
         .select({ expiresAt: chatPlatformBan.expiresAt })
         .from(chatPlatformBan)
         .where(
@@ -675,7 +676,7 @@ export class ChatService {
       if (!viewerId) {
         throw new ChatRoomNotMemberError(roomId);
       }
-      const [member] = await this.drizzle.db
+      const [member] = await db
         .select({ id: chatRoomMember.id })
         .from(chatRoomMember)
         .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, viewerId)))

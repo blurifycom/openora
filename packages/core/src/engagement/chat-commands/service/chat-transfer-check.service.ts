@@ -1,8 +1,9 @@
 import { ORPCError } from '@orpc/server';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
-import { withAdvisoryXactLocks, type DrizzleService, type DrizzleTx } from '@openora/core/server';
+import { withAdvisoryXactLocks, type DrizzleTx } from '@openora/core/server';
 import {
   ChatContextSendDecisionSchema,
+  ChatTransferCheckInputSchema,
   GLOBAL_CHAT_ROOM_ID,
   chatBlockLockKey,
   type ChatContextSendPolicy,
@@ -17,22 +18,28 @@ import { chatCommandConfig } from '../schema/index.js';
 
 const refuse = (refusal: ChatTransferRefusal): ChatTransferVerdict => ({ allowed: false, refusal });
 
-/** Local `CHAT_TRANSFER_CHECK`: reads the shared database through the caller's transaction. */
+/**
+ * Local `CHAT_TRANSFER_CHECK`: every read goes through the caller's transaction, which it
+ * requires, so the block lock below cannot be skipped by calling it outside one.
+ */
 export class ChatTransferCheckService {
   constructor(
     private readonly deps: {
-      drizzle: DrizzleService;
       roomAccess: ChatRoomAccess;
       contextSendPolicy: ChatContextSendPolicy;
     },
   ) {}
 
   async check(
-    tx: DrizzleTx | undefined,
-    input: ChatTransferCheckInput,
+    transaction: unknown,
+    rawInput: ChatTransferCheckInput,
   ): Promise<ChatTransferVerdict> {
-    const db = tx ?? this.deps.drizzle.db;
-    const [command] = await db
+    if (!transaction) {
+      throw new Error('CHAT_TRANSFER_CHECK needs the caller transaction to hold its block locks');
+    }
+    const tx = transaction as DrizzleTx;
+    const input = ChatTransferCheckInputSchema.parse(rawInput);
+    const [command] = await tx
       .select({ enabled: chatCommandConfig.enabled, config: chatCommandConfig.config })
       .from(chatCommandConfig)
       .where(eq(chatCommandConfig.key, input.command))
@@ -41,7 +48,7 @@ export class ChatTransferCheckService {
       return refuse('command_disabled');
     }
 
-    const [room] = await db
+    const [room] = await tx
       .select({
         id: chatRoom.id,
         slug: chatRoom.slug,
@@ -61,7 +68,7 @@ export class ChatTransferCheckService {
     if (!room) {
       return refuse('room_not_found');
     }
-    const accessRefusal = await this.roomAccessRefusal(room.id, input.actorId);
+    const accessRefusal = await this.roomAccessRefusal(tx, room.id, input.actorId);
     if (accessRefusal) {
       return refuse(accessRefusal);
     }
@@ -72,7 +79,7 @@ export class ChatTransferCheckService {
           userId: input.actorId,
           roomId: room.id,
           contextRef,
-          tx: db,
+          tx,
         }),
       );
       if (!decision.allowed) {
@@ -91,9 +98,11 @@ export class ChatTransferCheckService {
 
   // CHAT_ROOM_ACCESS answers with the router's error codes: a missing room, or a non-member or
   // banned actor. Anything else is a fault and propagates, which fails the caller's transaction.
-  private async roomAccessRefusal(roomId: Uuid, actorId: Uuid) {
+  // Bans and membership take no lock: one lifted or added after this read and before the
+  // caller commits is not seen.
+  private async roomAccessRefusal(tx: DrizzleTx, roomId: Uuid, actorId: Uuid) {
     try {
-      await this.deps.roomAccess.verifyRoomAccess(roomId, actorId);
+      await this.deps.roomAccess.verifyRoomAccess(roomId, actorId, tx);
       return null;
     } catch (error) {
       if (error instanceof ORPCError && error.code === 'NOT_FOUND') {
@@ -106,44 +115,41 @@ export class ChatTransferCheckService {
     }
   }
 
-  // Inside a transaction, a shared lock per direction makes `blockUser` (which takes the same
-  // key exclusively) wait for the money to commit, or the read here wait for the block.
-  private async blockedCounterparts(tx: DrizzleTx | undefined, input: ChatTransferCheckInput) {
+  // A shared lock per direction makes `blockUser` (which takes the same key exclusively) wait
+  // for the money to commit, or the read here wait for the block.
+  private async blockedCounterparts(tx: DrizzleTx, input: ChatTransferCheckInput) {
     const { actorId } = input;
     const counterpartIds = [...new Set(input.counterpartIds)].filter((id) => id !== actorId);
     if (counterpartIds.length === 0) {
       return [];
     }
-    const read = () =>
-      (tx ?? this.deps.drizzle.db)
-        .select({ blockerId: chatUserBlock.blockerId, blockedId: chatUserBlock.blockedId })
-        .from(chatUserBlock)
-        .where(
-          and(
-            isNull(chatUserBlock.removedAt),
-            or(
-              and(
-                eq(chatUserBlock.blockerId, actorId),
-                inArray(chatUserBlock.blockedId, counterpartIds),
-              ),
-              and(
-                inArray(chatUserBlock.blockerId, counterpartIds),
-                eq(chatUserBlock.blockedId, actorId),
+    const rows = await withAdvisoryXactLocks(
+      tx,
+      counterpartIds.flatMap((id) => [
+        chatBlockLockKey(actorId, id),
+        chatBlockLockKey(id, actorId),
+      ]),
+      () =>
+        tx
+          .select({ blockerId: chatUserBlock.blockerId, blockedId: chatUserBlock.blockedId })
+          .from(chatUserBlock)
+          .where(
+            and(
+              isNull(chatUserBlock.removedAt),
+              or(
+                and(
+                  eq(chatUserBlock.blockerId, actorId),
+                  inArray(chatUserBlock.blockedId, counterpartIds),
+                ),
+                and(
+                  inArray(chatUserBlock.blockerId, counterpartIds),
+                  eq(chatUserBlock.blockedId, actorId),
+                ),
               ),
             ),
           ),
-        );
-    const rows = tx
-      ? await withAdvisoryXactLocks(
-          tx,
-          counterpartIds.flatMap((id) => [
-            chatBlockLockKey(actorId, id),
-            chatBlockLockKey(id, actorId),
-          ]),
-          read,
-          'shared',
-        )
-      : await read();
+      'shared',
+    );
     const blocked = new Set(
       rows.map((row) => (row.blockerId === actorId ? row.blockedId : row.blockerId)),
     );
