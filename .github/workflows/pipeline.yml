@@ -34,11 +34,6 @@ jobs:
       id-token: write # npm provenance (signed build attestation)
     outputs:
       version: ${{ steps.version.outputs.version }}
-    env:
-      # The example demo is identified ONLY by these secret VALUES -
-      # this repo is public, so nothing about it is committed here. Unset -> the step no-ops.
-      EXAMPLE_DEPLOY_TRIGGER_URL: ${{ secrets.EXAMPLE_DEPLOY_TRIGGER_URL }}
-      EXAMPLE_DEPLOY_TRIGGER_TOKEN: ${{ secrets.EXAMPLE_DEPLOY_TRIGGER_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -82,18 +77,6 @@ jobs:
       - name: Read published version
         id: version
         run: echo "version=$(node -p "require('./packages/core/package.json').version")" >> "$GITHUB_OUTPUT"
-
-      # Redeploy the public example demo against the new snapshot. Best-effort; dev channel only.
-      - name: Trigger example demo deploy
-        continue-on-error: true
-        if: env.EXAMPLE_DEPLOY_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
-        run: |
-          VERSION=$(node -p "require('./packages/core/package.json').version")
-          curl -sf -X POST "$EXAMPLE_DEPLOY_TRIGGER_URL" \
-            -F "token=$EXAMPLE_DEPLOY_TRIGGER_TOKEN" \
-            -F "ref=main" \
-            -F "variables[DEPLOY]=true" \
-            -F "variables[OSS_VERSION]=$VERSION"
 
   # Separate job so bursts of merges collapse into ONE downstream bump: each run waits, and a
   # newer run's bump cancels this one while it waits (publishing above is never cancelled).
