@@ -35,7 +35,8 @@ worker mirrors that shape rather than reimplementing it.
 
 The mail plugin declares no `dependsOn`. Every consumer resolves `MAIL_DISPATCH` lazily
 in its own router factory, which runs after every plugin has registered - the same
-pattern `wallet/plugin.ts` uses for `TAG_EVALUATION_COMMANDS`. The `MailService` is
+pattern `wallet/plugin.ts` used for `TAG_EVALUATION_COMMANDS` (removed, superseded by
+ADR-0057). The `MailService` is
 memoized on first `MAIL_DISPATCH` resolution. It is deliberate, and it is why the plugin
 can bind a port `identity` needs while `identity` binds ports the mail worker needs.
 

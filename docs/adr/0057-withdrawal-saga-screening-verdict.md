@@ -40,7 +40,8 @@ never auto-approves without a verdict, and never on one that asks for a review.
 **No verdict means manual review.** A withdrawal stays `pending` in the admin queue when:
 
 - the player cannot be resolved for a review that is due (logged, no verdict);
-- screening throws until the broker dead-letters the event;
+- screening throws on every delivery, and the Redis Streams broker dead-letters the event after
+  `MAX_DELIVERIES` (5) deliveries;
 - the outbox never delivers.
 
 Each failure fails closed. A redelivered verdict is a no-op: the wallet acts only on a `pending`
@@ -118,6 +119,10 @@ Limits of the dedup:
 - A withdrawal nobody decides is surfaced after a day instead of waiting silently.
 - Apps that share a database share an outbox, and any one of them may deliver a verdict. Installs
   that differ in auto-withdrawal config must not share a database.
+- Rolling deploy: a verdict from an old tag replica has no `reviewRequired`, so the wallet leaves
+  that withdrawal for a human. The three new finding kinds come with a migration, and an old
+  replica may not serialise them: run the migration and replace every replica that reads findings
+  before relying on them.
 - Known gaps:
 - Bonus forfeiture still runs inside the withdraw transaction (`BONUS_LIFECYCLE`).
 - The review threshold compares raw amounts across currencies, as before.
