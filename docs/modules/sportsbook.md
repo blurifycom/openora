@@ -282,6 +282,14 @@ nothing else, so the provider may retry it or treat it as final.
   retry gets the first answer and moves nothing new. A refused request keeps no answer, so its
   retry runs again. The hold is released once no debt is outstanding in any currency, so writing
   off one currency's debt keeps the hold while another is still owed.
+- **A void after a short reopen returns what the player paid and cancels the rest.** When a reopen
+  undid a void and left part of the stake as debt, the next void credits what that reopen
+  collected plus what offsets and collects took of its shortfall, and the system cancels what is
+  left of it: the debt's `owed` drops by that amount, the change is audited with actor `system`
+  and cause `voided`, and the hold is released once nothing is outstanding. A part an admin wrote
+  off stays written off. A cancel only applies to a reserved bet, so after a reopen it is refused
+  `illegal_transition`. A wallet refusal on a settlement or cancel is final: refused
+  `illegal_transition` and filed as a `provider_mismatch` finding.
 - **Reports are cash-basis for a reopened bet.** GGR and responsible-gambling spend count what was
   collected, when it was collected, so an offset can land in a later period than the payout it
   reverses. A written-off debt never reaches the ledger. An offset or an admin collect takes each

@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gt, gte, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, gte, like, sql, sum, type SQL } from 'drizzle-orm';
 import {
   findOneOrThrow,
   isPositiveMoney,
@@ -26,6 +26,7 @@ import {
   type WalletCorrectionDebitArgs,
   type WalletCorrectionDebitType,
 } from '@openora/core/contracts';
+import { walletTransaction } from '@openora/core/wallet/schema';
 import {
   SPORTSBOOK_HOLD_SOURCE,
   SPORTSBOOK_WALLET_PROVIDER_PREFIX,
@@ -40,6 +41,7 @@ import {
   sportsbookDebtAction,
   sportsbookDebtShortfall,
   sportsbookPlayerDebt,
+  type SportsbookBetRow,
   type SportsbookDebtShortfallRow,
   type SportsbookPlayerDebtRow,
 } from '../schema/index.js';
@@ -245,6 +247,87 @@ export class SportsbookDebtService {
       amount: shortfall,
       holdActive: true,
       actor: null,
+    };
+  }
+
+  /**
+   * A void undid the reopen that recorded the bet's latest shortfall, so the system cancels what is
+   * left of it: never owed after all. Answers what offsets and collections already took of that
+   * shortfall, for the void to return with the rest; a write-off of it stays written off.
+   */
+  async cancelForVoid(
+    tx: DrizzleTx,
+    bet: Pick<SportsbookBetRow, 'id' | 'userId' | 'currency' | 'provider' | 'providerBetId'>,
+  ): Promise<{ change: DebtChange | undefined; collected: string }> {
+    const [before] = await tx
+      .select()
+      .from(sportsbookPlayerDebt)
+      .where(
+        and(
+          eq(sportsbookPlayerDebt.userId, bet.userId),
+          eq(sportsbookPlayerDebt.currency, bet.currency),
+        ),
+      )
+      .for('update');
+    const [shortfall] = await tx
+      .select()
+      .from(sportsbookDebtShortfall)
+      .where(eq(sportsbookDebtShortfall.betId, bet.id))
+      .orderBy(desc(sportsbookDebtShortfall.seq))
+      .limit(1);
+    if (!before || shortfall?.debtId !== before.id) {
+      throw new Error('sportsbook debt: a reopen recorded no shortfall for the bet it left owing');
+    }
+    const [taken] = await tx
+      .select({ total: sum(walletTransaction.amount) })
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.externalRoundId, bet.providerBetId),
+          eq(walletTransaction.providerName, `${SPORTSBOOK_WALLET_PROVIDER_PREFIX}${bet.provider}`),
+          eq(walletTransaction.type, shortfall.type),
+          eq(walletTransaction.status, 'completed'),
+          like(walletTransaction.providerRefId, `%:${shortfall.id}`),
+        ),
+      );
+    const collected = taken?.total ?? '0';
+    const remaining = isPositiveMoney(before.outstanding)
+      ? ((await this.outstandingShortfalls(tx, before)).find((s) => s.id === shortfall.id)
+          ?.remaining ?? '0')
+      : '0';
+    if (!isPositiveMoney(remaining)) {
+      return { change: undefined, collected };
+    }
+    // Cutting the shortfall to what was consumed of it keeps the oldest-first walk over the rest.
+    if (moneyEquals(remaining, shortfall.amount)) {
+      await tx.delete(sportsbookDebtShortfall).where(eq(sportsbookDebtShortfall.id, shortfall.id));
+    } else {
+      await tx
+        .update(sportsbookDebtShortfall)
+        .set({ amount: moneySubtract(shortfall.amount, remaining) })
+        .where(eq(sportsbookDebtShortfall.id, shortfall.id));
+    }
+    const rows = await tx
+      .update(sportsbookPlayerDebt)
+      .set({
+        owed: sql`${sportsbookPlayerDebt.owed} - ${remaining}`,
+        outstanding: sql`${sportsbookPlayerDebt.outstanding} - ${remaining}`,
+        status: sql`case when ${sportsbookPlayerDebt.outstanding} - ${remaining} = 0 then 'cleared' else 'open' end::sportsbook_debt_status`,
+      })
+      .where(eq(sportsbookPlayerDebt.id, before.id))
+      .returning();
+    const debt = findOneOrThrow(rows, new SportsbookDebtNotFoundError(before.id));
+    return {
+      change: {
+        before,
+        debt,
+        cause: 'voided',
+        amount: remaining,
+        holdActive: await this.releaseHoldIfClear(tx, debt.userId),
+        actor: null,
+        reason: `cancelled by a void of sportsbook bet ${bet.id}`,
+      },
+      collected,
     };
   }
 

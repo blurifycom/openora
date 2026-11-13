@@ -80,10 +80,12 @@ is `SPORTSBOOK_LEDGER` unchanged.
     the round's reversals would exceed its stakes.
   - A reversal always runs in a transaction, opened for a caller that passes a bare db, so all of
     this is read under the wallet row lock and concurrent reversals of one round see each other.
- - Every in-core reversal names its bet: this API's `reverse` and `bet` with `reverseRef`, and
-    a sportsbook cancel or void, which names the reserve's stake or the stake its last reopen
-    re-collected. A rollback that carries another round id than its bet goes through `reverse`
-    here, which finds the bet by `targetRefId`.
+  - In-core reversals name their bet: this API's `reverse` and `bet` with `reverseRef`, and a
+    sportsbook cancel or void, which names the reserve's stake or the stake its last reopen
+    re-collected. The one exception is a void that also returns what offsets and collects took of
+    that reopen's debt: it credits more than the stake row, so it names none and the round cap
+    bounds it. A rollback that carries another round id than its bet goes through `reverse` here,
+    which finds the bet by `targetRefId`.
   - `WALLET_REVERSAL_UNMATCHED` is final, and this API answers it `bet_not_found`. A bridge that
     credits reversals straight through `WALLET_COMMANDS` maps it to a code its provider does not
     retry; an unmapped one usually answers a server error, which the provider retries forever.

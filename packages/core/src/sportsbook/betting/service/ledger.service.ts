@@ -5,10 +5,12 @@ import {
   findOneOrThrow,
   isPositiveMoney,
   isUniqueConstraintViolation,
+  moneyAdd,
   moneyCompare,
   moneyDivide,
   moneyEquals,
   moneyFloorToScale,
+  moneySubtract,
   type DrizzleDb,
   type DrizzleService,
   type DrizzleTx,
@@ -517,29 +519,53 @@ async function hasWallet(tx: DrizzleTx, userId: SportsbookBetRow['userId']): Pro
 }
 
 /**
- * The stake row a void or cancel at the bet's current version returns, for the wallet to reverse
- * exactly once: the reserve's debit, or the stake a reopen re-collected after a void. Undefined
- * when that reopen collected nothing; the wallet then matches the reversal to the round's stakes.
+ * The stake a void or cancel at the bet's current version returns: the reserve's debit, or after a
+ * reopen that undid a void, the stake it re-collected (`id` undefined when it collected nothing)
+ * and the part it could not collect and left as debt.
  */
 async function stakeToReverse(
   tx: DrizzleTx,
   bet: Pick<SportsbookBetRow, 'id' | 'version'>,
-): Promise<string | undefined> {
+): Promise<{ id: string | undefined; uncollected: string }> {
   const t = sportsbookBetTransaction;
   const rows = await tx
-    .select({ kind: t.kind, result: t.result, version: t.betVersion, ids: t.walletTransactionIds })
+    .select({
+      kind: t.kind,
+      result: t.result,
+      version: t.betVersion,
+      amount: t.amount,
+      ids: t.walletTransactionIds,
+    })
     .from(t)
     .where(and(eq(t.betId, bet.id), inArray(t.kind, ['reserve', 'settle', 'reopen'])));
   const at = (kind: SportsbookTransactionKind, version: number) =>
     rows.find((r) => r.kind === kind && r.version === version);
-  let stake = rows.find((r) => r.kind === 'reserve')?.ids[0];
+  let stake = { id: rows.find((r) => r.kind === 'reserve')?.ids[0], uncollected: '0' };
   // A reopen bumps the version; it re-collected a stake only when it undid a void.
   for (let version = 1; version <= bet.version; version++) {
-    if (at('settle', version - 1)?.result === 'void') {
-      stake = at('reopen', version)?.ids[0];
+    const voided = at('settle', version - 1);
+    const reopen = at('reopen', version);
+    if (voided?.result === 'void' && reopen) {
+      stake = { id: reopen.ids[0], uncollected: moneySubtract(voided.amount, reopen.amount) };
     }
   }
   return stake;
+}
+
+/** The wallet would not return a stake or pay a settlement: final, and filed for an operator. */
+function walletRefused(
+  { provider, providerTxId }: TxKey,
+  move: 'a stake refund' | 'a payout',
+  reason: string,
+  owner: Pick<SportsbookFindingArgs, 'betId' | 'userId'>,
+): LedgerRefusal {
+  return new LedgerRefusal('illegal_transition', {
+    kind: 'provider_mismatch',
+    dedupeKey: `provider_mismatch:${provider}:${providerTxId}`,
+    provider,
+    ...owner,
+    detail: { providerTxId, move, walletRefusal: reason },
+  });
 }
 
 /** A provider callback for a bet core already moved past it, or dropped: refused and filed. */
@@ -1266,11 +1292,14 @@ export class SportsbookLedgerService {
             type: 'bet_reversal',
             allowNewCurrency: true,
             providerRef: walletRef(args),
-            reversesTransactionId: await stakeToReverse(tx, cancelled),
+            reversesTransactionId: (await stakeToReverse(tx, cancelled)).id,
           }),
         );
         if (!credit.ok) {
-          throw new Error(`sportsbook cancel: stake refund did not move (${credit.reason})`);
+          throw walletRefused(args, 'a stake refund', credit.reason, {
+            betId: cancelled.id,
+            userId: cancelled.userId,
+          });
         }
         if (!credit.moved) {
           throw raceLost(credit.replayedTransactionId);
@@ -1473,7 +1502,24 @@ export class SportsbookLedgerService {
       const moves: WalletMove[] = [];
       let balance: string;
       let debtChange: DebtChange | undefined;
-      if (pays) {
+      let credited = payout;
+      let reversesTransactionId: string | undefined;
+      if (pays && creditType === 'bet_reversal') {
+        const stake = await stakeToReverse(tx, settled);
+        reversesTransactionId = stake.id;
+        // The reopen this void undoes left part of the stake as debt: the void cancels that rest
+        // and returns only what the player paid, the reopen's part and what was taken of the debt.
+        if (isPositiveMoney(stake.uncollected)) {
+          const cancelled = await this.debts.cancelForVoid(tx, settled);
+          debtChange = cancelled.change;
+          credited = moneyAdd(moneySubtract(payout, stake.uncollected), cancelled.collected);
+          // More than the reopen's stake row: the round cap bounds it instead.
+          if (isPositiveMoney(cancelled.collected)) {
+            reversesTransactionId = undefined;
+          }
+        }
+      }
+      if (isPositiveMoney(credited)) {
         const raceLost = (heldBy: string | undefined) =>
           new LedgerRaceLost(
             'a payout',
@@ -1485,24 +1531,26 @@ export class SportsbookLedgerService {
           raceLost,
           this.wallet.credit(tx, {
             userId: settled.userId,
-            amount: payout,
+            amount: credited,
             currency: settled.currency,
             type: creditType,
             allowNewCurrency: true,
             providerRef: walletRef(args),
-            reversesTransactionId:
-              creditType === 'bet_reversal' ? await stakeToReverse(tx, settled) : undefined,
+            reversesTransactionId,
           }),
         );
         if (!credit.ok) {
-          throw new Error(`sportsbook settle: payout did not move (${credit.reason})`);
+          throw walletRefused(args, 'a payout', credit.reason, {
+            betId: settled.id,
+            userId: settled.userId,
+          });
         }
         if (!credit.moved) {
           throw raceLost(credit.replayedTransactionId);
         }
         moves.push({
           transactionId: credit.transactionId,
-          amount: payout,
+          amount: credited,
           currency: settled.currency,
           type: creditType,
           direction: 'credit',
