@@ -11,6 +11,9 @@ import type {
   GameRoundRankingFilter,
   GameRoundTopFilter,
   PlayerGameStats,
+  ProviderCurrencyRanking,
+  ProviderCurrencyRankingFilter,
+  ProviderRankingSortBy,
 } from '@openora/core/contracts';
 import { DrizzleService, sumMoney } from '@openora/core/server';
 import { and, asc, count, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
@@ -27,6 +30,13 @@ const RANKING_FIGURES: Record<GameRankingSortBy, SQL> = {
   revenue: rankedRevenue,
   roundsPlayed: sql`count(*)`,
   uniquePlayers: sql`count(distinct ${gameRound.userId})`,
+};
+
+const rankedGames = sql<number>`count(distinct ${gameRound.gameId})`.mapWith(Number);
+
+const PROVIDER_RANKING_FIGURES: Record<ProviderRankingSortBy, SQL> = {
+  ...RANKING_FIGURES,
+  gamesPlayed: sql`count(distinct ${gameRound.gameId})`,
 };
 
 // See ADR-0017/0025.
@@ -194,6 +204,91 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
             revenue: row.revenue,
             roundsPlayed: Number(row.roundsPlayed),
             uniquePlayers: Number(row.uniquePlayers),
+          })),
+      })),
+      truncated: totals.length > maxCurrencies,
+    };
+  }
+
+  async rankProvidersPerCurrency({
+    dateFrom,
+    dateTo,
+    currency,
+    gameType,
+    sortBy,
+    sortDir,
+    limit,
+    maxCurrencies,
+  }: ProviderCurrencyRankingFilter): Promise<ProviderCurrencyRanking> {
+    const rounds = and(
+      eq(gameRound.status, 'completed'),
+      gte(gameRound.startedAt, dateFrom),
+      lte(gameRound.startedAt, dateTo),
+      currency ? eq(gameRound.currency, currency) : undefined,
+      gameType ? eq(game.gameType, gameType) : undefined,
+    );
+    const db = this.drizzle.db;
+    const order = sortDir === 'asc' ? sql`asc` : sql`desc`;
+    const ranked = db
+      .select({
+        currency: gameRound.currency,
+        providerId: gameProvider.id,
+        name: sql<string>`${gameProvider.name}`.as('name'),
+        slug: sql<string>`${gameProvider.slug}`.as('slug'),
+        volume: rankedVolume.as('volume'),
+        revenue: rankedRevenue.as('revenue'),
+        roundsPlayed: rankedRounds.as('rounds_played'),
+        uniquePlayers: rankedPlayers.as('unique_players'),
+        gamesPlayed: rankedGames.as('games_played'),
+        // The provider id breaks ties, so equal figures always rank in the same order.
+        rank: sql<number>`row_number() over (partition by ${gameRound.currency} order by ${PROVIDER_RANKING_FIGURES[sortBy]} ${order}, ${gameProvider.id})`.as(
+          'rank',
+        ),
+      })
+      .from(gameRound)
+      .innerJoin(game, eq(game.id, gameRound.gameId))
+      .innerJoin(gameProvider, eq(gameProvider.id, game.providerId))
+      .where(rounds)
+      .groupBy(gameRound.currency, gameProvider.id)
+      .as('ranked');
+    const [totals, providers] = await Promise.all([
+      db
+        .select({
+          currency: gameRound.currency,
+          volume: rankedVolume,
+          revenue: rankedRevenue,
+          roundsPlayed: rankedRounds,
+          uniquePlayers: rankedPlayers,
+          gamesPlayed: rankedGames,
+          providersPlayed: sql<number>`count(distinct ${game.providerId})`.mapWith(Number),
+        })
+        .from(gameRound)
+        .innerJoin(game, eq(game.id, gameRound.gameId))
+        .where(rounds)
+        .groupBy(gameRound.currency)
+        .orderBy(asc(gameRound.currency))
+        .limit(maxCurrencies + 1),
+      db
+        .select()
+        .from(ranked)
+        .where(lte(ranked.rank, limit))
+        .orderBy(asc(ranked.currency), asc(ranked.rank)),
+    ]);
+    return {
+      currencies: totals.slice(0, maxCurrencies).map(({ currency: code, ...figures }) => ({
+        currency: code,
+        totals: figures,
+        providers: providers
+          .filter((row) => row.currency === code)
+          .map((row) => ({
+            providerId: row.providerId,
+            name: row.name,
+            slug: row.slug,
+            volume: row.volume,
+            revenue: row.revenue,
+            roundsPlayed: Number(row.roundsPlayed),
+            uniquePlayers: Number(row.uniquePlayers),
+            gamesPlayed: Number(row.gamesPlayed),
           })),
       })),
       truncated: totals.length > maxCurrencies,

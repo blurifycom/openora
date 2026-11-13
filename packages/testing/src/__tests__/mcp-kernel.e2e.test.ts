@@ -28,7 +28,13 @@ import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
 import { promoGrant, promoGrantEntry } from '@openora/core/promo/schema/bonus';
-import { sportsbookBet, sportsbookSession } from '@openora/core/sportsbook/schema/betting';
+import { promoRakebackAccrual } from '@openora/core/promo/schema/gamification';
+import {
+  sportsbookBet,
+  sportsbookBetTransaction,
+  sportsbookPlayerDebt,
+  sportsbookSession,
+} from '@openora/core/sportsbook/schema/betting';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
   registerAndMaterializePlayer,
@@ -62,6 +68,11 @@ const EXPECTED_TOOL_OWNERS = {
   'games.categories': 'gaming',
   'games.find': 'gaming',
   'gaming.top_games': 'gaming',
+  'gaming.top_providers': 'gaming',
+  'bonus.rakeback_liability': 'gamification',
+  'players.segment_counts': 'tag',
+  'sportsbook.debts': 'betting',
+  'sportsbook.promotion_report': 'betting',
   'ggr.summary': 'analytics',
   'kyc.queue': 'compliance',
   'kyc.status': 'compliance',
@@ -2145,6 +2156,245 @@ describe('entity find tools list each entity by the id its key names, under thei
     ['transactions.find', 'transaction:view', () => marketer],
     ['bonus.grants_find', 'bonus:view', () => officer],
     ['cms.banners', 'content:update', () => officer],
+  ] as const)('refuses %s to an admin whose roles lack %s', async (toolId, _grant, staff) => {
+    const run = adminRun(staff().userId);
+
+    expect(await kernel.invokeTool(toolId, {}, run)).toEqual({ ok: false, error: 'forbidden' });
+    const rows = await auditRowsOfCall(run.correlationId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ action: 'mcp.tool.failed', resourceId: toolId });
+  });
+});
+
+describe('operator report tools: providers, sportsbook promotions and debts, rakeback, segments', () => {
+  // A currency and a month no other suite writes, so the figures are this suite's alone.
+  const CURRENCY = 'MCPR';
+  const RANGE = { dateFrom: '2021-09-01', dateTo: '2021-09-30' };
+  const IN_RANGE = new Date('2021-09-10T12:00:00.000Z');
+  let support: Awaited<ReturnType<typeof newStaff>>;
+  let officer: Awaited<ReturnType<typeof newStaff>>;
+  let marketer: Awaited<ReturnType<typeof newStaff>>;
+  let bettor: Awaited<ReturnType<typeof newPlayer>>;
+  let providerId: string;
+  let debtId: string;
+
+  beforeAll(async () => {
+    support = await newStaff(app, 'mcp-report-no-report', 'customer-support-agent');
+    officer = await newStaff(app, 'mcp-report-no-sportsbook', 'kyc-aml-officer');
+    marketer = await newStaff(app, 'mcp-report-no-players', 'marketing-banners');
+    bettor = await newPlayer('report-tools');
+    const [provider] = await drizzle()
+      .insert(gameProvider)
+      .values({ slug: `mcp-report-studio-${randomUUID()}`, name: 'MCP Report Studio' })
+      .returning({ id: gameProvider.id, slug: gameProvider.slug });
+    providerId = provider?.id ?? '';
+    const [aces] = await drizzle()
+      .insert(game)
+      .values({
+        name: 'MCP Report Aces',
+        slug: `mcp-report-aces-${randomUUID()}`,
+        providerId,
+        aggregator: 'direct',
+        reviewStatus: 'approved',
+      })
+      .returning({ id: game.id });
+    await drizzle()
+      .insert(gameRound)
+      .values({
+        gameId: aces?.id ?? '',
+        userId: bettor.userId,
+        status: 'completed',
+        betAmount: '60',
+        winAmount: '10',
+        currency: CURRENCY,
+        startedAt: IN_RANGE,
+      });
+    const [session] = await drizzle()
+      .insert(sportsbookSession)
+      .values({
+        userId: bettor.userId,
+        provider: 'book',
+        currency: CURRENCY,
+        countryCode: 'MT',
+        expiresAt: new Date(Date.now() + 60_000),
+      })
+      .returning({ id: sportsbookSession.id });
+    const providerBetId = randomUUID();
+    const [bet] = await drizzle()
+      .insert(sportsbookBet)
+      .values({
+        userId: bettor.userId,
+        provider: 'book',
+        providerBetId,
+        sessionId: session?.id ?? '',
+        currency: CURRENCY,
+        currencyDecimals: 2,
+        status: 'settled',
+        stake: '10',
+        cashStake: '0',
+        voidPayout: '10',
+        potentialPayout: '30',
+        payoutTotal: '30',
+        promotionPaid: '30',
+        promotionType: 'free_bet',
+        promotionFunder: 'operator',
+        legs: [
+          {
+            eventId: 'mcp-report',
+            eventName: 'Report Final',
+            startsAt: '2021-09-10T18:00:00.000Z',
+          },
+        ],
+        lastLegStartsAt: new Date('2021-09-10T18:00:00.000Z'),
+        acceptedAt: IN_RANGE,
+        settledAt: IN_RANGE,
+      })
+      .returning({ id: sportsbookBet.id });
+    await drizzle()
+      .insert(sportsbookBetTransaction)
+      .values({
+        provider: 'book',
+        providerTxId: randomUUID(),
+        providerBetId,
+        betId: bet?.id ?? null,
+        userId: bettor.userId,
+        kind: 'settle',
+        amount: '30',
+        fingerprint: randomUUID(),
+        currency: CURRENCY,
+        promotionAmount: '30',
+        createdAt: IN_RANGE,
+      });
+    const [debt] = await drizzle()
+      .insert(sportsbookPlayerDebt)
+      .values({ userId: bettor.userId, currency: CURRENCY, owed: '12', outstanding: '12' })
+      .returning({ id: sportsbookPlayerDebt.id });
+    debtId = debt?.id ?? '';
+    await drizzle().insert(promoRakebackAccrual).values({
+      userId: bettor.userId,
+      currency: CURRENCY,
+      amount: '0.6',
+      stake: '60',
+      basis: 'stake',
+      ratePercent: '1',
+      boostPercent: '0',
+      createdAt: IN_RANGE,
+    });
+  });
+
+  it('answers gaming.top_providers with the provider ranked in its currency', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'gaming.top_providers',
+        { ...RANGE, currency: CURRENCY },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('gaming.top_providers'));
+    expect(listField(output, 'currencies')).toEqual([
+      expect.objectContaining({
+        currency: CURRENCY,
+        providers: [
+          expect.objectContaining({
+            providerId,
+            name: 'MCP Report Studio',
+            volume: expect.stringMatching(wholeAmount(60)),
+            revenue: expect.stringMatching(wholeAmount(50)),
+            gamesPlayed: 1,
+          }),
+        ],
+      }),
+    ]);
+    expect(JSON.stringify(output)).not.toContain(bettor.userId);
+  });
+
+  it('answers sportsbook.promotion_report with what the free bet paid, naming no player', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'sportsbook.promotion_report',
+        { ...RANGE, currency: CURRENCY },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('sportsbook.promotion_report'));
+    expect(listField(output, 'currencies')).toEqual([
+      expect.objectContaining({
+        currency: CURRENCY,
+        bets: 1,
+        promotionPaid: expect.stringMatching(wholeAmount(30)),
+        promotions: [expect.objectContaining({ type: 'free_bet', funder: 'operator', bets: 1 })],
+      }),
+    ]);
+    const served = JSON.stringify(output);
+    expect(served).not.toContain(bettor.userId);
+    expect(served).not.toContain(bettor.playerId);
+  });
+
+  it('answers sportsbook.debts with the open debt by player id', async () => {
+    const output = outputOf(
+      await kernel.invokeTool('sportsbook.debts', { currency: CURRENCY }, adminRun(adminId)),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('sportsbook.debts'));
+    expect(listField(output, 'currencies')).toEqual([
+      expect.objectContaining({
+        currency: CURRENCY,
+        openDebts: 1,
+        outstanding: expect.stringMatching(wholeAmount(12)),
+        largestOpen: [
+          expect.objectContaining({ debtId, playerId: bettor.playerId, withdrawalsHeld: true }),
+        ],
+      }),
+    ]);
+    expect(JSON.stringify(output)).not.toContain(bettor.userId);
+  });
+
+  it('answers bonus.rakeback_liability with the unclaimed rakeback in its currency', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'bonus.rakeback_liability',
+        { ...RANGE, currency: CURRENCY },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('bonus.rakeback_liability'));
+    expect(listField(output, 'currencies')).toEqual([
+      {
+        currency: CURRENCY,
+        unclaimed: { amount: expect.stringMatching(/^0\.60*$/), accruals: 1, players: 1 },
+        accrued: { amount: expect.stringMatching(/^0\.60*$/), accruals: 1, players: 1 },
+        claimed: { amount: expect.stringMatching(/^0(\.0+)?$/), accruals: 0, players: 0 },
+      },
+    ]);
+    expect(JSON.stringify(output)).not.toContain(bettor.userId);
+  });
+
+  it('answers players.segment_counts with counts only, and refuses a window over 92 days', async () => {
+    const output = outputOf(
+      await kernel.invokeTool('players.segment_counts', { tagKeys: ['vip'] }, adminRun(adminId)),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('players.segment_counts'));
+    expect(output).toMatchObject({
+      windowDays: 30,
+      population: { players: expect.any(Number), seenInWindow: expect.any(Number) },
+      tags: [{ tag: 'vip', players: expect.any(Number), seenInWindow: expect.any(Number) }],
+    });
+    expect(JSON.stringify(output)).not.toContain(bettor.playerId);
+    expect(
+      await kernel.invokeTool('players.segment_counts', { windowDays: 93 }, adminRun(adminId)),
+    ).toMatchObject({ ok: false, error: 'invalid_input' });
+  });
+
+  it.each([
+    ['gaming.top_providers', 'report:view', () => support],
+    ['sportsbook.promotion_report', 'sportsbook:view', () => officer],
+    ['sportsbook.debts', 'sportsbook:view', () => officer],
+    ['bonus.rakeback_liability', 'bonus:view', () => officer],
+    ['players.segment_counts', 'player:view', () => marketer],
   ] as const)('refuses %s to an admin whose roles lack %s', async (toolId, _grant, staff) => {
     const run = adminRun(staff().userId);
 

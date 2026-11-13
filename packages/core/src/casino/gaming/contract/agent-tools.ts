@@ -105,6 +105,75 @@ export const topGamesTool = defineMcpTool({
   errors: ['report_unavailable'],
 });
 
+export const TOP_PROVIDERS_SORT_FIELDS = [...TOP_GAMES_SORT_FIELDS, 'gamesPlayed'] as const;
+export const TopProvidersSortBySchema = z.enum(TOP_PROVIDERS_SORT_FIELDS);
+
+export const TopProvidersInputSchema = z
+  .object({
+    dateFrom: z.iso.date().optional(),
+    dateTo: z.iso.date().optional(),
+    currency: CurrencyTickerSchema.max(10).optional(),
+    gameType: GameTypeSchema.optional(),
+    sortBy: TopProvidersSortBySchema.default('volume'),
+    sortDir: z.enum(['desc', 'asc']).default('desc'),
+    limit: z.coerce.number().int().min(1).max(TOP_GAMES_MAX_LIMIT).default(10),
+  })
+  .superRefine((input, ctx) => checkDayRange(resolveTopGamesRange(input), TOP_GAMES_MAX_DAYS, ctx));
+export type TopProvidersInput = z.infer<typeof TopProvidersInputSchema>;
+
+const ProviderFiguresSchema = GameFiguresSchema.extend({
+  gamesPlayed: z.number().int().nonnegative(),
+});
+
+export const TopProvidersOutputSchema = z.object({
+  dateFrom: z.iso.date(),
+  dateTo: z.iso.date(),
+  sortBy: TopProvidersSortBySchema,
+  sortDir: z.enum(['desc', 'asc']),
+  currencies: z
+    .array(
+      z.object({
+        currency: CurrencyTickerSchema,
+        totals: ProviderFiguresSchema.extend({ providersPlayed: z.number().int().nonnegative() }),
+        providers: z
+          .array(
+            ProviderFiguresSchema.extend({
+              providerId: UuidSchema,
+              name: z.string(),
+              slug: z.string(),
+            }),
+          )
+          .max(TOP_GAMES_MAX_LIMIT),
+      }),
+    )
+    .max(TOP_GAMES_MAX_CURRENCIES),
+  truncated: z.boolean(),
+});
+export type TopProviders = z.infer<typeof TopProvidersOutputSchema>;
+
+export const topProvidersTool = defineMcpTool({
+  id: 'gaming.top_providers',
+  title: 'Top providers',
+  description:
+    "The game providers ranked by their games' completed rounds over whole UTC days from " +
+    'dateFrom through dateTo (default: the 30 days ending today; at most 92 days), separately ' +
+    'per currency: volume (stakes net of reversed stakes), revenue (GGR: stakes minus wins, can ' +
+    'be negative), rounds played, distinct players and games played, as the back office game ' +
+    'report counts them. sortBy picks the figure (volume by default) and sortDir the order. Each ' +
+    'currency lists at most limit providers (1 to 50, default 10), each by providerId with its ' +
+    'name and slug, with its totals over every provider played; a provider none of whose games ' +
+    'had a completed round in range is not listed. Narrow with currency or gameType. At most 20 ' +
+    'currencies, alphabetical; truncated is true when more had rounds. Amounts are decimal ' +
+    'strings in the row currency and are never summed across currencies. Names no player.',
+  class: 'read',
+  schemaVersion: 1,
+  iam: { resource: 'report', action: 'view' },
+  inputSchema: TopProvidersInputSchema,
+  outputSchema: TopProvidersOutputSchema,
+  redact: { allow: ['dateFrom', 'dateTo', 'sortBy', 'sortDir', 'currencies', 'truncated'] },
+  errors: ['report_unavailable'],
+});
+
 /** At most this many of a game's categories games.find lists with it. */
 export const GAMES_FIND_MAX_CATEGORIES = 10;
 

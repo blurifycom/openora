@@ -722,6 +722,10 @@ export const promoRakebackAccrual = pgTable(
       .on(t.currency, t.userId)
       .where(sql`${t.status} = 'accrued'`),
     index('promo_rakeback_accrual_created_at_idx').on(t.createdAt, t.id),
+    // What was claimed over a range, every player's.
+    index('promo_rakeback_accrual_claimed_settled_at_idx')
+      .on(t.settledAt)
+      .where(sql`${t.status} = 'claimed'`),
     check(
       'promo_rakeback_accrual_bounds',
       sql`${t.amount} > 0 AND ${t.stake} >= 0 AND ${t.rolledBackStake} >= 0 AND ${t.rolledBackStake} <= ${t.stake} AND (${t.rtp} is null OR (${t.rtp} > 0 AND ${t.rtp} <= 1))`,

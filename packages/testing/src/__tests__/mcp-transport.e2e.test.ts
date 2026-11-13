@@ -305,11 +305,13 @@ describe('MCP transport, happy path through the SDK client', () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       'bonus_grants_find',
       'bonus_grants_summary',
+      'bonus_rakeback_liability',
       'cms_banners',
       'financial_summary',
       'games_categories',
       'games_find',
       'gaming_top_games',
+      'gaming_top_providers',
       'ggr_summary',
       'kyc_queue',
       'kyc_status',
@@ -317,9 +319,12 @@ describe('MCP transport, happy path through the SDK client', () => {
       'player_summary',
       'players_deposit_compare',
       'players_find',
+      'players_segment_counts',
       'rg_flags_queue',
       'rg_player_state',
       'sportsbook_bets_find',
+      'sportsbook_debts',
+      'sportsbook_promotion_report',
       'sportsbook_turnover_exposure',
       'transactions_find',
       'wallet_activity',
@@ -550,7 +555,11 @@ describe('MCP transport, grants', () => {
     const { tools } = await client.listTools();
     const kyc = await client.callTool({ name: 'kyc_status', arguments: { playerId } });
 
-    expect(tools.map((tool) => tool.name)).toEqual(['player_summary', 'players_find']);
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'player_summary',
+      'players_find',
+      'players_segment_counts',
+    ]);
     expect(kyc.isError).toBe(true);
     expect(JSON.parse(TextContentSchema.parse(kyc).content[0]?.text ?? '{}')).toEqual({
       error: 'forbidden',

@@ -54,7 +54,11 @@ fields. This file does not repeat it.
   It leaves GGR to `financial.summary`, which follows the ledger. `sportsbook.bets_find`, under
   the same grant, lists the bets placed over at most 92 days by status, result, player, currency
   and stake, each by `betId` and `playerId` with its figures and number of legs, never a
-  selection. Both are served only through the MCP kernel (ADR-0042).
+  selection. `sportsbook.promotion_report` gives what promotions paid and reopens took back per
+  currency, type and funder, by the admin promotions report's own query, and `sportsbook.debts`
+  what players owe now per currency with the largest open debts by player id and whether their
+  withdrawals are held - both under the same grant. All four are served only through the MCP
+  kernel (ADR-0042).
 - **Sportsbook debt.** What a reversed settlement could not take back, per player and currency,
   with the withdrawal hold that lives exactly as long as the debt.
 - **Reconciliation findings.** Everything the ledger noticed but could not decide on its own, for

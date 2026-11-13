@@ -169,6 +169,13 @@
       "when": 1793975347828,
       "tag": "0023_streak_milestone_conversion",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794302216575,
+      "tag": "0024_rakeback_claimed_index",
+      "breakpoints": true
     }
   ]
 }

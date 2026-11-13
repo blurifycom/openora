@@ -135,6 +135,34 @@ export type GameCurrencyRanking = {
   truncated: boolean;
 };
 
+/** What a per-currency provider ranking orders by: the game figures, or how many games played. */
+export type ProviderRankingSortBy = GameRankingSortBy | 'gamesPlayed';
+
+export type ProviderCurrencyRankingFilter = Omit<GameCurrencyRankingFilter, 'sortBy' | 'limit'> & {
+  sortBy: ProviderRankingSortBy;
+  /** Providers listed per currency. */
+  limit: number;
+};
+
+/**
+ * Per currency, its totals over every provider whose games had a completed round in range and at
+ * most `limit` of those providers by `sortBy`, ties by provider id, each summing its games' rounds
+ * as GameCurrencyRanking does.
+ */
+export type ProviderCurrencyRanking = {
+  currencies: {
+    currency: string;
+    totals: GameRankingFigures & { providersPlayed: number; gamesPlayed: number };
+    providers: (GameRankingFigures & {
+      providerId: string;
+      name: string;
+      slug: string;
+      gamesPlayed: number;
+    })[];
+  }[];
+  truncated: boolean;
+};
+
 export type PlayerGameStats = {
   totalWagered: string;
   totalBets: number;
@@ -160,6 +188,10 @@ export type AdminGameReporting = {
    * past the operator's report.
    */
   rankGamesPerCurrency?(filter: GameCurrencyRankingFilter): Promise<GameCurrencyRanking>;
+  /** The providers ranked per currency (ProviderCurrencyRanking); optional as `rankGamesPerCurrency`. */
+  rankProvidersPerCurrency?(
+    filter: ProviderCurrencyRankingFilter,
+  ): Promise<ProviderCurrencyRanking>;
 };
 
 export const ADMIN_GAME_REPORTING: Token<AdminGameReporting> = createToken('ADMIN_GAME_REPORTING');
