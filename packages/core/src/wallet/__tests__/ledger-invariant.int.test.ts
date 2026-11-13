@@ -993,6 +993,64 @@ describe('rolling baselines and their repair (real PG)', () => {
     );
   });
 
+  it('holds a pair whose backfill was flagged, even once a later stamp agrees with its balance', async () => {
+    const w = await seedWallet('270', [
+      {
+        type: 'deposit',
+        amount: '300',
+        status: 'completed',
+        balanceAfter: null,
+        createdAt: hoursAgo(48),
+      },
+      {
+        type: 'bet',
+        amount: '40',
+        status: 'completed',
+        direction: 'debit',
+        realShare: '40',
+        balanceAfter: '260',
+        createdAt: hoursAgo(30),
+      },
+    ]);
+    const svc = makeReconciliation();
+    await run(svc, true);
+    // A bet stamped off the edited balance: the stamps now carry the +10 forward as if it were real.
+    await db.drizzle.db.insert(walletTransaction).values({
+      walletId: w.id,
+      currency: 'USD',
+      type: 'bet',
+      amount: '5',
+      status: 'completed',
+      direction: 'debit',
+      realShare: '5',
+      balanceAfter: '265',
+      createdAt: hoursAgo(2),
+    });
+    await handEdit(w.id, '-5');
+
+    const second = await run(svc, true);
+
+    expect(second?.summary).toMatchObject({ baselinesInserted: 0, needsBaseline: 1 });
+    expect(await baselines(w.id)).toHaveLength(0);
+    const unchecked = await findings('ledger_invariant_unchecked');
+    expect(unchecked.map((f) => [f.externalId, f.status])).toEqual(
+      expect.arrayContaining([[`wallet:${w.id}:USD:backfill:10.000000000000000000`, 'open']]),
+    );
+    expect(unchecked.every((f) => f.status === 'open')).toBe(true);
+
+    // A super admin accepting the plain unchecked pair baselines it; the flag stays for its own look.
+    const plain = unchecked.find((f) => f.externalId === `wallet:${w.id}:USD:none`);
+    if (!plain) {
+      throw new Error('no plain unchecked finding filed');
+    }
+    await svc.resolveFinding(ADMIN_ID, plain.id, { outcome: 'rebaselined', note: 'confirmed' });
+    await run(svc);
+    const flagged = (await findings('ledger_invariant_unchecked')).find((f) =>
+      f.externalId?.includes(':backfill:'),
+    );
+    expect(flagged?.status).toBe('open');
+  });
+
   it('keeps the alert of a breach filed before the run failed', async () => {
     await handEdit((await fundedWallet('100')).id, '7');
     await handEdit((await fundedWallet('100')).id, '9');

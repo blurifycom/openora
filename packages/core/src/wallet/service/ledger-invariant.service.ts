@@ -306,6 +306,14 @@ export type BackfillMismatch = {
   estimate: string;
 };
 
+// A pair whose backfill was flagged stays unbaselined until a super admin resolves the finding: a
+// later stamp written off the wrong balance would otherwise agree with it and make it the zero.
+const heldByBackfillMismatch = sql`exists (
+  select 1 from wallet_reconciliation_finding f
+  where f.kind = 'ledger_invariant_unchecked' and f.provider_name = ${LEDGER_FINDING_LABEL}
+    and f.status = 'open'
+    and starts_with(f.external_id, 'wallet:' || p.wallet_id || ':' || p.currency || ':backfill:'))`;
+
 /**
  * Baselines one page of (wallet, currency) pairs whose history holds an unpriced row and that
  * have no baseline yet, at the cut. A pair with an unpriced row after the cut cannot be
@@ -313,7 +321,7 @@ export type BackfillMismatch = {
  * is cross-checked against the last `balance_after` the ledger stamped at or before the cut,
  * carried forward by the rows between: a pair where the two disagree is returned as a mismatch
  * and not baselined, because a baseline over a wallet already wrong makes its error the new zero.
- * Inserts only; a pair already baselined is left as it is, so a rerun changes nothing.
+ * Inserts only; a pair already baselined, or held by a mismatch still open, is left as it is.
  */
 export async function backfillBaselinePage(
   db: DrizzleDb,
@@ -344,6 +352,7 @@ export async function backfillBaselinePage(
           select 1 from wallet_balance_baseline bl
           where bl.wallet_id = p.wallet_id and bl.currency = p.currency)
         and exists (select 1 from wallet_transaction t where ${pairRows} and ${unpriced})
+        and not ${heldByBackfillMismatch}
     ),
     priced as (
       select p.id, p.wallet_id, p.currency, p.amount - l.total as amount, p.as_of, l.unpriced,

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
-import { and, asc, count, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, ne, notLike, sql } from 'drizzle-orm';
 import {
   type DrizzleDb,
   type DrizzleService,
@@ -1294,6 +1294,8 @@ export class ReconciliationService {
               sql`substring(${walletReconciliationFinding.externalId} from '^wallet:[^:]+:[^:]+')`,
               keys,
             ),
+            // A flagged backfill closes only by a super admin, never by a baseline that hides it.
+            notLike(walletReconciliationFinding.externalId, '%:backfill:%'),
           ),
         )
         .returning({ id: walletReconciliationFinding.id });
