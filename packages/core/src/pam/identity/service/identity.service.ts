@@ -643,9 +643,10 @@ export class IdentityService {
     });
   }
 
-  // Ends the sessions and revokes the MCP tokens together, before better-auth deletes the
-  // sessions itself, so no session outlives the revocation to issue a token. A failed
-  // revocation is logged, as below: the sessions end regardless.
+  // Ends the sessions and revokes the MCP tokens together. better-auth has already deleted the
+  // sessions and committed the new password when this runs, so no session from before the
+  // reset can issue a token meanwhile. A failed revocation is logged, as below: the sessions
+  // are gone regardless.
   private async endSessionsAfterPasswordReset(userId: User['id'], meta: ClientMeta) {
     try {
       await this.sessions?.endSessionsAfterPasswordReset(userId, meta);

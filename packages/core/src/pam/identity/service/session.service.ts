@@ -271,7 +271,7 @@ export class SessionService {
    * After a password reset: ends the account's sessions and revokes its MCP tokens in one
    * transaction, then signs its open tabs out. better-auth deletes the sessions and then writes
    * the new password before its reset hook runs, so the expiry here catches a session signed in
-   * between those two writes; expired first, before the revocation takes the token table's lock,
+   * after that delete; expired first, before the revocation takes the token table's lock,
    * none can issue a token the revocation missed. A failed revocation still ends the sessions,
    * then is tried once more; a second failure is thrown for the caller to log.
    */

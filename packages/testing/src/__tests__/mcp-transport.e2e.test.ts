@@ -694,8 +694,6 @@ describe('MCP tokens, issuing while a password reset is in flight', () => {
     const mail = await waitForEmail(email, (sent) => sent.subject === 'Reset your password');
     const otp = /\b(\d{6})\b/.exec(mail.text)?.[1];
 
-    // The reset hook is held right after its revocation. better-auth commits the new password
-    // and deletes the account's sessions before the hook runs, so the old session is gone here.
     const revocation = holdNextRevocation();
     const resetting = post('/identity/password/reset', {
       email,
@@ -703,8 +701,6 @@ describe('MCP tokens, issuing while a password reset is in flight', () => {
       newPassword: NEW_MODERATOR_PASSWORD,
     });
     await revocation.reached;
-    // Even an issuer who knows the new password is refused for the session the reset ended.
-    // Released either way: a held hook keeps the token table locked for the rest of the file.
     const issued = await staff
       .post('/iam/my-mcp-tokens', { label: 'raced', currentPassword: NEW_MODERATOR_PASSWORD })
       .finally(() => revocation.release());
