@@ -336,7 +336,6 @@ describe('ChatRoomMembershipService.handleAccountClosed - countdown (real PG)', 
 
     await services.chat.sendRoomMessage({
       userId: memberId,
-      username: 'bob',
       roomId: room.id,
       content: 'still here',
     });
@@ -356,7 +355,6 @@ describe('ChatRoomMembershipService.handleAccountClosed - countdown (real PG)', 
 
     await services.chat.sendRoomMessage({
       userId: memberId,
-      username: 'bob',
       roomId: room.id,
       content: 'hello',
     });
@@ -805,7 +803,6 @@ describe('ChatRoomPurgeService (real PG)', () => {
     const room = await seedPrivateRoom(services, ownerId, [memberId]);
     await services.chat.sendRoomMessage({
       userId: memberId,
-      username: 'bob',
       roomId: room.id,
       content: 'goodbye',
     });
@@ -869,7 +866,6 @@ describe('ChatRoomPurgeService (real PG)', () => {
     for (const content of ['one', 'two']) {
       await services.chat.sendRoomMessage({
         userId: memberId,
-        username: 'bob',
         roomId: room.id,
         content,
       });
