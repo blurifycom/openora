@@ -130,6 +130,9 @@ is `SPORTSBOOK_LEDGER` unchanged.
   one. A limit with no rate into its currency, or no currency, refuses. A script that writes `user_limit` directly must run `backfillRgLimits`
   (`@openora/core/compliance/seed`) after it; compliance also runs it at boot and re-projects
   recently changed limits on every `rg-monitor` tick. See ADR-0055.
+- **Other modules read wallet money through `WALLET_READER`, never the tables.** Only analytics
+  and test seeding import `@openora/core/wallet/schema`. A new read is a reader method that takes
+  the caller's `tx`, with a parity case in `wallet-reader-parity.int.test.ts`. See ADR-0056.
 
 ## Rules that are easy to get wrong here
 

@@ -63,6 +63,32 @@ export type WalletWithdrawalRequests = {
   pivotCurrency: string;
 };
 
+/** One currency's total of a player's ledger rows, unpriced: a decimal string in that currency. */
+export type WalletCurrencyTotal = {
+  currency: string;
+  total: string;
+};
+
+/** What responsible gambling reads of a player's money over a window. */
+export type WalletWindowMetric = 'deposits' | 'bets' | 'wins';
+
+/** One metric in one currency, as returned by `WalletReader.getMoneyByWindow`. */
+export type WalletWindowTotals = {
+  metric: WalletWindowMetric;
+  currency: string;
+  /** One decimal string per requested window start, in the order given. */
+  totals: string[];
+};
+
+/** The provider moves `WalletReader.sumProviderTransactions` totals. */
+export type WalletProviderTransactionQuery = {
+  providerName: string;
+  externalRoundId: string;
+  type: WalletTransactionType;
+  /** Matches a `providerRefId` ending in `:<providerRefSuffix>`, taken literally. */
+  providerRefSuffix: string;
+};
+
 /**
  * A player's money as the wallet holds it, for modules that must not read its tables. A total
  * across currencies is priced into the reader's reference currency, the fx pivot, at today's
@@ -138,6 +164,27 @@ export type WalletReader = {
    * auto-approval velocity check counts. Optional for the same reason as above.
    */
   getWithdrawalRequestsSince?(userId: string, since: Date): Promise<WalletWithdrawalRequests>;
+  /**
+   * A player's completed deposits, one total per currency, unpriced; empty for a player who
+   * never completed one. The caller prices them, so it can name the currency it could not.
+   */
+  getDepositsByCurrency(userId: string, tx?: unknown): Promise<WalletCurrencyTotal[]>;
+  /**
+   * Completed deposits, and stakes and wins each net of their reversals, per currency, one total
+   * per window start. A deposit counts from when it reached the balance: a held deposit from its
+   * release. A stake placed before a window and reversed inside it lowers that window's stakes, so
+   * a currency's total stops at zero instead of going below it. A metric and currency with nothing
+   * since the earliest start has no row.
+   */
+  getMoneyByWindow(
+    userId: string,
+    windowStarts: readonly Date[],
+    tx?: unknown,
+  ): Promise<WalletWindowTotals[]>;
+  /** Whether the player has a wallet row: a later credit to them has somewhere to land. */
+  hasWallet(userId: string, tx?: unknown): Promise<boolean>;
+  /** Sum of the completed moves matching `query`, in their currency; '0' when none match. */
+  sumProviderTransactions(query: WalletProviderTransactionQuery, tx?: unknown): Promise<string>;
 };
 
 export const WALLET_READER = createToken<WalletReader>('WALLET_READER');

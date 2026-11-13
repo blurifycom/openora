@@ -1,6 +1,10 @@
-import { type DrizzleDb, DrizzleService, sumInPivot } from '@openora/core/server';
+import { type DrizzleDb, DrizzleService, escapeLike, sumInPivot } from '@openora/core/server';
 import {
   type WalletReader,
+  type WalletCurrencyTotal,
+  type WalletProviderTransactionQuery,
+  type WalletWindowMetric,
+  type WalletWindowTotals,
   type WalletBalancesReading,
   type WalletLastDeposit,
   type WalletLifetimeWithdrawals,
@@ -18,12 +22,14 @@ import {
   gte,
   inArray,
   isNotNull,
+  like,
   lt,
   notInArray,
   sql,
   sum,
+  type SQLWrapper,
 } from 'drizzle-orm';
-import { wallet, walletTransaction } from '../schema/index.js';
+import { LOSS_LEGS, wallet, walletTransaction } from '../schema/index.js';
 import {
   IN_FLIGHT_TRANSACTION_STATUSES,
   VELOCITY_IGNORED_STATUSES,
@@ -35,6 +41,14 @@ import {
 import { pricedInPivot } from '../service/pivot-pricing.service.js';
 
 type CurrencyTotal = { currency: string; total: string | null };
+
+function totalsSince(amount: SQLWrapper, countedAt: SQLWrapper, windowStarts: readonly Date[]) {
+  const totals = windowStarts.map(
+    (start) =>
+      sql`greatest(coalesce(sum(${amount}) filter (where ${countedAt} >= ${start}), 0), 0)::text`,
+  );
+  return sql<string[]>`array[${sql.join(totals, sql`, `)}]`;
+}
 
 function toProviderTransaction(
   row: typeof walletTransaction.$inferSelect,
@@ -98,8 +112,20 @@ export class WalletReaderService implements WalletReader {
   /** Sum of a player's completed deposits, priced into pivotCurrency. Null when at least one
    * currency's amount could not be priced - never a partial or fabricated total. */
   async getLifetimeDeposit(userId: string, tx?: unknown): Promise<string | null> {
-    const rows = await this.on(tx)
-      .select({ currency: walletTransaction.currency, total: sum(walletTransaction.amount) })
+    return sumInPivot(
+      await this.getDepositsByCurrency(userId, tx),
+      this.pivotCurrency,
+      this.exchangeRateReader,
+      tx,
+    );
+  }
+
+  async getDepositsByCurrency(userId: string, tx?: unknown): Promise<WalletCurrencyTotal[]> {
+    return this.on(tx)
+      .select({
+        currency: walletTransaction.currency,
+        total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
+      })
       .from(walletTransaction)
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
       .where(
@@ -110,12 +136,89 @@ export class WalletReaderService implements WalletReader {
         ),
       )
       .groupBy(walletTransaction.currency);
-    return sumInPivot(
-      rows.map((row) => ({ currency: row.currency, total: row.total ?? '0' })),
-      this.pivotCurrency,
-      this.exchangeRateReader,
-      tx,
+  }
+
+  async getMoneyByWindow(
+    userId: string,
+    windowStarts: readonly Date[],
+    tx?: unknown,
+  ): Promise<WalletWindowTotals[]> {
+    const earliest = windowStarts.reduce<Date | null>(
+      (min, start) => (min === null || start < min ? start : min),
+      null,
     );
+    if (earliest === null) {
+      return [];
+    }
+    const db = this.on(tx);
+    const deposits = await db
+      .select({
+        currency: walletTransaction.currency,
+        totals: totalsSince(walletTransaction.amount, depositedAt(), windowStarts),
+      })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(
+        and(
+          eq(wallet.userId, userId),
+          eq(walletTransaction.type, 'deposit'),
+          eq(walletTransaction.status, 'completed'),
+          gte(depositedAt(), earliest),
+        ),
+      )
+      .groupBy(walletTransaction.currency);
+    // A stake, a reversal or a win is never reviewed: it moved when it was created.
+    const metric = sql<WalletWindowMetric>`case when ${walletTransaction.type} in ('win', 'win_reversal') then 'wins' else 'bets' end`;
+    // A reversal takes back from the metric of the leg it reverses.
+    const signedAmount = sql`case when ${walletTransaction.type} in ('bet_reversal', 'win_reversal') then -${walletTransaction.amount} else ${walletTransaction.amount} end`;
+    const play = await db
+      .select({
+        metric,
+        currency: walletTransaction.currency,
+        totals: totalsSince(signedAmount, walletTransaction.createdAt, windowStarts),
+      })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(
+        and(
+          eq(wallet.userId, userId),
+          eq(walletTransaction.status, 'completed'),
+          inArray(
+            walletTransaction.type,
+            LOSS_LEGS.map((leg) => leg.type),
+          ),
+          gte(walletTransaction.createdAt, earliest),
+        ),
+      )
+      .groupBy(metric, walletTransaction.currency);
+    return [...deposits.map((row) => ({ ...row, metric: 'deposits' as const })), ...play];
+  }
+
+  async hasWallet(userId: string, tx?: unknown): Promise<boolean> {
+    const [row] = await this.on(tx)
+      .select({ id: wallet.id })
+      .from(wallet)
+      .where(eq(wallet.userId, userId));
+    return row !== undefined;
+  }
+
+  async sumProviderTransactions(
+    query: WalletProviderTransactionQuery,
+    tx?: unknown,
+  ): Promise<string> {
+    const [row] = await this.on(tx)
+      .select({ total: sum(walletTransaction.amount) })
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.externalRoundId, query.externalRoundId),
+          eq(walletTransaction.providerName, query.providerName),
+          eq(walletTransaction.type, query.type),
+          eq(walletTransaction.status, 'completed'),
+          like(walletTransaction.providerRefId, `%:${escapeLike(query.providerRefSuffix)}`),
+        ),
+      );
+    return row?.total ?? '0';
   }
 
   async getWithdrawalCountInWindow(userId: string, windowDays: number): Promise<number> {

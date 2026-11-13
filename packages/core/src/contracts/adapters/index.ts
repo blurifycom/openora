@@ -144,6 +144,10 @@ export type {
   WalletLifetimeWithdrawals,
   WalletLastDeposit,
   WalletWithdrawalRequests,
+  WalletCurrencyTotal,
+  WalletWindowMetric,
+  WalletWindowTotals,
+  WalletProviderTransactionQuery,
 } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
