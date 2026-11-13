@@ -39,7 +39,7 @@ const LADDER = {
     { key: 'gold', name: 'Gold', wagerThreshold: '50000', rakebackPercent: '5' },
   ],
   config: {
-    eligibleProducts: [],
+    eligibleProducts: ['casino', 'live-casino', 'sportsbook', 'pvp'] satisfies WagerProduct[],
     rewards: {},
     payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
     payInPlayerCurrency: false,

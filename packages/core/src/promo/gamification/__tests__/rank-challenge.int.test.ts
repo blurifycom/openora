@@ -217,9 +217,10 @@ describe('which products count toward the Rank Challenge', () => {
 
   it('counts a sportsbook stake once the operator adds it to the list', async () => {
     const { account } = await seedPlayerWithUser(db);
-    await db.drizzle.db
-      .insert(promoRankConfig)
-      .values({ rankChallengeEligibleProducts: ['casino', 'sportsbook'] });
+    await db.drizzle.db.insert(promoRankConfig).values({
+      eligibleProducts: ['casino'],
+      rankChallengeEligibleProducts: ['casino', 'sportsbook'],
+    });
 
     await wagerOn(account.id, 'sportsbook');
 
@@ -229,7 +230,9 @@ describe('which products count toward the Rank Challenge', () => {
 
   it('leaves out a product the operator removed from the list', async () => {
     const { account } = await seedPlayerWithUser(db);
-    await db.drizzle.db.insert(promoRankConfig).values({ rankChallengeEligibleProducts: ['pvp'] });
+    await db.drizzle.db
+      .insert(promoRankConfig)
+      .values({ eligibleProducts: ['casino'], rankChallengeEligibleProducts: ['pvp'] });
 
     await wagerOn(account.id, 'casino');
 
@@ -238,7 +241,9 @@ describe('which products count toward the Rank Challenge', () => {
 
   it('counts every product when the list is empty', async () => {
     const { account } = await seedPlayerWithUser(db);
-    await db.drizzle.db.insert(promoRankConfig).values({ rankChallengeEligibleProducts: [] });
+    await db.drizzle.db
+      .insert(promoRankConfig)
+      .values({ eligibleProducts: ['casino'], rankChallengeEligibleProducts: [] });
 
     await wagerOn(account.id, 'sportsbook');
 

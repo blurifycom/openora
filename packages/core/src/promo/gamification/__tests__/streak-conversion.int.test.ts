@@ -68,8 +68,9 @@ const bonus = (
 
 const legacyConfig = (milestones: unknown[], currency = 'USD') =>
   db.drizzle.db.execute(sql`
-    INSERT INTO promo_streak_config (currency, daily_min_wager, enabled, milestones, reset_after_day)
-    VALUES (${currency}, '10', true, ${JSON.stringify(milestones)}::jsonb, 30)
+    INSERT INTO promo_streak_config
+      (currency, daily_min_wager, enabled, eligible_products, milestones, reset_after_day)
+    VALUES (${currency}, '10', true, '{casino}', ${JSON.stringify(milestones)}::jsonb, 30)
   `);
 
 const unsettledGrant = async (userId: string, day: number) => {

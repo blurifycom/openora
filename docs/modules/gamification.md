@@ -40,14 +40,20 @@ because a rate provider is slow would be a worse failure than undercounting thei
 What counts toward a rank is the raw stake, not what a bonus engine weighted it at. Weighting
 belongs to a bonus a player happens to hold; a player's standing must not depend on which bonus
 they are carrying. Which products count - casino, live casino, sportsbook - is the operator's
-setting, and an empty setting counts every bet.
+setting.
 
 Rakeback and the rank challenge each have a product list of their own, and a new ladder's lists
-leave sportsbook out until the operator adds it. A ladder configured before these lists existed
-was upgraded to empty ones, so it keeps paying on every product it did. Rakeback pays only on a
-stake both the rank's list and the rakeback list admit. The rank challenge does not need the
-ladder's settings row: without one it counts the default list. An empty list counts every
-product here too. Both lists are set on `PUT /backoffice/promo/ranks/config`, so changing one
+leave sportsbook out until the operator adds it. Rakeback pays only on a stake both the rank's
+list and the rakeback list admit. The rank challenge does not need the ladder's settings row:
+without one it counts the default list. Every product list - the rank's, rakeback's, the rank
+challenge's and the streak's - names its products, and a save with an empty list, a repeated
+product or an unknown one is refused. An empty list used to count every product, so a list saved
+empty before that rule was given all four on upgrade and keeps counting what it did. An instance
+still on the previous release can save an empty list during a rolling upgrade, so a stored empty
+list still counts every product; a later release backfills those and refuses them in the
+database. A list naming only unknown products was kept and counts nothing until the operator
+saves a valid one.
+Both lists are set on `PUT /backoffice/promo/ranks/config`, so changing one
 writes the ladder's settings row with it; a save that leaves a list or `periodicMinimumWager` out
 keeps the stored one, and only an explicit `null` clears the minimum.
 
