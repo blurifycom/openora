@@ -100,6 +100,31 @@ const rollBack = (service: RakebackService, userId: string, roundId: string, rea
     }),
   );
 
+const BOOK_ROUND = 'sportsbook:book';
+const sportsbookRound = (betId: string) => ({ providerName: BOOK_ROUND, externalRoundId: betId });
+
+const settledBet = (service: RakebackService, userId: string, betId: string, realAmount = '100') =>
+  db.drizzle.db.transaction((tx) =>
+    service.recordSettledWager(tx, {
+      userId,
+      currency: 'USDT',
+      realAmount,
+      context: { provider: 'book', product: 'sportsbook' },
+      round: sportsbookRound(betId),
+      qualifiedAt: new Date(),
+    }),
+  );
+
+const reopenedBet = (service: RakebackService, userId: string, betId: string) =>
+  db.drizzle.db.transaction((tx) =>
+    service.reopenSettledWager(tx, {
+      userId,
+      currency: 'USDT',
+      round: sportsbookRound(betId),
+      realAmount: '100',
+    }),
+  );
+
 const accrualsOf = (userId: string) =>
   db.drizzle.db
     .select()
@@ -212,7 +237,7 @@ describe('which products earn rakeback', () => {
     const userId = randomUUID();
     await givePlayerTier(userId, 'bronze');
 
-    await wagerOn(userId, 'sportsbook');
+    await settledBet(rakeback, userId, 'bet-1');
     await wagerOn(userId, 'live-casino');
 
     expect(credit).toHaveBeenCalledTimes(1);
@@ -225,7 +250,7 @@ describe('which products earn rakeback', () => {
       .update(promoRankConfig)
       .set({ rakebackEligibleProducts: ['casino', 'sportsbook'] });
 
-    await wagerOn(userId, 'sportsbook');
+    await settledBet(rakeback, userId, 'bet-1');
 
     expect(credit).toHaveBeenCalledTimes(1);
   });
@@ -245,7 +270,7 @@ describe('which products earn rakeback', () => {
     await givePlayerTier(userId, 'bronze');
     await db.drizzle.db.update(promoRankConfig).set({ rakebackEligibleProducts: [] });
 
-    await wagerOn(userId, 'sportsbook');
+    await settledBet(rakeback, userId, 'bet-1');
 
     expect(credit).toHaveBeenCalledTimes(1);
   });
@@ -876,5 +901,112 @@ describe('a rollback of a round with claimable rakeback', () => {
     await rollBack(claimable(), userId, 'r-2', '100');
 
     expect(await accrualsOf(userId)).toEqual([expect.objectContaining({ status: 'accrued' })]);
+  });
+});
+
+describe('a sportsbook bet, paid when it settles', () => {
+  const claimable = () => serviceWith({ basis: 'stake', payout: 'claim' });
+
+  beforeEach(() =>
+    db.drizzle.db
+      .update(promoRankConfig)
+      .set({ rakebackEligibleProducts: ['casino', 'sportsbook'] }),
+  );
+
+  it('pays nothing when the stake is reserved', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+
+    await wagerOn(userId, 'sportsbook');
+
+    expect(credit).not.toHaveBeenCalled();
+  });
+
+  it('keys an instant credit to the bet, so the wallet replays a re-settle', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+
+    await settledBet(rakeback, userId, 'bet-1');
+
+    expect(credit.mock.calls[0]?.[1]).toMatchObject({
+      amount: '1.000000000000000000',
+      type: 'cashback',
+      providerRef: { providerName: 'rakeback-settled', providerRefId: `${BOOK_ROUND}:bet-1` },
+    });
+  });
+
+  it('pays nothing for a stake a free bet paid for', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+
+    await settledBet(rakeback, userId, 'bet-1', '0');
+    await settledBet(claimable(), userId, 'bet-2', '0');
+
+    expect(credit).not.toHaveBeenCalled();
+    expect(await accrualsOf(userId)).toEqual([]);
+  });
+
+  it('pays nothing on the house edge, since a sportsbook bet carries no rtp', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+
+    await settledBet(serviceWith({ basis: 'margin', payout: 'claim' }), userId, 'bet-1');
+
+    expect(await accrualsOf(userId)).toEqual([]);
+  });
+
+  it('accrues once, however often the bet settles again', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+
+    await settledBet(claimable(), userId, 'bet-1');
+    await settledBet(claimable(), userId, 'bet-1');
+
+    expect(await accrualsOf(userId)).toEqual([
+      expect.objectContaining({
+        status: 'accrued',
+        amount: '1.000000000000000000',
+        providerName: BOOK_ROUND,
+        externalRoundId: 'bet-1',
+      }),
+    ]);
+  });
+
+  it('takes back an unclaimed accrual on a reopen and accrues it once more on the re-settle', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    await settledBet(claimable(), userId, 'bet-1');
+
+    await reopenedBet(claimable(), userId, 'bet-1');
+    expect(await accrualsOf(userId)).toEqual([expect.objectContaining({ status: 'reversed' })]);
+
+    await settledBet(claimable(), userId, 'bet-1');
+    expect(await accrualsOf(userId)).toEqual([
+      expect.objectContaining({ status: 'reversed' }),
+      expect.objectContaining({ status: 'accrued', amount: '1.000000000000000000' }),
+    ]);
+  });
+
+  it('keeps a claimed accrual on a reopen and pays nothing more on the re-settle', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    await settledBet(claimable(), userId, 'bet-1');
+    const [claim] = await db.drizzle.db
+      .insert(promoRakebackClaim)
+      .values({ userId, idempotencyKey: randomUUID(), outcome: 'claimed' })
+      .returning();
+    await db.drizzle.db
+      .update(promoRakebackAccrual)
+      .set({ status: 'claimed', claimId: claim?.id, settledAt: new Date() })
+      .where(eq(promoRakebackAccrual.userId, userId));
+
+    await reopenedBet(claimable(), userId, 'bet-1');
+    await settledBet(claimable(), userId, 'bet-1');
+    await settledBet(rakeback, userId, 'bet-1');
+
+    expect(await accrualsOf(userId)).toEqual([
+      expect.objectContaining({ status: 'claimed', rolledBackStake: '100.000000000000000000' }),
+    ]);
+    expect(credit).not.toHaveBeenCalled();
   });
 });
