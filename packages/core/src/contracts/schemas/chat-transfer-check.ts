@@ -17,11 +17,17 @@ export const CHAT_TRANSFER_REFUSALS = [
 export const ChatTransferRefusalSchema = z.enum(CHAT_TRANSFER_REFUSALS);
 export type ChatTransferRefusal = z.infer<typeof ChatTransferRefusalSchema>;
 
+/**
+ * The local binding takes two shared advisory locks per counterpart in one transaction, so the
+ * list is bounded well under Postgres' lock table. A rain asks for at most its own recipient count.
+ */
+export const CHAT_TRANSFER_MAX_COUNTERPARTS = 500;
+
 export const ChatTransferCheckInputSchema = z.object({
   actorId: UuidSchema,
   /** `null` addresses the global room. */
   roomId: UuidSchema.nullable(),
-  counterpartIds: z.array(UuidSchema),
+  counterpartIds: z.array(UuidSchema).max(CHAT_TRANSFER_MAX_COUNTERPARTS),
   command: ChatTransferCommandSchema,
 });
 export type ChatTransferCheckInput = z.infer<typeof ChatTransferCheckInputSchema>;

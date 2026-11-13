@@ -11,13 +11,17 @@ import type {
  * money; it calls this inside its transaction, before it locks a wallet, and refuses or drops
  * recipients from the verdict. Input and verdict are plain data, so a remote binding can serve it.
  *
- * Chat-commands binds the local implementation, which reads through `tx` when given and holds a
- * shared lock per pair against `blockUser` until that transaction ends, so a block either
- * commits before the check and refuses, or waits for the money to commit. A remote binding
- * cannot hold that lock: a block committed after its answer and before the money commits is not
- * seen. A binding that cannot answer throws `ChatTransferCheckUnavailableError`; callers go
- * through `checkChatTransfer`, which turns it into a `chat_unavailable` refusal, so a transfer
- * never moves money on an unanswered check.
+ * It checks the actor only: a mute does not stop a transfer, and a counterpart's own bans are not
+ * read. A context room's `contextRef` comes back so the caller can apply its own rule per context.
+ *
+ * Chat-commands binds the local implementation. It requires `tx` and reads everything through
+ * it, and it holds a shared lock per pair against `blockUser` until that transaction ends, so a
+ * block either commits before the check and refuses, or waits for the money to commit. Bans and
+ * membership take no lock: one that commits after the read and before the money commits is not
+ * seen, for as long as the caller's transaction runs. A remote binding holds no lock at all, so
+ * blocks get that same window, plus whatever its cache adds. A binding that cannot answer throws
+ * `ChatTransferCheckUnavailableError`; callers go through `checkChatTransfer`, which turns it
+ * into a `chat_unavailable` refusal, so a transfer never moves money on an unanswered check.
  */
 export type ChatTransferCheck = {
   check(tx: unknown, input: ChatTransferCheckInput): Promise<ChatTransferVerdict>;

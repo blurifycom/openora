@@ -42,9 +42,12 @@ has blocked or ignored via `CHAT_BLOCK_READER.getExcludedUserIds(viewerId)`.
 
 The module binds `CHAT_TRANSFER_CHECK`, the one read an overlay's money transfer (gift, claim, rain,
 donate) makes of chat state: the command row is enabled, the actor may post to the room, a context
-room's send policy allows it, and which counterparts are in a block with the actor. It reads through
-the caller's transaction and takes a shared `chatBlockLockKey` lock per direction, so a concurrent
-`blockUser` waits for the money to commit. It moves no money; the overlay refuses on the verdict.
+room's send policy allows it, and which counterparts are in a block with the actor. It requires the
+caller's transaction and reads everything through it, and takes a shared `chatBlockLockKey` lock per
+direction, so a concurrent `blockUser` waits for the money to commit. Bans and membership take no
+lock: a change committed while the money transaction runs is not seen. Mutes are not checked and a
+counterpart's own bans are not read. `counterpartIds` is capped at `CHAT_TRANSFER_MAX_COUNTERPARTS`.
+It moves no money; the overlay refuses on the verdict.
 
 ## Ports consumed
 
