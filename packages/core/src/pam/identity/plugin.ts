@@ -272,7 +272,11 @@ export default {
         accountReaderCallerNames,
       ),
       // The local chain, never a remote resolver. Unset SESSION_RESOLVER_CALLERS refuses every caller.
-      ...createInternalSessionRouter(c.get(LOCAL_SESSION_RESOLVER), sessionResolverCallerNames),
+      ...createInternalSessionRouter(
+        c.get(LOCAL_SESSION_RESOLVER),
+        resolveAdminSecurity(c),
+        sessionResolverCallerNames,
+      ),
     }));
     // RG login-block writer. compliance drives it through the port, never the schema.
     ctx.provide(
