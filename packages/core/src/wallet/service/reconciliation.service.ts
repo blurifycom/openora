@@ -1430,7 +1430,7 @@ export class ReconciliationService {
       if (newBreaches > 0) {
         await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
           runId,
-          openFindings: newBreaches,
+          openFindings: await this.countOpenFindings(txn),
           threshold: 0,
         });
       }
@@ -1991,8 +1991,8 @@ export class ReconciliationService {
     }
   }
 
-  private async countOpenFindings(): Promise<number> {
-    const [row] = await this.drizzle.db
+  private async countOpenFindings(db: DrizzleDb | DrizzleTx = this.drizzle.db): Promise<number> {
+    const [row] = await db
       .select({ n: count() })
       .from(walletReconciliationFinding)
       .where(
