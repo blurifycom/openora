@@ -47,7 +47,7 @@ Done:
 1. **Typed event catalog.** `domainEventSchemas` (Zod) in `@openora/shared-schemas` (`events.ts`) is the single source for every cross-module event payload; `DomainEventName`/`DomainEventPayload` are inferred from it.
 2. **Broker seam.** `MessageBrokerAdapter` + `MESSAGE_BROKER` token in `@openora/adapters`. The `EventBus` (`@openora/core`) is a typed facade over it that validates known payloads and isolates subscriber failures. Default binding is `InMemoryBroker` (synchronous in-process fan-out); bind a durable driver to `MESSAGE_BROKER` in an overlay to swap transport - no module change.
 3. **Plugin handlers wired.** `createApp` subscribes every `registry.events.getAll()` handler to the resolved bus at boot, so cross-module `ctx.events.on(...)` handlers now actually fire.
-4. **Atomic money.** `wallet` deposit/withdraw wrap the ledger insert + balance update in `db.transaction(...)` (withdraw re-checks the balance inside the txn to block double-spend) and emit only after commit.
+4. **Atomic money.** `wallet` deposit/withdraw wrap the ledger insert + balance update in `db.transaction(...)` (withdraw re-checks the balance inside the txn to block double-spend) and write their events in that transaction via `emitInTransaction` (ADR-0045). Informational events still emit after commit via `emit`.
 
 Open:
 

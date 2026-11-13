@@ -822,9 +822,11 @@ export const domainEventSchemas = {
     toAmount: MoneyAmountSchema,
   }),
 
-  // Promo. Every one of these fires post-commit and is notification/analytics fan-out only:
-  // money and counters move through the BONUS_GRANTS, BONUS_WAGERING and WAGER_TRACKING command
-  // ports instead, because the bus is best-effort and a dropped event would be a player's money.
+  // Promo. These are notification/analytics fan-out only: money and counters move through the
+  // BONUS_GRANTS, BONUS_WAGERING and WAGER_TRACKING command ports, never through an event.
+  // Payout announcements (`promo.bonus.granted`, `promo.race.won`, `promo.rank-challenge.won`)
+  // are written to the outbox in the transaction that pays them; the rest are informational and
+  // emitted after commit.
   'promo.bonus.granted': z.object({
     userId: UuidSchema,
     grantId: UuidSchema,
@@ -903,8 +905,9 @@ export const domainEventSchemas = {
     ),
     currency: CurrencyTickerSchema,
   }),
-  // One winner's own prize, emitted per player after the settlement transaction commits - the
-  // shape the in-app/email notification maps 1:1 (see engagement/notifications/plugin.ts).
+  // One winner's own prize, written to the outbox per player in the settlement transaction and
+  // published once it commits - the shape the in-app/email notification maps 1:1 (see
+  // engagement/notifications/plugin.ts).
   'promo.race.won': z.object({
     userId: UuidSchema,
     raceId: UuidSchema,
@@ -913,8 +916,9 @@ export const domainEventSchemas = {
     amount: MoneyAmountSchema,
     currency: CurrencyTickerSchema,
   }),
-  // One winner's own Rank Challenge tier, emitted per player after the settlement transaction
-  // commits - the shape the in-app/email notification maps 1:1, mirroring promo.race.won.
+  // One winner's own Rank Challenge tier, written to the outbox per player in the settlement
+  // transaction and published once it commits - the shape the in-app/email notification maps
+  // 1:1, mirroring promo.race.won.
   'promo.rank-challenge.won': z.object({
     userId: UuidSchema,
     tierId: UuidSchema,

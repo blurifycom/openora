@@ -2,17 +2,37 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
-import { mock, makeAuditWriter } from '../../../testing/mock.js';
-import type {
-  ExchangeRateReader,
-  PlayEligibilityPort,
-  WagerContext,
-  WagerProduct,
-  WalletCommands,
+import {
+  mock,
+  makeAuditWriter,
+  makeIdentityReader,
+  makeOutboxEventBus,
+} from '../../../testing/mock.js';
+import {
+  AUDIT_WRITER,
+  IDENTITY_READER,
+  PLAY_ELIGIBILITY,
+  WALLET_COMMANDS,
+  type ExchangeRateReader,
+  type PlayEligibilityPort,
+  type WagerContext,
+  type WagerProduct,
+  type WalletCommands,
 } from '@openora/core/contracts';
+import {
+  Container,
+  eventOutbox,
+  ModuleRegistryImpl,
+  type CoreTokenCatalog,
+  type EventBus,
+} from '@openora/core/server';
+import { migrate as serverMigrate } from '@openora/core/server/migrate';
 import { migrate } from '../migrate.js';
 import { migrate as identityMigrate } from '@openora/core/pam/migrate/identity';
 import { migrate as profileMigrate } from '@openora/core/pam/migrate/profile';
+import { migrate as walletMigrate } from '@openora/core/wallet/migrate';
+import { walletTransaction } from '@openora/core/wallet/schema';
+import walletPlugin from '@openora/core/wallet/plugin';
 import {
   promoRankChallengeClaim,
   promoRankChallengeTier,
@@ -34,6 +54,8 @@ const credit = vi.fn<WalletCommands['credit']>();
 const audit = makeAuditWriter();
 let service: RankChallengeService;
 let adminService: RankChallengeAdminService;
+
+const TX_ID = randomUUID();
 
 const CASINO: WagerContext = { provider: 'aggregator', product: 'casino' };
 
@@ -101,19 +123,46 @@ const claimsOf = () =>
 
 // The tier ladder and the payout currency match by default, so most tests exercise the
 // no-conversion path - the currency-conversion behaviour has its own describe block below.
-const payoutService = (payoutCurrency = 'USDT') =>
+const payoutService = (
+  payoutCurrency = 'USDT',
+  events: EventBus = makeOutboxEventBus(),
+  wallet: WalletCommands = mock<WalletCommands>({ credit }),
+) =>
   new RankChallengePayoutService(
     db.drizzle,
     mock<PlayEligibilityPort>({ isRestricted }),
-    mock<WalletCommands>({ credit }),
+    wallet,
     mock<ExchangeRateReader>({ convert }),
     payoutCurrency,
     audit,
+    events,
     logger,
   );
 
+// The wallet plugin's own WALLET_COMMANDS binding, so a payout writes a real ledger row.
+const realWallet = () => {
+  const container = new Container<CoreTokenCatalog>();
+  container.register(PLAY_ELIGIBILITY, () => mock<PlayEligibilityPort>({ isRestricted }));
+  container.register(AUDIT_WRITER, () => audit);
+  container.register(IDENTITY_READER, () => makeIdentityReader());
+  walletPlugin.register(new ModuleRegistryImpl<CoreTokenCatalog>(container));
+  return container.get(WALLET_COMMANDS);
+};
+
+const ledgerRowsFor = (providerRefId: string) =>
+  db.drizzle.db
+    .select({ id: walletTransaction.id })
+    .from(walletTransaction)
+    .where(eq(walletTransaction.providerRefId, providerRefId));
+
+const outboxed = (topic: string) =>
+  db.drizzle.db
+    .select({ payload: eventOutbox.payload })
+    .from(eventOutbox)
+    .where(eq(eventOutbox.topic, topic));
+
 beforeAll(async () => {
-  db = await createTestDb([migrate, identityMigrate, profileMigrate]);
+  db = await createTestDb([serverMigrate, migrate, identityMigrate, profileMigrate, walletMigrate]);
   service = new RankChallengeService(db.drizzle, mock<ExchangeRateReader>({ convert }), logger);
   adminService = new RankChallengeAdminService(db.drizzle, audit);
 });
@@ -123,7 +172,8 @@ afterAll(() => db.drop());
 beforeEach(async () => {
   vi.clearAllMocks();
   isRestricted.mockResolvedValue(false);
-  credit.mockResolvedValue({ ok: true, moved: true, transactionId: 'tx-1', newBalance: '50' });
+  credit.mockResolvedValue({ ok: true, moved: true, transactionId: TX_ID, newBalance: '50' });
+  await db.drizzle.db.delete(eventOutbox);
   await db.drizzle.db.delete(promoRankChallengeClaim);
   await db.drizzle.db.delete(promoRankChallengeWager);
   await db.drizzle.db.delete(promoRankChallengeTier);
@@ -309,6 +359,132 @@ describe('settling a claim', () => {
     await payoutService().settlePending();
 
     expect(credit).not.toHaveBeenCalled();
+  });
+});
+
+describe('announcing a settled claim through the outbox', () => {
+  it('writes the win and its balance credit in the settlement transaction', async () => {
+    const { account, player } = await seedPlayerWithUser(db);
+    await wager(account.id, '1');
+
+    await payoutService().settlePending();
+
+    expect(await outboxed('promo.rank-challenge.won')).toEqual([
+      {
+        payload: expect.objectContaining({
+          userId: account.id,
+          tierKey: 'bronze',
+          cashAmount: '50.000000000000000000',
+          transactionId: TX_ID,
+        }),
+      },
+    ]);
+    expect(await outboxed('wallet.balance.changed')).toEqual([
+      {
+        payload: {
+          userId: account.id,
+          playerId: player.id,
+          amount: '50.000000000000000000',
+          currency: 'USDT',
+          transactionId: TX_ID,
+          type: 'cashback',
+          direction: 'credit',
+        },
+      },
+    ]);
+  });
+
+  it('announces a physical-only win without a balance credit', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    await wager(account.id, '1');
+    await payoutService().settlePending();
+    await db.drizzle.db.delete(eventOutbox);
+
+    await wager(account.id, '9999');
+    await payoutService().settlePending();
+
+    expect(await outboxed('promo.rank-challenge.won')).toEqual([
+      { payload: expect.objectContaining({ tierKey: 'silver', physicalItem: 'AirPods Pro' }) },
+    ]);
+    expect(await outboxed('wallet.balance.changed')).toEqual([]);
+  });
+
+  it('leaves the claim unsettled and no event behind when the settlement rolls back after announcing', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    await wager(account.id, '1');
+    const events = makeOutboxEventBus();
+    const announce = events.emitInTransaction.bind(events);
+    vi.spyOn(events, 'emitInTransaction').mockImplementation(async (tx, topic, payload) => {
+      if (topic === 'wallet.balance.changed') {
+        throw new Error('outbox unavailable');
+      }
+      await announce(tx, topic, payload);
+    });
+
+    expect(await payoutService('USDT', events).settlePending()).toEqual([]);
+
+    const [claim] = await db.drizzle.db
+      .select({ settledAt: promoRankChallengeClaim.settledAt })
+      .from(promoRankChallengeClaim);
+    expect(claim?.settledAt).toBeNull();
+    expect(await db.drizzle.db.select().from(eventOutbox)).toHaveLength(0);
+  });
+
+  it('announces nothing for a restricted player', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    isRestricted.mockResolvedValue(true);
+    await wager(account.id, '1');
+
+    await payoutService().settlePending();
+
+    expect(await db.drizzle.db.select().from(eventOutbox)).toHaveLength(0);
+  });
+
+  it('announces the win but no balance change for a replayed credit that moved nothing', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    await wager(account.id, '1');
+    credit.mockResolvedValue({ ok: true, moved: false, newBalance: '50' });
+
+    await payoutService().settlePending();
+
+    expect(await outboxed('promo.rank-challenge.won')).toEqual([
+      { payload: expect.objectContaining({ tierKey: 'bronze', transactionId: null }) },
+    ]);
+    expect(await outboxed('wallet.balance.changed')).toEqual([]);
+  });
+
+  it('pays the cash exactly once through the real wallet after an outbox failure is retried', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    await wager(account.id, '1');
+    const events = makeOutboxEventBus();
+    vi.spyOn(events, 'emitInTransaction').mockRejectedValueOnce(new Error('outbox unavailable'));
+    const payouts = payoutService('USDT', events, realWallet());
+    const [claim] = await db.drizzle.db
+      .select({ id: promoRankChallengeClaim.id, tierId: promoRankChallengeClaim.tierId })
+      .from(promoRankChallengeClaim);
+    const sourceRef = `rank-challenge-payout:${claim?.tierId}:${account.id}`;
+
+    await payouts.settlePending();
+
+    expect(await ledgerRowsFor(sourceRef)).toHaveLength(0);
+    const [unsettled] = await db.drizzle.db
+      .select({ settledAt: promoRankChallengeClaim.settledAt })
+      .from(promoRankChallengeClaim);
+    expect(unsettled?.settledAt).toBeNull();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ claimId: claim?.id, failures: 1 }),
+      'rank challenge settlement failed',
+    );
+
+    await payouts.settlePending();
+
+    const ledger = await ledgerRowsFor(sourceRef);
+    expect(ledger).toHaveLength(1);
+    expect(await outboxed('wallet.balance.changed')).toEqual([
+      {
+        payload: expect.objectContaining({ userId: account.id, transactionId: ledger[0]?.id }),
+      },
+    ]);
   });
 });
 

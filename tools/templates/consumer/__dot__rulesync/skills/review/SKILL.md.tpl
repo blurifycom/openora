@@ -128,7 +128,7 @@ Applies to every change that crosses a layer: an oRPC route, a service, a Drizzl
 3. Service - open every callee; typed failures return, unexpected errors do not leak to the client.
 4. Query - every read and write filters by owner/tenant; a write and its ledger/audit row share one transaction.
 5. Table - the invariant lives in a constraint, index, or FK per `docs/standards/database.md`, not only in code; a migration exists for every schema change.
-6. Side effects - an event, job, or outbox message fires after commit and its handler is safe to run twice.
+6. Side effects - an informational event or job fires after commit; a money, compliance or RG event is written in the transaction via `emitInTransaction` (outbox). Every handler is safe to run twice.
 7. Response - output matches the contract schema and leaks no extra field; each error path returns the code the client expects.
 
 **Check the blast radius.** The change must not break a part it does not name. Build the caller list with `git grep -w -- <symbol> -- '*.ts' '*.tsx' '*.sql'` for each changed export, table symbol, and SQL table name, then confirm each use still holds:

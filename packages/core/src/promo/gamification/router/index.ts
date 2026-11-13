@@ -28,7 +28,6 @@ import { StreakAdminService } from '../service/streak-admin.service.js';
 import { StreakConfigNotSetError, StreakService } from '../service/streak.service.js';
 import {
   StreakMilestoneNotClaimableError,
-  type StreakClaimOutcome,
   type StreakPayoutService,
 } from '../service/streak-payout.service.js';
 import { RaceNotFoundError, RaceService } from '../service/race.service.js';
@@ -65,7 +64,6 @@ export function createGamificationRouter({
   admin,
   streaks,
   streakPayouts,
-  onStreakClaimed,
   streakAdmin,
   races,
   raceAdmin,
@@ -80,8 +78,6 @@ export function createGamificationRouter({
   admin: RankAdminService;
   streaks: StreakService;
   streakPayouts: StreakPayoutService;
-  /** Runs after the claim's transaction has committed. */
-  onStreakClaimed: (claimed: StreakClaimOutcome) => Promise<void>;
   streakAdmin: StreakAdminService;
   races: RaceService;
   raceAdmin: RaceAdminService;
@@ -125,7 +121,6 @@ export function createGamificationRouter({
           },
           () => streakPayouts.claim(getUserId(context), input.milestoneGrantId),
         );
-        await onStreakClaimed(claimed);
         return { outcome: claimed.outcome };
       }),
 

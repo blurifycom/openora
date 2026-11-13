@@ -13,6 +13,7 @@ import {
   moneyScaleBy,
   type DrizzleService,
   type DrizzleTx,
+  type EventBus,
 } from '@openora/core/server';
 import {
   promoPlayerRank,
@@ -62,9 +63,9 @@ const PERIOD_BONUS = {
  * later: a bonus waiting at the end of a block is an incentive to come back and play. If the
  * block cannot be checked at all, nothing is paid.
  *
- * Each method returns the grants it created, for the caller to announce once they are committed.
- * The promotions themselves are announced from here too, for the same reason: they happen inside
- * a bet, and this is the first place after it where anything may be emitted.
+ * Each grant is announced as `promo.bonus.granted` through the outbox, in the transaction that
+ * created it. Promotions (`promo.rank.changed`) are informational: they happen inside a bet, so
+ * `announceRankChanges` hands them to the caller to emit after commit.
  */
 export class RankPayoutService {
   constructor(
@@ -73,6 +74,7 @@ export class RankPayoutService {
     private readonly eligibility: PlayEligibilityPort | undefined,
     private readonly rates: ExchangeRateReader,
     private readonly wallet: WalletReader,
+    private readonly events: EventBus,
     private readonly logger: Logger,
   ) {}
 
@@ -96,8 +98,8 @@ export class RankPayoutService {
     const granted: Granted[] = [];
     for (const { id } of owed) {
       try {
-        const paid = await this.drizzle.db.transaction((tx) =>
-          this.settleLevelUp(tx, id, terms, payout),
+        const paid = await this.drizzle.db.transaction(async (tx) =>
+          this.announced(tx, await this.settleLevelUp(tx, id, terms, payout)),
         );
         if (paid) {
           granted.push(paid);
@@ -231,11 +233,12 @@ export class RankPayoutService {
         }
         const owed = { ...player, amount: player.amount };
         try {
-          const paid = await this.drizzle.db.transaction((tx) =>
-            this.grant(tx, owed, period.sourceRef, terms, payout),
-          );
+          const paid = await this.drizzle.db.transaction(async (tx) => {
+            const grant = await this.grant(tx, owed, period.sourceRef, terms, payout);
+            return this.announced(tx, grant && { ...grant, rankBonusKind: kind });
+          });
           if (paid) {
-            granted.push({ ...paid, rankBonusKind: kind });
+            granted.push(paid);
           }
         } catch (err) {
           // One player's failure must not cost everyone after them their bonus. Only a transient
@@ -348,6 +351,13 @@ export class RankPayoutService {
     const paid = await this.grant(tx, row, `rank-level-up:${row.tierId}`, terms, payout);
     await settle('granted', paid?.grantId ?? null);
     return paid;
+  }
+
+  private async announced(tx: DrizzleTx, granted: Granted | null) {
+    if (granted) {
+      await this.events.emitInTransaction(tx, 'promo.bonus.granted', granted);
+    }
+    return granted;
   }
 
   private async grant(

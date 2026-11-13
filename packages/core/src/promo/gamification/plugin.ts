@@ -3,7 +3,6 @@ import {
   AUDIT_WRITER,
   BONUS_GRANTS,
   EXCHANGE_RATE_READER,
-  IDENTITY_READER,
   JOB_QUEUE,
   PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
@@ -18,7 +17,6 @@ import {
   queue,
   resolveWalletDefaultCurrency,
   resolveWalletReferenceCurrency,
-  type IdentityReader,
   type JobQueueAdapter,
   type SettledWagerArgs,
   type WagerReversalArgs,
@@ -190,30 +188,7 @@ export default {
     let rakebackClaims: RakebackClaimService | null = null;
     let streaks: StreakService | null = null;
     let events: EventBus | null = null;
-    let identityReader: IdentityReader | null = null;
     let jobs: JobQueueAdapter | null = null;
-
-    const emitCashCredit = async (args: {
-      userId: string;
-      amount: string;
-      currency: string;
-      transactionId: string | null;
-    }) => {
-      // Null when nothing moved (a replayed credit already announced the first time).
-      if (!args.transactionId) {
-        return;
-      }
-      const playerId = (await identityReader?.getPlayerIdByUserIdSafe(args.userId)) ?? null;
-      events?.emit('wallet.balance.changed', {
-        userId: args.userId,
-        playerId,
-        amount: args.amount,
-        currency: args.currency,
-        transactionId: args.transactionId,
-        type: 'cashback',
-        direction: 'credit',
-      });
-    };
 
     ctx.jobs.worker({
       queue: RAKEBACK_AUTO_PAYOUT_QUEUE,
@@ -292,14 +267,11 @@ export default {
           logger.warn({ kind: payload.kind }, 'rank payout skipped - service not constructed');
           return;
         }
-        const granted =
-          payload.kind === 'levelUp'
-            ? await rankPayouts.settleLevelUps()
-            : await rankPayouts.payPeriodic(payload.kind, new Date());
-        // After each grant's own commit: announcing a bonus the transaction then rolled back
-        // would tell a player about money they do not have.
-        for (const grant of granted) {
-          events?.emit('promo.bonus.granted', grant);
+        // Each grant is announced through the outbox in its own transaction.
+        if (payload.kind === 'levelUp') {
+          await rankPayouts.settleLevelUps();
+        } else {
+          await rankPayouts.payPeriodic(payload.kind, new Date());
         }
       },
     });
@@ -455,14 +427,7 @@ export default {
           logger.warn({}, 'race payout skipped - service not constructed');
           return;
         }
-        const won = await racePayouts.closeDue(new Date());
-        // After the settlement transaction's own commit, the same rule the rank/streak payouts
-        // follow: a winner announced before the credit lands would tell a player about a prize
-        // they do not have yet.
-        for (const win of won) {
-          events?.emit('promo.race.won', win);
-          await emitCashCredit(win);
-        }
+        await racePayouts.closeDue(new Date());
       },
     });
 
@@ -474,20 +439,7 @@ export default {
           logger.warn({}, 'rank challenge payout skipped - service not constructed');
           return;
         }
-        const won = await rankChallengePayouts.settlePending();
-        // Same rule as every other payout job here: announce only after the settlement
-        // transaction that credited the cash (if any) has committed.
-        for (const win of won) {
-          events?.emit('promo.rank-challenge.won', win);
-          if (win.cashAmount !== null) {
-            await emitCashCredit({
-              userId: win.userId,
-              amount: win.cashAmount,
-              currency: win.currency,
-              transactionId: win.transactionId,
-            });
-          }
-        }
+        await rankChallengePayouts.settlePending();
       },
     });
 
@@ -503,6 +455,7 @@ export default {
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
         c.get(EXCHANGE_RATE_READER),
         c.get(WALLET_READER),
+        c.get(EVENT_BUS),
         logger,
       );
       streakPayouts = new StreakPayoutService({
@@ -512,17 +465,19 @@ export default {
         rates: c.get(EXCHANGE_RATE_READER),
         walletReader: c.get(WALLET_READER),
         audit: c.get(AUDIT_WRITER),
+        events: c.get(EVENT_BUS),
         logger,
       });
-      racePayouts = new RacePayoutService(
-        c.get(DRIZZLE),
-        c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
-        c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
-        c.get(EXCHANGE_RATE_READER),
+      racePayouts = new RacePayoutService({
+        drizzle: c.get(DRIZZLE),
+        eligibility: c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        wallet: c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
+        rates: c.get(EXCHANGE_RATE_READER),
         payoutCurrency,
-        c.get(AUDIT_WRITER),
+        audit: c.get(AUDIT_WRITER),
+        events: c.get(EVENT_BUS),
         logger,
-      );
+      });
       rankChallengePayouts = new RankChallengePayoutService(
         c.get(DRIZZLE),
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
@@ -530,11 +485,11 @@ export default {
         c.get(EXCHANGE_RATE_READER),
         payoutCurrency,
         c.get(AUDIT_WRITER),
+        c.get(EVENT_BUS),
         logger,
       );
       streaks = streakService(c);
       events = c.get(EVENT_BUS);
-      identityReader = c.get(IDENTITY_READER);
       const schedule = promoConfig(c);
       const referenceCurrency = resolveWalletReferenceCurrency(
         c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).wallet : undefined,
@@ -632,15 +587,6 @@ export default {
         admin: new RankAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         streaks,
         streakPayouts,
-        onStreakClaimed: async ({ granted }) => {
-          try {
-            for (const grant of granted) {
-              events?.emit('promo.bonus.granted', grant);
-            }
-          } catch (err) {
-            logger.error({ err }, 'streak claim announcement failed after the claim committed');
-          }
-        },
         streakAdmin: new StreakAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         races: raceService(c),
         raceAdmin: new RaceAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
