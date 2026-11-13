@@ -5,16 +5,16 @@ import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import type { AdminUserDirectory, AuditWritePort } from '@openora/core/contracts';
+import type { AuditWritePort } from '@openora/core/contracts';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import {
   NO_CLIENT_META,
   makeChatContextSendPolicy,
   makeEventBus,
-  makeIdentityReader,
   makeRealtimeTransport,
   mock,
 } from '../../../testing/mock.js';
+import { DrizzleAccountReader } from '@openora/core/pam/server';
 import { migrate } from '../migrate.js';
 import { chatRoom } from '../schema/index.js';
 import { ChatService, ChatRoomProtectedError } from '../service/chat.service.js';
@@ -43,15 +43,13 @@ function makeService() {
     recordInTransaction: vi.fn().mockResolvedValue(undefined),
   });
   const moderation = new ChatModerationService(db.drizzle, transport, audit, events);
-  const directory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] });
   return new ChatService({
     drizzle: db.drizzle,
     events,
     transport,
-    directory,
     audit,
     moderation,
-    identityReader: makeIdentityReader(),
+    accounts: new DrizzleAccountReader(db.drizzle),
     allowedAttachmentHosts: [],
     contextSendPolicy: makeChatContextSendPolicy(),
   });

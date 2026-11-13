@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import {
   createLogger,
   withAdvisoryXactLock,
@@ -18,11 +18,11 @@ import {
   type ChatContextRooms,
   type ChatContextRoomWrite,
   type ChatSystemWriter,
-  type IdentityReader,
+  type Account,
+  type AccountReader,
   type RealtimeTransport,
   type Uuid,
 } from '@openora/core/contracts';
-import { user } from '@openora/core/pam/schema/identity';
 import { chatRoom, chatRoomConfiguration, chatRoomMember } from '../schema/index.js';
 import type { ChatMemberJoinedSignal, ChatRoomClosedSignal } from '../contract/index.js';
 import {
@@ -60,7 +60,7 @@ export class ChatContextRoomService implements ChatContextRooms {
   private readonly drizzle: DrizzleService;
   private readonly audit: AuditWritePort;
   private readonly events: EventBus;
-  private readonly identityReader: IdentityReader;
+  private readonly accounts: AccountReader;
   private readonly transport: RealtimeTransport;
   private readonly systemWriter: ChatSystemWriter;
 
@@ -68,21 +68,21 @@ export class ChatContextRoomService implements ChatContextRooms {
     drizzle,
     audit,
     events,
-    identityReader,
+    accounts,
     transport,
     systemWriter,
   }: {
     drizzle: DrizzleService;
     audit: AuditWritePort;
     events: EventBus;
-    identityReader: IdentityReader;
+    accounts: AccountReader;
     transport: RealtimeTransport;
     systemWriter: ChatSystemWriter;
   }) {
     this.drizzle = drizzle;
     this.audit = audit;
     this.events = events;
-    this.identityReader = identityReader;
+    this.accounts = accounts;
     this.transport = transport;
     this.systemWriter = systemWriter;
   }
@@ -283,39 +283,35 @@ export class ChatContextRoomService implements ChatContextRooms {
     );
     const addedUserIds = added.map((member) => member.userId);
     if (addedUserIds.length > 0) {
-      effects.push(() => this.emitJoined(roomId, addedUserIds));
-    }
-    const staff = await this.staffAmong(t, addedUserIds);
-    for (const userId of addedUserIds.filter((id) => !staff.has(id))) {
-      const payload: ChatMemberJoinedSignal = { roomId, userId };
-      effects.push(() => this.signal(roomId, CHAT_MEMBER_JOINED_SIGNAL, payload));
+      effects.push(() => this.announceJoined(roomId, addedUserIds));
     }
     return addedUserIds;
   }
 
-  // The member list hides staff from ordinary viewers, so their joins are not signalled.
-  private async staffAmong(t: DrizzleTx, userIds: Uuid[]) {
-    if (userIds.length === 0) {
-      return new Set<Uuid>();
-    }
-    const rows = await t
-      .select({ id: user.id })
-      .from(user)
-      .where(and(inArray(user.id, userIds), inArray(user.role, STAFF_USER_ROLES)));
-    return new Set(rows.map((row) => row.id));
-  }
-
-  private async emitJoined(roomId: Uuid, userIds: Uuid[]) {
-    const playerIds = await this.identityReader.getPlayerIdsByUserIdsSafe(userIds);
+  // After commit: accounts are read outside the caller's transaction, best effort.
+  private async announceJoined(roomId: Uuid, userIds: Uuid[]) {
+    // Null when the read failed: no join is signalled then, since a staff joiner cannot be told.
+    const accounts = await this.accounts
+      .getAccounts(userIds)
+      .catch((err: unknown): Map<string, Account> | null => {
+        logger.warn({ err, roomId }, 'chat context room joiner accounts read failed');
+        return null;
+      });
     for (const userId of userIds) {
+      const account = accounts?.get(userId);
       this.events.emit('chat.room.member.joined', {
         roomId,
         userId,
-        playerId: playerIds.get(userId) ?? null,
+        playerId: account?.player?.playerId ?? null,
         auditRecorded: true,
         ip: null,
         userAgent: null,
       });
+      // The member list hides staff from ordinary viewers, so their joins are not signalled.
+      if (accounts && !STAFF_USER_ROLES.some((role) => role === account?.role)) {
+        const payload: ChatMemberJoinedSignal = { roomId, userId };
+        await this.signal(roomId, CHAT_MEMBER_JOINED_SIGNAL, payload);
+      }
     }
   }
 

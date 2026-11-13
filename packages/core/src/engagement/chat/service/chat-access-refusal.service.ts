@@ -1,12 +1,12 @@
-import { eq } from 'drizzle-orm';
-import type { DrizzleDb, DrizzleTx, EventBus } from '@openora/core/server';
-import type { ClientMeta, Uuid } from '@openora/core/contracts';
-import { user } from '@openora/core/pam/schema/identity';
-import { player } from '@openora/core/pam/schema/profile';
+import { createLogger, type EventBus } from '@openora/core/server';
+import type { Account, AccountReader, ClientMeta, Uuid } from '@openora/core/contracts';
+
+const logger = createLogger('chat-access-refusal');
 
 // A chat-level refusal never reaches a shared guard, so it owes the audit log AdminGuard's signal.
+// The refusal is recorded even when the caller's account cannot be read, just without its role.
 export async function emitAccessRefused(
-  db: DrizzleDb | DrizzleTx,
+  accounts: AccountReader,
   events: EventBus,
   {
     actorId,
@@ -16,15 +16,16 @@ export async function emitAccessRefused(
     userAgent,
   }: { actorId: Uuid; resource: string; action: string } & ClientMeta,
 ) {
-  const [caller] = await db
-    .select({ role: user.role, playerId: player.id })
-    .from(user)
-    .leftJoin(player, eq(player.userId, user.id))
-    .where(eq(user.id, actorId))
-    .limit(1);
+  const caller = await accounts
+    .getAccounts([actorId])
+    .then((found) => found.get(actorId))
+    .catch((err: unknown): Account | undefined => {
+      logger.warn({ err, actorId }, 'account read failed for an access refusal');
+      return undefined;
+    });
   events.emit('identity.user.unauthorized_access', {
     userId: actorId,
-    playerId: caller?.playerId ?? null,
+    playerId: caller?.player?.playerId ?? null,
     resource,
     action,
     ...(caller?.role ? { role: caller.role } : {}),

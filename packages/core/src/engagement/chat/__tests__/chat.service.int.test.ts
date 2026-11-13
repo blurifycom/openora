@@ -13,8 +13,7 @@ import {
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import type {
-  AdminUserDirectory,
-  AdminPlayerSummary,
+  AccountReader,
   AuditWritePort,
   FriendshipDissolvedPayload,
   RealtimeSignal,
@@ -25,14 +24,17 @@ import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
   NO_CLIENT_META,
   makeChatContextSendPolicy,
+  makeAccount,
+  makeAccountReader,
   makeEventBus,
-  makeIdentityReader,
   mock,
 } from '../../../testing/mock.js';
+import { DrizzleAccountReader } from '@openora/core/pam/server';
 import { CHAT_ROOM_CATEGORIES, ChatMessageSchema, type ChatMessage } from '../contract/index.js';
 import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
   MAX_PRIVATE_ROOMS_PER_PLAYER,
+  UNKNOWN_PLAYER_USERNAME,
 } from '../contract/constants.js';
 import { migrate } from '../migrate.js';
 // import {
@@ -43,7 +45,12 @@ import { migrate } from '../migrate.js';
 //   readPrivate,
 //   NO_CLIENT_META,
 // } from '../../../testing/mock.js';
-import { ACCESS_REVOKED_SIGNAL, GLOBAL_CHAT_ROOM_ID, chatChannel } from '@openora/core/contracts';
+import {
+  ACCESS_REVOKED_SIGNAL,
+  GLOBAL_CHAT_ROOM_ID,
+  chatChannel,
+  playerIdsOf,
+} from '@openora/core/contracts';
 import {
   ChatService,
   ChatMessageBlockedError,
@@ -116,18 +123,7 @@ async function waitForMessageSubscription(
 }
 
 function makeService(
-  directory: AdminUserDirectory = mock<AdminUserDirectory>({
-    lookupPlayers: async () => [],
-    lookupUsers: async (ids: readonly string[]) =>
-      ids.map((id) => ({
-        id,
-        email: `${id}@example.com`,
-        name: id,
-        createdAt: new Date(),
-        isActive: true,
-        role: 'player',
-      })),
-  }),
+  accounts: AccountReader = new DrizzleAccountReader(db.drizzle),
   socialCommands?: SocialCommands,
   allowedAttachmentHosts: readonly string[] = [],
   transport: RealtimeTransport = makeTransport(),
@@ -138,27 +134,25 @@ function makeService(
     recordInTransaction: vi.fn().mockResolvedValue(undefined),
   });
   const moderation = new ChatModerationService(db.drizzle, transport, audit, events);
-  const identityReader = makeIdentityReader();
   const chatService = new ChatService({
     drizzle: db.drizzle,
     events,
     transport,
-    directory,
     audit,
     moderation,
-    identityReader,
+    accounts,
     allowedAttachmentHosts,
     socialCommands,
     contextSendPolicy: makeChatContextSendPolicy(),
   });
-  const membership = new ChatRoomMembershipService(
+  const membership = new ChatRoomMembershipService(db.drizzle, events, audit, transport, accounts);
+  const roomBan = new ChatRoomBanService(
     db.drizzle,
     events,
     audit,
     transport,
-    identityReader,
+    playerIdsOf(accounts),
   );
-  const roomBan = new ChatRoomBanService(db.drizzle, events, audit, transport, identityReader);
   const roomMute = new ChatRoomMuteService(db.drizzle, audit);
   return {
     moderation,
@@ -294,7 +288,7 @@ describe('ChatService realtime wiring', () => {
   });
 
   it('counts each authenticated user once across multiple stream connections', async () => {
-    const { svc } = makeService();
+    const { svc } = makeService(makeAccountReader([makeAccount('u1')]));
     const first = svc.subscribeMessages('r1', () => undefined, 'u1', 'tab-1');
     const second = svc.subscribeMessages('r1', () => undefined, 'u1', 'tab-2');
 
@@ -306,19 +300,13 @@ describe('ChatService realtime wiring', () => {
   });
 
   it('excludes admin and super-admin users from the online count', async () => {
-    const directory = mock<AdminUserDirectory>({
-      lookupPlayers: async () => [],
-      lookupUsers: async (ids: readonly string[]) =>
-        ids.map((id) => ({
-          id,
-          email: `${id}@example.com`,
-          name: id,
-          createdAt: new Date(),
-          isActive: true,
-          role: id === 'admin' ? 'admin' : id === 'super-admin' ? 'super-admin' : 'player',
-        })),
-    });
-    const { svc } = makeService(directory);
+    const { svc } = makeService(
+      makeAccountReader([
+        makeAccount('player'),
+        makeAccount('admin', { role: 'admin', player: null }),
+        makeAccount('super-admin', { role: 'super-admin', player: null }),
+      ]),
+    );
     const playerUnsubscribe = svc.subscribeMessages('r1', () => undefined, 'player');
     const adminUnsubscribe = svc.subscribeMessages('r1', () => undefined, 'admin');
     const superAdminUnsubscribe = svc.subscribeMessages('r1', () => undefined, 'super-admin');
@@ -841,33 +829,8 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
 });
 
 describe('ChatService @mention detection (real PG)', () => {
-  function mentionDirectory(summaries: AdminPlayerSummary[]) {
-    return mock<AdminUserDirectory>({
-      lookupPlayers: async () => [],
-      getPlayerByUsername: vi
-        .fn()
-        .mockImplementation((username: string) =>
-          Promise.resolve(
-            summaries.find((s) => s.username.toLowerCase() === username.toLowerCase()) ?? null,
-          ),
-        ),
-    });
-  }
-
-  function summaryFor(userId: string, username: string): AdminPlayerSummary {
-    return {
-      playerId: randomUUID(),
-      userId,
-      username,
-      email: `${username}@example.com`,
-      kycStatus: null,
-      language: null,
-      avatarUrl: null,
-      createdAt: new Date(),
-      level: 1,
-      currency: 'USD',
-    };
-  }
+  const mentionDirectory = makeAccountReader;
+  const summaryFor = (userId: string, username: string) => makeAccount(userId, { username });
 
   it('resolves an @username in a room message and emits chat.user.mentioned', async () => {
     const bobId = randomUUID();
@@ -1347,26 +1310,9 @@ describe('ChatService block list (real PG)', () => {
   it('enriches each entry with the blocked users username, and falls back to null when unresolvable', async () => {
     const blockedId = randomUUID();
     const unresolvableId = randomUUID();
-    const directory = mock<AdminUserDirectory>({
-      lookupPlayers: async (userIds: readonly string[]) =>
-        userIds
-          .filter((id) => id === blockedId)
-          .map(
-            (userId): AdminPlayerSummary => ({
-              playerId: randomUUID(),
-              userId,
-              username: 'BlockedPlayer',
-              email: 'blocked@test.dev',
-              kycStatus: null,
-              language: null,
-              avatarUrl: null,
-              createdAt: new Date(),
-              level: 1,
-              currency: 'USD',
-            }),
-          ),
-    });
-    const { svc } = makeService(directory);
+    const { svc } = makeService(
+      makeAccountReader([makeAccount(blockedId, { username: 'BlockedPlayer' })]),
+    );
     const blockerId = randomUUID();
     await db.drizzle.db.insert(chatUserBlock).values([
       { blockerId, blockedId, createdAt: new Date('2026-01-01T00:00:00.000Z') },
@@ -1547,26 +1493,9 @@ describe('ChatService ignore list (real PG)', () => {
   it('enriches each entry with the ignored users username, and falls back to null when unresolvable', async () => {
     const ignoredId = randomUUID();
     const unresolvableId = randomUUID();
-    const directory = mock<AdminUserDirectory>({
-      lookupPlayers: async (userIds: readonly string[]) =>
-        userIds
-          .filter((id) => id === ignoredId)
-          .map(
-            (userId): AdminPlayerSummary => ({
-              playerId: randomUUID(),
-              userId,
-              username: 'IgnoredPlayer',
-              email: 'ignored@test.dev',
-              kycStatus: null,
-              language: null,
-              avatarUrl: null,
-              createdAt: new Date(),
-              level: 1,
-              currency: 'USD',
-            }),
-          ),
-    });
-    const { svc } = makeService(directory);
+    const { svc } = makeService(
+      makeAccountReader([makeAccount(ignoredId, { username: 'IgnoredPlayer' })]),
+    );
     const ignorerId = randomUUID();
     await db.drizzle.db.insert(chatUserIgnore).values([
       { ignorerId, ignoredId, createdAt: new Date('2026-01-01T00:00:00.000Z') },
@@ -3348,31 +3277,15 @@ describe('ChatService.verifyRoomAccess and listings (real PG)', () => {
     expect(viewer.map((r) => r.id).sort()).toEqual([publicRoom.id, mine.id].sort());
   });
 
-  it('lists room members oldest-first, resolving usernames via the directory', async () => {
+  it('lists room members oldest-first, resolving usernames through accounts', async () => {
     const moderatorId = randomUUID();
     const memberId = randomUUID();
-    const now = new Date();
-    function summary(userId: string, username: string): AdminPlayerSummary {
-      return {
-        playerId: randomUUID(),
-        userId,
-        username,
-        email: `${username}@example.test`,
-        kycStatus: null,
-        language: null,
-        avatarUrl: null,
-        createdAt: now,
-        level: 1,
-        currency: 'USD',
-      };
-    }
-    const directory = mock<AdminUserDirectory>({
-      lookupPlayers: async (ids: readonly string[]) =>
-        [summary(moderatorId, 'Moderator'), summary(memberId, 'SilentMember')].filter((s) =>
-          ids.includes(s.userId),
-        ),
-    });
-    const { svc } = makeService(directory);
+    const { svc } = makeService(
+      makeAccountReader([
+        makeAccount(moderatorId, { username: 'Moderator' }),
+        makeAccount(memberId, { username: 'SilentMember' }),
+      ]),
+    );
     const room = await svc.createPrivateRoom({
       userId: moderatorId,
       name: 'Room',
@@ -3391,9 +3304,8 @@ describe('ChatService.verifyRoomAccess and listings (real PG)', () => {
     expect(members[0]).toMatchObject({ role: 'owner' });
   });
 
-  it('returns username: null when the directory does not resolve a member', async () => {
-    const directory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] });
-    const { svc } = makeService(directory);
+  it('shows a member the identity service does not know as "Unknown player"', async () => {
+    const { svc } = makeService(makeAccountReader([]));
     const moderatorId = randomUUID();
     const room = await svc.createPrivateRoom({
       userId: moderatorId,
@@ -3403,7 +3315,9 @@ describe('ChatService.verifyRoomAccess and listings (real PG)', () => {
 
     const members = await svc.listRoomMembers({ roomId: room.id, viewerId: moderatorId });
 
-    expect(members).toEqual([expect.objectContaining({ userId: moderatorId, username: null })]);
+    expect(members).toEqual([
+      expect.objectContaining({ userId: moderatorId, username: UNKNOWN_PLAYER_USERNAME }),
+    ]);
   });
 });
 

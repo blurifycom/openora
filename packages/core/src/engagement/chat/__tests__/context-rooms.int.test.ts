@@ -19,7 +19,6 @@ import {
   SYSTEM_EVENT_PARAM_VALUE_MAX_LENGTH,
   SYSTEM_EVENT_PARAMS_MAX_BYTES,
   ChatContextSendDeniedError,
-  type AdminUserDirectory,
   type ChatContextSendPolicy,
   type RealtimeSignal,
 } from '@openora/core/contracts';
@@ -28,9 +27,8 @@ import {
   makeAuditWriter,
   makeChatContextSendPolicy,
   makeEventBus,
-  makeIdentityReader,
-  mock,
 } from '../../../testing/mock.js';
+import { DrizzleAccountReader } from '@openora/core/pam/server';
 import { migrate } from '../migrate.js';
 import { ChatMessageSchema, type ChatMessage } from '../contract/index.js';
 import { CHAT_MEMBER_JOINED_SIGNAL, CHAT_ROOM_CLOSED_SIGNAL } from '../contract/constants.js';
@@ -58,31 +56,24 @@ function makeServices(contextSendPolicy = makeChatContextSendPolicy()) {
   transports.push(transport);
   const events = makeEventBus();
   const audit = makeAuditWriter();
-  const identityReader = makeIdentityReader();
+  const accounts = new DrizzleAccountReader(db.drizzle);
   const moderation = new ChatModerationService(db.drizzle, transport, audit, events);
   const chat = new ChatService({
     drizzle: db.drizzle,
     events,
     transport,
-    directory: mock<AdminUserDirectory>({ lookupPlayers: async () => [] }),
     audit,
     moderation,
-    identityReader,
+    accounts,
     allowedAttachmentHosts: [],
     contextSendPolicy,
   });
-  const membership = new ChatRoomMembershipService(
-    db.drizzle,
-    events,
-    audit,
-    transport,
-    identityReader,
-  );
+  const membership = new ChatRoomMembershipService(db.drizzle, events, audit, transport, accounts);
   const context = new ChatContextRoomService({
     drizzle: db.drizzle,
     audit,
     events,
-    identityReader,
+    accounts,
     transport,
     systemWriter: chat,
   });

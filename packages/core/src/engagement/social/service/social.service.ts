@@ -11,13 +11,13 @@ import {
   serializeRow,
 } from '@openora/core/server';
 import {
+  playerIdsOf,
+  type AccountReader,
   type FriendshipDissolvedPayload,
   type IdentityReader,
   type Uuid,
 } from '@openora/core/contracts';
 import { chatUserBlock, chatUserIgnore } from '@openora/core/engagement/schema/chat';
-import { player } from '@openora/core/pam/schema/profile';
-import { user } from '@openora/core/pam/schema/identity';
 import { friendship } from '../schema/index.js';
 import {
   type Friendship,
@@ -117,11 +117,15 @@ function pairCondition(userA: Uuid, userB: Uuid) {
 }
 
 export class SocialService {
+  private readonly identityReader: Pick<IdentityReader, 'getPlayerIdByUserIdSafe'>;
+
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
-    private readonly identityReader: IdentityReader,
-  ) {}
+    private readonly accounts: AccountReader,
+  ) {
+    this.identityReader = playerIdsOf(accounts);
+  }
 
   private async pagedFriendships(where: SQL | undefined, page: number, limit: number) {
     const [rows, countRows] = await Promise.all([
@@ -142,20 +146,12 @@ export class SocialService {
     return { rows, total: Number(countRows[0]?.n ?? 0) };
   }
 
-  /** `player` rows widened with the identity-owned handle. */
-  private playersWithUsername(where: SQL) {
-    return this.drizzle.db
-      .select({
-        userId: player.userId,
-        username: user.username,
-        status: player.status,
-        lastSeenAt: player.lastSeenAt,
-        allowFriendRequests: player.allowFriendRequests,
-        showOnlineStatusToFriends: player.showOnlineStatusToFriends,
-      })
-      .from(player)
-      .innerJoin(user, eq(user.id, player.userId))
-      .where(where);
+  /** Player profiles widened with the identity-owned handle; an id with no profile is left out. */
+  private async playersWithUsername(userIds: readonly Uuid[]) {
+    const accounts = await this.accounts.getAccounts(userIds);
+    return [...accounts.values()].flatMap(({ userId, username, player }) =>
+      player ? [{ ...player, userId, username }] : [],
+    );
   }
 
   async sendFriendRequest(callerId: Uuid, targetUserId: Uuid): Promise<Friendship> {
@@ -164,9 +160,7 @@ export class SocialService {
     }
 
     // Batched: caller + target resolved in one query rather than two round trips.
-    const players = await this.playersWithUsername(
-      inArray(player.userId, [callerId, targetUserId]),
-    );
+    const players = await this.playersWithUsername([callerId, targetUserId]);
     const targetPlayer = players.find((p) => p.userId === targetUserId);
     const callerPlayer = players.find((p) => p.userId === callerId);
 
@@ -289,14 +283,7 @@ export class SocialService {
   async getRelationships(callerId: Uuid, targetUserIds: readonly Uuid[]): Promise<Relationship[]> {
     const uniqueTargetIds = [...new Set(targetUserIds)];
 
-    const players = await this.drizzle.db
-      .select({
-        userId: player.userId,
-        status: player.status,
-        allowFriendRequests: player.allowFriendRequests,
-      })
-      .from(player)
-      .where(inArray(player.userId, uniqueTargetIds));
+    const players = await this.playersWithUsername(uniqueTargetIds);
     const playerByUserId = new Map(players.map((p) => [p.userId, p]));
 
     const friendships = await this.drizzle.db
@@ -461,7 +448,7 @@ export class SocialService {
     const [players, ignores] =
       otherUserIds.length > 0
         ? await Promise.all([
-            this.playersWithUsername(inArray(player.userId, otherUserIds)),
+            this.playersWithUsername(otherUserIds),
             this.drizzle.db
               .select({ ignoredId: chatUserIgnore.ignoredId })
               .from(chatUserIgnore)
@@ -563,7 +550,7 @@ export class SocialService {
       throw new FriendRequestNotFoundError(friendshipId);
     }
 
-    const [callerPlayer] = await this.playersWithUsername(eq(player.userId, callerId));
+    const [callerPlayer] = await this.playersWithUsername([callerId]);
     if (!callerPlayer) {
       // Invariant: an authenticated caller always has a player row (see
       // sendFriendRequest's same guard).
@@ -651,9 +638,7 @@ export class SocialService {
     );
 
     const [players, mutualCounts, blocks] = await Promise.all([
-      counterpartIds.length > 0
-        ? this.playersWithUsername(inArray(player.userId, counterpartIds))
-        : Promise.resolve([]),
+      counterpartIds.length > 0 ? this.playersWithUsername(counterpartIds) : Promise.resolve([]),
       direction === 'incoming' && counterpartIds.length > 0
         ? this.getMutualFriendsCounts(callerId, counterpartIds)
         : Promise.resolve(new Map<string, number>()),

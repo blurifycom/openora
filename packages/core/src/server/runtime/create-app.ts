@@ -33,6 +33,7 @@ import {
   OUTBOX,
   ADMIN_PERMISSION_RESOLVER,
   ADMIN_SECURITY_POLICY,
+  ACCOUNT_READER,
   AUDIT_WRITER,
   IDENTITY_READER,
   MCP_KERNEL,
@@ -622,6 +623,7 @@ async function bootApp(
         // has() avoids throwing on an unbound token so boot works without the identity module.
         c.has(IDENTITY_READER) ? c.get(IDENTITY_READER) : undefined,
         c.has(ADMIN_SECURITY_POLICY) ? c.get(ADMIN_SECURITY_POLICY) : undefined,
+        c.has(ACCOUNT_READER) ? c.get(ACCOUNT_READER) : undefined,
       ),
   );
   if (config.igaming) {
