@@ -61,3 +61,5 @@ export type { EventStreamOptions, MultiplexedChannel, MultiplexedEvent } from '.
 
 // T0 PlatformConfig loader. See ADR-0013 Tier 0.
 export { loadPlatformConfig, resolvePlatformConfigPath } from './platform-config-loader.js';
+
+export { retryUntilDone } from './retry-until-done.js';

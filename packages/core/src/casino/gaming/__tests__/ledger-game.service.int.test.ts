@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { findOneOrThrow } from '@openora/core/server';
+import { findOneOrThrow, retryUntilDone } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -10,7 +10,6 @@ import {
   applyLedgerGames,
   backfillLedgerGamesAtBoot,
   emitLedgerGames,
-  retryUntilDone,
 } from '../service/ledger-game.service.js';
 import { backfillLedgerGames } from '../seed/index.js';
 
