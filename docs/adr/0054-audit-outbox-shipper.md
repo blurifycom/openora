@@ -75,8 +75,10 @@ table or operator in front of the ones the guards read.
   in favour of `enqueueAuditInTransaction` and removed in the next minor release.
 - A shipper runs in every process that loads the audit plugin. The advisory lock keeps them from
   racing; the cost is one idle query per replica per poll.
-- The chain still lives in the business database. Moving it to a database of its own is a follow-up:
-  the shipper is the only writer, so it is the only code that has to change.
+- The chain lives in the business database unless `AUDIT_DATABASE_URL` names one of its own. Then
+  the shipper appends there as a role that may only read and append, and deletes the batch from
+  the outbox once that append has committed; the main database's delete guard, which cannot see
+  the chain, trusts the shipper lock instead (`docs/standards/audit.md`).
 - `audit_log_seq_key` (unique) is built next to the plain `audit_log_seq_idx`, which stays until
   the next minor release. Dropped in the same migrate run, the chain head lookup
   (`ORDER BY seq DESC LIMIT 1`) would scan the whole table while the unique index builds; a later
