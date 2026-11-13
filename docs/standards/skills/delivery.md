@@ -26,7 +26,7 @@ Every run starts here, so a run that died midway resumes where it stopped: the t
 ### Delivery rules
 
 - Tracker writes, only under `/ship` and only on its own ticket, through the tracker `docs/agents/issue-tracker.md` points to: the plan and questions comments, a blocker comment, the PR link, and the transitions to in progress and in review. Nothing else, and never ticket content in this public repo.
-- Push the branch and open its PR without asking under `/ship` (not under `--ask`). Never push `dev` or `stage`. A force-push is `--force-with-lease` on the PR branch only, while every commit on it past `dev` is your own (`git log --format=%ae origin/dev..origin/<branch>`); someone else's commit there means merge instead. Merge only into a feature branch, never into `dev`, `stage`, `main` or any shared branch. Every comment you leave on the PR starts with `Agent:`.
+- Push the branch and open its PR without asking under `/ship` (not under `--ask`). Never push `dev` or `stage`. A force-push is `--force-with-lease` on the PR branch only, while every commit on it past `dev` is your own (`git log --format=%ae origin/dev..origin/<branch>`); someone else's commit there means merge instead. Merge only into a feature branch, never into `dev`, `stage`, `main` or any shared branch. Never comment, review, or reply on the PR: draft the text for a person to post (a hook blocks posting). Resolving a thread you addressed is allowed.
 - Draft Slack notices only, and only after delivery.
 - One PR per concern.
 - Inside its worktree, `/ship` does what the work needs without asking and says so in the PR: a new env var goes into the local `.env` with a dev value and into every place the repo declares one, a dependency the plan needs is added with its lockfile, and the worktree's own database is created, migrated, seeded and reset freely. A value only a person has gets a dev placeholder and a "Needs before deploy" line in the PR. What the plan's Access list names and its check proved may be read freely, never changed on that alone: before the first change outside the repo, `Asked:` with one line per change (account, resource, what changes) and stop. A person's yes in this session covers that exact list; anything else, or a new run, asks again. Each change goes in the PR under "Outside the repo" (where, what, how to undo it, the old value of anything it changed).
@@ -103,8 +103,8 @@ Use on "fix the comments", "check <reviewer>'s comments", or a PR or discussion 
 5. Prove the fixed flow end to end - request to database and back - before calling it fixed. Drive the real route (`call(router.x.y, input, { context })` or `bootTestApp`) against a real DB, then assert on the rows the request actually wrote and on the response read back off them. A service method called directly does not prove the route, the transaction boundary, or the audit row; leave the end-to-end assertion behind as a test.
 6. Run `pnpm verify`.
 7. Report the commit SHA and stop for explicit push confirmation (under `/ship` without `--ask`, push its branch).
-8. Reply per thread after the push, so the reply points at real code. Write replies in the user's voice. State what changed and the SHA, or state plainly why the comment does not apply.
-9. Report which comments were fixed, answered, and rejected.
+8. After the push, so each reply points at real code, draft one reply per thread in the user's voice and print them for the user to post: the thread, then what changed and the SHA, or plainly why the comment does not apply. Never post them. Resolve only the threads you fixed (`resolveReviewThread` via `gh api graphql`).
+9. Report which comments were fixed, drafted a reply, and rejected.
 
 ### Rules
 

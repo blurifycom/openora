@@ -2,9 +2,11 @@
 // Watches the MR or PR of a branch and prints one line, then exits, when ship has work on it:
 //   failed | conflicts | threads <ids> | green (only with --until-green) | merged | closed | error <message>
 // A thread waits for an answer until the account this runs as left a final reaction on its last comment (thumbsup
-// or question; eyes only means picked up and stays pending: the agent never writes on the MR) or that comment is its legacy "Agent:" reply; it is reported once it stayed the same for two checks, so a review with
-// ten comments is one line. Run it in the background:
-//   node watch-pr.mjs <branch> [--until-green]        WATCH_DEBUG=1 prints every check to stderr
+// or question; eyes only means picked up and stays pending: the agent never writes on the MR) or that comment is from that account (the person replying by hand); it is reported once it stayed the same for two checks, so a review with
+// ten comments is one line. --drafted <ids> skips threads whose last comment is one of those ids (replies
+// already drafted, waiting for the person to post them); a new comment changes the id and reports the thread
+// again. Run it in the background:
+//   node watch-pr.mjs <branch> [--until-green] [--drafted <id,id>]   WATCH_DEBUG=1 prints every check to stderr
 // --once checks one time, for a caller that polls on its own (a scheduler): threads are reported at
 // once, and `none` means nothing to do.
 import { execFileSync } from 'node:child_process';
@@ -13,7 +15,6 @@ const EVERY_MS = 120_000;
 // ponytail: a repo with no CI on the last commit reads green after this; a head-SHA match on checks if it matters
 const NO_CI_MS = 10 * 60_000;
 const MAX_ERRORS = 5;
-const AGENT_REPLY = 'Agent:';
 const FAILED = [
   'FAILURE',
   'ERROR',
@@ -27,23 +28,22 @@ const FAILED = [
 
 const [branch, ...flags] = process.argv.slice(2);
 if (!branch) {
-  console.error('usage: watch-pr.mjs <branch> [--until-green | --once]');
+  console.error('usage: watch-pr.mjs <branch> [--until-green | --once] [--drafted <id,id>]');
   process.exit(2);
 }
 const untilGreen = flags.includes('--until-green');
 const once = flags.includes('--once');
+const draftedAt = flags.indexOf('--drafted');
+const drafted = new Set(draftedAt === -1 ? [] : (flags[draftedAt + 1] ?? '').split(','));
 
 const run = (cmd, args) =>
   execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const json = (cmd, args) => JSON.parse(run(cmd, args));
 const unansweredIds = (lastComments, me) =>
   lastComments
-    .filter(
-      (comment) =>
-        !(comment.author === me && comment.body.trimStart().startsWith(AGENT_REPLY)) &&
-        !comment.reactors.includes(me),
-    )
+    .filter((comment) => comment.author !== me && !comment.reactors.includes(me))
     .map((comment) => String(comment.id))
+    .filter((id) => !drafted.has(id))
     .sort();
 
 const THREADS = `query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {

@@ -46,6 +46,15 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-comments.mjs\""
+          }
+        ]
+      },
+      {
         "matcher": "Task|Agent",
         "hooks": [
           {

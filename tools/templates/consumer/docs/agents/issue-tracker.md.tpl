@@ -38,5 +38,5 @@ Run the protocol above and distill: goal in one line, AC quoted as bullets, deci
 
 - Never comment on, transition, or edit a Jira issue or Confluence page unless the user asks for that exact write. Reading authorizes nothing.
 - The one standing exception: `/ship {{trackerKey}}-<n>` is the ask for its own writes on that ticket - the Plan, questions, blocker and MR-link comments, the test cases where the `test-plan` skill keeps them, and the transitions to In Progress and Code Review. Nothing else.
-- Review comments go through `review --post`, draft-and-confirm, using the commands in `docs/agents/forge.md`.
+- Review comments and thread replies are drafts the user posts by hand; never post them (see "Review comments" in `docs/agents/forge.md`).
 - Slack: draft only, never send.

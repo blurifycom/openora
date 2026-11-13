@@ -1,9 +1,15 @@
 {
   "permissions": {
-    "deny": ["Bash(git reset --hard *)", "Bash(npm *)", "Bash(yarn *)"]
+    "deny": [
+      "Bash(git reset --hard *)",
+      "Bash(npm *)",
+      "Bash(yarn *)"
+    ]
   },
   "enableAllProjectMcpServers": false,
-  "enabledMcpjsonServers": ["oss-dev"],
+  "enabledMcpjsonServers": [
+    "oss-dev"
+  ],
   "hooks": {
     "PreToolUse": [
       {
@@ -29,6 +35,10 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-stack.mjs\""
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-comments.mjs\""
           }
         ]
       },
