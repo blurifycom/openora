@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Watches one MR or PR (branch or number) and prints one line, then exits, when babysit has work on it:
-//   failed | conflicts | threads <ids> | green (with --until-green) | merged | closed | error <message>
+//   failed | conflicts | threads <ids> | green (with --until-green) | merged | closed | watched | error <message>
 // A thread waits for an answer until its last comment is from the account this runs as: agents never
 // post, so that is the person replying by hand. It is reported once it stayed the same for two checks,
 // so a review with ten comments is one line. A thread whose last-comment id is in
@@ -8,17 +8,16 @@
 // for the person to post it; a new comment changes the id and reports the thread again.
 // Run it in the background:
 //   node babysit.mjs <branch|number> [--until-green]     WATCH_DEBUG=1 prints every check to stderr
-// While it watches, <git common dir>/babysit/<number>.pid names its Claude session until the MR merges
-// or closes, so a scheduler skips the MR while that session lives.
+// It takes <git common dir>/babysit/<number>.pid, naming its Claude session until the MR merges or
+// closes; another live session holding it prints `watched`, so two sessions never fix the same MR.
 // --once checks one time, for a caller that polls on its own (a scheduler): threads are reported at
-// once, `green` only for a draft (mark it ready), `watched` when a live session holds the MR, and
-// `none` means nothing to do.
+// once, `green` only for a draft (mark it ready), and `none` means nothing to do.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 const EVERY_MS = 120_000;
-// ponytail: a repo with no CI on the last commit reads green after this; a head-SHA match on checks if it matters
+// ponytail: a repo with no CI on the last commit reads green after this (never under --once); a head-SHA match on checks if it matters
 const NO_CI_MS = 10 * 60_000;
 const MAX_ERRORS = 5;
 const FAILED = [
@@ -176,16 +175,20 @@ function gitlab() {
 
 // The lock names the Claude session this runs under, not this process: the watcher exits on every
 // line of work, and the session still owns the MR while it fixes it. The session ending frees it.
-// ponytail: a pid reused by an unrelated process after a crash reads as alive; the next reboot clears it
+// ponytail: a pid reused by an unrelated process after a crash reads as alive; the next reboot clears it.
+// Without a `claude` ancestor (another agent) the lock lives only as long as this process.
 const sessionPid = (() => {
-  let pid = process.ppid;
-  for (let depth = 0; depth < 10 && pid > 1; depth++) {
-    const [parent, ...command] = run('ps', ['-o', 'ppid=,comm=', '-p', String(pid)])
-      .trim()
-      .split(/\s+/);
-    if (basename(command.join(' ')) === 'claude') return pid;
-    pid = Number(parent);
-  }
+  try {
+    let pid = process.ppid;
+    for (let depth = 0; depth < 10 && pid > 1; depth++) {
+      const [parent, ...args] = run('ps', ['-o', 'ppid=,args=', '-p', String(pid)])
+        .trim()
+        .split(/\s+/);
+      // the native binary, or `node …/bin/claude` for an npm install
+      if (args.slice(0, 2).some((arg) => basename(arg) === 'claude')) return pid;
+      pid = Number(parent);
+    }
+  } catch {}
   return process.pid;
 })();
 const lockFile = (number) => join(commonDir, 'babysit', `${number}.pid`);
@@ -197,13 +200,16 @@ const alive = (pid) => {
     return error.code === 'EPERM';
   }
 };
-const heldByOther = (number) => {
+const holder = (number) => {
   try {
-    const pid = Number(readFileSync(lockFile(number), 'utf8'));
-    return pid !== sessionPid && alive(pid);
+    return Number(readFileSync(lockFile(number), 'utf8'));
   } catch {
-    return false;
+    return null;
   }
+};
+const heldByOther = (number) => {
+  const pid = holder(number);
+  return pid !== null && pid !== sessionPid && alive(pid);
 };
 let held = null;
 const hold = (number) => {
@@ -212,12 +218,17 @@ const hold = (number) => {
   writeFileSync(lockFile(number), String(sessionPid));
   held = number;
 };
-const release = () => held !== null && rmSync(lockFile(held), { force: true });
-process.on('exit', () => sessionPid === process.pid && release());
+const release = (number) =>
+  holder(number) === sessionPid && rmSync(lockFile(number), { force: true });
+process.on('exit', () => sessionPid === process.pid && held !== null && release(held));
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => process.exit(0));
 
+let current = null;
 const say = (line) => {
-  if (['merged', 'closed'].includes(line)) release();
+  const word = line.split(' ')[0];
+  if (['merged', 'closed'].includes(word)) release(current);
+  // --once holds only for work, so a quiet check leaves the MR free for another session
+  if (once && ['failed', 'conflicts', 'threads', 'green'].includes(word)) hold(current);
   console.log(line);
   process.exit(0);
 };
@@ -230,9 +241,10 @@ for (;;) {
     const now = status();
     errors = 0;
     if (process.env.WATCH_DEBUG) console.error(JSON.stringify(now));
-    if (!once) hold(now.number);
+    current = now.number;
     if (now.state !== 'open') say(now.state);
-    if (once && heldByOther(now.number)) say('watched');
+    if (heldByOther(now.number)) say('watched');
+    if (!once) hold(now.number);
     if (now.conflicts) say('conflicts');
     if (now.ci === 'failed') say('failed');
     const ids = now.unanswered.join(' ');

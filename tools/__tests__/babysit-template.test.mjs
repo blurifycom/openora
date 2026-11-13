@@ -2,7 +2,8 @@
 // drafted reply stays quiet until a new comment lands, and a live session holding the PR wins.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { once as onceEvent } from 'node:events';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -67,12 +68,14 @@ const threads = (lastCommentIds) =>
       },
     ]),
   );
-const once = () =>
-  execFileSync(process.execPath, [SCRIPT, '7', '--once'], {
+const babysit = (...flags) =>
+  execFileSync(process.execPath, [SCRIPT, '7', ...flags], {
     cwd: repo,
     encoding: 'utf8',
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
   }).trim();
+const once = () => babysit('--once');
+const watch = () => babysit('--until-green');
 
 test('a green PR has nothing to do, a green draft asks to be marked ready, red wins', () => {
   threads([]);
@@ -97,14 +100,20 @@ test('a thread with a drafted reply stays quiet until a new comment changes its 
   assert.equal(once(), 'threads c3');
 });
 
-test('a PR held by a live session reads watched; a dead holder does not count', () => {
-  pr({});
+test('a PR held by a live session reads watched, watching or not; a dead holder does not count', async () => {
+  pr({ statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'FAILURE' }] });
   threads([]);
+  const lock = join(repo, '.git/babysit/7.pid');
   const sleeper = spawn('sleep', ['30']);
   sleepers.push(sleeper);
   mkdirSync(join(repo, '.git/babysit'), { recursive: true });
-  writeFileSync(join(repo, '.git/babysit/7.pid'), String(sleeper.pid));
+  writeFileSync(lock, String(sleeper.pid));
   assert.equal(once(), 'watched');
-  writeFileSync(join(repo, '.git/babysit/7.pid'), '999999');
-  assert.equal(once(), 'none');
+  assert.equal(watch(), 'watched');
+  sleeper.kill();
+  await onceEvent(sleeper, 'exit');
+  assert.equal(once(), 'failed');
+  pr({ state: 'MERGED' });
+  assert.equal(once(), 'merged');
+  assert.equal(existsSync(lock), false);
 });
