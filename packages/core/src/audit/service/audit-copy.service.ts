@@ -10,6 +10,8 @@ import { drainAuditOutbox } from './audit-shipper.service.js';
 const BATCH_SIZE = 1000;
 const LOCK_TIMEOUT = '5s';
 const MOVED_TRIGGER = 'audit_log_moved';
+const CLOSED_TRIGGER = 'audit_log_closed';
+const DRAIN_SESSION_OPTIONS = '-c lock_timeout=5s -c statement_timeout=60s';
 const USAGE = 'usage: openora-audit-copy [--apply] [--fence | --drain-outbox]';
 
 // The chain lock of the database it runs in, the key appendAuditEntries locks under. In the
@@ -23,18 +25,24 @@ const COLUMNS_SQL = `SELECT a.attname || ' ' || format_type(a.atttypid, a.atttyp
  WHERE a.attrelid = to_regclass('public.audit_log') AND a.attnum > 0 AND NOT a.attisdropped
  ORDER BY a.attnum`;
 
-const DENY_MOVED_SQL = [
-  `CREATE OR REPLACE FUNCTION audit_log_deny_moved() RETURNS trigger
+const denyInsertSql = (trigger: string, message: string) => [
+  `CREATE OR REPLACE FUNCTION ${trigger}_deny() RETURNS trigger
      LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
      BEGIN
-       RAISE EXCEPTION 'audit_log moved to its own database: % is not permitted here', TG_OP;
+       RAISE EXCEPTION '${message}: % is not permitted here', TG_OP;
      END;
      $$`,
-  `CREATE OR REPLACE TRIGGER ${MOVED_TRIGGER}
+  `CREATE OR REPLACE TRIGGER ${trigger}
      BEFORE INSERT ON audit_log
-     FOR EACH STATEMENT EXECUTE FUNCTION audit_log_deny_moved()`,
-  `ALTER TABLE audit_log ENABLE ALWAYS TRIGGER ${MOVED_TRIGGER}`,
+     FOR EACH STATEMENT EXECUTE FUNCTION ${trigger}_deny()`,
+  `ALTER TABLE audit_log ENABLE ALWAYS TRIGGER ${trigger}`,
 ];
+
+const DENY_MOVED_SQL = denyInsertSql(MOVED_TRIGGER, 'audit_log moved to its own database');
+const DENY_CLOSED_SQL = denyInsertSql(
+  CLOSED_TRIGGER,
+  'audit_log was drained back into the main database',
+);
 
 type Head = { seq: string; hash: string };
 
@@ -44,6 +52,7 @@ export type CopyReport = { copied: number; applied: boolean };
 export type CopyHooks = {
   afterCopy?: () => Promise<void>;
   duringDrain?: () => Promise<void>;
+  afterFenceLift?: () => Promise<void>;
 };
 
 class CopyError extends Error {}
@@ -52,6 +61,7 @@ const say = (line: string) => process.stdout.write(`${line}\n`);
 
 function newClient(url: string): Client {
   const client = new Client({ connectionString: url, application_name: 'openora-audit-copy' });
+  // A killed connection is reported by the query that was running, which is what ends the run.
   client.on('error', () => undefined);
   return client;
 }
@@ -75,8 +85,12 @@ async function withClients<T>(
   }
 }
 
-async function withDb<T>(url: string, fn: (db: DrizzleDb) => Promise<T>): Promise<T> {
-  const pool = new Pool({ connectionString: url, max: 2 });
+async function withDb<T>(
+  url: string,
+  fn: (db: DrizzleDb) => Promise<T>,
+  options?: string,
+): Promise<T> {
+  const pool = new Pool({ connectionString: url, max: 2, options });
   pool.on('error', () => undefined);
   try {
     return await fn(drizzle(pool, { casing: 'snake_case' }));
@@ -179,6 +193,7 @@ async function copyBatches(source: Client, target: Client): Promise<number> {
     await target.query('BEGIN');
     let copied: number;
     try {
+      await target.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
       copied = await copyStep(source, target);
       await target.query('COMMIT');
     } catch (err) {
@@ -275,7 +290,9 @@ export async function copyChain({ adminUrl, auditUrl, apply }: CopyOptions): Pro
  * Copies the last of the chain under a lock that stops every writer of the main `audit_log`, and
  * in the same breath installs the trigger that refuses its inserts from then on. The main
  * transaction commits only once the target holds every row and its whole chain verifies, so a
- * failure leaves no fence and no gap. Run an unfenced copy first so this window is short. Needs a
+ * failure leaves no fence and no gap. The target's chain is verified in full before the lock is
+ * taken; under it only the rows after that point are, so run an unfenced copy first to keep the
+ * window short. Needs a
  * main database that split `migrate` has marked. Without `apply` it takes no lock and only counts.
  */
 export async function fenceChain(
@@ -293,6 +310,9 @@ export async function fenceChain(
       const { copied } = await transfer(main, target, { apply: false, complete: true });
       return { copied, applied: false };
     }
+    const before = await headOf(target);
+    const anchor = before && { fromSeq: Number(before.seq), fromHash: before.hash };
+    await verifyChainAt(targetUrl, undefined, 'target before lock');
     await main.query('BEGIN');
     try {
       await main.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
@@ -302,7 +322,7 @@ export async function fenceChain(
       await hooks.afterCopy?.();
       await snapshot('source', main);
       await snapshot('target', target);
-      await verifyChainAt(targetUrl, undefined, 'target');
+      await verifyChainAt(targetUrl, anchor, 'target');
       for (const statement of DENY_MOVED_SQL) {
         await main.query(statement);
       }
@@ -343,11 +363,41 @@ async function assertTargetInLegacy(legacy: Client, target: Client): Promise<voi
   }
 }
 
+async function assertShipperIdle(main: Client): Promise<void> {
+  await main.query('BEGIN');
+  try {
+    const { rows } = await main.query<{ locked: boolean }>(
+      `SELECT pg_try_advisory_xact_lock(hashtext('audit_shipper')) AS locked`,
+    );
+    if (!rows[0]?.locked) {
+      throw new CopyError('a shipper holds the shipper lock: stop every shipper and writer first');
+    }
+  } finally {
+    await main.query('ROLLBACK').catch(() => undefined);
+  }
+}
+
+async function liftFence(main: Client): Promise<void> {
+  await main.query('BEGIN');
+  try {
+    await main.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
+    await main.query(`DROP TRIGGER IF EXISTS ${MOVED_TRIGGER} ON audit_log`);
+    await main.query('COMMIT');
+  } catch (err) {
+    await main.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  }
+}
+
 /**
  * Rolls a fenced chain back: lifts the fence and ships the outbox into the main `audit_log`
- * again. Every refusal comes before the fence is touched. The audit database's `audit_log` stays
- * locked against appends from the first check to the end, so a live shipper cannot add a row the
- * main one would lack, and the check runs again after the drain. Every writer must be stopped.
+ * again. Every refusal (a split main without a shipper url, a row the main database lacks, a shipper
+ * holding its lock) comes before the fence is touched. The audit database's `audit_log` stays
+ * locked against appends from the first check to the commit, the check runs again after the drain,
+ * and the same transaction installs a trigger that refuses every later insert there, so a late
+ * append fails instead of forking the chain. Every writer must be stopped. A failure after the fence
+ * is lifted leaves the run safe to repeat. Lifting the audit database's trigger again is a
+ * deliberate owner step: `DROP TRIGGER audit_log_closed ON audit_log`.
  */
 export async function drainOutboxToLegacy(
   { adminUrl, auditUrl, shipperUrl }: DrainOptions,
@@ -360,11 +410,11 @@ export async function drainOutboxToLegacy(
     if (!outboxUrl) {
       throw new CopyError('the main database is split: set AUDIT_SHIPPER_DATABASE_URL');
     }
-    if (apply) {
-      await target.query('BEGIN');
-    }
+    let open = false;
     try {
       if (apply) {
+        await target.query('BEGIN');
+        open = true;
         await target.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
         await target.query(CHAIN_LOCK_SQL);
         await target.query('LOCK TABLE audit_log IN EXCLUSIVE MODE');
@@ -377,20 +427,30 @@ export async function drainOutboxToLegacy(
       if (!apply) {
         return { queued, applied: false };
       }
+      await assertShipperIdle(legacy);
       const head = await headOf(legacy);
       const anchor = head && { fromSeq: Number(head.seq), fromHash: head.hash };
       await hooks.duringDrain?.();
-      await legacy.query(`DROP TRIGGER IF EXISTS ${MOVED_TRIGGER} ON audit_log`);
-      await withDb(outboxUrl, (outbox) =>
-        withDb(adminUrl, (chain) => drainAuditOutbox(outbox, chain)),
+      await liftFence(legacy);
+      await hooks.afterFenceLift?.();
+      await withDb(
+        outboxUrl,
+        (outbox) =>
+          withDb(adminUrl, (chain) => drainAuditOutbox(outbox, chain), DRAIN_SESSION_OPTIONS),
+        DRAIN_SESSION_OPTIONS,
       );
       await assertTargetInLegacy(legacy, target);
+      for (const statement of DENY_CLOSED_SQL) {
+        await target.query(statement);
+      }
+      await target.query('COMMIT');
+      open = false;
       await snapshot('main', legacy);
       await snapshot('audit', target);
       await verifyChainAt(adminUrl, anchor, 'main');
       return { queued, applied: true };
     } finally {
-      if (apply) {
+      if (open) {
         await target.query('ROLLBACK').catch(() => undefined);
       }
     }
@@ -429,7 +489,10 @@ function parseFlags(argv: readonly string[]): Flags {
   }
 }
 
-/** The `openora-audit-copy` entry: returns the process exit code. URLs come from `env` only. */
+/**
+ * The `openora-audit-copy` entry: returns the process exit code. URLs come from `env` only.
+ * `hooks` is a seam for tests, not for callers.
+ */
 export async function main(
   argv: readonly string[],
   env: Record<string, string | undefined>,

@@ -74,12 +74,14 @@ and the head `seq:hash`, and the verdict of the chain check it ran.
 2. Run `openora-audit-copy` (dry run), then `openora-audit-copy --apply`, with the legacy writers still
    running. Rerun it to catch up; a failed run is simply rerun. Do this unfenced copy first so the fence
    in the next step holds its lock only for the last few rows.
-3. Archive the output of every `--apply` run and a `verifyChain` of both databases under the change
-   record, once before the fence and once after it (and again after a drain).
+3. Before the fence, run `verifyChain` on both databases; the fence step does not start until both are
+   valid. Archive the output of every `--apply` run and these verdicts under the change record, and
+   run `verifyChain` on both again after the fence and after a drain.
 4. `openora-audit-copy --fence` (dry run: counts the rows, takes no lock), then `--fence --apply`. It
    needs the main database marked split. It locks the main `audit_log` against writers (5 second lock
-   timeout: it gives up and changes nothing if a writer holds the chain, so rerun it), copies the last
-   rows, compares count and head, verifies the whole target chain, and only then installs an
+   timeout: it gives up and changes nothing if a writer holds the chain, so rerun it). Before taking the
+   lock it verifies the target's whole chain; under the lock it copies the last rows, compares count
+   and head, verifies only the rows after the point the first check reached, and only then installs an
    `ENABLE ALWAYS` trigger that refuses every insert into the main `audit_log` and commits. A failed
    verification rolls the main transaction back and installs no fence. Exit 0 means the target is
    complete, the fence is in and the chain is intact. The fence lasts: a legacy insert fails with
@@ -87,13 +89,18 @@ and the head `seq:hash`, and the verdict of the chain check it ran.
 5. Point the api and chat processes at `AUDIT_DATABASE_URL` and `AUDIT_SHIPPER_DATABASE_URL`. The shipper
    now drains the queued outbox rows into the audit database.
 
-To step back before step 5, stop every writer and run `openora-audit-copy --drain-outbox --apply`. It
-makes every refusal first (a split main needs `AUDIT_SHIPPER_DATABASE_URL`; each row of the audit
-database must be in the main one with the same hash), then holds a lock on the audit database's
-`audit_log` for the whole run so nothing can append there, lifts the fence, ships the outbox into the
-main `audit_log`, checks the audit database again and verifies the main chain. After the switch (rows
-exist only in the audit database) there is no way back: roll forward only. Nothing is ever dropped; the
-old rows stay in the main database until you remove them under a change ticket.
+To step back before step 5, stop every writer and every shipper and run `openora-audit-copy
+--drain-outbox --apply`. It makes every refusal first (a split main needs `AUDIT_SHIPPER_DATABASE_URL`;
+each row of the audit database must be in the main one with the same hash; no shipper may hold the
+shipper lock), then holds a lock on the audit database's `audit_log` while it lifts the fence, ships the
+outbox into the main `audit_log` and checks the audit database again. In the same transaction it commits
+a trigger on the audit database that refuses every later insert (`audit_log_closed`), so an append that
+waited behind the lock fails instead of forking the chain. Lock waits give up after 5 seconds and the
+shipping session is bounded too; a failure after the fence is lifted leaves the run safe to repeat. The
+audit database stays closed until its owner runs `DROP TRIGGER audit_log_closed ON audit_log` under a
+change ticket, which is the step before any new copy into it. After the switch (rows exist only in the
+audit database) there is no way back: roll forward only. Nothing is ever dropped; the old rows stay in
+the main database until you remove them under a change ticket.
 
 **Known gap.** The app role can still divert a pending entry by copying it into
 `audit_outbox_rejected` under its own outbox id and deleting it: the content is kept but never

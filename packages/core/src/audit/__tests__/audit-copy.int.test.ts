@@ -459,14 +459,14 @@ describe('audit-copy', () => {
     expect(await fenceState(f.main.url)).toBe('A');
   });
 
-  it('TC-17 the audit database takes no append while the drain runs', async () => {
+  it('TC-17 the audit database rejects an append that waited out the drain', async () => {
     const f = await fixture();
     await seed(f.main.drizzle.db, 3);
     await run(envOf(f), ['--fence', '--apply']);
     await queueOutbox(f, ['x']);
     let live: Promise<unknown> = Promise.resolve();
     const duringDrain = async () => {
-      live = seed(serviceFor(f.targetUrl), 1, 'live');
+      live = seed(serviceFor(f.targetUrl), 1, 'live').catch((err: unknown) => err);
       for (;;) {
         const waiting = await scalar(
           f.targetUrl,
@@ -480,9 +480,15 @@ describe('audit-copy', () => {
     };
     const result = await run(envOf(f), ['--drain-outbox', '--apply'], { duringDrain });
     expect(result.code).toBe(0);
-    await live;
+    expect(causeOf(await live)).toContain('drained back into the main database');
     expect(await count(f.main.url)).toBe('4');
-    expect(await count(f.targetUrl)).toBe('4');
+    expect(await count(f.targetUrl)).toBe('3');
+    expect(await scalar(f.targetUrl, `SELECT hash FROM audit_log WHERE seq = 3`)).toBe(
+      await scalar(f.main.url, `SELECT hash FROM audit_log WHERE seq = 3`),
+    );
+    expect(await scalar(f.main.url, `SELECT count(*)::text FROM audit_log WHERE seq = 4`)).toBe(
+      '1',
+    );
   }, 60_000);
 
   it('TC-18 the fence refuses a main database that is not split', async () => {
@@ -494,7 +500,7 @@ describe('audit-copy', () => {
     expect(await fenceState(f.main.url)).toBeUndefined();
   });
 
-  it('TC-19 the fence dry run counts without a lock or a trigger', async () => {
+  it('TC-19 the fence dry run only counts and installs nothing', async () => {
     const f = await fixture();
     await seed(f.main.drizzle.db, 3);
     const result = await run(envOf(f), ['--fence']);
@@ -506,10 +512,11 @@ describe('audit-copy', () => {
 
   it('TC-20 a bad flag prints the usage and never the argument', async () => {
     const f = await fixture({ split: false });
-    const result = await run(envOf(f), ['--postgres://user:hunter2@host/db']);
+    const result = await run(envOf(f), ['--postgres://u:hunter2@h/d']);
     expect(result.code).toBe(1);
     expect(result.err).toContain('usage: openora-audit-copy');
-    expect(result.err).not.toContain('hunter2');
+    expect(result.err).toBe('usage: openora-audit-copy [--apply] [--fence | --drain-outbox]\n');
+    expect(result.err + result.out).not.toContain('hunter2');
   });
 
   it('TC-21 a killed connection ends the run with exit 1', async () => {
@@ -523,6 +530,7 @@ describe('audit-copy', () => {
     };
     const result = await run(envOf(f), ['--fence', '--apply'], { afterCopy });
     expect(result.code).toBe(1);
+    expect(result.err).toMatch(/terminat|connection/i);
     expect(await fenceState(f.main.url)).toBeUndefined();
   });
 
@@ -538,5 +546,73 @@ describe('audit-copy', () => {
       `target: rows=3 head=${sourceHead?.['seq']}:${sourceHead?.['hash']}`,
     );
     expect(result.out).toContain('verify target: valid');
+  });
+
+  it('TC-23 the fence verifies the target before the lock and only the new rows under it', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 10);
+    await run(envOf(f), ['--apply']);
+    await seed(f.main.drizzle.db, 5, 'late');
+    const result = await run(envOf(f), ['--fence', '--apply']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('verify target before lock: valid (full chain)');
+    expect(result.out).toContain('verify target: valid (from seq 10)');
+  });
+
+  it('TC-24 a copy beside a running drain fails on the lock timeout', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await run(envOf(f), ['--fence', '--apply']);
+    let beside = -1;
+    const duringDrain = async () => {
+      beside = await runCopy(['--apply'], envOf(f));
+    };
+    const result = await run(envOf(f), ['--drain-outbox', '--apply'], { duringDrain });
+    expect(result.code).toBe(0);
+    expect(beside).toBe(1);
+    expect(result.err).toContain('lock timeout');
+  }, 60_000);
+
+  it('TC-25 a drain that fails after the fence is lifted reruns cleanly', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await run(envOf(f), ['--fence', '--apply']);
+    await queueOutbox(f, ['y', 'z']);
+    const failed = await run(envOf(f), ['--drain-outbox', '--apply'], {
+      afterFenceLift: () => Promise.reject(new Error('crash after the lift')),
+    });
+    expect(failed.code).toBe(1);
+    expect(await fenceState(f.main.url)).toBeUndefined();
+    expect(
+      await scalar(
+        f.targetUrl,
+        `SELECT count(*)::text FROM pg_trigger WHERE tgname = 'audit_log_closed'`,
+      ),
+    ).toBe('0');
+    const rerun = await run(envOf(f), ['--drain-outbox', '--apply']);
+    expect(rerun.code).toBe(0);
+    expect(await count(f.main.url)).toBe('5');
+    expect(await scalar(f.main.url, 'SELECT count(*)::text FROM audit_outbox')).toBe('0');
+    expect(await isValid(f.main.url)).toBe(true);
+  }, 60_000);
+
+  it('TC-26 a drain refuses while a shipper holds its lock and keeps the fence', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await run(envOf(f), ['--fence', '--apply']);
+    const holder = new Pool({ connectionString: f.main.url, max: 1 });
+    const client = await holder.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext('audit_shipper'))`);
+      const result = await run(envOf(f), ['--drain-outbox', '--apply']);
+      expect(result.code).toBe(1);
+      expect(result.err).toContain('shipper holds the shipper lock');
+      expect(await fenceState(f.main.url)).toBe('A');
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+      await holder.end();
+    }
   });
 });
