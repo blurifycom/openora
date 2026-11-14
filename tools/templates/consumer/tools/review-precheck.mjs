@@ -250,6 +250,39 @@ if (bannedClassRules.length === 0) {
   report('banned-class', 'INFO', '-', 'not configured (reviewPrecheck.bannedClasses)');
 }
 
+// ---- rollout facts -------------------------------------------------------------------------
+
+const MIGRATION_SQL = /(^|\/)migrations\/[^/]+\.sql$/;
+const DESTRUCTIVE_SQL =
+  /\bDROP\s+TABLE\b|\bDROP\s+COLUMN\b|\bRENAME\s+(TO|COLUMN)\b|\bALTER\s+COLUMN\s+\S+\s+(SET\s+DATA\s+)?TYPE\b|\bSET\s+NOT\s+NULL\b/i;
+const ADD_COLUMN_NOT_NULL = /\bADD\s+COLUMN\b(?=.*\bNOT\s+NULL\b)(?!.*\bDEFAULT\b)/i;
+const reviewableSet = new Set(reviewable);
+for (const { file, line, text } of diff.added) {
+  if (
+    reviewableSet.has(file) &&
+    MIGRATION_SQL.test(file) &&
+    (DESTRUCTIVE_SQL.test(text) || ADD_COLUMN_NOT_NULL.test(text))
+  ) {
+    report(
+      'destructive migration',
+      'WARN',
+      `${file}:${line}`,
+      'breaks instances still on the previous release; expand first, contract in a later release',
+    );
+  }
+}
+
+const ENV_READ = /\b(?:process\.env\.|import\.meta\.env\.|process\.env\[\s*['"])([A-Za-z_]\w*)/g;
+const newEnv = new Map();
+const envChecked = new Set();
+for (const { file, line, text } of added) {
+  for (const [, name] of text.matchAll(ENV_READ)) {
+    if (envChecked.has(name)) continue;
+    envChecked.add(name);
+    if (!gitOk('grep', '-q', '-w', name, args.base, '--')) newEnv.set(name, `${file}:${line}`);
+  }
+}
+
 // ---- i18n ----------------------------------------------------------------------------------
 
 const DEFAULT_LOCALE = config.defaultLocale ?? 'en';
@@ -529,3 +562,6 @@ for (const [check, rows] of findings) {
     console.log(`PRECHECK: [INFO] - ${check} - +${rows.length - MAX_LINES_PER_CHECK} more`);
   }
 }
+[...newEnv].slice(0, MAX_LINES_PER_CHECK).forEach(([name, location]) => {
+  console.log(`NEW-ENV: ${name} - ${location}`);
+});

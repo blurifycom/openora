@@ -243,3 +243,42 @@ test('middleware, api folders, workflows and plain .mjs logic are not low risk',
     );
   }
 });
+
+test('destructive migration statements are flagged, a defaulted NOT NULL column is not', () => {
+  git('checkout', '-q', '-b', 'mig-base', 'dev');
+  git('checkout', '-q', '-b', 'mig-added');
+  const file = 'apps/api/drizzle/migrations/0001_x.sql';
+  commit('migrate', {
+    [file]: [
+      'ALTER TABLE t DROP COLUMN c;',
+      'ALTER TABLE t ADD COLUMN d int NOT NULL;',
+      'ALTER TABLE t ADD COLUMN e int NOT NULL DEFAULT 0;',
+    ].join('\n'),
+  });
+  const out = precheck('--base', 'mig-base', '--head', 'mig-added');
+  assert.ok(out.some((row) => row.startsWith(`REVIEWABLE: ${file} `)));
+  const hits = out.filter((row) => row.includes('destructive migration'));
+  assert.deepEqual(
+    hits.map((row) => row.match(/0001_x\.sql:(\d+)/)[1]),
+    ['1', '2'],
+    out.join('\n'),
+  );
+});
+
+test('NEW-ENV lists only env vars absent at the base ref, once each', () => {
+  git('checkout', '-q', '-b', 'env-base', 'dev');
+  commit('old env', { 'apps/api/src/old.ts': 'export const o = process.env.OLD_ONE;\n' });
+  git('checkout', '-q', '-b', 'env-added');
+  commit('new env', {
+    'apps/api/src/cfg.ts': [
+      "export const a = process.env['NEW_ONE'];",
+      'export const b = process.env.OLD_ONE;',
+      'export const c = process.env.NEW_ONE;',
+    ].join('\n'),
+  });
+  const out = precheck('--base', 'env-base', '--head', 'env-added');
+  assert.deepEqual(
+    out.filter((row) => row.startsWith('NEW-ENV:')),
+    ['NEW-ENV: NEW_ONE - apps/api/src/cfg.ts:1'],
+  );
+});

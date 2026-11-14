@@ -47,6 +47,7 @@ Checklist - tick as you go:
 - `SKIPPED:` - lockfiles, locale data, tests, generated files. No reviewer opens them; the precheck's i18n facts and CI's frozen-lockfile install stand in. List them in the report so nothing is silently dropped.
 - `PRECHECK:` - mechanical hits on added lines (casts, widened maps, hardcoded limits, hand memo, banned classes, locale parity, missing keys). Reviewers judge these; they never re-derive them.
 - `DOMAIN:` / `DOMAIN-HIT:` - security and compliance keyword hits; they pick each reviewer's mode in §5.
+- `NEW-ENV:` - env vars read on added lines and absent at the base ref. The orchestrator checks each against the deploy env contract and docs for the `rollout` dimension.
 
 No `REVIEWABLE:` and no `SKIPPED:` lines: fall back to `git status -s`; if still empty, ask (under `--ci`: APPROVED, zero findings).
 
@@ -139,7 +140,7 @@ Applies to every change that crosses a layer: an oRPC route, a service, a Drizzl
 - A changed contract or shared type: every consumer, including the UI apps and the shared UI package.
 - A changed event or job payload: every handler, and that it accepts the old and the new shape during rollout.
 
-**Check the migration.** For each changed `.sql` under `drizzle/migrations/`, read the SQL. A `DROP`, a `RENAME`, or a column type change breaks the instances still running the previous release - `[BLOCK]` in the same MR as the reader change; it ships in a later release, after every reader of the old shape is deployed. A new `NOT NULL` column without a default fails on existing rows - `[BLOCK]`. Expand first, contract later. A hand-edited migration is a `[BLOCK]` (`docs/standards/database.md`).
+**Check the migration.** For each changed `.sql` under `drizzle/migrations/`, read the SQL. The precheck's `destructive migration` rows are the starting list; the SQL is still read. A `DROP`, a `RENAME`, or a column type change breaks the instances still running the previous release - `[BLOCK]` in the same MR as the reader change; it ships in a later release, after every reader of the old shape is deployed. A new `NOT NULL` column without a default fails on existing rows - `[BLOCK]`. Expand first, contract later. A hand-edited migration is a `[BLOCK]` (`docs/standards/database.md`).
 
 **Prove with tests.** The orchestrator may run the tests of a touched module, never the full gate: `pnpm vitest related <path>` for each caller in the blast radius, plus any existing `apps/e2e` spec that already drives the changed route. A failing test is a `[BLOCK]` with the test name as evidence; a caller with no test is `[INFO]`, not a request to write one. Tests that could not run are reported as `TESTS: not run - <reason>`, never skipped silently, and forbid APPROVED on `high` or `critical` risk.
 
