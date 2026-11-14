@@ -148,7 +148,7 @@ export class OutboxRelay {
           or(isNull(eventOutbox.claimedAt), lt(eventOutbox.claimedAt, leaseExpiredBefore)),
         ),
       )
-      .orderBy(asc(eventOutbox.occurredAt))
+      .orderBy(asc(eventOutbox.occurredAt), sql`${eventOutbox.seq} asc nulls first`)
       .limit(this.opts.batchSize ?? 100)
       .for('update', { skipLocked: true });
     const rows = await this.db
@@ -156,7 +156,9 @@ export class OutboxRelay {
       .set({ claimedAt: sql`now()`, attempts: sql`${eventOutbox.attempts} + 1` })
       .where(inArray(eventOutbox.eventId, claimable))
       .returning();
-    return rows.sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
+    return rows.sort(
+      (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime() || (a.seq ?? -1) - (b.seq ?? -1),
+    );
   }
 
   private async publishRow(row: EventOutboxRow): Promise<boolean> {

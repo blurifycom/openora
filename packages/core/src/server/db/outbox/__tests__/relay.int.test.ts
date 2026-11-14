@@ -78,6 +78,49 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
     expect(rows.every((r) => r.publishedAt !== null)).toBe(true);
   });
 
+  async function publishedOrder() {
+    const published: string[] = [];
+    const relay = new OutboxRelay(
+      db.drizzle.db,
+      brokerThat((envelope) => published.push(envelope.eventId)),
+    );
+    await relay.drainOnce();
+    return published;
+  }
+
+  it('publishes rows sharing one occurredAt by seq, not by insert or id order', async () => {
+    const occurredAt = new Date('2026-01-01T00:00:00.000Z');
+    const bySeq: string[] = [];
+    for (const seq of [5, 4, 3, 2, 1]) {
+      bySeq[seq - 1] = (await seedRow({ occurredAt, seq })).eventId;
+    }
+
+    expect(await publishedOrder()).toEqual(bySeq);
+  });
+
+  it('publishes a row written before seq existed ahead of the numbered rows of its millisecond', async () => {
+    const occurredAt = new Date('2026-01-01T00:00:00.000Z');
+    const second = await seedRow({ occurredAt, seq: 2 });
+    const legacy = await seedRow({ occurredAt, seq: null });
+    const first = await seedRow({ occurredAt, seq: 1 });
+    const later = await seedRow({ occurredAt: new Date('2026-01-01T00:00:01.000Z'), seq: null });
+
+    expect(await publishedOrder()).toEqual([
+      legacy.eventId,
+      first.eventId,
+      second.eventId,
+      later.eventId,
+    ]);
+  });
+
+  it('numbers rows in insert order when the writer sets no seq', async () => {
+    const occurredAt = new Date('2026-01-01T00:00:00.000Z');
+    const first = await seedRow({ occurredAt });
+    const second = await seedRow({ occurredAt });
+
+    expect(second.seq).toBeGreaterThan(first.seq ?? Number.POSITIVE_INFINITY);
+  });
+
   it('is a no-op when nothing is pending', async () => {
     await seedRow({ publishedAt: new Date() });
     const broker = brokerThat();
