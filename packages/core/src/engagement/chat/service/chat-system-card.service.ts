@@ -41,8 +41,8 @@ export class ChatSystemCardService {
    * Publishes the card to realtime clients once it is stored, so a refused, stale or dropped
    * card never reaches them, and a redelivery that changes nothing publishes nothing.
    */
-  async apply(card: SystemCardUpsert): Promise<SystemCardOutcome> {
-    const { outcome, record } = await this.write(card);
+  async apply(card: SystemCardUpsert, postedAt?: Date): Promise<SystemCardOutcome> {
+    const { outcome, record } = await this.write(card, postedAt);
     if (record) {
       publishChatEvent(
         this.transport,
@@ -55,6 +55,7 @@ export class ChatSystemCardService {
 
   private write(
     card: SystemCardUpsert,
+    postedAt: Date | undefined,
   ): Promise<{ outcome: SystemCardOutcome; record?: typeof chatMessage.$inferSelect }> {
     return this.drizzle.db.transaction(async (tx) => {
       let roomId = card.roomId;
@@ -81,6 +82,7 @@ export class ChatSystemCardService {
           type: 'system',
           metadata: card.metadata,
           version: card.version,
+          createdAt: postedAt,
         })
         .onConflictDoNothing({ target: chatMessage.id })
         .returning();

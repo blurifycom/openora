@@ -1,6 +1,6 @@
 import * as z from 'zod';
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger, mapErrors } from '@openora/core/server';
-import type { CoreTokenCatalog, DrizzleTx, Plugin } from '@openora/core/server';
+import type { CoreTokenCatalog, DrizzleService, DrizzleTx, Plugin } from '@openora/core/server';
 import type { ChatContextRooms, JobQueueAdapter } from '@openora/core/contracts';
 import {
   JOB_QUEUE,
@@ -241,15 +241,20 @@ export default {
     });
 
     let contextRoomsRef: ChatContextRooms | null = null;
+    let drizzleRef: DrizzleService | null = null;
 
-    // Room writes from a service that does not run chat (OutboxChatContextRoomCommands). One for
-    // a ref with no room yet throws, so it is redelivered until its ensure lands.
-    ctx.events.on('chat.context_room.command_issued', async (payload) => {
-      if (!contextRoomsRef || !systemCardRef) {
+    // Room writes from a service that does not run chat (OutboxChatContextRoomCommands). One that
+    // cannot apply throws, so it is redelivered, then dead-lettered.
+    ctx.events.on('chat.context_room.command_issued', async (payload, envelope) => {
+      if (!contextRoomsRef || !systemCardRef || !drizzleRef) {
         throw new Error('chat context room command: service not constructed yet');
       }
       const command = domainEventSchemas['chat.context_room.command_issued'].parse(payload);
-      await applyContextRoomCommand(command, contextRoomsRef, systemCardRef);
+      await applyContextRoomCommand(
+        command,
+        { drizzle: drizzleRef, rooms: contextRoomsRef, cards: systemCardRef },
+        envelope && new Date(envelope.occurredAt),
+      );
     });
 
     ctx.events.on('player.account.closed', async (payload) => {
@@ -391,6 +396,7 @@ export default {
       jobQueueRef = c.get(JOB_QUEUE);
       systemCardRef = new ChatSystemCardService(c.get(DRIZZLE), c.get(CHAT_REALTIME_TRANSPORT));
       contextRoomsRef = c.get(CHAT_CONTEXT_ROOMS);
+      drizzleRef = c.get(DRIZZLE);
       void jobQueueRef
         .schedule(
           CHAT_ROOM_PURGE_SCAN_QUEUE,

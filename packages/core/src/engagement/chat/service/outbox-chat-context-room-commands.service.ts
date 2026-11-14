@@ -1,7 +1,6 @@
-import type { ChatContextRoomCommands, DomainEventPayload } from '@openora/core/contracts';
+import type { ChatContextRoomCommands } from '@openora/core/contracts';
 import type { DrizzleService, EventBus } from '@openora/core/server';
-
-type ContextRoomCommand = DomainEventPayload<'chat.context_room.command_issued'>;
+import type { ContextRoomCommand } from './chat-context-room-command.service.js';
 
 const NOTHING_AFTER_COMMIT = { afterCommit: async () => {} };
 
@@ -9,7 +8,8 @@ const NOTHING_AFTER_COMMIT = { afterCommit: async () => {} };
  * `CHAT_CONTEXT_ROOM_COMMANDS` for a service that does not run chat: each write is a
  * `chat.context_room.command_issued` event on the caller's transaction, so the room changes if
  * and only if the caller's own write committed. Without a `tx` it writes the event in a
- * transaction of its own. Chat publishes once it has applied the command.
+ * transaction of its own. Chat publishes once it has applied the command; commands are not
+ * applied in issue order (see `ChatContextRoomCommands`).
  */
 export class OutboxChatContextRoomCommands implements ChatContextRoomCommands {
   constructor(
@@ -25,14 +25,6 @@ export class OutboxChatContextRoomCommands implements ChatContextRoomCommands {
     memberIds,
   }: Parameters<ChatContextRoomCommands['ensureRoom']>[0]) {
     return this.issue(tx, { op: 'ensure', ref, roomId, name, memberIds });
-  }
-
-  addMember({ tx, ref, userId }: Parameters<ChatContextRoomCommands['addMember']>[0]) {
-    return this.issue(tx, { op: 'add_member', ref, userId });
-  }
-
-  removeMember({ tx, ref, userId }: Parameters<ChatContextRoomCommands['removeMember']>[0]) {
-    return this.issue(tx, { op: 'remove_member', ref, userId });
   }
 
   close({ tx, ref }: Parameters<ChatContextRoomCommands['close']>[0]) {

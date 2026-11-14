@@ -23,6 +23,7 @@ import {
   ADMIN_USER_DIRECTORY,
   AUDIT_WRITER,
   CHAT_CONTEXT_ROOM_COMMANDS,
+  CHAT_CONTEXT_ROOMS,
   CHAT_SYSTEM_AUTHOR_ID,
   IDENTITY_READER,
   JOB_QUEUE,
@@ -49,9 +50,10 @@ import { ChatService } from '../service/chat.service.js';
 import { ChatModerationService } from '../service/chat-moderation.service.js';
 import { OutboxChatContextRoomCommands } from '../service/outbox-chat-context-room-commands.service.js';
 import {
+  ChatContextRoomIdConflictError,
   ChatContextRoomNotFoundError,
   ChatPlayerMutedError,
-  ChatRoomNotMemberError,
+  ChatSystemCardRefusedError,
 } from '../service/errors/chat-moderation.errors.js';
 import chatPlugin from '../plugin.js';
 
@@ -78,22 +80,34 @@ function manualBroker() {
       await handler(envelope);
     }
   };
+  // Like the broker: what throws is redelivered after the rest. The relay orders by occurredAt
+  // alone, so two commands of one transaction can come out in either order.
+  const deliverAll = async (envelopes: EventEnvelope[]) => {
+    const failed: EventEnvelope[] = [];
+    for (const envelope of envelopes) {
+      await deliver(envelope).catch(() => failed.push(envelope));
+    }
+    for (const envelope of failed) {
+      await deliver(envelope);
+    }
+  };
   // The commands relayed since the last call, in outbox order.
   const takeCommands = () => published.splice(0).filter((envelope) => envelope.topic === TOPIC);
-  return { broker, deliver, takeCommands };
+  return { broker, deliver, deliverAll, takeCommands };
 }
 
 // The chat plugin as createApp wires it: registered, its router factory run (it builds the
 // services its handlers use), and its command handler subscribed under its own consumer id.
 function setup() {
-  const { broker, deliver, takeCommands } = manualBroker();
+  const { broker, deliver, deliverAll, takeCommands } = manualBroker();
   const bus = createEventBus({
     broker,
     outbox: new DrizzleOutboxWriter(),
     processedEvents: new DrizzleProcessedEventLog(db.drizzle.db),
   });
   const publish = vi.fn(async () => undefined);
-  const transport = mock<RealtimeTransport>({ publish, signal: vi.fn(async () => undefined) });
+  const signal = vi.fn(async () => undefined);
+  const transport = mock<RealtimeTransport>({ publish, signal });
   const audit = makeAuditWriter();
   const container = new Container<CoreTokenCatalog>();
   container.register(DRIZZLE, () => db.drizzle);
@@ -127,23 +141,22 @@ function setup() {
     contextSendPolicy: makeChatContextSendPolicy(),
   });
   const relay = new OutboxRelay(db.drizzle.db, broker);
-  // Relays the committed commands and delivers each once, in outbox order.
   const relayAndApply = async () => {
     await relay.drainOnce();
-    for (const envelope of takeCommands()) {
-      await deliver(envelope);
-    }
+    await deliverAll(takeCommands());
   };
   return {
     commands: new OutboxChatContextRoomCommands(bus, db.drizzle),
     local: container.get(CHAT_CONTEXT_ROOM_COMMANDS),
-    handler: subscription.handler,
+    rooms: container.get(CHAT_CONTEXT_ROOMS),
     relay,
     deliver,
+    deliverAll,
     takeCommands,
     relayAndApply,
     chat,
     publish,
+    signal,
   };
 }
 
@@ -238,7 +251,7 @@ describe('context room commands through the outbox (real PG)', () => {
   });
 
   it('keeps one room and one message when a command is delivered twice or issued twice', async () => {
-    const { commands, relayAndApply, deliver, relay, takeCommands, publish } = setup();
+    const { commands, relayAndApply, deliverAll, relay, takeCommands, publish } = setup();
     const ref = `match:${randomUUID()}`;
     const roomId = randomUUID();
     const messageId = randomUUID();
@@ -246,16 +259,13 @@ describe('context room commands through the outbox (real PG)', () => {
     const issue = () =>
       db.drizzle.db.transaction(async (tx) => {
         await commands.ensureRoom({ ref, roomId, name: 'Match', memberIds: [a], tx });
-        await commands.addMember({ ref, userId: a, tx });
         await commands.postSystemEvent({ ref, messageId, code: 'match.started', tx });
       });
 
     await issue();
     await relay.drainOnce();
     const envelopes = takeCommands();
-    for (const envelope of [...envelopes, ...envelopes]) {
-      await deliver(envelope);
-    }
+    await deliverAll([...envelopes, ...envelopes]);
     await issue();
     await relayAndApply();
 
@@ -265,34 +275,36 @@ describe('context room commands through the outbox (real PG)', () => {
     expect(publish).toHaveBeenCalledTimes(1);
   });
 
-  it('converges when a post and a member command arrive before the ensure', async () => {
+  it('converges when posts arrive before the ensure, in the order they were issued', async () => {
     const { commands, deliver, relay, takeCommands } = setup();
     const ref = `match:${randomUUID()}`;
     const roomId = randomUUID();
-    const messageId = randomUUID();
-    const [a, b] = [randomUUID(), randomUUID()];
-    await db.drizzle.db.transaction(async (tx) => {
-      await commands.postSystemEvent({ ref, messageId, code: 'match.started', tx });
-      await commands.addMember({ ref, userId: b, tx });
-    });
+    const [first, second] = [randomUUID(), randomUUID()];
+    const a = randomUUID();
+    await commands.postSystemEvent({ ref, messageId: first, code: 'match.started' });
     await commands.ensureRoom({ ref, roomId, name: 'Match', memberIds: [a] });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await commands.postSystemEvent({ ref, messageId: second, code: 'match.settled' });
     await relay.drainOnce();
-    const [post, add, ensure] = takeCommands();
+    const [firstPost, ensure, secondPost] = takeCommands();
 
-    await expect(deliver(post!)).rejects.toBeInstanceOf(ChatContextRoomNotFoundError);
-    await expect(deliver(add!)).rejects.toBeInstanceOf(ChatContextRoomNotFoundError);
+    await expect(deliver(firstPost!)).rejects.toBeInstanceOf(ChatContextRoomNotFoundError);
     await deliver(ensure!);
-    // The broker's redelivery of the two that threw.
-    await deliver(post!);
-    await deliver(add!);
+    await deliver(secondPost!);
+    // The broker's redelivery of the one that threw.
+    await deliver(firstPost!);
 
-    expect(await memberIds(roomId)).toEqual([a, b].sort());
-    expect(await messagesWithId(messageId)).toEqual([expect.objectContaining({ roomId })]);
+    expect(await memberIds(roomId)).toEqual([a]);
+    const [firstCard] = await messagesWithId(first);
+    const [secondCard] = await messagesWithId(second);
+    expect(firstCard).toMatchObject({ roomId, createdAt: new Date(firstPost!.occurredAt) });
+    expect(secondCard).toMatchObject({ roomId, createdAt: new Date(secondPost!.occurredAt) });
+    expect(firstCard!.createdAt.getTime()).toBeLessThan(secondCard!.createdAt.getTime());
     expect(await db.drizzle.db.select().from(processedEvents)).toHaveLength(3);
   });
 
-  it('keeps a closed room closed: system posts land, member posts and a re-ensure do not reopen it', async () => {
-    const { commands, relayAndApply, chat } = setup();
+  it('keeps a closed room closed: system posts land, a member post is refused, a re-ensure adds nobody', async () => {
+    const { commands, relayAndApply, chat, signal } = setup();
     const ref = `match:${randomUUID()}`;
     const roomId = randomUUID();
     const messageId = randomUUID();
@@ -303,36 +315,103 @@ describe('context room commands through the outbox (real PG)', () => {
 
     await commands.close({ ref });
     await commands.postSystemEvent({ ref, messageId, code: 'match.settled' });
-    await commands.ensureRoom({ ref, roomId, name: 'Match', memberIds: [a] });
+    const late = randomUUID();
+    await commands.ensureRoom({ ref, roomId, name: 'Match', memberIds: [a, late] });
     await relayAndApply();
 
     expect(await isClosed(roomId)).toBe(true);
+    expect(await memberIds(roomId)).toEqual([a]);
+    expect(signal).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ userId: late }),
+    );
     expect(await messagesWithId(messageId)).toHaveLength(1);
     const refused = send(chat, roomId, a);
     await expect(refused).rejects.toBeInstanceOf(ChatPlayerMutedError);
     await expect(refused).rejects.toMatchObject({ data: { reason: 'read_only' } });
   });
 
-  it('ends a removed member’s membership, and a repeated removal changes nothing', async () => {
-    const { commands, relayAndApply, chat } = setup();
+  it('refuses an ensure that names another room for the ref, and adds nobody', async () => {
+    const { commands, relayAndApply, deliver, relay, takeCommands } = setup();
     const ref = `match:${randomUUID()}`;
     const roomId = randomUUID();
     const [a, b] = [randomUUID(), randomUUID()];
-    await commands.ensureRoom({ ref, roomId, name: 'Match', memberIds: [a, b] });
-    await commands.removeMember({ ref, userId: b });
-    await commands.removeMember({ ref, userId: b });
-
+    await commands.ensureRoom({ ref, roomId, name: 'Match', memberIds: [a] });
     await relayAndApply();
 
+    await commands.ensureRoom({ ref, roomId: randomUUID(), name: 'Match', memberIds: [b] });
+    await relay.drainOnce();
+    const [ensure] = takeCommands();
+
+    await expect(deliver(ensure!)).rejects.toBeInstanceOf(ChatContextRoomIdConflictError);
     expect(await memberIds(roomId)).toEqual([a]);
-    await expect(send(chat, roomId, b)).rejects.toBeInstanceOf(ChatRoomNotMemberError);
-    await expect(send(chat, roomId, a)).resolves.toBeDefined();
+    expect(await db.drizzle.db.select().from(processedEvents)).toHaveLength(1);
   });
 
-  it('rejects a payload that does not parse, so it is not acknowledged', async () => {
-    const { handler } = setup();
+  it('refuses a post whose id names another message', async () => {
+    const { commands, relayAndApply, deliver, relay, takeCommands } = setup();
+    const [ref, otherRef] = [`match:${randomUUID()}`, `match:${randomUUID()}`];
+    const messageId = randomUUID();
+    await commands.ensureRoom({ ref, roomId: randomUUID(), name: 'Match', memberIds: [] });
+    await commands.ensureRoom({
+      ref: otherRef,
+      roomId: randomUUID(),
+      name: 'Match',
+      memberIds: [],
+    });
+    await commands.postSystemEvent({ ref, messageId, code: 'match.started' });
+    await relayAndApply();
 
-    await expect(handler({ op: 'ensure', ref: 'match:x', roomId: 'not-a-uuid' })).rejects.toThrow();
+    await commands.postSystemEvent({ ref: otherRef, messageId, code: 'match.started' });
+    await relay.drainOnce();
+    const [post] = takeCommands();
+
+    const refused = deliver(post!);
+    await expect(refused).rejects.toBeInstanceOf(ChatSystemCardRefusedError);
+    await expect(refused).rejects.toThrow('conflict');
+    expect(await db.drizzle.db.select().from(processedEvents)).toHaveLength(3);
+  });
+
+  it('refuses a post whose room is deleted while it applies', async () => {
+    const { commands, relayAndApply, deliver, relay, takeCommands, rooms } = setup();
+    const ref = `match:${randomUUID()}`;
+    const roomId = randomUUID();
+    const messageId = randomUUID();
+    await commands.ensureRoom({ ref, roomId, name: 'Match', memberIds: [] });
+    await relayAndApply();
+    const findRoom = rooms.findRoom.bind(rooms);
+    vi.spyOn(rooms, 'findRoom').mockImplementationOnce(async (r) => {
+      const room = await findRoom(r);
+      await db.drizzle.db
+        .update(chatRoom)
+        .set({ deletedAt: new Date() })
+        .where(eq(chatRoom.id, roomId));
+      return room;
+    });
+
+    await commands.postSystemEvent({ ref, messageId, code: 'match.started' });
+    await relay.drainOnce();
+    const [post] = takeCommands();
+
+    const refused = deliver(post!);
+    await expect(refused).rejects.toBeInstanceOf(ChatSystemCardRefusedError);
+    await expect(refused).rejects.toThrow('room-gone');
+    expect(await messagesWithId(messageId)).toHaveLength(0);
+  });
+
+  it('rejects a command that does not parse, without recording it as processed', async () => {
+    const { deliver } = setup();
+
+    await expect(
+      deliver({
+        eventId: randomUUID(),
+        topic: TOPIC,
+        payload: { op: 'drop_room', ref: 'match:x' },
+        occurredAt: new Date().toISOString(),
+        schemaVersion: 1,
+      }),
+    ).rejects.toThrow();
     expect(await db.drizzle.db.select().from(processedEvents)).toHaveLength(0);
   });
 });
