@@ -184,6 +184,10 @@ export const WalletConfigSchema = z
          * whole history and outlives the vendor diff's. Absent: 240.
          */
         ledgerInvariantStaleRunAfterMinutes: z.number().int().positive().optional(),
+        /** The oldest event the outbox has not relayed, in minutes, past which a cycle files a finding. */
+        outboxLagAlertMinutes: z.number().int().positive().default(5),
+        /** Dead-lettered events across every broker topic past which a cycle files a finding. */
+        deadLetterAlertThreshold: z.number().int().nonnegative().default(0),
       })
       .strict()
       .optional(),

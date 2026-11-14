@@ -232,6 +232,20 @@ is `SPORTSBOOK_LEDGER` unchanged.
   withdrawal with no provider also goes back to the queue as `pending` with reason
   `never_dispatched`, so a person approves it again; a dispatch still running for it never
   reaches the vendor.
+- **Reconciliation holds the ledger against what other services said it should hold.** Each cycle
+  files, once per key and only to be dismissed or closed by itself:
+  `ledger_request_mismatch` for a Ledger API request in the window whose answered transaction is
+  missing or differs in type, currency, key, amount or player (the last two only on requests that
+  recorded them); `ledger_unrequested_transaction` for a bet, win or reversal keyed by a provider
+  with no request under its key, counted only from that provider's first request on;
+  `play_eligibility_drift` and `rg_limits_drift` for a player whose projection is behind or differs
+  at the same version from what identity and compliance hold now (`PLAY_ELIGIBILITY_SOURCE`,
+  `RG_LIMITS_SOURCE`, optional), closed once the projection catches up; `outbox_relay_lag` while the
+  oldest unrelayed event is older than `reconciliation.outboxLagAlertMinutes` (default 5); and
+  `event_dead_letters` while the broker's dead-letter streams hold more than
+  `reconciliation.deadLetterAlertThreshold` entries (default 0). The last two are one finding for
+  the pipeline, not one per event, and close once the backlog clears. Every new finding raises
+  `wallet.reconciliation.alert` in the transaction that files it. None moves money.
 - **A module's withdrawal hold blocks every withdrawal the same way, under its own reason.** A
   module places and releases its hold through `WALLET_COMMANDS` in its own transaction, keyed by
   (player, source), and releases only its own. The wallet audits each change in that transaction.

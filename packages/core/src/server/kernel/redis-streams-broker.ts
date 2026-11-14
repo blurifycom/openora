@@ -185,6 +185,19 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     };
   }
 
+  async deadLetterCount(): Promise<number> {
+    let total = 0;
+    for await (const keys of this.client.scanIterator({
+      MATCH: `${DLQ_PREFIX}*`,
+      TYPE: 'stream',
+    })) {
+      for (const key of keys) {
+        total += await this.client.xLen(key);
+      }
+    }
+    return total;
+  }
+
   async close(): Promise<void> {
     const loops = [...this.loops.values()];
     this.loops.clear();

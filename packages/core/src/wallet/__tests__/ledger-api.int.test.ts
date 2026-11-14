@@ -207,12 +207,15 @@ function expectMoved(outcome: LedgerV1MoveOutcome, status: 'applied' | 'replayed
 
 describe('Ledger API v1 bet (real PG)', () => {
   it('takes the stake, adds it to the round, and snapshots the wager inputs', async () => {
-    const { walletId, betArgs } = await setup();
+    const { walletId, userId, betArgs } = await setup();
     const args = betArgs();
 
     const applied = expectMoved(await api.bet(args), 'applied');
 
     expect(moneyEquals(applied.balance, '90')).toBe(true);
+    const [stored] = await storedKeys(args.providerRefId);
+    expect(stored?.userId).toBe(userId);
+    expect(moneyEquals(stored?.amount ?? '', '10')).toBe(true);
     expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
     const round = await roundOf(args.externalRoundId);
     expect(round.id).toBe(applied.roundId);
@@ -456,6 +459,9 @@ describe('Ledger API v1 reverse (real PG)', () => {
     const applied = expectMoved(await api.reverse(reverse), 'applied');
 
     expect(moneyEquals(applied.balance, '100')).toBe(true);
+    const [stored] = await storedKeys(reverse.providerRefId);
+    expect(stored?.userId).toBe(userId);
+    expect(moneyEquals(stored?.amount ?? '', '10')).toBe(true);
     expect(await api.reverse(reverse)).toMatchObject({ status: 'replayed' });
     expect(await api.reverse({ ...reverse, providerRefId: `rb-${randomUUID()}` })).toEqual({
       status: 'refused',

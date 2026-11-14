@@ -35,6 +35,7 @@ import {
   REALTIME_TRANSPORT,
   RG_EXCLUSION_READER,
   RG_LIMIT_LEDGER,
+  RG_LIMITS_SOURCE,
   WALLET_READER,
   RG_STANDING_READER,
   UuidSchema,
@@ -56,7 +57,7 @@ import {
   PlayerNotFoundError,
 } from './service/kyc.service.js';
 import { RgService } from './service/rg.service.js';
-import { backfillRgLimits } from './service/rg-limits-publisher.service.js';
+import { backfillRgLimits, rgLimitsPage } from './service/rg-limits-publisher.service.js';
 import { RgSelfServiceService } from './service/rg-self-service.service.js';
 import {
   RgMonitoringService,
@@ -207,6 +208,10 @@ export default {
         rates: c.get(EXCHANGE_RATE_READER),
         limitsLedger: c.get(RG_LIMIT_LEDGER),
       }));
+    // What the wallet's reconciliation compares its limits projection against.
+    ctx.provideSealed(RG_LIMITS_SOURCE, (c) => ({
+      page: (after, limit) => rgLimitsPage(c.get(DRIZZLE).db, after, limit),
+    }));
     ctx.provide(RG_EXCLUSION_READER, (c) => ({
       getExclusionState: async (userId, tx) => {
         const { selfExclusion, coolingOff } = await rgService(c).getActiveExclusions(userId, tx);

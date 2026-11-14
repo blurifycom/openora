@@ -3,8 +3,10 @@ import {
   BONUS_WAGERING,
   LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
+  PLAY_ELIGIBILITY_SOURCE,
   RG_LIMITS,
   RG_LIMIT_LEDGER,
+  RG_LIMITS_SOURCE,
   createSealedToken,
   type SealedToken,
 } from '@openora/core/contracts';
@@ -117,6 +119,10 @@ export const SEALED_TOKENS: readonly SealedToken<unknown>[] = [
   // a limit the player set.
   RG_LIMITS,
   RG_LIMIT_LEDGER,
+  // What the reconciliation compares those projections against: rebinding either could hide a
+  // projection that lets a restricted player through.
+  PLAY_ELIGIBILITY_SOURCE,
+  RG_LIMITS_SOURCE,
 ];
 
 // Sealed identities that currently have a real owning-module implementation bound

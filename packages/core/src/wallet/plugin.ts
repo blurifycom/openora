@@ -19,6 +19,7 @@ import {
   LEDGER_API_V1,
   LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
+  PLAY_ELIGIBILITY_SOURCE,
   GAMING_COMMANDS,
   SPORTSBOOK_LEDGER,
   WALLET_ASSET_CATALOG,
@@ -29,6 +30,8 @@ import {
   PLAY_ELIGIBILITY,
   RG_LIMITS,
   RG_LIMIT_LEDGER,
+  RG_LIMITS_SOURCE,
+  MESSAGE_BROKER,
   DEPOSIT_ADMISSION_POLICY,
   DEPOSIT_HOLD_POLICY,
   KYC_WITHDRAWAL_POLICY,
@@ -84,6 +87,7 @@ import {
   LEDGER_INVARIANT_QUEUE,
   LedgerInvariantJobSchema,
   ReconciliationService,
+  projectionDriftCheck,
 } from './service/reconciliation.service.js';
 import { SwapService } from './service/swap.service.js';
 import { OnRampService } from './service/on-ramp.service.js';
@@ -126,6 +130,16 @@ export default {
   id: 'wallet',
   dependsOn: ['identity', 'audit'],
   requiresPorts: [WITHDRAWAL_SECURITY, PLAYER_TAGS, KYC_WITHDRAWAL_POLICY],
+  optionalPorts: [
+    {
+      port: PLAY_ELIGIBILITY_SOURCE,
+      without: 'reconciliation never compares the play eligibility projection with identity',
+    },
+    {
+      port: RG_LIMITS_SOURCE,
+      without: 'reconciliation never compares the limits projection with compliance',
+    },
+  ],
   register(ctx) {
     // Set inside the router factory (container access); the job worker's handler
     // closes over this ref, same shape as pam/tag's evalSvc - subscriptions/workers
@@ -556,6 +570,21 @@ export default {
         audit: c.get(AUDIT_WRITER),
         platformConfig,
         rgLimits,
+        projectionChecks: [
+          ...(c.has(PLAY_ELIGIBILITY_SOURCE)
+            ? [
+                projectionDriftCheck(
+                  'play_eligibility_drift',
+                  c.get(PLAY_ELIGIBILITY_SOURCE),
+                  sharedPlayEligibility(c),
+                ),
+              ]
+            : []),
+          ...(c.has(RG_LIMITS_SOURCE)
+            ? [projectionDriftCheck('rg_limits_drift', c.get(RG_LIMITS_SOURCE), rgLimits)]
+            : []),
+        ],
+        broker: c.has(MESSAGE_BROKER) ? c.get(MESSAGE_BROKER) : undefined,
       });
       reconciliationRef = reconciliation;
 

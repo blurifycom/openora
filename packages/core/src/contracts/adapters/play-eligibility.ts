@@ -114,3 +114,16 @@ export type PlayEligibilityProjectionPort = {
 
 export const PLAY_ELIGIBILITY_PROJECTION: SealedToken<PlayEligibilityProjectionPort> =
   createSealedToken<PlayEligibilityProjectionPort>('PLAY_ELIGIBILITY_PROJECTION');
+
+/**
+ * Identity's committed play eligibility, read for the wallet's reconciliation to compare its
+ * projection against. Bound by identity, the owner of every input. Sealed: rebinding it could
+ * hide a projection that lets an excluded player stake.
+ */
+export type PlayEligibilitySourcePort = {
+  /** Up to `limit` users' snapshots in user id order, after `afterUserId` when given. */
+  page(afterUserId: string | null, limit: number): Promise<PlayEligibilitySnapshot[]>;
+};
+
+export const PLAY_ELIGIBILITY_SOURCE: SealedToken<PlayEligibilitySourcePort> =
+  createSealedToken<PlayEligibilitySourcePort>('PLAY_ELIGIBILITY_SOURCE');

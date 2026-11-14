@@ -331,17 +331,34 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
   }
 
   async drifted(snapshots: readonly RgLimitsSnapshot[]): Promise<User['id'][]> {
+    return this.differing(snapshots, (held, wanted) => held !== wanted);
+  }
+
+  /**
+   * As `drifted`, but a projection ahead of its snapshot is not behind: the owner moved on after
+   * it was read, so only a lower version, or the same one with other rows, counts.
+   */
+  async behind(snapshots: readonly RgLimitsSnapshot[]): Promise<User['id'][]> {
+    return this.differing(snapshots, (held, wanted) => held < wanted);
+  }
+
+  private async differing(
+    snapshots: readonly RgLimitsSnapshot[],
+    versionDiffers: (held: number, wanted: number) => boolean,
+  ): Promise<User['id'][]> {
     const newest = this.newestPerUser(snapshots);
     if (newest.size === 0) {
       return [];
     }
     const { versionOf, rowsOf: heldRowsOf } = await this.held([...newest.keys()]);
     return [...newest.values()]
-      .filter(
-        (snapshot) =>
-          (versionOf.get(snapshot.userId) ?? 0) !== snapshot.version ||
-          !sameRows(heldRowsOf(snapshot.userId), rowsOf(snapshot)),
-      )
+      .filter((snapshot) => {
+        const held = versionOf.get(snapshot.userId) ?? 0;
+        return (
+          versionDiffers(held, snapshot.version) ||
+          (held === snapshot.version && !sameRows(heldRowsOf(snapshot.userId), rowsOf(snapshot)))
+        );
+      })
       .map((snapshot) => snapshot.userId);
   }
 

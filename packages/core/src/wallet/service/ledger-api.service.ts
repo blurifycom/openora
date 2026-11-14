@@ -241,8 +241,9 @@ export class LedgerApiService implements LedgerApiV1 {
           balance: debit.newBalance,
           currency: debit.currency,
         };
+        const recorded = { userId, amount: args.amount };
         if (!reverseKey) {
-          return { move };
+          return { move, ...recorded };
         }
 
         // The provider rolled this bet back before it arrived: return the stake in this same
@@ -267,8 +268,10 @@ export class LedgerApiService implements LedgerApiV1 {
           }),
           targetRefId: providerRefId,
           response: { ...reversal, reversalTransactionId: null },
+          ...recorded,
         });
         return {
+          ...recorded,
           move: {
             ...move,
             reversalTransactionId: reversal.transactionId,
@@ -309,8 +312,10 @@ export class LedgerApiService implements LedgerApiV1 {
         if (round.ended || (args.isFinal && isPositiveMoney(args.amount))) {
           await this.emit(tx, 'gaming.round.ended', { roundId: round.roundId, userId, playerId });
         }
+        const recorded = { userId, amount: args.amount };
         if (!isPositiveMoney(args.amount)) {
           return {
+            ...recorded,
             move: {
               transactionId: null,
               reversalTransactionId: null,
@@ -337,6 +342,7 @@ export class LedgerApiService implements LedgerApiV1 {
           direction: 'credit',
         });
         return {
+          ...recorded,
           move: {
             transactionId: moved.transactionId,
             reversalTransactionId: null,
@@ -413,7 +419,12 @@ export class LedgerApiService implements LedgerApiV1 {
             amount: bet.amount,
             currency: bet.currency,
           });
-          return { move: { ...reversal, reversalTransactionId: null }, targetRefId };
+          return {
+            move: { ...reversal, reversalTransactionId: null },
+            targetRefId,
+            userId,
+            amount: bet.amount,
+          };
         },
       );
     });
@@ -491,7 +502,12 @@ export class LedgerApiService implements LedgerApiV1 {
     operation: LedgerV1KeyedOperation,
     print: string,
     lockRefs: readonly string[],
-    move: (tx: DrizzleTx) => Promise<{ move: LedgerV1Move; targetRefId?: string }>,
+    move: (tx: DrizzleTx) => Promise<{
+      move: LedgerV1Move;
+      targetRefId?: string;
+      userId: Uuid;
+      amount: string;
+    }>,
   ): Promise<LedgerV1MoveOutcome> {
     const keys = [key.providerRefId, ...lockRefs].map((ref) => lockKey(key.providerName, ref));
     return this.deps.drizzle.db
@@ -514,6 +530,8 @@ export class LedgerApiService implements LedgerApiV1 {
             fingerprint: print,
             targetRefId: applied.targetRefId ?? null,
             response: applied.move,
+            userId: applied.userId,
+            amount: applied.amount,
           });
           return { status: 'applied', ...applied.move };
         }),
@@ -569,9 +587,13 @@ export class LedgerApiService implements LedgerApiV1 {
       fingerprint: string;
       targetRefId: string | null;
       response: LedgerV1Move;
+      userId: Uuid;
+      amount: string;
     },
   ): Promise<void> {
-    await tx.insert(ledgerApiRequest).values({ ...key, ...row });
+    await tx
+      .insert(ledgerApiRequest)
+      .values({ providerName: key.providerName, providerRefId: key.providerRefId, ...row });
   }
 
   /**

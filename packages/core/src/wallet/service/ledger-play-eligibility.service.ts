@@ -117,19 +117,7 @@ export class LedgerPlayEligibilityService
     }
     const db = this.drizzle.db;
     // Unlocked: the upsert's own condition decides, so a row nobody needs to change is never locked.
-    const held = await db
-      .select()
-      .from(ledgerPlayEligibility)
-      .where(inArray(ledgerPlayEligibility.userId, [...newest.keys()]));
-    const heldBy = new Map(held.map((row) => [row.userId, row]));
-    const stale = [...newest.values()].filter((row) => {
-      const current = heldBy.get(row.userId);
-      return (
-        !current ||
-        current.version < row.version ||
-        (current.version === row.version && !sameState(current, row))
-      );
-    });
+    const stale = await this.staleOf([...newest.values()]);
     if (stale.length === 0) {
       return 0;
     }
@@ -148,6 +136,38 @@ export class LedgerPlayEligibilityService
                  excluded.banned, excluded.ban_expires, excluded.status))`,
       });
     return result.rowCount ?? 0;
+  }
+
+  /**
+   * The users whose row is missing, at a lower version than their snapshot, or at its version
+   * with another state. A row ahead of its snapshot is not behind: the owner moved on after it.
+   */
+  async behind(snapshots: readonly PlayEligibilitySnapshot[]): Promise<User['id'][]> {
+    return (await this.staleOf(snapshots.map(rowOf))).map((row) => row.userId);
+  }
+
+  private async staleOf(rows: readonly ProjectionRow[]): Promise<ProjectionRow[]> {
+    if (rows.length === 0) {
+      return [];
+    }
+    const held = await this.drizzle.db
+      .select()
+      .from(ledgerPlayEligibility)
+      .where(
+        inArray(
+          ledgerPlayEligibility.userId,
+          rows.map((row) => row.userId),
+        ),
+      );
+    const heldBy = new Map(held.map((row) => [row.userId, row]));
+    return rows.filter((row) => {
+      const current = heldBy.get(row.userId);
+      return (
+        !current ||
+        current.version < row.version ||
+        (current.version === row.version && !sameState(current, row))
+      );
+    });
   }
 }
 
