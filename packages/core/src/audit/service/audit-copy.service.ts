@@ -46,9 +46,9 @@ const DENY_CLOSED_SQL = denyInsertSql(
 
 type Head = { seq: string; hash: string };
 
-export type CopyOptions = { adminUrl: string; auditUrl: string; apply: boolean };
-export type DrainOptions = { adminUrl: string; auditUrl: string; shipperUrl?: string };
-export type CopyReport = { copied: number; applied: boolean };
+type CopyOptions = { adminUrl: string; auditUrl: string; apply: boolean };
+type DrainOptions = { adminUrl: string; auditUrl: string; shipperUrl?: string };
+type CopyReport = { copied: number; applied: boolean };
 export type CopyHooks = {
   afterCopy?: () => Promise<void>;
   duringDrain?: () => Promise<void>;
@@ -274,7 +274,7 @@ async function verifyChainAt(
  * the cursor. Refuses a target whose head is not the source's row of that seq. Without `apply`
  * it only counts.
  */
-export async function copyChain({ adminUrl, auditUrl, apply }: CopyOptions): Promise<CopyReport> {
+async function copyChain({ adminUrl, auditUrl, apply }: CopyOptions): Promise<CopyReport> {
   const targetUrl = targetUrlOf(adminUrl, auditUrl);
   return withClients(adminUrl, targetUrl, async (source, target) => {
     const { copied, anchor } = await transfer(source, target, { apply, complete: false });
@@ -296,7 +296,7 @@ export async function copyChain({ adminUrl, auditUrl, apply }: CopyOptions): Pro
  * window short. Needs a
  * main database that split `migrate` has marked. Without `apply` it takes no lock and only counts.
  */
-export async function fenceChain(
+async function fenceChain(
   { adminUrl, auditUrl, apply }: CopyOptions,
   hooks: CopyHooks = {},
 ): Promise<CopyReport> {
@@ -437,7 +437,7 @@ async function rejectedCount(main: Client): Promise<number> {
  * rerun finds it so. Opening it again is a deliberate owner step: `DROP TRIGGER audit_log_closed
  * ON audit_log`.
  */
-export async function drainOutboxToLegacy(
+async function drainOutboxToLegacy(
   { adminUrl, auditUrl, shipperUrl }: DrainOptions,
   { apply }: { apply: boolean },
   hooks: CopyHooks = {},
