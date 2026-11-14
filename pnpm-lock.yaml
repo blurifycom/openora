@@ -215,9 +215,6 @@ importers:
       '@openora/core':
         specifier: workspace:*
         version: link:packages/core
-      '@openora/testing':
-        specifier: workspace:*
-        version: link:packages/testing
       '@types/node':
         specifier: 26.6.5
         version: 26.6.5
