@@ -33,6 +33,12 @@ export type GamingAccumulateExternalRoundArgs = {
    * a value that differs from the catalogue's is logged and dropped.
    */
   wager?: Partial<GamingRoundWager>;
+  /**
+   * Lands only on an existing round of this game, player and currency that holds at least the
+   * stake a negative `betDelta` reverses; anything else throws GamingRoundOwnerMismatchError and
+   * writes nothing. For a reversal on a round the caller named rather than one the ledger derived.
+   */
+  existingRoundOnly?: boolean;
 };
 
 export type GamingAccumulateExternalRoundOutcome = {

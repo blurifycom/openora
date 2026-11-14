@@ -684,6 +684,60 @@ describe('Ledger API v1 reverse of a bet whose round is keyed apart from its row
     expect(moneyEquals((await roundOf(bet.externalRoundId)).reversedAmount, '10')).toBe(true);
     expect(await roundsOf(elsewhere)).toHaveLength(0);
   });
+
+  it('refuses a named round of another player, then applies on the right one', async () => {
+    const { walletId, userId, game: g } = await setup();
+    const other = await seedPlayer();
+    const rawRoundId = `live-${randomUUID()}`;
+    const mine = await placeLegacyBet(userId, g.id, rawRoundId);
+    const theirs = await placeLegacyBet(other.userId, g.id, rawRoundId);
+
+    expect(await api.reverse({ ...mine.reverse, externalRoundId: theirs.roundKey })).toEqual({
+      status: 'refused',
+      reason: 'round_mismatch',
+    });
+    expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
+    expect(moneyEquals((await roundOf(theirs.roundKey)).betAmount, '10')).toBe(true);
+    expect(await storedKeys(mine.reverse.providerRefId)).toHaveLength(0);
+
+    expectMoved(await api.reverse(mine.reverse), 'applied');
+    expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
+  });
+
+  it('refuses a named round it has never seen, or on another game, opening nothing', async () => {
+    const { walletId, userId, game: g } = await setup();
+    const otherGame = await seedGame();
+    const { reverse, roundKey } = await placeLegacyBet(userId, g.id, `live-${randomUUID()}`);
+    const unknown = `${PROVIDER}:${userId}:${randomUUID()}`;
+
+    for (const attempt of [
+      { ...reverse, externalRoundId: unknown },
+      { ...reverse, gameId: otherGame.id },
+    ]) {
+      expect(await api.reverse(attempt)).toEqual({ status: 'refused', reason: 'round_mismatch' });
+    }
+    expect(await roundsOf(unknown)).toHaveLength(0);
+    expect(moneyEquals((await roundOf(roundKey)).betAmount, '10')).toBe(true);
+    expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
+  });
+
+  it('refuses a reverse of a bet placed here on another game', async () => {
+    const { walletId, userId, betArgs } = await setup();
+    const otherGame = await seedGame();
+    const bet = betArgs();
+    await api.bet(bet);
+
+    expect(
+      await api.reverse({
+        providerName: PROVIDER,
+        providerRefId: `rb-${randomUUID()}`,
+        userId,
+        gameId: otherGame.id,
+        targetRefId: bet.providerRefId,
+      }),
+    ).toEqual({ status: 'refused', reason: 'round_mismatch' });
+    expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
+  });
 });
 
 describe('Ledger API v1 reverse beside direct wallet reversals (real PG)', () => {

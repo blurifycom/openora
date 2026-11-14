@@ -843,6 +843,55 @@ export class GamingService {
     if (typeof sentRtp === 'string' && !isWagerRtp(sentRtp)) {
       throw new GamingInvalidRtpError(sentRtp);
     }
+    const winDelta = SignedMoneyAmountSchema.parse(args.winDelta ?? '0');
+    const reversedStake = sql`greatest(-(${betDelta}::numeric), 0)`;
+    const status = args.isFinal ? ('completed' as const) : ('active' as const);
+    const endedAt = args.isFinal ? new Date() : undefined;
+    const deltas = {
+      betAmount: sql`${gameRound.betAmount} + ${betDelta}::numeric`,
+      winAmount: sql`${gameRound.winAmount} + ${winDelta}::numeric`,
+      reversedAmount: sql`${gameRound.reversedAmount} + ${reversedStake}`,
+      ...(args.isFinal ? { status, endedAt } : {}),
+    };
+    const ownedByCaller = and(
+      eq(gameRound.userId, args.userId),
+      eq(gameRound.gameId, args.gameId),
+      sql`upper(${gameRound.currency}) = ${args.currency.toUpperCase()}`,
+    );
+    const returning = {
+      id: gameRound.id,
+      betAmount: gameRound.betAmount,
+      winAmount: gameRound.winAmount,
+      wagerProduct: gameRound.wagerProduct,
+      rtp: gameRound.rtp,
+    };
+    type ReturnedRound = Pick<
+      typeof gameRound.$inferSelect,
+      'id' | 'betAmount' | 'winAmount' | 'wagerProduct' | 'rtp'
+    >;
+    const toOutcome = (row: ReturnedRound): GamingAccumulateExternalRoundOutcome => ({
+      roundId: row.id,
+      betAmount: row.betAmount,
+      winAmount: row.winAmount,
+      wager: { product: row.wagerProduct, rtp: row.rtp },
+    });
+    if (args.existingRoundOnly) {
+      const [existing] = await txn
+        .update(gameRound)
+        .set(deltas)
+        .where(
+          and(
+            eq(gameRound.externalRoundId, args.externalRoundId),
+            ownedByCaller,
+            sql`${gameRound.betAmount} >= ${reversedStake}`,
+          ),
+        )
+        .returning(returning);
+      if (!existing) {
+        throw new GamingRoundOwnerMismatchError(args.externalRoundId);
+      }
+      return toOutcome(existing);
+    }
     const projected = await readLedgerGame(txn, args.gameId);
     // Only a stake that opens a round needs a game the ledger knows. A win, refund, rollback or
     // final always lands, also as a round's first call (a free-round result, a settle that beats
@@ -875,10 +924,6 @@ export class GamingService {
     }
     const wagerProduct = projected?.product ?? sent?.product ?? null;
     const rtp = projected?.rtp ?? sent?.rtp ?? null;
-    const winDelta = SignedMoneyAmountSchema.parse(args.winDelta ?? '0');
-    const reversedStake = sql`greatest(-(${betDelta}::numeric), 0)`;
-    const status = args.isFinal ? 'completed' : 'active';
-    const endedAt = args.isFinal ? new Date() : undefined;
     const [row] = await txn
       .insert(gameRound)
       .values({
@@ -898,38 +943,20 @@ export class GamingService {
         target: gameRound.externalRoundId,
         targetWhere: sql`${gameRound.externalRoundId} IS NOT NULL`,
         set: {
-          betAmount: sql`${gameRound.betAmount} + ${betDelta}::numeric`,
-          winAmount: sql`${gameRound.winAmount} + ${winDelta}::numeric`,
-          reversedAmount: sql`${gameRound.reversedAmount} + ${reversedStake}`,
-          ...(args.isFinal ? { status, endedAt } : {}),
+          ...deltas,
           // First seen wins: a round keeps the snapshot it has, and only fills one it lacks.
           wagerProduct: sql`coalesce(${gameRound.wagerProduct}, excluded.wager_product)`,
           rtp: sql`coalesce(${gameRound.rtp}, excluded.rtp)`,
         },
         // A conflicting row of another user, game or currency is left untouched (0 rows
         // returned) instead of merging deltas onto someone else's round.
-        setWhere: and(
-          eq(gameRound.userId, args.userId),
-          eq(gameRound.gameId, args.gameId),
-          sql`upper(${gameRound.currency}) = ${args.currency.toUpperCase()}`,
-        ),
+        setWhere: ownedByCaller,
       })
-      .returning({
-        id: gameRound.id,
-        betAmount: gameRound.betAmount,
-        winAmount: gameRound.winAmount,
-        wagerProduct: gameRound.wagerProduct,
-        rtp: gameRound.rtp,
-      });
+      .returning(returning);
     if (!row) {
       throw new GamingRoundOwnerMismatchError(args.externalRoundId);
     }
-    return {
-      roundId: row.id,
-      betAmount: row.betAmount,
-      winAmount: row.winAmount,
-      wager: { product: row.wagerProduct, rtp: row.rtp },
-    };
+    return toOutcome(row);
   }
 
   async getUserRounds(userId: User['id']) {
