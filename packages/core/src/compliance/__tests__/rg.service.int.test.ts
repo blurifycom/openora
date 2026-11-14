@@ -581,6 +581,60 @@ describe('RgService.setPlayerLimit ordering (real PG)', () => {
     ).rejects.toBeInstanceOf(LimitOrderingViolationError);
   });
 
+  it('refuses daily above monthly when no weekly sits between them', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'monthly', amount: '50' }),
+      actorId,
+      'admin',
+    );
+
+    await expect(
+      svc.setPlayerLimit(
+        userId,
+        limitInput({ userId, period: 'daily', amount: '80' }),
+        actorId,
+        'admin',
+      ),
+    ).rejects.toBeInstanceOf(LimitOrderingViolationError);
+  });
+
+  it('names the sibling in the way and its bound, whichever side of it changed', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'weekly', amount: '50' }),
+      actorId,
+      'admin',
+    );
+    const weeklyBound = {
+      conflictingPeriod: 'weekly',
+      bound: { amount: expect.stringMatching(/^50(\.0+)?$/), currency: 'USD' },
+    };
+
+    await expect(
+      svc.setPlayerLimit(
+        userId,
+        limitInput({ userId, period: 'daily', amount: '80' }),
+        actorId,
+        'admin',
+      ),
+    ).rejects.toMatchObject({ data: { period: 'daily', ...weeklyBound } });
+    await expect(
+      svc.setPlayerLimit(
+        userId,
+        limitInput({ userId, period: 'monthly', amount: '20' }),
+        actorId,
+        'admin',
+      ),
+    ).rejects.toMatchObject({ data: { period: 'monthly', ...weeklyBound } });
+  });
+
   it('accepts a valid ordered set: daily <= weekly <= monthly', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
@@ -718,6 +772,40 @@ describe('isWeakening across currencies', () => {
     await expect(
       isWeakening(row, { amount: '200', minutes: null, currency: 'EUR' }, rates, db.drizzle.db),
     ).resolves.toBe(false);
+  });
+
+  it('does not read an unchanged limit as a raise', async () => {
+    const rates = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async () => '100'),
+    });
+    const row = baseRow({ amount: '100', currency: 'USD' });
+
+    await expect(
+      isWeakening(row, { amount: '100', minutes: null, currency: 'USD' }, rates, db.drizzle.db),
+    ).resolves.toBe(false);
+    await expect(
+      isWeakening(row, { amount: '90', minutes: null, currency: 'EUR' }, rates, db.drizzle.db),
+    ).resolves.toBe(false);
+    await expect(
+      isWeakening(
+        baseRow({ type: 'session', amount: null, minutes: 30 }),
+        { amount: null, minutes: 30, currency: null },
+        rates,
+        db.drizzle.db,
+      ),
+    ).resolves.toBe(false);
+  });
+
+  it('fails closed to weakening when the change and the row share no unit', async () => {
+    await expect(
+      isWeakening(
+        baseRow({ amount: '100', minutes: null }),
+        { amount: null, minutes: 30, currency: null },
+        identityRates(),
+        db.drizzle.db,
+      ),
+    ).resolves.toBe(true);
   });
 
   it('classifies a converted higher value in another currency as a raise', async () => {
@@ -899,6 +987,118 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
       .from(userLimit)
       .where(eq(userLimit.id, row.id));
     expect(persisted?.currency).toBe('SESSION');
+  });
+});
+
+describe('RgService events carry the client meta (real PG)', () => {
+  const meta = { ip: '203.0.113.7', userAgent: 'rg-test-agent' };
+
+  it('cancels a parked change on an admin override and records both on the events', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
+    const now = new Date();
+    await db.drizzle.db.insert(userLimit).values({
+      userId,
+      type: 'deposit',
+      period: 'daily',
+      amount: '100',
+      currency: 'USD',
+      pendingKind: 'increase',
+      pendingAmount: '200',
+      pendingCurrency: 'USD',
+      pendingRequestedAt: now,
+      pendingEffectiveAt: future(),
+      pendingExpiresAt: future(),
+    });
+
+    await svc.setPlayerLimit(
+      userId,
+      {
+        userId,
+        type: 'deposit',
+        amount: '50',
+        minutes: null,
+        currency: 'USD',
+        period: 'daily',
+        reason: 'admin override',
+        confirm: true,
+      },
+      randomUUID(),
+      'admin',
+      meta,
+    );
+
+    const [row] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(row?.pendingKind).toBeNull();
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'rg.limit.change_cancelled',
+      expect.objectContaining({
+        userId,
+        kind: 'increase',
+        requestedAmount: expect.stringMatching(/^200(\.0+)?$/),
+        ...meta,
+      }),
+    );
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'rg.limit.set',
+      expect.objectContaining({ userId, ...meta }),
+    );
+  });
+
+  it('on activating and lifting a cooling-off', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
+
+    await svc.activateCoolingOff(
+      userId,
+      { userId, durationHours: 24, reason: 'break' },
+      randomUUID(),
+      'admin',
+      meta,
+    );
+    await svc.liftCoolingOff(userId, { userId, reason: 'ok' }, randomUUID(), meta);
+
+    for (const event of ['rg.cooling_off.activated', 'rg.cooling_off.lifted']) {
+      expect(events.emitInTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        event,
+        expect.objectContaining({ userId, ...meta }),
+      );
+    }
+  });
+
+  it('on activating and lifting a self-exclusion', async () => {
+    const { svc, events } = makeService();
+    const activatedUser = randomUUID();
+    const liftedUser = randomUUID();
+    await seedExclusion({ userId: liftedUser, isPermanent: false, expiresAt: past() });
+
+    await svc.activateSelfExclusion(
+      activatedUser,
+      { userId: activatedUser, isPermanent: true, reason: 'stop', confirm: true },
+      randomUUID(),
+      'admin',
+      meta,
+    );
+    await svc.liftSelfExclusion(
+      liftedUser,
+      { userId: liftedUser, reason: 'ok', confirm: true },
+      randomUUID(),
+      meta,
+    );
+
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'rg.self_exclusion.activated',
+      expect.objectContaining({ userId: activatedUser, ...meta }),
+    );
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'rg.self_exclusion.lifted',
+      expect.objectContaining({ userId: liftedUser, ...meta }),
+    );
   });
 });
 
@@ -1200,6 +1400,17 @@ describe('RgService.getActiveExclusions (real PG)', () => {
     const exclusions = await svc.getActiveExclusions(userId);
 
     expect(exclusions.coolingOff).toMatchObject({ kind: 'cooling_off' });
+    expect(exclusions.selfExclusion).toMatchObject({ kind: 'self_exclusion' });
+  });
+
+  it('does not read a timed self-exclusion as a cooling-off', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, kind: 'self_exclusion', expiresAt: future() });
+
+    const exclusions = await svc.getActiveExclusions(userId);
+
+    expect(exclusions.coolingOff).toBeNull();
     expect(exclusions.selfExclusion).toMatchObject({ kind: 'self_exclusion' });
   });
 
