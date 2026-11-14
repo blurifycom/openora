@@ -57,33 +57,43 @@ then resolve it under a change ticket as for a forked chain.
 **Moving the chain (audit-copy).** `openora-audit-copy` (a bin of `@openora/core`) moves the legacy
 `audit_log` of a main database into the chain's own database. It needs `DATABASE_ADMIN_URL` (the main
 database's owner), `AUDIT_DATABASE_URL` (only its database name is used; the tool connects with the
-owner's credentials) and, for `--drain-outbox` on a split main, `AUDIT_SHIPPER_DATABASE_URL`. No flag
-writes anything but `--apply`; without it every mode is a dry run that prints the counts and rolls back.
-Rows are copied byte-equal and never recomputed, in batches of 1000 that each commit alone; the target's
-own head is the cursor, so a crashed or repeated run copies only what is missing. The tool refuses a
-target whose head is not the source's row of that `seq`, and ends by verifying the target's chain.
+owner's credentials) and, for `--drain-outbox`, `AUDIT_SHIPPER_DATABASE_URL`. Only `--apply` writes;
+without it every mode is a dry run that reads and prints how many rows it would copy. Rows are copied
+byte-equal and never recomputed, in batches of 1000 that each commit alone; the target's own head is the
+cursor, so a crashed or repeated run copies only what is missing. The tool refuses a target whose head
+is not the source's row of that `seq`, and every `--apply` run prints, for both databases, the row count
+and the head `seq:hash`, and the verdict of the chain check it ran.
 
 1. Run `migrate` with `auditUrl` and `shipperUrl`. It creates the audit database and marks the main one
    split. From here the shipper cannot append to the main database, so new records wait in
    `audit_outbox`. Keep the api and chat processes off `AUDIT_DATABASE_URL`: **never point a process at
    the audit database before the fence check below is green**, or its shipper appends to a half-copied
-   chain and forks it. The shipper only refuses an empty target, not a partly copied one.
-2. `openora-audit-copy` (dry run), then `openora-audit-copy --apply`. Rerun it to catch up;
-   it is safe while legacy writers run, and a failed run is simply rerun.
-3. `openora-audit-copy --fence --apply`. It locks the main `audit_log` against writers (5 second lock
+   chain and forks it. The shipper only refuses an empty target, not a partly copied one. If a process
+   did write to the audit database early, the target has forked: the tool refuses it ("target diverged"),
+   so drop and recreate the audit database under a change ticket, run `migrate` again and copy again.
+2. Run `openora-audit-copy` (dry run), then `openora-audit-copy --apply`, with the legacy writers still
+   running. Rerun it to catch up; a failed run is simply rerun. Do this unfenced copy first so the fence
+   in the next step holds its lock only for the last few rows.
+3. Archive the output of every `--apply` run and a `verifyChain` of both databases under the change
+   record, once before the fence and once after it (and again after a drain).
+4. `openora-audit-copy --fence` (dry run: counts the rows, takes no lock), then `--fence --apply`. It
+   needs the main database marked split. It locks the main `audit_log` against writers (5 second lock
    timeout: it gives up and changes nothing if a writer holds the chain, so rerun it), copies the last
-   rows, compares count and head, installs an `ENABLE ALWAYS` trigger that refuses every insert into the
-   main `audit_log`, commits, and verifies the whole target chain. Exit 0 means the target is complete,
-   the fence is in and the chain is intact; any other exit leaves the system as it was or safely
-   rerunnable. The fence lasts: a legacy insert fails with `audit_log moved to its own database`.
-4. Point the api and chat processes at `AUDIT_DATABASE_URL` and `AUDIT_SHIPPER_DATABASE_URL`. The shipper
+   rows, compares count and head, verifies the whole target chain, and only then installs an
+   `ENABLE ALWAYS` trigger that refuses every insert into the main `audit_log` and commits. A failed
+   verification rolls the main transaction back and installs no fence. Exit 0 means the target is
+   complete, the fence is in and the chain is intact. The fence lasts: a legacy insert fails with
+   `audit_log moved to its own database`.
+5. Point the api and chat processes at `AUDIT_DATABASE_URL` and `AUDIT_SHIPPER_DATABASE_URL`. The shipper
    now drains the queued outbox rows into the audit database.
 
-To step back before step 4, run `openora-audit-copy --drain-outbox --apply` with every writer stopped. It
-refuses unless each row of the audit database is in the main one with the same hash, lifts the fence,
-ships the outbox into the main `audit_log` and verifies it. After the switch (rows exist only in the audit
-database) there is no way back: roll forward only. Nothing is ever dropped; the old rows stay in the main
-database until you remove them under a change ticket.
+To step back before step 5, stop every writer and run `openora-audit-copy --drain-outbox --apply`. It
+makes every refusal first (a split main needs `AUDIT_SHIPPER_DATABASE_URL`; each row of the audit
+database must be in the main one with the same hash), then holds a lock on the audit database's
+`audit_log` for the whole run so nothing can append there, lifts the fence, ships the outbox into the
+main `audit_log`, checks the audit database again and verifies the main chain. After the switch (rows
+exist only in the audit database) there is no way back: roll forward only. Nothing is ever dropped; the
+old rows stay in the main database until you remove them under a change ticket.
 
 **Known gap.** The app role can still divert a pending entry by copying it into
 `audit_outbox_rejected` under its own outbox id and deleting it: the content is kept but never
