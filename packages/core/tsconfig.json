@@ -133,6 +133,7 @@
       "@openora/core/promo/seed/gamification": ["./src/promo/gamification/seed/index.ts"],
       "@openora/core/promo/server": ["./src/promo/server.ts"],
       "@openora/core/react": ["./src/react/index.ts"],
+      "@openora/core/seed/local": ["./src/scripts/seed-local.ts"],
       "@openora/core/server": ["./src/server/index.ts"],
       "@openora/core/server/migrate": ["./src/server/db/migrate.ts"],
       "@openora/core/server/orm": ["./src/server/db/orm.ts"],

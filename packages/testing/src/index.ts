@@ -21,8 +21,8 @@ export {
 } from './register.js';
 export { capturedEmailsFor, clearCapturedEmails, type CapturedEmail } from './captured-emails.js';
 export { seedMinimal, type SeedMinimalOptions } from './seed.js';
-export { seedDemoData } from './seed-demo-data.js';
-export type { SeedAuth, SeedOptions, SeedResult } from './seed-demo-data.js';
+export { seedDemoData } from '@openora/core/seed/local';
+export type { SeedAuth, SeedOptions, SeedResult } from '@openora/core/seed/local';
 export { bootE2e, closeE2e, type E2e, type BootE2eOptions } from './e2e.js';
 export { secretFromTotpUri, totpCode } from './totp.js';
 export {

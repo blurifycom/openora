@@ -1,41 +1,34 @@
 /**
- * Reference-data seeder. Composes the module seeders you enable (e.g. IAM's
- * predefined roles) and runs them - convergent upserts, safe on every deploy.
+ * Local seeder: reference data (roles, tags, default configs), a super-admin from ADMIN_EMAIL /
+ * ADMIN_PASSWORD, and demo players, games, wallets and chat so the backoffice has something to show.
  *
- * Standalone one-shot script (mirrors the migration runner): needs only a DB
- * connection, never boots the app. Add a module's seeder by importing + calling it.
+ * Standalone one-shot script (mirrors the migration runner): needs only a DB connection, never
+ * boots the app. Safe to re-run: reference data converges, demo content is recreated and the admin
+ * password is reset to ADMIN_PASSWORD. Refuses to run with NODE_ENV=production.
  *
  * Usage: pnpm db:seed  (run after db:migrate). Requires DATABASE_URL.
- * Does NOT include demo data (fixtures, fake players) - that is dev-only.
  */
-import { createDrizzleDb } from '@openora/core/server';
-import { seedRoles } from '@openora/core/iam/seed';
-import { seedTag } from '@openora/core/pam/tag/seed';
-import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
-import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
-// import additional module seeders here as you enable them
+import { seedLocalData } from '@openora/core/seed/local';
 
 async function main() {
-  if (process.env['NODE_ENV'] === 'production') {
-    console.error('Refusing to seed in production. This script is dev/local only.');
-    process.exit(1);
-  }
-
   const databaseUrl = process.env['DATABASE_URL'];
   if (!databaseUrl) {
     console.error('DATABASE_URL env var not set');
     process.exit(1);
   }
 
-  const db = createDrizzleDb(databaseUrl);
+  const result = await seedLocalData({
+    databaseUrl,
+    admin: {
+      email: process.env['ADMIN_EMAIL'] ?? 'admin@oss.dev',
+      password: process.env['ADMIN_PASSWORD'] ?? 'password1234',
+    },
+    playerCount: Number(process.env['SEED_PLAYERS'] ?? 36),
+    log: (m) => console.log(`  ${m}`),
+  });
 
-  await seedRoles(db);
-  await seedTag(db);
-  await seedAutoWithdrawalConfig(db);
-  // Without it, a bonus with no offer behind it - a gift, a rain drop, a hand-issued grant -
-  // resolves no weight profile and is refused.
-  await seedDefaultWeightProfile(db);
-  console.log('Reference data seeded.');
+  console.log(`\nSeeded ${result.players} players, ${result.games} games.`);
+  console.log(`Log in to the backoffice: ${result.adminEmail} / ${result.adminPassword}`);
 }
 
 main()

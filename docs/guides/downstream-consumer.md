@@ -155,10 +155,12 @@ Common orchestration patterns:
 
 - **One script per module** - `db:seed:iam`, `db:seed:casino`, ... each importing a single seeder.
 - **One script with a flag** - `pnpm db:seed --only=iam` branches on the arg.
-- **One combined script** - imports and runs them all (the default `apps/api/src/seed.ts` above).
+- **One combined script** - imports and runs them all, like the snippet above.
 
-**Demo/fake data** (sample players, transactions) is a separate, dev-only concern - it lives in
-`@openora/testing` (`seedDemoData` / `seedMinimal`) and must never run on production.
+**Local data** is a separate, dev-only concern. The scaffolded `apps/api/src/seed.ts` calls
+`seedLocalData` from `@openora/core/seed/local`: reference data, a super-admin from `ADMIN_EMAIL` /
+`ADMIN_PASSWORD`, and demo players, games, wallets and chat. It wipes demo tables, so it refuses
+`NODE_ENV=production`; production runs a reference-data script like the one above.
 
 ## Building the frontend (in your own repo)
 

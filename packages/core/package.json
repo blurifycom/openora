@@ -69,6 +69,11 @@
       "require": "./dist/server/db/migrate.js",
       "types": "./dist/server/db/migrate.d.ts"
     },
+    "./seed/local": {
+      "types": "./dist/scripts/seed-local.d.ts",
+      "import": "./dist/scripts/seed-local.js",
+      "default": "./dist/scripts/seed-local.js"
+    },
     "./testing": {
       "import": "./dist/testing/index.js",
       "require": "./dist/testing/index.js",

@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { seedDemoData, type SeedResult } from './seed-demo-data.js';
+import { EXAMPLE_RANK_LADDER, seedDemoData, type SeedResult } from '@openora/core/seed/local';
 import {
   createAuth,
   DRIZZLE,
@@ -11,66 +11,10 @@ import {
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
-import { seedRankLadder, type RankLadderSeed } from '@openora/core/promo/seed/gamification';
-import {
-  DEFAULT_PAYOUT_ANCHORS,
-  DEFAULT_RANK_PERK_PRODUCTS,
-} from '@openora/core/promo/contracts/gamification';
+import { seedRankLadder } from '@openora/core/promo/seed/gamification';
 import { user, session, account, verification } from '@openora/core/pam/schema/identity';
 
-/**
- * A ladder for local development and the test harness. Deliberately short and round: an
- * operator's real thresholds and payouts are their own pricing, not something this package ships.
- */
-export const EXAMPLE_RANK_LADDER: RankLadderSeed = {
-  currency: 'USDT',
-  tiers: [
-    { key: 'bronze', name: 'Bronze', wagerThreshold: '0', rakebackPercent: '1', dailyBonus: '1' },
-    {
-      key: 'silver',
-      name: 'Silver',
-      wagerThreshold: '10000',
-      rakebackPercent: '3',
-      dailyBonus: '5',
-      monthlyBonus: '50',
-      levelUpBonus: '10',
-    },
-    {
-      key: 'gold',
-      name: 'Gold',
-      wagerThreshold: '100000',
-      rakebackPercent: '5',
-      dailyBonus: '20',
-      weeklyBonus: '100',
-      monthlyBonus: '400',
-      levelUpBonus: '50',
-    },
-    {
-      key: 'platinum',
-      name: 'Platinum',
-      wagerThreshold: '1000000',
-      rakebackPercent: '10',
-      dailyBonus: '100',
-      weeklyBonus: '500',
-      monthlyBonus: '2000',
-      levelUpBonus: '250',
-    },
-  ],
-  config: {
-    payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
-    payInPlayerCurrency: false,
-    periodicRequiresActivity: true,
-    eligibleProducts: [],
-    rakebackEligibleProducts: [...DEFAULT_RANK_PERK_PRODUCTS],
-    rankChallengeEligibleProducts: [...DEFAULT_RANK_PERK_PRODUCTS],
-    rewards: {
-      levelUp: { wageringMultiplier: '1', expiryDays: 7 },
-      daily: { wageringMultiplier: '1', expiryDays: 1 },
-      weekly: { wageringMultiplier: '1', expiryDays: 7 },
-      monthly: { wageringMultiplier: '1', expiryDays: 30 },
-    },
-  },
-};
+export { EXAMPLE_RANK_LADDER };
 
 export type SeedMinimalOptions = {
   /** Keep small for fast tests. */
