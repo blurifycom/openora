@@ -64,7 +64,7 @@ the API. Before the first start:
 docker compose -f compose.prod.yml up -d --build
 ```
 
-The API listens on `127.0.0.1:3001` only. Put a reverse proxy with TLS (Caddy, nginx) in front of it
+The API listens on `127.0.0.1` only, port `API_PORT` (default 3001). Put a reverse proxy with TLS (Caddy, nginx) in front of it
 for your public domain.
 
 It seeds nothing: no backoffice roles and no admin yet, so nobody can log in. Create them with a

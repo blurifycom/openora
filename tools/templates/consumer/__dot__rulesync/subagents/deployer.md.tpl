@@ -36,7 +36,7 @@ Inject as platform env/secrets, never bake into images: `DATABASE_URL` (+ `DATAB
 - `pnpm db:seed` is dev-only (refuses `NODE_ENV=production`) - never in a prod deploy.
 ## CI deploy
 
-A deploy stage gated to `{{mrTarget}}`/`stage`: build + push the images (combined context, needs Docker), run the migration job, roll the services. Keep it portable - shell + the target's CLI - so it survives a platform change.
+A deploy stage gated to `{{mrTarget}}`/`stage`: build + push the images (this repo as context, needs Docker), run the migration job, roll the services. Keep it portable - shell + the target's CLI - so it survives a platform change.
 
 ## Escalate
 
