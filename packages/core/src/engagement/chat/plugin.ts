@@ -40,6 +40,7 @@ import { ChatRoomMuteService } from './service/chat-room-mute.service.js';
 import { ChatRoomRestrictionService } from './service/chat-room-restriction.service.js';
 import { ChatModerationExpiryService } from './service/chat-moderation-expiry.service.js';
 import { ChatRoomPurgeService } from './service/chat-room-purge.service.js';
+import { ChatSystemCardService } from './service/chat-system-card.service.js';
 import { createChatRouter } from './router/index.js';
 
 const CHAT_MODERATION_EXPIRY_QUEUE = queue('chat-moderation-expiry');
@@ -205,6 +206,34 @@ export default {
       );
     };
 
+    let systemCardRef: ChatSystemCardService | null = null;
+
+    // Cards from a service that does not run chat (OutboxChatSystemWriter). Neither a refused
+    // id nor a deleted room changes on redelivery, so both are logged and acknowledged.
+    ctx.events.on('chat.system_message.upserted', async (payload) => {
+      if (!systemCardRef) {
+        throw new Error('chat system card: service not constructed yet');
+      }
+      const card = domainEventSchemas['chat.system_message.upserted'].parse(payload);
+      const outcome = await systemCardRef.apply(card);
+      if (outcome === 'conflict') {
+        logger.error(
+          { messageId: card.messageId, roomId: card.roomId },
+          'chat system card refused: its id names another message',
+        );
+      } else if (outcome === 'room-gone') {
+        logger.warn(
+          { messageId: card.messageId, roomId: card.roomId },
+          'chat system card dropped: its room no longer exists',
+        );
+      } else if (outcome === 'stale') {
+        logger.debug(
+          { messageId: card.messageId, version: card.version },
+          'chat system card skipped: a same or newer version is stored',
+        );
+      }
+    });
+
     ctx.events.on('player.account.closed', async (payload) => {
       const parsed = domainEventSchemas['player.account.closed'].safeParse(payload);
       if (parsed.success) {
@@ -342,6 +371,7 @@ export default {
         c.get(AUDIT_WRITER),
       );
       jobQueueRef = c.get(JOB_QUEUE);
+      systemCardRef = new ChatSystemCardService(c.get(DRIZZLE), c.get(CHAT_REALTIME_TRANSPORT));
       void jobQueueRef
         .schedule(
           CHAT_ROOM_PURGE_SCAN_QUEUE,

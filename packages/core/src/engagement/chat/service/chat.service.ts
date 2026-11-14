@@ -41,6 +41,7 @@ import {
   ChatContextSendDecisionSchema,
   ChatContextSendDeniedError,
   CHAT_SYSTEM_AUTHOR_USERNAME,
+  CHAT_SYSTEM_MESSAGE_VERSION,
   chatBlockLockKey,
   chatChannel,
   GLOBAL_CHAT_ROOM_ID,
@@ -208,7 +209,11 @@ function emitMentions({
   });
 }
 
-function publishChatEvent<T>(transport: RealtimeTransport, roomId: string | null, event: T): void {
+export function publishChatEvent<T>(
+  transport: RealtimeTransport,
+  roomId: string | null,
+  event: T,
+): void {
   void Promise.resolve()
     .then(() => transport.publish(chatChannel(roomId), event))
     .catch((err: unknown) => {
@@ -412,7 +417,7 @@ function toSentMessage(
 
 // A system message this service just wrote: its metadata came in typed by the contract, so
 // it needs neither the legacy repair nor the re-parse a stored row does.
-function toWrittenSystemMessage(
+export function toWrittenSystemMessage(
   record: typeof chatMessage.$inferSelect,
   metadata: CommandMetadata,
 ): ChatSystemMessage {
@@ -2773,6 +2778,7 @@ export class ChatService {
   }
 
   async postSystemMessage(args: {
+    messageId?: ChatMessage['id'];
     roomId: ChatRoom['id'] | null;
     actorId?: User['id'];
     username?: User['name'];
@@ -2784,6 +2790,7 @@ export class ChatService {
     const [record] = await db
       .insert(chatMessage)
       .values({
+        id: args.messageId,
         roomId,
         userId: args.actorId ?? CHAT_SYSTEM_AUTHOR_ID,
         username: args.username ?? CHAT_SYSTEM_AUTHOR_USERNAME,
@@ -2803,17 +2810,28 @@ export class ChatService {
     return msg;
   }
 
+  // `roomId`, `actorId` and `username` are for the outbox writer; the row already holds them.
   async updateSystemMessage(args: {
     messageId: ChatMessage['id'];
+    roomId: ChatRoom['id'] | null;
+    actorId: User['id'];
+    username?: User['name'];
     metadata: CommandMetadata;
     tx?: unknown;
   }): Promise<CommandChatMessage> {
     const db = (args.tx as DrizzleDb | undefined) ?? this.drizzle.db;
     const [record] = await db
       .update(chatMessage)
-      .set({ metadata: args.metadata })
-      .where(eq(chatMessage.id, args.messageId))
+      .set({
+        metadata: args.metadata,
+        version: sql`greatest(${chatMessage.version}, ${CHAT_SYSTEM_MESSAGE_VERSION.updated})`,
+      })
+      // Only a system card: an id that names a player's message never rewrites it.
+      .where(and(eq(chatMessage.id, args.messageId), eq(chatMessage.type, 'system')))
       .returning();
+    if (!record) {
+      throw new Error(`chat system card ${args.messageId} not found`);
+    }
     const message = toWrittenSystemMessage(record, args.metadata);
     if (!args.tx) {
       publishChatEvent(this.transport, message.roomId, message);

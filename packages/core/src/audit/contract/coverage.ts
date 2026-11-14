@@ -98,6 +98,11 @@ export const AUDIT_COVERAGE_GAPS = {
     reason:
       'one per chat message; the message row is the record and moderation actions are audited',
   },
+  'chat.system_message.upserted': {
+    kind: 'exempt',
+    reason:
+      'carries a chat card to the chat service; the command that wrote it audits its own money movement',
+  },
   'chat.room.member.removed': {
     kind: 'atSource',
     writer: 'ChatRoomMembershipService and ChatContextRoomService via recordInTransaction',

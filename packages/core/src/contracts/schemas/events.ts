@@ -63,6 +63,7 @@ import {
   BonusGrantSourceSchema,
   ContributionPercentSchema,
 } from './promo.js';
+import { CommandMetadataSchema } from './chat-command.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
@@ -930,6 +931,18 @@ export const domainEventSchemas = {
     // null for global-chat messages (no room); a room id otherwise.
     roomId: UuidSchema.nullable(),
     userId: UuidSchema,
+  }),
+
+  // A system card written by a service that does not run chat, on the transaction that moved
+  // the money it reports. Chat applies it to its own table: the id keys the card, and `version`
+  // (CHAT_SYSTEM_MESSAGE_VERSION) wins over a lower one, so redelivery and reordering are safe.
+  'chat.system_message.upserted': z.object({
+    messageId: UuidSchema,
+    roomId: UuidSchema.nullable(),
+    actorId: UuidSchema,
+    username: z.string(),
+    metadata: CommandMetadataSchema,
+    version: z.number().int().positive(),
   }),
 
   // A player muted/unmuted another player's messages for themselves (ABC-45 AC11).
