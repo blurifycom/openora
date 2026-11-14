@@ -7,6 +7,7 @@ x-runtime: &runtime
   env_file: .env
   environment:
     NODE_ENV: production
+    PORT: 3001
     DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/oss_igaming
     REDIS_URL: redis://redis:6379
 
@@ -48,7 +49,8 @@ services:
   api:
     <<: *runtime
     ports:
-      - '${API_PORT:-3001}:3001'
+      # Local only: put a TLS reverse proxy (Caddy, nginx) in front for the public domain.
+      - '127.0.0.1:${API_PORT:-3001}:3001'
     depends_on:
       migrate:
         condition: service_completed_successfully

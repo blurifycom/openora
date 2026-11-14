@@ -2,6 +2,7 @@
 **/dist
 .git
 .turbo
-.env
-.env.*
-!.env.example
+.claude
+**/.env
+**/.env.*
+!**/.env.example

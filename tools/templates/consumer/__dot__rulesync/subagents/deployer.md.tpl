@@ -18,7 +18,7 @@ The operator picks the platform (ECS/Fargate, Kubernetes, Fly.io, Railway, Rende
 - `web` - Next.js standalone, :3000 (if present)
 - `backoffice` - Vite SPA static, :80 via nginx/static server (if present)
 
-An api-only consumer ships just the api. Build context is COMBINED: this repo + the sibling `{{ossDir}}` checkout (the app builds via `pnpm -C {{ossDir}} build`). Multi-stage Dockerfiles (install + build, then a slim runtime image); pin Node to `.nvmrc`.
+An api-only consumer ships just the api. Start from the shipped `Dockerfile` (one image for the api and its migrations, `@openora/*` from npm) and `compose.prod.yml` (single-server reference), and adapt them to the chosen platform; pin Node to `.nvmrc`.
 
 ## Ground first
 
@@ -34,8 +34,6 @@ Inject as platform env/secrets, never bake into images: `DATABASE_URL` (+ `DATAB
 
 - Migrations run as a one-shot job (api image, command override `pnpm db:migrate`) on the target network, after the DB is reachable, before the api rolls - never part of container start.
 - `pnpm db:seed` is dev-only (refuses `NODE_ENV=production`) - never in a prod deploy.
-- Provisioning Redis activates nothing by itself - `JOB_QUEUE` (BullMQ) and other drivers turn on only when `REDIS_URL` is set in the api env. Decide with the operator whether to wire it now or leave Redis idle.
-
 ## CI deploy
 
 A deploy stage gated to `{{mrTarget}}`/`stage`: build + push the images (combined context, needs Docker), run the migration job, roll the services. Keep it portable - shell + the target's CLI - so it survives a platform change.
