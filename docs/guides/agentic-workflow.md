@@ -5,7 +5,7 @@ Copy-paste recipes: what to type, in what order, for each common job. Each step 
 One-time setup (once per clone):
 
 ```
-pnpm setup      # docker + db + mcp + deps
+pnpm run setup      # docker + db + mcp + deps
 ```
 
 First time on the platform? Let it onboard you - it interviews you for requirements, then delegates the build to the right agents:

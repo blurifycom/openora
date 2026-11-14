@@ -16,7 +16,7 @@ source for architecture, naming, boundaries, and the "where does X go?" decision
 
 ```bash
 pnpm install
-pnpm setup   # boots Docker (Postgres + Redis), runs migrations, prints a summary
+pnpm run setup   # boots Docker (Postgres + Redis), runs migrations, prints a summary
 pnpm db:seed          # demo data: admin + players + wallets + transactions + games
 pnpm dev           # api :3001, mcp dev server
 ```
