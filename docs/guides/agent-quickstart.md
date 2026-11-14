@@ -107,7 +107,7 @@ Fix any typecheck, lint, boundary, or test failures before considering the work 
 
 ## Step 11: Integration check
 
-Start the full stack:
+Start the API from a `pnpm create:app` app (in this repo `pnpm dev` only runs the MCP dev server; see the [Quickstart](./quickstart.md)):
 
 ```
 pnpm dev
