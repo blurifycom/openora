@@ -519,7 +519,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
   });
 
   plop.setGenerator('app', {
-    description: 'Scaffold a downstream consumer repo (api wired to this checkout)',
+    description: 'Scaffold a downstream consumer repo (api, @openora/* from npm)',
     prompts: [
       {
         type: 'input',
@@ -534,7 +534,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
       const a = data ?? {};
       return [
         () => {
-          const args = ['exec', 'tsx', 'tools/create/create-igaming-app.ts', s(a, 'dir')];
+          const args = ['create:app', s(a, 'dir')];
           if (s(a, 'appName')) {
             args.push('--name', s(a, 'appName'));
           }
