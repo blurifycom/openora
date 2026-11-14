@@ -250,6 +250,7 @@ export class LedgerApiService implements LedgerApiV1 {
           userId,
           playerId,
           gameId,
+          roundExternalId: externalRoundId,
           providerRef: { ...reverseKey, externalRoundId },
           betTransactionId: debit.transactionId,
           amount: args.amount,
@@ -384,10 +385,19 @@ export class LedgerApiService implements LedgerApiV1 {
           if (!bet?.externalRoundId) {
             throw new LedgerRefusal('bet_not_found');
           }
+          // A bet placed here keyed its round and its row with one id. Any other bet's round id
+          // may not be its round's key, so the caller may name the round.
+          const placedHere = await this.findRequest(tx, {
+            providerName,
+            providerRefId: targetRefId,
+          });
           const reversal = await this.returnStake(tx, {
             userId,
             playerId,
             gameId,
+            roundExternalId: placedHere
+              ? bet.externalRoundId
+              : (args.externalRoundId ?? bet.externalRoundId),
             providerRef: { providerName, providerRefId, externalRoundId: bet.externalRoundId },
             betTransactionId: bet.id,
             amount: bet.amount,
@@ -549,13 +559,17 @@ export class LedgerApiService implements LedgerApiV1 {
     await tx.insert(ledgerApiRequest).values({ ...key, ...row });
   }
 
-  /** Credits a stake back as `bet_reversal` and takes it off the round. */
+  /**
+   * Credits a stake back as `bet_reversal`, on the bet's own round id so the wallet matches it to
+   * its bet, and takes it off the round keyed `roundExternalId`.
+   */
   private async returnStake(
     tx: DrizzleTx,
     args: {
       userId: Uuid;
       playerId: string | null;
       gameId: Uuid;
+      roundExternalId: LedgerV1BetArgs['externalRoundId'];
       providerRef: LedgerKey & { externalRoundId: LedgerV1BetArgs['externalRoundId'] };
       betTransactionId: Uuid;
       amount: string;
@@ -567,7 +581,7 @@ export class LedgerApiService implements LedgerApiV1 {
       gameId: args.gameId,
       userId,
       currency,
-      externalRoundId: providerRef.externalRoundId,
+      externalRoundId: args.roundExternalId,
       betDelta: `-${amount}`,
     });
     const credit = await this.deps.walletCommands.credit(tx, {
