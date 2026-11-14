@@ -26,12 +26,17 @@ newest release; pin an exact version if you need reproducible installs.
 
 ## Dev setup
 
+Needs Node.js 22+ and Docker Desktop running.
+
 ```bash
 pnpm install               # pulls @openora/* from npm
-cp .env.example .env       # set DATABASE_URL + AUTH_SECRET
-pnpm db:migrate            # apply the OSS schema to your database
-pnpm dev                   # api :3001
+pnpm bootstrap             # .env, Postgres + Redis, schema, admin + demo data
+pnpm dev                   # api :3001, docs at http://localhost:3001/docs
 ```
+
+`pnpm bootstrap` is safe to re-run. It logs the backoffice admin it created (`ADMIN_EMAIL` /
+`ADMIN_PASSWORD` in `.env`). For a database that is not local, set `DATABASE_URL` in `.env` and run
+`pnpm db:migrate` yourself; `pnpm db:seed` only seeds a local database.
 
 The `oss` MCP server is declared in `.mcp.json`. Approve it in your editor, restart, then run
 **`/start`** in Claude Code - it asks what you want to build and scaffolds it for you.

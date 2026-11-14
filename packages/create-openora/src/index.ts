@@ -83,9 +83,8 @@ async function main(): Promise<void> {
 
     cd ${posix(relative(process.cwd(), targetDir)) || '.'}
     pnpm install            # pulls @openora/* from npm + generates agent files
-    cp .env.example .env     # then set DATABASE_URL / AUTH_SECRET
-    pnpm db:migrate          # apply the schema - runs from node_modules
-    pnpm dev                 # api :3001
+    pnpm bootstrap           # .env, Postgres + Redis (Docker), schema, admin + demo data
+    pnpm dev                 # api :3001, docs at http://localhost:3001/docs
 
   Add features with turbo gen:
 

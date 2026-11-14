@@ -38,8 +38,7 @@ against the plugin host, and never forks the framework:
 pnpm create:app my-gaming-core
 cd my-gaming-core
 pnpm install
-cp .env.example .env                  # set DATABASE_URL + AUTH_SECRET
-pnpm db:migrate
+pnpm bootstrap                        # .env, Postgres + Redis (Docker), schema, admin + demo data
 pnpm dev                              # api on :3001
 ```
 
