@@ -11,6 +11,7 @@ import {
   enqueueAuditInTransaction,
   verifyAuditChain,
 } from '../service/audit.service.js';
+import { drainAuditOutbox } from '../service/audit-shipper.service.js';
 import { main as runCopy, type CopyHooks } from '../service/audit-copy.service.js';
 
 const unique = () => randomUUID().replaceAll('-', '');
@@ -154,6 +155,8 @@ const sequenceState = (url: string) =>
   sqlOn(url, 'SELECT last_value::text, is_called::text FROM audit_log_seq_seq');
 const fenceState = (url: string) =>
   scalar(url, `SELECT tgenabled::text FROM pg_trigger WHERE tgname = 'audit_log_moved'`);
+const closedState = (url: string) =>
+  scalar(url, `SELECT count(*)::text FROM pg_trigger WHERE tgname = 'audit_log_closed'`);
 const isValid = async (url: string) => (await verifyAuditChain(serviceFor(url))).valid;
 
 const causeOf = (err: unknown): string =>
@@ -459,28 +462,18 @@ describe('audit-copy', () => {
     expect(await fenceState(f.main.url)).toBe('A');
   });
 
-  it('TC-17 the audit database rejects an append that waited out the drain', async () => {
+  it('TC-17 the audit database is closed before the fence lifts, so a late append fails', async () => {
     const f = await fixture();
     await seed(f.main.drizzle.db, 3);
     await run(envOf(f), ['--fence', '--apply']);
     await queueOutbox(f, ['x']);
-    let live: Promise<unknown> = Promise.resolve();
+    let live: unknown;
     const duringDrain = async () => {
-      live = seed(serviceFor(f.targetUrl), 1, 'live').catch((err: unknown) => err);
-      for (;;) {
-        const waiting = await scalar(
-          f.targetUrl,
-          `SELECT count(*)::text FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`,
-        );
-        if (waiting !== '0') {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+      live = await seed(serviceFor(f.targetUrl), 1, 'live').catch((err: unknown) => err);
     };
     const result = await run(envOf(f), ['--drain-outbox', '--apply'], { duringDrain });
     expect(result.code).toBe(0);
-    expect(causeOf(await live)).toContain('drained back into the main database');
+    expect(causeOf(live)).toContain('drained back into the main database');
     expect(await count(f.main.url)).toBe('4');
     expect(await count(f.targetUrl)).toBe('3');
     expect(await scalar(f.targetUrl, `SELECT hash FROM audit_log WHERE seq = 3`)).toBe(
@@ -559,7 +552,7 @@ describe('audit-copy', () => {
     expect(result.out).toContain('verify target: valid (from seq 10)');
   });
 
-  it('TC-24 a copy beside a running drain fails on the lock timeout', async () => {
+  it('TC-24 a copy beside a running drain is refused by the closed audit database', async () => {
     const f = await fixture();
     await seed(f.main.drizzle.db, 3);
     await run(envOf(f), ['--fence', '--apply']);
@@ -570,7 +563,7 @@ describe('audit-copy', () => {
     const result = await run(envOf(f), ['--drain-outbox', '--apply'], { duringDrain });
     expect(result.code).toBe(0);
     expect(beside).toBe(1);
-    expect(result.err).toContain('lock timeout');
+    expect(result.err).toContain('drained back into the main database');
   }, 60_000);
 
   it('TC-25 a drain that fails after the fence is lifted reruns cleanly', async () => {
@@ -583,12 +576,7 @@ describe('audit-copy', () => {
     });
     expect(failed.code).toBe(1);
     expect(await fenceState(f.main.url)).toBeUndefined();
-    expect(
-      await scalar(
-        f.targetUrl,
-        `SELECT count(*)::text FROM pg_trigger WHERE tgname = 'audit_log_closed'`,
-      ),
-    ).toBe('0');
+    expect(await closedState(f.targetUrl)).toBe('1');
     const rerun = await run(envOf(f), ['--drain-outbox', '--apply']);
     expect(rerun.code).toBe(0);
     expect(await count(f.main.url)).toBe('5');
@@ -609,10 +597,78 @@ describe('audit-copy', () => {
       expect(result.code).toBe(1);
       expect(result.err).toContain('shipper holds the shipper lock');
       expect(await fenceState(f.main.url)).toBe('A');
+      expect(await closedState(f.targetUrl)).toBe('0');
     } finally {
       await client.query('ROLLBACK');
       client.release();
       await holder.end();
     }
   });
+
+  it('TC-27 a shipper that starts after the idle check fails on the closed audit database and its rows ship on the rerun', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await run(envOf(f), ['--fence', '--apply']);
+    await queueOutbox(f, ['p', 'q']);
+    let late: unknown;
+    const duringDrain = async () => {
+      late = await drainAuditOutbox(serviceFor(f.shipperUrl), serviceFor(f.auditUrl)).catch(
+        (err: unknown) => err,
+      );
+    };
+    const first = await run(envOf(f), ['--drain-outbox', '--apply'], { duringDrain });
+    expect(causeOf(late)).toContain('drained back into the main database');
+    expect(first.code).toBe(0);
+    expect(await count(f.main.url)).toBe('5');
+    expect(await scalar(f.main.url, 'SELECT count(*)::text FROM audit_outbox')).toBe('0');
+    expect(await count(f.targetUrl)).toBe('3');
+    const rerun = await run(envOf(f), ['--drain-outbox', '--apply']);
+    expect(rerun.code).toBe(0);
+    expect(await count(f.main.url)).toBe('5');
+    expect(await isValid(f.main.url)).toBe(true);
+  }, 60_000);
+
+  it('TC-28 a drain that leaves rows in the outbox exits 1', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await run(envOf(f), ['--fence', '--apply']);
+    const result = await run(envOf(f), ['--drain-outbox', '--apply'], {
+      afterDrain: () => queueOutbox(f, ['unstopped']),
+    });
+    expect(result.code).toBe(1);
+    expect(result.err).toContain('audit_outbox still holds rows');
+    const rerun = await run(envOf(f), ['--drain-outbox', '--apply']);
+    expect(rerun.code).toBe(0);
+  }, 60_000);
+
+  it('TC-29 a failure between the chain insert and the outbox delete never duplicates a row', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await run(envOf(f), ['--fence', '--apply']);
+    await queueOutbox(f, ['once']);
+    await sqlOn(
+      f.main.url,
+      `CREATE FUNCTION fail_outbox_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'injected delete failure'; END $$`,
+      `CREATE TRIGGER fail_outbox_delete BEFORE DELETE ON audit_outbox
+         FOR EACH ROW EXECUTE FUNCTION fail_outbox_delete()`,
+    );
+    const failed = await run(envOf(f), ['--drain-outbox', '--apply']);
+    expect(failed.code).toBe(1);
+    expect(failed.err).toContain('delete from "audit_outbox"');
+    expect(await count(f.main.url)).toBe('4');
+    expect(await scalar(f.main.url, 'SELECT count(*)::text FROM audit_outbox')).toBe('1');
+    await sqlOn(f.main.url, 'DROP TRIGGER fail_outbox_delete ON audit_outbox');
+    const rerun = await run(envOf(f), ['--drain-outbox', '--apply']);
+    expect(rerun.code).toBe(0);
+    expect(await count(f.main.url)).toBe('4');
+    expect(
+      await scalar(
+        f.main.url,
+        'SELECT (count(event_id) - count(DISTINCT event_id))::text FROM audit_log',
+      ),
+    ).toBe('0');
+    expect(await scalar(f.main.url, 'SELECT count(*)::text FROM audit_outbox')).toBe('0');
+    expect(await isValid(f.main.url)).toBe(true);
+  }, 60_000);
 });
