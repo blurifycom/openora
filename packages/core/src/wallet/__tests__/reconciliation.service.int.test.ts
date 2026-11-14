@@ -46,7 +46,7 @@ import {
   ReconciliationAttributionError,
   ReconciliationCreditMismatchError,
   ReconciliationFindingNotFoundError,
-  ReconciliationOutcomeNotAllowedError,
+  type ReconciliationRefusalReason,
   ReconciliationRefundAmountError,
 } from '../service/reconciliation.service.js';
 
@@ -173,6 +173,13 @@ async function waitForOpenClaim(jobName: string, timeoutMs = 2000): Promise<void
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+
+// The error class and the reason a client is told, so each refusal pins its own path.
+const refusedFor = (reason: ReconciliationRefusalReason) =>
+  expect.objectContaining({
+    name: 'ReconciliationOutcomeNotAllowedError',
+    data: { reason },
+  });
 
 describe('ReconciliationService.runCycle - internal transfer exclusion', () => {
   it('produces zero findings for a sweep that appears in the vendor transaction list', async () => {
@@ -438,7 +445,8 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
     expect(findings[0]).toMatchObject({ kind: 'unknown_at_provider', externalId: tx.id });
   });
 
-  it('closes the held withdrawal when its finding is credited by hand, so a late vendor answer cannot pay twice', async () => {
+  /** A held withdrawal the vendor has no record of, its finding, and a matching manual credit. */
+  async function unknownWithdrawalWithCredit(creditUserId?: string) {
     const { w, tx } = await seedStuckWithdrawal(null);
     const findWithdrawalByReference = vi.fn<
       NonNullable<PaymentAdapter['findWithdrawalByReference']>
@@ -454,10 +462,13 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
       }),
     });
     await reconciliation.runCycle();
-    const [finding] = await findingRows();
+    const finding = findOneOrThrow(
+      await findingRows(),
+      new Error('no unknown_at_provider finding'),
+    );
     const credit = await walletSvc.manualAdjust({
       adminId: randomUUID(),
-      userId: w.userId,
+      userId: creditUserId ?? w.userId,
       direction: 'credit',
       amount: '1',
       currency: 'BTC',
@@ -466,8 +477,14 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
       ip: null,
       userAgent: null,
     });
+    return { w, tx, finding, credit, reconciliation, findWithdrawalByReference };
+  }
 
-    await reconciliation.resolveFinding(randomUUID(), finding!.id, {
+  it('closes the held withdrawal when its finding is credited by hand, so a late vendor answer cannot pay twice', async () => {
+    const { w, tx, finding, credit, reconciliation, findWithdrawalByReference } =
+      await unknownWithdrawalWithCredit();
+
+    await reconciliation.resolveFinding(randomUUID(), finding.id, {
       outcome: 'credited',
       transactionId: credit.transactionId,
     });
@@ -483,6 +500,40 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
       .where(eq(walletTransaction.id, tx.id));
     expect(row?.status).toBe('failed');
     expect(await balanceOf(w.id)).toBe('6.000000000000000000');
+  });
+
+  it('refuses to credit a withdrawal settled another way since its finding was filed', async () => {
+    const { tx, finding, credit, reconciliation } = await unknownWithdrawalWithCredit();
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ status: 'completed' })
+      .where(eq(walletTransaction.id, tx.id));
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), finding.id, {
+        outcome: 'credited',
+        transactionId: credit.transactionId,
+      }),
+    ).rejects.toMatchObject(refusedFor('withdrawal_not_processing'));
+    const [still] = await findingRows();
+    expect(still?.status).toBe('open');
+  });
+
+  it("refuses a manual credit to a wallet other than the withdrawal's", async () => {
+    const other = await seedWallet('BTC', '0');
+    const { tx, finding, credit, reconciliation } = await unknownWithdrawalWithCredit(other.userId);
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), finding.id, {
+        outcome: 'credited',
+        transactionId: credit.transactionId,
+      }),
+    ).rejects.toBeInstanceOf(ReconciliationCreditMismatchError);
+    const [row] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, tx.id));
+    expect(row?.status).toBe('processing');
   });
 
   it('measures stuck time from approval, not from the request', async () => {
@@ -881,13 +932,39 @@ describe('ReconciliationService.resolveFinding', () => {
     expect(resolved.transactionId).toBe(creditTx.transactionId);
   });
 
+  it('refuses a manual credit that already closed another finding', async () => {
+    const [first, second] = [await seedFinding(), await seedFinding()];
+    const w = await seedWallet('BTC', '0');
+    const { wallet: walletSvc, reconciliation } = makeServices(listTransactionsReturning([]), {
+      identityReader: playerReader(),
+    });
+    const creditTx = await walletSvc.manualAdjust({
+      adminId: randomUUID(),
+      userId: w.userId,
+      direction: 'credit',
+      amount: '1',
+      currency: 'BTC',
+      reason: 'reconciliation credit',
+      idempotencyKey: randomUUID(),
+      ip: null,
+      userAgent: null,
+    });
+    const credit = { outcome: 'credited', transactionId: creditTx.transactionId } as const;
+    await reconciliation.resolveFinding(randomUUID(), first.id, credit);
+
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), second.id, credit),
+    ).rejects.toMatchObject(refusedFor('credit_already_used'));
+    expect((await findingById(second.id))?.status).toBe('open');
+  });
+
   it('refuses a non-deposit credited resolution that names no manual credit', async () => {
     const finding = await seedFinding();
     const { reconciliation } = makeServices(listTransactionsReturning([]));
 
     await expect(
       reconciliation.resolveFinding(randomUUID(), finding.id, { outcome: 'credited' }),
-    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    ).rejects.toMatchObject(refusedFor('credit_names_no_transaction'));
   });
 
   it('refuses to close a deposit finding with a manual credit made before the hold policy ran', async () => {
@@ -899,7 +976,7 @@ describe('ReconciliationService.resolveFinding', () => {
         outcome: 'credited',
         transactionId: randomUUID(),
       }),
-    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    ).rejects.toMatchObject(refusedFor('deposit_credit_names_a_transaction'));
   });
 
   it('credits a missing deposit as a deposit the limit window counts, keyed on the vendor id', async () => {
@@ -1024,7 +1101,7 @@ describe('ReconciliationService.resolveFinding', () => {
       const finding = await seedFinding(kind);
       await expect(
         reconciliation.resolveFinding(randomUUID(), finding.id, refund()),
-      ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+      ).rejects.toMatchObject(refusedFor('outcome_not_allowed_for_kind'));
     }
   });
 
@@ -1046,7 +1123,7 @@ describe('ReconciliationService.resolveFinding', () => {
 
     await expect(
       reconciliation.resolveFinding(randomUUID(), finding.id, refund('1', 'bc1qelsewhere')),
-    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    ).rejects.toMatchObject(refusedFor('refund_destination_without_note'));
     expect((await findingById(finding.id))?.status).toBe('open');
 
     const resolved = await reconciliation.resolveFinding(
@@ -1422,7 +1499,7 @@ describe('ReconciliationService.resolveFinding', () => {
         outcome: 'dismissed',
         note: 'refunded on chain',
       }),
-    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    ).rejects.toMatchObject(refusedFor('outcome_not_allowed_for_kind'));
     expect(await statusOf(held.id)).toBe('on_hold');
   });
 
@@ -1436,7 +1513,7 @@ describe('ReconciliationService.resolveFinding', () => {
         outcome: 'credited',
         transactionId: randomUUID(),
       }),
-    ).rejects.toBeInstanceOf(ReconciliationOutcomeNotAllowedError);
+    ).rejects.toMatchObject(refusedFor('outcome_not_allowed_for_kind'));
   });
 
   it('releases a held deposit to the balance once the hold policy lets it in', async () => {

@@ -146,7 +146,10 @@ describe('wallet custody and reconciliation routes', () => {
     it('delegates to the reconciliation service for an authorized caller', async () => {
       const resolveFinding = vi.fn(async () => resolved);
       const router = routerWith(authorizedGuard(), {
-        reconciliation: mock<ReconciliationService>({ resolveFinding }),
+        reconciliation: mock<ReconciliationService>({
+          resolveFinding,
+          isLedgerFinding: async () => false,
+        }),
       });
 
       const result = await call(router.reconciliation.resolve, input, { context: CTX });
@@ -164,7 +167,12 @@ describe('wallet custody and reconciliation routes', () => {
       const resolveFinding = vi.fn(async () => resolved);
       const router = routerWith(
         makeAdminGuard({ caller: { userId: CALLER_ID, role: 'admin' }, superAdmin: false }),
-        { reconciliation: mock<ReconciliationService>({ resolveFinding }) },
+        {
+          reconciliation: mock<ReconciliationService>({
+            resolveFinding,
+            isLedgerFinding: async () => false,
+          }),
+        },
       );
 
       for (const resolution of [
@@ -183,7 +191,12 @@ describe('wallet custody and reconciliation routes', () => {
       const resolveFinding = vi.fn(async () => resolved);
       const router = routerWith(
         makeAdminGuard({ caller: { userId: CALLER_ID, role: 'admin' }, superAdmin: false }),
-        { reconciliation: mock<ReconciliationService>({ resolveFinding }) },
+        {
+          reconciliation: mock<ReconciliationService>({
+            resolveFinding,
+            isLedgerFinding: async () => false,
+          }),
+        },
       );
 
       await call(router.reconciliation.resolve, input, { context: CTX });

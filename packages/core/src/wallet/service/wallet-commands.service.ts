@@ -221,7 +221,8 @@ export class WalletCommandsService implements WalletCommands {
     {
       correctionRequestedAmount,
       wager,
-    }: { correctionRequestedAmount?: string; wager?: WagerContext } = {},
+      realShare,
+    }: { correctionRequestedAmount?: string; wager?: WagerContext; realShare?: string } = {},
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const insertQuery = txn.insert(walletTransaction).values({
       walletId: row.id,
@@ -236,6 +237,7 @@ export class WalletCommandsService implements WalletCommands {
       providerRefId: providerRef?.providerRefId,
       externalRoundId: providerRef?.externalRoundId,
       correctionRequestedAmount,
+      realShare,
       wagerProduct: wager?.product,
       wagerRtp: wager?.rtp !== undefined && isWagerRtp(wager.rtp) ? wager.rtp : undefined,
       metadata:
@@ -436,7 +438,9 @@ export class WalletCommandsService implements WalletCommands {
           'debit',
           providerRef,
           debitedBalance,
-          { wager: type === 'bet' ? context : undefined },
+          // Every bet records the part its real balance paid, a bonus-split one included, so the
+          // ledger invariant can price it without guessing what the grant covered.
+          type === 'bet' ? { wager: context, realShare: realPart } : {},
         );
         // The wallet lock serializes this wallet's own moves, so only another wallet's debit or
         // credit can have taken the reference since the check above.
@@ -799,7 +803,8 @@ export class WalletCommandsService implements WalletCommands {
         'debit',
         providerRef,
         taken?.balance,
-        { correctionRequestedAmount: amount },
+        // All of it came off the real balance, which the ledger invariant reads from here.
+        { correctionRequestedAmount: amount, realShare: collected },
       );
       if (raced) {
         throw new WalletCorrectionRefConflictError(

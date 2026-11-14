@@ -1,0 +1,1 @@
+CREATE INDEX "wallet_reconciliation_finding_open_kind_external_id_idx" ON "wallet_reconciliation_finding" USING btree ("kind","provider_name","external_id") WHERE "wallet_reconciliation_finding"."status" = 'open';

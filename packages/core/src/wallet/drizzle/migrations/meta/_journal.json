@@ -295,6 +295,20 @@
       "when": 1794217881101,
       "tag": "0041_violet_gladiator",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1794527937172,
+      "tag": "0042_previous_madripoor",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1794531943669,
+      "tag": "0043_medical_sunset_bain",
+      "breakpoints": true
     }
   ]
 }

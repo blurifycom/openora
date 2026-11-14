@@ -98,6 +98,7 @@ import {
   ReconciliationRefundAmountError,
   ReconciliationAttributionError,
   DepositAlreadyRefundedError,
+  LEDGER_INVARIANT_QUEUE,
 } from '../service/reconciliation.service.js';
 
 // Unauthenticated route: it costs a signature verification (and, for a custody vendor,
@@ -762,7 +763,15 @@ export function createWalletRouter({
         } = await adminGuard.assert(context, 'wallet-reconciliation', 'resolve');
         // `credited` on a deposit finding and `released` put custody money on a player's
         // balance, so they need what any other hand credit (`manualAdjustment`) needs.
-        if (input.resolution.outcome === 'credited' || input.resolution.outcome === 'released') {
+        // `rebaselined` moves the point a wallet's ledger is counted from, as a backfill does,
+        // and dismissing a ledger finding closes the only report of money no one accounts for.
+        const { outcome } = input.resolution;
+        if (
+          outcome === 'credited' ||
+          outcome === 'released' ||
+          outcome === 'rebaselined' ||
+          (outcome === 'dismissed' && (await reconciliation.isLedgerFinding(input.id)))
+        ) {
           await adminGuard.assertSuperAdmin(context);
         }
         return mapErrors(
@@ -796,6 +805,38 @@ export function createWalletRouter({
         await adminGuard.assert(context, 'wallet-reconciliation', 'run');
         const runId = randomUUID();
         await jobQueue.enqueue(reconciliationQueue, { runId });
+        return { runId };
+      }),
+
+      // A baseline fixes the point the ledger is counted from, so taking them is the
+      // super-admin's call and on the audit trail; a plain scan only reads.
+      ledgerInvariant: os.reconciliation.ledgerInvariant.handler(async ({ input, context }) => {
+        const { userId: adminId } = await adminGuard.assert(
+          context,
+          'wallet-reconciliation',
+          'run',
+        );
+        const runId = randomUUID();
+        if (input.backfillBaselines) {
+          const { ip, userAgent } = await adminGuard.assertSuperAdmin(context, {
+            resource: 'wallet-reconciliation',
+            action: 'ledgerInvariant',
+          });
+          await audit.record({
+            actorId: adminId,
+            actorType: 'admin',
+            action: 'wallet.ledger_invariant_run.requested',
+            resourceType: 'wallet_job_run',
+            resourceId: runId,
+            after: { runId, backfillBaselines: true },
+            ip,
+            userAgent,
+          });
+        }
+        await jobQueue.enqueue(LEDGER_INVARIANT_QUEUE, {
+          runId,
+          backfillBaselines: input.backfillBaselines,
+        });
         return { runId };
       }),
     },

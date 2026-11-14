@@ -53,19 +53,21 @@ export type ReconciliationFindingInput = {
  * across WalletService and ReconciliationService (both import this, neither imports the
  * other, so there is no cycle). A finding is a report, never a credit instruction (see
  * the schema's own comment): this never touches a balance or a transaction row, only
- * records that something needs a human look.
+ * records that something needs a human look. True when it filed a new finding, false when the
+ * report was already on file.
  */
 export async function recordReconciliationFinding(
   db: DrizzleDb | DrizzleTx,
   input: ReconciliationFindingInput,
   audit?: AuditWritePort,
-): Promise<void> {
+): Promise<boolean> {
   const row = await insertFinding(db, input);
   if (row && audit) {
     await audit.record(findingRecordedAudit(row.id, input));
   } else if (!row && audit) {
     await fillUnreadableFinding(db, input, audit);
   }
+  return row !== undefined;
 }
 
 /** As `recordReconciliationFinding`, with the audit row committed in the caller's transaction. */
@@ -73,11 +75,46 @@ export async function recordReconciliationFindingInTransaction(
   txn: DrizzleTx,
   input: ReconciliationFindingInput,
   audit: AuditWritePort,
-): Promise<void> {
+): Promise<boolean> {
   const row = await insertFinding(txn, input);
   if (row) {
     await audit.recordInTransaction(txn, findingRecordedAudit(row.id, input));
   }
+  return row !== undefined;
+}
+
+/**
+ * Files a batch of non-deposit findings in one insert and audits only the ones it filed, in the
+ * caller's transaction: a report already on file stays silent, and none lands unaudited. Returns
+ * the inputs it filed.
+ */
+export async function recordReconciliationFindingsInTransaction(
+  txn: DrizzleTx,
+  inputs: readonly ReconciliationFindingInput[],
+  audit: AuditWritePort,
+): Promise<ReconciliationFindingInput[]> {
+  if (inputs.length === 0) {
+    return [];
+  }
+  const byKey = new Map(inputs.map((input) => [`${input.kind}:${input.externalId}`, input]));
+  const filed = await txn
+    .insert(walletReconciliationFinding)
+    .values(inputs.map(findingValues))
+    .onConflictDoNothing()
+    .returning({
+      id: walletReconciliationFinding.id,
+      kind: walletReconciliationFinding.kind,
+      externalId: walletReconciliationFinding.externalId,
+    });
+  const recorded: ReconciliationFindingInput[] = [];
+  for (const row of filed) {
+    const input = byKey.get(`${row.kind}:${row.externalId}`);
+    if (input) {
+      await audit.recordInTransaction(txn, findingRecordedAudit(row.id, input));
+      recorded.push(input);
+    }
+  }
+  return recorded;
 }
 
 /**
@@ -258,24 +295,28 @@ async function insertFinding(db: DrizzleDb | DrizzleTx, input: ReconciliationFin
   }
   const [row] = await db
     .insert(walletReconciliationFinding)
-    .values({
-      runId: input.runId,
-      providerName: input.providerName,
-      kind: input.kind,
-      currency: input.currency ?? null,
-      network: input.network ?? null,
-      amount: input.amount ?? null,
-      address: input.address ?? null,
-      tag: input.tag ?? null,
-      txHash: input.txHash ?? null,
-      sourceAddress: input.sourceAddress ?? null,
-      externalId: input.externalId ?? null,
-      transactionId: input.transactionId ?? null,
-      detail: input.detail ?? null,
-    })
+    .values(findingValues(input))
     .onConflictDoNothing()
     .returning();
   return row;
+}
+
+function findingValues(input: ReconciliationFindingInput) {
+  return {
+    runId: input.runId,
+    providerName: input.providerName,
+    kind: input.kind,
+    currency: input.currency ?? null,
+    network: input.network ?? null,
+    amount: input.amount ?? null,
+    address: input.address ?? null,
+    tag: input.tag ?? null,
+    txHash: input.txHash ?? null,
+    sourceAddress: input.sourceAddress ?? null,
+    externalId: input.externalId ?? null,
+    transactionId: input.transactionId ?? null,
+    detail: input.detail ?? null,
+  };
 }
 
 /**
