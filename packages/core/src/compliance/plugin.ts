@@ -220,9 +220,16 @@ export default {
       repair: async (userIds) => {
         const db = c.get(DRIZZLE).db;
         const publisher = new RgLimitsPublisher(c.get(RG_LIMIT_LEDGER), c.get(EVENT_BUS));
+        const failed: string[] = [];
         for (const userId of userIds) {
-          await db.transaction((tx) => publisher.publish(tx, userId));
+          try {
+            await db.transaction((tx) => publisher.publish(tx, userId));
+          } catch (err) {
+            logger.error({ err, userId }, 'compliance: re-publishing limits failed');
+            failed.push(userId);
+          }
         }
+        return failed;
       },
     }));
     ctx.provide(RG_EXCLUSION_READER, (c) => ({

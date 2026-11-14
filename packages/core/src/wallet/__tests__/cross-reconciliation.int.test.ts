@@ -113,6 +113,14 @@ async function findingsOf(kind: WalletReconciliationFindingKind) {
     .where(eq(walletReconciliationFinding.kind, kind));
 }
 
+async function runOf(runId: string | undefined) {
+  const [run] = await db.drizzle.db
+    .select()
+    .from(walletJobRun)
+    .where(eq(walletJobRun.runId, runId ?? ''));
+  return run;
+}
+
 async function seedWallet() {
   return findOneOrThrow(
     await db.drizzle.db
@@ -255,9 +263,13 @@ describe('reconciliation: Ledger API requests against the ledger (real PG)', () 
 });
 
 describe('reconciliation: projections against their owners (real PG)', () => {
-  const eligibility = (userId: string, version: number): PlayEligibilitySnapshot => ({
+  const eligibility = (
+    userId: string,
+    version: number,
+    rgBlocked = true,
+  ): PlayEligibilitySnapshot => ({
     userId,
-    rgBlocked: true,
+    rgBlocked,
     rgBlockedUntil: null,
     isActive: true,
     banned: false,
@@ -266,49 +278,47 @@ describe('reconciliation: projections against their owners (real PG)', () => {
     version,
   });
   const userOf = (externalId: string | null) => externalId?.split(':')[0];
+  const setBlocked = (userId: string, rgBlocked: boolean) =>
+    db.drizzle.db
+      .update(ledgerPlayEligibility)
+      .set({ rgBlocked })
+      .where(eq(ledgerPlayEligibility.userId, userId));
 
-  /** An owner holding `owner`, whose repair writes it to the projection when `repairs` says so. */
-  function playOwner(projection: LedgerPlayEligibilityService, owner: PlayEligibilitySnapshot[]) {
-    const state = { repairs: false, repaired: [] as string[][] };
+  /** An owner holding `owner`; its writer records each re-publish and settles nothing. */
+  function playOwner(owner: PlayEligibilitySnapshot[], now = owner) {
+    const repaired: string[][] = [];
     const source = {
       page: async (after: string | null) => (after ? [] : owner),
       snapshots: async (userIds: readonly string[]) =>
-        owner.filter((s) => userIds.includes(s.userId)),
+        now.filter((s) => userIds.includes(s.userId)),
       repair: async (userIds: readonly string[]) => {
-        state.repaired.push([...userIds].sort());
-        if (state.repairs) {
-          await projection.reconcile(owner.filter((s) => userIds.includes(s.userId)));
-        }
+        repaired.push([...userIds]);
+        return [];
       },
     };
-    return { source, state };
+    return { source, repaired };
   }
 
-  it('files one drift per player while it lasts, repairs it through the owner, then closes it', async () => {
+  it('catches a player behind up from the owner snapshot, then closes the finding', async () => {
     const projection = new LedgerPlayEligibilityService(db.drizzle);
     const behind = randomUUID();
     const missing = randomUUID();
     const level = randomUUID();
     const owner = [behind, missing, level].sort().map((userId) => eligibility(userId, 2));
     await projection.reconcile([eligibility(behind, 1), eligibility(level, 2)]);
-    const { source, state } = playOwner(projection, owner);
+    const { source, repaired } = playOwner(owner);
     const { reconciliation } = makeReconciliation({
       projectionChecks: [projectionDriftCheck('play_eligibility_drift', source, projection)],
     });
 
     await reconciliation.runCycle();
-    await reconciliation.runCycle();
 
     const filed = await findingsOf('play_eligibility_drift');
     expect(filed.map((f) => userOf(f.externalId)).sort()).toEqual([behind, missing].sort());
     expect(filed.every((f) => f.status === 'open')).toBe(true);
-    expect(state.repaired).toEqual([[behind, missing].sort(), [behind, missing].sort()]);
+    expect(repaired).toEqual([]);
+    expect(await projection.compare(owner)).toEqual({ behind: [], differing: [], ahead: [] });
 
-    state.repairs = true;
-    await reconciliation.runCycle();
-    expect((await findingsOf('play_eligibility_drift')).every((f) => f.status === 'open')).toBe(
-      true,
-    );
     await reconciliation.runCycle();
 
     const after = await findingsOf('play_eligibility_drift');
@@ -319,14 +329,15 @@ describe('reconciliation: projections against their owners (real PG)', () => {
   it('files again when a drift is dismissed while it lasts, or comes back at the same version', async () => {
     const projection = new LedgerPlayEligibilityService(db.drizzle);
     const player = randomUUID();
-    const owner = [eligibility(player, 2)];
-    await projection.reconcile([eligibility(player, 1)]);
-    const { source } = playOwner(projection, owner);
+    await projection.reconcile([eligibility(player, 2)]);
+    await setBlocked(player, false);
+    const { source, repaired } = playOwner([eligibility(player, 2)]);
     const { reconciliation } = makeReconciliation({
       projectionChecks: [projectionDriftCheck('play_eligibility_drift', source, projection)],
     });
 
     await reconciliation.runCycle();
+    expect(repaired).toEqual([[player]]);
     await db.drizzle.db
       .update(walletReconciliationFinding)
       .set({ status: 'resolved', resolutionNote: 'dismissed' });
@@ -336,16 +347,13 @@ describe('reconciliation: projections against their owners (real PG)', () => {
     expect(filed).toHaveLength(2);
     expect(filed.filter((f) => f.status === 'open')).toHaveLength(1);
 
-    await projection.reconcile(owner);
+    await setBlocked(player, true);
     await reconciliation.runCycle();
     expect((await findingsOf('play_eligibility_drift')).every((f) => f.status === 'resolved')).toBe(
       true,
     );
 
-    await db.drizzle.db
-      .update(ledgerPlayEligibility)
-      .set({ rgBlocked: false })
-      .where(eq(ledgerPlayEligibility.userId, player));
+    await setBlocked(player, false);
     await reconciliation.runCycle();
 
     filed = await findingsOf('play_eligibility_drift');
@@ -353,6 +361,28 @@ describe('reconciliation: projections against their owners (real PG)', () => {
     expect(filed.filter((f) => f.status === 'open').map((f) => userOf(f.externalId))).toEqual([
       player,
     ]);
+  });
+
+  it('counts play eligibility still ahead of its owner as drift, never one a write between the reads moved on', async () => {
+    const projection = new LedgerPlayEligibilityService(db.drizzle);
+    const ahead = randomUUID();
+    const raced = randomUUID();
+    await projection.reconcile([eligibility(ahead, 3, false), eligibility(raced, 3, false)]);
+    const owner = [ahead, raced].sort().map((userId) => eligibility(userId, 2));
+    // `raced` committed version 3 after its page was read: the re-read sees it caught up.
+    const { source, repaired } = playOwner(owner, [
+      eligibility(ahead, 2),
+      eligibility(raced, 3, false),
+    ]);
+    const { reconciliation } = makeReconciliation({
+      projectionChecks: [projectionDriftCheck('play_eligibility_drift', source, projection)],
+    });
+
+    await reconciliation.runCycle();
+
+    const filed = await findingsOf('play_eligibility_drift');
+    expect(filed.map((f) => userOf(f.externalId))).toEqual([ahead]);
+    expect(repaired).toEqual([[ahead]]);
   });
 
   it('counts a limits projection still ahead of its owner as drift, never one a write between the reads moved on', async () => {
@@ -389,7 +419,7 @@ describe('reconciliation: projections against their owners (real PG)', () => {
     const source = {
       page: async (after: string | null) => (after ? [] : owner),
       snapshots: async (userIds: readonly string[]) => userIds.map(ownerNow),
-      repair: async () => undefined,
+      repair: async () => [],
     };
     const { reconciliation } = makeReconciliation({
       projectionChecks: [projectionDriftCheck('rg_limits_drift', source, projection)],
@@ -399,6 +429,35 @@ describe('reconciliation: projections against their owners (real PG)', () => {
 
     const filed = await findingsOf('rg_limits_drift');
     expect(filed.map((f) => userOf(f.externalId)).sort()).toEqual([ahead, stale].sort());
+  });
+
+  it('re-publishes at most a page of players through the owner a cycle, and notes the rest', async () => {
+    const projection = new LedgerPlayEligibilityService(db.drizzle);
+    const players = [randomUUID(), randomUUID(), randomUUID()].sort();
+    await projection.reconcile(players.map((userId) => eligibility(userId, 2)));
+    for (const userId of players) {
+      await setBlocked(userId, false);
+    }
+    const owner = players.map((userId) => eligibility(userId, 2));
+    const repaired: string[] = [];
+    const source = {
+      page: async (after: string | null) =>
+        owner.filter((s) => after === null || s.userId > after).slice(0, 2),
+      snapshots: async () => [],
+      repair: async (userIds: readonly string[]) => {
+        repaired.push(...userIds);
+        return [];
+      },
+    };
+    const { reconciliation } = makeReconciliation({
+      projectionChecks: [projectionDriftCheck('play_eligibility_drift', source, projection)],
+    });
+
+    const result = await reconciliation.runCycle();
+
+    expect(repaired).toEqual(players.slice(0, 2));
+    expect(await findingsOf('play_eligibility_drift')).toHaveLength(3);
+    expect((await runOf(result?.runId))?.summary).toMatchObject({ projectionRepairsDeferred: 1 });
   });
 });
 
@@ -422,7 +481,8 @@ describe('reconciliation: event delivery backlog (real PG)', () => {
 
     const filed = await findingsOf('outbox_relay_lag');
     expect(filed).toHaveLength(1);
-    expect(filed[0]).toMatchObject({ externalId: stuck, status: 'open' });
+    expect(filed[0]?.externalId?.startsWith(`${stuck}:`)).toBe(true);
+    expect(filed[0]?.status).toBe('open');
     expect(events.emitInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       'wallet.reconciliation.alert',
@@ -442,7 +502,24 @@ describe('reconciliation: event delivery backlog (real PG)', () => {
     await reconciliation.runCycle();
 
     const open = (await findingsOf('outbox_relay_lag')).filter((f) => f.status === 'open');
-    expect(open.map((f) => f.externalId)).toEqual([next]);
+    expect(open.map((f) => f.externalId?.split(':')[0])).toEqual([next]);
+  });
+
+  it('files the lag again when its finding is dismissed while the outbox stays stuck', async () => {
+    const stuck = await seedOutbox(minutesAgo(10));
+    const { reconciliation } = makeReconciliation();
+
+    await reconciliation.runCycle();
+    await db.drizzle.db
+      .update(walletReconciliationFinding)
+      .set({ status: 'resolved', resolutionNote: 'dismissed' });
+    await reconciliation.runCycle();
+
+    const filed = await findingsOf('outbox_relay_lag');
+    expect(filed).toHaveLength(2);
+    expect(
+      filed.filter((f) => f.status === 'open').map((f) => f.externalId?.split(':')[0]),
+    ).toEqual([stuck]);
   });
 
   it('files no lag finding for a backlog younger than the threshold', async () => {
@@ -486,7 +563,7 @@ describe('reconciliation: event delivery backlog (real PG)', () => {
 });
 
 describe('reconciliation: a failing check (real PG)', () => {
-  it('completes the run, and the other checks still file, when one check throws', async () => {
+  it('completes every run, the other checks still file, and each run alerts naming it', async () => {
     await db.drizzle.db.insert(eventOutbox).values({
       eventId: randomUUID(),
       topic: 'wallet.deposit.completed',
@@ -498,14 +575,14 @@ describe('reconciliation: a failing check (real PG)', () => {
         throw new Error('owner unreachable');
       },
       snapshots: async () => [],
-      repair: async () => undefined,
+      repair: async () => [],
     };
     const broker = {
       deadLetters: async (): Promise<DeadLetters> => {
         throw new Error('SCAN denied');
       },
     };
-    const { reconciliation } = makeReconciliation({
+    const { reconciliation, events } = makeReconciliation({
       broker,
       projectionChecks: [
         projectionDriftCheck(
@@ -516,14 +593,62 @@ describe('reconciliation: a failing check (real PG)', () => {
       ],
     });
 
-    const result = await reconciliation.runCycle();
+    const runs = [await reconciliation.runCycle(), await reconciliation.runCycle()];
 
-    const [run] = await db.drizzle.db
-      .select()
-      .from(walletJobRun)
-      .where(eq(walletJobRun.runId, result?.runId ?? ''));
-    expect(run?.status).toBe('completed');
-    expect(run?.summary).toMatchObject({ checksFailed: 2 });
+    for (const result of runs) {
+      const run = await runOf(result?.runId);
+      expect(run?.status).toBe('completed');
+      expect(run?.summary).toMatchObject({
+        failedChecks: ['play_eligibility_drift', 'event_dead_letters'],
+      });
+      expect(events.emitInTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        'wallet.reconciliation.alert',
+        expect.objectContaining({
+          runId: result?.runId,
+          threshold: 10,
+          failedChecks: ['play_eligibility_drift', 'event_dead_letters'],
+        }),
+      );
+    }
     expect(await findingsOf('outbox_relay_lag')).toHaveLength(1);
   });
+
+  it('alerts naming the owner re-publish that failed', async () => {
+    const projection = new LedgerPlayEligibilityService(db.drizzle);
+    const player = randomUUID();
+    await projection.reconcile([{ ...eligibilityOf(player), rgBlocked: false }]);
+    const source = {
+      page: async (after: string | null) => (after ? [] : [eligibilityOf(player)]),
+      snapshots: async () => [],
+      repair: async (userIds: readonly string[]) => [...userIds],
+    };
+    const { reconciliation, events } = makeReconciliation({
+      projectionChecks: [projectionDriftCheck('play_eligibility_drift', source, projection)],
+    });
+
+    const result = await reconciliation.runCycle();
+
+    expect((await runOf(result?.runId))?.summary).toMatchObject({
+      failedChecks: ['play_eligibility_drift:repair'],
+    });
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'wallet.reconciliation.alert',
+      expect.objectContaining({ failedChecks: ['play_eligibility_drift:repair'] }),
+    );
+  });
 });
+
+function eligibilityOf(userId: string): PlayEligibilitySnapshot {
+  return {
+    userId,
+    rgBlocked: true,
+    rgBlockedUntil: null,
+    isActive: true,
+    banned: false,
+    banExpires: null,
+    status: 'active',
+    version: 2,
+  };
+}

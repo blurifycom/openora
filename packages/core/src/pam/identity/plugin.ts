@@ -320,9 +320,16 @@ export default {
       snapshots: (userIds) => playEligibilityOf(c.get(DRIZZLE).db, userIds),
       repair: async (userIds) => {
         const publisher = makePlayEligibilityPublisher(c);
+        const failed: string[] = [];
         for (const userId of userIds) {
-          await publisher.sync(userId);
+          try {
+            await publisher.sync(userId);
+          } catch (err) {
+            logger.error({ err, userId }, 'identity: re-publishing play eligibility failed');
+            failed.push(userId);
+          }
         }
+        return failed;
       },
     }));
     // Lets iam demand the password and a fresh second factor before it issues an MCP token.

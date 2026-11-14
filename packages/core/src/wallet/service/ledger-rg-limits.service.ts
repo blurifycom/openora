@@ -338,18 +338,16 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
   }
 
   /**
-   * `behind`: the users held at a lower version than their snapshot, or at its version with other
-   * rows; a user with none held is at version 0. `ahead`: those held higher, with other rows.
+   * `behind`: the users held at a lower version than their snapshot; a user with none held is at
+   * version 0. `differing`: those at its version with other rows. `ahead`: those held higher,
+   * with other rows.
    */
   async compare(snapshots: readonly RgLimitsSnapshot[]): Promise<ProjectionComparison> {
     const standing = await this.standing(snapshots);
     const ids = (users: typeof standing) => users.map((user) => user.userId);
     return {
-      behind: ids(
-        standing.filter(
-          (user) => user.held < user.wanted || (user.held === user.wanted && !user.sameRows),
-        ),
-      ),
+      behind: ids(standing.filter((user) => user.held < user.wanted)),
+      differing: ids(standing.filter((user) => user.held === user.wanted && !user.sameRows)),
       ahead: ids(standing.filter((user) => user.held > user.wanted && !user.sameRows)),
     };
   }

@@ -74,6 +74,7 @@ import {
   depositStatusIsNoOp,
   isRecordableDeposit,
 } from './wallet.service.js';
+import type { ProjectionComparison } from './ledger-play-eligibility.service.js';
 import {
   DEPOSIT_FINDING_KINDS,
   OUT_OF_CYCLE_RUN_ID,
@@ -470,42 +471,67 @@ type OwnerSnapshot = { userId: string; version: number };
 export type ProjectionDriftCheck = {
   kind: ProjectionDriftKind;
   /** The owner's snapshots after `after`, and the users among them the projection is off. */
-  page(
-    after: string | null,
-    limit: number,
-  ): Promise<{ snapshots: OwnerSnapshot[]; drifting: string[] }>;
-  /** Re-publishes `userIds` through the owner's own writer, under a new version. */
-  repair(userIds: readonly string[]): Promise<void>;
+  page(after: string | null, limit: number): Promise<ProjectionDriftPage>;
+  /** Re-publishes `userIds` through the owner's own writer; returns the ones it could not. */
+  repair(userIds: readonly string[]): Promise<string[]>;
+};
+
+type ProjectionDriftPage = {
+  snapshots: OwnerSnapshot[];
+  /** Behind the owner's version: `catchUp` writes the owner's snapshots, as its event would. */
+  behind: string[];
+  /** Off the owner at its own version, or still ahead of it: only the owner's writer settles. */
+  conflicting: string[];
+  catchUp(): Promise<unknown>;
 };
 
 /**
- * Reads the owner, then the projection. A projection behind drifts. One ahead with another state
- * may only have caught a write that landed between the reads, so the owner is read again: a
- * projection still ahead of the owner's committed state is drift, as the owner writes its own
- * version and the projection in one transaction.
+ * Reads the owner, then the projection. A projection ahead with another state may only have caught
+ * a write that landed between the reads, so the owner is read again: still ahead is drift, as the
+ * owner writes its own version and the projection in one transaction.
  */
 export function projectionDriftCheck<S extends OwnerSnapshot>(
   kind: ProjectionDriftKind,
   source: {
     page(after: string | null, limit: number): Promise<S[]>;
     snapshots(userIds: readonly string[]): Promise<S[]>;
-    repair(userIds: readonly string[]): Promise<void>;
+    repair(userIds: readonly string[]): Promise<string[]>;
   },
-  projection: { compare(snapshots: readonly S[]): Promise<{ behind: string[]; ahead: string[] }> },
+  projection: {
+    compare(snapshots: readonly S[]): Promise<ProjectionComparison>;
+    reconcile(snapshots: readonly S[]): Promise<number>;
+  },
 ): ProjectionDriftCheck {
   return {
     kind,
     page: async (after, limit) => {
       const snapshots = await source.page(after, limit);
-      const { behind, ahead } = await projection.compare(snapshots);
-      if (ahead.length === 0) {
-        return { snapshots, drifting: behind };
-      }
-      const stillAhead = new Set((await projection.compare(await source.snapshots(ahead))).ahead);
-      return { snapshots, drifting: [...behind, ...ahead.filter((id) => stillAhead.has(id))] };
+      const { behind, differing, ahead } = await projection.compare(snapshots);
+      const stillAhead = new Set(
+        ahead.length === 0 ? [] : (await projection.compare(await source.snapshots(ahead))).ahead,
+      );
+      const lagging = new Set(behind);
+      return {
+        snapshots,
+        behind,
+        conflicting: [...differing, ...ahead.filter((id) => stillAhead.has(id))],
+        catchUp: () => projection.reconcile(snapshots.filter((s) => lagging.has(s.userId))),
+      };
     },
     repair: (userIds) => source.repair(userIds),
   };
+}
+
+/** Notes a failed check once for the run's alert and logs each failure with its context. */
+function noteFailure(
+  counts: { failedChecks: string[] },
+  check: string,
+  context: Record<string, unknown>,
+): void {
+  if (!counts.failedChecks.includes(check)) {
+    counts.failedChecks.push(check);
+  }
+  logger.error({ ...context, check }, 'reconciliation: a check failed, the run goes on');
 }
 
 export type ReconciliationServiceDeps = {
@@ -1198,7 +1224,8 @@ export class ReconciliationService {
       projectionDrifts: 0,
       projectionFindingsClosed: 0,
       deliveryIncidents: 0,
-      checksFailed: 0,
+      failedChecks: [] as string[],
+      projectionRepairsDeferred: 0,
       unreconciledHours: 0,
     };
 
@@ -1254,21 +1281,21 @@ export class ReconciliationService {
         // Ledger API requests against the wallet rows they wrote, each projection against its
         // owner (a full compare, every cycle), and the event pipeline's backlog. Each on its own,
         // so one that fails leaves the others, the run and its completed anchor standing.
-        await this.runCheck(runId, ['ledger_request_mismatch'], counts, () =>
+        await this.runCheck(runId, 'ledger_request_mismatch', counts, () =>
           this.reconcileLedgerRequests(runId, since, until, cfg.batchSize, counts),
         );
-        await this.runCheck(runId, ['ledger_unrequested_transaction'], counts, () =>
+        await this.runCheck(runId, 'ledger_unrequested_transaction', counts, () =>
           this.reportUnrequestedLedgerMoves(runId, since, until, cfg.batchSize, counts),
         );
         for (const check of this.projectionChecks) {
-          await this.runCheck(runId, [check.kind], counts, () =>
+          await this.runCheck(runId, check.kind, counts, () =>
             this.reconcileProjection(runId, check, cfg.batchSize, counts),
           );
         }
-        await this.runCheck(runId, ['outbox_relay_lag'], counts, () =>
+        await this.runCheck(runId, 'outbox_relay_lag', counts, () =>
           this.reconcileOutboxLag(runId, cfg.outboxLagAlertMinutes, counts),
         );
-        await this.runCheck(runId, ['event_dead_letters'], counts, () =>
+        await this.runCheck(runId, 'event_dead_letters', counts, () =>
           this.reconcileDeadLetters(runId, cfg.deadLetterAlertThreshold, counts),
         );
       }
@@ -1284,11 +1311,14 @@ export class ReconciliationService {
           resourceId: runId,
           after: { runId, ...counts, openFindings },
         });
-        if (cfg && openFindings > cfg.alertThreshold) {
+        // A check that fails every cycle files nothing, so its failure alerts on its own.
+        const { failedChecks } = counts;
+        if (cfg && (openFindings > cfg.alertThreshold || failedChecks.length > 0)) {
           await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
             runId,
             openFindings,
             threshold: cfg.alertThreshold,
+            ...(failedChecks.length > 0 && { failedChecks }),
           });
         }
       });
@@ -2097,58 +2127,63 @@ export class ReconciliationService {
   }
 
   /**
-   * Runs one integrity check of the cycle. A failure is logged and counted, never raised. Whatever
-   * the run filed under `kinds`, even before a failure, alerts once whatever the open-findings
-   * threshold: each is an integrity or enforcement gap, not backlog.
+   * Runs one integrity check of the cycle. A failure is logged and noted, never raised, so the
+   * other checks, the vendor diff and the completed run go ahead; the run's alert names it.
    */
   private async runCheck(
     runId: WalletJobRun['runId'],
-    kinds: readonly WalletReconciliationFindingKind[],
-    counts: { checksFailed: number },
+    name: string,
+    counts: { failedChecks: string[] },
     check: () => Promise<void>,
   ): Promise<void> {
     try {
       await check();
     } catch (err) {
-      counts.checksFailed += 1;
-      logger.error(
-        { err, runId, kinds, counts },
-        'reconciliation: a check failed, the run goes on',
-      );
-    }
-    try {
-      await this.drizzle.db.transaction(async (txn) => {
-        const [filed] = await txn
-          .select({ n: count() })
-          .from(walletReconciliationFinding)
-          .where(
-            and(
-              eq(walletReconciliationFinding.runId, runId),
-              inArray(walletReconciliationFinding.kind, [...kinds]),
-            ),
-          );
-        if (Number(filed?.n ?? 0) > 0) {
-          await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
-            runId,
-            openFindings: await this.countOpenFindings(txn),
-            threshold: 0,
-          });
-        }
-      });
-    } catch (err) {
-      logger.error({ err, runId, kinds }, 'reconciliation: alerting on a check failed');
+      noteFailure(counts, name, { err, runId });
     }
   }
 
-  /** Files `findings` with their audit entries; returns how many were not on file already. */
-  private async file(findings: readonly ReconciliationFindingInput[]): Promise<number> {
+  /**
+   * Files `findings` in `txn` and, for the run's first batch of their kind that files anything,
+   * alerts in that same commit whatever the open-findings threshold: each is an integrity or
+   * enforcement gap, not backlog. One alert per check per run, however many pages it files.
+   */
+  private async fileAndAlert(
+    txn: DrizzleTx,
+    runId: WalletJobRun['runId'],
+    findings: readonly ReconciliationFindingInput[],
+  ): Promise<number> {
     if (findings.length === 0) {
       return 0;
     }
-    const filed = await this.drizzle.db.transaction((txn) =>
-      recordReconciliationFindingsInTransaction(txn, findings, this.audit),
-    );
+    const [earlier] = await txn
+      .select({ id: walletReconciliationFinding.id })
+      .from(walletReconciliationFinding)
+      .where(
+        and(
+          eq(walletReconciliationFinding.runId, runId),
+          inArray(walletReconciliationFinding.kind, [...new Set(findings.map((f) => f.kind))]),
+        ),
+      )
+      .limit(1);
+    const filed = await recordReconciliationFindingsInTransaction(txn, findings, this.audit);
+    if (filed.length > 0 && !earlier) {
+      await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
+        runId,
+        openFindings: await this.countOpenFindings(txn),
+        threshold: 0,
+      });
+    }
     return filed.length;
+  }
+
+  private async file(
+    runId: WalletJobRun['runId'],
+    findings: readonly ReconciliationFindingInput[],
+  ): Promise<number> {
+    return findings.length === 0
+      ? 0
+      : this.drizzle.db.transaction((txn) => this.fileAndAlert(txn, runId, findings));
   }
 
   /**
@@ -2211,6 +2246,7 @@ export class ReconciliationService {
         .orderBy(asc(request.createdAt), asc(request.providerName), asc(request.providerRefId))
         .limit(batchSize);
       counts.ledgerRequestMismatches += await this.file(
+        runId,
         rows.map((row): ReconciliationFindingInput => {
           const found = row.found;
           const expected = row.operation === 'reverse' ? 'bet_reversal' : row.operation;
@@ -2289,6 +2325,7 @@ export class ReconciliationService {
         .orderBy(asc(tx.createdAt), asc(tx.id))
         .limit(batchSize);
       counts.unrequestedLedgerMoves += await this.file(
+        runId,
         rows.map(
           ({ row }): ReconciliationFindingInput => ({
             runId,
@@ -2314,14 +2351,20 @@ export class ReconciliationService {
    * One projection against its owner, page by page over every user. A drifting player with no
    * open finding of the kind gets one, keyed `<userId>:<runId>` so a drift that comes back after
    * one was dismissed or closed files again; an open one closes once its page finds the player in
-   * step. Drifting players are then re-published through the owner's own writer: no money moves,
-   * and the finding stays as the record until a later cycle sees the repair hold.
+   * step. No money moves. A player behind is caught up from the owner's snapshot, as its event
+   * would have; one the owner's version cannot settle is re-published through the owner's writer,
+   * up to `batchSize` a cycle. The finding stays as the record until a later cycle sees it hold.
    */
   private async reconcileProjection(
     runId: WalletJobRun['runId'],
     check: ProjectionDriftCheck,
     batchSize: number,
-    counts: { projectionDrifts: number; projectionFindingsClosed: number },
+    counts: {
+      projectionDrifts: number;
+      projectionFindingsClosed: number;
+      projectionRepairsDeferred: number;
+      failedChecks: string[];
+    },
   ): Promise<void> {
     const userOf = sql<string>`split_part(${walletReconciliationFinding.externalId}, ':', 1)`;
     const reported = new Set(
@@ -2337,12 +2380,16 @@ export class ReconciliationService {
           )
       ).map((row) => row.userId),
     );
+    // ponytail: a fixed per-cycle cap on owner re-publishes; a config knob if a backlog needs one.
+    let repairsLeft = batchSize;
+    let deferred = 0;
     let after: string | null = null;
     for (;;) {
-      const { snapshots, drifting } = await check.page(after, batchSize);
+      const { snapshots, behind, conflicting, catchUp } = await check.page(after, batchSize);
       if (snapshots.length === 0) {
-        return;
+        break;
       }
+      const drifting = [...behind, ...conflicting];
       const isDrifting = new Set(drifting);
       const inStep = snapshots
         .map((snapshot) => snapshot.userId)
@@ -2360,8 +2407,9 @@ export class ReconciliationService {
               'the projection matched its owner after this was reported',
             );
           }
-          const filed = await recordReconciliationFindingsInTransaction(
+          counts.projectionDrifts += await this.fileAndAlert(
             txn,
+            runId,
             fresh.map(
               (userId): ReconciliationFindingInput => ({
                 runId,
@@ -2371,22 +2419,35 @@ export class ReconciliationService {
                 detail: `the ledger projection is off the owner's version ${versionOf.get(userId)}`,
               }),
             ),
-            this.audit,
           );
-          counts.projectionDrifts += filed.length;
         });
       }
-      if (drifting.length > 0) {
+      if (behind.length > 0) {
+        await catchUp().catch((err: unknown) =>
+          noteFailure(counts, `${check.kind}:catch_up`, { err, runId, players: behind.length }),
+        );
+      }
+      const repairNow = conflicting.slice(0, repairsLeft);
+      repairsLeft -= repairNow.length;
+      deferred += conflicting.length - repairNow.length;
+      if (repairNow.length > 0) {
         try {
-          await check.repair(drifting);
+          const failed = await check.repair(repairNow);
+          if (failed.length > 0) {
+            noteFailure(counts, `${check.kind}:repair`, { runId, players: failed });
+          }
         } catch (err) {
-          logger.error(
-            { err, runId, kind: check.kind, players: drifting.length },
-            'reconciliation: re-publishing drifted players failed',
-          );
+          noteFailure(counts, `${check.kind}:repair`, { err, runId });
         }
       }
       after = snapshots.at(-1)?.userId ?? null;
+    }
+    if (deferred > 0) {
+      counts.projectionRepairsDeferred += deferred;
+      logger.warn(
+        { runId, kind: check.kind, deferred },
+        'reconciliation: owner re-publishes capped, the rest wait for the next cycle',
+      );
     }
   }
 
@@ -2404,12 +2465,13 @@ export class ReconciliationService {
     if (lagged) {
       logger.error({ runId, oldest: lagged }, 'reconciliation: the event outbox is not relaying');
     }
-    // Keyed by the event: one relayed and another stuck later is a new incident.
+    // Keyed by the event and the run, as only an open finding dedupes: one dismissed while the
+    // outbox is still stuck files again.
     counts.deliveryIncidents += await this.trackIncident(
       runId,
       'outbox_relay_lag',
       lagged && {
-        externalId: lagged.eventId,
+        externalId: `${lagged.eventId}:${runId}`,
         detail: `event ${lagged.eventId} waits to be relayed since ${lagged.occurredAt.toISOString()}`,
       },
     );
@@ -2444,7 +2506,7 @@ export class ReconciliationService {
   /**
    * Files `incident` unless one of `kind` is already open, or closes the open one if it cleared.
    * The incident may be the outbox itself stalling, so a new one also alerts straight through the
-   * broker, best effort, beside the durable alert `runCheck` sends through the outbox.
+   * broker, best effort, beside the durable alert filed with it through the outbox.
    */
   private async trackIncident(
     runId: WalletJobRun['runId'],
@@ -2469,12 +2531,9 @@ export class ReconciliationService {
       if (open) {
         return 0;
       }
-      const recorded = await recordReconciliationFindingsInTransaction(
-        txn,
-        [{ runId, providerName: EVENT_PIPELINE_FINDING_LABEL, kind, ...incident }],
-        this.audit,
-      );
-      return recorded.length;
+      return this.fileAndAlert(txn, runId, [
+        { runId, providerName: EVENT_PIPELINE_FINDING_LABEL, kind, ...incident },
+      ]);
     });
     if (filed > 0) {
       try {

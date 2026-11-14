@@ -581,6 +581,8 @@ export const domainEventSchemas = {
     runId: UuidSchema,
     openFindings: z.number().int().nonnegative(),
     threshold: z.number().int().nonnegative(),
+    /** The run's checks that failed, when any did. */
+    failedChecks: z.array(z.string()).optional(),
   }),
 
   'gaming.round.started': z.object({

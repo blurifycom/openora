@@ -125,8 +125,11 @@ export type PlayEligibilitySourcePort = {
   page(afterUserId: string | null, limit: number): Promise<PlayEligibilitySnapshot[]>;
   /** The committed snapshots of `userIds`, read now; an unknown user is left out. */
   snapshots(userIds: readonly string[]): Promise<PlayEligibilitySnapshot[]>;
-  /** Re-publishes each of `userIds` through identity's own writer, under a new version. */
-  repair(userIds: readonly string[]): Promise<void>;
+  /**
+   * Re-publishes each of `userIds` through identity's own writer, under a new version. Returns
+   * the ones it could not, each logged.
+   */
+  repair(userIds: readonly string[]): Promise<string[]>;
 };
 
 export const PLAY_ELIGIBILITY_SOURCE: SealedToken<PlayEligibilitySourcePort> =

@@ -53,7 +53,11 @@ function isStale(current: ProjectionRow | undefined, wanted: ProjectionRow): boo
 }
 
 /** How a projection stands against its owner's snapshots. */
-export type ProjectionComparison = { behind: User['id'][]; ahead: User['id'][] };
+export type ProjectionComparison = {
+  behind: User['id'][];
+  differing: User['id'][];
+  ahead: User['id'][];
+};
 
 const fromExcluded = {
   rgBlocked: sql`excluded.rg_blocked`,
@@ -150,20 +154,21 @@ export class LedgerPlayEligibilityService
   }
 
   /**
-   * `behind`: the users whose row is missing, at a lower version than their snapshot, or at its
-   * version with another state. `ahead`: those whose row holds a higher version and another state.
+   * `behind`: the users whose row is missing or at a lower version than their snapshot.
+   * `differing`: those at its version with another state. `ahead`: those at a higher version with
+   * another state.
    */
   async compare(snapshots: readonly PlayEligibilitySnapshot[]): Promise<ProjectionComparison> {
     const rows = snapshots.map(rowOf);
     const heldBy = await this.heldBy(rows);
+    const users = (pick: (held: ProjectionRow | undefined, row: ProjectionRow) => boolean) =>
+      rows.filter((row) => pick(heldBy.get(row.userId), row)).map((row) => row.userId);
     return {
-      behind: rows.filter((row) => isStale(heldBy.get(row.userId), row)).map((row) => row.userId),
-      ahead: rows
-        .filter((row) => {
-          const current = heldBy.get(row.userId);
-          return current && current.version > row.version && !sameState(current, row);
-        })
-        .map((row) => row.userId),
+      behind: users((held, row) => !held || held.version < row.version),
+      differing: users(
+        (held, row) => !!held && held.version === row.version && !sameState(held, row),
+      ),
+      ahead: users((held, row) => !!held && held.version > row.version && !sameState(held, row)),
     };
   }
 

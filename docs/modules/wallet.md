@@ -233,8 +233,9 @@ is `SPORTSBOOK_LEDGER` unchanged.
   `never_dispatched`, so a person approves it again; a dispatch still running for it never
   reaches the vendor.
 - **Reconciliation holds the ledger against what other services said it should hold.** Each cycle
-  runs these checks one by one, so one that fails is logged and counted (`checksFailed`) and the
-  rest, the vendor diff and the completed run still go ahead. None moves money.
+  runs these checks one by one, so one that fails is logged and named in `failedChecks`, and the
+  rest, the vendor diff and the completed run still go ahead; the run's own alert names it, so a
+  check that fails every cycle alerts every cycle. None moves money.
   `ledger_request_mismatch` is a Ledger API request in the window whose answered transaction is
   missing or differs in type, currency, key, amount or player (the last two only on requests that
   recorded them); `ledger_unrequested_transaction` is a bet, win or reversal keyed by a provider
@@ -243,15 +244,20 @@ is `SPORTSBOOK_LEDGER` unchanged.
   `play_eligibility_drift` and `rg_limits_drift` are a player whose projection is behind what
   identity and compliance hold now, differs from it at the same version, or is still ahead of it
   with another state once the owner is read again (`PLAY_ELIGIBILITY_SOURCE`, `RG_LIMITS_SOURCE`,
-  optional). The cycle re-publishes each drifting player through the owner's own writer, and the
+  optional). A player behind is caught up from the owner's snapshot, as the owner's event would
+  have; one off the owner at its own version, or still ahead, is re-published through the owner's
+  own writer, at most `batchSize` a cycle (`projectionRepairsDeferred` counts the rest). The
   finding closes the next cycle that finds the player in step; a drift that comes back after one
   was dismissed or closed is filed again. `outbox_relay_lag` is the oldest unrelayed event older
   than `reconciliation.outboxLagAlertMinutes` (default 5), and `event_dead_letters` the broker's
   dead-letter streams holding more than `reconciliation.deadLetterAlertThreshold` entries
-  (default 0): one finding per incident, not one per event, closed once the backlog clears. These
+  (default 0): one finding per incident, not one per event, closed once the backlog clears. A lag
+  finding dismissed while the outbox is still stuck is filed again the next cycle. These
   four close themselves when the condition clears, audited as the system; a person can still
   dismiss one. Each check that files anything raises one `wallet.reconciliation.alert` per cycle
-  through the outbox; a pipeline incident also raises one straight on the broker, best effort.
+  through the outbox, in the transaction that files its first finding. A pipeline incident alerts
+  twice on purpose: through the outbox, and straight on the broker, best effort, in case the outbox
+  is what stalled.
 - **A module's withdrawal hold blocks every withdrawal the same way, under its own reason.** A
   module places and releases its hold through `WALLET_COMMANDS` in its own transaction, keyed by
   (player, source), and releases only its own. The wallet audits each change in that transaction.
