@@ -89,7 +89,9 @@ function assertLocalDatabase(databaseUrl: string): void {
   if (process.env['NODE_ENV'] === 'production') {
     throw new Error('seedLocalData refuses to run with NODE_ENV=production: it wipes demo tables.');
   }
-  const host = new URL(databaseUrl).hostname;
+  const url = new URL(databaseUrl);
+  // pg lets a `host` query parameter (a Cloud SQL socket, say) override the URL's hostname.
+  const host = url.searchParams.get('host') ?? url.hostname;
   if (!LOCAL_DB_HOSTS.has(host) && process.env['OPENORA_ALLOW_REMOTE_SEED'] !== '1') {
     throw new Error(
       `seedLocalData refuses to wipe the database at ${host}: it only seeds a local database. ` +

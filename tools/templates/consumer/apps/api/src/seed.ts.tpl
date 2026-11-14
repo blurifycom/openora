@@ -18,13 +18,19 @@ async function main() {
     process.exit(1);
   }
 
+  const playerCount = Number(process.env['SEED_PLAYERS'] ?? 36);
+  if (!Number.isInteger(playerCount) || playerCount < 0) {
+    console.error('SEED_PLAYERS must be a whole number');
+    process.exit(1);
+  }
+
   const result = await seedLocalData({
     databaseUrl,
     admin: {
       email: process.env['ADMIN_EMAIL'] ?? 'admin@oss.dev',
       password: process.env['ADMIN_PASSWORD'] ?? 'password1234',
     },
-    playerCount: Number(process.env['SEED_PLAYERS'] || 36),
+    playerCount,
     log: (m) => console.log(`  ${m}`),
   });
 

@@ -14,6 +14,15 @@ describe('seedLocalData guard', () => {
     ).rejects.toThrow(/db\.example\.com/);
   });
 
+  it('refuses a remote host passed as the host query parameter', async () => {
+    await expect(
+      seedLocalData({
+        databaseUrl: 'postgresql://u:p@localhost/app?host=/cloudsql/proj:region:inst',
+        admin,
+      }),
+    ).rejects.toThrow(/cloudsql/);
+  });
+
   it('refuses NODE_ENV=production even for a local host', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     await expect(
