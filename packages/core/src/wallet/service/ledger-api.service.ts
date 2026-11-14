@@ -474,6 +474,9 @@ export class LedgerApiService implements LedgerApiV1 {
         if (mapped[1] === 'fingerprint_mismatch') {
           log.warn({ err }, 'ledger api: a key was reused by a different request');
         }
+        if (mapped[1] === 'round_mismatch') {
+          log.warn({ err }, 'ledger api: a move was refused on a round it does not match');
+        }
         return { status: 'refused', reason: mapped[1] };
       }
       throw err;

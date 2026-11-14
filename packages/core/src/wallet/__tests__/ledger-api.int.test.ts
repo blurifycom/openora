@@ -721,6 +721,22 @@ describe('Ledger API v1 reverse of a bet whose round is keyed apart from its row
     expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
   });
 
+  it('refuses a named round that no longer holds the stake, moving nothing', async () => {
+    const { walletId, userId, game: g } = await setup();
+    const { reverse, roundKey } = await placeLegacyBet(userId, g.id, `live-${randomUUID()}`);
+    await db.drizzle.db
+      .update(gameRound)
+      .set({ betAmount: '5' })
+      .where(eq(gameRound.externalRoundId, roundKey));
+
+    expect(await api.reverse({ ...reverse, externalRoundId: roundKey })).toEqual({
+      status: 'refused',
+      reason: 'round_mismatch',
+    });
+    expect(moneyEquals((await roundOf(roundKey)).betAmount, '5')).toBe(true);
+    expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
+  });
+
   it('refuses a reverse of a bet placed here on another game', async () => {
     const { walletId, userId, betArgs } = await setup();
     const otherGame = await seedGame();
