@@ -519,7 +519,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
   });
 
   plop.setGenerator('app', {
-    description: 'Scaffold a downstream consumer repo (api wired to this checkout)',
+    description: 'Scaffold a downstream consumer repo (api, @openora/* from npm)',
     prompts: [
       {
         type: 'input',
