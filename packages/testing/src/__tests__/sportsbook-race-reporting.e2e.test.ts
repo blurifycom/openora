@@ -218,10 +218,22 @@ describe('revenue by product', () => {
       : null;
   };
 
+  const pastMillisecond = async (ms: number) => {
+    while (Date.now() <= ms) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+  };
+
+  // Postgres stamps rows in microseconds and a Date holds milliseconds, so a window shares no
+  // millisecond with the steps either side of it: one that did would count their rows too.
   async function window<T>(step: () => Promise<T>) {
+    await pastMillisecond(Date.now());
     const from = new Date();
     await step();
-    return { from, to: new Date(Date.now() + 1) };
+    // A row stamped later in the step's last millisecond is past Date.now(), so the bound is the next one.
+    const to = new Date(Date.now() + 1);
+    await pastMillisecond(to.getTime());
+    return { from, to };
   }
 
   it('counts the stake when accepted, the payout when settled, and takes a reopened payout back then', async () => {

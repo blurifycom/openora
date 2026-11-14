@@ -10,6 +10,7 @@ import {
   moneyToNumber,
   moneyEquals,
   moneyCompare,
+  expandMoneyExponent,
   moneyScaleBy,
   houseEdge,
   moneyDivide,
@@ -19,6 +20,7 @@ import {
   moneyCeilToScale,
   mapConcurrent,
 } from '../query-helpers.js';
+import { MoneyAmountSchema } from '@openora/core/contracts';
 
 describe('findOneOrThrow', () => {
   it('returns the first row when present', () => {
@@ -135,6 +137,35 @@ describe('moneyEquals', () => {
     expect(moneyEquals('1.000000000000000001', '1.000000000000000002')).toBe(false);
     expect(moneyToNumber('1.000000000000000001')).toBe(moneyToNumber('1.000000000000000002'));
   });
+});
+
+describe('expandMoneyExponent', () => {
+  it.each([
+    ['1e-7', '0.0000001'],
+    ['1E+2', '100'],
+    ['1e2', '100'],
+    ['2.5e-17', '0.000000000000000025'],
+    ['1.0e-18', '0.000000000000000001'],
+    ['1.50e1', '15'],
+    ['0.5e1', '5'],
+    ['0e0', '0'],
+    ['12.345e1', '123.45'],
+  ])('rewrites %j to the exact plain decimal %j', (input, expected) => {
+    expect(expandMoneyExponent(input)).toBe(expected);
+    expect(MoneyAmountSchema.safeParse(expected).success).toBe(true);
+  });
+
+  it('expands a 19th decimal as is, so the money schema still refuses it', () => {
+    expect(expandMoneyExponent('1e-19')).toBe('0.0000000000000000001');
+    expect(MoneyAmountSchema.safeParse(expandMoneyExponent('1e-19')).success).toBe(false);
+  });
+
+  it.each(['-5', '-1e2', 'NaN', '1e999999', 'e5', '1e', ' 1e2', '1.e2', '42.50'])(
+    'leaves %j unchanged for the money schema to judge',
+    (input) => {
+      expect(expandMoneyExponent(input)).toBe(input);
+    },
+  );
 });
 
 describe('moneyCompare', () => {

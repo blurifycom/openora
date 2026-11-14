@@ -2,8 +2,9 @@ import * as z from 'zod';
 import { createGameSortCatalog, defineGameSort } from '@openora/core/contracts';
 import { GameSortService } from '../service/game-sort.service.js';
 import { GameSortRankingService } from '../service/game-sort-ranking.service.js';
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { moneyEquals, setErrorReporter } from '@openora/core/server';
 import { and, eq, sql } from 'drizzle-orm';
 import type {
   GameAdapter,
@@ -39,6 +40,7 @@ import {
   RgRestrictedError,
   InsufficientBalanceError,
   WinCreditFailedError,
+  WinAmountInvalidError,
   ExternalRoundOwnerMismatchError,
   GameGeoFiltersUnavailableError,
 } from '../service/gaming.service.js';
@@ -1841,6 +1843,66 @@ describe('GamingService.endRound (real PG)', () => {
     const [unsettled] = await db.drizzle.db.select().from(gameRound);
     expect(unsettled?.status).toBe('active');
     expect(Number(unsettled?.winAmount)).toBe(0);
+  });
+
+  it.each([
+    ['1e-7', '0.0000001'],
+    ['1E+2', '100'],
+    ['2.5e-17', '0.000000000000000025'],
+  ])('pays a provider win of %j as the plain decimal %j', async (providerWin, paid) => {
+    const created = await seedGame();
+    const round = await seedRound(created.id, userId);
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '0',
+      currency: 'USD',
+    });
+    const svc = makeService({ provider: settlingProvider(providerWin), walletCommands });
+
+    expect(await svc.endRound(userId, round.id)).toEqual({ success: true, winAmount: paid });
+
+    expect(walletCommands.credit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ amount: paid }),
+    );
+    const [settled] = await db.drizzle.db.select().from(gameRound);
+    expect(settled?.status).toBe('completed');
+    expect(moneyEquals(settled?.winAmount ?? '', paid)).toBe(true);
+  });
+
+  describe('a provider win the ledger cannot hold', () => {
+    afterEach(() => setErrorReporter(undefined));
+
+    it.each(['1e-19', '0.0000000000000000001', '-5', '-1e2', '1e999999', 'NaN'])(
+      'refuses %j, leaves the round open, credits nothing and reports the round and raw value',
+      async (winAmount) => {
+        const reporter = vi.fn();
+        setErrorReporter(reporter);
+        const created = await seedGame();
+        const round = await seedRound(created.id, userId);
+        const walletCommands = makeWalletCommands({
+          ok: true,
+          moved: false,
+          newBalance: '0',
+          currency: 'USD',
+        });
+        const svc = makeService({ provider: settlingProvider(winAmount), walletCommands });
+
+        await expect(svc.endRound(userId, round.id)).rejects.toBeInstanceOf(WinAmountInvalidError);
+
+        expect(walletCommands.credit).not.toHaveBeenCalled();
+        const [unsettled] = await db.drizzle.db.select().from(gameRound);
+        expect(unsettled?.status).toBe('active');
+        expect(reporter).toHaveBeenCalledOnce();
+        expect(reporter).toHaveBeenCalledWith(
+          expect.any(WinAmountInvalidError),
+          expect.objectContaining({
+            extra: expect.objectContaining({ roundId: round.id, providerWinAmount: winAmount }),
+          }),
+        );
+      },
+    );
   });
 });
 

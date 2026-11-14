@@ -3,10 +3,13 @@ import {
   type DrizzleDb,
   type DrizzleTx,
   createDomainError,
+  createLogger,
   makeNotFoundError,
   makeConflictError,
   DrizzleService,
+  expandMoneyExponent,
   findOneOrThrow,
+  isPositiveMoney,
   likeContains,
   pageToOffset,
   serializeRow,
@@ -32,6 +35,7 @@ import {
 import { type PgColumn, type PgTable, union } from 'drizzle-orm/pg-core';
 import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
 import {
+  MoneyAmountSchema,
   RgLimitExceededError,
   isAllowedHost,
   type GameAdapter,
@@ -88,6 +92,8 @@ import {
   type ListGamesInput,
   type UpdateGameInput,
 } from '../contract/index.js';
+
+const logger = createLogger('gaming');
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
@@ -146,6 +152,16 @@ export const InsufficientBalanceError = createDomainError<[available: string, re
 export const WinCreditFailedError = createDomainError<[roundId: string, reason: string]>(
   'WinCreditFailedError',
   (roundId, reason) => `win credit failed for round ${roundId}: ${reason}`,
+);
+
+// Thrown before the round is touched, so it stays `active`: an amount the ledger cannot hold
+// exactly (`1e-19`, a 19th decimal, a negative) is never rounded or dropped in silence. Every
+// throw is logged at error level, which reaches the bound ERROR_TRACKING adapter, so operations
+// see the stuck round and the provider's raw value.
+export const WinAmountInvalidError = createDomainError<[roundId: string, winAmount: string]>(
+  'WinAmountInvalidError',
+  (roundId, winAmount) =>
+    `round ${roundId} won ${JSON.stringify(winAmount)}, which is not a decimal with at most 18 places`,
 );
 
 export const ExternalRoundOwnerMismatchError = createDomainError<[externalRoundId: string]>(
@@ -730,7 +746,16 @@ export class GamingService {
 
     const outcome = await this.provider.endRound(roundId);
     // The provider's number, never the caller's: the win is credited off this alone.
-    const winAmount = outcome?.winAmount ?? '0';
+    const providerWinAmount = outcome?.winAmount ?? '0';
+    const winAmount = expandMoneyExponent(providerWinAmount);
+    if (!MoneyAmountSchema.safeParse(winAmount).success) {
+      const err = new WinAmountInvalidError(roundId, providerWinAmount);
+      logger.error(
+        { err, roundId, providerWinAmount },
+        'provider win cannot be stored, round left active',
+      );
+      throw err;
+    }
 
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
@@ -751,7 +776,7 @@ export class GamingService {
       if (settled.length === 0) {
         return false;
       }
-      if (Number(winAmount) > 0) {
+      if (isPositiveMoney(winAmount)) {
         // The bet already opened this currency's balance, so `allowNewCurrency` only
         // covers a player whose active currency moved between start and settlement.
         const credited = await this.walletCommands.credit(tx, {

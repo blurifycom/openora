@@ -51,11 +51,13 @@ export type {
 export {
   WALLET_COMMANDS,
   WALLET_CORRECTION_DEBIT_TYPES,
+  WalletCommandAmountError,
   WalletCorrectionExceedsRoundError,
   WalletCorrectionRefConflictError,
   WalletCorrectionRoundError,
   WalletCorrectionTypeError,
   WalletHoldWithoutWalletError,
+  WalletReplayMismatchError,
 } from './wallet-commands.js';
 
 export type { WagerContext, WagerProduct } from './wager-context.js';
