@@ -80,8 +80,18 @@ export const userLimit = pgTable(
     ),
     index('user_limit_user_id_idx').on(t.userId),
     index('user_limit_pending_expires_at_idx').on(t.pendingExpiresAt),
+    // The rg-monitor heal reads the limits changed in its window.
+    index('user_limit_updated_at_idx').on(t.updatedAt),
   ],
 );
+
+// Each user's limits version: bumped under this row's lock by every writer of a deposit or wager
+// limit, before it re-reads the limits it projects into the ledger (ADR-0055). The row lock
+// orders concurrent writers of one user, so the later one always projects the later state.
+export const rgLimitVersion = pgTable('rg_limit_version', {
+  userId: uuid().primaryKey(),
+  version: integer().notNull(),
+});
 
 export const countryRule = pgTable('geo_rule', {
   id: uuid().primaryKey().defaultRandom(),

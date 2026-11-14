@@ -47,6 +47,7 @@
       "@openora/core/compliance/plugins/compliance": ["./src/compliance/plugin.ts"],
       "@openora/core/compliance/schema": ["./src/compliance/schema/index.ts"],
       "@openora/core/compliance/sealed": ["./src/compliance/sealed.ts"],
+      "@openora/core/compliance/seed": ["./src/compliance/seed/index.ts"],
       "@openora/core/compliance/server": ["./src/compliance/server.ts"],
       "@openora/core/contracts": ["./src/contracts/index.ts"],
       "@openora/core/contracts/kit": ["./src/contracts/kit.ts"],

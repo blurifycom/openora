@@ -78,4 +78,5 @@ await db.transaction(async (t) => {
 
 - Never hand-edit generated migrations or `docs/catalog.json`. Change the `pgTable`, then run `pnpm regen`.
 - Every module owns its own `drizzle/migrations/` + `__drizzle_migrations_<id>` tracking table, co-located with its schema. One shared database, one journal per module.
+- A one-time data migration that reads another module's tables (the wallet's `0047` seed, compliance's `0017` pin) checks each foreign table with `to_regclass` and runs its statement through `EXECUTE` inside a `DO` block, so it plans only when the table exists and is a no-op on a fresh database. Modules migrate in name order: say which order the data needs, make the other order safe, and name the boot backfill that repairs what it skipped. `RAISE NOTICE` the rows it had to leave alone.
 - A Postgres extension an index needs (for example `pg_trgm`) goes in the module `migrate()` `extensions` option, never hand-edited into a regenerated migration.

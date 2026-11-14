@@ -11,10 +11,12 @@
 import { createDrizzleDb } from '@openora/core/server';
 import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import { seedRoles } from '@openora/core/iam/seed';
+import { backfillRgLimits } from '@openora/core/compliance/seed';
 import { backfillPlayEligibility } from '@openora/core/pam/identity/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import {
   ledgerPlayEligibilityProjection,
+  ledgerRgLimits,
   seedAutoWithdrawalConfig,
 } from '@openora/core/wallet/seed';
 import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
@@ -45,6 +47,8 @@ async function main() {
   await backfillLedgerGames(db);
   // The ledger refuses a stake from a user it has not projected; this projects every user.
   await backfillPlayEligibility(db, ledgerPlayEligibilityProjection(db));
+  // The same for responsible-gambling limits: the ledger does not enforce an unprojected one.
+  await backfillRgLimits(db, ledgerRgLimits(db));
   console.log('Reference data seeded.');
 }
 

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
+  RG_LIMITS,
+  RG_LIMIT_LEDGER,
   playRefusalOf,
   type PlayEligibilityState,
 } from '@openora/core/contracts';
@@ -69,7 +71,7 @@ describe('the stake gate is sealed', () => {
     return { container, registry };
   };
 
-  it.each([LEDGER_PLAY_ELIGIBILITY, PLAY_ELIGIBILITY_PROJECTION])(
+  it.each([LEDGER_PLAY_ELIGIBILITY, PLAY_ELIGIBILITY_PROJECTION, RG_LIMITS, RG_LIMIT_LEDGER])(
     'refuses an overlay rebinding %s after the wallet bound it',
     (token) => {
       const { container, registry } = wallet();

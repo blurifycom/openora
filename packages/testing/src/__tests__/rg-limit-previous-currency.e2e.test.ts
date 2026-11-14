@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { and, eq, sql } from 'drizzle-orm';
 import { MESSAGE_BROKER } from '@openora/core/contracts';
 import { DRIZZLE, eventOutbox } from '@openora/core/server';
@@ -22,8 +23,14 @@ import {
  * limit's own currency, and the player's in-app `rg.limit.admin_updated` notification
  * and the audit row show it. Driven over the real app and a real Postgres db; the only
  * rows written behind the app are the exchange-rate quotes (no provider is wired in
- * tests) and a legacy NULL-currency limit row (the API can no longer create one).
+ * tests) and a legacy NULL-currency limit row (the API can no longer create one), which the
+ * compliance migration that pins legacy currencies then pins.
  */
+
+const PIN_LEGACY_CURRENCY = new URL(
+  '../../../core/src/compliance/drizzle/migrations/0017_pin_legacy_limit_currency.sql',
+  import.meta.url,
+);
 
 let db: TestDb;
 let app: TestApp;
@@ -152,6 +159,7 @@ describe('admin limit override carries the old limit currency', () => {
       minutes: null,
       currency: null,
     });
+    await app.container.get(DRIZZLE).db.execute(sql.raw(readFileSync(PIN_LEGACY_CURRENCY, 'utf8')));
 
     // 100 EUR = 110 USD, so 50 USD is a lowering. Player currency (EUR) is neither side's new one.
     const res = await setLimit(p.userId, { type: 'deposit', amount: '50', currency: 'USD' });
@@ -326,5 +334,42 @@ describe('player self-service limit change', () => {
       expect(confirmed?.before).not.toHaveProperty('currency');
     });
     await expectNoPlayerChangeNotification(p);
+  });
+});
+
+describe('a limit 0017 left without a currency', () => {
+  it('refuses the player with 409 and lets an admin lower it, reduce-only, into a currency', async () => {
+    const p = await registerAndMaterializePlayer(app, {
+      email: `rgpc-unpinned-${randomUUID()}@e2e.test`,
+    });
+    const [row] = await app.container
+      .get(DRIZZLE)
+      .db.insert(userLimit)
+      .values({ userId: p.userId, type: 'deposit', period: 'daily', amount: '100', currency: null })
+      .returning();
+
+    const player = await p.client.put('/compliance/limits', {
+      type: 'deposit',
+      amount: '10',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+    });
+    expect(player.status).toBe(409);
+    expect(JSON.stringify(await readJson(player))).toContain('operator fix is required');
+
+    // Read in the player's currency (USD): 500 is a raise, 80 a lowering.
+    expect(
+      (await setLimit(p.userId, { type: 'deposit', amount: '500', currency: 'USD' })).status,
+    ).toBe(409);
+    expect(
+      (await setLimit(p.userId, { type: 'deposit', amount: '80', currency: 'USD' })).status,
+    ).toBe(200);
+    const [repaired] = await app.container
+      .get(DRIZZLE)
+      .db.select()
+      .from(userLimit)
+      .where(eq(userLimit.id, row!.id));
+    expect(repaired).toMatchObject({ currency: 'USD', amount: '80.000000000000000000' });
   });
 });

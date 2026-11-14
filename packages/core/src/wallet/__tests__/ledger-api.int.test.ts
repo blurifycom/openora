@@ -9,7 +9,6 @@ import {
   IDENTITY_READER,
   LEDGER_API_V1,
   PLAY_ELIGIBILITY,
-  RG_LIMITS,
   WALLET_BET_ALREADY_REVERSED,
   WALLET_COMMANDS,
   WALLET_REVERSAL_UNMATCHED,
@@ -21,7 +20,6 @@ import {
   type LedgerV1MoveOutcome,
   type PlayEligibilityPort,
   type PlayEligibilitySnapshot,
-  type RgLimitsPort,
   type WalletCommands,
 } from '@openora/core/contracts';
 import {
@@ -43,6 +41,7 @@ import { migrate } from '../migrate.js';
 import { ledgerApiRequest, wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import walletPlugin from '../plugin.js';
 import { ledgerPlayEligibilityProjection } from '../service/ledger-play-eligibility.service.js';
+import { ledgerRgLimits } from '../service/ledger-rg-limits.service.js';
 
 let db: TestDb;
 let api: LedgerApiV1;
@@ -316,19 +315,25 @@ describe('Ledger API v1 bet (real PG)', () => {
 
     it('a reached wager limit as limit', () =>
       refusedBy(
-        (c) =>
-          c.register(RG_LIMITS, () =>
-            mock<RgLimitsPort>({
-              checkWager: vi.fn().mockResolvedValue({
-                allowed: false,
-                limitType: 'wager',
-                period: 'daily',
-                limit: '5',
-                used: '0',
-              }),
-            }),
-          ),
+        () => {},
         'limit',
+        (userId) =>
+          ledgerRgLimits(db.drizzle.db).reconcile([
+            {
+              userId,
+              version: 1,
+              limits: [
+                {
+                  limitId: randomUUID(),
+                  type: 'wager',
+                  period: 'daily',
+                  amount: '5',
+                  currency: 'USD',
+                  changedAt: new Date().toISOString(),
+                },
+              ],
+            },
+          ]),
       ));
 
     it('a stake over the bonus max bet as max_bet_exceeded', () =>

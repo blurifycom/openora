@@ -584,6 +584,11 @@
       "import": "./dist/analytics/server.js",
       "default": "./dist/analytics/server.js"
     },
+    "./compliance/seed": {
+      "types": "./dist/compliance/seed/index.d.ts",
+      "import": "./dist/compliance/seed/index.js",
+      "default": "./dist/compliance/seed/index.js"
+    },
     "./pam/identity/seed": {
       "types": "./dist/pam/identity/seed/index.d.ts",
       "import": "./dist/pam/identity/seed/index.js",
