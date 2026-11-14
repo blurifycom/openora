@@ -1,4 +1,4 @@
-import { createAuth, createDrizzleDb, type DrizzleDb } from '@openora/core/server';
+import { createAuth, createDrizzleDb } from '@openora/core/server';
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
@@ -82,32 +82,41 @@ export type SeedLocalOptions = {
   log?: (message: string) => void;
 };
 
-/** Reference data every install needs: roles, tags and default configs. Convergent upserts. */
-export async function seedReferenceData(db: DrizzleDb): Promise<void> {
-  await seedIam(db);
-  await seedTag(db);
-  await seedAutoWithdrawalConfig(db);
-  await seedDefaultWeightProfile(db);
-  await seedRankLadder(db, EXAMPLE_RANK_LADDER);
-  await seedChatCommands(db);
-}
+const LOCAL_DB_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', 'postgres']);
 
-/**
- * Everything a local install needs to be usable: reference data, a super-admin, demo players,
- * wallets, games and chat. Wipes and recreates the demo content on every run, so it refuses to
- * run with NODE_ENV=production.
- */
-export async function seedLocalData(options: SeedLocalOptions): Promise<SeedResult> {
+/** The seeder wipes players and wallet ledgers, so it only touches a database on this machine. */
+function assertLocalDatabase(databaseUrl: string): void {
   if (process.env['NODE_ENV'] === 'production') {
     throw new Error('seedLocalData refuses to run with NODE_ENV=production: it wipes demo tables.');
   }
+  const host = new URL(databaseUrl).hostname;
+  if (!LOCAL_DB_HOSTS.has(host) && process.env['OPENORA_ALLOW_REMOTE_SEED'] !== '1') {
+    throw new Error(
+      `seedLocalData refuses to wipe the database at ${host}: it only seeds a local database. ` +
+        'Set OPENORA_ALLOW_REMOTE_SEED=1 if this database is disposable.',
+    );
+  }
+}
+
+/**
+ * Everything a local install needs to be usable: reference data, an example rank ladder, a
+ * super-admin, demo players, wallets, games and chat. Wipes and recreates the demo content on
+ * every run, so it refuses production and any non-local database host.
+ */
+export async function seedLocalData(options: SeedLocalOptions): Promise<SeedResult> {
+  assertLocalDatabase(options.databaseUrl);
   const log = options.log ?? (() => {});
   const db = createDrizzleDb(options.databaseUrl);
   // better-auth's drizzle adapter needs the auth tables passed as schema, else
   // user creation throws "model user not found".
   const auth = createAuth({ db, schema: { user, session, account, verification, twoFactor } });
 
-  await seedReferenceData(db);
+  await seedIam(db);
+  await seedTag(db);
+  await seedAutoWithdrawalConfig(db);
+  await seedDefaultWeightProfile(db);
+  await seedRankLadder(db, EXAMPLE_RANK_LADDER);
+  await seedChatCommands(db);
   log('Reference data ready (roles, tags, configs, rank ladder, chat commands).');
 
   return seedDemoData({

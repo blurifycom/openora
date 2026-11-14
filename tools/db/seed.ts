@@ -11,7 +11,8 @@
  *   pnpm db:seed --players=60          # more players
  *   pnpm db:seed --admin-email=me@x.io --admin-password=secret123
  *
- * Requires DATABASE_URL (falls back to the local docker default). Single-tenant
+ * Requires DATABASE_URL (falls back to the local docker default). A non-local host needs
+ * OPENORA_ALLOW_REMOTE_SEED=1, since the seed wipes demo tables. Single-tenant
  * since ADR-0026 - one DB role, no RLS.
  */
 import { seedLocalData } from '@openora/core/seed/local';

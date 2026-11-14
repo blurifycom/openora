@@ -4,7 +4,8 @@
  *
  * Standalone one-shot script (mirrors the migration runner): needs only a DB connection, never
  * boots the app. Safe to re-run: reference data converges, demo content is recreated and the admin
- * password is reset to ADMIN_PASSWORD. Refuses to run with NODE_ENV=production.
+ * password is reset to ADMIN_PASSWORD. Local only: refuses NODE_ENV=production and any database
+ * host other than localhost. Never run it in a release pipeline.
  *
  * Usage: pnpm db:seed  (run after db:migrate). Requires DATABASE_URL.
  */
@@ -23,7 +24,7 @@ async function main() {
       email: process.env['ADMIN_EMAIL'] ?? 'admin@oss.dev',
       password: process.env['ADMIN_PASSWORD'] ?? 'password1234',
     },
-    playerCount: Number(process.env['SEED_PLAYERS'] ?? 36),
+    playerCount: Number(process.env['SEED_PLAYERS'] || 36),
     log: (m) => console.log(`  ${m}`),
   });
 
