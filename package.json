@@ -44,7 +44,7 @@
     "db:setup:test": "tsx tools/db/setup-test-db.ts",
     "db:setup:test:fresh": "tsx tools/db/setup-test-db.ts --fresh",
     "db:clean:test": "tsx tools/db/clean-test-databases.ts",
-    "create:app": "tsx tools/create/create-igaming-app.ts",
+    "create:app": "pnpm --filter @openora/create build && node packages/create-openora/dist/index.js",
     "create:service": "tsx tools/create/create-service.ts",
     "setup": "tsx tools/setup/setup-agent.ts",
     "setup:mcp": "tsx tools/setup/setup-mcp.ts",

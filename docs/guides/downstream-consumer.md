@@ -28,9 +28,10 @@ build, calls the `enhance-intent` MCP tool to turn the ask into a grounded spec,
 matching scaffold flow. See [mcp-setup.md](./mcp-setup.md#zero-config-setup-pnpm-setupmcp).
 
 This emits a headless api consumer: `apps/api` (thin `createApp` entry +
-`extensions.config.ts`), root `pnpm.overrides` linking every `@openora/*`, `.mcp.json`, the three
-consumer AI agents, and `turbo/generators/` (`pnpm gen plugin|adapter`). The CLI lives at
-`tools/create/create-igaming-app.ts`; the base tree at `tools/templates/consumer/`. Read on to
+`extensions.config.ts`), `@openora/*` installed from npm, `.mcp.json`, the three
+consumer AI agents, and `turbo/generators/` (`pnpm gen plugin|adapter`). `pnpm create:app` runs the
+`@openora/create` scaffolder (`packages/create-openora`, the same one `npm create @openora`
+runs); the base tree is `tools/templates/consumer/`. Read on to
 understand what it generated and how to extend it.
 
 ### Frontend
