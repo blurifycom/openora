@@ -47,6 +47,21 @@ The API sends anonymous usage telemetry (a random instance id, the version, the 
 two active-player counts). Set `OPENORA_TELEMETRY_DISABLED=1` in `.env` to turn it off; every field
 is listed at https://openora.ai/documentation/telemetry.
 
+## Deploy
+
+`compose.prod.yml` runs the app on one server with Docker: Postgres, Redis, a migration step, then
+the API. Commit `pnpm-lock.yaml`, copy the repo to the server, and set real secrets in `.env`
+(`AUTH_SECRET`, `WITHDRAWAL_PIN_HMAC_SECRET`, `POSTGRES_PASSWORD`). In production the API refuses
+to boot until a real mail sender is bound: run `pnpm gen adapter`, pick `EMAIL_SENDER`, and point it
+at your provider (SMTP, SES, Postmark). Then:
+
+```bash
+docker compose -f compose.prod.yml up -d --build
+```
+
+It seeds no demo data. Roles and other reference data come from a reference seed; see the
+downstream consumer guide.
+
 ## Extending
 
 | Need | Command |
