@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * One-command agent onboarding. Run via `pnpm setup`.
+ * One-command agent onboarding. Run via `pnpm run setup`.
  * Checks prerequisites, boots infra, migrates DB, starts MCP dev server, prints summary.
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -50,6 +50,11 @@ async function main() {
     console.log('\n--- Dependencies: already installed ---');
   }
 
+  if (!existsSync(join(root, '.env'))) {
+    console.log('\n--- Creating .env from packages/core/.env.example ---');
+    copyFileSync(join(root, 'packages', 'core', '.env.example'), join(root, '.env'));
+  }
+
   console.log('\n--- Generating derived artifacts (pnpm regen) ---');
   run('pnpm regen');
 
@@ -73,13 +78,12 @@ async function main() {
     }, 1500);
   });
 
+  // db:migrate and db:seed import the built packages, not the sources.
+  console.log('\n--- Building packages the db tools need ---');
+  run('pnpm --filter "@openora/testing..." build');
+
   console.log('\n--- Running Drizzle migrations ---');
-  try {
-    run('pnpm gen:drizzle');
-    run('pnpm db:migrate');
-  } catch {
-    console.warn('  [warn] Migration step skipped (schema may be empty - normal on first run)');
-  }
+  run('pnpm db:migrate');
 
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const envExamplePath = join(root, 'packages', 'core', '.env.example');
@@ -98,16 +102,15 @@ async function main() {
     `Node: ${process.version}  pnpm: ${execSync('pnpm --version', { encoding: 'utf8' }).trim()}`,
   );
   console.log('');
-  console.log('Services:');
-  console.log(`  API          http://localhost:${ports['PORT_API'] ?? '3001'}`);
-  console.log(`  Backoffice   http://localhost:3000`);
+  console.log('Next:');
+  console.log('  Demo data:    pnpm db:seed   (admin@oss.dev / password1234)');
   console.log(
-    `  MCP server   oss-dev (stdio, via .mcp.json - see docs/guides/mcp-setup.md for per-editor setup)`,
+    `  Run an API:   pnpm create:app <name> - serves on :${ports['PORT_API'] ?? '3001'} (docs/guides/quickstart.md)`,
   );
-  console.log(`  Storybook    http://localhost:6006`);
-  console.log('');
-  console.log('Start everything: pnpm dev');
-  console.log('Run tests:        pnpm verify');
+  console.log(
+    `  MCP server:   oss-dev (stdio, via .mcp.json - see docs/guides/mcp-setup.md for per-editor setup)`,
+  );
+  console.log('  Run tests:    pnpm verify');
   console.log('Add a module:     /scaffold-module <name>');
   console.log('Add an extension: /scaffold-plugin <name>');
   console.log('');

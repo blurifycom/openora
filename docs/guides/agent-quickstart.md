@@ -4,7 +4,7 @@ This guide walks an AI agent through implementing a module end-to-end using only
 
 ## Assumptions
 
-- `pnpm setup` has been run (Docker up, DB migrated, dependencies installed).
+- `pnpm run setup` has been run (Docker up, DB migrated, dependencies installed).
 - The `oss-dev` MCP server is registered in `.mcp.json` and your agent launches it automatically (stdio). No separate process to start. Verify: `claude mcp list` (Claude Code), or check MCP settings in Cursor/Windsurf. See `docs/guides/mcp-setup.md` for per-editor setup.
 
 ## Step 1: Understand the platform
@@ -107,7 +107,7 @@ Fix any typecheck, lint, boundary, or test failures before considering the work 
 
 ## Step 11: Integration check
 
-Start the full stack:
+Start the API from a `pnpm create:app` app (in this repo `pnpm dev` only runs the MCP dev server; see the [Quickstart](./quickstart.md)):
 
 ```
 pnpm dev

@@ -48,44 +48,35 @@ The platform ships the backend surface (auth, wallet, player management, complia
 
 ## Requirements
 
-Node 26+, pnpm 11+, Docker.
+Node 26.13.1+ (see `.nvmrc`), pnpm 11 (pinned via `packageManager`; `corepack enable`), Docker with Compose.
 
 ## Quick start
 
-Two ways to get the API up at `http://localhost:3001`. Demo credentials after seeding: `admin@oss.dev` / `password1234`.
-
-### 1. Via agents / MCP (one command)
-
-For agents (Claude Code, Copilot, Codex, Cursor) and anyone who wants a single onboarding step.
+This repo is a library: setting it up gives you a migrated, seeded database and the tooling, and
+`pnpm create:app` generates the app that serves the API on `http://localhost:3001`. A first run
+takes about 30 minutes. The full walkthrough, with the ports used, what you should see after each
+step and troubleshooting, is in [docs/guides/quickstart.md](./docs/guides/quickstart.md).
 
 ```bash
-pnpm setup   # checks prereqs, installs deps, boots Postgres, runs migrations, prints a summary
-pnpm db:seed          # demo data: admin + players + wallets + transactions + games
-pnpm dev           # api :3001
+git clone https://github.com/blurifycom/openora.git && cd openora
+pnpm run setup        # prereqs, deps, containers, build, migrations (not `pnpm setup`: that is pnpm's own command)
+pnpm db:seed          # demo data; admin@oss.dev / password1234
+
+pnpm create:app my-gaming-core && cd my-gaming-core
+pnpm install && cp .env.example .env
+pnpm db:migrate
+pnpm dev              # api :3001, then: curl http://localhost:3001/health
 ```
 
-The `oss-dev` MCP dev server is wired in [`.mcp.json`](./.mcp.json) (stdio, launched by the editor - no port). It exposes the schema registry, route catalog, plugin manifest, and scaffolders as tools so an agent can extend the platform without re-asking the same questions each session.
+### Agents and MCP
+
+The `oss-dev` MCP dev server is wired in [`.mcp.json`](./.mcp.json) (stdio, launched by the editor - no port). It exposes the schema registry, route catalog, plugin manifest, and scaffolders as tools so an agent can extend the framework without re-asking the same questions each session.
 
 ```bash
 claude mcp list    # verify the oss-dev server is connected
 ```
 
 Then use `list-modules`, `list-routes`, `get-drizzle-schema`, `propose-table-change`, `docs-search`, `db-query-readonly`, and the `scaffold-*` tools. See [docs/guides/agent-quickstart.md](./docs/guides/agent-quickstart.md).
-
-### 2. Manual run
-
-```bash
-pnpm install                                  # install workspace deps
-docker compose up -d                          # start Postgres + Redis (library-first: no app containers)
-pnpm gen:drizzle             # generate Drizzle migrations
-pnpm db:migrate                            # apply them
-pnpm db:seed                                     # demo data
-pnpm dev                                      # api :3001
-```
-
-`pnpm db:seed` is idempotent and deterministic. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`.
-
-To run the whole reference stack in containers instead of on the host, use the opt-in profile: `docker compose --profile full up --build` (api :3001, web :3000, backoffice :3002).
 
 ## How it fits together
 

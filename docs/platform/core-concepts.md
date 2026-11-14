@@ -133,5 +133,5 @@ broker (RabbitMQ/Kafka) via an overlay, with no module changes.
 
 ## Next
 
-- [Architecture](/docs/architecture) - how these fit together.
-- [API reference](/docs/api) - every route, generated from the live contract.
+- [Architecture](./architecture.md) - how these fit together.
+- API reference - every route, generated from the live contract, served at `/docs` by a running API (see the [Quickstart](../guides/quickstart.md)).

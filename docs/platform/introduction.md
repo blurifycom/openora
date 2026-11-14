@@ -1,6 +1,6 @@
 # Introduction
 
-An open-source, headless, plugin-based, AI-native igaming platform. Clone it, extend it
+An open-source, headless, plugin-based, AI-native iGaming framework. Clone it, extend it
 with your own modules and adapters, and deploy it - without forking core.
 
 The backend ships fully featured out of the box: auth, wallet, lobby, games, chat,
@@ -17,7 +17,7 @@ repo and talks to the API over HTTP.
 - **Swappable seams** - payments, KYC, messaging, realtime, and jobs are ports you bind to any
   vendor.
 - **AI-native** - a machine-readable contract surface and an MCP dev server let coding agents
-  extend the platform safely.
+  extend the framework safely.
 
 ## A taste
 
@@ -34,6 +34,6 @@ await client.wallet.deposit({ amount: 50, currency: 'EUR', provider: 'mock' });
 
 ## Next
 
-- [Quickstart](/docs/quickstart) - run the API and call your first route.
-- [Core concepts](/docs/core-concepts) - plugins, contracts, services, adapters, events.
-- [API reference](/docs/api) - every route, generated from the live contract.
+- [Quickstart](../guides/quickstart.md) - run the API and call your first route.
+- [Core concepts](./core-concepts.md) - plugins, contracts, services, adapters, events.
+- API reference - every route, generated from the live contract, served at `/docs` by a running API (see the Quickstart).
