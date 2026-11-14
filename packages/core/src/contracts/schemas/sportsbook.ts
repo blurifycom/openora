@@ -21,7 +21,14 @@ export const SPORTSBOOK_CANCEL_REASONS = ['rejected', 'discarded'] as const;
 export const SportsbookCancelReasonSchema = z.enum(SPORTSBOOK_CANCEL_REASONS);
 export type SportsbookCancelReason = z.infer<typeof SportsbookCancelReasonSchema>;
 
-export const SPORTSBOOK_DEBT_CAUSES = ['recorded', 'offset', 'collected', 'written_off'] as const;
+/** `voided`: a void of the bet whose reopen recorded the shortfall cancelled what was left of it. */
+export const SPORTSBOOK_DEBT_CAUSES = [
+  'recorded',
+  'offset',
+  'collected',
+  'written_off',
+  'voided',
+] as const;
 export const SportsbookDebtCauseSchema = z.enum(SPORTSBOOK_DEBT_CAUSES);
 export type SportsbookDebtCause = z.infer<typeof SportsbookDebtCauseSchema>;
 

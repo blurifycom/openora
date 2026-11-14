@@ -148,6 +148,13 @@
       "when": 1794534151349,
       "tag": "0020_green_the_hand",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794569948448,
+      "tag": "0021_nifty_surge",
+      "breakpoints": true
     }
   ]
 }

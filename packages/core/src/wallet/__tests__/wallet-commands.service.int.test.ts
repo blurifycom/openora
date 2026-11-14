@@ -7,6 +7,7 @@ import {
   MaxBetExceededError,
   WalletCommandAmountError,
   WalletReplayMismatchError,
+  WALLET_REVERSAL_UNMATCHED,
   type WalletCreditArgs,
   type WalletDebitArgs,
   type BonusGrantCommands,
@@ -58,6 +59,14 @@ async function balanceOf(userId: string) {
     .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
     .where(eq(wallet.userId, userId));
   return Number(row?.amount ?? 0);
+}
+
+const stakeRef = { providerName: 'agg', providerRefId: 'bet-1', externalRoundId: 'round-1' };
+const reversalRef = { ...stakeRef, providerRefId: 'rb-1' };
+
+/** A reversal is only accepted against a stake on its round. */
+async function stake(userId: string, amount: string, providerRef = stakeRef) {
+  await svc.debit(db.drizzle.db, { userId, amount, type: 'bet', providerRef });
 }
 
 async function txRows(walletId: string) {
@@ -1129,6 +1138,7 @@ describe('WalletCommandsService ledger balance_after (real PG)', () => {
 describe('WalletCommandsService bet reversal audit (real PG)', () => {
   it('records the reversal in the credit transaction', async () => {
     const w = await seedWallet({ balance: '100' });
+    await stake(w.userId, '25');
     const writer = makeAuditWriter();
     const reversing = new WalletCommandsService(eligibility(false), writer);
 
@@ -1137,6 +1147,7 @@ describe('WalletCommandsService bet reversal audit (real PG)', () => {
       amount: '25',
       currency: 'USD',
       type: 'bet_reversal',
+      providerRef: reversalRef,
     });
 
     expect(outcome).toMatchObject({ ok: true, moved: true });
@@ -1146,15 +1157,16 @@ describe('WalletCommandsService bet reversal audit (real PG)', () => {
       expect.objectContaining({
         action: 'wallet.bet.reversed',
         resourceType: 'wallet_transaction',
-        resourceId: (await txRows(w.id))[0]?.id,
-        before: { balance: '100.000000000000000000' },
-        after: expect.objectContaining({ balance: '125.000000000000000000' }),
+        resourceId: outcome.ok && outcome.moved ? outcome.transactionId : undefined,
+        before: { balance: '75.000000000000000000' },
+        after: expect.objectContaining({ balance: '100.000000000000000000' }),
       }),
     );
   });
 
   it('rolls the credit and the ledger row back when the audit write fails', async () => {
     const w = await seedWallet({ balance: '100' });
+    await stake(w.userId, '25');
     const writer = makeAuditWriter();
     writer.recordInTransaction.mockRejectedValueOnce(new Error('audit down'));
     const reversing = new WalletCommandsService(eligibility(false), writer);
@@ -1166,12 +1178,13 @@ describe('WalletCommandsService bet reversal audit (real PG)', () => {
           amount: '25',
           currency: 'USD',
           type: 'bet_reversal',
+          providerRef: reversalRef,
         }),
       ),
     ).rejects.toThrow('audit down');
 
-    expect(await balanceOf(w.userId)).toBe(100);
-    expect(await txRows(w.id)).toHaveLength(0);
+    expect(await balanceOf(w.userId)).toBe(75);
+    expect(await txRows(w.id)).toHaveLength(1);
   });
 });
 
@@ -1334,7 +1347,7 @@ describe('WalletCommandsService.credit bonus settlement (real PG)', () => {
       providerRef: { providerName: 'agg', providerRefId: 'r1' },
     });
 
-    expect(res).toEqual({ ok: false, reason: 'bonus-funded reversal is missing a round id' });
+    expect(res).toEqual({ ok: false, reason: WALLET_REVERSAL_UNMATCHED });
     expect(settle).not.toHaveBeenCalled();
     expect(await balanceOf(w.userId)).toBe(0);
     expect(await txRows(w.id)).toHaveLength(0);
@@ -1342,7 +1355,8 @@ describe('WalletCommandsService.credit bonus settlement (real PG)', () => {
 
   it('credits only the real share of a win or reversal the engine settled', async () => {
     const { settle, svc: engine } = settling('4');
-    const w = await seedWallet({ balance: '0' });
+    const w = await seedWallet({ balance: '10' });
+    await stake(w.userId, '10');
 
     await engine.credit(db.drizzle.db, {
       userId: w.userId,
@@ -1376,15 +1390,16 @@ describe('WalletCommandsService.credit bonus settlement (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(8);
   });
 
-  it('credits a reversal fully when no engine is bound, round id or not', async () => {
-    const w = await seedWallet({ balance: '0' });
+  it('credits a reversal fully when no engine is bound', async () => {
+    const w = await seedWallet({ balance: '10' });
+    await stake(w.userId, '10');
 
     await svc.credit(db.drizzle.db, {
       userId: w.userId,
       amount: '10',
       currency: 'USD',
       type: 'bet_reversal',
-      providerRef: { providerName: 'agg', providerRefId: 'r1' },
+      providerRef: reversalRef,
     });
 
     expect(await balanceOf(w.userId)).toBe(10);
@@ -2305,7 +2320,9 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     });
 
     it('never lets a stake correction draw on a payout, or another round or provider', async () => {
-      const w = await seedWallet({ balance: '100' });
+      const w = await seedWallet({ balance: '200' });
+      await stake(w.userId, '50', round('other'));
+      await stake(w.userId, '50', round('r', 'other-provider'));
       await pay(w.userId, 'win', '50');
       await pay(w.userId, 'bet_reversal', '50', round('other'));
       await pay(w.userId, 'bet_reversal', '50', round('r', 'other-provider'));

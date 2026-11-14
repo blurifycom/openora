@@ -49,7 +49,9 @@ export type {
   WalletWithdrawalHoldArgs,
 } from './wallet-commands.js';
 export {
+  WALLET_BET_ALREADY_REVERSED,
   WALLET_COMMANDS,
+  WALLET_REVERSAL_UNMATCHED,
   WALLET_CORRECTION_DEBIT_TYPES,
   WalletCommandAmountError,
   WalletCorrectionExceedsRoundError,
@@ -118,8 +120,14 @@ export type {
   GamingNotifyGamesCreatedArgs,
   GamingNotifyGamesChangedArgs,
   GamingAccumulateExternalRoundOutcome,
+  GamingRoundWager,
 } from './gaming-commands.js';
-export { GAMING_COMMANDS, GamingUnknownGameError } from './gaming-commands.js';
+export {
+  GAMING_COMMANDS,
+  GamingInvalidRtpError,
+  GamingRoundOwnerMismatchError,
+  GamingUnknownGameError,
+} from './gaming-commands.js';
 
 export type {
   CatalogCategoryWithGameCount,
@@ -624,6 +632,8 @@ export type {
   SportsbookSessionOutcome,
 } from './sportsbook-ledger.js';
 export { SPORTSBOOK_LEDGER } from './sportsbook-ledger.js';
+export type { LedgerApiV1 } from './ledger-api.js';
+export { LEDGER_API_V1 } from './ledger-api.js';
 export type {
   SportsbookProvider,
   SportsbookProviderSession,

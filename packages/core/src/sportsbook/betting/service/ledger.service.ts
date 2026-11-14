@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto';
-import { and, eq, isNull, min, ne, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, min, ne, or } from 'drizzle-orm';
 import {
   createLogger,
   findOneOrThrow,
   isPositiveMoney,
   isUniqueConstraintViolation,
+  moneyAdd,
   moneyCompare,
   moneyDivide,
   moneyEquals,
   moneyFloorToScale,
+  moneySubtract,
   type DrizzleDb,
   type DrizzleService,
   type DrizzleTx,
@@ -514,6 +516,58 @@ export function isValidPromotionAmount(
 async function hasWallet(tx: DrizzleTx, userId: SportsbookBetRow['userId']): Promise<boolean> {
   const [row] = await tx.select({ id: wallet.id }).from(wallet).where(eq(wallet.userId, userId));
   return row !== undefined;
+}
+
+/**
+ * The stake a void or cancel at the bet's current version returns: the reserve's debit, or after a
+ * reopen that undid a void, the stake it re-collected (`id` undefined when it collected nothing)
+ * and the part it could not collect and left as debt.
+ */
+async function stakeToReverse(
+  tx: DrizzleTx,
+  bet: Pick<SportsbookBetRow, 'id' | 'version'>,
+): Promise<{ id: string | undefined; uncollected: string }> {
+  const t = sportsbookBetTransaction;
+  const rows = await tx
+    .select({
+      kind: t.kind,
+      result: t.result,
+      version: t.betVersion,
+      amount: t.amount,
+      ids: t.walletTransactionIds,
+    })
+    .from(t)
+    .where(and(eq(t.betId, bet.id), inArray(t.kind, ['reserve', 'settle', 'reopen'])));
+  const at = (kind: SportsbookTransactionKind, version: number) =>
+    rows.find((r) => r.kind === kind && r.version === version);
+  let stake = { id: rows.find((r) => r.kind === 'reserve')?.ids[0], uncollected: '0' };
+  // A reopen bumps the version; it re-collected a stake only when it undid a void.
+  for (let version = 1; version <= bet.version; version++) {
+    const voided = at('settle', version - 1);
+    const reopen = at('reopen', version);
+    if (voided?.result === 'void' && reopen) {
+      stake = { id: reopen.ids[0], uncollected: moneySubtract(voided.amount, reopen.amount) };
+    }
+  }
+  return stake;
+}
+
+/**
+ * The wallet or the debt does not hold what the ledger expects of a settlement or cancel: final,
+ * and filed for an operator.
+ */
+function ledgerMismatch(
+  { provider, providerTxId }: TxKey,
+  owner: Pick<SportsbookFindingArgs, 'betId' | 'userId'>,
+  detail: Record<string, string>,
+): LedgerRefusal {
+  return new LedgerRefusal('illegal_transition', {
+    kind: 'provider_mismatch',
+    dedupeKey: `provider_mismatch:${provider}:${providerTxId}`,
+    provider,
+    ...owner,
+    detail: { providerTxId, ...detail },
+  });
 }
 
 /** A provider callback for a bet core already moved past it, or dropped: refused and filed. */
@@ -1240,10 +1294,15 @@ export class SportsbookLedgerService {
             type: 'bet_reversal',
             allowNewCurrency: true,
             providerRef: walletRef(args),
+            reversesTransactionId: (await stakeToReverse(tx, cancelled)).id,
           }),
         );
         if (!credit.ok) {
-          throw new Error(`sportsbook cancel: stake refund did not move (${credit.reason})`);
+          throw ledgerMismatch(
+            args,
+            { betId: cancelled.id, userId: cancelled.userId },
+            { move: 'a stake refund', walletRefusal: credit.reason },
+          );
         }
         if (!credit.moved) {
           throw raceLost(credit.replayedTransactionId);
@@ -1446,7 +1505,31 @@ export class SportsbookLedgerService {
       const moves: WalletMove[] = [];
       let balance: string;
       let debtChange: DebtChange | undefined;
-      if (pays) {
+      let credited = payout;
+      let reversesTransactionId: string | undefined;
+      if (pays && creditType === 'bet_reversal') {
+        const stake = await stakeToReverse(tx, settled);
+        reversesTransactionId = stake.id;
+        // The reopen this void undoes left part of the stake as debt: the void cancels that rest
+        // and returns only what the player paid, the reopen's part and what was taken of the debt.
+        if (isPositiveMoney(stake.uncollected)) {
+          const cancelled = await this.debts.cancelForVoid(tx, settled);
+          if (!cancelled) {
+            throw ledgerMismatch(
+              args,
+              { betId: settled.id, userId: settled.userId },
+              { uncollected: stake.uncollected, missing: 'stake shortfall' },
+            );
+          }
+          debtChange = cancelled.change;
+          credited = moneyAdd(moneySubtract(payout, stake.uncollected), cancelled.collected);
+          // More than the reopen's stake row: the round cap bounds it instead.
+          if (isPositiveMoney(cancelled.collected)) {
+            reversesTransactionId = undefined;
+          }
+        }
+      }
+      if (isPositiveMoney(credited)) {
         const raceLost = (heldBy: string | undefined) =>
           new LedgerRaceLost(
             'a payout',
@@ -1458,22 +1541,27 @@ export class SportsbookLedgerService {
           raceLost,
           this.wallet.credit(tx, {
             userId: settled.userId,
-            amount: payout,
+            amount: credited,
             currency: settled.currency,
             type: creditType,
             allowNewCurrency: true,
             providerRef: walletRef(args),
+            reversesTransactionId,
           }),
         );
         if (!credit.ok) {
-          throw new Error(`sportsbook settle: payout did not move (${credit.reason})`);
+          throw ledgerMismatch(
+            args,
+            { betId: settled.id, userId: settled.userId },
+            { move: 'a payout', walletRefusal: credit.reason },
+          );
         }
         if (!credit.moved) {
           throw raceLost(credit.replayedTransactionId);
         }
         moves.push({
           transactionId: credit.transactionId,
-          amount: payout,
+          amount: credited,
           currency: settled.currency,
           type: creditType,
           direction: 'credit',

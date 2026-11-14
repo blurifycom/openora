@@ -9,7 +9,11 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { GamingUnknownGameError, type DomainEventPayload } from '@openora/core/contracts';
+import {
+  GamingUnknownGameError,
+  type DomainEventPayload,
+  type GamingRoundWager,
+} from '@openora/core/contracts';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { GAMES_CHANGED_EVENT_BATCH } from '../contract/index.js';
 import { game, ledgerGame, type Game } from '../schema/index.js';
@@ -23,24 +27,36 @@ const keepNewest = {
   set: {
     providerId: sql`excluded.provider_id`,
     gameType: sql`excluded.game_type`,
+    wagerProduct: sql`excluded.wager_product`,
+    rtp: sql`excluded.rtp`,
     version: sql`excluded.version`,
     updatedAt: sql`now()`,
   },
   setWhere: sql`${ledgerGame.version} < excluded.version`,
 };
 
-export async function assertLedgerGame(
+/** The wagering inputs `ledger_game` holds for `gameId`, or undefined for a game it lacks. */
+export async function readLedgerGame(
   db: DrizzleDb | DrizzleTx,
   gameId: Game['id'],
-): Promise<void> {
+): Promise<GamingRoundWager | undefined> {
   const [row] = await db
-    .select({ gameId: ledgerGame.gameId })
+    .select({ product: ledgerGame.wagerProduct, rtp: ledgerGame.rtp })
     .from(ledgerGame)
     .where(eq(ledgerGame.gameId, gameId))
     .limit(1);
+  return row;
+}
+
+export async function assertLedgerGame(
+  db: DrizzleDb | DrizzleTx,
+  gameId: Game['id'],
+): Promise<GamingRoundWager> {
+  const row = await readLedgerGame(db, gameId);
   if (!row) {
     throw new GamingUnknownGameError(gameId);
   }
+  return row;
 }
 
 export async function applyLedgerGames(
@@ -66,6 +82,8 @@ export async function emitLedgerGames(
         gameId: game.id,
         providerId: game.providerId,
         gameType: game.gameType,
+        wagerProduct: game.wagerProduct,
+        rtp: game.rtp,
         version: game.ledgerVersion,
       })
       .from(game)
@@ -89,6 +107,8 @@ export async function backfillLedgerGames(db: DrizzleDb | DrizzleTx): Promise<nu
           gameId: game.id,
           providerId: game.providerId,
           gameType: game.gameType,
+          wagerProduct: game.wagerProduct,
+          rtp: game.rtp,
           version: game.ledgerVersion,
           updatedAt: sql`now()`.as('updated_at'),
         })

@@ -11,6 +11,7 @@ import {
   boolean,
   jsonb,
   integer,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 import {
   WALLET_RAILS,
@@ -23,6 +24,7 @@ import {
   WALLET_DEPOSIT_STATUS_EVENT_STATUSES,
   ON_RAMP_STATUSES,
   WAGER_PRODUCTS,
+  LEDGER_V1_KEYED_OPERATIONS,
   type OnRampStatus,
   type WalletRail,
   type WalletTransactionStatus,
@@ -79,6 +81,7 @@ export const walletTransactionDirectionEnum = pgEnum(
 );
 
 export const walletWagerProductEnum = pgEnum('wallet_wager_product', WAGER_PRODUCTS);
+export const ledgerApiOperationEnum = pgEnum('ledger_api_operation', LEDGER_V1_KEYED_OPERATIONS);
 
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
@@ -219,6 +222,9 @@ export const walletTransaction = pgTable(
     // gone to the grant; NULL when all of `amount` was real. On a bet, the part of the stake the
     // real balance paid, written on every bet (NULL only on bets older than that).
     realShare: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    // A `bet_reversal` that named the bet it returns: that bet's row. Unique, so one bet is
+    // reversed at most once. NULL on every other row and on a reversal that named no bet.
+    reversedTransactionId: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -251,6 +257,9 @@ export const walletTransaction = pgTable(
     uniqueIndex('wallet_transaction_wallet_id_idempotency_key_idx')
       .on(t.walletId, t.idempotencyKey)
       .where(sql`${t.idempotencyKey} IS NOT NULL`),
+    uniqueIndex('wallet_transaction_reversed_transaction_id_idx')
+      .on(t.reversedTransactionId)
+      .where(sql`${t.reversedTransactionId} IS NOT NULL`),
   ],
 );
 
@@ -721,6 +730,29 @@ export type WalletBonusCredit = typeof walletBonusCredit.$inferSelect;
 export type WalletBonusRolloverConfig = typeof walletBonusRolloverConfig.$inferSelect;
 export type WalletAssetRow = typeof walletAsset.$inferSelect;
 export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
+// Ledger API v1 idempotency: one row per key a bet, win or reverse applied, written in the
+// transaction that moved the money, with the request's fingerprint and the answer it got, so a
+// retry is answered from here and a reused key with another request is told apart. Append-only.
+// `target_ref_id` is the bet a reverse returned; unique per provider, so a stake comes back once.
+export const ledgerApiRequest = pgTable(
+  'ledger_api_request',
+  {
+    providerName: text().notNull(),
+    providerRefId: text().notNull(),
+    operation: ledgerApiOperationEnum().notNull(),
+    fingerprint: text().notNull(),
+    targetRefId: text(),
+    response: jsonb().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.providerName, t.providerRefId] }),
+    uniqueIndex('ledger_api_request_target_ref_key')
+      .on(t.providerName, t.targetRefId)
+      .where(sql`${t.targetRefId} IS NOT NULL`),
+  ],
+);
+
 export type WalletJobRun = typeof walletJobRun.$inferSelect;
 export type WalletReconciliationFinding = typeof walletReconciliationFinding.$inferSelect;
 export type WalletRefundedDeposit = typeof walletRefundedDeposit.$inferSelect;
