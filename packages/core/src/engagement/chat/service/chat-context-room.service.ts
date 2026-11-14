@@ -113,9 +113,10 @@ export class ChatContextRoomService implements ChatContextRooms {
             after: { ref, name },
           });
         }
-        const addedMemberIds = await this.addMembers(t, room.id, memberIds, effects);
+        const closed = await this.isClosed(t, room.id);
+        const addedMemberIds = closed ? [] : await this.addMembers(t, room.id, memberIds, effects);
         return {
-          room: toContextRoom(room, ref, await this.isClosed(t, room.id)),
+          room: toContextRoom(room, ref, closed),
           created: inserted !== undefined,
           addedMemberIds,
         };

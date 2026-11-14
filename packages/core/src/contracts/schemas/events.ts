@@ -948,13 +948,12 @@ export const domainEventSchemas = {
   }),
 
   // A context room write a service that does not run chat issued on its own transaction
-  // (OutboxChatContextRoomCommands). Chat applies it keyed on the caller's `ref`: ensure on the
-  // ref (the room takes `roomId`), membership on (ref, userId), a post on `messageId`, so a
-  // redelivery changes nothing. A command for a ref chat has no room for yet is redelivered.
+  // (OutboxChatContextRoomCommands). Chat applies it keyed on the caller's ids: ensure on the
+  // `ref` (the room takes `roomId`), a post on `messageId`, so a redelivery changes nothing.
+  // Commands for one ref are not applied in issue order: replicas consume concurrently and a
+  // failed one is redelivered later. A command for a ref chat has no room for yet is redelivered.
   'chat.context_room.command_issued': z.discriminatedUnion('op', [
     EnsureChatContextRoomInputSchema.extend({ op: z.literal('ensure'), roomId: UuidSchema }),
-    z.object({ op: z.literal('add_member'), ref: ChatContextRefSchema, userId: UuidSchema }),
-    z.object({ op: z.literal('remove_member'), ref: ChatContextRefSchema, userId: UuidSchema }),
     z.object({ op: z.literal('close'), ref: ChatContextRefSchema }),
     z.object({
       op: z.literal('post_system_event'),

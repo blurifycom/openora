@@ -93,3 +93,13 @@ export const ChatRoomInviteOnlyError = createDomainError(
   (roomId: Uuid) => `Room is invite-only: ${roomId}`,
   { reason: 'invite_only' },
 );
+export const ChatContextRoomIdConflictError = createDomainError(
+  'ChatContextRoomIdConflictError',
+  (ref: string, roomId: Uuid, requestedRoomId: Uuid) =>
+    `Chat context room ${ref} is room ${roomId}, not ${requestedRoomId}`,
+);
+export const ChatSystemCardRefusedError = createDomainError(
+  'ChatSystemCardRefusedError',
+  (messageId: Uuid, outcome: 'conflict' | 'room-gone') =>
+    `Chat system message ${messageId} refused: ${outcome}`,
+);
