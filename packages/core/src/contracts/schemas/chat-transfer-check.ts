@@ -48,6 +48,8 @@ export const ChatTransferVerdictSchema = z.discriminatedUnion('allowed', [
     refusal: ChatTransferRefusalSchema,
     /** The context send policy's own code, on `context_send_denied` only. */
     policyReason: ChatContextSendPolicyReasonSchema.optional(),
+    /** The room's context, on `context_send_denied` only, so the caller applies its own rule first. */
+    contextRef: z.string().optional(),
   }),
 ]);
 export type ChatTransferVerdict = z.infer<typeof ChatTransferVerdictSchema>;

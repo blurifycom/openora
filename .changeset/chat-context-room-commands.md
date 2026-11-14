@@ -8,7 +8,7 @@ New optional `CHAT_CONTEXT_ROOM_COMMANDS` port, and the `OutboxChatContextRoomCo
 
 `ChatSystemWriter` gains an outbox binding, `OutboxChatSystemWriter`, that writes the new `chat.system_message.upserted` event. A system card is keyed on the caller's `messageId` and carries a `version` (`CHAT_SYSTEM_MESSAGE_VERSION`), so a late or redelivered post never reverts a settled card. `chat_message` gains the `version` column.
 
-New `CHAT_TRANSFER_CHECK` port with `checkChatTransfer`, and `CHAT_BLOCK_READER`. The transfer check reads every chat-side fact a money transfer rests on (command enabled, actor may post, send policy, blocks with the counterparts) in one call on the caller's transaction, and fails closed with `chat_unavailable` when chat cannot answer. A transfer is also refused when the command limits cannot be read.
+New `CHAT_TRANSFER_CHECK` port with `checkChatTransfer`, and `CHAT_BLOCK_READER`. The transfer check reads every chat-side fact a money transfer rests on (command enabled, actor may post, send policy, blocks with the counterparts) in one call on the caller's transaction, and fails closed with `chat_unavailable` when chat cannot answer. A transfer is also refused when the command limits cannot be read. A `context_send_denied` verdict carries the room's `contextRef`, so a caller can apply its own per-context rule before the policy's reason.
 
 Block and friendship events are published through the outbox, in emit order.
 
