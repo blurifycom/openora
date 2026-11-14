@@ -57,7 +57,12 @@ import {
   PlayerNotFoundError,
 } from './service/kyc.service.js';
 import { RgService } from './service/rg.service.js';
-import { backfillRgLimits, rgLimitsPage } from './service/rg-limits-publisher.service.js';
+import {
+  backfillRgLimits,
+  readSnapshots,
+  RgLimitsPublisher,
+  rgLimitsPage,
+} from './service/rg-limits-publisher.service.js';
 import { RgSelfServiceService } from './service/rg-self-service.service.js';
 import {
   RgMonitoringService,
@@ -211,6 +216,14 @@ export default {
     // What the wallet's reconciliation compares its limits projection against.
     ctx.provideSealed(RG_LIMITS_SOURCE, (c) => ({
       page: (after, limit) => rgLimitsPage(c.get(DRIZZLE).db, after, limit),
+      snapshots: (userIds) => readSnapshots(c.get(DRIZZLE).db, userIds),
+      repair: async (userIds) => {
+        const db = c.get(DRIZZLE).db;
+        const publisher = new RgLimitsPublisher(c.get(RG_LIMIT_LEDGER), c.get(EVENT_BUS));
+        for (const userId of userIds) {
+          await db.transaction((tx) => publisher.publish(tx, userId));
+        }
+      },
     }));
     ctx.provide(RG_EXCLUSION_READER, (c) => ({
       getExclusionState: async (userId, tx) => {

@@ -159,7 +159,7 @@ async function versionedUsers(
  * `userIds`' committed limits snapshots, versions and rows read on one snapshot: a version read
  * after a newer commit than the limits would label older limits with the newer version.
  */
-async function readSnapshots(
+export async function readSnapshots(
   db: DrizzleDb,
   userIds: readonly User['id'][],
 ): Promise<RgLimitsSnapshot[]> {

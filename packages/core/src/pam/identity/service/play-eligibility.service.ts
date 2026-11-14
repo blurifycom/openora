@@ -4,7 +4,7 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { eq, gt, sql } from 'drizzle-orm';
+import { eq, gt, inArray, sql } from 'drizzle-orm';
 import {
   playRefusalOf,
   type PlayEligibilityPort,
@@ -161,13 +161,8 @@ export async function backfillPlayEligibility(
   }
 }
 
-/** Up to `limit` users' committed play eligibility in user id order, after `after` when given. */
-export async function playEligibilityPage(
-  db: DrizzleDb,
-  after: User['id'] | null,
-  limit: number,
-): Promise<PlayEligibilitySnapshot[]> {
-  const rows = await db
+const committedState = (db: DrizzleDb) =>
+  db
     .select({
       userId: user.id,
       rgBlocked: user.rgBlocked,
@@ -179,9 +174,29 @@ export async function playEligibilityPage(
       version: user.playEligibilityVersion,
     })
     .from(user)
-    .leftJoin(player, eq(player.userId, user.id))
+    .leftJoin(player, eq(player.userId, user.id));
+
+/** Up to `limit` users' committed play eligibility in user id order, after `after` when given. */
+export async function playEligibilityPage(
+  db: DrizzleDb,
+  after: User['id'] | null,
+  limit: number,
+): Promise<PlayEligibilitySnapshot[]> {
+  const rows = await committedState(db)
     .where(after === null ? undefined : gt(user.id, after))
     .orderBy(user.id)
     .limit(limit);
+  return rows.map((row) => snapshotOf(row.userId, row));
+}
+
+/** The committed play eligibility of `userIds`; an unknown user is left out. */
+export async function playEligibilityOf(
+  db: DrizzleDb,
+  userIds: readonly User['id'][],
+): Promise<PlayEligibilitySnapshot[]> {
+  if (userIds.length === 0) {
+    return [];
+  }
+  const rows = await committedState(db).where(inArray(user.id, [...userIds]));
   return rows.map((row) => snapshotOf(row.userId, row));
 }

@@ -29,6 +29,7 @@ export type {
   EventEnvelope,
   MessageBrokerAdapter,
   BrokerHandler,
+  DeadLetters,
   SubscribeOptions,
 } from './broker.js';
 export { MESSAGE_BROKER } from './broker.js';

@@ -168,6 +168,10 @@ export const RG_LIMIT_LEDGER: SealedToken<RgLimitLedgerPort> =
 export type RgLimitsSourcePort = {
   /** Up to `limit` users' snapshots in user id order, after `afterUserId` when given. */
   page(afterUserId: string | null, limit: number): Promise<RgLimitsSnapshot[]>;
+  /** The committed snapshots of `userIds`, read now; a user with no limits is at version 0. */
+  snapshots(userIds: readonly string[]): Promise<RgLimitsSnapshot[]>;
+  /** Re-publishes each of `userIds` through compliance's own writer, under a new version. */
+  repair(userIds: readonly string[]): Promise<void>;
 };
 
 export const RG_LIMITS_SOURCE: SealedToken<RgLimitsSourcePort> =

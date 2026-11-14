@@ -11,10 +11,8 @@ import {
   isNull,
   lt,
   ne,
-  notInArray,
   notLike,
   sql,
-  type AnyColumn,
   type SQL,
 } from 'drizzle-orm';
 import {
@@ -190,10 +188,20 @@ const LEDGER_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new S
 ]);
 
 /**
+ * Findings whose dismissal takes a super admin: the wallet ledger's own, and a Ledger API row that
+ * disagrees with its request or moved with none. Nothing closes these but a person.
+ */
+const SUPER_ADMIN_DISMISSAL_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
+  ...LEDGER_FINDING_KINDS,
+  'ledger_request_mismatch',
+  'ledger_unrequested_transaction',
+]);
+
+/**
  * Reports a credit never settles: a withdrawal stuck in its saga (ADR-0057) is still live and
  * settles through its own path, so a manual credit would pay it twice; a Ledger API row that
- * disagrees with its request, a projection behind its owner, and an event pipeline falling
- * behind are fixed at their source. Dismissal only.
+ * disagrees with its request, a projection off its owner, and an event pipeline falling behind
+ * are fixed at their source. Dismissal only; the last four also close themselves once they clear.
  */
 const DISMISS_ONLY_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
   'stuck_withdrawal_requested',
@@ -409,19 +417,6 @@ const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
 const PROJECTION_FINDING_LABEL = 'ledger-projection';
 const EVENT_PIPELINE_FINDING_LABEL = 'event-pipeline';
 
-/** A finding of `kind` under this provider and external id is on file, whatever its status. */
-const alreadyReported = (
-  kind: WalletReconciliationFindingKind,
-  providerName: SQL | AnyColumn,
-  externalId: SQL | AnyColumn,
-) =>
-  sql<boolean>`EXISTS (
-    SELECT 1 FROM ${walletReconciliationFinding}
-    WHERE ${walletReconciliationFinding.kind} = ${kind}
-      AND ${walletReconciliationFinding.providerName} = ${providerName}
-      AND ${walletReconciliationFinding.externalId} = ${externalId}
-  )`;
-
 const JOB_NAME = 'wallet-reconciliation';
 const LEDGER_INVARIANT_JOB_NAME = 'wallet-ledger-invariant';
 export const LEDGER_INVARIANT_QUEUE = queue(LEDGER_INVARIANT_JOB_NAME);
@@ -474,28 +469,42 @@ type OwnerSnapshot = { userId: string; version: number };
 /** One projection the cycle compares with its owner's state, a keyset page at a time. */
 export type ProjectionDriftCheck = {
   kind: ProjectionDriftKind;
-  /** The owner's snapshots after `after`, and the users among them the projection is behind. */
+  /** The owner's snapshots after `after`, and the users among them the projection is off. */
   page(
     after: string | null,
     limit: number,
-  ): Promise<{ snapshots: OwnerSnapshot[]; behind: string[] }>;
+  ): Promise<{ snapshots: OwnerSnapshot[]; drifting: string[] }>;
+  /** Re-publishes `userIds` through the owner's own writer, under a new version. */
+  repair(userIds: readonly string[]): Promise<void>;
 };
 
 /**
- * Reads the owner first and the projection second, so a write landing between the two leaves the
- * projection ahead, which `behind` does not count.
+ * Reads the owner, then the projection. A projection behind drifts. One ahead with another state
+ * may only have caught a write that landed between the reads, so the owner is read again: a
+ * projection still ahead of the owner's committed state is drift, as the owner writes its own
+ * version and the projection in one transaction.
  */
 export function projectionDriftCheck<S extends OwnerSnapshot>(
   kind: ProjectionDriftKind,
-  source: { page(after: string | null, limit: number): Promise<S[]> },
-  projection: { behind(snapshots: readonly S[]): Promise<string[]> },
+  source: {
+    page(after: string | null, limit: number): Promise<S[]>;
+    snapshots(userIds: readonly string[]): Promise<S[]>;
+    repair(userIds: readonly string[]): Promise<void>;
+  },
+  projection: { compare(snapshots: readonly S[]): Promise<{ behind: string[]; ahead: string[] }> },
 ): ProjectionDriftCheck {
   return {
     kind,
     page: async (after, limit) => {
       const snapshots = await source.page(after, limit);
-      return { snapshots, behind: await projection.behind(snapshots) };
+      const { behind, ahead } = await projection.compare(snapshots);
+      if (ahead.length === 0) {
+        return { snapshots, drifting: behind };
+      }
+      const stillAhead = new Set((await projection.compare(await source.snapshots(ahead))).ahead);
+      return { snapshots, drifting: [...behind, ...ahead.filter((id) => stillAhead.has(id))] };
     },
+    repair: (userIds) => source.repair(userIds),
   };
 }
 
@@ -509,8 +518,8 @@ export type ReconciliationServiceDeps = {
   rgLimits?: RgLimitsPort;
   /** The projections to compare with their owners; one whose owner is not loaded is left out. */
   projectionChecks?: readonly ProjectionDriftCheck[];
-  /** Counts dead letters when its driver can. */
-  broker?: Pick<MessageBrokerAdapter, 'deadLetterCount'>;
+  /** Reads the dead letters when its driver can. */
+  broker?: Pick<MessageBrokerAdapter, 'deadLetters'>;
 };
 
 /**
@@ -530,7 +539,7 @@ export class ReconciliationService {
   private readonly platformConfig?: PlatformConfig;
   private readonly rgLimits?: RgLimitsPort;
   private readonly projectionChecks: readonly ProjectionDriftCheck[];
-  private readonly broker?: Pick<MessageBrokerAdapter, 'deadLetterCount'>;
+  private readonly broker?: Pick<MessageBrokerAdapter, 'deadLetters'>;
 
   constructor({
     drizzle,
@@ -554,13 +563,13 @@ export class ReconciliationService {
     this.broker = broker;
   }
 
-  /** Whether a finding is about a wallet's own ledger, whose dismissal takes a super admin. */
+  /** Whether a finding is one whose dismissal takes a super admin. */
   async isLedgerFinding(id: WalletReconciliationFindingRow['id']): Promise<boolean> {
     const [row] = await this.drizzle.db
       .select({ kind: walletReconciliationFinding.kind })
       .from(walletReconciliationFinding)
       .where(eq(walletReconciliationFinding.id, id));
-    return row !== undefined && LEDGER_FINDING_KINDS.has(row.kind);
+    return row !== undefined && SUPER_ADMIN_DISMISSAL_KINDS.has(row.kind);
   }
 
   async listFindings(filter: ListReconciliationFindingsInput) {
@@ -1189,6 +1198,7 @@ export class ReconciliationService {
       projectionDrifts: 0,
       projectionFindingsClosed: 0,
       deliveryIncidents: 0,
+      checksFailed: 0,
       unreconciledHours: 0,
     };
 
@@ -1242,11 +1252,25 @@ export class ReconciliationService {
         );
 
         // Ledger API requests against the wallet rows they wrote, each projection against its
-        // owner (a full compare, every cycle), and the event pipeline's backlog.
-        await this.reconcileLedgerRequests(runId, since, until, cfg.batchSize, counts);
-        await this.reportUnrequestedLedgerMoves(runId, since, until, cfg.batchSize, counts);
-        await this.reconcileProjections(runId, cfg.batchSize, counts);
-        await this.reconcileEventDelivery(runId, cfg, counts);
+        // owner (a full compare, every cycle), and the event pipeline's backlog. Each on its own,
+        // so one that fails leaves the others, the run and its completed anchor standing.
+        await this.runCheck(runId, ['ledger_request_mismatch'], counts, () =>
+          this.reconcileLedgerRequests(runId, since, until, cfg.batchSize, counts),
+        );
+        await this.runCheck(runId, ['ledger_unrequested_transaction'], counts, () =>
+          this.reportUnrequestedLedgerMoves(runId, since, until, cfg.batchSize, counts),
+        );
+        for (const check of this.projectionChecks) {
+          await this.runCheck(runId, [check.kind], counts, () =>
+            this.reconcileProjection(runId, check, cfg.batchSize, counts),
+          );
+        }
+        await this.runCheck(runId, ['outbox_relay_lag'], counts, () =>
+          this.reconcileOutboxLag(runId, cfg.outboxLagAlertMinutes, counts),
+        );
+        await this.runCheck(runId, ['event_dead_letters'], counts, () =>
+          this.reconcileDeadLetters(runId, cfg.deadLetterAlertThreshold, counts),
+        );
       }
 
       openFindings = await this.countOpenFindings();
@@ -2073,23 +2097,57 @@ export class ReconciliationService {
   }
 
   /**
-   * Files `findings` in the caller's transaction and, when any is new, alerts in that same commit
-   * whatever the open-findings threshold: each is an integrity or enforcement gap, not backlog.
-   * Returns how many it filed.
+   * Runs one integrity check of the cycle. A failure is logged and counted, never raised. Whatever
+   * the run filed under `kinds`, even before a failure, alerts once whatever the open-findings
+   * threshold: each is an integrity or enforcement gap, not backlog.
    */
-  private async fileAndAlert(
-    txn: DrizzleTx,
+  private async runCheck(
     runId: WalletJobRun['runId'],
-    findings: readonly ReconciliationFindingInput[],
-  ): Promise<number> {
-    const filed = await recordReconciliationFindingsInTransaction(txn, findings, this.audit);
-    if (filed.length > 0) {
-      await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
-        runId,
-        openFindings: await this.countOpenFindings(txn),
-        threshold: 0,
-      });
+    kinds: readonly WalletReconciliationFindingKind[],
+    counts: { checksFailed: number },
+    check: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await check();
+    } catch (err) {
+      counts.checksFailed += 1;
+      logger.error(
+        { err, runId, kinds, counts },
+        'reconciliation: a check failed, the run goes on',
+      );
     }
+    try {
+      await this.drizzle.db.transaction(async (txn) => {
+        const [filed] = await txn
+          .select({ n: count() })
+          .from(walletReconciliationFinding)
+          .where(
+            and(
+              eq(walletReconciliationFinding.runId, runId),
+              inArray(walletReconciliationFinding.kind, [...kinds]),
+            ),
+          );
+        if (Number(filed?.n ?? 0) > 0) {
+          await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
+            runId,
+            openFindings: await this.countOpenFindings(txn),
+            threshold: 0,
+          });
+        }
+      });
+    } catch (err) {
+      logger.error({ err, runId, kinds }, 'reconciliation: alerting on a check failed');
+    }
+  }
+
+  /** Files `findings` with their audit entries; returns how many were not on file already. */
+  private async file(findings: readonly ReconciliationFindingInput[]): Promise<number> {
+    if (findings.length === 0) {
+      return 0;
+    }
+    const filed = await this.drizzle.db.transaction((txn) =>
+      recordReconciliationFindingsInTransaction(txn, findings, this.audit),
+    );
     return filed.length;
   }
 
@@ -2120,9 +2178,12 @@ export class ReconciliationService {
       OR (${request.amount} IS NOT NULL AND ${tx.amount} <> ${request.amount})
       OR (${request.userId} IS NOT NULL AND ${wallet.userId} IS DISTINCT FROM ${request.userId})
     )`;
+    // The cursor's time stays Postgres text: a JS Date drops the microseconds it is ordered by.
+    let cursor: { at: string; providerName: string; providerRefId: string } | undefined;
     for (;;) {
       const rows = await this.drizzle.db
         .select({
+          at: sql<string>`${request.createdAt}::text`,
           providerName: request.providerName,
           providerRefId: request.providerRefId,
           operation: request.operation,
@@ -2142,47 +2203,49 @@ export class ReconciliationService {
             lt(request.createdAt, until),
             sql`${answeredWith} IS NOT NULL`,
             mismatch,
-            sql`NOT ${alreadyReported('ledger_request_mismatch', request.providerName, request.providerRefId)}`,
+            cursor &&
+              sql`(${request.createdAt}, ${request.providerName}, ${request.providerRefId})
+                > (${cursor.at}::timestamptz, ${cursor.providerName}, ${cursor.providerRefId})`,
           ),
         )
-        .orderBy(asc(request.createdAt))
+        .orderBy(asc(request.createdAt), asc(request.providerName), asc(request.providerRefId))
         .limit(batchSize);
-      const findings = rows.map((row): ReconciliationFindingInput => {
-        const found = row.found;
-        const expected = row.operation === 'reverse' ? 'bet_reversal' : row.operation;
-        const differs = found
-          ? [
-              found.type !== expected && `type ${found.type}`,
-              found.currency !== row.currency && `currency ${found.currency}`,
-              (found.providerName !== row.providerName ||
-                found.providerRefId !== row.providerRefId) &&
-                `key ${found.providerName}/${found.providerRefId}`,
-              row.amount !== null &&
-                moneyCompare(found.amount, row.amount) !== 0 &&
-                `amount ${found.amount}`,
-              row.userId !== null && row.foundUserId !== row.userId && `user ${row.foundUserId}`,
-            ].filter((part) => part !== false)
-          : [];
-        return {
-          runId,
-          providerName: row.providerName,
-          kind: 'ledger_request_mismatch',
-          currency: row.currency,
-          amount: row.amount,
-          transactionId: found?.id ?? null,
-          externalId: row.providerRefId,
-          detail: found
-            ? `${row.operation} answered ${row.transactionId}, which has ${differs.join(', ')}`
-            : `${row.operation} answered ${row.transactionId}, which is not on the ledger`,
-        };
-      });
-      const filed = await this.drizzle.db.transaction((txn) =>
-        this.fileAndAlert(txn, runId, findings),
+      counts.ledgerRequestMismatches += await this.file(
+        rows.map((row): ReconciliationFindingInput => {
+          const found = row.found;
+          const expected = row.operation === 'reverse' ? 'bet_reversal' : row.operation;
+          const differs = found
+            ? [
+                found.type !== expected && `type ${found.type}`,
+                found.currency !== row.currency && `currency ${found.currency}`,
+                (found.providerName !== row.providerName ||
+                  found.providerRefId !== row.providerRefId) &&
+                  `key ${found.providerName}/${found.providerRefId}`,
+                row.amount !== null &&
+                  moneyCompare(found.amount, row.amount) !== 0 &&
+                  `amount ${found.amount}`,
+                row.userId !== null && row.foundUserId !== row.userId && `user ${row.foundUserId}`,
+              ].filter((part) => part !== false)
+            : [];
+          return {
+            runId,
+            providerName: row.providerName,
+            kind: 'ledger_request_mismatch',
+            currency: row.currency,
+            amount: row.amount,
+            transactionId: found?.id ?? null,
+            externalId: row.providerRefId,
+            detail: found
+              ? `${row.operation} answered ${row.transactionId}, which has ${differs.join(', ')}`
+              : `${row.operation} answered ${row.transactionId}, which is not on the ledger`,
+          };
+        }),
       );
-      counts.ledgerRequestMismatches += filed;
-      if (rows.length < batchSize || filed === 0) {
+      const last = rows.at(-1);
+      if (!last || rows.length < batchSize) {
         return;
       }
+      cursor = last;
     }
   }
 
@@ -2199,9 +2262,10 @@ export class ReconciliationService {
     counts: { unrequestedLedgerMoves: number },
   ): Promise<void> {
     const tx = walletTransaction;
+    let cursor: { at: string; id: string } | undefined;
     for (;;) {
       const rows = await this.drizzle.db
-        .select()
+        .select({ at: sql<string>`${tx.createdAt}::text`, row: tx })
         .from(tx)
         .where(
           and(
@@ -2219,100 +2283,128 @@ export class ReconciliationService {
               WHERE ${ledgerApiRequest.providerName} = ${tx.providerName}
                 AND ${ledgerApiRequest.createdAt} <= ${tx.createdAt}
             )`,
-            sql`NOT ${alreadyReported('ledger_unrequested_transaction', tx.providerName, tx.providerRefId)}`,
+            cursor && sql`(${tx.createdAt}, ${tx.id}) > (${cursor.at}::timestamptz, ${cursor.id})`,
           ),
         )
-        .orderBy(asc(tx.createdAt))
+        .orderBy(asc(tx.createdAt), asc(tx.id))
         .limit(batchSize);
-      const findings = rows.map(
-        (row): ReconciliationFindingInput => ({
-          runId,
-          providerName: row.providerName ?? '',
-          kind: 'ledger_unrequested_transaction',
-          currency: row.currency,
-          amount: row.amount,
-          transactionId: row.id,
-          externalId: row.providerRefId,
-          detail: `${row.type} ${row.id} moved with no Ledger API request under its key`,
-        }),
+      counts.unrequestedLedgerMoves += await this.file(
+        rows.map(
+          ({ row }): ReconciliationFindingInput => ({
+            runId,
+            providerName: row.providerName ?? '',
+            kind: 'ledger_unrequested_transaction',
+            currency: row.currency,
+            amount: row.amount,
+            transactionId: row.id,
+            externalId: row.providerRefId,
+            detail: `${row.type} ${row.id} moved with no Ledger API request under its key`,
+          }),
+        ),
       );
-      const filed = await this.drizzle.db.transaction((txn) =>
-        this.fileAndAlert(txn, runId, findings),
-      );
-      counts.unrequestedLedgerMoves += filed;
-      if (rows.length < batchSize || filed === 0) {
+      const last = rows.at(-1);
+      if (!last || rows.length < batchSize) {
         return;
       }
+      cursor = { at: last.at, id: last.row.id };
     }
   }
 
   /**
-   * Each projection against its owner, page by page over every user. A drift is filed once per
-   * player and source version, keyed `<userId>:<version>`; a player's open finding closes once
-   * the page holding them finds the projection caught up or the owner moved to another version.
+   * One projection against its owner, page by page over every user. A drifting player with no
+   * open finding of the kind gets one, keyed `<userId>:<runId>` so a drift that comes back after
+   * one was dismissed or closed files again; an open one closes once its page finds the player in
+   * step. Drifting players are then re-published through the owner's own writer: no money moves,
+   * and the finding stays as the record until a later cycle sees the repair hold.
    */
-  private async reconcileProjections(
+  private async reconcileProjection(
     runId: WalletJobRun['runId'],
+    check: ProjectionDriftCheck,
     batchSize: number,
     counts: { projectionDrifts: number; projectionFindingsClosed: number },
   ): Promise<void> {
-    for (const check of this.projectionChecks) {
-      let after: string | null = null;
-      for (;;) {
-        const { snapshots, behind } = await check.page(after, batchSize);
-        if (snapshots.length === 0) {
-          break;
-        }
-        const versionOf = new Map(snapshots.map((s) => [s.userId, s.version]));
-        const findings = behind.map(
-          (userId): ReconciliationFindingInput => ({
-            runId,
-            providerName: PROJECTION_FINDING_LABEL,
-            kind: check.kind,
-            externalId: `${userId}:${versionOf.get(userId)}`,
-            detail: `the ledger projection is behind the owner's version ${versionOf.get(userId)}`,
-          }),
-        );
-        const stillBehind = findings.flatMap((f) => (f.externalId ? [f.externalId] : []));
-        await this.drizzle.db.transaction(async (txn) => {
-          counts.projectionFindingsClosed += await this.closeFindings(
-            txn,
-            check.kind,
+    const userOf = sql<string>`split_part(${walletReconciliationFinding.externalId}, ':', 1)`;
+    const reported = new Set(
+      (
+        await this.drizzle.db
+          .select({ userId: userOf })
+          .from(walletReconciliationFinding)
+          .where(
             and(
-              inArray(sql`split_part(${walletReconciliationFinding.externalId}, ':', 1)`, [
-                ...versionOf.keys(),
-              ]),
-              stillBehind.length > 0
-                ? notInArray(walletReconciliationFinding.externalId, stillBehind)
-                : undefined,
+              eq(walletReconciliationFinding.kind, check.kind),
+              eq(walletReconciliationFinding.status, 'open'),
             ),
-            'projection_caught_up',
-            'the projection matched its owner after this was reported',
-          );
-          counts.projectionDrifts += await this.fileAndAlert(txn, runId, findings);
-        });
-        after = snapshots.at(-1)?.userId ?? null;
+          )
+      ).map((row) => row.userId),
+    );
+    let after: string | null = null;
+    for (;;) {
+      const { snapshots, drifting } = await check.page(after, batchSize);
+      if (snapshots.length === 0) {
+        return;
       }
+      const isDrifting = new Set(drifting);
+      const inStep = snapshots
+        .map((snapshot) => snapshot.userId)
+        .filter((userId) => reported.has(userId) && !isDrifting.has(userId));
+      const fresh = drifting.filter((userId) => !reported.has(userId));
+      if (inStep.length > 0 || fresh.length > 0) {
+        const versionOf = new Map(snapshots.map((s) => [s.userId, s.version]));
+        await this.drizzle.db.transaction(async (txn) => {
+          if (inStep.length > 0) {
+            counts.projectionFindingsClosed += await this.closeFindings(
+              txn,
+              check.kind,
+              inArray(userOf, inStep),
+              'projection_caught_up',
+              'the projection matched its owner after this was reported',
+            );
+          }
+          const filed = await recordReconciliationFindingsInTransaction(
+            txn,
+            fresh.map(
+              (userId): ReconciliationFindingInput => ({
+                runId,
+                providerName: PROJECTION_FINDING_LABEL,
+                kind: check.kind,
+                externalId: `${userId}:${runId}`,
+                detail: `the ledger projection is off the owner's version ${versionOf.get(userId)}`,
+              }),
+            ),
+            this.audit,
+          );
+          counts.projectionDrifts += filed.length;
+        });
+      }
+      if (drifting.length > 0) {
+        try {
+          await check.repair(drifting);
+        } catch (err) {
+          logger.error(
+            { err, runId, kind: check.kind, players: drifting.length },
+            'reconciliation: re-publishing drifted players failed',
+          );
+        }
+      }
+      after = snapshots.at(-1)?.userId ?? null;
     }
   }
 
-  /**
-   * The event pipeline's backlog: the oldest event the outbox has not relayed and the broker's
-   * dead letters, each against its threshold. One finding per incident, closed once it clears.
-   */
-  private async reconcileEventDelivery(
+  /** The oldest event the outbox has not relayed, against its threshold. */
+  private async reconcileOutboxLag(
     runId: WalletJobRun['runId'],
-    cfg: { outboxLagAlertMinutes: number; deadLetterAlertThreshold: number },
+    lagAlertMinutes: number,
     counts: { deliveryIncidents: number },
   ): Promise<void> {
     const oldest = await oldestUnrelayedEvent(this.drizzle.db);
     const lagged =
-      oldest && Date.now() - oldest.occurredAt.getTime() > cfg.outboxLagAlertMinutes * 60_000
+      oldest && Date.now() - oldest.occurredAt.getTime() > lagAlertMinutes * 60_000
         ? oldest
         : undefined;
     if (lagged) {
       logger.error({ runId, oldest: lagged }, 'reconciliation: the event outbox is not relaying');
     }
+    // Keyed by the event: one relayed and another stuck later is a new incident.
     counts.deliveryIncidents += await this.trackIncident(
       runId,
       'outbox_relay_lag',
@@ -2321,33 +2413,45 @@ export class ReconciliationService {
         detail: `event ${lagged.eventId} waits to be relayed since ${lagged.occurredAt.toISOString()}`,
       },
     );
+  }
 
-    const deadLetters = await this.broker?.deadLetterCount?.();
-    if (deadLetters === undefined) {
+  /** The broker's dead letters against their threshold, when its driver can read them. */
+  private async reconcileDeadLetters(
+    runId: WalletJobRun['runId'],
+    threshold: number,
+    counts: { deliveryIncidents: number },
+  ): Promise<void> {
+    const deadLetters = await this.broker?.deadLetters?.();
+    if (!deadLetters) {
       return;
     }
-    const overflowing = deadLetters > cfg.deadLetterAlertThreshold;
+    const overflowing = deadLetters.count > threshold;
     if (overflowing) {
       logger.error({ runId, deadLetters }, 'reconciliation: events are dead-lettered');
     }
-    // Keyed by the count: a dismissed report comes back only once another event dead-letters.
+    // Keyed by the newest dead letter: a report that cleared or was dismissed comes back once
+    // another event dead-letters, whatever the count.
     counts.deliveryIncidents += await this.trackIncident(
       runId,
       'event_dead_letters',
       overflowing && {
-        externalId: String(deadLetters),
-        detail: `${deadLetters} events dead-lettered, past the threshold of ${cfg.deadLetterAlertThreshold}`,
+        externalId: deadLetters.newest ?? String(deadLetters.count),
+        detail: `${deadLetters.count} events dead-lettered, past the threshold of ${threshold}`,
       },
     );
   }
 
-  /** Files `incident` unless one of `kind` is already open, or closes the open one if it cleared. */
+  /**
+   * Files `incident` unless one of `kind` is already open, or closes the open one if it cleared.
+   * The incident may be the outbox itself stalling, so a new one also alerts straight through the
+   * broker, best effort, beside the durable alert `runCheck` sends through the outbox.
+   */
   private async trackIncident(
     runId: WalletJobRun['runId'],
     kind: Extract<WalletReconciliationFindingKind, 'outbox_relay_lag' | 'event_dead_letters'>,
     incident: { externalId: string; detail: string } | false | undefined,
   ): Promise<number> {
-    return this.drizzle.db.transaction(async (txn) => {
+    const filed = await this.drizzle.db.transaction(async (txn) => {
       if (!incident) {
         await this.closeFindings(txn, kind, undefined, 'cleared', 'the backlog cleared');
         return 0;
@@ -2365,10 +2469,25 @@ export class ReconciliationService {
       if (open) {
         return 0;
       }
-      return this.fileAndAlert(txn, runId, [
-        { runId, providerName: EVENT_PIPELINE_FINDING_LABEL, kind, ...incident },
-      ]);
+      const recorded = await recordReconciliationFindingsInTransaction(
+        txn,
+        [{ runId, providerName: EVENT_PIPELINE_FINDING_LABEL, kind, ...incident }],
+        this.audit,
+      );
+      return recorded.length;
     });
+    if (filed > 0) {
+      try {
+        this.events.emit('wallet.reconciliation.alert', {
+          runId,
+          openFindings: await this.countOpenFindings(),
+          threshold: 0,
+        });
+      } catch (err) {
+        logger.error({ err, runId, kind }, 'reconciliation: the direct alert failed');
+      }
+    }
+    return filed;
   }
 
   // ponytail: findings dedupe on (kind, provider, external id) whatever their status, so a

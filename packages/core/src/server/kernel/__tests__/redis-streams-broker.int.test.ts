@@ -341,7 +341,10 @@ describe('RedisStreamsBroker', () => {
     });
     const pending = await redis.client.xPending(streamOf(topic), 'svc');
     expect(pending.pending).toBe(0);
-    expect(await broker.deadLetterCount()).toBe(1);
+    expect(await broker.deadLetters()).toEqual({
+      count: 1,
+      newest: `oss:dlq:${topic}/${dead!.id}`,
+    });
   });
 
   it('dead-letters a pending entry older than the retention window instead of re-running it', async () => {

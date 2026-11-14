@@ -123,6 +123,10 @@ export const PLAY_ELIGIBILITY_PROJECTION: SealedToken<PlayEligibilityProjectionP
 export type PlayEligibilitySourcePort = {
   /** Up to `limit` users' snapshots in user id order, after `afterUserId` when given. */
   page(afterUserId: string | null, limit: number): Promise<PlayEligibilitySnapshot[]>;
+  /** The committed snapshots of `userIds`, read now; an unknown user is left out. */
+  snapshots(userIds: readonly string[]): Promise<PlayEligibilitySnapshot[]>;
+  /** Re-publishes each of `userIds` through identity's own writer, under a new version. */
+  repair(userIds: readonly string[]): Promise<void>;
 };
 
 export const PLAY_ELIGIBILITY_SOURCE: SealedToken<PlayEligibilitySourcePort> =

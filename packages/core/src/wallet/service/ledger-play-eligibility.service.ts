@@ -44,6 +44,17 @@ function sameState(a: PlayEligibilityState, b: PlayEligibilityState): boolean {
   );
 }
 
+function isStale(current: ProjectionRow | undefined, wanted: ProjectionRow): boolean {
+  return (
+    !current ||
+    current.version < wanted.version ||
+    (current.version === wanted.version && !sameState(current, wanted))
+  );
+}
+
+/** How a projection stands against its owner's snapshots. */
+export type ProjectionComparison = { behind: User['id'][]; ahead: User['id'][] };
+
 const fromExcluded = {
   rgBlocked: sql`excluded.rg_blocked`,
   rgBlockedUntil: sql`excluded.rg_blocked_until`,
@@ -139,35 +150,42 @@ export class LedgerPlayEligibilityService
   }
 
   /**
-   * The users whose row is missing, at a lower version than their snapshot, or at its version
-   * with another state. A row ahead of its snapshot is not behind: the owner moved on after it.
+   * `behind`: the users whose row is missing, at a lower version than their snapshot, or at its
+   * version with another state. `ahead`: those whose row holds a higher version and another state.
    */
-  async behind(snapshots: readonly PlayEligibilitySnapshot[]): Promise<User['id'][]> {
-    return (await this.staleOf(snapshots.map(rowOf))).map((row) => row.userId);
+  async compare(snapshots: readonly PlayEligibilitySnapshot[]): Promise<ProjectionComparison> {
+    const rows = snapshots.map(rowOf);
+    const heldBy = await this.heldBy(rows);
+    return {
+      behind: rows.filter((row) => isStale(heldBy.get(row.userId), row)).map((row) => row.userId),
+      ahead: rows
+        .filter((row) => {
+          const current = heldBy.get(row.userId);
+          return current && current.version > row.version && !sameState(current, row);
+        })
+        .map((row) => row.userId),
+    };
   }
 
   private async staleOf(rows: readonly ProjectionRow[]): Promise<ProjectionRow[]> {
-    if (rows.length === 0) {
-      return [];
-    }
-    const held = await this.drizzle.db
-      .select()
-      .from(ledgerPlayEligibility)
-      .where(
-        inArray(
-          ledgerPlayEligibility.userId,
-          rows.map((row) => row.userId),
-        ),
-      );
-    const heldBy = new Map(held.map((row) => [row.userId, row]));
-    return rows.filter((row) => {
-      const current = heldBy.get(row.userId);
-      return (
-        !current ||
-        current.version < row.version ||
-        (current.version === row.version && !sameState(current, row))
-      );
-    });
+    const heldBy = await this.heldBy(rows);
+    return rows.filter((row) => isStale(heldBy.get(row.userId), row));
+  }
+
+  private async heldBy(rows: readonly ProjectionRow[]) {
+    const held =
+      rows.length === 0
+        ? []
+        : await this.drizzle.db
+            .select()
+            .from(ledgerPlayEligibility)
+            .where(
+              inArray(
+                ledgerPlayEligibility.userId,
+                rows.map((row) => row.userId),
+              ),
+            );
+    return new Map(held.map((row) => [row.userId, row]));
   }
 }
 
