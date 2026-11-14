@@ -925,6 +925,34 @@ describe('Ledger API v1 win and round (real PG)', () => {
     });
   });
 
+  it('ends a round once: a repeated close or final win answers the totals without a second event', async () => {
+    const { userId, game: g, betArgs } = await setup();
+    const bet = betArgs();
+    await api.bet(bet);
+    events.emitInTransaction.mockClear();
+    const close = () =>
+      api.closeRound({
+        userId,
+        gameId: g.id,
+        externalRoundId: bet.externalRoundId,
+        currency: 'USD',
+      });
+    const roundEnded = () =>
+      events.emitInTransaction.mock.calls.filter(([, name]) => name === 'gaming.round.ended');
+
+    await close();
+    const endedAt = (await roundOf(bet.externalRoundId)).endedAt;
+    expectMoved(
+      await api.win({ ...bet, providerRefId: `w-${randomUUID()}`, amount: '3', isFinal: true }),
+      'applied',
+    );
+    const again = await close();
+
+    expect(roundEnded()).toHaveLength(1);
+    expect(again.status === 'closed' && moneyEquals(again.winAmount, '3')).toBe(true);
+    expect((await roundOf(bet.externalRoundId)).endedAt).toEqual(endedAt);
+  });
+
   it('refuses to close another player round as round_mismatch', async () => {
     const { game: g, betArgs } = await setup();
     const bet = betArgs();

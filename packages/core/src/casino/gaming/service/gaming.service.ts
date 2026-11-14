@@ -846,12 +846,16 @@ export class GamingService {
     const winDelta = SignedMoneyAmountSchema.parse(args.winDelta ?? '0');
     const reversedStake = sql`greatest(-(${betDelta}::numeric), 0)`;
     const status = args.isFinal ? ('completed' as const) : ('active' as const);
-    const endedAt = args.isFinal ? new Date() : undefined;
+    // A round ends once: a repeated final keeps the first end time, so the call that set it is
+    // the one that ended the round.
+    const endedNow = sql`statement_timestamp()`;
     const deltas = {
       betAmount: sql`${gameRound.betAmount} + ${betDelta}::numeric`,
       winAmount: sql`${gameRound.winAmount} + ${winDelta}::numeric`,
       reversedAmount: sql`${gameRound.reversedAmount} + ${reversedStake}`,
-      ...(args.isFinal ? { status, endedAt } : {}),
+      ...(args.isFinal
+        ? { status, endedAt: sql`coalesce(${gameRound.endedAt}, ${endedNow})` }
+        : {}),
     };
     const ownedByCaller = and(
       eq(gameRound.userId, args.userId),
@@ -864,16 +868,18 @@ export class GamingService {
       winAmount: gameRound.winAmount,
       wagerProduct: gameRound.wagerProduct,
       rtp: gameRound.rtp,
+      ended: sql<boolean>`coalesce(${gameRound.endedAt} = ${endedNow}, false)`,
     };
     type ReturnedRound = Pick<
       typeof gameRound.$inferSelect,
       'id' | 'betAmount' | 'winAmount' | 'wagerProduct' | 'rtp'
-    >;
+    > & { ended: boolean };
     const toOutcome = (row: ReturnedRound): GamingAccumulateExternalRoundOutcome => ({
       roundId: row.id,
       betAmount: row.betAmount,
       winAmount: row.winAmount,
       wager: { product: row.wagerProduct, rtp: row.rtp },
+      ended: row.ended,
     });
     if (args.existingRoundOnly) {
       const [existing] = await txn
@@ -935,7 +941,7 @@ export class GamingService {
         winAmount: winDelta,
         reversedAmount: reversedStake,
         status,
-        endedAt,
+        endedAt: args.isFinal ? endedNow : undefined,
         wagerProduct,
         rtp,
       })

@@ -305,7 +305,7 @@ export class LedgerApiService implements LedgerApiV1 {
           winDelta: args.amount,
           ...(args.isFinal ? { isFinal: true } : {}),
         });
-        if (args.isFinal) {
+        if (round.ended) {
           await this.emit(tx, 'gaming.round.ended', { roundId: round.roundId, userId, playerId });
         }
         if (!isPositiveMoney(args.amount)) {
@@ -426,11 +426,13 @@ export class LedgerApiService implements LedgerApiV1 {
         const round = await this.deps
           .gamingCommands()
           .accumulateExternalRound(tx, { ...args, isFinal: true });
-        await this.emit(tx, 'gaming.round.ended', {
-          roundId: round.roundId,
-          userId: args.userId,
-          playerId,
-        });
+        if (round.ended) {
+          await this.emit(tx, 'gaming.round.ended', {
+            roundId: round.roundId,
+            userId: args.userId,
+            playerId,
+          });
+        }
         return {
           status: 'closed' as const,
           roundId: round.roundId,

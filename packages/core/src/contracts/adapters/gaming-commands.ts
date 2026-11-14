@@ -47,6 +47,8 @@ export type GamingAccumulateExternalRoundOutcome = {
   winAmount: string;
   /** The round's snapshot once this call landed: what every stake on it is priced under. */
   wager: GamingRoundWager;
+  /** True only for the call that moved the round to completed; a repeated final is false. */
+  ended: boolean;
 };
 
 export type GamingSetGameAvailabilityArgs = {
