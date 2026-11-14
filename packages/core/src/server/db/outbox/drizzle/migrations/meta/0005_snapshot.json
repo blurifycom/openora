@@ -205,10 +205,7 @@
       "compositePrimaryKeys": {
         "processed_events_event_id_consumer_pk": {
           "name": "processed_events_event_id_consumer_pk",
-          "columns": [
-            "event_id",
-            "consumer"
-          ]
+          "columns": ["event_id", "consumer"]
         }
       },
       "uniqueConstraints": {},
