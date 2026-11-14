@@ -117,3 +117,14 @@ Rollback is routing. Redeploy the main API with plain `chat` in the manifest so 
 - Every process with a manifest sets all three variables.
 - Each queue has a consumer; each route prefix has exactly one owner at the load balancer.
 - Once-per-deployment work uses `{ consumerGroup }`.
+
+## Operational log signals
+
+Two warnings exist to be alarmed on. A log metric filter matches the message text exactly, so the strings are part of the contract. Neither carries an event payload or player data.
+
+| Message | Fields | Fires |
+| --- | --- | --- |
+| `event outbox lagging` | `pending`, `oldestPendingAgeMs` | The oldest unpublished `event_outbox` row (claimed or not) is older than 60 seconds. Logged by the relay at most once a minute per replica. Age is read on the database clock. |
+| `stream consumer lagging` | `stream`, `group`, `pending` | A consumer group has more than 100 delivered but unacknowledged entries on a stream. Logged at most once a minute per stream and group, from the reclaim step. |
+
+The first means the relay is not publishing: broker down, relay stopped, or a row failing every attempt. The second means the handlers of that group are slow or failing.

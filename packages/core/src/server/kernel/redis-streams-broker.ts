@@ -16,6 +16,9 @@ const BLOCK_MS = 5_000;
 const CLAIM_INTERVAL_MS = 30_000;
 const CLAIM_MIN_IDLE_MS = 60_000;
 const RETRY_DELAY_MS = 2_000;
+// Entries delivered to a group but not yet acknowledged; above this the consumer is falling behind.
+const PENDING_LAG_THRESHOLD = 100;
+const LAG_LOG_INTERVAL_MS = 60_000;
 // Deliveries (first read + reclaims) after which a still-failing entry is dead-lettered.
 export const MAX_DELIVERIES = 5;
 
@@ -133,6 +136,7 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
   private readonly startId: '$' | '0';
   private readonly consumerId = randomUUID();
   private readonly loops = new Map<string, ConsumerLoop>();
+  private readonly lagLoggedAt = new Map<string, number>();
   private readonly claimIntervalMs: number;
   private readonly claimMinIdleMs: number;
 
@@ -234,6 +238,7 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
           }
           if (Date.now() - lastClaimAt > this.claimIntervalMs) {
             lastClaimAt = Date.now();
+            await this.reportLag(reader, key, group);
             claimCursor = await this.reclaimPending(reader, key, group, handlers, claimCursor);
           }
           const reply = (await reader.xReadGroup(
@@ -262,6 +267,20 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     })();
 
     return { handlers, stop, done };
+  }
+
+  private async reportLag(reader: RedisClient, key: string, group: string): Promise<void> {
+    try {
+      const { pending } = await reader.xPending(key, group);
+      const lagKey = `${key}\0${group}`;
+      const due = Date.now() - (this.lagLoggedAt.get(lagKey) ?? 0) >= LAG_LOG_INTERVAL_MS;
+      if (pending > PENDING_LAG_THRESHOLD && due) {
+        this.lagLoggedAt.set(lagKey, Date.now());
+        this.logger.warn({ stream: key, group, pending }, 'stream consumer lagging');
+      }
+    } catch (err) {
+      this.logger.error({ err, key, group }, 'stream lag check failed');
+    }
   }
 
   // Walks the whole pending list each interval (XAUTOCLAIM pages until cursor 0-0), so a

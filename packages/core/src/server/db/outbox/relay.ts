@@ -1,5 +1,6 @@
 import type { MessageBrokerAdapter, EventEnvelope } from '@openora/core/contracts';
 import { and, asc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { createLogger } from '../../kernel/logger.js';
 import { EVENT_RETENTION_MS } from '../../kernel/event-bus.js';
 import { eventOutbox, processedEvents, type EventOutboxRow } from './schema.js';
 import type { DrizzleDb } from '../drizzle.js';
@@ -14,6 +15,29 @@ const PROCESSED_EVENTS_RETENTION_MS = EVENT_RETENTION_MS + 24 * 60 * 60_000;
 // A batch stops publishing once this much of its lease is spent and hands the rest back, so
 // another relay can't reclaim and republish rows this one is still working through.
 const PUBLISH_BUDGET_MS = CLAIM_LEASE_MS / 2;
+// The relay reports the backlog at most this often, and only while the oldest unpublished row
+// is older than the lag threshold.
+const LAG_CHECK_INTERVAL_MS = 60_000;
+const LAG_THRESHOLD_MS = 60_000;
+
+const logger = createLogger('outbox-relay');
+
+export type EventOutboxBacklog = { pending: number; oldestPendingAgeMs: number };
+
+/**
+ * Unpublished `event_outbox` rows (claimed or not) and the age of the oldest, both read on the
+ * database clock so a skewed replica clock cannot hide or invent lag.
+ */
+export async function eventOutboxBacklog(db: DrizzleDb): Promise<EventOutboxBacklog> {
+  const result = await db.execute<{ pending: number; oldest_pending_age_ms: number | null }>(sql`
+    SELECT count(*)::int AS pending,
+           (extract(epoch FROM now() - min(created_at)) * 1000)::float8 AS oldest_pending_age_ms
+    FROM ${eventOutbox}
+    WHERE ${isNull(eventOutbox.publishedAt)}
+  `);
+  const row = result.rows[0];
+  return { pending: row?.pending ?? 0, oldestPendingAgeMs: row?.oldest_pending_age_ms ?? 0 };
+}
 
 export type OutboxRelayOptions = {
   intervalMs?: number; // poll cadence; default 200
@@ -58,6 +82,7 @@ export class OutboxRelay {
   private timer: ReturnType<typeof setInterval> | undefined;
   private draining = false;
   private lastPruneAt = 0;
+  private lastLagCheckAt = 0;
 
   constructor(
     private readonly db: DrizzleDb,
@@ -103,6 +128,7 @@ export class OutboxRelay {
     this.draining = true;
     try {
       await this.pruneIfDue();
+      await this.reportLagIfDue();
       const batch = await this.claimBatch();
       const deadline = Date.now() + PUBLISH_BUDGET_MS;
       const published: EventOutboxRow['eventId'][] = [];
@@ -171,6 +197,24 @@ export class OutboxRelay {
         .where(eq(eventOutbox.eventId, row.eventId))
         .catch((releaseErr: unknown) => this.opts.onError?.(releaseErr));
       return false;
+    }
+  }
+
+  private async reportLagIfDue(): Promise<void> {
+    if (Date.now() - this.lastLagCheckAt < LAG_CHECK_INTERVAL_MS) {
+      return;
+    }
+    this.lastLagCheckAt = Date.now();
+    try {
+      const backlog = await eventOutboxBacklog(this.db);
+      if (backlog.oldestPendingAgeMs > LAG_THRESHOLD_MS) {
+        logger.warn(
+          { pending: backlog.pending, oldestPendingAgeMs: Math.round(backlog.oldestPendingAgeMs) },
+          'event outbox lagging',
+        );
+      }
+    } catch (err) {
+      this.opts.onError?.(err);
     }
   }
 

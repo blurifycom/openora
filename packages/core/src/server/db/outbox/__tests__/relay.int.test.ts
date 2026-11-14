@@ -4,9 +4,25 @@ import { eq, sql } from 'drizzle-orm';
 import type { MessageBrokerAdapter, EventEnvelope } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate } from '@openora/core/server/migrate';
-import { OutboxRelay } from '../relay.js';
+import { OutboxRelay, eventOutboxBacklog } from '../relay.js';
 import { eventOutbox, processedEvents } from '../schema.js';
 import { EVENT_RETENTION_MS } from '../../../kernel/event-bus.js';
+
+const { relayWarn } = vi.hoisted(() => ({ relayWarn: vi.fn() }));
+
+vi.mock('../../../kernel/logger.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../kernel/logger.js')>();
+  return {
+    ...actual,
+    createLogger: (name: string) => {
+      const logger = actual.createLogger(name);
+      if (name === 'outbox-relay') {
+        logger.warn = relayWarn;
+      }
+      return logger;
+    },
+  };
+});
 
 let db: TestDb;
 
@@ -323,5 +339,86 @@ describe('OutboxRelay poll loop (real PG)', () => {
     releasePublish.resolve();
     await stopping;
     expect(stopped).toBe(true);
+  });
+});
+
+describe('event outbox lag', () => {
+  const TWO_MINUTES_MS = 120_000;
+  const staleCreatedAt = () => new Date(Date.now() - TWO_MINUTES_MS);
+
+  beforeEach(() => {
+    relayWarn.mockClear();
+  });
+
+  it('backlog counts unpublished rows, claimed or not, and ignores published ones', async () => {
+    await seedRow({ createdAt: staleCreatedAt() });
+    await seedRow({ createdAt: staleCreatedAt(), claimedAt: new Date() });
+    await seedRow({ createdAt: staleCreatedAt(), publishedAt: new Date() });
+
+    const backlog = await eventOutboxBacklog(db.drizzle.db);
+
+    expect(backlog.pending).toBe(2);
+    expect(backlog.oldestPendingAgeMs).toBeGreaterThan(TWO_MINUTES_MS - 5_000);
+  });
+
+  it('backlog of an empty outbox is zero', async () => {
+    expect(await eventOutboxBacklog(db.drizzle.db)).toEqual({ pending: 0, oldestPendingAgeMs: 0 });
+  });
+
+  it('logs when the oldest pending row is past the threshold', async () => {
+    await seedRow({ createdAt: staleCreatedAt() });
+    const relay = new OutboxRelay(db.drizzle.db, brokerThat());
+
+    await relay.drainOnce();
+
+    expect(relayWarn).toHaveBeenCalledTimes(1);
+    expect(relayWarn).toHaveBeenCalledWith(
+      { pending: 1, oldestPendingAgeMs: expect.any(Number) },
+      'event outbox lagging',
+    );
+  });
+
+  it('counts a claimed but unpublished row', async () => {
+    await seedRow({ createdAt: staleCreatedAt(), claimedAt: new Date() });
+    const relay = new OutboxRelay(db.drizzle.db, brokerThat());
+
+    await relay.drainOnce();
+
+    expect(relayWarn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not log for a fresh row or a published one', async () => {
+    await seedRow();
+    await seedRow({ createdAt: staleCreatedAt(), publishedAt: new Date() });
+    const relay = new OutboxRelay(db.drizzle.db, brokerThat());
+
+    await relay.drainOnce();
+
+    expect(relayWarn).not.toHaveBeenCalled();
+  });
+
+  it('logs at most once a minute across repeated drains', async () => {
+    const failing: MessageBrokerAdapter = {
+      publish: async () => {
+        throw new Error('broker down');
+      },
+      subscribe: () => () => {},
+      close: async () => {},
+    };
+    await seedRow({ createdAt: staleCreatedAt() });
+    const relay = new OutboxRelay(db.drizzle.db, failing, { onError: () => {} });
+    const realNow = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(realNow);
+
+    await relay.drainOnce();
+    await relay.drainOnce();
+    now.mockReturnValue(realNow + 30_000);
+    await relay.drainOnce();
+    expect(relayWarn).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(realNow + 61_000);
+    await relay.drainOnce();
+    expect(relayWarn).toHaveBeenCalledTimes(2);
+    now.mockRestore();
   });
 });
