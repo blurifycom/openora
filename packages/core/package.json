@@ -22,7 +22,8 @@
     "directory": "packages/core"
   },
   "bin": {
-    "openora-migrate": "./bin/migrate.mjs"
+    "openora-migrate": "./bin/migrate.mjs",
+    "openora-audit-copy": "./bin/audit-copy.mjs"
   },
   "files": [
     "bin",

@@ -312,7 +312,7 @@ function identifier(value: string, part: string): string {
   return `"${value}"`;
 }
 
-const databaseOf = (url: string) => decodeURIComponent(new URL(url).pathname.slice(1));
+export const databaseOf = (url: string) => decodeURIComponent(new URL(url).pathname.slice(1));
 const userOf = (url: string) => decodeURIComponent(new URL(url).username);
 
 function loginRole(url: string, env: string): LoginRole {
@@ -405,7 +405,7 @@ function scramVerifier(password: string): string {
   return `SCRAM-SHA-256$${iterations}:${salt.toString('base64')}$${storedKey}:${serverKey}`;
 }
 
-function withDatabase(url: string, database: string): string {
+export function withDatabase(url: string, database: string): string {
   const next = new URL(url);
   next.pathname = `/${database}`;
   return next.toString();
