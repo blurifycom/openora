@@ -53,6 +53,7 @@ export type CopyHooks = {
   afterCopy?: () => Promise<void>;
   duringDrain?: () => Promise<void>;
   afterFenceLift?: () => Promise<void>;
+  afterDrain?: () => Promise<void>;
 };
 
 class CopyError extends Error {}
@@ -389,15 +390,45 @@ async function liftFence(main: Client): Promise<void> {
   }
 }
 
+// Closes the audit database to inserts in a transaction of its own, short enough that nothing waits
+// on it for long. The rows it holds are checked under the lock, so what the trigger then freezes is
+// known to be in the main database.
+async function closeTarget(legacy: Client, target: Client): Promise<void> {
+  await target.query('BEGIN');
+  try {
+    await target.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
+    await target.query(CHAIN_LOCK_SQL);
+    await target.query('LOCK TABLE audit_log IN EXCLUSIVE MODE');
+    await assertTargetInLegacy(legacy, target);
+    for (const statement of DENY_CLOSED_SQL) {
+      await target.query(statement);
+    }
+    await target.query('COMMIT');
+  } catch (err) {
+    await target.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  }
+}
+
+async function assertOutboxEmpty(main: Client): Promise<void> {
+  const { rows } = await main.query<{ queued: string }>(
+    'SELECT count(*)::text AS queued FROM audit_outbox',
+  );
+  if (rows[0]?.queued !== '0') {
+    throw new CopyError('audit_outbox still holds rows: a writer was not stopped, rerun the drain');
+  }
+}
+
 /**
- * Rolls a fenced chain back: lifts the fence and ships the outbox into the main `audit_log`
- * again. Every refusal (a split main without a shipper url, a row the main database lacks, a shipper
- * holding its lock) comes before the fence is touched. The audit database's `audit_log` stays
- * locked against appends from the first check to the commit, the check runs again after the drain,
- * and the same transaction installs a trigger that refuses every later insert there, so a late
- * append fails instead of forking the chain. Every writer must be stopped. A failure after the fence
- * is lifted leaves the run safe to repeat. Lifting the audit database's trigger again is a
- * deliberate owner step: `DROP TRIGGER audit_log_closed ON audit_log`.
+ * Rolls a fenced chain back. Every refusal (a split main without a shipper url, a shipper holding
+ * its lock, a row the main database lacks) comes before anything changes. Then the audit
+ * database is closed to inserts by a trigger committed in a short transaction of its own, so a
+ * shipper that starts later fails on its insert and keeps its batch in the outbox. Only then is the
+ * main fence lifted and the outbox shipped into the main `audit_log`, which must end empty, and
+ * every audit row is checked against the main database once more. Every writer must be stopped. A
+ * failure at any point leaves the run safe to repeat: the audit database stays closed and a
+ * rerun finds it so. Opening it again is a deliberate owner step: `DROP TRIGGER audit_log_closed
+ * ON audit_log`.
  */
 export async function drainOutboxToLegacy(
   { adminUrl, auditUrl, shipperUrl }: DrainOptions,
@@ -410,50 +441,34 @@ export async function drainOutboxToLegacy(
     if (!outboxUrl) {
       throw new CopyError('the main database is split: set AUDIT_SHIPPER_DATABASE_URL');
     }
-    let open = false;
-    try {
-      if (apply) {
-        await target.query('BEGIN');
-        open = true;
-        await target.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
-        await target.query(CHAIN_LOCK_SQL);
-        await target.query('LOCK TABLE audit_log IN EXCLUSIVE MODE');
-      }
+    const { rows } = await legacy.query<{ queued: string }>(
+      'SELECT count(*)::text AS queued FROM audit_outbox',
+    );
+    const queued = Number(rows[0]?.queued ?? 0);
+    if (!apply) {
       await assertTargetInLegacy(legacy, target);
-      const { rows } = await legacy.query<{ queued: string }>(
-        'SELECT count(*)::text AS queued FROM audit_outbox',
-      );
-      const queued = Number(rows[0]?.queued ?? 0);
-      if (!apply) {
-        return { queued, applied: false };
-      }
-      await assertShipperIdle(legacy);
-      const head = await headOf(legacy);
-      const anchor = head && { fromSeq: Number(head.seq), fromHash: head.hash };
-      await hooks.duringDrain?.();
-      await liftFence(legacy);
-      await hooks.afterFenceLift?.();
-      await withDb(
-        outboxUrl,
-        (outbox) =>
-          withDb(adminUrl, (chain) => drainAuditOutbox(outbox, chain), DRAIN_SESSION_OPTIONS),
-        DRAIN_SESSION_OPTIONS,
-      );
-      await assertTargetInLegacy(legacy, target);
-      for (const statement of DENY_CLOSED_SQL) {
-        await target.query(statement);
-      }
-      await target.query('COMMIT');
-      open = false;
-      await snapshot('main', legacy);
-      await snapshot('audit', target);
-      await verifyChainAt(adminUrl, anchor, 'main');
-      return { queued, applied: true };
-    } finally {
-      if (open) {
-        await target.query('ROLLBACK').catch(() => undefined);
-      }
+      return { queued, applied: false };
     }
+    await assertShipperIdle(legacy);
+    await closeTarget(legacy, target);
+    await hooks.duringDrain?.();
+    const head = await headOf(legacy);
+    const anchor = head && { fromSeq: Number(head.seq), fromHash: head.hash };
+    await liftFence(legacy);
+    await hooks.afterFenceLift?.();
+    await withDb(
+      outboxUrl,
+      (outbox) =>
+        withDb(adminUrl, (chain) => drainAuditOutbox(outbox, chain), DRAIN_SESSION_OPTIONS),
+      DRAIN_SESSION_OPTIONS,
+    );
+    await hooks.afterDrain?.();
+    await assertOutboxEmpty(legacy);
+    await assertTargetInLegacy(legacy, target);
+    await snapshot('main', legacy);
+    await snapshot('audit', target);
+    await verifyChainAt(adminUrl, anchor, 'main');
+    return { queued, applied: true };
   });
 }
 

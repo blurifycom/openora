@@ -92,13 +92,16 @@ and the head `seq:hash`, and the verdict of the chain check it ran.
 To step back before step 5, stop every writer and every shipper and run `openora-audit-copy
 --drain-outbox --apply`. It makes every refusal first (a split main needs `AUDIT_SHIPPER_DATABASE_URL`;
 each row of the audit database must be in the main one with the same hash; no shipper may hold the
-shipper lock), then holds a lock on the audit database's `audit_log` while it lifts the fence, ships the
-outbox into the main `audit_log` and checks the audit database again. In the same transaction it commits
-a trigger on the audit database that refuses every later insert (`audit_log_closed`), so an append that
-waited behind the lock fails instead of forking the chain. Lock waits give up after 5 seconds and the
-shipping session is bounded too; a failure after the fence is lifted leaves the run safe to repeat. The
-audit database stays closed until its owner runs `DROP TRIGGER audit_log_closed ON audit_log` under a
-change ticket, which is the step before any new copy into it. After the switch (rows exist only in the
+shipper lock), then closes the audit database first: in one short transaction under the chain lock it
+commits a trigger that refuses every later insert (`audit_log_closed`), so a shipper or writer that
+starts later fails on it, keeps its batch in the outbox and loses nothing. Only then does it lift the
+fence, ship the outbox into the main `audit_log` and check the audit database again. The outbox must be
+empty at the end: rows left behind mean a writer was not stopped, and the run exits 1 so you rerun it.
+A re-shipped batch (a failure between the chain insert and the outbox delete) is deduplicated by
+event id. Lock waits give up after 5 seconds and the shipping session is bounded too; a rerun finds the
+audit database already closed, which is expected and needs nothing. The audit database stays closed
+until its owner runs `DROP TRIGGER audit_log_closed ON audit_log` under a change ticket, which is the
+step before any new copy into it. After the switch (rows exist only in the
 audit database) there is no way back: roll forward only. Nothing is ever dropped; the old rows stay in
 the main database until you remove them under a change ticket.
 
