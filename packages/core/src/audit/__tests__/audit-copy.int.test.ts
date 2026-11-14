@@ -90,25 +90,37 @@ const seed = async (db: DrizzleDb, count: number, tag = 'seed') => {
   await db.transaction((tx) => appendAuditEntries(tx, entries));
 };
 
-type Fixture = { main: TestDb; target: string; targetUrl: string };
+type Fixture = {
+  main: TestDb;
+  target: string;
+  targetUrl: string;
+  auditUrl: string;
+  shipperUrl: string;
+};
 
-async function fixture({ migrateTarget = true } = {}): Promise<Fixture> {
+async function fixture({ split = true, migrateTarget = true } = {}): Promise<Fixture> {
   const main = await createTestDb([migrateOutbox, migrate]);
   track(main);
   const target = newDatabase();
-  await asAdmin(`CREATE DATABASE "${target}"`);
   const targetUrl = urlFor(target);
-  if (migrateTarget) {
-    await migrateOutbox(targetUrl);
-    await migrate(targetUrl);
+  const auditUrl = split ? urlFor(target, newRole()) : targetUrl;
+  const shipperUrl = urlFor(new URL(main.url).pathname.slice(1), newRole());
+  if (split) {
+    await migrate({ adminUrl: main.url, auditUrl, shipperUrl });
+  } else {
+    await asAdmin(`CREATE DATABASE "${target}"`);
+    if (migrateTarget) {
+      await migrateOutbox(targetUrl);
+      await migrate(targetUrl);
+    }
   }
-  return { main, target, targetUrl };
+  return { main, target, targetUrl, auditUrl, shipperUrl };
 }
 
-const envOf = (f: Fixture, extra: Record<string, string> = {}) => ({
+const envOf = (f: Fixture) => ({
   DATABASE_ADMIN_URL: f.main.url,
-  AUDIT_DATABASE_URL: f.targetUrl,
-  ...extra,
+  AUDIT_DATABASE_URL: f.auditUrl,
+  AUDIT_SHIPPER_DATABASE_URL: f.shipperUrl,
 });
 
 async function run(
@@ -146,6 +158,19 @@ const isValid = async (url: string) => (await verifyAuditChain(serviceFor(url)))
 
 const causeOf = (err: unknown): string =>
   err instanceof Error ? `${err.message} ${err.cause ? causeOf(err.cause) : ''}` : String(err);
+
+const queueOutbox = async (f: Fixture, markers: string[]) => {
+  for (const marker of markers) {
+    await f.main.drizzle.db.transaction((tx) =>
+      enqueueAuditInTransaction(tx, {
+        actorType: 'system',
+        action: 'test.outbox',
+        resourceType: 'player',
+        resourceId: marker,
+      }),
+    );
+  }
+};
 
 const FAIL_AT_1500 = [
   `CREATE FUNCTION fail_at_1500() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -236,7 +261,7 @@ describe('audit-copy', () => {
     const before = await sequenceState(f.targetUrl);
     const result = await run(envOf(f), []);
     expect(result.code).toBe(0);
-    expect(result.out).toContain('rows copied: 1500');
+    expect(result.out).toContain('rows to copy: 1500');
     expect(await count(f.targetUrl)).toBe('0');
     expect(await sequenceState(f.targetUrl)).toEqual(before);
   });
@@ -351,38 +376,17 @@ describe('audit-copy', () => {
   });
 
   it('TC-11 drain-outbox lifts the fence and ships the outbox into the legacy chain', async () => {
-    const main = await createTestDb([migrateOutbox, migrate]);
-    track(main);
-    await seed(main.drizzle.db, 4);
-    const targetName = newDatabase();
-    const writer = newRole();
-    const shipper = newRole();
-    const targetUrl = urlFor(targetName, writer);
-    const shipperUrl = urlFor(new URL(main.url).pathname.slice(1), shipper);
-    await migrate({ adminUrl: main.url, auditUrl: targetUrl, shipperUrl });
-    const env = {
-      DATABASE_ADMIN_URL: main.url,
-      AUDIT_DATABASE_URL: targetUrl,
-      AUDIT_SHIPPER_DATABASE_URL: shipperUrl,
-    };
-    expect((await run(env, ['--fence', '--apply'])).code).toBe(0);
-    for (const marker of ['a', 'b', 'c']) {
-      await main.drizzle.db.transaction((tx) =>
-        enqueueAuditInTransaction(tx, {
-          actorType: 'system',
-          action: 'test.outbox',
-          resourceType: 'player',
-          resourceId: marker,
-        }),
-      );
-    }
-    const result = await run(env, ['--drain-outbox', '--apply']);
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 4);
+    expect((await run(envOf(f), ['--fence', '--apply'])).code).toBe(0);
+    await queueOutbox(f, ['a', 'b', 'c']);
+    const result = await run(envOf(f), ['--drain-outbox', '--apply']);
     expect(result.err).toBe('');
     expect(result.code).toBe(0);
-    expect(await fenceState(main.url)).toBeUndefined();
-    expect(await count(main.url)).toBe('7');
-    expect(await scalar(main.url, 'SELECT count(*)::text FROM audit_outbox')).toBe('0');
-    expect(await isValid(main.url)).toBe(true);
+    expect(await fenceState(f.main.url)).toBeUndefined();
+    expect(await count(f.main.url)).toBe('7');
+    expect(await scalar(f.main.url, 'SELECT count(*)::text FROM audit_outbox')).toBe('0');
+    expect(await isValid(f.main.url)).toBe(true);
   }, 60_000);
 
   it('TC-12 drain-outbox refuses once the audit database is ahead and keeps the fence', async () => {
@@ -397,7 +401,7 @@ describe('audit-copy', () => {
   });
 
   it('TC-13 refuses a missing table, different columns, one database and clashing flags', async () => {
-    const bare = await fixture({ migrateTarget: false });
+    const bare = await fixture({ split: false, migrateTarget: false });
     await seed(bare.main.drizzle.db, 1);
     const missing = await run(envOf(bare), ['--apply']);
     expect(missing.code).toBe(1);
@@ -428,5 +432,111 @@ describe('audit-copy', () => {
     const fence = await run(envOf(f), ['--fence', '--apply']);
     expect(fence.code).toBe(0);
     expect(await fenceState(f.main.url)).toBe('A');
+  });
+
+  it('TC-15 a target chain that fails verification stops the fence before it commits', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 4);
+    await sqlOn(
+      f.main.url,
+      'ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only',
+      `UPDATE audit_log SET action = 'tampered' WHERE seq = 2`,
+    );
+    const result = await run(envOf(f), ['--fence', '--apply']);
+    expect(result.code).toBe(1);
+    expect(result.err).toContain('broken at seq 2');
+    expect(await fenceState(f.main.url)).toBeUndefined();
+  });
+
+  it('TC-16 drain-outbox refuses a split main without a shipper url and keeps the fence', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await run(envOf(f), ['--fence', '--apply']);
+    const { AUDIT_SHIPPER_DATABASE_URL: _omitted, ...withoutShipper } = envOf(f);
+    const result = await run(withoutShipper, ['--drain-outbox', '--apply']);
+    expect(result.code).toBe(1);
+    expect(result.err).toContain('AUDIT_SHIPPER_DATABASE_URL');
+    expect(await fenceState(f.main.url)).toBe('A');
+  });
+
+  it('TC-17 the audit database takes no append while the drain runs', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await run(envOf(f), ['--fence', '--apply']);
+    await queueOutbox(f, ['x']);
+    let live: Promise<unknown> = Promise.resolve();
+    const duringDrain = async () => {
+      live = seed(serviceFor(f.targetUrl), 1, 'live');
+      for (;;) {
+        const waiting = await scalar(
+          f.targetUrl,
+          `SELECT count(*)::text FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`,
+        );
+        if (waiting !== '0') {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    };
+    const result = await run(envOf(f), ['--drain-outbox', '--apply'], { duringDrain });
+    expect(result.code).toBe(0);
+    await live;
+    expect(await count(f.main.url)).toBe('4');
+    expect(await count(f.targetUrl)).toBe('4');
+  }, 60_000);
+
+  it('TC-18 the fence refuses a main database that is not split', async () => {
+    const f = await fixture({ split: false });
+    await seed(f.main.drizzle.db, 2);
+    const result = await run(envOf(f), ['--fence', '--apply']);
+    expect(result.code).toBe(1);
+    expect(result.err).toContain('not split');
+    expect(await fenceState(f.main.url)).toBeUndefined();
+  });
+
+  it('TC-19 the fence dry run counts without a lock or a trigger', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    const result = await run(envOf(f), ['--fence']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('rows to copy: 3');
+    expect(await count(f.targetUrl)).toBe('0');
+    expect(await fenceState(f.main.url)).toBeUndefined();
+  });
+
+  it('TC-20 a bad flag prints the usage and never the argument', async () => {
+    const f = await fixture({ split: false });
+    const result = await run(envOf(f), ['--postgres://user:hunter2@host/db']);
+    expect(result.code).toBe(1);
+    expect(result.err).toContain('usage: openora-audit-copy');
+    expect(result.err).not.toContain('hunter2');
+  });
+
+  it('TC-21 a killed connection ends the run with exit 1', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    const afterCopy = async () => {
+      await asAdmin(
+        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+          WHERE application_name = 'openora-audit-copy' AND pid <> pg_backend_pid()`,
+      );
+    };
+    const result = await run(envOf(f), ['--fence', '--apply'], { afterCopy });
+    expect(result.code).toBe(1);
+    expect(await fenceState(f.main.url)).toBeUndefined();
+  });
+
+  it('TC-22 an apply run prints the heads, counts and verdict as evidence', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    const result = await run(envOf(f), ['--apply']);
+    const sourceHead = (await head(f.main.url))[0];
+    expect(result.out).toContain(
+      `source: rows=3 head=${sourceHead?.['seq']}:${sourceHead?.['hash']}`,
+    );
+    expect(result.out).toContain(
+      `target: rows=3 head=${sourceHead?.['seq']}:${sourceHead?.['hash']}`,
+    );
+    expect(result.out).toContain('verify target: valid');
   });
 });
