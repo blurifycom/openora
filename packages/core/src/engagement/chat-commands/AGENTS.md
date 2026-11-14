@@ -36,13 +36,29 @@ audit entry via `AUDIT_WRITER`.
 
 `mention` does not go through a dedicated post route. The `@username` pattern is typed inline in a
 message; `GET /chat-command/mention-search` powers the type-ahead, excluding any player the caller
-has blocked or ignored via `CHAT_BLOCK_WRITER.getExcludedUserIds(viewerId)`.
+has blocked or ignored via `CHAT_BLOCK_READER.getExcludedUserIds(viewerId)`.
+
+## Transfer check
+
+The module binds `CHAT_TRANSFER_CHECK`, the one read an overlay's money transfer (gift, claim, rain,
+donate) makes of chat state: the command row is enabled, the actor may post to the room, a context
+room's send policy allows it, and which counterparts are in a block with the actor. It requires the
+caller's transaction and reads everything through it, and takes a shared `chatBlockLockKey` lock per
+direction, so a concurrent `blockUser` waits for the money to commit. Bans and membership take no
+lock: a change committed while the money transaction runs is not seen. Mutes are not checked and a
+counterpart's own bans are not read. `counterpartIds` is capped at `CHAT_TRANSFER_MAX_COUNTERPARTS`.
+It moves no money; the overlay refuses on the verdict.
 
 ## Ports consumed
 
 - `ADMIN_USER_DIRECTORY` - `findPlayerIds`/`lookupPlayers` for `@mention` autocomplete.
-- `CHAT_BLOCK_WRITER` - `getExcludedUserIds(viewerId)` to filter blocked and ignored players out of
-  mention search.
+- `CHAT_BLOCK_READER` - `getExcludedUserIds(viewerId)` to filter blocked and ignored players out of
+  mention search; `getBlockedUserIds(viewerId)` for blocks alone, so a probe outside chat never
+  reveals an ignore.
+- `CHAT_TRANSFER_CHECK` refuses an enabled command whose stored limits no longer parse
+  (`command_disabled`) instead of reading them as no limits.
+- `CHAT_ROOM_ACCESS`, `CHAT_CONTEXT_SEND_POLICY` - room access and the context send policy, for
+  `CHAT_TRANSFER_CHECK`.
 - `AUDIT_WRITER` - `record(...)` for `adminUpdateCommand`'s `chat.command.updated` audit entry.
 
 ## Don't

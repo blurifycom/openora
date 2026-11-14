@@ -19,7 +19,7 @@ import {
   type PaginationOptions,
   type AdminUserDirectory,
   type AdminGameReporting,
-  type ChatBlockWriter,
+  type ChatBlockReader,
   type SessionCommands,
   type UserCommands,
   type PlayerActivityTracker,
@@ -89,7 +89,7 @@ export class PlayerService implements PlayerActivityTracker {
     private readonly events: EventBus,
     private readonly userDirectory: AdminUserDirectory,
     private readonly gameReporting: AdminGameReporting,
-    private readonly blockWriter: ChatBlockWriter,
+    private readonly blockReader: ChatBlockReader,
     private readonly sessionCommands: SessionCommands,
     private readonly userCommands: UserCommands,
     private readonly rates?: ExchangeRateReader,
@@ -498,7 +498,7 @@ export class PlayerService implements PlayerActivityTracker {
     if (ids.length === 0) {
       return [];
     }
-    const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
+    const excluded = new Set(await this.blockReader.getExcludedUserIds(viewerId));
     const filteredIds = ids.filter((id) => !excluded.has(id));
     if (filteredIds.length === 0) {
       return [];

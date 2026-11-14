@@ -2,10 +2,9 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   UuidSchema,
-  MoneyAmountSchema,
   ChatRoomIdSchema,
   TimestampSchema,
-  CurrencyTickerSchema,
+  CommandConfigSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
@@ -26,17 +25,7 @@ export const CHAT_COMMAND_TYPES = [
 export const ChatCommandTypeSchema = z.enum(CHAT_COMMAND_TYPES);
 export type ChatCommandType = z.infer<typeof ChatCommandTypeSchema>;
 
-const CurrencyAmountSchema = z.object({
-  currency: CurrencyTickerSchema,
-  amount: MoneyAmountSchema,
-});
-
-export const CommandConfigSchema = z.object({
-  maxAmount: CurrencyAmountSchema.optional(),
-  minAmount: CurrencyAmountSchema.optional(),
-  maxRecipients: z.number().int().positive().optional(),
-});
-export type CommandConfig = z.infer<typeof CommandConfigSchema>;
+export { CommandConfigSchema, type CommandConfig } from '@openora/core/contracts';
 
 export const ChatCommandDescriptorSchema = z.object({
   key: ChatCommandTypeSchema,
