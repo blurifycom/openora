@@ -170,6 +170,7 @@ export default {
       jobQueue = c.get(JOB_QUEUE);
       drizzle = c.get(DRIZZLE);
       if (c.has(SUPPORT_CHAT_PROVIDER)) {
+        const provider = c.get(SUPPORT_CHAT_PROVIDER);
         service = new SupportChatService({
           drizzle,
           audit: c.get(AUDIT_WRITER),
@@ -180,12 +181,17 @@ export default {
           accountManagerReader: c.has(PLAYER_ACCOUNT_MANAGER_READER)
             ? c.get(PLAYER_ACCOUNT_MANAGER_READER)
             : null,
-          provider: c.get(SUPPORT_CHAT_PROVIDER),
+          provider,
           scheduleSync,
         });
+        if (!provider.createTicket) {
+          logger.warn(
+            'SUPPORT_CHAT_PROVIDER has no createTicket - /support-chat/tickets answers not configured',
+          );
+        }
       } else {
         logger.warn(
-          'no SUPPORT_CHAT_PROVIDER bound - /support-chat/session answers not configured',
+          'no SUPPORT_CHAT_PROVIDER bound - /support-chat/session and /support-chat/tickets answer not configured',
         );
       }
       const history = c.has(SUPPORT_HISTORY_READER)

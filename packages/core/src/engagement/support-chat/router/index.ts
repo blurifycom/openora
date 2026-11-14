@@ -18,6 +18,7 @@ import {
   SupportChatNotConfiguredError,
   SupportChatPlayerNotFoundError,
   SupportChatUnavailableError,
+  SupportTicketEmailNotVerifiedError,
   type SupportChatService,
 } from '../service/support-chat.service.js';
 import {
@@ -27,6 +28,8 @@ import {
 
 // Every call spends the operator's vendor quota.
 const SESSION_RATE_LIMIT = { limit: 10, windowMs: 60_000, onUnavailable: 'allow' } as const;
+// Every ticket lands in the operator's support queue; a double submit counts twice.
+const TICKET_RATE_LIMIT = { limit: 5, windowMs: 10 * 60_000, onUnavailable: 'allow' } as const;
 // Per admin, cache hits included: staff clicking around must not burn the vendor's API quota.
 const HISTORY_RATE_LIMIT = { limit: 30, windowMs: 60_000, onUnavailable: 'allow' } as const;
 
@@ -63,6 +66,29 @@ export function createSupportChatRouter({
             throw new SupportChatNotConfiguredError();
           }
           return session.openSession(userId, context.clientMeta);
+        },
+      );
+    }),
+
+    createTicket: os.createTicket.handler(async ({ input, context }) => {
+      const userId = getUserId(context);
+      await assertRateLimit(
+        limiter,
+        makeRateLimitKey(RATE_LIMIT_KEYS.SUPPORT_TICKET_CREATE, userId),
+        TICKET_RATE_LIMIT,
+      );
+      return mapErrors(
+        {
+          NOT_FOUND: SupportChatPlayerNotFoundError,
+          FORBIDDEN: SupportTicketEmailNotVerifiedError,
+          SERVICE_UNAVAILABLE: [SupportChatNotConfiguredError, SupportChatUnavailableError],
+        },
+        async () => {
+          if (!session) {
+            throw new SupportChatNotConfiguredError();
+          }
+          await session.createTicket(userId, input, context.clientMeta);
+          return { success: true as const };
         },
       );
     }),

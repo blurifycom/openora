@@ -2,10 +2,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { inspect } from 'node:util';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { createClient } from 'redis';
 import { JOB_QUEUE, SupportChatProviderError, queue } from '@openora/core/contracts';
 import { DRIZZLE, loadExtensions, setErrorReporter } from '@openora/core/server';
+import { auditLog } from '@openora/core/audit/schema';
 import { SupportChatSyncFailedError } from '@openora/core/engagement/server';
 import { user } from '@openora/core/pam/schema/identity';
 import {
@@ -18,6 +19,7 @@ import {
 import {
   answerNextSupportChatTokenRaw,
   failNextSupportChatToken,
+  failNextSupportTicket,
   failSupportChatSyncs,
   readSupportChatCalls,
   resetSupportChat,
@@ -131,7 +133,7 @@ describe('support chat adapter failures that leak vendor text', () => {
       const text = await refused.text();
 
       expect(refused.status).toBe(503);
-      expect(JSON.parse(text)).toMatchObject({ message: 'Support chat is unavailable' });
+      expect(JSON.parse(text)).toMatchObject({ data: { reason: 'unavailable' } });
       expect(text).not.toMatch(LEAK);
     },
   );
@@ -154,7 +156,7 @@ describe('support chat adapter failures that leak vendor text', () => {
     const text = await refused.text();
 
     expect(refused.status).toBe(503);
-    expect(JSON.parse(text)).toMatchObject({ message: 'Support chat is unavailable' });
+    expect(JSON.parse(text)).toMatchObject({ data: { reason: 'unavailable' } });
     expect(text).not.toMatch(LEAK);
     expect(inspect(reported, { depth: null, showHidden: true })).not.toMatch(LEAK);
   });
@@ -231,4 +233,54 @@ describe('support chat sync failures that are not the adapter', () => {
     expect((deadLetter.error as Error).name).toBe('SupportContextNotSettledError');
     expect((deadLetter.error as Error).message).toMatch(/still changing/);
   });
+});
+
+describe('support ticket adapter failures', () => {
+  const SUBJECT = `withdrawal stuck ${randomUUID()}`;
+  const MESSAGE = `please call me back ${randomUUID()}`;
+
+  it.each<[string, (email: string) => SupportChatProviderError | Error]>([
+    ['a provider error', () => new SupportChatProviderError('unavailable')],
+    [
+      'a raw error holding the email, the subject and the message',
+      (email) => new Error(`${email} ${SUBJECT} ${MESSAGE}`),
+    ],
+  ])(
+    'answers a generic 503 for %s, with no email, subject or message reported, and audits nothing',
+    async (_case, thrown) => {
+      const reported: { error: unknown; context: unknown }[] = [];
+      setErrorReporter((error, context) => reported.push({ error, context }));
+      const email = `leak-${randomUUID()}@e2e.test`;
+      const p = await registerAndMaterializePlayer(testApp, { email });
+      failNextSupportTicket(thrown(email));
+
+      const refused = await p.client.post('/support-chat/tickets', {
+        subject: SUBJECT,
+        message: MESSAGE,
+      });
+      const text = await refused.text();
+
+      expect(refused.status).toBe(503);
+      expect(JSON.parse(text)).toMatchObject({ data: { reason: 'unavailable' } });
+      expect(text).not.toContain(email);
+      expect(text).not.toContain(MESSAGE);
+      expect(text).not.toContain(SUBJECT);
+      const seen = inspect(reported, { depth: null, showHidden: true });
+      expect(seen).not.toContain(email);
+      expect(seen).not.toContain(MESSAGE);
+      expect(seen).not.toContain(SUBJECT);
+      expect(readSupportChatCalls().tickets.some((t) => t.requester.email === email)).toBe(false);
+      const audits = await testApp.container
+        .get(DRIZZLE)
+        .db.select()
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.action, 'support_chat.ticket.created'),
+            eq(auditLog.resourceId, p.playerId),
+          ),
+        );
+      expect(audits).toHaveLength(0);
+    },
+  );
 });

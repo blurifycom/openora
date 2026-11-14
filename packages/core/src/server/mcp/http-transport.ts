@@ -45,7 +45,7 @@ import {
   servesHost,
   withHeaders,
 } from './transport-gate.js';
-import { loggableError } from './loggable-error.js';
+import { loggableError } from '../kernel/loggable-error.js';
 import { exposedTools, toCallToolResult, type ExposedTool } from './transport-tools.js';
 
 const logger = createLogger('mcp-transport');

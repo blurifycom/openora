@@ -4,6 +4,7 @@ import { inspect } from 'node:util';
 import {
   SupportChatProviderError,
   SupportHistoryProviderError,
+  type AuditWritePort,
   type RgExclusionReader,
   type SupportChatProvider,
   type WalletReader,
@@ -70,10 +71,14 @@ async function linkedPlayer() {
   return { userId: account.id, playerId: player.id };
 }
 
-const service = (playerId: string, provider: Partial<SupportChatProvider>) =>
+const service = (
+  playerId: string,
+  provider: Partial<SupportChatProvider>,
+  audit: AuditWritePort = makeAuditWriter(),
+) =>
   new SupportChatService({
     drizzle: db.drizzle,
-    audit: makeAuditWriter(),
+    audit,
     events: makeEventBus(),
     identityReader: {
       ...makeIdentityReader(),
@@ -351,5 +356,89 @@ describe('SupportChatService sync path core errors (real PG)', () => {
     expect(error).toBeInstanceOf(SupportContextNotSettledError);
     expect(error).not.toBeInstanceOf(SupportChatSyncFailedError);
     expect(inspect([logged(), error], { depth: null })).not.toContain('unexpected adapter error');
+  });
+});
+
+describe('SupportChatService offline ticket (real PG)', () => {
+  const SUBJECT = 'withdrawal stuck since monday';
+  const MESSAGE = 'my withdrawal is stuck';
+  const TICKET = { subject: SUBJECT, message: MESSAGE };
+
+  it('answers 200 when the audit write fails after the ticket is created, logging the player id only', async () => {
+    const { account, player } = await seedPlayerWithUser(db);
+    const ticketId = `ticket-${randomUUID()}`;
+    const createTicket = vi.fn(async () => ({ ticketId }));
+    const audit = makeAuditWriter();
+    audit.record.mockRejectedValueOnce(new Error(`audit down for ${account.email}`));
+
+    await expect(
+      service(player.id, { createTicket }, audit).createTicket(account.id, TICKET, NO_CLIENT_META),
+    ).resolves.toBeUndefined();
+    expect(createTicket).toHaveBeenCalledOnce();
+    expect(log.error.mock.calls).toEqual([
+      [{ err: { name: 'Error' }, playerId: player.id }, expect.any(String)],
+    ]);
+    expect(log.error.mock.calls[0]?.[0]).not.toHaveProperty('ticketId');
+    const seen = inspect(logged(), { depth: null });
+    expect(seen).not.toContain(ticketId);
+    expect(seen).not.toContain(account.email);
+    expect(seen).not.toContain(MESSAGE);
+    expect(seen).not.toContain(SUBJECT);
+  });
+
+  it.each<[string, (email: string) => unknown]>([
+    [
+      'a ticket id getter that throws an error carrying the email',
+      (email) =>
+        Object.defineProperty({}, 'ticketId', {
+          get() {
+            throw new Error(`vendor says ${email}: ${SUBJECT} ${MESSAGE}`);
+          },
+        }),
+    ],
+    [
+      'a ticket id that is the vendor ticket holding the email',
+      (email) => ({
+        ticketId: { id: 7, requester: { email }, subject: SUBJECT, description: MESSAGE },
+      }),
+    ],
+  ])('logs a malformed answer of %s as its reason only', async (_case, answer) => {
+    const { account, player } = await seedPlayerWithUser(db);
+    const createTicket = mock<NonNullable<SupportChatProvider['createTicket']>>(async () =>
+      answer(account.email),
+    );
+
+    await service(player.id, { createTicket }).createTicket(account.id, TICKET, NO_CLIENT_META);
+
+    expect(warned()).toEqual([{ playerId: player.id, reason: 'malformed ticket answer' }]);
+    const seen = inspect(logged(), { depth: null, showHidden: true });
+    expect(seen).not.toContain(account.email);
+    expect(seen).not.toContain(MESSAGE);
+    expect(seen).not.toContain(SUBJECT);
+  });
+
+  it('logs a raw adapter error holding the email and the message as unexpected only', async () => {
+    const { account, player } = await seedPlayerWithUser(db);
+    const audit = makeAuditWriter();
+    const error = await service(
+      player.id,
+      {
+        createTicket: async () => {
+          throw new Error(`ticket for ${account.email} failed: ${SUBJECT} ${MESSAGE} ${secret()}`);
+        },
+      },
+      audit,
+    )
+      .createTicket(account.id, TICKET, NO_CLIENT_META)
+      .catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(SupportChatUnavailableError);
+    expect(warned()).toEqual([{ playerId: player.id, reason: 'unexpected adapter error' }]);
+    const seen = inspect([logged(), error], { depth: null, showHidden: true });
+    expect(seen).not.toContain(account.email);
+    expect(seen).not.toContain(MESSAGE);
+    expect(seen).not.toContain(SUBJECT);
+    expect(seen).not.toMatch(LEAK);
+    expect(audit.record).not.toHaveBeenCalled();
   });
 });
