@@ -529,8 +529,12 @@ export {
 } from './chat-transfer-check.js';
 export type { ChatRoomAccess } from './chat-room-access.js';
 export { CHAT_ROOM_ACCESS } from './chat-room-access.js';
-export type { ChatContextRooms, ChatContextRoomWrite } from './chat-context-rooms.js';
-export { CHAT_CONTEXT_ROOMS } from './chat-context-rooms.js';
+export type {
+  ChatContextRoomCommands,
+  ChatContextRooms,
+  ChatContextRoomWrite,
+} from './chat-context-rooms.js';
+export { CHAT_CONTEXT_ROOM_COMMANDS, CHAT_CONTEXT_ROOMS } from './chat-context-rooms.js';
 export type { ChatContextSendPolicy } from './chat-context-send-policy.js';
 export {
   CHAT_CONTEXT_SEND_POLICY,

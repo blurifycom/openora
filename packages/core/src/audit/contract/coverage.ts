@@ -103,6 +103,12 @@ export const AUDIT_COVERAGE_GAPS = {
     reason:
       'carries a chat card to the chat service; the command that wrote it audits its own money movement',
   },
+  'chat.context_room.command_issued': {
+    kind: 'atSource',
+    writer: 'ChatContextRoomService via recordInTransaction, when chat applies the command',
+    reason:
+      'carries a context room write to the chat service, which audits the room, member and close rows it writes',
+  },
   'chat.room.member.removed': {
     kind: 'atSource',
     writer: 'ChatRoomMembershipService and ChatContextRoomService via recordInTransaction',

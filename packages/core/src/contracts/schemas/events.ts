@@ -64,6 +64,8 @@ import {
   ContributionPercentSchema,
 } from './promo.js';
 import { CommandMetadataSchema } from './chat-command.js';
+import { SystemEventMetadataSchema } from './chat-command-metadata.js';
+import { ChatContextRefSchema, EnsureChatContextRoomInputSchema } from './chat-context-room.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
@@ -944,6 +946,23 @@ export const domainEventSchemas = {
     metadata: CommandMetadataSchema,
     version: z.number().int().positive(),
   }),
+
+  // A context room write a service that does not run chat issued on its own transaction
+  // (OutboxChatContextRoomCommands). Chat applies it keyed on the caller's `ref`: ensure on the
+  // ref (the room takes `roomId`), membership on (ref, userId), a post on `messageId`, so a
+  // redelivery changes nothing. A command for a ref chat has no room for yet is redelivered.
+  'chat.context_room.command_issued': z.discriminatedUnion('op', [
+    EnsureChatContextRoomInputSchema.extend({ op: z.literal('ensure'), roomId: UuidSchema }),
+    z.object({ op: z.literal('add_member'), ref: ChatContextRefSchema, userId: UuidSchema }),
+    z.object({ op: z.literal('remove_member'), ref: ChatContextRefSchema, userId: UuidSchema }),
+    z.object({ op: z.literal('close'), ref: ChatContextRefSchema }),
+    z.object({
+      op: z.literal('post_system_event'),
+      ref: ChatContextRefSchema,
+      messageId: UuidSchema,
+      metadata: SystemEventMetadataSchema,
+    }),
+  ]),
 
   // A player muted/unmuted another player's messages for themselves (ABC-45 AC11).
   // actorPlayerId = the blocker/ignorer; playerId = the blocked/ignored subject (resourceId).

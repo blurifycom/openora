@@ -88,11 +88,12 @@ export class ChatContextRoomService implements ChatContextRooms {
   }
 
   async ensureRoom({ tx, ...input }: Parameters<ChatContextRooms['ensureRoom']>[0]) {
-    const { ref, name, memberIds } = EnsureChatContextRoomInputSchema.parse(input);
+    const { ref, roomId, name, memberIds } = EnsureChatContextRoomInputSchema.parse(input);
     return this.write(tx, async (t, effects) => {
       const [inserted] = await t
         .insert(chatRoom)
         .values({
+          id: roomId,
           name,
           slug: `${CONTEXT_ROOM_SLUG_PREFIX}${randomUUID()}`,
           kind: 'context',
@@ -205,6 +206,7 @@ export class ChatContextRoomService implements ChatContextRooms {
 
   async postSystemEvent({
     ref,
+    messageId,
     code,
     params = {},
     tx,
@@ -213,6 +215,7 @@ export class ChatContextRoomService implements ChatContextRooms {
     return this.write(tx, (t, effects) =>
       this.withRoom(t, ref, async (room) => {
         const message = await this.systemWriter.postSystemMessage({
+          messageId,
           roomId: room.id,
           metadata,
           tx: t,
