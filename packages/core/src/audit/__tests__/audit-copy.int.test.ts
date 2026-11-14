@@ -671,4 +671,20 @@ describe('audit-copy', () => {
     expect(await scalar(f.main.url, 'SELECT count(*)::text FROM audit_outbox')).toBe('0');
     expect(await isValid(f.main.url)).toBe(true);
   }, 60_000);
+
+  it('TC-30 a drain that sets a row aside as rejected exits 1', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await run(envOf(f), ['--fence', '--apply']);
+    await sqlOn(
+      f.main.url,
+      `INSERT INTO audit_outbox (event_id, entry) VALUES (gen_random_uuid(), '{"bad": true}'::jsonb)`,
+    );
+    const result = await run(envOf(f), ['--drain-outbox', '--apply']);
+    expect(result.code).toBe(1);
+    expect(result.err).toContain(
+      '1 outbox rows rejected during drain; inspect audit_outbox_rejected',
+    );
+    expect(await scalar(f.main.url, 'SELECT count(*)::text FROM audit_outbox_rejected')).toBe('1');
+  }, 60_000);
 });

@@ -419,6 +419,13 @@ async function assertOutboxEmpty(main: Client): Promise<void> {
   }
 }
 
+async function rejectedCount(main: Client): Promise<number> {
+  const { rows } = await main.query<{ rejected: string }>(
+    'SELECT count(*)::text AS rejected FROM audit_outbox_rejected',
+  );
+  return Number(rows[0]?.rejected ?? 0);
+}
+
 /**
  * Rolls a fenced chain back. Every refusal (a split main without a shipper url, a shipper holding
  * its lock, a row the main database lacks) comes before anything changes. Then the audit
@@ -451,6 +458,7 @@ export async function drainOutboxToLegacy(
     }
     await assertShipperIdle(legacy);
     await closeTarget(legacy, target);
+    const rejectedBefore = await rejectedCount(legacy);
     await hooks.duringDrain?.();
     const head = await headOf(legacy);
     const anchor = head && { fromSeq: Number(head.seq), fromHash: head.hash };
@@ -464,6 +472,12 @@ export async function drainOutboxToLegacy(
     );
     await hooks.afterDrain?.();
     await assertOutboxEmpty(legacy);
+    const rejectedNow = await rejectedCount(legacy);
+    if (rejectedNow > rejectedBefore) {
+      throw new CopyError(
+        `${rejectedNow - rejectedBefore} outbox rows rejected during drain; inspect audit_outbox_rejected`,
+      );
+    }
     await assertTargetInLegacy(legacy, target);
     await snapshot('main', legacy);
     await snapshot('audit', target);
