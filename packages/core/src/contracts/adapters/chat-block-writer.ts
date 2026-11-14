@@ -1,3 +1,4 @@
+import type { User } from '../schemas/identity.js';
 import { createToken, type Token } from './token.js';
 import type { Uuid } from '../schemas/common.js';
 
@@ -12,7 +13,7 @@ export type ChatBlockWriter = {
   /** Active block relationships only; ignores do not prevent money transfers. */
   getBlockedUserIds(viewerId: string): Promise<string[]>;
   /** Ids of the users holding an active block on `userId`; ignores are not included. */
-  getBlockerIds(userId: string): Promise<string[]>;
+  getBlockerIds(userId: User['id']): Promise<string[]>;
   /** Checks the relationship on the caller's transaction before a money mutation. */
   isBlocked(tx: unknown, blockerId: string, blockedId: string): Promise<boolean>;
 };

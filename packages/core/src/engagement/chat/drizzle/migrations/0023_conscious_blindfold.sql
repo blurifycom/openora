@@ -1,0 +1,1 @@
+CREATE INDEX "chat_user_block_blocked_idx" ON "chat_user_block" USING btree ("blocked_id") WHERE "chat_user_block"."removed_at" IS NULL;
