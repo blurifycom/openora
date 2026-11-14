@@ -54,7 +54,7 @@ It moves no money; the overlay refuses on the verdict.
 - `ADMIN_USER_DIRECTORY` - `findPlayerIds`/`lookupPlayers` for `@mention` autocomplete.
 - `CHAT_BLOCK_READER` - `getExcludedUserIds(viewerId)` to filter blocked and ignored players out of
   mention search; `getBlockedUserIds(viewerId)` for blocks alone, so a probe outside chat never
-  reveals an ignore.
+  reveals an ignore; `getBlockerIds(userId)` for the users who block `userId`, in one read.
 - `CHAT_TRANSFER_CHECK` refuses an enabled command whose stored limits no longer parse
   (`command_disabled`) instead of reading them as no limits.
 - `CHAT_ROOM_ACCESS`, `CHAT_CONTEXT_SEND_POLICY` - room access and the context send policy, for
