@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
-import { Client, type Pool } from 'pg';
-import { createDrizzleDb, type DrizzleDb } from '@openora/core/server';
+import { Client, Pool } from 'pg';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import type { DrizzleDb } from '@openora/core/server';
 import { CHAIN_SPLIT_SQL } from '../schema/index.js';
 import { databaseOf, withDatabase } from '../migrate.js';
 import { verifyAuditChain, type AuditChainAnchor } from './audit.service.js';
@@ -9,8 +10,12 @@ import { drainAuditOutbox } from './audit-shipper.service.js';
 const BATCH_SIZE = 1000;
 const LOCK_TIMEOUT = '5s';
 const MOVED_TRIGGER = 'audit_log_moved';
+const USAGE = 'usage: openora-audit-copy [--apply] [--fence | --drain-outbox]';
 
-// The key appendAuditEntries locks under, so a copy batch and an append never interleave.
+// The chain lock of the database it runs in, the key appendAuditEntries locks under. In the
+// target it keeps a live shipper's append out of a copy batch; in the main database it only
+// stops a legacy writer that takes it, which is why the fence also locks the table. In a plain
+// copy it merely serializes two copy runs.
 const CHAIN_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtext('audit_log'))`;
 
 const COLUMNS_SQL = `SELECT a.attname || ' ' || format_type(a.atttypid, a.atttypmod) AS col
@@ -36,33 +41,47 @@ type Head = { seq: string; hash: string };
 export type CopyOptions = { adminUrl: string; auditUrl: string; apply: boolean };
 export type DrainOptions = { adminUrl: string; auditUrl: string; shipperUrl?: string };
 export type CopyReport = { copied: number; applied: boolean };
-export type CopyHooks = { afterCopy?: () => Promise<void> };
+export type CopyHooks = {
+  afterCopy?: () => Promise<void>;
+  duringDrain?: () => Promise<void>;
+};
 
 class CopyError extends Error {}
 
-const closeDb = (db: DrizzleDb) => (db as DrizzleDb & { $client: Pool }).$client.end();
+const say = (line: string) => process.stdout.write(`${line}\n`);
 
-async function connect(url: string): Promise<Client> {
-  const client = new Client({ connectionString: url });
-  await client.connect();
-  await client.query(`SET TIME ZONE 'UTC'`);
+function newClient(url: string): Client {
+  const client = new Client({ connectionString: url, application_name: 'openora-audit-copy' });
+  client.on('error', () => undefined);
   return client;
 }
 
 async function withClients<T>(
-  urls: readonly string[],
-  fn: (clients: Client[]) => Promise<T>,
+  firstUrl: string,
+  secondUrl: string,
+  fn: (first: Client, second: Client) => Promise<T>,
 ): Promise<T> {
-  const clients: Client[] = [];
+  const first = newClient(firstUrl);
+  const second = newClient(secondUrl);
   try {
-    for (const url of urls) {
-      clients.push(await connect(url));
+    for (const client of [first, second]) {
+      await client.connect();
+      await client.query(`SET TIME ZONE 'UTC'`);
     }
-    return await fn(clients);
+    return await fn(first, second);
   } finally {
-    for (const client of clients) {
-      await client.end().catch(() => undefined);
-    }
+    await first.end().catch(() => undefined);
+    await second.end().catch(() => undefined);
+  }
+}
+
+async function withDb<T>(url: string, fn: (db: DrizzleDb) => Promise<T>): Promise<T> {
+  const pool = new Pool({ connectionString: url, max: 2 });
+  pool.on('error', () => undefined);
+  try {
+    return await fn(drizzle(pool, { casing: 'snake_case' }));
+  } finally {
+    await pool.end().catch(() => undefined);
   }
 }
 
@@ -81,6 +100,19 @@ async function headOf(db: Client): Promise<Head | undefined> {
     'SELECT seq::text AS seq, hash FROM audit_log ORDER BY audit_log.seq DESC LIMIT 1',
   );
   return rows[0];
+}
+
+async function snapshot(label: string, db: Client): Promise<void> {
+  const head = await headOf(db);
+  const { rows } = await db.query<{ count: string }>(
+    'SELECT count(*)::text AS count FROM audit_log',
+  );
+  say(`${label}: rows=${rows[0]?.count} head=${head ? `${head.seq}:${head.hash}` : 'none'}`);
+}
+
+async function isSplit(main: Client): Promise<boolean> {
+  const { rows } = await main.query<{ split: boolean }>(CHAIN_SPLIT_SQL);
+  return rows[0]?.split ?? false;
 }
 
 async function columnsOf(db: Client, side: string): Promise<string[]> {
@@ -117,7 +149,7 @@ async function assertInSource(source: Client, head: Head): Promise<void> {
 
 // One batch inside the caller's target transaction, cursored by the target's own head. The rows
 // travel as JSON text from one server to the other, never parsed here, so they land byte-equal.
-async function copyStep(source: Client, target: Client, apply: boolean): Promise<number> {
+async function copyStep(source: Client, target: Client): Promise<number> {
   await target.query(CHAIN_LOCK_SQL);
   const head = await headOf(target);
   if (head) {
@@ -133,7 +165,7 @@ async function copyStep(source: Client, target: Client, apply: boolean): Promise
     [rows[0]?.batch ?? '[]'],
   );
   const copied = rowCount ?? 0;
-  if (apply && copied > 0) {
+  if (copied > 0) {
     await target.query(
       `SELECT setval(pg_get_serial_sequence('audit_log', 'seq'), (SELECT max(seq) FROM audit_log))`,
     );
@@ -141,31 +173,16 @@ async function copyStep(source: Client, target: Client, apply: boolean): Promise
   return copied;
 }
 
-// A dry run is one transaction rolled back at the end, so it never advances the sequence either.
-async function copyBatches(source: Client, target: Client, apply: boolean): Promise<number> {
+async function copyBatches(source: Client, target: Client): Promise<number> {
   let total = 0;
-  if (!apply) {
-    await target.query('BEGIN');
-    try {
-      for (;;) {
-        const copied = await copyStep(source, target, false);
-        total += copied;
-        if (copied < BATCH_SIZE) {
-          return total;
-        }
-      }
-    } finally {
-      await target.query('ROLLBACK');
-    }
-  }
   for (;;) {
     await target.query('BEGIN');
     let copied: number;
     try {
-      copied = await copyStep(source, target, true);
+      copied = await copyStep(source, target);
       await target.query('COMMIT');
     } catch (err) {
-      await target.query('ROLLBACK');
+      await target.query('ROLLBACK').catch(() => undefined);
       throw err;
     }
     total += copied;
@@ -175,15 +192,28 @@ async function copyBatches(source: Client, target: Client, apply: boolean): Prom
   }
 }
 
+// A dry run reads only: the rows the source holds beyond the target's head, once that head is
+// known to be the source's own row.
+async function pendingCount(source: Client, head: Head | undefined): Promise<number> {
+  if (head) {
+    await assertInSource(source, head);
+  }
+  const { rows } = await source.query<{ count: string }>(
+    'SELECT count(*)::text AS count FROM audit_log WHERE seq > $1',
+    [head?.seq ?? '0'],
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
 async function assertCaughtUp(source: Client, target: Client, complete: boolean): Promise<void> {
   const head = await headOf(target);
-  const [{ rows: s }, { rows: t }] = [
-    await source.query<{ count: string; head: string | null }>(
-      'SELECT count(*) FILTER (WHERE seq <= $1)::text AS count, max(seq)::text AS head FROM audit_log',
-      [head?.seq ?? '0'],
-    ),
-    await target.query<{ count: string }>('SELECT count(*)::text AS count FROM audit_log'),
-  ];
+  const { rows: s } = await source.query<{ count: string; head: string | null }>(
+    'SELECT count(*) FILTER (WHERE seq <= $1)::text AS count, max(seq)::text AS head FROM audit_log',
+    [head?.seq ?? '0'],
+  );
+  const { rows: t } = await target.query<{ count: string }>(
+    'SELECT count(*)::text AS count FROM audit_log',
+  );
   if (s[0]?.count !== t[0]?.count) {
     throw new CopyError('the target and the source hold a different number of rows');
   }
@@ -199,86 +229,90 @@ async function transfer(
 ): Promise<{ copied: number; anchor: AuditChainAnchor | undefined }> {
   await assertSameShape(source, target);
   const before = await headOf(target);
-  const copied = await copyBatches(source, target, apply);
-  if (apply) {
-    await assertCaughtUp(source, target, complete);
+  const anchor = before && { fromSeq: Number(before.seq), fromHash: before.hash };
+  if (!apply) {
+    return { copied: await pendingCount(source, before), anchor };
   }
-  return {
-    copied,
-    anchor: before && { fromSeq: Number(before.seq), fromHash: before.hash },
-  };
+  const copied = await copyBatches(source, target);
+  await assertCaughtUp(source, target, complete);
+  return { copied, anchor };
 }
 
-async function verifyChainAt(url: string, anchor: AuditChainAnchor | undefined): Promise<void> {
-  const db = createDrizzleDb(url);
-  try {
-    const verdict = await verifyAuditChain(db, anchor);
-    if (!verdict.valid) {
-      throw new CopyError(`the chain is broken at seq ${verdict.firstBrokenSeq}`);
-    }
-  } finally {
-    await closeDb(db);
+async function verifyChainAt(
+  url: string,
+  anchor: AuditChainAnchor | undefined,
+  label: string,
+): Promise<void> {
+  const verdict = await withDb(url, (db) => verifyAuditChain(db, anchor));
+  const from = anchor ? `from seq ${anchor.fromSeq}` : 'full chain';
+  if (!verdict.valid) {
+    say(`verify ${label}: broken at seq ${verdict.firstBrokenSeq} (${from})`);
+    throw new CopyError(`the chain is broken at seq ${verdict.firstBrokenSeq}`);
   }
+  say(`verify ${label}: valid (${from})`);
 }
 
 /**
  * Copies the chain rows the target lacks, in batches of one target transaction each, and checks
  * the target's chain from where it was before the run. Safe to rerun: the target's own head is
- * the cursor. Refuses a target whose head is not the source's row of that seq.
+ * the cursor. Refuses a target whose head is not the source's row of that seq. Without `apply`
+ * it only counts.
  */
 export async function copyChain({ adminUrl, auditUrl, apply }: CopyOptions): Promise<CopyReport> {
   const targetUrl = targetUrlOf(adminUrl, auditUrl);
-  const report = await withClients([adminUrl, targetUrl], async ([source, target]) => {
-    if (!source || !target) {
-      throw new CopyError('could not connect');
+  return withClients(adminUrl, targetUrl, async (source, target) => {
+    const { copied, anchor } = await transfer(source, target, { apply, complete: false });
+    if (apply) {
+      await snapshot('source', source);
+      await snapshot('target', target);
+      await verifyChainAt(targetUrl, anchor, 'target');
     }
-    return transfer(source, target, { apply, complete: false });
+    return { copied, applied: apply };
   });
-  if (apply) {
-    await verifyChainAt(targetUrl, report.anchor);
-  }
-  return { copied: report.copied, applied: apply };
 }
 
 /**
  * Copies the last of the chain under a lock that stops every writer of the main `audit_log`, and
  * in the same breath installs the trigger that refuses its inserts from then on. The main
- * transaction commits only once the target holds every row, so a crash leaves no fence and no gap.
+ * transaction commits only once the target holds every row and its whole chain verifies, so a
+ * failure leaves no fence and no gap. Run an unfenced copy first so this window is short. Needs a
+ * main database that split `migrate` has marked. Without `apply` it takes no lock and only counts.
  */
 export async function fenceChain(
   { adminUrl, auditUrl, apply }: CopyOptions,
   hooks: CopyHooks = {},
 ): Promise<CopyReport> {
   const targetUrl = targetUrlOf(adminUrl, auditUrl);
-  const copied = await withClients([adminUrl, targetUrl], async ([main, target]) => {
-    if (!main || !target) {
-      throw new CopyError('could not connect');
+  return withClients(adminUrl, targetUrl, async (main, target) => {
+    if (!(await isSplit(main))) {
+      throw new CopyError(
+        'the main database is not split: run migrate with AUDIT_DATABASE_URL and AUDIT_SHIPPER_DATABASE_URL first',
+      );
+    }
+    if (!apply) {
+      const { copied } = await transfer(main, target, { apply: false, complete: true });
+      return { copied, applied: false };
     }
     await main.query('BEGIN');
     try {
       await main.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
       await main.query(CHAIN_LOCK_SQL);
       await main.query('LOCK TABLE audit_log IN EXCLUSIVE MODE');
-      const report = await transfer(main, target, { apply, complete: true });
-      if (!apply) {
-        await main.query('ROLLBACK');
-        return report.copied;
-      }
+      const { copied } = await transfer(main, target, { apply: true, complete: true });
       await hooks.afterCopy?.();
+      await snapshot('source', main);
+      await snapshot('target', target);
+      await verifyChainAt(targetUrl, undefined, 'target');
       for (const statement of DENY_MOVED_SQL) {
         await main.query(statement);
       }
       await main.query('COMMIT');
-      return report.copied;
+      return { copied, applied: true };
     } catch (err) {
       await main.query('ROLLBACK').catch(() => undefined);
       throw err;
     }
   });
-  if (apply) {
-    await verifyChainAt(targetUrl, undefined);
-  }
-  return { copied, applied: apply };
 }
 
 async function assertTargetInLegacy(legacy: Client, target: Client): Promise<void> {
@@ -311,51 +345,56 @@ async function assertTargetInLegacy(legacy: Client, target: Client): Promise<voi
 
 /**
  * Rolls a fenced chain back: lifts the fence and ships the outbox into the main `audit_log`
- * again. Refuses once the audit database holds a row the main one lacks, since a row written after
- * the switch cannot go back.
+ * again. Every refusal comes before the fence is touched. The audit database's `audit_log` stays
+ * locked against appends from the first check to the end, so a live shipper cannot add a row the
+ * main one would lack, and the check runs again after the drain. Every writer must be stopped.
  */
 export async function drainOutboxToLegacy(
   { adminUrl, auditUrl, shipperUrl }: DrainOptions,
   { apply }: { apply: boolean },
+  hooks: CopyHooks = {},
 ): Promise<{ queued: number; applied: boolean }> {
   const targetUrl = targetUrlOf(adminUrl, auditUrl);
-  const { split, queued, anchor } = await withClients(
-    [adminUrl, targetUrl],
-    async ([legacy, target]) => {
-      if (!legacy || !target) {
-        throw new CopyError('could not connect');
+  return withClients(adminUrl, targetUrl, async (legacy, target) => {
+    const outboxUrl = (await isSplit(legacy)) ? shipperUrl : adminUrl;
+    if (!outboxUrl) {
+      throw new CopyError('the main database is split: set AUDIT_SHIPPER_DATABASE_URL');
+    }
+    if (apply) {
+      await target.query('BEGIN');
+    }
+    try {
+      if (apply) {
+        await target.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
+        await target.query(CHAIN_LOCK_SQL);
+        await target.query('LOCK TABLE audit_log IN EXCLUSIVE MODE');
       }
       await assertTargetInLegacy(legacy, target);
-      const { rows: marks } = await legacy.query<{ split: boolean }>(CHAIN_SPLIT_SQL);
-      const { rows: pending } = await legacy.query<{ queued: string }>(
+      const { rows } = await legacy.query<{ queued: string }>(
         'SELECT count(*)::text AS queued FROM audit_outbox',
       );
-      const head = await headOf(legacy);
-      if (apply) {
-        await legacy.query(`DROP TRIGGER IF EXISTS ${MOVED_TRIGGER} ON audit_log`);
+      const queued = Number(rows[0]?.queued ?? 0);
+      if (!apply) {
+        return { queued, applied: false };
       }
-      return {
-        split: marks[0]?.split ?? false,
-        queued: Number(pending[0]?.queued ?? 0),
-        anchor: head && { fromSeq: Number(head.seq), fromHash: head.hash },
-      };
-    },
-  );
-  if (!apply) {
-    return { queued, applied: false };
-  }
-  if (split && !shipperUrl) {
-    throw new CopyError('the main database is split: set AUDIT_SHIPPER_DATABASE_URL');
-  }
-  const outbox = createDrizzleDb(split ? shipperUrl : adminUrl);
-  const legacyChain = createDrizzleDb(adminUrl);
-  try {
-    await drainAuditOutbox(outbox, legacyChain);
-  } finally {
-    await Promise.all([closeDb(outbox), closeDb(legacyChain)]);
-  }
-  await verifyChainAt(adminUrl, anchor);
-  return { queued, applied: true };
+      const head = await headOf(legacy);
+      const anchor = head && { fromSeq: Number(head.seq), fromHash: head.hash };
+      await hooks.duringDrain?.();
+      await legacy.query(`DROP TRIGGER IF EXISTS ${MOVED_TRIGGER} ON audit_log`);
+      await withDb(outboxUrl, (outbox) =>
+        withDb(adminUrl, (chain) => drainAuditOutbox(outbox, chain)),
+      );
+      await assertTargetInLegacy(legacy, target);
+      await snapshot('main', legacy);
+      await snapshot('audit', target);
+      await verifyChainAt(adminUrl, anchor, 'main');
+      return { queued, applied: true };
+    } finally {
+      if (apply) {
+        await target.query('ROLLBACK').catch(() => undefined);
+      }
+    }
+  });
 }
 
 function required(env: Record<string, string | undefined>, key: string): string {
@@ -366,14 +405,10 @@ function required(env: Record<string, string | undefined>, key: string): string 
   return value;
 }
 
-const write = (stream: NodeJS.WriteStream, line: string) => stream.write(`${line}\n`);
+type Flags = { apply: boolean; fence: boolean; drain: boolean };
 
-/** The `openora-audit-copy` entry: returns the process exit code. URLs come from `env` only. */
-export async function main(
-  argv: readonly string[],
-  env: Record<string, string | undefined>,
-  hooks: CopyHooks = {},
-): Promise<number> {
+// A parse error's own message can echo an argument, which may be a URL with a password.
+function parseFlags(argv: readonly string[]): Flags {
   try {
     const { values } = parseArgs({
       args: [...argv],
@@ -384,30 +419,47 @@ export async function main(
       },
       strict: true,
     });
-    if (values.fence && values['drain-outbox']) {
-      throw new CopyError('--fence and --drain-outbox are mutually exclusive');
+    return {
+      apply: values.apply === true,
+      fence: values.fence === true,
+      drain: values['drain-outbox'] === true,
+    };
+  } catch {
+    throw new CopyError(USAGE);
+  }
+}
+
+/** The `openora-audit-copy` entry: returns the process exit code. URLs come from `env` only. */
+export async function main(
+  argv: readonly string[],
+  env: Record<string, string | undefined>,
+  hooks: CopyHooks = {},
+): Promise<number> {
+  try {
+    const { apply, fence, drain } = parseFlags(argv);
+    if (fence && drain) {
+      throw new CopyError(`--fence and --drain-outbox are mutually exclusive\n${USAGE}`);
     }
     const adminUrl = required(env, 'DATABASE_ADMIN_URL');
     const auditUrl = required(env, 'AUDIT_DATABASE_URL');
-    const apply = values.apply === true;
     const mode = apply ? 'applied' : 'dry run, nothing written';
-    if (values['drain-outbox']) {
+    if (drain) {
       const report = await drainOutboxToLegacy(
         { adminUrl, auditUrl, shipperUrl: env['AUDIT_SHIPPER_DATABASE_URL'] },
         { apply },
+        hooks,
       );
-      write(process.stdout, `outbox rows queued: ${report.queued} (${mode})`);
+      say(`outbox rows queued: ${report.queued} (${mode})`);
       return 0;
     }
     const options = { adminUrl, auditUrl, apply };
-    const report = values.fence ? await fenceChain(options, hooks) : await copyChain(options);
-    write(
-      process.stdout,
-      `${values.fence ? 'fenced; ' : ''}rows copied: ${report.copied} (${mode})`,
+    const report = fence ? await fenceChain(options, hooks) : await copyChain(options);
+    say(
+      `${fence ? 'fence: ' : ''}rows ${apply ? 'copied' : 'to copy'}: ${report.copied} (${mode})`,
     );
     return 0;
   } catch (err) {
-    write(process.stderr, err instanceof Error ? err.message : 'audit-copy failed');
+    process.stderr.write(`${err instanceof Error ? err.message : 'audit-copy failed'}\n`);
     return 1;
   }
 }
