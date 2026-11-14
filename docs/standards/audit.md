@@ -10,7 +10,7 @@ Read this before adding a state-changing action or changing audit storage, event
 - Audit rows are append-only, enforced by `ENABLE ALWAYS` database triggers that deny UPDATE, DELETE and TRUNCATE on `audit_log` and `audit_outbox_rejected` to every role, in replica mode too. `audit_outbox` denies UPDATE and TRUNCATE and allows a DELETE only of a row whose content is kept: the same entry in `audit_outbox_rejected` under its outbox id, or chained in `audit_log` under its event id with equal fields. Triggers do not stop DDL, so the table owner can still `ALTER TABLE ... DISABLE TRIGGER`; run the app as a role that does not own the audit tables, and migrations as the owner. Never add update or delete behavior, and never invent a topic outside `domainEventSchemas`.
 - A write through `AUDIT_WRITER` queues the record in `audit_outbox` inside the caller's transaction and takes no lock; the audit shipper appends it to the chain after commit, so `audit_log` lags the write by up to a poll. Never read `audit_log` back to decide what the write just did (a marker belongs in a business table); a test drains the outbox first (`flushAudit` in `@openora/testing`). `recordAuditInTransaction` is deprecated (use `enqueueAuditInTransaction`; removed in the next minor release) and still appends directly, taking the chain lock until its commit ([ADR-0053](../adr/0053-audit-outbox-shipper.md)).
 - The chain can live in a database of its own. Run the audit `migrate({ adminUrl, auditUrl, shipperUrl })` with `auditUrl` set to `AUDIT_DATABASE_URL` and `shipperUrl` to `AUDIT_SHIPPER_DATABASE_URL`, under the audit migration lock on the main database, so concurrent migrates take turns. It creates the audit database when missing and two login roles: the writer, from `auditUrl`, that may only connect to the audit database, read `audit_log` and append to it, and the shipper, from `shipperUrl` on the main database, the only role that may delete from `audit_outbox` and insert into `audit_outbox_rejected`; a migrate revokes those two grants from any other role that holds them. Each role is made with no SUPERUSER, CREATEDB, CREATEROLE, REPLICATION or BYPASSRLS and has a connection limit of 20; the migrate refuses a url role that already holds one of those attributes, is a member of another role, has a member that inherits it or may SET it, is the main admin or app role, or is the other audit role. It knows the app role only from `DATABASE_URL`, so set that in the migrate's environment too, or the app role is not refused. The password is set from the url as a SCRAM verifier on every run, so a rotation is a migrate away; the verifier, not the password, reaches the server log under `log_statement = ddl`. The first split run revokes CONNECT on the main database from PUBLIC and grants it by name to every role that owns or holds a grant on one of its public tables; every run revokes it from the writer and grants it to the shipper. A role made later that only connects (monitoring, backup) needs its own `GRANT CONNECT`. Once split, the single-database migrate of that main database refuses to run.
-- Set `AUDIT_DATABASE_URL` and `AUDIT_SHIPPER_DATABASE_URL` on every process that loads the audit plugin; the boot fails on the first without the second. The shipper appends as the writer and deletes the batch from the outbox as the shipper once the append has committed, so a crash in between ships the batch again and the append skips the event ids it holds. It refuses to ship into an empty audit database while the main one still holds `audit_log` rows: those legacy rows stay where they are until the audit-copy runbook moves them, and the shipper waits for it. `AUDIT_DATABASE_POOL_MAX` (default 3) sizes each of the two audit pools per process; keep replicas x `AUDIT_DATABASE_POOL_MAX` at or under 20, each role's connection limit. Other modules read the chain through `AUDIT_READER`, never the audit schema.
+- Set `AUDIT_DATABASE_URL` and `AUDIT_SHIPPER_DATABASE_URL` on every process that loads the audit plugin; the boot fails on the first without the second. The shipper appends as the writer and deletes the batch from the outbox as the shipper once the append has committed, so a crash in between ships the batch again and the append skips the event ids it holds. It refuses to ship into an empty audit database while the main one still holds `audit_log` rows: those legacy rows stay where they are until the [audit-copy runbook](#moving-the-chain-audit-copy) moves them, and the shipper waits for it. `AUDIT_DATABASE_POOL_MAX` (default 3) sizes each of the two audit pools per process; keep replicas x `AUDIT_DATABASE_POOL_MAX` at or under 20, each role's connection limit. Other modules read the chain through `AUDIT_READER`, never the audit schema.
 - `list`, `exportCsv` and `verifyChain` read the chain only, so they are eventually consistent: a record shows once shipped. `listMyRgHistory` also reads the player's pending outbox rows, so a player sees a limit change straight away. `verifyChain({ fromSeq, fromHash })` resumes from the last row an earlier run found intact, and fails at that row when it is gone or no longer hashes to `fromHash`. A job that stores the anchor also checks that the head `seq` it reads never falls below the one it stored: a chain cut back to before the anchor fails the anchored verify, but one cut back and regrown past it only shows there. `listMyRgHistory` gives a record its event id, queued or chained, so its id holds across the ship.
 - `seq` is the authoritative order of the trail, assigned when the shipper appends. `created_at` is the time the record was queued in the business transaction, the business time of the change rather than its commit time (an event's `occurredAt` for a record mapped from one), so it can run out of `seq` order. Order by `seq`, never by `created_at`.
 - The chain's unique indexes use `NULLS NOT DISTINCT`, so the minimum Postgres version is 15.
@@ -53,6 +53,37 @@ keeps growing. A rejected row under that `outbox_id` with other content, next to
 under its `event_id` with other content, means both were planted to launder the entry: the guard
 keeps it pending on purpose. Export the outbox row, the rejected row and the chain row as evidence,
 then resolve it under a change ticket as for a forked chain.
+
+**Moving the chain (audit-copy).** `openora-audit-copy` (a bin of `@openora/core`) moves the legacy
+`audit_log` of a main database into the chain's own database. It needs `DATABASE_ADMIN_URL` (the main
+database's owner), `AUDIT_DATABASE_URL` (only its database name is used; the tool connects with the
+owner's credentials) and, for `--drain-outbox` on a split main, `AUDIT_SHIPPER_DATABASE_URL`. No flag
+writes anything but `--apply`; without it every mode is a dry run that prints the counts and rolls back.
+Rows are copied byte-equal and never recomputed, in batches of 1000 that each commit alone; the target's
+own head is the cursor, so a crashed or repeated run copies only what is missing. The tool refuses a
+target whose head is not the source's row of that `seq`, and ends by verifying the target's chain.
+
+1. Run `migrate` with `auditUrl` and `shipperUrl`. It creates the audit database and marks the main one
+   split. From here the shipper cannot append to the main database, so new records wait in
+   `audit_outbox`. Keep the api and chat processes off `AUDIT_DATABASE_URL`: **never point a process at
+   the audit database before the fence check below is green**, or its shipper appends to a half-copied
+   chain and forks it. The shipper only refuses an empty target, not a partly copied one.
+2. `openora-audit-copy` (dry run), then `openora-audit-copy --apply`. Rerun it to catch up;
+   it is safe while legacy writers run, and a failed run is simply rerun.
+3. `openora-audit-copy --fence --apply`. It locks the main `audit_log` against writers (5 second lock
+   timeout: it gives up and changes nothing if a writer holds the chain, so rerun it), copies the last
+   rows, compares count and head, installs an `ENABLE ALWAYS` trigger that refuses every insert into the
+   main `audit_log`, commits, and verifies the whole target chain. Exit 0 means the target is complete,
+   the fence is in and the chain is intact; any other exit leaves the system as it was or safely
+   rerunnable. The fence lasts: a legacy insert fails with `audit_log moved to its own database`.
+4. Point the api and chat processes at `AUDIT_DATABASE_URL` and `AUDIT_SHIPPER_DATABASE_URL`. The shipper
+   now drains the queued outbox rows into the audit database.
+
+To step back before step 4, run `openora-audit-copy --drain-outbox --apply` with every writer stopped. It
+refuses unless each row of the audit database is in the main one with the same hash, lifts the fence,
+ships the outbox into the main `audit_log` and verifies it. After the switch (rows exist only in the audit
+database) there is no way back: roll forward only. Nothing is ever dropped; the old rows stay in the main
+database until you remove them under a change ticket.
 
 **Known gap.** The app role can still divert a pending entry by copying it into
 `audit_outbox_rejected` under its own outbox id and deleting it: the content is kept but never
