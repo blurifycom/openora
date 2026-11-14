@@ -1,5 +1,5 @@
 import { ORPCError } from '@orpc/server';
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { withAdvisoryXactLocks, type DrizzleTx } from '@openora/core/server';
 import {
   ChatContextSendDecisionSchema,
@@ -40,11 +40,20 @@ export class ChatTransferCheckService {
     const tx = transaction as DrizzleTx;
     const input = ChatTransferCheckInputSchema.parse(rawInput);
     const [command] = await tx
-      .select({ enabled: chatCommandConfig.enabled, config: chatCommandConfig.config })
+      .select({
+        enabled: chatCommandConfig.enabled,
+        config: chatCommandConfig.config,
+        hasStoredConfig: sql<boolean>`${chatCommandConfig.config} is not null`,
+      })
       .from(chatCommandConfig)
       .where(eq(chatCommandConfig.key, input.command))
       .limit(1);
     if (!command?.enabled) {
+      return refuse('command_disabled');
+    }
+    // A stored config that no longer parses reads as null; treating it as "no limits" would let
+    // any amount through, so the command is refused until an operator fixes the row.
+    if (command.hasStoredConfig && command.config === null) {
       return refuse('command_disabled');
     }
 
