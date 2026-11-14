@@ -41,6 +41,9 @@ export const user = pgTable(
     banned: boolean().default(false),
     banReason: text(),
     banExpires: timestamp({ withTimezone: true }),
+    // The ledger's play eligibility projection keeps the highest version it has seen. Bumped
+    // under this row's lock by every writer of an eligibility input, so it orders their pushes.
+    playEligibilityVersion: integer().notNull().default(0),
     // Required by the drizzle adapter when better-auth twoFactor() plugin is enabled.
     // Use logical JS property names only; drizzle.config.ts maps camelCase -> snake_case
     // for SQL identifiers so migrations and runtime are consistent.

@@ -1,0 +1,87 @@
+import { describe, it, expect } from 'vitest';
+import {
+  LEDGER_PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY_PROJECTION,
+  playRefusalOf,
+  type PlayEligibilityState,
+} from '@openora/core/contracts';
+import {
+  Container,
+  DRIZZLE,
+  ModuleRegistryImpl,
+  type CoreTokenCatalog,
+  type DrizzleService,
+} from '@openora/core/server';
+import { mock } from '../../testing/mock.js';
+import walletPlugin from '../plugin.js';
+
+const NOW = new Date('2026-06-01T12:00:00.000Z');
+const LATER = new Date('2026-06-02T12:00:00.000Z');
+const EARLIER = new Date('2026-05-31T12:00:00.000Z');
+
+const clear: PlayEligibilityState = {
+  rgBlocked: false,
+  rgBlockedUntil: null,
+  isActive: true,
+  banned: false,
+  banExpires: null,
+  status: 'active',
+};
+
+describe('playRefusalOf', () => {
+  it('lets a clear account play', () => {
+    expect(playRefusalOf(clear, NOW)).toBeNull();
+  });
+
+  it('refuses an RG block by its end: none is self-exclusion, a future one cooling-off', () => {
+    expect(playRefusalOf({ ...clear, rgBlocked: true }, NOW)).toBe('self_excluded');
+    expect(playRefusalOf({ ...clear, rgBlocked: true, rgBlockedUntil: LATER }, NOW)).toBe(
+      'cooling_off',
+    );
+  });
+
+  it('lets a player whose block has ended play before any sweep lifts it', () => {
+    expect(playRefusalOf({ ...clear, rgBlocked: true, rgBlockedUntil: EARLIER }, NOW)).toBeNull();
+  });
+
+  it('refuses by player status', () => {
+    expect(playRefusalOf({ ...clear, status: 'self_excluded' }, NOW)).toBe('self_excluded');
+    expect(playRefusalOf({ ...clear, status: 'suspended' }, NOW)).toBe('account_suspended');
+    expect(playRefusalOf({ ...clear, status: 'closed' }, NOW)).toBe('account_closed');
+  });
+
+  it('refuses an inactive account and a ban until it expires', () => {
+    expect(playRefusalOf({ ...clear, isActive: false }, NOW)).toBe('account_inactive');
+    expect(playRefusalOf({ ...clear, banned: true }, NOW)).toBe('account_inactive');
+    expect(playRefusalOf({ ...clear, banned: true, banExpires: LATER }, NOW)).toBe(
+      'account_inactive',
+    );
+    expect(playRefusalOf({ ...clear, banned: true, banExpires: EARLIER }, NOW)).toBeNull();
+  });
+});
+
+describe('the stake gate is sealed', () => {
+  const wallet = () => {
+    const container = new Container<CoreTokenCatalog>();
+    container.register(DRIZZLE, () => mock<DrizzleService>({}));
+    const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
+    walletPlugin.register(registry);
+    return { container, registry };
+  };
+
+  it.each([LEDGER_PLAY_ELIGIBILITY, PLAY_ELIGIBILITY_PROJECTION])(
+    'refuses an overlay rebinding %s after the wallet bound it',
+    (token) => {
+      const { container, registry } = wallet();
+      const bound = container.get(token);
+
+      expect(() =>
+        // @ts-expect-error The type already refuses a sealed token; the runtime must too.
+        registry.provide(token, () => bound),
+      ).toThrow(/Refusing to bind a sealed token/);
+      expect(() => registry.provideSealed(token, () => bound)).toThrow(/already bound/);
+      expect(() => container.register(token, () => bound)).toThrow(/is sealed/);
+      expect(container.get(token)).toBe(bound);
+    },
+  );
+});

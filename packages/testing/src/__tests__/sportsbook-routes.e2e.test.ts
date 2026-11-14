@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { and, asc, desc, eq, like } from 'drizzle-orm';
-import type { Paginated } from '@openora/core/contracts';
+import { PLAY_ELIGIBILITY_PROJECTION, type Paginated } from '@openora/core/contracts';
 import { DRIZZLE } from '@openora/core/server';
 import type { betting } from '@openora/core/sportsbook/contracts';
 import { auditLog } from '@openora/core/audit/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { player as playerProfile } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { backfillPlayEligibility } from '@openora/core/pam/identity/seed';
 import {
   sportsbookBet,
   sportsbookBetTransaction,
@@ -459,15 +460,21 @@ describe('sportsbook availability route', () => {
 });
 
 describe('sportsbook refusal reasons', () => {
-  const setUser = (userId: string, values: Partial<typeof user.$inferInsert>) =>
-    app.container.get(DRIZZLE).db.update(user).set(values).where(eq(user.id, userId));
+  // A direct write bypasses identity's publisher, so it re-projects as a script would.
+  const setUser = async (userId: string, values: Partial<typeof user.$inferInsert>) => {
+    const { db } = app.container.get(DRIZZLE);
+    await db.update(user).set(values).where(eq(user.id, userId));
+    await backfillPlayEligibility(db, app.container.get(PLAY_ELIGIBILITY_PROJECTION));
+  };
 
-  const setPlayerStatus = (userId: string, status: typeof playerProfile.$inferInsert.status) =>
-    app.container
-      .get(DRIZZLE)
-      .db.update(playerProfile)
-      .set({ status })
-      .where(eq(playerProfile.userId, userId));
+  const setPlayerStatus = async (
+    userId: string,
+    status: typeof playerProfile.$inferInsert.status,
+  ) => {
+    const { db } = app.container.get(DRIZZLE);
+    await db.update(playerProfile).set({ status }).where(eq(playerProfile.userId, userId));
+    await backfillPlayEligibility(db, app.container.get(PLAY_ELIGIBILITY_PROJECTION));
+  };
 
   // Blocking through the platform's routes also ends the login, so these write the state
   // directly: a block that reached the account while its login lived on.

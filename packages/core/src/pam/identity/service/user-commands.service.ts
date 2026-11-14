@@ -7,6 +7,7 @@ import { findOneOrThrow } from '@openora/core/server';
 import type { DrizzleService, DrizzleTx } from '@openora/core/server';
 import type { User, UserCommands } from '@openora/core/contracts';
 import { account, user } from '../schema/index.js';
+import type { PlayEligibilityPublisher } from './play-eligibility.service.js';
 
 function isUniqueViolation(error: unknown, constraint: string): boolean {
   const cause = error instanceof DatabaseError ? error : (error as Error)?.cause;
@@ -19,7 +20,14 @@ const generatedAdminUsername = () => `admin_${randomBytes(6).toString('hex')}`;
 
 /** Identity owns the `user` table, so sibling modules mutate it through this port. */
 export class DrizzleUserCommands implements UserCommands {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly playEligibility: PlayEligibilityPublisher,
+  ) {}
+
+  publishPlayEligibility(userId: User['id'], tx: unknown) {
+    return this.playEligibility.publish(tx as DrizzleTx, userId);
+  }
 
   async setUsername(userId: User['id'], username: string, tx?: unknown) {
     const db = tx === undefined ? this.drizzle.db : (tx as DrizzleTx);

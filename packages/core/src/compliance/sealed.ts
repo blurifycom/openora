@@ -1,6 +1,8 @@
 import {
   AUDIT_WRITER,
   BONUS_WAGERING,
+  LEDGER_PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY_PROJECTION,
   createSealedToken,
   type SealedToken,
 } from '@openora/core/contracts';
@@ -106,6 +108,9 @@ export const SEALED_TOKENS: readonly SealedToken<unknown>[] = [
   AGE_VERIFICATION_GATE,
   GEO_PLATFORM_DENY_LIST,
   GDPR_DATA_RIGHTS_WORKFLOW,
+  // The ledger's stake gate and its writer: rebinding either could turn off a self-exclusion.
+  LEDGER_PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY_PROJECTION,
 ];
 
 // Sealed identities that currently have a real owning-module implementation bound

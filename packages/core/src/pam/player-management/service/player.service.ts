@@ -317,6 +317,7 @@ export class PlayerService implements PlayerActivityTracker {
           previousStatus: locked.status,
           newStatus: data.status,
         });
+        await this.userCommands.publishPlayEligibility(locked.userId, trx);
       }
       return locked;
     });
@@ -364,6 +365,7 @@ export class PlayerService implements PlayerActivityTracker {
         previousStatus: locked.status,
         newStatus: 'suspended',
       });
+      await this.userCommands.publishPlayEligibility(userId, trx);
     });
     // Also on a redelivery that finds the player already blocked: the revoke may be what failed.
     await this.sessionCommands.revokeAll(userId);
@@ -432,6 +434,7 @@ export class PlayerService implements PlayerActivityTracker {
           previousStatus: locked.status,
           newStatus: 'closed',
         });
+        await this.userCommands.publishPlayEligibility(locked.userId, trx);
       }
       return locked;
     });

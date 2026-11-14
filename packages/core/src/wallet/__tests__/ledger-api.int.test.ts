@@ -20,6 +20,7 @@ import {
   type LedgerV1BetArgs,
   type LedgerV1MoveOutcome,
   type PlayEligibilityPort,
+  type PlayEligibilitySnapshot,
   type RgLimitsPort,
   type WalletCommands,
 } from '@openora/core/contracts';
@@ -41,6 +42,7 @@ import { mock, makeAuditWriter, makeEventBus, makeIdentityReader } from '../../t
 import { migrate } from '../migrate.js';
 import { ledgerApiRequest, wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import walletPlugin from '../plugin.js';
+import { ledgerPlayEligibilityProjection } from '../service/ledger-play-eligibility.service.js';
 
 let db: TestDb;
 let api: LedgerApiV1;
@@ -49,7 +51,7 @@ let gamingCommands: GamingCommands;
 const events = makeEventBus();
 const PROVIDER = 'acme-games';
 
-const unrestricted = mock<PlayEligibilityPort>({
+const unrestricted = mock<Required<PlayEligibilityPort>>({
   isRestricted: vi.fn().mockResolvedValue(false),
   checkPlay: vi.fn().mockResolvedValue(null),
 });
@@ -62,10 +64,10 @@ function boot(register: (container: Container<CoreTokenCatalog>) => void = () =>
   container.register(AUDIT_WRITER, () => makeAuditWriter());
   container.register(IDENTITY_READER, () => makeIdentityReader());
   container.register(PLAY_ELIGIBILITY, () => unrestricted);
-  register(container);
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   walletPlugin.register(registry);
   gamingPlugin.register(registry);
+  register(container);
   return container;
 }
 
@@ -109,6 +111,21 @@ async function seedGame(rtp: string | null = '0.96') {
   return row;
 }
 
+/** The standing the ledger's own projection holds for a user; a stake reads only this. */
+const standing = (userId: string, rgBlocked = false, version = 0): PlayEligibilitySnapshot => ({
+  userId,
+  rgBlocked,
+  rgBlockedUntil: null,
+  isActive: true,
+  banned: false,
+  banExpires: null,
+  status: 'active',
+  version,
+});
+
+const project = (snapshot: PlayEligibilitySnapshot) =>
+  ledgerPlayEligibilityProjection(db.drizzle.db).reconcile([snapshot]);
+
 async function seedPlayer(balance = '100') {
   const userId = randomUUID();
   const row = findOneOrThrow(
@@ -118,6 +135,7 @@ async function seedPlayer(balance = '100') {
   await db.drizzle.db
     .insert(walletBalance)
     .values({ walletId: row.id, currency: 'USD', amount: balance });
+  await project(standing(userId));
   return { userId, walletId: row.id };
 }
 
@@ -276,9 +294,11 @@ describe('Ledger API v1 bet (real PG)', () => {
     const refusedBy = async (
       register: (container: Container<CoreTokenCatalog>) => void,
       reason: string,
+      arrange: (userId: string) => Promise<unknown> = async () => {},
     ) => {
       const guarded = boot(register).get(LEDGER_API_V1);
-      const { walletId, betArgs } = await setup();
+      const { walletId, userId, betArgs } = await setup();
+      await arrange(userId);
       const args = betArgs();
 
       expect(await guarded.bet(args)).toEqual({ status: 'refused', reason });
@@ -289,14 +309,9 @@ describe('Ledger API v1 bet (real PG)', () => {
 
     it('a self-excluded player as player_blocked', () =>
       refusedBy(
-        (c) =>
-          c.register(PLAY_ELIGIBILITY, () =>
-            mock<PlayEligibilityPort>({
-              isRestricted: vi.fn().mockResolvedValue(true),
-              checkPlay: vi.fn().mockResolvedValue('self_excluded'),
-            }),
-          ),
+        () => {},
         'player_blocked',
+        (userId) => project(standing(userId, true, 1)),
       ));
 
     it('a reached wager limit as limit', () =>

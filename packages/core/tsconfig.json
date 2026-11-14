@@ -102,6 +102,7 @@
       "@openora/core/pam/contracts/player-note": ["./src/pam/player-note/contract/index.ts"],
       "@openora/core/pam/contracts/profile": ["./src/pam/profile/contract/index.ts"],
       "@openora/core/pam/contracts/tag": ["./src/pam/tag/contract/index.ts"],
+      "@openora/core/pam/identity/seed": ["./src/pam/identity/seed/index.ts"],
       "@openora/core/pam/migrate/identity": ["./src/pam/identity/migrate.ts"],
       "@openora/core/pam/migrate/player-note": ["./src/pam/player-note/migrate.ts"],
       "@openora/core/pam/migrate/profile": ["./src/pam/profile/migrate.ts"],

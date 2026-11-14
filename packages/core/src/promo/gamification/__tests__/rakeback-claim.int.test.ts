@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  seedPlayerWithUser,
+  waitForRowLockWaiter,
+  type TestDb,
+} from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import type {
   AuditWritePort,
@@ -11,8 +16,9 @@ import type {
   WalletCommands,
   WalletCreditArgs,
 } from '@openora/core/contracts';
-import { moneyScaleBy, type EventBus } from '@openora/core/server';
+import { moneyScaleBy, type DrizzleTx, type EventBus } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
+import { player } from '@openora/core/pam/schema/profile';
 import { migrate } from '../migrate.js';
 import { migrate as identityMigrate } from '@openora/core/pam/migrate/identity';
 import { migrate as profileMigrate } from '@openora/core/pam/migrate/profile';
@@ -369,6 +375,38 @@ describe('a player claiming their rakeback', () => {
     await expect(claimsWith().claim(userId, randomUUID())).rejects.toBeInstanceOf(
       RakebackAccountBlockedError,
     );
+    expect(credit).not.toHaveBeenCalled();
+  });
+
+  it('waits out an admin suspending the player mid-claim instead of deadlocking it', async () => {
+    const userId = await newPlayer();
+    await accrue(userId, '5');
+    // Identity's eligibility read locks the user row, as the real port does.
+    isRestricted.mockImplementation(async (id, tx) => {
+      await (tx as DrizzleTx).select().from(user).where(eq(user.id, id)).for('share');
+      return false;
+    });
+    let releaseSuspend = () => {};
+    let playerLocked = () => {};
+    const locked = new Promise<void>((resolve) => (playerLocked = resolve));
+    // A status writer: the player row, then identity republishing eligibility on the user row.
+    const suspend = db.drizzle.db.transaction(async (tx) => {
+      await tx.update(player).set({ status: 'suspended' }).where(eq(player.userId, userId));
+      playerLocked();
+      await new Promise<void>((resolve) => (releaseSuspend = resolve));
+      await tx
+        .update(user)
+        .set({ playEligibilityVersion: sql`${user.playEligibilityVersion} + 1` })
+        .where(eq(user.id, userId));
+    });
+    await locked;
+
+    const claim = claimsWith().claim(userId, randomUUID());
+    await waitForRowLockWaiter(db);
+    releaseSuspend();
+
+    await expect(suspend).resolves.toBeUndefined();
+    await expect(claim).rejects.toBeInstanceOf(RakebackAccountBlockedError);
     expect(credit).not.toHaveBeenCalled();
   });
 

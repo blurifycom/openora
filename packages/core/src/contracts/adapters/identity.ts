@@ -58,6 +58,11 @@ export type UserCommands = {
     input: { email: string; name: string; password: string },
     tx?: unknown,
   ): Promise<{ id: string }>;
+  /**
+   * Writes the user's play eligibility to the ledger's projection on `tx`, after the caller
+   * changed an input to it (the player status), so both commit or roll back together.
+   */
+  publishPlayEligibility(userId: string, tx: unknown): Promise<void>;
 };
 
 export const USER_COMMANDS: Token<UserCommands> = createToken<UserCommands>('USER_COMMANDS');

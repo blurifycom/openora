@@ -4,10 +4,16 @@ import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate } from '../migrate.js';
 import { DrizzleUserCommands } from '../service/user-commands.service.js';
+import { PlayEligibilityPublisher } from '../service/play-eligibility.service.js';
+import { makeEventBus } from '../../../testing/mock.js';
 
 let db: TestDb;
 
-const commands = () => new DrizzleUserCommands(db.drizzle);
+const commands = () =>
+  new DrizzleUserCommands(
+    db.drizzle,
+    new PlayEligibilityPublisher(db.drizzle, makeEventBus(), () => undefined),
+  );
 
 beforeAll(async () => {
   db = await createTestDb([migrate]);
