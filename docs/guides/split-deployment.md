@@ -120,11 +120,13 @@ Rollback is routing. Redeploy the main API with plain `chat` in the manifest so 
 
 ## Operational log signals
 
-Two warnings exist to be alarmed on. A log metric filter matches the message text exactly, so the strings are part of the contract. Neither carries an event payload or player data.
+Two warnings exist to be alarmed on. A log metric filter matches the message text exactly, so the strings are part of the contract. Neither carries an event payload or player data. Both fire per replica, so a deployment with several replicas can log each one.
 
-| Message | Fields | Fires |
-| --- | --- | --- |
-| `event outbox lagging` | `pending`, `oldestPendingAgeMs` | The oldest unpublished `event_outbox` row (claimed or not) is older than 60 seconds. Logged by the relay at most once a minute per replica. Age is read on the database clock. |
-| `stream consumer lagging` | `stream`, `group`, `pending` | A consumer group has more than 100 delivered but unacknowledged entries on a stream. Logged at most once a minute per stream and group, from the reclaim step. |
+| Message                   | Fields                          | Fires                                                                                                                                                                                                                      |
+| ------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `event outbox lagging`    | `pending`, `oldestPendingAgeMs` | The oldest unpublished `event_outbox` row (claimed or not) is older than 60 seconds. Logged by the relay at most once a minute per replica, after a drain. Age is read on the database clock from the row's `occurred_at`. |
+| `stream consumer lagging` | `stream`, `group`, `pending`    | A consumer group has more than 100 delivered but unacknowledged entries on a stream. Logged at most once a minute per stream and group, from the reclaim step.                                                             |
 
-The first means the relay is not publishing: broker down, relay stopped, or a row failing every attempt. The second means the handlers of that group are slow or failing.
+The first means a relay is running but not publishing: broker down, or a row failing every attempt. It cannot fire when no relay runs at all, so cover that with a log-absence alarm or a periodic health check on `eventOutboxBacklog(db)`. The second means the handlers of that group are slow or failing.
+
+Generic alarms to start from: page on one `event outbox lagging` line, since it already means a row is over a minute old. Alert on `stream consumer lagging` when it appears in 3 of 5 consecutive minutes.

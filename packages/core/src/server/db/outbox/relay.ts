@@ -31,7 +31,7 @@ export type EventOutboxBacklog = { pending: number; oldestPendingAgeMs: number }
 export async function eventOutboxBacklog(db: DrizzleDb): Promise<EventOutboxBacklog> {
   const result = await db.execute<{ pending: number; oldest_pending_age_ms: number | null }>(sql`
     SELECT count(*)::int AS pending,
-           (extract(epoch FROM now() - min(created_at)) * 1000)::float8 AS oldest_pending_age_ms
+           (extract(epoch FROM now() - min(occurred_at)) * 1000)::float8 AS oldest_pending_age_ms
     FROM ${eventOutbox}
     WHERE ${isNull(eventOutbox.publishedAt)}
   `);
@@ -128,7 +128,6 @@ export class OutboxRelay {
     this.draining = true;
     try {
       await this.pruneIfDue();
-      await this.reportLagIfDue();
       const batch = await this.claimBatch();
       const deadline = Date.now() + PUBLISH_BUDGET_MS;
       const published: EventOutboxRow['eventId'][] = [];
@@ -157,6 +156,7 @@ export class OutboxRelay {
       this.opts.onError?.(err);
       return 0;
     } finally {
+      await this.reportLagIfDue();
       this.draining = false;
     }
   }
@@ -214,6 +214,7 @@ export class OutboxRelay {
         );
       }
     } catch (err) {
+      logger.error({ err }, 'event outbox lag check failed');
       this.opts.onError?.(err);
     }
   }

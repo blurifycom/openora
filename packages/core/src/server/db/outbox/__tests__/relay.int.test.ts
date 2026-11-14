@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { MessageBrokerAdapter, EventEnvelope } from '@openora/core/contracts';
@@ -342,18 +342,32 @@ describe('OutboxRelay poll loop (real PG)', () => {
   });
 });
 
+function failingBroker(): MessageBrokerAdapter {
+  return {
+    publish: async () => {
+      throw new Error('broker down');
+    },
+    subscribe: () => () => {},
+    close: async () => {},
+  };
+}
+
 describe('event outbox lag', () => {
   const TWO_MINUTES_MS = 120_000;
-  const staleCreatedAt = () => new Date(Date.now() - TWO_MINUTES_MS);
+  const staleOccurredAt = () => new Date(Date.now() - TWO_MINUTES_MS);
 
   beforeEach(() => {
     relayWarn.mockClear();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('backlog counts unpublished rows, claimed or not, and ignores published ones', async () => {
-    await seedRow({ createdAt: staleCreatedAt() });
-    await seedRow({ createdAt: staleCreatedAt(), claimedAt: new Date() });
-    await seedRow({ createdAt: staleCreatedAt(), publishedAt: new Date() });
+    await seedRow({ occurredAt: staleOccurredAt() });
+    await seedRow({ occurredAt: staleOccurredAt(), claimedAt: new Date() });
+    await seedRow({ occurredAt: staleOccurredAt(), publishedAt: new Date() });
 
     const backlog = await eventOutboxBacklog(db.drizzle.db);
 
@@ -366,8 +380,8 @@ describe('event outbox lag', () => {
   });
 
   it('logs when the oldest pending row is past the threshold', async () => {
-    await seedRow({ createdAt: staleCreatedAt() });
-    const relay = new OutboxRelay(db.drizzle.db, brokerThat());
+    await seedRow({ occurredAt: staleOccurredAt() });
+    const relay = new OutboxRelay(db.drizzle.db, failingBroker(), { onError: () => {} });
 
     await relay.drainOnce();
 
@@ -379,7 +393,7 @@ describe('event outbox lag', () => {
   });
 
   it('counts a claimed but unpublished row', async () => {
-    await seedRow({ createdAt: staleCreatedAt(), claimedAt: new Date() });
+    await seedRow({ occurredAt: staleOccurredAt(), claimedAt: new Date() });
     const relay = new OutboxRelay(db.drizzle.db, brokerThat());
 
     await relay.drainOnce();
@@ -389,7 +403,7 @@ describe('event outbox lag', () => {
 
   it('does not log for a fresh row or a published one', async () => {
     await seedRow();
-    await seedRow({ createdAt: staleCreatedAt(), publishedAt: new Date() });
+    await seedRow({ occurredAt: staleOccurredAt(), publishedAt: new Date() });
     const relay = new OutboxRelay(db.drizzle.db, brokerThat());
 
     await relay.drainOnce();
@@ -398,27 +412,20 @@ describe('event outbox lag', () => {
   });
 
   it('logs at most once a minute across repeated drains', async () => {
-    const failing: MessageBrokerAdapter = {
-      publish: async () => {
-        throw new Error('broker down');
-      },
-      subscribe: () => () => {},
-      close: async () => {},
-    };
-    await seedRow({ createdAt: staleCreatedAt() });
-    const relay = new OutboxRelay(db.drizzle.db, failing, { onError: () => {} });
+    await seedRow({ occurredAt: staleOccurredAt() });
+    const relay = new OutboxRelay(db.drizzle.db, failingBroker(), { onError: () => {} });
     const realNow = Date.now();
-    const now = vi.spyOn(Date, 'now').mockReturnValue(realNow);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(realNow);
 
     await relay.drainOnce();
     await relay.drainOnce();
-    now.mockReturnValue(realNow + 30_000);
+    vi.setSystemTime(realNow + 30_000);
     await relay.drainOnce();
     expect(relayWarn).toHaveBeenCalledTimes(1);
 
-    now.mockReturnValue(realNow + 61_000);
+    vi.setSystemTime(realNow + 61_000);
     await relay.drainOnce();
     expect(relayWarn).toHaveBeenCalledTimes(2);
-    now.mockRestore();
   });
 });

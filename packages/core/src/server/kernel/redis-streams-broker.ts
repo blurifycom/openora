@@ -279,7 +279,7 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
         this.logger.warn({ stream: key, group, pending }, 'stream consumer lagging');
       }
     } catch (err) {
-      this.logger.error({ err, key, group }, 'stream lag check failed');
+      this.logger.error({ err, stream: key, group }, 'stream lag check failed');
     }
   }
 

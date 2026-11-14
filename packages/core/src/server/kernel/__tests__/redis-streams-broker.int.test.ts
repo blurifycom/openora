@@ -4,7 +4,22 @@ import { MAX_DELIVERIES, RedisStreamsBroker } from '../redis-streams-broker.js';
 import { EVENT_RETENTION_MS } from '../event-bus.js';
 import { createTestRedis, waitForConsumerGroup, type TestRedis } from '@openora/core/testing';
 import type { EventEnvelope } from '@openora/core/contracts';
-import type { Logger } from 'pino';
+
+const { brokerWarn } = vi.hoisted(() => ({ brokerWarn: vi.fn() }));
+
+vi.mock('../logger.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../logger.js')>();
+  return {
+    ...actual,
+    createLogger: (name: string) => {
+      const logger = actual.createLogger(name);
+      if (name === 'message-broker') {
+        logger.warn = brokerWarn;
+      }
+      return logger;
+    },
+  };
+});
 
 let redis: TestRedis;
 const brokers: RedisStreamsBroker[] = [];
@@ -48,6 +63,8 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
+  brokerWarn.mockClear();
   await Promise.allSettled(brokers.map((b) => b.close()));
   brokers.length = 0;
   await redis.flush();
@@ -391,7 +408,6 @@ describe('RedisStreamsBroker consumer lag', () => {
 
   it('logs stream consumer lagging while a handler leaves entries unacked, and stops after they are acked', async () => {
     const broker = makeBroker('lag-svc', { intervalMs: 50, minIdleMs: 60_000 });
-    const warn = vi.spyOn((broker as unknown as { logger: Logger }).logger, 'warn');
     const topic = uniqueTopic();
     broker.subscribe(topic, () => {
       throw new Error('never acks');
@@ -402,13 +418,13 @@ describe('RedisStreamsBroker consumer lag', () => {
     }
 
     await vi.waitFor(() => {
-      expect(warn).toHaveBeenCalledWith(
+      expect(brokerWarn).toHaveBeenCalledWith(
         { stream: streamOf(topic), group: 'lag-svc', pending: LAGGING },
         'stream consumer lagging',
       );
     });
     await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(brokerWarn).toHaveBeenCalledTimes(1);
 
     const pending = await redis.client.xPendingRange(streamOf(topic), 'lag-svc', '-', '+', 200);
     await redis.client.xAck(
@@ -416,12 +432,11 @@ describe('RedisStreamsBroker consumer lag', () => {
       'lag-svc',
       pending.map((entry) => entry.id),
     );
-    warn.mockClear();
-    const realNow = Date.now();
-    vi.spyOn(Date, 'now').mockReturnValue(realNow + 120_000);
+    brokerWarn.mockClear();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 120_000);
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    expect(warn).not.toHaveBeenCalled();
-    vi.restoreAllMocks();
+    expect(brokerWarn).not.toHaveBeenCalled();
   });
 });
