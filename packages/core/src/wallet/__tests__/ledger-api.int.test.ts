@@ -178,6 +178,10 @@ async function roundOf(externalRoundId: string) {
   );
 }
 
+function roundEnded() {
+  return events.emitInTransaction.mock.calls.filter(([, name]) => name === 'gaming.round.ended');
+}
+
 async function setup(balance = '100', rtp: string | null = '0.96') {
   const g = await seedGame(rtp);
   const player = await seedPlayer(balance);
@@ -925,7 +929,7 @@ describe('Ledger API v1 win and round (real PG)', () => {
     });
   });
 
-  it('ends a round once: a repeated close or final win answers the totals without a second event', async () => {
+  it('ends a round once: a repeated close answers the totals without a second event, a late paying win re-announces it', async () => {
     const { userId, game: g, betArgs } = await setup();
     const bet = betArgs();
     await api.bet(bet);
@@ -937,20 +941,33 @@ describe('Ledger API v1 win and round (real PG)', () => {
         externalRoundId: bet.externalRoundId,
         currency: 'USD',
       });
-    const roundEnded = () =>
-      events.emitInTransaction.mock.calls.filter(([, name]) => name === 'gaming.round.ended');
 
     await close();
     const endedAt = (await roundOf(bet.externalRoundId)).endedAt;
+    await close();
+    expect(roundEnded()).toHaveLength(1);
+
     expectMoved(
       await api.win({ ...bet, providerRefId: `w-${randomUUID()}`, amount: '3', isFinal: true }),
       'applied',
     );
     const again = await close();
 
-    expect(roundEnded()).toHaveLength(1);
+    expect(roundEnded()).toHaveLength(2);
     expect(again.status === 'closed' && moneyEquals(again.winAmount, '3')).toBe(true);
     expect((await roundOf(bet.externalRoundId)).endedAt).toEqual(endedAt);
+  });
+
+  it('ends a round its close opens exactly once when two closes race', async () => {
+    const { userId, game: g } = await setup();
+    const externalRoundId = `race-${randomUUID()}`;
+    events.emitInTransaction.mockClear();
+    const close = () => api.closeRound({ userId, gameId: g.id, externalRoundId, currency: 'USD' });
+
+    const outcomes = await Promise.all([close(), close()]);
+
+    expect(outcomes.map((o) => o.status)).toEqual(['closed', 'closed']);
+    expect(roundEnded()).toHaveLength(1);
   });
 
   it('refuses to close another player round as round_mismatch', async () => {

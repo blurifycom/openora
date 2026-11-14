@@ -305,7 +305,8 @@ export class LedgerApiService implements LedgerApiV1 {
           winDelta: args.amount,
           ...(args.isFinal ? { isFinal: true } : {}),
         });
-        if (round.ended) {
+        // A late final win that pays still re-announces the round, so readers see its new total.
+        if (round.ended || (args.isFinal && isPositiveMoney(args.amount))) {
           await this.emit(tx, 'gaming.round.ended', { roundId: round.roundId, userId, playerId });
         }
         if (!isPositiveMoney(args.amount)) {
