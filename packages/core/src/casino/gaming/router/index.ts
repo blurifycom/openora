@@ -65,6 +65,7 @@ import {
 } from '../service/game-favorite.service.js';
 import {
   GameBulkTooManyGamesError,
+  GamingUnknownGameError,
   MaxBetExceededError,
   RgLimitExceededError,
   type CacheAdapter,
@@ -162,7 +163,7 @@ export function createGamingRouter({
     startRound: os.startRound.handler(({ input, context }) =>
       mapErrors(
         {
-          NOT_FOUND: GameNotFoundError,
+          NOT_FOUND: [GameNotFoundError, GamingUnknownGameError],
           CONFLICT: [RgRestrictedError, RgLimitExceededError, GameGeoRestrictedError],
           BAD_REQUEST: [InsufficientBalanceError, MaxBetExceededError],
         },

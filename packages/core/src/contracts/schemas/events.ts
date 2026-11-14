@@ -21,6 +21,7 @@ import {
   GameSortKeySchema,
   GameSortParamsSchema,
   GameTagSnapshotSchema,
+  GAME_TYPES,
 } from './game.js';
 import {
   GEO_RULE_ADMIN_SOURCE,
@@ -712,6 +713,23 @@ export const domainEventSchemas = {
     gameIds: z.array(UuidSchema).max(1000),
     tagIds: z.array(UuidSchema).max(1000),
     providerIds: z.array(UuidSchema).max(1000),
+  }),
+  // The catalogue facts a round needs, as committed, for the ledger side's `ledger_game`
+  // projection. Written to the outbox in the transaction that read them; `version` is the
+  // game row's ledger_version, drawn from a sequence, so a consumer keeps the highest one and
+  // ignores the rest. Not `gaming.games.changed`, which feeds the category triggers.
+  'gaming.ledger_game.projected': z.object({
+    games: z
+      .array(
+        z.object({
+          gameId: UuidSchema,
+          providerId: UuidSchema,
+          gameType: z.enum(GAME_TYPES),
+          version: z.number().int().nonnegative(),
+        }),
+      )
+      .min(1)
+      .max(1000),
   }),
   'gaming.tag.created': authContextBase
     .extend({ tagId: UuidSchema })

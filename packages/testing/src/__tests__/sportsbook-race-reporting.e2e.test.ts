@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DRIZZLE } from '@openora/core/server';
 import type { SportsbookReserveArgs } from '@openora/core/contracts';
 import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
+import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import {
   asPlayer,
   closeE2e,
@@ -357,6 +358,8 @@ describe('revenue by product', () => {
         })),
       )
       .returning();
+    // Reporting types a round through the round ledger's projection, as an importer's notify fills it.
+    await backfillLedgerGames(drizzle);
     const played = await window(() =>
       drizzle.insert(gameRound).values([
         {

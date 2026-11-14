@@ -61,9 +61,12 @@ export type FinancialGgrQuery = z.infer<typeof FinancialGgrQuerySchema>;
 /**
  * Stakes and payouts per product. A sportsbook stake counts when the bet is accepted and only its
  * cash part; a payout counts when the bet settles, and a reopen takes it back in the reopen's period.
+ * A round on a game the round ledger has not projected yet counts as `unclassified`, never as a
+ * guessed product.
  */
+export const UNCLASSIFIED_PRODUCT = 'unclassified';
 export const ProductRevenueSchema = z.object({
-  product: GameTypeSchema,
+  product: z.union([GameTypeSchema, z.literal(UNCLASSIFIED_PRODUCT)]),
   currency: CurrencyTickerSchema,
   stakes: MoneyAmountSchema,
   payouts: SignedMoneyAmountSchema,

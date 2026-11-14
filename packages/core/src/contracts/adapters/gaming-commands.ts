@@ -44,7 +44,30 @@ export type GamingNotifyGamesChangedArgs = {
   providerIds?: readonly string[];
 };
 
+/**
+ * A stake would open a new round on a game the ledger has no `ledger_game` row for: the catalogue
+ * never reported it, or the projection has not caught up. Only that stake is refused; a call with
+ * no stake (a win, a refund, a rollback, a final) never is, even as a round's first call (a
+ * free-round result, a settle that arrives before its bet), and neither is a stake on a round that
+ * already exists. Thrown before any round row or money moves, so the caller's transaction rolls
+ * back whole. A provider bridge answers it with a final, non-retry "unknown game" code that
+ * refuses the bet.
+ */
+export class GamingUnknownGameError extends Error {
+  readonly gameId: string;
+  constructor(gameId: string) {
+    super(`game ${gameId} is unknown to the round ledger`);
+    this.name = 'GamingUnknownGameError';
+    this.gameId = gameId;
+  }
+}
+
 export type GamingCommands = {
+  /**
+   * Throws GamingUnknownGameError, before writing anything, when the call carries a positive
+   * `betDelta`, no round with this `externalRoundId` exists yet, and `ledger_game` lacks the
+   * game. A call with no stake, or on an existing round, is never refused for its game.
+   */
   accumulateExternalRound(
     tx: unknown,
     args: GamingAccumulateExternalRoundArgs,

@@ -6,13 +6,16 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { migrate as migrateBetting } from '@openora/core/sportsbook/migrate/betting';
-import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
+import { game, gameProvider, gameRound, ledgerGame } from '@openora/core/casino/schema/gaming';
+import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
+import { eq } from 'drizzle-orm';
 import {
   sportsbookBet,
   sportsbookBetTransaction,
   sportsbookSession,
 } from '@openora/core/sportsbook/schema/betting';
 import { mock } from '../../testing/mock.js';
+import { UNCLASSIFIED_PRODUCT } from '../contract/index.js';
 import { FinancialAnalyticsService } from '../service/financial-analytics.service.js';
 
 let db: TestDb;
@@ -46,6 +49,7 @@ async function seedRound(gameType: GameType, betAmount: string, winAmount: strin
       .returning(),
     new Error('seed: no game'),
   );
+  await backfillLedgerGames(db.drizzle.db);
   await db.drizzle.db.insert(gameRound).values({
     gameId: row.id,
     userId: randomUUID(),
@@ -54,6 +58,7 @@ async function seedRound(gameType: GameType, betAmount: string, winAmount: strin
     winAmount,
     status: 'completed',
   });
+  return row;
 }
 
 async function seedSettledBet() {
@@ -119,9 +124,11 @@ const products = () =>
     })),
   );
 
+let casinoGame: Awaited<ReturnType<typeof seedRound>>;
+
 beforeAll(async () => {
   db = await createTestDb([migrateWallet, migrateGaming]);
-  await seedRound('casino', '5', '2');
+  casinoGame = await seedRound('casino', '5', '2');
   await seedRound('sportsbook', '4', '1');
   service = new FinancialAnalyticsService(db.drizzle, uncached());
 });
@@ -161,5 +168,25 @@ describe('revenue by product read from the database, with no sportsbook plugin l
 
     expect(execute).not.toHaveBeenCalled();
     execute.mockRestore();
+  });
+
+  it('keeps the rounds of a game the catalogue deleted in GGR', async () => {
+    const before = await products();
+
+    await db.drizzle.db.delete(game).where(eq(game.id, casinoGame.id));
+
+    await expect(products()).resolves.toEqual(before);
+    expect(before).toContainEqual({ product: 'casino', stakes: 5, payouts: 2 });
+  });
+
+  it('reports the rounds of a game the ledger has not projected as unclassified, never as casino', async () => {
+    const before = await products();
+    const unprojected = await seedRound('sportsbook', '3', '1');
+    await db.drizzle.db.delete(ledgerGame).where(eq(ledgerGame.gameId, unprojected.id));
+
+    await expect(products()).resolves.toEqual([
+      ...before,
+      { product: UNCLASSIFIED_PRODUCT, stakes: 3, payouts: 1 },
+    ]);
   });
 });

@@ -33,6 +33,11 @@ export const AUDIT_COVERAGE_GAPS = {
     writer: 'WalletService manual adjustment via recordInTransaction',
     reason: 'joins the balance mutation, with the balance before and after',
   },
+  'gaming.ledger_game.projected': {
+    kind: 'exempt',
+    reason:
+      'a projection feed for the round ledger; the catalogue change behind it is audited as gaming.game.updated or by the importer that wrote it',
+  },
   'wallet.balance.changed': {
     kind: 'exempt',
     reason:

@@ -1,5 +1,10 @@
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
+import type {
+  CoreTokenCatalog,
+  DrizzleService,
+  Plugin,
+  TypedContainer,
+} from '@openora/core/server';
 import {
   ADMIN_GAME_REPORTING,
   GAME_ADAPTER,
@@ -17,6 +22,7 @@ import {
   WALLET_COMMANDS,
   createGameSortCatalog,
   createGameCategoryRuleCatalog,
+  domainEventSchemas,
   CACHE,
   type CacheAdapter,
 } from '@openora/core/contracts';
@@ -35,6 +41,11 @@ import { GameTagService } from './service/game-tag.service.js';
 import { GameProviderService } from './service/game-provider.service.js';
 import { GameBulkService } from './service/game-bulk.service.js';
 import { GameFavoriteService } from './service/game-favorite.service.js';
+import {
+  applyLedgerGames,
+  backfillLedgerGamesAtBoot,
+  retryUntilDone,
+} from './service/ledger-game.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
@@ -50,6 +61,8 @@ import {
   GameCategoryRankJobSchema,
   GameCategoryRankSweepJobSchema,
 } from './contract/index.js';
+
+const logger = createLogger('gaming');
 
 export default {
   id: 'gaming',
@@ -133,6 +146,7 @@ export default {
     let rankingRef: GameSortRankingService | null = null;
     let triggersRef: GameSortTriggerService | null = null;
     let catalogCacheRef: CacheAdapter | undefined;
+    let drizzleRef: DrizzleService | undefined;
     const requireTriggers = () => {
       if (!triggersRef) {
         throw new Error('gaming: sort trigger service not constructed yet');
@@ -168,6 +182,14 @@ export default {
     ctx.events.on('gaming.games.changed', (payload) => {
       requireTriggers().gamesChanged(payload);
       requireMembership().triggers.gamesChanged(payload);
+    });
+    // The round ledger's projection: idempotent and order-proof by version, see ledger-game.service.ts.
+    ctx.events.on('gaming.ledger_game.projected', async (payload) => {
+      if (!drizzleRef) {
+        throw new Error('gaming: ledger projection not constructed yet');
+      }
+      const { games } = domainEventSchemas['gaming.ledger_game.projected'].parse(payload);
+      await applyLedgerGames(drizzleRef.db, games);
     });
     ctx.events.on('gaming.tag.deleted', (payload) =>
       requireMembership().triggers.tagDeleted(payload),
@@ -208,7 +230,23 @@ export default {
       },
     });
 
+    // createApp runs this factory in every process, a `:no-routes` or worker-only one included
+    // (module-registry.ts), synchronously before any event is delivered.
     ctx.routers.add('gaming', (c) => {
+      drizzleRef = c.get(DRIZZLE);
+      // Fails closed until it lands: a stake on a game not yet projected is refused, never played.
+      const bootBackfill = new AbortController();
+      c.onDispose(() => bootBackfill.abort());
+      const db = drizzleRef.db;
+      void retryUntilDone(() => backfillLedgerGamesAtBoot(db), {
+        signal: bootBackfill.signal,
+        onFailure: (err, retryInMs) =>
+          logger.error({ err, retryInMs }, 'gaming: ledger_game boot backfill failed, retrying'),
+      }).then((projected) => {
+        if (projected !== undefined) {
+          logger.info({ projected }, 'gaming: ledger_game backfilled at boot');
+        }
+      });
       const jobQueue = c.get(JOB_QUEUE);
       catalogCacheRef = c.get(CACHE);
       const sortCatalog = c.get(GAME_SORT_CATALOG);
@@ -244,7 +282,10 @@ export default {
       setGameAvailability: (args) => gamingService(c).setGameAvailability(args),
       setGameAvailabilityInTransaction: (tx, args) =>
         gamingService(c).setGameAvailabilityInTransaction(tx, args),
-      notifyGamesCreated: (args) => membershipServices(c).triggers.notifyGamesCreated(args.gameIds),
+      notifyGamesCreated: async (args) => {
+        await gamingService(c).projectLedgerGames(args.gameIds);
+        await membershipServices(c).triggers.notifyGamesCreated(args.gameIds);
+      },
       notifyGamesChanged: (args) => gamingService(c).notifyGamesChanged(args),
     }));
   },

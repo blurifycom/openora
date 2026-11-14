@@ -1,10 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate } from '../migrate.js';
-import { game, gameCategory, gameCategoryGame, gameProvider, gameRound } from '../schema/index.js';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameRound,
+  ledgerGame,
+} from '../schema/index.js';
 import { DrizzleAdminGameReporting } from '../admin-reporting.js';
+import { backfillLedgerGames } from '../seed/index.js';
 
 let db: TestDb;
 let reporting: DrizzleAdminGameReporting;
@@ -65,7 +73,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${gameRound}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${gameRound}, ${ledgerGame}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -193,6 +201,26 @@ describe('DrizzleAdminGameReporting.listGamePerformance (real PG)', () => {
     const rows = await reporting.listGamePerformance({});
 
     expect(rows.map((r) => r.gameId)).toEqual([high.id, low.id]);
+  });
+
+  it('keeps the GGR of a game the catalogue deleted, under its id', async () => {
+    const g = await seedGame();
+    await seedRound(g.id, { betAmount: '100', winAmount: '30' });
+    await backfillLedgerGames(db.drizzle.db);
+    const [before] = await reporting.listGamePerformance({});
+
+    await db.drizzle.db.delete(game).where(eq(game.id, g.id));
+
+    expect(await reporting.listGamePerformance({})).toEqual([{ ...before, name: g.id }]);
+    expect(Number(before?.revenue)).toBe(70);
+    expect(
+      await reporting.getGamePerformanceTrend({
+        gameId: g.id,
+        granularity: 'month',
+        dateFrom: AT('2026-01-01T00:00:00.000Z'),
+        dateTo: AT('2026-01-31T23:59:59.999Z'),
+      }),
+    ).toMatchObject({ totals: { roundsPlayed: 1 } });
   });
 });
 

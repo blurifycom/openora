@@ -1,5 +1,9 @@
 import * as z from 'zod';
-import { createGameSortCatalog, defineGameSort } from '@openora/core/contracts';
+import {
+  createGameSortCatalog,
+  defineGameSort,
+  GamingUnknownGameError,
+} from '@openora/core/contracts';
 import { GameSortService } from '../service/game-sort.service.js';
 import { GameSortRankingService } from '../service/game-sort-ranking.service.js';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
@@ -30,7 +34,9 @@ import {
   gameRound,
   gameTag,
   gameTagGame,
+  ledgerGame,
 } from '../schema/index.js';
+import { backfillLedgerGames } from '../seed/index.js';
 import {
   GamingService,
   GameAggregatorNotMappedError,
@@ -165,6 +171,8 @@ async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}, categ
       .insert(gameCategoryGame)
       .values(ids.map((categoryId) => ({ gameId: row!.id, categoryId })));
   }
+  // An imported game reaches the round ledger through its projection.
+  await backfillLedgerGames(db.drizzle.db);
   return row!;
 }
 
@@ -178,7 +186,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${gameGeoRule}, ${providerGeoRule}, ${gameRound}, ${gameCategoryGame}, ${gameTagGame}, ${game}, ${gameProvider}, ${gameCategory}, ${gameTag} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${gameGeoRule}, ${providerGeoRule}, ${gameRound}, ${ledgerGame}, ${gameCategoryGame}, ${gameTagGame}, ${game}, ${gameProvider}, ${gameCategory}, ${gameTag} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -590,6 +598,29 @@ describe('GamingService.startRound (real PG)', () => {
       startRound(svc, '00000000-0000-0000-0000-000000000304', created.id, 'USD', '10'),
     ).rejects.toThrow('outbox down');
 
+    expect(launchGame).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+  });
+
+  it('refuses a game the round ledger has not projected before any money moves', async () => {
+    const created = await seedGame({ name: 'Unprojected' });
+    await db.drizzle.db.delete(ledgerGame).where(eq(ledgerGame.gameId, created.id));
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '90',
+      currency: 'USD',
+    });
+    const launchGame = vi.fn();
+    const svc = makeService({
+      provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
+      walletCommands,
+    });
+
+    await expect(
+      startRound(svc, '00000000-0000-0000-0000-000000000305', created.id, 'USD', '10'),
+    ).rejects.toEqual(new GamingUnknownGameError(created.id));
+    expect(walletCommands.debit).not.toHaveBeenCalled();
     expect(launchGame).not.toHaveBeenCalled();
     expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
   });
@@ -1197,6 +1228,60 @@ describe('GamingService.notifyGamesChanged (real PG)', () => {
 
     expect(await rankDirtyAt(category.id)).toBeNull();
     expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('reports the committed games to the round ledger through the outbox', async () => {
+    const changed = await seedGame();
+    const events = makeEventBus();
+
+    await makeService({ events }).notifyGamesChanged({ gameIds: [changed.id] });
+
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'gaming.ledger_game.projected',
+      {
+        games: [
+          {
+            gameId: changed.id,
+            providerId: changed.providerId,
+            gameType: 'casino',
+            version: changed.ledgerVersion,
+          },
+        ],
+      },
+    );
+  });
+});
+
+describe('GamingService.updateGame round ledger feed (real PG)', () => {
+  it('reports a provider move in the update transaction, and stays quiet on a rename', async () => {
+    const created = await seedGame();
+    const other = await seedProvider({ name: 'Other' });
+    const events = makeEventBus();
+    const svc = makeService({ events });
+
+    await svc.updateGame({ id: created.id, name: 'Renamed', ...ACTOR });
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
+
+    await svc.updateGame({ id: created.id, providerId: other.id, ...ACTOR });
+    const [moved] = await db.drizzle.db.select().from(game).where(eq(game.id, created.id));
+    expect(moved?.ledgerVersion).toBeGreaterThan(created.ledgerVersion);
+    expect(events.emitInTransaction).toHaveBeenCalledTimes(1);
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'gaming.ledger_game.projected',
+      {
+        games: [
+          {
+            gameId: created.id,
+            providerId: other.id,
+            gameType: 'casino',
+            version: moved?.ledgerVersion,
+          },
+        ],
+      },
+    );
   });
 });
 
@@ -2086,6 +2171,183 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
     const rows = await db.drizzle.db.select().from(gameRound);
     expect(rows).toHaveLength(1);
     expect(Number(rows[0]?.betAmount)).toBe(17);
+  });
+
+  it('refuses a game the round ledger does not know and writes no round', async () => {
+    const svc = makeService();
+    const unknownGameId = randomUUID();
+
+    await expect(
+      svc.accumulateExternalRound(db.drizzle.db, {
+        gameId: unknownGameId,
+        userId: '00000000-0000-0000-0000-000000000507',
+        currency: 'USD',
+        externalRoundId: 'ext-round-unknown',
+        betDelta: '10',
+      }),
+    ).rejects.toBeInstanceOf(GamingUnknownGameError);
+    expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+  });
+
+  it.each(['1e1', '+10', ' 10', '.5'])(
+    'refuses a non-canonical stake %j before it can skip the game check',
+    async (betDelta) => {
+      const svc = makeService();
+
+      await expect(
+        svc.accumulateExternalRound(db.drizzle.db, {
+          gameId: randomUUID(),
+          userId: '00000000-0000-0000-0000-000000000507',
+          currency: 'USD',
+          externalRoundId: `ext-round-noncanonical-${betDelta}`,
+          betDelta,
+        }),
+      ).rejects.toThrow();
+      expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+    },
+  );
+
+  it('keeps a settled round as it was when the catalogue later moves its game', async () => {
+    const created = await seedGame({ name: 'Aces' });
+    const other = await seedProvider({ name: 'Other' });
+    const svc = makeService();
+    const args = {
+      gameId: created.id,
+      userId: '00000000-0000-0000-0000-000000000508',
+      currency: 'USD',
+      externalRoundId: 'ext-round-catalogue-lag',
+    };
+    await svc.accumulateExternalRound(db.drizzle.db, { ...args, betDelta: '10', winDelta: '4' });
+    await svc.accumulateExternalRound(db.drizzle.db, { ...args, isFinal: true });
+    const [settled] = await db.drizzle.db.select().from(gameRound);
+
+    const [moved] = await db.drizzle.db
+      .update(game)
+      .set({ providerId: other.id, gameType: 'original' })
+      .where(eq(game.id, created.id))
+      .returning();
+    await backfillLedgerGames(db.drizzle.db);
+
+    expect(await db.drizzle.db.select().from(gameRound)).toEqual([settled]);
+    expect(
+      await db.drizzle.db.select().from(ledgerGame).where(eq(ledgerGame.gameId, created.id)),
+    ).toEqual([
+      expect.objectContaining({
+        providerId: other.id,
+        gameType: 'original',
+        version: moved?.ledgerVersion,
+      }),
+    ]);
+  });
+
+  describe('as the first call of a round on a game the ledger has not projected', () => {
+    async function unprojectedGame(externalRoundId: string) {
+      const created = await seedGame({ name: 'Aces' });
+      await db.drizzle.db.delete(ledgerGame).where(eq(ledgerGame.gameId, created.id));
+      return {
+        gameId: created.id,
+        userId: '00000000-0000-0000-0000-000000000510',
+        currency: 'USD',
+        externalRoundId,
+      };
+    }
+
+    it('books a win-only call', async () => {
+      const args = await unprojectedGame('ext-round-unprojected-win');
+
+      const result = await makeService().accumulateExternalRound(db.drizzle.db, {
+        ...args,
+        winDelta: '25',
+        isFinal: true,
+      });
+
+      expect(Number(result.betAmount)).toBe(0);
+      expect(Number(result.winAmount)).toBe(25);
+      const [row] = await db.drizzle.db.select().from(gameRound);
+      expect(row).toMatchObject({ id: result.roundId, status: 'completed' });
+    });
+
+    it('books a refund-only call', async () => {
+      const args = await unprojectedGame('ext-round-unprojected-refund');
+
+      await makeService().accumulateExternalRound(db.drizzle.db, { ...args, betDelta: '-10' });
+
+      const [row] = await db.drizzle.db.select().from(gameRound);
+      expect(Number(row?.reversedAmount)).toBe(10);
+    });
+
+    it('refuses a stake and writes no round', async () => {
+      const args = await unprojectedGame('ext-round-unprojected-stake');
+
+      await expect(
+        makeService().accumulateExternalRound(db.drizzle.db, {
+          ...args,
+          betDelta: '10',
+          winDelta: '5',
+        }),
+      ).rejects.toBeInstanceOf(GamingUnknownGameError);
+      expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+    });
+  });
+
+  describe('on a round opened before the ledger lost its game', () => {
+    async function openRoundThenForgetGame(externalRoundId: string) {
+      const created = await seedGame({ name: 'Aces' });
+      const svc = makeService();
+      const args = {
+        gameId: created.id,
+        userId: '00000000-0000-0000-0000-000000000509',
+        currency: 'USD',
+        externalRoundId,
+      };
+      await svc.accumulateExternalRound(db.drizzle.db, { ...args, betDelta: '10' });
+      await db.drizzle.db.delete(ledgerGame).where(eq(ledgerGame.gameId, created.id));
+      return { svc, args };
+    }
+
+    async function round(externalRoundId: string) {
+      const [row] = await db.drizzle.db
+        .select()
+        .from(gameRound)
+        .where(eq(gameRound.externalRoundId, externalRoundId));
+      return row;
+    }
+
+    it('still books the win and the final call', async () => {
+      const { svc, args } = await openRoundThenForgetGame('ext-round-lost-win');
+
+      await svc.accumulateExternalRound(db.drizzle.db, { ...args, winDelta: '25', isFinal: true });
+
+      const row = await round('ext-round-lost-win');
+      expect(row).toMatchObject({ status: 'completed' });
+      expect(Number(row?.betAmount)).toBe(10);
+      expect(Number(row?.winAmount)).toBe(25);
+      expect(row?.endedAt).not.toBeNull();
+    });
+
+    it('still books a rollback of the stake', async () => {
+      const { svc, args } = await openRoundThenForgetGame('ext-round-lost-rollback');
+
+      await svc.accumulateExternalRound(db.drizzle.db, { ...args, betDelta: '-10', isFinal: true });
+
+      const row = await round('ext-round-lost-rollback');
+      expect(row).toMatchObject({ status: 'completed' });
+      expect(Number(row?.betAmount)).toBe(0);
+      expect(Number(row?.reversedAmount)).toBe(10);
+    });
+
+    it('still refuses to open a new round on that game', async () => {
+      const { svc, args } = await openRoundThenForgetGame('ext-round-lost-open');
+
+      await expect(
+        svc.accumulateExternalRound(db.drizzle.db, {
+          ...args,
+          externalRoundId: 'ext-round-lost-next',
+          betDelta: '10',
+        }),
+      ).rejects.toBeInstanceOf(GamingUnknownGameError);
+      expect(await round('ext-round-lost-next')).toBeUndefined();
+    });
   });
 
   it('rolls back the accumulated round together with the caller transaction', async () => {

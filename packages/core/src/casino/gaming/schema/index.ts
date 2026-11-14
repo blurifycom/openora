@@ -164,6 +164,10 @@ export const game = pgTable(
     reviewStatus: gameReviewStatusEnum().notNull().default('pending'),
     reviewedAt: timestamp({ withTimezone: true }),
     metadata: jsonb(),
+    // Drawn from game_ledger_version_seq by the game_ledger_version trigger on insert and
+    // whenever a column `ledger_game` projects changes, from any writer, so it only grows,
+    // across a delete and re-insert too, and a stale event never overwrites a newer one.
+    ledgerVersion: integer().notNull().default(0),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     // Legacy pre-0003 free-text columns. Retained (unread, unwritten by new code)
     // so old releases keep working until a follow-up drop migration lands; the
@@ -269,9 +273,9 @@ export const gameRound = pgTable(
   'game_round',
   {
     id: uuid().primaryKey().defaultRandom(),
-    gameId: uuid()
-      .notNull()
-      .references(() => game.id),
+    // No FK to the catalogue `game`: a round is ledger-side and resolves its game through
+    // `ledger_game`, the projection the catalogue feeds with `gaming.ledger_game.projected`.
+    gameId: uuid().notNull(),
     userId: uuid().notNull(),
     status: gameRoundStatusEnum().notNull().default('active'),
     betAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
@@ -293,6 +297,18 @@ export const gameRound = pgTable(
       .where(sql`${t.externalRoundId} IS NOT NULL`),
   ],
 );
+
+// The ledger side's own copy of the catalogue facts a round needs, fed only by
+// `gaming.ledger_game.projected` and the boot backfill. Rows are never deleted, so a round on
+// a game the catalogue later drops still settles and still counts in reporting. See
+// docs/modules/gaming.md.
+export const ledgerGame = pgTable('ledger_game', {
+  gameId: uuid().primaryKey(),
+  providerId: uuid().notNull(),
+  gameType: gameTypeEnum().notNull(),
+  version: integer().notNull(),
+  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
 
 export const gameFavorite = pgTable(
   'game_favorite',
