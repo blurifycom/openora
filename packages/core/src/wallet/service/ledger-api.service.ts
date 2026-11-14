@@ -22,6 +22,7 @@ import {
   WalletReplayMismatchError,
   type DomainEventName,
   type DomainEventPayload,
+  type GamingAccumulateExternalRoundArgs,
   type GamingCommands,
   type IdentityReader,
   type LedgerApiV1,
@@ -250,6 +251,7 @@ export class LedgerApiService implements LedgerApiV1 {
           userId,
           playerId,
           gameId,
+          round: { externalRoundId },
           providerRef: { ...reverseKey, externalRoundId },
           betTransactionId: debit.transactionId,
           amount: args.amount,
@@ -303,7 +305,8 @@ export class LedgerApiService implements LedgerApiV1 {
           winDelta: args.amount,
           ...(args.isFinal ? { isFinal: true } : {}),
         });
-        if (args.isFinal) {
+        // A late final win that pays still re-announces the round, so readers see its new total.
+        if (round.ended || (args.isFinal && isPositiveMoney(args.amount))) {
           await this.emit(tx, 'gaming.round.ended', { roundId: round.roundId, userId, playerId });
         }
         if (!isPositiveMoney(args.amount)) {
@@ -384,10 +387,27 @@ export class LedgerApiService implements LedgerApiV1 {
           if (!bet?.externalRoundId) {
             throw new LedgerRefusal('bet_not_found');
           }
+          // A bet placed here keyed its round and its row with one id. Any other bet's round id
+          // may not be its round's key, so the caller may name the round, which must then be
+          // this player's existing round of this game and currency still holding the stake.
+          const placedHere = await this.findRequest(tx, {
+            providerName,
+            providerRefId: targetRefId,
+          });
+          const namedRound = placedHere ? undefined : args.externalRoundId;
+          if (placedHere && args.externalRoundId && args.externalRoundId !== bet.externalRoundId) {
+            log.warn(
+              { providerName, providerRefId, targetRefId, named: args.externalRoundId },
+              "ledger api: a reverse named another round than its bet's; using the bet's round",
+            );
+          }
           const reversal = await this.returnStake(tx, {
             userId,
             playerId,
             gameId,
+            round: namedRound
+              ? { externalRoundId: namedRound, existingRoundOnly: true }
+              : { externalRoundId: bet.externalRoundId },
             providerRef: { providerName, providerRefId, externalRoundId: bet.externalRoundId },
             betTransactionId: bet.id,
             amount: bet.amount,
@@ -407,11 +427,13 @@ export class LedgerApiService implements LedgerApiV1 {
         const round = await this.deps
           .gamingCommands()
           .accumulateExternalRound(tx, { ...args, isFinal: true });
-        await this.emit(tx, 'gaming.round.ended', {
-          roundId: round.roundId,
-          userId: args.userId,
-          playerId,
-        });
+        if (round.ended) {
+          await this.emit(tx, 'gaming.round.ended', {
+            roundId: round.roundId,
+            userId: args.userId,
+            playerId,
+          });
+        }
         return {
           status: 'closed' as const,
           roundId: round.roundId,
@@ -454,6 +476,9 @@ export class LedgerApiService implements LedgerApiV1 {
       if (mapped) {
         if (mapped[1] === 'fingerprint_mismatch') {
           log.warn({ err }, 'ledger api: a key was reused by a different request');
+        }
+        if (mapped[1] === 'round_mismatch') {
+          log.warn({ err }, 'ledger api: a move was refused on a round it does not match');
         }
         return { status: 'refused', reason: mapped[1] };
       }
@@ -549,13 +574,17 @@ export class LedgerApiService implements LedgerApiV1 {
     await tx.insert(ledgerApiRequest).values({ ...key, ...row });
   }
 
-  /** Credits a stake back as `bet_reversal` and takes it off the round. */
+  /**
+   * Credits a stake back as `bet_reversal`, on the bet's own round id so the wallet matches it to
+   * its bet, and takes it off `round`.
+   */
   private async returnStake(
     tx: DrizzleTx,
     args: {
       userId: Uuid;
       playerId: string | null;
       gameId: Uuid;
+      round: Pick<GamingAccumulateExternalRoundArgs, 'externalRoundId' | 'existingRoundOnly'>;
       providerRef: LedgerKey & { externalRoundId: LedgerV1BetArgs['externalRoundId'] };
       betTransactionId: Uuid;
       amount: string;
@@ -567,7 +596,7 @@ export class LedgerApiService implements LedgerApiV1 {
       gameId: args.gameId,
       userId,
       currency,
-      externalRoundId: providerRef.externalRoundId,
+      ...args.round,
       betDelta: `-${amount}`,
     });
     const credit = await this.deps.walletCommands.credit(tx, {

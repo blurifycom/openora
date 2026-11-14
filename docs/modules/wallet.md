@@ -92,6 +92,18 @@ is `SPORTSBOOK_LEDGER` unchanged.
   - A partial unnamed reversal followed by a `reverse` of its bet here returns only the partial
     amount: the round cap counts it, so the `reverse` of the whole stake is refused
     `already_reversed`.
+- **A reverse takes the stake off the bet's own round.** A bet placed here keyed its round and its
+  ledger row with one `externalRoundId`, so its reverse always lands on that round. A bet a bridge
+  wrote before it keyed rounds as it does now may hold the provider's raw round id while its round
+  is keyed another way (per player, since one live table round id is shared by its players): the
+  bridge passes that round's key as the reverse's `externalRoundId`. It must name this player's
+  existing round of the reverse's `gameId` and the bet's currency that still holds the stake, or
+  the reverse is refused `round_mismatch` with nothing moved; a named round is never opened. A
+  bet placed here ignores a named round and logs a warning. Without one, a bet not placed here
+  falls back to its raw id and opens a second round, or is refused `round_mismatch` when another
+  player's round holds that id. The reversal's ledger row always carries the bet's own round id.
+  A bet row records no game, so `gameId` is pinned only through the round: a bet placed here, or
+  one with a named round, is refused `round_mismatch` on another game; the raw-id fallback is not.
 - **A stored answer carries the balance from the first apply.** A bridge that needs live funds
   calls `balance()`.
 - **The `reversed_transaction_id` unique index is built without `CONCURRENTLY`**, as the

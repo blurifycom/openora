@@ -135,6 +135,15 @@ export const LedgerV1ReverseArgsSchema = z.object({
   userId: UuidSchema,
   gameId: UuidSchema,
   targetRefId: LedgerProviderRefSchema,
+  /**
+   * The round the bet's stake was counted on, for a bet this API did not place: a bridge's older
+   * bet whose row holds the provider's raw round id while its round is keyed another way. It must
+   * be this player's existing round of `gameId` and the bet's currency, still holding the stake,
+   * or the reverse is refused `round_mismatch`; a reverse never opens a round it names. Ignored
+   * (and logged) for a bet placed here, whose round is always its own. Defaults to the bet's round
+   * id. Not part of the request: a retry that changes it replays.
+   */
+  externalRoundId: LedgerProviderRefSchema.optional(),
 });
 export type LedgerV1ReverseArgs = z.input<typeof LedgerV1ReverseArgsSchema>;
 

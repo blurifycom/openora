@@ -178,6 +178,10 @@ async function roundOf(externalRoundId: string) {
   );
 }
 
+function roundEnded() {
+  return events.emitInTransaction.mock.calls.filter(([, name]) => name === 'gaming.round.ended');
+}
+
 async function setup(balance = '100', rtp: string | null = '0.96') {
   const g = await seedGame(rtp);
   const player = await seedPlayer(balance);
@@ -603,6 +607,159 @@ describe('Ledger API v1 reverse (real PG)', () => {
   });
 });
 
+describe('Ledger API v1 reverse of a bet whose round is keyed apart from its row (real PG)', () => {
+  /** A bridge's older bet: the row holds the provider's raw round id, the round a per-player key. */
+  async function placeLegacyBet(userId: string, gameId: string, rawRoundId: string) {
+    const roundKey = `${PROVIDER}:${userId}:${rawRoundId}`;
+    const providerRefId = `tx-${randomUUID()}`;
+    await db.drizzle.db.transaction(async (tx) => {
+      await gamingCommands.accumulateExternalRound(tx, {
+        gameId,
+        userId,
+        currency: 'USD',
+        externalRoundId: roundKey,
+        betDelta: '10',
+      });
+      await walletCommands.debit(tx, {
+        userId,
+        amount: '10',
+        currency: 'USD',
+        type: 'bet',
+        context: { provider: PROVIDER, product: 'casino', gameId },
+        providerRef: { providerName: PROVIDER, providerRefId, externalRoundId: rawRoundId },
+      });
+    });
+    return {
+      roundKey,
+      reverse: {
+        providerName: PROVIDER,
+        providerRefId: `rb-${randomUUID()}`,
+        userId,
+        gameId,
+        targetRefId: providerRefId,
+        externalRoundId: roundKey,
+      },
+    };
+  }
+
+  it('returns each player stake on their own round when players share a raw round id', async () => {
+    const first = await setup();
+    const second = await seedPlayer();
+    const rawRoundId = `live-${randomUUID()}`;
+    const bets = [
+      await placeLegacyBet(first.userId, first.game.id, rawRoundId),
+      await placeLegacyBet(second.userId, first.game.id, rawRoundId),
+    ];
+
+    for (const { reverse, roundKey } of bets) {
+      const applied = expectMoved(await api.reverse(reverse), 'applied');
+      const round = await roundOf(roundKey);
+      expect(applied.roundId).toBe(round.id);
+      expect(moneyEquals(round.betAmount, '0')).toBe(true);
+      expect(moneyEquals(round.reversedAmount, '10')).toBe(true);
+      expect(await api.reverse(reverse)).toMatchObject({ status: 'replayed', roundId: round.id });
+    }
+    expect(await roundsOf(rawRoundId)).toHaveLength(0);
+    for (const walletId of [first.walletId, second.walletId]) {
+      expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
+      expect(await txCount(walletId)).toBe(2);
+    }
+  });
+
+  it('keeps a bet placed here on its own round whatever round the reverse names', async () => {
+    const { userId, game: g, betArgs } = await setup();
+    const bet = betArgs();
+    const placed = expectMoved(await api.bet(bet), 'applied');
+    const elsewhere = `round-${randomUUID()}`;
+
+    const applied = expectMoved(
+      await api.reverse({
+        providerName: PROVIDER,
+        providerRefId: `rb-${randomUUID()}`,
+        userId,
+        gameId: g.id,
+        targetRefId: bet.providerRefId,
+        externalRoundId: elsewhere,
+      }),
+      'applied',
+    );
+
+    expect(applied.roundId).toBe(placed.roundId);
+    expect(moneyEquals((await roundOf(bet.externalRoundId)).reversedAmount, '10')).toBe(true);
+    expect(await roundsOf(elsewhere)).toHaveLength(0);
+  });
+
+  it('refuses a named round of another player, then applies on the right one', async () => {
+    const { walletId, userId, game: g } = await setup();
+    const other = await seedPlayer();
+    const rawRoundId = `live-${randomUUID()}`;
+    const mine = await placeLegacyBet(userId, g.id, rawRoundId);
+    const theirs = await placeLegacyBet(other.userId, g.id, rawRoundId);
+
+    expect(await api.reverse({ ...mine.reverse, externalRoundId: theirs.roundKey })).toEqual({
+      status: 'refused',
+      reason: 'round_mismatch',
+    });
+    expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
+    expect(moneyEquals((await roundOf(theirs.roundKey)).betAmount, '10')).toBe(true);
+    expect(await storedKeys(mine.reverse.providerRefId)).toHaveLength(0);
+
+    expectMoved(await api.reverse(mine.reverse), 'applied');
+    expect(moneyEquals(await balanceOf(walletId), '100')).toBe(true);
+  });
+
+  it('refuses a named round it has never seen, or on another game, opening nothing', async () => {
+    const { walletId, userId, game: g } = await setup();
+    const otherGame = await seedGame();
+    const { reverse, roundKey } = await placeLegacyBet(userId, g.id, `live-${randomUUID()}`);
+    const unknown = `${PROVIDER}:${userId}:${randomUUID()}`;
+
+    for (const attempt of [
+      { ...reverse, externalRoundId: unknown },
+      { ...reverse, gameId: otherGame.id },
+    ]) {
+      expect(await api.reverse(attempt)).toEqual({ status: 'refused', reason: 'round_mismatch' });
+    }
+    expect(await roundsOf(unknown)).toHaveLength(0);
+    expect(moneyEquals((await roundOf(roundKey)).betAmount, '10')).toBe(true);
+    expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
+  });
+
+  it('refuses a named round that no longer holds the stake, moving nothing', async () => {
+    const { walletId, userId, game: g } = await setup();
+    const { reverse, roundKey } = await placeLegacyBet(userId, g.id, `live-${randomUUID()}`);
+    await db.drizzle.db
+      .update(gameRound)
+      .set({ betAmount: '5' })
+      .where(eq(gameRound.externalRoundId, roundKey));
+
+    expect(await api.reverse({ ...reverse, externalRoundId: roundKey })).toEqual({
+      status: 'refused',
+      reason: 'round_mismatch',
+    });
+    expect(moneyEquals((await roundOf(roundKey)).betAmount, '5')).toBe(true);
+    expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
+  });
+
+  it('refuses a reverse of a bet placed here on another game', async () => {
+    const { walletId, userId, betArgs } = await setup();
+    const otherGame = await seedGame();
+    const bet = betArgs();
+    await api.bet(bet);
+
+    expect(
+      await api.reverse({
+        providerName: PROVIDER,
+        providerRefId: `rb-${randomUUID()}`,
+        userId,
+        gameId: otherGame.id,
+        targetRefId: bet.providerRefId,
+      }),
+    ).toEqual({ status: 'refused', reason: 'round_mismatch' });
+    expect(moneyEquals(await balanceOf(walletId), '90')).toBe(true);
+  });
+});
+
 describe('Ledger API v1 reverse beside direct wallet reversals (real PG)', () => {
   const reverseOf = (userId: string, gameId: string, targetRefId: string) =>
     api.reverse({
@@ -770,6 +927,47 @@ describe('Ledger API v1 win and round (real PG)', () => {
       status: 'refused',
       reason: 'wallet_not_found',
     });
+  });
+
+  it('ends a round once: a repeated close answers the totals without a second event, a late paying win re-announces it', async () => {
+    const { userId, game: g, betArgs } = await setup();
+    const bet = betArgs();
+    await api.bet(bet);
+    events.emitInTransaction.mockClear();
+    const close = () =>
+      api.closeRound({
+        userId,
+        gameId: g.id,
+        externalRoundId: bet.externalRoundId,
+        currency: 'USD',
+      });
+
+    await close();
+    const endedAt = (await roundOf(bet.externalRoundId)).endedAt;
+    await close();
+    expect(roundEnded()).toHaveLength(1);
+
+    expectMoved(
+      await api.win({ ...bet, providerRefId: `w-${randomUUID()}`, amount: '3', isFinal: true }),
+      'applied',
+    );
+    const again = await close();
+
+    expect(roundEnded()).toHaveLength(2);
+    expect(again.status === 'closed' && moneyEquals(again.winAmount, '3')).toBe(true);
+    expect((await roundOf(bet.externalRoundId)).endedAt).toEqual(endedAt);
+  });
+
+  it('ends a round its close opens exactly once when two closes race', async () => {
+    const { userId, game: g } = await setup();
+    const externalRoundId = `race-${randomUUID()}`;
+    events.emitInTransaction.mockClear();
+    const close = () => api.closeRound({ userId, gameId: g.id, externalRoundId, currency: 'USD' });
+
+    const outcomes = await Promise.all([close(), close()]);
+
+    expect(outcomes.map((o) => o.status)).toEqual(['closed', 'closed']);
+    expect(roundEnded()).toHaveLength(1);
   });
 
   it('refuses to close another player round as round_mismatch', async () => {
