@@ -5,7 +5,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -48,6 +48,11 @@ async function main() {
     run('pnpm install');
   } else {
     console.log('\n--- Dependencies: already installed ---');
+  }
+
+  if (!existsSync(join(root, '.env'))) {
+    console.log('\n--- Creating .env from packages/core/.env.example ---');
+    copyFileSync(join(root, 'packages', 'core', '.env.example'), join(root, '.env'));
   }
 
   console.log('\n--- Generating derived artifacts (pnpm regen) ---');

@@ -57,6 +57,7 @@ user `admin@oss.dev` with password `password1234`. Flags: `--players=<n>`,
 
 ```bash
 pnpm install
+cp packages/core/.env.example .env            # db tools read DATABASE_URL from here
 docker compose up -d                          # Postgres, Redis, RabbitMQ and the test databases
 pnpm regen                                    # tsconfig paths, Drizzle migrations, catalog
 pnpm --filter "@openora/testing..." build     # the db tools import the built packages
@@ -71,12 +72,15 @@ against the plugin host, and never forks the framework:
 
 ```bash
 pnpm create:app my-gaming-core
-cd my-gaming-core
+cd my-gaming-core                             # created inside this clone
 pnpm install
 cp .env.example .env
 pnpm db:migrate
 pnpm dev
 ```
+
+> Known issue: `@openora/core` 0.4.0 on npm ships without the `openora-migrate` bin, so the
+> app's `pnpm db:migrate` fails until the next release.
 
 The defaults in `.env.example` point at the containers from step 1 (`DATABASE_URL`,
 `REDIS_URL`) and include a local-only `AUTH_SECRET`, so a local run needs no edits. Replace
@@ -86,7 +90,7 @@ The defaults in `.env.example` point at the containers from step 1 (`DATABASE_UR
 
 ```bash
 curl http://localhost:3001/health
-# {"status":"ok"}
+# {"status":"ok","timestamp":"..."}
 ```
 
 Open `http://localhost:3001/docs` for the API reference of every route, generated from the

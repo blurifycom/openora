@@ -18,7 +18,7 @@ source for architecture, naming, boundaries, and the "where does X go?" decision
 pnpm install
 pnpm run setup   # boots Docker (Postgres + Redis), runs migrations, prints a summary
 pnpm db:seed          # demo data: admin + players + wallets + transactions + games
-pnpm dev           # api :3001, mcp dev server
+pnpm dev           # mcp dev server; the API runs from a `pnpm create:app` app
 ```
 
 Backoffice login: `admin@oss.dev` / `password1234` (see `pnpm db:seed --help` for flags).
