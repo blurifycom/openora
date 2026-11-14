@@ -449,7 +449,7 @@ describe('reconciliation: projections against their owners (real PG)', () => {
         return [];
       },
     };
-    const { reconciliation } = makeReconciliation({
+    const { reconciliation, events } = makeReconciliation({
       projectionChecks: [projectionDriftCheck('play_eligibility_drift', source, projection)],
     });
 
@@ -458,6 +458,43 @@ describe('reconciliation: projections against their owners (real PG)', () => {
     expect(repaired).toEqual(players.slice(0, 2));
     expect(await findingsOf('play_eligibility_drift')).toHaveLength(3);
     expect((await runOf(result?.runId))?.summary).toMatchObject({ projectionRepairsDeferred: 1 });
+    expect(events.emitInTransaction).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'wallet.reconciliation.alert',
+      expect.objectContaining({ runId: result?.runId, projectionRepairsDeferred: 1 }),
+    );
+  });
+
+  it('spends the repair cap on successes, so players who keep failing do not starve the rest', async () => {
+    const projection = new LedgerPlayEligibilityService(db.drizzle);
+    const players = [randomUUID(), randomUUID(), randomUUID(), randomUUID()].sort();
+    await projection.reconcile(players.map((userId) => eligibility(userId, 2)));
+    for (const userId of players) {
+      await setBlocked(userId, false);
+    }
+    const owner = players.map((userId) => eligibility(userId, 2));
+    const failing = new Set<string>(players.slice(0, 2));
+    const repaired: string[] = [];
+    const source = {
+      page: async (after: string | null) =>
+        owner.filter((s) => after === null || s.userId > after).slice(0, 2),
+      snapshots: async () => [],
+      repair: async (userIds: readonly string[]) => {
+        repaired.push(...userIds.filter((userId) => !failing.has(userId)));
+        return userIds.filter((userId) => failing.has(userId));
+      },
+    };
+    const { reconciliation } = makeReconciliation({
+      projectionChecks: [projectionDriftCheck('play_eligibility_drift', source, projection)],
+    });
+
+    const result = await reconciliation.runCycle();
+
+    expect(repaired).toEqual(players.slice(2));
+    expect((await runOf(result?.runId))?.summary).toMatchObject({
+      projectionRepairsDeferred: 0,
+      failedChecks: ['play_eligibility_drift:repair'],
+    });
   });
 });
 

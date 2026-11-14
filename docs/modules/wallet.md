@@ -246,7 +246,8 @@ is `SPORTSBOOK_LEDGER` unchanged.
   with another state once the owner is read again (`PLAY_ELIGIBILITY_SOURCE`, `RG_LIMITS_SOURCE`,
   optional). A player behind is caught up from the owner's snapshot, as the owner's event would
   have; one off the owner at its own version, or still ahead, is re-published through the owner's
-  own writer, at most `batchSize` a cycle (`projectionRepairsDeferred` counts the rest). The
+  own writer, at most `batchSize` successes in at most twice that many attempts a cycle
+  (`projectionRepairsDeferred` counts the rest, and the run alerts when it is above 0). The
   finding closes the next cycle that finds the player in step; a drift that comes back after one
   was dismissed or closed is filed again. `outbox_relay_lag` is the oldest unrelayed event older
   than `reconciliation.outboxLagAlertMinutes` (default 5), and `event_dead_letters` the broker's

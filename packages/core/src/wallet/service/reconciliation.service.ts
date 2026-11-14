@@ -1311,14 +1311,21 @@ export class ReconciliationService {
           resourceId: runId,
           after: { runId, ...counts, openFindings },
         });
-        // A check that fails every cycle files nothing, so its failure alerts on its own.
-        const { failedChecks } = counts;
-        if (cfg && (openFindings > cfg.alertThreshold || failedChecks.length > 0)) {
+        // A check that fails, or repairs it had to defer, file nothing new every cycle, so
+        // each alerts on its own.
+        const { failedChecks, projectionRepairsDeferred } = counts;
+        if (
+          cfg &&
+          (openFindings > cfg.alertThreshold ||
+            failedChecks.length > 0 ||
+            projectionRepairsDeferred > 0)
+        ) {
           await this.events.emitInTransaction(txn, 'wallet.reconciliation.alert', {
             runId,
             openFindings,
             threshold: cfg.alertThreshold,
             ...(failedChecks.length > 0 && { failedChecks }),
+            ...(projectionRepairsDeferred > 0 && { projectionRepairsDeferred }),
           });
         }
       });
@@ -2380,8 +2387,11 @@ export class ReconciliationService {
           )
       ).map((row) => row.userId),
     );
-    // ponytail: a fixed per-cycle cap on owner re-publishes; a config knob if a backlog needs one.
+    // ponytail: a fixed per-cycle cap of batchSize successful owner re-publishes, at most
+    // 2x batchSize attempts so a player who keeps failing cannot starve the rest; a config
+    // knob if a backlog needs one.
     let repairsLeft = batchSize;
+    let attemptsLeft = 2 * batchSize;
     let deferred = 0;
     let after: string | null = null;
     for (;;) {
@@ -2427,19 +2437,24 @@ export class ReconciliationService {
           noteFailure(counts, `${check.kind}:catch_up`, { err, runId, players: behind.length }),
         );
       }
-      const repairNow = conflicting.slice(0, repairsLeft);
-      repairsLeft -= repairNow.length;
-      deferred += conflicting.length - repairNow.length;
-      if (repairNow.length > 0) {
+      let pending = conflicting;
+      while (pending.length > 0 && repairsLeft > 0 && attemptsLeft > 0) {
+        const attempt = pending.slice(0, Math.min(repairsLeft, attemptsLeft));
+        pending = pending.slice(attempt.length);
+        attemptsLeft -= attempt.length;
+        let failed = attempt.length;
         try {
-          const failed = await check.repair(repairNow);
-          if (failed.length > 0) {
-            noteFailure(counts, `${check.kind}:repair`, { runId, players: failed });
+          const failedPlayers = await check.repair(attempt);
+          failed = failedPlayers.length;
+          if (failed > 0) {
+            noteFailure(counts, `${check.kind}:repair`, { runId, players: failedPlayers });
           }
         } catch (err) {
           noteFailure(counts, `${check.kind}:repair`, { err, runId });
         }
+        repairsLeft -= attempt.length - failed;
       }
+      deferred += pending.length;
       after = snapshots.at(-1)?.userId ?? null;
     }
     if (deferred > 0) {

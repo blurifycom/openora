@@ -941,7 +941,12 @@ export async function mapEventToRecord(
       actorType: 'system',
       resourceType: 'wallet_job_run',
       resourceId: str(p['runId']),
-      after: { openFindings: p['openFindings'] ?? null, threshold: p['threshold'] ?? null },
+      after: {
+        openFindings: p['openFindings'] ?? null,
+        threshold: p['threshold'] ?? null,
+        failedChecks: p['failedChecks'] ?? null,
+        projectionRepairsDeferred: p['projectionRepairsDeferred'] ?? null,
+      },
     };
   }
 
