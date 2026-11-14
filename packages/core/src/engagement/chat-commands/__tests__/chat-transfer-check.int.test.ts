@@ -214,6 +214,28 @@ describe('CHAT_TRANSFER_CHECK local binding', () => {
     });
   });
 
+  it('refuses a command whose stored limits no longer parse, and allows one with none stored', async () => {
+    const { check } = boot();
+    await db.drizzle.db.execute(
+      sql`INSERT INTO ${chatCommandConfig} (key, label, config) VALUES ('donate', 'donate', '{"maxAmount": {"not": "a decimal"}}'::jsonb)`,
+    );
+
+    await expect(check(gift({ command: 'donate' }))).resolves.toEqual({
+      allowed: false,
+      refusal: 'command_disabled',
+    });
+
+    await db.drizzle.db
+      .update(chatCommandConfig)
+      .set({ config: null })
+      .where(sql`${chatCommandConfig.key} = 'donate'`);
+
+    await expect(check(gift({ command: 'donate' }))).resolves.toMatchObject({
+      allowed: true,
+      commandConfig: {},
+    });
+  });
+
   it('answers the global room as null whether addressed by null or by its row id', async () => {
     const { check } = boot();
 
