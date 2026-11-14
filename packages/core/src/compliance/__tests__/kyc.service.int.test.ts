@@ -8,12 +8,14 @@ import type {
   KycStatusWriter,
   KycVendorStatus,
   PlatformConfig,
+  WalletReader,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
+import { WalletReaderService } from '@openora/core/wallet/seed';
 import { makeAuditWriter, makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { kycVerification } from '../schema/index.js';
@@ -34,6 +36,7 @@ function makeService(
     config?: PlatformConfig;
     exchangeRateReader?: ExchangeRateReader;
     identityReader?: IdentityReader;
+    walletReader?: WalletReader;
   } = {},
 ) {
   const events = makeEventBus();
@@ -55,6 +58,9 @@ function makeService(
     kycAdapter,
     statusWriter,
     identityReader: options.identityReader ?? makeIdentityReader(),
+    walletReader:
+      options.walletReader ??
+      new WalletReaderService({ drizzle: db.drizzle, pivotCurrency: 'USD' }),
     ...(options.config ? { platformConfig: options.config } : {}),
     ...(options.exchangeRateReader ? { exchangeRateReader: options.exchangeRateReader } : {}),
   });
@@ -878,6 +884,21 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
       expect.anything(),
     );
     expect(await verificationsOf(userId)).toHaveLength(1);
+  });
+
+  it('rejects, so the deposit event is redelivered, and writes nothing when the wallet read fails', async () => {
+    const walletReader = mock<WalletReader>({
+      getDepositsByCurrency: vi.fn(async () => {
+        throw new Error('wallet reader unavailable');
+      }),
+    });
+    const { svc, statusWriter } = makeService({ config, walletReader });
+    const { userId } = await seedPlayer();
+
+    await expect(svc.handleDeposit(userId)).rejects.toThrow('wallet reader unavailable');
+
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+    expect(await verificationsOf(userId)).toHaveLength(0);
   });
 });
 

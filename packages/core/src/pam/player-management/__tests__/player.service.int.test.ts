@@ -9,6 +9,7 @@ import type {
   SessionCommands,
   UserCommands,
   ExchangeRateReader,
+  WalletReader,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
@@ -19,6 +20,7 @@ import { tag, playerTag } from '@openora/core/pam/schema/tag';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
+import { WalletReaderService } from '@openora/core/wallet/seed';
 import { mock, makeEventBus } from '../../../testing/mock.js';
 import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
 
@@ -32,6 +34,7 @@ function makeService(
     sessionCommands?: SessionCommands;
     userCommands?: UserCommands;
     rates?: ExchangeRateReader;
+    walletReader?: WalletReader;
   } = {},
 ) {
   const events = makeEventBus();
@@ -62,6 +65,8 @@ function makeService(
       blockWriter,
       sessionCommands,
       userCommands,
+      overrides.walletReader ??
+        new WalletReaderService({ drizzle: db.drizzle, pivotCurrency: 'USD' }),
       overrides.rates,
     ),
     events,
@@ -492,6 +497,20 @@ describe('PlayerService.refreshTotalDeposits (real PG)', () => {
     await seedLedgerRow(account.id, '5', 'DOGE');
 
     await svc.refreshTotalDeposits(account.id);
+
+    expect((await rowById(row.id))?.totalDeposits).toBe('10.00');
+  });
+
+  it('rejects and keeps the stored total, never a zero, when the wallet read fails', async () => {
+    const walletReader = mock<WalletReader>({
+      getDepositsByCurrency: vi.fn(async () => {
+        throw new Error('wallet reader unavailable');
+      }),
+    });
+    const { svc } = makeService({ rates: btcRates, walletReader });
+    const { account, player: row } = await seedPlayerWithUser({}, { totalDeposits: '10.00' });
+
+    await expect(svc.refreshTotalDeposits(account.id)).rejects.toThrow('wallet reader unavailable');
 
     expect((await rowById(row.id))?.totalDeposits).toBe('10.00');
   });

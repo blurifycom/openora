@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gt, gte, like, sql, sum, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, gte, sql, type SQL } from 'drizzle-orm';
 import {
   findOneOrThrow,
   isPositiveMoney,
@@ -25,8 +25,8 @@ import {
   type WalletCommands,
   type WalletCorrectionDebitArgs,
   type WalletCorrectionDebitType,
+  type WalletReader,
 } from '@openora/core/contracts';
-import { walletTransaction } from '@openora/core/wallet/schema';
 import {
   SPORTSBOOK_HOLD_SOURCE,
   SPORTSBOOK_WALLET_PROVIDER_PREFIX,
@@ -160,6 +160,7 @@ export type SportsbookDebtDeps = {
   audit: AuditWritePort;
   identity: IdentityReader;
   wallet: WalletCommands;
+  walletReader: WalletReader;
 };
 
 /** Every method runs under the player lock; the caller writes the change's audit row last. */
@@ -169,6 +170,7 @@ export class SportsbookDebtService {
   private readonly audit: AuditWritePort;
   private readonly identity: IdentityReader;
   private readonly wallet: WalletCommands;
+  private readonly walletReader: WalletReader;
 
   constructor(deps: SportsbookDebtDeps) {
     this.drizzle = deps.drizzle;
@@ -176,6 +178,7 @@ export class SportsbookDebtService {
     this.audit = deps.audit;
     this.identity = deps.identity;
     this.wallet = deps.wallet;
+    this.walletReader = deps.walletReader;
   }
 
   /** The open debt a payout in this currency offsets, locked for the rest of the transaction. */
@@ -284,19 +287,16 @@ export class SportsbookDebtService {
     if (!before || shortfall?.debtId !== before.id) {
       return undefined;
     }
-    const [taken] = await tx
-      .select({ total: sum(walletTransaction.amount) })
-      .from(walletTransaction)
-      .where(
-        and(
-          eq(walletTransaction.externalRoundId, bet.providerBetId),
-          eq(walletTransaction.providerName, `${SPORTSBOOK_WALLET_PROVIDER_PREFIX}${bet.provider}`),
-          eq(walletTransaction.type, shortfall.type),
-          eq(walletTransaction.status, 'completed'),
-          like(walletTransaction.providerRefId, `%:${shortfall.id}`),
-        ),
-      );
-    const collected = taken?.total ?? '0';
+    // In this transaction, under the debt row lock: a collection committed or made in it counts.
+    const collected = await this.walletReader.sumProviderTransactions(
+      {
+        providerName: `${SPORTSBOOK_WALLET_PROVIDER_PREFIX}${bet.provider}`,
+        externalRoundId: bet.providerBetId,
+        type: shortfall.type,
+        providerRefSuffix: shortfall.id,
+      },
+      tx,
+    );
     const remaining = isPositiveMoney(before.outstanding)
       ? ((await this.outstandingShortfalls(tx, before)).find((s) => s.id === shortfall.id)
           ?.remaining ?? '0')

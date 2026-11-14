@@ -32,17 +32,17 @@ import {
   type IdentityReader,
   type Player,
   type User,
+  type WalletReader,
   ClientMeta,
   resolveExchangeRatePivot,
 } from '@openora/core/contracts';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import * as z from 'zod';
 import { kycVerification, type KycVerification } from '../schema/index.js';
-// Cross-domain reads via public /schema subpaths (ADR-0020); the wallet ledger is the
-// source of truth for lifetime deposits (player.totalDeposits is a display copy in the
-// player's currency, not the pivot this compares in).
+// Cross-domain read via the public /schema subpath (ADR-0020). Lifetime deposits come from
+// WALLET_READER: player.totalDeposits is a display copy in the player's currency, not the pivot
+// this compares in.
 import { player } from '@openora/core/pam/schema/profile';
-import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import type {
   SubmitKycInput,
   PlayerKycView,
@@ -249,6 +249,7 @@ export type KycVerificationDeps = {
   platformConfig?: PlatformConfig;
   reKycTrigger?: ReKycTrigger;
   exchangeRateReader?: ExchangeRateReader;
+  walletReader: WalletReader;
 };
 
 export class KycVerificationService {
@@ -261,6 +262,7 @@ export class KycVerificationService {
   private readonly platformConfig?: PlatformConfig;
   private readonly reKycTrigger: ReKycTrigger;
   private readonly exchangeRateReader?: ExchangeRateReader;
+  private readonly walletReader: WalletReader;
 
   constructor(deps: KycVerificationDeps) {
     this.drizzle = deps.drizzle;
@@ -272,6 +274,7 @@ export class KycVerificationService {
     this.platformConfig = deps.platformConfig;
     this.reKycTrigger = deps.reKycTrigger ?? new CumulativeDepositReKycTrigger();
     this.exchangeRateReader = deps.exchangeRateReader;
+    this.walletReader = deps.walletReader;
   }
 
   private get provider() {
@@ -811,21 +814,8 @@ export class KycVerificationService {
       return;
     }
 
-    const depositsByCurrency = await this.drizzle.db
-      .select({
-        currency: walletTransaction.currency,
-        total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
-      })
-      .from(walletTransaction)
-      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
-      .where(
-        and(
-          eq(wallet.userId, userId),
-          eq(walletTransaction.type, 'deposit'),
-          eq(walletTransaction.status, 'completed'),
-        ),
-      )
-      .groupBy(walletTransaction.currency);
+    // A failed read throws, so the deposit event is redelivered rather than the check skipped.
+    const depositsByCurrency = await this.walletReader.getDepositsByCurrency(userId);
     // Priced into the platform's exchange-rate pivot (not the player's own currency) so
     // it lines up with reverifyThresholds, which is configured per pivot currency (e.g.
     // { USD: '10000' }) - a threshold keyed by player.currency would only ever fire for

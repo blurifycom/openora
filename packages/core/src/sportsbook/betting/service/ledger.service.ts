@@ -67,7 +67,6 @@ import {
   type SportsbookBetRow,
   type SportsbookBetTransactionRow,
 } from '../schema/index.js';
-import { wallet } from '@openora/core/wallet/schema';
 import type { SportsbookConfigService } from './config.service.js';
 import type { DebtChange, SportsbookDebtService } from './debt.service.js';
 import { fileFinding, type SportsbookFindingArgs } from './finding.service.js';
@@ -511,11 +510,6 @@ export function isValidPromotionAmount(
       ? moneyCompare(promotionAmount, cashPromotionCeiling(bet, result, payout)) <= 0
       : moneyEquals(promotionAmount, payout))
   );
-}
-
-async function hasWallet(tx: DrizzleTx, userId: SportsbookBetRow['userId']): Promise<boolean> {
-  const [row] = await tx.select({ id: wallet.id }).from(wallet).where(eq(wallet.userId, userId));
-  return row !== undefined;
 }
 
 /**
@@ -1033,7 +1027,7 @@ export class SportsbookLedgerService {
       );
 
       // Without a debit nothing else proves the wallet a later settle credits exists.
-      if (!isPositiveMoney(bet.cashStake) && !(await hasWallet(tx, userId))) {
+      if (!isPositiveMoney(bet.cashStake) && !(await this.walletReader.hasWallet(userId, tx))) {
         throw new LedgerRefusal('insufficient_funds');
       }
       const debit = isPositiveMoney(bet.cashStake) ? await this.debitStake(tx, bet, args) : null;

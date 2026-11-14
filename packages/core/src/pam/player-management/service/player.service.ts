@@ -24,15 +24,13 @@ import {
   type UserCommands,
   type PlayerActivityTracker,
   type ExchangeRateReader,
+  type WalletReader,
 } from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, asc, desc, sql, inArray, isNull, lt } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
-// Read-only ledger read via the wallet's public /schema subpath: the ledger, not a counter
-// kept here, is the source of truth for what a player deposited.
-import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
 import type { PlayerSearchResult, PlayerProfileCard } from '../contract/index.js';
 
@@ -92,6 +90,8 @@ export class PlayerService implements PlayerActivityTracker {
     private readonly blockWriter: ChatBlockWriter,
     private readonly sessionCommands: SessionCommands,
     private readonly userCommands: UserCommands,
+    // The ledger, not a counter kept here, is the source of truth for what a player deposited.
+    private readonly walletReader: WalletReader,
     private readonly rates?: ExchangeRateReader,
   ) {}
 
@@ -113,21 +113,8 @@ export class PlayerService implements PlayerActivityTracker {
         if (!current) {
           return true;
         }
-        const depositsByCurrency = await tx
-          .select({
-            currency: walletTransaction.currency,
-            total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
-          })
-          .from(walletTransaction)
-          .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
-          .where(
-            and(
-              eq(wallet.userId, userId),
-              eq(walletTransaction.type, 'deposit'),
-              eq(walletTransaction.status, 'completed'),
-            ),
-          )
-          .groupBy(walletTransaction.currency);
+        // A failed read throws out of the job, which retries; the stored total stays as it was.
+        const depositsByCurrency = await this.walletReader.getDepositsByCurrency(userId, tx);
         const totalDeposits = await sumInPivot(
           depositsByCurrency,
           current.currency,

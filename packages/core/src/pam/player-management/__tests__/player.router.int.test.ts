@@ -16,6 +16,7 @@ import type {
   ChatBlockWriter,
   SessionCommands,
   UserCommands,
+  WalletReader,
 } from '@openora/core/contracts';
 import {
   mock,
@@ -74,6 +75,7 @@ function build(
       }),
       publishPlayEligibility: vi.fn(async () => undefined),
     }),
+    mock<WalletReader>({}),
   );
   const audit = makeAuditWriter();
   const events = makeEventBus();
