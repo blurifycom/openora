@@ -1,3 +1,4 @@
+import type { User } from '../schemas/identity.js';
 import { createToken, type Token } from './token.js';
 import type { Uuid } from '../schemas/common.js';
 
@@ -11,6 +12,8 @@ export type ChatBlockWriter = {
   getExcludedUserIds(viewerId: string): Promise<string[]>;
   /** Active block relationships only; ignores do not prevent money transfers. */
   getBlockedUserIds(viewerId: string): Promise<string[]>;
+  /** Ids of the users holding an active block on `userId`; ignores are not included. */
+  getBlockerIds(userId: User['id']): Promise<string[]>;
   /** Checks the relationship on the caller's transaction before a money mutation. */
   isBlocked(tx: unknown, blockerId: string, blockedId: string): Promise<boolean>;
 };
@@ -23,6 +26,9 @@ export function chatBlockLockKey(blockerId: string, blockedId: string): string {
 export const CHAT_BLOCK_WRITER: Token<ChatBlockWriter> = createToken('CHAT_BLOCK_WRITER');
 
 /** The read a module outside chat needs (player search, mentions), apart from the writes. */
-export type ChatBlockReader = Pick<ChatBlockWriter, 'getExcludedUserIds' | 'getBlockedUserIds'>;
+export type ChatBlockReader = Pick<
+  ChatBlockWriter,
+  'getExcludedUserIds' | 'getBlockedUserIds' | 'getBlockerIds'
+>;
 
 export const CHAT_BLOCK_READER: Token<ChatBlockReader> = createToken('CHAT_BLOCK_READER');

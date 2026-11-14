@@ -1,0 +1,1 @@
+ALTER TABLE "event_outbox" ALTER COLUMN "seq" SET DEFAULT nextval('event_outbox_seq');

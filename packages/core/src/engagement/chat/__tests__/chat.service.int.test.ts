@@ -1339,6 +1339,24 @@ describe('ChatService block list (real PG)', () => {
     expect(await svc.getExcludedUserIds(blockerId)).toContain(blockedId);
   });
 
+  it('reads blocks in both directions, ignoring ignores and lifted blocks', async () => {
+    const { svc } = makeService();
+    const viewerId = randomUUID();
+    const blockedByViewer = randomUUID();
+    const ignoredByViewer = randomUUID();
+    const blocksViewer = randomUUID();
+    const liftedBlocker = randomUUID();
+    await svc.blockUser(viewerId, blockedByViewer);
+    await svc.ignoreUser(viewerId, ignoredByViewer);
+    await svc.blockUser(blocksViewer, viewerId);
+    await svc.blockUser(liftedBlocker, viewerId);
+    await svc.unblockUser(liftedBlocker, viewerId, NO_CLIENT_META);
+
+    expect(await svc.getBlockedUserIds(viewerId)).toEqual([blockedByViewer]);
+    expect(await svc.getBlockerIds(viewerId)).toEqual([blocksViewer]);
+    expect(await svc.getBlockerIds(blockedByViewer)).toEqual([viewerId]);
+  });
+
   it('lists the blocked ids newest-first', async () => {
     const { svc } = makeService();
     const blockerId = randomUUID();

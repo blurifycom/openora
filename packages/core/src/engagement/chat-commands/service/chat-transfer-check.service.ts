@@ -92,7 +92,12 @@ export class ChatTransferCheckService {
         }),
       );
       if (!decision.allowed) {
-        return { allowed: false, refusal: 'context_send_denied', policyReason: decision.reason };
+        return {
+          allowed: false,
+          refusal: 'context_send_denied',
+          policyReason: decision.reason,
+          contextRef,
+        };
       }
     }
 

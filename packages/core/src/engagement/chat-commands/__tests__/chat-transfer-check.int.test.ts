@@ -352,6 +352,7 @@ describe('CHAT_TRANSFER_CHECK local binding', () => {
       allowed: false,
       refusal: 'context_send_denied',
       policyReason: 'match_closed',
+      contextRef,
     });
   });
 

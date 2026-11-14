@@ -98,6 +98,25 @@ and each job reaches one of them.
   [ADR-0050](../adr/0050-dependency-only-modules-provide-but-do-not-consume.md) lands each of the
   ten handles every event once in the split and once in the rest of the install.
 
+- **Chat writes from a process that does not run chat.** A module that writes chat state inside
+  its own transaction binds the outbox writers from `@openora/core/engagement/server` over the
+  chat module's local ones: `OutboxChatSystemWriter` for `CHAT_SYSTEM_WRITER` and
+  `OutboxChatContextRoomCommands` for `CHAT_CONTEXT_ROOM_COMMANDS`. Each write becomes an event in
+  the caller's transaction, so it commits or rolls back with the caller's own rows, and the chat
+  service applies it after the relay delivers it. Nothing is read back: the caller names the
+  context room (`roomId`) and each system message (`messageId`) with its own ids, and knows the
+  members from its own records. Chat applies every command idempotently, but not in the order
+  they were issued: the relay orders by `occurredAt` alone and replicas consume concurrently. A
+  system message is stamped with the time it was issued, so the room still shows the caller's
+  order. A command for a ref chat has no room for yet fails and is redelivered until the ensure
+  lands; with two or more replicas the first message can arrive a minute or more late. A command
+  chat can never apply (a `roomId` other than the ref's room, a `messageId` that names another
+  message, a deleted room) fails the same way and ends in
+  `oss:dlq:chat.context_room.command_issued`. Members only join, through `ensureRoom`, and
+  ensuring a closed room adds nobody: removing a member is not offered in this mode, since a
+  removal could land before the add it should follow. Use `CHAT_CONTEXT_ROOMS` only where chat
+  shares the process: it also reads rooms back and removes members.
+
 - **Fewer queues in a process.** `JOB_WORKERS` picks the job queues a process consumes: names,
   `prefix*` patterns, `!` to exclude. To keep a long-running queue off the API replicas, run one
   more instance with the same plugins and `SERVICE_NAME` and `JOB_WORKERS=<queues>`, and give the
