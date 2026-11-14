@@ -21,6 +21,7 @@ import {
   makePaymentProviderRegistry,
   makeWithdrawalPorts,
 } from '../../testing/mock.js';
+import { migrate as migrateServer } from '@openora/core/server/migrate';
 import { migrate } from '../migrate.js';
 import {
   OUT_OF_CYCLE_RUN_ID,
@@ -55,7 +56,7 @@ import {
 let db: TestDb;
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrateServer, migrate]);
 });
 
 afterAll(async () => {
@@ -75,6 +76,8 @@ const RECONCILIATION_CONFIG: NonNullable<PlatformConfig['wallet']>['reconciliati
   stuckAfterMinutes: 60,
   staleRunAfterMinutes: 30,
   alertThreshold: 10,
+  outboxLagAlertMinutes: 5,
+  deadLetterAlertThreshold: 0,
 };
 
 function makeServices(

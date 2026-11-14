@@ -34,6 +34,19 @@ function toEnvelope(row: EventOutboxRow): EventEnvelope {
   };
 }
 
+/** The longest-waiting event the relay has not published yet, if any. */
+export async function oldestUnrelayedEvent(
+  db: DrizzleDb,
+): Promise<Pick<EventOutboxRow, 'eventId' | 'occurredAt'> | undefined> {
+  const [row] = await db
+    .select({ eventId: eventOutbox.eventId, occurredAt: eventOutbox.occurredAt })
+    .from(eventOutbox)
+    .where(isNull(eventOutbox.publishedAt))
+    .orderBy(asc(eventOutbox.occurredAt))
+    .limit(1);
+  return row;
+}
+
 /**
  * Publishes pending `event_outbox` rows to the `MESSAGE_BROKER`. Runs as a
  * background poll loop (`start`/`stop`) and is also drainable on demand

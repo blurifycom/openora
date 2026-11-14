@@ -29,6 +29,7 @@ export type {
   EventEnvelope,
   MessageBrokerAdapter,
   BrokerHandler,
+  DeadLetters,
   SubscribeOptions,
 } from './broker.js';
 export { MESSAGE_BROKER } from './broker.js';
@@ -500,6 +501,7 @@ export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
 export type {
   PlayEligibilityPort,
   PlayEligibilityProjectionPort,
+  PlayEligibilitySourcePort,
   PlayEligibilityState,
   PlayRefusal,
 } from './play-eligibility.js';
@@ -507,6 +509,7 @@ export {
   LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
+  PLAY_ELIGIBILITY_SOURCE,
   PLAY_REFUSALS,
   isPlayRefused,
   playRefusalOf,
@@ -516,10 +519,12 @@ export type {
   RgLimitDecision,
   RgLimitExceededData,
   RgLimitLedgerPort,
+  RgLimitsSourcePort,
 } from './rg-limits.js';
 export {
   RG_LIMITS,
   RG_LIMIT_LEDGER,
+  RG_LIMITS_SOURCE,
   RgLimitExceededError,
   RgRateUnavailableError,
   limitSlotKey,

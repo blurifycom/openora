@@ -96,7 +96,9 @@ export async function recordReconciliationFindingsInTransaction(
   if (inputs.length === 0) {
     return [];
   }
-  const byKey = new Map(inputs.map((input) => [`${input.kind}:${input.externalId}`, input]));
+  const keyOf = (f: Pick<ReconciliationFindingInput, 'kind' | 'providerName' | 'externalId'>) =>
+    `${f.kind}:${f.providerName}:${f.externalId}`;
+  const byKey = new Map(inputs.map((input) => [keyOf(input), input]));
   const filed = await txn
     .insert(walletReconciliationFinding)
     .values(inputs.map(findingValues))
@@ -104,11 +106,12 @@ export async function recordReconciliationFindingsInTransaction(
     .returning({
       id: walletReconciliationFinding.id,
       kind: walletReconciliationFinding.kind,
+      providerName: walletReconciliationFinding.providerName,
       externalId: walletReconciliationFinding.externalId,
     });
   const recorded: ReconciliationFindingInput[] = [];
   for (const row of filed) {
-    const input = byKey.get(`${row.kind}:${row.externalId}`);
+    const input = byKey.get(keyOf(row));
     if (input) {
       await audit.recordInTransaction(txn, findingRecordedAudit(row.id, input));
       recorded.push(input);

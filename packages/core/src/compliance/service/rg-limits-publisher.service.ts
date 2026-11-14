@@ -132,18 +132,64 @@ async function* userBatches(
   }
   let after: User['id'] | null = null;
   for (;;) {
-    const rows = await db
-      .select({ userId: rgLimitVersion.userId })
-      .from(rgLimitVersion)
-      .where(after === null ? undefined : gt(rgLimitVersion.userId, after))
-      .orderBy(asc(rgLimitVersion.userId))
-      .limit(batchSize);
-    if (rows.length === 0) {
+    const userIds = await versionedUsers(db, after, batchSize);
+    if (userIds.length === 0) {
       return;
     }
-    yield rows.map((row) => row.userId);
-    after = rows.at(-1)?.userId ?? null;
+    yield userIds;
+    after = userIds.at(-1) ?? null;
   }
+}
+
+async function versionedUsers(
+  db: DrizzleDb,
+  after: User['id'] | null,
+  limit: number,
+): Promise<User['id'][]> {
+  const rows = await db
+    .select({ userId: rgLimitVersion.userId })
+    .from(rgLimitVersion)
+    .where(after === null ? undefined : gt(rgLimitVersion.userId, after))
+    .orderBy(asc(rgLimitVersion.userId))
+    .limit(limit);
+  return rows.map((row) => row.userId);
+}
+
+/**
+ * `userIds`' committed limits snapshots, versions and rows read on one snapshot: a version read
+ * after a newer commit than the limits would label older limits with the newer version.
+ */
+export async function readSnapshots(
+  db: DrizzleDb,
+  userIds: readonly User['id'][],
+): Promise<RgLimitsSnapshot[]> {
+  const { versions, rows } = await db.transaction(
+    async (tx) => ({
+      versions: await tx
+        .select()
+        .from(rgLimitVersion)
+        .where(inArray(rgLimitVersion.userId, [...userIds])),
+      rows: await readLimits(tx, userIds),
+    }),
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
+  const versionOf = new Map(versions.map((row) => [row.userId, row.version]));
+  const rowsOf = new Map<User['id'], LimitRow[]>();
+  for (const row of rows) {
+    rowsOf.set(row.userId, [...(rowsOf.get(row.userId) ?? []), row]);
+  }
+  return userIds.map((userId) =>
+    snapshotOf(userId, versionOf.get(userId) ?? 0, rowsOf.get(userId) ?? []),
+  );
+}
+
+/** Up to `limit` users' committed limits in user id order, after `after` when given. */
+export async function rgLimitsPage(
+  db: DrizzleDb,
+  after: User['id'] | null,
+  limit: number,
+): Promise<RgLimitsSnapshot[]> {
+  return readSnapshots(db, await versionedUsers(db, after, limit));
 }
 
 /**
@@ -181,28 +227,7 @@ export async function backfillRgLimits(
   let repaired = 0;
   for await (const userIds of userBatches(db, batchSize, changedSince)) {
     signal?.throwIfAborted();
-    // One snapshot for both reads: a version read after a newer commit than the limits would
-    // label older limits with the newer version.
-    const { versions, rows } = await db.transaction(
-      async (tx) => ({
-        versions: await tx
-          .select()
-          .from(rgLimitVersion)
-          .where(inArray(rgLimitVersion.userId, userIds)),
-        rows: await readLimits(tx, userIds),
-      }),
-      { isolationLevel: 'repeatable read', accessMode: 'read only' },
-    );
-    const versionOf = new Map(versions.map((row) => [row.userId, row.version]));
-    const rowsOf = new Map<User['id'], LimitRow[]>();
-    for (const row of rows) {
-      rowsOf.set(row.userId, [...(rowsOf.get(row.userId) ?? []), row]);
-    }
-    const drifted = await ledger.drifted(
-      userIds.map((userId) =>
-        snapshotOf(userId, versionOf.get(userId) ?? 0, rowsOf.get(userId) ?? []),
-      ),
-    );
+    const drifted = await ledger.drifted(await readSnapshots(db, userIds));
     for (const userId of drifted) {
       signal?.throwIfAborted();
       await db.transaction((tx) => publisher.publish(tx, userId));

@@ -35,6 +35,7 @@ import {
   walletTransaction,
   type PlayLeg,
 } from '../schema/index.js';
+import type { ProjectionComparison } from './ledger-play-eligibility.service.js';
 
 const log = createLogger('wallet:rg-limits');
 
@@ -331,18 +332,38 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
   }
 
   async drifted(snapshots: readonly RgLimitsSnapshot[]): Promise<User['id'][]> {
-    const newest = this.newestPerUser(snapshots);
-    if (newest.size === 0) {
+    return (await this.standing(snapshots))
+      .filter((user) => user.held !== user.wanted || !user.sameRows)
+      .map((user) => user.userId);
+  }
+
+  /**
+   * `behind`: the users held at a lower version than their snapshot; a user with none held is at
+   * version 0. `differing`: those at its version with other rows. `ahead`: those held higher,
+   * with other rows.
+   */
+  async compare(snapshots: readonly RgLimitsSnapshot[]): Promise<ProjectionComparison> {
+    const standing = await this.standing(snapshots);
+    const ids = (users: typeof standing) => users.map((user) => user.userId);
+    return {
+      behind: ids(standing.filter((user) => user.held < user.wanted)),
+      differing: ids(standing.filter((user) => user.held === user.wanted && !user.sameRows)),
+      ahead: ids(standing.filter((user) => user.held > user.wanted && !user.sameRows)),
+    };
+  }
+
+  private async standing(snapshots: readonly RgLimitsSnapshot[]) {
+    const newest = [...this.newestPerUser(snapshots).values()];
+    if (newest.length === 0) {
       return [];
     }
-    const { versionOf, rowsOf: heldRowsOf } = await this.held([...newest.keys()]);
-    return [...newest.values()]
-      .filter(
-        (snapshot) =>
-          (versionOf.get(snapshot.userId) ?? 0) !== snapshot.version ||
-          !sameRows(heldRowsOf(snapshot.userId), rowsOf(snapshot)),
-      )
-      .map((snapshot) => snapshot.userId);
+    const { versionOf, rowsOf: heldRowsOf } = await this.held(newest.map((s) => s.userId));
+    return newest.map((snapshot) => ({
+      userId: snapshot.userId,
+      held: versionOf.get(snapshot.userId) ?? 0,
+      wanted: snapshot.version,
+      sameRows: sameRows(heldRowsOf(snapshot.userId), rowsOf(snapshot)),
+    }));
   }
 
   async spendFor(

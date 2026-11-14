@@ -4,7 +4,7 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { eq, gt, sql } from 'drizzle-orm';
+import { eq, gt, inArray, sql } from 'drizzle-orm';
 import {
   playRefusalOf,
   type PlayEligibilityPort,
@@ -149,29 +149,54 @@ export async function backfillPlayEligibility(
   { batchSize = 500, signal }: { batchSize?: number; signal?: AbortSignal } = {},
 ): Promise<number> {
   let written = 0;
-  let after: User['id'] | undefined;
+  let after: User['id'] | null = null;
   for (;;) {
     signal?.throwIfAborted();
-    const rows = await db
-      .select({
-        userId: user.id,
-        rgBlocked: user.rgBlocked,
-        rgBlockedUntil: user.rgBlockedUntil,
-        isActive: user.isActive,
-        banned: user.banned,
-        banExpires: user.banExpires,
-        status: player.status,
-        version: user.playEligibilityVersion,
-      })
-      .from(user)
-      .leftJoin(player, eq(player.userId, user.id))
-      .where(after === undefined ? undefined : gt(user.id, after))
-      .orderBy(user.id)
-      .limit(batchSize);
-    if (rows.length === 0) {
+    const snapshots = await playEligibilityPage(db, after, batchSize);
+    if (snapshots.length === 0) {
       return written;
     }
-    written += await projection.reconcile(rows.map((row) => snapshotOf(row.userId, row)));
-    after = rows[rows.length - 1]?.userId;
+    written += await projection.reconcile(snapshots);
+    after = snapshots.at(-1)?.userId ?? null;
   }
+}
+
+const committedState = (db: DrizzleDb) =>
+  db
+    .select({
+      userId: user.id,
+      rgBlocked: user.rgBlocked,
+      rgBlockedUntil: user.rgBlockedUntil,
+      isActive: user.isActive,
+      banned: user.banned,
+      banExpires: user.banExpires,
+      status: player.status,
+      version: user.playEligibilityVersion,
+    })
+    .from(user)
+    .leftJoin(player, eq(player.userId, user.id));
+
+/** Up to `limit` users' committed play eligibility in user id order, after `after` when given. */
+export async function playEligibilityPage(
+  db: DrizzleDb,
+  after: User['id'] | null,
+  limit: number,
+): Promise<PlayEligibilitySnapshot[]> {
+  const rows = await committedState(db)
+    .where(after === null ? undefined : gt(user.id, after))
+    .orderBy(user.id)
+    .limit(limit);
+  return rows.map((row) => snapshotOf(row.userId, row));
+}
+
+/** The committed play eligibility of `userIds`; an unknown user is left out. */
+export async function playEligibilityOf(
+  db: DrizzleDb,
+  userIds: readonly User['id'][],
+): Promise<PlayEligibilitySnapshot[]> {
+  if (userIds.length === 0) {
+    return [];
+  }
+  const rows = await committedState(db).where(inArray(user.id, [...userIds]));
+  return rows.map((row) => snapshotOf(row.userId, row));
 }

@@ -757,6 +757,8 @@ export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
 // transaction that moved the money, with the request's fingerprint and the answer it got, so a
 // retry is answered from here and a reused key with another request is told apart. Append-only.
 // `target_ref_id` is the bet a reverse returned; unique per provider, so a stake comes back once.
+// `user_id` and `amount` are what the request moved, for reconciliation to hold the wallet row
+// to; null on rows written before they were recorded.
 export const ledgerApiRequest = pgTable(
   'ledger_api_request',
   {
@@ -766,10 +768,13 @@ export const ledgerApiRequest = pgTable(
     fingerprint: text().notNull(),
     targetRefId: text(),
     response: jsonb().notNull(),
+    userId: uuid(),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     primaryKey({ columns: [t.providerName, t.providerRefId] }),
+    index('ledger_api_request_created_at_idx').on(t.createdAt),
     uniqueIndex('ledger_api_request_target_ref_key')
       .on(t.providerName, t.targetRefId)
       .where(sql`${t.targetRefId} IS NOT NULL`),

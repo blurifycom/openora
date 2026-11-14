@@ -46,6 +46,14 @@ export type MessageBrokerAdapter = {
   publish(envelope: EventEnvelope): void | Promise<void>;
   subscribe(topic: string, handler: BrokerHandler, options?: SubscribeOptions): () => void;
   close(): Promise<void>;
+  /**
+   * Events dead-lettered across every topic and still held, and the id of the newest one (null
+   * when none), which tells a new dead letter from one already counted. Absent when the driver
+   * keeps none.
+   */
+  deadLetters?(): Promise<DeadLetters>;
 };
+
+export type DeadLetters = { count: number; newest: string | null };
 
 export const MESSAGE_BROKER: Token<MessageBrokerAdapter> = createToken('MESSAGE_BROKER');

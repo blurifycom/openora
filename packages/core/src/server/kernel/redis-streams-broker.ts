@@ -3,6 +3,7 @@ import type {
   MessageBrokerAdapter,
   EventEnvelope,
   BrokerHandler,
+  DeadLetters,
   SubscribeOptions,
 } from '@openora/core/contracts';
 import type { RedisClient } from './redis-client.js';
@@ -68,6 +69,12 @@ function dlqKey(streamKeyName: string): string {
 // A stream id is `<ms since epoch>-<seq>`, stamped by Redis on XADD.
 function streamIdTime(id: string): number {
   return Number(id.split('-')[0]);
+}
+
+function streamIdAfter(a: string, b: string): boolean {
+  const [aTime = 0, aSeq = 0] = a.split('-').map(Number);
+  const [bTime = 0, bSeq = 0] = b.split('-').map(Number);
+  return aTime > bTime || (aTime === bTime && aSeq > bSeq);
 }
 
 function errorMessage(err: unknown): string {
@@ -183,6 +190,25 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
         current.stop();
       }
     };
+  }
+
+  async deadLetters(): Promise<DeadLetters> {
+    let count = 0;
+    let newest: { key: string; id: string } | null = null;
+    for await (const keys of this.client.scanIterator({
+      MATCH: `${DLQ_PREFIX}*`,
+      TYPE: 'stream',
+      COUNT: 1000,
+    })) {
+      for (const key of keys) {
+        count += await this.client.xLen(key);
+        const [last] = await this.client.xRevRange(key, '+', '-', { COUNT: 1 });
+        if (last && (!newest || streamIdAfter(last.id, newest.id))) {
+          newest = { key, id: last.id };
+        }
+      }
+    }
+    return { count, newest: newest && `${newest.key}/${newest.id}` };
   }
 
   async close(): Promise<void> {

@@ -159,3 +159,23 @@ export type RgLimitLedgerPort = {
 
 export const RG_LIMIT_LEDGER: SealedToken<RgLimitLedgerPort> =
   createSealedToken<RgLimitLedgerPort>('RG_LIMIT_LEDGER');
+
+/**
+ * Compliance's committed limits, read for the wallet's reconciliation to compare its projection
+ * against. Bound by compliance, the owner of every limit. Sealed: rebinding it could hide a
+ * projection that lets a move past a limit the player set.
+ */
+export type RgLimitsSourcePort = {
+  /** Up to `limit` users' snapshots in user id order, after `afterUserId` when given. */
+  page(afterUserId: string | null, limit: number): Promise<RgLimitsSnapshot[]>;
+  /** The committed snapshots of `userIds`, read now; a user with no limits is at version 0. */
+  snapshots(userIds: readonly string[]): Promise<RgLimitsSnapshot[]>;
+  /**
+   * Re-publishes each of `userIds` through compliance's own writer, under a new version. Returns
+   * the ones it could not, each logged.
+   */
+  repair(userIds: readonly string[]): Promise<string[]>;
+};
+
+export const RG_LIMITS_SOURCE: SealedToken<RgLimitsSourcePort> =
+  createSealedToken<RgLimitsSourcePort>('RG_LIMITS_SOURCE');

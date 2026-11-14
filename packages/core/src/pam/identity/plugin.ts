@@ -9,6 +9,7 @@ import {
   LOGIN_ENFORCEMENT,
   PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
+  PLAY_ELIGIBILITY_SOURCE,
   MAIL_DISPATCH,
   MAIL_RECIPIENT_DIRECTORY,
   MCP_TOKEN_REVOCATION,
@@ -66,6 +67,8 @@ import { FreshReauthenticationService } from './service/fresh-reauthentication.s
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
 import {
   backfillPlayEligibility,
+  playEligibilityOf,
+  playEligibilityPage,
   PlayEligibilityPublisher,
   PlayEligibilityService,
 } from './service/play-eligibility.service.js';
@@ -311,6 +314,24 @@ export default {
         }),
     );
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
+    // What the wallet's reconciliation compares its play eligibility projection against.
+    ctx.provideSealed(PLAY_ELIGIBILITY_SOURCE, (c) => ({
+      page: (after, limit) => playEligibilityPage(c.get(DRIZZLE).db, after, limit),
+      snapshots: (userIds) => playEligibilityOf(c.get(DRIZZLE).db, userIds),
+      repair: async (userIds) => {
+        const publisher = makePlayEligibilityPublisher(c);
+        const failed: string[] = [];
+        for (const userId of userIds) {
+          try {
+            await publisher.sync(userId);
+          } catch (err) {
+            logger.error({ err, userId }, 'identity: re-publishing play eligibility failed');
+            failed.push(userId);
+          }
+        }
+        return failed;
+      },
+    }));
     // Lets iam demand the password and a fresh second factor before it issues an MCP token.
     ctx.provide(
       FRESH_REAUTHENTICATION,

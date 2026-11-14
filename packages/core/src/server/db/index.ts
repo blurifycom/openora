@@ -36,7 +36,7 @@ export {
 } from './outbox/schema.js';
 export { DrizzleOutboxWriter } from './outbox/writer.js';
 export { DrizzleProcessedEventLog } from './outbox/processed-events.js';
-export { OutboxRelay, type OutboxRelayOptions } from './outbox/relay.js';
+export { OutboxRelay, type OutboxRelayOptions, oldestUnrelayedEvent } from './outbox/relay.js';
 
 // @openora/core/server/orm is a framework-free leaf so drizzle-kit can bundle schemas without
 // pulling in DrizzleService; cross-workspace consumers use it to share the physical drizzle-orm copy.
