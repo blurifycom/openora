@@ -88,6 +88,10 @@ export const WALLET_RECONCILIATION_FINDING_KINDS = [
   // A wallet the ledger invariant cannot check: its history holds rows nothing prices and no
   // baseline covers them.
   'ledger_invariant_unchecked',
+  // A withdrawal older than its state allows, one kind per saga state (ADR-0057).
+  'stuck_withdrawal_requested',
+  'stuck_withdrawal_approved',
+  'stuck_withdrawal_processing',
 ] as const;
 
 export const WALLET_RECONCILIATION_FINDING_STATUSES = ['open', 'resolved'] as const;

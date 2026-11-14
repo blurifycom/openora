@@ -9,11 +9,11 @@ import {
   type ExchangeRateReader,
   type PaymentAdapter,
   type AdminPlayerSummary,
+  type PlayEligibilityPort,
   type PlayerTags,
-  type TagEvaluationCommands,
   type TagKey,
 } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, waitForRowLockWaiter, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
   mock,
@@ -23,6 +23,7 @@ import {
   makeAuditWriter,
   makeExchangeRateReader,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { seedMatureWithdrawalAddress } from '../../testing/seed-wallet.js';
 import { migrate } from '../migrate.js';
@@ -56,6 +57,7 @@ import {
   DestinationAddressNotWhitelistedError,
   WithdrawalLockedError,
 } from '../service/wallet.service.js';
+import { WalletCommandsService } from '../service/wallet-commands.service.js';
 import { WithdrawalQueueItemSchema } from '../contract/index.js';
 
 // Past the 24-hour wait a new payout address sits out, for a row a test inserts directly.
@@ -78,6 +80,7 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
   const psp = makePsp();
   const audit = makeAuditWriter();
   const svc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: events,
     payment: mock<PaymentAdapter>(psp),
@@ -755,60 +758,6 @@ describe('WalletService.withdraw (real PG)', () => {
     expect(settled.filter((s) => s.status === 'fulfilled')).toHaveLength(1);
     expect(await balanceOf(w.userId)).toBe(40);
     expect(await txRows(w.id)).toHaveLength(1);
-  });
-});
-
-describe('WalletService.withdraw - synchronous tag evaluation (TAG_EVALUATION_COMMANDS) (real PG)', () => {
-  it('calls evaluateWithdrawalRequested on the withdrawal transaction handle, with userId/amount, before returning', async () => {
-    const tagEvaluationCommands = mock<TagEvaluationCommands>({
-      evaluateWithdrawalRequested: vi.fn().mockResolvedValue(undefined),
-    });
-    const { svc } = makeService({ tagEvaluationCommands });
-    const w = await seedWallet({ balance: '100' });
-
-    const result = await svc.withdraw({
-      userId: w.userId,
-      amount: '40',
-      currency: 'USD',
-      ...NO_CLIENT_META,
-    });
-
-    expect(result.status).toBe('pending');
-    expect(tagEvaluationCommands.evaluateWithdrawalRequested).toHaveBeenCalledWith(
-      expect.anything(),
-      { userId: w.userId, amount: '40' },
-    );
-  });
-
-  it('is never called when unbound (matches the pre-existing async-event-only behavior)', async () => {
-    const { svc } = makeService();
-    const w = await seedWallet({ balance: '100' });
-
-    const result = await svc.withdraw({
-      userId: w.userId,
-      amount: '40',
-      currency: 'USD',
-      ...NO_CLIENT_META,
-    });
-
-    expect(result.status).toBe('pending');
-  });
-
-  it('propagates an unexpected error and aborts the withdrawal (fail-closed: a review-gate failure must block the withdrawal, not silently skip review)', async () => {
-    const dbError = new Error('tag module db unavailable');
-    const tagEvaluationCommands = mock<TagEvaluationCommands>({
-      evaluateWithdrawalRequested: vi.fn().mockRejectedValue(dbError),
-    });
-    const { svc, events, psp } = makeService({ tagEvaluationCommands });
-    const w = await seedWallet({ balance: '100' });
-
-    await expect(
-      svc.withdraw({ userId: w.userId, amount: '40', currency: 'USD', ...NO_CLIENT_META }),
-    ).rejects.toBe(dbError);
-    // The transaction rolled back before the requested event/auto-approval step ran.
-    expect(events.emitInTransaction).not.toHaveBeenCalled();
-    expect(psp.processWithdrawal).not.toHaveBeenCalled();
-    expect(await balanceOf(w.userId)).toBe(100);
   });
 });
 
@@ -3109,5 +3058,51 @@ describe('WalletService.creditDepositByAddress edges (real PG)', () => {
       tag: 'memo-1',
       sourceAddress: 'rSender',
     });
+  });
+});
+
+describe('WalletService.withdraw racing a bet (real PG)', () => {
+  const commands = new WalletCommandsService(
+    mock<PlayEligibilityPort>({
+      isRestricted: vi.fn().mockResolvedValue(false),
+      checkPlay: vi.fn().mockResolvedValue(null),
+    }),
+    makeAuditWriter(),
+  );
+
+  it('waits on the wallet lock a bet holds and is refused once the stake has spent the balance', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const { svc } = makeService();
+    let commitBet = () => {};
+    const betMayCommit = new Promise<void>((resolve) => {
+      commitBet = resolve;
+    });
+    let betLocked = () => {};
+    const betHoldsLock = new Promise<void>((resolve) => {
+      betLocked = resolve;
+    });
+    const bet = db.drizzle.db.transaction(async (tx) => {
+      const outcome = await commands.debit(tx, {
+        userId: w.userId,
+        amount: '60',
+        type: 'bet',
+        providerRef: { providerName: 'agg', providerRefId: 'bet-race', externalRoundId: 'r-1' },
+      });
+      betLocked();
+      await betMayCommit;
+      return outcome;
+    });
+    await betHoldsLock;
+
+    const withdrawal = svc
+      .withdraw({ userId: w.userId, amount: '60', currency: 'USD', ...NO_CLIENT_META })
+      .catch((err: unknown) => err);
+    await waitForRowLockWaiter(db);
+    commitBet();
+
+    expect(await bet).toMatchObject({ ok: true });
+    expect(await withdrawal).toBeInstanceOf(InsufficientBalanceError);
+    expect(await balanceOf(w.userId)).toBe(40);
+    expect((await txRows(w.id)).map((r) => r.type)).toEqual(['bet']);
   });
 });

@@ -25,6 +25,7 @@ import {
   mock,
   NO_CLIENT_META,
   testContext,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { seedMatureWithdrawalAddress } from '../../testing/seed-wallet.js';
 import { migrate } from '../migrate.js';
@@ -83,6 +84,7 @@ function makeService(
     processWithdrawal: vi.fn(async () => ({ externalId: randomUUID(), status: 'completed' })),
   };
   const svc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>(psp),
@@ -453,5 +455,57 @@ describe('WalletService.withdraw - the 24-hour wait on a payout address (real PG
 
       await expect(unmatured(svc, tx.id, w.userId)).resolves.toBe(false);
     });
+  });
+});
+
+describe('WalletService.approveWithdrawal PIN lockout re-check (real PG)', () => {
+  it('refuses to approve while the PIN is locked out, and approves once the lockout ends', async () => {
+    const lockedUntil = new Date(Date.now() + 30 * 60 * 1000);
+    const security = makeWithdrawalSecurity();
+    const { svc } = makeService(security);
+    const w = await seedWallet('BTC');
+    await seedMatureWithdrawalAddress(db, { userId: w.userId, currency: 'BTC', address: ADDRESS });
+    const { transactionId } = await svc.withdraw(btcWithdrawal(w.userId));
+    vi.mocked(security.pinLockedUntil).mockResolvedValue(lockedUntil);
+
+    const refused = await svc
+      .approveWithdrawal(randomUUID(), transactionId)
+      .catch((err: unknown) => err);
+
+    expect(refused).toBeInstanceOf(WithdrawalPinLockedError);
+    const [queued] = await withdrawalRows();
+    expect(queued?.status).toBe('pending');
+
+    vi.mocked(security.pinLockedUntil).mockResolvedValue(null);
+    const approved = await svc.approveWithdrawal(randomUUID(), transactionId);
+    expect(approved.status).toBe('completed');
+  });
+
+  it('requeues an approved withdrawal with a trail when the lockout read throws after the flip', async () => {
+    const security = makeWithdrawalSecurity();
+    const audit = makeAuditWriter();
+    const { svc } = makeService(security, { audit });
+    const w = await seedWallet('BTC');
+    await seedMatureWithdrawalAddress(db, { userId: w.userId, currency: 'BTC', address: ADDRESS });
+    const { transactionId } = await svc.withdraw(btcWithdrawal(w.userId));
+    // Readable before the flip, down once it has committed.
+    vi.mocked(security.pinLockedUntil)
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('identity down'));
+
+    const refused = await svc
+      .approveWithdrawal(randomUUID(), transactionId)
+      .catch((err: unknown) => err);
+
+    expect(refused).toEqual(new Error('identity down'));
+    const [queued] = await withdrawalRows();
+    expect(queued).toMatchObject({ status: 'pending', providerName: null, reviewedBy: null });
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.withdrawal.requeued',
+        after: expect.objectContaining({ reason: 'control_check_failed' }),
+      }),
+    );
   });
 });

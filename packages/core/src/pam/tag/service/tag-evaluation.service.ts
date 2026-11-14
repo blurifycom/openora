@@ -11,7 +11,7 @@ import {
   type TagRule,
   type User,
 } from '@openora/core/contracts';
-import { moneyToNumber, mapConcurrent, createLogger, type DrizzleTx } from '@openora/core/server';
+import { moneyToNumber, mapConcurrent, createLogger } from '@openora/core/server';
 import {
   TagService,
   TagAlreadyInUseError,
@@ -215,7 +215,7 @@ export class TagEvaluationService {
     }
   }
 
-  /** True when the withdrawal_review rule is enabled and amount crosses its threshold. Shared by the event path and the synchronous command-port path below so both stay in lockstep. */
+  /** True when the withdrawal_review rule is enabled and amount crosses its threshold. */
   private async _withdrawalReviewThresholdCrossed(amount: string): Promise<boolean> {
     const rule = await this.getEnabledRule('withdrawal_review');
     if (!rule || rule.threshold === null) {
@@ -225,65 +225,49 @@ export class TagEvaluationService {
   }
 
   /**
-   * Assigns withdrawal_review when a single withdrawal attempt exceeds its threshold.
-   * Called on wallet.withdrawal.requested (the attempt, before funds move) so the
-   * review tag lands before payout. Sticky - never auto-removed here or anywhere else.
-   * This is the async, best-effort fan-out path (other consumers may want the event) -
-   * wallet's own auto-approval decision does NOT wait on this; it calls
-   * evaluateWithdrawalRequested below instead. Idempotent with that path via
-   * TagAlreadyInUseError (see tryAssignTag).
+   * Screens a requested withdrawal: assigns withdrawal_review when the attempt crosses its
+   * threshold, and commits the `tag.withdrawal.screened` verdict with it - the wallet waits on
+   * that verdict before it auto-approves (ADR-0057). Sticky - never auto-removed here or anywhere
+   * else. A review due for a player that cannot be resolved files no verdict, so the withdrawal
+   * stays for a human. A throw is redelivered; one that never succeeds leaves it there too.
    */
   async onWithdrawalRequested(payload: unknown) {
-    const { userId, amount } = domainEventSchemas['wallet.withdrawal.requested'].parse(payload);
-    if (await this._withdrawalReviewThresholdCrossed(amount)) {
-      await this.tryAssignTag({
-        userId,
-        tagKey: 'withdrawal_review',
-        reason: 'single withdrawal attempt exceeded review threshold',
-      });
-    }
-  }
-
-  /**
-   * Synchronous, transactional counterpart to onWithdrawalRequested, bound behind
-   * TAG_EVALUATION_COMMANDS. wallet.withdraw() awaits this on its own transaction handle
-   * BEFORE its maybeAutoApprove reads risk tags, so a withdrawal_review assignment is
-   * guaranteed committed before the auto-approval decision runs - closing the race the
-   * fire-and-forget EventBus emit above cannot (an EventBus emit is never awaited by the
-   * emitter). Money-adjacent: never events-only for this decision (see
-   * messaging-and-microservices "money never flows over events"). Any error here
-   * propagates and aborts the caller's withdrawal transaction - a review-gate evaluation
-   * failure must block the withdrawal rather than silently skip review.
-   */
-  async evaluateWithdrawalRequested(
-    tx: unknown,
-    args: { userId: User['id']; amount: string },
-  ): Promise<void> {
-    const { userId, amount } = args;
-    if (!(await this._withdrawalReviewThresholdCrossed(amount))) {
+    const parsed = domainEventSchemas['wallet.withdrawal.requested'].safeParse(payload);
+    if (!parsed.success) {
+      logger.error(
+        { issues: parsed.error.issues },
+        'malformed wallet.withdrawal.requested dropped',
+      );
       return;
     }
-    const playerId = await this.identityReader.getPlayerIdByUserId(userId);
-    if (!playerId) {
+    const { userId, amount, transactionId } = parsed.data;
+    const reviewRequired = await this._withdrawalReviewThresholdCrossed(amount);
+    const playerId = reviewRequired
+      ? (parsed.data.playerId ?? (await this.identityReader.getPlayerIdByUserId(userId)))
+      : null;
+    if (reviewRequired && !playerId) {
+      logger.error(
+        { userId, transactionId },
+        'withdrawal needs review but has no player; left unscreened',
+      );
       return;
     }
-    const trx = tx as DrizzleTx;
-    try {
-      await this.tag.assignPlayerTagInTx(trx, {
-        playerId,
-        tagKey: 'withdrawal_review',
-        assignReason: 'single withdrawal attempt exceeded review threshold',
-        assignActor: 'scheduled',
-        assignActorUserId: SYSTEM_ACTOR_ID,
-      });
-    } catch (e) {
-      if (e instanceof TagAlreadyInUseError) {
-        return;
-      }
-      throw e;
+    const tagged = await this.tag.screenWithdrawal({
+      userId,
+      transactionId,
+      review: playerId
+        ? {
+            playerId,
+            tagKey: 'withdrawal_review',
+            assignReason: 'single withdrawal attempt exceeded review threshold',
+            assignActor: 'scheduled',
+            assignActorUserId: SYSTEM_ACTOR_ID,
+          }
+        : null,
+    });
+    if (tagged) {
+      await this.evaluateBasicKycNeededOnDeposit(userId);
     }
-
-    await this.evaluateBasicKycNeededOnDeposit(userId);
   }
 
   private async evaluateBasicKycNeededOnDeposit(userId: User['id']) {

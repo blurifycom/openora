@@ -337,6 +337,13 @@
       "when": 1794597610187,
       "tag": "0047_seed_ledger_user_limit",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1794606712289,
+      "tag": "0048_ordinary_shatterstar",
+      "breakpoints": true
     }
   ]
 }

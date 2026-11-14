@@ -13,6 +13,7 @@ import {
   makeAuditWriter,
   makeExchangeRateReader,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletAsset, walletBalance, walletTransaction } from '../schema/index.js';
@@ -36,6 +37,7 @@ function makeService() {
     status: 'completed' as const,
   }));
   const svc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({ processDeposit }),

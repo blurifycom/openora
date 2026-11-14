@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
-import { DRIZZLE, type Container, type CoreTokenCatalog } from '@openora/core/server';
+import { setTimeout as delay } from 'node:timers/promises';
+import { and, eq, like, sql } from 'drizzle-orm';
+import {
+  DRIZZLE,
+  eventOutbox,
+  processedEvents,
+  type Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
+import { walletTransaction } from '@openora/core/wallet/schema';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import type { TestApp } from './app.js';
 import type { TestClient } from './request.js';
@@ -130,4 +138,43 @@ export async function roleIdByKey(
     throw new Error(`no seeded admin_role with key='${roleKey}'`);
   }
   return role.id;
+}
+
+const SCREENING_TIMEOUT_MS = 10_000;
+
+/**
+ * Waits until the wallet handled the tag module's screening verdict for a withdrawal, which is
+ * what runs auto-approval (ADR-0057), then returns the withdrawal's status as that decided it.
+ */
+export async function screenedWithdrawalStatus(app: TestApp, transactionId: string) {
+  const { db } = app.container.get(DRIZZLE);
+  const deadline = Date.now() + SCREENING_TIMEOUT_MS;
+  for (;;) {
+    const handled = await db
+      .select({ eventId: processedEvents.eventId })
+      .from(processedEvents)
+      .innerJoin(eventOutbox, eq(eventOutbox.eventId, processedEvents.eventId))
+      .where(
+        and(
+          eq(eventOutbox.topic, 'tag.withdrawal.screened'),
+          sql`${eventOutbox.payload}->>'transactionId' = ${transactionId}`,
+          like(processedEvents.consumer, '%/wallet/tag.withdrawal.screened%'),
+        ),
+      )
+      .limit(1);
+    if (handled.length > 0) {
+      break;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `withdrawal ${transactionId} was not screened within ${SCREENING_TIMEOUT_MS}ms`,
+      );
+    }
+    await delay(50);
+  }
+  const [row] = await db
+    .select({ status: walletTransaction.status })
+    .from(walletTransaction)
+    .where(eq(walletTransaction.id, transactionId));
+  return row?.status;
 }

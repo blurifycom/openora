@@ -26,6 +26,7 @@ import {
   makeJobQueue,
   makePaymentProviderRegistry,
   NO_CLIENT_META,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -99,6 +100,7 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
   });
   const paymentProviders = makePaymentProviderRegistry();
   const service = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({
@@ -352,21 +354,33 @@ describe('wallet auto-withdrawal-config routes', () => {
     );
 
     const below = await seedPlayerWallet();
-    const belowResult = await service.withdraw({
+    const belowRequested = await service.withdraw({
       userId: below.userId,
       amount: '40',
       currency: 'USD',
       ...NO_CLIENT_META,
     });
+    const belowResult =
+      (await service.autoApproveScreenedWithdrawal({
+        userId: below.userId,
+        transactionId: belowRequested.transactionId,
+        reviewRequired: false,
+      })) ?? belowRequested;
     expect(belowResult.status).toBe('completed');
 
     const above = await seedPlayerWallet();
-    const aboveResult = await service.withdraw({
+    const aboveRequested = await service.withdraw({
       userId: above.userId,
       amount: '400',
       currency: 'USD',
       ...NO_CLIENT_META,
     });
+    const aboveResult =
+      (await service.autoApproveScreenedWithdrawal({
+        userId: above.userId,
+        transactionId: aboveRequested.transactionId,
+        reviewRequired: false,
+      })) ?? aboveRequested;
     expect(aboveResult.status).toBe('pending');
 
     expect(audit.recordInTransaction).toHaveBeenCalledWith(

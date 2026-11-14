@@ -269,6 +269,15 @@ export class WithdrawalPinService implements WithdrawalSecurity {
     });
   }
 
+  async pinLockedUntil(userId: User['id']): Promise<Date | null> {
+    const [row] = await this.drizzle.db
+      .select({ lockedUntil: user.withdrawalPinLockedUntil })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row?.lockedUntil && row.lockedUntil.getTime() > Date.now() ? row.lockedUntil : null;
+  }
+
   /**
    * Reads, compares and counts under a row lock on the user, so a burst of parallel guesses is
    * judged one at a time: each sees the lock the one before it set, and none can be evaluated

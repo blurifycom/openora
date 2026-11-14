@@ -128,6 +128,11 @@ export const AUDIT_COVERAGE_GAPS = {
     writer: 'ComplianceService via recordInTransaction',
     reason: 'joins the rule writes and keeps the removed rules in `before`',
   },
+  'tag.withdrawal.screened': {
+    kind: 'exempt',
+    reason:
+      'a verdict that screening ran; the withdrawal_review tag it may follow is audited in the same transaction, and an auto-approval it leads to writes wallet.withdrawal.auto_approved',
+  },
   'wallet.withdrawal.requeued': {
     kind: 'atSource',
     writer: 'WalletService via recordInTransaction',

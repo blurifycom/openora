@@ -11,6 +11,7 @@ import {
   makeIdentityReader,
   makeAuditWriter,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
@@ -20,6 +21,7 @@ let db: TestDb;
 
 function makeService(directory?: Partial<AdminUserDirectory>) {
   return new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),

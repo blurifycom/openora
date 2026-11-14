@@ -19,6 +19,7 @@ import {
   makeExchangeRateReader,
   makeAuditWriter,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -48,6 +49,7 @@ import {
   ReconciliationFindingNotFoundError,
   type ReconciliationRefusalReason,
   ReconciliationRefundAmountError,
+  STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES,
 } from '../service/reconciliation.service.js';
 
 let db: TestDb;
@@ -91,6 +93,7 @@ function makeServices(
     wallet: { reconciliation: RECONCILIATION_CONFIG, ...overrides.platformConfig },
   });
   const wallet = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment,
@@ -132,6 +135,14 @@ async function balanceOf(walletId: string) {
 
 async function findingRows() {
   return db.drizzle.db.select().from(walletReconciliationFinding);
+}
+
+async function txById(id: string) {
+  const [row] = await db.drizzle.db
+    .select()
+    .from(walletTransaction)
+    .where(eq(walletTransaction.id, id));
+  return row;
 }
 
 function missingDepositEvent(
@@ -575,6 +586,298 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
       .from(walletTransaction)
       .where(eq(walletTransaction.id, second.tx.id));
     expect(row?.status).toBe('completed');
+  });
+
+  it('holds a processing withdrawal while the vendor is down: one finding, no refund', async () => {
+    const providerRefId = randomUUID();
+    const { w, tx } = await seedStuckWithdrawal(providerRefId);
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      getWithdrawalStatus: vi.fn(async () => {
+        throw new Error('vendor unreachable');
+      }),
+    });
+    const { reconciliation } = makeServices(payment);
+
+    await reconciliation.runCycle();
+    await reconciliation.runCycle();
+
+    const findings = await findingRows();
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      kind: 'stuck_withdrawal_processing',
+      externalId: providerRefId,
+      transactionId: tx.id,
+    });
+    const [row] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, tx.id));
+    expect(row?.status).toBe('processing');
+    expect(await balanceOf(w.id)).toBe('5.000000000000000000');
+    // The withdrawal is still live, so a manual credit could pay it twice: dismissal only.
+    await expect(
+      reconciliation.resolveFinding(randomUUID(), findings[0]?.id ?? '', {
+        outcome: 'credited',
+        transactionId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ name: 'ReconciliationOutcomeNotAllowedError' });
+  });
+
+  async function seedApprovedNeverDispatched() {
+    const seeded = await seedStuckWithdrawal(null);
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ providerName: null })
+      .where(eq(walletTransaction.id, seeded.tx.id));
+    return seeded;
+  }
+
+  const requeuedAudits = (audit: ReturnType<typeof makeServices>['audit']) =>
+    vi
+      .mocked(audit.recordInTransaction)
+      .mock.calls.filter(([, entry]) => entry.action === 'wallet.withdrawal.requeued');
+
+  it('files an approved withdrawal with no provider as stuck_withdrawal_approved and requeues it once, without asking the vendor', async () => {
+    const { w, tx } = await seedApprovedNeverDispatched();
+    // The vendor is up and has no record: that must not read as unknown_at_provider.
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      findWithdrawalByReference: vi.fn(async () => null),
+      getWithdrawalStatus: vi.fn(async () => null),
+      processWithdrawal: vi.fn(async () => ({
+        status: 'completed' as const,
+        externalId: randomUUID(),
+      })),
+    });
+    const { reconciliation, wallet: walletService, audit } = makeServices(payment);
+
+    await reconciliation.runCycle();
+
+    expect(payment.findWithdrawalByReference).not.toHaveBeenCalled();
+    expect(await findingRows()).toEqual([
+      expect.objectContaining({
+        kind: 'stuck_withdrawal_approved',
+        externalId: tx.id,
+        status: 'open',
+        detail: expect.stringContaining('no provider recorded'),
+      }),
+    ]);
+    expect(await txById(tx.id)).toMatchObject({
+      status: 'pending',
+      providerName: null,
+      reviewedAt: null,
+    });
+
+    await reconciliation.runCycle();
+
+    expect(requeuedAudits(audit)).toHaveLength(1);
+    expect(requeuedAudits(audit)[0]?.[1]).toMatchObject({
+      after: { status: 'pending', reason: 'never_dispatched' },
+    });
+    expect(await findingRows()).toEqual([
+      expect.objectContaining({ kind: 'stuck_withdrawal_approved', status: 'resolved' }),
+    ]);
+    expect(payment.processWithdrawal).not.toHaveBeenCalled();
+
+    const approved = await walletService.approveWithdrawal(randomUUID(), tx.id);
+
+    expect(approved.status).toBe('completed');
+    expect(payment.processWithdrawal).toHaveBeenCalledTimes(1);
+    expect(await balanceOf(w.id)).toBe('5.000000000000000000');
+  });
+
+  it('never pays a withdrawal reconciliation requeued while its dispatch was still running', async () => {
+    const { w, tx } = await seedApprovedNeverDispatched();
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ status: 'pending' })
+      .where(eq(walletTransaction.id, tx.id));
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      processWithdrawal: vi.fn(async () => ({
+        status: 'completed' as const,
+        externalId: randomUUID(),
+      })),
+    });
+    // The dispatch's first identity read, right before the provider stamp, waits for the test.
+    let reachDispatch = (): void => undefined;
+    const atDispatch = new Promise<void>((resolve) => {
+      reachDispatch = resolve;
+    });
+    let releaseDispatch = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      releaseDispatch = resolve;
+    });
+    const identityReader = makeIdentityReader();
+    let paused = false;
+    vi.mocked(identityReader.getPlayerIdByUserIdSafe).mockImplementation(async () => {
+      if (!paused) {
+        paused = true;
+        reachDispatch();
+        await released;
+      }
+      return null;
+    });
+    const { reconciliation, wallet: walletService } = makeServices(payment, { identityReader });
+
+    const slowApproval = walletService.approveWithdrawal(randomUUID(), tx.id);
+    await atDispatch;
+    // The dispatch has been stuck past the cutoff by the time reconciliation runs.
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ reviewedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) })
+      .where(eq(walletTransaction.id, tx.id));
+    await reconciliation.runCycle();
+    releaseDispatch();
+
+    expect(await slowApproval).toMatchObject({ status: 'pending' });
+    expect(payment.processWithdrawal).not.toHaveBeenCalled();
+    expect(await txById(tx.id)).toMatchObject({ status: 'pending', providerName: null });
+
+    expect(await walletService.approveWithdrawal(randomUUID(), tx.id)).toMatchObject({
+      status: 'completed',
+    });
+    expect(payment.processWithdrawal).toHaveBeenCalledTimes(1);
+    expect(await balanceOf(w.id)).toBe('5.000000000000000000');
+  });
+
+  it('keeps findings open when their close cannot be audited, and still files this cycle', async () => {
+    const { tx } = await seedApprovedNeverDispatched();
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      getWithdrawalStatus: vi.fn(async () => {
+        throw new Error('vendor unreachable');
+      }),
+    });
+    const { reconciliation, audit } = makeServices(payment);
+    await reconciliation.runCycle();
+    // Settled since: its finding is due to close.
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ status: 'completed' })
+      .where(eq(walletTransaction.id, tx.id));
+    audit.recordInTransaction.mockImplementation(
+      async (_txn: unknown, entry: { action: string }) => {
+        if (entry.action === 'wallet.reconciliation_finding.resolved') {
+          throw new Error('audit store down');
+        }
+      },
+    );
+    const dispatched = await seedStuckWithdrawal(randomUUID());
+
+    await reconciliation.runCycle();
+
+    const findings = await findingRows();
+    expect(findings.map(({ kind, status }) => ({ kind, status }))).toEqual(
+      expect.arrayContaining([
+        { kind: 'stuck_withdrawal_approved', status: 'open' },
+        { kind: 'stuck_withdrawal_processing', status: 'open' },
+      ]),
+    );
+    expect(findings).toHaveLength(2);
+    expect(findings.find((f) => f.kind === 'stuck_withdrawal_processing')?.transactionId).toBe(
+      dispatched.tx.id,
+    );
+  });
+
+  it('closes each stuck withdrawal finding once the withdrawal leaves that state, moving no money', async () => {
+    const { w, tx } = await seedApprovedNeverDispatched();
+    const vendorRefId = randomUUID();
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      getWithdrawalStatus: vi.fn(async () => {
+        throw new Error('vendor unreachable');
+      }),
+    });
+    const { reconciliation, audit } = makeServices(payment);
+    await reconciliation.runCycle();
+
+    // Requeued by the cycle, then approved and dispatched: approved closes, processing is filed
+    // for the vendor outage.
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({
+        status: 'processing',
+        reviewedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+        providerName: 'default',
+        providerRefId: vendorRefId,
+      })
+      .where(eq(walletTransaction.id, tx.id));
+    await reconciliation.runCycle();
+    // Settled by its webhook: processing closes too.
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ status: 'completed' })
+      .where(eq(walletTransaction.id, tx.id));
+    await reconciliation.runCycle();
+
+    const findings = await findingRows();
+    expect(findings.map(({ kind, status }) => ({ kind, status }))).toEqual(
+      expect.arrayContaining([
+        { kind: 'stuck_withdrawal_approved', status: 'resolved' },
+        { kind: 'stuck_withdrawal_processing', status: 'resolved' },
+      ]),
+    );
+    expect(findings).toHaveLength(2);
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.reconciliation_finding.resolved',
+        after: { status: 'resolved', outcome: 'withdrawal_moved_on' },
+      }),
+    );
+    expect(await balanceOf(w.id)).toBe('5.000000000000000000');
+  });
+
+  it('files a withdrawal left requested past a day once, held or not, and leaves a fresher one alone', async () => {
+    const w = await seedWallet('BTC', '5');
+    const requested = async (createdAt: Date, status: 'pending' | 'on_hold' = 'pending') =>
+      findOneOrThrow(
+        await db.drizzle.db
+          .insert(walletTransaction)
+          .values({
+            walletId: w.id,
+            type: 'withdrawal',
+            amount: '1',
+            currency: 'BTC',
+            status,
+            rail: 'crypto',
+            createdAt,
+          })
+          .returning(),
+        new Error('requested: no row'),
+      );
+    const dayAgo = new Date(Date.now() - (STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES + 5) * 60_000);
+    const stale = await requested(dayAgo);
+    const held = await requested(dayAgo, 'on_hold');
+    await requested(new Date(Date.now() - 60 * 60_000));
+    const payment = mock<PaymentAdapter>({ listTransactions: vi.fn(async () => []) });
+    const { reconciliation } = makeServices(payment);
+
+    await reconciliation.runCycle();
+    await reconciliation.runCycle();
+
+    const findings = await findingRows();
+    expect(findings).toHaveLength(2);
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'stuck_withdrawal_requested', externalId: stale.id }),
+        expect.objectContaining({ kind: 'stuck_withdrawal_requested', externalId: held.id }),
+      ]),
+    );
+    expect(await balanceOf(w.id)).toBe('5.000000000000000000');
+
+    // A human decided the pending one: its finding closes, the held one's stays open.
+    await db.drizzle.db
+      .update(walletTransaction)
+      .set({ status: 'rejected' })
+      .where(eq(walletTransaction.id, stale.id));
+    await reconciliation.runCycle();
+
+    const after = await findingRows();
+    expect(after.find((f) => f.externalId === stale.id)?.status).toBe('resolved');
+    expect(after.find((f) => f.externalId === held.id)?.status).toBe('open');
   });
 });
 

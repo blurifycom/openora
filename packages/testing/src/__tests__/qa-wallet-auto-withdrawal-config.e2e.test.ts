@@ -26,6 +26,7 @@ import {
   bootE2e,
   closeE2e,
   readJson,
+  screenedWithdrawalStatus,
   verifyKyc,
   assignIamRoleByKey,
 } from '../index.js';
@@ -310,7 +311,7 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
     });
     expect(belowRes.status).toBe(200);
     const belowBody = await readJson(belowRes);
-    expect(belowBody.status).toBe('completed');
+    expect(await screenedWithdrawalStatus(appMain, belowBody.transactionId)).toBe('completed');
 
     const aboveEmail = `above-${randomUUID()}@e2e.test`;
     const above = await registerAndMaterializePlayer(appMain, { email: aboveEmail });
@@ -327,7 +328,7 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
     });
     expect(aboveRes.status).toBe(200);
     const aboveBody = await readJson(aboveRes);
-    expect(aboveBody.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appMain, aboveBody.transactionId)).toBe('pending');
 
     const pendingListRes = await superAdmin.get('/wallet/withdrawals?status=pending&limit=100');
     const pendingList = await readJson(pendingListRes);
@@ -376,7 +377,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
         currency: 'USD',
       }),
     );
-    expect(first.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appMain, first.transactionId)).toBe('pending');
 
     await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '30',
@@ -391,7 +392,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
         currency: 'USD',
       }),
     );
-    expect(second.status).toBe('completed');
+    expect(await screenedWithdrawalStatus(appMain, second.transactionId)).toBe('completed');
 
     await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '5',
@@ -406,7 +407,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
         currency: 'USD',
       }),
     );
-    expect(third.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appMain, third.transactionId)).toBe('pending');
   });
 });
 
@@ -440,7 +441,7 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
         currency: 'USD',
       }),
     );
-    expect(res.status).toBe('completed');
+    expect(await screenedWithdrawalStatus(appMain, res.transactionId)).toBe('completed');
 
     const auditRes = await superAdmin.get(
       `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.withdrawal.auto_approved`,
@@ -476,7 +477,7 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
         currency: 'USD',
       }),
     );
-    expect(res.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appMain, res.transactionId)).toBe('pending');
   });
 });
 
@@ -505,7 +506,7 @@ describe('fail-closed: the singleton config row is missing', () => {
     });
     expect(res.status).toBe(200);
     const body = await readJson(res);
-    expect(body.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appUnseeded, body.transactionId)).toBe('pending');
   });
 
   it('BUG: GET /wallet/auto-withdrawal-config 500s instead of a mapped 404 when the row is missing (router/index.ts autoWithdrawalConfig.get skips mapErrors, unlike every sibling handler)', async () => {

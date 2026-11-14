@@ -1,6 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
-import { and, asc, count, desc, eq, gte, inArray, isNull, lt, ne, notLike, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  ne,
+  notLike,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import {
   type DrizzleDb,
   type DrizzleService,
@@ -170,6 +184,16 @@ const LEDGER_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new S
   'ledger_invariant_unchecked',
 ]);
 
+/**
+ * Reports of a withdrawal stuck in its saga (ADR-0057). The withdrawal itself is still live and
+ * settles through its own path, so a manual credit here would pay it twice: dismissal only.
+ */
+const STUCK_WITHDRAWAL_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
+  'stuck_withdrawal_requested',
+  'stuck_withdrawal_approved',
+  'stuck_withdrawal_processing',
+]);
+
 function assertOutcomeAllowed(
   kind: WalletReconciliationFindingKind,
   outcome: ReconciliationResolution['outcome'],
@@ -177,11 +201,13 @@ function assertOutcomeAllowed(
   const allowed =
     kind === 'held_deposit'
       ? outcome === 'released' || outcome === 'refunded'
-      : LEDGER_FINDING_KINDS.has(kind)
-        ? outcome === 'rebaselined' || outcome === 'dismissed'
-        : outcome === 'credited' ||
-          outcome === 'dismissed' ||
-          (outcome === 'refunded' && REFUNDABLE_FINDING_KINDS.has(kind));
+      : STUCK_WITHDRAWAL_FINDING_KINDS.has(kind)
+        ? outcome === 'dismissed'
+        : LEDGER_FINDING_KINDS.has(kind)
+          ? outcome === 'rebaselined' || outcome === 'dismissed'
+          : outcome === 'credited' ||
+            outcome === 'dismissed' ||
+            (outcome === 'refunded' && REFUNDABLE_FINDING_KINDS.has(kind));
   if (!allowed) {
     throw new ReconciliationOutcomeNotAllowedError(kind, outcome);
   }
@@ -361,6 +387,10 @@ const DEFAULT_LEDGER_INVARIANT_STALE_RUN_AFTER_MINUTES = 240;
 /** Fallback when reconciliation runs without a `wallet.sweep` config block. */
 const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
 
+// A requested withdrawal waits on a person, not a vendor, so it is stuck only once that wait
+// outruns a day. Approved and processing ones use `reconciliation.stuckAfterMinutes` (ADR-0057).
+export const STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES = 24 * 60;
+
 // A swap leg carries no payment provider name, but a finding needs one to be filed under.
 const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
 
@@ -420,8 +450,8 @@ export type ReconciliationServiceDeps = {
  * Owns the reconciliation job cycle (claim -> per-provider diff -> stuck-withdrawal /
  * stuck-sweep sweep -> finish + audit + alert) and the admin surface over its findings
  * (list/resolve). A finding is a report; the cycle never credits anything itself. Money
- * moves only through `WalletService`: `reconcileWithdrawalStatus` (already idempotent) in
- * the cycle, and in a resolution the deposit credit or release (after the deposit hold
+ * moves only through `WalletService`: `reconcileWithdrawalStatus` (already idempotent) and
+ * `requeueNeverDispatched` (a status move back to the queue, no money) in the cycle, and in a resolution the deposit credit or release (after the deposit hold
  * policy) or the manual-adjustment row a non-deposit `credited` resolution references.
  */
 export class ReconciliationService {
@@ -1078,7 +1108,9 @@ export class ReconciliationService {
       unknownAtProvider: 0,
       stuckSweeps: 0,
       stuckSwaps: 0,
+      stuckWithdrawals: 0,
       swapFindingsClosed: 0,
+      withdrawalFindingsClosed: 0,
       unreconciledHours: 0,
     };
 
@@ -1101,11 +1133,18 @@ export class ReconciliationService {
           await this.reconcileProvider(runId, providerName, since, until, counts);
         }
 
+        // Close first, then file: a withdrawal or leg that left the state it was reported in
+        // stops describing a situation that no longer exists before this cycle adds more.
+        counts.withdrawalFindingsClosed += await this.resolveMovedOnWithdrawalFindings();
         await this.reconcileStuckWithdrawals(runId, cfg.stuckAfterMinutes, cfg.batchSize, counts);
+        await this.reportStuckRequestedWithdrawals(runId, cfg.batchSize, counts);
 
-        // Close first, then file: a leg the desk settled after it was reported stops
-        // describing a situation that no longer exists before this cycle adds more.
-        await this.resolveSettledSwapFindings(counts);
+        counts.swapFindingsClosed += await this.resolveFindingsLeftBehind(
+          'stuck_swap',
+          sql`${walletTransaction.status} = 'processing'`,
+          'settled_at_desk',
+          'the desk settled this swap after it was reported',
+        );
         await this.reconcileStuckSwaps(
           runId,
           cfg.stuckSwapAfterMinutes ?? cfg.stuckAfterMinutes,
@@ -1693,13 +1732,20 @@ export class ReconciliationService {
     runId: WalletJobRun['runId'],
     stuckAfterMinutes: number,
     batchSize: number,
-    counts: { unknownAtProvider: number },
+    counts: { unknownAtProvider: number; stuckWithdrawals: number },
   ): Promise<void> {
     const cutoff = new Date(Date.now() - stuckAfterMinutes * 60 * 1000);
-    // Mirrors the externalId this loop files below, which is the findings dedup key.
+    // Mirrors the externalId this loop files below, which is the findings dedup key. A row never
+    // handed to a vendor files only stuck_withdrawal_approved, so only that kind reports it.
+    // ponytail: a vendor-bound row counts as reported with either of its kinds, so once it holds
+    // an unknown_at_provider finding a later outage report for it waits for batch room; its open
+    // finding already flags it. Track the kind per row if that ever hides an outage.
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
-      WHERE ${walletReconciliationFinding.kind} = 'unknown_at_provider'
+      WHERE ${walletReconciliationFinding.kind} IN
+            ('unknown_at_provider', 'stuck_withdrawal_approved', 'stuck_withdrawal_processing')
+        AND (${walletReconciliationFinding.kind} = 'stuck_withdrawal_approved')
+            = (${walletTransaction.providerName} IS NULL)
         AND ${walletReconciliationFinding.providerName}
             = coalesce(${walletTransaction.providerName}, ${DEFAULT_PAYMENT_PROVIDER})
         AND ${walletReconciliationFinding.externalId}
@@ -1731,13 +1777,58 @@ export class ReconciliationService {
       // One unreachable vendor or bad row must not abort the run - stuck swaps and sweeps
       // are checked after this loop, and a row that throws would sort first forever.
       try {
-        await this.reconcileStuckWithdrawal(runId, tx, counts);
+        if (tx.providerName) {
+          await this.reconcileStuckWithdrawal(runId, tx, counts);
+        } else {
+          // Dispatch stamps the vendor before calling it, so no vendor was asked to pay this one
+          // and there is nothing to look up. Reported, then sent back to the queue so a person
+          // approves it again; its finding closes once it has left processing.
+          await this.reportStuckWithdrawal(runId, tx, 'no provider recorded', counts);
+          await this.wallet.requeueNeverDispatched(tx.id, cutoff);
+        }
       } catch (err) {
         logger.error(
           { err, transactionId: tx.id },
           'reconciliation: stuck withdrawal check failed',
         );
+        await this.reportStuckWithdrawal(runId, tx, 'status check failed', counts);
       }
+    }
+  }
+
+  /**
+   * A withdrawal past `stuckAfterMinutes` that could not be settled from the vendor (ADR-0057):
+   * filed under its saga state, approved (never handed to a vendor) or processing (handed to one),
+   * so an outage still surfaces. A report only - never a refund, the payout may still have left.
+   * A failure to file is logged and never aborts the run.
+   */
+  private async reportStuckWithdrawal(
+    runId: WalletJobRun['runId'],
+    tx: WalletTransaction,
+    why: string,
+    counts: { stuckWithdrawals: number },
+  ): Promise<void> {
+    try {
+      const filed = await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId,
+          providerName: tx.providerName ?? DEFAULT_PAYMENT_PROVIDER,
+          kind: tx.providerName ? 'stuck_withdrawal_processing' : 'stuck_withdrawal_approved',
+          currency: tx.currency,
+          network: tx.network,
+          amount: tx.amount,
+          transactionId: tx.id,
+          externalId: tx.providerRefId ?? tx.id,
+          detail: `withdrawal processing since ${(tx.reviewedAt ?? tx.createdAt).toISOString()}; ${why}`,
+        },
+        this.audit,
+      );
+      if (filed) {
+        counts.stuckWithdrawals += 1;
+      }
+    } catch (err) {
+      logger.error({ err, transactionId: tx.id }, 'reconciliation: stuck withdrawal not filed');
     }
   }
 
@@ -1830,48 +1921,83 @@ export class ReconciliationService {
   }
 
   /**
-   * Closes `stuck_swap` findings the desk settled after they were reported - a
-   * report-side write only, matching what this table is for: it never touches a balance,
-   * a transaction status, or the swap itself. Without it a slow-but-healthy swap leaves
-   * an `open` finding describing a situation that no longer exists, and since
+   * Closes open findings of `kind` whose transaction has left the state they reported -
+   * `stillStuck` says what that state is - and returns how many. A report-side write only,
+   * matching what this table is for: it never touches a balance, a transaction status, or the
+   * transaction itself. Without it a slow-but-healthy swap, or a withdrawal a human took days
+   * to review, leaves an `open` finding describing a situation that no longer exists, and since
    * `countOpenFindings` feeds `alertThreshold`, a growing pile of them alerts on nothing.
+   * The close and its audit rows commit together. A failure is logged and closes nothing, so the
+   * cycle still files what it finds and the next cycle tries again.
    */
-  private async resolveSettledSwapFindings(counts: { swapFindingsClosed: number }): Promise<void> {
-    const settled = sql`EXISTS (
+  private async resolveFindingsLeftBehind(
+    kind: WalletReconciliationFindingKind,
+    stillStuck: SQL,
+    outcome: string,
+    resolutionNote: string,
+  ): Promise<number> {
+    const left = sql`EXISTS (
       SELECT 1 FROM ${walletTransaction}
       WHERE ${walletTransaction.id} = ${walletReconciliationFinding.transactionId}
-        AND ${walletTransaction.status} <> 'processing'
+        AND NOT (${stillStuck})
     )`;
-    const closed = await this.drizzle.db
-      .update(walletReconciliationFinding)
-      .set({
-        status: 'resolved',
-        resolvedAt: new Date(),
-        resolutionNote: 'the desk settled this swap after it was reported',
-      })
-      .where(
-        and(
-          eq(walletReconciliationFinding.kind, 'stuck_swap'),
-          eq(walletReconciliationFinding.status, 'open'),
-          settled,
-        ),
-      )
-      .returning({ id: walletReconciliationFinding.id });
+    try {
+      return await this.drizzle.db.transaction(async (txn) => {
+        const closed = await txn
+          .update(walletReconciliationFinding)
+          .set({ status: 'resolved', resolvedAt: new Date(), resolutionNote })
+          .where(
+            and(
+              eq(walletReconciliationFinding.kind, kind),
+              eq(walletReconciliationFinding.status, 'open'),
+              left,
+            ),
+          )
+          .returning({ id: walletReconciliationFinding.id });
 
-    // `resolvedBy` stays null: no admin acted, and the audit entry's system actor is
-    // what says who did. A finding closed here never carries a `credited` outcome,
-    // because nothing on this path moves money.
-    for (const row of closed) {
-      counts.swapFindingsClosed += 1;
-      await this.audit.record({
-        actorType: 'system',
-        action: 'wallet.reconciliation_finding.resolved',
-        resourceType: 'wallet_reconciliation_finding',
-        resourceId: row.id,
-        before: { status: 'open' },
-        after: { status: 'resolved', outcome: 'settled_at_desk' },
+        // `resolvedBy` stays null: no admin acted, and the audit entry's system actor is
+        // what says who did. A finding closed here never carries a `credited` outcome,
+        // because nothing on this path moves money.
+        for (const row of closed) {
+          await this.audit.recordInTransaction(txn, {
+            actorType: 'system',
+            action: 'wallet.reconciliation_finding.resolved',
+            resourceType: 'wallet_reconciliation_finding',
+            resourceId: row.id,
+            before: { status: 'open' },
+            after: { status: 'resolved', outcome },
+          });
+        }
+        return closed.length;
       });
+    } catch (err) {
+      logger.error({ err, kind }, 'reconciliation: closing findings failed');
+      return 0;
     }
+  }
+
+  // ponytail: findings dedupe on (kind, provider, external id) whatever their status, so a
+  // withdrawal that returns to a state it was already reported in is not reported again.
+  private async resolveMovedOnWithdrawalFindings(): Promise<number> {
+    const processing = sql`${walletTransaction.status} = 'processing'`;
+    const stillIn = [
+      ['stuck_withdrawal_requested', sql`${walletTransaction.status} IN ('pending', 'on_hold')`],
+      [
+        'stuck_withdrawal_approved',
+        sql`${processing} AND ${walletTransaction.providerName} IS NULL`,
+      ],
+      ['stuck_withdrawal_processing', processing],
+    ] as const;
+    let closed = 0;
+    for (const [kind, stillStuck] of stillIn) {
+      closed += await this.resolveFindingsLeftBehind(
+        kind,
+        stillStuck,
+        'withdrawal_moved_on',
+        'the withdrawal left this state after it was reported',
+      );
+    }
+    return closed;
   }
 
   // Human resolution only, like a stuck sweep. A swap_out held `processing` past the cutoff
@@ -1880,7 +2006,7 @@ export class ReconciliationService {
   //
   // wallet_transaction_status_type_created_at_idx covers the WHERE, but the ORDER BY leads
   // with the correlated EXISTS, which no index serves: every cycle sorts the whole matching
-  // set before LIMIT. That set is bounded in practice only because resolveSettledSwapFindings
+  // set before LIMIT. That set is bounded in practice only because resolveFindingsLeftBehind
   // closes findings - not because the plan is cheap. Same shape as the sweep sibling.
   private async reconcileStuckSwaps(
     runId: WalletJobRun['runId'],
@@ -1931,6 +2057,57 @@ export class ReconciliationService {
         },
         this.audit,
       );
+    }
+  }
+
+  /**
+   * A withdrawal requested more than STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES ago and still
+   * `pending` or `on_hold` (ADR-0057): screening or review never decided it. A report only, one
+   * per withdrawal.
+   */
+  private async reportStuckRequestedWithdrawals(
+    runId: WalletJobRun['runId'],
+    batchSize: number,
+    counts: { stuckWithdrawals: number },
+  ): Promise<void> {
+    const cutoff = new Date(Date.now() - STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES * 60_000);
+    // Same starvation guard as reconcileStuckWithdrawals: reported rows sort last.
+    const alreadyReported = sql<boolean>`EXISTS (
+      SELECT 1 FROM ${walletReconciliationFinding}
+      WHERE ${walletReconciliationFinding.kind} = 'stuck_withdrawal_requested'
+        AND ${walletReconciliationFinding.externalId} = ${walletTransaction.id}::text
+    )`;
+    const stuck = await this.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.type, 'withdrawal'),
+          inArray(walletTransaction.status, ['pending', 'on_hold']),
+          lt(walletTransaction.createdAt, cutoff),
+        ),
+      )
+      .orderBy(asc(alreadyReported), asc(walletTransaction.createdAt))
+      .limit(batchSize);
+    for (const tx of stuck) {
+      const filed = await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId,
+          providerName: DEFAULT_PAYMENT_PROVIDER,
+          kind: 'stuck_withdrawal_requested',
+          currency: tx.currency,
+          network: tx.network,
+          amount: tx.amount,
+          transactionId: tx.id,
+          externalId: tx.id,
+          detail: `withdrawal requested ${tx.createdAt.toISOString()} and still undecided`,
+        },
+        this.audit,
+      );
+      if (filed) {
+        counts.stuckWithdrawals += 1;
+      }
     }
   }
 

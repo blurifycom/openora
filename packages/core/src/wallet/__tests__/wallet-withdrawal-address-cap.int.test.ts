@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEventBus, makeAuditWriter, makeIdentityReader } from '../../testing/mock.js';
+import {
+  mock,
+  makeEventBus,
+  makeAuditWriter,
+  makeIdentityReader,
+  makeWithdrawalPorts,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { walletWithdrawalAddress } from '../schema/index.js';
 import {
@@ -28,6 +34,7 @@ beforeEach(async () => {
 
 function makeService() {
   return new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),

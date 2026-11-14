@@ -14,6 +14,7 @@ import {
   makeExchangeRateReader,
   makeAuditWriter,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
@@ -35,6 +36,7 @@ function makeService(rgLimits?: RgLimitsPort) {
     processDeposit: vi.fn(async () => ({ externalId: `psp-${randomUUID()}`, status: 'completed' })),
   });
   const svc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment,

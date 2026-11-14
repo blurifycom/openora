@@ -151,12 +151,6 @@ export type {
 } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
-export type {
-  TagEvaluationCommands,
-  TagEvaluationWithdrawalRequestedArgs,
-} from './tag-evaluation-commands.js';
-export { TAG_EVALUATION_COMMANDS } from './tag-evaluation-commands.js';
-
 export type { UserCommands } from './identity.js';
 export type { IdentityReader } from './identity-reader.js';
 export { userIdOfPlayer, userIdsOfPlayers } from './identity-reader.js';
