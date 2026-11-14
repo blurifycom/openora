@@ -45,7 +45,12 @@ if (env !== original) {
 // Shell env wins over .env, the same way `pnpm db:migrate` resolves it.
 process.loadEnvFile('.env');
 if (process.env.NODE_ENV === 'production') fail('Refusing to bootstrap with NODE_ENV=production.');
-const databaseUrl = new URL(process.env.DATABASE_URL ?? '');
+let databaseUrl;
+try {
+  databaseUrl = new URL(process.env.DATABASE_URL ?? '');
+} catch {
+  fail('DATABASE_URL in .env is missing or not a valid postgres URL.');
+}
 const host = databaseUrl.searchParams.get('host') ?? databaseUrl.hostname;
 if (!LOCAL_DB_HOSTS.has(host)) {
   fail(
