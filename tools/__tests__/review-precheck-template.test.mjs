@@ -244,7 +244,7 @@ test('middleware, api folders, workflows and plain .mjs logic are not low risk',
   }
 });
 
-test('destructive migration statements are flagged, a defaulted NOT NULL column is not', () => {
+test('destructive migration statements are flagged; comments, CREATE TABLE and a defaulted column are not', () => {
   git('checkout', '-q', '-b', 'mig-base', 'dev');
   git('checkout', '-q', '-b', 'mig-added');
   const file = 'apps/api/drizzle/migrations/0001_x.sql';
@@ -253,14 +253,17 @@ test('destructive migration statements are flagged, a defaulted NOT NULL column 
       'ALTER TABLE t DROP COLUMN c;',
       'ALTER TABLE t ADD COLUMN d int NOT NULL;',
       'ALTER TABLE t ADD COLUMN e int NOT NULL DEFAULT 0;',
+      '-- RENAME TO is planned for a later release',
+      'CREATE TABLE u (id int NOT NULL);',
+      'ALTER TABLE t ALTER COLUMN f SET NOT NULL;--> statement-breakpoint',
     ].join('\n'),
   });
   const out = precheck('--base', 'mig-base', '--head', 'mig-added');
   assert.ok(out.some((row) => row.startsWith(`REVIEWABLE: ${file} `)));
-  const hits = out.filter((row) => row.includes('destructive migration'));
+  const hits = out.filter((row) => row.includes('destructive-migration'));
   assert.deepEqual(
     hits.map((row) => row.match(/0001_x\.sql:(\d+)/)[1]),
-    ['1', '2'],
+    ['1', '2', '6'],
     out.join('\n'),
   );
 });
