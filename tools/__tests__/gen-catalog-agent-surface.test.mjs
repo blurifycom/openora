@@ -296,6 +296,16 @@ export type DemoCommands = {
 
 export const DEMO_COMMANDS: Token<DemoCommands> = createToken('DEMO_COMMANDS');
 `,
+    'packages/core/src/contracts/adapters/demo-reader.ts': `
+export type DemoRow = { id: string; createdAt: Date };
+
+export type DemoReader = {
+  find(id: string): Promise<DemoRow | null>;
+  find(ids: string[]): Promise<DemoRow[]>;
+};
+
+export const DEMO_READER = createToken<DemoReader>('DEMO_READER');
+`,
   });
   assert.deepEqual(
     catalog.adapters.map(({ category, interface: iface, methods, token }) => ({
@@ -311,6 +321,7 @@ export const DEMO_COMMANDS: Token<DemoCommands> = createToken('DEMO_COMMANDS');
         methods: ['placeHold', 'limit', 'release', 'nested'],
         token: 'DEMO_COMMANDS',
       },
+      { category: 'demo-reader', iface: 'DemoReader', methods: ['find'], token: 'DEMO_READER' },
     ],
   );
 });

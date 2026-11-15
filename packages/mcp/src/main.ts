@@ -135,7 +135,11 @@ function bindingPlugins(a: CatalogAdapter): string[] {
 function formatAdapter(a: CatalogAdapter): string {
   const plugins = bindingPlugins(a);
   const bound =
-    plugins.length > 0 ? `bound in ${plugins.join(', ')}` : 'stub - bind your implementation';
+    plugins.length > 0
+      ? `bound in ${plugins.join(', ')}`
+      : a.status === 'wired'
+        ? 'bound in the core runtime'
+        : 'stub - bind your implementation';
   return `- ${a.category}: ${a.interface}${formatMethods(a)} -> ${a.token}  [${a.status}; ${bound}]`;
 }
 
@@ -390,10 +394,11 @@ server.registerTool(
     lines.push(
       `\n--- Routes ---\n${m.routes.length > 0 ? m.routes.map((r) => `- ${r}`).join('\n') : '(none)'}`,
     );
-    const events = c.events.filter((e) => e.split('.').includes(m.id));
-    if (events.length > 0) {
-      lines.push(`\n--- Events ---\n${events.map((e) => `- ${e}`).join('\n')}`);
-    }
+    const eventSegments = [m.id, m.id.replaceAll('-', '_')];
+    const events = c.events.filter((e) => e.split('.').some((s) => eventSegments.includes(s)));
+    lines.push(
+      `\n--- Events named after this module ---\n${events.length > 0 ? events.map((e) => `- ${e}`).join('\n') : '(none - try list-events query=<word>)'}`,
+    );
     const seams = c.adapters.filter((a) =>
       bindingPlugins(a).some((p) => p === m.id || p.endsWith(`/${m.id}`)),
     );
@@ -401,7 +406,9 @@ server.registerTool(
       const seamLines = seams
         .map((a) => `- ${a.category} -> ${a.token}${formatMethods(a)}`)
         .join('\n');
-      lines.push(`\n--- Adapter seams bound here (details: list-adapters) ---\n${seamLines}`);
+      lines.push(
+        `\n--- Adapter seams this module binds or reads (details: list-adapters) ---\n${seamLines}`,
+      );
     }
     const tools = (c.agentTools ?? []).filter((t) => t.module === m.id);
     const actions = (c.agentActions ?? []).filter((a) => a.module === m.id);
@@ -421,7 +428,10 @@ server.registerTool(
     description:
       'Locate a Zod contract schema by name and return the file that defines it. The actual shape is read from the package types you have installed; this tells you WHERE the schema lives so you can import it.',
     inputSchema: {
-      name: z.string().describe('Schema name, e.g. "WalletBalance" or "WalletBalanceSchema"'),
+      name: z
+        .string()
+        .min(1)
+        .describe('Schema name, e.g. "WalletBalance" or "WalletBalanceSchema"'),
     },
   },
   async ({ name }) => {

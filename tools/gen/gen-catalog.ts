@@ -151,7 +151,9 @@ function interfaceMembers(src: string, name: string): string[] {
     return [];
   }
   const body = src.slice(start, src.indexOf('\n}', start));
-  return [...body.matchAll(/^ {2}(?:readonly )?(\w+)\??\s*[(<:]/gm)].map((m) => m[1] ?? '');
+  return [
+    ...new Set([...body.matchAll(/^ {2}(?:readonly )?(\w+)\??\s*[(<:]/gm)].map((m) => m[1] ?? '')),
+  ];
 }
 
 function collectAdapters(): AdapterInfo[] {
@@ -173,7 +175,7 @@ function collectAdapters(): AdapterInfo[] {
     }
     const src = readFileSync(join(dir, file), 'utf8');
     const tokenMatch = src.match(
-      /export const (\w+)(?::\s*(?:Sealed)?Token<(\w+)[^>]*>)?\s*=\s*(?:createSealedToken|createToken|Symbol)/,
+      /export const (\w+)(?::\s*(?:Sealed)?Token<(\w+)[^>]*>)?\s*=\s*(?:createSealedToken|createToken|Symbol)(?:<(\w+))?/,
     );
     const token = tokenMatch?.[1] ?? '';
     if (!token) {
@@ -183,6 +185,7 @@ function collectAdapters(): AdapterInfo[] {
     // since adapter files declare their argument and result types above the interface.
     const iface =
       tokenMatch?.[2] ??
+      tokenMatch?.[3] ??
       src.match(/export (?:interface|type) (\w*Adapter)\b/)?.[1] ??
       src.match(/export (?:interface|type) (\w+)/)?.[1] ??
       '';

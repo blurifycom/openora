@@ -14,13 +14,13 @@ shipped in the published package, or a catalog you point it at.
 
 | Tool                | Args      | Purpose                                                                    |
 | ------------------- | --------- | -------------------------------------------------------------------------- |
-| `catalog-overview`  | -         | Start here: counts + adapter table + config fields.                        |
-| `list-adapters`     | -         | Vendor swap-seams: interface, token, wired-vs-stub.                        |
+| `catalog-overview`  | -         | Start here: counts, adapter categories, modules, config fields.            |
+| `list-adapters`     | `query?`  | Vendor swap-seams: interface, methods, token, where bound.                 |
 | `list-routes`       | `module?` | oRPC route namespaces, optionally scoped to one module.                    |
-| `list-events`       | -         | Cross-module domain events to subscribe to.                                |
+| `list-events`       | `query?`  | Cross-module domain events to subscribe to.                                |
 | `list-agent-tools`  | `module?` | Agent tools and action types, with IAM and schema version.                 |
 | `list-slots`        | -         | Named UI slots for extending the backoffice.                               |
-| `describe-module`   | `name`    | One module's tables, routes and agent surface.                             |
+| `describe-module`   | `name`    | One module's tables, routes, events, seams and agent surface.              |
 | `schema-get`        | `name`    | Where a Zod contract schema is defined.                                    |
 | `get-config-schema` | -         | iGaming-config token, source, and fields.                                  |
 | `impact`            | `files`   | Transitive importers of files; platform files are followed into this repo. |
