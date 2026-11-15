@@ -114,14 +114,14 @@ Rounds of 3 and 4 share one budget: three. After the third with anything still f
 
 ### 4b. Record evidence
 
-The code is final now, so the videos are recorded once, here, never in an earlier round. Start `tester` for its evidence pass on HEAD: every browser spec that drives an AC, new or existing, runs once with video on, `playwright-cli` only for an AC no spec drives. It returns the clip paths per AC.
+The code is final now, so the videos are recorded once, here, never in an earlier round. Start `tester` for its evidence pass on HEAD: every browser spec that drives an AC, new or existing, runs once with video on, `playwright-cli` only for an AC no spec drives. It joins them with the four shots per changed screen into one walkthrough video and returns its path and chapter list.
 
 - A spec that fails here -> back to `builder` with it, then 3 for the cases it touches, 4 on the new commits, 4b again. That round counts against the same budget of three.
-- Every AC that needs a clip has one -> 5.
+- Every AC that needs a clip has one in the walkthrough -> 5.
 
 ### 5. Open the MR
 
-The pushed HEAD is the commit step 4 approved: anything committed after it, 4b specs included, goes back to 4 first (`guard-review` blocks the push otherwise). That round counts against the budget of three, and 4b is not repeated unless app code changed. `--ask`: report the SHA and stop for "yes push". Then run **create-pr** (it opens the MR as a draft) with the tester's AC table and the 4b videos. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
+The pushed HEAD is the commit step 4 approved: anything committed after it, 4b specs included, goes back to 4 first (`guard-review` blocks the push otherwise). That round counts against the budget of three, and 4b is not repeated unless app code changed. `--ask`: report the SHA and stop for "yes push". Then run **create-pr** (it opens the MR as a draft) with the tester's AC table and the 4b walkthrough and its chapter list. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
 
 ### 6. Red CI and review comments
 
@@ -129,7 +129,7 @@ Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-
 
 - Each thread is checked against the code on this branch first: correct | already handled | wrong on this branch | out of scope. Only a correct one changes code; the rest get an answer.
 - A red job is reproduced locally first; `builder` fixes its cause. Never skip or loosen a test.
-- Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched, and their clips replace the old ones in the MR description. Nothing is pushed untested.
+- Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched and the shots of the screens it changed, joins the walkthrough again, and it replaces the old one in the MR description. Nothing is pushed untested.
 - Push the ticket branch without asking (a force-push only as above). React per thread instead of replying: `thumbsup` and resolve when the fix addressed it, `question` when it needs an answer or you disagree; that thread stays open and its question goes in the ticket's questions comment, the single place for open questions.
 
 Then 7.
