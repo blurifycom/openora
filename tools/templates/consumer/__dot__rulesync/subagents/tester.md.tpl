@@ -11,6 +11,7 @@ description: >-
   on the final commit. Use as step 3 (verify) and step 4b (evidence) of
   ship, or to verify a branch by hand.
 claudecode:
+  disallowedTools: [Artifact, Workflow, ScheduleWakeup, ReportFindings]
   model: sonnet
   effort: high
 ---

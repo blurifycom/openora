@@ -7,6 +7,7 @@ description: >-
   frontend rules, performance, duplication, and simplification in a single
   pass. Findings only, no edits.
 claudecode:
+  disallowedTools: [Artifact, Workflow, ScheduleWakeup, ReportFindings]
   model: opus
 ---
 

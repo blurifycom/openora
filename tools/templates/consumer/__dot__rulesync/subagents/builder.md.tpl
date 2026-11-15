@@ -9,6 +9,7 @@ description: >-
   Use this agent to build or extend features in a consumer igaming repo that wraps
   the OSS platform.
 claudecode:
+  disallowedTools: [Artifact, Workflow, ScheduleWakeup, ReportFindings]
   model: sonnet
   effort: high
 ---

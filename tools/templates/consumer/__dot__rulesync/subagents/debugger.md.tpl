@@ -10,6 +10,7 @@ description: >-
   domain questions to expert, regression coverage to tester. Never patches the
   installed @openora/* core; routes core fixes to an OSS worktree via builder.
 claudecode:
+  disallowedTools: [Artifact, Workflow, ScheduleWakeup, ReportFindings]
   model: opus
 ---
 
