@@ -526,7 +526,7 @@ server.registerTool(
       module: z
         .string()
         .optional()
-        .describe('Only files under this folder, e.g. "wallet" or "promo/bonus"'),
+        .describe('Only files under this folder, for every name, e.g. "wallet" or "promo/bonus"'),
       includeTests: z.boolean().optional().describe('Also search test files (default false)'),
     },
   },
@@ -535,7 +535,7 @@ server.registerTool(
     if (typeof source === 'string') {
       return textReply(source);
     }
-    const sections = names.map((name) => usagesOf(source, name, mod, includeTests));
+    const sections = [...new Set(names)].map((name) => usagesOf(source, name, mod, includeTests));
     return textReply([`(paths under ${source.root})`, ...sections].join('\n\n'));
   },
 );
@@ -563,10 +563,14 @@ function symbolOf(source: Source, name: string, file: string | undefined, maxLin
       }
       const shape = outline(h);
       const shown = shape.slice(0, maxLines).map((l) => l.slice(0, LINE_WIDTH));
+      const nextLine = shape[maxLines]?.split(':')[0];
+      const rest = nextLine
+        ? `${shape.length - maxLines} more outline lines; Read ${path} offset=${nextLine} limit=${h.line + h.body.length - Number(nextLine)} for the rest`
+        : `Read ${path} offset=<line> limit=<n> for a part`;
       return [
         `${head} (outline: ${h.body.length} lines is over maxLines=${maxLines})`,
         ...shown,
-        `... (${shape.length > maxLines ? `${shape.length - maxLines} more outline lines; ` : ''}Read ${path} offset=<line> limit=<n> for a part, or raise maxLines for the whole body)`,
+        `... (${rest}, or raise maxLines for the whole body)`,
       ].join('\n');
     })
     .join('\n\n');
@@ -582,7 +586,7 @@ server.registerTool(
       file: z
         .string()
         .optional()
-        .describe('Path substring to pick one definition, e.g. "wallet/service"'),
+        .describe('Path substring to pick one definition, for every name, e.g. "wallet/service"'),
       maxLines: z
         .number()
         .int()
@@ -599,7 +603,19 @@ server.registerTool(
     if (typeof source === 'string') {
       return textReply(source);
     }
-    return textReply(names.map((name) => symbolOf(source, name, file, maxLines)).join('\n\n'));
+    // A batch prints no more than one name could: its hits at maxLines each.
+    const budget = SYMBOL_LOCATION_LIMIT * maxLines;
+    let used = 0;
+    const sections = [...new Set(names)].map((name) => {
+      const section = symbolOf(source, name, file, maxLines);
+      const size = section.split('\n').length;
+      if (used > 0 && used + size > budget) {
+        return `(${name}: skipped, it would take this reply over ${budget} lines - ask for it in another call)`;
+      }
+      used += size;
+      return section;
+    });
+    return textReply(sections.join('\n\n'));
   },
 );
 
