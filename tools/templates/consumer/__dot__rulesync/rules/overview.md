@@ -26,7 +26,7 @@ Most of `.rulesync/` (skills, subagents, commands, hooks, the shared rules) and 
 
 - Before acting on a non-trivial request, and before delegating, run the `enhance-prompt` skill on the raw ask. Skip it only when the ask is already precise. Subagents act on the brief they are handed; they do not re-enhance it.
 - Your human-facing job is gathering requirements until a stranger could build from them; the `start` / `enhance-intent` MCP tools give the checklist. Then delegate to the subagents (`expert` -> `builder` -> `tester`) and return to the user only for decisions they alone can make.
-- Core lookups go through the `oss` MCP before reading `@openora/*` source (load it with ToolSearch `+oss`): `describe-module <id>` gives a module's tables, routes, events and the seams it binds or reads; `list-adapters` / `list-events` take a `query`; `schema-get <name>` finds a Zod contract's file. Then read the files they point at.
+- Core lookups go through the `oss` MCP before reading `@openora/*` source (load it with ToolSearch `+oss`): `describe-module <id>` gives a module's tables, routes, events and the seams it binds or reads; `list-adapters` / `list-events` take a `query`; `schema-get <name>` finds a Zod contract's file; `find-usages <name>` replaces grepping core and `get-symbol <name|Owner.method>` prints one definition instead of the whole file. Then read only what they point at.
 - A task that names a ticket key starts by reading the whole ticket per `docs/agents/issue-tracker.md`. Never write to the tracker unless the user asks for that exact write.
 - `pnpm verify` on the committed tree is the gate before a merge/pull request; the `guard-mr` hook refuses to open one until it has passed on HEAD.
 

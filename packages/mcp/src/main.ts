@@ -7,6 +7,14 @@ import { dirname, join, parse } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDepGraph, impactOf, type DepGraph } from './dep-graph.js';
 import { classifyIntent, type IntentKind } from './intent.js';
+import {
+  findCoreSourceRoot,
+  findSymbol,
+  findUsages,
+  readSourceTree,
+  type SourceFile,
+  LINE_WIDTH,
+} from './source.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ownPackage: { version: string } = JSON.parse(
@@ -281,12 +289,13 @@ server.registerTool(
   'list-routes',
   {
     description:
-      'List oRPC route namespaces exposed by the platform modules. Pass `module` to scope to a single module.',
+      'List oRPC route namespaces exposed by the platform modules. Pass `module` to scope to a single module and `query` (e.g. "withdraw") to keep only matching routes.',
     inputSchema: {
       module: z.string().optional().describe('Module id to filter by (e.g. "wallet")'),
+      query: z.string().optional().describe('Case-insensitive substring of the route'),
     },
   },
-  async ({ module: mod }) => {
+  async ({ module: mod, query }) => {
     const loaded = loadCatalog();
     if (!loaded) {
       return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
@@ -305,11 +314,14 @@ server.registerTool(
     }
     const lines: string[] = [];
     for (const m of modules) {
-      if (m.routes.length > 0) {
-        lines.push(`${m.id}:\n${m.routes.map((r) => `  ${r}`).join('\n')}`);
+      const routes = m.routes.filter((r) => !query || containsIgnoreCase(query, r));
+      if (routes.length > 0) {
+        lines.push(`${m.id}:\n${routes.map((r) => `  ${r}`).join('\n')}`);
       }
     }
-    const text = lines.join('\n\n') || 'No routes defined in the catalog yet.';
+    const text =
+      lines.join('\n\n') ||
+      (query ? `No route matches "${query}".` : 'No routes defined in the catalog yet.');
     return { content: [{ type: 'text' as const, text }] };
   },
 );
@@ -341,19 +353,26 @@ server.registerTool(
   'list-agent-tools',
   {
     description:
-      'List the agent surface: MCP tools (read calls a model may make during a run) and action types (state changes a model may only propose; an idempotent executor runs them after approval). Each entry shows its IAM resource:action, schema version and owning module. Modules register them in plugin.ts with ctx.mcp.tool(defineMcpTool({...}), factory) and ctx.actions.register(defineActionType({...}), factory); consumers reach them only through the MCP_KERNEL token, which validates input, checks IAM, applies the output allow-list and audits every call. Pass `module` to scope to one module.',
+      'List the agent surface: MCP tools (read calls a model may make during a run) and action types (state changes a model may only propose; an idempotent executor runs them after approval). Each entry shows its IAM resource:action, schema version and owning module. Modules register them in plugin.ts with ctx.mcp.tool(defineMcpTool({...}), factory) and ctx.actions.register(defineActionType({...}), factory); consumers reach them only through the MCP_KERNEL token, which validates input, checks IAM, applies the output allow-list and audits every call. Pass `module` to scope to one module and `query` to match ids, titles and descriptions.',
     inputSchema: {
       module: z.string().optional().describe('Module id to filter by (e.g. "wallet")'),
+      query: z
+        .string()
+        .optional()
+        .describe('Case-insensitive substring of the id, title or description'),
     },
   },
-  async ({ module: mod }) => {
+  async ({ module: mod, query }) => {
     const loaded = loadCatalog();
     if (!loaded) {
       return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
     }
     const c = loaded.catalog;
-    const tools = (c.agentTools ?? []).filter((t) => !mod || t.module === mod);
-    const actions = (c.agentActions ?? []).filter((a) => !mod || a.module === mod);
+    const matches = (e: CatalogAgentTool | CatalogAgentAction) =>
+      (!mod || e.module === mod) &&
+      (!query || containsIgnoreCase(query, e.id, e.title ?? '', e.description ?? ''));
+    const tools = (c.agentTools ?? []).filter(matches);
+    const actions = (c.agentActions ?? []).filter(matches);
     const lines: string[] = [`=== Agent tools (${tools.length}) ===`];
     lines.push(...(tools.length > 0 ? tools.flatMap(formatAgentTool) : ['(none)']));
     lines.push(`\n=== Agent action types (${actions.length}) ===`);
@@ -403,11 +422,9 @@ server.registerTool(
       bindingPlugins(a).some((p) => p === m.id || p.endsWith(`/${m.id}`)),
     );
     if (seams.length > 0) {
-      const seamLines = seams
-        .map((a) => `- ${a.category} -> ${a.token}${formatMethods(a)}`)
-        .join('\n');
+      const seamLines = seams.map((a) => `- ${a.category} -> ${a.token}`).join('\n');
       lines.push(
-        `\n--- Adapter seams this module binds or reads (details: list-adapters) ---\n${seamLines}`,
+        `\n--- Adapter seams this module binds or reads (methods: list-adapters query=<category>) ---\n${seamLines}`,
       );
     }
     const tools = (c.agentTools ?? []).filter((t) => t.module === m.id);
@@ -459,6 +476,113 @@ server.registerTool(
         ? `No schema named "${name}". Names containing it:\n${shown}${more}`
         : `No schema name contains "${name}". Try a shorter word (e.g. "Withdraw").`;
     return { content: [{ type: 'text' as const, text }] };
+  },
+);
+
+const USAGE_LIMIT = 40;
+const SYMBOL_LOCATION_LIMIT = 5;
+
+// Read on every call (~35 ms for core): a paired change edits the very files this serves.
+function loadSource(): { root: string; files: SourceFile[] } | string {
+  const loaded = loadCatalog();
+  const root = process.env['OSS_SOURCE'] ?? (loaded ? findCoreSourceRoot(loaded.path) : null);
+  if (!root || !existsSync(root)) {
+    return 'Platform source not found - it is read from a linked platform checkout (packages/core/src). Set OSS_SOURCE to that folder.';
+  }
+  return { root, files: readSourceTree(root) };
+}
+
+const textReply = (text: string) => ({ content: [{ type: 'text' as const, text }] });
+
+server.registerTool(
+  'find-usages',
+  {
+    description:
+      'Find where a platform identifier is used: a DI token (WALLET_COMMANDS), a function, a type, an event or route id. Whole-word match over packages/core/src, comment lines and tests skipped. Returns `file:line  code`, capped. Use it instead of grepping the platform source.',
+    inputSchema: {
+      name: z.string().min(2).describe('Identifier or id, e.g. "WALLET_COMMANDS", "withdraw"'),
+      module: z
+        .string()
+        .optional()
+        .describe('Only files under this folder, e.g. "wallet" or "promo/bonus"'),
+      includeTests: z.boolean().optional().describe('Also search test files (default false)'),
+    },
+  },
+  async ({ name, module: mod, includeTests }) => {
+    const source = loadSource();
+    if (typeof source === 'string') {
+      return textReply(source);
+    }
+    const usages = findUsages(source.files, name, { module: mod, includeTests });
+    if (usages.length === 0) {
+      return textReply(`No usage of "${name}"${mod ? ` under ${mod}/` : ''}.`);
+    }
+    const shown = usages.slice(0, USAGE_LIMIT).map((u) => `${u.path}:${u.line}  ${u.text}`);
+    const more =
+      usages.length > USAGE_LIMIT
+        ? `\n(${usages.length - USAGE_LIMIT} more - pass module=<folder> to narrow)`
+        : '';
+    return textReply(
+      `=== ${usages.length} usages of ${name} (root ${source.root}) ===\n${shown.join('\n')}${more}`,
+    );
+  },
+);
+
+server.registerTool(
+  'get-symbol',
+  {
+    description:
+      'Print the source of a platform declaration: a function, const, schema, type, interface, class, or one method with `Owner.method` (e.g. "WalletService.withdraw", "WithdrawInputSchema", "WalletCommands"). Use it instead of grepping for the definition and reading the file around it.',
+    inputSchema: {
+      name: z.string().min(2).describe('Symbol name, or Owner.member for a method'),
+      file: z
+        .string()
+        .optional()
+        .describe('Path substring to pick one definition, e.g. "wallet/service"'),
+      maxLines: z
+        .number()
+        .int()
+        .min(5)
+        .max(400)
+        .optional()
+        .describe('Body lines to print (default 80)'),
+    },
+  },
+  async ({ name, file, maxLines = 80 }) => {
+    const source = loadSource();
+    if (typeof source === 'string') {
+      return textReply(source);
+    }
+    const hits = findSymbol(source.files, name, { file });
+    if (hits.length === 0) {
+      return textReply(
+        `No declaration of "${name}"${file ? ` in files matching ${file}` : ''}. Try find-usages name=${name.split('.').pop()}.`,
+      );
+    }
+    if (hits.length > SYMBOL_LOCATION_LIMIT) {
+      const where = hits
+        .slice(0, USAGE_LIMIT)
+        .map((h) => `${h.path}:${h.line}  ${(h.body[0] ?? '').trim().slice(0, LINE_WIDTH)}`);
+      if (hits.length > USAGE_LIMIT) {
+        where.push(`(${hits.length - USAGE_LIMIT} more)`);
+      }
+      return textReply(
+        `${hits.length} declarations of "${name}" - pass file=<path part>${name.includes('.') ? '' : ` or Owner.${name}`}:\n${where.join('\n')}`,
+      );
+    }
+    const blocks = hits.map((h) => {
+      const end = h.line + h.body.length - 1;
+      const body = h.body
+        .slice(0, maxLines)
+        .map((l) => l.slice(0, LINE_WIDTH))
+        .join('\n');
+      const cut =
+        h.body.length > maxLines
+          ? `\n... (${h.body.length - maxLines} more lines - raise maxLines or Read ${source.root}/${h.path} offset=${h.line + maxLines})`
+          : '';
+      return `--- ${source.root}/${h.path}:${h.line}-${end} ---\n${body}${cut}`;
+    });
+    return textReply(blocks.join('\n\n'));
   },
 );
 
