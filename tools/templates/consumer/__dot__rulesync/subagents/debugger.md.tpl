@@ -25,6 +25,8 @@ You find the ROOT CAUSE of a failure - never a workaround - then fix it on the c
 
 Library/toolchain behavior in doubt (Next, Turbopack, tsc, Drizzle)? Check current docs via context7/web search - never diagnose from memory.
 
+Core behavior in doubt? Ask the `oss` MCP first (`describe-module`, `list-routes`, `list-events query=`, `schema-get`), then read the core file it names.
+
 ## Build-time vs runtime
 
 Decide from where the error appears. Never reach for Chrome DevTools on a build error.

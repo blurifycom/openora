@@ -23,10 +23,15 @@ type CatalogModule = {
 type CatalogAdapter = {
   category: string;
   interface: string;
+  // Absent in a catalog generated before port members were catalogued.
+  methods?: string[];
   token: string;
   status: string;
   boundIn: string[];
 };
+
+const formatMethods = (a: CatalogAdapter): string =>
+  a.methods?.length ? ` { ${a.methods.join(', ')} }` : '';
 
 type CatalogSchema = {
   name: string;
@@ -117,6 +122,25 @@ function formatAgentAction(a: CatalogAgentAction): string[] {
   ];
 }
 
+const containsIgnoreCase = (query: string, ...fields: string[]): boolean =>
+  fields.some((f) => f.toLowerCase().includes(query.toLowerCase()));
+
+// `packages/core/src/promo/bonus/plugin.ts` -> `promo/bonus`; test files are not bindings.
+function bindingPlugins(a: CatalogAdapter): string[] {
+  return a.boundIn
+    .filter((p) => p.endsWith('/plugin.ts'))
+    .map((p) => p.replace(/^packages\/core\/src\//, '').replace(/\/plugin\.ts$/, ''));
+}
+
+function formatAdapter(a: CatalogAdapter): string {
+  const plugins = bindingPlugins(a);
+  const bound =
+    plugins.length > 0 ? `bound in ${plugins.join(', ')}` : 'stub - bind your implementation';
+  return `- ${a.category}: ${a.interface}${formatMethods(a)} -> ${a.token}  [${a.status}; ${bound}]`;
+}
+
+const SCHEMA_MATCH_LIMIT = 30;
+
 const NOT_FOUND_MESSAGE =
   'catalog.json not found - run `pnpm regen` in the platform repo, or set OSS_CATALOG to its path.';
 
@@ -193,10 +217,12 @@ server.registerTool(
         `action types: ${c.agentActions?.length ?? 0}`,
     );
 
-    lines.push('\n--- Adapter seams (implement an interface, bind to the token) ---');
-    for (const a of c.adapters) {
-      lines.push(`- ${a.category}: ${a.interface} -> ${a.token}  [${a.status}]`);
-    }
+    const stubs = c.adapters.filter((a) => a.status !== 'wired').map((a) => a.category);
+    lines.push('\n--- Adapter seams (details: list-adapters <query>) ---');
+    lines.push(c.adapters.map((a) => a.category).join(', '));
+    lines.push(`stubs awaiting an implementation: ${stubs.join(', ') || '(none)'}`);
+    lines.push(`\n--- Modules (details: describe-module <id>) ---`);
+    lines.push(c.modules.map((m) => m.id).join(', '));
 
     lines.push(`\n--- Config (${c.config.token}) ---`);
     for (const f of c.config.fields) {
@@ -214,26 +240,37 @@ server.registerTool(
   'list-adapters',
   {
     description:
-      'List the vendor adapter swap-seams (PSP/KYC/game/aggregator/geo-ip/notification). For each: the interface to implement, the DI token to bind it to, whether it is already wired or a stub awaiting an implementation, and where it is bound. Use this to find the integration point for a third-party vendor.',
-    inputSchema: {},
+      'List the vendor adapter swap-seams (PSP/KYC/game/aggregator/geo-ip/notification). For each: the interface to implement, the DI token to bind it to, whether it is already wired or a stub awaiting an implementation, and which module plugins bind it. Use this to find the integration point for a third-party vendor. Pass `query` (e.g. "withdrawal", "kyc") to keep the output short.',
+    inputSchema: {
+      query: z
+        .string()
+        .optional()
+        .describe('Case-insensitive filter on category, interface, token or binding module'),
+    },
   },
-  withCatalog((c) => {
-    if (c.adapters.length === 0) {
-      return 'No adapters in the catalog.';
+  async ({ query }) => {
+    const loaded = loadCatalog();
+    if (!loaded) {
+      return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
     }
-    const lines: string[] = ['=== Adapter seams ==='];
-    for (const a of c.adapters) {
-      lines.push(`\n${a.category}  [${a.status}]`);
-      lines.push(`  interface: ${a.interface}`);
-      lines.push(`  token:     ${a.token}`);
-      if (a.boundIn.length > 0) {
-        lines.push(`  boundIn:   ${a.boundIn.join(', ')}`);
-      } else {
-        lines.push('  boundIn:   (none - stub; bind your implementation to the token)');
-      }
-    }
-    return lines.join('\n');
-  }),
+    const adapters = loaded.catalog.adapters.filter(
+      (a) =>
+        !query ||
+        containsIgnoreCase(
+          query,
+          a.category,
+          a.interface,
+          a.token,
+          ...(a.methods ?? []),
+          ...bindingPlugins(a),
+        ),
+    );
+    const text =
+      adapters.length > 0
+        ? `=== Adapter seams (${adapters.length}) ===\n${adapters.map(formatAdapter).join('\n')}`
+        : `No adapter seam matches "${query}".`;
+    return { content: [{ type: 'text' as const, text }] };
+  },
 );
 
 server.registerTool(
@@ -277,15 +314,23 @@ server.registerTool(
   'list-events',
   {
     description:
-      'List the cross-module domain events you can subscribe to (via ctx.events.on in a plugin) or that signal platform activity. Use this to find the event to hook into for side effects.',
-    inputSchema: {},
+      'List the cross-module domain events you can subscribe to (via ctx.events.on in a plugin) or that signal platform activity. Use this to find the event to hook into for side effects. Pass `query` (e.g. "withdrawal", "promo.bonus") to keep the output short.',
+    inputSchema: {
+      query: z.string().optional().describe('Case-insensitive substring of the event name'),
+    },
   },
-  withCatalog((c) => {
-    if (c.events.length === 0) {
-      return 'No events in the catalog.';
+  async ({ query }) => {
+    const loaded = loadCatalog();
+    if (!loaded) {
+      return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
     }
-    return `=== Domain events (${c.events.length}) ===\n${c.events.map((e) => `- ${e}`).join('\n')}`;
-  }),
+    const events = loaded.catalog.events.filter((e) => !query || containsIgnoreCase(query, e));
+    const text =
+      events.length > 0
+        ? `=== Domain events (${events.length}) ===\n${events.map((e) => `- ${e}`).join('\n')}`
+        : `No event matches "${query}".`;
+    return { content: [{ type: 'text' as const, text }] };
+  },
 );
 
 server.registerTool(
@@ -345,6 +390,19 @@ server.registerTool(
     lines.push(
       `\n--- Routes ---\n${m.routes.length > 0 ? m.routes.map((r) => `- ${r}`).join('\n') : '(none)'}`,
     );
+    const events = c.events.filter((e) => e.split('.').includes(m.id));
+    if (events.length > 0) {
+      lines.push(`\n--- Events ---\n${events.map((e) => `- ${e}`).join('\n')}`);
+    }
+    const seams = c.adapters.filter((a) =>
+      bindingPlugins(a).some((p) => p === m.id || p.endsWith(`/${m.id}`)),
+    );
+    if (seams.length > 0) {
+      const seamLines = seams
+        .map((a) => `- ${a.category} -> ${a.token}${formatMethods(a)}`)
+        .join('\n');
+      lines.push(`\n--- Adapter seams bound here (details: list-adapters) ---\n${seamLines}`);
+    }
     const tools = (c.agentTools ?? []).filter((t) => t.module === m.id);
     const actions = (c.agentActions ?? []).filter((a) => a.module === m.id);
     if (tools.length > 0) {
@@ -377,18 +435,20 @@ server.registerTool(
     if (hit) {
       return { content: [{ type: 'text' as const, text: `${hit.name}\n${hit.file}` }] };
     }
-    const list = c.schemas
-      .map((s) => s.name)
-      .sort()
-      .join(', ');
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `Schema "${name}" not found.\n\nAvailable schemas:\n${list}`,
-        },
-      ],
-    };
+    const close = c.schemas.filter((s) => containsIgnoreCase(name, s.name));
+    const shown = close
+      .slice(0, SCHEMA_MATCH_LIMIT)
+      .map((s) => `- ${s.name}  ${s.file}`)
+      .join('\n');
+    const more =
+      close.length > SCHEMA_MATCH_LIMIT
+        ? `\n(${close.length - SCHEMA_MATCH_LIMIT} more - narrow the name)`
+        : '';
+    const text =
+      close.length > 0
+        ? `No schema named "${name}". Names containing it:\n${shown}${more}`
+        : `No schema name contains "${name}". Try a shorter word (e.g. "Withdraw").`;
+    return { content: [{ type: 'text' as const, text }] };
   },
 );
 

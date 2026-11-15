@@ -137,10 +137,22 @@ function collectModules(): ModuleInfo[] {
 type AdapterInfo = {
   category: string;
   interface: string;
+  methods: string[];
   token: string;
   status: 'wired' | 'stub';
   boundIn: string[];
 };
+
+// Top-level member names of `export interface <name> {` or `export type <name> = {`
+// (two-space indented lines).
+function interfaceMembers(src: string, name: string): string[] {
+  const start = src.search(new RegExp(`export (?:interface ${name}\\b[^{]*|type ${name} = )\\{`));
+  if (!name || start < 0) {
+    return [];
+  }
+  const body = src.slice(start, src.indexOf('\n}', start));
+  return [...body.matchAll(/^ {2}(?:readonly )?(\w+)\??\s*[(<:]/gm)].map((m) => m[1] ?? '');
+}
 
 function collectAdapters(): AdapterInfo[] {
   const dir = join(repoRoot, 'packages', 'core', 'src', 'contracts', 'adapters');
@@ -160,17 +172,20 @@ function collectAdapters(): AdapterInfo[] {
       continue;
     }
     const src = readFileSync(join(dir, file), 'utf8');
-    const iface =
-      src.match(/export (?:interface|type) (\w*Adapter)\b/)?.[1] ??
-      src.match(/export (?:interface|type) (\w+)/)?.[1] ??
-      '';
-    const token =
-      src.match(
-        /export const (\w+)(?::\s*(?:Sealed)?Token<[^>]*>)?\s*=\s*(?:createSealedToken|createToken|Symbol)/,
-      )?.[1] ?? '';
+    const tokenMatch = src.match(
+      /export const (\w+)(?::\s*(?:Sealed)?Token<(\w+)[^>]*>)?\s*=\s*(?:createSealedToken|createToken|Symbol)/,
+    );
+    const token = tokenMatch?.[1] ?? '';
     if (!token) {
       continue;
     }
+    // The token's type argument names the port; the first exported type is only a fallback,
+    // since adapter files declare their argument and result types above the interface.
+    const iface =
+      tokenMatch?.[2] ??
+      src.match(/export (?:interface|type) (\w*Adapter)\b/)?.[1] ??
+      src.match(/export (?:interface|type) (\w+)/)?.[1] ??
+      '';
     const boundIn = moduleSrc
       .filter(({ src }) =>
         new RegExp(
@@ -182,6 +197,7 @@ function collectAdapters(): AdapterInfo[] {
     out.push({
       category: file.replace(/\.ts$/, ''),
       interface: iface,
+      methods: interfaceMembers(src, iface),
       token,
       status: boundIn.length > 0 ? 'wired' : 'stub',
       boundIn,
@@ -190,8 +206,20 @@ function collectAdapters(): AdapterInfo[] {
   return out.sort((a, b) => a.category.localeCompare(b.category));
 }
 
+// Most events are emitted through helpers (outbox, typed wrappers), so a literal `.emit('x')`
+// scan alone misses them; the domainEventSchemas registry is the full list.
+function registeredEventNames(): string[] {
+  const src = read(join(repoRoot, 'packages', 'core', 'src', 'contracts', 'schemas', 'events.ts'));
+  const start = src.indexOf('export const domainEventSchemas = {');
+  if (start < 0) {
+    return [];
+  }
+  const body = src.slice(start, src.indexOf('\n};', start));
+  return [...body.matchAll(/^ {2}'([a-z][\w.:-]+)':/gm)].map((m) => m[1] ?? '');
+}
+
 function collectEvents(): string[] {
-  const set = new Set<string>();
+  const set = new Set<string>(registeredEventNames());
   for (const { srcDir } of moduleSrcDirs()) {
     for (const f of walk(srcDir, '.ts')) {
       for (const m of readFileSync(f, 'utf8').matchAll(/\.emit\(\s*'([a-z][\w.:-]+)'/g)) {

@@ -256,6 +256,65 @@ test('ignores examples in comments and reads generic calls and literals holding 
   assert.match(stderr, /broken\.ts: defineMcpTool\(\{\.\.\.\}\) could not be parsed - skipped/);
 });
 
+test('lists events registered in domainEventSchemas, not only literal emits', () => {
+  const { catalog } = generate({
+    ...moduleFiles,
+    'packages/core/src/demo/service.ts': "bus.emit('demo.literal', {});\n",
+    'packages/core/src/contracts/schemas/events.ts': `
+export const domainEventSchemas = {
+  'wallet.withdrawal.requested': walletTxnBase
+    .extend({ playerId: UuidSchema.nullable() }),
+  // 'commented.out': z.object({}),
+  'promo.bonus.granted': z.object({ nested: z.object({ 'inner.key': z.string() }) }),
+};
+
+export const domainEventVersions = { 'not.an.event': 2 };
+`,
+  });
+  assert.deepEqual(catalog.events, [
+    'demo.literal',
+    'promo.bonus.granted',
+    'wallet.withdrawal.requested',
+  ]);
+});
+
+test('names an adapter by its token type and lists its members', () => {
+  const { catalog } = generate({
+    ...moduleFiles,
+    'packages/core/src/contracts/adapters/demo-commands.ts': `
+export type DemoHoldArgs = { userId: string };
+
+export type DemoCommands = {
+  /** A doc line that mentions nested: values. */
+  placeHold(tx: unknown, args: DemoHoldArgs): Promise<void>;
+  readonly limit: number;
+  release?: (userId: string) => Promise<void>;
+  nested: {
+    inner(): void;
+  };
+};
+
+export const DEMO_COMMANDS: Token<DemoCommands> = createToken('DEMO_COMMANDS');
+`,
+  });
+  assert.deepEqual(
+    catalog.adapters.map(({ category, interface: iface, methods, token }) => ({
+      category,
+      iface,
+      methods,
+      token,
+    })),
+    [
+      {
+        category: 'demo-commands',
+        iface: 'DemoCommands',
+        methods: ['placeHold', 'limit', 'release', 'nested'],
+        token: 'DEMO_COMMANDS',
+      },
+    ],
+  );
+});
+
 test('an empty repo yields empty agent sections', () => {
   const { catalog } = generate({ 'README.md': '# empty\n' });
   assert.deepEqual(catalog.agentTools, []);
