@@ -11,6 +11,7 @@ import {
   findCoreSourceRoot,
   findSymbol,
   findUsages,
+  outline,
   readSourceTree,
   type SourceFile,
   LINE_WIDTH,
@@ -481,9 +482,10 @@ server.registerTool(
 
 const USAGE_LIMIT = 40;
 const SYMBOL_LOCATION_LIMIT = 5;
+type Source = { root: string; files: SourceFile[] };
 
 // Read on every call (~35 ms for core): a paired change edits the very files this serves.
-function loadSource(): { root: string; files: SourceFile[] } | string {
+function loadSource(): Source | string {
   const loaded = loadCatalog();
   const root = process.env['OSS_SOURCE'] ?? (loaded ? findCoreSourceRoot(loaded.path) : null);
   if (!root || !existsSync(root)) {
@@ -494,13 +496,33 @@ function loadSource(): { root: string; files: SourceFile[] } | string {
 
 const textReply = (text: string) => ({ content: [{ type: 'text' as const, text }] });
 
+const namesInput = (example: string) =>
+  z
+    .array(z.string().min(2))
+    .min(1)
+    .max(10)
+    .describe(`One or more names, looked up together in one call, e.g. ${example}`);
+
+function usagesOf(source: Source, name: string, mod?: string, includeTests?: boolean): string {
+  const usages = findUsages(source.files, name, { module: mod, includeTests });
+  if (usages.length === 0) {
+    return `No usage of "${name}"${mod ? ` under ${mod}/` : ''}.`;
+  }
+  const shown = usages.slice(0, USAGE_LIMIT).map((u) => `${u.path}:${u.line}  ${u.text}`);
+  const more =
+    usages.length > USAGE_LIMIT
+      ? `\n(${usages.length - USAGE_LIMIT} more - pass module=<folder> to narrow)`
+      : '';
+  return `=== ${usages.length} usages of ${name} ===\n${shown.join('\n')}${more}`;
+}
+
 server.registerTool(
   'find-usages',
   {
     description:
-      'Find where a platform identifier is used: a DI token (WALLET_COMMANDS), a function, a type, an event or route id. Whole-word match over packages/core/src, comment lines and tests skipped. Returns `file:line  code`, capped. Use it instead of grepping the platform source.',
+      'Find where identifiers are used: a DI token (WALLET_COMMANDS), a function, a type, an event or route id. Whole-word match over packages/core/src, comment lines and tests skipped. Returns `file:line  code`, capped. Pass every name you need in one call. Use it instead of grepping the platform source.',
     inputSchema: {
-      name: z.string().min(2).describe('Identifier or id, e.g. "WALLET_COMMANDS", "withdraw"'),
+      names: namesInput('["WALLET_COMMANDS", "withdraw"]'),
       module: z
         .string()
         .optional()
@@ -508,33 +530,55 @@ server.registerTool(
       includeTests: z.boolean().optional().describe('Also search test files (default false)'),
     },
   },
-  async ({ name, module: mod, includeTests }) => {
+  async ({ names, module: mod, includeTests }) => {
     const source = loadSource();
     if (typeof source === 'string') {
       return textReply(source);
     }
-    const usages = findUsages(source.files, name, { module: mod, includeTests });
-    if (usages.length === 0) {
-      return textReply(`No usage of "${name}"${mod ? ` under ${mod}/` : ''}.`);
-    }
-    const shown = usages.slice(0, USAGE_LIMIT).map((u) => `${u.path}:${u.line}  ${u.text}`);
-    const more =
-      usages.length > USAGE_LIMIT
-        ? `\n(${usages.length - USAGE_LIMIT} more - pass module=<folder> to narrow)`
-        : '';
-    return textReply(
-      `=== ${usages.length} usages of ${name} (root ${source.root}) ===\n${shown.join('\n')}${more}`,
-    );
+    const sections = names.map((name) => usagesOf(source, name, mod, includeTests));
+    return textReply([`(paths under ${source.root})`, ...sections].join('\n\n'));
   },
 );
+
+function symbolOf(source: Source, name: string, file: string | undefined, maxLines: number) {
+  const hits = findSymbol(source.files, name, { file });
+  if (hits.length === 0) {
+    return `No declaration of "${name}"${file ? ` in files matching ${file}` : ''}. Try find-usages names=["${name.split('.').pop()}"].`;
+  }
+  if (hits.length > SYMBOL_LOCATION_LIMIT) {
+    const where = hits
+      .slice(0, USAGE_LIMIT)
+      .map((h) => `${h.path}:${h.line}  ${(h.body[0] ?? '').trim().slice(0, LINE_WIDTH)}`);
+    if (hits.length > USAGE_LIMIT) {
+      where.push(`(${hits.length - USAGE_LIMIT} more)`);
+    }
+    return `${hits.length} declarations of "${name}" - pass file=<path part>${name.includes('.') ? '' : ` or Owner.${name}`}:\n${where.join('\n')}`;
+  }
+  return hits
+    .map((h) => {
+      const path = `${source.root}/${h.path}`;
+      const head = `--- ${path}:${h.line}-${h.line + h.body.length - 1} ---`;
+      if (h.body.length <= maxLines) {
+        return `${head}\n${h.body.map((l) => l.slice(0, LINE_WIDTH)).join('\n')}`;
+      }
+      const shape = outline(h);
+      const shown = shape.slice(0, maxLines).map((l) => l.slice(0, LINE_WIDTH));
+      return [
+        `${head} (outline: ${h.body.length} lines is over maxLines=${maxLines})`,
+        ...shown,
+        `... (${shape.length > maxLines ? `${shape.length - maxLines} more outline lines; ` : ''}Read ${path} offset=<line> limit=<n> for a part, or raise maxLines for the whole body)`,
+      ].join('\n');
+    })
+    .join('\n\n');
+}
 
 server.registerTool(
   'get-symbol',
   {
     description:
-      'Print the source of a platform declaration: a function, const, schema, type, interface, class, or one method with `Owner.method` (e.g. "WalletService.withdraw", "WithdrawInputSchema", "WalletCommands"). Use it instead of grepping for the definition and reading the file around it.',
+      'Print the source of platform declarations: a function, const, schema, type, interface, class or one method with `Owner.method` (e.g. "WalletService.withdraw", "WithdrawInputSchema"). A body over maxLines comes back as a numbered outline (members, or statements and their if/throw/await lines). Pass every name you need in one call. Use it instead of grepping for the definition and reading the file around it.',
     inputSchema: {
-      name: z.string().min(2).describe('Symbol name, or Owner.member for a method'),
+      names: namesInput('["WalletService.withdraw", "WithdrawInputSchema"]'),
       file: z
         .string()
         .optional()
@@ -545,44 +589,17 @@ server.registerTool(
         .min(5)
         .max(400)
         .optional()
-        .describe('Body lines to print (default 80)'),
+        .describe(
+          'Longest body printed whole, per declaration (default 80); longer ones come back as an outline',
+        ),
     },
   },
-  async ({ name, file, maxLines = 80 }) => {
+  async ({ names, file, maxLines = 80 }) => {
     const source = loadSource();
     if (typeof source === 'string') {
       return textReply(source);
     }
-    const hits = findSymbol(source.files, name, { file });
-    if (hits.length === 0) {
-      return textReply(
-        `No declaration of "${name}"${file ? ` in files matching ${file}` : ''}. Try find-usages name=${name.split('.').pop()}.`,
-      );
-    }
-    if (hits.length > SYMBOL_LOCATION_LIMIT) {
-      const where = hits
-        .slice(0, USAGE_LIMIT)
-        .map((h) => `${h.path}:${h.line}  ${(h.body[0] ?? '').trim().slice(0, LINE_WIDTH)}`);
-      if (hits.length > USAGE_LIMIT) {
-        where.push(`(${hits.length - USAGE_LIMIT} more)`);
-      }
-      return textReply(
-        `${hits.length} declarations of "${name}" - pass file=<path part>${name.includes('.') ? '' : ` or Owner.${name}`}:\n${where.join('\n')}`,
-      );
-    }
-    const blocks = hits.map((h) => {
-      const end = h.line + h.body.length - 1;
-      const body = h.body
-        .slice(0, maxLines)
-        .map((l) => l.slice(0, LINE_WIDTH))
-        .join('\n');
-      const cut =
-        h.body.length > maxLines
-          ? `\n... (${h.body.length - maxLines} more lines - raise maxLines or Read ${source.root}/${h.path} offset=${h.line + maxLines})`
-          : '';
-      return `--- ${source.root}/${h.path}:${h.line}-${end} ---\n${body}${cut}`;
-    });
-    return textReply(blocks.join('\n\n'));
+    return textReply(names.map((name) => symbolOf(source, name, file, maxLines)).join('\n\n'));
   },
 );
 

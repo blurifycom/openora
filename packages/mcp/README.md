@@ -12,26 +12,26 @@ shipped in the published package, or a catalog you point it at.
 
 ## Tools
 
-| Tool                | Args                               | Purpose                                                                    |
-| ------------------- | ---------------------------------- | -------------------------------------------------------------------------- |
-| `catalog-overview`  | -                                  | Start here: counts, adapter categories, modules, config fields.            |
-| `list-adapters`     | `query?`                           | Vendor swap-seams: interface, methods, token, where bound.                 |
-| `list-routes`       | `module?`, `query?`                | oRPC route namespaces, optionally scoped to one module.                    |
-| `list-events`       | `query?`                           | Cross-module domain events to subscribe to.                                |
-| `list-agent-tools`  | `module?`, `query?`                | Agent tools and action types, with IAM and schema version.                 |
-| `list-slots`        | -                                  | Named UI slots for extending the backoffice.                               |
-| `describe-module`   | `name`                             | One module's tables, routes, events, seams and agent surface.              |
-| `schema-get`        | `name`                             | Where a Zod contract schema is defined.                                    |
-| `get-config-schema` | -                                  | iGaming-config token, source, and fields.                                  |
-| `find-usages`       | `name`, `module?`, `includeTests?` | Where a platform identifier is used, as `file:line  code` (capped).        |
-| `get-symbol`        | `name`, `file?`, `maxLines?`       | Source of one declaration or `Owner.method`, up to its closing bracket.    |
-| `impact`            | `files`                            | Transitive importers of files; platform files are followed into this repo. |
+| Tool                | Args                                | Purpose                                                                                            |
+| ------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `catalog-overview`  | -                                   | Start here: counts, adapter categories, modules, config fields.                                    |
+| `list-adapters`     | `query?`                            | Vendor swap-seams: interface, methods, token, where bound.                                         |
+| `list-routes`       | `module?`, `query?`                 | oRPC route namespaces, optionally scoped to one module.                                            |
+| `list-events`       | `query?`                            | Cross-module domain events to subscribe to.                                                        |
+| `list-agent-tools`  | `module?`, `query?`                 | Agent tools and action types, with IAM and schema version.                                         |
+| `list-slots`        | -                                   | Named UI slots for extending the backoffice.                                                       |
+| `describe-module`   | `name`                              | One module's tables, routes, events, seams and agent surface.                                      |
+| `schema-get`        | `name`                              | Where a Zod contract schema is defined.                                                            |
+| `get-config-schema` | -                                   | iGaming-config token, source, and fields.                                                          |
+| `find-usages`       | `names`, `module?`, `includeTests?` | Where platform identifiers are used, as `file:line  code` (capped).                                |
+| `get-symbol`        | `names`, `file?`, `maxLines?`       | Source of declarations or `Owner.method`; a body over `maxLines` comes back as a numbered outline. |
+| `impact`            | `files`                             | Transitive importers of files; platform files are followed into this repo.                         |
 
 All tools are read-only. If the catalog cannot be located, every tool returns a
-helpful message instead of crashing. `find-usages` and `get-symbol` read
-`packages/core/src` of the platform checkout the catalog came from (a linked
-checkout), or `OSS_SOURCE` when set; on the npm package they say the source is
-missing.
+helpful message instead of crashing. `find-usages` and `get-symbol` take several
+names per call and read `packages/core/src` of the platform checkout the catalog
+came from (a linked checkout), or `OSS_SOURCE` when set; on the npm package they say
+the source is missing.
 
 ## Import graph (`impact`, `openora-dep-graph`)
 

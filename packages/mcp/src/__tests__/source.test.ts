@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findSymbol, findUsages, type SourceFile } from '../source.js';
+import { findSymbol, findUsages, outline, type SourceFile } from '../source.js';
 
 const files: SourceFile[] = [
   {
@@ -103,5 +103,27 @@ describe('findSymbol', () => {
 
   it('stays inside the owner', () => {
     expect(findSymbol(files, 'WalletPort.balance')).toEqual([]);
+  });
+});
+
+describe('outline', () => {
+  it('keeps a class to its members and a method to its statements, numbered', () => {
+    const [cls] = findSymbol(files, 'WalletService');
+    const [method] = findSymbol(files, 'WalletService.withdraw');
+    expect(cls && outline(cls)).toEqual([
+      '1: export class WalletService {',
+      '2:   constructor(private readonly ledger: Ledger) {}',
+      '4:   async withdraw(',
+      '6:   ): Promise<Result> {',
+      '13:   balance(): number {',
+    ]);
+    expect(method && outline(method)).toEqual([
+      '4:   async withdraw(',
+      '5:     input: WithdrawInput,',
+      '6:   ): Promise<Result> {',
+      "7:     if (input.amount === '{') {",
+      '8:       return this.fail();',
+      '10:     return this.ledger.withdraw(input);',
+    ]);
   });
 });

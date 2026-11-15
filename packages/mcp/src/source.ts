@@ -9,7 +9,7 @@ export type Usage = { path: string; line: number; text: string };
 export type SymbolHit = { path: string; line: number; body: string[] };
 
 export const LINE_WIDTH = 160;
-const isTest = (path: string) => /__tests__\/|\.test\.ts$/.test(path);
+const isTest = (path: string) => /__tests__\/|\.(test|spec)\.tsx?$/.test(path);
 const COMMENT_LINE = /^\s*(?:\/\/|\/?\*)/;
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -35,7 +35,7 @@ export function readSourceTree(root: string): SourceFile[] {
       const path = dir ? `${dir}/${entry.name}` : entry.name;
       if (entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.')) {
         walk(path);
-      } else if (entry.isFile() && path.endsWith('.ts') && !path.endsWith('.d.ts')) {
+      } else if (entry.isFile() && /\.tsx?$/.test(path) && !path.endsWith('.d.ts')) {
         files.push({ path, text: readFileSync(join(root, path), 'utf8') });
       }
     }
@@ -123,6 +123,23 @@ export function findSymbol(
     }
   }
   return hits;
+}
+
+const CLOSER_ONLY = /^\s*[})\]]+[;,)]*\s*$/;
+const indentOf = (line: string) => line.length - line.trimStart().length;
+
+// A body too long to print whole, cut to its shape: a class or interface keeps its member lines,
+// anything else its statements and one nesting level (the `if`, `throw`, `await` lines).
+// Each line keeps its number so the caller can read the part it needs.
+export function outline(hit: SymbolHit): string[] {
+  const [first = ''] = hit.body;
+  const depth = /\b(?:class|interface|enum)\s/.test(first) ? 2 : 4;
+  const limit = indentOf(first) + depth;
+  return hit.body.flatMap((line, i) =>
+    line.trim() && !CLOSER_ONLY.test(line) && !COMMENT_LINE.test(line) && indentOf(line) <= limit
+      ? [`${hit.line + i}: ${line}`]
+      : [],
+  );
 }
 
 // ponytail: per-line stripping, so a template literal or regex literal holding brackets can end
