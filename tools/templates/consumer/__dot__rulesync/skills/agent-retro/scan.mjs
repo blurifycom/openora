@@ -32,15 +32,24 @@ const positiveInt = (name, fallback) => {
 const days = positiveInt('days', 7);
 const top = positiveInt('top', 25);
 // The main checkout, also from a worktree: its name picks the transcripts, its .claude/reviews/ keeps the reports.
-const mainCheckout = () =>
-  dirname(
-    execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
-      encoding: 'utf8',
-    }).trim(),
-  );
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const mainCheckout = () => {
+  try {
+    return dirname(
+      execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim(),
+    );
+  } catch {
+    throw new Error('run inside a git checkout, or pass --match and --save false');
+  }
+};
+const repoNames = args.match ? [] : [...new Set([basename(mainCheckout()), 'openora'])];
+// Claude Code names a project dir after its path with every non-alphanumeric turned into '-',
+// so match whole '-'-separated segments: a repo named "api" must not pick up "~/other-api-x".
 const match = new RegExp(
-  args.match ?? [...new Set([basename(mainCheckout()), 'openora'])].map(escapeRegExp).join('|'),
+  args.match ??
+    `(?:^|-)(?:${repoNames.map((name) => name.replace(/[^a-zA-Z0-9]/g, '-')).join('|')})(?:-|$)`,
   'i',
 );
 const root = args.root ?? join(homedir(), '.claude/projects');
@@ -50,7 +59,7 @@ const since = Date.now() - days * 86_400_000;
 const CORRECTION =
   /\b(instead|actually|nope|i told you|you should have|still (not|broken|failing)|nadal|wciaz)\b|wciąż|^(no\b|nie\b|stop\b|wrong|źle|zle\b|not that|don'?t\b|nie rób|nie rob|why did you|dlaczego|i said|mówiłem|mowilem|again\b|znowu|you forgot|zapomniałeś|zapomniales|revert|cofnij|that'?s not)/i;
 
-// The digest is shared at the team sync: no credentials or player identifiers in it.
+// The digest is shared at the team sync: credentials, emails and home paths are masked.
 const SECRET_NAME =
   /(["']?)([\w-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)[\w-]*)\1(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s",}]+)/gi;
 // Capped: the name patterns backtrack quadratically on long word runs.
@@ -61,8 +70,8 @@ const redact = (text) =>
       /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
       '<private-key>',
     )
-    .replace(/\/Users\/[^/\s'"]+\//g, '~/')
-    .replace(/-Users-[^-\s]+-/g, '-~-')
+    .replace(/\/(?:Users|home)\/[^/\s'"]+\//g, '~/')
+    .replace(/-(?:Users|home)-[^-\s]+-/g, '-~-')
     .replace(/:\/\/[^\s/:@]+:[^\s/?#]+@/g, '://<user>:<redacted>@')
     .replace(
       /\b(Authorization|PRIVATE-TOKEN|x-api-key)(["']?\s*[:=]\s*)(?:(?:Bearer|Basic|token)\s+)?[^\s"']+/gi,
@@ -109,7 +118,7 @@ const sessionStats = [];
 // Redact first: placeholders below would break the secret patterns and leave token tails.
 const normalize = (text) =>
   redact(text)
-    .replace(/(?:\/Users\/|~\/)[^\s'"]+/g, '<path>')
+    .replace(/(?:\/(?:Users|home)\/|~\/)[^\s'"]+/g, '<path>')
     .replace(/\/(private\/)?tmp\/[^\s'"]+/g, '<tmp>')
     .replace(/\b[0-9a-f]{7,40}\b/g, '<sha>')
     .replace(/\d+/g, '<n>')
@@ -120,12 +129,14 @@ const normalize = (text) =>
 // A file path relative to its checkout, so the same file in two worktrees is one row.
 const WORKTREE =
   /^.*\/(?:\.t3\/worktrees\/[^/]+\/[^/]+|\.claude\/worktrees\/[^/]+|\.worktrees\/[^/]+)\//;
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const CHECKOUT = repoNames.length
+  ? new RegExp(`^.*?/(?:${repoNames.map(escapeRegExp).join('|')})/`)
+  : /^$/;
 const checkoutRelative = (path) =>
   WORKTREE.test(path)
     ? path.replace(WORKTREE, '')
-    : path
-        .replace(new RegExp(`^.*?/[^/]*(?:${match.source})[\\w-]*/`, 'i'), '')
-        .replace(/^\/Users\/[^/]+\//, '~/');
+    : path.replace(CHECKOUT, '').replace(/^\/(?:Users|home)\/[^/]+\//, '~/');
 
 // First meaningful tokens of a shell command: "pnpm --filter api typecheck", "glab mr view".
 const commandFamily = (command) => {
@@ -375,7 +386,8 @@ const out = [
     .sort((a, b) => a.at.localeCompare(b.at))
     .slice(-60)
     .map(
-      (c) => `- [${c.project.replace(/^-Users-[^-]+-/, '')} ${c.session.slice(0, 8)}] ${c.text}`,
+      (c) =>
+        `- [${c.project.replace(/^-(?:Users|home)-[^-]+-/, '')} ${c.session.slice(0, 8)}] ${c.text}`,
     ),
   '',
   '## Costliest main sessions (by tokens in the window; $ is the whole session, window or not)',
@@ -386,7 +398,7 @@ const out = [
     .slice(0, 15)
     .map(
       (s) =>
-        `| ${mtok(s.tokens)} | ${s.costUSD.toFixed(1)} | ${s.turns} | ${s.toolCalls} | ${s.errors} | ${s.corrections} | ${s.compactions} | ${s.project.replace(/^-Users-[^-]+-/, '')} | ${s.session} |`,
+        `| ${mtok(s.tokens)} | ${s.costUSD.toFixed(1)} | ${s.turns} | ${s.toolCalls} | ${s.errors} | ${s.corrections} | ${s.compactions} | ${s.project.replace(/^-(?:Users|home)-[^-]+-/, '')} | ${s.session} |`,
     ),
   '',
 ];

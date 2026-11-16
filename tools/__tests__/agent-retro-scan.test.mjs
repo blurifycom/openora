@@ -84,11 +84,49 @@ test('counts in-window failures, hook blocks and real corrections only', () => {
 });
 
 test('rejects a non-numeric --days', () => {
-  assert.throws(() =>
-    execFileSync('node', [SCAN, '--days', 'abc'], {
-      stdio: 'pipe',
-    }),
+  const root = mkdtempSync(join(tmpdir(), 'agent-retro-'));
+  assert.throws(
+    () =>
+      execFileSync('node', [SCAN, '--root', root, '--save', 'false', '--days', 'abc'], {
+        stdio: 'pipe',
+      }),
+    (error) => /--days must be a positive integer/.test(String(error.stderr)),
   );
+});
+
+test('defaults to the transcripts of this checkout and openora, keyed checkout-relative', () => {
+  const repo = join(mkdtempSync(join(tmpdir(), 'agent-retro-')), 'my.casino');
+  mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const root = mkdtempSync(join(tmpdir(), 'agent-retro-'));
+  const read = (id, path) => ({
+    type: 'assistant',
+    timestamp: now,
+    message: { content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: path } }] },
+  });
+  const projects = {
+    // the same file read from the main checkout and from a worktree is one row
+    '-Users-x-my-casino': read('a', '/Users/x/my.casino/apps/api/src/index.ts'),
+    '-Users-x-my-casino--claude-worktrees-fix': read(
+      'b',
+      '/Users/x/my.casino/.claude/worktrees/fix/apps/api/src/index.ts',
+    ),
+    '-Users-x-openora': read('c', '/Users/x/openora/README.md'),
+    // a name that merely contains this repo's name is another project
+    '-Users-x-my-casino2': read('d', '/Users/x/my-casino2/other.ts'),
+  };
+  for (const [dir, entry] of Object.entries(projects)) {
+    mkdirSync(join(root, dir));
+    writeFileSync(join(root, dir, `${entry.message.content[0].id}.jsonl`), JSON.stringify(entry));
+  }
+  const out = execFileSync('node', [SCAN, '--root', root, '--save', 'false'], {
+    cwd: repo,
+    encoding: 'utf8',
+  });
+  assert.match(out, /Main sessions: 3, subagent transcripts: 0, tool calls: 3/);
+  assert.match(out, /\| 2 \| 2 \| apps\/api\/src\/index\.ts \|/);
+  assert.match(out, /\| 1 \| 1 \| README\.md \|/);
+  assert.doesNotMatch(out, /other\.ts/);
 });
 
 test('masks credentials in command examples', () => {

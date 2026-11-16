@@ -33,7 +33,7 @@ ls "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.claud
 Takes seconds, prints the digest and saves it as `agent-retro-digest-<date>.md` in the reports dir: the main checkout's gitignored `.claude/reviews/` (printed as `reports dir:`), so a worktree run still finds last week's files.
 Counts come from the digest only: quote its numbers, never sum rows yourself ("Blocks per guard" has the totals). Only activity inside the window counts, even in a session that started earlier.
 If an earlier `agent-retro-<date>.md` report exists, read it first: for each of its rows, compare its
-"how to measure" digest row against today's digest and report fixed / unchanged / worse. Flags: `--days N`, `--match '<regex>'` (on `~/.claude/projects` dir names; default: this repo's main checkout name and `openora`), `--top N`.
+"how to measure" digest row against today's digest and report fixed / unchanged / worse. Flags: `--days N`, `--match '<regex>'` (on `~/.claude/projects` dir names; default: this repo's main checkout name and `openora`, as whole `-`-separated segments of the dir name), `--top N`.
 Tables are ranked by distinct main sessions (a subagent counts as its parent). One session doing something 40 times counts as one incident, not a pattern.
 "Possible user corrections" is a loose regex, so check each line before you use it.
 
