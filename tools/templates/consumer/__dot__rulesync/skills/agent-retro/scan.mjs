@@ -46,7 +46,7 @@ const mainCheckout = () => {
 };
 const repoNames = args.match ? [] : [...new Set([basename(mainCheckout()), 'openora'])];
 // Claude Code names a project dir after its path with every non-alphanumeric turned into '-',
-// so match whole '-'-separated segments: a repo named "api" must not pick up "~/other-api-x".
+// so match whole '-'-separated segments: a repo named "api" must not pick up "~/apix" (but "~/x/api/y" and "~/x-api-y" look the same).
 const match = new RegExp(
   args.match ??
     `(?:^|-)(?:${repoNames.map((name) => name.replace(/[^a-zA-Z0-9]/g, '-')).join('|')})(?:-|$)`,
