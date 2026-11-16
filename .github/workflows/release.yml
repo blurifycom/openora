@@ -30,19 +30,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm from package.json `packageManager`, then a frozen install - the same path as CI.
+      - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache: 'false'
+
+      # `setup-node` again purely for the npm registry auth the publish step needs -
+      # bootstrap installs node but does not write an authenticated .npmrc.
       - uses: actions/setup-node@v4
         with:
           node-version: 26
           registry-url: https://registry.npmjs.org
           scope: '@openora'
-
-      - name: Enable corepack (pnpm)
-        run: |
-          npm install -g corepack@latest
-          corepack enable
-          corepack prepare pnpm@11.8.0 --activate
-
-      - run: pnpm install --frozen-lockfile
 
       # The tag name is the source of truth. A prerelease tag (contains a '-') -> rc channel.
       - name: Resolve channel from tag
