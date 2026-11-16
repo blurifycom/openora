@@ -46,3 +46,6 @@ allowBuilds:
   tldjs: false
 # Explicit so pnpm enforces it strictly; the built-in default falls back to a too-young version.
 minimumReleaseAge: 1440
+# Fail on a version published with weaker evidence than an earlier one (lost provenance: the
+# usual sign of a stolen publish token).
+trustPolicy: no-downgrade
