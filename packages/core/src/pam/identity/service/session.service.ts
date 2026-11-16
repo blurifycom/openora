@@ -269,11 +269,11 @@ export class SessionService {
 
   /**
    * After a password reset: ends the account's sessions and revokes its MCP tokens in one
-   * transaction, then signs its open tabs out. better-auth deletes the sessions only once its
-   * reset hook returns, so a session still live after the revocation could issue a token the
-   * revocation missed; expired first, before the revocation takes the token table's lock, none
-   * can. A failed revocation still ends the sessions, then is tried once more; a second failure
-   * is thrown for the caller to log.
+   * transaction, then signs its open tabs out. better-auth deletes the sessions and then writes
+   * the new password before its reset hook runs, so the expiry here catches a session signed in
+   * after that delete; expired first, before the revocation takes the token table's lock,
+   * none can issue a token the revocation missed. A failed revocation still ends the sessions,
+   * then is tried once more; a second failure is thrown for the caller to log.
    */
   async endSessionsAfterPasswordReset(userId: User['id'], meta?: ClientMeta) {
     const mcpTokens = await this.mcpTokensOf(userId);
