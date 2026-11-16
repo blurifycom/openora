@@ -4,6 +4,7 @@ targets:
 name: deployer
 description: Deployment + containerization helper for a downstream igaming built on @openora/*. Authors the service Dockerfiles, defines the runtime env contract, wires DB migration as a one-shot job, and sets up a deploy pipeline for whatever target the operator chooses (ECS, Kubernetes, Fly, Railway, Compose, ...). Use this agent to package and ship a consumer igaming repo - never to change application behavior.
 claudecode:
+  disallowedTools: [Artifact, Workflow, ScheduleWakeup, ReportFindings]
   model: sonnet
 ---
 
