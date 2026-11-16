@@ -1,11 +1,11 @@
 name: Audit fix
 
-# Weekly: bump vulnerable dependencies and refresh one PR into dev. `--fix=update` only
-# moves versions inside the ranges package.json already allows; an advisory that needs a
-# range or major change stays in `pnpm audit` for a human.
+# Daily: bump vulnerable dependencies and Node.js, and keep one PR into dev up to date.
+# `--fix=update` only moves versions inside the ranges package.json already allows; an
+# advisory that needs a range or major change stays in `pnpm audit` for a human.
 on:
   schedule:
-    - cron: '0 6 * * 1'
+    - cron: '0 6 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -19,6 +19,7 @@ permissions:
 env:
   BRANCH: chore/audit-fix
   TITLE: 'fix(deps): bump vulnerable dependencies'
+  FILES: pnpm-lock.yaml *package.json .nvmrc
 
 jobs:
   audit-fix:
@@ -27,32 +28,68 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: dev
+          # The open PR's branch is compared with dev below.
+          fetch-depth: 0
       - uses: ./.github/actions/bootstrap
         with:
           turbo-cache: 'false'
       # Exits non-zero while anything is still vulnerable - the diff decides, not the exit code.
       - run: pnpm audit --fix=update || true
+      # The fix adds every bumped version to `minimumReleaseAgeExclude`, which would bypass the
+      # release-age cooldown for good. Drop them: the install below checks the lockfile against the
+      # policy and fails on a version still inside the cooldown, so the next run picks it up.
+      - run: git checkout -- pnpm-workspace.yaml
       # The fix rewrites bumped specifiers as `^x.y.z`; dependencies stay pinned exact.
       - name: Pin bumped versions
         run: |
           git ls-files '*package.json' | xargs sed -i -E 's/("[^"]+": )"[~^]([0-9][^"]*)"/\1"\2"/'
           pnpm install --lockfile-only
+      # Any security release on the pinned major after .nvmrc moves .nvmrc and the engines
+      # floor to the newest release of that major. A pin not found in the index bumps nothing.
+      - name: Bump Node.js on a security release
+        run: |
+          current=$(tr -d '[:space:]' < .nvmrc)
+          next=$(curl -fsSL https://nodejs.org/dist/index.json | jq -r --arg cur "v$current" --arg major "v${current%%.*}." '
+            [.[] | select(.version | startswith($major))] | .[:(map(.version) | index($cur) // 0)]
+            | if any(.[]; .security) then .[0].version[1:] else empty end') ||
+            { echo "::warning::nodejs.org index unreachable, no Node.js bump"; exit 0; }
+          if [ -n "$next" ]; then
+            echo "$next" > .nvmrc
+            sed -i "s/\"node\": \">=$current\"/\"node\": \">=$next\"/" package.json
+          fi
       - name: Open or refresh the PR
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if git diff --quiet -- pnpm-lock.yaml pnpm-workspace.yaml '*package.json'; then
+          set -f
+          if git diff --quiet -- $FILES; then
             echo "nothing to bump"
             exit 0
           fi
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git config user.name 'github-actions[bot]'
           git checkout -b "$BRANCH"
-          git add -- pnpm-lock.yaml pnpm-workspace.yaml '*package.json'
+          git add -- $FILES
           git commit -m "$TITLE"
-          git push -f origin "$BRANCH"
-          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
-            gh pr create --base dev --head "$BRANCH" --title "$TITLE" --body 'Automated by the weekly `Audit fix` workflow (`pnpm audit --fix=update`).'
+          # Only this repo's branch: a fork PR from a branch of the same name is not ours.
+          open=$(gh pr list --head "$BRANCH" --state open --json number,headRepositoryOwner \
+            --jq ".[] | select(.headRepositoryOwner.login == \"$GITHUB_REPOSITORY_OWNER\") | .number")
+          # A person's commits on the open PR are theirs to finish; a closed PR's branch is taken back.
+          if [ -n "$open" ] && git rev-parse -q --verify "origin/$BRANCH" >/dev/null; then
+            if git log --format=%an "origin/dev..origin/$BRANCH" | grep -qvxF 'github-actions[bot]'; then
+              echo "::warning::$BRANCH has commits from someone else, leaving PR #$open alone"
+              exit 0
+            fi
+            patch() { git diff "$@" | git patch-id --stable | cut -d' ' -f1; }
+            if [ "$(patch "origin/dev...origin/$BRANCH")" = "$(patch origin/dev HEAD)" ]; then
+              echo "the open PR already holds this bump"
+              exit 0
+            fi
+          fi
+          # The lease fails the push when someone pushed to the branch after the checks above.
+          git push --force-with-lease="$BRANCH:$(git rev-parse -q --verify "origin/$BRANCH" || true)" origin "$BRANCH"
+          if [ -z "$open" ]; then
+            gh pr create --base dev --head "$BRANCH" --title "$TITLE" --body 'Automated by the daily `Audit fix` workflow (`pnpm audit --fix=update` and Node.js security releases).'
           fi
           # A push made with the workflow token starts no `pull_request` run, so CI is dispatched by hand.
           gh workflow run ci.yml --ref "$BRANCH"

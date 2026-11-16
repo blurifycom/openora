@@ -102,7 +102,9 @@ change, read from the update stamp better-auth writes to the credential account 
 hash, so a revocation that fails leaves the old tokens refused rather than usable. A failed
 revocation is therefore logged rather than failing the change or the reset, which has already
 committed; on a reset a failure must not abort the hook either, because better-auth revokes the
-account's sessions only once its reset hook returns.
+account's sessions only once its reset hook returns. (Since better-auth 1.7, 2026-11: it deletes
+the sessions and writes the new password before the hook runs; the hook's own session expiry
+covers a sign-in after the delete and before the hook, and a failed revocation still must not abort it.)
 
 Players can never hold tokens, so their session revocations skip the token table. A bulk
 revocation locks the token table first and issuance takes the same lock before it inserts, so a

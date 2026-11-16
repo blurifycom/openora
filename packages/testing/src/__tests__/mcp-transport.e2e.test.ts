@@ -683,10 +683,9 @@ describe('MCP tokens, issuing while the issuing session is revoked', () => {
 });
 
 describe('MCP tokens, issuing while a password reset is in flight', () => {
-  it('refuses an issue from a session the reset has not deleted yet, and leaves no token to survive it', async () => {
+  it('refuses an issue from the session the reset ended, and leaves no token to survive it', async () => {
     const { userId: staffId, client: staff, email } = await staffWithRole(WITH_MCP);
     const existing = await issueToken(staff, 'before the reset');
-    const appDb = { drizzle: app.container.get(DRIZZLE) };
     const post = (path: string, body: unknown) =>
       Promise.resolve(
         app.app.request(path, {
@@ -699,8 +698,6 @@ describe('MCP tokens, issuing while a password reset is in flight', () => {
     const mail = await waitForEmail(email, (sent) => sent.subject === 'Reset your password');
     const otp = /\b(\d{6})\b/.exec(mail.text)?.[1];
 
-    // The reset hook is held right after its revocation: better-auth deletes the account's
-    // sessions only once the hook returns, the window an old session could issue a token in.
     const revocation = holdNextRevocation();
     const resetting = post('/identity/password/reset', {
       email,
@@ -708,20 +705,12 @@ describe('MCP tokens, issuing while a password reset is in flight', () => {
       newPassword: NEW_MODERATOR_PASSWORD,
     });
     await revocation.reached;
-    // better-auth has committed the new password by now, so the step-up passes only with it:
-    // even an issuer who knows it is refused for the session the reset is ending.
-    const issuing = staff.post('/iam/my-mcp-tokens', {
-      label: 'raced',
-      currentPassword: NEW_MODERATOR_PASSWORD,
-    });
-    // The issue queues behind the revocation's transaction, which ends the sessions too.
-    await waitForTableLockWaiter(appDb, mcpToken);
-    revocation.release();
-    const [reset, issued] = await Promise.all([resetting, issuing]);
+    const issued = await staff
+      .post('/iam/my-mcp-tokens', { label: 'raced', currentPassword: NEW_MODERATOR_PASSWORD })
+      .finally(() => revocation.release());
 
-    expect(reset.status).toBe(200);
-    expect(issued.status).toBe(403);
-    expect(ErrorReasonSchema.parse(await issued.json()).data.reason).toBe('owner_ineligible');
+    expect((await resetting).status).toBe(200);
+    expect(issued.status).toBe(401);
     expect(await tokenIdsOf(staffId)).toEqual([{ id: existing.id }]);
     expect(await revokeReasonOf(existing.id)).toBe('sessions_revoked');
   });
