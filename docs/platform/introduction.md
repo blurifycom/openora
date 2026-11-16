@@ -1,7 +1,7 @@
 # Introduction
 
-An open-source, headless, plugin-based, AI-native igaming platform. Clone it, extend it
-with your own modules and adapters, and deploy it - without forking core.
+Open-Source AI-Native Casino Platform. Clone it, extend it with your own modules and
+adapters, and deploy it - without forking core.
 
 The backend ships fully featured out of the box: auth, wallet, lobby, games, chat,
 compliance, back office, and CMS. The frontend (all UI) lives in your own consumer
