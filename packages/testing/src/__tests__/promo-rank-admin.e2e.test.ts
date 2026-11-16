@@ -49,6 +49,10 @@ const ladderRows = () =>
       key: promoRankTier.key,
       wagerThreshold: promoRankTier.wagerThreshold,
       levelUpBonus: promoRankTier.levelUpBonus,
+      rakebackPercent: promoRankTier.rakebackPercent,
+      dailyBonusPercent: promoRankTier.dailyBonusPercent,
+      weeklyBonusPercent: promoRankTier.weeklyBonusPercent,
+      monthlyBonusPercent: promoRankTier.monthlyBonusPercent,
     })
     .from(promoRankTier)
     .orderBy(promoRankTier.position);
@@ -72,6 +76,9 @@ const editable = (tier: {
   dailyBonus: string | null;
   weeklyBonus: string | null;
   monthlyBonus: string | null;
+  dailyBonusPercent: string | null;
+  weeklyBonusPercent: string | null;
+  monthlyBonusPercent: string | null;
   levelUpBonus: string | null;
 }) => ({
   id: tier.id,
@@ -82,6 +89,9 @@ const editable = (tier: {
   dailyBonus: tier.dailyBonus,
   weeklyBonus: tier.weeklyBonus,
   monthlyBonus: tier.monthlyBonus,
+  dailyBonusPercent: tier.dailyBonusPercent,
+  weeklyBonusPercent: tier.weeklyBonusPercent,
+  monthlyBonusPercent: tier.monthlyBonusPercent,
   levelUpBonus: tier.levelUpBonus,
 });
 
@@ -169,6 +179,101 @@ describe('an operator configuring the rank ladder', () => {
     });
     expect(rows.at(-1)?.before).toMatchObject({ tiers: expect.any(Array) });
     expect(rows.at(-1)?.after).toMatchObject({ tiers: expect.any(Array) });
+  });
+
+  it('saves a periodic bonus percent per tier and shows it to the player with the basis', async () => {
+    const payload = await currentPayload();
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `rank-percent-${randomUUID()}@example.test`,
+    });
+
+    const res = await admin.put('/backoffice/promo/ranks', {
+      currency: payload.currency,
+      tiers: payload.tiers.map((tier: object, index: number) =>
+        index === 1 ? { ...tier, dailyBonusPercent: '12.5', monthlyBonusPercent: '50' } : tier,
+      ),
+    });
+    const seenByPlayer = await readJson(await client.get('/promo/ranks'));
+
+    expect(res.status).toBe(200);
+    expect(seenByPlayer.periodicBasis).toBe('flat');
+    expect(seenByPlayer.tiers[1]).toMatchObject({
+      dailyBonusPercent: '12.50',
+      weeklyBonusPercent: null,
+      monthlyBonusPercent: '50.00',
+    });
+  });
+
+  it.each(['0', '100.01', '-5'])('refuses a periodic bonus percent of %s', async (percent) => {
+    const auditedBefore = await auditCount();
+    const payload = await currentPayload();
+
+    const res = await admin.put('/backoffice/promo/ranks', {
+      currency: payload.currency,
+      tiers: payload.tiers.map((tier: object, index: number) =>
+        index === 1 ? { ...tier, weeklyBonusPercent: percent } : tier,
+      ),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await auditCount()).toBe(auditedBefore);
+  });
+
+  describe('a tier paying more than the house edge', () => {
+    const silverAs = async (percents: object, strip: readonly string[] = []) => {
+      const payload = await currentPayload();
+      return admin.put('/backoffice/promo/ranks', {
+        currency: payload.currency,
+        tiers: payload.tiers.map((tier: Record<string, unknown>, index: number) =>
+          index === 1
+            ? Object.fromEntries(
+                Object.entries({ ...tier, ...percents }).filter(([key]) => !strip.includes(key)),
+              )
+            : tier,
+        ),
+      });
+    };
+
+    it('refuses rakeback and bonus percents adding up to more than 100', async () => {
+      const auditedBefore = await auditCount();
+
+      const res = await silverAs({
+        rakebackPercent: '50',
+        dailyBonusPercent: '30',
+        weeklyBonusPercent: '10',
+        monthlyBonusPercent: '10.01',
+      });
+
+      expect(res.status).toBe(400);
+      expect(await auditCount()).toBe(auditedBefore);
+    });
+
+    it('accepts percents adding up to exactly 100', async () => {
+      const res = await silverAs({
+        rakebackPercent: '50',
+        dailyBonusPercent: '30',
+        weeklyBonusPercent: '10',
+        monthlyBonusPercent: '10',
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('counts a stored percent the save left out', async () => {
+      expect((await silverAs({ rakebackPercent: '10', dailyBonusPercent: '60' })).status).toBe(200);
+      const auditedBefore = await auditCount();
+      const before = await ladderRows();
+
+      const res = await silverAs({ rakebackPercent: '50' }, [
+        'dailyBonusPercent',
+        'weeklyBonusPercent',
+        'monthlyBonusPercent',
+      ]);
+
+      expect(res.status).toBe(400);
+      expect(await ladderRows()).toEqual(before);
+      expect(await auditCount()).toBe(auditedBefore);
+    });
   });
 
   it('refuses thresholds that stop increasing and changes nothing', async () => {

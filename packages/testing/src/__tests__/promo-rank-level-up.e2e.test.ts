@@ -228,6 +228,7 @@ describe('a player ranking up and being told about it', () => {
               dailyBonus: '5.000000000000000000',
               monthlyBonus: '50.000000000000000000',
               levelUpBonus: '10.000000000000000000',
+              periodicBasis: 'flat',
             },
             data: { tierId: await tierId('silver') },
           }),
