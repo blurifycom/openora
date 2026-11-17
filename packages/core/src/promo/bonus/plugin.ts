@@ -1,16 +1,17 @@
 import * as z from 'zod';
 import {
   AUDIT_WRITER,
+  BONUS_DEPOSITS,
   BONUS_GRANTS,
   BONUS_GRANT_LEDGER,
   BONUS_LIFECYCLE,
   BONUS_WAGERING,
   BonusForfeitReasonSchema,
+  type BonusDepositCommands,
   type BonusLifecycleCommands,
-  CurrencyTickerSchema,
+  EXCHANGE_RATE_READER,
   GEO_CHECK_COMMANDS,
   JOB_QUEUE,
-  MoneyAmountSchema,
   PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
   PromoConfigSchema,
@@ -31,8 +32,7 @@ import {
   EVENT_BUS,
   createLogger,
   type CoreTokenCatalog,
-  type DrizzleService,
-  type EventBus,
+  type DrizzleTx,
   type Plugin,
   type TypedContainer,
 } from '@openora/core/server';
@@ -56,7 +56,6 @@ const logger = createLogger('promo-bonus');
 
 const EXPIRY_QUEUE = queue('promo-bonus-expiry');
 const FORFEIT_QUEUE = queue('promo-bonus-forfeit');
-const DEPOSIT_QUEUE = queue('promo-offer-deposit');
 const EXPIRY_CRON = '*/15 * * * *';
 // Shared by every money-adjacent job in this plugin - a bare enqueue() takes the driver's
 // default of one attempt, which turns one transient failure into a bonus the player earned and
@@ -91,23 +90,16 @@ const ForfeitJobSchema = z.object({
   actorIsAdmin: z.boolean(),
 });
 
-/**
- * A deposit turning an opt-in into a bonus is a money movement, so it runs as a durable job for
- * the same reason a forfeit does: the event that triggers it is best-effort, and a grant that
- * never gets created is a bonus the player was promised and did not receive. The grant's own
- * `(user, source, source_ref)` index makes the retry harmless.
- */
-const DepositJobSchema = z.object({
-  userId: UuidSchema,
-  amount: MoneyAmountSchema,
-  currency: CurrencyTickerSchema,
-  transactionId: UuidSchema,
-});
-
 export default {
   id: 'bonus',
   dependsOn: ['audit'],
   requiresPorts: [PLAY_ELIGIBILITY],
+  optionalPorts: [
+    {
+      port: EXCHANGE_RATE_READER,
+      without: 'a grant in a currency other than USD has no dust threshold',
+    },
+  ],
   controlPorts: [
     {
       port: GEO_CHECK_COMMANDS,
@@ -116,7 +108,15 @@ export default {
     },
   ],
   register(ctx) {
-    ctx.provide(BONUS_GRANTS, (c) => new GrantService(c.get(AUDIT_WRITER), grantConcurrency(c)));
+    ctx.provide(
+      BONUS_GRANTS,
+      (c) =>
+        new GrantService(
+          c.get(AUDIT_WRITER),
+          grantConcurrency(c),
+          c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+        ),
+    );
     ctx.provide(BONUS_GRANT_LEDGER, () => bonusGrantLedger);
     ctx.mcp.tool(grantsSummaryTool, (c) => {
       const summary = new GrantsSummaryService(c.get(DRIZZLE));
@@ -128,8 +128,32 @@ export default {
     });
     ctx.provideSealed(
       BONUS_WAGERING,
-      (c) => new WageringService(c.has(WAGER_TRACKING) ? c.get(WAGER_TRACKING) : undefined),
+      (c) =>
+        new WageringService(
+          c.get(AUDIT_WRITER),
+          c.has(WAGER_TRACKING) ? c.get(WAGER_TRACKING) : undefined,
+        ),
     );
+    // On the wallet's deposit transaction: the grant, and the outbox row announcing it, commit
+    // with the deposit that earned it.
+    ctx.provide(BONUS_DEPOSITS, (c): BonusDepositCommands => {
+      const service = new OfferService(
+        c.get(DRIZZLE),
+        c.get(AUDIT_WRITER),
+        c.get(BONUS_GRANTS),
+        c.get(WALLET_READER),
+        c.get(PLAY_ELIGIBILITY),
+        logger,
+      );
+      const bus = c.get(EVENT_BUS);
+      return {
+        async applyDeposit(tx: DrizzleTx, deposit) {
+          for (const bonus of await service.applyDeposit(tx, deposit)) {
+            await bus.emitInTransaction(tx, 'promo.bonus.granted', { ...bonus, source: 'deposit' });
+          }
+        },
+      };
+    });
     // A thin command port over GrantLifecycleService.forfeit - the shape an external
     // system/job context needs (no admin session to assert, one named grant rather than every
     // grant a player holds). Constructed off the container directly, not the module-scoped
@@ -151,8 +175,6 @@ export default {
 
     let lifecycle: GrantLifecycleService | null = null;
     let offers: OfferService | null = null;
-    let drizzle: DrizzleService | null = null;
-    let events: EventBus | null = null;
     let jobs: JobQueueAdapter | null = null;
     let realtime: RealtimeTransport | null = null;
 
@@ -291,46 +313,6 @@ export default {
       forfeitEverything('identity.user.deactivated', 'account_deactivated'),
     );
 
-    ctx.jobs.worker({
-      queue: DEPOSIT_QUEUE,
-      schema: DepositJobSchema,
-      handler: async ({ payload }) => {
-        if (!offers || !drizzle) {
-          throw new Error('promo-offer-deposit: service not constructed');
-        }
-        const service = offers;
-        const bus = events;
-        // Through the outbox in the grant's own transaction: the player is told about the
-        // credit and what it obliges them to wager if and only if the grant committed.
-        await drizzle.db.transaction(async (tx) => {
-          for (const bonus of await service.applyDeposit(tx, payload)) {
-            await bus?.emitInTransaction(tx, 'promo.bonus.granted', {
-              ...bonus,
-              source: 'deposit',
-            });
-          }
-        });
-      },
-    });
-
-    // A confirmed deposit is what turns an opt-in into a bonus.
-    ctx.events.on('wallet.deposit.completed', async (payload: unknown) => {
-      const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
-      if (!parsed.success) {
-        logger.error('promo offer deposit skipped - event payload failed validation');
-        return;
-      }
-      if (!jobs) {
-        throw new Error('promo offer deposit - job queue not bound yet');
-      }
-      const { userId, amount, currency, transactionId } = parsed.data;
-      await jobs.enqueue(
-        DEPOSIT_QUEUE,
-        { userId, amount, currency, transactionId },
-        { idempotencyKey: `promo-offer-deposit:${transactionId}`, ...MONEY_JOB_RETRY },
-      );
-    });
-
     ctx.routers.add('promo-bonus', (c) => {
       lifecycle = new GrantLifecycleService(
         c.get(DRIZZLE),
@@ -339,7 +321,6 @@ export default {
         c.get(PLAY_ELIGIBILITY),
         grantConcurrency(c),
       );
-      drizzle = c.get(DRIZZLE);
       offers = new OfferService(
         c.get(DRIZZLE),
         c.get(AUDIT_WRITER),
@@ -349,7 +330,6 @@ export default {
         logger,
         grantConcurrency(c),
       );
-      events = c.get(EVENT_BUS);
       jobs = c.get(JOB_QUEUE);
       realtime = c.get(REALTIME_TRANSPORT);
       void jobs

@@ -352,7 +352,7 @@ describe('a player taking an offer', () => {
     expect(grant?.grantedAmount).toBe('100.000000000000000000');
   });
 
-  it('counts two deposits under the minimum toward it, and grants once', async () => {
+  it('counts no deposit under the minimum toward it, and grants on one that meets it alone', async () => {
     const offer = await createOffer({
       minDeposit: '100',
       matchPercent: '50',
@@ -364,23 +364,16 @@ describe('a player taking an offer', () => {
     await client.post(`/promo/offers/${offer.id}/opt-in`, {});
 
     await deposit(client, '60');
-    const [pending] = await waitFor(
-      async () =>
-        (await optInsOf(userId)).filter((o) => o.accumulatedDeposit !== '0.000000000000000000'),
-      1,
-    );
-    expect(pending?.accumulatedDeposit).toBe('60.000000000000000000');
-    expect(await grantsOf(userId)).toHaveLength(0);
-
     await deposit(client, '60');
+    await settled(userId);
+    expect(await grantsOf(userId)).toHaveLength(0);
+    expect((await optInsOf(userId))[0]?.accumulatedDeposit).toBe('0.000000000000000000');
+
+    await deposit(client, '100');
 
     const grants = await waitFor(() => grantsOf(userId), 1);
     expect(grants).toHaveLength(1);
-    expect(grants[0]?.grantedAmount).toBe('60.000000000000000000');
-
-    await deposit(client, '60');
-    await settled(userId);
-    expect(await grantsOf(userId)).toHaveLength(1);
+    expect(grants[0]?.grantedAmount).toBe('50.000000000000000000');
   });
 
   it('grants nothing to a player who never took the offer', async () => {

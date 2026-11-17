@@ -24,7 +24,7 @@ let weightProfileId: string;
 
 const drizzle = () => app.container.get(DRIZZLE).db;
 
-async function grantBonus(userId: string, amount: string) {
+async function grantBonus(userId: string, amount: string, allowPlayerForfeit?: boolean) {
   const outcome = await drizzle().transaction((tx) =>
     app.container.get(BONUS_GRANTS).grant(tx, {
       userId,
@@ -33,7 +33,13 @@ async function grantBonus(userId: string, amount: string) {
       source: 'deposit',
       sourceRef: randomUUID(),
       actor: { type: 'system' },
-      terms: { wageringMultiplier: '5', expiryDays: 30, weightProfileId },
+      buckets: { linked: amount, unlinked: '10' },
+      terms: {
+        wageringMultiplier: '5',
+        expiryDays: 30,
+        weightProfileId,
+        ...(allowPlayerForfeit === undefined ? {} : { allowPlayerForfeit }),
+      },
     }),
   );
   if (!outcome.ok) {
@@ -295,5 +301,63 @@ describe('a ban forfeiting every active grant', () => {
       );
       expect(audit.items[0]).toMatchObject({ actorType: 'admin', actorId });
     }, JOB_WAIT);
+  });
+});
+
+describe('a player forfeiting their own bonus', () => {
+  it('forfeits it where the terms allow, removing the bonus and releasing the linked cash', async () => {
+    const { client, userId } = await player();
+    const grantId = await grantBonus(userId, '50', true);
+    expect(await readJson(await client.get(`/promo/grants/${grantId}`))).toMatchObject({
+      playerForfeitable: true,
+    });
+
+    const res = await client.post(`/promo/grants/${grantId}/forfeit`, {});
+
+    expect(res.status).toBe(200);
+    expect(await readJson(res)).toMatchObject({
+      id: grantId,
+      status: 'forfeited',
+      forfeitReason: 'player_opt_out',
+      bonusBalance: '0.000000000000000000',
+      linkedCash: '0.000000000000000000',
+      unlinkedCash: '0.000000000000000000',
+    });
+  });
+
+  it('is refused where the terms do not allow it, and the bonus stays live', async () => {
+    const { client, userId } = await player();
+    const grantId = await grantBonus(userId, '50');
+
+    const res = await client.post(`/promo/grants/${grantId}/forfeit`, {});
+
+    expect(res.status).toBe(403);
+    expect(await readJson(await client.get(`/promo/grants/${grantId}`))).toMatchObject({
+      status: 'active',
+      playerForfeitable: false,
+    });
+  });
+
+  it('cannot forfeit another player’s bonus, and is told it does not exist', async () => {
+    const owner = await player();
+    const grantId = await grantBonus(owner.userId, '50', true);
+    const { client } = await player();
+
+    const res = await client.post(`/promo/grants/${grantId}/forfeit`, {});
+
+    expect(res.status).toBe(404);
+    expect(await readJson(await owner.client.get(`/promo/grants/${grantId}`))).toMatchObject({
+      status: 'active',
+    });
+  });
+
+  it('cannot forfeit a bonus twice', async () => {
+    const { client, userId } = await player();
+    const grantId = await grantBonus(userId, '50', true);
+    await client.post(`/promo/grants/${grantId}/forfeit`, {});
+
+    const res = await client.post(`/promo/grants/${grantId}/forfeit`, {});
+
+    expect(res.status).toBe(409);
   });
 });

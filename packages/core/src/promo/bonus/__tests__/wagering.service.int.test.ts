@@ -25,7 +25,7 @@ afterAll(async () => {
 describe('wager() with no attributed bonus grant', () => {
   it('still reports the bet to wager tracking at its full stake', async () => {
     const wagerTracking: WagerTrackingCommands = { recordWager: vi.fn(async () => []) };
-    const wagering = new WageringService(wagerTracking);
+    const wagering = new WageringService(makeAuditWriter(), wagerTracking);
     const userId = randomUUID();
 
     const outcome = await db.drizzle.db.transaction((tx) =>
@@ -33,7 +33,7 @@ describe('wager() with no attributed bonus grant', () => {
         userId,
         currency: 'USD',
         stake: '25',
-        fromBonus: '0',
+        realAvailable: '25',
         context: CASINO,
         providerName: 'dice',
         externalRoundId: randomUUID(),
@@ -53,7 +53,7 @@ describe('wager() with no attributed bonus grant', () => {
       recordWager: vi.fn(async () => []),
       reverseWager: vi.fn(async () => {}),
     };
-    const wagering = new WageringService(wagerTracking);
+    const wagering = new WageringService(makeAuditWriter(), wagerTracking);
     const userId = randomUUID();
     const round = { providerName: 'dice', externalRoundId: randomUUID() };
 
@@ -62,7 +62,7 @@ describe('wager() with no attributed bonus grant', () => {
         userId,
         currency: 'USD',
         stake: '25',
-        fromBonus: '0',
+        realAvailable: '25',
         context: CASINO,
         ...round,
       });
@@ -71,6 +71,7 @@ describe('wager() with no attributed bonus grant', () => {
         currency: 'USD',
         amount: '25',
         kind: 'bet_reversal',
+        realBalance: '0',
         ...round,
       });
     });
@@ -89,7 +90,7 @@ describe('wager() with no attributed bonus grant', () => {
 
   it('reports a real-money-only stake at its full stake, all of it real, leaving an active grant untouched', async () => {
     const wagerTracking: WagerTrackingCommands = { recordWager: vi.fn(async () => []) };
-    const wagering = new WageringService(wagerTracking);
+    const wagering = new WageringService(makeAuditWriter(), wagerTracking);
     const userId = randomUUID();
     const [grant] = await db.drizzle.db
       .insert(promoGrant)
@@ -112,7 +113,7 @@ describe('wager() with no attributed bonus grant', () => {
         userId,
         currency: 'USD',
         stake: '25',
-        fromBonus: '0',
+        realAvailable: '25',
         context: { provider: 'sportsbook', product: 'sportsbook' },
         providerName: 'sportsbook',
         externalRoundId: randomUUID(),
@@ -135,16 +136,16 @@ describe('wager() with no attributed bonus grant', () => {
     });
   });
 
-  it('does not report a bet requesting bonus funds it has no grant for', async () => {
+  it('does not report a bet the real balance cannot cover when there is no grant', async () => {
     const wagerTracking: WagerTrackingCommands = { recordWager: vi.fn(async () => []) };
-    const wagering = new WageringService(wagerTracking);
+    const wagering = new WageringService(makeAuditWriter(), wagerTracking);
 
     const outcome = await db.drizzle.db.transaction((tx) =>
       wagering.wager(tx, {
         userId: randomUUID(),
         currency: 'USD',
         stake: '25',
-        fromBonus: '10',
+        realAvailable: '15',
         context: CASINO,
         providerName: 'dice',
         externalRoundId: randomUUID(),
@@ -195,13 +196,13 @@ describe('wager() on a product the grant excludes from bonus funds', () => {
     return outcome.grantId;
   };
 
-  const bet = (userId: string, product: WagerProduct, fromBonus: string) =>
+  const bet = (userId: string, product: WagerProduct, realAvailable: string) =>
     db.drizzle.db.transaction((tx) =>
-      new WageringService().wager(tx, {
+      new WageringService(makeAuditWriter()).wager(tx, {
         userId,
         currency: 'USD',
         stake: '10',
-        fromBonus,
+        realAvailable,
         context: { provider: 'aggregator', product },
         providerName: 'aggregator',
         externalRoundId: randomUUID(),
@@ -226,7 +227,7 @@ describe('wager() on a product the grant excludes from bonus funds', () => {
       const userId = randomUUID();
       const grantId = await grantFor(userId, [...EXCLUDED]);
 
-      const outcome = await bet(userId, product, '10');
+      const outcome = await bet(userId, product, '0');
 
       expect(outcome).toEqual({ ok: false, reason: 'insufficient_bonus', bonusAvailable: '0' });
       expect(Number(await bonusBalanceOf(grantId))).toBe(100);
@@ -238,7 +239,7 @@ describe('wager() on a product the grant excludes from bonus funds', () => {
     const userId = randomUUID();
     const grantId = await grantFor(userId, [...EXCLUDED]);
 
-    const outcome = await bet(userId, 'pvp', '0');
+    const outcome = await bet(userId, 'pvp', '10');
 
     expect(outcome).toMatchObject({ ok: true, grantId, bonusSpent: '0' });
     expect(Number(await bonusBalanceOf(grantId))).toBe(100);
@@ -248,7 +249,7 @@ describe('wager() on a product the grant excludes from bonus funds', () => {
     const userId = randomUUID();
     const grantId = await grantFor(userId, [...EXCLUDED]);
 
-    const outcome = await bet(userId, 'casino', '10');
+    const outcome = await bet(userId, 'casino', '0');
 
     expect(outcome).toMatchObject({ ok: true, grantId, bonusSpent: '10' });
     expect(Number(await bonusBalanceOf(grantId))).toBe(90);
@@ -258,7 +259,7 @@ describe('wager() on a product the grant excludes from bonus funds', () => {
     const userId = randomUUID();
     const grantId = await grantFor(userId);
 
-    const outcome = await bet(userId, 'live-casino', '10');
+    const outcome = await bet(userId, 'live-casino', '0');
 
     expect(outcome).toMatchObject({ ok: true, grantId, bonusSpent: '10' });
     expect(Number(await bonusBalanceOf(grantId))).toBe(90);

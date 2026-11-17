@@ -39,6 +39,7 @@ import {
   MoneyAmountSchema,
   RgLimitExceededError,
   isAllowedHost,
+  type BonusCompletion,
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
@@ -715,14 +716,6 @@ export class GamingService {
             direction: 'credit',
           });
         }
-        for (const { grantId, convertedAmount } of outcome.completed ?? []) {
-          await this.events.emitInTransaction(tx, 'promo.bonus.completed', {
-            userId,
-            grantId,
-            currency: outcome.currency,
-            convertedAmount,
-          });
-        }
       }
       // With the debit, not after the launch: nothing may fail once the provider session
       // exists, or a retry mints a new round and debits again. A launch that fails after
@@ -821,13 +814,38 @@ export class GamingService {
             type: 'win',
             direction: 'credit',
           });
+          await this.emitCompleted(tx, userId, round.currency, credited.completed ?? []);
         }
+      } else if (this.walletCommands.closeRound) {
+        // A lost round still settles the bonus bet it carried.
+        const closed = await this.walletCommands.closeRound(tx, {
+          userId,
+          currency: round.currency,
+          providerRef: { providerName: INTERNAL_ROUND_PROVIDER, externalRoundId: roundId },
+        });
+        await this.emitCompleted(tx, userId, round.currency, closed.completed);
       }
       await this.events.emitInTransaction(tx, 'gaming.round.ended', { roundId, userId, playerId });
       return true;
     });
 
     return { success: true, winAmount: paid ? winAmount : round.winAmount };
+  }
+
+  private async emitCompleted(
+    tx: DrizzleTx,
+    userId: User['id'],
+    currency: string,
+    completed: readonly BonusCompletion[],
+  ) {
+    for (const { grantId, convertedAmount } of completed) {
+      await this.events.emitInTransaction(tx, 'promo.bonus.completed', {
+        userId,
+        grantId,
+        currency,
+        convertedAmount,
+      });
+    }
   }
 
   /**
