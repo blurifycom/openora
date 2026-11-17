@@ -166,7 +166,8 @@ is `SPORTSBOOK_LEDGER` unchanged.
   the recipient's credit.
 - **A donation, a gift and a rain credit their recipient a bonus grant, never cash.** The sender's
   leg is an ordinary cash debit of the transfer's own kind. The recipient's leg is a wagered bonus
-  grant: it writes no ledger row and moves no settled balance. A credit of any other kind is paid
+  grant: it writes no ledger row and moves no settled balance, and when the recipient's bonus slot is
+  taken it is created pending until they activate it. A credit of any other kind is paid
   as that kind says, so a tip is paid as cash, and an integration that wants a wagered transfer
   sends a donation. The grant is deduplicated on the recipient, the transfer's kind and the
   caller's reference, without the provider name, so that reference must be unique per transfer

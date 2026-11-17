@@ -3,6 +3,7 @@ import type {
   AuditWritePort,
   ExchangeRateReader,
   RankPeriodicBasis,
+  RankProgressBasis,
   WagerReversalArgs,
   WagerTrackingArgs,
   WagerTrackingCommands,
@@ -54,6 +55,7 @@ export class RankService implements WagerTrackingCommands {
     private readonly audit: AuditWritePort,
     private readonly logger: { warn: (context: object, message: string) => void },
     private readonly periodicBasis: RankPeriodicBasis = 'flat',
+    private readonly progressBasis: RankProgressBasis = 'total',
   ) {}
 
   /**
@@ -62,7 +64,8 @@ export class RankService implements WagerTrackingCommands {
    *
    * Counts the raw stake, not the bonus engine's weighted one: that weight comes from whichever
    * bonus the player holds, and a player's standing must not depend on it. What counts is decided
-   * by the ladder's own `eligibleProducts`.
+   * by the ladder's own `eligibleProducts`, and under `progressBasis: 'real'` only the
+   * real-funded part of the stake counts.
    *
    * Not idempotent on its own: call it only inside the wallet's debit transaction, below its
    * duplicate-bet guard, so a replayed bet never reaches it.
@@ -114,6 +117,11 @@ export class RankService implements WagerTrackingCommands {
       return [];
     }
 
+    const wagered =
+      this.progressBasis === 'total'
+        ? amount
+        : moneyMultiplyDivide(amount, args.realAmount, args.amount);
+
     // Counted under both periodic bases, so the counter is already full when an operator switches.
     const nativeMargin = eligible ? houseEdge(args.realAmount, args.context.rtp) : '0';
     const margin =
@@ -161,7 +169,7 @@ export class RankService implements WagerTrackingCommands {
           kind,
           periodKey: openPeriodKey(kind, new Date(), config.payoutAnchors),
           currency: lowest.currency,
-          wagered: amount,
+          wagered,
           margin,
         })),
       )
@@ -172,7 +180,7 @@ export class RankService implements WagerTrackingCommands {
           promoRankPeriodWager.periodKey,
         ],
         set: {
-          wagered: sql`${promoRankPeriodWager.wagered} + ${amount}::numeric`,
+          wagered: sql`${promoRankPeriodWager.wagered} + ${wagered}::numeric`,
           margin: sql`${promoRankPeriodWager.margin} + ${margin}::numeric`,
           updatedAt: sql`now()`,
         },
@@ -183,13 +191,13 @@ export class RankService implements WagerTrackingCommands {
       .values({
         userId: args.userId,
         currency: lowest.currency,
-        lifetimeWagered: amount,
+        lifetimeWagered: wagered,
         lastWageredAt: sql`now()`,
       })
       .onConflictDoUpdate({
         target: promoPlayerRank.userId,
         set: {
-          lifetimeWagered: sql`${promoPlayerRank.lifetimeWagered} + ${amount}::numeric`,
+          lifetimeWagered: sql`${promoPlayerRank.lifetimeWagered} + ${wagered}::numeric`,
           lastWageredAt: sql`now()`,
           updatedAt: sql`now()`,
         },

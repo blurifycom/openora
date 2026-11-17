@@ -497,9 +497,10 @@ export class WalletCommandsService implements WalletCommands {
       };
     }
 
-    const newBalance = wagered.completed
-      ? await this.convertBonus(txn, debitRow, wagered.completed)
-      : debitedBalance;
+    let newBalance = debitedBalance;
+    for (const completion of wagered.completed) {
+      newBalance = await this.convertBonus(txn, debitRow, completion);
+    }
 
     return {
       ok: true,
@@ -509,7 +510,7 @@ export class WalletCommandsService implements WalletCommands {
       currency: debitCurrency,
       bonusSpent: wagered.bonusSpent,
       bonusBalance: wagered.bonusBalanceAfter,
-      ...(wagered.completed === null ? {} : { completed: wagered.completed }),
+      ...(wagered.completed.length === 0 ? {} : { completed: wagered.completed }),
       wagerTrackingCredits: wagered.walletCredits,
     };
   }

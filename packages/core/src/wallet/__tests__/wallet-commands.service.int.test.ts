@@ -1438,7 +1438,7 @@ describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
     bonusSpent: '0',
     weightedAmount: '10',
     bonusBalanceAfter: '0',
-    completed: null,
+    completed: [],
     walletCredits: [],
   };
   const engineWith = (wager: ReturnType<typeof vi.fn>) =>
@@ -1562,7 +1562,7 @@ describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
     const grantId = randomUUID();
     const wager = vi.fn().mockResolvedValue({
       ...wagerOk,
-      completed: { grantId, convertedAmount: '25' },
+      completed: [{ grantId, convertedAmount: '25' }],
     });
     const recordInTransaction = vi.fn(async () => undefined);
     const engine = new WalletCommandsService(
@@ -1580,7 +1580,7 @@ describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
       providerRef: ref,
     });
 
-    expect(res).toMatchObject({ ok: true, completed: { grantId, convertedAmount: '25' } });
+    expect(res).toMatchObject({ ok: true, completed: [{ grantId, convertedAmount: '25' }] });
     expect(Number((res as { newBalance: string }).newBalance)).toBe(115);
     expect(await balanceOf(w.userId)).toBe(115);
     const bonusRow = (await txRows(w.id)).find((r) => r.type === 'bonus');
@@ -1671,7 +1671,7 @@ describe('WalletCommandsService.debit of a bet paid wholly from bonus with no ba
       bonusSpent: '10',
       weightedAmount: '10',
       bonusBalanceAfter: '0',
-      completed: null,
+      completed: [],
       walletCredits: [],
     });
     const engine = new WalletCommandsService(eligibility(false), audit, {

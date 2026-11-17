@@ -4,7 +4,7 @@
  * together. Mirrors the WALLET_COMMANDS idiom (ADR-0017) - `tx: unknown` so neither side imports
  * the other's DB module.
  */
-import type { BonusGrantSource } from '../schemas/promo.js';
+import type { BonusGrantSource, BonusGrantStatus, GrantSlotTakenPolicy } from '../schemas/promo.js';
 import { createToken, type Token } from './token.js';
 import type { WagerProduct } from './wager-context.js';
 
@@ -82,6 +82,12 @@ export type BonusGrantArgs = {
    * module owns what those are granted under; the wallet only reports that money was given.
    */
   terms?: BonusGrantTerms;
+  /**
+   * What happens when `promo.bonus.grantConcurrency` leaves no free slot: `pending` (the default)
+   * creates the grant pending for the player to activate later; `refuse` creates nothing and
+   * answers `slot_taken`.
+   */
+  onSlotTaken?: GrantSlotTakenPolicy;
 };
 
 export type BonusGrantOutcome =
@@ -90,8 +96,13 @@ export type BonusGrantOutcome =
       grantId: string;
       /** False when the idempotency guard matched an existing grant and nothing was credited. */
       created: boolean;
+      /** `pending` when the grant waits for a free slot before it can be played. */
+      status?: BonusGrantStatus;
     }
-  | { ok: false; reason: 'ineligible' | 'offer_inactive' | 'currency_unsupported' };
+  | {
+      ok: false;
+      reason: 'ineligible' | 'offer_inactive' | 'currency_unsupported' | 'slot_taken';
+    };
 
 export type BonusGrantCommands = {
   grant(tx: unknown, args: BonusGrantArgs): Promise<BonusGrantOutcome>;

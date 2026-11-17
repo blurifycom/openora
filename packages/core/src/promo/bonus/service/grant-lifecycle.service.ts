@@ -4,6 +4,7 @@ import {
   type BonusForfeitHeldArgs,
   type BonusForfeitReason,
   type ClientMeta,
+  type GrantConcurrencyMode,
   type Uuid,
 } from '@openora/core/contracts';
 import {
@@ -15,12 +16,18 @@ import {
   type EventBus,
 } from '@openora/core/server';
 import { promoGrant, promoGrantEntry, type PromoGrant } from '../schema/index.js';
+import { BonusSlotTakenError, isSlotTaken, withGrantSlotLock } from '../shared/grant-slot.js';
 
 export const GrantNotForfeitableError = makeConflictError(
   'GrantNotForfeitableError',
   'This bonus is no longer live, so there is nothing to forfeit',
 );
 export const GrantNotFoundError = makeNotFoundError('Grant');
+export const GrantNotActivatableError = makeConflictError(
+  'GrantNotActivatableError',
+  'Only a pending bonus inside its claim window can be activated',
+  { code: 'BONUS_NOT_ACTIVATABLE' },
+);
 
 /** A grant that can still be taken away. `completed`, `expired` and `forfeited` cannot. */
 const LIVE_STATUSES = ['pending', 'active'] as const;
@@ -52,7 +59,91 @@ export class GrantLifecycleService {
     private readonly drizzle: DrizzleService,
     private readonly audit: AuditWritePort,
     private readonly events: EventBus,
+    private readonly concurrency: GrantConcurrencyMode = 'multiple',
   ) {}
+
+  /**
+   * The player starts a pending grant once its slot is free. Its rollover window restarts here,
+   * so the time it spent waiting is not taken out of the time to wager it.
+   */
+  async activate({
+    userId,
+    grantId,
+    meta,
+  }: {
+    userId: Uuid;
+    grantId: PromoGrant['id'];
+    meta?: ClientMeta | undefined;
+  }): Promise<PromoGrant> {
+    return this.drizzle.db.transaction(async (tx) => {
+      const [owned] = await tx
+        .select({ currency: promoGrant.currency })
+        .from(promoGrant)
+        .where(and(eq(promoGrant.id, grantId), eq(promoGrant.userId, userId)));
+      if (!owned) {
+        throw new GrantNotFoundError(grantId);
+      }
+      return withGrantSlotLock(tx, userId, owned.currency, async () => {
+        const [grant] = await tx
+          .select({
+            status: promoGrant.status,
+            source: promoGrant.source,
+            expiresAt: promoGrant.expiresAt,
+            terms: promoGrant.terms,
+            inWindow: sql<boolean>`${promoGrant.expiresAt} > now()`,
+          })
+          .from(promoGrant)
+          .where(eq(promoGrant.id, grantId))
+          .for('update');
+        if (!grant || grant.status !== 'pending' || !grant.inWindow) {
+          throw new GrantNotActivatableError();
+        }
+        if (
+          await isSlotTaken(tx, this.concurrency, {
+            userId,
+            currency: owned.currency,
+            source: grant.source,
+          })
+        ) {
+          throw new BonusSlotTakenError();
+        }
+        const [activated] = await tx
+          .update(promoGrant)
+          .set({
+            status: 'active',
+            activatedAt: sql`now()`,
+            expiresAt: sql`now() + make_interval(days => ${grant.terms.expiryDays})`,
+          })
+          .where(and(eq(promoGrant.id, grantId), eq(promoGrant.status, 'pending')))
+          .returning();
+        if (!activated) {
+          throw new GrantNotActivatableError();
+        }
+        await this.audit.recordInTransaction(tx, {
+          actorType: 'player',
+          actorId: userId,
+          action: 'promo.bonus.activated',
+          resourceType: 'promo_grant',
+          resourceId: grantId,
+          before: { status: grant.status, expiresAt: grant.expiresAt.toISOString() },
+          after: {
+            userId,
+            status: activated.status,
+            expiresAt: activated.expiresAt.toISOString(),
+          },
+          ...meta,
+        });
+        await this.events.emitInTransaction(tx, 'promo.bonus.activated', {
+          userId,
+          grantId,
+          currency: activated.currency,
+          source: activated.source,
+          expiresAt: activated.expiresAt.toISOString(),
+        });
+        return activated;
+      });
+    });
+  }
 
   /**
    * Expire what is due. Each grant is claimed and closed in its own transaction, so a second

@@ -2,6 +2,7 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import {
   type AuditWritePort,
   type BonusGrantCommands,
+  type GrantConcurrencyMode,
   type PageQuery,
   type PlayEligibilityPort,
   type Uuid,
@@ -36,6 +37,7 @@ import {
 } from '../schema/index.js';
 import { grantAmountFor } from '../shared/grant-amount.js';
 import { maxBetTermsIssues } from '../shared/max-bet.js';
+import { BonusSlotTakenError, isSlotTaken } from '../shared/grant-slot.js';
 import { offerIneligibility } from '../shared/offer-eligibility.js';
 
 export const OfferNotFoundError = makeNotFoundError('Offer');
@@ -82,6 +84,7 @@ export class OfferService {
     private readonly wallet: WalletReader,
     private readonly playEligibility: PlayEligibilityPort,
     private readonly logger: { error: (context: object, message: string) => void },
+    private readonly concurrency: GrantConcurrencyMode = 'multiple',
   ) {}
 
   async listForAdmin(query: PageQuery & { status?: PromoOffer['status'] }): Promise<PromoOffer[]> {
@@ -239,6 +242,16 @@ export class OfferService {
       if (refusal !== null) {
         throw new OfferNotEligibleError();
       }
+      if (
+        offer.rules.periodDays === undefined &&
+        (await isSlotTaken(tx, this.concurrency, {
+          userId,
+          currency: offer.currency,
+          source: 'deposit',
+        }))
+      ) {
+        throw new BonusSlotTakenError();
+      }
       // The unique index is the guard: two parallel opt-ins settle on one row rather than both
       // reading "not opted in" and both inserting.
       const [claimed] = await tx
@@ -356,7 +369,13 @@ export class OfferService {
         actor: { type: 'system' },
         offerId: offer.id,
         terms: offer.terms,
+        onSlotTaken: 'refuse',
       });
+      if (!created.ok && created.reason === 'slot_taken') {
+        // Another bonus took the slot after the opt-in. No bonus for this deposit, and the claim
+        // stays open for the next one.
+        continue;
+      }
       if (!created.ok) {
         // The accumulator stays where it was: banking a total the grant refused would pay the
         // match on all of it the next time a deposit lands.

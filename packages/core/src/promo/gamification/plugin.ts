@@ -147,6 +147,7 @@ const rankService = (c: TypedContainer<CoreTokenCatalog>) =>
     c.get(AUDIT_WRITER),
     logger,
     promoConfig(c).rankPeriodic.basis,
+    promoConfig(c).ranks.progressBasis,
   );
 
 const streakService = (c: TypedContainer<CoreTokenCatalog>) =>

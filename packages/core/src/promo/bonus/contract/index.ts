@@ -263,7 +263,10 @@ export const PlayerGrantSchema = z.object({
   forfeitReason: BonusForfeitReasonSchema.nullable(),
   /** Largest total stake of a round while this bonus is active, in its currency; null for no limit. */
   maxBet: MoneyAmountSchema.nullable(),
+  /** While `pending`, the end of the window to activate it; once active, of the time to wager it. */
   expiresAt: TimestampSchema,
+  /** Null while the grant waits for a free slot. */
+  activatedAt: TimestampSchema.nullable(),
   closedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema,
 });
@@ -329,6 +332,7 @@ export type BonusBalance = z.infer<typeof BonusBalanceSchema>;
  */
 export const BonusBalanceChangeReasonSchema = z.enum([
   'granted',
+  'activated',
   'completed',
   'expired',
   'forfeited',
@@ -458,6 +462,15 @@ export const bonusContract = {
 
     get: oc
       .route({ method: 'GET', path: '/promo/grants/{id}' })
+      .input(z.object({ id: UuidSchema }))
+      .output(PlayerGrantSchema),
+
+    /**
+     * Starts a pending bonus once no other bonus holds its slot; its wagering window restarts
+     * now. Refused with `BONUS_SLOT_TAKEN` while the slot is held.
+     */
+    activate: oc
+      .route({ method: 'POST', path: '/promo/grants/{id}/activate' })
       .input(z.object({ id: UuidSchema }))
       .output(PlayerGrantSchema),
 

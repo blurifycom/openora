@@ -1300,7 +1300,7 @@ describe('GamingService.startRound bonus completion (real PG)', () => {
       transactionId: '00000000-0000-0000-0000-0000000000d4',
       newBalance: '0',
       currency: 'USD',
-      completed: { grantId: '00000000-0000-0000-0000-0000000000c5', convertedAmount: '25' },
+      completed: [{ grantId: '00000000-0000-0000-0000-0000000000c5', convertedAmount: '25' }],
     });
     const svc = new GamingService(
       db.drizzle,

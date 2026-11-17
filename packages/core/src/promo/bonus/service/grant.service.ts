@@ -5,11 +5,13 @@ import {
   CurrencyTickerInputSchema,
   MoneyAmountSchema,
   UuidSchema,
+  GrantSlotTakenPolicySchema,
   WagerProductSchema,
   type AuditWritePort,
   type BonusGrantArgs,
   type BonusGrantCommands,
   type BonusGrantOutcome,
+  type GrantConcurrencyMode,
 } from '@openora/core/contracts';
 import {
   isPositiveMoney,
@@ -27,6 +29,7 @@ import {
   type GrantTermsSnapshot,
 } from '../schema/index.js';
 import { maxBetTermsIssues, resolveMaxBet } from '../shared/max-bet.js';
+import { isSlotTaken, withGrantSlotLock } from '../shared/grant-slot.js';
 
 const WagerWeightProfileNotFoundError = makeNotFoundError('WagerWeightProfile');
 const GrantConflictError = makeConflictError(
@@ -105,6 +108,7 @@ const grantArgsSchema = z
         }
       })
       .default(DEFAULT_GRANT_TERMS),
+    onSlotTaken: GrantSlotTakenPolicySchema.default('pending'),
   })
   .refine((a) => (a.source === 'manual') === (a.actor.type === 'admin'), {
     message: 'a manual grant must name the admin who issued it, and no other source may name one',
@@ -122,10 +126,20 @@ const grantArgsSchema = z
  * transaction handle so the grant commits with whatever earned it.
  */
 export class GrantService implements BonusGrantCommands {
-  constructor(private readonly audit: AuditWritePort) {}
+  constructor(
+    private readonly audit: AuditWritePort,
+    private readonly concurrency: GrantConcurrencyMode = 'multiple',
+  ) {}
 
   async grant(tx: DrizzleTx, rawArgs: BonusGrantArgs): Promise<BonusGrantOutcome> {
     const args = grantArgsSchema.parse(rawArgs);
+    return withGrantSlotLock(tx, args.userId, args.currency, () => this.grantLocked(tx, args));
+  }
+
+  private async grantLocked(
+    tx: DrizzleTx,
+    args: z.infer<typeof grantArgsSchema>,
+  ): Promise<BonusGrantOutcome> {
     const wageringRequired = moneyScaleBy(args.amount, args.terms.wageringMultiplier);
 
     // A retry resolves before any live configuration is read, so a profile deleted since the
@@ -134,6 +148,11 @@ export class GrantService implements BonusGrantCommands {
     if (replayed) {
       return replayed;
     }
+    const slotTaken = await isSlotTaken(tx, this.concurrency, args);
+    if (slotTaken && args.onSlotTaken === 'refuse') {
+      return { ok: false, reason: 'slot_taken' };
+    }
+    const status = slotTaken ? 'pending' : 'active';
     const terms = await this.snapshotTerms(tx, args.terms, args.amount);
 
     // The unique index is the idempotency guard. A read-then-write check would let two
@@ -150,8 +169,10 @@ export class GrantService implements BonusGrantCommands {
         grantedAmount: args.amount,
         bonusBalance: args.amount,
         wageringRequired,
+        status,
+        // A pending grant's window is its claim window; activation restarts it.
         expiresAt: sql`now() + make_interval(days => ${args.terms.expiryDays})`,
-        activatedAt: sql`now()`,
+        activatedAt: status === 'active' ? sql`now()` : null,
       })
       .onConflictDoNothing()
       .returning({ id: promoGrant.id });
@@ -193,10 +214,11 @@ export class GrantService implements BonusGrantCommands {
         expiryDays: args.terms.expiryDays,
         weightProfileId: terms.weightProfileId,
         maxBet: terms.maxBet ?? null,
+        status,
       },
     });
 
-    return { ok: true, grantId: inserted.id, created: true };
+    return { ok: true, grantId: inserted.id, created: true, status };
   }
 
   /**
@@ -215,6 +237,7 @@ export class GrantService implements BonusGrantCommands {
         currency: promoGrant.currency,
         grantedAmount: promoGrant.grantedAmount,
         wageringRequired: promoGrant.wageringRequired,
+        status: promoGrant.status,
       })
       .from(promoGrant)
       .where(
@@ -234,7 +257,7 @@ export class GrantService implements BonusGrantCommands {
     if (!matches) {
       throw new GrantConflictError();
     }
-    return { ok: true, grantId: existing.id, created: false };
+    return { ok: true, grantId: existing.id, created: false, status: existing.status };
   }
 
   // One statement, so a profile deleted or edited mid-grant yields either its old rows or a

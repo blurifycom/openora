@@ -39,34 +39,39 @@ export type BonusWagerArgs = {
 export type BonusWagerOutcome =
   | {
       ok: true;
-      /** Grant the bet was attributed to, or `null` when none was: the player holds none, or the product never uses bonus funds. */
+      /**
+       * First grant the bet was attributed to, in rollover order, or `null` when none was: the
+       * player holds none, or the product never uses bonus funds.
+       */
       grantId: string | null;
       /** Part of the stake actually taken from bonus funds. Echoes `fromBonus` on success. */
       bonusSpent: string;
       /**
-       * Stake after the resolved weight, as a decimal string. `'0'` when the bet does not count.
+       * Stake after weighting, each part at the weight of the grant it was attributed to, as a
+       * decimal string. `'0'` when the bet does not count.
        * Uncapped: a bet that finishes a requirement reports the whole weighted stake, not the part
        * the grant had room for, because a wager counter measures turnover rather than absorption.
        */
       weightedAmount: string;
-      /** Bonus funds left on the attributed grant once the bet settled. */
+      /** Bonus funds left across the player's active grants in the bet's currency. */
       bonusBalanceAfter: string;
       /**
-       * The grant this bet pushed over its wagering requirement, and the bonus funds it owes the
-       * real balance. Singular because one bet feeds exactly one grant; a list beside a single
-       * amount would invite a caller to report that amount for every grant in it. The wallet
-       * performs the credit itself, so the two modules never call back into each other.
+       * Each grant this bet pushed over its wagering requirement, in rollover order, and the bonus
+       * funds it owes the real balance. A bet spread across several grants can finish more than
+       * one. The wallet performs each credit itself, so the two modules never call back into
+       * each other.
        */
-      completed: { grantId: string; convertedAmount: string } | null;
+      completed: { grantId: string; convertedAmount: string }[];
       /** Whatever a `WAGER_TRACKING` consumer credited to the real balance alongside this bet - rank rakeback today. */
       walletCredits: WagerTrackingWalletCredit[];
     }
   /** Bonus funds could not cover `fromBonus`. The wallet turns this into its own insufficient-funds outcome. */
   | { ok: false; reason: 'insufficient_bonus'; bonusAvailable: string }
   /**
-   * The round's total stake, this bet included, is larger than the active grant's `maxBet`. A
-   * refusal, not a silent pass: the limit exists so a player cannot turn a wagering requirement
-   * into one high-variance spin, and a bet that quietly ignored it would do exactly that.
+   * The round's total stake, this bet included, is larger than the strictest `maxBet` among the
+   * active grants. A refusal, not a silent pass: the limit exists so a player cannot turn a
+   * wagering requirement into one high-variance spin, and a bet that quietly ignored it would do
+   * exactly that.
    */
   | { ok: false; reason: 'max_bet_exceeded'; maxBet: string; roundStake: string };
 

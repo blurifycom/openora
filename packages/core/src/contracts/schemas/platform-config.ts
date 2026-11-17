@@ -10,7 +10,7 @@ import { AgentsConfigSchema } from './agents.js';
 import { HostAllowlistEntrySchema, UrlPrefixAllowlistEntrySchema } from './host-allowlist.js';
 import { createToken } from '../adapters/token.js';
 import { MIN_PLAYER_AGE_YEARS } from './player.js';
-import { RANK_PERIODIC_BASES } from './promo.js';
+import { GRANT_CONCURRENCY_MODES, RANK_PERIODIC_BASES, RANK_PROGRESS_BASES } from './promo.js';
 
 /**
  * Platform-wide T0 configuration consumed by the slot evaluation context and
@@ -323,12 +323,24 @@ export type RakebackPayout = (typeof RAKEBACK_PAYOUTS)[number];
 
 export const PromoConfigSchema = z
   .object({
+    bonus: z
+      .object({
+        /**
+         * How many grants may be active at once, per currency: `single` one, `per_source` one per
+         * grant source, `multiple` no limit. A grant over the limit is created pending.
+         */
+        grantConcurrency: z.enum(GRANT_CONCURRENCY_MODES).default('multiple'),
+      })
+      .strict()
+      .prefault({}),
     ranks: z
       .object({
         /** How often owed level-up bonuses are settled. */
         payoutCron: CronExpressionSchema.default(RANK_PAYOUT_DEFAULT_CRON),
         /** How often the daily, weekly and monthly payouts check whether a period has closed. */
         periodicCron: CronExpressionSchema.default(RANK_PERIODIC_DEFAULT_CRON),
+        /** `total` counts the whole eligible stake toward rank progress; `real` only its own-money part. */
+        progressBasis: z.enum(RANK_PROGRESS_BASES).default('total'),
       })
       .strict()
       .prefault({}),

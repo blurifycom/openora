@@ -63,6 +63,11 @@ export const AUDIT_COVERAGE_GAPS = {
     writer: 'GrantService.grant via recordInTransaction',
     reason: 'joins the grant row and its opening ledger entry',
   },
+  'promo.bonus.activated': {
+    kind: 'atSource',
+    writer: 'GrantLifecycleService.activate via recordInTransaction',
+    reason: 'joins the status change that starts the grant',
+  },
   'promo.bonus.completed': {
     kind: 'atSource',
     writer: 'WalletCommandsService.convertBonus via recordInTransaction (promo.bonus.converted)',
