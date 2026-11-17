@@ -40,7 +40,7 @@ strict, so a field reaches the vendor only when it is added to the contract on p
   (`unauthorized`, `rate_limited`, `timeout`, `unavailable`, `not_found`, `bad_response`), as
   [Support history](#support-history) describes them, never free text. The code goes to the log,
   and for a failed sync to the job queue and the error reporter, and nowhere else; the player
-  gets a fixed "unavailable" refusal. A JavaScript adapter can still pass any text; core logs it
+  gets a fixed service-unavailable refusal with the reason `unavailable`. A JavaScript adapter can still pass any text; core logs it
   as `unlisted reason`. Any other error that escapes the adapter, or a provider error whose
   `reason` throws when read, is logged as `unexpected adapter error`, nothing of it kept, not
   even its name. The provider error may carry the original error as `cause`; core never reads,
@@ -82,10 +82,49 @@ strict, so a field reaches the vendor only when it is added to the contract on p
    chat gets no sync. A username change has no event today, so it reaches the vendor on the
    player's next chat open; the same holds for an active-currency change.
 
+## Offline tickets
+
+A player who does not want a live chat can write a ticket through the tickets route instead. The
+body carries a subject, trimmed, between 1 and 150 characters, and a message, trimmed, between 1
+and 5000 characters; both are required and any other field is refused, so a player cannot file a
+ticket under someone else's name or address. The contract exports both limits as
+`SUPPORT_TICKET_SUBJECT_MAX` and `SUPPORT_TICKET_MESSAGE_MAX`. Core hands the adapter the
+requester's name (the account username) and email and the account language, all read from the
+account on every request, plus the subject and the message.
+
+- **The email must be verified.** A unique email is not a proven one: an account can be registered
+  on an address its owner has not registered yet, and the vendor files the ticket under whoever owns
+  that address. A player with an unverified email gets a forbidden refusal with the reason
+  `email_not_verified`, and the adapter is not called.
+- **One ticket per call, as given.** The adapter creates exactly one ticket authored by the
+  customer, with the requester core sent and in no group; routing is the vendor's. It answers the
+  vendor's own id for that ticket: 1-200 ASCII letters, digits and `_ . : # / = + ~ -` only. That
+  shape is a sanity check against obvious mistakes such as an email address (`@`) or text with
+  spaces, not a guarantee the value holds no personal data: a username or an encoded email still
+  passes, so the adapter must answer the vendor's id field, never another one. Core validates the answer: one off
+  that shape is logged as malformed, never itself, and the ticket is audited without an id; the
+  player still gets success, since the ticket exists and a retry would file it twice. Mask the
+  email in any log line, and throw the port's provider error with a listed reason on failure. The
+  player then gets the generic unavailable refusal; the reason goes to the log only, and none of
+  the email, the subject or the message reaches the response, a log line or the error reporter.
+- **The subject and the message are untrusted text.** Core trims their ends and passes the rest
+  untouched, HTML and control characters included. Send both to the vendor as plain text, never
+  as HTML.
+- **No dedupe.** The call is not idempotent and core never retries it, so a double submit files two
+  tickets. Each player may file 5 tickets in 10 minutes; a body refused as invalid spends none.
+- **Audited without content.** Each created ticket leaves one `support_chat.ticket.created` audit
+  row naming the player and carrying the vendor's ticket id, so staff can match the row to the
+  ticket; it holds none of the email, the subject or the message, and the player never sees the
+  id. A failed
+  audit write after the vendor created the ticket is logged as an error with the error's name and
+  code and the player id, and the player still gets success.
+- **Optional on the port.** A provider without the ticket method answers the tickets route
+  service-unavailable with the reason `not_configured`, and boot logs one warning; the session route works as before.
+
 ## Unbound
 
-Core binds no provider and no history reader. Without a provider, the session route answers
-service-unavailable as not configured and boot logs one warning; without a reader, the history
+Core binds no provider and no history reader. Without a provider, the session and tickets routes
+answer service-unavailable with the reason `not_configured` and boot logs one warning; without a reader, the history
 route does the same with its own warning. Whether a player is linked is read from the database, not
 from the process, so a refresh still enqueues a sync for a player another process linked. A
 process without a provider fails that job, logging a warning per attempt, and the queue retries
