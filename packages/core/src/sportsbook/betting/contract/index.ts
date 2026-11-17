@@ -407,10 +407,10 @@ export const SportsbookPlayerSummaryRowSchema = z.object({
   cashPayout: MoneyAmountSchema,
   promotionPayout: MoneyAmountSchema,
   /**
-   * `cashStake - payout`: a promotion-paid stake earns nothing and a promotion payout costs in
-   * full, as on the wallet ledger. Bet-level, so a reopened bet's uncollected reversal is not in it.
+   * `cashStake - payout`, the player's activity, not revenue: the official GGR is the wallet's.
+   * Bet-level, so a reopened bet's uncollected reversal is not in it.
    */
-  ggr: SignedMoneyAmountSchema,
+  netResult: SignedMoneyAmountSchema,
   openExposure: MoneyAmountSchema,
 });
 export type SportsbookPlayerSummaryRow = z.infer<typeof SportsbookPlayerSummaryRowSchema>;
@@ -474,7 +474,11 @@ export const sportsbookAdminContract = {
     .input(UserIdInputSchema)
     .output(SportsbookRestrictionSchema),
   playerSummary: oc
-    .route({ method: 'GET', path: '/backoffice/sportsbook/players/{userId}/summary' })
+    .route({
+      method: 'GET',
+      path: '/backoffice/sportsbook/players/{userId}/summary',
+      summary: "A player's sportsbook activity by currency, not revenue",
+    })
     .input(SportsbookPlayerSummaryInputSchema)
     .output(z.array(SportsbookPlayerSummaryRowSchema)),
   restrictPlayer: oc
