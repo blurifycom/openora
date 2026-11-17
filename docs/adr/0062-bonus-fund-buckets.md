@@ -3,6 +3,8 @@
 **Date**: 2026-11-17
 **Status**: Accepted
 
+> **Update (2026-11-17)**: Locking linked funds against withdrawal, deferred in the Consequences below, is now in [ADR-0064](./0064-bonus-withdrawal-locks.md). A withdrawal follows `promo.bonus.withdrawalWhileActive`: it forfeits every live grant by default, or is refused over locked money.
+
 ## Context
 
 A deposit bonus held one number: the bonus balance. The wallet paid a bet from real money first
