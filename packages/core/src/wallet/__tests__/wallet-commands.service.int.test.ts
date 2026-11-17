@@ -1167,7 +1167,9 @@ describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
   });
 
   it('refuses a stake over the grant max bet as such, not as a short balance', async () => {
-    const wager = vi.fn().mockResolvedValue({ ok: false, reason: 'max_bet_exceeded', maxBet: '5' });
+    const wager = vi
+      .fn()
+      .mockResolvedValue({ ok: false, reason: 'max_bet_exceeded', maxBet: '5', roundStake: '10' });
     const w = await seedWallet({ balance: '100' });
 
     await expect(

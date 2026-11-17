@@ -26,11 +26,23 @@ export type BonusGrantTerms = {
    */
   weightProfileId?: string;
   /**
-   * Largest single stake allowed while this grant is active, as a decimal string, or absent for
-   * no limit. An anti-abuse control, so it is enforced inside the debit transaction against this
-   * snapshot rather than checked by a caller beforehand.
+   * Largest total stake of one round allowed while this grant is active, as a decimal string, or
+   * absent for no limit. An anti-abuse control, so it is enforced inside the debit transaction
+   * against this snapshot rather than checked by a caller beforehand. On a grant created with
+   * `maxBetRate` this is the value resolved at grant time; a caller sets one or the other.
    */
   maxBet?: string | null;
+  /**
+   * Max bet as a fraction of the granted amount (`'0.1'` is 10%). Absent means no limit, whatever
+   * the floor and ceiling say. Resolved once when the grant is created.
+   */
+  maxBetRate?: string | null;
+  /** Lower bound on the rate-derived max bet, in the grant's currency. */
+  maxBetFloor?: string | null;
+  /** Upper bound on the rate-derived max bet, in the grant's currency. */
+  maxBetCeiling?: string | null;
+  /** Products whose stakes the max bet never applies to. Absent or empty exempts none. */
+  maxBetExemptProducts?: WagerProduct[];
   /**
    * Cap on what the grant can ever convert into real money, as a multiple of the granted amount.
    * Absent means uncapped. Without one a modest bonus can compound into a payout the operator
