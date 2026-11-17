@@ -1,7 +1,7 @@
 # Quickstart
 
 Get the platform running locally and scaffold an app on top of it. Requires Node 26+,
-pnpm 11+, and Docker.
+pnpm 12.21+, and Docker.
 
 This repo is a library, not a server. It ships `@openora/core` and the tooling around it -
 there is no `apps/api` here to boot. The runnable API lives in a consumer app you generate

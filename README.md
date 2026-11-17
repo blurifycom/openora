@@ -48,7 +48,7 @@ The platform ships the backend surface (auth, wallet, player management, complia
 
 ## Requirements
 
-Node 26+, pnpm 11+, Docker.
+Node 26+, pnpm 12.21+, Docker.
 
 ## Quick start
 
