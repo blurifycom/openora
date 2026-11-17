@@ -80,6 +80,7 @@ export type DirectAuditAction =
   | 'promo.bonus.forfeited'
   | 'promo.bonus.forfeit_refused'
   | 'promo.bonus.expired'
+  | 'promo.bonus.depleted'
   | 'promo.race.payout.settled'
   | 'promo.streak.milestone.claimed'
   | 'promo.streak.milestone.expired'

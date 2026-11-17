@@ -6,8 +6,11 @@ import {
   BONUS_GRANT_SOURCES,
   BONUS_GRANT_STATUSES,
   BonusGrantSourceSchema,
+  BonusExistingBalanceModeSchema,
+  BonusFreeFundsOrderSchema,
   BonusGrantStatusSchema,
   BonusForfeitReasonSchema,
+  BonusRolloverBaseSchema,
   ContributionPercentSchema,
   CurrencyTickerSchema,
   MoneyAmountSchema,
@@ -133,6 +136,16 @@ export const PromoOfferRulesSchema = z.object({
 
 export type PromoOfferRules = z.infer<typeof PromoOfferRulesSchema>;
 
+/** How a deposit bonus splits funds into buckets; every field defaults to today's behaviour. */
+export const BonusFundSettingsSchema = z.object({
+  rolloverBase: BonusRolloverBaseSchema.default('bonus'),
+  existingBalance: BonusExistingBalanceModeSchema.default('free'),
+  freeFundsOrder: BonusFreeFundsOrderSchema.default('first'),
+  dustThresholdUsd: MoneyAmountSchema.default('0.01'),
+  /** The currency's precision; the bucket split rounds down to it. */
+  decimals: z.number().int().min(0).max(18).default(18),
+});
+
 export const BonusGrantTermsSchema = z.object({
   wageringMultiplier: MoneyAmountSchema,
   expiryDays: z.number().int().positive().max(365),
@@ -151,6 +164,9 @@ export const BonusGrantTermsSchema = z.object({
   maxWinMultiplier: MoneyAmountSchema.nullable().optional(),
   /** Products bonus funds cannot pay for. Absent or empty allows every product. */
   excludedProducts: z.array(WagerProductSchema).optional(),
+  funds: BonusFundSettingsSchema.optional(),
+  /** Lets the player forfeit the grant themselves. Absent means only an admin can. */
+  allowPlayerForfeit: z.boolean().optional(),
 });
 
 /** An offer as an admin configures it. */
@@ -181,7 +197,7 @@ export const CreatePromoOfferInputSchema = PromoOfferSchema.omit({
 }).extend({
   status: PromoOfferStatusSchema.default('draft'),
   rules: PromoOfferRulesSchema.default({ firstDepositOnly: false }),
-  requiresOptIn: z.boolean().default(false),
+  requiresOptIn: z.boolean().default(true),
   validFrom: TimestampSchema.nullable().default(null),
   validUntil: TimestampSchema.nullable().default(null),
 });
@@ -235,7 +251,7 @@ export const PlayerOfferSchema = PublicOfferSchema.extend({
    * grant list, so it holds however far back that grant has been paged.
    */
   claimed: z.boolean(),
-  /** What their deposits have put toward the minimum so far. */
+  /** The deposit that earned the bonus; zero until one meets the minimum on its own. */
   accumulatedDeposit: MoneyAmountSchema,
 });
 
@@ -260,9 +276,15 @@ export const PlayerGrantSchema = z.object({
   bonusBalance: MoneyAmountSchema,
   wageringRequired: MoneyAmountSchema,
   wageringProgress: MoneyAmountSchema,
+  /** Real cash tied to the bonus (bucket B); part of the real balance, not on top of it. */
+  linkedCash: MoneyAmountSchema,
+  /** Real cash locked by the bonus but not linked to it (bucket A); also part of the real balance. */
+  unlinkedCash: MoneyAmountSchema,
   forfeitReason: BonusForfeitReasonSchema.nullable(),
   /** Largest total stake of a round while this bonus is active, in its currency; null for no limit. */
   maxBet: MoneyAmountSchema.nullable(),
+  /** The grant's terms let the player forfeit it themselves. */
+  playerForfeitable: z.boolean(),
   /** While `pending`, the end of the window to activate it; once active, of the time to wager it. */
   expiresAt: TimestampSchema,
   /** Null while the grant waits for a free slot. */
@@ -484,6 +506,12 @@ export const bonusContract = {
       .route({ method: 'GET', path: '/promo/grants/{id}/entries' })
       .input(z.object({ id: UuidSchema, ...PageQuerySchema.shape }))
       .output(paginated(PlayerGrantEntrySchema)),
+
+    /** Gives up a live bonus: C is removed, B and A are released. Only where the terms allow it. */
+    forfeit: oc
+      .route({ method: 'POST', path: '/promo/grants/{id}/forfeit' })
+      .input(z.object({ id: UuidSchema }))
+      .output(PlayerGrantSchema),
   },
 };
 export * from './agent-tools.js';

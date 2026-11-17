@@ -5,6 +5,7 @@ import {
   ADMIN_USER_DIRECTORY,
   BONUS_GRANTS,
   BONUS_GRANT_LEDGER,
+  BONUS_DEPOSITS,
   BONUS_LIFECYCLE,
   BONUS_WAGERING,
   IDENTITY_READER,
@@ -352,6 +353,7 @@ export default {
         playEligibility: c.get(PLAY_ELIGIBILITY),
         grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
         bonusLifecycle: c.has(BONUS_LIFECYCLE) ? c.get(BONUS_LIFECYCLE) : undefined,
+        depositBonus: c.has(BONUS_DEPOSITS) ? c.get(BONUS_DEPOSITS) : undefined,
       }));
 
     ctx.mcp.tool(walletActivityTool, (c) => {

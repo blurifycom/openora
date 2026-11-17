@@ -76,6 +76,7 @@ function makeWalletCommands(
   return mock<WalletCommands>({
     debit: vi.fn().mockResolvedValue(debitResult),
     credit: vi.fn().mockResolvedValue(creditResult),
+    closeRound: vi.fn().mockResolvedValue({ completed: [], newBalance: '0' }),
   });
 }
 
@@ -1290,45 +1291,6 @@ describe('GamingService.updateGame round ledger feed (real PG)', () => {
 });
 
 describe('GamingService.startRound bonus completion (real PG)', () => {
-  it('emits bonus completion before a provider launch failure can discard the notification', async () => {
-    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a5', name: 'Aces' });
-    const events = makeEventBus();
-    const launchGame = vi.fn().mockRejectedValue(new Error('provider unavailable'));
-    const walletCommands = makeWalletCommands({
-      ok: true,
-      moved: true,
-      transactionId: '00000000-0000-0000-0000-0000000000d4',
-      newBalance: '0',
-      currency: 'USD',
-      completed: [{ grantId: '00000000-0000-0000-0000-0000000000c5', convertedAmount: '25' }],
-    });
-    const svc = new GamingService(
-      db.drizzle,
-      events,
-      mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
-      unrestricted,
-      walletCommands,
-      makeIdentityReader(),
-    );
-    const userId = '00000000-0000-0000-0000-000000000405';
-
-    await expect(startRound(svc, userId, created.id, 'USD', '25')).rejects.toThrow(
-      'provider unavailable',
-    );
-
-    expect(events.emitInTransaction).toHaveBeenCalledWith(
-      expect.anything(),
-      'promo.bonus.completed',
-      {
-        userId,
-        grantId: '00000000-0000-0000-0000-0000000000c5',
-        currency: 'USD',
-        convertedAmount: '25',
-      },
-    );
-    expect(launchGame).toHaveBeenCalledOnce();
-  });
-
   it('emits nothing when the bet completed no bonus', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a6', name: 'Eights' });
     const events = makeEventBus();

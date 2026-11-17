@@ -63,11 +63,11 @@ const stake = (
   providerName = 'aggregator',
 ) =>
   db.drizzle.db.transaction((tx) =>
-    new WageringService().wager(tx, {
+    new WageringService(makeAuditWriter()).wager(tx, {
       userId,
       currency: 'USD',
       stake: amount,
-      fromBonus: '0',
+      realAvailable: '1000000',
       context: { provider: 'aggregator', product },
       providerName,
       externalRoundId: round,
@@ -76,13 +76,14 @@ const stake = (
 
 const reversal = (userId: string, amount: string, round: string) =>
   db.drizzle.db.transaction((tx) =>
-    new WageringService().settle(tx, {
+    new WageringService(makeAuditWriter()).settle(tx, {
       userId,
       currency: 'USD',
       amount,
       kind: 'bet_reversal',
       providerName: 'aggregator',
       externalRoundId: round,
+      realBalance: '1000000',
     }),
   );
 

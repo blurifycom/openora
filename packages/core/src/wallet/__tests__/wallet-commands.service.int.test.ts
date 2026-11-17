@@ -1336,7 +1336,7 @@ describe('WalletCommandsService.credit currency guard (real PG)', () => {
 
 describe('WalletCommandsService.credit bonus settlement (real PG)', () => {
   const settling = (realShare: string) => {
-    const settle = vi.fn().mockResolvedValue({ bonusShare: '0', realShare });
+    const settle = vi.fn().mockResolvedValue({ bonusShare: '0', realShare, completed: [] });
     const bonusWagering = mock<BonusWageringCommands>({ settle });
     return { settle, svc: new WalletCommandsService(eligibility(false), audit, { bonusWagering }) };
   };
@@ -1388,6 +1388,7 @@ describe('WalletCommandsService.credit bonus settlement (real PG)', () => {
       providerName: 'agg',
       externalRoundId: 'round-1',
       kind: 'win',
+      realBalance: '0.000000000000000000',
     });
     expect(settle).toHaveBeenNthCalledWith(
       2,
@@ -1445,7 +1446,6 @@ describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
     bonusSpent: '0',
     weightedAmount: '10',
     bonusBalanceAfter: '0',
-    completed: [],
     walletCredits: [],
   };
   const engineWith = (wager: ReturnType<typeof vi.fn>) =>
@@ -1471,7 +1471,7 @@ describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
       expect.anything(),
       expect.objectContaining({
         stake: '10',
-        fromBonus: '6.000000000000000000',
+        realAvailable: '4.000000000000000000',
         externalRoundId: 'round-1',
       }),
     );
@@ -1565,31 +1565,34 @@ describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(0);
   });
 
-  it('converts a completed grant into the real balance with its own ledger row and audit entry', async () => {
+  it('converts a grant the losing round completed into the real balance with its own ledger row and audit entry', async () => {
     const grantId = randomUUID();
-    const wager = vi.fn().mockResolvedValue({
-      ...wagerOk,
+    const closeRound = vi.fn().mockResolvedValue({
       completed: [{ grantId, convertedAmount: '25' }],
     });
     const recordInTransaction = vi.fn(async () => undefined);
     const engine = new WalletCommandsService(
       eligibility(false),
       { ...makeAuditWriter(), recordInTransaction },
-      { bonusWagering: mock<BonusWageringCommands>({ wager }) },
+      { bonusWagering: mock<BonusWageringCommands>({ closeRound }) },
     );
     const w = await seedWallet({ balance: '100' });
 
     const res = await engine.debit(db.drizzle.db, {
       userId: w.userId,
-      amount: '10',
-      type: 'bet',
+      amount: '0',
+      type: 'loss',
       context,
-      providerRef: ref,
+      providerRef: { ...ref, providerRefId: 'l1' },
     });
 
     expect(res).toMatchObject({ ok: true, completed: [{ grantId, convertedAmount: '25' }] });
-    expect(Number((res as { newBalance: string }).newBalance)).toBe(115);
-    expect(await balanceOf(w.userId)).toBe(115);
+    expect(closeRound).toHaveBeenCalledWith(
+      db.drizzle.db,
+      expect.objectContaining({ externalRoundId: 'round-1', providerName: 'agg' }),
+    );
+    expect(Number((res as { newBalance: string }).newBalance)).toBe(125);
+    expect(await balanceOf(w.userId)).toBe(125);
     const bonusRow = (await txRows(w.id)).find((r) => r.type === 'bonus');
     expect(bonusRow).toMatchObject({ direction: 'credit', status: 'completed' });
     expect(Number(bonusRow?.amount)).toBe(25);
@@ -1598,8 +1601,8 @@ describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
       expect.objectContaining({
         action: 'promo.bonus.converted',
         resourceId: grantId,
-        before: { currency: 'USD', balance: '90.000000000000000000' },
-        after: { currency: 'USD', balance: '115.000000000000000000', convertedAmount: '25' },
+        before: { currency: 'USD', balance: '100.000000000000000000' },
+        after: { currency: 'USD', balance: '125.000000000000000000', convertedAmount: '25' },
       }),
     );
   });
@@ -1682,7 +1685,6 @@ describe('WalletCommandsService.debit of a bet paid wholly from bonus with no ba
       bonusSpent: '10',
       weightedAmount: '10',
       bonusBalanceAfter: '0',
-      completed: [],
       walletCredits: [],
     });
     const engine = new WalletCommandsService(eligibility(false), audit, {
@@ -2348,7 +2350,9 @@ describe('WalletCommandsService.correctionDebit (real PG)', () => {
     });
 
     it('caps a payout reversal of a bonus-funded round at the real share it paid', async () => {
-      const settle = vi.fn().mockResolvedValue({ bonusShare: '120', realShare: '80' });
+      const settle = vi
+        .fn()
+        .mockResolvedValue({ bonusShare: '120', realShare: '80', completed: [] });
       const engine = new WalletCommandsService(eligibility(false), audit, {
         bonusWagering: mock<BonusWageringCommands>({ settle }),
       });

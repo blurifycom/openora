@@ -67,6 +67,8 @@ import {
   type WalletTransactionStatus,
   type WithdrawalRequeueReason,
   type BonusGrantLedgerReader,
+  type BonusDepositCommands,
+  type DomainEventPayload,
   type BonusLifecycleCommands,
   wagerProductOfProviderName,
   wagerProductProviderPrefix,
@@ -1157,6 +1159,7 @@ export type WalletServiceDeps = {
   grantLedger?: BonusGrantLedgerReader;
   // Optional: bound by the bonus module. Absent = there is no bonus a withdrawal could forfeit.
   bonusLifecycle?: BonusLifecycleCommands;
+  depositBonus?: BonusDepositCommands;
 };
 
 /**
@@ -1189,6 +1192,7 @@ export class WalletService {
 
   private readonly grantLedger?: BonusGrantLedgerReader;
   private readonly bonusLifecycle?: BonusLifecycleCommands;
+  private readonly depositBonus?: BonusDepositCommands;
 
   constructor({
     drizzle,
@@ -1211,6 +1215,7 @@ export class WalletService {
     playEligibility,
     grantLedger,
     bonusLifecycle,
+    depositBonus,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -1232,6 +1237,21 @@ export class WalletService {
     this.playEligibility = playEligibility;
     this.grantLedger = grantLedger;
     this.bonusLifecycle = bonusLifecycle;
+    this.depositBonus = depositBonus;
+  }
+
+  /** Every completed deposit ends here, so its bonus commits with the credit or not at all. */
+  private async depositCompleted(
+    txn: DrizzleTx,
+    deposit: DomainEventPayload<'wallet.deposit.completed'>,
+  ) {
+    await this.depositBonus?.applyDeposit(txn, {
+      userId: deposit.userId,
+      amount: deposit.amount,
+      currency: deposit.currency,
+      transactionId: deposit.transactionId,
+    });
+    await this.events.emitInTransaction(txn, 'wallet.deposit.completed', deposit);
   }
 
   // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
@@ -1901,7 +1921,7 @@ export class WalletService {
         return { transactionId: reservation.row.id };
       }
       await creditAndStampBalance(txn, settled.id, reservation.walletRecord.id, currency, amount);
-      await this.events.emitInTransaction(txn, 'wallet.deposit.completed', {
+      await this.depositCompleted(txn, {
         userId,
         playerId,
         amount,
@@ -4479,7 +4499,7 @@ export class WalletService {
             event.currency,
             event.amount,
           );
-          await this.events.emitInTransaction(txn, 'wallet.deposit.completed', payload);
+          await this.depositCompleted(txn, payload);
         } else {
           await recordReconciliationFindingInTransaction(
             txn,
@@ -4922,7 +4942,7 @@ export class WalletService {
       transactionId: WalletTransaction['id'];
     },
   ): Promise<void> {
-    await this.events.emitInTransaction(txn, 'wallet.deposit.completed', {
+    await this.depositCompleted(txn, {
       ...deposit,
       playerId: await this.identityReader.getPlayerIdByUserId(deposit.userId, txn),
     });

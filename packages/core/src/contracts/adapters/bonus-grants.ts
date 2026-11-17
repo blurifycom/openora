@@ -4,9 +4,31 @@
  * together. Mirrors the WALLET_COMMANDS idiom (ADR-0017) - `tx: unknown` so neither side imports
  * the other's DB module.
  */
-import type { BonusGrantSource, BonusGrantStatus, GrantSlotTakenPolicy } from '../schemas/promo.js';
+import type {
+  BonusExistingBalanceMode,
+  BonusFreeFundsOrder,
+  BonusGrantSource,
+  BonusGrantStatus,
+  BonusRolloverBase,
+  GrantSlotTakenPolicy,
+} from '../schemas/promo.js';
 import { createToken, type Token } from './token.js';
 import type { WagerProduct } from './wager-context.js';
+
+/**
+ * How a deposit bonus splits the player's money into buckets: A (real cash not linked to the
+ * bonus), B (real cash linked to it) and C (the bonus funds). A and B are counters over the real
+ * balance; C is the grant's own balance.
+ */
+export type BonusFundSettings = {
+  rolloverBase: BonusRolloverBase;
+  existingBalance: BonusExistingBalanceMode;
+  freeFundsOrder: BonusFreeFundsOrder;
+  /** Below this total, in USD, a grant with no open bet is depleted. Decimal string. */
+  dustThresholdUsd: string;
+  /** Decimal places the bucket split rounds down to; the currency's precision. */
+  decimals: number;
+};
 
 /**
  * The terms a grant is created under. The grant row stores a snapshot of them, with the weight
@@ -54,6 +76,10 @@ export type BonusGrantTerms = {
    * product. A stake on an excluded product is paid from real funds only.
    */
   excludedProducts?: WagerProduct[];
+  /** Absent means the defaults: rollover on the bonus, existing balance free, free funds first. */
+  funds?: BonusFundSettings;
+  /** Lets the player forfeit this grant themselves. Absent means only an admin can. */
+  allowPlayerForfeit?: boolean;
 };
 
 /**
@@ -88,6 +114,16 @@ export type BonusGrantArgs = {
    * answers `slot_taken`.
    */
   onSlotTaken?: GrantSlotTakenPolicy;
+  /**
+   * Opening real-cash counters of a deposit grant: `linked` (B) and `unlinked` (A). Absent leaves
+   * both at zero, which is every grant with no deposit behind it.
+   */
+  buckets?: { linked: string; unlinked: string };
+  /**
+   * Wagering requirement when it is not `amount x wageringMultiplier` - a `bonus_plus_linked`
+   * rollover. Decimal string.
+   */
+  wageringRequired?: string;
 };
 
 export type BonusGrantOutcome =

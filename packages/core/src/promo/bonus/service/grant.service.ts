@@ -10,8 +10,10 @@ import {
   type AuditWritePort,
   type BonusGrantArgs,
   type BonusGrantCommands,
+  type BonusFundSettings,
   type BonusGrantOutcome,
   type GrantConcurrencyMode,
+  type ExchangeRateReader,
 } from '@openora/core/contracts';
 import {
   isPositiveMoney,
@@ -28,6 +30,8 @@ import {
   promoWeightProfile,
   type GrantTermsSnapshot,
 } from '../schema/index.js';
+import { BonusFundSettingsSchema } from '../contract/index.js';
+import { DEFAULT_FUND_SETTINGS } from '../shared/fund-buckets.js';
 import { maxBetTermsIssues, resolveMaxBet } from '../shared/max-bet.js';
 import { isSlotTaken, withGrantSlotLock } from '../shared/grant-slot.js';
 
@@ -101,6 +105,8 @@ const grantArgsSchema = z
           .nullable()
           .optional(),
         maxBetExemptProducts: z.array(WagerProductSchema).optional(),
+        funds: BonusFundSettingsSchema.optional(),
+        allowPlayerForfeit: z.boolean().optional(),
       })
       .superRefine((terms, ctx) => {
         for (const message of maxBetTermsIssues(terms)) {
@@ -109,6 +115,11 @@ const grantArgsSchema = z
       })
       .default(DEFAULT_GRANT_TERMS),
     onSlotTaken: GrantSlotTakenPolicySchema.default('pending'),
+    buckets: z.object({ linked: MoneyAmountSchema, unlinked: MoneyAmountSchema }).optional(),
+    wageringRequired: MoneyAmountSchema.refine(
+      isPositiveMoney,
+      'must be greater than zero',
+    ).optional(),
   })
   .refine((a) => (a.source === 'manual') === (a.actor.type === 'admin'), {
     message: 'a manual grant must name the admin who issued it, and no other source may name one',
@@ -116,10 +127,18 @@ const grantArgsSchema = z
   })
   // Each input fits `numeric(38,18)` on its own, but their product need not: the requirement
   // would overflow at the insert instead of being refused here.
-  .refine(
-    (a) => MoneyAmountSchema.safeParse(moneyScaleBy(a.amount, a.terms.wageringMultiplier)).success,
-    { message: 'wagering requirement is too large to store', path: ['amount'] },
-  );
+  .refine((a) => MoneyAmountSchema.safeParse(requirementOf(a)).success, {
+    message: 'wagering requirement is too large to store',
+    path: ['amount'],
+  });
+
+function requirementOf(args: {
+  amount: string;
+  terms: { wageringMultiplier: string };
+  wageringRequired?: string;
+}): string {
+  return args.wageringRequired ?? moneyScaleBy(args.amount, args.terms.wageringMultiplier);
+}
 
 /**
  * Creates the bonuses a player holds. Bound to BONUS_GRANTS, and always called on the caller's
@@ -129,6 +148,7 @@ export class GrantService implements BonusGrantCommands {
   constructor(
     private readonly audit: AuditWritePort,
     private readonly concurrency: GrantConcurrencyMode = 'multiple',
+    private readonly rates?: ExchangeRateReader,
   ) {}
 
   async grant(tx: DrizzleTx, rawArgs: BonusGrantArgs): Promise<BonusGrantOutcome> {
@@ -142,7 +162,7 @@ export class GrantService implements BonusGrantCommands {
     tx: DrizzleTx,
     args: z.infer<typeof grantArgsSchema>,
   ): Promise<BonusGrantOutcome> {
-    const wageringRequired = moneyScaleBy(args.amount, args.terms.wageringMultiplier);
+    const wageringRequired = requirementOf(args);
 
     // A retry resolves before any live configuration is read, so a profile deleted since the
     // first call cannot turn an exact replay into an error.
@@ -155,7 +175,11 @@ export class GrantService implements BonusGrantCommands {
       return { ok: false, reason: 'slot_taken' };
     }
     const status = slotTaken ? 'pending' : 'active';
-    const terms = await this.snapshotTerms(tx, args.terms, args.amount);
+    const terms = {
+      ...(await this.snapshotTerms(tx, args.terms, args.amount)),
+      dustThreshold: await this.dustThreshold(tx, args.terms.funds, args.currency),
+    };
+    const buckets = args.buckets ?? { linked: '0', unlinked: '0' };
 
     // The unique index is the idempotency guard. A read-then-write check would let two
     // concurrent replays of the same deposit both pass and grant the bonus twice.
@@ -171,6 +195,8 @@ export class GrantService implements BonusGrantCommands {
         grantedAmount: args.amount,
         bonusBalance: args.amount,
         wageringRequired,
+        linkedCash: buckets.linked,
+        unlinkedCash: buckets.unlinked,
         status,
         // A pending grant's window is its claim window; activation restarts it.
         expiresAt: sql`now() + make_interval(days => ${args.terms.expiryDays})`,
@@ -217,6 +243,12 @@ export class GrantService implements BonusGrantCommands {
         weightProfileId: terms.weightProfileId,
         maxBet: terms.maxBet ?? null,
         status,
+        linkedCash: buckets.linked,
+        unlinkedCash: buckets.unlinked,
+        ...(args.terms.funds === undefined ? {} : { funds: args.terms.funds }),
+        ...(args.terms.allowPlayerForfeit === undefined
+          ? {}
+          : { allowPlayerForfeit: args.terms.allowPlayerForfeit }),
       },
     });
 
@@ -260,6 +292,25 @@ export class GrantService implements BonusGrantCommands {
       throw new GrantConflictError();
     }
     return { ok: true, grantId: existing.id, created: false, status: existing.status };
+  }
+
+  /**
+   * The dust threshold in the grant's own currency, fixed at grant time like every other term. No
+   * rate means no threshold: the grant depletes only once it is exactly empty.
+   */
+  private async dustThreshold(
+    tx: DrizzleTx,
+    funds: BonusFundSettings | undefined,
+    currency: string,
+  ): Promise<string> {
+    const usd = (funds ?? DEFAULT_FUND_SETTINGS).dustThresholdUsd;
+    if (moneyCompare(usd, '0') <= 0) {
+      return '0';
+    }
+    if (currency === 'USD') {
+      return usd;
+    }
+    return (await this.rates?.convert(usd, 'USD', currency, tx)) ?? '0';
   }
 
   // One statement, so a profile deleted or edited mid-grant yields either its old rows or a
