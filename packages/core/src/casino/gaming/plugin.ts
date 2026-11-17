@@ -238,7 +238,11 @@ export default {
       triggers.scheduleSweep();
       return createGamingRouter({
         gaming: gamingService(c),
-        providers: new GameProviderService(c.get(DRIZZLE), c.get(EVENT_BUS)),
+        providers: new GameProviderService(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).gaming.allowedThumbnailHosts : [],
+        ),
         categories: new GameCategoryService(
           c.get(DRIZZLE),
           c.get(EVENT_BUS),

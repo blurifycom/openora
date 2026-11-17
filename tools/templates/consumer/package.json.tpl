@@ -32,7 +32,7 @@
   },
   "engines": {
     "node": ">=22.0.0",
-    "pnpm": ">=10.0.0"
+    "pnpm": ">=12.21.0"
   },
   "packageManager": "{{packageManager}}"
 }

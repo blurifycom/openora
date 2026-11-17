@@ -8,6 +8,7 @@ import {
   type WalletReader,
 } from '@openora/core/contracts';
 import {
+  createDomainError,
   findOneOrThrow,
   makeConflictError,
   makeNotFoundError,
@@ -34,6 +35,7 @@ import {
   type PromoOptIn as PromoOptInRow,
 } from '../schema/index.js';
 import { grantAmountFor } from '../shared/grant-amount.js';
+import { maxBetTermsIssues } from '../shared/max-bet.js';
 import { offerIneligibility } from '../shared/offer-eligibility.js';
 
 export const OfferNotFoundError = makeNotFoundError('Offer');
@@ -48,6 +50,11 @@ export const OfferNotEligibleError = makeConflictError(
 export const OfferClaimedError = makeConflictError(
   'OfferClaimedError',
   'This offer cannot be re-denominated while players hold claims on it',
+);
+
+export const InvalidOfferTermsError = createDomainError<[reason: string]>(
+  'InvalidOfferTermsError',
+  (reason) => reason,
 );
 
 const DATE_FIELDS = ['validFrom', 'validUntil', 'createdAt', 'updatedAt'] as const;
@@ -89,6 +96,7 @@ export class OfferService {
   }
 
   async create(adminId: Uuid, input: CreatePromoOfferInput): Promise<PromoOffer> {
+    assertCoherentTerms(input.terms);
     return this.drizzle.db.transaction(async (tx) => {
       const inserted = await tx
         .insert(promoOffer)
@@ -122,6 +130,9 @@ export class OfferService {
 
   async update(adminId: Uuid, input: UpdatePromoOfferInput): Promise<PromoOffer> {
     const { id, ...patch } = input;
+    if (patch.terms) {
+      assertCoherentTerms(patch.terms);
+    }
     return this.drizzle.db.transaction(async (tx) => {
       const before = await this.requireOffer(tx, id);
       // Re-denominating an offer players have already banked deposits against would pay a grant
@@ -429,6 +440,13 @@ export class OfferService {
       throw new OfferNotFoundError(id);
     }
     return row;
+  }
+}
+
+function assertCoherentTerms(terms: PromoOffer['terms']) {
+  const [issue] = maxBetTermsIssues(terms);
+  if (issue !== undefined) {
+    throw new InvalidOfferTermsError(issue);
   }
 }
 

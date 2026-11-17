@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { createLogger, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
 import type {
   AuditWritePort,
@@ -63,6 +63,8 @@ export async function recordReconciliationFinding(
   const row = await insertFinding(db, input);
   if (row && audit) {
     await audit.record(findingRecordedAudit(row.id, input));
+  } else if (!row && audit) {
+    await fillUnreadableFinding(db, input, audit);
   }
 }
 
@@ -76,6 +78,69 @@ export async function recordReconciliationFindingInTransaction(
   if (row) {
     await audit.recordInTransaction(txn, findingRecordedAudit(row.id, input));
   }
+}
+
+/**
+ * A poll that could not read a deposit's amount files `missing_deposit` with no amount, which
+ * takes the deposit's only slot in the unique index. The first readable report completes that
+ * row instead of being dropped by the conflict, or by `SAME_DEPOSIT_KIND` for a webhook.
+ */
+async function fillUnreadableFinding(
+  db: DrizzleDb | DrizzleTx,
+  input: ReconciliationFindingInput,
+  audit: AuditWritePort,
+): Promise<void> {
+  const { amount, externalId } = input;
+  if (!amount || !externalId || !SAME_DEPOSIT_KIND[input.kind]) {
+    return;
+  }
+  const filled = {
+    amount,
+    currency: input.currency ?? null,
+    network: input.network ?? null,
+    address: input.address ?? null,
+    tag: input.tag ?? null,
+    txHash: input.txHash ?? null,
+    sourceAddress: input.sourceAddress ?? null,
+    detail: null,
+  };
+  const stillUnreadable = and(
+    eq(walletReconciliationFinding.kind, 'missing_deposit'),
+    eq(walletReconciliationFinding.providerName, input.providerName),
+    eq(walletReconciliationFinding.externalId, externalId),
+    eq(walletReconciliationFinding.status, 'open'),
+    isNull(walletReconciliationFinding.amount),
+  );
+  await db.transaction(async (txn) => {
+    if (await isRefundedDeposit(txn, input.providerName, externalId)) {
+      return;
+    }
+    const [row] = await txn
+      .select({
+        id: walletReconciliationFinding.id,
+        amount: walletReconciliationFinding.amount,
+        currency: walletReconciliationFinding.currency,
+        network: walletReconciliationFinding.network,
+        address: walletReconciliationFinding.address,
+        detail: walletReconciliationFinding.detail,
+      })
+      .from(walletReconciliationFinding)
+      .where(stillUnreadable)
+      .for('update');
+    if (!row) {
+      return;
+    }
+    await txn.update(walletReconciliationFinding).set(filled).where(stillUnreadable);
+    const { id, address, ...before } = row;
+    const recorded = findingRecordedAudit(id, input);
+    const { kind: _kind, runId: _runId, ...reported } = recorded.after;
+    await audit.recordInTransaction(txn, {
+      ...recorded,
+      action: 'wallet.reconciliation_finding.filled',
+      before,
+      after: { ...reported, detail: null, addressChanged: address !== filled.address },
+    });
+  });
 }
 
 function findingRecordedAudit(
@@ -105,6 +170,7 @@ export const DEPOSIT_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind>
   'amount_mismatch',
   'currency_mismatch',
   'held_deposit',
+  'below_minimum_deposit',
 ]);
 
 /** Whether an admin already refunded this vendor deposit on chain, from any finding. */

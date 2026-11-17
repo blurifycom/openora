@@ -57,6 +57,7 @@ export const gameProvider = pgTable(
     slug: text().notNull(),
     name: text().notNull(),
     logoUrl: text(),
+    customLogoUrl: text(),
     isActive: boolean().notNull().default(false),
     autoApproveNewGames: boolean().notNull().default(false),
     metadata: jsonb(),

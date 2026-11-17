@@ -112,10 +112,20 @@ export class WageringService implements BonusWageringCommands {
     // Against the terms snapshot, inside the transaction that moves the money. It is an
     // anti-abuse control - a player who can stake the whole bonus on one spin turns a wagering
     // requirement into a coin flip - so a preflight read the client could skip is not enough.
-    // It bounds the whole stake, not the bonus part: the limit applies while a bonus is active.
-    const { maxBet } = grant.terms;
-    if (maxBet !== null && maxBet !== undefined && moneyCompare(args.stake, maxBet) > 0) {
-      return { ok: false, reason: 'max_bet_exceeded', maxBet };
+    // It bounds the whole stake, not the bonus part, and the round's total rather than one debit:
+    // the limit applies while a bonus is active, and splitting a stake across debits of one round
+    // must not get around it.
+    const { maxBet, maxBetExemptProducts } = grant.terms;
+    if (
+      maxBet !== null &&
+      maxBet !== undefined &&
+      moneyCompare(args.stake, ZERO) > 0 &&
+      maxBetExemptProducts?.includes(args.context.product) !== true
+    ) {
+      const roundStake = moneyAdd(await this.outstandingRoundStake(tx, args), args.stake);
+      if (moneyCompare(roundStake, maxBet) > 0) {
+        return { ok: false, reason: 'max_bet_exceeded', maxBet, roundStake };
+      }
     }
 
     const spent = await this.spendBonus(tx, grant.id, args.fromBonus);
@@ -367,6 +377,28 @@ export class WageringService implements BonusWageringCommands {
       round: { providerName: args.providerName, externalRoundId: args.externalRoundId },
       realAmount,
     });
+  }
+
+  /** What the round already staked on any grant, net of what reversals gave back. */
+  private async outstandingRoundStake(tx: DrizzleTx, args: BonusWagerArgs): Promise<string> {
+    const rows = await this.roundStakes(
+      tx,
+      args.userId,
+      args.currency,
+      args.providerName,
+      args.externalRoundId,
+    );
+    return rows.reduce(
+      (sum, row) =>
+        moneyAdd(
+          sum,
+          moneySubtract(
+            moneyAdd(row.bonusStake, row.realStake),
+            moneyAdd(row.bonusReturned, row.realReturned),
+          ),
+        ),
+      ZERO,
+    );
   }
 
   /**

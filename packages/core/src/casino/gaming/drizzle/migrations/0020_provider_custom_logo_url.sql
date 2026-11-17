@@ -1,0 +1,1 @@
+ALTER TABLE "game_provider" ADD COLUMN "custom_logo_url" text;

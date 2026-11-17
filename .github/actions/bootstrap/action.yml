@@ -16,11 +16,11 @@ runs:
   steps:
     # Reads the pinned version from package.json `packageManager` and caches the store.
     # Replaces `npm i -g corepack@latest` + corepack enable/prepare (Node 26 ships no corepack).
-    - uses: pnpm/action-setup@v6.1.0
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       with:
         cache: true
 
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 26
 
@@ -34,7 +34,7 @@ runs:
     # computed. turbo 2.x writes to .turbo/cache at the repo root, not node_modules/.cache.
     - name: Cache turbo
       if: inputs.turbo-cache == 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .turbo/cache
         key: turbo-${{ runner.os }}-${{ github.event.pull_request.head.sha || github.sha }}

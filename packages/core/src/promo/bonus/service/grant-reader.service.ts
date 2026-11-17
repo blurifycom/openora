@@ -19,6 +19,7 @@ export const GrantNotFoundError = makeNotFoundError('Grant');
 
 const MONEY_FIELDS = [
   'grantedAmount',
+  'maxBet',
   'bonusBalance',
   'wageringRequired',
   'wageringProgress',
@@ -38,6 +39,7 @@ const GRANT_COLUMNS = {
   wageringRequired: promoGrant.wageringRequired,
   wageringProgress: promoGrant.wageringProgress,
   forfeitReason: promoGrant.forfeitReason,
+  maxBet: sql<string | null>`${promoGrant.terms} ->> 'maxBet'`,
   expiresAt: promoGrant.expiresAt,
   closedAt: promoGrant.closedAt,
   createdAt: promoGrant.createdAt,
@@ -156,7 +158,32 @@ export class GrantReaderService {
       )
       .groupBy(promoGrant.currency)
       .orderBy(asc(promoGrant.currency));
-    return rows.map((row) => ({ ...row, activeGrants: Number(row.activeGrants) }));
+    const attributed = await this.drizzle.db
+      .selectDistinctOn([promoGrant.currency], {
+        currency: promoGrant.currency,
+        maxBet: sql<string | null>`${promoGrant.terms} ->> 'maxBet'`,
+      })
+      .from(promoGrant)
+      .where(
+        and(
+          eq(promoGrant.userId, userId),
+          eq(promoGrant.status, 'active'),
+          sql`${promoGrant.expiresAt} > now()`,
+          currency === undefined ? undefined : eq(promoGrant.currency, currency),
+        ),
+      )
+      .orderBy(
+        asc(promoGrant.currency),
+        asc(promoGrant.expiresAt),
+        asc(promoGrant.createdAt),
+        asc(promoGrant.id),
+      );
+    const maxBetByCurrency = new Map(attributed.map((row) => [row.currency, row.maxBet]));
+    return rows.map((row) => ({
+      ...row,
+      activeGrants: Number(row.activeGrants),
+      maxBet: maxBetByCurrency.get(row.currency) ?? null,
+    }));
   }
 
   /** The movements behind one of the caller's own grants; someone else's id is simply missing. */
@@ -233,8 +260,8 @@ export class GrantReaderService {
 type OfferLabel = { offerKey: string | null; offerName: string | null };
 
 type PlayerGrantRow = {
-  [K in keyof typeof GRANT_COLUMNS]: PromoGrant[K];
-} & OfferLabel;
+  [K in Exclude<keyof typeof GRANT_COLUMNS, 'maxBet'>]: PromoGrant[K];
+} & OfferLabel & { maxBet: string | null };
 
 type AdminGrantRow = PlayerGrantRow & {
   userId: PromoGrant['userId'];

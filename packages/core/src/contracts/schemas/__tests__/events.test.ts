@@ -465,6 +465,55 @@ describe('gaming provider autoApproveNewGames forward-compat', () => {
   });
 });
 
+describe('gaming provider customLogoUrl forward-compat', () => {
+  const providerSnapshot = {
+    slug: 'studio',
+    name: 'Studio',
+    aggregatorMappings: [],
+    logoUrl: 'https://cdn.example/vendor.png',
+    metadata: null,
+    isActive: true,
+    autoApproveNewGames: false,
+  };
+
+  it('round-trips an explicit customLogoUrl', () => {
+    const withCustom = { ...providerSnapshot, customLogoUrl: 'https://cdn.example/custom.png' };
+    const result = domainEventSchemas['gaming.provider.updated'].safeParse({
+      providerId: randomUUID(),
+      actorId: randomUUID(),
+      before: providerSnapshot,
+      after: withCustom,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.before.customLogoUrl).toBeNull();
+      expect(result.data.after.customLogoUrl).toBe('https://cdn.example/custom.png');
+    }
+  });
+
+  it('defaults customLogoUrl to null for a legacy update and creation without it', () => {
+    const updated = domainEventSchemas['gaming.provider.updated'].safeParse({
+      providerId: randomUUID(),
+      actorId: randomUUID(),
+      before: providerSnapshot,
+      after: providerSnapshot,
+    });
+    const created = domainEventSchemas['gaming.provider.created'].safeParse({
+      providerId: randomUUID(),
+      actorId: randomUUID(),
+      ...providerSnapshot,
+    });
+
+    expect(updated.success && created.success).toBe(true);
+    if (updated.success && created.success) {
+      expect(updated.data.before.customLogoUrl).toBeNull();
+      expect(updated.data.after.customLogoUrl).toBeNull();
+      expect(created.data.customLogoUrl).toBeNull();
+    }
+  });
+});
+
 describe('chat.user.mentioned author username', () => {
   it('rejects an empty author username', () => {
     const result = domainEventSchemas['chat.user.mentioned'].safeParse({

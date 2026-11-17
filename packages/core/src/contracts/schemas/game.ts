@@ -27,6 +27,7 @@ export const GameProviderSummarySchema = z.object({
   slug: z.string(),
   name: z.string(),
   logoUrl: z.string().nullable(),
+  customLogoUrl: z.string().nullable(),
 });
 export type GameProviderSummary = z.infer<typeof GameProviderSummarySchema>;
 

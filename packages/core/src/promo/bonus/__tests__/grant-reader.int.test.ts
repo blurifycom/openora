@@ -159,4 +159,57 @@ describe('GrantReaderService', () => {
     });
     expect(rows.find((row) => row.id === live)?.closedAmount).toBeNull();
   });
+
+  describe('max bet', () => {
+    const issue = async (userId: string, amount: string, terms: object, currency = 'USD') => {
+      const outcome = await db.drizzle.db.transaction((tx) =>
+        new GrantService(makeAuditWriter()).grant(tx, {
+          userId,
+          currency,
+          amount,
+          source: 'deposit',
+          sourceRef: randomUUID(),
+          actor: { type: 'system' },
+          terms: { wageringMultiplier: '3', expiryDays: 14, weightProfileId, ...terms },
+        }),
+      );
+      if (!outcome.ok) {
+        throw new Error('seed grant refused');
+      }
+      return outcome.grantId;
+    };
+
+    it('shows the max bet resolved at grant time on the grant, and null when it has none', async () => {
+      const reader = new GrantReaderService(db.drizzle);
+      const userId = randomUUID();
+      const limited = await issue(userId, '200', { maxBetRate: '0.05' });
+      const unlimited = await issue(userId, '50', {});
+
+      const { items } = await reader.list(userId, { page: 1, limit: 10 });
+      const single = await reader.get(userId, limited);
+
+      expect(Number(items.find((g) => g.id === limited)?.maxBet)).toBe(10);
+      expect(items.find((g) => g.id === unlimited)?.maxBet).toBeNull();
+      expect(Number(single.maxBet)).toBe(10);
+    });
+
+    it('shows the balance the max bet of the grant a bet in that currency is attributed to', async () => {
+      const reader = new GrantReaderService(db.drizzle);
+      const userId = randomUUID();
+      await issue(userId, '100', { maxBet: '4' });
+      await issue(userId, '100', { maxBet: '9', expiryDays: 90 });
+      await issue(userId, '100', {}, 'EUR');
+
+      const balances = await reader.balances(userId);
+
+      expect(Number(balances.find((b) => b.currency === 'USD')?.maxBet)).toBe(4);
+      expect(balances.find((b) => b.currency === 'EUR')?.maxBet).toBeNull();
+    });
+
+    it('shows no max bet for a player with no active grant', async () => {
+      const reader = new GrantReaderService(db.drizzle);
+
+      expect(await reader.balances(randomUUID())).toEqual([]);
+    });
+  });
 });
