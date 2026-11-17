@@ -119,9 +119,12 @@ function toRecord(
   };
 }
 
-const SELECT_LIST = /^(\s*select\s+(?:distinct\s+)?)[\s\S]*?(\s+from\s+")/i;
+const SELECT_LIST = /^(\s*select\s+(?:distinct\s+)?)[^(]*?(\s+from\s+")/i;
 
-/** `select … from "user" where …`: the table and filter fit the cap. Drizzle quotes table names. */
+/**
+ * `select … from "user" where …`: the table and filter fit the cap, so a changed column list
+ * no longer reads as a new statement. A list with a subquery or call is kept whole.
+ */
 const shortenSql = (sql: string): string =>
   sql.replace(SELECT_LIST, '$1…$2').slice(0, MAX_SQL_LENGTH);
 
