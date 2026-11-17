@@ -15,7 +15,7 @@ import {
   type RunContext,
 } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
-import { kycVerification } from '@openora/core/compliance/schema';
+import { kycVerification, rgExclusion, rgFlag, userLimit } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
@@ -46,9 +46,12 @@ const NOTE_ROUTE_KEYS = ['actorId', 'content', 'createdAt', 'id', 'playerId', 'u
 const EXPECTED_TOOL_OWNERS = {
   'financial.summary': 'analytics',
   'ggr.summary': 'analytics',
+  'kyc.queue': 'compliance',
   'kyc.status': 'compliance',
   'payments.flow_daily': 'analytics',
   'player.summary': 'player-management',
+  'rg.flags_queue': 'compliance',
+  'rg.player_state': 'compliance',
   'players.deposit_compare': 'wallet',
   'wallet.activity': 'wallet',
   'withdrawals.queue': 'wallet',
@@ -1322,6 +1325,167 @@ describe('operator read tools answer only their declared keys, under their own g
     const run = adminRun(caller.userId);
 
     expect(await kernel.invokeTool(toolId, input, run)).toEqual({ ok: false, error: 'forbidden' });
+    const rows = await auditRowsOfCall(run.correlationId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ action: 'mcp.tool.failed', resourceId: toolId });
+  });
+});
+
+describe('compliance read tools serve RG and KYC facts by player id, under compliance:view', () => {
+  // Far enough back that no other suite's flag or verification is older.
+  const LONG_AGO = '2020-01-02T03:04:05.000Z';
+  const EXCLUSION_REASON = 'told support they cannot stop';
+  const DECISION_REASON = 'selfie does not match the passport photo';
+  let marketer: Awaited<ReturnType<typeof newStaff>>;
+  let flagged: Awaited<ReturnType<typeof newPlayer>>;
+  let flagId: string;
+  let verificationId: string;
+
+  beforeAll(async () => {
+    marketer = await newStaff(app, 'mcp-no-compliance', 'marketing-banners');
+    flagged = await newPlayer('rg-flagged');
+    await drizzle().insert(userLimit).values({
+      userId: flagged.userId,
+      type: 'deposit',
+      amount: '250',
+      currency: 'USD',
+      period: 'weekly',
+    });
+    await drizzle()
+      .insert(rgExclusion)
+      .values({
+        userId: flagged.userId,
+        kind: 'cooling_off',
+        reason: EXCLUSION_REASON,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        createdBy: flagged.userId,
+      });
+    const [flag] = await drizzle()
+      .insert(rgFlag)
+      .values({
+        userId: flagged.userId,
+        flagType: 'limit_threshold',
+        limitType: 'deposit',
+        detail: { actual: '240', limit: '250', period: 'weekly', pct: 96 },
+        flaggedAt: new Date(LONG_AGO),
+      })
+      .returning({ id: rgFlag.id });
+    const [verification] = await drizzle()
+      .insert(kycVerification)
+      .values({
+        userId: flagged.userId,
+        provider: 'vendor',
+        referenceId: `mcp-kyc-queue-${randomUUID()}`,
+        tier: 'advanced',
+        status: 'pending',
+        documentTypes: ['passport'],
+        decisionReason: DECISION_REASON,
+        triggeredBy: 'submission',
+        submittedAt: new Date(LONG_AGO),
+        createdAt: new Date(LONG_AGO),
+      })
+      .returning({ id: kycVerification.id });
+    flagId = flag?.id ?? '';
+    verificationId = verification?.id ?? '';
+  });
+
+  it("answers rg.player_state with the player's exclusion, flag and limit, and no reason", async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'rg.player_state',
+        { playerId: flagged.playerId, windowDays: [7] },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('rg.player_state'));
+    expect(output).toMatchObject({
+      playerId: flagged.playerId,
+      // Play eligibility reads the block the RG service sets with an exclusion; the row seeded
+      // here sets none, so only the shape is checked.
+      restricted: expect.any(Boolean),
+      activeExclusions: [{ kind: 'cooling_off', isPermanent: false }],
+      activeFlags: [{ flagType: 'limit_threshold', limitType: 'deposit', flaggedAt: LONG_AGO }],
+      limits: [
+        expect.objectContaining({
+          type: 'deposit',
+          period: 'weekly',
+          currency: 'USD',
+          minutes: null,
+          pendingKind: null,
+        }),
+      ],
+      windows: [{ days: 7 }],
+    });
+    const served = JSON.stringify(output);
+    expect(served).not.toContain(EXCLUSION_REASON);
+    expect(served).not.toContain(flagged.userId);
+    expect(served).not.toContain(flagged.email);
+
+    expect(
+      await kernel.invokeTool('rg.player_state', { playerId: randomUUID() }, adminRun(adminId)),
+    ).toMatchObject({ ok: false, error: 'player_not_found' });
+  });
+
+  it('answers rg.flags_queue with the oldest active flag by player id, without its detail', async () => {
+    const output = outputOf(
+      await kernel.invokeTool('rg.flags_queue', { limit: 1 }, adminRun(adminId)),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('rg.flags_queue'));
+    expect(listField(output, 'oldest')).toEqual([
+      {
+        flagId,
+        playerId: flagged.playerId,
+        flagType: 'limit_threshold',
+        limitType: 'deposit',
+        flaggedAt: LONG_AGO,
+        waitHours: expect.any(Number),
+      },
+    ]);
+    expect(Number(output['activeCount'])).toBeGreaterThanOrEqual(1);
+    expect(JSON.stringify(output)).not.toContain(flagged.userId);
+  });
+
+  it('answers kyc.queue with the oldest pending verification by player id, without its reason', async () => {
+    const output = outputOf(
+      await kernel.invokeTool('kyc.queue', { tier: 'advanced', limit: 1 }, adminRun(adminId)),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('kyc.queue'));
+    expect(listField(output, 'oldest')).toEqual([
+      {
+        verificationId,
+        playerId: flagged.playerId,
+        tier: 'advanced',
+        status: 'pending',
+        triggeredBy: 'submission',
+        documentTypes: ['passport'],
+        submittedAt: LONG_AGO,
+        waitHours: expect.any(Number),
+      },
+    ]);
+    const served = JSON.stringify(output);
+    expect(served).not.toContain(DECISION_REASON);
+    expect(served).not.toContain(flagged.userId);
+
+    expect(await kernel.invokeTool('kyc.queue', { limit: 21 }, adminRun(adminId))).toMatchObject({
+      ok: false,
+      error: 'invalid_input',
+    });
+  });
+
+  it.each([
+    ['rg.player_state', () => ({ playerId: flagged.playerId })],
+    ['rg.flags_queue', () => ({})],
+    ['kyc.queue', () => ({})],
+  ] as const)('refuses %s to an admin whose roles lack compliance:view', async (toolId, input) => {
+    const run = adminRun(marketer.userId);
+
+    expect(await kernel.invokeTool(toolId, input(), run)).toEqual({
+      ok: false,
+      error: 'forbidden',
+    });
     const rows = await auditRowsOfCall(run.correlationId);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ action: 'mcp.tool.failed', resourceId: toolId });

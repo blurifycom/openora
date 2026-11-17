@@ -40,8 +40,16 @@ import {
   type JobQueueAdapter,
   type RealtimeTransport,
 } from '@openora/core/contracts';
-import { kycStatusTool, requestEnhancedKycAction } from './contract/index.js';
+import {
+  kycQueueTool,
+  kycStatusTool,
+  requestEnhancedKycAction,
+  rgFlagsQueueTool,
+  rgPlayerStateTool,
+} from './contract/index.js';
 import { ComplianceService } from './service/compliance.service.js';
+import { ComplianceQueuesService } from './service/compliance-queues.service.js';
+import { toRgPlayerState } from './service/rg-player-state.service.js';
 import {
   KycResubmissionAlreadyRequestedError,
   KycVerificationInProgressError,
@@ -211,6 +219,31 @@ export default {
         }
         return { playerId, ...standing };
       };
+    });
+
+    ctx.mcp.tool(rgPlayerStateTool, (c) => {
+      const identity = c.get(IDENTITY_READER);
+      return async ({ playerId, windowDays }) => {
+        // Resolved per call: the reader's own dependencies (play eligibility, rates) are another
+        // module's, and a kernel built without them still serves compliance's other tools.
+        const standing = c.get(RG_STANDING_READER);
+        const userId = await userIdOfPlayer(identity, playerId);
+        const state = userId ? await standing.getStanding(userId, { windowDays }) : null;
+        if (!state) {
+          throw new McpToolError('player_not_found');
+        }
+        return toRgPlayerState(playerId, state);
+      };
+    });
+
+    ctx.mcp.tool(rgFlagsQueueTool, (c) => {
+      const queues = new ComplianceQueuesService(c.get(DRIZZLE));
+      return (input) => queues.rgFlagsQueue(input);
+    });
+
+    ctx.mcp.tool(kycQueueTool, (c) => {
+      const queues = new ComplianceQueuesService(c.get(DRIZZLE));
+      return (input) => queues.kycQueue(input);
     });
 
     ctx.actions.register(requestEnhancedKycAction, (c) => {
