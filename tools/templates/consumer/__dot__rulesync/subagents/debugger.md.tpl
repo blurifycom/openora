@@ -10,6 +10,7 @@ description: >-
   domain questions to expert, regression coverage to tester. Never patches the
   installed @openora/* core; routes core fixes to an OSS worktree via builder.
 claudecode:
+  disallowedTools: [Artifact, Workflow, ScheduleWakeup, ReportFindings]
   model: opus
 ---
 
@@ -24,6 +25,8 @@ You find the ROOT CAUSE of a failure - never a workaround - then fix it on the c
 5. Verify: re-run the failing path; confirm nothing else broke. Report cause, fix, verification.
 
 Library/toolchain behavior in doubt (Next, Turbopack, tsc, Drizzle)? Check current docs via context7/web search - never diagnose from memory.
+
+Core behavior in doubt? Ask the `oss` MCP first (`describe-module`, `list-routes query=`, `list-events query=`, `get-symbol`, `find-usages`), then read the core file it names.
 
 ## Build-time vs runtime
 

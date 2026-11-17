@@ -28,21 +28,20 @@ jobs:
       contents: write # create the GitHub Release
       id-token: write # npm provenance (signed build attestation)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      # pnpm from package.json `packageManager`, then a frozen install - the same path as CI.
+      - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache: 'false'
+
+      # `setup-node` again purely for the npm registry auth the publish step needs -
+      # bootstrap installs node but does not write an authenticated .npmrc.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 26
           registry-url: https://registry.npmjs.org
           scope: '@openora'
-
-      - name: Enable corepack (pnpm)
-        run: |
-          npm install -g corepack@latest
-          corepack enable
-          corepack prepare pnpm@11.8.0 --activate
-
-      - run: pnpm install --frozen-lockfile
 
       # The tag name is the source of truth. A prerelease tag (contains a '-') -> rc channel.
       - name: Resolve channel from tag
@@ -61,7 +60,7 @@ jobs:
       - name: Build and publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: true
+          PNPM_CONFIG_PROVENANCE: true # pnpm reads only PNPM_CONFIG_*, never NPM_CONFIG_*
           V: ${{ steps.rel.outputs.version }}
           DISTTAG: ${{ steps.rel.outputs.disttag }}
         run: |

@@ -141,7 +141,13 @@ class CompositeWagerTracking implements WagerTrackingCommands {
 }
 
 const rankService = (c: TypedContainer<CoreTokenCatalog>) =>
-  new RankService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), c.get(AUDIT_WRITER), logger);
+  new RankService(
+    c.get(DRIZZLE),
+    c.get(EXCHANGE_RATE_READER),
+    c.get(AUDIT_WRITER),
+    logger,
+    promoConfig(c).rankPeriodic.basis,
+  );
 
 const streakService = (c: TypedContainer<CoreTokenCatalog>) =>
   new StreakService({
@@ -162,6 +168,7 @@ const rakebackService = (c: TypedContainer<CoreTokenCatalog>) =>
     () => (c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined),
     logger,
     promoConfig(c).rakeback,
+    promoConfig(c).rankPeriodic.basis,
   );
 
 const rankChallengeService = (c: TypedContainer<CoreTokenCatalog>) =>
@@ -327,7 +334,8 @@ export default {
           return;
         }
         const count = await rankPayouts.pruneSettledPeriodWagers();
-        logger.info({ count }, 'rank period counters pruned');
+        const rounds = await rankPayouts.pruneRoundWagers(new Date());
+        logger.info({ count, rounds }, 'rank period counters and round wagers pruned');
       },
     });
 
@@ -504,6 +512,7 @@ export default {
         c.get(EXCHANGE_RATE_READER),
         c.get(WALLET_READER),
         logger,
+        promoConfig(c).rankPeriodic.basis,
       );
       streakPayouts = new StreakPayoutService({
         drizzle: c.get(DRIZZLE),
@@ -629,7 +638,11 @@ export default {
 
       return createGamificationRouter({
         ranks: rankService(c),
-        admin: new RankAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
+        admin: new RankAdminService(
+          c.get(DRIZZLE),
+          c.get(AUDIT_WRITER),
+          promoConfig(c).rankPeriodic.basis,
+        ),
         streaks,
         streakPayouts,
         onStreakClaimed: async ({ granted }) => {
