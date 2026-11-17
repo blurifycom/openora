@@ -37,7 +37,7 @@ The orchestrator passes you the base ref and changed-file list - do not re-scope
 - [ ] Failure mid-flow leaves consistent state (throw between two writes, partial batch, tx scope); cache/event/outbox side effects match every mutation the change introduces.
 - [ ] Walk the failure branch of every changed path, not only the happy one: when a lookup, callee, or external call throws before or after a write, what does the caller see, and is a debit or hold left without its reversal?
 - [ ] Read-check-write across two statements: can two concurrent requests both pass the check and persist state that breaks the invariant the change adds?
-- [ ] A test in the diff that would still pass with the feature removed or its mock unconfigured (an assertion that accepts any rejection) proves nothing - flag it. So does an inner-tier test whose outcome an outer-tier test (E2E or integration) already asserts, with no branch or input the outer one cannot reach: flag it for removal. Pure-function branch tests are exempt.
+- [ ] A test in the diff that would still pass with the feature removed or its mock unconfigured (an assertion that accepts any rejection) proves nothing - flag it. So does an inner-tier test whose outcome an outer-tier test (E2E or integration) already asserts, with no branch, input or side effect (event, audit, ledger row) the outer one cannot reach: flag it for removal. Pure-function branch tests are exempt.
 
 ### Performance
 
