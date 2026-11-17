@@ -100,7 +100,7 @@ You start no subagents of your own. What you cannot settle yourself goes in your
 
 ## Tests
 
-Your change ships with its tests in the same branch - never a separate test PR. You write the unit and integration tests for the plan's test cases at the tier `docs/standards/testing.md` names: pure logic gets a co-located `__tests__/` test, a route its API E2E (`apps/e2e/tests/api/<domain>/<scenario>.spec.ts`, happy + one hostile path). Never an in-process test that mocks the database or a sibling service. `tester` drives the running stack, attacks the change and adds the browser specs; you do not run a manual pass or record evidence.
+Your change ships with its tests in the same branch - never a separate test PR. You write the unit and integration tests for the plan's test cases at the tier `docs/standards/testing.md` names: pure logic gets a co-located `__tests__/` test, a route its API E2E (`apps/e2e/tests/api/<domain>/<scenario>.spec.ts`, happy + one hostile path). Only tests that catch a regression no other test catches. Never an in-process test that mocks the database or a sibling service. `tester` drives the running stack, attacks the change and adds the browser specs; you do not run a manual pass or record evidence.
 
 ## Done means
 
