@@ -759,6 +759,46 @@ describe('WalletService.withdraw (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(40);
     expect(await txRows(w.id)).toHaveLength(1);
   });
+
+  it('forfeits through the bonus lifecycle port when nothing binds the fund locks', async () => {
+    const forfeitHeld = vi.fn(async () => []);
+    const { svc } = makeService({ bonusLifecycle: { forfeitHeld, forfeit: vi.fn() } });
+    const w = await seedWallet({ balance: '100' });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(forfeitHeld).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: w.userId,
+        reason: 'withdrawal_while_active',
+        note: `withdrawal ${result.transactionId}`,
+      }),
+    );
+  });
+
+  it('leaves forfeiting to the fund locks when they are bound', async () => {
+    const forfeitHeld = vi.fn(async () => []);
+    const onOutflow = vi.fn(async () => undefined);
+    const { svc } = makeService({
+      bonusLifecycle: { forfeitHeld, forfeit: vi.fn() },
+      bonusFundLocks: { onOutflow, lockedFunds: vi.fn() },
+    });
+    const w = await seedWallet({ balance: '100' });
+
+    await svc.withdraw({ userId: w.userId, amount: '40', currency: 'USD', ...NO_CLIENT_META });
+
+    expect(onOutflow).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: w.userId, outflow: 'withdrawal', amount: '40' }),
+    );
+    expect(forfeitHeld).not.toHaveBeenCalled();
+  });
 });
 
 describe('WalletService idempotency - deposit (real PG)', () => {
