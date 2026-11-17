@@ -3,12 +3,14 @@ import { alias } from 'drizzle-orm/pg-core';
 import {
   createDomainError,
   createLogger,
+  loggableError,
   makeNotFoundError,
   type DrizzleService,
   type EventBus,
 } from '@openora/core/server';
 import {
   SupportChatCustomerTokenSchema,
+  SupportTicketCreatedSchema,
   normalizeKycStatus,
   type AuditWritePort,
   type ClientMeta,
@@ -19,6 +21,7 @@ import {
   type SupportChatCustomerToken,
   type SupportChatProvider,
   type SupportCustomerContext,
+  type SupportTicketRequest,
   type WalletReader,
 } from '@openora/core/contracts';
 import { user, type User } from '@openora/core/pam/schema/identity';
@@ -36,17 +39,27 @@ export const SupportChatPlayerNotFoundError = makeNotFoundError('Player');
 export const SupportChatNotConfiguredError = createDomainError<[]>(
   'SupportChatNotConfiguredError',
   () => 'Support chat is not configured',
+  { reason: 'not_configured' },
 );
 
 export const SupportChatUnavailableError = createDomainError<[]>(
   'SupportChatUnavailableError',
   () => 'Support chat is unavailable',
+  { reason: 'unavailable' },
 );
 
 // Its message reaches the player, so the detail is logged where it is thrown instead.
 export const SupportChatLinkMissingError = createDomainError<[]>(
   'SupportChatLinkMissingError',
   () => 'Support chat could not be opened',
+);
+
+// A unique email is not a proven one: an account can be registered on someone else's
+// not-yet-registered address, and the vendor files the ticket under whoever owns that email.
+export const SupportTicketEmailNotVerifiedError = createDomainError<[]>(
+  'SupportTicketEmailNotVerifiedError',
+  () => 'Verify your email address before writing to support',
+  { reason: 'email_not_verified' },
 );
 
 export type SupportCustomerReading = Omit<SupportCustomerContext, 'accountStatus' | 'syncedAt'> & {
@@ -181,6 +194,90 @@ export class SupportChatService {
         logger.error({ err, userId }, 'support-chat sync not enqueued on session open'),
       );
     return token;
+  }
+
+  /**
+   * Hands the vendor one ticket from the caller's own player, under the name, email and language
+   * read from the account now. Not idempotent: a double submit is two tickets.
+   */
+  async createTicket(
+    userId: User['id'],
+    { subject, message }: Pick<SupportTicketRequest, 'subject' | 'message'>,
+    clientMeta: ClientMeta,
+  ): Promise<void> {
+    if (!this.deps.provider.createTicket) {
+      throw new SupportChatNotConfiguredError();
+    }
+    const [account] = await this.deps.drizzle.db
+      .select({
+        playerId: player.id,
+        username: user.username,
+        email: user.email,
+        language: user.language,
+        emailVerified: user.emailVerified,
+      })
+      .from(player)
+      .innerJoin(user, eq(user.id, player.userId))
+      .where(eq(player.userId, userId))
+      .limit(1);
+    if (!account) {
+      throw new SupportChatPlayerNotFoundError(userId);
+    }
+    const { playerId } = account;
+    if (!account.emailVerified) {
+      throw new SupportTicketEmailNotVerifiedError();
+    }
+    let answer: unknown;
+    try {
+      answer = await this.deps.provider.createTicket({
+        requester: { name: account.username, email: account.email },
+        language: account.language,
+        subject,
+        message,
+      });
+    } catch (err) {
+      logger.warn({ playerId, reason: reasonOf(err) }, 'support ticket not created');
+      throw new SupportChatUnavailableError();
+    }
+    // The ticket exists at the vendor by now, so neither a malformed answer nor a failed audit
+    // write may answer the player as if it did not: a retry would file it twice.
+    const ticketId = this.ticketIdOf(playerId, answer);
+    await this.deps.audit
+      .record({
+        actorType: 'player',
+        actorId: userId,
+        action: 'support_chat.ticket.created',
+        resourceType: 'player',
+        resourceId: playerId,
+        after: { ticketId },
+        ...clientMeta,
+      })
+      // Ops match an unaudited ticket by playerId and log time against the requester's tickets.
+      .catch((err: unknown) =>
+        logger.error(
+          { err: loggableError(err), playerId },
+          'support ticket created but not audited',
+        ),
+      );
+  }
+
+  /**
+   * The vendor's ticket id, or null when its answer is off the schema. Only the parsed id leaves
+   * here: the raw answer may hold the requester's email, the subject or the message, and the audit
+   * row it would land in is append-only.
+   */
+  private ticketIdOf(playerId: Player['id'], answer: unknown): string | null {
+    // safeParse rethrows what a getter on the answer throws, which is the adapter's text too.
+    try {
+      const parsed = SupportTicketCreatedSchema.safeParse(answer);
+      if (parsed.success) {
+        return parsed.data.ticketId;
+      }
+    } catch {
+      // Logged below as malformed, like an answer that fails the schema.
+    }
+    logger.warn({ playerId, reason: 'malformed ticket answer' }, 'support ticket id not recorded');
+    return null;
   }
 
   /** Writes the current context onto the player's vendor customer; a player who never opened the chat is skipped. */

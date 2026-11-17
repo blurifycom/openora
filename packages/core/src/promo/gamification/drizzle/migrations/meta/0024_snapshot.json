@@ -1,5 +1,5 @@
 {
-  "id": "f47cab54-eaa7-4cb1-ac7e-3a2e0f4fd78c",
+  "id": "cd36447c-363a-4119-bbd9-87523212b51b",
   "prevId": "ccc93a83-34e9-4cc5-a5a5-719bf2408fbf",
   "version": "7",
   "dialect": "postgresql",
@@ -967,22 +967,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "promo_rakeback_accrual_claimed_settled_at_idx": {
-          "name": "promo_rakeback_accrual_claimed_settled_at_idx",
-          "columns": [
-            {
-              "expression": "settled_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"promo_rakeback_accrual\".\"status\" = 'claimed'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -1756,6 +1740,13 @@
           "notNull": true,
           "default": "'0'"
         },
+        "margin": {
+          "name": "margin",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp with time zone",
@@ -1843,6 +1834,139 @@
         "promo_rank_period_wager_non_negative": {
           "name": "promo_rank_period_wager_non_negative",
           "value": "\"promo_rank_period_wager\".\"wagered\" >= 0"
+        },
+        "promo_rank_period_wager_margin_non_negative": {
+          "name": "promo_rank_period_wager_margin_non_negative",
+          "value": "\"promo_rank_period_wager\".\"margin\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.promo_rank_round_wager": {
+      "name": "promo_rank_round_wager",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_name": {
+          "name": "provider_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "external_round_id": {
+          "name": "external_round_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ladder_currency": {
+          "name": "ladder_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stake": {
+          "name": "stake",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "margin": {
+          "name": "margin",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "promo_rank_round_wager_round_idx": {
+          "name": "promo_rank_round_wager_round_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "currency",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "external_round_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ladder_currency",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "promo_rank_round_wager_created_idx": {
+          "name": "promo_rank_round_wager_created_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "promo_rank_round_wager_non_negative": {
+          "name": "promo_rank_round_wager_non_negative",
+          "value": "\"promo_rank_round_wager\".\"stake\" >= 0 AND \"promo_rank_round_wager\".\"margin\" >= 0"
         }
       },
       "isRLSEnabled": false
@@ -1918,6 +2042,24 @@
           "primaryKey": false,
           "notNull": false
         },
+        "daily_bonus_percent": {
+          "name": "daily_bonus_percent",
+          "type": "numeric(5, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "weekly_bonus_percent": {
+          "name": "weekly_bonus_percent",
+          "type": "numeric(5, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "monthly_bonus_percent": {
+          "name": "monthly_bonus_percent",
+          "type": "numeric(5, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1948,6 +2090,14 @@
         "promo_rank_tier_bounds": {
           "name": "promo_rank_tier_bounds",
           "value": "\"promo_rank_tier\".\"position\" >= 0 AND \"promo_rank_tier\".\"wager_threshold\" >= 0\n        AND \"promo_rank_tier\".\"rakeback_percent\" >= 0 AND \"promo_rank_tier\".\"rakeback_percent\" <= 100\n        AND (\"promo_rank_tier\".\"daily_bonus\" is null OR \"promo_rank_tier\".\"daily_bonus\" > 0)\n        AND (\"promo_rank_tier\".\"weekly_bonus\" is null OR \"promo_rank_tier\".\"weekly_bonus\" > 0)\n        AND (\"promo_rank_tier\".\"monthly_bonus\" is null OR \"promo_rank_tier\".\"monthly_bonus\" > 0)\n        AND (\"promo_rank_tier\".\"level_up_bonus\" is null OR \"promo_rank_tier\".\"level_up_bonus\" > 0)"
+        },
+        "promo_rank_tier_bonus_percent_bounds": {
+          "name": "promo_rank_tier_bonus_percent_bounds",
+          "value": "(\"promo_rank_tier\".\"daily_bonus_percent\" is null OR (\"promo_rank_tier\".\"daily_bonus_percent\" > 0 AND \"promo_rank_tier\".\"daily_bonus_percent\" <= 100))\n        AND (\"promo_rank_tier\".\"weekly_bonus_percent\" is null OR (\"promo_rank_tier\".\"weekly_bonus_percent\" > 0 AND \"promo_rank_tier\".\"weekly_bonus_percent\" <= 100))\n        AND (\"promo_rank_tier\".\"monthly_bonus_percent\" is null OR (\"promo_rank_tier\".\"monthly_bonus_percent\" > 0 AND \"promo_rank_tier\".\"monthly_bonus_percent\" <= 100))"
+        },
+        "promo_rank_tier_total_percent": {
+          "name": "promo_rank_tier_total_percent",
+          "value": "\"promo_rank_tier\".\"rakeback_percent\" + coalesce(\"promo_rank_tier\".\"daily_bonus_percent\", 0)\n        + coalesce(\"promo_rank_tier\".\"weekly_bonus_percent\", 0) + coalesce(\"promo_rank_tier\".\"monthly_bonus_percent\", 0) <= 100"
         }
       },
       "isRLSEnabled": false

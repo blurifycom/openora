@@ -1,4 +1,5 @@
-import { implement } from '@orpc/server';
+import { ORPCError, implement } from '@orpc/server';
+import { DEFAULT_LOBBY_LAYOUT_KEY } from '@openora/core/contracts';
 import { mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
 import { lobbyContract } from '../contract/index.js';
 import {
@@ -15,14 +16,16 @@ const BAD_REQUEST = [LobbySectionFieldError];
 export function createLobbyRouter({
   lobby,
   adminGuard,
+  keyedLayouts,
 }: {
   lobby: LobbyService;
   adminGuard: AdminGuard;
+  keyedLayouts: boolean;
 }) {
   const os = implement(lobbyContract).$context<OssContext>();
 
   return os.router({
-    getLayout: os.getLayout.handler(() => lobby.getLayout()),
+    getLayout: os.getLayout.handler(({ input }) => lobby.getLayout(input.layoutKey)),
     listCategories: os.listCategories.handler(() => lobby.listCategories()),
 
     getCategoryBySlug: os.getCategoryBySlug.handler(({ input }) =>
@@ -35,13 +38,18 @@ export function createLobbyRouter({
 
     search: os.search.handler(({ input }) => lobby.search(input.q)),
 
-    getAdminLayout: os.getAdminLayout.handler(async ({ context }) => {
+    getAdminLayout: os.getAdminLayout.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
-      return lobby.getAdminLayout();
+      return lobby.getAdminLayout(input.layoutKey);
     }),
 
     replaceLayout: os.replaceLayout.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
+      if (!keyedLayouts && input.layoutKey !== DEFAULT_LOBBY_LAYOUT_KEY) {
+        throw new ORPCError('BAD_REQUEST', {
+          message: `Saving a lobby layout other than '${DEFAULT_LOBBY_LAYOUT_KEY}' is turned off`,
+        });
+      }
       return mapErrors({ NOT_FOUND, BAD_REQUEST, CONFLICT: LobbyLayoutVersionConflictError }, () =>
         lobby.replaceLayout({ ...input, actorId: userId, ip, userAgent }),
       );

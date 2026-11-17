@@ -7,6 +7,7 @@ description: >-
   and input-validation risks in a real-money igaming consumer repo.
   Findings only, no edits.
 claudecode:
+  disallowedTools: [Artifact, Workflow, ScheduleWakeup, ReportFindings]
   model: opus
 ---
 

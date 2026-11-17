@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { inspect } from 'node:util';
-import { and, eq, like, sql } from 'drizzle-orm';
+import { and, eq, inArray, like, sql } from 'drizzle-orm';
 import {
   AUDIT_WRITER,
   IDENTITY_READER,
@@ -32,6 +32,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { promoPlayerRank } from '@openora/core/promo/schema/gamification';
 import {
   asAdmin,
+  asPlayer,
   assignIamRoleByKey,
   bootE2e,
   clearCapturedEmails,
@@ -44,6 +45,7 @@ import {
 } from '../index.js';
 import {
   answerNextSupportChatTokenWith,
+  answerNextSupportTicketRaw,
   failNextSupportChatToken,
   failSupportChatSyncs,
   holdNextSupportChatSync,
@@ -328,7 +330,7 @@ describe('POST /support-chat/session', () => {
     const { client } = await newPlayer(unconfiguredApp);
     const res = await client.post(SESSION);
     expect(res.status).toBe(503);
-    expect(await body(res)).toMatchObject({ message: 'Support chat is not configured' });
+    expect(await body(res)).toMatchObject({ data: { reason: 'not_configured' } });
   });
 
   it.each([
@@ -342,8 +344,7 @@ describe('POST /support-chat/session', () => {
       const refused = await client.post(SESSION);
       expect(refused.status).toBe(503);
       const error = await body(refused);
-      expect(error['message']).toBe('Support chat is unavailable');
-      expect(error['data']).toBeUndefined();
+      expect(error['data']).toEqual({ reason: 'unavailable' });
       expect(JSON.stringify(error)).not.toContain('rate_limited');
       expect(await linkRows(playerId)).toHaveLength(0);
 
@@ -631,10 +632,416 @@ describe('POST /support-chat/session', () => {
     expect(Object.keys(context ?? {}).sort()).toEqual(CONTEXT_KEYS);
     expect(SupportCustomerContextSchema.safeParse(context).success).toBe(true);
     expect(SupportCustomerContextSchema.safeParse({ ...context, balance: 1 }).success).toBe(false);
-    const everything = JSON.stringify(readSupportChatCalls());
+    // Tickets carry free player text, so only the parts that carry the context are scanned.
+    const { syncs, tokenRequests } = readSupportChatCalls();
+    const everything = JSON.stringify({ syncs, tokenRequests });
     for (const secret of ['+48123456789', '1990-01-01', 'Secret', 'Person', 'balance']) {
       expect(everything).not.toContain(secret);
     }
+  });
+});
+
+const TICKETS = '/support-chat/tickets';
+
+const ticketsTo = (email: string) =>
+  readSupportChatCalls().tickets.filter((ticket) => ticket.requester.email === email);
+
+const ticketAudits = (playerId: string) =>
+  testApp.container
+    .get(DRIZZLE)
+    .db.select()
+    .from(auditLog)
+    .where(
+      and(eq(auditLog.action, 'support_chat.ticket.created'), eq(auditLog.resourceId, playerId)),
+    );
+
+describe('offline ticket', () => {
+  it('files one ticket under the account name, email and language and audits it without either', async () => {
+    const p = await newPlayer();
+    await testApp.container
+      .get(DRIZZLE)
+      .db.update(user)
+      .set({ language: 'de' })
+      .where(eq(user.id, p.userId));
+    const [{ username } = { username: '' }] = await testApp.container
+      .get(DRIZZLE)
+      .db.select({ username: user.username })
+      .from(user)
+      .where(eq(user.id, p.userId));
+
+    const res = await p.client.post(TICKETS, { subject: '  Withdrawal  ', message: '  hi  ' });
+
+    expect(res.status).toBe(200);
+    expect(await body(res)).toEqual({ success: true });
+    const tickets = ticketsTo(p.email);
+    expect(tickets).toEqual([
+      {
+        requester: { name: username, email: p.email },
+        language: 'de',
+        subject: 'Withdrawal',
+        message: 'hi',
+        ticketId: expect.any(String),
+      },
+    ]);
+    const audits = await ticketAudits(p.playerId);
+    expect(audits).toEqual([
+      expect.objectContaining({
+        actorType: 'player',
+        actorId: p.userId,
+        resourceType: 'player',
+        after: { ticketId: tickets[0]?.ticketId },
+      }),
+    ]);
+    expect(JSON.stringify(audits)).not.toContain(p.email);
+    expect(JSON.stringify(audits)).not.toContain('"hi"');
+    expect(JSON.stringify(audits)).not.toContain('Withdrawal');
+  });
+
+  it('refuses a body naming the requester or another player with 400 and files nothing', async () => {
+    const p = await newPlayer();
+    const victim = await newPlayer();
+    const res = await p.client.post(TICKETS, {
+      subject: 'Help',
+      message: 'hello',
+      email: victim.email,
+      name: 'Support Team',
+      userId: victim.userId,
+      language: 'fr',
+    });
+
+    expect(res.status).toBe(400);
+    expect(ticketsTo(p.email)).toHaveLength(0);
+    expect(ticketsTo(victim.email)).toHaveLength(0);
+  });
+
+  it('refuses a guest with 401 and files nothing', async () => {
+    const before = readSupportChatCalls().tickets.length;
+    const res = await testApp.app.request(TICKETS, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ subject: 'Help', message: 'hello' }),
+    });
+
+    expect(res.status).toBe(401);
+    expect(readSupportChatCalls().tickets).toHaveLength(before);
+  });
+
+  it("answers 429 on a player's 6th ticket in 10 minutes while another player still files one", async () => {
+    const p = await newPlayer();
+    for (let call = 0; call < 5; call++) {
+      expect(
+        (await p.client.post(TICKETS, { subject: 'Help', message: `ticket ${call}` })).status,
+      ).toBe(200);
+    }
+    const refused = await p.client.post(TICKETS, { subject: 'Help', message: 'one more' });
+
+    expect(refused.status).toBe(429);
+    const error = await body(refused);
+    expect(error['code']).toBe('TOO_MANY_REQUESTS');
+    expect((error['data'] as { retryAfterMs: number }).retryAfterMs).toBeGreaterThan(0);
+    expect(ticketsTo(p.email)).toHaveLength(5);
+    const other = await newPlayer();
+    expect((await other.client.post(TICKETS, { subject: 'Help', message: 'hello' })).status).toBe(
+      200,
+    );
+  });
+
+  it('refuses an empty, blank, too long, missing or non-text message with 400 without spending the limit', async () => {
+    const p = await newPlayer();
+    for (const invalid of [
+      { subject: 'Help', message: '' },
+      { subject: 'Help', message: '   ' },
+      { subject: 'Help', message: 'x'.repeat(5001) },
+      { subject: 'Help' },
+      { subject: 'Help', message: 42 },
+    ]) {
+      expect((await p.client.post(TICKETS, invalid)).status, JSON.stringify(invalid)).toBe(400);
+    }
+    expect(ticketsTo(p.email)).toHaveLength(0);
+
+    const longest = 'x'.repeat(5000);
+    expect((await p.client.post(TICKETS, { subject: 'Help', message: longest })).status).toBe(200);
+    for (let call = 0; call < 4; call++) {
+      expect(
+        (await p.client.post(TICKETS, { subject: 'Help', message: `ticket ${call}` })).status,
+      ).toBe(200);
+    }
+    expect(ticketsTo(p.email)[0]?.message).toBe(longest);
+  });
+
+  it('refuses a missing, empty, blank or too long subject with 400 and takes exactly 150 characters', async () => {
+    const p = await newPlayer();
+    for (const invalid of [
+      { message: 'hello' },
+      { subject: '', message: 'hello' },
+      { subject: ' \t\n ', message: 'hello' },
+      { subject: 'x'.repeat(151), message: 'hello' },
+    ]) {
+      expect((await p.client.post(TICKETS, invalid)).status, JSON.stringify(invalid)).toBe(400);
+    }
+    expect(ticketsTo(p.email)).toHaveLength(0);
+
+    const longest = 'x'.repeat(150);
+    expect((await p.client.post(TICKETS, { subject: longest, message: 'hello' })).status).toBe(200);
+    expect(ticketsTo(p.email).map((t) => t.subject)).toEqual([longest]);
+  });
+
+  it('refuses a subject or message with no visible text, and keeps emoji sequences and newlines', async () => {
+    const p = await newPlayer();
+    for (const invisible of [
+      { subject: '\u200b', message: 'hello' },
+      { subject: 'help', message: '\u200b\u2060' },
+      { subject: ' \ufeff ', message: 'hello' },
+    ]) {
+      expect((await p.client.post(TICKETS, invisible)).status, JSON.stringify(invisible)).toBe(400);
+    }
+    expect(ticketsTo(p.email)).toHaveLength(0);
+
+    const subject = '\u{1F469}\u200d\u{1F4BB} help';
+    const message = 'line one\nline two\n\nthanks';
+    expect((await p.client.post(TICKETS, { subject, message: 'hello' })).status).toBe(200);
+    expect((await p.client.post(TICKETS, { subject: 'help', message })).status).toBe(200);
+    expect(ticketsTo(p.email).map((t) => [t.subject, t.message])).toEqual([
+      [subject, 'hello'],
+      ['help', message],
+    ]);
+  });
+
+  it('answers 503 not configured when no provider is bound', async () => {
+    const { client } = await newPlayer(unconfiguredApp);
+    const res = await client.post(TICKETS, { subject: 'Help', message: 'hello' });
+
+    expect(res.status).toBe(503);
+    expect(await body(res)).toMatchObject({ data: { reason: 'not_configured' } });
+  });
+
+  it('answers an admin without a player profile 404 and files nothing', async () => {
+    const before = readSupportChatCalls().tickets.length;
+    const res = await admin.post(TICKETS, { subject: 'Help', message: 'hello' });
+
+    expect(res.status).toBe(404);
+    expect(readSupportChatCalls().tickets).toHaveLength(before);
+  });
+
+  it('files the ticket under the new email after an email change', async () => {
+    const p = await newPlayer();
+    const newEmail = `support-chat-new-${randomUUID()}@e2e.test`;
+    clearCapturedEmails();
+    await ok(
+      await p.client.post('/identity/email/change/request', {
+        newEmail,
+        currentPassword: PASSWORD,
+      }),
+    );
+    const mail = await waitForEmail(
+      newEmail,
+      (m) => m.subject === 'Confirm your new email address',
+    );
+    const otp = /(\d{6})/.exec(mail.text)?.[1];
+    await ok(await p.client.post('/identity/email/change/confirm', { newEmail, otp }));
+    // The change ends the player's sessions, so they sign in again under the new address.
+    const client = await asPlayer(testApp.app, { email: newEmail });
+
+    expect((await client.post(TICKETS, { subject: 'Help', message: 'hello' })).status).toBe(200);
+    expect(ticketsTo(newEmail)).toHaveLength(1);
+    expect(ticketsTo(p.email)).toHaveLength(0);
+  });
+
+  it('files two tickets for two concurrent identical posts', async () => {
+    const p = await newPlayer();
+    const answers = await Promise.all([
+      p.client.post(TICKETS, { subject: 'Help', message: 'same' }),
+      p.client.post(TICKETS, { subject: 'Help', message: 'same' }),
+    ]);
+
+    expect(answers.map((res) => res.status)).toEqual([200, 200]);
+    const tickets = ticketsTo(p.email);
+    expect(tickets).toHaveLength(2);
+    const afters = (await ticketAudits(p.playerId)).map((row) => row.after);
+    expect(afters).toHaveLength(2);
+    expect(afters).toEqual(expect.arrayContaining(tickets.map(({ ticketId }) => ({ ticketId }))));
+  });
+
+  it("never carries one player's name or email on another player's ticket under parallel posts", async () => {
+    const players = await Promise.all([newPlayer(), newPlayer(), newPlayer(), newPlayer()]);
+
+    const answers = await Promise.all(
+      players.map((p, i) =>
+        p.client.post(TICKETS, { subject: `subject ${i}`, message: `from ${i} ${p.email}` }),
+      ),
+    );
+
+    expect(answers.map((res) => res.status)).toEqual([200, 200, 200, 200]);
+    const names = new Map(
+      (
+        await testApp.container
+          .get(DRIZZLE)
+          .db.select({ id: user.id, username: user.username })
+          .from(user)
+          .where(
+            inArray(
+              user.id,
+              players.map((p) => p.userId),
+            ),
+          )
+      ).map((row) => [row.id, row.username]),
+    );
+    for (const [i, p] of players.entries()) {
+      expect(ticketsTo(p.email)).toEqual([
+        {
+          requester: { name: names.get(p.userId), email: p.email },
+          language: 'en',
+          subject: `subject ${i}`,
+          message: `from ${i} ${p.email}`,
+          ticketId: expect.any(String),
+        },
+      ]);
+    }
+  });
+
+  it('hands the vendor html, control characters and line breaks untouched, trimming the ends only', async () => {
+    const p = await newPlayer();
+    const message = '<script>alert(1)</script>\r\nline two\u0000 \u202e';
+
+    expect(
+      (await p.client.post(TICKETS, { subject: 'Help', message: `\n\t ${message}  ` })).status,
+    ).toBe(200);
+
+    expect(ticketsTo(p.email)[0]?.message).toBe(message.trim());
+  });
+
+  it('counts the limit in characters: 5000 emoji pass intact, 5001 are refused', async () => {
+    const p = await newPlayer();
+    const atLimit = '\u{1F600}'.repeat(5000);
+
+    expect(
+      (await p.client.post(TICKETS, { subject: 'Help', message: '\u{1F600}'.repeat(5001) })).status,
+    ).toBe(400);
+    expect((await p.client.post(TICKETS, { subject: 'Help', message: atLimit })).status).toBe(200);
+
+    expect(ticketsTo(p.email).map((t) => t.message)).toEqual([atLimit]);
+  });
+
+  it('files nothing for a player an admin suspended, whose sessions are revoked', async () => {
+    const p = await newPlayer();
+    const suspended = await admin.patch(`/players/${p.playerId}`, { status: 'suspended' });
+    expect(suspended.status, await suspended.clone().text()).toBe(200);
+
+    const res = await p.client.post(TICKETS, { subject: 'Help', message: 'let me back in' });
+
+    expect(res.status).toBe(401);
+    expect(ticketsTo(p.email)).toHaveLength(0);
+  });
+
+  it('answers 503 not configured for a provider without createTicket while its session route still works', async () => {
+    const p = await newPlayer();
+    const provider = testApp.container.get(SUPPORT_CHAT_PROVIDER);
+    const createTicket = provider.createTicket;
+    delete provider.createTicket;
+    try {
+      const res = await p.client.post(TICKETS, { subject: 'Help', message: 'hello' });
+
+      expect(res.status).toBe(503);
+      expect(await body(res)).toMatchObject({ data: { reason: 'not_configured' } });
+      expect((await p.client.post(SESSION)).status).toBe(200);
+      expect(ticketsTo(p.email)).toHaveLength(0);
+      expect(await ticketAudits(p.playerId)).toHaveLength(0);
+    } finally {
+      if (createTicket) {
+        provider.createTicket = createTicket;
+      }
+    }
+  });
+
+  it.each([
+    ['a uuid', 'a0b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c4d'],
+    ['a numeric string', '12345'],
+    ['a project-key slug', 'PM-1234'],
+    ['a global id with colon and slashes', 'gid://helpdesk/Ticket/123'],
+    ['a namespaced id with colon and hash', 'acme:ticket#42_v2.1'],
+    ['a 200-character id', 'a'.repeat(200)],
+    ['a padded base64 id', 'dGlja2V0MTIz=='],
+    ['a base64 id with a plus', 'Zm9v+YmFy'],
+    ['an id with a tilde', 'T-2026~11'],
+  ])('records the vendor ticket id on the audit row when it is %s', async (_case, ticketId) => {
+    const p = await newPlayer();
+    answerNextSupportTicketRaw({ ticketId });
+
+    expect((await p.client.post(TICKETS, { subject: 'Help', message: 'hello' })).status).toBe(200);
+
+    expect(await ticketAudits(p.playerId)).toEqual([
+      expect.objectContaining({ after: { ticketId } }),
+    ]);
+  });
+
+  it.each<[string, (email: string, message: string, subject: string) => unknown]>([
+    ['nothing', () => undefined],
+    ['a numeric ticket id', () => ({ ticketId: 42 })],
+    ['an empty ticket id', () => ({ ticketId: '' })],
+    ['a 201-character ticket id', () => ({ ticketId: 'x'.repeat(201) })],
+    ['the requester email as the ticket id', (email) => ({ ticketId: email })],
+    ['the message as the ticket id', (_email, message) => ({ ticketId: message })],
+    ['the subject as the ticket id', (_email, _message, subject) => ({ ticketId: subject })],
+    ['a message id in angle brackets', () => ({ ticketId: '<123.abc@mail.example>' })],
+    [
+      'the percent-encoded email as the ticket id',
+      (email) => ({ ticketId: encodeURIComponent(email) }),
+    ],
+    [
+      'a ticket id holding the requester, the subject and the message',
+      (email, message, subject) => ({
+        ticketId: { requester: { email }, subject, description: message },
+      }),
+    ],
+    [
+      'a ticket id whose getter throws the email',
+      (email) =>
+        Object.defineProperty({}, 'ticketId', {
+          get() {
+            throw new Error(`vendor says ${email}`);
+          },
+        }),
+    ],
+  ])(
+    'answers 200 and audits a null ticket id when the vendor answers %s, leaking no email, subject or message',
+    async (_case, answer) => {
+      const p = await newPlayer();
+      const subject = `withdrawal ${randomUUID()}`;
+      const message = `stuck withdrawal ${randomUUID()}`;
+      answerNextSupportTicketRaw(answer(p.email, message, subject));
+
+      const res = await p.client.post(TICKETS, { subject, message });
+      const text = await res.text();
+
+      expect(res.status).toBe(200);
+      expect(JSON.parse(text)).toEqual({ success: true });
+      const audits = await ticketAudits(p.playerId);
+      expect(audits).toEqual([expect.objectContaining({ after: { ticketId: null } })]);
+      for (const seen of [text, JSON.stringify(audits)]) {
+        expect(seen).not.toContain(p.email);
+        expect(seen).not.toContain(subject);
+        expect(seen).not.toContain(message);
+      }
+    },
+  );
+
+  it('refuses a player whose email is not verified with 403 email_not_verified and files nothing', async () => {
+    const p = await newPlayer();
+    await testApp.container
+      .get(DRIZZLE)
+      .db.update(user)
+      .set({ emailVerified: false })
+      .where(eq(user.id, p.userId));
+
+    const res = await p.client.post(TICKETS, { subject: 'Help', message: 'hello' });
+
+    expect(res.status).toBe(403);
+    expect(await body(res)).toMatchObject({
+      code: 'FORBIDDEN',
+      data: { reason: 'email_not_verified' },
+    });
+    expect(ticketsTo(p.email)).toHaveLength(0);
+    expect(await ticketAudits(p.playerId)).toHaveLength(0);
   });
 });
 

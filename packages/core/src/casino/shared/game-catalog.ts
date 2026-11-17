@@ -195,6 +195,7 @@ export const providerSummaryColumns = {
   slug: gameProvider.slug,
   name: gameProvider.name,
   logoUrl: gameProvider.logoUrl,
+  customLogoUrl: gameProvider.customLogoUrl,
 };
 
 export const categorySummaryColumns = {
@@ -242,6 +243,7 @@ export function toGame(row: {
       slug: row.provider.slug,
       name: row.provider.name,
       logoUrl: row.provider.logoUrl,
+      customLogoUrl: row.provider.customLogoUrl,
     },
     aggregator: row.game.aggregator,
     categories: row.categories.map(toCategorySummary),

@@ -32,6 +32,11 @@ const REAL_MONEY_ONLY_PRODUCTS = ['sportsbook'] as const satisfies readonly Wage
 export const isRealMoneyOnlyProduct = (product: WagerProduct): boolean =>
   REAL_MONEY_ONLY_PRODUCTS.some((p) => p === product);
 
+const PositiveMoneyAmountSchema = MoneyAmountSchema.refine(
+  (amount) => /[1-9]/.test(amount),
+  'must be above zero',
+);
+
 /**
  * What a weight row targets, most specific first. A bet resolves against a profile in this
  * order and takes the first row that matches; `default` is the profile's catch-all.
@@ -132,8 +137,16 @@ export const BonusGrantTermsSchema = z.object({
   wageringMultiplier: MoneyAmountSchema,
   expiryDays: z.number().int().positive().max(365),
   weightProfileId: UuidSchema.optional(),
-  /** Largest single stake while the grant is active. Absent or null for no limit. */
+  /** Largest total stake of a round while the grant is active. Absent or null for no limit. */
   maxBet: MoneyAmountSchema.nullable().optional(),
+  /** Max bet as a fraction of the granted amount, resolved at grant time. Absent or null for no limit. */
+  maxBetRate: PositiveMoneyAmountSchema.nullable().optional(),
+  /** Lower bound on the rate-derived max bet, in the offer's currency. */
+  maxBetFloor: PositiveMoneyAmountSchema.nullable().optional(),
+  /** Upper bound on the rate-derived max bet, in the offer's currency. */
+  maxBetCeiling: PositiveMoneyAmountSchema.nullable().optional(),
+  /** Products the max bet never applies to. Absent or empty exempts none. */
+  maxBetExemptProducts: z.array(WagerProductSchema).optional(),
   /** Cap on conversion as a multiple of the granted amount. Absent or null for no cap. */
   maxWinMultiplier: MoneyAmountSchema.nullable().optional(),
   /** Products bonus funds cannot pay for. Absent or empty allows every product. */
@@ -248,6 +261,8 @@ export const PlayerGrantSchema = z.object({
   wageringRequired: MoneyAmountSchema,
   wageringProgress: MoneyAmountSchema,
   forfeitReason: BonusForfeitReasonSchema.nullable(),
+  /** Largest total stake of a round while this bonus is active, in its currency; null for no limit. */
+  maxBet: MoneyAmountSchema.nullable(),
   expiresAt: TimestampSchema,
   closedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema,
@@ -294,6 +309,11 @@ export const BonusBalanceSchema = z.object({
   wageringRequired: MoneyAmountSchema,
   wageringProgress: MoneyAmountSchema,
   activeGrants: z.number().int().nonnegative(),
+  /**
+   * Max bet of the grant a bet in this currency is attributed to now, so a client can show it and
+   * pass it to a game launch. Null when that grant has no limit or the player holds none.
+   */
+  maxBet: MoneyAmountSchema.nullable(),
 });
 
 export type BonusBalance = z.infer<typeof BonusBalanceSchema>;

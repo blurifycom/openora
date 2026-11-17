@@ -33,7 +33,11 @@ import {
   ExclusionKindSchema,
   NonEmptyReasonSchema,
 } from './compliance.js';
-import { LobbyLayoutSnapshotSchema } from './lobby.js';
+import {
+  DEFAULT_LOBBY_LAYOUT_KEY,
+  LobbyLayoutKeySchema,
+  LobbyLayoutSnapshotSchema,
+} from './lobby.js';
 import { CountryCodeSchema } from './igaming-config.js';
 import { TagKeySchema } from './tag.js';
 import { PermissionLevelSchema } from './iam.js';
@@ -62,6 +66,7 @@ import {
   BonusForfeitReasonSchema,
   BonusGrantSourceSchema,
   ContributionPercentSchema,
+  RANK_PERIODIC_BASES,
 } from './promo.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
@@ -116,6 +121,7 @@ const gameProviderSnapshotSchema = z.object({
   name: z.string(),
   aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
   logoUrl: z.string().nullable(),
+  customLogoUrl: z.string().nullable().default(null),
   metadata: z.unknown().nullable(),
   isActive: z.boolean(),
   // Older provider events predate auto-approve; replay them as off.
@@ -622,6 +628,7 @@ export const domainEventSchemas = {
 
   'lobby.layout.updated': authContextBase.extend({
     actorId: UuidSchema.optional(),
+    layoutKey: LobbyLayoutKeySchema.default(DEFAULT_LOBBY_LAYOUT_KEY),
     before: lobbyLayoutAuditSnapshotSchema,
     after: lobbyLayoutAuditSnapshotSchema,
   }),
@@ -888,6 +895,11 @@ export const domainEventSchemas = {
     dailyBonus: MoneyAmountSchema.nullable().optional(),
     weeklyBonus: MoneyAmountSchema.nullable().optional(),
     monthlyBonus: MoneyAmountSchema.nullable().optional(),
+    dailyBonusPercent: ContributionPercentSchema.nullable().optional(),
+    weeklyBonusPercent: ContributionPercentSchema.nullable().optional(),
+    monthlyBonusPercent: ContributionPercentSchema.nullable().optional(),
+    // Under `margin` the bonuses above are caps on a percent of the house edge, not flat amounts.
+    periodicBasis: z.enum(RANK_PERIODIC_BASES).optional(),
   }),
   // Standings frozen and prizes granted. Emitted once, after the settlement transaction.
   'promo.race.settled': z.object({

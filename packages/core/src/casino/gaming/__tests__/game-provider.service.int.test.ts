@@ -7,6 +7,7 @@ import { migrate } from '../migrate.js';
 import { game, gameProvider, gameProviderAggregatorMapping } from '../schema/index.js';
 import {
   GameProviderService,
+  GameProviderLogoHostNotAllowedError,
   GameProviderMappingInUseError,
   GameProviderNotFoundError,
   GameProviderSlugTakenError,
@@ -17,9 +18,9 @@ let db: TestDb;
 
 const ACTOR = { actorId: '00000000-0000-4000-8000-000000000001', ...NO_CLIENT_META };
 
-function makeService() {
+function makeService(allowedLogoHosts: readonly string[] = ['cdn.example']) {
   const events = makeEventBus();
-  return { svc: new GameProviderService(db.drizzle, events), events };
+  return { svc: new GameProviderService(db.drizzle, events, allowedLogoHosts), events };
 }
 
 async function seedProvider(
@@ -63,7 +64,15 @@ describe('GameProviderService (real PG)', () => {
     const firstPage = await svc.listActiveProviders({ page: 1, limit: 1 });
 
     expect(firstPage).toEqual({
-      items: [{ id: expect.any(String), slug: 'alpha-studio', name: 'Alpha', logoUrl: null }],
+      items: [
+        {
+          id: expect.any(String),
+          slug: 'alpha-studio',
+          name: 'Alpha',
+          logoUrl: null,
+          customLogoUrl: null,
+        },
+      ],
       total: 2,
       page: 1,
       limit: 1,
@@ -361,5 +370,92 @@ describe('GameProviderService (real PG)', () => {
     ).resolves.toMatchObject({
       aggregatorMappings: [{ aggregator: 'aggregation-a', vendorId: 'vendor-a2' }],
     });
+  });
+
+  it('sets, leaves untouched and clears customLogoUrl independently of logoUrl', async () => {
+    const created = await seedProvider({ logoUrl: 'https://vendor.test/logo.png' });
+    const { svc } = makeService();
+
+    const set = await svc.updateProvider({
+      id: created.id,
+      customLogoUrl: 'https://cdn.example/custom.png',
+      ...ACTOR,
+    });
+    expect(set).toMatchObject({
+      logoUrl: 'https://vendor.test/logo.png',
+      customLogoUrl: 'https://cdn.example/custom.png',
+    });
+
+    const renamed = await svc.updateProvider({
+      id: created.id,
+      name: 'Renamed',
+      logoUrl: 'https://vendor.test/new-logo.png',
+      ...ACTOR,
+    });
+    expect(renamed).toMatchObject({
+      logoUrl: 'https://vendor.test/new-logo.png',
+      customLogoUrl: 'https://cdn.example/custom.png',
+    });
+
+    const cleared = await svc.updateProvider({ id: created.id, customLogoUrl: null, ...ACTOR });
+    expect(cleared).toMatchObject({
+      logoUrl: 'https://vendor.test/new-logo.png',
+      customLogoUrl: null,
+    });
+  });
+
+  it('carries the old and new customLogoUrl on gaming.provider.updated', async () => {
+    const created = await seedProvider({ customLogoUrl: 'https://cdn.example/old.png' });
+    const { svc, events } = makeService();
+
+    await svc.updateProvider({
+      id: created.id,
+      customLogoUrl: 'https://assets.cdn.example/new.png',
+      ...ACTOR,
+    });
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'gaming.provider.updated',
+      expect.objectContaining({
+        before: expect.objectContaining({ customLogoUrl: 'https://cdn.example/old.png' }),
+        after: expect.objectContaining({ customLogoUrl: 'https://assets.cdn.example/new.png' }),
+      }),
+    );
+  });
+
+  it('rejects a custom logo on a host outside the allowlist, leaving the column unchanged and emitting nothing', async () => {
+    const created = await seedProvider();
+    const { svc, events } = makeService();
+
+    await expect(
+      svc.updateProvider({
+        id: created.id,
+        customLogoUrl: 'https://evil.example/tracker.png',
+        ...ACTOR,
+      }),
+    ).rejects.toBeInstanceOf(GameProviderLogoHostNotAllowedError);
+
+    expect(emittedTopics(events)).not.toContain('gaming.provider.updated');
+    const [row] = await db.drizzle.db
+      .select({ customLogoUrl: gameProvider.customLogoUrl })
+      .from(gameProvider)
+      .where(eq(gameProvider.id, created.id));
+    expect(row?.customLogoUrl).toBeNull();
+  });
+
+  it('rejects any custom logo when the allowlist is empty, but null still clears it', async () => {
+    const created = await seedProvider({ customLogoUrl: 'https://cdn.example/old.png' });
+    const { svc } = makeService([]);
+
+    await expect(
+      svc.updateProvider({
+        id: created.id,
+        customLogoUrl: 'https://cdn.example/new.png',
+        ...ACTOR,
+      }),
+    ).rejects.toBeInstanceOf(GameProviderLogoHostNotAllowedError);
+
+    const cleared = await svc.updateProvider({ id: created.id, customLogoUrl: null, ...ACTOR });
+    expect(cleared.customLogoUrl).toBeNull();
   });
 });
