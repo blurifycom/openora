@@ -29,6 +29,7 @@ import {
 } from '../service/grant-lifecycle.service.js';
 import { GrantNotFoundError, GrantReaderService } from '../service/grant-reader.service.js';
 import {
+  InvalidOfferTermsError,
   OfferClaimedError,
   OfferKeyTakenError,
   OfferNotEligibleError,
@@ -153,13 +154,21 @@ export function createBonusRouter({
 
         create: os.admin.offers.create.handler(async ({ input, context }) => {
           const { userId } = await adminGuard.assert(context, 'bonus', 'create');
-          return mapErrors({ CONFLICT: OfferKeyTakenError }, () => offers.create(userId, input));
+          return mapErrors(
+            { CONFLICT: OfferKeyTakenError, UNPROCESSABLE_CONTENT: InvalidOfferTermsError },
+            () => offers.create(userId, input),
+          );
         }),
 
         update: os.admin.offers.update.handler(async ({ input, context }) => {
           const { userId } = await adminGuard.assert(context, 'bonus', 'update');
-          return mapErrors({ NOT_FOUND: OfferNotFoundError, CONFLICT: OfferClaimedError }, () =>
-            offers.update(userId, input),
+          return mapErrors(
+            {
+              NOT_FOUND: OfferNotFoundError,
+              CONFLICT: OfferClaimedError,
+              UNPROCESSABLE_CONTENT: InvalidOfferTermsError,
+            },
+            () => offers.update(userId, input),
           );
         }),
       },

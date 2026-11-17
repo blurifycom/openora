@@ -289,6 +289,82 @@ describe('GrantService.grant', () => {
     );
   });
 
+  describe('max bet', () => {
+    const maxBetOf = async () => (await rows())[0]?.terms.maxBet;
+
+    it('resolves the rate against the granted amount and stores it on the grant', async () => {
+      await grant(args({ amount: '200', terms: { ...termsWith('5'), maxBetRate: '0.05' } }));
+
+      expect(Number(await maxBetOf())).toBe(10);
+    });
+
+    it('stores the floor when the rate-derived value falls under it', async () => {
+      await grant(
+        args({ amount: '100', terms: { ...termsWith('5'), maxBetRate: '0.01', maxBetFloor: '5' } }),
+      );
+
+      expect(Number(await maxBetOf())).toBe(5);
+    });
+
+    it('stores the ceiling when the rate-derived value rises over it', async () => {
+      await grant(
+        args({
+          amount: '10000',
+          terms: { ...termsWith('5'), maxBetRate: '0.1', maxBetCeiling: '250' },
+        }),
+      );
+
+      expect(Number(await maxBetOf())).toBe(250);
+    });
+
+    it('stores no limit with no rate, and keeps an explicit max bet as given', async () => {
+      await grant(args({ terms: { ...termsWith('5'), maxBetFloor: '5', maxBetCeiling: '50' } }));
+      await grant(args({ terms: { ...termsWith('5'), maxBet: '7' } }));
+
+      const limits = (await rows()).map((row) => row.terms.maxBet ?? null);
+      expect(limits).toHaveLength(2);
+      expect(limits).toEqual(expect.arrayContaining([null, '7']));
+    });
+
+    it('does not move the stored value when the grant is replayed', async () => {
+      const first = args({ amount: '200', terms: { ...termsWith('5'), maxBetRate: '0.05' } });
+
+      await grant(first);
+      await grant(first);
+
+      expect(await rows()).toHaveLength(1);
+      expect(Number(await maxBetOf())).toBe(10);
+    });
+
+    it('records the resolved value on the audit row', async () => {
+      await grant(args({ amount: '200', terms: { ...termsWith('5'), maxBetRate: '0.05' } }));
+
+      const { after } = audit.recordInTransaction.mock.calls.at(-1)?.[1] ?? {};
+      expect(Number((after as { maxBet: string }).maxBet)).toBe(10);
+    });
+
+    it('rejects a rate beside an explicit max bet, and a floor above the ceiling', async () => {
+      await expect(
+        grant(args({ terms: { ...termsWith('5'), maxBetRate: '0.1', maxBet: '5' } })),
+      ).rejects.toThrow();
+      await expect(
+        grant(
+          args({
+            terms: { ...termsWith('5'), maxBetRate: '0.1', maxBetFloor: '10', maxBetCeiling: '5' },
+          }),
+        ),
+      ).rejects.toThrow();
+      expect(await rows()).toHaveLength(0);
+    });
+
+    it('rejects a rate of zero', async () => {
+      await expect(
+        grant(args({ terms: { ...termsWith('5'), maxBetRate: '0' } })),
+      ).rejects.toThrow();
+      expect(await rows()).toHaveLength(0);
+    });
+  });
+
   it('rejects a zero or negative amount before it reaches the ledger', async () => {
     await expect(grant(args({ amount: '0' }))).rejects.toThrow();
     await expect(grant(args({ amount: '-1' }))).rejects.toThrow();

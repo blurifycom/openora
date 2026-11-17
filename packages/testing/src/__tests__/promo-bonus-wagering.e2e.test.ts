@@ -510,6 +510,30 @@ describe('the terms a grant was created under', () => {
     expect((await grantRow(grantId)).bonusBalance).toBe('95.000000000000000000');
   });
 
+  it('refuses a second debit of one round that takes its total over the maximum bet', async () => {
+    const { userId } = await player('0');
+    const grantId = await grantBonus(userId, '100', '10', 'USD', { maxBet: '5' });
+    const round = randomUUID();
+
+    expect((await bet(userId, '3', round)).ok).toBe(true);
+    await expect(
+      debit({
+        userId,
+        amount: '2.01',
+        type: 'bet',
+        currency: 'USD',
+        context: CASINO,
+        providerRef: {
+          providerName: 'aggregator',
+          providerRefId: `bet-second-${round}`,
+          externalRoundId: round,
+        },
+      }),
+    ).rejects.toThrow(/maximum bet/i);
+
+    expect((await grantRow(grantId)).bonusBalance).toBe('97.000000000000000000');
+  });
+
   it('converts no more than the maximum win the terms allow, and kills the surplus', async () => {
     const { userId } = await player('0');
     // 10 granted at 10x needs 100 wagered. The first stake wins 500 back onto the grant, so by

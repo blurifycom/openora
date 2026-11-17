@@ -64,14 +64,15 @@ export type BonusWagerOutcome =
   /** Bonus funds could not cover `fromBonus`. The wallet turns this into its own insufficient-funds outcome. */
   | { ok: false; reason: 'insufficient_bonus'; bonusAvailable: string }
   /**
-   * The stake is larger than the active grant's `maxBet`. A refusal, not a silent pass: the limit
-   * exists so a player cannot turn a wagering requirement into one high-variance spin, and a bet
-   * that quietly ignored it would do exactly that.
+   * The round's total stake, this bet included, is larger than the active grant's `maxBet`. A
+   * refusal, not a silent pass: the limit exists so a player cannot turn a wagering requirement
+   * into one high-variance spin, and a bet that quietly ignored it would do exactly that.
    */
-  | { ok: false; reason: 'max_bet_exceeded'; maxBet: string };
+  | { ok: false; reason: 'max_bet_exceeded'; maxBet: string; roundStake: string };
 
 /**
- * A stake refused because it is over the active grant's `maxBet`. Shared here rather than
+ * A stake refused because the round's total is over the active grant's `maxBet`. `roundStake`
+ * equals `stake` for a round's first debit. Shared here rather than
  * module-local, the same as `RgLimitExceededError` beside `RG_LIMITS`: the wallet throws it from
  * inside `debit`, but whatever router sits above the caller (a game round) is
  * the one that has to map it to a response, and it can only do that against a class it can import.
@@ -79,12 +80,16 @@ export type BonusWagerOutcome =
 export class MaxBetExceededError extends Error {
   readonly stake: string;
   readonly maxBet: string;
+  readonly roundStake: string;
 
-  constructor(stake: string, maxBet: string) {
-    super(`stake ${stake} is over the ${maxBet} maximum bet the active bonus was granted under`);
+  constructor(stake: string, maxBet: string, roundStake: string = stake) {
+    super(
+      `stake ${roundStake} is over the ${maxBet} maximum bet the active bonus was granted under`,
+    );
     this.name = 'MaxBetExceededError';
     this.stake = stake;
     this.maxBet = maxBet;
+    this.roundStake = roundStake;
   }
 }
 

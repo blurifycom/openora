@@ -26,6 +26,7 @@ import {
   promoWeightProfile,
   type GrantTermsSnapshot,
 } from '../schema/index.js';
+import { maxBetTermsIssues, resolveMaxBet } from '../shared/max-bet.js';
 
 const WagerWeightProfileNotFoundError = makeNotFoundError('WagerWeightProfile');
 const GrantConflictError = makeConflictError(
@@ -87,6 +88,21 @@ const grantArgsSchema = z
           .nullable()
           .optional(),
         excludedProducts: z.array(WagerProductSchema).optional(),
+        maxBetRate: MoneyAmountSchema.refine(isPositiveMoney, 'must be greater than zero')
+          .nullable()
+          .optional(),
+        maxBetFloor: MoneyAmountSchema.refine(isPositiveMoney, 'must be greater than zero')
+          .nullable()
+          .optional(),
+        maxBetCeiling: MoneyAmountSchema.refine(isPositiveMoney, 'must be greater than zero')
+          .nullable()
+          .optional(),
+        maxBetExemptProducts: z.array(WagerProductSchema).optional(),
+      })
+      .superRefine((terms, ctx) => {
+        for (const message of maxBetTermsIssues(terms)) {
+          ctx.addIssue({ code: 'custom', message });
+        }
       })
       .default(DEFAULT_GRANT_TERMS),
   })
@@ -118,7 +134,7 @@ export class GrantService implements BonusGrantCommands {
     if (replayed) {
       return replayed;
     }
-    const terms = await this.snapshotTerms(tx, args.terms);
+    const terms = await this.snapshotTerms(tx, args.terms, args.amount);
 
     // The unique index is the idempotency guard. A read-then-write check would let two
     // concurrent replays of the same deposit both pass and grant the bonus twice.
@@ -176,6 +192,7 @@ export class GrantService implements BonusGrantCommands {
         wageringMultiplier: args.terms.wageringMultiplier,
         expiryDays: args.terms.expiryDays,
         weightProfileId: terms.weightProfileId,
+        maxBet: terms.maxBet ?? null,
       },
     });
 
@@ -225,6 +242,7 @@ export class GrantService implements BonusGrantCommands {
   private async snapshotTerms(
     tx: DrizzleTx,
     terms: NonNullable<BonusGrantArgs['terms']>,
+    grantedAmount: string,
   ): Promise<GrantTermsSnapshot> {
     const rows = await tx
       .select({
@@ -256,6 +274,12 @@ export class GrantService implements BonusGrantCommands {
     if (!hasUsableWeight) {
       throw new UnusableWeightProfileError();
     }
-    return { ...terms, weightProfileId: profileId, weights };
+    const maxBet = resolveMaxBet(grantedAmount, terms);
+    return {
+      ...terms,
+      weightProfileId: profileId,
+      weights,
+      ...(maxBet === null ? {} : { maxBet }),
+    };
   }
 }
