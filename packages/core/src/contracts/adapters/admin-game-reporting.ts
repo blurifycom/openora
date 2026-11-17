@@ -1,5 +1,5 @@
 import { createToken, type Token } from './token.js';
-import type { GameType } from '../schemas/game.js';
+import type { GameSortDirection, GameType } from '../schemas/game.js';
 import type { Granularity } from '../schemas/reporting.js';
 
 /**
@@ -102,7 +102,7 @@ export type GameCurrencyRankingFilter = {
   currency?: string;
   gameType?: GameType;
   sortBy: GameRankingSortBy;
-  sortDir: 'asc' | 'desc';
+  sortDir: GameSortDirection;
   /** Games listed per currency. */
   limit: number;
   /** Currencies listed, alphabetical; `truncated` says more had rounds. */
