@@ -8,6 +8,7 @@ description: >-
   test cases a tester can run. Writes nothing - ship posts what it returns. Use
   as step 1 of ship, or on "plan {{trackerKey}}-XXX".
 claudecode:
+  disallowedTools: [Artifact, Workflow, ScheduleWakeup, ReportFindings]
   model: opus
 ---
 

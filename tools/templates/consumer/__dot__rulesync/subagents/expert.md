@@ -9,6 +9,7 @@ description: >-
   feeds). Advisory only - no code. Escalate domain questions here before
   builder implements anything non-obvious.
 claudecode:
+  disallowedTools: [Artifact, Workflow, ScheduleWakeup, ReportFindings]
   model: opus
 ---
 

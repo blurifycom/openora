@@ -7,6 +7,7 @@ description: >-
   consumer repo: responsible gambling, KYC and age gates, geo rules, audit
   trail, ledger integrity, bonus and wagering. Findings only, no edits.
 claudecode:
+  disallowedTools: [Artifact, Workflow, ScheduleWakeup, ReportFindings]
   model: opus
 ---
 
