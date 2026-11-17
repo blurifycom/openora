@@ -305,10 +305,13 @@ describe('MCP transport, happy path through the SDK client', () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       'financial_summary',
       'ggr_summary',
+      'kyc_queue',
       'kyc_status',
       'payments_flow_daily',
       'player_summary',
       'players_deposit_compare',
+      'rg_flags_queue',
+      'rg_player_state',
       'wallet_activity',
       'withdrawals_queue',
     ]);
