@@ -16,6 +16,7 @@ import {
   checkDayBounds,
   defineMcpTool,
   tagKeys,
+  SortOrderSchema,
 } from '@openora/core/contracts';
 
 export const PlayerSummaryToolOutputSchema = z.object({
@@ -105,7 +106,7 @@ export const PlayersFindInputSchema = z
     lastSeenTo: z.iso.date().optional(),
     minTotalDeposits: MoneyThresholdSchema.optional(),
     sortBy: PlayersFindSortBySchema.default('registeredAt'),
-    sortDir: z.enum(['desc', 'asc']).default('desc'),
+    sortDir: SortOrderSchema.default('desc'),
     limit: FindToolLimitSchema,
   })
   .superRefine((input, ctx) => {
