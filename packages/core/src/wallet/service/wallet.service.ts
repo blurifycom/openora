@@ -32,6 +32,7 @@ import {
   type PaymentWebhookEvent,
   type AdminUserDirectory,
   type PlatformConfig,
+  resolvePromoConfig,
   type KycStatus,
   type RateLimiterAdapter,
   type RateLimitKey,
@@ -69,6 +70,7 @@ import {
   type BonusGrantLedgerReader,
   type BonusDepositCommands,
   type DomainEventPayload,
+  type BonusFundLockCommands,
   type BonusLifecycleCommands,
   wagerProductOfProviderName,
   wagerProductProviderPrefix,
@@ -554,6 +556,19 @@ type DepositAsset = {
   minDeposit: string;
   depositEnabled: boolean;
 };
+
+/** `block` mode with no module binding the lock would let every withdrawal through, so it fails the boot. */
+export function requireBonusFundLocks(
+  platformConfig: PlatformConfig | undefined,
+  locks: BonusFundLockCommands | undefined,
+): BonusFundLockCommands | undefined {
+  if (!locks && resolvePromoConfig(platformConfig).bonus.withdrawalWhileActive === 'block') {
+    throw new Error(
+      "promo.bonus.withdrawalWhileActive is 'block' but nothing binds BONUS_FUND_LOCKS: load the bonus module beside the wallet or set the mode to 'forfeit'",
+    );
+  }
+  return locks;
+}
 
 export function assertDepositAllowed(
   assets: readonly DepositAsset[],
@@ -1157,7 +1172,9 @@ export type WalletServiceDeps = {
   playEligibility?: PlayEligibilityPort;
   // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
   grantLedger?: BonusGrantLedgerReader;
-  // Optional: bound by the bonus module. Absent = there is no bonus a withdrawal could forfeit.
+  // Optional: bound by the bonus module. Absent = no bonus locks funds or is forfeited by a withdrawal.
+  bonusFundLocks?: BonusFundLockCommands;
+  // Optional: forfeits on a withdrawal only when no module binds `bonusFundLocks` (a custom bonus engine).
   bonusLifecycle?: BonusLifecycleCommands;
   depositBonus?: BonusDepositCommands;
 };
@@ -1191,6 +1208,7 @@ export class WalletService {
   private readonly playEligibility?: PlayEligibilityPort;
 
   private readonly grantLedger?: BonusGrantLedgerReader;
+  private readonly bonusFundLocks?: BonusFundLockCommands;
   private readonly bonusLifecycle?: BonusLifecycleCommands;
   private readonly depositBonus?: BonusDepositCommands;
 
@@ -1214,6 +1232,7 @@ export class WalletService {
     depositAdmission,
     playEligibility,
     grantLedger,
+    bonusFundLocks,
     bonusLifecycle,
     depositBonus,
   }: WalletServiceDeps) {
@@ -1236,6 +1255,7 @@ export class WalletService {
     this.depositAdmission = depositAdmission;
     this.playEligibility = playEligibility;
     this.grantLedger = grantLedger;
+    this.bonusFundLocks = bonusFundLocks;
     this.bonusLifecycle = bonusLifecycle;
     this.depositBonus = depositBonus;
   }
@@ -2364,8 +2384,6 @@ export class WalletService {
         return { transactionId: row.id, status: row.status };
       }
 
-      // No bonus-lock subtraction: bonus funds live on their grant and never enter
-      // `wallet_balance`, so everything this row holds is the player's to withdraw.
       const [debited] = await debitWalletBalance(txn, current.id, currency, amount);
       if (!debited) {
         throw new InsufficientBalanceError(
@@ -2374,17 +2392,28 @@ export class WalletService {
         );
       }
       await stampBalanceAfter(txn, row.id, debited.amount);
-      // A player may not cash out while a bonus is live, and the rule holds in every currency.
-      // On this transaction, after the balance lock, so a bet cannot convert the bonus between
-      // the request and the forfeit, and the lock order matches a bet's. A rejected withdrawal
-      // does not bring the bonus back.
-      await this.bonusLifecycle?.forfeitHeld(txn, {
-        userId,
-        reason: 'withdrawal_while_active',
+      // After the balance lock, so a bet cannot move the bonus between the debit and this check,
+      // and the lock order matches a bet's. Either refuses money a bonus locks, rolling the
+      // debit back, or forfeits every live bonus; a rejected withdrawal does not bring it back.
+      const forfeitContext = {
         actor: { id: userId, isAdmin: false },
         note: `withdrawal ${row.id}`,
         meta: { ip: ip ?? null, userAgent: userAgent ?? null },
-      });
+      };
+      await (this.bonusFundLocks
+        ? this.bonusFundLocks.onOutflow(txn, {
+            userId,
+            currency: balanceKey(currency),
+            amount,
+            balanceAfter: debited.amount,
+            outflow: 'withdrawal',
+            ...forfeitContext,
+          })
+        : this.bonusLifecycle?.forfeitHeld(txn, {
+            userId,
+            reason: 'withdrawal_while_active',
+            ...forfeitContext,
+          }));
 
       // Screening runs in the tag module off this event, never in this transaction; only its
       // verdict lets the withdrawal be auto-approved (autoApproveScreenedWithdrawal, ADR-0059).

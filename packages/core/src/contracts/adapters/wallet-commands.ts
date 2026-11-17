@@ -333,12 +333,25 @@ export type WalletWithdrawalHoldArgs = {
   reason: string;
 };
 
+/** Debits `debit` never checks against bonus-locked funds: play, and the operator's own debits. Any other debit over the movable funds is refused with `BonusFundsLockedError`. */
+export const WALLET_LOCK_EXEMPT_DEBIT_TYPES = ['bet', 'loss', 'manual_debit'] as const;
+
+export type MovableFundsArgs = { userId: string; currency: string };
+export type MovableFunds = { real: string; locked: string; free: string };
+
 export type WalletCommands = {
   /**
    * A replay that names no currency answers in the currency the first call moved.
    * @throws WalletReplayMismatchError when `providerRef` is already on a different request's move.
+   * @throws BonusFundsLockedError when a type outside `WALLET_LOCK_EXEMPT_DEBIT_TYPES` dips into bonus-locked money.
    */
   debit(tx: unknown, args: WalletDebitArgs): Promise<WalletDebitOutcome>;
+  /**
+   * The player's real balance in `currency` and how much of it a live bonus locks. Takes the
+   * wallet row and balance row locks a debit takes, so a debit later in `tx` sees the same figure;
+   * a transfer check, not a display read. Optional so a custom binding written before it compiles.
+   */
+  movableFunds?(tx: unknown, args: MovableFundsArgs): Promise<MovableFunds>;
   /** @throws WalletReplayMismatchError when `providerRef` is already on a different request's move. */
   credit(tx: unknown, args: WalletCreditArgs): Promise<WalletCreditOutcome>;
   /**
