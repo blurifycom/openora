@@ -59,6 +59,10 @@ docs/agents/*.local.md
 # Git worktrees for paired consumer changes (`pnpm oss:worktree` in a consumer repo)
 /.worktrees/
 
+# Spans the integration tier records for the backend trace report (packages/testing/scripts/trace-report.ts)
+trace-results/
+trace-baseline/
+
 # Stryker mutation testing
 reports/
 .stryker-tmp/

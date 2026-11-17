@@ -24,6 +24,7 @@ import {
 import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
 import { SseClientAuthorizer } from '@openora/core/testing';
 import { acquireTestRedisDatabase } from './redis.js';
+import { traceFetch } from './trace-recorder.js';
 import type { Hono } from 'hono';
 
 const REDIS_READY_TIMEOUT_MS = 10_000;
@@ -138,6 +139,7 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
     throw err;
   }
 
+  traceFetch(created.app);
   return {
     app: created.app,
     container: created.container,
