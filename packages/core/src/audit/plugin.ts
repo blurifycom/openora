@@ -1,6 +1,6 @@
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { AUDIT_WRITER, IDENTITY_READER } from '@openora/core/contracts';
+import { AUDIT_WRITER, DEFAULT_LOBBY_LAYOUT_KEY, IDENTITY_READER } from '@openora/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
 import { AUDIT_COVERAGE_GAPS } from './contract/coverage.js';
@@ -808,7 +808,7 @@ export async function mapEventToRecord(
       actorType: typeof p['actorId'] === 'string' ? 'admin' : 'system',
       actorId: str(p['actorId']),
       resourceType: 'lobby-layout',
-      resourceId: null,
+      resourceId: str(p['layoutKey']) ?? DEFAULT_LOBBY_LAYOUT_KEY,
       before: isRecord(p['before']) ? p['before'] : null,
       after: isRecord(p['after']) ? p['after'] : null,
     };

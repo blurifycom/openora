@@ -64,6 +64,7 @@ export const lobbySection = pgTable(
   'lobby_section',
   {
     id: uuid().primaryKey().defaultRandom(),
+    layoutKey: text().notNull().default('global'),
     type: text().notNull(),
     config: jsonb().$type<LobbySectionConfig>().notNull(),
     sortOrder: integer().notNull().default(0),
@@ -73,7 +74,7 @@ export const lobbySection = pgTable(
       .$onUpdateFn(() => new Date()),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('lobby_section_sort_order_idx').on(t.sortOrder)],
+  (t) => [index('lobby_section_layout_key_sort_order_idx').on(t.layoutKey, t.sortOrder)],
 );
 
 export type LobbySection = typeof lobbySection.$inferSelect;

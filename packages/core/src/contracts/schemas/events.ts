@@ -33,7 +33,11 @@ import {
   ExclusionKindSchema,
   NonEmptyReasonSchema,
 } from './compliance.js';
-import { LobbyLayoutSnapshotSchema } from './lobby.js';
+import {
+  DEFAULT_LOBBY_LAYOUT_KEY,
+  LobbyLayoutKeySchema,
+  LobbyLayoutSnapshotSchema,
+} from './lobby.js';
 import { CountryCodeSchema } from './igaming-config.js';
 import { TagKeySchema } from './tag.js';
 import { PermissionLevelSchema } from './iam.js';
@@ -624,6 +628,7 @@ export const domainEventSchemas = {
 
   'lobby.layout.updated': authContextBase.extend({
     actorId: UuidSchema.optional(),
+    layoutKey: LobbyLayoutKeySchema.default(DEFAULT_LOBBY_LAYOUT_KEY),
     before: lobbyLayoutAuditSnapshotSchema,
     after: lobbyLayoutAuditSnapshotSchema,
   }),

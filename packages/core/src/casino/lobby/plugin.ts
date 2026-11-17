@@ -1,6 +1,11 @@
 import { DRIZZLE, EVENT_BUS, ADMIN_GUARD } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { CACHE, LOBBY_SECTION_CATALOG, createLobbySectionCatalog } from '@openora/core/contracts';
+import {
+  CACHE,
+  LOBBY_SECTION_CATALOG,
+  PLATFORM_CONFIG,
+  createLobbySectionCatalog,
+} from '@openora/core/contracts';
 import { LobbyService } from './service/lobby.service.js';
 import { createLobbyRouter } from './router/index.js';
 
@@ -17,6 +22,7 @@ export default {
           c.get(CACHE),
         ),
         adminGuard: c.get(ADMIN_GUARD),
+        keyedLayouts: c.has(PLATFORM_CONFIG) && c.get(PLATFORM_CONFIG).lobby.keyedLayouts,
       }),
     );
   },
