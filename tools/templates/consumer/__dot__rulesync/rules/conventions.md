@@ -99,7 +99,7 @@ above) if this repo has no UI apps.
 - **A feature or fix PR ships its own tests** - no separate test PR. It ships the change, the
   manual verification pass that proves it (drive the running stack by hand, attach a short video
   per acceptance criterion, or the request/response trace for an API-only change, to the PR
-  description), and the tests that pass exercised, listed in the description's "Tests" list.
+  description), and the tests that pass exercised. The diff shows them; the description does not list them.
   Which tier each one belongs to, and how to run the manual pass: `docs/standards/testing.md`.
 - **Green before review:** `/check` (typecheck + lint + unit tests) while iterating, `pnpm verify`
   on the committed tree before the PR (the `guard-mr` hook refuses to open one until it passed on
@@ -107,7 +107,7 @@ above) if this repo has no UI apps.
   title too - a squash merge turns it into the commit), one PR per concern. Never push without
   explicit confirmation. The description carries what / why / acceptance criteria / bare ticket
   key, the manual-verification evidence (a short video per acceptance criterion, before and after on
-  a fix) and the "Tests" list - but no CI checklist the pipeline already shows, no URLs,
+  a fix) - but no test list or CI checklist the diff and pipeline already show, no URLs,
   hostnames, secrets, or PII. Detail: `docs/standards/git-delivery.md`.
 - **Fix the import, never work around a lint or boundary violation.** Agent rules are generated
   from `.rulesync/` via `pnpm gen:agents` - never hand-edit a generated file. Detail:

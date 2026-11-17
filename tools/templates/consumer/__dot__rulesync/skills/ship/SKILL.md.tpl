@@ -121,7 +121,7 @@ The code is final now, so the videos are recorded once, here, never in an earlie
 
 ### 5. Open the MR
 
-`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table, the 4b videos and its Tests list. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
+`--ask`: report the SHA and stop for "yes push". Then run **create-pr** with the tester's AC table and the 4b videos. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
 
 ### 6. Red CI and review comments
 
