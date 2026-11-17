@@ -8,7 +8,6 @@ on:
   # temporary branch too, or the group never merges.
   merge_group:
   workflow_call:
-  # audit-fix.yml opens its PR with the workflow token, which starts no `pull_request` run.
   workflow_dispatch:
 
 # `edited` gets its own group so a retitle never cancels a running verify. Merge-group refs
