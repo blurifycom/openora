@@ -53,6 +53,7 @@ describe('FinancialAnalyticsService.summary', () => {
       { currency: 'USD', total: '30.00' },
       { currency: 'EUR', total: '0' },
     ]);
+    expect(result.sportsbookPromotionCost).toEqual([]);
   });
 
   it('serves a repeat query from cache without touching the database', async () => {
@@ -62,6 +63,7 @@ describe('FinancialAnalyticsService.summary', () => {
       netDeposits: [],
       ggr: [],
       bonusCost: [],
+      sportsbookPromotionCost: [],
       ngr: [],
     };
     const cache = fakeCache(cached);

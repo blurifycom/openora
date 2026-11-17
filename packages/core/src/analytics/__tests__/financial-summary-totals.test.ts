@@ -25,6 +25,7 @@ describe('totalsPerCurrency', () => {
         { currency: 'EUR', total: '0' },
         { currency: 'BTC', total: '0.5' },
       ],
+      sportsbookPromotionCost: [],
       ngr: [
         { currency: 'USDT', total: '7' },
         { currency: 'EUR', total: '0' },
@@ -71,6 +72,7 @@ describe('totalsPerCurrency', () => {
         netDeposits: [],
         ggr: [],
         bonusCost: [],
+        sportsbookPromotionCost: [],
         ngr: [],
       }),
     ).toEqual([]);
