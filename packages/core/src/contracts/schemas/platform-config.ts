@@ -434,6 +434,18 @@ export const IdentityConfigSchema = z
   .strict();
 export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
 
+export const LobbyConfigSchema = z
+  .object({
+    /**
+     * Lets admins save lobby layouts other than `global`. Turn it on only once every server
+     * runs a release that scopes lobby sections by layout key: an older server deletes a
+     * keyed layout's sections when it saves `global`.
+     */
+    keyedLayouts: z.boolean().default(false),
+  })
+  .strict();
+export type LobbyConfig = z.infer<typeof LobbyConfigSchema>;
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -499,6 +511,8 @@ export const PlatformConfigSchema = z
       allowedAvatarHosts: [],
       allowedAvatarUrlPrefixes: [],
     }),
+    /** Lobby layout knobs. Absent = only the `global` layout can be saved. */
+    lobby: LobbyConfigSchema.prefault({}),
     /** How often the rank payout jobs tick. Absent = the built-in defaults. */
     promo: PromoConfigSchema.prefault({}),
     /** Agent run limits, retention and the model catalog. Absent = the schema defaults, no models. */

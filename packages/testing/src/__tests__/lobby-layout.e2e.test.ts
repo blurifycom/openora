@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { loadExtensions } from '@openora/core/server';
+import { EVENT_BUS, loadExtensions } from '@openora/core/server';
 import {
   asAdmin,
   registerAndMaterializePlayer,
@@ -34,6 +34,12 @@ beforeAll(async () => {
       {
         id: 'test-lobby-sections',
         path: fileURLToPath(new URL('../test-lobby-sections-plugin.ts', import.meta.url)),
+      },
+      {
+        id: 'testing-lobby-keyed-layouts-config',
+        path: fileURLToPath(
+          new URL('./fixtures/test-lobby-keyed-layouts-config-plugin.ts', import.meta.url),
+        ),
       },
     ],
   }));
@@ -118,6 +124,20 @@ describe('lobby layout aggregate', () => {
         before: expect.objectContaining({ version: expect.any(Number) }),
         after: expect.objectContaining({ version: expect.any(Number) }),
       });
+    });
+  });
+
+  it('files an update event without a layout key under the global layout', async () => {
+    const version = 1_000_000 + Math.floor(Math.random() * 1_000_000);
+    app.container.get(EVENT_BUS).emitRaw('lobby.layout.updated', {
+      before: { version, sections: [] },
+      after: { version: version + 1, sections: [] },
+    });
+
+    await vi.waitFor(async () => {
+      const auditRes = await admin.get('/audit/logs?action=lobby.layout.updated&resourceId=global');
+      const entries = (await json(auditRes))['items'] as Array<{ after: { version: number } }>;
+      expect(entries.some((entry) => entry.after.version === version + 1)).toBe(true);
     });
   });
 
