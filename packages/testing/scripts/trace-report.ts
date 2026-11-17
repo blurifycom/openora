@@ -7,6 +7,7 @@
 // Without a baseline it lists the procedures with the most queries per request.
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { z } from 'zod';
 import type { SpanRecord } from '../src/trace-recorder.ts';
 
 const BAR_WIDTH = 40;
@@ -42,6 +43,30 @@ type Change = {
   newQueries: boolean;
 };
 
+const spanRecord: z.ZodType<SpanRecord> = z.object({
+  test: z.string(),
+  file: z.string(),
+  traceId: z.string(),
+  spanId: z.string(),
+  parentId: z.string().nullable(),
+  name: z.string(),
+  startMs: z.number(),
+  durationMs: z.number(),
+  sql: z.string().exactOptional(),
+  pgClient: z.number().exactOptional(),
+  httpStatus: z.number().exactOptional(),
+});
+
+const parseSpan = (line: string): SpanRecord[] => {
+  try {
+    const parsed = spanRecord.safeParse(JSON.parse(line));
+    return parsed.success ? [parsed.data] : [];
+  } catch {
+    return [];
+  }
+};
+
+/** Lines of another shape (a baseline recorded by an older recorder) are skipped. */
 function readSpans(dir: string): SpanRecord[] {
   if (!existsSync(dir)) {
     return [];
@@ -50,7 +75,7 @@ function readSpans(dir: string): SpanRecord[] {
     .filter((file) => file.endsWith('.jsonl'))
     .flatMap((file) => readFileSync(join(dir, file), 'utf8').split('\n'))
     .filter(Boolean)
-    .map((line): SpanRecord => JSON.parse(line));
+    .flatMap(parseSpan);
 }
 
 const HTTP_ROOT = /^[A-Z]+ \//;
@@ -137,6 +162,20 @@ function signatureSets(requests: Request[]): Pick<ProcedureStats, 'signatures' |
   };
 }
 
+/** Which branch a racing test lands on varies by run, so a statement is new only if no status ran it. */
+function withSeenAcrossStatuses(
+  baseline: Map<string, ProcedureStats>,
+): Map<string, ProcedureStats> {
+  const byName = Map.groupBy(baseline.values(), (stat) => stat.procedure.replace(/ \d{3}$/, ''));
+  for (const group of byName.values()) {
+    const seen = new Set(group.flatMap((stat) => [...stat.seen]));
+    for (const stat of group) {
+      stat.seen = seen;
+    }
+  }
+  return baseline;
+}
+
 function changes(
   current: Map<string, ProcedureStats>,
   baseline: Map<string, ProcedureStats>,
@@ -201,27 +240,26 @@ function rows(request: Request, baselineSignatures: Set<string> | undefined): Ro
   const pgSpans = request.spans
     .filter((span) => span.sql)
     .toSorted((a, b) => a.startMs - b.startMs);
-  let tx: { client: number | undefined; row: Row } | undefined;
+  const openTx = new Map<number | undefined, Row>();
   for (const span of pgSpans) {
     const sql = span.sql ?? '';
     if (/^begin\b/i.test(sql.trim())) {
-      tx = {
-        client: span.pgClient,
-        row: {
-          label: 'pg transaction',
-          startMs: span.startMs,
-          durationMs: 0,
-          depth: 1,
-          isNew: false,
-        },
+      const row = {
+        label: 'pg transaction',
+        startMs: span.startMs,
+        durationMs: 0,
+        depth: 1,
+        isNew: false,
       };
-      out.push(tx.row);
+      openTx.set(span.pgClient, row);
+      out.push(row);
       continue;
     }
-    const inTx = tx !== undefined && tx.client === span.pgClient;
-    if (tx && inTx && /^(commit|rollback)\b/i.test(sql.trim())) {
-      tx.row.durationMs = span.startMs + span.durationMs - tx.row.startMs;
-      tx = undefined;
+    const tx = openTx.get(span.pgClient);
+    const inTx = tx !== undefined;
+    if (tx && /^(commit|rollback)\b/i.test(sql.trim())) {
+      tx.durationMs = span.startMs + span.durationMs - tx.startMs;
+      openTx.delete(span.pgClient);
       continue;
     }
     if (TX_CONTROL.test(sql.trim())) {
@@ -281,9 +319,15 @@ const TABLE_HEADER = [
 ];
 
 function report(currentDir: string, baselineDir: string | undefined): string {
-  const current = stats(toRequests(readSpans(currentDir)));
+  const currentSpans = readSpans(currentDir);
+  const current = stats(toRequests(currentSpans));
   if (current.size === 0) {
     return '### ⏱ Backend trace\n\nNo procedure spans recorded.\n';
+  }
+  // oRPC reads its tracer from a global keyed by the @orpc/shared version, so a core oRPC
+  // bump that leaves this package's pin behind silently drops every procedure span.
+  if (!currentSpans.some((span) => span.name.startsWith('orpc.'))) {
+    return "### ⏱ Backend trace\n\n⚠ No oRPC spans: align `@orpc/shared` in packages/testing with core's `@orpc/server`.\n";
   }
   const baselineSpans = baselineDir ? readSpans(baselineDir) : [];
   if (baselineSpans.length === 0) {
@@ -303,7 +347,7 @@ function report(currentDir: string, baselineDir: string | undefined): string {
       '',
     ].join('\n');
   }
-  const baseline = stats(toRequests(baselineSpans));
+  const baseline = withSeenAcrossStatuses(stats(toRequests(baselineSpans)));
   const changed = changes(current, baseline).toSorted(
     (a, b) =>
       Number(b.moreQueries) - Number(a.moreQueries) || b.current.queries - a.current.queries,

@@ -3,11 +3,11 @@ import { join, relative } from 'node:path';
 import { context, propagation, SpanStatusCode, type Tracer, trace } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import {
-  BasicTracerProvider,
   type ReadableSpan,
   SimpleSpanProcessor,
   type SpanExporter,
-} from '@opentelemetry/sdk-trace-base';
+  TracerProvider,
+} from '@opentelemetry/sdk-trace';
 import { setGlobalOtelConfig } from '@orpc/shared';
 import type { Hono } from 'hono';
 import pg from 'pg';
@@ -31,9 +31,8 @@ export type SpanRecord = {
 const PACKAGE_DIR = join(import.meta.dirname, '..');
 export const TRACE_RESULTS_DIR = join(PACKAGE_DIR, 'trace-results');
 
-// A full run is ~300 MB of spans; these three are most of it and no report reads them:
-// oRPC's per-request plumbing, queries outside any request (seeding, event consumers),
-// and the tail of long statements.
+// Dropped to keep a run's spans small: oRPC's per-request plumbing, queries outside any
+// request, a select's column list and the tail of long statements.
 const ORPC_PLUMBING = new Set([
   'find_procedure',
   'parse_standard_body',
@@ -69,8 +68,8 @@ export function recordSpans(): void {
 
   context.disable();
   context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
-  const provider = new BasicTracerProvider({
-    spanProcessors: [new SimpleSpanProcessor(jsonlExporter(file))],
+  const provider = new TracerProvider({
+    spanProcessors: [new SimpleSpanProcessor({ exporter: jsonlExporter(file) })],
   });
   state.tracer = provider.getTracer('openora-testing');
   setGlobalOtelConfig({ tracer: state.tracer, trace, context, propagation });
@@ -114,11 +113,17 @@ function toRecord(
     name: span.name,
     startMs: hrToMs(span.startTime),
     durationMs: hrToMs(span.duration),
-    ...(typeof sql === 'string' ? { sql: sql.slice(0, MAX_SQL_LENGTH) } : {}),
+    ...(typeof sql === 'string' ? { sql: shortenSql(sql) } : {}),
     ...(typeof pgClient === 'number' ? { pgClient } : {}),
     ...(typeof httpStatus === 'number' ? { httpStatus } : {}),
   };
 }
+
+const SELECT_LIST = /^(\s*select\s+(?:distinct\s+)?)[\s\S]*?(\s+from\s+")/i;
+
+/** `select … from "user" where …`: the table and filter fit the cap. Drizzle quotes table names. */
+const shortenSql = (sql: string): string =>
+  sql.replace(SELECT_LIST, '$1…$2').slice(0, MAX_SQL_LENGTH);
 
 const hrToMs = ([seconds, nanos]: [number, number]): number => seconds * 1e3 + nanos / 1e6;
 
@@ -168,6 +173,7 @@ function patchPgQuery(): void {
     return;
   }
   state.patched = true;
+  // Library boundary: pg types `query` as a dozen overloads; the patch forwards any of them.
   const proto = pg.Client.prototype as unknown as { query: Query };
   const original = proto.query;
   proto.query = function tracedQuery(this: object, ...args: unknown[]): unknown {
@@ -196,6 +202,7 @@ function patchPgQuery(): void {
   };
   // A pool at capacity queues `connect` callbacks and runs them from whichever request
   // releases a client, which would file the queued request's queries under that one.
+  // Library boundary: same for `Pool#connect`'s callback and promise overloads.
   const pool = pg.Pool.prototype as unknown as { connect: Query };
   const connect = pool.connect;
   pool.connect = function boundConnect(this: object, ...args: unknown[]): unknown {
