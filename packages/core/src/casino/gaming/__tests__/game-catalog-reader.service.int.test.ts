@@ -96,7 +96,11 @@ beforeEach(async () => {
 
 describe('GameCatalogReaderService.getPlayableGames (real PG)', () => {
   it('returns only games whose game and provider are both active, keyed by id', async () => {
-    const provider = await seedProvider({ name: 'Studio', logoUrl: 'https://cdn/logo.png' });
+    const provider = await seedProvider({
+      name: 'Studio',
+      logoUrl: 'https://cdn/logo.png',
+      customLogoUrl: 'https://cdn/custom-logo.png',
+    });
     const disabledProvider = await seedProvider({ isActive: false });
     const playable = await seedGame(provider.id, {
       name: 'Playable',
@@ -129,6 +133,7 @@ describe('GameCatalogReaderService.getPlayableGames (real PG)', () => {
         slug: provider.slug,
         name: 'Studio',
         logoUrl: 'https://cdn/logo.png',
+        customLogoUrl: 'https://cdn/custom-logo.png',
       },
       tags: [],
     });
@@ -310,6 +315,7 @@ describe('GameCatalogReaderService.getActiveProviders (real PG)', () => {
       slug: zeta.slug,
       name: 'Zeta',
       logoUrl: 'https://cdn/zeta.png',
+      customLogoUrl: null,
     });
   });
 

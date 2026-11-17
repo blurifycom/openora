@@ -48,6 +48,7 @@ import {
 } from '../service/game-tag.service.js';
 import {
   GameProviderService,
+  GameProviderLogoHostNotAllowedError,
   GameProviderNotFoundError,
   GameProviderSlugTakenError,
   GameProviderVendorIdTakenError,
@@ -257,6 +258,7 @@ export function createGamingRouter({
             GameProviderVendorIdTakenError,
             GameProviderMappingInUseError,
           ],
+          BAD_REQUEST: GameProviderLogoHostNotAllowedError,
         },
         () => providers.updateProvider({ ...input, actorId: userId, ip, userAgent }),
       );

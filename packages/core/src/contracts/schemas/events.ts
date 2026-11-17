@@ -117,6 +117,7 @@ const gameProviderSnapshotSchema = z.object({
   name: z.string(),
   aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
   logoUrl: z.string().nullable(),
+  customLogoUrl: z.string().nullable().default(null),
   metadata: z.unknown().nullable(),
   isActive: z.boolean(),
   // Older provider events predate auto-approve; replay them as off.
