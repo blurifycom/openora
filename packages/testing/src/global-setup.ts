@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import { Pool } from 'pg';
 import { applyMigrations, templateDatabase, adminUrl, urlForDatabase } from './db.js';
+import { TRACE_RESULTS_DIR } from './trace-recorder.js';
 
 /**
  * Build the template database every suite in this tier clones from, once per run, and
@@ -16,6 +18,8 @@ import { applyMigrations, templateDatabase, adminUrl, urlForDatabase } from './d
  * second run sharing this Postgres server, out from under its live connections.
  */
 export default async function setup(): Promise<() => Promise<void>> {
+  // Workers append to these files, so a run starts from none.
+  rmSync(TRACE_RESULTS_DIR, { recursive: true, force: true });
   process.env['OPENORA_TEST_RUN_ID'] = randomUUID().replaceAll('-', '').slice(0, 8);
   const template = templateDatabase();
   const admin = new Pool({ connectionString: adminUrl(), connectionTimeoutMillis: 5000 });
