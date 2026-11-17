@@ -103,8 +103,7 @@ export const topGamesTool = defineMcpTool({
   errors: ['report_unavailable'],
 });
 
-export const TOP_PROVIDERS_SORT_FIELDS = [...TOP_GAMES_SORT_FIELDS, 'gamesPlayed'] as const;
-export const TopProvidersSortBySchema = z.enum(TOP_PROVIDERS_SORT_FIELDS);
+export const TopProvidersSortBySchema = z.enum([...TopGamesSortBySchema.options, 'gamesPlayed']);
 
 export const TopProvidersInputSchema = z
   .object({
@@ -113,7 +112,7 @@ export const TopProvidersInputSchema = z
     currency: CurrencyTickerSchema.max(10).optional(),
     gameType: GameTypeSchema.optional(),
     sortBy: TopProvidersSortBySchema.default('volume'),
-    sortDir: z.enum(['desc', 'asc']).default('desc'),
+    sortDir: GameSortDirectionSchema.default('desc'),
     limit: z.coerce.number().int().min(1).max(TOP_GAMES_MAX_LIMIT).default(10),
   })
   .superRefine((input, ctx) => checkDayRange(resolveTopGamesRange(input), TOP_GAMES_MAX_DAYS, ctx));
@@ -127,7 +126,7 @@ export const TopProvidersOutputSchema = z.object({
   dateFrom: z.iso.date(),
   dateTo: z.iso.date(),
   sortBy: TopProvidersSortBySchema,
-  sortDir: z.enum(['desc', 'asc']),
+  sortDir: GameSortDirectionSchema,
   currencies: z
     .array(
       z.object({
