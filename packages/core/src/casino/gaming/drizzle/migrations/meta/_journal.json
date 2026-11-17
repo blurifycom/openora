@@ -141,6 +141,13 @@
       "when": 1793884629793,
       "tag": "0019_curly_doomsday",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794574229225,
+      "tag": "0020_provider_custom_logo_url",
+      "breakpoints": true
     }
   ]
 }

@@ -16,7 +16,7 @@ import {
 } from '../schema/index.js';
 import { seedDefaultWeightProfile } from '../seed/index.js';
 import { GrantService } from '../service/grant.service.js';
-import { OfferService } from '../service/offer.service.js';
+import { InvalidOfferTermsError, OfferService } from '../service/offer.service.js';
 
 let db: TestDb;
 let offers: OfferService;
@@ -347,6 +347,62 @@ describe('a deposit applied to a claim', () => {
     // The deposit still fully banked: only the grant step was withheld.
     const [optIn] = await optInsOf(userId);
     expect(optIn?.accumulatedDeposit).toBe('100.000000000000000000');
+  });
+});
+
+describe('an offer with a max bet rate', () => {
+  it('grants a bonus with the limit resolved from the credited bonus amount', async () => {
+    const userId = randomUUID();
+    const offer = await seedOffer({
+      minDeposit: '20',
+      terms: {
+        wageringMultiplier: '5',
+        expiryDays: 30,
+        maxBetRate: '0.1',
+        maxBetFloor: '2',
+        maxBetCeiling: '25',
+        maxBetExemptProducts: ['pvp'],
+      },
+    });
+    await claim(userId, offer.id);
+    lifetimeDeposit = '100';
+
+    await apply(userId, '100', randomUUID());
+
+    const [grant] = await grantsOf(userId);
+    expect(Number(grant?.terms.maxBet)).toBe(10);
+    expect(grant?.terms.maxBetExemptProducts).toEqual(['pvp']);
+  });
+
+  it('refuses to save an offer whose floor is above its ceiling', async () => {
+    const terms = {
+      wageringMultiplier: '5',
+      expiryDays: 30,
+      maxBetRate: '0.1',
+      maxBetFloor: '30',
+      maxBetCeiling: '25',
+    };
+
+    await expect(
+      offers.create(randomUUID(), {
+        key: `offer-${randomUUID()}`,
+        name: 'Bad limits',
+        status: 'draft',
+        currency: 'USD',
+        matchPercent: '100',
+        maxGrantAmount: '1000',
+        minDeposit: '20',
+        terms,
+        rules: { firstDepositOnly: false },
+        requiresOptIn: true,
+        validFrom: null,
+        validUntil: null,
+      }),
+    ).rejects.toBeInstanceOf(InvalidOfferTermsError);
+    const saved = await seedOffer();
+    await expect(offers.update(randomUUID(), { id: saved.id, terms })).rejects.toBeInstanceOf(
+      InvalidOfferTermsError,
+    );
   });
 });
 

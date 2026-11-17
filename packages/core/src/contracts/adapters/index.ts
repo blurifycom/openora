@@ -320,12 +320,15 @@ export type {
   SupportChatCustomerToken,
   SupportCustomerContext,
   SupportChatProvider,
+  SupportTicketCreated,
+  SupportTicketRequest,
 } from './support-chat.js';
 export {
   SUPPORT_CHAT_PROVIDER,
   SupportChatCustomerTokenSchema,
   SupportCustomerContextSchema,
   SupportChatProviderError,
+  SupportTicketCreatedSchema,
 } from './support-chat.js';
 export type {
   SupportHistory,

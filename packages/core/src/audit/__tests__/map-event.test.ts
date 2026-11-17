@@ -168,7 +168,27 @@ describe('mapEventToRecord: gaming.provider.created', () => {
       actorId: adminId,
       resourceType: 'game_provider',
       resourceId: providerId,
-      after: { aggregatorMappings, isActive: false },
+      after: { aggregatorMappings, isActive: false, customLogoUrl: null },
+    });
+  });
+
+  it('carries customLogoUrl in the audited snapshot', async () => {
+    const row = await mapEventToRecord('gaming.provider.created', {
+      providerId: '55555555-5555-4555-8555-555555555557',
+      slug: 'custom-logo-studio',
+      name: 'Custom Logo Studio',
+      aggregatorMappings: [],
+      logoUrl: 'https://cdn.example/vendor.png',
+      customLogoUrl: 'https://cdn.example/custom.png',
+      isActive: true,
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({
+      after: {
+        logoUrl: 'https://cdn.example/vendor.png',
+        customLogoUrl: 'https://cdn.example/custom.png',
+      },
     });
   });
 });

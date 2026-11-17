@@ -10,6 +10,7 @@ import { AgentsConfigSchema } from './agents.js';
 import { HostAllowlistEntrySchema, UrlPrefixAllowlistEntrySchema } from './host-allowlist.js';
 import { createToken } from '../adapters/token.js';
 import { MIN_PLAYER_AGE_YEARS } from './player.js';
+import { RANK_PERIODIC_BASES } from './promo.js';
 
 /**
  * Platform-wide T0 configuration consumed by the slot evaluation context and
@@ -335,6 +336,16 @@ export const PromoConfigSchema = z
       })
       .strict()
       .prefault({}),
+    rankPeriodic: z
+      .object({
+        /**
+         * `flat` pays each tier's daily, weekly and monthly bonus amount; `margin` pays the tier's
+         * percent of the period's own-money stake × (1 − rtp), capped by that amount.
+         */
+        basis: z.enum(RANK_PERIODIC_BASES).default('flat'),
+      })
+      .strict()
+      .prefault({}),
   })
   .strict();
 
@@ -434,6 +445,18 @@ export const IdentityConfigSchema = z
   .strict();
 export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
 
+export const LobbyConfigSchema = z
+  .object({
+    /**
+     * Lets admins save lobby layouts other than `global`. Turn it on only once every server
+     * runs a release that scopes lobby sections by layout key: an older server deletes a
+     * keyed layout's sections when it saves `global`.
+     */
+    keyedLayouts: z.boolean().default(false),
+  })
+  .strict();
+export type LobbyConfig = z.infer<typeof LobbyConfigSchema>;
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -499,6 +522,8 @@ export const PlatformConfigSchema = z
       allowedAvatarHosts: [],
       allowedAvatarUrlPrefixes: [],
     }),
+    /** Lobby layout knobs. Absent = only the `global` layout can be saved. */
+    lobby: LobbyConfigSchema.prefault({}),
     /** How often the rank payout jobs tick. Absent = the built-in defaults. */
     promo: PromoConfigSchema.prefault({}),
     /** Agent run limits, retention and the model catalog. Absent = the schema defaults, no models. */

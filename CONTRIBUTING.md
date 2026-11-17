@@ -9,7 +9,7 @@ source for architecture, naming, boundaries, and the "where does X go?" decision
 | Tool   | Version                                                       |
 | ------ | ------------------------------------------------------------- |
 | Node   | 26+                                                           |
-| pnpm   | 11+ (via `corepack enable`)                                   |
+| pnpm   | 12.21+ (`npm i -g corepack && corepack enable`)               |
 | Docker | Postgres + Redis - required, the test suite runs against both |
 
 ## First run

@@ -307,7 +307,7 @@ export class WalletCommandsService implements WalletCommands {
       // insufficient funds would tell the player to deposit more, and a client that did would
       // hit the same wall with a bigger balance.
       if (wagered.reason === 'max_bet_exceeded') {
-        throw new MaxBetExceededError(amount, wagered.maxBet);
+        throw new MaxBetExceededError(amount, wagered.maxBet, wagered.roundStake);
       }
       return { ok: false, available: moneyAdd(available, wagered.bonusAvailable) };
     }
