@@ -389,7 +389,9 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
       }
       total += value.byteLength;
       if (total > MAX_CAPTURED_BODY_BYTES) {
-        await reader.cancel();
+        // Not awaited: a clone's cancel settles only once the original body is cancelled or
+        // read to the end, and the handler reads it only after this returns.
+        reader.cancel().catch(() => undefined);
         return undefined;
       }
       chunks.push(value);
