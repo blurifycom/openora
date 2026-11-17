@@ -18,7 +18,8 @@ does not repeat it.
   them.
 
 It does not own the money. Every reward is credited by the bonus module through its grant port,
-so a rank bonus is the same object as a deposit bonus and lives by the same rules once it exists.
+so a rank bonus is the same object as a deposit bonus and lives by the same rules, except that it
+holds no withdrawal lock unless its terms ask for one (see the [wallet page](./wallet.md)).
 When the player's bonus slot in that currency is taken (`promo.bonus.grantConcurrency`), a reward
 is created pending and wagers nothing until the player activates it.
 
