@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { EVENT_BUS, loadExtensions } from '@openora/core/server';
+import { createClient } from '@openora/core/react';
+import { type ReplaceLobbyLayoutInput, lobbyContract } from '@openora/core/casino/contracts/lobby';
 import {
   asAdmin,
   registerAndMaterializePlayer,
@@ -228,6 +230,40 @@ describe('lobby layout aggregate', () => {
         })
       ).status,
     ).toBe(400);
+  });
+
+  it('serves typed client calls that pass no layout key from the global layout', async () => {
+    const client = createClient(
+      { lobby: lobbyContract },
+      {
+        baseUrl: 'http://localhost',
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          return admin.request(`${url.pathname}${url.search}`, {
+            method: request.method,
+            headers: request.headers,
+            ...(request.method === 'GET' ? {} : { body: await request.text() }),
+          });
+        },
+      },
+    );
+    const gameId = randomUUID();
+    const replace: ReplaceLobbyLayoutInput = {
+      version: (await client.lobby.getAdminLayout()).version,
+      sections: [{ type: 'test-game', config: { title: 'Typed', gameId }, isEnabled: true }],
+    };
+
+    const saved = await client.lobby.replaceLayout(replace);
+
+    expect(saved.sections.map((section) => section.config)).toEqual([{ title: 'Typed', gameId }]);
+    expect(await client.lobby.getAdminLayout()).toMatchObject({ version: saved.version });
+    expect(await client.lobby.getLayout()).toEqual(
+      await client.lobby.getLayout({ layoutKey: 'global' }),
+    );
+    expect((await client.lobby.getLayout()).map((section) => section.id)).toEqual(
+      saved.sections.map((section) => section.id),
+    );
   });
 
   it('rejects player and anonymous access to both backoffice routes', async () => {

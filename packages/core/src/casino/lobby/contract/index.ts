@@ -3,6 +3,7 @@ import * as z from 'zod';
 import {
   DEFAULT_LOBBY_LAYOUT_KEY,
   LobbyLayoutKeySchema,
+  type LobbyLayoutKey,
   LobbyLayoutSectionSnapshotSchema,
   LobbyLayoutSnapshotSchema,
   LobbySectionConfigSchema,
@@ -77,7 +78,7 @@ export type LobbySectionSaveInput = z.infer<typeof LobbySectionSaveInputSchema>;
 
 const LayoutKeyInputSchema = LobbyLayoutKeySchema.default(DEFAULT_LOBBY_LAYOUT_KEY);
 
-export const LobbyLayoutKeyInputSchema = z.object({ layoutKey: LayoutKeyInputSchema });
+export const LobbyLayoutKeyInputSchema = z.object({ layoutKey: LayoutKeyInputSchema }).prefault({});
 export type LobbyLayoutKeyInput = z.infer<typeof LobbyLayoutKeyInputSchema>;
 
 export const ReplaceLobbyLayoutInputSchema = z
@@ -87,7 +88,10 @@ export const ReplaceLobbyLayoutInputSchema = z
     sections: z.array(LobbySectionSaveInputSchema).max(LOBBY_SECTION_COUNT_MAX),
   })
   .describe('Complete replacement of one lobby layout; its omitted existing sections are deleted.');
-export type ReplaceLobbyLayoutInput = z.infer<typeof ReplaceLobbyLayoutInputSchema>;
+export type ReplaceLobbyLayoutInput = Omit<
+  z.infer<typeof ReplaceLobbyLayoutInputSchema>,
+  'layoutKey'
+> & { layoutKey?: LobbyLayoutKey };
 
 export const LobbyResolvedSectionSchema = z.object({
   id: UuidSchema,

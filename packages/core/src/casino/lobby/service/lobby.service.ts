@@ -78,9 +78,7 @@ type Actor = {
   actorId?: User['id'];
 } & ClientMeta;
 
-type ReplaceLayoutInput = Omit<ReplaceLobbyLayoutInput, 'layoutKey'> & {
-  layoutKey?: LobbyLayoutKey;
-} & Actor;
+type ReplaceLayoutInput = ReplaceLobbyLayoutInput & Actor;
 
 type PreparedLayoutSection = {
   id: string;
