@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import type {
+  RankPeriodicBasis,
   WagerContext,
   WagerProduct,
   WalletCommands,
@@ -67,8 +68,8 @@ const wager = (
 const wagerOn = (userId: string, product: WagerProduct) =>
   wager(userId, '100', '100', { provider: 'aggregator', product });
 
-const serviceWith = (settings: RakebackSettings) =>
-  new RakebackService(() => mock<WalletCommands>({ credit }), logger, settings);
+const serviceWith = (settings: RakebackSettings, periodicBasis?: RankPeriodicBasis) =>
+  new RakebackService(() => mock<WalletCommands>({ credit }), logger, settings, periodicBasis);
 
 const betOn = (
   service: RakebackService,
@@ -471,6 +472,69 @@ describe('streak rakeback for a ranked player', () => {
     await betOn(margin(), userId, '100', { rtp: '0.96' });
 
     expect(lastCredit().amount).toBe('0.200000000000000000');
+  });
+
+  describe('a 100% uplift on a tier whose bonus percents leave 2 points of the edge', () => {
+    const upliftBy100 = async (userId: string) => {
+      await db.drizzle.db.update(promoStreakConfig).set({
+        rakebackMilestones: [{ day: 1, unrankedRatePercent: '5', rankedUpliftPercent: '100' }],
+      });
+      await db.drizzle.db
+        .update(promoRankTier)
+        .set({ dailyBonusPercent: '50', weeklyBonusPercent: '30', monthlyBonusPercent: '13' })
+        .where(eq(promoRankTier.key, 'gold'));
+      await givePlayerTier(userId, 'gold');
+      await givePlayerStreak(userId, 1, daysAgo(0));
+    };
+
+    it('is trimmed to 40% so rakeback and the margin bonuses pay at most the whole edge', async () => {
+      const userId = randomUUID();
+      await upliftBy100(userId);
+
+      await betOn(serviceWith({ basis: 'margin', payout: 'instant' }, 'margin'), userId, '100', {
+        rtp: '0.96',
+      });
+
+      expect(lastCredit().amount).toBe('0.280000000000000000');
+    });
+
+    it('records the trimmed uplift on a claimable accrual', async () => {
+      const userId = randomUUID();
+      await upliftBy100(userId);
+
+      await betOn(serviceWith({ basis: 'margin', payout: 'claim' }, 'margin'), userId, '100', {
+        rtp: '0.96',
+      });
+
+      expect(await accrualsOf(userId)).toEqual([
+        expect.objectContaining({
+          amount: '0.280000000000000000',
+          ratePercent: '5.00',
+          streakMode: 'ranked',
+          streakPercent: '40.00',
+        }),
+      ]);
+    });
+
+    it('is paid in full under the flat periodic basis, where the bonus percents pay nothing', async () => {
+      const userId = randomUUID();
+      await upliftBy100(userId);
+
+      await betOn(serviceWith({ basis: 'margin', payout: 'instant' }, 'flat'), userId, '100', {
+        rtp: '0.96',
+      });
+
+      expect(lastCredit().amount).toBe('0.400000000000000000');
+    });
+
+    it('is paid in full on the stake basis, which pays on turnover', async () => {
+      const userId = randomUUID();
+      await upliftBy100(userId);
+
+      await betOn(serviceWith({ basis: 'stake', payout: 'instant' }, 'margin'), userId, '100');
+
+      expect(lastCredit().amount).toBe('10.000000000000000000');
+    });
   });
 });
 

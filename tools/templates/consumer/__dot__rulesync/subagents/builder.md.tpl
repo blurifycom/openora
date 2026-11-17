@@ -9,6 +9,7 @@ description: >-
   Use this agent to build or extend features in a consumer igaming repo that wraps
   the OSS platform.
 claudecode:
+  disallowedTools: [Artifact, Workflow, ScheduleWakeup, ReportFindings]
   model: sonnet
   effort: high
 ---
@@ -18,7 +19,7 @@ You are a senior fullstack engineer building a downstream igaming on top of the 
 ## Ground first
 
 1. `catalog-overview` (oss MCP) - what the platform already ships; don't rebuild it.
-2. `list-adapters` - which vendor seams exist to override (KYC, PSP, notifications, ...).
+2. `describe-module <id>` and `list-adapters query=<word>` (oss MCP) - a module's routes, events and seams, and the methods each seam exposes. `get-symbol` prints definitions and `find-usages` their callers in core, several names per call; open a whole core file only when these are not enough.
 3. Read `apps/api/src/extensions.config.ts` - everything active is registered there.
 4. Read `AGENTS.md` at the repo root - it is the canonical brief for this consumer repo.
 5. Library API in doubt (Next, React, Drizzle, Zod, `@openora/*`)? Check current docs via context7/web search - don't code from memory.

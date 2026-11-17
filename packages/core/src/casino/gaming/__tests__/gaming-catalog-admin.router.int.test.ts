@@ -53,6 +53,7 @@ import {
   ADMIN_GAME_RULE_MATCH_MAX,
   GAME_CATEGORY_RULE_MATCH_MAX,
   UpdateGameInputSchema,
+  UpdateProviderInputSchema,
 } from '../contract/index.js';
 
 const CTX = testContext();
@@ -652,6 +653,27 @@ describe('gaming catalog router authz', () => {
         customThumbnailUrl: 'https://cdn.example/x%22%3E%3Cscript%3Ealert(1)%3C/script%3E',
       },
     });
+  });
+
+  it('validates customLogoUrl on a provider update exactly like customThumbnailUrl on a game', () => {
+    const id = '00000000-0000-4000-8000-000000000000';
+    for (const customLogoUrl of [
+      'http://cdn.example/logo.png',
+      'javascript:alert(1)',
+      'not-a-url',
+      'https://user:pass@cdn.example/logo.png',
+      URL_UNDER_CAP_RAW_OVER_CAP_ESCAPED,
+    ]) {
+      expect(UpdateProviderInputSchema.safeParse({ id, customLogoUrl }).success).toBe(false);
+    }
+    expect(
+      UpdateProviderInputSchema.safeParse({ id, customLogoUrl: 'HTTPS://cdn.example/x"><b>' }),
+    ).toMatchObject({
+      success: true,
+      data: { customLogoUrl: 'https://cdn.example/x%22%3E%3Cb%3E' },
+    });
+    expect(UpdateProviderInputSchema.safeParse({ id, customLogoUrl: null }).success).toBe(true);
+    expect(UpdateProviderInputSchema.parse({ id })).not.toHaveProperty('customLogoUrl');
   });
 
   it('answers 400 to the geo filters when the compliance module is not loaded', async () => {

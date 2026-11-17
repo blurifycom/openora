@@ -359,6 +359,17 @@ const ProviderAggregatorMappingsInputSchema = z
     }
   });
 
+const CustomImageUrlSchema = z
+  .url({ protocol: /^https$/, normalize: true, abort: true })
+  .max(512)
+  .refine(
+    (v) => {
+      const url = new URL(v);
+      return url.username === '' && url.password === '';
+    },
+    { message: 'must not embed credentials' },
+  );
+
 const ProviderWriteFieldsSchema = z.object({
   slug: CatalogSlugSchema,
   name: z.string().trim().min(1).max(128),
@@ -381,6 +392,7 @@ export const UpdateProviderInputSchema = ProviderWriteFieldsSchema.partial().ext
   id: UuidSchema,
   isActive: z.boolean().optional(),
   autoApproveNewGames: z.boolean().optional(),
+  customLogoUrl: CustomImageUrlSchema.nullable().optional(),
 });
 export type UpdateProviderInput = z.infer<typeof UpdateProviderInputSchema>;
 
@@ -647,18 +659,7 @@ export const UpdateGameInputSchema = z.object({
   providerId: UuidSchema.optional(),
   aggregator: z.string().trim().min(1).max(64).optional(),
   thumbnailUrl: z.string().trim().min(1).max(512).nullable().optional(),
-  customThumbnailUrl: z
-    .url({ protocol: /^https$/, normalize: true, abort: true })
-    .max(512)
-    .refine(
-      (v) => {
-        const url = new URL(v);
-        return url.username === '' && url.password === '';
-      },
-      { message: 'must not embed credentials' },
-    )
-    .nullable()
-    .optional(),
+  customThumbnailUrl: CustomImageUrlSchema.nullable().optional(),
   // No isUnavailable: the flag is vendor-set only, an admin must never be able to toggle it.
   isActive: z.boolean().optional(),
   metadata: z.unknown().nullable().optional(),

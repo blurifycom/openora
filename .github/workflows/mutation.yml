@@ -46,20 +46,20 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: dev
       - uses: ./.github/actions/bootstrap
         with:
           turbo-cache: 'false'
       - uses: ./.github/actions/test-infra
-      - uses: actions/cache@v4
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: packages/core/reports/stryker-incremental.json
           key: stryker-incremental-${{ github.run_id }}
           restore-keys: stryker-incremental-
       - run: pnpm --filter @openora/core test:mutation
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: mutation-report

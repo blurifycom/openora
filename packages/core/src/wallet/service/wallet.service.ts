@@ -35,6 +35,8 @@ import {
   type KycStatus,
   type RateLimiterAdapter,
   type RateLimitKey,
+  MoneyAmountSchema,
+  type WalletDepositStatusEventStatus,
   type WalletRail,
   railFor as sharedRailFor,
   resolveExchangeRatePivot,
@@ -95,12 +97,14 @@ import {
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
   walletDepositAddress,
+  walletDepositStatusEvent,
   walletWithdrawalAddress,
   walletAsset,
   walletOnRampOrder,
   walletWithdrawalHold,
   type Wallet,
   type WalletDepositAddress,
+  type WalletDepositStatusEvent,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
@@ -391,6 +395,11 @@ const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually
 const isKycPassed = (status: KycStatus | null) =>
   status !== null && KYC_PASS_STATUSES.has(normalizeKycStatus(status));
 
+const MalformedDepositEventError = createDomainError<[externalId: string]>(
+  'MalformedDepositEventError',
+  (externalId) => `Deposit event ${externalId || '(empty id)'} carries no usable amount or id`,
+);
+
 export const AmbiguousDepositAddressError = createDomainError(
   'AmbiguousDepositAddressError',
   (address, network) =>
@@ -575,21 +584,27 @@ export function assertDepositAllowed(
   }
 }
 
+function depositFloor(assets: readonly DepositAsset[], network?: string) {
+  const wanted = network?.toUpperCase();
+  const applicable = wanted
+    ? assets.filter((asset) => asset.network.toUpperCase() === wanted)
+    : assets;
+  return applicable.reduce<DepositAsset | undefined>(
+    (lowest, asset) =>
+      !lowest || moneyCompare(asset.minDeposit, lowest.minDeposit) < 0 ? asset : lowest,
+    undefined,
+  );
+}
+
 export function assertAboveMinimumDeposit(
   assets: readonly DepositAsset[],
   amount: string,
   currency: string,
   network?: string,
 ): void {
-  const enabled = assets.filter((asset) => asset.depositEnabled);
-  const wanted = network?.toUpperCase();
-  const applicable = wanted
-    ? enabled.filter((asset) => asset.network.toUpperCase() === wanted)
-    : enabled;
-  const floor = applicable.reduce<DepositAsset | undefined>(
-    (lowest, asset) =>
-      !lowest || moneyCompare(asset.minDeposit, lowest.minDeposit) < 0 ? asset : lowest,
-    undefined,
+  const floor = depositFloor(
+    assets.filter((asset) => asset.depositEnabled),
+    network,
   );
   if (floor && moneyCompare(amount, floor.minDeposit) < 0) {
     throw new BelowMinimumDepositError(amount, floor.minDeposit, currency, floor.network);
@@ -793,6 +808,56 @@ export function providerRefCondition(
 }
 
 type DepositEvent = Extract<PaymentWebhookEvent, { kind: 'deposit' }>;
+type DepositStatusEvent = Extract<PaymentWebhookEvent, { kind: 'deposit_status' }>;
+type DepositAddressTarget = Pick<DepositEvent, 'address' | 'network' | 'tag'> &
+  Partial<Pick<DepositEvent, 'currency'>>;
+type DepositOutcome = {
+  event: Pick<DepositEvent, 'externalId' | 'amount' | 'currency'>;
+  network: string | null;
+  depositAddress: WalletDepositAddress;
+  playerId: Player['id'] | null;
+  detail: Record<string, string | null>;
+};
+
+export function isRecordableDeposit({
+  externalId,
+  amount,
+}: Pick<DepositEvent, 'externalId' | 'amount'>) {
+  return externalId.trim() !== '' && MoneyAmountSchema.safeParse(amount).success;
+}
+
+export function depositStatusIsNoOp(
+  seen: ReadonlySet<WalletDepositStatusEventStatus>,
+  status: WalletDepositStatusEventStatus,
+) {
+  return (
+    seen.has('below_minimum') || seen.has(status) || (status === 'detected' && seen.has('failed'))
+  );
+}
+
+function soleNetworkForCurrency(
+  rows: readonly Pick<WalletDepositAddress, 'currency' | 'network'>[],
+  currency: string,
+) {
+  const sameCurrency = rows.filter((row) => row.currency.toUpperCase() === currency.toUpperCase());
+  return sameCurrency.length === 1 ? (sameCurrency[0]?.network ?? undefined) : undefined;
+}
+
+function assertRecordableDeposit(event: Pick<DepositEvent, 'externalId' | 'amount'>) {
+  if (!isRecordableDeposit(event)) {
+    throw new MalformedDepositEventError(event.externalId);
+  }
+}
+
+function isAddressCurrencyMismatch(
+  event: Pick<DepositEvent, 'network' | 'currency'>,
+  depositAddress: Pick<WalletDepositAddress, 'currency'>,
+) {
+  return (
+    event.network === undefined &&
+    event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()
+  );
+}
 
 /** An on-chain deposit an admin settles by hand from a reconciliation finding. */
 export type HandDeposit = {
@@ -1192,9 +1257,7 @@ export class WalletService {
       .where(eq(walletAsset.currency, currency.toUpperCase()));
   }
 
-  // `for('share')` blocks a concurrent deleteWalletAsset (which takes `for('update')` on
-  // the same rows) from removing the pair while a deposit is being gated against it.
-  private depositAssetsForCurrency(currency: string, db: DrizzleDb = this.drizzle.db) {
+  private selectDepositAssets(currency: string, db: DrizzleDb | DrizzleTx) {
     return db
       .select({
         network: walletAsset.network,
@@ -1202,8 +1265,13 @@ export class WalletService {
         depositEnabled: walletAsset.depositEnabled,
       })
       .from(walletAsset)
-      .where(eq(walletAsset.currency, currency.toUpperCase()))
-      .for('share');
+      .where(eq(walletAsset.currency, currency.toUpperCase()));
+  }
+
+  // `for('share')` blocks a concurrent deleteWalletAsset (which takes `for('update')` on
+  // the same rows) from removing the pair while a deposit is being gated against it.
+  private depositAssetsForCurrency(currency: string, db: DrizzleDb = this.drizzle.db) {
+    return this.selectDepositAssets(currency, db).for('share');
   }
 
   /**
@@ -4159,6 +4227,7 @@ export class WalletService {
     event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
     providerName: string = DEFAULT_PAYMENT_PROVIDER,
   ): Promise<void> {
+    assertRecordableDeposit(event);
     const depositAddress = await this.findDepositAddressByAddress(event);
     if (!depositAddress) {
       // A known vendor defect hits this live: a token deposit reported under a sibling
@@ -4188,10 +4257,7 @@ export class WalletService {
       );
       return;
     }
-    if (
-      event.network === undefined &&
-      event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()
-    ) {
+    if (isAddressCurrencyMismatch(event, depositAddress)) {
       // Same "do not silently drop" discipline as the no-address branch above - this is
       // the push-path counterpart to the poll-path's currency_mismatch finding.
       logger.warn(
@@ -4231,14 +4297,6 @@ export class WalletService {
       if (await isRefundedDeposit(txn, depositAddress.providerName, event.externalId)) {
         return null;
       }
-      let [walletRecord] = await txn
-        .select()
-        .from(wallet)
-        .where(eq(wallet.userId, depositAddress.userId));
-      if (!walletRecord) {
-        walletRecord = await openWallet(txn, depositAddress.userId, event.currency);
-      }
-
       // A redelivery of a credited deposit must not depend on a rate being available now.
       const [credited] = await this.findDepositByProviderRef(
         txn,
@@ -4251,6 +4309,16 @@ export class WalletService {
           holdReason: heldReason(credited),
           refunded: credited.status === 'refunded',
         };
+      }
+      if (await this.refuseIfBelowMinimum(txn, { event, depositAddress, playerId })) {
+        return 'below_minimum' as const;
+      }
+      let [walletRecord] = await txn
+        .select()
+        .from(wallet)
+        .where(eq(wallet.userId, depositAddress.userId));
+      if (!walletRecord) {
+        walletRecord = await openWallet(txn, depositAddress.userId, event.currency);
       }
       // Throws when no fresh rate exists. The funds are on chain, so the deposit is not
       // dropped: nothing commits, the webhook answers an error and the vendor redelivers it,
@@ -4343,6 +4411,9 @@ export class WalletService {
         refunded: winner.status === 'refunded',
       };
     });
+    if (credit === 'below_minimum') {
+      return;
+    }
     if (credit === null) {
       logger.warn(
         { userId: depositAddress.userId, externalId: event.externalId },
@@ -4411,6 +4482,182 @@ export class WalletService {
         this.audit,
       );
     }
+  }
+
+  /**
+   * Audits that a vendor saw a deposit or reported it failed. Moves no money. A no-op once
+   * the deposit is credited, refunded or refused below minimum, and for a detection after the
+   * failure. An event no single player can be named for, or in another currency than its
+   * address, is only logged, and a malformed one throws so the vendor retries it.
+   */
+  async recordDepositStatus(event: DepositStatusEvent): Promise<void> {
+    assertRecordableDeposit(event);
+    const depositAddress = await this.findAttributableDepositAddress(event);
+    if (!depositAddress || isAddressCurrencyMismatch(event, depositAddress)) {
+      logger.warn(
+        { externalId: event.externalId, network: event.network, status: event.status },
+        'payment webhook: deposit status event names no single player or its address is in another currency, ignored',
+      );
+      return;
+    }
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId);
+    const { providerName } = depositAddress;
+    await this.drizzle.db.transaction(async (txn) => {
+      await lockVendorDeposit(txn, providerName, event.externalId);
+      if (await this.isDepositSettled(txn, providerName, event.externalId)) {
+        return;
+      }
+      const seen = await this.depositStatusesSeen(txn, providerName, event.externalId);
+      if (depositStatusIsNoOp(seen, event.status)) {
+        return;
+      }
+      await this.recordDepositOutcome(txn, event.status, {
+        event,
+        network: await this.reportedNetwork(event, txn),
+        depositAddress,
+        playerId,
+        detail: event.vendorStatus ? { vendorStatus: event.vendorStatus } : {},
+      });
+    });
+  }
+
+  /**
+   * Whether a polled deposit missing from the ledger is one the minimum refuses, auditing it
+   * the first time. One no single player can be named for answers false, as does one the
+   * webhook path would have filed as a currency mismatch, so both still reach a finding.
+   */
+  async recordDepositIfBelowMinimum(event: DepositEvent): Promise<boolean> {
+    const depositAddress = await this.findAttributableDepositAddress(event);
+    if (!depositAddress || isAddressCurrencyMismatch(event, depositAddress)) {
+      return false;
+    }
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId);
+    const { providerName } = depositAddress;
+    return this.drizzle.db.transaction(async (txn) => {
+      await lockVendorDeposit(txn, providerName, event.externalId);
+      if (await this.isDepositSettled(txn, providerName, event.externalId)) {
+        return false;
+      }
+      return this.refuseIfBelowMinimum(txn, { event, depositAddress, playerId });
+    });
+  }
+
+  private async refuseIfBelowMinimum(
+    txn: DrizzleTx,
+    deposit: Omit<DepositOutcome, 'event' | 'network' | 'detail'> & { event: DepositEvent },
+  ): Promise<boolean> {
+    const { event, depositAddress } = deposit;
+    const { providerName } = depositAddress;
+    const seen = await this.depositStatusesSeen(txn, providerName, event.externalId);
+    if (seen.has('below_minimum')) {
+      return true;
+    }
+    const network = await this.reportedNetwork(event, txn);
+    const assets = await this.selectDepositAssets(event.currency, txn);
+    // A network the catalog has no row for falls back to the currency's lowest minimum.
+    const floor = depositFloor(assets, network ?? undefined) ?? depositFloor(assets);
+    const refused =
+      !isPositiveMoney(event.amount) ||
+      (floor !== undefined && moneyCompare(event.amount, floor.minDeposit) < 0);
+    if (!refused) {
+      return false;
+    }
+    await this.recordDepositOutcome(txn, 'below_minimum', {
+      ...deposit,
+      network,
+      detail: { minDeposit: floor?.minDeposit ?? null },
+    });
+    await recordReconciliationFindingInTransaction(
+      txn,
+      {
+        runId: OUT_OF_CYCLE_RUN_ID,
+        providerName,
+        kind: 'below_minimum_deposit',
+        currency: event.currency,
+        network,
+        amount: event.amount,
+        address: event.address,
+        tag: event.tag ?? null,
+        txHash: event.txHash,
+        sourceAddress: event.sourceAddress ?? null,
+        externalId: event.externalId,
+        detail: floor ? `asset minimum ${floor.minDeposit}` : null,
+      },
+      this.audit,
+    );
+    return true;
+  }
+
+  private async isDepositSettled(
+    txn: DrizzleTx,
+    providerName: string,
+    externalId: WalletDepositStatusEvent['externalId'],
+  ) {
+    if (await isRefundedDeposit(txn, providerName, externalId)) {
+      return true;
+    }
+    const [row] = await this.findDepositByProviderRef(txn, providerName, externalId);
+    return row !== undefined;
+  }
+
+  private async reportedNetwork(
+    event: DepositAddressTarget & Pick<DepositEvent, 'currency'>,
+    db: DrizzleTx,
+  ) {
+    return (
+      event.network ??
+      soleNetworkForCurrency(await this.depositAddressRows(event, db), event.currency) ??
+      null
+    );
+  }
+
+  private async depositStatusesSeen(
+    txn: DrizzleTx,
+    providerName: string,
+    externalId: WalletDepositStatusEvent['externalId'],
+  ) {
+    const rows = await txn
+      .select({ status: walletDepositStatusEvent.status })
+      .from(walletDepositStatusEvent)
+      .where(
+        and(
+          eq(walletDepositStatusEvent.providerName, providerName),
+          eq(walletDepositStatusEvent.externalId, externalId),
+        ),
+      );
+    return new Set(rows.map((row) => row.status));
+  }
+
+  private async recordDepositOutcome(
+    txn: DrizzleTx,
+    status: WalletDepositStatusEventStatus,
+    { event, network, depositAddress, playerId, detail }: DepositOutcome,
+  ) {
+    const { providerName } = depositAddress;
+    const { externalId, amount, currency } = event;
+    const [inserted] = await txn
+      .insert(walletDepositStatusEvent)
+      .values({ providerName, externalId, status })
+      .onConflictDoNothing()
+      .returning({ id: walletDepositStatusEvent.id });
+    if (!inserted) {
+      return;
+    }
+    await this.audit.recordInTransaction(txn, {
+      actorType: 'system',
+      action: `wallet.deposit.${status}`,
+      resourceType: playerId ? 'player' : 'user',
+      resourceId: playerId ?? depositAddress.userId,
+      ...(status === 'detected' ? {} : { result: 'failure' }),
+      after: {
+        providerName,
+        externalId,
+        amount,
+        currency,
+        network,
+        ...detail,
+      },
+    });
   }
 
   /**
@@ -4517,9 +4764,7 @@ export class WalletService {
   }
 
   /** The player a deposit address was issued to, or undefined when it is nobody's. */
-  async depositAddressOwner(
-    target: Pick<DepositEvent, 'address' | 'network' | 'tag'>,
-  ): Promise<User['id'] | undefined> {
+  async depositAddressOwner(target: DepositAddressTarget): Promise<User['id'] | undefined> {
     return (await this.findDepositAddressByAddress(target))?.userId;
   }
 
@@ -4656,12 +4901,22 @@ export class WalletService {
     return row;
   }
 
-  private async findDepositAddressByAddress({
-    address,
-    network,
-    tag,
-  }: Pick<DepositEvent, 'address' | 'network' | 'tag'>) {
-    const rows = await this.drizzle.db
+  private async findAttributableDepositAddress(target: DepositAddressTarget) {
+    try {
+      return await this.findDepositAddressByAddress(target);
+    } catch (err) {
+      if (err instanceof AmbiguousDepositAddressError) {
+        return undefined;
+      }
+      throw err;
+    }
+  }
+
+  private depositAddressRows(
+    { address, network, tag }: DepositAddressTarget,
+    db: DrizzleDb | DrizzleTx = this.drizzle.db,
+  ) {
+    return db
       .select()
       .from(walletDepositAddress)
       .where(
@@ -4673,12 +4928,21 @@ export class WalletService {
             : or(eq(walletDepositAddress.network, network), isNull(walletDepositAddress.network)),
         ),
       );
+  }
+
+  private async findDepositAddressByAddress(target: DepositAddressTarget) {
+    const { address, network, currency } = target;
+    const rows = await this.depositAddressRows(target);
 
     const owners = new Set(rows.map((row) => row.userId));
     if (owners.size > 1) {
       throw new AmbiguousDepositAddressError(address, network);
     }
-    return rows.find((row) => row.network === network) ?? rows[0];
+    return (
+      rows.find((row) => row.network === network) ??
+      rows.find((row) => row.currency.toUpperCase() === currency?.toUpperCase()) ??
+      rows[0]
+    );
   }
 
   /**

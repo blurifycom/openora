@@ -71,6 +71,31 @@ does not repeat it.
   else `wallet.defaultReferenceCurrency`. The rate and its timestamp are stored with it and never
   recalculated. With no fresh rate the row is not written: a request fails with a typed error, and a
   deposit webhook fails so the vendor redelivers it.
+- **An address-based deposit under its asset's minimum is not credited.** The floor is the row for
+  the event's network. With none named it is the row of the one network the address was issued
+  on for that currency, and if the address has no such row or several, the lowest row. A row with
+  deposits switched off still counts, and a named network with no row takes the currency's lowest
+  row. A zero amount is refused whatever the floor, with `minDeposit: null` when the currency has
+  no row. The refusal, a `detected` status and a `failed` status each leave one audit row under
+  the player, guarded by `wallet_deposit_status_event` in the same transaction, so a redelivery or
+  a poll adds nothing. The first refusal stands if the minimum later drops. A credited or refunded
+  deposit audits no later status, and a failed one no later detection. A refused deposit gets its own
+  `below_minimum_deposit` finding: filed in the refusal's transaction, it carries the address, tag,
+  tx hash and sender, can be credited or refunded by an admin, and is left out of the open count
+  behind `alertThreshold`. If an unreadable poll report of the same id came first, its
+  `missing_deposit` finding stays beside the refusal with no amount, and can only be dismissed. The finding and the audit row
+  name a network only when the event reported one or the address has a single row of that
+  currency. With no network named, an address holding several currencies resolves to its row of
+  the event's currency. A status event in another currency than every row of its address, with no
+  network named, is logged and records nothing. An event with a malformed amount or an empty id
+  answers an error on the webhook, so the vendor retries it. An amount with more decimals than the
+  ledger keeps is malformed too, and is never rounded. The poll files a polled deposit with a
+  malformed amount as a `missing_deposit` finding with no amount and the raw string, escaped and
+  cut to 200 characters, in its detail. An admin can only dismiss it until a readable report of the
+  same id completes the open row, once and with an audit record of both amounts; a dismissed or
+  resolved finding stays as it was. An id already on the ledger or refused below minimum files
+  nothing, and a blank id or a malformed status event is logged and skipped. A
+  finding for a zero amount can be dismissed but never credited.
 - **A bet row records what the bet was placed on.** `wager_product` comes from its `WagerContext`,
   and so does `wager_rtp` when it is a fraction in [0, 1]. A malformed rtp is stored as NULL rather
   than refusing the bet. `houseEdge` in `@openora/core/server` prices it.
