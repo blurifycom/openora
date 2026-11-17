@@ -321,6 +321,11 @@ export const RAKEBACK_PAYOUTS = ['instant', 'claim'] as const;
 export type RakebackBasis = (typeof RAKEBACK_BASES)[number];
 export type RakebackPayout = (typeof RAKEBACK_PAYOUTS)[number];
 
+export const BONUS_WITHDRAWAL_MODES = ['block', 'forfeit'] as const;
+export type BonusWithdrawalMode = (typeof BONUS_WITHDRAWAL_MODES)[number];
+export const DEFAULT_LOCKED_FUNDS_MESSAGE =
+  'Part of this balance is tied to an active bonus and cannot be moved until the bonus ends';
+
 export const PromoConfigSchema = z
   .object({
     bonus: z
@@ -330,6 +335,13 @@ export const PromoConfigSchema = z
          * grant source, `multiple` no limit. A grant over the limit is created pending.
          */
         grantConcurrency: z.enum(GRANT_CONCURRENCY_MODES).default('multiple'),
+        /**
+         * `forfeit` lets a withdrawal through and forfeits every live bonus; `block` refuses a
+         * withdrawal that would take money a locking bonus ties up.
+         */
+        withdrawalWhileActive: z.enum(BONUS_WITHDRAWAL_MODES).default('forfeit'),
+        /** Fallback message on a refused outflow; a UI reads the error's `data`. */
+        lockedFundsMessage: z.string().min(1).default(DEFAULT_LOCKED_FUNDS_MESSAGE),
       })
       .strict()
       .prefault({}),
@@ -570,6 +582,11 @@ export const PlatformConfigSchema = z
 
 export type PlatformConfig = z.infer<typeof PlatformConfigSchema>;
 export type PlatformConfigInput = z.input<typeof PlatformConfigSchema>;
+
+/** Promo settings with their defaults, also when no platform config is bound. */
+export function resolvePromoConfig(config: Pick<PlatformConfig, 'promo'> | undefined): PromoConfig {
+  return PromoConfigSchema.parse(config?.promo ?? {});
+}
 
 /**
  * Validate and normalize a platform config. Throws a precise, agent-legible

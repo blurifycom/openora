@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { BONUS_GRANT_SOURCES } from '@openora/core/contracts';
 import { moneyCompare } from '@openora/core/server';
 import {
   clampCounters,
   depositBuckets,
+  grantLocks,
   isDepleted,
+  splitLocked,
   splitReturn,
   splitStake,
   sumSplit,
@@ -156,5 +159,52 @@ describe('depletion', () => {
   it('depletes only at exactly zero without a threshold', () => {
     expect(isDepleted('0', '0')).toBe(true);
     expect(isDepleted('0.000000000000000001', '0')).toBe(false);
+  });
+});
+
+describe('splitLocked', () => {
+  const grant = (unlinked: string, linked: string) => ({ unlinked, linked });
+
+  it('locks A and B of every grant and frees the rest', () => {
+    const r = splitLocked('150', [grant('100', '0'), grant('0', '20')]);
+    expect(eq(r.locked, '120')).toBe(true);
+    expect(eq(r.free, '30')).toBe(true);
+  });
+
+  it('frees everything with no grants', () => {
+    const r = splitLocked('42.5', []);
+    expect(eq(r.locked, '0')).toBe(true);
+    expect(eq(r.free, '42.5')).toBe(true);
+  });
+
+  it('never locks more than the real balance holds', () => {
+    const r = splitLocked('50', [grant('40', '30')]);
+    expect(eq(r.locked, '50')).toBe(true);
+    expect(eq(r.free, '0')).toBe(true);
+  });
+
+  it('locks nothing on an empty balance', () => {
+    const r = splitLocked('0', [grant('10', '10')]);
+    expect(eq(r.locked, '0')).toBe(true);
+    expect(eq(r.free, '0')).toBe(true);
+  });
+
+  it('keeps 18-decimal precision', () => {
+    const r = splitLocked('1', [grant('0.000000000000000001', '0')]);
+    expect(eq(r.free, '0.999999999999999999')).toBe(true);
+  });
+});
+
+describe('grantLocks', () => {
+  it('locks a deposit grant by default and nothing else', () => {
+    expect(grantLocks('deposit', {})).toBe(true);
+    for (const source of BONUS_GRANT_SOURCES.filter((s) => s !== 'deposit')) {
+      expect(grantLocks(source, {}), source).toBe(false);
+    }
+  });
+
+  it('follows the terms when they say', () => {
+    expect(grantLocks('deposit', { funds: { lockWithdrawals: false } })).toBe(false);
+    expect(grantLocks('manual', { funds: { lockWithdrawals: true } })).toBe(true);
   });
 });

@@ -2,6 +2,7 @@ import * as z from 'zod';
 import {
   AUDIT_WRITER,
   BONUS_DEPOSITS,
+  BONUS_FUND_LOCKS,
   BONUS_GRANTS,
   BONUS_GRANT_LEDGER,
   BONUS_LIFECYCLE,
@@ -14,7 +15,7 @@ import {
   JOB_QUEUE,
   PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
-  PromoConfigSchema,
+  resolvePromoConfig,
   RATE_LIMITER,
   REALTIME_TRANSPORT,
   UuidSchema,
@@ -38,6 +39,7 @@ import {
 } from '@openora/core/server';
 import { GrantLifecycleService } from './service/grant-lifecycle.service.js';
 import { createBonusLifecyclePort } from './service/bonus-lifecycle-port.service.js';
+import { FundLockService } from './service/fund-lock.service.js';
 import { GrantReaderService, bonusGrantLedger } from './service/grant-reader.service.js';
 import { GrantService } from './service/grant.service.js';
 import { GrantsFindService } from './service/grants-find.service.js';
@@ -75,7 +77,7 @@ function initiatedByOf(data: unknown): 'player' | 'admin' | 'system' | undefined
 const EmptyJobPayloadSchema = z.object({});
 
 const grantConcurrency = (c: TypedContainer<CoreTokenCatalog>) =>
-  PromoConfigSchema.parse(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).promo : {}).bonus
+  resolvePromoConfig(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined).bonus
     .grantConcurrency;
 
 /**
@@ -154,26 +156,33 @@ export default {
         },
       };
     });
+    // Built off the container rather than in the router factory: a job or the wallet calling
+    // these ports must not depend on the router having been resolved first.
+    let lifecycleSvc: GrantLifecycleService | null = null;
+    const grantLifecycle = (c: TypedContainer<CoreTokenCatalog>) =>
+      (lifecycleSvc ??= new GrantLifecycleService(
+        c.get(DRIZZLE),
+        c.get(AUDIT_WRITER),
+        c.get(EVENT_BUS),
+        c.get(PLAY_ELIGIBILITY),
+        grantConcurrency(c),
+      ));
     // A thin command port over GrantLifecycleService.forfeit - the shape an external
     // system/job context needs (no admin session to assert, one named grant rather than every
-    // grant a player holds). Constructed off the container directly, not the module-scoped
-    // `lifecycle` variable below: that one is only built lazily when the router resolves, and a
-    // job calling this port must not depend on the router having been requested first.
+    // grant a player holds).
     ctx.provide(
       BONUS_LIFECYCLE,
-      (c): BonusLifecycleCommands =>
-        createBonusLifecyclePort(
-          new GrantLifecycleService(
-            c.get(DRIZZLE),
-            c.get(AUDIT_WRITER),
-            c.get(EVENT_BUS),
-            c.get(PLAY_ELIGIBILITY),
-            grantConcurrency(c),
-          ),
+      (c): BonusLifecycleCommands => createBonusLifecyclePort(grantLifecycle(c)),
+    );
+    ctx.provideSealed(
+      BONUS_FUND_LOCKS,
+      (c) =>
+        new FundLockService(
+          grantLifecycle(c),
+          resolvePromoConfig(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined).bonus,
         ),
     );
 
-    let lifecycle: GrantLifecycleService | null = null;
     let offers: OfferService | null = null;
     let jobs: JobQueueAdapter | null = null;
     let realtime: RealtimeTransport | null = null;
@@ -214,11 +223,11 @@ export default {
       queue: EXPIRY_QUEUE,
       schema: EmptyJobPayloadSchema,
       handler: async () => {
-        if (!lifecycle) {
-          logger.warn('promo-bonus-expiry sweep skipped - service not constructed');
+        if (!lifecycleSvc) {
+          logger.warn('promo-bonus-expiry sweep skipped - grant lifecycle not resolved yet');
           return;
         }
-        const closed = await lifecycle.expireDue();
+        const closed = await lifecycleSvc.expireDue();
         if (closed.length > 0) {
           logger.info({ grants: closed.length }, 'promo bonus grants expired');
         }
@@ -229,10 +238,10 @@ export default {
       queue: FORFEIT_QUEUE,
       schema: ForfeitJobSchema,
       handler: async ({ payload }) => {
-        if (!lifecycle) {
-          throw new Error('promo-bonus-forfeit: service not constructed');
+        if (!lifecycleSvc) {
+          throw new Error('promo-bonus-forfeit: grant lifecycle not resolved yet');
         }
-        await lifecycle.forfeitAllFor(
+        await lifecycleSvc.forfeitAllFor(
           payload.userId,
           payload.reason,
           payload.actorId === null
@@ -314,13 +323,6 @@ export default {
     );
 
     ctx.routers.add('promo-bonus', (c) => {
-      lifecycle = new GrantLifecycleService(
-        c.get(DRIZZLE),
-        c.get(AUDIT_WRITER),
-        c.get(EVENT_BUS),
-        c.get(PLAY_ELIGIBILITY),
-        grantConcurrency(c),
-      );
       offers = new OfferService(
         c.get(DRIZZLE),
         c.get(AUDIT_WRITER),
@@ -340,7 +342,7 @@ export default {
         offers,
         realtime: c.get(REALTIME_TRANSPORT),
         weights: new WeightService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
-        lifecycle,
+        lifecycle: grantLifecycle(c),
         adminGuard: c.get(ADMIN_GUARD),
         limiter: c.get(RATE_LIMITER),
         geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,

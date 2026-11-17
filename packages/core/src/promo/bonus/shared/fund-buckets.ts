@@ -8,6 +8,7 @@ import {
 import type {
   BonusFreeFundsOrder,
   BonusFundSettings,
+  BonusGrantSource,
   BonusRolloverBase,
 } from '@openora/core/contracts';
 import { grantAmountFor } from './grant-amount.js';
@@ -73,6 +74,28 @@ export function clampCounters(args: { real: string; unlinked: string; linked: st
   const linked = min(args.linked, real);
   const unlinked = min(args.unlinked, moneySubtract(real, linked));
   return { unlinked, linked };
+}
+
+export function grantLocks(
+  source: BonusGrantSource,
+  terms: { funds?: Pick<BonusFundSettings, 'lockWithdrawals'> | undefined },
+): boolean {
+  return terms.funds?.lockWithdrawals ?? source === 'deposit';
+}
+
+/** Real money the locking grants' A and B tie up, clamped to the real balance, and the rest. */
+export function splitLocked(
+  real: string,
+  grants: readonly { unlinked: string; linked: string }[],
+): { locked: string; free: string } {
+  const counters = clampCounters({
+    real,
+    unlinked: grants.reduce((sum, grant) => moneyAdd(sum, grant.unlinked), ZERO),
+    linked: grants.reduce((sum, grant) => moneyAdd(sum, grant.linked), ZERO),
+  });
+  const locked = moneyAdd(counters.unlinked, counters.linked);
+  const free = moneySubtract(real, locked);
+  return { locked, free: moneyCompare(free, ZERO) > 0 ? free : ZERO };
 }
 
 function spendOrder(order: BonusFreeFundsOrder): readonly FundBucket[] {

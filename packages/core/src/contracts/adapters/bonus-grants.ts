@@ -28,6 +28,8 @@ export type BonusFundSettings = {
   dustThresholdUsd: string;
   /** Decimal places the bucket split rounds down to; the currency's precision. */
   decimals: number;
+  /** Ties A and B to the grant's currency against outflows. Absent: only a deposit grant locks. */
+  lockWithdrawals?: boolean;
 };
 
 /**
