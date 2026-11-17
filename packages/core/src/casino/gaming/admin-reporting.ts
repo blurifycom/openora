@@ -20,7 +20,7 @@ import { and, asc, count, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm'
 import { game, gameProvider, gameRound } from './schema/index.js';
 
 const rankedVolume = sumMoney(gameRound.betAmount);
-// GGR: negative when the games paid out more than they took in.
+// Round revenue, not the ledger GGR (ADR-0053): negative when the games paid out more than they took in.
 const rankedRevenue = sql<string>`(${sumMoney(gameRound.betAmount)} - ${sumMoney(gameRound.winAmount)})::numeric(38, 18)`;
 const rankedRounds = sql<number>`count(*)`.mapWith(Number);
 const rankedPlayers = sql<number>`count(distinct ${gameRound.userId})`.mapWith(Number);

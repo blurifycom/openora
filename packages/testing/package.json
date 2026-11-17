@@ -24,8 +24,8 @@
     }
   },
   "scripts": {
-    "build": "tsc",
-    "check:types": "tsc --noEmit",
+    "build": "tsc && tsc -p scripts",
+    "check:types": "tsc --noEmit && tsc -p scripts",
     "clean": "rm -rf dist",
     "test:integration": "vitest run --passWithNoTests"
   },
@@ -39,6 +39,10 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/context-async-hooks": "2.10.0",
+    "@opentelemetry/sdk-trace": "2.10.0",
+    "@orpc/shared": "1.15.7",
     "@types/node": "26.6.5",
     "@types/pg": "8.23.1",
     "typescript": "6.0.3",

@@ -60,6 +60,9 @@ jobs:
   checks:
     if: github.event.action != 'edited'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # download dev's trace baseline from the last merge-queue run
     services:
       postgres:
         image: postgres:16-alpine
@@ -96,6 +99,33 @@ jobs:
           check:hygiene check:refs check:deprecations test:unit test:tools &&
           pnpm exec turbo run test:integration --filter='!@openora/core' &&
           pnpm check:drift
+      # The E2E tier records a span per request, oRPC step and pg query. The latest
+      # merge-queue run's spans are the baseline a PR run's job summary is compared against.
+      - name: Backend trace report
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p packages/testing/trace-results
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            run_id=$(gh run list --workflow ci.yml --event merge_group --status success --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty' || true)
+            if [ -n "$run_id" ] && gh run download "$run_id" --name trace-spans --dir trace-baseline; then
+              echo "Baseline: [merge-queue run $run_id]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          node packages/testing/scripts/trace-report.ts packages/testing/trace-results trace-baseline \
+            | tee packages/testing/trace-results/report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload trace spans
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: trace-spans
+          path: packages/testing/trace-results/
+          # Only merge-queue spans are read back, as the next PRs' baseline.
+          retention-days: ${{ github.event_name == 'merge_group' && 30 || 7 }}
+          if-no-files-found: ignore
 
   # The slowest tier (packages/core `vitest.integration.config.ts`), 3 shards. Each job has
   # its own postgres + redis, so per-suite databases and redis partitions are isolated.

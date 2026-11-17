@@ -113,8 +113,8 @@ export const openBet = inArray(sportsbookBet.status, ['reserved', 'accepted']);
  * stake-side fields count every bet not cancelled, by its acceptance or, while still reserved, its
  * debit, in the range; payout-side fields bets settled in it; and `openExposure` the reserved and
  * accepted stakes now, whatever the range. Group by currency; `read` keeps the bets any of them
- * counts. `ggr`, their cash stake less their payout, is the player summary's alone: the operator's
- * sportsbook GGR (financial.summary) follows the ledger, so a reopen counts when it posts.
+ * counts. `netResult`, their cash stake less their payout, is the player summary's alone: the
+ * operator's GGR (financial.summary) follows the wallet ledger, so a reopen counts when it posts.
  */
 export function betTotals(range: DateRange) {
   const bet = sportsbookBet;
@@ -135,7 +135,7 @@ export function betTotals(range: DateRange) {
       promotionPayout: sumMoney(bet.promotionPaid, settled),
       openExposure: sumMoney(bet.stake, openBet),
     },
-    ggr: sql<string>`(${sumMoney(bet.cashStake, staked)} - ${sumMoney(bet.payoutTotal, settled)})::numeric(38, 18)`,
+    netResult: sql<string>`(${sumMoney(bet.cashStake, staked)} - ${sumMoney(bet.payoutTotal, settled)})::numeric(38, 18)`,
     read: or(staked, settled, openBet),
   };
 }
@@ -268,7 +268,7 @@ export class SportsbookBetQueryService {
     await assertSportsbookPlayer(this.identity, userId);
     const totals = betTotals(range);
     return this.drizzle.db
-      .select({ ...totals.columns, ggr: totals.ggr })
+      .select({ ...totals.columns, netResult: totals.netResult })
       .from(sportsbookBet)
       .where(and(eq(sportsbookBet.userId, userId), totals.read))
       .groupBy(sportsbookBet.currency)

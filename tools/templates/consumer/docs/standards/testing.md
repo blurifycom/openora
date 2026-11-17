@@ -27,8 +27,6 @@ Before the PR opens:
    change by looking at it.
 4. Write the tests that pass exercised, in this branch, at the tier the table below names. Include
    the hostile paths and the authz negatives. A fix carries the test that fails without it.
-5. End the description with a **"Tests"** list: one line per test added, naming its tier
-   (unit / API E2E / browser E2E) and path.
 
 A changed behaviour with no test is a review `[WARN]`, never a `[BLOCK]`, except on the paths below.
 
@@ -81,7 +79,12 @@ expect(await service.get(id)).toEqual(row);
 
 - Test behavior, not implementation - tests must survive a safe refactor (assert outputs, not
   private caches).
-- Cover the change in the same PR as the change; always include the authz negatives.
+- Cover the change in the same PR as the change; always include the authz negatives, in the
+  route's API E2E.
+- Every test catches a regression no other test catches. Before adding one, name the bug it fails
+  on; if an existing test already fails on that bug, do not add it. Cover an outcome once, at the
+  outermost tier that reaches it; add an inner-tier test only for a branch, input or side effect
+  (event, audit, ledger row) the outer one cannot reach. Pure-function tests stay branch-complete.
 - Drive a vendor's inbound side the way the vendor does: post the real webhook shape to the real
   route with a signature the stub's key material produces. Never call the adapter directly.
 - Deterministic and isolated: no shared mutable state, no real outbound network, seedable data.
