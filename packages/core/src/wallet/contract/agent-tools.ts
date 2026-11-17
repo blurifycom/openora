@@ -21,6 +21,7 @@ import {
   defineMcpTool,
   resolveDayRange,
   type WalletTransactionStatus,
+  SortOrderSchema,
 } from '@openora/core/contracts';
 
 export const OPEN_WITHDRAWALS_LIMIT = 20;
@@ -278,7 +279,7 @@ export const TransactionsFindInputSchema = z
     to: z.iso.date().optional(),
     minAmount: MoneyThresholdSchema.optional(),
     sortBy: TransactionsFindSortBySchema.default('createdAt'),
-    sortDir: z.enum(['desc', 'asc']).default('desc'),
+    sortDir: SortOrderSchema.default('desc'),
     limit: FindToolLimitSchema,
   })
   .superRefine((input, ctx) =>

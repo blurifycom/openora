@@ -17,6 +17,7 @@ import {
   defineMcpTool,
   resolveDayRange,
   type DayRangeInput,
+  SortOrderSchema,
 } from '@openora/core/contracts';
 
 const TURNOVER_EXPOSURE_DEFAULT_DAYS = 30;
@@ -131,7 +132,7 @@ export const BetsFindInputSchema = z
     placedTo: z.iso.date().optional(),
     minStake: MoneyThresholdSchema.optional(),
     sortBy: BetsFindSortBySchema.default('placedAt'),
-    sortDir: z.enum(['desc', 'asc']).default('desc'),
+    sortDir: SortOrderSchema.default('desc'),
     limit: FindToolLimitSchema,
   })
   .superRefine((input, ctx) =>

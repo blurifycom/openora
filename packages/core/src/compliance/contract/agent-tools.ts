@@ -294,7 +294,7 @@ export const kycQueueTool = defineMcpTool({
     "document types submitted and hours since submission. Use kyc.status for one player's " +
     'standing. No decision reason, document or personal data is returned.',
   class: 'read',
-  schemaVersion: 1,
+  schemaVersion: 2,
   iam: { resource: 'compliance', action: 'view' },
   inputSchema: KycQueueInputSchema,
   outputSchema: KycQueueOutputSchema,
