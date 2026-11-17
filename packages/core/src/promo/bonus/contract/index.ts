@@ -144,6 +144,8 @@ export const BonusFundSettingsSchema = z.object({
   dustThresholdUsd: MoneyAmountSchema.default('0.01'),
   /** The currency's precision; the bucket split rounds down to it. */
   decimals: z.number().int().min(0).max(18).default(18),
+  /** Ties A and B to the grant's currency against outflows. Absent: only a deposit grant locks. */
+  lockWithdrawals: z.boolean().optional(),
 });
 
 export const BonusGrantTermsSchema = z.object({
