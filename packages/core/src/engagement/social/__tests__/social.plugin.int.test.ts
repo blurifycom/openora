@@ -82,7 +82,7 @@ describe('social plugin SOCIAL_COMMANDS wiring', () => {
     const friendshipRow = await makeFriends(alice.userId, bob.userId);
 
     await db.drizzle.db.transaction((tx) =>
-      socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId),
+      socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId, alice.id),
     );
 
     const row = await getFriendshipById(friendshipRow.id);
@@ -96,7 +96,7 @@ describe('social plugin SOCIAL_COMMANDS wiring', () => {
 
     await expect(
       db.drizzle.db.transaction((tx) =>
-        socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId),
+        socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId, alice.id),
       ),
     ).resolves.toBeNull();
     expect(await db.drizzle.db.select().from(friendship)).toHaveLength(0);
@@ -109,11 +109,12 @@ describe('social plugin SOCIAL_COMMANDS wiring', () => {
     const friendshipRow = await makeFriends(alice.userId, bob.userId);
 
     const dissolved = await db.drizzle.db.transaction((tx) =>
-      socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId),
+      socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId, alice.id),
     );
 
     expect(dissolved).toMatchObject({ friendshipId: friendshipRow.id, reason: 'blocked' });
     expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emitInTransaction).not.toHaveBeenCalled();
   });
 
   it('still dissolves correctly when resolved before the social router is mounted', async () => {
@@ -137,7 +138,7 @@ describe('social plugin SOCIAL_COMMANDS wiring', () => {
     const friendshipRow = await makeFriends(alice.userId, bob.userId);
 
     await db.drizzle.db.transaction((tx) =>
-      socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId),
+      socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId, alice.id),
     );
 
     const row = await getFriendshipById(friendshipRow.id);

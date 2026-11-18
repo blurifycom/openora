@@ -13,8 +13,8 @@ export default {
       (svc ??= new SocialService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER)));
 
     ctx.provide(SOCIAL_COMMANDS, (c) => ({
-      dissolveFriendshipOnBlock: (tx, blockerId, blockedId) =>
-        socialService(c).dissolveFriendshipOnBlock(tx, blockerId, blockedId),
+      dissolveFriendshipOnBlock: (tx, blockerId, blockedId, blockerPlayerId) =>
+        socialService(c).dissolveFriendshipOnBlock(tx, blockerId, blockedId, blockerPlayerId),
     }));
 
     ctx.routers.add('social', (c) => createSocialRouter(socialService(c)));
