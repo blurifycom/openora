@@ -12,11 +12,15 @@ import {
 } from '@openora/core/contracts';
 import { DrizzleService, mapConcurrent } from '../db/index.js';
 import { sql } from 'drizzle-orm';
-import { SessionResolver } from './session-resolver.js';
+import type { SessionResolver } from './session-resolver.js';
 import { holdsGrant, isRoleName, type ResourceName, type ActionOf } from './permissions.js';
 import type { OssContext, EventBus } from '../kernel/index.js';
 import { createLogger } from '../kernel/logger.js';
-import { extractClientMeta } from '../kernel/router-utils.js';
+import {
+  extractClientMeta,
+  throwIfSessionUnavailable,
+  type AuthContext,
+} from '../kernel/router-utils.js';
 import { getCurrentClientMeta, noteGrantedPermission } from '../kernel/request-context.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
@@ -32,6 +36,19 @@ const GRANT_RESOLVE_CONCURRENCY = 10;
 // Postgres matches a uuid in any letter case but prints it lowercase, and grants are keyed by
 // the printed form, so an id is looked up the way the database answers it.
 const canonicalUserId = (userId: string) => userId.toLowerCase();
+
+const toHeaders = (raw: OssContext['request']['headers']) => {
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(raw)) {
+    if (v !== undefined) {
+      headers.set(k, Array.isArray(v) ? v.join(', ') : v);
+    }
+  }
+  return headers;
+};
+
+const sessionOf = (auth: AuthContext | undefined) =>
+  auth && { userId: auth.userId, sessionId: auth.sessionId };
 
 const heldRequirements = <T extends GrantRequirement>(
   role: string,
@@ -54,7 +71,9 @@ export class AdminGuard {
   // Uses the shared SessionResolver (one better-auth init for the whole app) rather than a second createAuth over the same DB.
   constructor(
     private readonly drizzle: DrizzleService,
-    private readonly sessions: SessionResolver,
+    // Undefined in a service with no session tables: the request middleware has already
+    // resolved the session through the identity service, so the guard reads `context.auth`.
+    private readonly sessions: Pick<SessionResolver, 'resolveSession'> | undefined,
     // When bound (iam module loaded), grants come from DB only; otherwise static roles decide.
     private readonly permissionResolver?: AdminPermissionResolver,
     private readonly events?: EventBus,
@@ -92,16 +111,12 @@ export class AdminGuard {
 
     const { ip, userAgent } = extractClientMeta(request.headers);
 
-    const headers = new Headers();
-    for (const [k, v] of Object.entries(request.headers)) {
-      if (v === undefined) {
-        continue;
-      }
-      headers.set(k, Array.isArray(v) ? v.join(', ') : v);
-    }
-    const resolvedSession = await this.sessions.resolveSession(headers);
+    const resolvedSession = this.sessions
+      ? await this.sessions.resolveSession(toHeaders(request.headers))
+      : sessionOf((context as { auth?: AuthContext }).auth);
     const userId = resolvedSession?.userId;
     if (!userId) {
+      throwIfSessionUnavailable(context);
       // The idle policy ended this session on the way in, so say so: the back office shows
       // the reason on its sign-in page instead of a bare "not signed in".
       const idleEnded = (context as { sessionEndedReason?: string }).sessionEndedReason;

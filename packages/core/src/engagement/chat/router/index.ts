@@ -8,6 +8,7 @@ import {
   AdminGuard,
   assertRateLimit,
   upstreamDownAs503,
+  throwIfSessionUnavailable,
   type OssContext,
 } from '@openora/core/server';
 import {
@@ -104,7 +105,10 @@ const SEND_MESSAGE_RATE_LIMIT = {
 
 // Reads work for anonymous viewers; when authenticated, the id drives per-viewer
 // block filtering (ABC-45 AC11). Sourced from server-verified `auth`, never a header.
+// A viewer whose session could not be looked up gets a 503, never an anonymous read
+// that drops their block filter or refuses them a private room they belong to.
 function resolveViewerId(context: OssContext) {
+  throwIfSessionUnavailable(context);
   return context.auth?.userId;
 }
 
