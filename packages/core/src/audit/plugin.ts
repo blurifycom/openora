@@ -8,7 +8,12 @@ import {
   type DrizzleTx,
   type Plugin,
 } from '@openora/core/server';
-import { AUDIT_WRITER, DEFAULT_LOBBY_LAYOUT_KEY, IDENTITY_READER, type EventEnvelope } from '@openora/core/contracts';
+import {
+  AUDIT_WRITER,
+  DEFAULT_LOBBY_LAYOUT_KEY,
+  IDENTITY_READER,
+  type EventEnvelope,
+} from '@openora/core/contracts';
 import {
   AuditService,
   enqueueAuditInTransaction,
