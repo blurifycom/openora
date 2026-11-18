@@ -31,6 +31,8 @@ import {
   appendAuditEntries,
   enqueueAuditInTransaction,
   OutboxEntrySchema,
+  // oxlint-disable-next-line typescript/no-deprecated -- its split-main refusal is under test.
+  recordAuditInTransaction,
   verifyAuditChain,
 } from '../service/audit.service.js';
 import { AuditReaderService } from '../service/audit-reader.service.js';
@@ -400,6 +402,91 @@ describe('audit chain in a database of its own', () => {
     }
   });
 
+  it('refuses an audit role that owns a database, or a table in the main or the audit database', async () => {
+    const dbOwner = newRole('dbowner');
+    const tableOwner = newRole('tblowner');
+    await asAdmin(
+      `CREATE ROLE "${dbOwner.user}" LOGIN`,
+      `CREATE DATABASE "${newDatabase()}" OWNER "${dbOwner.user}"`,
+      `CREATE ROLE "${tableOwner.user}" LOGIN`,
+    );
+    const ownerOf = async (db: DrizzleDb, table: string) =>
+      (
+        await db.execute<{ owner: string }>(
+          sql`SELECT relowner::regrole::text AS owner FROM pg_class WHERE relname = ${table}`,
+        )
+      ).rows[0]?.owner;
+    const chainOwner = await ownerOf(auditAdmin.db, 'audit_log');
+    const outboxOwner = await ownerOf(main.drizzle.db, 'audit_outbox');
+
+    await expect(
+      migrate({ adminUrl: main.url, auditUrl: urlFor(auditDatabase, dbOwner), shipperUrl }),
+    ).rejects.toThrow(/owns a database, schema, table or function/);
+    try {
+      await auditAdmin.db.execute(sql.raw(`ALTER TABLE audit_log OWNER TO "${tableOwner.user}"`));
+      await expect(
+        migrate({ adminUrl: main.url, auditUrl: urlFor(auditDatabase, tableOwner), shipperUrl }),
+      ).rejects.toThrow(/owns a database, schema, table or function/);
+    } finally {
+      await auditAdmin.db.execute(sql.raw(`ALTER TABLE audit_log OWNER TO "${chainOwner}"`));
+    }
+    try {
+      await main.drizzle.db.execute(
+        sql.raw(`ALTER TABLE audit_outbox OWNER TO "${tableOwner.user}"`),
+      );
+      await expect(
+        migrate({ adminUrl: main.url, auditUrl, shipperUrl: urlFor(mainDatabase, tableOwner) }),
+      ).rejects.toThrow(/owns a database, schema, table or function/);
+    } finally {
+      await main.drizzle.db.execute(sql.raw(`ALTER TABLE audit_outbox OWNER TO "${outboxOwner}"`));
+    }
+    await migrateSplit();
+    const id = randomUUID();
+    await queue(id);
+    await ship();
+    expect(await chainOf(auditWriter.db, id)).toHaveLength(1);
+  });
+
+  it('refuses a single-database migrate that waited on the lock while a split migrate ran', async () => {
+    const fresh = await createTestDb([migrateOutbox, migrate]);
+    databases.push(databaseOf(fresh.url));
+    const lockName = 'drizzle.__drizzle_migrations_audit';
+    const waiting = async () =>
+      (
+        await fresh.drizzle.db.execute<{ n: number }>(sql`
+          SELECT count(*)::int AS n FROM pg_locks l JOIN pg_database d ON d.oid = l.database
+           WHERE l.locktype = 'advisory' AND NOT l.granted AND d.datname = current_database()`)
+      ).rows[0]?.n;
+    const holder = new Pool({ connectionString: fresh.url, max: 1 });
+    try {
+      const client = await holder.connect();
+      try {
+        await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockName]);
+        const split = migrate({
+          adminUrl: fresh.url,
+          auditUrl: urlFor(newDatabase(), newRole('writer')),
+          shipperUrl: urlFor(databaseOf(fresh.url), newRole('shipper')),
+        });
+        await vi.waitFor(async () => expect(await waiting()).toBe(1), { timeout: 10_000 });
+        // Not split yet, so this passes its early check and queues behind the split migrate.
+        const single = migrate(fresh.url);
+        await vi.waitFor(async () => expect(await waiting()).toBe(2), { timeout: 10_000 });
+        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName]);
+        await split;
+        await expect(single).rejects.toThrow(/lives in a database of its own/);
+      } finally {
+        client.release();
+      }
+    } finally {
+      await holder.end();
+    }
+    const { rows } = await fresh.drizzle.db.execute<{ shipperOnly: boolean }>(sql`
+      SELECT prosrc LIKE '%session_user%' AS "shipperOnly" FROM pg_proc
+       WHERE oid = 'audit_outbox_deny_unshipped_delete()'::regprocedure`);
+    expect(rows[0]?.shipperOnly).toBe(true);
+    await fresh.drop();
+  });
+
   it('resumes verification from an anchor and finds a row tampered after it', async () => {
     const id = randomUUID();
     for (let i = 0; i < 3; i += 1) {
@@ -565,7 +652,7 @@ describe('audit chain in a database of its own', () => {
     expect(await changes()).toMatchObject([{ queued: false }]);
   });
 
-  it('refuses the single-database paths on a split main, and shipping before the copy', async () => {
+  it('refuses the single-database paths on a split main, and shipping before the whole copy', async () => {
     const legacyMain = await createTestDb([migrateOutbox, migrate]);
     const legacyDatabase = databaseOf(legacyMain.url);
     databases.push(legacyDatabase);
@@ -576,6 +663,7 @@ describe('audit chain in a database of its own', () => {
     const db = legacyMain.drizzle.db;
     try {
       await queue(randomUUID(), 'test.legacy', { db });
+      await queue(randomUUID(), 'test.legacy', { db });
       await drainAuditOutbox(db);
 
       await migrate({
@@ -583,19 +671,65 @@ describe('audit chain in a database of its own', () => {
         auditUrl: legacyAuditUrl,
         shipperUrl: legacyShipperUrl,
       });
-      await queue(randomUUID(), 'test.legacy', { db });
+      const pending = randomUUID();
+      await queue(pending, 'test.legacy', { db });
+      const queuedLegacy = async () =>
+        (
+          await db.execute<{ n: number }>(
+            sql`SELECT count(*)::int AS n FROM audit_outbox WHERE entry->>'resourceId' = ${pending}`,
+          )
+        ).rows[0]?.n;
 
       const asShipper = new DrizzleService(legacyShipperUrl);
       const asWriter = new DrizzleService(legacyAuditUrl);
+      const legacyAuditAdmin = new DrizzleService(urlFor(databaseOf(legacyAuditUrl)));
+      // What audit-copy does, one batch of `limit` rows: byte-equal, in seq order, from the head on.
+      const copyLegacy = async (limit: number) => {
+        const { rows } = await db.execute<{ batch: string }>(sql`
+          SELECT json_agg(t ORDER BY seq)::text AS batch
+            FROM (SELECT * FROM audit_log ORDER BY seq LIMIT ${limit}) t`);
+        await legacyAuditAdmin.db.execute(sql`
+          INSERT INTO audit_log SELECT * FROM json_populate_recordset(null::audit_log, ${rows[0]?.batch}::json)
+          ON CONFLICT DO NOTHING`);
+        await legacyAuditAdmin.db.execute(
+          sql`SELECT setval(pg_get_serial_sequence('audit_log', 'seq'), (SELECT max(seq) FROM audit_log))`,
+        );
+      };
       try {
         await expect(drainAuditOutbox(asShipper.db, asWriter.db)).rejects.toThrow(
           /copy the chain over before shipping/,
         );
+        await copyLegacy(1);
+        await expect(drainAuditOutbox(asShipper.db, asWriter.db)).rejects.toThrow(
+          /copy the chain over before shipping/,
+        );
+        expect(await queuedLegacy()).toBe(1);
+
+        await copyLegacy(2);
+        await drainAuditOutbox(asShipper.db, asWriter.db);
+        expect(await queuedLegacy()).toBe(0);
+        expect(await chainOf(asWriter.db, pending)).toHaveLength(1);
+        expect(await verifyAuditChain(asWriter.db)).toEqual({ valid: true });
       } finally {
-        await Promise.all([asShipper.dispose(), asWriter.dispose()]);
+        await Promise.all([asShipper.dispose(), asWriter.dispose(), legacyAuditAdmin.dispose()]);
       }
       await expect(migrate(legacyMain.url)).rejects.toThrow(/lives in a database of its own/);
+      await queue(randomUUID(), 'test.legacy', { db });
       await expect(drainAuditOutbox(db)).rejects.toThrow(/lives in a database of its own/);
+      const before = await db.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM audit_log`);
+      await expect(
+        db.transaction((tx) =>
+          // oxlint-disable-next-line typescript/no-deprecated -- its split-main refusal is what this proves.
+          recordAuditInTransaction(tx, {
+            actorType: 'system',
+            action: 'test.legacy',
+            resourceType: 'player',
+            resourceId: randomUUID(),
+          }),
+        ),
+      ).rejects.toThrow(/lives in a database of its own/);
+      const after = await db.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM audit_log`);
+      expect(after.rows[0]?.n).toBe(before.rows[0]?.n);
     } finally {
       await legacyMain.drop();
     }

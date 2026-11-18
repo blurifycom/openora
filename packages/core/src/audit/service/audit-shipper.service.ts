@@ -1,8 +1,12 @@
 import * as z from 'zod';
 import { auditOutbox, createLogger, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
 import { asc, inArray, sql } from 'drizzle-orm';
-import { appendAuditEntries, OutboxEntrySchema, type ShippableEntry } from './audit.service.js';
-import { CHAIN_SPLIT_SQL } from '../schema/index.js';
+import {
+  appendAuditEntries,
+  chainMovedOut,
+  OutboxEntrySchema,
+  type ShippableEntry,
+} from './audit.service.js';
 
 const BATCH_SIZE = 1_000;
 const SHIPPER_LOCK_KEY = 'audit_shipper';
@@ -38,34 +42,28 @@ async function chain(txn: DrizzleTx, shippable: Shippable[]): Promise<Rejection[
   }));
 }
 
-// True once split migrate has moved this database's chain out, so shipping into it would build a
-// second chain the readers never see.
-async function chainMovedOut(tx: DrizzleTx): Promise<boolean> {
-  const { rows } = await tx.execute<{ split: boolean }>(sql.raw(CHAIN_SPLIT_SQL));
-  return rows[0]?.split ?? false;
-}
-
-// A chain started empty while the main database still holds the old one would fork the history:
-// the old rows are copied over first (the audit-copy runbook), and only then may the shipper append.
+// A chain appended to before the main database's old one is wholly copied over would fork the
+// history: the copy runs in seq order with the target's head as its cursor (the audit-copy
+// runbook), so the target holding the old chain's last row, hash and all, means it holds every row.
 async function refuseChainBeforeCopy(main: DrizzleTx, chainTx: DrizzleTx): Promise<void> {
-  const { rows: chain } = await chainTx.execute<{ empty: boolean }>(
-    sql`SELECT NOT EXISTS (SELECT 1 FROM audit_log) AS empty`,
-  );
-  if (!chain[0]?.empty) {
-    return;
-  }
   const { rows: legacy } = await main.execute<{ present: boolean }>(
     sql`SELECT to_regclass('public.audit_log') IS NOT NULL AS present`,
   );
   if (!legacy[0]?.present) {
     return;
   }
-  const { rows: held } = await main.execute<{ held: boolean }>(
-    sql`SELECT EXISTS (SELECT 1 FROM audit_log) AS held`,
+  const { rows: tail } = await main.execute<{ seq: string; hash: string }>(
+    sql`SELECT seq::text AS seq, hash FROM audit_log ORDER BY seq DESC LIMIT 1`,
   );
-  if (held[0]?.held) {
+  if (!tail[0]) {
+    return;
+  }
+  const { rows: copied } = await chainTx.execute<{ copied: boolean }>(
+    sql`SELECT EXISTS (SELECT 1 FROM audit_log WHERE seq = ${tail[0].seq} AND hash = ${tail[0].hash}) AS copied`,
+  );
+  if (!copied[0]?.copied) {
     throw new Error(
-      'the audit database is empty while the main database still holds audit_log rows: copy the chain over before shipping',
+      `the audit database lacks the main database's audit_log up to seq ${tail[0].seq}: copy the chain over before shipping`,
     );
   }
 }
@@ -85,8 +83,8 @@ async function refuseChainBeforeCopy(main: DrizzleTx, chainTx: DrizzleTx): Promi
  * (`AUDIT_SHIPPER_DRIZZLE`), the only role its outbox guard lets delete. Nothing checks that
  * `chainDb` points at the chain's database; the split mark split `migrate` leaves on the main
  * database is the guard: with `chainDb` left as `db` there, this throws instead of shipping. It
- * also throws before the first append into an empty chain while the main database still holds the
- * old one.
+ * also throws before any append while the main database still holds an old chain that `chainDb`
+ * lacks the last row of.
  */
 export async function shipAuditBatch(
   db: DrizzleDb,

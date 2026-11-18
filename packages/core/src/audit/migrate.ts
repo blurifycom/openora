@@ -264,6 +264,18 @@ const mainConnectByRoleSql = (writer: LoginRole, shipper: LoginRole) => `DO $$
 
 const MARK_SPLIT_SQL = `COMMENT ON FUNCTION audit_outbox_deny_unshipped_delete() IS '${CHAIN_SPLIT_MARK}'`;
 
+const SPLIT_MAIN_MESSAGE =
+  'the audit chain of this database lives in a database of its own: migrate with auditUrl (AUDIT_DATABASE_URL) and shipperUrl (AUDIT_SHIPPER_DATABASE_URL)';
+
+// The single-database guard replacement's own check, run under the migration lock that split
+// migrate marks the database under, so a split that lands while this run waits is still seen.
+const REFUSE_SPLIT_MAIN_SQL = `DO $$
+   BEGIN
+     IF (${CHAIN_SPLIT_SQL}) THEN
+       RAISE EXCEPTION '${SPLIT_MAIN_MESSAGE}';
+     END IF;
+   END $$`;
+
 // Per audit role. Each replica opens up to AUDIT_DATABASE_POOL_MAX connections as each role, so
 // replicas x AUDIT_DATABASE_POOL_MAX must stay within it.
 const ROLE_CONNECTION_LIMIT = 20;
@@ -280,6 +292,15 @@ const ROLE_STATE_SQL = `SELECT r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR
           EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.roleid = r.oid
                      AND coalesce((to_jsonb(m)->>'inherit_option')::boolean
                                   OR (to_jsonb(m)->>'set_option')::boolean, true)) AS shared
+     FROM pg_roles r WHERE r.rolname = $1`;
+
+// An owner may disable the append-only triggers, alter the guards or grant itself back what
+// migrate revoked, so an audit role owns nothing: no database anywhere, and no schema, table,
+// sequence, view or function in the database this runs in.
+const ROLE_OWNS_SQL = `SELECT EXISTS (SELECT 1 FROM pg_database WHERE datdba = r.oid)
+          OR EXISTS (SELECT 1 FROM pg_namespace WHERE nspowner = r.oid)
+          OR EXISTS (SELECT 1 FROM pg_class WHERE relowner = r.oid)
+          OR EXISTS (SELECT 1 FROM pg_proc WHERE proowner = r.oid) AS owns
      FROM pg_roles r WHERE r.rolname = $1`;
 
 type LoginRole = { name: string; quoted: string; password: string; database: string };
@@ -337,6 +358,17 @@ async function ensureLoginRole(client: PoolClient, role: LoginRole): Promise<voi
   await client.query(
     `ALTER ROLE ${role.quoted} WITH LOGIN CONNECTION LIMIT ${ROLE_CONNECTION_LIMIT} PASSWORD '${scramVerifier(role.password)}'`,
   );
+}
+
+async function refuseOwners(client: Pool | PoolClient, roles: LoginRole[]): Promise<void> {
+  for (const role of roles) {
+    const { rows } = await client.query<{ owns: boolean }>(ROLE_OWNS_SQL, [role.name]);
+    if (rows[0]?.owns) {
+      throw new Error(
+        `audit role ${role.name} owns a database, schema, table or function: reassign what it owns and migrate again`,
+      );
+    }
+  }
 }
 
 async function inTransaction(client: PoolClient, statements: string[]): Promise<void> {
@@ -419,9 +451,7 @@ export async function migrate(target?: string | AuditMigrateTarget): Promise<voi
     const probe = new Pool({ connectionString: mainUrl });
     try {
       if (await isSplit(probe)) {
-        throw new Error(
-          'the audit chain of this database lives in a database of its own: migrate with auditUrl (AUDIT_DATABASE_URL) and shipperUrl (AUDIT_SHIPPER_DATABASE_URL)',
-        );
+        throw new Error(SPLIT_MAIN_MESSAGE);
       }
     } finally {
       await probe.end();
@@ -429,6 +459,7 @@ export async function migrate(target?: string | AuditMigrateTarget): Promise<voi
     return runMigrations({
       ...MIGRATIONS,
       postSql: [
+        REFUSE_SPLIT_MAIN_SQL,
         ...APPEND_ONLY_SQL,
         CHAIN_MATCH_SQL,
         ...outboxGuardSql(CHAINED_HERE),
@@ -482,6 +513,13 @@ export async function migrate(target?: string | AuditMigrateTarget): Promise<voi
         }
         await ensureLoginRole(client, writer);
         await ensureLoginRole(client, shipper);
+        await refuseOwners(client, [writer, shipper]);
+        const auditAdmin = new Pool({ connectionString: withDatabase(mainUrl, writer.database) });
+        try {
+          await refuseOwners(auditAdmin, [writer, shipper]);
+        } finally {
+          await auditAdmin.end();
+        }
 
         await runMigrations({
           ...MIGRATIONS,

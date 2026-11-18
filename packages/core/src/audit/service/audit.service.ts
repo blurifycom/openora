@@ -26,7 +26,7 @@ import {
   type User,
   type Uuid,
 } from '@openora/core/contracts';
-import { auditLog, type AuditLog } from '../schema/index.js';
+import { auditLog, CHAIN_SPLIT_SQL, type AuditLog } from '../schema/index.js';
 import {
   AuditActorTypeSchema,
   AuditSnapshotSchema,
@@ -440,9 +440,19 @@ export async function appendAuditEntries(
 }
 
 /**
+ * True when `tx` reaches a main database whose chain split `migrate` moved to a database of its
+ * own: its `audit_log`, if any is left, is one nothing reads.
+ */
+export async function chainMovedOut(tx: DrizzleTx): Promise<boolean> {
+  const { rows } = await tx.execute<{ split: boolean }>(sql.raw(CHAIN_SPLIT_SQL));
+  return rows[0]?.split ?? false;
+}
+
+/**
  * Appends one row to the hash chain straight away, inside the caller's transaction and holding
  * the `audit_log` chain lock until it commits, so every other append waits on the caller's
  * transaction. For a deploy step that runs outside the container and reads its own row back.
+ * Throws on a split main database, whose own `audit_log` is no longer the chain.
  *
  * @deprecated Use `enqueueAuditInTransaction`, which queues the record and takes no lock. Removed
  * in the next minor release.
@@ -451,6 +461,11 @@ export async function recordAuditInTransaction(
   txn: DrizzleTx,
   input: RecordInput,
 ): Promise<AuditLog> {
+  if (await chainMovedOut(txn)) {
+    throw new Error(
+      'the audit chain of this database lives in a database of its own: append in a transaction on the audit database (AUDIT_DATABASE_URL)',
+    );
+  }
   const [row] = await appendAuditEntries(txn, [
     { eventId: randomUUID(), entry: outboxEntry(input) },
   ]);
