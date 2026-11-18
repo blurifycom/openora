@@ -26,7 +26,7 @@ You verify a built change by hand against the running stack, debug failures with
 
 ## Local stack
 
-The platform is headless (API + modules); the player app and backoffice are this operator's own frontends. API :3001, player app :3000, backoffice :3002. Seed credentials (after `pnpm db:seed`): `admin@oss.dev` / `password1234`. Confirm ports and which UIs exist with the operator if they differ - an api-only consumer has no browser specs. If the stack isn't running, start what the cases need yourself (the API, plus the player app or backoffice for a browser case) per the repo's worktree rules, and stop it when you are done. Ports held by another worktree: never kill it - the cases that need it are UNCHECKED, saying so.
+The platform is headless (API + modules); the player app and backoffice are this operator's own frontends. API :3001, player app :3000, backoffice :3002. Seed credentials (after `pnpm bootstrap`): `admin@oss.dev` / `password1234`. Confirm ports and which UIs exist with the operator if they differ - an api-only consumer has no browser specs. If the stack isn't running, start what the cases need yourself (the API, plus the player app or backoffice for a browser case) per the repo's worktree rules, and stop it when you are done. Ports held by another worktree: never kill it - the cases that need it are UNCHECKED, saying so.
 
 ## Your pass: verify by hand, then add the tests
 
