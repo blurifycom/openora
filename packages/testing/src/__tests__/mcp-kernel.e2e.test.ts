@@ -15,9 +15,12 @@ import {
   type RunContext,
 } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
+import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
 import { kycVerification, rgExclusion, rgFlag, userLimit } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
+import { promoGrant, promoGrantEntry } from '@openora/core/promo/schema/bonus';
+import { sportsbookBet, sportsbookSession } from '@openora/core/sportsbook/schema/betting';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
   registerAndMaterializePlayer,
@@ -44,7 +47,9 @@ const REVIEWED = 'Reviewed, no issues.';
 const NOTE_ROUTE_KEYS = ['actorId', 'content', 'createdAt', 'id', 'playerId', 'updatedAt'];
 
 const EXPECTED_TOOL_OWNERS = {
+  'bonus.grants_summary': 'bonus',
   'financial.summary': 'analytics',
+  'gaming.top_games': 'gaming',
   'ggr.summary': 'analytics',
   'kyc.queue': 'compliance',
   'kyc.status': 'compliance',
@@ -53,6 +58,7 @@ const EXPECTED_TOOL_OWNERS = {
   'rg.flags_queue': 'compliance',
   'rg.player_state': 'compliance',
   'players.deposit_compare': 'wallet',
+  'sportsbook.turnover_exposure': 'betting',
   'wallet.activity': 'wallet',
   'withdrawals.queue': 'wallet',
 } as const;
@@ -1486,6 +1492,236 @@ describe('compliance read tools serve RG and KYC facts by player id, under compl
       ok: false,
       error: 'forbidden',
     });
+    const rows = await auditRowsOfCall(run.correlationId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ action: 'mcp.tool.failed', resourceId: toolId });
+  });
+});
+
+describe('gaming, sportsbook and bonus read tools serve operator-wide figures per currency', () => {
+  // A currency and a month no other suite writes, so the figures are this suite's alone.
+  const CURRENCY = 'MCPX';
+  const RANGE = { dateFrom: '2021-06-01', dateTo: '2021-06-30' };
+  const IN_RANGE = new Date('2021-06-10T12:00:00.000Z');
+  const EVENT_NAME = 'Hidden Final';
+  let support: Awaited<ReturnType<typeof newStaff>>;
+  let officer: Awaited<ReturnType<typeof newStaff>>;
+  let bettor: Awaited<ReturnType<typeof newPlayer>>;
+  let gameId: string;
+  let betId: string;
+
+  beforeAll(async () => {
+    support = await newStaff(app, 'mcp-no-report', 'customer-support-agent');
+    officer = await newStaff(app, 'mcp-no-sportsbook', 'kyc-aml-officer');
+    bettor = await newPlayer('sportsbook-open');
+    const [provider] = await drizzle()
+      .insert(gameProvider)
+      .values({ slug: `mcp-studio-${randomUUID()}`, name: 'MCP Studio' })
+      .returning({ id: gameProvider.id });
+    const [row] = await drizzle()
+      .insert(game)
+      .values({
+        name: 'MCP Aces',
+        slug: `mcp-aces-${randomUUID()}`,
+        providerId: provider?.id ?? '',
+        aggregator: 'direct',
+        reviewStatus: 'approved',
+      })
+      .returning({ id: game.id });
+    gameId = row?.id ?? '';
+    await drizzle()
+      .insert(gameRound)
+      .values([
+        {
+          gameId,
+          userId: bettor.userId,
+          status: 'completed',
+          betAmount: '100',
+          winAmount: '30',
+          currency: CURRENCY,
+          startedAt: IN_RANGE,
+        },
+        {
+          gameId,
+          userId: randomUUID(),
+          status: 'completed',
+          betAmount: '40',
+          winAmount: '0',
+          currency: CURRENCY,
+          startedAt: IN_RANGE,
+        },
+      ]);
+    const [session] = await drizzle()
+      .insert(sportsbookSession)
+      .values({
+        userId: bettor.userId,
+        provider: 'book',
+        currency: CURRENCY,
+        countryCode: 'MT',
+        expiresAt: new Date(Date.now() + 60_000),
+      })
+      .returning({ id: sportsbookSession.id });
+    const [bet] = await drizzle()
+      .insert(sportsbookBet)
+      .values({
+        userId: bettor.userId,
+        provider: 'book',
+        providerBetId: randomUUID(),
+        sessionId: session?.id ?? '',
+        currency: CURRENCY,
+        currencyDecimals: 2,
+        status: 'accepted',
+        stake: '20',
+        cashStake: '20',
+        voidPayout: '20',
+        potentialPayout: '120',
+        legs: [
+          { eventId: 'mcp-event', eventName: EVENT_NAME, startsAt: '2030-01-01T00:00:00.000Z' },
+        ],
+        lastLegStartsAt: new Date('2030-01-01T00:00:00.000Z'),
+        acceptedAt: IN_RANGE,
+      })
+      .returning({ id: sportsbookBet.id });
+    betId = bet?.id ?? '';
+    const [grant] = await drizzle()
+      .insert(promoGrant)
+      .values({
+        userId: bettor.userId,
+        currency: CURRENCY,
+        source: 'manual',
+        sourceRef: `mcp-${randomUUID()}`,
+        terms: { wageringMultiplier: '3', expiryDays: 14, weights: [] },
+        grantedAmount: '25',
+        bonusBalance: '25',
+        wageringRequired: '75',
+        status: 'active',
+        activatedAt: IN_RANGE,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      })
+      .returning();
+    if (!grant) {
+      throw new Error('no grant row');
+    }
+    await drizzle().insert(promoGrantEntry).values({
+      grantId: grant.id,
+      userId: grant.userId,
+      currency: CURRENCY,
+      type: 'grant',
+      bonusAmount: '25',
+      balanceAfter: '25',
+    });
+  });
+
+  it('answers gaming.top_games with the game ranked in its currency, under report:view', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'gaming.top_games',
+        { ...RANGE, currency: CURRENCY },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('gaming.top_games'));
+    expect(listField(output, 'currencies')).toEqual([
+      {
+        currency: CURRENCY,
+        totals: {
+          volume: expect.stringMatching(wholeAmount(140)),
+          revenue: expect.stringMatching(wholeAmount(110)),
+          roundsPlayed: 2,
+          uniquePlayers: 2,
+          gamesPlayed: 1,
+        },
+        games: [
+          {
+            gameId,
+            name: 'MCP Aces',
+            provider: 'MCP Studio',
+            gameType: 'casino',
+            volume: expect.stringMatching(wholeAmount(140)),
+            revenue: expect.stringMatching(wholeAmount(110)),
+            roundsPlayed: 2,
+            uniquePlayers: 2,
+          },
+        ],
+      },
+    ]);
+    expect(JSON.stringify(output)).not.toContain(bettor.userId);
+  });
+
+  it('answers sportsbook.turnover_exposure with the open bet by player id, without its event', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'sportsbook.turnover_exposure',
+        { ...RANGE, currency: CURRENCY },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('sportsbook.turnover_exposure'));
+    expect(listField(output, 'currencies')).toEqual([
+      expect.objectContaining({
+        currency: CURRENCY,
+        bets: 1,
+        stake: expect.stringMatching(wholeAmount(20)),
+        openBets: 1,
+        openPotentialPayout: expect.stringMatching(wholeAmount(120)),
+        largestOpen: [
+          expect.objectContaining({
+            betId,
+            playerId: bettor.playerId,
+            status: 'accepted',
+            legs: 1,
+          }),
+        ],
+      }),
+    ]);
+    const served = JSON.stringify(output);
+    expect(served).not.toContain(EVENT_NAME);
+    expect(served).not.toContain(bettor.userId);
+  });
+
+  it('answers bonus.grants_summary with the grant funded in range and the liability it holds', async () => {
+    const output = outputOf(
+      await kernel.invokeTool(
+        'bonus.grants_summary',
+        { ...RANGE, currency: CURRENCY },
+        adminRun(adminId),
+      ),
+    );
+
+    expect(Object.keys(output).sort()).toEqual(allowListOf('bonus.grants_summary'));
+    expect(listField(output, 'currencies')).toEqual([
+      expect.objectContaining({
+        currency: CURRENCY,
+        granted: { count: 1, amount: expect.stringMatching(wholeAmount(25)) },
+        bySource: [expect.objectContaining({ source: 'manual' })],
+        outstanding: expect.objectContaining({
+          activeGrants: 1,
+          bonusBalance: expect.stringMatching(wholeAmount(25)),
+          wageringRemaining: expect.stringMatching(wholeAmount(75)),
+        }),
+      }),
+    ]);
+    expect(JSON.stringify(output)).not.toContain(bettor.userId);
+
+    expect(
+      await kernel.invokeTool(
+        'bonus.grants_summary',
+        { dateFrom: '2020-01-01', dateTo: '2021-06-30' },
+        adminRun(adminId),
+      ),
+    ).toMatchObject({ ok: false, error: 'invalid_input' });
+  });
+
+  it.each([
+    ['gaming.top_games', 'report:view', () => support],
+    ['sportsbook.turnover_exposure', 'sportsbook:view', () => officer],
+    ['bonus.grants_summary', 'bonus:view', () => officer],
+  ] as const)('refuses %s to an admin whose roles lack %s', async (toolId, _grant, staff) => {
+    const run = adminRun(staff().userId);
+
+    expect(await kernel.invokeTool(toolId, {}, run)).toEqual({ ok: false, error: 'forbidden' });
     const rows = await auditRowsOfCall(run.correlationId);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ action: 'mcp.tool.failed', resourceId: toolId });

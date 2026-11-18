@@ -190,6 +190,10 @@ export const sportsbookBet = pgTable(
       .where(
         sql`${t.status} = 'reserved' and ${t.reconcileAttempts} < ${sql.raw(String(SPORTSBOOK_RECONCILE_MAX_ATTEMPTS))}`,
       ),
+    // The operator-wide settlement read: bets settled in a range, whoever placed them.
+    index('sportsbook_bet_settled_at_idx')
+      .on(t.settledAt)
+      .where(sql`${t.status} = 'settled'`),
     index('sportsbook_bet_accepted_last_leg_starts_at_idx')
       .on(t.lastLegStartsAt, t.id)
       .where(sql`${t.status} = 'accepted'`),

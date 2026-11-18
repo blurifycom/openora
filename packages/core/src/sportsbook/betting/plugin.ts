@@ -23,6 +23,7 @@ import {
   SPORTSBOOK_RG_REVOKE_TRIGGERS,
   SportsbookReconcileJobSchema,
   SportsbookRgRevokeJobSchema,
+  turnoverExposureTool,
 } from './contract/index.js';
 import { createSportsbookRouter } from './router/index.js';
 import { SportsbookAlignService } from './service/align.service.js';
@@ -34,6 +35,7 @@ import { SportsbookLedgerService } from './service/ledger.service.js';
 import { SportsbookReconcileService } from './service/reconcile.service.js';
 import { SportsbookRestrictionService } from './service/restriction.service.js';
 import { SportsbookSessionService } from './service/session.service.js';
+import { SportsbookTurnoverService } from './service/turnover-exposure.service.js';
 
 const logger = createLogger('sportsbook');
 
@@ -120,6 +122,13 @@ export default {
     };
 
     ctx.provide(SPORTSBOOK_LEDGER, (c) => services(c).ledger);
+
+    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts,
+    // and the services above need the wallet's and the provider's ports.
+    ctx.mcp.tool(turnoverExposureTool, (c) => {
+      const turnover = new SportsbookTurnoverService(c.get(DRIZZLE));
+      return (input) => turnover.turnoverExposure(input);
+    });
 
     for (const topic of SPORTSBOOK_RG_REVOKE_TRIGGERS) {
       ctx.events.on(topic, async (payload, envelope) => {

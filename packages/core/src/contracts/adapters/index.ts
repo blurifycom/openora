@@ -469,6 +469,10 @@ export type {
   GameRoundCount,
   GameRoundRankingFilter,
   GameRoundTopFilter,
+  GameRankingSortBy,
+  GameCurrencyRankingFilter,
+  GameRankingFigures,
+  GameCurrencyRanking,
   PlayerGameStats,
 } from './admin-game-reporting.js';
 export { GAME_PERFORMANCE_SORT_FIELDS, ADMIN_GAME_REPORTING } from './admin-game-reporting.js';

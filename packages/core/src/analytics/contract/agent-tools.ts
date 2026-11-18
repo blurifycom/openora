@@ -8,11 +8,13 @@ import {
   WALLET_TRANSACTION_STATUSES,
   WalletTransactionStatusSchema,
   WalletTransactionTypeSchema,
+  checkDayRange,
   defineMcpTool,
+  resolveDayRange,
+  type DayRangeInput,
 } from '@openora/core/contracts';
 import { GgrSeriesSchema } from './financial.js';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const GGR_SUMMARY_DEFAULT_DAYS = 30;
 export const GGR_SUMMARY_MAX_DAYS = 366;
 const PAYMENTS_FLOW_DEFAULT_DAYS = 14;
@@ -22,49 +24,6 @@ const FINANCIAL_SUMMARY_DEFAULT_DAYS = 30;
 export const FINANCIAL_SUMMARY_MAX_DAYS = 366;
 export const FINANCIAL_SUMMARY_MAX_CURRENCIES = 100;
 export const FINANCIAL_SUMMARY_MAX_PRODUCT_ROWS = 300;
-
-type DayRangeInput = { dateFrom?: string; dateTo?: string };
-type DayRange = { dateFrom: string; dateTo: string };
-
-const isoDay = (epochMs: number) => new Date(epochMs).toISOString().slice(0, 10);
-
-/**
- * The whole UTC days a report covers, both ends inclusive: `dateTo` defaults to the day of
- * `now`, and `dateFrom` to the `defaultDays` days ending on `dateTo`.
- */
-function resolveDayRange(
-  { dateFrom, dateTo }: DayRangeInput,
-  defaultDays: number,
-  now: Date,
-): DayRange {
-  const to = dateTo ?? isoDay(now.getTime());
-  return {
-    dateFrom: dateFrom ?? isoDay(Date.parse(to) - (defaultDays - 1) * DAY_MS),
-    dateTo: to,
-  };
-}
-
-function dayRangeDays({ dateFrom, dateTo }: DayRange) {
-  return (Date.parse(dateTo) - Date.parse(dateFrom)) / DAY_MS + 1;
-}
-
-function checkDayRange(range: DayRange, maxDays: number, ctx: z.core.$RefinementCtx) {
-  if (range.dateFrom > range.dateTo) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['dateFrom'],
-      message: 'dateFrom must be on or before dateTo',
-    });
-    return;
-  }
-  if (dayRangeDays(range) > maxDays) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['dateFrom'],
-      message: `the range spans at most ${maxDays} days`,
-    });
-  }
-}
 
 /** ggr.summary's days: `dateTo` defaults to the day of `now`, `dateFrom` to 30 days ending on it. */
 export function resolveGgrSummaryRange(input: DayRangeInput, now = new Date()) {

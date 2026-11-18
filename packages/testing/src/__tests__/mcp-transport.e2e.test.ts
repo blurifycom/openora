@@ -303,7 +303,9 @@ describe('MCP transport, happy path through the SDK client', () => {
     const { tools } = await client.listTools();
 
     expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'bonus_grants_summary',
       'financial_summary',
+      'gaming_top_games',
       'ggr_summary',
       'kyc_queue',
       'kyc_status',
@@ -312,6 +314,7 @@ describe('MCP transport, happy path through the SDK client', () => {
       'players_deposit_compare',
       'rg_flags_queue',
       'rg_player_state',
+      'sportsbook_turnover_exposure',
       'wallet_activity',
       'withdrawals_queue',
     ]);

@@ -1,0 +1,1 @@
+CREATE INDEX "sportsbook_bet_settled_at_idx" ON "sportsbook_bet" USING btree ("settled_at") WHERE "sportsbook_bet"."status" = 'settled';
