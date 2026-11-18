@@ -41,6 +41,13 @@ describe('parseServiceManifest', () => {
     ]);
   });
 
+  it('collapses a repeat that agrees on the flag', () => {
+    expect(parseServiceManifest('wallet,wallet')).toEqual([plain('wallet')]);
+    expect(parseServiceManifest('identity:no-routes,identity:no-routes')).toEqual([
+      { id: 'identity', noRoutes: true },
+    ]);
+  });
+
   it('rejects an unknown flag, an empty flag and a contradictory repeat', () => {
     expect(() => parseServiceManifest('identity:noroutes')).toThrow(/unknown flag/);
     expect(() => parseServiceManifest('identity:')).toThrow(/unknown flag/);
