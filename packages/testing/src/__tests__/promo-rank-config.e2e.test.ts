@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { WAGER_TRACKING, type WagerProduct } from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
@@ -67,7 +67,11 @@ async function adminWithRole(roleKey: string) {
 // audit_log is append-only, so a test counts what its own call added rather than clearing rows.
 const auditRows = async () => {
   await flushAudit(app);
-  return drizzle().select().from(auditLog).where(eq(auditLog.action, CONFIG_ACTION));
+  return drizzle()
+    .select()
+    .from(auditLog)
+    .where(eq(auditLog.action, CONFIG_ACTION))
+    .orderBy(asc(auditLog.seq));
 };
 
 const wager = (userId: string, amount: string, product: WagerProduct) =>

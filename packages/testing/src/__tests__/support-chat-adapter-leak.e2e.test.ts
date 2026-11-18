@@ -12,6 +12,7 @@ import { user } from '@openora/core/pam/schema/identity';
 import {
   bootE2e,
   closeE2e,
+  flushAudit,
   registerAndMaterializePlayer,
   type TestApp,
   type TestDb,
@@ -270,6 +271,7 @@ describe('support ticket adapter failures', () => {
       expect(seen).not.toContain(MESSAGE);
       expect(seen).not.toContain(SUBJECT);
       expect(readSupportChatCalls().tickets.some((t) => t.requester.email === email)).toBe(false);
+      await flushAudit(testApp);
       const audits = await testApp.container
         .get(DRIZZLE)
         .db.select()

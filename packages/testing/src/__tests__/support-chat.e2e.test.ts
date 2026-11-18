@@ -648,14 +648,16 @@ const TICKETS = '/support-chat/tickets';
 const ticketsTo = (email: string) =>
   readSupportChatCalls().tickets.filter((ticket) => ticket.requester.email === email);
 
-const ticketAudits = (playerId: string) =>
-  testApp.container
+const ticketAudits = async (playerId: string) => {
+  await flushAudit(testApp);
+  return testApp.container
     .get(DRIZZLE)
     .db.select()
     .from(auditLog)
     .where(
       and(eq(auditLog.action, 'support_chat.ticket.created'), eq(auditLog.resourceId, playerId)),
     );
+};
 
 describe('offline ticket', () => {
   it('files one ticket under the account name, email and language and audits it without either', async () => {
