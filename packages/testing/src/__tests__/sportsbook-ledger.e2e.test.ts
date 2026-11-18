@@ -753,8 +753,9 @@ describe('sportsbook ledger', () => {
       return { player, args, betId, drain, voidAt };
     }
 
-    const voidedDebtAudit = async (debtId: string) =>
-      app.container
+    const voidedDebtAudit = async (debtId: string) => {
+      await flushAudit(app);
+      return app.container
         .get(DRIZZLE)
         .db.select({
           actorId: auditLog.actorId,
@@ -769,6 +770,7 @@ describe('sportsbook ledger', () => {
             sql`${auditLog.after}->>'cause' = 'voided'`,
           ),
         );
+    };
 
     it.each([
       { collectable: 4, of: 'part' },
