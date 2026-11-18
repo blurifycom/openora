@@ -1,5 +1,6 @@
 // babysit.mjs --once against a fake `gh`: a green draft asks to be marked ready, a thread with a
-// drafted reply stays quiet until a new comment lands, and a live session holding the PR wins.
+// drafted reply stays quiet until a new comment lands, a final reaction from the account answers a
+// thread (eyes only means picked up), and a live session holding the PR wins.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once as onceEvent } from 'node:events';
@@ -46,7 +47,7 @@ const pr = (fields) =>
       ...fields,
     }),
   );
-const threads = (lastCommentIds) =>
+const threads = (lastCommentIds, reactions = []) =>
   writeFileSync(
     join(repo, 'threads.json'),
     JSON.stringify([
@@ -58,7 +59,16 @@ const threads = (lastCommentIds) =>
               reviewThreads: {
                 nodes: lastCommentIds.map((id) => ({
                   isResolved: false,
-                  comments: { nodes: [{ id, author: { login: 'reviewer' } }] },
+                  comments: {
+                    nodes: [
+                      {
+                        id,
+                        body: 'fix this',
+                        author: { login: 'reviewer' },
+                        reactions: { nodes: reactions },
+                      },
+                    ],
+                  },
                 })),
               },
               comments: { nodes: [] },
@@ -98,6 +108,22 @@ test('a thread with a drafted reply stays quiet until a new comment changes its 
   assert.equal(once(), 'none');
   threads(['c1', 'c3']);
   assert.equal(once(), 'threads c3');
+});
+
+const mine = (content) => ({ content, user: { login: 'me' } });
+
+test('a thread is answered by a final reaction from the account, not by eyes or someone else', () => {
+  pr({});
+  threads(['C1']);
+  assert.equal(once(), 'threads C1');
+  threads(['C1'], [mine('EYES')]);
+  assert.equal(once(), 'threads C1');
+  threads(['C1'], [{ content: 'THUMBS_UP', user: { login: 'other' } }]);
+  assert.equal(once(), 'threads C1');
+  threads(['C1'], [mine('EYES'), mine('THUMBS_UP')]);
+  assert.equal(once(), 'none');
+  threads(['C1'], [mine('CONFUSED')]);
+  assert.equal(once(), 'none');
 });
 
 test('a PR held by a live session reads watched, watching or not; a dead holder does not count', async () => {
