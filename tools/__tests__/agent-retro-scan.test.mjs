@@ -139,6 +139,10 @@ test('masks credentials in command examples', () => {
     'FIREBLOCKS_API_KEY: sekret3 node x',
     'psql postgres://u:sekret4@host/db',
     'mysql --password sekret5',
+    'curl -H "Cookie: session=sekret6; csrf=sekret7" https://x',
+    "curl -H 'Set-Cookie: sid=sekret8' https://x",
+    'curl -b "session=sekret9; csrf=sekret10" https://x',
+    'curl --cookie sid=sekret11 https://x',
     "printf '-----BEGIN PRIVATE KEY-----\nsekret6\n-----END PRIVATE KEY-----'",
   ];
   writeFileSync(
@@ -153,8 +157,8 @@ test('masks credentials in command examples', () => {
       .join('\n'),
   );
   const out = execFileSync('node', [SCAN, '--root', root, '--save', 'false'], { encoding: 'utf8' });
-  assert.match(out, /tool calls: 7/);
+  assert.match(out, /tool calls: 11/);
   assert.doesNotMatch(out, /sekret|9z8y7x/);
   // masking keeps the key that groups rows
-  assert.match(out, /\| 1 \| 1 \| curl -H \|/);
+  assert.match(out, /\| 3 \| 1 \| curl -H \|/);
 });

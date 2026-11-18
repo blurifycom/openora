@@ -77,6 +77,9 @@ const redact = (text) =>
       /\b(Authorization|PRIVATE-TOKEN|x-api-key)(["']?\s*[:=]\s*)(?:(?:Bearer|Basic|token)\s+)?[^\s"']+/gi,
       '$1$2<redacted>',
     )
+    // A cookie header holds a whole `a=1; b=2` list, so it is masked to the closing quote or line end.
+    .replace(/\b(Cookie|Set-Cookie)(["']?\s*[:=]\s*)[^"'\r\n]+/gi, '$1$2<redacted>')
+    .replace(/\b(curl\s(?:.*?\s)?(?:-b|--cookie)(?:=|\s+))(?:"[^"]*"|'[^']*'|\S+)/g, '$1<redacted>')
     .replace(/\b(Bearer|Basic)\s+[\w.~+/=-]{8,}/g, '$1 <redacted>')
     .replace(SECRET_NAME, '$1$2$1$3<redacted>')
     .replace(/(--password[= ]|docker login\s.*?-p\s+|curl\s.*?-u\s+[^:\s]+:)\S+/g, '$1<redacted>')
