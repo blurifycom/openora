@@ -214,18 +214,17 @@ async function inviteStatuses(
         liveInvite(db, now),
       ),
     );
-  // Postgres returns uuids lowercase; an uppercase caller id must still match.
-  const memberIds = new Set(members.map((row) => row.userId.toLowerCase()));
-  const bannedIds = new Set(bans.map((row) => row.userId.toLowerCase()));
-  const invitedIds = new Set(invites.map((row) => row.userId.toLowerCase()));
+  const memberIds = new Set(members.map((row) => row.userId));
+  const bannedIds = new Set(bans.map((row) => row.userId));
+  const invitedIds = new Set(invites.map((row) => row.userId));
   return new Map(
     ids.map((id) => [
       id,
-      memberIds.has(id.toLowerCase())
+      memberIds.has(id)
         ? 'member'
-        : bannedIds.has(id.toLowerCase())
+        : bannedIds.has(id)
           ? 'banned'
-          : invitedIds.has(id.toLowerCase())
+          : invitedIds.has(id)
             ? 'invited'
             : 'available',
     ]),
@@ -313,11 +312,14 @@ export class ChatRoomInviteService {
 
   async inviteToRoom({
     actorId,
-    roomId,
-    userId,
+    roomId: rawRoomId,
+    userId: rawUserId,
     ip,
     userAgent,
   }: { actorId: Uuid; roomId: Uuid; userId: Uuid } & ClientMeta) {
+    // Postgres and the ban writer hold uuids lowercase: an uppercase id must key the same locks.
+    const roomId = rawRoomId.toLowerCase();
+    const userId = rawUserId.toLowerCase();
     if (actorId === userId) {
       throw new ChatRoomInviteSelfError();
     }
@@ -450,7 +452,7 @@ export class ChatRoomInviteService {
     userIds: Uuid[];
   } & ClientMeta): Promise<ChatRoomInviteLookup[]> {
     await this.assertCanInvite(actorId, roomId, 'lookup', { ip, userAgent });
-    const ids = [...new Set(userIds)];
+    const ids = [...new Set(userIds.map((id) => id.toLowerCase()))];
     const accounts = await this.accounts.getAccounts(ids);
     const statuses = await inviteStatuses(
       this.drizzle.db,

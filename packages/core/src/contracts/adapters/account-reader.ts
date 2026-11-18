@@ -9,7 +9,7 @@ import { UuidSchema } from '../schemas/common.js';
  * may play. Owned and bound by the identity module (it owns `user`), so chat, social and the
  * admin guard read accounts here instead of joining the identity and profile tables. A service
  * running on a database of its own binds an implementation that calls the identity service's
- * internal API (ADR-0052) and caches each answer briefly; that one throws when the call fails,
+ * internal API (ADR-0054) and caches each answer briefly; that one throws when the call fails,
  * so a caller deciding access fails closed instead of reading "no such account".
  */
 export const AccountSchema = z.object({
