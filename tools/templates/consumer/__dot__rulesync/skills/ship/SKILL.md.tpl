@@ -31,7 +31,7 @@ The orchestrator: one ticket key in, a green MR in Code Review out. You own the 
 - Git: commits on the ticket branch `<type>/{{trackerKey}}-XXX/<slug>` and pushing it. Never a push to `{{mrTarget}}`, `stage`, `prod` or any shared branch.
 - Force-push: only `git push --force-with-lease` on the ticket branch, and only while every commit on the remote branch past `{{mrTarget}}` is your own (`git log --format=%ae origin/{{mrTarget}}..origin/<branch>` shows only your `git config user.email`). Someone else's commit there: merge, never push over it. Never a plain `--force`.
 - Merging: into a feature branch only (`{{mrTarget}}` merged into the ticket branch to clear conflicts, a stacked MR into its parent ticket branch). Never into `{{mrTarget}}`, `dev`, `develop`, `stage`, `staging`, `prod`, `production`, `main` or `master`.
-- The forge: opening the MR for that branch and reacting on its review threads (`eyes` picked up, `thumbsup` fixed, `question` needs an answer). Never a reply, review or comment on the MR: the developer writes MR text by hand. Your reaction on a thread's last comment is what tells `watch-pr.mjs` it is handled.
+- The forge: opening the MR for that branch and reacting on its review threads (`eyes` picked up, `thumbsup` fixed, `question` needs an answer). Never a reply, review or comment on the MR: the developer writes MR text by hand. Your `thumbsup` or `question` on a thread's last comment is what tells `watch-pr.mjs` it is handled; `eyes` alone stays pending.
 - Slack: nothing. Announcing the MR is the forge integration's job, so ship never drafts a notice.
 
 ## Do what the work needs, inside the worktree
