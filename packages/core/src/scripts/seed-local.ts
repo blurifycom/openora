@@ -1,7 +1,14 @@
 import { createAuth, createDrizzleDb } from '@openora/core/server';
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
-import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
+import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
+import {
+  ledgerPlayEligibilityProjection,
+  ledgerRgLimits,
+  seedAutoWithdrawalConfig,
+} from '@openora/core/wallet/seed';
+import { backfillPlayEligibility } from '@openora/core/pam/identity/seed';
+import { backfillRgLimits } from '@openora/core/compliance/seed';
 import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
 import { seedRankLadder, type RankLadderSeed } from '@openora/core/promo/seed/gamification';
 import { seedChatCommands } from '@openora/core/engagement/seed/chat-commands';
@@ -121,7 +128,7 @@ export async function seedLocalData(options: SeedLocalOptions): Promise<SeedResu
   await seedChatCommands(db);
   log('Reference data ready (roles, tags, configs, rank ladder, chat commands).');
 
-  return seedDemoData({
+  const result = await seedDemoData({
     db,
     auth,
     admin: { name: 'Platform Admin', ...options.admin },
@@ -129,4 +136,14 @@ export async function seedLocalData(options: SeedLocalOptions): Promise<SeedResu
     ...(options.playerCount === undefined ? {} : { playerCount: options.playerCount }),
     log,
   });
+  // After the demo games exist: the round ledger only plays games it has projected.
+  await backfillLedgerGames(db);
+  log('Round ledger games projected.');
+  // After the demo users exist: the ledger refuses a stake from a user it has not projected.
+  await backfillPlayEligibility(db, ledgerPlayEligibilityProjection(db));
+  log('Ledger play eligibility projected.');
+  // After any seeded limit: the ledger does not enforce a limit it has not projected.
+  await backfillRgLimits(db, ledgerRgLimits(db));
+  log('Ledger limits projected.');
+  return result;
 }

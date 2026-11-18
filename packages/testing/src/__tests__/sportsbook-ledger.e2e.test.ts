@@ -12,6 +12,7 @@ import { player as playerProfile } from '@openora/core/pam/schema/profile';
 import {
   sportsbookBet,
   sportsbookBetTransaction,
+  sportsbookDebtShortfall,
   sportsbookPlayerDebt,
   sportsbookReconciliationFinding,
 } from '@openora/core/sportsbook/schema/betting';
@@ -688,6 +689,288 @@ describe('sportsbook ledger', () => {
     );
     expect(await betRow(betId)).toMatchObject({ status: 'settled', version: 2, result: 'won' });
     expect(await balanceOf(app, player.userId)).toBe('115.000000000000000000');
+  });
+
+  it('voids a reopened void again, returning the stake the reopen re-collected', async () => {
+    const player = await fundedPlayer(app, '100');
+    const { args } = await acceptedBet(app, player);
+    const voidAt = (expectedVersion: number) =>
+      ledgerOf(app).settle({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: args.providerBetId,
+        result: 'void',
+        payout: '10',
+        expectedVersion,
+      });
+    expectApplied(await voidAt(1));
+    expectApplied(
+      await ledgerOf(app).reopen({
+        provider: PROVIDER,
+        providerTxId: txId(),
+        providerBetId: args.providerBetId,
+        expectedVersion: 1,
+      }),
+    );
+
+    expectApplied(await voidAt(2));
+    expect(await balanceOf(app, player.userId)).toBe('100.000000000000000000');
+  });
+
+  describe('a void of a reopen that left part of the stake as debt', () => {
+    const money = (amount: number) => `${amount}.000000000000000000`;
+
+    async function reopenedShortOf(collectable: number) {
+      const player = await fundedPlayer(app, '100');
+      const { args, betId } = await acceptedBet(app, player);
+      const voidAt = (expectedVersion: number) =>
+        ledgerOf(app).settle({
+          provider: PROVIDER,
+          providerTxId: txId(),
+          providerBetId: args.providerBetId,
+          result: 'void',
+          payout: '10',
+          expectedVersion,
+        });
+      expectApplied(await voidAt(1));
+      const drain = await acceptedBet(app, player, {
+        stake: String(100 - collectable),
+        potentialPayout: '200',
+      });
+      expectApplied(
+        await ledgerOf(app).reopen({
+          provider: PROVIDER,
+          providerTxId: txId(),
+          providerBetId: args.providerBetId,
+          expectedVersion: 1,
+        }),
+      );
+      expect(await balanceOf(app, player.userId)).toBe(money(0));
+      expect(await debtOf(player)).toMatchObject({
+        outstanding: money(10 - collectable),
+      });
+      expect(await holdsOf(player)).toHaveLength(1);
+      return { player, args, betId, drain, voidAt };
+    }
+
+    const voidedDebtAudit = async (debtId: string) =>
+      app.container
+        .get(DRIZZLE)
+        .db.select({
+          actorId: auditLog.actorId,
+          actorType: auditLog.actorType,
+          after: auditLog.after,
+        })
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.resourceId, debtId),
+            eq(auditLog.action, 'sportsbook.debt.changed'),
+            sql`${auditLog.after}->>'cause' = 'voided'`,
+          ),
+        );
+
+    it.each([
+      { collectable: 4, of: 'part' },
+      { collectable: 0, of: 'none' },
+    ])(
+      'returns what a reopen collecting $of of the stake took and cancels the rest of its debt',
+      async ({ collectable }) => {
+        const { player, args, betId, voidAt } = await reopenedShortOf(collectable);
+
+        // Cancel only applies to a reserved bet, so after a reopen it is refused, final.
+        expect(
+          await ledgerOf(app).cancel({
+            provider: PROVIDER,
+            providerTxId: txId(),
+            providerBetId: args.providerBetId,
+            reason: 'rejected',
+          }),
+        ).toEqual({ status: 'refused', reason: 'illegal_transition' });
+
+        expectApplied(await voidAt(2));
+        expect(await betRow(betId)).toMatchObject({
+          status: 'settled',
+          result: 'void',
+          version: 2,
+        });
+        expect(await balanceOf(app, player.userId)).toBe(money(collectable));
+        const debt = await debtOf(player);
+        expect(debt).toMatchObject({
+          status: 'cleared',
+          owed: money(0),
+          outstanding: money(0),
+          writtenOff: money(0),
+        });
+        expect(await holdsOf(player)).toHaveLength(0);
+        expect(await voidedDebtAudit(debt!.id)).toEqual([
+          {
+            actorId: null,
+            actorType: 'system',
+            after: expect.objectContaining({
+              amount: money(10 - collectable),
+              reason: `cancelled by a void of sportsbook bet ${betId}`,
+            }),
+          },
+        ]);
+      },
+    );
+
+    it('also returns what a later win already offset of that debt', async () => {
+      const { player, betId, drain, voidAt } = await reopenedShortOf(4);
+      expectApplied(
+        await ledgerOf(app).settle({
+          provider: PROVIDER,
+          providerTxId: txId(),
+          providerBetId: drain.args.providerBetId,
+          result: 'won',
+          payout: '3',
+        }),
+      );
+      expect(await debtOf(player)).toMatchObject({ outstanding: money(3), collected: money(3) });
+
+      expectApplied(await voidAt(2));
+      expect(await betRow(betId)).toMatchObject({ status: 'settled', result: 'void' });
+      // 4 the reopen took and 3 the offset took come back; the last 3 are cancelled.
+      expect(await balanceOf(app, player.userId)).toBe(money(7));
+      const debt = await debtOf(player);
+      expect(debt).toMatchObject({
+        status: 'cleared',
+        owed: money(3),
+        collected: money(3),
+        outstanding: money(0),
+      });
+      expect(await holdsOf(player)).toHaveLength(0);
+      expect(await voidedDebtAudit(debt!.id)).toMatchObject([
+        { actorType: 'system', after: { amount: money(3) } },
+      ]);
+    });
+
+    const shortfallsOf = (debtId: string) =>
+      app.container
+        .get(DRIZZLE)
+        .db.select({
+          id: sportsbookDebtShortfall.id,
+          type: sportsbookDebtShortfall.type,
+          amount: sportsbookDebtShortfall.amount,
+        })
+        .from(sportsbookDebtShortfall)
+        .where(eq(sportsbookDebtShortfall.debtId, debtId))
+        .orderBy(asc(sportsbookDebtShortfall.seq));
+
+    /** Void X, reopen it 4 short of its 10 stake (debt A = 6), then settle it won at v2. */
+    async function shortStakeThenWon(win: string) {
+      const player = await fundedPlayer(app, '100');
+      const x = await acceptedBet(app, player, { stake: '10', potentialPayout: '500' });
+      const at = { provider: PROVIDER, providerBetId: x.args.providerBetId };
+      expectApplied(
+        await ledgerOf(app).settle({
+          ...at,
+          providerTxId: txId(),
+          result: 'void',
+          payout: '10',
+          expectedVersion: 1,
+        }),
+      );
+      await acceptedBet(app, player, { stake: '96', potentialPayout: '200' });
+      expectApplied(
+        await ledgerOf(app).reopen({ ...at, providerTxId: txId(), expectedVersion: 1 }),
+      );
+      expectApplied(
+        await ledgerOf(app).settle({
+          ...at,
+          providerTxId: txId(),
+          result: 'won',
+          payout: win,
+          expectedVersion: 2,
+        }),
+      );
+      const reopenWin = async () =>
+        expectApplied(
+          await ledgerOf(app).reopen({ ...at, providerTxId: txId(), expectedVersion: 2 }),
+        );
+      const voidV3 = async () =>
+        expectApplied(
+          await ledgerOf(app).settle({
+            ...at,
+            providerTxId: txId(),
+            result: 'void',
+            payout: '10',
+            expectedVersion: 3,
+          }),
+        );
+      return { player, betId: x.betId, reopenWin, voidV3 };
+    }
+
+    it('cancels the stake shortfall, not a later win reversal, when an offset already cleared it', async () => {
+      const { player, betId, reopenWin, voidV3 } = await shortStakeThenWon('20');
+      expect(await balanceOf(app, player.userId)).toBe(money(14));
+      await acceptedBet(app, player, { stake: '10', potentialPayout: '20' });
+      await reopenWin();
+      expect(await balanceOf(app, player.userId)).toBe(money(0));
+      const debt = (await debtOf(player))!;
+      const [stakeShortfall] = await shortfallsOf(debt.id);
+
+      await voidV3();
+      expect(await betRow(betId)).toMatchObject({ status: 'settled', result: 'void', version: 3 });
+      // 4 the stake reopen took and 6 the win offset took of A; the win reversal C stays owed.
+      expect(await balanceOf(app, player.userId)).toBe(money(10));
+      expect(await shortfallsOf(debt.id)).toMatchObject([
+        { id: stakeShortfall!.id, type: 'bet', amount: money(6) },
+        { type: 'win_reversal', amount: money(16) },
+      ]);
+      expect(await debtOf(player)).toMatchObject({
+        status: 'open',
+        owed: money(22),
+        collected: money(6),
+        outstanding: money(16),
+      });
+      expect(await holdsOf(player)).toHaveLength(1);
+      expect(await voidedDebtAudit(debt.id)).toEqual([
+        {
+          actorId: null,
+          actorType: 'system',
+          after: expect.objectContaining({
+            amount: '0',
+            outstanding: money(16),
+            shortfallId: stakeShortfall!.id,
+            refunded: money(6),
+          }),
+        },
+      ]);
+    });
+
+    it('cancels only the rest of the stake shortfall when an offset took part of it', async () => {
+      const { player, betId, reopenWin, voidV3 } = await shortStakeThenWon('3');
+      expect(await balanceOf(app, player.userId)).toBe(money(0));
+      await reopenWin();
+      const debt = (await debtOf(player))!;
+      expect(debt).toMatchObject({ owed: money(9), collected: money(3), outstanding: money(6) });
+      const [stakeShortfall] = await shortfallsOf(debt.id);
+
+      await voidV3();
+      expect(await betRow(betId)).toMatchObject({ status: 'settled', result: 'void', version: 3 });
+      // 4 the stake reopen took and 3 the win offset took of A; A's last 3 are cancelled.
+      expect(await balanceOf(app, player.userId)).toBe(money(7));
+      expect(await shortfallsOf(debt.id)).toMatchObject([
+        { id: stakeShortfall!.id, type: 'bet', amount: money(3) },
+        { type: 'win_reversal', amount: money(3) },
+      ]);
+      expect(await debtOf(player)).toMatchObject({
+        status: 'open',
+        owed: money(6),
+        collected: money(3),
+        outstanding: money(3),
+      });
+      expect(await holdsOf(player)).toHaveLength(1);
+      const [audit] = await voidedDebtAudit(debt.id);
+      expect(audit).toMatchObject({
+        actorId: null,
+        actorType: 'system',
+        after: { outstanding: money(3), shortfallId: stakeShortfall!.id, refunded: money(3) },
+      });
+      expect(Number((audit!.after as { amount: string }).amount)).toBe(3);
+    });
   });
 
   it('keeps each currency on its own balance', async () => {

@@ -33,6 +33,21 @@ export const AUDIT_COVERAGE_GAPS = {
     writer: 'WalletService manual adjustment via recordInTransaction',
     reason: 'joins the balance mutation, with the balance before and after',
   },
+  'identity.play_eligibility.changed': {
+    kind: 'exempt',
+    reason:
+      'a projection feed for the ledger; the change behind it is audited as the RG exclusion, the player status change or the account (de)activation that wrote it',
+  },
+  'compliance.rg_limits.changed': {
+    kind: 'exempt',
+    reason:
+      'a projection feed for the ledger; the change behind it is audited as the rg.limit.* event or the profile update that wrote it',
+  },
+  'gaming.ledger_game.projected': {
+    kind: 'exempt',
+    reason:
+      'a projection feed for the round ledger; the catalogue change behind it is audited as gaming.game.updated or by the importer that wrote it',
+  },
   'wallet.balance.changed': {
     kind: 'exempt',
     reason:
@@ -123,6 +138,11 @@ export const AUDIT_COVERAGE_GAPS = {
     kind: 'atSource',
     writer: 'ComplianceService via recordInTransaction',
     reason: 'joins the rule writes and keeps the removed rules in `before`',
+  },
+  'tag.withdrawal.screened': {
+    kind: 'exempt',
+    reason:
+      'a verdict that screening ran; the withdrawal_review tag it may follow is audited in the same transaction, and an auto-approval it leads to writes wallet.withdrawal.auto_approved',
   },
   'wallet.withdrawal.requeued': {
     kind: 'atSource',

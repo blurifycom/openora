@@ -27,6 +27,7 @@ import {
   makeWithdrawalSecurity,
   makeJobQueue,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -80,6 +81,7 @@ function routerWithProviders(
   limiter?: RateLimiterAdapter<RateLimitKey>,
 ) {
   const service = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment,

@@ -544,6 +544,13 @@ export const GAME_CATEGORY_RANK_SWEEP_QUEUE = queue('gaming.category.rank-sweep'
 
 export const GameCategoryRankSweepJobSchema = z.object({});
 
+// Projects into `ledger_game` any game the catalogue holds newer than it, see docs/modules/gaming.md.
+export const LEDGER_GAME_RECONCILE_QUEUE = queue('gaming.ledger-game.reconcile');
+
+export const LedgerGameReconcileJobSchema = z.object({});
+
+export const LEDGER_GAME_RECONCILE_INTERVAL_MS = 60_000;
+
 // How often the sweep looks for a category whose rank fell behind its last change.
 export const RANK_SWEEP_INTERVAL_MS = 60_000;
 

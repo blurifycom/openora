@@ -16,6 +16,7 @@ import {
   makePaymentProviderRegistry,
   makeRealtimeTransport,
   testContext,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { createWalletRouter } from '../router/index.js';
 import type { ReconciliationService } from '../service/reconciliation.service.js';
@@ -70,6 +71,7 @@ function makeService(
 function routerWith(swap: SwapService) {
   return createWalletRouter({
     wallet: new WalletService({
+      ...makeWithdrawalPorts(),
       drizzle: db.drizzle,
       events: makeEventBus(),
       payment: mock<PaymentAdapter>({}),

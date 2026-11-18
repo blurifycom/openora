@@ -15,6 +15,7 @@ import {
   makeIdentityReader,
   makeJobQueue,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { autoWithdrawalRule } from '../schema/index.js';
@@ -54,6 +55,7 @@ function routerWith(adminGuard: AdminGuard) {
   const audit = makeAuditWriter();
   const paymentProviders = makePaymentProviderRegistry();
   const service = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),

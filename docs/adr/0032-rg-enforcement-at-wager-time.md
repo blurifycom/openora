@@ -1,7 +1,7 @@
 # ADR-0032: Responsible-gambling enforcement at wager time
 
 **Date**: 2026-07-25
-**Status**: Accepted
+**Status**: Accepted; superseded in part by ADR-0056 (stake gate)
 
 ## Context
 

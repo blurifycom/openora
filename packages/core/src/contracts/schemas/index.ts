@@ -8,6 +8,7 @@ export * from './promo.js';
 export * from './display-currency.js';
 export * from './game.js';
 export * from './sportsbook.js';
+export * from './ledger.js';
 export * from './lobby.js';
 export * from './igaming-config.js';
 export * from './tag.js';

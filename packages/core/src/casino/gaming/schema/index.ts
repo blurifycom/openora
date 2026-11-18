@@ -12,6 +12,7 @@ import {
   integer,
   uniqueIndex,
   jsonb,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import {
   GAME_CATEGORY_GAME_SOURCES,
@@ -27,6 +28,7 @@ import {
   GAME_TYPES,
   MONEY_PRECISION,
   MONEY_SCALE,
+  WAGER_PRODUCTS,
 } from '@openora/core/contracts';
 import { zodJsonb } from '@openora/core/server';
 import { GAME_ROUND_STATUSES } from '../contract/index.js';
@@ -37,6 +39,12 @@ export const gameRoundStatusEnum = pgEnum('game_round_status', GAME_ROUND_STATUS
 // because ADMIN_GAME_REPORTING (contracts/adapters, isomorphic) and admin-console's
 // contract both need the same type - see contracts/schemas/game.ts.
 export const gameTypeEnum = pgEnum('game_type', GAME_TYPES);
+export const gameWagerProductEnum = pgEnum('game_wager_product', WAGER_PRODUCTS);
+
+/** Return to player as a decimal fraction, the shape `WagerContext.rtp` takes. */
+const rtpColumn = () => decimal({ precision: 19, scale: 18 });
+const rtpRangeCheck = (name: string, rtp: AnyPgColumn) =>
+  check(name, sql`${rtp} IS NULL OR (${rtp} >= 0 AND ${rtp} <= 1)`);
 export const gameReviewStatusEnum = pgEnum('game_review_status', GAME_REVIEW_STATUSES);
 export const gameTagTypeEnum = pgEnum('game_tag_type', GAME_TAG_TYPES);
 export const gameTagVisibilityEnum = pgEnum('game_tag_visibility', GAME_TAG_VISIBILITIES);
@@ -165,6 +173,15 @@ export const game = pgTable(
     reviewStatus: gameReviewStatusEnum().notNull().default('pending'),
     reviewedAt: timestamp({ withTimezone: true }),
     metadata: jsonb(),
+    // Wagering inputs the importer reports for the game: the bonus engine weighs a stake by its
+    // product and rakeback prices it by its rtp. The round ledger snapshots both on each round, so
+    // editing them here never reprices a round already placed.
+    wagerProduct: gameWagerProductEnum(),
+    rtp: rtpColumn(),
+    // Drawn from game_ledger_version_seq by the game_ledger_version trigger on insert and
+    // whenever a column `ledger_game` projects changes, from any writer, so it only grows,
+    // across a delete and re-insert too, and a stale event never overwrites a newer one.
+    ledgerVersion: integer().notNull().default(0),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     // Legacy pre-0003 free-text columns. Retained (unread, unwritten by new code)
     // so old releases keep working until a follow-up drop migration lands; the
@@ -189,6 +206,7 @@ export const game = pgTable(
       'game_review_status_active_check',
       sql`NOT ${t.isActive} OR ${t.reviewStatus} IN ('approved', 'auto_approved')`,
     ),
+    rtpRangeCheck('game_rtp_range_check', t.rtp),
   ],
 );
 
@@ -270,9 +288,9 @@ export const gameRound = pgTable(
   'game_round',
   {
     id: uuid().primaryKey().defaultRandom(),
-    gameId: uuid()
-      .notNull()
-      .references(() => game.id),
+    // No FK to the catalogue `game`: a round is ledger-side and resolves its game through
+    // `ledger_game`, the projection the catalogue feeds with `gaming.ledger_game.projected`.
+    gameId: uuid().notNull(),
     userId: uuid().notNull(),
     status: gameRoundStatusEnum().notNull().default('active'),
     betAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
@@ -284,6 +302,11 @@ export const gameRound = pgTable(
     startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp({ withTimezone: true }),
     externalRoundId: text(),
+    // The wagering inputs every stake on the round is priced under, set once when the round is
+    // first seen (`ledger_game`'s value ahead of the caller's) and never changed after. No CHECK:
+    // the writers validate rtp (`isWagerRtp`, and the `game` CHECK on the catalogue).
+    wagerProduct: gameWagerProductEnum(),
+    rtp: rtpColumn(),
   },
   (t) => [
     index('game_round_user_id_started_at_idx').on(t.userId, t.startedAt),
@@ -294,6 +317,20 @@ export const gameRound = pgTable(
       .where(sql`${t.externalRoundId} IS NOT NULL`),
   ],
 );
+
+// The ledger side's own copy of the catalogue facts a round needs, fed only by
+// `gaming.ledger_game.projected` and the boot backfill. Rows are never deleted, so a round on
+// a game the catalogue later drops still settles and still counts in reporting. See
+// docs/modules/gaming.md.
+export const ledgerGame = pgTable('ledger_game', {
+  gameId: uuid().primaryKey(),
+  providerId: uuid().notNull(),
+  gameType: gameTypeEnum().notNull(),
+  wagerProduct: gameWagerProductEnum(),
+  rtp: rtpColumn(),
+  version: integer().notNull(),
+  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
 
 export const gameFavorite = pgTable(
   'game_favorite',

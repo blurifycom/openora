@@ -12,9 +12,11 @@ import type {
   GameRoundTopFilter,
   PlayerGameStats,
 } from '@openora/core/contracts';
+import { UNCLASSIFIED_GAME_TYPE } from '@openora/core/contracts';
 import { DrizzleService, sumMoney } from '@openora/core/server';
 import { and, asc, count, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
-import { game, gameProvider, gameRound } from './schema/index.js';
+import { union } from 'drizzle-orm/pg-core';
+import { game, gameProvider, gameRound, ledgerGame } from './schema/index.js';
 
 const rankedVolume = sumMoney(gameRound.betAmount);
 // Round revenue, not the ledger GGR (ADR-0053): negative when the games paid out more than they took in.
@@ -40,8 +42,7 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     // so they live in the join condition, not WHERE - a game with zero completed rounds
     // in range still appears with all-zero metrics rather than being dropped from the
     // report. `gameType` narrows which GAMES appear at all, so it stays in WHERE.
-    const joinConditions = [
-      eq(gameRound.gameId, game.id),
+    const roundsInRange = [
       eq(gameRound.status, 'completed'),
       filter.dateFrom ? gte(gameRound.startedAt, filter.dateFrom) : undefined,
       filter.dateTo ? lte(gameRound.startedAt, filter.dateTo) : undefined,
@@ -49,13 +50,30 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       // sum - the operator UI shows a disclaimer in that case; this is intentional.
       filter.currency ? eq(gameRound.currency, filter.currency) : undefined,
     ].filter(Boolean);
+    // A game is in the catalogue, in the ledger's never-deleted `ledger_game`, or only in its
+    // rounds (a no-stake call is never refused): every one keeps its GGR in the report, under its
+    // id once it has no name, and as unclassified once nothing types it.
+    const games = union(
+      db.select({ id: game.id }).from(game),
+      db.select({ id: ledgerGame.gameId }).from(ledgerGame),
+      db
+        .select({ id: gameRound.gameId })
+        .from(gameRound)
+        .where(and(...roundsInRange)),
+    ).as('games');
+    const gameId = games.id;
+    // An inline literal, not a bind parameter, so the select and the group by are one expression.
+    const gameType = sql<
+      GamePerformanceRow['gameType']
+    >`coalesce(${game.gameType}::text, ${ledgerGame.gameType}::text, ${sql.raw(`'${UNCLASSIFIED_GAME_TYPE}'`)})`;
+    const name = sql<string>`coalesce(${game.name}, ${games.id}::text)`;
     if (filter.gameIds?.length === 0) {
       return [];
     }
     const where = and(
-      filter.gameType ? eq(game.gameType, filter.gameType) : undefined,
+      filter.gameType ? eq(gameType, filter.gameType) : undefined,
       // One array parameter: the list can run to thousands of ids.
-      filter.gameIds ? sql`${game.id} = ANY(${sql.param([...filter.gameIds])}::uuid[])` : undefined,
+      filter.gameIds ? sql`${gameId} = ANY(${sql.param([...filter.gameIds])}::uuid[])` : undefined,
     );
 
     const volume = sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`;
@@ -65,8 +83,8 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     const roundsPlayed = sql<number>`count(${gameRound.id})`;
 
     const sortColumns = {
-      name: game.name,
-      gameType: game.gameType,
+      name,
+      gameType,
       volume,
       revenue,
       uniquePlayers,
@@ -75,21 +93,15 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     const order = filter.sortDir === 'asc' ? asc : desc;
 
     const rows = await db
-      .select({
-        gameId: game.id,
-        name: game.name,
-        gameType: game.gameType,
-        volume,
-        revenue,
-        uniquePlayers,
-        roundsPlayed,
-      })
-      .from(game)
-      .leftJoin(gameRound, and(...joinConditions))
+      .select({ gameId, name, gameType, volume, revenue, uniquePlayers, roundsPlayed })
+      .from(games)
+      .leftJoin(game, eq(game.id, games.id))
+      .leftJoin(ledgerGame, eq(ledgerGame.gameId, games.id))
+      .leftJoin(gameRound, and(eq(gameRound.gameId, games.id), ...roundsInRange))
       .where(where)
-      .groupBy(game.id, game.name, game.gameType)
-      // game.id breaks ties so equal metrics always come back in the same order.
-      .orderBy(order(sortColumns[filter.sortBy ?? 'volume']), asc(game.id));
+      .groupBy(gameId, name, gameType)
+      // The game id breaks ties so equal metrics always come back in the same order.
+      .orderBy(order(sortColumns[filter.sortBy ?? 'volume']), asc(gameId));
 
     return rows.map((r) => ({
       gameId: r.gameId,
@@ -229,12 +241,14 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     filter: GamePerformanceTrendFilter,
   ): Promise<GamePerformanceTrend | null> {
     const db = this.drizzle.db;
-    const [found] = await db
-      .select({ id: game.id })
-      .from(game)
-      .where(eq(game.id, filter.gameId))
-      .limit(1);
-    if (!found) {
+    // A game the catalogue dropped, or never had, still has a trend while its rounds remain.
+    const {
+      rows: [known],
+    } = await db.execute<{ found: boolean }>(sql`select
+      exists (select 1 from ${game} where ${game.id} = ${filter.gameId})
+      or exists (select 1 from ${ledgerGame} where ${ledgerGame.gameId} = ${filter.gameId})
+      or exists (select 1 from ${gameRound} where ${gameRound.gameId} = ${filter.gameId}) as found`);
+    if (!known?.found) {
       return null;
     }
 

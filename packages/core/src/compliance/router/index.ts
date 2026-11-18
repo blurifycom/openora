@@ -50,6 +50,8 @@ import {
   ExclusionPeriodNotElapsedError,
   LimitRaiseNotAllowedError,
   LimitOrderingViolationError,
+  RgLimitCurrencyUnresolvedError,
+  LimitTwinCurrencyError,
 } from '../service/rg.service.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 import {
@@ -124,12 +126,14 @@ export function createComplianceRouter({
     ),
 
     upsertLimit: os.upsertLimit.handler(({ input, context }) => {
-      return mapErrors({ CONFLICT: LimitOrderingViolationError }, () =>
-        rgSelfService.upsertLimit(
-          getUserId(context, RG_SELF_PROTECTION),
-          input,
-          context.clientMeta,
-        ),
+      return mapErrors(
+        { CONFLICT: [LimitOrderingViolationError, RgLimitCurrencyUnresolvedError] },
+        () =>
+          rgSelfService.upsertLimit(
+            getUserId(context, RG_SELF_PROTECTION),
+            input,
+            context.clientMeta,
+          ),
       );
     }),
 
@@ -400,8 +404,15 @@ export function createComplianceRouter({
 
     setPlayerLimit: os.setPlayerLimit.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
-      return mapErrors({ CONFLICT: [LimitRaiseNotAllowedError, LimitOrderingViolationError] }, () =>
-        rg.setPlayerLimit(input.userId, input, userId, 'admin', { ip, userAgent }),
+      return mapErrors(
+        {
+          CONFLICT: [
+            LimitRaiseNotAllowedError,
+            LimitOrderingViolationError,
+            LimitTwinCurrencyError,
+          ],
+        },
+        () => rg.setPlayerLimit(input.userId, input, userId, 'admin', { ip, userAgent }),
       );
     }),
 
@@ -456,7 +467,11 @@ export function createComplianceRouter({
         {
           NOT_FOUND: [LimitNotFoundError, NoPendingLimitChangeError],
           FORBIDDEN: LimitOwnershipError,
-          CONFLICT: [CooldownNotElapsedError, LimitChangeExpiredError],
+          CONFLICT: [
+            CooldownNotElapsedError,
+            LimitChangeExpiredError,
+            RgLimitCurrencyUnresolvedError,
+          ],
         },
         () => rgSelfService.confirmPendingChange(input.id, getUserId(context), context.clientMeta),
       ),

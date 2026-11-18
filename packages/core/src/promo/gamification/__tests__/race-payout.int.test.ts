@@ -27,6 +27,7 @@ import {
 } from '@openora/core/contracts';
 import {
   Container,
+  DRIZZLE,
   createEventBus,
   ModuleRegistryImpl,
   type CoreTokenCatalog,
@@ -81,6 +82,7 @@ const service = (
 // The wallet plugin's own WALLET_COMMANDS binding, so a payout writes a real ledger row.
 const realWallet = () => {
   const container = new Container<CoreTokenCatalog>();
+  container.register(DRIZZLE, () => db.drizzle);
   container.register(PLAY_ELIGIBILITY, () => mock<PlayEligibilityPort>({ isRestricted }));
   container.register(AUDIT_WRITER, () => audit);
   container.register(IDENTITY_READER, () => makeIdentityReader());

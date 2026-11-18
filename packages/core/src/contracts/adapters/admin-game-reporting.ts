@@ -17,6 +17,9 @@ export const GAME_PERFORMANCE_SORT_FIELDS = [
   'uniquePlayers',
   'roundsPlayed',
 ] as const;
+/** A game with rounds that neither the catalogue nor the round ledger's `ledger_game` knows. */
+export const UNCLASSIFIED_GAME_TYPE = 'unclassified';
+
 export type GamePerformanceSortBy = (typeof GAME_PERFORMANCE_SORT_FIELDS)[number];
 
 export type GamePerformanceFilter = {
@@ -39,7 +42,7 @@ export type GamePerformanceFilter = {
 export type GamePerformanceRow = {
   gameId: string;
   name: string;
-  gameType: GameType;
+  gameType: GameType | typeof UNCLASSIFIED_GAME_TYPE;
   volume: string;
   revenue: string;
   uniquePlayers: number;

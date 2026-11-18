@@ -16,6 +16,7 @@ import {
   gameProvider,
   gameRound,
 } from '@openora/core/casino/schema/gaming';
+import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
 import { BONUS_GRANTS } from '@openora/core/contracts';
 import { promoWeight, promoWeightProfile } from '@openora/core/promo/schema/bonus';
@@ -96,6 +97,7 @@ beforeAll(async () => {
   if (!row) {
     throw new Error('failed to seed a game row');
   }
+  await backfillLedgerGames(app.container.get(DRIZZLE).db);
   gameId = row.id;
 }, 60_000);
 

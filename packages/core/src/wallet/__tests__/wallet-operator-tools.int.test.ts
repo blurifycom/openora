@@ -18,6 +18,11 @@ import {
   PLAYER_SEGMENT_READER,
   PLAY_ELIGIBILITY,
   RATE_LIMITER,
+  KYC_WITHDRAWAL_POLICY,
+  PLAYER_TAGS,
+  WITHDRAWAL_SECURITY,
+  type KycWithdrawalPolicy,
+  type PlayerTags,
   type AdminPlayerSummary,
   type AdminUserDirectory,
   type ExchangeRateReader,
@@ -30,7 +35,13 @@ import {
   TagKeySchema,
 } from '@openora/core/contracts';
 import { createMcpKernel, createTestDb, type TestDb } from '@openora/core/testing';
-import { makeAuditWriter, makeEventBus, makeIdentityReader, mock } from '../../testing/mock.js';
+import {
+  makeAuditWriter,
+  makeEventBus,
+  makeIdentityReader,
+  makeWithdrawalSecurity,
+  mock,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletAutoWithdrawalConfig, walletTransaction } from '../schema/index.js';
 import walletPlugin from '../plugin.js';
@@ -114,6 +125,9 @@ function bootKernel() {
     }),
   );
   container.register(RATE_LIMITER, () => mock<RateLimiterAdapter<string>>({}));
+  container.register(PLAYER_TAGS, () => mock<PlayerTags>({}));
+  container.register(KYC_WITHDRAWAL_POLICY, () => mock<KycWithdrawalPolicy>({}));
+  container.register(WITHDRAWAL_SECURITY, () => makeWithdrawalSecurity());
   container.register(PLAYER_SEGMENT_READER, () => segmentReader());
   container.register(EXCHANGE_RATE_READER, () => eurOnlyRates());
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);

@@ -1,15 +1,13 @@
 import type { DrizzleTx } from '@openora/core/server';
-import { and, asc, eq, gte, inArray, sql, type SQLWrapper } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import {
   LimitTypeSchema,
   type RgStanding,
   type RgStandingFlag,
   type RgStandingLimit,
-  type RgStandingWindow,
   type User,
 } from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
-import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
   rgExclusion,
   rgFlag,
@@ -17,16 +15,7 @@ import {
   type RgExclusion,
   type UserLimit,
 } from '../schema/index.js';
-import { LOSS_LEGS, pendingChangeStatus } from './rg-eval.js';
-
-export type RgMoneyMetric = keyof NonNullable<RgStandingWindow['totals']>;
-
-export type RgMoneyRow = {
-  metric: RgMoneyMetric;
-  currency: string;
-  /** One decimal string per requested window start, in the order given. */
-  totals: string[];
-};
+import { pendingChangeStatus } from './rg-eval.js';
 
 type ExclusionFacts = Pick<
   RgStanding,
@@ -150,8 +139,7 @@ export async function readActiveFlags(
 }
 
 /**
- * Resolves a limit stored without a currency to the player's own currency for the reading only:
- * the write that fills it in belongs to the limit's own lock (`resolveLimitCurrencyInTx`).
+ * Reads a limit stored without a currency in the player's own currency, for the reading only.
  */
 export async function readLimits(
   tx: DrizzleTx,
@@ -221,94 +209,4 @@ function pendingWeakening(
     return { pendingKind: null, pendingRequestedAt: null };
   }
   return { pendingKind: row.pendingKind, pendingRequestedAt: row.pendingRequestedAt };
-}
-
-/**
- * Completed deposits, and stakes and wins each net of their reversals, per currency, one total per
- * window start.
- * A deposit counts from when it reached the balance: a held deposit from its release. A stake
- * placed before a window and reversed inside it lowers that window's stakes, so a currency's
- * total stops at zero instead of going below it.
- */
-export async function readMoneyByWindow(
-  tx: DrizzleTx,
-  userId: User['id'],
-  windowStarts: readonly Date[],
-): Promise<RgMoneyRow[]> {
-  const earliest = windowStarts.reduce<Date | null>(
-    (min, start) => (min === null || start < min ? start : min),
-    null,
-  );
-  if (earliest === null) {
-    return [];
-  }
-  const deposits = await readDepositsByWindow(tx, userId, windowStarts, earliest);
-  const play = await readPlayByWindow(tx, userId, windowStarts, earliest);
-  return [...deposits, ...play];
-}
-
-function totalsSince(amount: SQLWrapper, countedAt: SQLWrapper, windowStarts: readonly Date[]) {
-  const totals = windowStarts.map(
-    (start) =>
-      sql`greatest(coalesce(sum(${amount}) filter (where ${countedAt} >= ${start}), 0), 0)::text`,
-  );
-  return sql<string[]>`array[${sql.join(totals, sql`, `)}]`;
-}
-
-async function readDepositsByWindow(
-  tx: DrizzleTx,
-  userId: User['id'],
-  windowStarts: readonly Date[],
-  earliest: Date,
-): Promise<RgMoneyRow[]> {
-  const depositedAt = sql`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`;
-  const rows = await tx
-    .select({
-      currency: walletTransaction.currency,
-      totals: totalsSince(walletTransaction.amount, depositedAt, windowStarts),
-    })
-    .from(walletTransaction)
-    .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
-    .where(
-      and(
-        eq(wallet.userId, userId),
-        eq(walletTransaction.type, 'deposit'),
-        eq(walletTransaction.status, 'completed'),
-        gte(depositedAt, earliest),
-      ),
-    )
-    .groupBy(walletTransaction.currency);
-  return rows.map((row) => ({ ...row, metric: 'deposits' }));
-}
-
-// A stake, a reversal or a win is never reviewed: it moved when it was created.
-async function readPlayByWindow(
-  tx: DrizzleTx,
-  userId: User['id'],
-  windowStarts: readonly Date[],
-  earliest: Date,
-): Promise<RgMoneyRow[]> {
-  const metric = sql<RgMoneyMetric>`case when ${walletTransaction.type} in ('win', 'win_reversal') then 'wins' else 'bets' end`;
-  // A reversal takes back from the metric of the leg it reverses.
-  const signedAmount = sql`case when ${walletTransaction.type} in ('bet_reversal', 'win_reversal') then -${walletTransaction.amount} else ${walletTransaction.amount} end`;
-  return tx
-    .select({
-      metric,
-      currency: walletTransaction.currency,
-      totals: totalsSince(signedAmount, walletTransaction.createdAt, windowStarts),
-    })
-    .from(walletTransaction)
-    .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
-    .where(
-      and(
-        eq(wallet.userId, userId),
-        eq(walletTransaction.status, 'completed'),
-        inArray(
-          walletTransaction.type,
-          LOSS_LEGS.map((leg) => leg.type),
-        ),
-        gte(walletTransaction.createdAt, earliest),
-      ),
-    )
-    .groupBy(metric, walletTransaction.currency);
 }

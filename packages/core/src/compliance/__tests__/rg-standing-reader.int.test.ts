@@ -12,15 +12,18 @@ import {
   PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
   RG_STANDING_READER,
+  WALLET_READER,
   definePlatformConfig,
   type ExchangeRateReader,
   type PlayEligibilityPort,
+  type WalletReader,
 } from '@openora/core/contracts';
 import { createTestDb, seedCompletedDeposit, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { walletTransaction } from '@openora/core/wallet/schema';
+import { WalletReaderService } from '@openora/core/wallet/seed';
 import { mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { rgExclusion, rgFlag, userLimit } from '../schema/index.js';
@@ -47,11 +50,14 @@ function rates(): ExchangeRateReader {
   });
 }
 
-function reader({ restricted = false } = {}) {
+const walletReader = () => new WalletReaderService({ drizzle: db.drizzle, pivotCurrency: 'USD' });
+
+function reader({ restricted = false, wallet = walletReader() as WalletReader } = {}) {
   return new RgStandingReaderService({
     drizzle: db.drizzle,
     eligibility: mock<PlayEligibilityPort>({ isRestricted: vi.fn(async () => restricted) }),
     rates: rates(),
+    walletReader: wallet,
     pivotCurrency: 'USD',
   });
 }
@@ -419,6 +425,19 @@ describe('RgStandingReaderService.getStanding (real PG)', () => {
     expect(Number(standing?.windows[0]?.totals?.deposits)).toBe(100);
   });
 
+  it('rejects, never reads as no money, when the wallet reader fails', async () => {
+    const userId = await seedPlayer();
+    const down = mock<WalletReader>({
+      getMoneyByWindow: vi.fn(async () => {
+        throw new Error('wallet reader unavailable');
+      }),
+    });
+
+    await expect(reader({ wallet: down }).getStanding(userId, { windowDays: [7] })).rejects.toThrow(
+      'wallet reader unavailable',
+    );
+  });
+
   it.each([
     ['more than four windows', [1, 7, 14, 30, 90]],
     ['a zero-day window', [0]],
@@ -450,6 +469,7 @@ describe('RG_STANDING_READER as the compliance plugin binds it (real PG)', () =>
     container.register(PLAY_ELIGIBILITY, () =>
       mock<PlayEligibilityPort>({ isRestricted: vi.fn(async () => true) }),
     );
+    container.register(WALLET_READER, walletReader);
     await compliancePlugin.register(new ModuleRegistryImpl<CoreTokenCatalog>(container));
     return container.get(RG_STANDING_READER);
   }

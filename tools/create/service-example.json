@@ -4,6 +4,7 @@
     "wallet",
     "identity",
     "audit",
+    "tag",
     "compliance",
     "mail",
     "iam",

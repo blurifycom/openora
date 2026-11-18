@@ -11,6 +11,7 @@ import {
   boolean,
   jsonb,
   integer,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 import {
   WALLET_RAILS,
@@ -23,6 +24,10 @@ import {
   WALLET_DEPOSIT_STATUS_EVENT_STATUSES,
   ON_RAMP_STATUSES,
   WAGER_PRODUCTS,
+  LEDGER_V1_KEYED_OPERATIONS,
+  PLAYER_STATUSES,
+  GATED_LIMIT_TYPES,
+  GATED_LIMIT_PERIODS,
   type OnRampStatus,
   type WalletRail,
   type WalletTransactionStatus,
@@ -79,6 +84,7 @@ export const walletTransactionDirectionEnum = pgEnum(
 );
 
 export const walletWagerProductEnum = pgEnum('wallet_wager_product', WAGER_PRODUCTS);
+export const ledgerApiOperationEnum = pgEnum('ledger_api_operation', LEDGER_V1_KEYED_OPERATIONS);
 
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
@@ -105,6 +111,39 @@ export const walletBalance = pgTable(
       .$onUpdateFn(() => new Date()),
   },
   (t) => [uniqueIndex('wallet_balance_wallet_id_currency_idx').on(t.walletId, t.currency)],
+);
+
+// Where the ledger invariant starts counting for a (wallet, currency): `amount` is the balance
+// the rows up to `asOf` add up to, so the invariant is
+// `amount + effect(rows created after asOf) = wallet_balance.amount`. Every row at or before
+// `asOf` was in a terminal status when it was taken, so none of them can move money again.
+// Append-only history; the latest `asOf` (then `createdAt`) is the one in force. Three writers:
+// - the operator-run backfill, over rows nothing can price (written before `balance_after`,
+//   `direction` or a bet's `real_share` existed), taken from the balance;
+// - the scan itself, rolling a pair that checked clean forward from the ledger alone (`runId`);
+// - a super admin resolving a breach by vouching for the current balance (`findingId`).
+export const walletBalanceBaseline = pgTable(
+  'wallet_balance_baseline',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    walletId: uuid()
+      .notNull()
+      .references(() => wallet.id),
+    currency: text().notNull(),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    asOf: timestamp({ withTimezone: true }).notNull(),
+    // The ledger invariant run that took it; NULL when an admin did.
+    runId: uuid(),
+    findingId: uuid().references(() => walletReconciliationFinding.id),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('wallet_balance_baseline_wallet_id_currency_as_of_idx').on(
+      t.walletId,
+      t.currency,
+      t.asOf,
+    ),
+  ],
 );
 
 export const walletTransaction = pgTable(
@@ -183,8 +222,12 @@ export const walletTransaction = pgTable(
     // every other row, so a correction's replay never matches the stake debit it re-collects.
     correctionRequestedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     // What a bonus-funded round's win or stake reversal put into the real balance, the rest having
-    // gone to the grant. NULL when all of `amount` was real.
+    // gone to the grant; NULL when all of `amount` was real. On a bet, the part of the stake the
+    // real balance paid, written on every bet (NULL only on bets older than that).
     realShare: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    // A `bet_reversal` that named the bet it returns: that bet's row. Unique, so one bet is
+    // reversed at most once. NULL on every other row and on a reversal that named no bet.
+    reversedTransactionId: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -217,10 +260,33 @@ export const walletTransaction = pgTable(
     uniqueIndex('wallet_transaction_wallet_id_idempotency_key_idx')
       .on(t.walletId, t.idempotencyKey)
       .where(sql`${t.idempotencyKey} IS NOT NULL`),
+    uniqueIndex('wallet_transaction_reversed_transaction_id_idx')
+      .on(t.reversedTransactionId)
+      .where(sql`${t.reversedTransactionId} IS NOT NULL`),
   ],
 );
 
 // Per-player threshold override (unique userId); overrides the global autoWithdrawal.fiatThreshold.
+type LedgerRow = typeof walletTransaction.$inferSelect;
+
+/** A ledger leg as responsible gambling counts play: its type and direction. */
+export type PlayLeg = {
+  type: Extract<LedgerRow['type'], 'bet' | 'bet_reversal' | 'win' | 'win_reversal'>;
+  direction: NonNullable<LedgerRow['direction']>;
+};
+
+export const WAGER_LEGS = [
+  { type: 'bet', direction: 'debit' },
+  { type: 'bet_reversal', direction: 'credit' },
+] as const satisfies readonly PlayLeg[];
+
+// Every ledger leg RG reads as play; RG spend and RG standing both count from this list.
+export const LOSS_LEGS = [
+  ...WAGER_LEGS,
+  { type: 'win', direction: 'credit' },
+  { type: 'win_reversal', direction: 'debit' },
+] as const satisfies readonly PlayLeg[];
+
 export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
   id: uuid().primaryKey().defaultRandom(),
   userId: uuid().notNull().unique('auto_withdrawal_rule_user_id_unique'),
@@ -581,6 +647,10 @@ export const walletReconciliationFinding = pgTable(
       .where(sql`${t.externalId} IS NOT NULL`),
     index('wallet_reconciliation_finding_status_created_at_idx').on(t.status, t.createdAt),
     index('wallet_reconciliation_finding_run_id_idx').on(t.runId),
+    // Every ledger run looks up the open findings of one kind by key prefix, page by page.
+    index('wallet_reconciliation_finding_open_kind_external_id_idx')
+      .on(t.kind, t.providerName, t.externalId)
+      .where(sql`${t.status} = 'open'`),
   ],
 );
 
@@ -683,6 +753,81 @@ export type WalletBonusCredit = typeof walletBonusCredit.$inferSelect;
 export type WalletBonusRolloverConfig = typeof walletBonusRolloverConfig.$inferSelect;
 export type WalletAssetRow = typeof walletAsset.$inferSelect;
 export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
+// Ledger API v1 idempotency: one row per key a bet, win or reverse applied or refused, written in
+// the transaction that moved the money (or undid it), with the request's fingerprint and the answer
+// it got, so a retry is answered from here and a reused key with another request is told apart.
+// Append-only. `target_ref_id` is the bet a reverse returned, or found nowhere (a tombstone);
+// unique per provider, so a stake comes back once and a tombstoned bet is never taken.
+// `user_id` and `amount` are what the request moved, for reconciliation to hold the wallet row
+// to; null on rows written before they were recorded.
+export const ledgerApiRequest = pgTable(
+  'ledger_api_request',
+  {
+    providerName: text().notNull(),
+    providerRefId: text().notNull(),
+    operation: ledgerApiOperationEnum().notNull(),
+    fingerprint: text().notNull(),
+    targetRefId: text(),
+    response: jsonb().notNull(),
+    userId: uuid(),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.providerName, t.providerRefId] }),
+    index('ledger_api_request_created_at_idx').on(t.createdAt),
+    uniqueIndex('ledger_api_request_target_ref_key')
+      .on(t.providerName, t.targetRefId)
+      .where(sql`${t.targetRefId} IS NOT NULL`),
+  ],
+);
+
+export const ledgerPlayerStatusEnum = pgEnum('ledger_player_status', PLAYER_STATUSES);
+
+// The ledger's own view of whether a user may stake: identity's play eligibility inputs, written
+// through PLAY_ELIGIBILITY_PROJECTION in identity's transaction, replayed by the
+// `identity.play_eligibility.changed` event and healed by identity's boot backfill (ADR-0056). A stake reads this row `FOR SHARE` in its own transaction and is refused
+// without one. Every write keeps the highest `version`. `status` is null for a user without a
+// player profile. Time-bounded blocks keep their end and are judged when read.
+export const ledgerPlayEligibility = pgTable('ledger_play_eligibility', {
+  userId: uuid().primaryKey(),
+  rgBlocked: boolean().notNull(),
+  rgBlockedUntil: timestamp({ withTimezone: true }),
+  isActive: boolean().notNull(),
+  banned: boolean().notNull(),
+  banExpires: timestamp({ withTimezone: true }),
+  status: ledgerPlayerStatusEnum(),
+  version: integer().notNull(),
+  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// The ledger's own copy of each user's effective deposit and wager limits: compliance writes it
+// through RG_LIMIT_LEDGER in the transaction that changes a limit, replays it with the
+// `compliance.rg_limits.changed` event and heals it with its boot backfill (ADR-0057). The gate
+// reads these rows, never `user_limit`. One row per limit, keyed by the compliance limit id.
+// `currency` is null when the limit has none (or fails the snapshot contract): the gate refuses.
+export const ledgerUserLimit = pgTable(
+  'ledger_user_limit',
+  {
+    limitId: uuid().primaryKey(),
+    userId: uuid().notNull(),
+    type: text({ enum: GATED_LIMIT_TYPES }).notNull(),
+    period: text({ enum: GATED_LIMIT_PERIODS }).notNull(),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    currency: text(),
+    changedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [index('ledger_user_limit_user_id_idx').on(t.userId)],
+);
+
+// The version of each user's `ledger_user_limit` rows, kept even when they have none left, so a
+// late event can never resurrect a removed limit. Every write keeps the highest version.
+export const ledgerUserLimitVersion = pgTable('ledger_user_limit_version', {
+  userId: uuid().primaryKey(),
+  version: integer().notNull(),
+  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 export type WalletJobRun = typeof walletJobRun.$inferSelect;
 export type WalletReconciliationFinding = typeof walletReconciliationFinding.$inferSelect;
 export type WalletRefundedDeposit = typeof walletRefundedDeposit.$inferSelect;

@@ -29,6 +29,7 @@ export type {
   EventEnvelope,
   MessageBrokerAdapter,
   BrokerHandler,
+  DeadLetters,
   SubscribeOptions,
 } from './broker.js';
 export { MESSAGE_BROKER } from './broker.js';
@@ -49,7 +50,9 @@ export type {
   WalletWithdrawalHoldArgs,
 } from './wallet-commands.js';
 export {
+  WALLET_BET_ALREADY_REVERSED,
   WALLET_COMMANDS,
+  WALLET_REVERSAL_UNMATCHED,
   WALLET_CORRECTION_DEBIT_TYPES,
   WalletCommandAmountError,
   WalletCorrectionExceedsRoundError,
@@ -118,8 +121,14 @@ export type {
   GamingNotifyGamesCreatedArgs,
   GamingNotifyGamesChangedArgs,
   GamingAccumulateExternalRoundOutcome,
+  GamingRoundWager,
 } from './gaming-commands.js';
-export { GAMING_COMMANDS } from './gaming-commands.js';
+export {
+  GAMING_COMMANDS,
+  GamingInvalidRtpError,
+  GamingRoundOwnerMismatchError,
+  GamingUnknownGameError,
+} from './gaming-commands.js';
 
 export type {
   CatalogCategoryWithGameCount,
@@ -136,14 +145,12 @@ export type {
   WalletLifetimeWithdrawals,
   WalletLastDeposit,
   WalletWithdrawalRequests,
+  WalletCurrencyTotal,
+  WalletWindowMetric,
+  WalletWindowTotals,
+  WalletProviderTransactionQuery,
 } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
-
-export type {
-  TagEvaluationCommands,
-  TagEvaluationWithdrawalRequestedArgs,
-} from './tag-evaluation-commands.js';
-export { TAG_EVALUATION_COMMANDS } from './tag-evaluation-commands.js';
 
 export type { UserCommands } from './identity.js';
 export type { IdentityReader } from './identity-reader.js';
@@ -500,7 +507,11 @@ export type {
   GameCurrencyRanking,
   PlayerGameStats,
 } from './admin-game-reporting.js';
-export { GAME_PERFORMANCE_SORT_FIELDS, ADMIN_GAME_REPORTING } from './admin-game-reporting.js';
+export {
+  GAME_PERFORMANCE_SORT_FIELDS,
+  ADMIN_GAME_REPORTING,
+  UNCLASSIFIED_GAME_TYPE,
+} from './admin-game-reporting.js';
 
 export type {
   PlayerActivityFilter,
@@ -521,10 +532,38 @@ export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js
 
 export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
-export type { PlayEligibilityPort, PlayRefusal } from './play-eligibility.js';
-export { PLAY_ELIGIBILITY, PLAY_REFUSALS, isPlayRefused } from './play-eligibility.js';
-export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
-export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
+export type {
+  PlayEligibilityPort,
+  PlayEligibilityProjectionPort,
+  PlayEligibilitySourcePort,
+  PlayEligibilityState,
+  PlayRefusal,
+} from './play-eligibility.js';
+export {
+  LEDGER_PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY_PROJECTION,
+  PLAY_ELIGIBILITY_SOURCE,
+  PLAY_REFUSALS,
+  isPlayRefused,
+  playRefusalOf,
+} from './play-eligibility.js';
+export type {
+  RgLimitsPort,
+  RgLimitDecision,
+  RgLimitExceededData,
+  RgLimitLedgerPort,
+  RgLimitsSourcePort,
+} from './rg-limits.js';
+export {
+  RG_LIMITS,
+  RG_LIMIT_LEDGER,
+  RG_LIMITS_SOURCE,
+  RgLimitExceededError,
+  RgRateUnavailableError,
+  limitSlotKey,
+  periodWindow,
+} from './rg-limits.js';
 export type {
   RgStanding,
   RgStandingExclusion,
@@ -664,6 +703,8 @@ export type {
   SportsbookSessionOutcome,
 } from './sportsbook-ledger.js';
 export { SPORTSBOOK_LEDGER } from './sportsbook-ledger.js';
+export type { LedgerApiV1 } from './ledger-api.js';
+export { LEDGER_API_V1 } from './ledger-api.js';
 export type {
   SportsbookProvider,
   SportsbookProviderSession,

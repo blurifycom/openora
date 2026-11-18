@@ -16,6 +16,10 @@ import {
   WITHDRAWAL_SECURITY,
   JOB_QUEUE,
   RATE_LIMITER,
+  KYC_WITHDRAWAL_POLICY,
+  PLAYER_TAGS,
+  type KycWithdrawalPolicy,
+  type PlayerTags,
   REALTIME_TRANSPORT,
   type AdminUserDirectory,
   type PlayEligibilityPort,
@@ -49,6 +53,8 @@ function boot() {
   container.register(WITHDRAWAL_SECURITY, () => makeWithdrawalSecurity());
   container.register(ADMIN_USER_DIRECTORY, () => mock<AdminUserDirectory>({}));
   container.register(RATE_LIMITER, () => mock<RateLimiterAdapter<string>>({}));
+  container.register(PLAYER_TAGS, () => mock<PlayerTags>({}));
+  container.register(KYC_WITHDRAWAL_POLICY, () => mock<KycWithdrawalPolicy>({}));
   container.register(JOB_QUEUE, () => makeJobQueue());
 
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
