@@ -135,7 +135,7 @@ Then register it in `extensions.config.ts`.
 
 ## Build your own iGaming on top
 
-Scaffold a consumer turborepo that links this checkout - it holds only what's unique to your operation (frontend, branding, vendor adapters, overlay plugins). Core is consumed as linked `@openora/*` packages, never forked.
+Scaffold a consumer turborepo that installs `@openora/*` from npm - it holds only what's unique to your operation (frontend, branding, vendor adapters, overlay plugins). Core is never forked.
 
 ```bash
 pnpm create:app ../my-igaming --name my-igaming

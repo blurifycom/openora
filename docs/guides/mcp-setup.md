@@ -27,8 +27,8 @@ Then restart your editor (or run `/mcp`) and run **`/start`**: it asks what you 
 calls the `enhance-intent` tool to turn your fuzzy ask into a grounded spec (classified against
 the decision tree, with live module and adapter context), and drives the right scaffold flow.
 
-A `create:app` consumer ships the same script (`pnpm setup:mcp`, delegating to this checkout) -
-run it once in the generated repo so its own agents get the toolbelt.
+A `create:app` consumer needs no setup step: its generated `.mcp.json` already runs
+`@openora/mcp` from `node_modules`.
 
 ## Server config snippet
 
@@ -115,10 +115,8 @@ pnpm --filter @openora/mcp build   # rebuild after any source change
 }
 ```
 
-Note: in a `create:app` consumer running in dev/link mode you don't need this - the
-generated `.mcp.json` already points at the full `oss-dev` server through the sibling
-checkout. The exception is the agent surface: `list-agent-tools` is served only by
-`@openora/mcp`.
+Note: a `create:app` consumer doesn't need this - its generated `.mcp.json` already runs
+`@openora/mcp` from `node_modules`.
 
 ## Usage pattern for agents
 

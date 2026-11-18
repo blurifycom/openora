@@ -309,7 +309,7 @@ function buildPlaybook(kind: IntentKind, ctx: { modules: string[]; tokens: strin
     case 'downstream-app':
       return [
         '## Where it goes',
-        'A brand-new operator repo that consumes `@openora/*` via local `link:` - it does NOT fork this repo.',
+        'A brand-new operator repo that installs `@openora/*` from npm - it does NOT fork this repo.',
         '',
         '## Playbook',
         '1. Run `scaffold-app <target-dir>` (MCP tool) or `pnpm create:app ../<name> --name <name>`.',
@@ -582,7 +582,7 @@ server.registerTool(
   'scaffold-app',
   {
     description:
-      'Bootstrap a new downstream igaming consumer repo (api + web + backoffice) wired to this OSS checkout via link:. Delegates to tools/create/create-igaming-app.ts. Does NOT run pnpm install - tell the user to run `pnpm install && pnpm db:migrate` in the new dir next.',
+      'Bootstrap a new downstream igaming consumer repo (headless api) that installs @openora/* from npm. Runs the @openora/create scaffolder (`pnpm create:app`). Does NOT run pnpm install - tell the user to run `pnpm install && pnpm db:migrate` in the new dir next.',
     inputSchema: {
       target: z
         .string()
