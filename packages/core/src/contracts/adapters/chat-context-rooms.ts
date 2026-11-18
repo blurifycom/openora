@@ -16,7 +16,10 @@ export type ChatContextRoomWrite<T> = T & { afterCommit(): Promise<void> };
  * through the room history, send and stream routes. Closing one stops players posting for good.
  */
 export type ChatContextRooms = {
-  /** Creates the room or returns the existing one, adding any `memberIds` not yet in it. */
+  /**
+   * Creates the room or returns the existing one, adding any `memberIds` not yet in it unless
+   * the room is closed.
+   */
   ensureRoom(
     input: EnsureChatContextRoomInput & { tx?: unknown },
   ): Promise<
@@ -35,9 +38,13 @@ export type ChatContextRooms = {
     tx?: unknown;
   }): Promise<ChatContextRoomWrite<{ removed: boolean }>>;
   close(input: { ref: string; tx?: unknown }): Promise<ChatContextRoomWrite<{ closed: boolean }>>;
-  /** Posts as the system author; allowed in a closed room. */
+  /**
+   * Posts as the system author; allowed in a closed room. `messageId` keys the message on the
+   * caller's own id; an id that already names a message fails the write.
+   */
   postSystemEvent(input: {
     ref: string;
+    messageId?: Uuid;
     code: SystemEventMetadata['code'];
     params?: SystemEventMetadata['params'];
     tx?: unknown;
@@ -45,3 +52,45 @@ export type ChatContextRooms = {
 };
 
 export const CHAT_CONTEXT_ROOMS: Token<ChatContextRooms> = createToken('CHAT_CONTEXT_ROOMS');
+
+type CommandIssued = Promise<{ afterCommit(): Promise<void> }>;
+
+/**
+ * The `ChatContextRooms` writes a caller can make without reading chat back, so they work
+ * whether chat shares the caller's database or not. The caller names the room (`roomId`, its
+ * own record id) and the message (`messageId`), and knows the members from its own records.
+ * Members only join, through `ensureRoom`, and ensuring a closed room adds nobody.
+ *
+ * The chat module binds the local `ChatContextRooms` here: each write joins the caller's `tx` and
+ * `afterCommit` runs its realtime effects. A service that runs without chat binds
+ * `OutboxChatContextRoomCommands` over it: each write is a `chat.context_room.command_issued`
+ * event on the caller's `tx` (or its own when none is given), `afterCommit` does nothing, and
+ * chat applies the command once the event is relayed. In that mode:
+ * - a write lands after the caller's commit, and commands are not applied in issue order;
+ *   a system message is still stamped with the time it was issued, so the room shows the
+ *   caller's order;
+ * - a command for a ref with no room yet waits, redelivered, until its ensure lands;
+ * - one chat cannot apply fails in chat and is dead-lettered, never in the committed caller:
+ *   a `roomId` other than the ref's room, a `messageId` that names another message, a
+ *   deleted room.
+ *
+ * The modes differ on a repeated `messageId`: the local binding fails the write (the caller's
+ * transaction rolls back), the outbox one ignores a repeat of the same message in the same room.
+ *
+ * Removing a member is not offered here: commands are not ordered across replicas, so a
+ * removal could land before an add of the same member. Use `CHAT_CONTEXT_ROOMS` where chat
+ * shares the process.
+ */
+export type ChatContextRoomCommands = {
+  ensureRoom(
+    input: Parameters<ChatContextRooms['ensureRoom']>[0] & { roomId: Uuid },
+  ): CommandIssued;
+  close(input: Parameters<ChatContextRooms['close']>[0]): CommandIssued;
+  postSystemEvent(
+    input: Parameters<ChatContextRooms['postSystemEvent']>[0] & { messageId: Uuid },
+  ): CommandIssued;
+};
+
+export const CHAT_CONTEXT_ROOM_COMMANDS: Token<ChatContextRoomCommands> = createToken(
+  'CHAT_CONTEXT_ROOM_COMMANDS',
+);

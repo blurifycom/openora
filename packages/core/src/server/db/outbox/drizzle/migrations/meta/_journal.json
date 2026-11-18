@@ -29,6 +29,20 @@
       "when": 1793689698297,
       "tag": "0003_event_correlation",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794641811516,
+      "tag": "0004_reflective_the_stranger",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794641811878,
+      "tag": "0005_organic_stranger",
+      "breakpoints": true
     }
   ]
 }

@@ -3,7 +3,7 @@ import { mock, makeDrizzle } from '../../../../testing/mock.js';
 import type {
   AdminUserDirectory,
   AuditWritePort,
-  ChatBlockWriter,
+  ChatBlockReader,
   ChatRoomAccess,
   RealtimeTransport,
 } from '@openora/core/contracts';
@@ -27,7 +27,7 @@ function makeService(select: Record<string, unknown>[][] = []) {
       findPlayerIds: vi.fn().mockResolvedValue([]),
       lookupPlayers: vi.fn().mockResolvedValue([]),
     }),
-    mock<ChatBlockWriter>({ getExcludedUserIds: vi.fn().mockResolvedValue([]) }),
+    mock<ChatBlockReader>({ getExcludedUserIds: vi.fn().mockResolvedValue([]) }),
     mock<RealtimeTransport>({ getOnlineUserIds: vi.fn().mockResolvedValue([]) }),
     mock<AuditWritePort>({ record: vi.fn().mockResolvedValue(undefined) }),
     mock<ChatRoomAccess>({ verifyRoomAccess: vi.fn().mockResolvedValue(undefined) }),
@@ -63,7 +63,7 @@ function makeMentionService(deps: MentionDeps = {}) {
         ? {}
         : { get: vi.fn().mockResolvedValue({ id: 'viewer', role: deps.viewerRole }) }),
     }),
-    mock<ChatBlockWriter>({
+    mock<ChatBlockReader>({
       getExcludedUserIds: vi.fn().mockResolvedValue(deps.excludedUserIds ?? []),
     }),
     mock<RealtimeTransport>({
@@ -169,7 +169,7 @@ describe('ChatCommandsService searchMentions', () => {
         findPlayerIds,
         lookupPlayers: vi.fn().mockResolvedValue([{ userId: 'wanted', username: 'dave' }]),
       }),
-      mock<ChatBlockWriter>({ getExcludedUserIds: vi.fn().mockResolvedValue(['blocked']) }),
+      mock<ChatBlockReader>({ getExcludedUserIds: vi.fn().mockResolvedValue(['blocked']) }),
       mock<RealtimeTransport>({ getOnlineUserIds: vi.fn().mockResolvedValue([]) }),
       mock<AuditWritePort>({ record: vi.fn().mockResolvedValue(undefined) }),
       mock<ChatRoomAccess>({ verifyRoomAccess: vi.fn().mockResolvedValue(undefined) }),

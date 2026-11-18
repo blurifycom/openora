@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger, mapErrors } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import type { JobQueueAdapter } from '@openora/core/contracts';
+import type { CoreTokenCatalog, DrizzleService, DrizzleTx, Plugin } from '@openora/core/server';
+import type { ChatContextRooms, JobQueueAdapter } from '@openora/core/contracts';
 import {
   JOB_QUEUE,
   domainEventSchemas,
@@ -10,8 +10,10 @@ import {
   CHAT_REALTIME_CLIENT_AUTHORIZER,
   RATE_LIMITER,
   CHAT_SYSTEM_WRITER,
+  CHAT_BLOCK_READER,
   CHAT_BLOCK_WRITER,
   CHAT_CONTEXT_ROOMS,
+  CHAT_CONTEXT_ROOM_COMMANDS,
   CHAT_CONTEXT_SEND_POLICY,
   CHAT_MODERATION,
   CHAT_ROOM_ACCESS,
@@ -41,6 +43,7 @@ import { ChatRoomRestrictionService } from './service/chat-room-restriction.serv
 import { ChatModerationExpiryService } from './service/chat-moderation-expiry.service.js';
 import { ChatRoomPurgeService } from './service/chat-room-purge.service.js';
 import { ChatSystemCardService } from './service/chat-system-card.service.js';
+import { applyContextRoomCommand } from './service/chat-context-room-command.service.js';
 import { createChatRouter } from './router/index.js';
 
 const CHAT_MODERATION_EXPIRY_QUEUE = queue('chat-moderation-expiry');
@@ -118,6 +121,7 @@ export default {
       );
     ctx.provide(CHAT_SYSTEM_WRITER, createChatService);
     ctx.provide(CHAT_BLOCK_WRITER, createChatService);
+    ctx.provide(CHAT_BLOCK_READER, createChatService);
     ctx.provide(
       CHAT_CONTEXT_ROOMS,
       (c) =>
@@ -130,14 +134,16 @@ export default {
           systemWriter: c.get(CHAT_SYSTEM_WRITER),
         }),
     );
+    ctx.provide(CHAT_CONTEXT_ROOM_COMMANDS, (c) => c.get(CHAT_CONTEXT_ROOMS));
     ctx.provide(CHAT_ROOM_ACCESS, (c) => ({
-      verifyRoomAccess: async (roomId, viewerId) => {
+      verifyRoomAccess: async (roomId, viewerId, tx) => {
         await mapErrors(
           {
             NOT_FOUND: ChatRoomNotFoundError,
             FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
           },
-          () => createChatService(c).verifyRoomAccess(roomId, viewerId),
+          () =>
+            createChatService(c).verifyRoomAccess(roomId, viewerId, tx as DrizzleTx | undefined),
         );
       },
     }));
@@ -232,6 +238,23 @@ export default {
           'chat system card skipped: a same or newer version is stored',
         );
       }
+    });
+
+    let contextRoomsRef: ChatContextRooms | null = null;
+    let drizzleRef: DrizzleService | null = null;
+
+    // Room writes from a service that does not run chat (OutboxChatContextRoomCommands). One that
+    // cannot apply throws, so it is redelivered, then dead-lettered.
+    ctx.events.on('chat.context_room.command_issued', async (payload, envelope) => {
+      if (!contextRoomsRef || !systemCardRef || !drizzleRef) {
+        throw new Error('chat context room command: service not constructed yet');
+      }
+      const command = domainEventSchemas['chat.context_room.command_issued'].parse(payload);
+      await applyContextRoomCommand(
+        command,
+        { drizzle: drizzleRef, rooms: contextRoomsRef, cards: systemCardRef },
+        envelope && new Date(envelope.occurredAt),
+      );
     });
 
     ctx.events.on('player.account.closed', async (payload) => {
@@ -372,6 +395,8 @@ export default {
       );
       jobQueueRef = c.get(JOB_QUEUE);
       systemCardRef = new ChatSystemCardService(c.get(DRIZZLE), c.get(CHAT_REALTIME_TRANSPORT));
+      contextRoomsRef = c.get(CHAT_CONTEXT_ROOMS);
+      drizzleRef = c.get(DRIZZLE);
       void jobQueueRef
         .schedule(
           CHAT_ROOM_PURGE_SCAN_QUEUE,

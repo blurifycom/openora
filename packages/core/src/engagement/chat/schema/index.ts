@@ -115,6 +115,10 @@ export const chatUserBlock = pgTable(
       .on(t.blockerId, t.blockedId)
       .where(sql`${t.removedAt} IS NULL`),
     index('chat_user_block_blocker_idx').on(t.blockerId),
+    // Reverse lookup (who blocks this user): the pair key leads with blockerId.
+    index('chat_user_block_blocked_idx')
+      .on(t.blockedId)
+      .where(sql`${t.removedAt} IS NULL`),
   ],
 );
 

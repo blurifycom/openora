@@ -13,6 +13,9 @@ export const ChatContextRefSchema = z
 
 export const EnsureChatContextRoomInputSchema = z.object({
   ref: ChatContextRefSchema,
+  // The new room's id, so a caller can name the room without reading it back (its own record
+  // id, a match id for example). Ignored when the ref already has a room. Omitted: a random id.
+  roomId: UuidSchema.optional(),
   name: z.string().trim().min(1).max(CHAT_CONTEXT_ROOM_NAME_MAX_LENGTH),
   memberIds: z.array(UuidSchema).max(CHAT_CONTEXT_ROOM_MEMBERS_MAX),
 });
