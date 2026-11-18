@@ -1,8 +1,16 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { DRIZZLE, loadExtensions } from '@openora/core/server';
-import { user } from '@openora/core/pam/schema/identity';
+import { REALTIME_TRANSPORT } from '@openora/core/contracts';
+import {
+  createInternalClient,
+  DRIZZLE,
+  EVENT_BUS,
+  InternalApiError,
+  loadExtensions,
+  SESSION_RESOLVER_ROUTE,
+} from '@openora/core/server';
+import { session, user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { chatMessage, chatRoomInvite, chatRoomMember } from '@openora/core/engagement/schema/chat';
 import {
@@ -23,14 +31,21 @@ import {
 import { chatInviteHelpers } from '../chat-invite-helpers.js';
 
 // Two apps on one database: a monolith serving identity, and a chat service that reads every
-// account from it over the signed internal API. A call to the identity origin is served by the
-// identity app in process, or fails as `identity` says.
+// account and resolves every session through it over the signed internal API. A call to the
+// identity origin is served by the identity app in process, or fails as `identity` says.
 const IDENTITY_SERVICE_URL = 'http://identity.internal';
 const CHAT_SERVICE_NAME = 'chat-e2e';
 const SHARED_ENV = {
   INTERNAL_API_SECRETS: randomBytes(32).toString('hex'),
   ACCOUNT_READER_CALLERS: CHAT_SERVICE_NAME,
+  SESSION_RESOLVER_CALLERS: CHAT_SERVICE_NAME,
 };
+// The events that end a session, which chat purges its cache on.
+const SESSION_ENDING_EVENTS = [
+  'identity.session.revoked',
+  'identity.sessions.revoked_all',
+  'identity.user.deactivated',
+] as const;
 const CHAT_ENV = {
   // What the boot asks for on top of chat, social and identity:no-routes.
   SERVICE_MANIFEST: [
@@ -57,6 +72,7 @@ let db: TestDb;
 let identityApp: TestApp;
 let chatApp: TestApp;
 let identity: IdentityMode = 'up';
+let stopBridge: (() => void)[] = [];
 const identityCalls: string[] = [];
 const realFetch = globalThis.fetch;
 
@@ -81,15 +97,19 @@ function withEnv<T>(env: Record<string, string>, run: () => Promise<T>): Promise
   });
 }
 
-/** A client of the chat service, signed in through the identity service. */
-async function chatClientFor(email: string): Promise<TestClient> {
+async function signIn(email: string): Promise<string> {
   const login = await identityApp.app.request('/identity/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password: 'password1234' }),
   });
   expect(login.status).toBe(200);
-  const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+  return (login.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+}
+
+/** A client of the chat service, signed in through the identity service. */
+async function chatClientFor(email: string): Promise<TestClient> {
+  const cookie = await signIn(email);
   const call = async (path: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers);
     headers.set('cookie', cookie);
@@ -164,9 +184,19 @@ beforeAll(async () => {
   chatApp = await withEnv(CHAT_ENV, async () =>
     bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url }),
   );
+  // Each booted app owns a Redis database, so the two apps do not share a broker as the two
+  // services do in production. This carries the events that end a session across the gap.
+  stopBridge = SESSION_ENDING_EVENTS.map((topic) =>
+    identityApp.container
+      .get(EVENT_BUS)
+      .on(topic, (payload) => chatApp.container.get(EVENT_BUS).emit(topic, payload)),
+  );
 }, 90_000);
 
 afterAll(async () => {
+  for (const stop of stopBridge) {
+    stop();
+  }
   vi.unstubAllGlobals();
   for (const key of Object.keys(SHARED_ENV)) {
     delete process.env[key];
@@ -316,5 +346,187 @@ describe('chat on its own service, reading accounts from the identity service', 
 
     expect(demoted.status).toBe(403);
     expect(deactivated.status).toBe(403);
+  });
+});
+
+describe('chat on its own service, resolving sessions through the identity service', () => {
+  const sessionCalls = () =>
+    identityCalls.filter((path) => path === `/internal/v1${SESSION_RESOLVER_ROUTE}`).length;
+
+  /** An admin of the identity service ends every session of `userId`. */
+  async function revokeAll(userId: string) {
+    const cookie = await signIn('admin@oss.dev');
+    const res = await identityApp.app.request('/identity/sessions/revoke-all', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ userId }),
+    });
+    expect(res.status).toBe(200);
+  }
+
+  it('resolves the session over the internal API, then serves it from cache', async () => {
+    const account = await chatter('remote');
+    identityCalls.length = 0;
+
+    const first = await account.client.get('/chat/rooms/moderated');
+    const second = await account.client.get('/chat/rooms/moderated');
+
+    expect([first.status, second.status]).toEqual([200, 200]);
+    expect(sessionCalls()).toBe(1);
+  });
+
+  it('refuses a revoked session by purge, well inside the cache window', async () => {
+    const account = await chatter('revoked');
+    const bystander = await chatter('bystander');
+    expect((await account.client.get('/chat/rooms/moderated')).status).toBe(200);
+    expect((await bystander.client.get('/chat/rooms/moderated')).status).toBe(200);
+
+    await revokeAll(account.userId);
+
+    await vi.waitFor(
+      async () => expect((await account.client.get('/chat/rooms/moderated')).status).toBe(401),
+      { timeout: 1_000 },
+    );
+    expect((await bystander.client.get('/chat/rooms/moderated')).status).toBe(200);
+  });
+
+  it('refuses a session by purge when one device is revoked or the account is deactivated', async () => {
+    const single = await chatter('revokeone');
+    const deactivated = await chatter('deactivated');
+    expect((await single.client.get('/chat/rooms/moderated')).status).toBe(200);
+    expect((await deactivated.client.get('/chat/rooms/moderated')).status).toBe(200);
+    const events = identityApp.container.get(EVENT_BUS);
+    // The sessions end in the identity database; only the events tell chat to drop its copy.
+    for (const { userId } of [single, deactivated]) {
+      await sql().update(session).set({ expiresAt: new Date() }).where(eq(session.userId, userId));
+    }
+
+    events.emit('identity.session.revoked', {
+      userId: single.userId,
+      playerId: null,
+      sessionId: randomUUID(),
+    });
+    events.emit('identity.user.deactivated', {
+      userId: deactivated.userId,
+      actorId: randomUUID(),
+    });
+
+    for (const account of [single, deactivated]) {
+      await vi.waitFor(
+        async () => expect((await account.client.get('/chat/rooms/moderated')).status).toBe(401),
+        { timeout: 1_000 },
+      );
+    }
+  });
+
+  it('answers 503 while identity is down or failing, 401 when it refuses, and recovers when it is back', async () => {
+    const account = await chatter('outage');
+
+    const down = await whileIdentity('down', () => account.client.get('/chat/rooms/moderated'));
+    const upstream5xx = await whileIdentity(502, () => account.client.get('/chat/rooms/moderated'));
+    const upstream4xx = await whileIdentity(400, () => account.client.get('/chat/rooms/moderated'));
+    const recovered = await account.client.get('/chat/rooms/moderated');
+
+    expect([down.status, upstream5xx.status, upstream4xx.status]).toEqual([503, 503, 401]);
+    expect(recovered.status).toBe(200);
+  });
+
+  it('answers 503 on a signed-in read that also serves guests while identity is down', async () => {
+    const owner = await chatter('outagereader');
+    const room = await createRoom(owner);
+    // A second sign-in: its session is not in chat's cache yet, so the read has to ask identity.
+    const freshDevice = await chatClientFor(`${owner.username}@e2e.test`);
+
+    const [roomRead, globalRead] = await whileIdentity('down', () =>
+      Promise.all([freshDevice.get(`/chat/rooms/${room.id}`), freshDevice.get('/chat/global')]),
+    );
+
+    expect(await errorOf(roomRead)).toEqual({ status: 503, code: 'SERVICE_UNAVAILABLE' });
+    expect(await errorOf(globalRead)).toEqual({ status: 503, code: 'SERVICE_UNAVAILABLE' });
+    expect((await freshDevice.get(`/chat/rooms/${room.id}`)).status).toBe(200);
+  });
+
+  it('ignores a purge announcement that is not a user id', async () => {
+    const account = await chatter('malformedpurge');
+    expect((await account.client.get('/chat/rooms/moderated')).status).toBe(200);
+
+    await chatApp.container
+      .get(REALTIME_TRANSPORT)
+      .publish('chat:session-purge', { userId: 42, extra: 'junk' });
+    await chatApp.container.get(REALTIME_TRANSPORT).publish('chat:session-purge', 'junk');
+
+    expect((await account.client.get('/chat/rooms/moderated')).status).toBe(200);
+  });
+
+  it('forwards only the session cookie to identity, and makes no call for a jar without one', async () => {
+    const account = await chatter('jar');
+    const cookie = await signIn(`${account.username}@e2e.test`);
+    identityCalls.length = 0;
+
+    const noise = await chatApp.app.request('/chat/rooms/moderated', {
+      headers: { cookie: '_ga=GA1.2.3; consent=yes' },
+    });
+    const withJar = await chatApp.app.request('/chat/rooms/moderated', {
+      headers: { cookie: `_ga=GA1.2.3; ${cookie}; consent=yes` },
+    });
+
+    expect(noise.status).toBe(401);
+    expect(withJar.status).toBe(200);
+    expect(sessionCalls()).toBe(1);
+  });
+
+  it('refuses a session the idle window ended, on that request and the next', async () => {
+    const account = await chatter('idle');
+    await sql().update(user).set({ autoLogoutDuration: '15m' }).where(eq(user.id, account.userId));
+    await sql()
+      .update(session)
+      .set({ lastSeenAt: new Date(Date.now() - 2 * 60 * 60_000) })
+      .where(eq(session.userId, account.userId));
+
+    const refused = await account.client.get('/chat/rooms/moderated');
+    const again = await account.client.get('/chat/rooms/moderated');
+
+    expect([refused.status, again.status]).toEqual([401, 401]);
+  });
+
+  it('refuses a cookie identity does not know', async () => {
+    const res = await chatApp.app.request('/chat/rooms/moderated', {
+      headers: { cookie: 'better-auth.session_token=forged.value' },
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('keeps the player last-seen stamp fresh from chat traffic', async () => {
+    const account = await chatter('seen');
+    await sql()
+      .update(player)
+      .set({ lastSeenAt: new Date(Date.now() - 24 * 60 * 60_000) })
+      .where(eq(player.userId, account.userId));
+
+    expect((await account.client.get('/chat/rooms/moderated')).status).toBe(200);
+
+    const [row] = await sql()
+      .select({ lastSeenAt: player.lastSeenAt })
+      .from(player)
+      .where(eq(player.userId, account.userId));
+    expect(Date.now() - (row?.lastSeenAt?.getTime() ?? 0)).toBeLessThan(60_000);
+  });
+
+  it('refuses a service that is not an allowed session caller', async () => {
+    const rogue = createInternalClient({
+      baseUrl: IDENTITY_SERVICE_URL,
+      serviceName: 'rogue-service',
+      audience: 'monolith',
+      secrets: process.env['INTERNAL_API_SECRETS'],
+      timeoutMs: 5_000,
+    });
+
+    const err = await rogue
+      .request('POST', SESSION_RESOLVER_ROUTE, { cookie: 'better-auth.session_token=x' })
+      .catch((caught: unknown) => caught);
+
+    expect(err).toBeInstanceOf(InternalApiError);
+    expect(err).toMatchObject({ status: 403 });
   });
 });
