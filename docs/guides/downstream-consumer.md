@@ -134,7 +134,7 @@ and each job reaches one of them.
   the variable is unset every internal route answers 401. Your internet-facing edge (load
   balancer or reverse proxy) MUST deny `/internal/`; services call each other directly over the
   private network. For rotation and limits, see
-  [ADR-0052](../adr/0052-signed-internal-api-for-service-calls.md).
+  [ADR-0054](../adr/0054-signed-internal-api-for-service-calls.md).
 
 ## Seeding reference data (production)
 

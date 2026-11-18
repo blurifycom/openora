@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 /**
- * Service-to-service request signing for the `/internal/v1` surface (ADR-0052). Every request
+ * Service-to-service request signing for the `/internal/v1` surface (ADR-0054). Every request
  * carries the caller's `SERVICE_NAME`, a unix-ms timestamp and an HMAC-SHA256 over
  * `service\naudience\ntimestamp\nMETHOD\npath+query\ncontent-type\nsha256hex(body)` with a
  * secret shared by the install. The audience is the called service's `SERVICE_NAME`, so a

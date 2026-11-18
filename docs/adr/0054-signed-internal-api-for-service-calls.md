@@ -1,4 +1,4 @@
-# ADR-0052: Signed internal API for service-to-service calls
+# ADR-0054: Signed internal API for service-to-service calls
 
 **Date**: 2026-11-12
 **Status**: Accepted
