@@ -31,6 +31,10 @@ const ALLOW = [
   'gh api graphql -f query=\'\nmutation { resolveReviewThread(input: {threadId: "T"}) { thread { isResolved } } }\'',
   `gh api graphql -f query="$(cat <<'EOF'\nquery { viewer { login } }\nEOF\n)"`,
   'gh api repos/o/r/pulls/5/comments \\\n  --paginate',
+  'gh pr --repo o/r view 5 --comments',
+  `gh api /graphql -f query='query { viewer { login } }'`,
+  'gh api -X GET repos/o/r/issues/5/comments',
+  'gh api -X GET -X GET repos/o/r/issues/5/comments',
 ];
 
 const DENY = [
@@ -79,6 +83,23 @@ const DENY = [
   `glab api graphql -f query='mutation { createDiscussion(input: {noteableId: "x", body: "y"}) { note { id } } }'`,
   'gh api -X POST graphql -f query=@mutation.graphql',
   `gh api --hostname github.com graphql -f query='mutation { addComment(input: {}) { clientMutationId } }'`,
+  'gh pr --repo o/r comment 5 -b x',
+  'gh pr -R o/r comment 5 -b x',
+  'gh pr -Ro/r comment 5 -b x',
+  'gh pr --repo=o/r comment 5 -b x',
+  'gh issue --repo o/r comment 5 -b x',
+  'glab mr -R o/r note 2 -m x',
+  'gh pr --repo o/r review 5 --comment -b nit',
+  `gh api /graphql -f query='mutation { addComment(input: {}) { clientMutationId } }'`,
+  `gh api "/graphql" -f query='mutation { addComment(input: {}) { clientMutationId } }'`,
+  `gh api https://api.github.com/graphql -f query='mutation { addComment(input: {}) { clientMutationId } }'`,
+  'gh api repos/o/r/issues/5/comments -fbody=x',
+  'gh api repos/o/r/pulls/5/comments -Fbody=x',
+  'gh api repos/o/r/issues/5/comments --field body=x',
+  'gh api repos/o/r/issues/5/comments --raw-field=body=x',
+  'gh api -X GET -X POST repos/o/r/issues/5/comments -f body=x',
+  'gh api --method GET --method=POST repos/o/r/issues/5/comments -f body=x',
+  'gh api -X POST -X GET repos/o/r/issues/5/comments',
 ];
 
 const exitCode = (guard, command) =>

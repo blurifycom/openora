@@ -20,10 +20,14 @@ const API_CALL = new RegExp(START + String.raw`(?:gh|glab)\s+api\b`);
 // `draft_notes` covers the draft and its `/publish` and `bulk_publish` calls.
 const COMMENT_PATH = /\/(?:comments|(?:draft_)?notes|reviews)(?=[/"'\s?]|$)/;
 const DISCUSSIONS = /\/discussions\/?(?=["'\s?]|$)/;
-const GRAPHQL = /\sgraphql(?=["'\s]|$)/;
-const EXPLICIT_METHOD = /\s(?:-X\s*|--method[=\s]+)["']?([A-Za-z]+)/;
+const GRAPHQL = /\s["']?(?:\S*\/)?graphql(?=["'\s]|$)/;
+// A repeated method flag is a write when any of them is, whichever one the CLI honours.
+const EXPLICIT_METHODS = /\s(?:-X\s*|--method[=\s]+)["']?([A-Za-z]+)/g;
+// `-R o/r`, `-Ro/r`, `--repo o/r` and `--repo=o/r` may sit before the subcommand.
+const REPO_FLAG = /\s(?:-R\s*|--repo(?:=|\s+))\S+/g;
 // `gh api` and `glab api` default to POST once a field or body is passed.
-const FIELDS = /\s(?:-f|-F|--field|--raw-field|--input)\b/;
+// `-f` and `-F` also match a value glued to the flag (`-fbody=x`).
+const FIELDS = /\s(?:-[fF]|--(?:raw-)?field\b|--input\b)/;
 const COMMENT_MUTATION =
   /\b(?:addComment|addPullRequestReview\w*|submitPullRequestReview|updateIssueComment|updatePullRequestReview\w*|create(?:Diff|ImageDiff)?Note|createDiscussion|updateNote)\b/;
 // A query read from a file, stdin, a variable or a substitution cannot be inspected, so it counts
@@ -32,11 +36,17 @@ const OPAQUE_QUERY = /query=["']?(?:@|\$(?!\(cat\s*<<)|`)|--input\b/;
 // `bash -c '<script>'` runs its script as calls of its own.
 const SHELL_SCRIPT = /\b(?:ba|z|da)?sh\s+-\w*c\s+(["'])([\s\S]*?)\1/g;
 
-const methodOf = (call) =>
-  (call.match(EXPLICIT_METHOD)?.[1] ?? (FIELDS.test(call) ? 'POST' : 'GET')).toUpperCase();
+const methodsOf = (call) => {
+  const explicit = [...call.matchAll(EXPLICIT_METHODS)].map((match) => match[1].toUpperCase());
+  return explicit.length > 0 ? explicit : [FIELDS.test(call) ? 'POST' : 'GET'];
+};
 
 const postsComment = (call) => {
-  if (COMMENT_CLI.test(call) || (GH_PR_REVIEW.test(call) && REVIEW_WITH_TEXT.test(call))) {
+  const withoutRepo = call.replace(REPO_FLAG, '');
+  if (
+    COMMENT_CLI.test(withoutRepo) ||
+    (GH_PR_REVIEW.test(withoutRepo) && REVIEW_WITH_TEXT.test(withoutRepo))
+  ) {
     return true;
   }
   if (!API_CALL.test(call)) {
@@ -46,10 +56,11 @@ const postsComment = (call) => {
     // A query spans lines, variables and substitutions, so the whole command is checked.
     return COMMENT_MUTATION.test(command) || OPAQUE_QUERY.test(command);
   }
-  const method = methodOf(call);
+  const methods = methodsOf(call);
   return (
-    (['POST', 'PUT', 'PATCH'].includes(method) && COMMENT_PATH.test(call)) ||
-    (method === 'POST' && DISCUSSIONS.test(call))
+    (methods.some((method) => ['POST', 'PUT', 'PATCH'].includes(method)) &&
+      COMMENT_PATH.test(call)) ||
+    (methods.includes('POST') && DISCUSSIONS.test(call))
   );
 };
 
