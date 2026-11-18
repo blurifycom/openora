@@ -2365,6 +2365,14 @@ export class ChatService {
     return [...(await this.blockedIdsFor(viewerId))];
   }
 
+  async getBlockerIds(userId: User['id']): Promise<string[]> {
+    const rows = await this.drizzle.db
+      .select({ blockerId: chatUserBlock.blockerId })
+      .from(chatUserBlock)
+      .where(and(eq(chatUserBlock.blockedId, userId), isNull(chatUserBlock.removedAt)));
+    return rows.map((row) => row.blockerId);
+  }
+
   async isBlocked(
     tx: DrizzleDb | DrizzleTx,
     blockerId: User['id'],

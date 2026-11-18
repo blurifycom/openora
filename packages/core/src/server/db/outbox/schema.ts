@@ -1,9 +1,11 @@
 import { sql } from 'drizzle-orm';
 import {
   pgTable,
+  pgSequence,
   text,
   jsonb,
   integer,
+  bigint,
   timestamp,
   index,
   PrimaryKeyBuilder,
@@ -11,6 +13,12 @@ import {
   uuid,
   check,
 } from 'drizzle-orm/pg-core';
+
+// Insert-order tie-break for rows emitted in the same millisecond. A plain sequence behind a
+// nullable column, not an identity column: adding an identity column rewrites the table under an
+// exclusive lock, this only touches the catalog. Rows written before it exist hold a null `seq`
+// and sort first.
+export const eventOutboxSeq = pgSequence('event_outbox_seq');
 
 // Transactional outbox table. A service writes the event envelope here INSIDE the
 // same db.transaction as its state change (EventBus.emitInTransaction), so the row
@@ -30,6 +38,9 @@ export const eventOutbox = pgTable(
     correlationId: text(),
     orderingKey: text(),
     occurredAt: timestamp({ withTimezone: true }).notNull(),
+    // Set by the database, never by a writer: breaks ties between rows emitted in the same
+    // millisecond, so the relay publishes them in the order they were written.
+    seq: bigint({ mode: 'number' }).default(sql`nextval('event_outbox_seq')`),
     publishedAt: timestamp({ withTimezone: true }),
     claimedAt: timestamp({ withTimezone: true }),
     attempts: integer().notNull().default(0),
