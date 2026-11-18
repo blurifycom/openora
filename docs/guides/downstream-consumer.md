@@ -120,7 +120,7 @@ app (no HTTP, no auth, no plugin host), so it is cheap and carries zero footprin
 server. You compose the seeders you want explicitly, then run it after migrations:
 
 ```typescript
-// my-igaming/apps/api/src/seed.ts  - run after `db:migrate`, before/at release
+// my-igaming/apps/api/src/seed-reference.ts  - run after `db:migrate`, before/at release
 import { createDrizzleDb } from '@openora/core/server';
 import { seedRoles } from '@openora/core/iam/seed';
 // import additional module seeders here as you enable them
@@ -132,7 +132,7 @@ await seedRoles(db);
 console.log('Reference data seeded.');
 ```
 
-Wire it as its own command (e.g. `"db:seed": "tsx src/seed.ts"`) and run it in your release
+Wire it as its own command (e.g. `"db:seed:reference": "tsx src/seed-reference.ts"`) and run it in your release
 pipeline right after `pnpm db:migrate`. Because the seeders are idempotent upserts, re-running on
 each deploy is the intended pattern. Composition is explicit (like `extensions.config.ts`): enable
 a module's seeder by adding its one import + call - the same trade-off the migration runner makes.
@@ -155,10 +155,13 @@ Common orchestration patterns:
 
 - **One script per module** - `db:seed:iam`, `db:seed:casino`, ... each importing a single seeder.
 - **One script with a flag** - `pnpm db:seed --only=iam` branches on the arg.
-- **One combined script** - imports and runs them all (the default `apps/api/src/seed.ts` above).
+- **One combined script** - imports and runs them all, like the snippet above.
 
-**Demo/fake data** (sample players, transactions) is a separate, dev-only concern - it lives in
-`@openora/testing` (`seedDemoData` / `seedMinimal`) and must never run on production.
+**Local data** is a separate, dev-only concern. The scaffolded `apps/api/src/seed.ts` calls
+`seedLocalData` from `@openora/core/seed/local`: reference data, a super-admin from `ADMIN_EMAIL` /
+`ADMIN_PASSWORD`, and demo players, games, wallets and chat. It wipes demo tables, so it refuses
+`NODE_ENV=production` and any database host other than localhost. Never run `db:seed` in a release
+pipeline; production runs a reference-data script like the one above.
 
 ## Building the frontend (in your own repo)
 

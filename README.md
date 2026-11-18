@@ -83,7 +83,7 @@ pnpm db:seed                                     # demo data
 pnpm dev                                      # api :3001
 ```
 
-`pnpm db:seed` is idempotent and deterministic. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`.
+`pnpm db:seed` is idempotent and deterministic. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`. It refuses a non-local database host unless `OPENORA_ALLOW_REMOTE_SEED=1`.
 
 To run the whole reference stack in containers instead of on the host, use the opt-in profile: `docker compose --profile full up --build` (api :3001, web :3000, backoffice :3002).
 

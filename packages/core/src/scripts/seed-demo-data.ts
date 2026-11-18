@@ -1,7 +1,8 @@
 // See ADR-0020.
 import { findOneOrThrow, type DrizzleDb } from '@openora/core/server';
-import { eq, sql } from 'drizzle-orm';
-import { user } from '@openora/core/pam/schema/identity';
+import { and, eq, sql } from 'drizzle-orm';
+import { hashPassword } from 'better-auth/crypto';
+import { account, user } from '@openora/core/pam/schema/identity';
 import { assignRoleByKey } from '@openora/core/iam/seed';
 import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
@@ -804,7 +805,8 @@ async function ensureUser(
     .select({ id: user.id, role: user.role })
     .from(user)
     .where(eq(user.email, input.email));
-  if (!existing) {
+  const created = !existing;
+  if (created) {
     await auth.api.signUpEmail({
       body: {
         email: input.email,
@@ -820,6 +822,13 @@ async function ensureUser(
   }
   if (!existing) {
     return null;
+  }
+  if (!created) {
+    // Re-seeding must leave the printed credentials working, even for a user an older run made.
+    await db
+      .update(account)
+      .set({ password: await hashPassword(input.password) })
+      .where(and(eq(account.userId, existing.id), eq(account.providerId, 'credential')));
   }
   const role = existing.role === 'admin' || input.role === 'admin' ? 'admin' : input.role;
   const patch: Partial<typeof user.$inferInsert> = {

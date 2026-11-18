@@ -1,33 +1,21 @@
 #!/usr/bin/env node
 /**
  * Populate the local database so the backoffice has something realistic to show.
- * Run via `pnpm db:seed`. Idempotent - safe to re-run.
+ * Run via `pnpm db:seed`. Safe to re-run: reference data converges, demo content is recreated,
+ * and the admin password is reset to the one given.
  *
- * Two phases, both idempotent:
- *   1. Reference data - IAM's predefined roles (seedRoles, convergent upsert). Safe on any env.
- *   2. Demo data - admin + fake players + games + transactions (dev/local only).
- *
- * Seeding is a standalone one-shot script (mirrors tools/db/migrate-all.mjs) - it needs only a
- * DB connection, never boots the app. Reference seeders are composed explicitly here; the
- * consumer's own seed script does the same with the modules it enables.
+ * Thin wrapper over `seedLocalData` from `@openora/core/seed/local` - a create:app consumer runs
+ * the same seeder from its own `pnpm db:seed`.
  *
  *   pnpm db:seed                       # 36 players, admin@oss.dev / password1234
  *   pnpm db:seed --players=60          # more players
  *   pnpm db:seed --admin-email=me@x.io --admin-password=secret123
  *
- * Requires DATABASE_URL (falls back to the local docker default). Single-tenant
+ * Requires DATABASE_URL (falls back to the local docker default). A non-local host needs
+ * OPENORA_ALLOW_REMOTE_SEED=1, since the seed wipes demo tables. Single-tenant
  * since ADR-0026 - one DB role, no RLS.
  */
-import { createAuth, createDrizzleDb } from '@openora/core/server';
-import { seedIam } from '@openora/core/iam/seed';
-import { seedTag } from '@openora/core/pam/tag/seed';
-import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
-import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
-import { seedRankLadder } from '@openora/core/promo/seed/gamification';
-import { seedChatCommands } from '@openora/core/engagement/seed/chat-commands';
-import { seedDemoData } from '@openora/testing/seed-demo-data';
-import { EXAMPLE_RANK_LADDER } from '@openora/testing/seed';
-import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
+import { seedLocalData } from '@openora/core/seed/local';
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -35,37 +23,16 @@ function arg(name: string): string | undefined {
 }
 
 async function main() {
-  const databaseUrl =
-    process.env['DATABASE_ADMIN_URL'] ??
-    process.env['DATABASE_URL'] ??
-    'postgresql://postgres:postgres@localhost:5432/oss_igaming';
-  const db = createDrizzleDb(databaseUrl);
-  // better-auth's drizzle adapter needs the auth tables passed as schema, else
-  // user creation throws "model user not found". See @openora/core/server createAuth().
-  const auth = createAuth({ db, schema: { user, session, account, verification, twoFactor } });
-
-  await seedIam(db);
-  console.log('  Reference roles ready.');
-  await seedTag(db);
-  console.log('  Default tags ready.');
-  await seedAutoWithdrawalConfig(db);
-  console.log('  Auto-withdrawal config ready.');
-  await seedDefaultWeightProfile(db);
-  console.log('  Default wager-weight profile ready.');
-  await seedRankLadder(db, EXAMPLE_RANK_LADDER);
-  console.log('  Rank ladder ready.');
-  await seedChatCommands(db);
-  console.log('  Chat command config ready.');
-
-  const result = await seedDemoData({
-    db,
-    auth,
+  const result = await seedLocalData({
+    databaseUrl:
+      process.env['DATABASE_ADMIN_URL'] ??
+      process.env['DATABASE_URL'] ??
+      'postgresql://postgres:postgres@localhost:5432/oss_igaming',
     playerCount: Number(arg('players') ?? 36),
-    password: arg('password') ?? 'password1234',
+    playerPassword: arg('password') ?? 'password1234',
     admin: {
       email: arg('admin-email') ?? 'admin@oss.dev',
       password: arg('admin-password') ?? 'password1234',
-      name: 'Platform Admin',
     },
     log: (m) => console.log(`  ${m}`),
   });
