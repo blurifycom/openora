@@ -47,23 +47,28 @@ async function chain(txn: DrizzleTx, shippable: Shippable[]): Promise<Rejection[
 // history: the copy runs in seq order with the target's head as its cursor (the audit-copy
 // runbook), so the target holding the old chain's last row, hash and all, means it holds every row,
 // and the fence on the old chain means no legacy writer adds one after it. A drain ships back into
-// the main database itself, which is the old chain.
+// the main database itself, which is the old chain: the same database name on the same server
+// address and port. Reached by two different addresses, a drain is taken for a ship elsewhere and
+// fails safe on the lifted fence. A fence counts only while it fires for every session.
+const INSTANCE_SQL = sql`current_database() || ' on ' || coalesce(host(inet_server_addr()), 'local socket')
+    || ':' || current_setting('port')`;
+
 async function refuseChainBeforeCopy(main: DrizzleTx, chainTx: DrizzleTx): Promise<void> {
   const { rows: legacy } = await main.execute<{
     present: boolean;
     fenced: boolean;
-    database: string;
+    instance: string;
   }>(
     sql`SELECT to_regclass('public.audit_log') IS NOT NULL AS present,
                EXISTS (SELECT 1 FROM pg_trigger
                         WHERE tgrelid = to_regclass('public.audit_log')
-                          AND tgname = ${CHAIN_MOVED_TRIGGER}) AS fenced,
-               current_database() AS database`,
+                          AND tgname = ${CHAIN_MOVED_TRIGGER} AND tgenabled = 'A') AS fenced,
+               ${INSTANCE_SQL} AS instance`,
   );
-  const { rows: chainDatabase } = await chainTx.execute<{ database: string }>(
-    sql`SELECT current_database() AS database`,
+  const { rows: chainInstance } = await chainTx.execute<{ instance: string }>(
+    sql`SELECT ${INSTANCE_SQL} AS instance`,
   );
-  if (!legacy[0]?.present || legacy[0].database === chainDatabase[0]?.database) {
+  if (!legacy[0]?.present || legacy[0].instance === chainInstance[0]?.instance) {
     return;
   }
   const { rows: tail } = await main.execute<{ seq: string; hash: string }>(

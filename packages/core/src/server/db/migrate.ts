@@ -42,6 +42,13 @@ export type RunMigrationsOptions = {
    */
   preSql?: string[];
   /**
+   * Raw SQL statements to run, in order, under the migration advisory lock and before any pending
+   * migration is read or applied. Same trust model as `preSql`; for a check that must see what a
+   * concurrent runner of the same journal committed while this one waited on the lock, so a
+   * refusal lands before a single migration file commits.
+   */
+  lockedPreSql?: string[];
+  /**
    * Raw SQL statements to run, in order, AFTER every pending migration is applied. Same
    * trust model as `preSql`; for constraints drizzle-kit cannot express against a table
    * it has just created (eg an append-only trigger on the audit log). Runs while the
@@ -247,6 +254,9 @@ export async function runMigrations(opts: RunMigrationsOptions) {
         lockClient,
         `${migrationsSchema}.${migrationsTable}`,
         async () => {
+          for (const sql of opts.lockedPreSql ?? []) {
+            await lockClient.query(sql);
+          }
           const applied = await lockClient.query<{ hash: string }>(
             `SELECT hash FROM ${schema}.${table}`,
           );

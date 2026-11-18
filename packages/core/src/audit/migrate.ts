@@ -263,12 +263,17 @@ const mainConnectByRoleSql = (writer: LoginRole, shipper: LoginRole) => `DO $$
    END $$`;
 
 const MARK_SPLIT_SQL = `COMMENT ON FUNCTION audit_outbox_deny_unshipped_delete() IS '${CHAIN_SPLIT_MARK}'`;
+/** What `openora-audit-copy --drain-outbox` runs last, under `AUDIT_MIGRATION_LOCK`. */
+export const UNMARK_SPLIT_SQL = `COMMENT ON FUNCTION audit_outbox_deny_unshipped_delete() IS NULL`;
+/** The advisory lock every audit migrate of a main database runs under. */
+export const AUDIT_MIGRATION_LOCK = `${MIGRATIONS.migrationsSchema}.${MIGRATIONS.migrationsTable}`;
 
 const SPLIT_MAIN_MESSAGE =
   'the audit chain of this database lives in a database of its own: migrate with auditUrl (AUDIT_DATABASE_URL) and shipperUrl (AUDIT_SHIPPER_DATABASE_URL)';
 
-// The single-database guard replacement's own check, run under the migration lock that split
-// migrate marks the database under, so a split that lands while this run waits is still seen.
+// Single-database migrate's refusal, run under the migration lock that split migrate marks the
+// database under and before any pending migration file, so a split that lands while this run
+// waits is seen before anything commits.
 const REFUSE_SPLIT_MAIN_SQL = `DO $$
    BEGIN
      IF (${CHAIN_SPLIT_SQL}) THEN
@@ -448,18 +453,10 @@ export async function migrate(target?: string | AuditMigrateTarget): Promise<voi
     throw new Error('Cannot run migrations: set DATABASE_URL (or DATABASE_ADMIN_URL).');
   }
   if (!auditUrl) {
-    const probe = new Pool({ connectionString: mainUrl });
-    try {
-      if (await isSplit(probe)) {
-        throw new Error(SPLIT_MAIN_MESSAGE);
-      }
-    } finally {
-      await probe.end();
-    }
     return runMigrations({
       ...MIGRATIONS,
+      lockedPreSql: [REFUSE_SPLIT_MAIN_SQL],
       postSql: [
-        REFUSE_SPLIT_MAIN_SQL,
         ...APPEND_ONLY_SQL,
         CHAIN_MATCH_SQL,
         ...outboxGuardSql(CHAINED_HERE),
@@ -497,53 +494,50 @@ export async function migrate(target?: string | AuditMigrateTarget): Promise<voi
   const admin = new Pool({ connectionString: mainUrl });
   const client = await admin.connect();
   try {
-    await withMigrationAdvisoryLock(
-      client,
-      `${MIGRATIONS.migrationsSchema}.${MIGRATIONS.migrationsTable}`,
-      async () => {
-        const { rowCount } = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [
-          writer.database,
-        ]);
-        if (rowCount === 0) {
-          await client.query(`CREATE DATABASE ${auditDatabase}`).catch((err: { code?: string }) => {
-            if (!ALREADY_EXISTS.has(err.code ?? '')) {
-              throw err;
-            }
-          });
-        }
-        await ensureLoginRole(client, writer);
-        await ensureLoginRole(client, shipper);
-        await refuseOwners(client, [writer, shipper]);
-        const auditAdmin = new Pool({ connectionString: withDatabase(mainUrl, writer.database) });
-        try {
-          await refuseOwners(auditAdmin, [writer, shipper]);
-        } finally {
-          await auditAdmin.end();
-        }
-
-        await runMigrations({
-          ...MIGRATIONS,
-          databaseUrl: withDatabase(mainUrl, writer.database),
-          postSql: [
-            ...APPEND_ONLY_SQL,
-            CHAIN_MATCH_SQL,
-            ...CHAIN_UNIQUE_SQL,
-            ...EMAIL_CHANGE_INDEX_SQL,
-            ...writerGrantsSql(writer),
-          ],
+    await withMigrationAdvisoryLock(client, AUDIT_MIGRATION_LOCK, async () => {
+      const { rowCount } = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [
+        writer.database,
+      ]);
+      if (rowCount === 0) {
+        await client.query(`CREATE DATABASE ${auditDatabase}`).catch((err: { code?: string }) => {
+          if (!ALREADY_EXISTS.has(err.code ?? '')) {
+            throw err;
+          }
         });
+      }
+      // Before any ALTER, so a refused role keeps its password and connection limit.
+      await refuseOwners(client, [writer, shipper]);
+      const auditAdmin = new Pool({ connectionString: withDatabase(mainUrl, writer.database) });
+      try {
+        await refuseOwners(auditAdmin, [writer, shipper]);
+      } finally {
+        await auditAdmin.end();
+      }
+      await ensureLoginRole(client, writer);
+      await ensureLoginRole(client, shipper);
 
-        const firstSplit = !(await isSplit(client));
-        await inTransaction(client, [
-          DENY_MUTATION_FN_SQL,
-          ...outboxGuardSql(SHIPPER_HOLDS_LOCK, `session_user = '${shipper.name}'`),
-          MARK_SPLIT_SQL,
-          ...shipperGrantsSql(shipper),
-          ...(firstSplit ? [MAIN_CONNECT_SQL] : []),
-          mainConnectByRoleSql(writer, shipper),
-        ]);
-      },
-    );
+      await runMigrations({
+        ...MIGRATIONS,
+        databaseUrl: withDatabase(mainUrl, writer.database),
+        postSql: [
+          ...APPEND_ONLY_SQL,
+          CHAIN_MATCH_SQL,
+          ...CHAIN_UNIQUE_SQL,
+          ...EMAIL_CHANGE_INDEX_SQL,
+          ...writerGrantsSql(writer),
+        ],
+      });
+
+      const firstSplit = !(await isSplit(client));
+      await inTransaction(client, [
+        DENY_MUTATION_FN_SQL,
+        ...outboxGuardSql(SHIPPER_HOLDS_LOCK, `session_user = '${shipper.name}'`),
+        MARK_SPLIT_SQL,
+        ...shipperGrantsSql(shipper),
+        ...(firstSplit ? [MAIN_CONNECT_SQL] : []),
+        mainConnectByRoleSql(writer, shipper),
+      ]);
+    });
   } finally {
     client.release();
     await admin.end();

@@ -3,7 +3,7 @@ import { Client, Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { DrizzleDb } from '@openora/core/server';
 import { CHAIN_MOVED_TRIGGER, CHAIN_SPLIT_SQL } from '../schema/index.js';
-import { databaseOf, withDatabase } from '../migrate.js';
+import { AUDIT_MIGRATION_LOCK, databaseOf, UNMARK_SPLIT_SQL, withDatabase } from '../migrate.js';
 import { verifyAuditChain, type AuditChainAnchor } from './audit.service.js';
 import { drainAuditOutbox } from './audit-shipper.service.js';
 
@@ -418,6 +418,23 @@ async function assertOutboxEmpty(main: Client): Promise<void> {
   }
 }
 
+// The drain's last step: with the audit database closed and the outbox empty, the main database
+// holds the chain again, so the split mark goes and single-database migrate and shipping resume.
+// Under the audit migration lock, so it never interleaves with a split migrate setting the mark.
+async function unmarkSplit(main: Client): Promise<void> {
+  await main.query('BEGIN');
+  try {
+    await main.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
+    await main.query('SELECT pg_advisory_xact_lock(hashtext($1))', [AUDIT_MIGRATION_LOCK]);
+    await assertOutboxEmpty(main);
+    await main.query(UNMARK_SPLIT_SQL);
+    await main.query('COMMIT');
+  } catch (err) {
+    await main.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  }
+}
+
 async function rejectedCount(main: Client): Promise<number> {
   const { rows } = await main.query<{ rejected: string }>(
     'SELECT count(*)::text AS rejected FROM audit_outbox_rejected',
@@ -431,7 +448,8 @@ async function rejectedCount(main: Client): Promise<number> {
  * database is closed to inserts by a trigger committed in a short transaction of its own, so a
  * shipper that starts later fails on its insert and keeps its batch in the outbox. Only then is the
  * main fence lifted and the outbox shipped into the main `audit_log`, which must end empty, and
- * every audit row is checked against the main database once more. Every writer must be stopped. A
+ * every audit row is checked against the main database once more. Last, with the outbox still
+ * empty, the split mark is cleared, so single-database migrate and shipping resume. Every writer must be stopped. A
  * failure at any point leaves the run safe to repeat: the audit database stays closed and a
  * rerun finds it so. Opening it again is a deliberate owner step: `DROP TRIGGER audit_log_closed
  * ON audit_log`.
@@ -470,7 +488,6 @@ async function drainOutboxToLegacy(
       DRAIN_SESSION_OPTIONS,
     );
     await hooks.afterDrain?.();
-    await assertOutboxEmpty(legacy);
     const rejectedNow = await rejectedCount(legacy);
     if (rejectedNow > rejectedBefore) {
       throw new CopyError(
@@ -481,6 +498,7 @@ async function drainOutboxToLegacy(
     await snapshot('main', legacy);
     await snapshot('audit', target);
     await verifyChainAt(adminUrl, anchor, 'main');
+    await unmarkSplit(legacy);
     return { queued, applied: true };
   });
 }

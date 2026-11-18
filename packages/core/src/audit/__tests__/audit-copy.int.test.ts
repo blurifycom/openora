@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, afterAll } from 'vitest';
 import { Pool } from 'pg';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
-import { DrizzleService, type DrizzleDb } from '@openora/core/server';
+import { DrizzleService, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { adminDatabaseUrl, testDatabasePrefix } from '../../testing/real-infra.js';
 import { migrate } from '../migrate.js';
@@ -390,6 +390,13 @@ describe('audit-copy', () => {
     expect(await count(f.main.url)).toBe('7');
     expect(await scalar(f.main.url, 'SELECT count(*)::text FROM audit_outbox')).toBe('0');
     expect(await isValid(f.main.url)).toBe(true);
+    // The drain cleared the split mark: single-database migrate and shipping resume on main.
+    await migrate(f.main.url);
+    await queueOutbox(f, ['after-drain']);
+    await drainAuditOutbox(f.main.drizzle.db);
+    expect(await count(f.main.url)).toBe('8');
+    expect(await scalar(f.main.url, 'SELECT count(*)::text FROM audit_outbox')).toBe('0');
+    expect(await isValid(f.main.url)).toBe(true);
   }, 60_000);
 
   it('TC-12 drain-outbox refuses once the audit database is ahead and keeps the fence', async () => {
@@ -692,6 +699,54 @@ describe('audit-copy', () => {
       await scalar(f.targetUrl, `SELECT seq::text FROM audit_log WHERE resource_id = 'waiting'`),
     ).toBe('5');
     expect(await isValid(f.targetUrl)).toBe(true);
+  });
+
+  it('TC-32 the shipper refuses a fence trigger that is disabled', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await queueOutbox(f, ['disabled-fence']);
+    expect((await run(envOf(f), ['--fence', '--apply'])).code).toBe(0);
+    await sqlOn(f.main.url, 'ALTER TABLE audit_log DISABLE TRIGGER audit_log_moved');
+    const ship = () => drainAuditOutbox(serviceFor(f.shipperUrl), serviceFor(f.auditUrl));
+    await expect(ship()).rejects.toThrow(/not fenced/);
+    expect(await count(f.targetUrl)).toBe('3');
+    await sqlOn(f.main.url, 'ALTER TABLE audit_log ENABLE ALWAYS TRIGGER audit_log_moved');
+    await ship();
+    expect(await count(f.targetUrl)).toBe('4');
+  });
+
+  it('TC-33 a chain on another server with the main database name is no drain', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await queueOutbox(f, ['elsewhere']);
+    expect((await run(envOf(f), ['--apply'])).code).toBe(0);
+    // The main database itself, as if it sat on another server under the same name.
+    const sameName = serviceFor(f.main.url);
+    const elsewhere = {
+      transaction: (fn: (tx: DrizzleTx) => Promise<unknown>) =>
+        sameName.transaction((tx) =>
+          fn(
+            new Proxy(tx, {
+              get: (target, key, receiver) =>
+                key === 'execute'
+                  ? async (query: Parameters<DrizzleTx['execute']>[0]) => {
+                      const result = await target.execute<Record<string, unknown>>(query);
+                      for (const row of result.rows) {
+                        if ('instance' in row) {
+                          row['instance'] = `${String(row['instance'])} elsewhere`;
+                        }
+                      }
+                      return result;
+                    }
+                  : Reflect.get(target, key, receiver),
+            }),
+          ),
+        ),
+    } as unknown as DrizzleDb;
+    await expect(drainAuditOutbox(serviceFor(f.shipperUrl), elsewhere)).rejects.toThrow(
+      /not fenced/,
+    );
+    expect(await count(f.main.url)).toBe('3');
   });
 
   it('TC-30 a drain that sets a row aside as rejected exits 1', async () => {

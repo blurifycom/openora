@@ -101,7 +101,13 @@ fence, ship the outbox into the main `audit_log` and check the audit database ag
 empty at the end: rows left behind mean a writer was not stopped, and the run exits 1 so you rerun it.
 A row set aside into `audit_outbox_rejected` during the drain also exits 1 with the count: inspect that table. If a failure lands between closing the audit database and lifting the fence, main stays fenced, audit rows queue in `audit_outbox` and the shipper fails every batch until the rerun, so watch the outbox backlog. A shipper started despite the "stop every shipper" step can make `closeTarget` refuse with "roll forward only": nothing is lost, so stop the shipper and roll forward instead. A re-shipped batch (a failure between the chain insert and the outbox delete) is deduplicated by
 event id. Lock waits give up after 5 seconds and the shipping session is bounded too; a rerun finds the
-audit database already closed, which is expected and needs nothing. The audit database stays closed
+audit database already closed, which is expected and needs nothing. Its last step, under the audit
+migration lock and only while the outbox is still empty, clears the split mark from the main database,
+which then holds the chain again. Next run `migrate` without `auditUrl`: it puts back the outbox guard
+that checks a deleted row against the chain. Then grant the app role `DELETE` on `audit_outbox` and
+`INSERT` on `audit_outbox_rejected` again (split migrate revoked both from every role but the shipper)
+and start the processes on the main database alone. Until then new records wait in `audit_outbox` and
+nothing is lost. A drain that exits 1 leaves the mark, so the rerun is what clears it. The audit database stays closed
 until its owner runs `DROP TRIGGER audit_log_closed ON audit_log` under a change ticket, which is the
 step before any new copy into it. After the switch (rows exist only in the
 audit database) there is no way back: roll forward only. Nothing is ever dropped; the old rows stay in

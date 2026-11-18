@@ -428,6 +428,11 @@ describe('audit chain in a database of its own', () => {
       await expect(
         migrate({ adminUrl: main.url, auditUrl: urlFor(auditDatabase, tableOwner), shipperUrl }),
       ).rejects.toThrow(/owns a database, schema, table or function/);
+      // Refused before any ALTER ROLE: the owner keeps its connection limit (and password).
+      const { rows } = await main.drizzle.db.execute<{ limit: number }>(
+        sql`SELECT rolconnlimit AS limit FROM pg_roles WHERE rolname IN (${dbOwner.user}, ${tableOwner.user})`,
+      );
+      expect(rows).toEqual([{ limit: -1 }, { limit: -1 }]);
     } finally {
       await auditAdmin.db.execute(sql.raw(`ALTER TABLE audit_log OWNER TO "${chainOwner}"`));
     }
@@ -458,6 +463,12 @@ describe('audit chain in a database of its own', () => {
           SELECT count(*)::int AS n FROM pg_locks l JOIN pg_database d ON d.oid = l.database
            WHERE l.locktype = 'advisory' AND NOT l.granted AND d.datname = current_database()`)
       ).rows[0]?.n;
+    // A pending migration file for the single-database run: it must not commit before refusing.
+    const pendingCreatedAt = 1792137000604; // 0001_conscious_tigra
+    await fresh.drizzle.db.execute(sql`DROP INDEX audit_log_after_user_id_idx`);
+    await fresh.drizzle.db.execute(
+      sql`DELETE FROM drizzle.__drizzle_migrations_audit WHERE created_at = ${pendingCreatedAt}`,
+    );
     const holder = new Pool({ connectionString: fresh.url, max: 1 });
     try {
       const client = await holder.connect();
@@ -469,7 +480,7 @@ describe('audit chain in a database of its own', () => {
           shipperUrl: urlFor(databaseOf(fresh.url), newRole('shipper')),
         });
         await vi.waitFor(async () => expect(await waiting()).toBe(1), { timeout: 10_000 });
-        // Not split yet, so this passes its early check and queues behind the split migrate.
+        // Not split yet, so this queues behind the split migrate.
         const single = migrate(fresh.url);
         await vi.waitFor(async () => expect(await waiting()).toBe(2), { timeout: 10_000 });
         await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName]);
@@ -485,6 +496,14 @@ describe('audit chain in a database of its own', () => {
       SELECT prosrc LIKE '%session_user%' AS "shipperOnly" FROM pg_proc
        WHERE oid = 'audit_outbox_deny_unshipped_delete()'::regprocedure`);
     expect(rows[0]?.shipperOnly).toBe(true);
+    const { rows: pending } = await fresh.drizzle.db.execute<{
+      index: string | null;
+      n: number;
+    }>(sql`
+      SELECT to_regclass('audit_log_after_user_id_idx')::text AS index,
+             (SELECT count(*)::int FROM drizzle.__drizzle_migrations_audit
+               WHERE created_at = ${pendingCreatedAt}) AS n`);
+    expect(pending[0]).toEqual({ index: null, n: 0 });
     await fresh.drop();
   });
 
