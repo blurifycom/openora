@@ -250,6 +250,44 @@ if (bannedClassRules.length === 0) {
   report('banned-class', 'INFO', '-', 'not configured (reviewPrecheck.bannedClasses)');
 }
 
+// ---- rollout facts -------------------------------------------------------------------------
+
+const MIGRATION_SQL = /(^|\/)migrations\/[^/]+\.sql$/;
+const DESTRUCTIVE_SQL =
+  /\bDROP\s+TABLE\b|\bDROP\s+COLUMN\b|\bRENAME\s+(TO|COLUMN)\b|\bALTER\s+COLUMN\s+\S+\s+(SET\s+DATA\s+)?TYPE\b|\bSET\s+NOT\s+NULL\b/i;
+// One line at a time: drizzle writes one statement per line; a hand-split statement is read by the reviewer.
+const ADD_COLUMN_NOT_NULL = /\bADD\s+COLUMN\b(?=.*\bNOT\s+NULL\b)(?!.*\bDEFAULT\b)/i;
+const SQL_COMMENT = /\/\*.*?\*\/|--(?!>).*$/g; // keeps drizzle's `--> statement-breakpoint` harmless
+const reviewableSet = new Set(reviewable);
+for (const { file, line, text } of diff.added) {
+  if (!reviewableSet.has(file) || !MIGRATION_SQL.test(file)) continue;
+  const sql = text.replace(SQL_COMMENT, '');
+  if (DESTRUCTIVE_SQL.test(sql) || ADD_COLUMN_NOT_NULL.test(sql)) {
+    report(
+      'destructive-migration',
+      'WARN',
+      `${file}:${line}`,
+      'breaks instances still on the previous release; expand first, contract in a later release',
+    );
+  }
+}
+
+const ENV_READ = /\b(?:process\.env\.|import\.meta\.env\.|process\.env\[\s*['"])([A-Za-z_]\w*)/g;
+const newEnv = new Map();
+const envChecked = new Set();
+for (const { file, line, text } of added) {
+  for (const [, name] of text.matchAll(ENV_READ)) {
+    if (envChecked.has(name)) continue;
+    envChecked.add(name);
+    const { status } = spawnSync('git', ['grep', '-q', '-w', name, args.base, '--'], {
+      stdio: 'ignore',
+    });
+    if (status === 1) newEnv.set(name, `${file}:${line}`);
+    else if (status !== 0)
+      notes.push(`NOTE: git grep failed for ${name} at ${args.base} - NEW-ENV is incomplete`);
+  }
+}
+
 // ---- i18n ----------------------------------------------------------------------------------
 
 const DEFAULT_LOCALE = config.defaultLocale ?? 'en';
@@ -528,4 +566,10 @@ for (const [check, rows] of findings) {
   if (rows.length > MAX_LINES_PER_CHECK) {
     console.log(`PRECHECK: [INFO] - ${check} - +${rows.length - MAX_LINES_PER_CHECK} more`);
   }
+}
+[...newEnv].slice(0, MAX_LINES_PER_CHECK).forEach(([name, location]) => {
+  console.log(`NEW-ENV: ${name} - ${location}`);
+});
+if (newEnv.size > MAX_LINES_PER_CHECK) {
+  console.log(`NEW-ENV: +${newEnv.size - MAX_LINES_PER_CHECK} more`);
 }
