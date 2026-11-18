@@ -65,6 +65,9 @@ path entirely:
   deliberately NOT in the required list - it stays unbound and throws only on first
   use. Not every deployment serves realtime traffic, so failing boot for it
   unconditionally would be wrong.
+  (Amended: the `REDIS_URL` auto-bind now also binds `REALTIME_CLIENT_AUTHORIZER` to
+  `SseClientAuthorizer`, since the chat plugin resolves it at boot. It holds no per-process
+  state, and an overlay still overrides it.)
 - The five in-process impls survive as **test-only doubles**, relocated to a new
   `packages/core/src/testing/fakes/` and exposed via a new `@openora/core/testing`
   subpath (not the separate `@openora/testing` package - that package depends on

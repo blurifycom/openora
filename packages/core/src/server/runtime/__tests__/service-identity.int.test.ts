@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
 import {
   ACCESS_REVOKED_SIGNAL,
+  REALTIME_CLIENT_AUTHORIZER,
   REALTIME_TRANSPORT,
   type RealtimeSignal,
 } from '@openora/core/contracts';
@@ -10,6 +11,7 @@ import {
   redisUrlForWorker,
   waitForConsumerGroup,
   type TestRedis,
+  SseClientAuthorizer,
 } from '@openora/core/testing';
 import { createApp } from '../create-app.js';
 import { EVENT_BUS } from '../../kernel/index.js';
@@ -85,6 +87,11 @@ afterAll(async () => {
 });
 
 describe('service identity across two services sharing one Redis', () => {
+  it('binds the SSE client authorizer alongside the Redis realtime transport', async () => {
+    const service = await boot({});
+    expect(service.container.get(REALTIME_CLIENT_AUTHORIZER)).toBeInstanceOf(SseClientAuthorizer);
+  });
+
   it('a publish on one service reaches a subscriber on another that shares its realtime namespace', async () => {
     const namespace = unique('rt');
     const a = await boot({ name: unique('svc-a'), namespace });

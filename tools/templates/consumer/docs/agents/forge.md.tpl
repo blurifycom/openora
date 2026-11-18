@@ -14,6 +14,7 @@ Swapping forge: keep the headings below and replace the commands. For GitLab tha
 - Topic branch (`feat/*`, `fix/*`, `{{trackerKey}}-*`) -> `{{mrTarget}}`.
 - A repo that promotes through environment branches adds them here (for example `{{mrTarget}}` -> `stage` -> `prod`) and never opens a PR straight from a topic branch to the last one.
 - If the current branch is not listed, target `{{mrTarget}}`.
+- Released: a change counts as released only when this repo's deploy marker shows its merge commit (name the marker here: the tag, deploy job or environment version that ships `{{mrTarget}}`). Merged is not released.
 
 ## Open a pull request
 
@@ -36,7 +37,7 @@ Reuse an open PR for the same head -> base instead of opening a duplicate: `gh p
 
 ## Attach evidence
 
-`gh` has no command to upload an image. Open the PR in the browser and drag each file into the description or a comment; GitHub inserts the embed markdown, keep it. If a file cannot be uploaded, say in the description that it is available from the author. Never paste a local path.
+`gh` has no command to upload an image. Open the PR in the browser and drag the one walkthrough video into the description; GitHub inserts the embed markdown, keep it. If a file cannot be uploaded, say in the description that it is available from the author. Never paste a local path.
 
 ## Review comments
 

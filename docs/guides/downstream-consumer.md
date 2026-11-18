@@ -9,23 +9,21 @@ tokens, events, config schema, agent tools and action types) an agent reads inst
 
 ## Fastest path: scaffold the repo
 
-From this OSS checkout, generate a full consumer turborepo wired to link at it:
+From this OSS checkout, generate a full consumer turborepo that installs `@openora/*` from npm:
 
 ```bash
 pnpm create:app ../my-igaming --name my-igaming
 cd ../my-igaming
 pnpm install
-pnpm setup:mcp          # trust the MCP server + install the /start onboarding flow
-cp .env.example .env     # set DATABASE_URL + AUTH_SECRET + CORS_ORIGINS
-pnpm db:migrate          # apply the OSS schema
+pnpm bootstrap           # .env, Postgres + Redis (Docker), schema, admin + demo data
 pnpm dev                 # api :3001
 ```
 
 The platform is **headless backend only** - it ships modules, contracts, and SDK consumption surface only. Build your entire frontend (player web, admin backoffice, components, styling, theme) in your own repo and consume the api over HTTP via `@openora/core/react`.
 
-After install, run `pnpm setup:mcp` and then `/start` in Claude Code: it asks what you want to
+After install, approve the `oss` MCP server from `.mcp.json` and run `/start` in Claude Code: it asks what you want to
 build, calls the `enhance-intent` MCP tool to turn the ask into a grounded spec, and drives the
-matching scaffold flow. See [mcp-setup.md](./mcp-setup.md#zero-config-setup-pnpm-setupmcp).
+matching scaffold flow. See [mcp-setup.md](./mcp-setup.md).
 
 This emits a headless api consumer: `apps/api` (thin `createApp` entry +
 `extensions.config.ts`), `@openora/*` installed from npm, `.mcp.json`, the three

@@ -7,7 +7,7 @@ description: >-
   against the operator's local stack, checks every test case and acceptance
   criterion, attacks it like a player, a tester and a fraudster would, and
   returns a per-case verdict table. Adds the tests its pass exercised;
-  never fixes app code. Records the per-AC videos only when asked, once,
+  never fixes app code. Records the walkthrough video (a clip per AC) only when asked, once,
   on the final commit. Use as step 3 (verify) and step 4b (evidence) of
   ship, or to verify a branch by hand.
 claudecode:
@@ -26,7 +26,7 @@ You verify a built change by hand against the running stack, debug failures with
 
 ## Local stack
 
-The platform is headless (API + modules); the player app and backoffice are this operator's own frontends. API :3001, player app :3000, backoffice :3002. Seed credentials (after `pnpm db:seed`): `admin@oss.dev` / `password1234`. Confirm ports and which UIs exist with the operator if they differ - an api-only consumer has no browser specs. If the stack isn't running, start what the cases need yourself (the API, plus the player app or backoffice for a browser case) per the repo's worktree rules, and stop it when you are done. Ports held by another worktree: never kill it - the cases that need it are UNCHECKED, saying so.
+The platform is headless (API + modules); the player app and backoffice are this operator's own frontends. API :3001, player app :3000, backoffice :3002. Seed credentials (after `pnpm bootstrap`): `admin@oss.dev` / `password1234`. Confirm ports and which UIs exist with the operator if they differ - an api-only consumer has no browser specs. If the stack isn't running, start what the cases need yourself (the API, plus the player app or backoffice for a browser case) per the repo's worktree rules, and stop it when you are done. Ports held by another worktree: never kill it - the cases that need it are UNCHECKED, saying so.
 
 ## Your pass: verify by hand, then add the tests
 
@@ -67,13 +67,13 @@ Debug and verify with the **Playwright CLI** first (`pnpm -F {{scope}}/e2e test 
 
 Only when the orchestrator asks for it: after the verify pass is green and review is clean, on the final commit. Nothing is verified or attacked again here; it records what already passed.
 
-**Evidence is mandatory** before the MR: one short video per acceptance criterion (aim under 30 s, ending on the outcome the AC names; the "after" twin of a fix's "before" clip), saved under `apps/e2e/test-results/evidence/<ac>-<slug>.webm`, and the file paths listed in the report so they reach the PR description - a human confirms the change by watching it, not by reading a description.
+**Evidence is mandatory** before the MR: one walkthrough video: a short clip per acceptance criterion (aim under 30 s, in the AC's main viewport, ending on the outcome the AC names; the "after" twin of a fix's "before" clip), then the four shots of every changed screen, joined into `/tmp/ui-verify/<ticket>-walkthrough.mp4` as `.claude/skills/ui-verify/SKILL.md` "Video evidence" says, with its path and chapter list in the report so they reach the PR description - a human confirms the change by watching it, not by reading a description.
 
-1. Specs first: run every browser spec that drives an AC, whether this branch added it or it already existed, in one command with video on (the repo's record switch where it has one, otherwise `test.use({ video: 'on' })`), and copy each `test-results/<test>/video.webm` to its evidence name. One run films every AC a spec drives, at no token cost per step.
-2. `playwright-cli` (`video-start`, `video-chapter "AC<n>: ..."`, drive it, `video-stop`) only for an AC no spec drives.
+1. Specs first: run every browser spec that drives an AC, whether this branch added it or it already existed, in one command with video on (the repo's record switch where it has one, otherwise `test.use({ video: 'on' })`), and copy each `test-results/<test>/video.webm` to `/tmp/ui-verify/<ac>-<slug>.webm` for the manifest: the next run wipes `test-results/`, and a fix round re-joins the untouched clips. One run films every AC a spec drives, at no token cost per step.
+2. `playwright-cli` (`resize`, `video-start`, drive it, `video-stop`) only for an AC no spec drives.
 3. A spec that fails here is a FAIL row back to the orchestrator, never a re-recorded workaround.
 
-API-only changes attach the request/response trace instead. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey. After a fix to an open MR, record again only the ACs that fix touched.
+API-only changes attach the request/response trace instead. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey. After a fix to an open MR, record again only the ACs that fix touched, take again the four shots of every screen it changed, and join again.
 
 ## Triage - the key question
 

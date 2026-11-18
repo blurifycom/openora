@@ -17,13 +17,13 @@
 npm create @openora@latest my-casino
 ```
 
+Needs Node.js 22+ and Docker Desktop running.
+
 ```sh
 cd my-casino
 pnpm install
-cp .env.example .env
-docker compose up -d
-pnpm db:migrate
-pnpm dev
+pnpm bootstrap   # .env, Postgres + Redis, schema, admin + demo data
+pnpm dev         # api :3001, docs at http://localhost:3001/docs
 ```
 
 That's a full iGaming backend - accounts, wallet, casino lobby, chat, compliance, CMS, backoffice, audit - running locally, composed from published packages.
