@@ -86,6 +86,31 @@ export function isPositiveMoney(value: string): boolean {
   return MoneyAmountSchema.safeParse(value).success && moneyCompare(value, '0') > 0;
 }
 
+// Unsigned, and a three-digit exponent at most, so `1e999999999` cannot pad a huge string.
+const MONEY_EXPONENT_FORM = /^(\d+)(?:\.(\d+))?[eE]([+-]?\d{1,3})$/;
+
+// A vendor that serializes its number with JS `String()` sends `1e-7` for 0.0000001. This
+// rewrites that form to the plain decimal exactly, by moving the point in the digits (never
+// through a float). Anything else comes back unchanged, so MoneyAmountSchema still refuses a
+// negative, `NaN` or a value that needs more than MONEY_SCALE places.
+export function expandMoneyExponent(value: string): string {
+  const match = MONEY_EXPONENT_FORM.exec(value);
+  if (!match) {
+    return value;
+  }
+  const [, whole = '', fraction = '', exponent = '0'] = match;
+  const digits = whole + fraction;
+  const point = whole.length + Number(exponent);
+  const plain =
+    point <= 0
+      ? `0.${'0'.repeat(-point)}${digits}`
+      : point >= digits.length
+        ? digits + '0'.repeat(point - digits.length)
+        : `${digits.slice(0, point)}.${digits.slice(point)}`;
+  const trimmed = plain.includes('.') ? plain.replace(/\.?0+$/, '') : plain;
+  return trimmed.replace(/^0+(?=\d)/, '');
+}
+
 export function moneyCompare(a: string, b: string): -1 | 0 | 1 {
   const diff = toMinorUnits(a) - toMinorUnits(b);
   return diff < 0n ? -1 : diff > 0n ? 1 : 0;
