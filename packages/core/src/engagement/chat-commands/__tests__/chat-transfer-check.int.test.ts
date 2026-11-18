@@ -177,6 +177,14 @@ describe('CHAT_TRANSFER_CHECK local binding', () => {
     );
   });
 
+  it('throws on the non-transaction database handle', async () => {
+    const { transferCheck } = boot();
+
+    await expect(transferCheck.check(db.drizzle.db, gift())).rejects.toThrow(
+      'needs the caller transaction',
+    );
+  });
+
   it('refuses an actor who is not a member of a private room', async () => {
     const { check } = boot();
     const memberId = randomUUID();

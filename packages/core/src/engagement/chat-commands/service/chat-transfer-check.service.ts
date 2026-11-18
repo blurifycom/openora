@@ -34,7 +34,8 @@ export class ChatTransferCheckService {
     transaction: unknown,
     rawInput: ChatTransferCheckInput,
   ): Promise<ChatTransferVerdict> {
-    if (!transaction) {
+    // Only a transaction handle has `rollback`; the pool handle would take the lock outside one.
+    if (typeof transaction !== 'object' || transaction === null || !('rollback' in transaction)) {
       throw new Error('CHAT_TRANSFER_CHECK needs the caller transaction to hold its block locks');
     }
     const tx = transaction as DrizzleTx;
