@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { IdentityReader, MessageBrokerAdapter, OutboxWriter } from '@openora/core/contracts';
+import type { MessageBrokerAdapter, OutboxWriter } from '@openora/core/contracts';
 import {
   DrizzleOutboxWriter,
   DrizzleProcessedEventLog,
@@ -91,7 +91,7 @@ function makeOutboxService(failOn?: string) {
     outbox,
     processedEvents: new DrizzleProcessedEventLog(db.drizzle.db),
   });
-  return new SocialService(db.drizzle, events, realIdentityReader());
+  return new SocialService(db.drizzle, events, new DrizzleAccountReader(db.drizzle));
 }
 
 const outboxRowsFor = async (topic: string) =>

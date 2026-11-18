@@ -18,17 +18,15 @@ import {
 } from '@openora/core/server';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import {
-  ADMIN_USER_DIRECTORY,
+  ACCOUNT_READER,
   AUDIT_WRITER,
   CHAT_SYSTEM_AUTHOR_ID,
   GLOBAL_CHAT_ROOM_ID,
-  IDENTITY_READER,
   JOB_QUEUE,
   RATE_LIMITER,
   REALTIME_CLIENT_AUTHORIZER,
   REALTIME_TRANSPORT,
   type JobQueueAdapter,
-  type AdminUserDirectory,
   type AuditWritePort,
   type BrokerHandler,
   type ChatModeration,
@@ -38,7 +36,7 @@ import {
   type RealtimeTransport,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { makeChatContextSendPolicy, makeIdentityReader, mock } from '../../../testing/mock.js';
+import { makeAccountReader, makeChatContextSendPolicy, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { chatMessage, chatRoom } from '../schema/index.js';
 import { ChatService } from '../service/chat.service.js';
@@ -90,10 +88,9 @@ function setup() {
     drizzle: db.drizzle,
     events: bus,
     transport: mock<RealtimeTransport>(),
-    directory: mock<AdminUserDirectory>(),
     audit: mock<AuditWritePort>(),
     moderation: mock<ChatModeration>(),
-    identityReader: makeIdentityReader(),
+    accounts: makeAccountReader(),
     allowedAttachmentHosts: [],
     contextSendPolicy: makeChatContextSendPolicy(),
   });
@@ -122,9 +119,8 @@ function bootChatCardHandler(bus: EventBus) {
   container.register(REALTIME_TRANSPORT, () => mock<RealtimeTransport>());
   container.register(REALTIME_CLIENT_AUTHORIZER, () => mock());
   container.register(RATE_LIMITER, () => mock());
-  container.register(ADMIN_USER_DIRECTORY, () => mock<AdminUserDirectory>());
   container.register(AUDIT_WRITER, () => mock<AuditWritePort>());
-  container.register(IDENTITY_READER, () => makeIdentityReader());
+  container.register(ACCOUNT_READER, () => makeAccountReader());
   container.register(ADMIN_GUARD, () => mock());
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   registry.setOwner('chat');
