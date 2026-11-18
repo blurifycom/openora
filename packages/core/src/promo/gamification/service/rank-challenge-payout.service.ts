@@ -6,11 +6,13 @@ import type {
   Uuid,
   WalletCommands,
 } from '@openora/core/contracts';
-import type { DrizzleService, DrizzleTx } from '@openora/core/server';
+import type { DrizzleService, DrizzleTx, EventBus } from '@openora/core/server';
 import { promoRankChallengeClaim, promoRankChallengeTier } from '../schema/index.js';
+import { announceCashCredit } from '../shared/cash-credit-event.js';
 import { priceForPayout } from '../shared/payout-currency.js';
+import { STUCK_AFTER_FAILURES } from './race-payout.service.js';
 
-/** What `plugin.ts` announces per winner, once its own settlement transaction has committed. */
+/** One settled win, announced through the outbox in its claim's settlement transaction. */
 export type RankChallengeWon = {
   userId: Uuid;
   tierId: Uuid;
@@ -31,9 +33,9 @@ type Logger = {
 
 /**
  * Settles a claim `RankChallengeService.recordWager` already inserted: credits the cash portion
- * (if any) once, marks the claim settled, and reports the win for `plugin.ts` to announce -
+ * (if any) once, marks the claim settled, and announces the win in the same transaction -
  * mirroring `RankPayoutService.settleLevelUps`'s own "read unsettled rows, credit, mark
- * settled, return what to announce" shape, guarded by the
+ * settled, announce" shape, guarded by the
  * same `settledAt is null` idiom `promoRankLevelUp`/`promoStreakMilestoneGrant` use.
  *
  * A player under a responsible-gambling block still gets the claim settled (so a physical prize
@@ -41,6 +43,9 @@ type Logger = {
  * `RacePayoutService` applies to its own grants.
  */
 export class RankChallengePayoutService {
+  // ponytail: per-process count, resets on restart; a shared counter if workers scale out.
+  private readonly failures = new Map<Uuid, number>();
+
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly eligibility: PlayEligibilityPort | undefined,
@@ -48,6 +53,7 @@ export class RankChallengePayoutService {
     private readonly rates: ExchangeRateReader,
     private readonly payoutCurrency: string,
     private readonly audit: AuditWritePort,
+    private readonly events: EventBus,
     private readonly logger: Logger,
   ) {}
 
@@ -65,9 +71,15 @@ export class RankChallengePayoutService {
         if (result) {
           won.push(result);
         }
+        this.failures.delete(id);
       } catch (err) {
         // One claim's failure must not stop the next tick from settling the others due.
-        this.logger.error({ err, claimId: id }, 'rank challenge settlement failed');
+        const failures = (this.failures.get(id) ?? 0) + 1;
+        this.failures.set(id, failures);
+        this.logger.error({ err, claimId: id, failures }, 'rank challenge settlement failed');
+        if (failures >= STUCK_AFTER_FAILURES) {
+          this.logger.error({ claimId: id, failures }, 'rank challenge settlement stuck');
+        }
       }
     }
     return won;
@@ -168,7 +180,7 @@ export class RankChallengePayoutService {
     if (restricted) {
       return null;
     }
-    return {
+    const won: RankChallengeWon = {
       userId: claim.userId,
       tierId: claim.tierId,
       tierKey: tier?.key ?? '',
@@ -178,5 +190,15 @@ export class RankChallengePayoutService {
       currency: paidCurrency,
       transactionId,
     };
+    await this.events.emitInTransaction(tx, 'promo.rank-challenge.won', won);
+    if (paidCashAmount !== null) {
+      await announceCashCredit(tx, this.events, {
+        userId: claim.userId,
+        amount: paidCashAmount,
+        currency: paidCurrency,
+        transactionId,
+      });
+    }
+    return won;
   }
 }

@@ -6,17 +6,18 @@ import type {
   Uuid,
   WalletCommands,
 } from '@openora/core/contracts';
-import type { DrizzleService, DrizzleTx } from '@openora/core/server';
+import type { DrizzleService, DrizzleTx, EventBus } from '@openora/core/server';
 import {
   promoRace,
   promoRacePayout,
   promoRaceRoundWager,
   promoRaceWager,
 } from '../schema/index.js';
+import { announceCashCredit } from '../shared/cash-credit-event.js';
 import { priceForPayout } from '../shared/payout-currency.js';
 import { RACE_STANDING_ORDER } from './race.service.js';
 
-/** What `plugin.ts` announces per winner, once its own settlement transaction has committed. */
+/** One paid winner, announced through the outbox in its race's settlement transaction. */
 export type RaceWon = {
   userId: Uuid;
   raceId: Uuid;
@@ -46,9 +47,23 @@ const payoutAudit = (raceId: Uuid, settled: PayoutSettled): AuditEntry => ({
   after: settled,
 });
 
+/** Consecutive failed ticks before a settlement is logged as stuck rather than just failed. */
+export const STUCK_AFTER_FAILURES = 5;
+
 type Logger = {
   warn: (context: object, message: string) => void;
   error: (context: object, message: string) => void;
+};
+
+export type RacePayoutDeps = {
+  drizzle: DrizzleService;
+  eligibility: PlayEligibilityPort | undefined;
+  wallet: WalletCommands | undefined;
+  rates: ExchangeRateReader;
+  payoutCurrency: string;
+  audit: AuditWritePort;
+  events: EventBus;
+  logger: Logger;
 };
 
 /**
@@ -65,18 +80,13 @@ type Logger = {
  * `RankPayoutService`/`StreakPayoutService` apply to their own grants.
  */
 export class RacePayoutService {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly eligibility: PlayEligibilityPort | undefined,
-    private readonly wallet: WalletCommands | undefined,
-    private readonly rates: ExchangeRateReader,
-    private readonly payoutCurrency: string,
-    private readonly audit: AuditWritePort,
-    private readonly logger: Logger,
-  ) {}
+  // ponytail: per-process count, resets on restart; a shared counter if workers scale out.
+  private readonly failures = new Map<Uuid, number>();
+
+  constructor(private readonly deps: RacePayoutDeps) {}
 
   async closeDue(now: Date): Promise<RaceWon[]> {
-    const due = await this.drizzle.db
+    const due = await this.deps.drizzle.db
       .select({ id: promoRace.id })
       .from(promoRace)
       .where(and(lte(promoRace.endAt, now), isNull(promoRace.closedAt)));
@@ -84,10 +94,17 @@ export class RacePayoutService {
     const won: RaceWon[] = [];
     for (const { id } of due) {
       try {
-        won.push(...(await this.drizzle.db.transaction((tx) => this.settleOne(tx, id, now))));
+        won.push(...(await this.deps.drizzle.db.transaction((tx) => this.settleOne(tx, id, now))));
+        this.failures.delete(id);
       } catch (err) {
         // One race's failure must not stop the next tick from settling the others due.
-        this.logger.error({ err, raceId: id }, 'race settlement failed');
+        const failures = (this.failures.get(id) ?? 0) + 1;
+        this.failures.set(id, failures);
+        this.deps.logger.error({ err, raceId: id, failures }, 'race settlement failed');
+        if (failures >= STUCK_AFTER_FAILURES) {
+          // A failure that repeats every tick (a bad payload, a missing rate) never heals itself.
+          this.deps.logger.error({ raceId: id, failures }, 'race settlement stuck');
+        }
       }
     }
     return won;
@@ -136,7 +153,7 @@ export class RacePayoutService {
       if (!position) {
         continue;
       }
-      const restricted = (await this.eligibility?.isRestricted(standing.userId, tx)) ?? true;
+      const restricted = (await this.deps.eligibility?.isRestricted(standing.userId, tx)) ?? true;
       if (restricted) {
         await tx.insert(promoRacePayout).values({
           raceId,
@@ -159,7 +176,7 @@ export class RacePayoutService {
         );
         continue;
       }
-      if (!this.wallet) {
+      if (!this.deps.wallet) {
         throw new Error('WALLET_COMMANDS is not bound');
       }
       // Never the race's own currency unconditionally - a crypto-only player must not have a
@@ -168,13 +185,13 @@ export class RacePayoutService {
       // the same "not credited yet, retried later" rule a wallet credit failure follows below.
       const priced = await priceForPayout(
         tx,
-        this.rates,
+        this.deps.rates,
         position.prize,
         race.currency,
-        this.payoutCurrency,
+        this.deps.payoutCurrency,
       );
       const sourceRef = `race-payout:${raceId}:${standing.userId}`;
-      const credited = await this.wallet.credit(tx, {
+      const credited = await this.deps.wallet.credit(tx, {
         userId: standing.userId,
         amount: priced.amount,
         currency: priced.currency,
@@ -227,7 +244,11 @@ export class RacePayoutService {
       .set({ closedAt: settledAt, updatedAt: settledAt })
       .where(eq(promoRace.id, raceId));
     // With the credits and the close, so a prize can never be paid without its record.
-    await this.audit.recordManyInTransaction(tx, audits);
+    await this.deps.audit.recordManyInTransaction(tx, audits);
+    for (const win of won) {
+      await this.deps.events.emitInTransaction(tx, 'promo.race.won', win);
+      await announceCashCredit(tx, this.deps.events, win);
+    }
     // Frozen standings ignore a rollback, so what each round counted here is no longer needed.
     await tx.delete(promoRaceRoundWager).where(eq(promoRaceRoundWager.raceId, raceId));
     return won;

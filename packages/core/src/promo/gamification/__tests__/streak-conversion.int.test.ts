@@ -9,7 +9,7 @@ import type {
   PlayEligibilityPort,
   WalletReader,
 } from '@openora/core/contracts';
-import { makeAuditWriter, mock } from '../../../testing/mock.js';
+import { makeAuditWriter, makeEventBus, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
   promoStreakConfig,
@@ -46,6 +46,7 @@ const payouts = () =>
       getBalances: async () => ({ activeCurrency: 'USD', balances: [] }),
     }),
     audit,
+    events: makeEventBus(),
     logger: { error: vi.fn() },
   });
 

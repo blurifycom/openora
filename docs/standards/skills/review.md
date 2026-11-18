@@ -40,7 +40,7 @@ For each changed route or entry point, list the hops in order and open the code 
 3. Service - each callee is opened, not assumed; typed failures return, unexpected errors do not leak.
 4. Query - every read and write filters by tenant or owner; the write and its ledger row and audit row share one transaction.
 5. Table - the invariant lives in a constraint, index, or foreign key, not only in code; a migration exists for every schema change.
-6. Side effects - an event, job, or outbox message is emitted after commit, and its handler is safe to run twice.
+6. Side effects - informational events emit after commit via `emit`; money, compliance and RG events are written in the transaction via `emitInTransaction`; every handler is safe to run twice.
 7. Response - the output matches the contract schema and leaks no extra field; each error path returns the code the client expects.
 
 ### Check the blast radius

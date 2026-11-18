@@ -83,5 +83,5 @@ Detail for the "functional and declarative" line in `conventions`. Read this whe
 
 ## State and side effects
 
-- **Side effects at the edges** (services, adapters, plugins, handlers), never in pure helpers. Events emit from the service after the DB commit.
+- **Side effects at the edges** (services, adapters, plugins, handlers), never in pure helpers. Informational events emit after commit via `emit`; money, compliance and RG events are written in the transaction via `emitInTransaction`.
 - **Server state is owned by the data layer** - no ad-hoc shadow caches.

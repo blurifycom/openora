@@ -2,13 +2,15 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { makeAuditWriter, mock } from '../../../testing/mock.js';
+import { makeAuditWriter, makeOutboxEventBus, mock } from '../../../testing/mock.js';
 import type {
   BonusGrantCommands,
   ExchangeRateReader,
   PlayEligibilityPort,
   WalletReader,
 } from '@openora/core/contracts';
+import { eventOutbox, type EventBus } from '@openora/core/server';
+import { migrate as serverMigrate } from '@openora/core/server/migrate';
 import { migrate } from '../migrate.js';
 import {
   promoPlayerStreak,
@@ -36,7 +38,7 @@ const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
 const REWARD_AMOUNT = '10.000000000000000000';
 
-const service = () =>
+const service = (events: EventBus = makeOutboxEventBus()) =>
   new StreakPayoutService({
     drizzle: db.drizzle,
     grants: mock<BonusGrantCommands>({ grant }),
@@ -44,8 +46,17 @@ const service = () =>
     rates: mock<ExchangeRateReader>({ convert }),
     walletReader: mock<WalletReader>({ getBalances }),
     audit,
+    events,
     logger: payoutLogger,
   });
+
+const announcedGrants = async () =>
+  (
+    await db.drizzle.db
+      .select({ payload: eventOutbox.payload })
+      .from(eventOutbox)
+      .where(eq(eventOutbox.topic, 'promo.bonus.granted'))
+  ).map(({ payload }) => payload);
 
 const announceReached = async () => {
   const announced: StreakMilestoneReached[] = [];
@@ -98,7 +109,7 @@ const playsIn = (activeCurrency: string) =>
   getBalances.mockResolvedValue({ activeCurrency, balances: [] });
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([serverMigrate, migrate]);
 });
 
 afterAll(() => db.drop());
@@ -108,6 +119,7 @@ beforeEach(async () => {
   isRestricted.mockResolvedValue(false);
   grant.mockImplementation(async () => ({ ok: true, created: true, grantId: randomUUID() }));
   playsIn('USD');
+  await db.drizzle.db.delete(eventOutbox);
   await db.drizzle.db.delete(promoStreakMilestoneGrant);
   await db.drizzle.db.delete(promoStreakDailyWager);
   await db.drizzle.db.delete(promoPlayerStreak);
@@ -226,6 +238,28 @@ describe('claiming a streak reward', () => {
     await expect(service().claim(userId, id)).rejects.toThrow(/already granted/);
 
     await expect(rewardRow(id)).resolves.toMatchObject({ settledAt: null });
+  });
+
+  it('announces the grant through the outbox, in the claim transaction', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+
+    const claimed = await service().claim(userId, id);
+
+    expect(claimed.granted).toEqual([expect.objectContaining({ userId, source: 'streak' })]);
+    expect(await announcedGrants()).toEqual(claimed.granted);
+  });
+
+  it('leaves the reward waiting, and nothing announced, when the announcement cannot be written', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+    const events = makeOutboxEventBus();
+    vi.spyOn(events, 'emitInTransaction').mockRejectedValue(new Error('outbox unavailable'));
+
+    await expect(service(events).claim(userId, id)).rejects.toThrow('outbox unavailable');
+
+    await expect(rewardRow(id)).resolves.toMatchObject({ settledAt: null });
+    expect(await announcedGrants()).toEqual([]);
   });
 
   it('leaves the reward waiting when the bonus engine refuses the grant', async () => {
