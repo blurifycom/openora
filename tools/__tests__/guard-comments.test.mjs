@@ -35,6 +35,10 @@ const ALLOW = [
   `gh api /graphql -f query='query { viewer { login } }'`,
   'gh api -X GET repos/o/r/issues/5/comments',
   'gh api -X GET -X GET repos/o/r/issues/5/comments',
+  'gh api repos/o/r/pulls/comments/9/reactions -f content=+1',
+  'gh api -X POST repos/o/r/issues/comments/9/reactions -f content=eyes',
+  'glab api -X POST "projects/1/merge_requests/2/notes/9/award_emoji" -f name=thumbsup',
+  `gh api graphql -f query='mutation { addReaction(input: {subjectId: "C", content: EYES}) { reaction { id } } }'`,
 ];
 
 const DENY = [
@@ -51,6 +55,12 @@ const DENY = [
   'gh api repos/o/r/issues/5/comments -f body=verdict',
   'gh api --method POST repos/o/r/pulls/5/reviews -f event=COMMENT',
   'gh api -X POST repos/o/r/pulls/5/reviews/7/events -f event=APPROVE',
+  'if gh pr comment 5 -b x; then true; fi',
+  'while true; do gh pr comment 5 -b x; done',
+  'until gh pr comment 5 -b x; do true; done',
+  'f(){ gh pr comment 5 -b x; }',
+  'f() { glab mr note 2 -m x; }',
+  'if true; then true; elif gh pr comment 5 -b x; then true; fi',
   'glab api -X POST "projects/1/merge_requests/2/notes" -f body=hi',
   'glab api "projects/1/merge_requests/2/discussions" -f body=hi',
   'glab api -X POST "projects/1/merge_requests/2/discussions/abc/notes" -f body=reply',

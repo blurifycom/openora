@@ -9,7 +9,7 @@ import { deny, extractCommand, readPayload } from './_shared.mjs';
 // A call starts its shell segment, after `(`, `{`, `!`, a loop or branch keyword, env assignments
 // and wrappers (`env`, `sudo`, `eval "`, `xargs -n1`, ...), so a commit message that mentions
 // `gh pr comment` is not one. An absolute path to the binary counts too.
-const START = String.raw`^[\s(!{]*(?:(?:do|then|else)\s+)?(?:(?:\w+=\S*|(?:command|env|exec|eval|nice|time|nohup|sudo|npx|pnpm\s+exec|xargs)(?:\s+-\S+)*|g?timeout(?:\s+-\S+)*\s+\S+)\s+["']?)*(?:\S*/)?`;
+const START = String.raw`^[\s(!{]*(?:[\w-]+\s*\(\)\s*[({]*\s*)?(?:(?:do|then|else|if|elif|while|until)\s+)?(?:(?:\w+=\S*|(?:command|env|exec|eval|nice|time|nohup|sudo|npx|pnpm\s+exec|xargs)(?:\s+-\S+)*|g?timeout(?:\s+-\S+)*\s+\S+)\s+["']?)*(?:\S*/)?`;
 const COMMENT_CLI = new RegExp(
   START + String.raw`(?:gh\s+(?:pr|issue)\s+comment|glab\s+(?:mr|issue)\s+(?:note|comment))\b`,
 );
@@ -19,6 +19,9 @@ const REVIEW_WITH_TEXT = /\s(?:-[cbrF]|--comment|--request-changes|--body|--body
 const API_CALL = new RegExp(START + String.raw`(?:gh|glab)\s+api\b`);
 // `draft_notes` covers the draft and its `/publish` and `bulk_publish` calls.
 const COMMENT_PATH = /\/(?:comments|(?:draft_)?notes|reviews)(?=[/"'\s?]|$)/;
+// Reacting is allowed: `.../comments/<id>/reactions` (gh) and `.../notes/<id>/award_emoji` (glab).
+const REACTION_PATH =
+  /\/(?:comments|notes)\/[^/\s"'?]+\/(?:reactions|award_emoji)(?:\/[^/\s"'?]*)?/g;
 const DISCUSSIONS = /\/discussions\/?(?=["'\s?]|$)/;
 const GRAPHQL = /\s["']?(?:\S*\/)?graphql(?=["'\s]|$)/;
 // A repeated method flag is a write when any of them is, whichever one the CLI honours.
@@ -57,10 +60,11 @@ const postsComment = (call) => {
     return COMMENT_MUTATION.test(command) || OPAQUE_QUERY.test(command);
   }
   const methods = methodsOf(call);
+  const path = call.replace(REACTION_PATH, '');
   return (
     (methods.some((method) => ['POST', 'PUT', 'PATCH'].includes(method)) &&
-      COMMENT_PATH.test(call)) ||
-    (methods.includes('POST') && DISCUSSIONS.test(call))
+      COMMENT_PATH.test(path)) ||
+    (methods.includes('POST') && DISCUSSIONS.test(path))
   );
 };
 

@@ -75,6 +75,7 @@ const THREADS = `query($owner: String!, $name: String!, $number: Int!, $endCurso
       pageInfo { hasNextPage endCursor }
     }
     comments(last: 1) { nodes { id body author { login } reactions(first: 50) { nodes { content user { login } } } } }
+    latestReviews(first: 20) { nodes { id state body author { login } reactions(first: 50) { nodes { content user { login } } } } }
   } }
 }`;
 
@@ -107,6 +108,12 @@ function github() {
     .filter((thread) => !thread.isResolved)
     .flatMap((thread) => thread.comments.nodes)
     .concat(pages[0].repository.pullRequest.comments.nodes)
+    // a summary-only review has no thread: changes requested or a body is a request until answered
+    .concat(
+      (pages[0].repository.pullRequest.latestReviews?.nodes ?? []).filter(
+        (review) => review.state === 'CHANGES_REQUESTED' || review.body?.trim(),
+      ),
+    )
     .map((comment) => ({
       ...comment,
       author: comment.author?.login,
@@ -231,7 +238,13 @@ let held = null;
 const hold = (number) => {
   if (held === number) return;
   mkdirSync(dirname(lockFile(number)), { recursive: true });
-  writeFileSync(lockFile(number), String(sessionPid));
+  try {
+    writeFileSync(lockFile(number), String(sessionPid), { flag: 'wx' });
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    if (heldByOther(number)) return;
+    writeFileSync(lockFile(number), String(sessionPid));
+  }
   held = number;
 };
 const release = (number) =>

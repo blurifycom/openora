@@ -47,7 +47,7 @@ const pr = (fields) =>
       ...fields,
     }),
   );
-const threads = (lastCommentIds, reactions = []) =>
+const threads = (lastCommentIds, reactions = [], reviews = []) =>
   writeFileSync(
     join(repo, 'threads.json'),
     JSON.stringify([
@@ -72,6 +72,7 @@ const threads = (lastCommentIds, reactions = []) =>
                 })),
               },
               comments: { nodes: [] },
+              latestReviews: { nodes: reviews },
             },
           },
         },
@@ -123,6 +124,28 @@ test('a thread is answered by a final reaction from the account, not by eyes or 
   threads(['C1'], [mine('EYES'), mine('THUMBS_UP')]);
   assert.equal(once(), 'none');
   threads(['C1'], [mine('CONFUSED')]);
+  assert.equal(once(), 'none');
+});
+
+test('a summary-only review is unanswered until the account reacts; an empty approval is not', () => {
+  pr({});
+  const review = (fields) => ({
+    id: 'R1',
+    state: 'COMMENTED',
+    body: '',
+    author: { login: 'reviewer' },
+    reactions: { nodes: [] },
+    ...fields,
+  });
+  threads([], [], [review({ body: 'please rework' })]);
+  assert.equal(once(), 'threads R1');
+  threads([], [], [review({ state: 'CHANGES_REQUESTED' })]);
+  assert.equal(once(), 'threads R1');
+  threads([], [], [review({ state: 'APPROVED' })]);
+  assert.equal(once(), 'none');
+  threads([], [], [review({ body: 'x', reactions: { nodes: [mine('THUMBS_UP')] } })]);
+  assert.equal(once(), 'none');
+  threads([], [], [review({ body: 'mine', author: { login: 'me' } })]);
   assert.equal(once(), 'none');
 });
 
