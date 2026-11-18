@@ -68,6 +68,8 @@ pnpm db:migrate
 pnpm dev              # api :3001, then: curl http://localhost:3001/health
 ```
 
+`pnpm db:seed` refuses a non-local database host unless `OPENORA_ALLOW_REMOTE_SEED=1`.
+
 ### Agents and MCP
 
 The `oss-dev` MCP dev server is wired in [`.mcp.json`](./.mcp.json) (stdio, launched by the editor - no port). It exposes the schema registry, route catalog, plugin manifest, and scaffolders as tools so an agent can extend the framework without re-asking the same questions each session.
@@ -77,8 +79,6 @@ claude mcp list    # verify the oss-dev server is connected
 ```
 
 Then use `list-modules`, `list-routes`, `get-drizzle-schema`, `propose-table-change`, `docs-search`, `db-query-readonly`, and the `scaffold-*` tools. See [docs/guides/agent-quickstart.md](./docs/guides/agent-quickstart.md).
-
-`pnpm db:seed` refuses a non-local database host unless `OPENORA_ALLOW_REMOTE_SEED=1`.
 
 ## How it fits together
 
