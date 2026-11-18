@@ -36,7 +36,7 @@ Reuse an open PR for the same head -> base instead of opening a duplicate: `gh p
 
 ## Attach evidence
 
-`gh` has no command to upload an image. Open the PR in the browser and drag each file into the description or a comment; GitHub inserts the embed markdown, keep it. If a file cannot be uploaded, say in the description that it is available from the author. Never paste a local path.
+`gh` has no command to upload an image. Open the PR in the browser and drag the one walkthrough video into the description; GitHub inserts the embed markdown, keep it. If a file cannot be uploaded, say in the description that it is available from the author. Never paste a local path.
 
 ## Inline review comments
 
