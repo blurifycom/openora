@@ -347,6 +347,18 @@ describe('chat room invites: rejections', () => {
     await expectRejected(await invite(owner, room, member.userId), 409, 'member');
   });
 
+  it('refuses an uppercase id of a member or a pending invitee', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('member');
+    const invitee = await registerChatter('guest');
+    const room = await createRoom(owner);
+    await joinByCode(member, room);
+    await sendInvite(owner, room, invitee);
+
+    await expectRejected(await invite(owner, room, member.userId.toUpperCase()), 409, 'member');
+    await expectRejected(await invite(owner, room, invitee.userId.toUpperCase()), 409, 'invited');
+  });
+
   it('refuses a second pending invite for the same player', async () => {
     const owner = await registerChatter('host');
     const invitee = await registerChatter('guest');

@@ -214,17 +214,18 @@ async function inviteStatuses(
         liveInvite(db, now),
       ),
     );
-  const memberIds = new Set(members.map((row) => row.userId));
-  const bannedIds = new Set(bans.map((row) => row.userId));
-  const invitedIds = new Set(invites.map((row) => row.userId));
+  // Postgres returns uuids lowercase; an uppercase caller id must still match.
+  const memberIds = new Set(members.map((row) => row.userId.toLowerCase()));
+  const bannedIds = new Set(bans.map((row) => row.userId.toLowerCase()));
+  const invitedIds = new Set(invites.map((row) => row.userId.toLowerCase()));
   return new Map(
     ids.map((id) => [
       id,
-      memberIds.has(id)
+      memberIds.has(id.toLowerCase())
         ? 'member'
-        : bannedIds.has(id)
+        : bannedIds.has(id.toLowerCase())
           ? 'banned'
-          : invitedIds.has(id)
+          : invitedIds.has(id.toLowerCase())
             ? 'invited'
             : 'available',
     ]),
