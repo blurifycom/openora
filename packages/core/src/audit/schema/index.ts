@@ -61,6 +61,9 @@ export type AuditLogInsert = typeof auditLog.$inferInsert;
 // it still holds. Here, not in migrate.ts, so the shipper reads it without the migrate runner.
 export const CHAIN_SPLIT_MARK = 'audit chain in a database of its own';
 
+/** The trigger `openora-audit-copy --fence` puts on the main `audit_log` once the copy is whole. */
+export const CHAIN_MOVED_TRIGGER = 'audit_log_moved';
+
 /** One row, `split`: true once split `migrate` has run against this database. */
 export const CHAIN_SPLIT_SQL = `SELECT coalesce(obj_description(
      to_regprocedure('audit_outbox_deny_unshipped_delete()'), 'pg_proc') = '${CHAIN_SPLIT_MARK}',

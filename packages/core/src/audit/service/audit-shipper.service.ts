@@ -7,6 +7,7 @@ import {
   OutboxEntrySchema,
   type ShippableEntry,
 } from './audit.service.js';
+import { CHAIN_MOVED_TRIGGER } from '../schema/index.js';
 
 const BATCH_SIZE = 1_000;
 const SHIPPER_LOCK_KEY = 'audit_shipper';
@@ -44,12 +45,25 @@ async function chain(txn: DrizzleTx, shippable: Shippable[]): Promise<Rejection[
 
 // A chain appended to before the main database's old one is wholly copied over would fork the
 // history: the copy runs in seq order with the target's head as its cursor (the audit-copy
-// runbook), so the target holding the old chain's last row, hash and all, means it holds every row.
+// runbook), so the target holding the old chain's last row, hash and all, means it holds every row,
+// and the fence on the old chain means no legacy writer adds one after it. A drain ships back into
+// the main database itself, which is the old chain.
 async function refuseChainBeforeCopy(main: DrizzleTx, chainTx: DrizzleTx): Promise<void> {
-  const { rows: legacy } = await main.execute<{ present: boolean }>(
-    sql`SELECT to_regclass('public.audit_log') IS NOT NULL AS present`,
+  const { rows: legacy } = await main.execute<{
+    present: boolean;
+    fenced: boolean;
+    database: string;
+  }>(
+    sql`SELECT to_regclass('public.audit_log') IS NOT NULL AS present,
+               EXISTS (SELECT 1 FROM pg_trigger
+                        WHERE tgrelid = to_regclass('public.audit_log')
+                          AND tgname = ${CHAIN_MOVED_TRIGGER}) AS fenced,
+               current_database() AS database`,
   );
-  if (!legacy[0]?.present) {
+  const { rows: chainDatabase } = await chainTx.execute<{ database: string }>(
+    sql`SELECT current_database() AS database`,
+  );
+  if (!legacy[0]?.present || legacy[0].database === chainDatabase[0]?.database) {
     return;
   }
   const { rows: tail } = await main.execute<{ seq: string; hash: string }>(
@@ -64,6 +78,11 @@ async function refuseChainBeforeCopy(main: DrizzleTx, chainTx: DrizzleTx): Promi
   if (!copied[0]?.copied) {
     throw new Error(
       `the audit database lacks the main database's audit_log up to seq ${tail[0].seq}: copy the chain over before shipping`,
+    );
+  }
+  if (!legacy[0].fenced) {
+    throw new Error(
+      'the main database audit_log is not fenced: copy the chain over before shipping (openora-audit-copy --fence --apply)',
     );
   }
 }

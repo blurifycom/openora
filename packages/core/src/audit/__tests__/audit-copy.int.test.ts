@@ -672,6 +672,28 @@ describe('audit-copy', () => {
     expect(await isValid(f.main.url)).toBe(true);
   }, 60_000);
 
+  it('TC-31 the shipper waits for the fence, so a legacy write after the copy never forks the chain', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await queueOutbox(f, ['waiting']);
+    const ship = () => drainAuditOutbox(serviceFor(f.shipperUrl), serviceFor(f.auditUrl));
+
+    expect((await run(envOf(f), ['--apply'])).code).toBe(0);
+    await expect(ship()).rejects.toThrow(/not fenced/);
+    await seed(f.main.drizzle.db, 1, 'late');
+    await expect(ship()).rejects.toThrow(/lacks the main database's audit_log up to seq 4/);
+    expect(await count(f.targetUrl)).toBe('3');
+
+    expect((await run(envOf(f), ['--fence', '--apply'])).code).toBe(0);
+    await ship();
+    expect(await scalar(f.main.url, 'SELECT count(*)::text FROM audit_outbox')).toBe('0');
+    expect(await count(f.targetUrl)).toBe('5');
+    expect(
+      await scalar(f.targetUrl, `SELECT seq::text FROM audit_log WHERE resource_id = 'waiting'`),
+    ).toBe('5');
+    expect(await isValid(f.targetUrl)).toBe(true);
+  });
+
   it('TC-30 a drain that sets a row aside as rejected exits 1', async () => {
     const f = await fixture();
     await seed(f.main.drizzle.db, 3);

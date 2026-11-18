@@ -37,6 +37,7 @@ import {
 } from '../service/audit.service.js';
 import { AuditReaderService } from '../service/audit-reader.service.js';
 import { drainAuditOutbox } from '../service/audit-shipper.service.js';
+import { main as runAuditCopy } from '../service/audit-copy.service.js';
 
 const unique = () => randomUUID().replaceAll('-', '');
 // Databases and roles made here, dropped here: a role is cluster-wide and outlives the run's sweep.
@@ -706,6 +707,17 @@ describe('audit chain in a database of its own', () => {
         expect(await queuedLegacy()).toBe(1);
 
         await copyLegacy(2);
+        await expect(drainAuditOutbox(asShipper.db, asWriter.db)).rejects.toThrow(/not fenced/);
+        const fence = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+        try {
+          const code = await runAuditCopy(['--fence', '--apply'], {
+            DATABASE_ADMIN_URL: legacyMain.url,
+            AUDIT_DATABASE_URL: legacyAuditUrl,
+          });
+          expect(code).toBe(0);
+        } finally {
+          fence.mockRestore();
+        }
         await drainAuditOutbox(asShipper.db, asWriter.db);
         expect(await queuedLegacy()).toBe(0);
         expect(await chainOf(asWriter.db, pending)).toHaveLength(1);

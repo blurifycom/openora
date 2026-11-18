@@ -2,14 +2,13 @@ import { parseArgs } from 'node:util';
 import { Client, Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { DrizzleDb } from '@openora/core/server';
-import { CHAIN_SPLIT_SQL } from '../schema/index.js';
+import { CHAIN_MOVED_TRIGGER, CHAIN_SPLIT_SQL } from '../schema/index.js';
 import { databaseOf, withDatabase } from '../migrate.js';
 import { verifyAuditChain, type AuditChainAnchor } from './audit.service.js';
 import { drainAuditOutbox } from './audit-shipper.service.js';
 
 const BATCH_SIZE = 1000;
 const LOCK_TIMEOUT = '5s';
-const MOVED_TRIGGER = 'audit_log_moved';
 const CLOSED_TRIGGER = 'audit_log_closed';
 const DRAIN_SESSION_OPTIONS = '-c lock_timeout=5s -c statement_timeout=60s';
 const USAGE = 'usage: openora-audit-copy [--apply] [--fence | --drain-outbox]';
@@ -38,7 +37,7 @@ const denyInsertSql = (trigger: string, message: string) => [
   `ALTER TABLE audit_log ENABLE ALWAYS TRIGGER ${trigger}`,
 ];
 
-const DENY_MOVED_SQL = denyInsertSql(MOVED_TRIGGER, 'audit_log moved to its own database');
+const DENY_MOVED_SQL = denyInsertSql(CHAIN_MOVED_TRIGGER, 'audit_log moved to its own database');
 const DENY_CLOSED_SQL = denyInsertSql(
   CLOSED_TRIGGER,
   'audit_log was drained back into the main database',
@@ -382,7 +381,7 @@ async function liftFence(main: Client): Promise<void> {
   await main.query('BEGIN');
   try {
     await main.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
-    await main.query(`DROP TRIGGER IF EXISTS ${MOVED_TRIGGER} ON audit_log`);
+    await main.query(`DROP TRIGGER IF EXISTS ${CHAIN_MOVED_TRIGGER} ON audit_log`);
     await main.query('COMMIT');
   } catch (err) {
     await main.query('ROLLBACK').catch(() => undefined);
