@@ -35,7 +35,7 @@ import {
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { auditLog } from '@openora/core/audit/schema';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
-import auditPlugin from '@openora/core/audit/server';
+import auditPlugin, { drainAuditOutbox } from '@openora/core/audit/server';
 import {
   NO_CLIENT_META,
   makeChatContextSendPolicy,
@@ -157,11 +157,14 @@ function setup({
 
 const outboxRows = () => db.drizzle.db.select().from(eventOutbox);
 
-const auditRowsFor = (action: string, resourceId: string | null) =>
-  db.drizzle.db
+// Ships what the writes queued, then reads the log.
+async function auditRowsFor(action: string, resourceId: string | null) {
+  await drainAuditOutbox(db.drizzle.db);
+  return db.drizzle.db
     .select()
     .from(auditLog)
     .where(and(eq(auditLog.action, action), eq(auditLog.resourceId, resourceId ?? '')));
+}
 
 beforeAll(async () => {
   db = await createTestDb([migrateOutbox, migrateAudit, migrate]);

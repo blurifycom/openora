@@ -1,16 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, type SQL } from 'drizzle-orm';
 import {
   createTestDb,
   waitForAdvisoryLockWaiter,
   waitForRowLockWaiter,
   type TestDb,
 } from '@openora/core/testing';
+import { withAuditGuardsLifted } from '../../../testing/audit-guards.js';
 import type { AuditWritePort, RealtimeTransport } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
-import { AuditService } from '@openora/core/audit/server';
+import { AuditService, drainAuditOutbox } from '@openora/core/audit/server';
+import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { makeEventBus, makeIdentityReader, mock, NO_CLIENT_META } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { chatMute, chatPlatformBan, chatPlayerCooldown } from '../schema/index.js';
@@ -70,11 +72,16 @@ async function seedCooldown(overrides: Partial<typeof chatPlayerCooldown.$inferI
   return row!;
 }
 
-const auditRowsFor = (resourceId: string) =>
-  db.drizzle.db.select().from(auditLog).where(eq(auditLog.resourceId, resourceId));
+// Ships what the writes queued, then reads the log.
+async function auditRows(where?: SQL) {
+  await drainAuditOutbox(db.drizzle.db);
+  return db.drizzle.db.select().from(auditLog).where(where);
+}
+
+const auditRowsFor = (resourceId: string) => auditRows(eq(auditLog.resourceId, resourceId));
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateAudit]);
+  db = await createTestDb([migrateOutbox, migrate, migrateAudit]);
   // The real audit writer, so "exactly one audit entry" is a row count in audit_log
   // rather than a call count on a spy - the hash chain has to accept these writes too.
   const svc = new AuditService(db.drizzle, makeEventBus(), makeIdentityReader());
@@ -92,8 +99,11 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(
-    sql`TRUNCATE ${chatMute}, ${chatPlatformBan}, ${chatPlayerCooldown}, ${auditLog} RESTART IDENTITY CASCADE`,
+  // The audit tables refuse TRUNCATE for every role.
+  await withAuditGuardsLifted(db.drizzle.db, (tx) =>
+    tx.execute(
+      sql`TRUNCATE ${chatMute}, ${chatPlatformBan}, ${chatPlayerCooldown}, audit_log, audit_outbox RESTART IDENTITY CASCADE`,
+    ),
   );
 });
 
@@ -152,7 +162,7 @@ describe('ChatModerationExpiryService.sweep', () => {
     expect(await makeSweep().sweep()).toEqual({ mutes: 0, bans: 0, cooldowns: 1 });
     expect(await makeSweep().sweep()).toEqual({ mutes: 0, bans: 0, cooldowns: 0 });
 
-    const rows = await db.drizzle.db.select().from(auditLog);
+    const rows = await auditRows();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       action: 'chat.cooldown.expired',
@@ -193,7 +203,7 @@ describe('ChatModerationExpiryService.sweep', () => {
     await seedBan({ expiresAt: secondsFromNow(-30), liftedAt: new Date(), liftedBy: ADMIN_ID });
 
     expect(await makeSweep().sweep()).toEqual({ mutes: 0, bans: 0, cooldowns: 0 });
-    expect(await db.drizzle.db.select().from(auditLog)).toEqual([]);
+    expect(await auditRows()).toEqual([]);
   });
 
   it('writes one entry per lapse when two sweeps run concurrently over the same rows', async () => {
@@ -288,10 +298,7 @@ describe('ChatModerationExpiryService.sweep', () => {
     const [row] = await db.drizzle.db.select().from(chatMute).where(eq(chatMute.id, lapsed.id));
     expect(row).toMatchObject({ liftedAt: expiresAt, liftedBy: null });
     expect((await auditRowsFor(lapsed.id)).map((r) => r.action)).toEqual(['chat.mute.expired']);
-    const [created] = await db.drizzle.db
-      .select()
-      .from(auditLog)
-      .where(eq(auditLog.action, 'chat.mute.created'));
+    const [created] = await auditRows(eq(auditLog.action, 'chat.mute.created'));
     expect(created!.before).toBeNull();
   });
 
@@ -333,10 +340,7 @@ describe('ChatModerationExpiryService.sweep', () => {
       ...NO_CLIENT_META,
     });
 
-    const [created] = await db.drizzle.db
-      .select()
-      .from(auditLog)
-      .where(eq(auditLog.action, 'chat.mute.created'));
+    const [created] = await auditRows(eq(auditLog.action, 'chat.mute.created'));
     expect(created!.before).toMatchObject({ muteId: running.id, reason: 'spam' });
     expect(await auditRowsFor(running.id)).toHaveLength(0);
   });
@@ -378,8 +382,6 @@ describe('ChatModerationExpiryService.sweep', () => {
       .from(chatMute)
       .where(sql`${chatMute.userId} = ${userId} AND ${chatMute.liftedAt} IS NULL`);
     expect(active).toHaveLength(0);
-    expect(
-      await db.drizzle.db.select().from(auditLog).where(eq(auditLog.action, 'chat.mute.lifted')),
-    ).toHaveLength(1);
+    expect(await auditRows(eq(auditLog.action, 'chat.mute.lifted'))).toHaveLength(1);
   });
 });

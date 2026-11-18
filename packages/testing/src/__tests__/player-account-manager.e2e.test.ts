@@ -18,6 +18,7 @@ import {
   type TestApp,
   type TestClient,
   type TestDb,
+  flushAudit,
 } from '../index.js';
 
 const AUDIT_ACTION = 'admin.player.account_manager_changed';
@@ -47,12 +48,14 @@ async function managerOf(playerId: string) {
   return (await json(res))['accountManager'];
 }
 
-const auditRows = (playerId: string) =>
-  drizzle()
+const auditRows = async (playerId: string) => {
+  await flushAudit(testApp);
+  return drizzle()
     .select()
     .from(auditLog)
     .where(and(eq(auditLog.action, AUDIT_ACTION), eq(auditLog.resourceId, playerId)))
     .orderBy(auditLog.seq);
+};
 
 const outboxRows = (playerId: string) =>
   drizzle()
@@ -436,6 +439,7 @@ describe('account-manager permissions and input', () => {
     });
     await vi.waitFor(
       async () => {
+        await flushAudit(testApp);
         const rows = await drizzle()
           .select({ actorId: auditLog.actorId, result: auditLog.result })
           .from(auditLog)

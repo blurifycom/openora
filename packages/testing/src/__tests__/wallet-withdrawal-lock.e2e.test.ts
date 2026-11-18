@@ -10,6 +10,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -117,6 +118,7 @@ describe('withdrawal_lock through the real tag and wallet routes', () => {
     expect(approved.status).toBe(200);
     expect((await readJson(approved)).status).toBe('completed');
 
+    await flushAudit(app);
     const audit = await readJson(await admin.get(`/audit/logs?resourceId=${playerId}&limit=50`));
     const tagActions = audit.items
       .filter(

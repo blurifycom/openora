@@ -11,6 +11,7 @@ import {
   uniqueUsername,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -24,6 +25,7 @@ async function newPlayer(label: string, username = uniqueUsername('p')) {
 }
 
 async function profileAudits(playerId: string) {
+  await flushAudit(app);
   const res = await admin.get(`/audit/logs?resourceId=${playerId}&action=player.profile.updated`);
   expect(res.status).toBe(200);
   return (await readJson(res)).items;

@@ -72,7 +72,13 @@ export type EventBus = {
     options?: SubscribeHandlerOptions,
   ): () => void;
   on(event: string, handler: EventHandler, options?: SubscribeHandlerOptions): () => void;
+  // Runs `tap` inside every `emitInTransaction`, in its transaction, after the outbox write, so
+  // a record that must commit with the event (its audit row) does not wait for delivery. A tap
+  // that rejects rolls the emitter's transaction back.
+  tapTransactional(tap: TransactionalTap): void;
 };
+
+type TransactionalTap = (tx: unknown, envelope: EventEnvelope) => Promise<void>;
 
 export const EVENT_BUS: Token<EventBus> = createToken('EVENT_BUS');
 
@@ -130,6 +136,8 @@ export function createEventBus({
     );
   }
 
+  const taps: TransactionalTap[] = [];
+
   return {
     emit(event, payload) {
       publishEvent(event, payload);
@@ -140,9 +148,17 @@ export function createEventBus({
     },
 
     async emitInTransaction(tx: unknown, event: string, payload: unknown): Promise<void> {
-      parseKnownPayload(event, payload);
+      const parsed = parseKnownPayload(event, payload);
       notePublishedTopic(event);
-      await outbox.write(tx, buildEnvelope(event, payload));
+      const envelope = buildEnvelope(event, payload);
+      await outbox.write(tx, envelope);
+      for (const tap of taps) {
+        await tap(tx, { ...envelope, payload: parsed });
+      }
+    },
+
+    tapTransactional(tap) {
+      taps.push(tap);
     },
 
     on(event: string, handler: EventHandler, options?: SubscribeHandlerOptions): () => void {

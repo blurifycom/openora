@@ -8,6 +8,7 @@ import {
   ADMIN_SECURITY_POLICY,
   ADMIN_USER_DIRECTORY,
   ADMIN_WALLET_REPORTING,
+  AUDIT_READER,
   AUDIT_WRITER,
   BONUS_GRANTS,
   BONUS_GRANT_LEDGER,
@@ -105,7 +106,7 @@ import {
   LOCAL_SESSION_RESOLVER,
   REMOTE_SESSION_RESOLVER,
 } from '../auth/index.js';
-import { DRIZZLE } from '../db/index.js';
+import { AUDIT_DRIZZLE, AUDIT_SHIPPER_DRIZZLE, DRIZZLE } from '../db/index.js';
 import { EVENT_BUS } from '../kernel/index.js';
 
 const coreTokenCatalog = {
@@ -118,6 +119,9 @@ const coreTokenCatalog = {
   ADMIN_SECURITY_POLICY,
   ADMIN_USER_DIRECTORY,
   ADMIN_WALLET_REPORTING,
+  AUDIT_DRIZZLE,
+  AUDIT_READER,
+  AUDIT_SHIPPER_DRIZZLE,
   AUDIT_WRITER,
   AUTH_SESSION,
   LOCAL_SESSION_RESOLVER,

@@ -18,6 +18,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -65,6 +66,7 @@ async function seedGame(providerId: string) {
 }
 
 async function gameUpdatedAuditRows(gameId: string) {
+  await flushAudit(app);
   return drizzleOf(app.container)
     .select({ before: auditLog.before, after: auditLog.after })
     .from(auditLog)

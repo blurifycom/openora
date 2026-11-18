@@ -12,7 +12,7 @@ import {
   sportsbookReconciliationFinding,
   sportsbookSession,
 } from '@openora/core/sportsbook/schema/betting';
-import { closeE2e, type TestApp, type TestClient, type TestDb } from '../index.js';
+import { closeE2e, flushAudit, type TestApp, type TestClient, type TestDb } from '../index.js';
 import { mockSportsbookProviderState } from '../test-sportsbook-provider-plugin.js';
 import {
   PROVIDER,
@@ -360,6 +360,7 @@ describe('responsible gambling ends sportsbook play', () => {
       reason: 'session_invalid',
     });
     expect(await balanceOf(app, player.userId)).toBe('100.000000000000000000');
+    await flushAudit(app);
     const audited = await drizzle()
       .select()
       .from(auditLog)
@@ -518,6 +519,7 @@ describe('responsible gambling ends sportsbook play', () => {
       },
       { timeout: 15_000 },
     );
+    await flushAudit(app);
     const audited = await drizzle()
       .select()
       .from(auditLog)

@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
+import * as z from 'zod';
 import {
+  auditOutbox,
   DrizzleService,
   getCurrentCorrelationId,
   likePrefix,
@@ -7,6 +9,7 @@ import {
   pageToOffset,
   serializeRow,
   withAdvisoryXactLock,
+  type DrizzleDb,
   type DrizzleTx,
   type EventBus,
   type SerializedRow,
@@ -18,15 +21,19 @@ import {
   LimitTypeSchema,
   MoneyAmountSchema,
   type AuditWritePort,
+  type EventEnvelope,
   type IdentityReader,
   type User,
+  type Uuid,
 } from '@openora/core/contracts';
-import { auditLog, type AuditLog } from '../schema/index.js';
-import type {
-  AuditListFilters,
-  AuditExportFilters,
-  MyRgHistoryEntry,
-  MyRgHistoryFilters,
+import { auditLog, CHAIN_SPLIT_SQL, type AuditLog } from '../schema/index.js';
+import {
+  AuditActorTypeSchema,
+  AuditSnapshotSchema,
+  type AuditListFilters,
+  type AuditExportFilters,
+  type MyRgHistoryEntry,
+  type MyRgHistoryFilters,
 } from '../contract/index.js';
 
 const RG_LIMIT_ACTION_PREFIX = 'rg.limit.';
@@ -43,7 +50,15 @@ function pick<T>(
   return result.success ? (result.data ?? null) : null;
 }
 
-function toMyRgHistoryEntry(row: SerializedRow<AuditLog, 'createdAt'>): MyRgHistoryEntry {
+// A chained row, or a queued record under its event id.
+type RgHistoryRow = Pick<
+  SerializedRow<AuditLog, 'createdAt'>,
+  'id' | 'action' | 'actorType' | 'createdAt'
+> & {
+  after: unknown;
+};
+
+function toMyRgHistoryEntry(row: RgHistoryRow): MyRgHistoryEntry {
   const after = isRecord(row.after) ? row.after : {};
   const isSet = row.action === 'rg.limit.set';
   const newAmountRaw = isSet ? after['amount'] : after['requestedAmount'];
@@ -175,15 +190,152 @@ function buildWhere(filters: AuditExportFilters) {
   );
 }
 
+function chainPage(
+  db: DrizzleDb | DrizzleTx,
+  filters: AuditExportFilters,
+  { offset, limit }: { offset: number; limit: number },
+) {
+  const dir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
+  return db
+    .select()
+    .from(auditLog)
+    .where(buildWhere(filters))
+    .orderBy(dir(AUDIT_SORT_COLS[filters.sortBy ?? 'createdAt']), dir(auditLog.seq))
+    .limit(limit)
+    .offset(offset);
+}
+
+async function chainCount(db: DrizzleDb | DrizzleTx, filters: AuditExportFilters) {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(auditLog)
+    .where(buildWhere(filters));
+  return row?.count ?? 0;
+}
+
 const toDto = (row: AuditLog) => serializeRow(row, { dateFields: ['createdAt'] });
 
 export type RecordInput = Parameters<AuditWritePort['record']>[0] & {
   result?: string | null;
 };
 
-// Postgres takes at most 65,535 bind parameters per statement; at 16 columns a row, this many
+// What `audit_outbox.entry` holds: the entry with its correlation id and `createdAt` resolved at
+// enqueue, inside the request that wrote it. `createdAt` is queue time: when the business
+// transaction wrote the record, not when it committed or shipped; for a record mapped from an
+// event it is the event's own time, so the tap and the consumer queue the same entry for it. `seq` is assigned at ship time
+// and is the authoritative order of the chain; `createdAt` is not monotonic in it. Checked at
+// enqueue, so a bad entry fails the business transaction as an `audit_log` insert used to; the
+// shipper checks each row again and moves one that fails aside instead of stopping behind it.
+export const OutboxEntrySchema = z.object({
+  actorId: z.string().nullish(),
+  actorType: AuditActorTypeSchema,
+  action: z.string().min(1),
+  resourceType: z.string().min(1),
+  resourceId: z.string().nullish(),
+  before: AuditSnapshotSchema.optional(),
+  after: AuditSnapshotSchema.optional(),
+  ip: z.string().nullish(),
+  userAgent: z.string().nullish(),
+  correlationId: z.string().nullable(),
+  result: z.string().nullish(),
+  // Postgres has no year 0, so such an entry could never be chained: refused here, it moves aside.
+  createdAt: z.iso.datetime().refine((at) => !at.startsWith('0000'), 'year 0 cannot be stored'),
+});
+
+type OutboxEntry = z.infer<typeof OutboxEntrySchema>;
+
+/** One `audit_outbox` row on its way into the chain. */
+export type ShippableEntry = { eventId: string; entry: unknown };
+
+// Postgres takes at most 65,535 bind parameters per statement; at 17 columns a row, this many
 // rows stay well under it.
 const MAX_ROWS_PER_INSERT = 1_000;
+
+// `occurredAt` is the audited event's time, passed only by the audit plugin's event paths; any
+// other record is stamped now, and a time key on the record itself is dropped by the schema, so a
+// caller of `AUDIT_WRITER` cannot backdate its entry.
+function outboxEntry(input: RecordInput, occurredAt?: EventEnvelope['occurredAt']): OutboxEntry {
+  // An entry that leaves the correlation id unset takes the one its context runs under, e.g. the
+  // agent proposal an MCP execution writes for; an explicit value, null included, is kept.
+  const correlationId =
+    input.correlationId === undefined ? (getCurrentCorrelationId() ?? null) : input.correlationId;
+  const createdAt = (occurredAt === undefined ? new Date() : new Date(occurredAt)).toISOString();
+  return OutboxEntrySchema.parse({ ...input, correlationId, createdAt });
+}
+
+async function enqueue(
+  txn: DrizzleTx,
+  rows: readonly { eventId: ShippableEntry['eventId']; entry: OutboxEntry }[],
+) {
+  for (let start = 0; start < rows.length; start += MAX_ROWS_PER_INSERT) {
+    await txn
+      .insert(auditOutbox)
+      .values(rows.slice(start, start + MAX_ROWS_PER_INSERT))
+      .onConflictDoNothing({ target: auditOutbox.eventId });
+  }
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * `eventId` as the uuid `event_id` column takes: a uuid as it is, anything else (an event id
+ * from a broker that does not mint uuids) as the sha1-based uuid of its text, so a redelivery
+ * maps to the same id and still dedups.
+ */
+export function auditEventId(eventId: EventEnvelope['eventId']): ShippableEntry['eventId'] {
+  if (UUID_PATTERN.test(eventId)) {
+    return eventId;
+  }
+  const hex = createHash('sha1').update(eventId).digest('hex');
+  const variant = ((Number.parseInt(hex.charAt(16), 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+async function enqueueOne(
+  txn: DrizzleTx,
+  input: RecordInput,
+  eventId: ShippableEntry['eventId'],
+  occurredAt?: EventEnvelope['occurredAt'],
+): Promise<void> {
+  await enqueue(txn, [{ eventId, entry: outboxEntry(input, occurredAt) }]);
+  noteAuditWrite(input.actorId);
+}
+
+/**
+ * Queues one audit record inside the caller's transaction: it reaches `audit_log` once the
+ * transaction commits and the audit shipper appends it to the hash chain, and never if it rolls
+ * back. Takes no lock, so the business transaction never waits on the chain. The record is stamped
+ * now under a fresh event id, so a caller can neither backdate it nor key it to another record.
+ */
+export function enqueueAuditInTransaction(txn: DrizzleTx, input: RecordInput): Promise<void> {
+  return enqueueOne(txn, input, randomUUID());
+}
+
+/**
+ * Queues the audit record of an event, keyed by its event id and dated by its `occurredAt`, so the
+ * tap, the consumer and a redelivery queue one equal entry. Only the audit plugin's event paths
+ * call it, and `audit/server` does not export it: no other caller may backdate a record (ADR-0055).
+ */
+export function enqueueEventAuditInTransaction(
+  txn: DrizzleTx,
+  input: RecordInput,
+  { eventId, occurredAt }: Pick<EventEnvelope, 'eventId' | 'occurredAt'>,
+): Promise<void> {
+  return enqueueOne(txn, input, auditEventId(eventId), occurredAt);
+}
+
+async function enqueueManyAuditInTransaction(
+  txn: DrizzleTx,
+  inputs: readonly RecordInput[],
+): Promise<void> {
+  await enqueue(
+    txn,
+    inputs.map((input) => ({ eventId: randomUUID(), entry: outboxEntry(input) })),
+  );
+  for (const { actorId } of inputs) {
+    noteAuditWrite(actorId);
+  }
+}
 
 function latestChainHash(txn: DrizzleTx) {
   return txn
@@ -194,101 +346,86 @@ function latestChainHash(txn: DrizzleTx) {
     .then(([latest]) => latest?.hash ?? null);
 }
 
-/** The row `input` appends at `seq` after `prevHash`, hashed over what is persisted. */
+// The column types audit_log's snapshots as records, which every reader indexes by key, but the
+// jsonb stores an array snapshot (a role's permission list) as is, as it always has.
+// ponytail: widen the column type once its readers narrow arrays themselves.
+const snapshot = (value: OutboxEntry['before']) => (value ?? null) as AuditLog['before'];
+
+/** The row `entry` appends at `seq` after `prevHash`, hashed over what is persisted. */
 function chainedRow(
-  input: RecordInput,
+  { eventId, entry }: { eventId: ShippableEntry['eventId']; entry: OutboxEntry },
   { seq, prevHash }: { seq: number; prevHash: string | null },
 ) {
   const id = randomUUID();
-  const createdAt = new Date();
+  const createdAt = new Date(entry.createdAt);
+  const before = snapshot(entry.before);
+  const after = snapshot(entry.after);
   const hash = computeHash({
     id,
-    actorId: input.actorId ?? null,
-    actorType: input.actorType,
-    action: input.action,
-    resourceType: input.resourceType,
-    resourceId: input.resourceId ?? null,
-    before: input.before ?? null,
-    after: input.after ?? null,
-    result: input.result ?? null,
+    actorId: entry.actorId ?? null,
+    actorType: entry.actorType,
+    action: entry.action,
+    resourceType: entry.resourceType,
+    resourceId: entry.resourceId ?? null,
+    before,
+    after,
+    result: entry.result ?? null,
     seq,
     createdAt: createdAt.toISOString(),
     prevHash,
   });
-  // An entry that leaves the correlation id unset takes the one its context runs under, e.g. the
-  // agent proposal an MCP execution writes for; an explicit value, null included, is kept.
-  const correlationId =
-    input.correlationId === undefined ? getCurrentCorrelationId() : input.correlationId;
-  return { ...input, correlationId, id, seq, prevHash, createdAt, hash };
-}
-
-function chainedRows(
-  inputs: readonly RecordInput[],
-  { seqs, headHash }: { seqs: readonly number[]; headHash: string | null },
-) {
-  const rows: ReturnType<typeof chainedRow>[] = [];
-  for (const [index, input] of inputs.entries()) {
-    const seq = seqs[index];
-    if (seq === undefined) {
-      throw new Error('audit_log: fewer sequence values were reserved than rows to append');
-    }
-    rows.push(chainedRow(input, { seq, prevHash: rows.at(-1)?.hash ?? headHash }));
-  }
-  return rows;
+  return { ...entry, before, after, eventId, id, seq, prevHash, createdAt, hash };
 }
 
 /**
- * Appends one row to the hash chain inside the caller's transaction. Exported for a writer that
- * runs outside the container - a deploy step - so it keeps the same chain protocol as
- * `AUDIT_WRITER` rather than inserting into `audit_log` by hand.
- *
- * Must be called inside a transaction: the advisory lock is transaction-scoped, so on a plain
- * connection it is released after its own statement and concurrent writers can fork the chain.
+ * Appends `entries` to the hash chain in order, inside `txn` and under the chain lock, with one
+ * read of the chain head and one sequence reservation for the lot. An entry whose `eventId` is
+ * already in the log is skipped, so a batch shipped again after a crash adds nothing; the unique
+ * `event_id`, `seq` and `prev_hash` indexes refuse what slips past the lock. Every entry is
+ * checked again before any row is written, so a malformed one fails the whole batch.
  */
-export async function recordAuditInTransaction(
+export async function appendAuditEntries(
   txn: DrizzleTx,
-  input: RecordInput,
-): Promise<AuditLog> {
-  const row = await withAdvisoryXactLock(txn, 'audit_log', async () => {
-    const prevHash = await latestChainHash(txn);
-
-    const seqResult = await txn.execute<{ seq: string | number }>(
-      sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
-    );
-    const seq = +(seqResult.rows.at(0)?.seq ?? 0);
-
-    const [inserted] = await txn
-      .insert(auditLog)
-      .values(chainedRow(input, { seq, prevHash }))
-      .returning();
-
-    return inserted;
-  });
-  noteAuditWrite(input.actorId);
-  return row;
-}
-
-/**
- * Appends `inputs` to the hash chain in order, inside the caller's transaction and under the
- * lock `recordAuditInTransaction` takes, with one read of the chain head and one sequence
- * reservation for the lot. The rows are those that many `recordAuditInTransaction` calls in the
- * same order would append, apart from the id and timestamp each row is given. An empty list
- * writes nothing.
- */
-async function recordManyAuditInTransaction(
-  txn: DrizzleTx,
-  inputs: readonly RecordInput[],
+  entries: readonly ShippableEntry[],
 ): Promise<AuditLog[]> {
-  if (inputs.length === 0) {
+  const parsed = entries.map(({ eventId, entry }) => ({
+    eventId,
+    entry: OutboxEntrySchema.parse(entry),
+  }));
+  if (parsed.length === 0) {
     return [];
   }
-  const appended = await withAdvisoryXactLock(txn, 'audit_log', async () => {
+  return withAdvisoryXactLock(txn, 'audit_log', async () => {
+    const shipped = new Set(
+      (
+        await txn
+          .select({ eventId: auditLog.eventId })
+          .from(auditLog)
+          .where(
+            inArray(
+              auditLog.eventId,
+              parsed.map(({ eventId }) => eventId),
+            ),
+          )
+      ).map(({ eventId }) => eventId),
+    );
+    const fresh = parsed.filter(({ eventId }) => !shipped.has(eventId));
+    if (fresh.length === 0) {
+      return [];
+    }
     const headHash = await latestChainHash(txn);
     const { rows: reserved } = await txn.execute<{ seq: string | number }>(
       sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq
-          FROM generate_series(1, ${inputs.length}) ORDER BY seq`,
+          FROM generate_series(1, ${fresh.length}) ORDER BY seq`,
     );
-    const rows = chainedRows(inputs, { seqs: reserved.map((row) => Number(row.seq)), headHash });
+    const rows: ReturnType<typeof chainedRow>[] = [];
+    for (const [index, item] of fresh.entries()) {
+      const seq = reserved[index]?.seq;
+      if (seq === undefined) {
+        throw new Error('audit_log: fewer sequence values were reserved than rows to append');
+      }
+      rows.push(chainedRow(item, { seq: Number(seq), prevHash: rows.at(-1)?.hash ?? headHash }));
+    }
     const inserted: AuditLog[] = [];
     for (let start = 0; start < rows.length; start += MAX_ROWS_PER_INSERT) {
       inserted.push(
@@ -300,106 +437,258 @@ async function recordManyAuditInTransaction(
     }
     return inserted;
   });
-  for (const { actorId } of inputs) {
-    noteAuditWrite(actorId);
-  }
-  return appended;
 }
 
+/**
+ * True when `tx` reaches a main database whose chain split `migrate` moved to a database of its
+ * own: its `audit_log`, if any is left, is one nothing reads.
+ */
+export async function chainMovedOut(tx: DrizzleTx): Promise<boolean> {
+  const { rows } = await tx.execute<{ split: boolean }>(sql.raw(CHAIN_SPLIT_SQL));
+  return rows[0]?.split ?? false;
+}
+
+/**
+ * Appends one row to the hash chain straight away, inside the caller's transaction and holding
+ * the `audit_log` chain lock until it commits, so every other append waits on the caller's
+ * transaction. For a deploy step that runs outside the container and reads its own row back.
+ * Throws on a split main database, whose own `audit_log` is no longer the chain.
+ *
+ * @deprecated Use `enqueueAuditInTransaction`, which queues the record and takes no lock. Removed
+ * in the next minor release.
+ */
+export async function recordAuditInTransaction(
+  txn: DrizzleTx,
+  input: RecordInput,
+): Promise<AuditLog> {
+  if (await chainMovedOut(txn)) {
+    throw new Error(
+      'the audit chain of this database lives in a database of its own: append in a transaction on the audit database (AUDIT_DATABASE_URL)',
+    );
+  }
+  const [row] = await appendAuditEntries(txn, [
+    { eventId: randomUUID(), entry: outboxEntry(input) },
+  ]);
+  if (!row) {
+    throw new Error('audit_log: the record was not appended');
+  }
+  noteAuditWrite(input.actorId);
+  return row;
+}
+
+const hashOf = (row: AuditLog) =>
+  computeHash({
+    id: row.id,
+    actorId: row.actorId ?? null,
+    actorType: row.actorType,
+    action: row.action,
+    resourceType: row.resourceType,
+    resourceId: row.resourceId ?? null,
+    before: row.before ?? null,
+    after: row.after ?? null,
+    result: row.result ?? null,
+    seq: row.seq,
+    createdAt: row.createdAt.toISOString(),
+    prevHash: row.prevHash ?? null,
+  });
+
+const VERIFY_CHUNK_SIZE = 1_000;
+
+/** Where an earlier check left a chain it found intact: the last row it checked. */
+export type AuditChainAnchor = { fromSeq: AuditLog['seq']; fromHash: AuditLog['hash'] };
+
+export type AuditChainVerdict =
+  | { valid: true }
+  // `rowId` is null when the anchored row itself is gone.
+  | { valid: false; firstBrokenSeq: AuditLog['seq']; rowId: AuditLog['id'] | null };
+
+/**
+ * Checks the hash chain in `db`: every row links to the one before it and hashes to its stored
+ * hash. From `anchor`, the check starts at that row, which must still be there with the hash the
+ * anchor kept, and covers it and every later row; without one, the whole chain from its head.
+ * Keyset-paged, so a large chain verifies in constant memory.
+ */
+export async function verifyAuditChain(
+  db: DrizzleDb,
+  anchor?: AuditChainAnchor,
+): Promise<AuditChainVerdict> {
+  let expectedPrevHash: string | null = null;
+  let cursor: number | null = null;
+  if (anchor) {
+    const [row] = await db.select().from(auditLog).where(eq(auditLog.seq, anchor.fromSeq)).limit(1);
+    if (!row || row.hash !== anchor.fromHash || row.hash !== hashOf(row)) {
+      return { valid: false, firstBrokenSeq: anchor.fromSeq, rowId: row?.id ?? null };
+    }
+    expectedPrevHash = row.hash;
+    cursor = row.seq;
+  }
+  for (;;) {
+    const rows = await db
+      .select()
+      .from(auditLog)
+      .where(cursor === null ? undefined : gt(auditLog.seq, cursor))
+      .orderBy(auditLog.seq)
+      .limit(VERIFY_CHUNK_SIZE);
+    for (const row of rows) {
+      if (row.prevHash !== expectedPrevHash || row.hash !== hashOf(row)) {
+        return { valid: false, firstBrokenSeq: row.seq, rowId: row.id };
+      }
+      expectedPrevHash = row.hash;
+      cursor = row.seq;
+    }
+    if (rows.length < VERIFY_CHUNK_SIZE) {
+      return { valid: true };
+    }
+  }
+}
+
+/**
+ * Reads, eventually consistent with the writes: `list` and `exportCsv` read the chain, which a
+ * record reaches only once the shipper has moved it from `audit_outbox`, so a record shows a
+ * moment after the transaction that wrote it commits. `listMyRgHistory` also reads the player's
+ * queued records, so a player sees a limit change straight away. The chain is read through
+ * `auditDrizzle`, the outbox through `drizzle`; they are the same unless the chain has a database of
+ * its own.
+ */
 export class AuditService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly identityReader: IdentityReader,
+    private readonly auditDrizzle: DrizzleService = drizzle,
   ) {}
 
-  // Hash computed and inserted in a single statement - no read-back UPDATE, so a
-  // crash can never leave a 'pending' hash. Serialized via pg advisory lock so
-  // concurrent record() calls cannot fork the chain. Append-only.
-  async record(input: RecordInput) {
-    const row = await this.drizzle.db.transaction((tx) => this.recordInTransaction(tx, input));
-    return toDto(row);
+  /** Queues `input` in a transaction of its own, stamped now. */
+  async record(input: RecordInput): Promise<void> {
+    await this.drizzle.db.transaction((tx) => enqueueAuditInTransaction(tx, input));
   }
 
-  recordInTransaction(tx: unknown, input: RecordInput): Promise<AuditLog> {
-    return recordAuditInTransaction(tx as DrizzleTx, input);
+  recordInTransaction(tx: unknown, input: RecordInput): Promise<void> {
+    return enqueueAuditInTransaction(tx as DrizzleTx, input);
   }
 
-  recordManyInTransaction(tx: unknown, inputs: readonly RecordInput[]): Promise<AuditLog[]> {
-    return recordManyAuditInTransaction(tx as DrizzleTx, inputs);
+  recordManyInTransaction(tx: unknown, inputs: readonly RecordInput[]): Promise<void> {
+    return enqueueManyAuditInTransaction(tx as DrizzleTx, inputs);
   }
 
   async list(filters: AuditListFilters) {
-    const db = this.drizzle.db;
     const { page, limit } = filters;
-    const offset = pageToOffset(page, limit);
-
-    const where = buildWhere(filters);
-    const sortBy = filters.sortBy ?? 'createdAt';
-    const dir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
-
-    const [rows, countResult] = await Promise.all([
-      db
-        .select()
-        .from(auditLog)
-        .where(where)
-        .orderBy(dir(AUDIT_SORT_COLS[sortBy]), dir(auditLog.seq))
-        .limit(limit)
-        .offset(offset),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(auditLog)
-        .where(where),
+    const [rows, total] = await Promise.all([
+      chainPage(this.auditDrizzle.db, filters, { offset: pageToOffset(page, limit), limit }),
+      chainCount(this.auditDrizzle.db, filters),
     ]);
-
-    return {
-      items: rows.map(toDto),
-      total: countResult[0]?.count ?? 0,
-      page,
-      limit,
-    };
+    return { items: rows.map(toDto), total, page, limit };
   }
 
-  /** Player self-service RG limit history. Returns an empty page, not an error,
-   * when the caller has no player profile. */
+  /**
+   * Player self-service RG limit history, the changes still queued for the chain included, so a
+   * player sees a change as soon as it commits. Queued records come after every chained one, as the
+   * shipper will chain them. A record's `id` is its event id, queued or chained, so it keeps it
+   * across the ship; a record chained before event ids existed keeps its row id. Returns an empty
+   * page, not an error, when the caller has no player profile.
+   */
   async listMyRgHistory(userId: User['id'], filters: MyRgHistoryFilters) {
     const { page, limit } = filters;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
     if (!playerId) {
       return { items: [], total: 0, page, limit };
     }
-
-    const { items, total } = await this.list({
-      page,
-      limit,
+    const scope = {
       resourceType: 'player',
       resourceId: playerId,
       actionPrefix: RG_LIMIT_ACTION_PREFIX,
       sortOrder: filters.sortOrder,
-    });
+    };
+    // Read before the chain: a record shipped in between is then found in the chain's snapshot
+    // and counted there once.
+    const queued = await this.queuedRgHistory(playerId);
+    const offset = pageToOffset(page, limit);
+    const newestFirst = (filters.sortOrder ?? 'desc') === 'desc';
+    return this.auditDrizzle.db.transaction(
+      async (tx) => {
+        const chainedIds = new Set(
+          queued.length === 0
+            ? []
+            : (
+                await tx
+                  .select({ eventId: auditLog.eventId })
+                  .from(auditLog)
+                  .where(
+                    inArray(
+                      auditLog.eventId,
+                      queued.map(({ eventId }) => eventId),
+                    ),
+                  )
+              ).map(({ eventId }) => eventId),
+        );
+        const pending = queued
+          .filter(({ eventId }) => !chainedIds.has(eventId))
+          .map(({ row }) => row);
+        const chained = await chainCount(tx, scope);
+        // Newest first, the queued records open the list; oldest first, they close it.
+        const lead = newestFirst ? pending.reverse() : [];
+        const tail = newestFirst ? [] : pending;
+        const fromLead = lead.slice(offset, offset + limit);
+        const room = limit - fromLead.length;
+        const rows =
+          room > 0
+            ? (
+                await chainPage(tx, scope, {
+                  offset: Math.max(0, offset - lead.length),
+                  limit: room,
+                })
+              ).map((row) => ({ ...toDto(row), id: row.eventId ?? row.id }))
+            : [];
+        const tailStart = Math.max(0, offset - lead.length - chained);
+        const fromTail = tail.slice(tailStart, tailStart + room - rows.length);
+        return {
+          items: [...fromLead, ...rows, ...fromTail].map(toMyRgHistoryEntry),
+          total: chained + pending.length,
+          page,
+          limit,
+        };
+      },
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
+  }
 
-    return { items: items.map(toMyRgHistoryEntry), total, page, limit };
+  // The player's RG limit records still in `audit_outbox`, oldest first, each under its event id,
+  // the id it keeps once chained. An entry that fails its schema never reaches the chain and is
+  // left out here too.
+  private async queuedRgHistory(playerId: Uuid) {
+    const rows = await this.drizzle.db
+      .select({ eventId: auditOutbox.eventId, entry: auditOutbox.entry })
+      .from(auditOutbox)
+      .where(
+        and(
+          sql`${auditOutbox.entry}->>'resourceType' = 'player'`,
+          sql`${auditOutbox.entry}->>'resourceId' = ${playerId}`,
+          sql`${auditOutbox.entry}->>'action' LIKE ${likePrefix(RG_LIMIT_ACTION_PREFIX)}`,
+        ),
+      )
+      .orderBy(asc(auditOutbox.id));
+    return rows.flatMap(({ eventId, entry }) => {
+      const parsed = OutboxEntrySchema.safeParse(entry);
+      if (!parsed.success) {
+        return [];
+      }
+      const { action, actorType, after, createdAt } = parsed.data;
+      const row: RgHistoryRow = { id: eventId, action, actorType, after, createdAt };
+      return [{ eventId, row }];
+    });
   }
 
   // Hard cap to prevent unbounded bulk extraction / OOM; exports exceeding it are
   // truncated to the latest rows. Use verifyChain for full-chain integrity.
   static readonly EXPORT_MAX_ROWS = 50_000;
 
-  static readonly VERIFY_CHUNK_SIZE = 1_000;
+  static readonly VERIFY_CHUNK_SIZE = VERIFY_CHUNK_SIZE;
 
   async exportCsv(filters: AuditExportFilters) {
-    const db = this.drizzle.db;
-    const where = buildWhere(filters);
-
-    const sortBy = filters.sortBy ?? 'createdAt';
-    const dir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
-
-    const rows = await db
-      .select()
-      .from(auditLog)
-      .where(where)
-      .orderBy(dir(AUDIT_SORT_COLS[sortBy]), dir(auditLog.seq))
-      .limit(AuditService.EXPORT_MAX_ROWS);
+    const rows = await chainPage(this.auditDrizzle.db, filters, {
+      offset: 0,
+      limit: AuditService.EXPORT_MAX_ROWS,
+    });
 
     const header =
       'id,actorId,actorType,action,resourceType,resourceId,ip,correlationId,result,seq,prevHash,hash,createdAt';
@@ -426,54 +715,8 @@ export class AuditService {
     return [header, ...lines].join('\n');
   }
 
-  async verifyChain(): Promise<
-    { valid: true } | { valid: false; firstBrokenSeq: number; rowId: string }
-  > {
-    let expectedPrevHash: string | null = null;
-    let cursor: number | null = null;
-    let hasMore = true;
-
-    // Keyset-paged so a large chain verifies in constant memory; VERIFY_CHUNK_SIZE
-    // caps how many rows are held per round-trip.
-    while (hasMore) {
-      const rows = await this.drizzle.db
-        .select()
-        .from(auditLog)
-        .where(cursor === null ? undefined : gt(auditLog.seq, cursor))
-        .orderBy(auditLog.seq)
-        .limit(AuditService.VERIFY_CHUNK_SIZE);
-
-      for (const row of rows) {
-        if (row.prevHash !== expectedPrevHash) {
-          return { valid: false, firstBrokenSeq: row.seq, rowId: row.id };
-        }
-
-        const expected = computeHash({
-          id: row.id,
-          actorId: row.actorId ?? null,
-          actorType: row.actorType,
-          action: row.action,
-          resourceType: row.resourceType,
-          resourceId: row.resourceId ?? null,
-          before: row.before ?? null,
-          after: row.after ?? null,
-          result: row.result ?? null,
-          seq: row.seq,
-          createdAt: row.createdAt.toISOString(),
-          prevHash: row.prevHash ?? null,
-        });
-
-        if (row.hash !== expected) {
-          return { valid: false, firstBrokenSeq: row.seq, rowId: row.id };
-        }
-
-        expectedPrevHash = row.hash;
-        cursor = row.seq;
-      }
-
-      hasMore = rows.length === AuditService.VERIFY_CHUNK_SIZE;
-    }
-
-    return { valid: true };
+  /** See `verifyAuditChain`. */
+  verifyChain(anchor?: AuditChainAnchor): Promise<AuditChainVerdict> {
+    return verifyAuditChain(this.auditDrizzle.db, anchor);
   }
 }

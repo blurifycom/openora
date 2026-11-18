@@ -12,6 +12,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -26,7 +27,8 @@ type Player = Awaited<ReturnType<typeof registerAndMaterializePlayer>>;
 
 const drizzle = () => app.container.get(DRIZZLE).db;
 
-function auditRowsOf(correlationId: string) {
+async function auditRowsOf(correlationId: string) {
+  await flushAudit(app);
   return drizzle()
     .select({
       action: auditLog.action,

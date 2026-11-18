@@ -11,6 +11,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 type AuditItem = {
@@ -45,6 +46,7 @@ async function seedTrustedDevice(userId: string): Promise<string> {
 }
 
 async function deviceRevocations(playerId: string): Promise<AuditItem[]> {
+  await flushAudit(testApp);
   const res = await admin.get(
     `/audit/logs?resourceType=player&resourceId=${playerId}&action=identity.trusted_device.revoked`,
   );

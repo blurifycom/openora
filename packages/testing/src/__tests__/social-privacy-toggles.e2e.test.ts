@@ -14,6 +14,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -80,7 +81,8 @@ describe('PATCH /profile - community toggles', () => {
       showOnlineStatusToFriends: false,
     });
 
-    // Written inside the profile transaction, not by an async consumer - no polling needed.
+    // Queued inside the profile transaction, not by an async consumer - a flush, no polling.
+    await flushAudit(app);
     const auditRes = await admin.get(
       `/audit/logs?resourceId=${before.id}&action=player.profile.updated`,
     );
@@ -102,6 +104,7 @@ describe('PATCH /profile - community toggles', () => {
     const res = await client.patch('/profile', { timezone: 'Europe/Warsaw' });
     expect(res.status).toBe(200);
 
+    await flushAudit(app);
     const { items } = await readJson(
       await admin.get(`/audit/logs?resourceId=${playerId}&action=player.profile.updated`),
     );

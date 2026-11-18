@@ -22,6 +22,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
   verifyKyc,
   assignTag,
@@ -160,6 +161,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     expect(pending.has(body.transactionId)).toBe(false);
 
     await vi.waitFor(async () => {
+      await flushAudit(appDefault);
       const auditRes = await admin.get(
         `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.withdrawal.auto_approved`,
       );
@@ -366,6 +368,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     expect(body.status).toBe('completed');
 
     await vi.waitFor(async () => {
+      await flushAudit(appDefault);
       const auditRes = await admin.get(
         `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.withdrawal.auto_approved`,
       );
@@ -472,6 +475,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
     expect(await readJson(getRes)).toMatchObject({ threshold: '1.500000000000000000' });
 
     await vi.waitFor(async () => {
+      await flushAudit(appDefault);
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${userId}&action=wallet.auto_withdrawal_rule.set`,
       );
@@ -491,6 +495,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
     expect(await readJson(afterDelete)).toBeNull();
 
     await vi.waitFor(async () => {
+      await flushAudit(appDefault);
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${userId}&action=wallet.auto_withdrawal_rule.deleted`,
       );

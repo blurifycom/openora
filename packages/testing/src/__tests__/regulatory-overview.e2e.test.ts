@@ -13,6 +13,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -119,6 +120,7 @@ describe('regulatory overview routes', () => {
     const globalKyc = GlobalKycConfigSchema.parse(await globalResponse.json());
     expect(globalKyc).toMatchObject({ enabled: false, updatedBy: complianceManagerId });
 
+    await flushAudit(app);
     const countryAudits = await app.container
       .get(DRIZZLE)
       .db.select()

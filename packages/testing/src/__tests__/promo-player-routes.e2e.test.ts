@@ -11,6 +11,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -265,6 +266,7 @@ describe('self-exclusion forfeiting every active grant', () => {
     });
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const grantRes = await admin.get(
         `/audit/logs?resourceId=${grantId}&action=promo.bonus.forfeited`,
       );
@@ -287,6 +289,7 @@ describe('a ban forfeiting every active grant', () => {
     await vi.waitFor(async () => {
       const grant = await readJson(await client.get(`/promo/grants/${grantId}`));
       expect(grant).toMatchObject({ status: 'forfeited', forfeitReason: 'account_deactivated' });
+      await flushAudit(app);
       const audit = await readJson(
         await admin.get(`/audit/logs?resourceId=${grantId}&action=promo.bonus.forfeited`),
       );

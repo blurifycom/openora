@@ -12,6 +12,7 @@ import {
   asAdmin,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
   registerAndMaterializePlayer,
   type TestApp,
@@ -118,6 +119,7 @@ describe('a player claiming rakeback on the house edge', () => {
     expect(await claimCredits(body.claimId)).toEqual([
       { amount: '0.400000000000000000', type: 'cashback' },
     ]);
+    await flushAudit(app);
     const audit = await readJson(
       await admin.get(`/audit/logs?resourceId=${body.claimId}&action=promo.rakeback.claimed`),
     );
@@ -267,6 +269,7 @@ describe('an admin voiding unclaimed rakeback', () => {
     expect(res.status).toBe(200);
     expect(await readJson(res)).toMatchObject({ status: 'voided', voidReason: 'duplicate round' });
     expect(again.status).toBe(409);
+    await flushAudit(app);
     const audit = await readJson(
       await admin.get(`/audit/logs?resourceId=${accrual.id}&action=promo.rakeback.voided`),
     );

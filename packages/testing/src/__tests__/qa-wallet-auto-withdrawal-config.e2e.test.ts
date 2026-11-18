@@ -25,6 +25,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
   verifyKyc,
   assignIamRoleByKey,
@@ -284,6 +285,7 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
       ...VELOCITY,
     });
 
+    await flushAudit(appMain);
     const configAuditRes = await superAdmin.get(
       '/audit/logs?action=wallet.auto_withdrawal_config.set&limit=1',
     );
@@ -337,6 +339,7 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
     expect(pendingIds.has(aboveBody.transactionId)).toBe(true);
     expect(pendingIds.has(belowBody.transactionId)).toBe(false);
 
+    await flushAudit(appMain);
     const autoApprovedAuditRes = await superAdmin.get(
       `/audit/logs?resourceType=player&resourceId=${below.playerId}&action=wallet.withdrawal.auto_approved`,
     );
@@ -442,6 +445,7 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
     );
     expect(res.status).toBe('completed');
 
+    await flushAudit(appMain);
     const auditRes = await superAdmin.get(
       `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.withdrawal.auto_approved`,
     );

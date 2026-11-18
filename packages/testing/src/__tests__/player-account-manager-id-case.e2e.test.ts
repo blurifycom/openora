@@ -13,6 +13,7 @@ import {
   type TestApp,
   type TestClient,
   type TestDb,
+  flushAudit,
 } from '../index.js';
 
 type Account = { userId: string; playerId: string };
@@ -36,8 +37,9 @@ async function newStaff(roleKey: string): Promise<Account> {
 const setManager = (playerId: string, accountManagerId: string) =>
   admin.put(`/players/${playerId}/account-manager`, { accountManagerId });
 
-const auditCount = async (playerId: string) =>
-  (
+const auditCount = async (playerId: string) => {
+  await flushAudit(testApp);
+  return (
     await drizzle()
       .select({ id: auditLog.id })
       .from(auditLog)
@@ -48,6 +50,7 @@ const auditCount = async (playerId: string) =>
         ),
       )
   ).length;
+};
 
 beforeAll(async () => {
   ({ db, app: testApp } = await bootE2e());
@@ -102,6 +105,7 @@ describe('account-manager ids in another letter case', () => {
     });
     await vi.waitFor(
       async () => {
+        await flushAudit(testApp);
         const denials = await drizzle()
           .select({ actorId: auditLog.actorId })
           .from(auditLog)

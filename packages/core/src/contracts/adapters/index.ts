@@ -437,6 +437,8 @@ export {
 } from './admin-security.js';
 export type { AuditWritePort, AuditAction, DirectAuditAction } from './audit.js';
 export { AUDIT_WRITER } from './audit.js';
+export type { AuditEmailChange, AuditReader, AuditSubject } from './audit-reader.js';
+export { AUDIT_READER } from './audit-reader.js';
 
 export type { PlayerTags } from './player-tags.js';
 export { PLAYER_TAGS } from './player-tags.js';

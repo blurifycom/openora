@@ -12,6 +12,7 @@ import {
   type TestDb,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -118,6 +119,7 @@ describe('lobby layout aggregate', () => {
     expect(save.status).toBe(200);
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const auditRes = await admin.get('/audit/logs?action=lobby.layout.updated');
       expect(auditRes.status).toBe(200);
       const body = await json(auditRes);

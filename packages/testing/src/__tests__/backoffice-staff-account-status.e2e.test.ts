@@ -14,6 +14,7 @@ import {
   type TestClient,
   bootE2e,
   closeE2e,
+  flushAudit,
 } from '../index.js';
 
 let db: TestDb;
@@ -196,6 +197,7 @@ describe('PATCH /backoffice/users/{userId} on a staff account', () => {
     expect(await isActiveOf(staffId)).toBe(true);
 
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const rows = await drizzle()
         .select({ actorId: auditLog.actorId, before: auditLog.before, after: auditLog.after })
         .from(auditLog)
@@ -243,6 +245,7 @@ describe('disabling a staff account', () => {
       .from(player)
       .where(eq(player.userId, staffId));
     await vi.waitFor(async () => {
+      await flushAudit(app);
       const rows = await drizzle()
         .select({ actorType: auditLog.actorType, actorId: auditLog.actorId })
         .from(auditLog)

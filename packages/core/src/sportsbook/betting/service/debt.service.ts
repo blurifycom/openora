@@ -604,7 +604,7 @@ export class SportsbookDebtService {
     return rows.length > 0;
   }
 
-  /** Inside the change's transaction, after every other write: audit_log is the last lock. */
+  /** Inside the change's transaction. */
   async writeAudit(
     tx: DrizzleTx,
     { before, debt, cause, amount, actor, reason }: DebtChange,

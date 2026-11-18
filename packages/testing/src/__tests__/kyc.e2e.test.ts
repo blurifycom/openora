@@ -16,6 +16,7 @@ import {
   type E2e,
   bootE2e,
   closeE2e,
+  flushAudit,
   readJson,
 } from '../index.js';
 
@@ -48,6 +49,8 @@ let defaultE2e: E2e | undefined;
 let gatedE2e: E2e | undefined;
 let appDefault: E2e['app'];
 let appGated: E2e['app'];
+
+const flushAudits = () => Promise.all([flushAudit(appDefault), flushAudit(appGated)]);
 
 function signWebhook(rawBody: string, secret: string): string {
   return `sha256=${createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')}`;
@@ -141,6 +144,7 @@ describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
     expect(anonRes.status).toBe(401);
 
     await vi.waitFor(async () => {
+      await flushAudits();
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.submitted`,
       );
@@ -151,6 +155,7 @@ describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
     });
 
     await vi.waitFor(async () => {
+      await flushAudits();
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
@@ -218,6 +223,7 @@ describe('KYC webhook reconcile (gated stack)', () => {
     });
 
     await vi.waitFor(async () => {
+      await flushAudits();
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
@@ -405,6 +411,7 @@ describe('KYC withdrawal gate (gated stack)', () => {
     expect(allowed.transactionId).toBeTruthy();
 
     await vi.waitFor(async () => {
+      await flushAudits();
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
@@ -493,6 +500,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
     expect(kycView.basic.current.triggeredBy).toBe('manual');
 
     await vi.waitFor(async () => {
+      await flushAudits();
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
@@ -547,6 +555,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
     expect((await readJson(res)).status).toBe('rejected');
 
     await vi.waitFor(async () => {
+      await flushAudits();
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
@@ -595,6 +604,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
     }
 
     await vi.waitFor(async () => {
+      await flushAudits();
       for (const playerId of [playerA, playerB]) {
         const auditRes = await admin.get(
           `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
@@ -671,6 +681,7 @@ describe('KYC status writer concurrency (real Postgres FOR UPDATE)', () => {
     expect(kycView.basic.current.status).toBe('manually_overridden');
 
     await vi.waitFor(async () => {
+      await flushAudits();
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
