@@ -5,6 +5,22 @@ import { EVENT_RETENTION_MS } from '../event-bus.js';
 import { createTestRedis, waitForConsumerGroup, type TestRedis } from '@openora/core/testing';
 import type { EventEnvelope } from '@openora/core/contracts';
 
+const { brokerWarn } = vi.hoisted(() => ({ brokerWarn: vi.fn() }));
+
+vi.mock('../logger.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../logger.js')>();
+  return {
+    ...actual,
+    createLogger: (name: string) => {
+      const logger = actual.createLogger(name);
+      if (name === 'message-broker') {
+        logger.warn = brokerWarn;
+      }
+      return logger;
+    },
+  };
+});
+
 let redis: TestRedis;
 const brokers: RedisStreamsBroker[] = [];
 
@@ -47,6 +63,8 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
+  brokerWarn.mockClear();
   await Promise.allSettled(brokers.map((b) => b.close()));
   brokers.length = 0;
   await redis.flush();
@@ -382,5 +400,43 @@ describe('RedisStreamsBroker', () => {
 
     await vi.waitFor(async () => expect(await redis.client.xLen(`oss:dlq:${topic}`)).toBe(1));
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe('RedisStreamsBroker consumer lag', () => {
+  const LAGGING = 101;
+
+  it('logs stream consumer lagging while a handler leaves entries unacked, and stops after they are acked', async () => {
+    const broker = makeBroker('lag-svc', { intervalMs: 50, minIdleMs: 60_000 });
+    const topic = uniqueTopic();
+    broker.subscribe(topic, () => {
+      throw new Error('never acks');
+    });
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'lag-svc' });
+    for (let i = 0; i < LAGGING; i++) {
+      await broker.publish(makeEnvelope(topic));
+    }
+
+    await vi.waitFor(() => {
+      expect(brokerWarn).toHaveBeenCalledWith(
+        { stream: streamOf(topic), group: 'lag-svc', pending: LAGGING },
+        'stream consumer lagging',
+      );
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(brokerWarn).toHaveBeenCalledTimes(1);
+
+    const pending = await redis.client.xPendingRange(streamOf(topic), 'lag-svc', '-', '+', 200);
+    await redis.client.xAck(
+      streamOf(topic),
+      'lag-svc',
+      pending.map((entry) => entry.id),
+    );
+    brokerWarn.mockClear();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 120_000);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(brokerWarn).not.toHaveBeenCalled();
   });
 });
