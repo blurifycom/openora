@@ -20,17 +20,15 @@ import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import {
-  ADMIN_USER_DIRECTORY,
+  ACCOUNT_READER,
   AUDIT_WRITER,
   CHAT_CONTEXT_ROOM_COMMANDS,
   CHAT_CONTEXT_ROOMS,
   CHAT_SYSTEM_AUTHOR_ID,
-  IDENTITY_READER,
   JOB_QUEUE,
   RATE_LIMITER,
   REALTIME_CLIENT_AUTHORIZER,
   REALTIME_TRANSPORT,
-  type AdminUserDirectory,
   type BrokerHandler,
   type EventEnvelope,
   type JobQueueAdapter,
@@ -39,9 +37,9 @@ import {
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
+  makeAccountReader,
   makeAuditWriter,
   makeChatContextSendPolicy,
-  makeIdentityReader,
   mock,
 } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -116,9 +114,8 @@ function setup() {
   container.register(REALTIME_TRANSPORT, () => transport);
   container.register(REALTIME_CLIENT_AUTHORIZER, () => mock());
   container.register(RATE_LIMITER, () => mock());
-  container.register(ADMIN_USER_DIRECTORY, () => mock<AdminUserDirectory>());
+  container.register(ACCOUNT_READER, () => makeAccountReader());
   container.register(AUDIT_WRITER, () => audit);
-  container.register(IDENTITY_READER, () => makeIdentityReader());
   container.register(ADMIN_GUARD, () => mock());
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   registry.setOwner('chat');
@@ -133,10 +130,9 @@ function setup() {
     drizzle: db.drizzle,
     events: bus,
     transport,
-    directory: mock<AdminUserDirectory>({ lookupPlayers: async () => [] }),
     audit,
     moderation: new ChatModerationService(db.drizzle, transport, audit, bus),
-    identityReader: makeIdentityReader(),
+    accounts: makeAccountReader(),
     allowedAttachmentHosts: [],
     contextSendPolicy: makeChatContextSendPolicy(),
   });
@@ -184,7 +180,7 @@ const isClosed = async (roomId: string) =>
   )[0]?.readOnlyMode === true;
 
 const send = (chat: ChatService, roomId: string, userId: string) =>
-  chat.sendRoomMessage({ userId, username: 'player', roomId, content: 'gg' });
+  chat.sendRoomMessage({ userId, roomId, content: 'gg' });
 
 beforeAll(async () => {
   db = await createTestDb([migrateOutbox, migrate, migrateIdentity, migrateProfile]);

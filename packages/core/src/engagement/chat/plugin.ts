@@ -10,7 +10,13 @@ import {
   mapErrors,
   parseServiceManifest,
 } from '@openora/core/server';
-import type { CoreTokenCatalog, DrizzleService, DrizzleTx, InternalClient, Plugin } from '@openora/core/server';
+import type {
+  CoreTokenCatalog,
+  DrizzleService,
+  DrizzleTx,
+  InternalClient,
+  Plugin,
+} from '@openora/core/server';
 import type { ChatContextRooms, JobQueueAdapter } from '@openora/core/contracts';
 import {
   JOB_QUEUE,
