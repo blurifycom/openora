@@ -58,6 +58,7 @@ const CHAT_ENV = {
     'iam',
     'player-management',
     'wallet',
+    'tag',
     'gaming',
     'exchange-rate',
   ].join(','),
