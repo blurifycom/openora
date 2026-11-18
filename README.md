@@ -56,7 +56,7 @@ Two ways to get the API up at `http://localhost:3001`. Demo credentials after se
 
 ### 1. Via agents / MCP (one command)
 
-For agents (Claude Code, Copilot, Codex, Cursor) and anyone who wants a single onboarding step.
+For agents (Claude Code, Codex, Cursor) and anyone who wants a single onboarding step.
 
 ```bash
 pnpm setup   # checks prereqs, installs deps, boots Postgres, runs migrations, prints a summary

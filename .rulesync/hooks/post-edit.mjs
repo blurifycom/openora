@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PostToolUse hook (Claude / Copilot CLI / Codex CLI).
+// PostToolUse hook (Claude / Codex CLI).
 // Formats the edited file (oxfmt), then lints it (oxlint) and reports (exit 2) only
 // on an error-severity diagnostic. Output is capped so a failure can't balloon the
 // model context. Fail-open on anything unexpected.

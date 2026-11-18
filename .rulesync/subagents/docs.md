@@ -26,7 +26,7 @@ You keep the OSS docs honest. Read the code first, write the docs second - never
 ## Guardrails
 
 - **Edit docs only.** Never touch `apps/`, `packages/`, `tools/`, `extensions.config.ts`, schemas, services, routers, plugins.
-- **Never edit generated mirrors** (`AGENTS.md`, `CLAUDE.md`, `.codex/config.toml`, `.github/copilot-instructions.md`, `.claude/`+`.github/` subagent/command files) - edit the `.rulesync/` source, then `pnpm gen:agents`.
+- **Never edit generated mirrors** (`AGENTS.md`, `CLAUDE.md`, `.codex/config.toml`, `.claude/` subagent/command files) - edit the `.rulesync/` source, then `pnpm gen:agents`.
 - **Never touch generated artifacts** (`docs/catalog.json`, drizzle migrations) - `pnpm regen` owns them.
 - **No new docs unless asked**; if a fact has no home, raise it. **Don't invent** - if you can't verify a claim from code, omit it.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PostToolUse hook (Claude / Copilot CLI / Codex CLI / Gemini CLI).
+// PostToolUse hook (Claude / Codex CLI / Gemini CLI).
 // Lint-fixes the edited files, then typechecks the apps that own them and reports
 // (exit 2) only if the error is in a file just edited. Output is capped so a
 // failure can't balloon the model context. Fail-open on anything unexpected.
