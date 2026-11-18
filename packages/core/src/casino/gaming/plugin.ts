@@ -1,5 +1,16 @@
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
+import {
+  EVENT_BUS,
+  DRIZZLE,
+  ADMIN_GUARD,
+  createLogger,
+  retryUntilDone,
+} from '@openora/core/server';
+import type {
+  CoreTokenCatalog,
+  DrizzleService,
+  Plugin,
+  TypedContainer,
+} from '@openora/core/server';
 import {
   ADMIN_GAME_REPORTING,
   GAME_ADAPTER,
@@ -17,6 +28,7 @@ import {
   WALLET_COMMANDS,
   createGameSortCatalog,
   createGameCategoryRuleCatalog,
+  domainEventSchemas,
   CACHE,
   type CacheAdapter,
 } from '@openora/core/contracts';
@@ -36,6 +48,7 @@ import { GameProviderService } from './service/game-provider.service.js';
 import { GameBulkService } from './service/game-bulk.service.js';
 import { GameFavoriteService } from './service/game-favorite.service.js';
 import { topGames } from './service/top-games.service.js';
+import { applyLedgerGames, reconcileLedgerGames } from './service/ledger-game.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
@@ -48,17 +61,21 @@ import {
   GameCategoryMembershipSweepJobSchema,
   GAME_CATEGORY_RANK_QUEUE,
   GAME_CATEGORY_RANK_SWEEP_QUEUE,
+  LEDGER_GAME_RECONCILE_QUEUE,
+  LEDGER_GAME_RECONCILE_INTERVAL_MS,
+  LedgerGameReconcileJobSchema,
   GameCategoryRankJobSchema,
   GameCategoryRankSweepJobSchema,
   topGamesTool,
 } from './contract/index.js';
+
+const logger = createLogger('gaming');
 
 export default {
   id: 'gaming',
   requiresPorts: [PLAY_ELIGIBILITY, IDENTITY_READER],
   dependsOn: ['wallet'],
   controlPorts: [
-    { port: RG_LIMITS, without: 'a round starts over a wager limit', boundBy: 'compliance' },
     {
       port: GAME_GEO_CHECK,
       without: 'a game starts in a country it is restricted in',
@@ -91,7 +108,7 @@ export default {
         c.get(PLAY_ELIGIBILITY),
         c.get(WALLET_COMMANDS),
         c.get(IDENTITY_READER),
-        c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
+        c.get(RG_LIMITS),
         c.has(GAME_GEO_CHECK) ? c.get(GAME_GEO_CHECK) : undefined,
         c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).gaming.allowedThumbnailHosts : [],
       ));
@@ -140,6 +157,7 @@ export default {
     let rankingRef: GameSortRankingService | null = null;
     let triggersRef: GameSortTriggerService | null = null;
     let catalogCacheRef: CacheAdapter | undefined;
+    let drizzleRef: DrizzleService | undefined;
     const requireTriggers = () => {
       if (!triggersRef) {
         throw new Error('gaming: sort trigger service not constructed yet');
@@ -176,6 +194,14 @@ export default {
       requireTriggers().gamesChanged(payload);
       requireMembership().triggers.gamesChanged(payload);
     });
+    // The round ledger's projection: idempotent and order-proof by version, see ledger-game.service.ts.
+    ctx.events.on('gaming.ledger_game.projected', async (payload) => {
+      if (!drizzleRef) {
+        throw new Error('gaming: ledger projection not constructed yet');
+      }
+      const { games } = domainEventSchemas['gaming.ledger_game.projected'].parse(payload);
+      await applyLedgerGames(drizzleRef.db, games);
+    });
     ctx.events.on('gaming.tag.deleted', (payload) =>
       requireMembership().triggers.tagDeleted(payload),
     );
@@ -189,6 +215,20 @@ export default {
         }
         await rankingRef.rank(payload.categoryId);
         await invalidateCatalog(catalogCacheRef);
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: LEDGER_GAME_RECONCILE_QUEUE,
+      schema: LedgerGameReconcileJobSchema,
+      handler: async () => {
+        if (!drizzleRef) {
+          throw new Error('gaming: ledger projection not constructed yet');
+        }
+        const projected = await reconcileLedgerGames(drizzleRef.db);
+        if (projected > 0) {
+          logger.warn({ projected }, 'gaming: ledger_game reconcile projected unreported games');
+        }
       },
     });
 
@@ -215,8 +255,35 @@ export default {
       },
     });
 
+    // createApp runs this factory in every process, a `:no-routes` or worker-only one included
+    // (module-registry.ts), synchronously before any event is delivered.
     ctx.routers.add('gaming', (c) => {
+      drizzleRef = c.get(DRIZZLE);
+      // Fails closed until it lands: a stake on a game not yet projected is refused, never played.
+      const bootBackfill = new AbortController();
+      c.onDispose(() => bootBackfill.abort());
+      const db = drizzleRef.db;
+      void retryUntilDone(() => reconcileLedgerGames(db), {
+        signal: bootBackfill.signal,
+        onFailure: (err, retryInMs) =>
+          logger.error({ err, retryInMs }, 'gaming: ledger_game boot backfill failed, retrying'),
+      }).then((projected) => {
+        if (projected !== undefined) {
+          logger.info({ projected }, 'gaming: ledger_game backfilled at boot');
+        }
+      });
       const jobQueue = c.get(JOB_QUEUE);
+      // The boot run alone misses a game an old process imports after it during a rolling deploy.
+      void jobQueue
+        .schedule(
+          LEDGER_GAME_RECONCILE_QUEUE,
+          'gaming-ledger-game-reconcile',
+          {},
+          { everyMs: LEDGER_GAME_RECONCILE_INTERVAL_MS },
+        )
+        .catch((err: unknown) => {
+          logger.error({ err }, 'gaming: ledger_game reconcile schedule failed');
+        });
       catalogCacheRef = c.get(CACHE);
       const sortCatalog = c.get(GAME_SORT_CATALOG);
       const sorts = new GameSortService(sortCatalog);
@@ -255,7 +322,10 @@ export default {
       setGameAvailability: (args) => gamingService(c).setGameAvailability(args),
       setGameAvailabilityInTransaction: (tx, args) =>
         gamingService(c).setGameAvailabilityInTransaction(tx, args),
-      notifyGamesCreated: (args) => membershipServices(c).triggers.notifyGamesCreated(args.gameIds),
+      notifyGamesCreated: async (args) => {
+        await gamingService(c).projectLedgerGames(args.gameIds);
+        await membershipServices(c).triggers.notifyGamesCreated(args.gameIds);
+      },
       notifyGamesChanged: (args) => gamingService(c).notifyGamesChanged(args),
     }));
   },

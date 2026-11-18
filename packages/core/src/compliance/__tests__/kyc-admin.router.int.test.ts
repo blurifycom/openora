@@ -9,6 +9,7 @@ import {
   type KycAdapter,
   type KycStatusWriter,
   type KycWebhookVerifier,
+  type WalletReader,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
@@ -73,6 +74,7 @@ function build(guard: AdminGuard, requireApprovalForDirectKycOverride = false) {
     kycAdapter: mock<KycAdapter>({}),
     statusWriter,
     identityReader: makeIdentityReader(),
+    walletReader: mock<WalletReader>({}),
   });
   const audit = makeAuditWriter();
   const router = createComplianceRouter({

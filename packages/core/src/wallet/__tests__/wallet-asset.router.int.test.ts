@@ -18,6 +18,7 @@ import {
   makeIdentityReader,
   makeJobQueue,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -86,6 +87,7 @@ function routerWith(
     providerNames ? { names: providerNames } : {},
   );
   const service = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>(payment ?? {}),

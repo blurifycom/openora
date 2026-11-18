@@ -25,6 +25,7 @@ import {
   type WalletCommands,
   type WalletCorrectionDebitArgs,
   type WalletCorrectionDebitType,
+  type WalletReader,
 } from '@openora/core/contracts';
 import {
   SPORTSBOOK_HOLD_SOURCE,
@@ -40,6 +41,7 @@ import {
   sportsbookDebtAction,
   sportsbookDebtShortfall,
   sportsbookPlayerDebt,
+  type SportsbookBetRow,
   type SportsbookDebtShortfallRow,
   type SportsbookPlayerDebtRow,
 } from '../schema/index.js';
@@ -82,6 +84,8 @@ export type DebtChange = {
   holdActive: boolean;
   actor: AdminCaller | null;
   reason?: string;
+  /** A void's cancel: the shortfall it ended and what of it the void refunded. */
+  voided?: { shortfallId: string; refunded: string };
 };
 
 export type DebtMove = { transactionId: Uuid; amount: string; type: WalletCorrectionDebitType };
@@ -156,6 +160,7 @@ export type SportsbookDebtDeps = {
   audit: AuditWritePort;
   identity: IdentityReader;
   wallet: WalletCommands;
+  walletReader: WalletReader;
 };
 
 /** Every method runs under the player lock; the caller writes the change's audit row last. */
@@ -165,6 +170,7 @@ export class SportsbookDebtService {
   private readonly audit: AuditWritePort;
   private readonly identity: IdentityReader;
   private readonly wallet: WalletCommands;
+  private readonly walletReader: WalletReader;
 
   constructor(deps: SportsbookDebtDeps) {
     this.drizzle = deps.drizzle;
@@ -172,6 +178,7 @@ export class SportsbookDebtService {
     this.audit = deps.audit;
     this.identity = deps.identity;
     this.wallet = deps.wallet;
+    this.walletReader = deps.walletReader;
   }
 
   /** The open debt a payout in this currency offsets, locked for the rest of the transaction. */
@@ -245,6 +252,95 @@ export class SportsbookDebtService {
       amount: shortfall,
       holdActive: true,
       actor: null,
+    };
+  }
+
+  /**
+   * A void undid the reopen that left part of this bet's stake as debt (its latest `bet`
+   * shortfall: only a reopen of a void records one), so the system cancels what is left of it:
+   * never owed after all. Answers what offsets and collections already took of that shortfall, for
+   * the void to return with the rest; a write-off of it stays written off. Undefined when the bet
+   * has no such shortfall.
+   */
+  async cancelForVoid(
+    tx: DrizzleTx,
+    bet: Pick<SportsbookBetRow, 'id' | 'userId' | 'currency' | 'provider' | 'providerBetId'>,
+  ): Promise<{ change: DebtChange | undefined; collected: string } | undefined> {
+    const [before] = await tx
+      .select()
+      .from(sportsbookPlayerDebt)
+      .where(
+        and(
+          eq(sportsbookPlayerDebt.userId, bet.userId),
+          eq(sportsbookPlayerDebt.currency, bet.currency),
+        ),
+      )
+      .for('update');
+    const [shortfall] = await tx
+      .select()
+      .from(sportsbookDebtShortfall)
+      .where(
+        and(eq(sportsbookDebtShortfall.betId, bet.id), eq(sportsbookDebtShortfall.type, 'bet')),
+      )
+      .orderBy(desc(sportsbookDebtShortfall.seq))
+      .limit(1);
+    if (!before || shortfall?.debtId !== before.id) {
+      return undefined;
+    }
+    // In this transaction, under the debt row lock: a collection committed or made in it counts.
+    const collected = await this.walletReader.sumProviderTransactions(
+      {
+        providerName: `${SPORTSBOOK_WALLET_PROVIDER_PREFIX}${bet.provider}`,
+        externalRoundId: bet.providerBetId,
+        type: shortfall.type,
+        providerRefSuffix: shortfall.id,
+      },
+      tx,
+    );
+    const remaining = isPositiveMoney(before.outstanding)
+      ? ((await this.outstandingShortfalls(tx, before)).find((s) => s.id === shortfall.id)
+          ?.remaining ?? '0')
+      : '0';
+    if (!isPositiveMoney(remaining) && !isPositiveMoney(collected)) {
+      return { change: undefined, collected };
+    }
+    let debt = before;
+    if (isPositiveMoney(remaining)) {
+      // Cutting the shortfall to what was consumed of it keeps the oldest-first walk over the rest.
+      if (moneyEquals(remaining, shortfall.amount)) {
+        await tx
+          .delete(sportsbookDebtShortfall)
+          .where(eq(sportsbookDebtShortfall.id, shortfall.id));
+      } else {
+        await tx
+          .update(sportsbookDebtShortfall)
+          .set({ amount: moneySubtract(shortfall.amount, remaining) })
+          .where(eq(sportsbookDebtShortfall.id, shortfall.id));
+      }
+      const rows = await tx
+        .update(sportsbookPlayerDebt)
+        .set({
+          owed: sql`${sportsbookPlayerDebt.owed} - ${remaining}`,
+          outstanding: sql`${sportsbookPlayerDebt.outstanding} - ${remaining}`,
+          status: sql`case when ${sportsbookPlayerDebt.outstanding} - ${remaining} = 0 then 'cleared' else 'open' end::sportsbook_debt_status`,
+        })
+        .where(eq(sportsbookPlayerDebt.id, before.id))
+        .returning();
+      debt = findOneOrThrow(rows, new SportsbookDebtNotFoundError(before.id));
+    }
+    return {
+      change: {
+        before,
+        debt,
+        cause: 'voided',
+        amount: remaining,
+        holdActive: await this.releaseHoldIfClear(tx, debt.userId),
+        actor: null,
+        reason: `cancelled by a void of sportsbook bet ${bet.id}`,
+        // The debt keeps the refunded offsets in `collected`; the audit row records them.
+        voided: { shortfallId: shortfall.id, refunded: collected },
+      },
+      collected,
     };
   }
 
@@ -607,7 +703,7 @@ export class SportsbookDebtService {
   /** Inside the change's transaction. */
   async writeAudit(
     tx: DrizzleTx,
-    { before, debt, cause, amount, actor, reason }: DebtChange,
+    { before, debt, cause, amount, actor, reason, voided }: DebtChange,
   ): Promise<void> {
     await this.audit.recordInTransaction(tx, {
       actorId: actor?.userId ?? null,
@@ -616,7 +712,7 @@ export class SportsbookDebtService {
       resourceType: 'sportsbook_player_debt',
       resourceId: debt.id,
       before: snapshot(before),
-      after: { ...snapshot(debt), cause, amount, ...(reason ? { reason } : {}) },
+      after: { ...snapshot(debt), cause, amount, ...(reason ? { reason } : {}), ...voided },
       ip: actor?.ip,
       userAgent: actor?.userAgent,
     });

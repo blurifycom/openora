@@ -6,6 +6,7 @@ import {
   GEO_CHECK_COMMANDS,
   IDENTITY_READER,
   JOB_QUEUE,
+  LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY,
   SPORTSBOOK_LEDGER,
   SPORTSBOOK_PROVIDER,
@@ -55,7 +56,13 @@ type SportsbookServices = {
 
 export default {
   id: 'betting',
-  requiresPorts: [PLAY_ELIGIBILITY, IDENTITY_READER, WALLET_COMMANDS, WALLET_READER],
+  requiresPorts: [
+    PLAY_ELIGIBILITY,
+    LEDGER_PLAY_ELIGIBILITY,
+    IDENTITY_READER,
+    WALLET_COMMANDS,
+    WALLET_READER,
+  ],
   dependsOn: ['wallet', 'audit', 'identity'],
   register(ctx) {
     // SPORTSBOOK_PROVIDER is bound by the operator's overlay; core ships none.
@@ -75,7 +82,14 @@ export default {
         }
         const wallet = c.get(WALLET_COMMANDS);
         const config = new SportsbookConfigService(drizzle, audit);
-        const debts = new SportsbookDebtService({ drizzle, events, audit, identity, wallet });
+        const debts = new SportsbookDebtService({
+          drizzle,
+          events,
+          audit,
+          identity,
+          wallet,
+          walletReader,
+        });
         const sessions = new SportsbookSessionService({
           drizzle,
           audit,
@@ -92,7 +106,8 @@ export default {
           config,
           sessions,
           debts,
-          playEligibility,
+          // A stake: the ledger's own projection, like every wallet debit.
+          playEligibility: c.get(LEDGER_PLAY_ELIGIBILITY),
           identity,
           wallet,
           walletReader,

@@ -16,6 +16,7 @@ import type {
   ChatBlockWriter,
   SessionCommands,
   UserCommands,
+  WalletReader,
 } from '@openora/core/contracts';
 import {
   mock,
@@ -72,7 +73,9 @@ function build(
         await db.drizzle.db.update(user).set({ username }).where(eq(user.id, userId));
         return { success: true };
       }),
+      publishPlayEligibility: vi.fn(async () => undefined),
     }),
+    mock<WalletReader>({}),
   );
   const audit = makeAuditWriter();
   const events = makeEventBus();

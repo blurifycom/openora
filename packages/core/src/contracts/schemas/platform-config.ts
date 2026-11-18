@@ -160,6 +160,7 @@ export const WalletConfigSchema = z
       .object({
         cron: z.string().default('0 * * * *'),
         lookbackHours: z.number().int().positive().default(24),
+        /** Rows a page. The ledger invariant run caps its own pages at 1000, under the bind limit. */
         batchSize: z.number().int().positive().default(200),
         stuckAfterMinutes: z.number().int().positive().default(60),
         /**
@@ -173,6 +174,21 @@ export const WalletConfigSchema = z
         /** Run-claim takeover threshold, as in `sweep.staleRunAfterMinutes`. */
         staleRunAfterMinutes: z.number().int().positive().default(30),
         alertThreshold: z.number().int().positive().default(10),
+        /**
+         * When the ledger invariant scan runs. It reads every wallet's whole ledger since its
+         * baseline, so it gets its own, rarer schedule than the hourly vendor diff. Absent: daily
+         * at 03:30.
+         */
+        ledgerInvariantCron: z.string().optional(),
+        /**
+         * Run-claim takeover threshold for the ledger invariant scan, which reads every wallet's
+         * whole history and outlives the vendor diff's. Absent: 240.
+         */
+        ledgerInvariantStaleRunAfterMinutes: z.number().int().positive().optional(),
+        /** The oldest event the outbox has not relayed, in minutes, past which a cycle files a finding. */
+        outboxLagAlertMinutes: z.number().int().positive().default(5),
+        /** Dead-lettered events across every broker topic past which a cycle files a finding. */
+        deadLetterAlertThreshold: z.number().int().nonnegative().default(0),
       })
       .strict()
       .optional(),

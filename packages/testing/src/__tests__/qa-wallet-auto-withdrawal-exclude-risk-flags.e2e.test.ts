@@ -20,6 +20,7 @@ import {
   closeE2e,
   flushAudit,
   readJson,
+  screenedWithdrawalStatus,
   verifyKyc,
   assignTag,
 } from '../index.js';
@@ -146,7 +147,7 @@ describe('upgraded install: the migration DEFAULT tags gate before any admin eve
         currency: 'USD',
       }),
     );
-    expect(taggedRes.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appMain, taggedRes.transactionId)).toBe('pending');
 
     const cleanEmail = `preexisting-clean-${randomUUID()}@e2e.test`;
     const clean = await registerAndMaterializePlayer(appMain, { email: cleanEmail });
@@ -163,7 +164,7 @@ describe('upgraded install: the migration DEFAULT tags gate before any admin eve
         currency: 'USD',
       }),
     );
-    expect(cleanRes.status).toBe('completed');
+    expect(await screenedWithdrawalStatus(appMain, cleanRes.transactionId)).toBe('completed');
   });
 });
 
@@ -201,7 +202,7 @@ describe('immediate effect: PUT excludeRiskFlags, GET reflects it right away, no
         currency: 'USD',
       }),
     );
-    expect(res.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appMain, res.transactionId)).toBe('pending');
   });
 });
 
@@ -234,7 +235,7 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
         currency: 'USD',
       }),
     );
-    expect(res.status).toBe('completed');
+    expect(await screenedWithdrawalStatus(appMain, res.transactionId)).toBe('completed');
   });
 
   it("an admin's excludeRiskFlags submission is authoritative - a tag omitted from the submitted list is no longer excluded, even one that used to be part of the migration DEFAULT", async () => {
@@ -266,7 +267,7 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
         currency: 'USD',
       }),
     );
-    expect(res.status).toBe('completed');
+    expect(await screenedWithdrawalStatus(appMain, res.transactionId)).toBe('completed');
   });
 });
 
@@ -296,7 +297,7 @@ describe('effective set = the DB value verbatim: excluded regardless of amount w
         currency: 'USD',
       }),
     );
-    expect(res.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appMain, res.transactionId)).toBe('pending');
   });
 });
 
@@ -323,7 +324,7 @@ describe('regression (no weakening): a player with no excluded tag, under thresh
         currency: 'USD',
       }),
     );
-    expect(res.status).toBe('completed');
+    expect(await screenedWithdrawalStatus(appMain, res.transactionId)).toBe('completed');
   });
 });
 
@@ -358,7 +359,7 @@ describe('per-player override does not bypass the tag-exclusion gate', () => {
         currency: 'USD',
       }),
     );
-    expect(res.status).toBe('pending');
+    expect(await screenedWithdrawalStatus(appMain, res.transactionId)).toBe('pending');
   });
 });
 
@@ -407,7 +408,7 @@ describe('audit trail', () => {
         currency: 'USD',
       }),
     );
-    expect(res.status).toBe('completed');
+    expect(await screenedWithdrawalStatus(appMain, res.transactionId)).toBe('completed');
 
     await flushAudit(appMain);
     const auditRes = await superAdmin.get(

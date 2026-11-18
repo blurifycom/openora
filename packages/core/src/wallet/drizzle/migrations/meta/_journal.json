@@ -295,6 +295,62 @@
       "when": 1794217881101,
       "tag": "0041_violet_gladiator",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1794527937172,
+      "tag": "0042_previous_madripoor",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1794531943669,
+      "tag": "0043_medical_sunset_bain",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1794569998636,
+      "tag": "0044_odd_alex_power",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794579765711,
+      "tag": "0045_shallow_frank_castle",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794597584820,
+      "tag": "0046_lethal_ogun",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794597610187,
+      "tag": "0047_seed_ledger_user_limit",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1794606712289,
+      "tag": "0048_ordinary_shatterstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1794627755493,
+      "tag": "0049_romantic_doctor_faustus",
+      "breakpoints": true
     }
   ]
 }

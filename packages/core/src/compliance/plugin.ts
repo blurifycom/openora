@@ -1,4 +1,10 @@
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
+import {
+  EVENT_BUS,
+  DRIZZLE,
+  ADMIN_GUARD,
+  createLogger,
+  retryUntilDone,
+} from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import * as z from 'zod';
 import {
@@ -28,7 +34,9 @@ import {
   RATE_LIMITER,
   REALTIME_TRANSPORT,
   RG_EXCLUSION_READER,
-  RG_LIMITS,
+  RG_LIMIT_LEDGER,
+  RG_LIMITS_SOURCE,
+  WALLET_READER,
   RG_STANDING_READER,
   UuidSchema,
   defaultResponsibleGamingConfig,
@@ -57,6 +65,12 @@ import {
   PlayerNotFoundError,
 } from './service/kyc.service.js';
 import { RgService } from './service/rg.service.js';
+import {
+  backfillRgLimits,
+  readSnapshots,
+  RgLimitsPublisher,
+  rgLimitsPage,
+} from './service/rg-limits-publisher.service.js';
 import { RgSelfServiceService } from './service/rg-self-service.service.js';
 import {
   RgMonitoringService,
@@ -66,7 +80,6 @@ import {
 } from './service/rg-monitoring.service.js';
 import { createComplianceRouter, kycStatusChannel } from './router/index.js';
 import { HmacKycWebhookVerifier } from './adapters/hmac-kyc-webhook-verifier.js';
-import { RgLimitGate } from './adapters/rg-limit-gate.js';
 import { KycWithdrawalGate } from './adapters/kyc-withdrawal-gate.js';
 import { RgStandingReaderService } from './adapters/rg-standing-reader.service.js';
 
@@ -82,6 +95,30 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
     c.get(CACHE),
     c.has(MIRROR_TARGET_POLICY) ? c.get(MIRROR_TARGET_POLICY) : null,
   );
+
+// The migration that ships the gate seeds the projection, so no limit is unprojected at deploy.
+// This heals what a replica from before ADR-0057 wrote during the rolling deploy without publishing.
+function backfillRgLimitsAtBoot(c: TypedContainer<CoreTokenCatalog>) {
+  const ledger = c.get(RG_LIMIT_LEDGER);
+  const db = c.get(DRIZZLE).db;
+  const abort = new AbortController();
+  c.onDispose(() => abort.abort());
+  const events = c.get(EVENT_BUS);
+  void retryUntilDone(() => backfillRgLimits(db, ledger, { signal: abort.signal, events }), {
+    signal: abort.signal,
+    onFailure: (err, retryInMs) =>
+      logger.error({ err, retryInMs }, 'compliance: rg limits boot backfill failed, retrying'),
+  }).then((written) => {
+    if (written) {
+      logger.info({ written }, 'compliance: rg limits backfilled into the ledger at boot');
+    }
+  });
+}
+
+// Each rg-monitor tick re-projects the limits changed within this window: a limit an unpublishing
+// writer (a replica from before ADR-0057, a direct SQL fix) changed reaches the ledger within a tick
+// instead of at the next boot. Several ticks wide, so one missed tick loses nothing.
+const RECENT_LIMIT_CHANGE_MS = 10 * 60_000;
 
 const RG_EVAL_QUEUE = queue('rg-eval');
 const RG_MONITOR_QUEUE = queue('rg-monitor');
@@ -124,15 +161,15 @@ function enhancedKycRefusalCode(err: unknown) {
 export default {
   id: 'compliance',
   dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit', 'exchange-rate'],
-  requiresPorts: [LOGIN_ENFORCEMENT],
+  requiresPorts: [LOGIN_ENFORCEMENT, RG_LIMIT_LEDGER, WALLET_READER],
   register(ctx) {
     ctx.provide(GEO_CHECK_COMMANDS, makeComplianceService);
     ctx.provide(GAME_GEO_CHECK, makeComplianceService);
     ctx.provide(GAME_GEO_RULE_COMMANDS, makeComplianceService);
-    ctx.provide(RG_LIMITS, (c) => new RgLimitGate(monitoring(c), c.get(EXCHANGE_RATE_READER)));
     ctx.provide(
       KYC_WITHDRAWAL_POLICY,
-      (c) => new KycWithdrawalGate(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER)),
+      (c) =>
+        new KycWithdrawalGate(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), c.get(WALLET_READER)),
     );
     ctx.provide(
       RG_STANDING_READER,
@@ -141,6 +178,7 @@ export default {
           drizzle: c.get(DRIZZLE),
           eligibility: c.get(PLAY_ELIGIBILITY),
           rates: c.get(EXCHANGE_RATE_READER),
+          walletReader: c.get(WALLET_READER),
           pivotCurrency: resolveExchangeRatePivot(
             c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).exchangeRate : undefined,
           ),
@@ -164,11 +202,12 @@ export default {
     let rgRef: RgService | null = null;
     let selfServiceRef: RgSelfServiceService | null = null;
     let monitorRef: RgMonitoringService | null = null;
+    let healRecentLimitsRef: (() => Promise<number>) | null = null;
     const monitoring = (c: TypedContainer<CoreTokenCatalog>) =>
       (monitorRef ??= new RgMonitoringService({
         drizzle: c.get(DRIZZLE),
         directory: c.has(ADMIN_USER_DIRECTORY) ? c.get(ADMIN_USER_DIRECTORY) : null,
-        rates: c.get(EXCHANGE_RATE_READER),
+        ledger: c.get(RG_LIMIT_LEDGER),
       }));
     // Backs the router and RG_EXCLUSION_READER; either may build it first.
     const rgService = (c: TypedContainer<CoreTokenCatalog>) =>
@@ -180,7 +219,27 @@ export default {
         mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null,
         audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
         rates: c.get(EXCHANGE_RATE_READER),
+        limitsLedger: c.get(RG_LIMIT_LEDGER),
       }));
+    // What the wallet's reconciliation compares its limits projection against.
+    ctx.provideSealed(RG_LIMITS_SOURCE, (c) => ({
+      page: (after, limit) => rgLimitsPage(c.get(DRIZZLE).db, after, limit),
+      snapshots: (userIds) => readSnapshots(c.get(DRIZZLE).db, userIds),
+      repair: async (userIds) => {
+        const db = c.get(DRIZZLE).db;
+        const publisher = new RgLimitsPublisher(c.get(RG_LIMIT_LEDGER), c.get(EVENT_BUS));
+        const failed: string[] = [];
+        for (const userId of userIds) {
+          try {
+            await db.transaction((tx) => publisher.publish(tx, userId));
+          } catch (err) {
+            logger.error({ err, userId }, 'compliance: re-publishing limits failed');
+            failed.push(userId);
+          }
+        }
+        return failed;
+      },
+    }));
     ctx.provide(RG_EXCLUSION_READER, (c) => ({
       getExclusionState: async (userId, tx) => {
         const { selfExclusion, coolingOff } = await rgService(c).getActiveExclusions(userId, tx);
@@ -199,6 +258,7 @@ export default {
         identityReader: c.get(IDENTITY_READER),
         platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
         exchangeRateReader: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+        walletReader: c.get(WALLET_READER),
       }));
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeTransport: RealtimeTransport | null = null;
@@ -386,6 +446,15 @@ export default {
       queue: RG_MONITOR_QUEUE,
       schema: RgMonitorJobSchema,
       handler: async () => {
+        // First and on its own: a failing step below must not starve the projection heal, and a
+        // failing heal must not skip the expiries.
+        if (healRecentLimitsRef) {
+          try {
+            await healRecentLimitsRef();
+          } catch (err) {
+            logger.error({ err }, 'compliance: rg limits heal failed');
+          }
+        }
         if (rgRef) {
           await rgRef.expireLapsedCoolingOffs();
         }
@@ -445,6 +514,12 @@ export default {
         }
         logger.warn(msg);
       }
+      backfillRgLimitsAtBoot(c);
+      healRecentLimitsRef = () =>
+        backfillRgLimits(c.get(DRIZZLE).db, c.get(RG_LIMIT_LEDGER), {
+          changedSince: new Date(Date.now() - RECENT_LIMIT_CHANGE_MS),
+          events: c.get(EVENT_BUS),
+        });
       const kyc = kycVerification(c);
       const compliance = makeComplianceService(c);
       complianceRef = compliance;

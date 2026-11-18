@@ -27,6 +27,7 @@ import {
   type PaginationOptions,
   type AuditWritePort,
   type DomainEventPayload,
+  type Uuid,
 } from '@openora/core/contracts';
 import { SYSTEM_ACTOR_ID, type PlayerTagSortBy, type PlayerTagWithTag } from '../contract/index.js';
 import { player } from '@openora/core/pam/schema/profile';
@@ -308,10 +309,8 @@ export class TagService implements PlayerTags {
     return rows.map(toTag);
   }
 
-  // Core idempotent assign, shared by assignPlayerTag (own transaction) and
-  // assignPlayerTagInTx (caller-supplied transaction). Does NOT emit - callers decide
-  // when, since assignPlayerTagInTx's caller owns a transaction this method has no
-  // visibility into committing.
+  // Core idempotent assign, shared by assignPlayerTag and screenWithdrawal. Does NOT emit -
+  // callers decide how, each on its own transaction.
   //
   // Returns a status instead of throwing for the "already active" case: throwing here
   // would roll back the merge UPDATE below along with the whole transaction when this
@@ -389,30 +388,40 @@ export class TagService implements PlayerTags {
   }
 
   /**
-   * Same idempotent assign as assignPlayerTag, but on a caller-supplied transaction handle
-   * (the TAG_EVALUATION_COMMANDS command-port idiom, ADR-0017) so the write commits
-   * atomically with the caller's own writes - eg wallet's withdraw() inserting the
-   * withdrawal request row. Emits tag.player.assigned right after the write (mirrors
-   * PlayerKycStatusWriter.setStatus): this method has no visibility into when the
-   * caller's own transaction actually commits, so - like every other caller-supplied-tx
-   * command port in this repo - it cannot defer the emit past that point.
+   * Records that a requested withdrawal was screened: the withdrawal_review tag when `review` asks
+   * for it, then the `tag.withdrawal.screened` verdict, in one transaction. The wallet
+   * auto-approves only on that verdict, so it can never read the player's tags before a review
+   * tag due for this withdrawal has committed. The verdict says whether this withdrawal needed a
+   * review, so a tag cleared before the wallet reads it cannot let it through. True when the
+   * review tag was newly assigned.
    */
-  public async assignPlayerTagInTx(trx: DrizzleTx, args: AssignPlayerTagArgs) {
-    try {
-      const outcome = await this._assignPlayerTagOnTx(trx, args);
-      if (outcome.status === 'already_active') {
-        throw new TagAlreadyInUseError();
+  public async screenWithdrawal({
+    userId,
+    transactionId,
+    review,
+  }: {
+    userId: User['id'];
+    transactionId: Uuid;
+    review: AssignPlayerTagArgs | null;
+  }): Promise<boolean> {
+    return this.drizzle.db.transaction(async (trx) => {
+      const assigned = review ? await this._assignPlayerTagOnTx(trx, review) : null;
+      if (review && assigned?.status === 'created') {
+        const event = await this._recordTagChange(trx, 'tag.player.assigned', {
+          playerId: review.playerId,
+          tagKey: review.tagKey,
+          reason: review.assignReason,
+          actorId: review.assignActorUserId ?? SYSTEM_ACTOR_ID,
+        });
+        await this.event.emitInTransaction(trx, 'tag.player.assigned', event);
       }
-      void this.event.emit('tag.player.assigned', {
-        playerId: args.playerId,
-        tagKey: args.tagKey,
-        reason: args.assignReason,
-        actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
+      await this.event.emitInTransaction(trx, 'tag.withdrawal.screened', {
+        userId,
+        transactionId,
+        reviewRequired: review !== null,
       });
-      return outcome.row;
-    } catch (e) {
-      mapDbError(e);
-    }
+      return assigned?.status === 'created';
+    });
   }
 
   private _findActiveAssignment(trx: DrizzleTx, tagId: Tag['id'], playerId: Player['id']) {
@@ -530,7 +539,7 @@ export class TagService implements PlayerTags {
         }
         const assigned = await this._assignPlayerTagOnTx(trx, assignArgs);
         if (assigned.status === 'already_active') {
-          // Unlike assignPlayerTag/assignPlayerTagInTx (where a lost race is an
+          // Unlike assignPlayerTag/screenWithdrawal (where a lost race is an
           // idempotent no-op that must still let a metadata merge commit), a lost
           // race HERE must roll back the whole swap, including the removal above -
           // see the class doc: nothing may commit half-way. Throwing inside this

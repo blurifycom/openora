@@ -36,6 +36,7 @@ import {
   makeRealtimeTransport,
   NO_CLIENT_META,
   testContext,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import type { OnRampCheckoutInputSchema } from '../contract/index.js';
 import { createWalletRouter, type OnRampWebhookPort } from '../router/index.js';
@@ -142,6 +143,7 @@ function makeService({
 } = {}) {
   const issueDepositAddress = vi.fn(async (userId: string) => ({ address: `T-${userId}` }));
   const wallet = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({ issueDepositAddress }),

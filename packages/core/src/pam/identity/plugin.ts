@@ -9,6 +9,8 @@ import {
   KYC_ADAPTER,
   LOGIN_ENFORCEMENT,
   PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY_PROJECTION,
+  PLAY_ELIGIBILITY_SOURCE,
   MAIL_DISPATCH,
   MAIL_RECIPIENT_DIRECTORY,
   MCP_TOKEN_REVOCATION,
@@ -36,6 +38,7 @@ import {
   AUTH_SESSION,
   LOCAL_SESSION_RESOLVER,
   createLogger,
+  retryUntilDone,
 } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import { DrizzleUserCommands } from './service/user-commands.service.js';
@@ -73,7 +76,13 @@ import { SessionIdleService } from './service/session-idle.service.js';
 import { TwoFactorLockoutService } from './service/two-factor-lockout.service.js';
 import { FreshReauthenticationService } from './service/fresh-reauthentication.service.js';
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
-import { PlayEligibilityService } from './service/play-eligibility.service.js';
+import {
+  backfillPlayEligibility,
+  playEligibilityOf,
+  playEligibilityPage,
+  PlayEligibilityPublisher,
+  PlayEligibilityService,
+} from './service/play-eligibility.service.js';
 import { TwoFactorSetupPolicyService } from './service/two-factor-setup-policy.service.js';
 
 type IdentityContainer = TypedContainer<CoreTokenCatalog>;
@@ -113,6 +122,33 @@ function makeSessionService(c: IdentityContainer) {
     events: c.get(EVENT_BUS),
     identityReader: c.get(IDENTITY_READER),
     mcpTokens: mcpTokenRevocation(c),
+  });
+}
+
+function makePlayEligibilityPublisher(c: IdentityContainer) {
+  return new PlayEligibilityPublisher(c.get(DRIZZLE), c.get(EVENT_BUS), () =>
+    c.has(PLAY_ELIGIBILITY_PROJECTION) ? c.get(PLAY_ELIGIBILITY_PROJECTION) : undefined,
+  );
+}
+
+// Fails closed until it lands: a user the ledger lacks is refused a stake, never let in. Covers a
+// user an older replica registered during a rolling deploy, before it published.
+function backfillPlayEligibilityAtBoot(c: IdentityContainer) {
+  if (!c.has(PLAY_ELIGIBILITY_PROJECTION)) {
+    return;
+  }
+  const projection = c.get(PLAY_ELIGIBILITY_PROJECTION);
+  const db = c.get(DRIZZLE).db;
+  const abort = new AbortController();
+  c.onDispose(() => abort.abort());
+  void retryUntilDone(() => backfillPlayEligibility(db, projection, { signal: abort.signal }), {
+    signal: abort.signal,
+    onFailure: (err, retryInMs) =>
+      logger.error({ err, retryInMs }, 'identity: play eligibility boot backfill failed, retrying'),
+  }).then((written) => {
+    if (written) {
+      logger.info({ written }, 'identity: play eligibility backfilled into the ledger at boot');
+    }
   });
 }
 
@@ -179,6 +215,14 @@ export default {
       port: MCP_TOKEN_REVOCATION,
       without: "ending an admin's sessions leaves their MCP tokens valid",
       boundBy: 'iam',
+    },
+    {
+      // Fail closed: wallet refuses a user it has no row for, so a split that loads wallet but
+      // leaves this unbound would turn every write into an outbox-lag window. Without wallet in
+      // the plugin list nothing is staked, and the outbox event alone carries it.
+      port: PLAY_ELIGIBILITY_PROJECTION,
+      without: 'a restriction reaches the ledger only when its outbox event is delivered',
+      boundBy: 'wallet',
     },
   ],
   register(ctx) {
@@ -253,7 +297,13 @@ export default {
     // The back-office depends on this port, not on the identity schema directly.
     ctx.provide(
       ADMIN_USER_DIRECTORY,
-      (c) => new DrizzleAdminUserDirectory(c.get(DRIZZLE), c.get(EVENT_BUS), mcpTokenRevocation(c)),
+      (c) =>
+        new DrizzleAdminUserDirectory(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          makePlayEligibilityPublisher(c),
+          mcpTokenRevocation(c),
+        ),
     );
     ctx.provide(MAIL_RECIPIENT_DIRECTORY, (c) => new DrizzleMailRecipientDirectory(c.get(DRIZZLE)));
     // Read-only session queries for cross-module consumers (eg tag inactive evaluation).
@@ -281,7 +331,7 @@ export default {
     // RG login-block writer. compliance drives it through the port, never the schema.
     ctx.provide(
       LOGIN_ENFORCEMENT,
-      (c) => new LoginEnforcementService(c.get(DRIZZLE), makeSessionService(c)),
+      (c) => new LoginEnforcementService(makeSessionService(c), makePlayEligibilityPublisher(c)),
     );
     // Per-player "auto-logout when inactive". The request middleware resolves this on
     // every authenticated request; leaving it unbound turns the idle check off entirely.
@@ -295,6 +345,24 @@ export default {
         }),
     );
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
+    // What the wallet's reconciliation compares its play eligibility projection against.
+    ctx.provideSealed(PLAY_ELIGIBILITY_SOURCE, (c) => ({
+      page: (after, limit) => playEligibilityPage(c.get(DRIZZLE).db, after, limit),
+      snapshots: (userIds) => playEligibilityOf(c.get(DRIZZLE).db, userIds),
+      repair: async (userIds) => {
+        const publisher = makePlayEligibilityPublisher(c);
+        const failed: string[] = [];
+        for (const userId of userIds) {
+          try {
+            await publisher.sync(userId);
+          } catch (err) {
+            logger.error({ err, userId }, 'identity: re-publishing play eligibility failed');
+            failed.push(userId);
+          }
+        }
+        return failed;
+      },
+    }));
     // Lets iam demand the password and a fresh second factor before it issues an MCP token.
     ctx.provide(
       FRESH_REAUTHENTICATION,
@@ -313,7 +381,10 @@ export default {
     // admin request; leaving it unbound turns both checks off, which is why it is bound
     // here rather than behind a feature flag.
     ctx.provide(ADMIN_SECURITY_POLICY, (c) => resolveAdminSecurity(c));
-    ctx.provide(USER_COMMANDS, (c) => new DrizzleUserCommands(c.get(DRIZZLE)));
+    ctx.provide(
+      USER_COMMANDS,
+      (c) => new DrizzleUserCommands(c.get(DRIZZLE), makePlayEligibilityPublisher(c)),
+    );
     ctx.provide(SESSION_COMMANDS, (c) => {
       const sessionSvc = makeSessionService(c);
       return {
@@ -325,6 +396,7 @@ export default {
         assertAuthSurfaceGuards(c);
       }
       realtimeTransport = c.get(REALTIME_TRANSPORT);
+      backfillPlayEligibilityAtBoot(c);
       const sessions = makeSessionService(c);
       return createIdentityRouter(
         new IdentityService({
@@ -347,6 +419,7 @@ export default {
             sms: c.get(SMS_ADAPTER),
           }),
           sessions,
+          playEligibility: makePlayEligibilityPublisher(c),
         }),
         sessions,
         new PhoneLoginService({

@@ -17,6 +17,7 @@ import {
   makeIdentityReader,
   makeJobQueue,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
@@ -46,6 +47,7 @@ beforeEach(async () => {
 
 function realWalletService() {
   return new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),

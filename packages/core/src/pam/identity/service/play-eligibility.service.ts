@@ -1,6 +1,18 @@
-import { DrizzleService, type DrizzleDb } from '@openora/core/server';
-import { eq } from 'drizzle-orm';
-import type { PlayEligibilityPort, PlayerStatus, PlayRefusal, User } from '@openora/core/contracts';
+import {
+  DrizzleService,
+  type DrizzleDb,
+  type DrizzleTx,
+  type EventBus,
+} from '@openora/core/server';
+import { eq, gt, inArray, sql } from 'drizzle-orm';
+import {
+  playRefusalOf,
+  type PlayEligibilityPort,
+  type PlayEligibilityProjectionPort,
+  type PlayEligibilitySnapshot,
+  type PlayRefusal,
+  type User,
+} from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '../schema/index.js';
 import { isRgBlocked } from './rg-guard.service.js';
@@ -22,8 +34,16 @@ export class PlayEligibilityService implements PlayEligibilityPort {
     return isRgBlocked(row);
   }
 
+  // Locks the player row before the user row: a status writer holds the player row while it
+  // publishes, which takes the user row, so the other order could deadlock with it.
   async checkPlay(userId: User['id'], tx?: unknown): Promise<PlayRefusal | null> {
     const db = (tx as DrizzleDb | undefined) ?? this.drizzle.db;
+    const profileQuery = db
+      .select({ status: player.status })
+      .from(player)
+      .where(eq(player.userId, userId))
+      .limit(1);
+    const [profile] = tx ? await profileQuery.for('share') : await profileQuery;
     const accountQuery = db
       .select({
         rgBlocked: user.rgBlocked,
@@ -36,47 +56,147 @@ export class PlayEligibilityService implements PlayEligibilityPort {
       .where(eq(user.id, userId))
       .limit(1);
     const [account] = tx ? await accountQuery.for('share') : await accountQuery;
-    if (!account || isRgBlocked(account)) {
-      return playRefusalOf(account, undefined);
+    if (!account) {
+      return 'account_inactive';
     }
-    const profileQuery = db
-      .select({ status: player.status })
-      .from(player)
-      .where(eq(player.userId, userId))
-      .limit(1);
-    const [profile] = tx ? await profileQuery.for('share') : await profileQuery;
-    return playRefusalOf(account, profile?.status);
+    return playRefusalOf({
+      ...account,
+      banned: account.banned === true,
+      status: profile?.status ?? null,
+    });
   }
 }
 
-export type PlayStanding = {
+type ProjectedState = {
   rgBlocked: boolean;
   rgBlockedUntil: Date | null;
   isActive: boolean;
   banned: boolean | null;
   banExpires: Date | null;
+  status: PlayEligibilitySnapshot['status'];
+  version: number;
 };
 
-/** `checkPlay` over an account and its profile status already read; no account = inactive. */
-export function playRefusalOf(
-  account: PlayStanding | undefined,
-  status: PlayerStatus | undefined,
-): PlayRefusal | null {
-  if (!account) {
-    return 'account_inactive';
+function snapshotOf(userId: User['id'], state: ProjectedState): PlayEligibilitySnapshot {
+  return {
+    ...state,
+    userId,
+    banned: state.banned === true,
+    rgBlockedUntil: state.rgBlockedUntil?.toISOString() ?? null,
+    banExpires: state.banExpires?.toISOString() ?? null,
+  };
+}
+
+/**
+ * Writes a user's play eligibility to the ledger, the only place a stake is checked. Every
+ * writer of an input (the RG block, `isActive`, the player status) calls `publish` in its own
+ * transaction, after its change, so the ledger's row commits or rolls back with it.
+ */
+export class PlayEligibilityPublisher {
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly events: EventBus,
+    /** Resolved per call: wallet loads after identity, and a split may run identity alone. */
+    private readonly projection: () => PlayEligibilityProjectionPort | undefined,
+  ) {}
+
+  /**
+   * Bumps the user's version, which locks the row so publishes for one user run one at a time,
+   * then writes the ledger's row on `tx`. The outbox event carries the same snapshot to a
+   * process without the projection, and repairs one that lost it.
+   */
+  async publish(tx: DrizzleTx, userId: User['id']): Promise<void> {
+    const [account] = await tx
+      .update(user)
+      .set({ playEligibilityVersion: sql`${user.playEligibilityVersion} + 1` })
+      .where(eq(user.id, userId))
+      .returning({
+        rgBlocked: user.rgBlocked,
+        rgBlockedUntil: user.rgBlockedUntil,
+        isActive: user.isActive,
+        banned: user.banned,
+        banExpires: user.banExpires,
+        version: user.playEligibilityVersion,
+      });
+    if (!account) {
+      return;
+    }
+    const [profile] = await tx
+      .select({ status: player.status })
+      .from(player)
+      .where(eq(player.userId, userId))
+      .limit(1);
+    const snapshot = snapshotOf(userId, { ...account, status: profile?.status ?? null });
+    await this.projection()?.write(snapshot, tx);
+    await this.events.emitInTransaction(tx, 'identity.play_eligibility.changed', snapshot);
   }
-  if (isRgBlocked(account)) {
-    return account.rgBlockedUntil === null ? 'self_excluded' : 'cooling_off';
+
+  /** `publish` in a transaction of its own, for a writer that changed nothing it must roll back. */
+  sync(userId: User['id']): Promise<void> {
+    return this.drizzle.db.transaction((tx) => this.publish(tx, userId));
   }
-  switch (status) {
-    case 'self_excluded':
-      return 'self_excluded';
-    case 'suspended':
-      return 'account_suspended';
-    case 'closed':
-      return 'account_closed';
+}
+
+/**
+ * Hands every user's committed play eligibility to the ledger in keyset batches, and returns
+ * how many rows the ledger wrote. Heals a user registered by a replica that predates the
+ * publisher, or a direct write that skipped it. Locks nothing on this side; the ledger rewrites
+ * only rows that are missing or behind. An aborted `signal` stops it between batches.
+ */
+export async function backfillPlayEligibility(
+  db: DrizzleDb,
+  projection: PlayEligibilityProjectionPort,
+  { batchSize = 500, signal }: { batchSize?: number; signal?: AbortSignal } = {},
+): Promise<number> {
+  let written = 0;
+  let after: User['id'] | null = null;
+  for (;;) {
+    signal?.throwIfAborted();
+    const snapshots = await playEligibilityPage(db, after, batchSize);
+    if (snapshots.length === 0) {
+      return written;
+    }
+    written += await projection.reconcile(snapshots);
+    after = snapshots.at(-1)?.userId ?? null;
   }
-  const banned =
-    account.banned === true && (account.banExpires === null || account.banExpires > new Date());
-  return !account.isActive || banned ? 'account_inactive' : null;
+}
+
+const committedState = (db: DrizzleDb) =>
+  db
+    .select({
+      userId: user.id,
+      rgBlocked: user.rgBlocked,
+      rgBlockedUntil: user.rgBlockedUntil,
+      isActive: user.isActive,
+      banned: user.banned,
+      banExpires: user.banExpires,
+      status: player.status,
+      version: user.playEligibilityVersion,
+    })
+    .from(user)
+    .leftJoin(player, eq(player.userId, user.id));
+
+/** Up to `limit` users' committed play eligibility in user id order, after `after` when given. */
+export async function playEligibilityPage(
+  db: DrizzleDb,
+  after: User['id'] | null,
+  limit: number,
+): Promise<PlayEligibilitySnapshot[]> {
+  const rows = await committedState(db)
+    .where(after === null ? undefined : gt(user.id, after))
+    .orderBy(user.id)
+    .limit(limit);
+  return rows.map((row) => snapshotOf(row.userId, row));
+}
+
+/** The committed play eligibility of `userIds`; an unknown user is left out. */
+export async function playEligibilityOf(
+  db: DrizzleDb,
+  userIds: readonly User['id'][],
+): Promise<PlayEligibilitySnapshot[]> {
+  if (userIds.length === 0) {
+    return [];
+  }
+  const rows = await committedState(db).where(inArray(user.id, [...userIds]));
+  return rows.map((row) => snapshotOf(row.userId, row));
 }

@@ -14,11 +14,13 @@ import {
   IDENTITY_READER,
   KYC_ADAPTER,
   KYC_STATUS_WRITER,
+  WALLET_READER,
   type KycAdapter,
   type KycStatus,
   type KycStatusWriter,
   type KycTier,
   type RunContext,
+  type WalletReader,
 } from '@openora/core/contracts';
 import { createMcpKernel, createTestDb, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
@@ -44,6 +46,7 @@ function bootKernel() {
   container.register(KYC_STATUS_WRITER, () =>
     mock<KycStatusWriter>({ setStatus: vi.fn(async () => null) }),
   );
+  container.register(WALLET_READER, () => mock<WalletReader>({}));
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   registry.setOwner('compliance');
   compliancePlugin.register(registry);

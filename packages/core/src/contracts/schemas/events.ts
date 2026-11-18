@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { isWagerRtp, WagerProductSchema } from '../adapters/wager-context.js';
 import {
   ClientMetaSchema,
   CurrencyTickerSchema,
@@ -21,6 +22,7 @@ import {
   GameSortKeySchema,
   GameSortParamsSchema,
   GameTagSnapshotSchema,
+  GAME_TYPES,
 } from './game.js';
 import {
   GEO_RULE_ADMIN_SOURCE,
@@ -38,6 +40,7 @@ import {
   LobbyLayoutKeySchema,
   LobbyLayoutSnapshotSchema,
 } from './lobby.js';
+import { PlayEligibilitySnapshotSchema, RgLimitsSnapshotSchema } from './ledger.js';
 import { CountryCodeSchema } from './igaming-config.js';
 import { TagKeySchema } from './tag.js';
 import { PermissionLevelSchema } from './iam.js';
@@ -175,7 +178,17 @@ const walletTxnBase = z.object({
 });
 
 // Why a withdrawal already flipped to `processing` went back to the queue before reaching the PSP.
-export const WITHDRAWAL_REQUEUE_REASONS = ['withdrawal_hold', 'withdrawal_lock'] as const;
+export const WITHDRAWAL_REQUEUE_REASONS = [
+  'withdrawal_hold',
+  'withdrawal_lock',
+  'withdrawal_pin_locked',
+  'kyc_required',
+  // A control's port threw after the flip, so it could not be shown clear.
+  'control_check_failed',
+  // Reconciliation found it approved past the cutoff with no provider recorded: no vendor was
+  // asked to pay it, so it goes back for a person to approve again.
+  'never_dispatched',
+] as const;
 export type WithdrawalRequeueReason = (typeof WITHDRAWAL_REQUEUE_REASONS)[number];
 
 const limitChangeBase = authContextBase.extend({
@@ -464,6 +477,14 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
+  // A user's play eligibility as committed, for the ledger's `ledger_play_eligibility`
+  // projection. Written to the outbox by every writer of an input, in its own transaction; the
+  // consumer keeps the highest `version`, since delivery order is not guaranteed.
+  'identity.play_eligibility.changed': PlayEligibilitySnapshotSchema,
+  // A user's effective deposit and wager limits as committed, for the ledger's
+  // `ledger_user_limit` projection. Written to the outbox by every limit writer in its own
+  // transaction; the consumer keeps the highest `version` (ADR-0057).
+  'compliance.rg_limits.changed': RgLimitsSnapshotSchema,
   // An admin toggled a user's active status (the only user-lifecycle flow today;
   // users are deactivated, never hard-deleted). userId = subject, actorId = the
   // admin who acted (for a complete audit trail).
@@ -533,8 +554,8 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     adminId: UuidSchema.nullable(),
   }),
-  // A hold or `withdrawal_lock` landed after the approval flip, so the withdrawal went back to the
-  // status it was approved from before reaching the PSP. No money moved; it waits for a decision again.
+  // A hold, `withdrawal_lock`, PIN lockout or KYC requirement landed after the approval flip, so the
+  // withdrawal went back to the status it was approved from before reaching the PSP. No money moved; it waits for a decision again.
   'wallet.withdrawal.requeued': walletTxnBase.extend({
     playerId: UuidSchema.nullable(),
     reason: z.enum(WITHDRAWAL_REQUEUE_REASONS),
@@ -569,6 +590,10 @@ export const domainEventSchemas = {
     runId: UuidSchema,
     openFindings: z.number().int().nonnegative(),
     threshold: z.number().int().nonnegative(),
+    /** The run's checks that failed, when any did. */
+    failedChecks: z.array(z.string()).optional(),
+    /** Owner re-publishes the run's repair cap pushed to the next cycle, when any were. */
+    projectionRepairsDeferred: z.number().int().nonnegative().optional(),
   }),
 
   'gaming.round.started': z.object({
@@ -722,6 +747,27 @@ export const domainEventSchemas = {
     gameIds: z.array(UuidSchema).max(1000),
     tagIds: z.array(UuidSchema).max(1000),
     providerIds: z.array(UuidSchema).max(1000),
+  }),
+  // The catalogue facts a round needs, its wagering inputs included, as committed, for the
+  // ledger side's `ledger_game` projection. Written to the outbox in the transaction that read
+  // them; `version` is the game row's ledger_version, drawn from a sequence, so a consumer keeps
+  // the highest one and ignores the rest. Not `gaming.games.changed`, which feeds the category
+  // triggers.
+  'gaming.ledger_game.projected': z.object({
+    games: z
+      .array(
+        z.object({
+          gameId: UuidSchema,
+          providerId: UuidSchema,
+          gameType: z.enum(GAME_TYPES),
+          // Optional so an event a previous release wrote still parses; absent reads as null.
+          wagerProduct: WagerProductSchema.nullable().optional(),
+          rtp: z.string().refine(isWagerRtp, 'decimal fraction in [0, 1]').nullable().optional(),
+          version: z.number().int().nonnegative(),
+        }),
+      )
+      .min(1)
+      .max(1000),
   }),
   'gaming.tag.created': authContextBase
     .extend({ tagId: UuidSchema })
@@ -1446,6 +1492,16 @@ export const domainEventSchemas = {
   // actorId is the user performing the action (SYSTEM_ACTOR_ID for automated ops).
   'tag.player.assigned': tagPlayerEventBase,
   'tag.player.removed': tagPlayerEventBase,
+  // The tag module screened a requested withdrawal: any `withdrawal_review` tag it called for
+  // committed in the same transaction. The wallet auto-approves only after this verdict, so a
+  // withdrawal it never arrives for stays in the manual queue (ADR-0059). `reviewRequired` is this
+  // withdrawal's own amount against the review threshold; optional only so a verdict from a
+  // producer older than the field still parses, and the wallet reads its absence as true.
+  'tag.withdrawal.screened': z.object({
+    userId: UuidSchema,
+    transactionId: UuidSchema,
+    reviewRequired: z.boolean().optional(),
+  }),
   // Emitted after an admin creates or updates a tag rule configuration.
   'tag.rule.upserted': authContextBase.extend({
     tagKey: TagKeySchema,

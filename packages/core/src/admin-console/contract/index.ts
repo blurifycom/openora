@@ -15,6 +15,7 @@ import {
   QueryBooleanSchema,
   SignedMoneyAmountSchema,
   TimestampSchema,
+  UNCLASSIFIED_GAME_TYPE,
   UserIdInputSchema,
   UserRoleSchema,
   UuidSchema,
@@ -119,7 +120,7 @@ export const GamePerformanceFilterSchema = z.object({
 export const GamePerformanceSchema = z.object({
   gameId: UuidSchema,
   name: z.string(),
-  gameType: GameTypeSchema,
+  gameType: z.union([GameTypeSchema, z.literal(UNCLASSIFIED_GAME_TYPE)]),
   volume: MoneyAmountSchema,
   revenue: SignedMoneyAmountSchema,
   uniquePlayers: z.number().int(),

@@ -83,6 +83,25 @@ export const WALLET_RECONCILIATION_FINDING_KINDS = [
   'stuck_swap',
   'held_deposit',
   'below_minimum_deposit',
+  // A wallet balance its own ledger does not add up to.
+  'ledger_invariant_breach',
+  // A wallet the ledger invariant cannot check: its history holds rows nothing prices and no
+  // baseline covers them.
+  'ledger_invariant_unchecked',
+  // A withdrawal older than its state allows, one kind per saga state (ADR-0059).
+  'stuck_withdrawal_requested',
+  'stuck_withdrawal_approved',
+  'stuck_withdrawal_processing',
+  // A Ledger API request answered applied whose wallet row is missing or says something else.
+  'ledger_request_mismatch',
+  // A game move from a provider on the Ledger API that no Ledger API request recorded.
+  'ledger_unrequested_transaction',
+  // A ledger projection behind its owner's state for one player.
+  'play_eligibility_drift',
+  'rg_limits_drift',
+  // The event outbox or the broker's dead-letter queues past their thresholds, one per incident.
+  'outbox_relay_lag',
+  'event_dead_letters',
 ] as const;
 
 export const WALLET_RECONCILIATION_FINDING_STATUSES = ['open', 'resolved'] as const;

@@ -16,14 +16,22 @@ import {
   REALTIME_TRANSPORT,
   WALLET_COMMANDS,
   WALLET_READER,
+  LEDGER_API_V1,
+  LEDGER_PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY_PROJECTION,
+  PLAY_ELIGIBILITY_SOURCE,
+  GAMING_COMMANDS,
+  SPORTSBOOK_LEDGER,
   WALLET_ASSET_CATALOG,
   PLATFORM_CONFIG,
   RATE_LIMITER,
   PLAYER_TAGS,
   PLAYER_SEGMENT_READER,
-  TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   RG_LIMITS,
+  RG_LIMIT_LEDGER,
+  RG_LIMITS_SOURCE,
+  MESSAGE_BROKER,
   DEPOSIT_ADMISSION_POLICY,
   DEPOSIT_HOLD_POLICY,
   KYC_WITHDRAWAL_POLICY,
@@ -60,6 +68,9 @@ import {
   WithdrawalNotPendingError,
 } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
+import { LedgerApiService } from './service/ledger-api.service.js';
+import { LedgerRgLimitsService } from './service/ledger-rg-limits.service.js';
+import { LedgerPlayEligibilityService } from './service/ledger-play-eligibility.service.js';
 import { DepositCompareService, SegmentTooLargeError } from './service/deposit-compare.service.js';
 import {
   CustodySweepService,
@@ -72,7 +83,12 @@ import { DrizzleAdminWalletReporting } from './admin-reporting.js';
 import { createWalletRouter, walletBalanceChannel } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
-import { ReconciliationService } from './service/reconciliation.service.js';
+import {
+  LEDGER_INVARIANT_QUEUE,
+  LedgerInvariantJobSchema,
+  ReconciliationService,
+  projectionDriftCheck,
+} from './service/reconciliation.service.js';
 import { SwapService } from './service/swap.service.js';
 import { OnRampService } from './service/on-ramp.service.js';
 
@@ -85,6 +101,9 @@ const DEFAULT_SWEEP_CRON = '*/15 * * * *';
 
 const WALLET_RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 const WalletReconciliationJobSchema = z.object({ runId: UuidSchema.optional() });
+// Mirrors wallet.reconciliation.ledgerInvariantCron's default. The ledger check needs no
+// vendor, so it runs even where the vendor diff is not configured.
+const DEFAULT_LEDGER_INVARIANT_CRON = '30 3 * * *';
 
 function depositCompareRefusal(err: unknown): never {
   if (err instanceof SegmentTooLargeError) {
@@ -104,14 +123,22 @@ function holdRefusalCode(err: unknown) {
 }
 
 export default {
-  // NOT dependsOn 'tag': that would cycle (tag hard-depends on wallet's WALLET_READER).
-  // wallet's use of tag's PLAYER_TAGS / TAG_EVALUATION_COMMANDS is optional and resolved
-  // lazily in the router factory (`c.has(...)`), which runs after every plugin has
-  // registered - so both ports are bound by then regardless of load order.
+  // NOT dependsOn 'tag' or 'compliance': both depend on wallet, so that would cycle. Their ports
+  // are required instead - checked once every plugin has registered and resolved in the router
+  // factory - so a withdrawal can never skip the withdrawal_lock, PIN or KYC check because the
+  // module behind it is not loaded (ADR-0059).
   id: 'wallet',
   dependsOn: ['identity', 'audit'],
-  controlPorts: [
-    { port: RG_LIMITS, without: 'deposit and wager limits go unenforced', boundBy: 'compliance' },
+  requiresPorts: [WITHDRAWAL_SECURITY, PLAYER_TAGS, KYC_WITHDRAWAL_POLICY],
+  optionalPorts: [
+    {
+      port: PLAY_ELIGIBILITY_SOURCE,
+      without: 'reconciliation never compares the play eligibility projection with identity',
+    },
+    {
+      port: RG_LIMITS_SOURCE,
+      without: 'reconciliation never compares the limits projection with compliance',
+    },
   ],
   register(ctx) {
     // Set inside the router factory (container access); the job worker's handler
@@ -124,6 +151,18 @@ export default {
     // publish. Subscriptions wire before router factories run, but are set before any
     // real event arrives.
     let realtimeTransport: RealtimeTransport | null = null;
+    // One instance behind both play eligibility ports; the router factory constructs it, and runs
+    // in every process before any event is delivered.
+    let playEligibility: LedgerPlayEligibilityService | null = null;
+    const sharedPlayEligibility = (c: TypedContainer<CoreTokenCatalog>) =>
+      (playEligibility ??= new LedgerPlayEligibilityService(c.get(DRIZZLE)));
+    // Same for the limits gate and its projection writer (ADR-0057).
+    let rgLimitsRef: LedgerRgLimitsService | null = null;
+    const sharedRgLimits = (c: TypedContainer<CoreTokenCatalog>) =>
+      (rgLimitsRef ??= new LedgerRgLimitsService(
+        c.get(DRIZZLE),
+        c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+      ));
 
     // Publishes a change *signal*, never the balance itself - see the comment on
     // WalletBalanceUpdateSchema. Only wired to events that actually move a settled
@@ -170,6 +209,19 @@ export default {
         'withdrawal',
         envelope.eventId,
       );
+    });
+    // The tag module's screening verdict is the only trigger for auto-approval (ADR-0059).
+    // Throws before the service exists, so the event is redelivered rather than recorded handled.
+    ctx.events.on('tag.withdrawal.screened', async (payload) => {
+      const parsed = domainEventSchemas['tag.withdrawal.screened'].safeParse(payload);
+      if (!parsed.success) {
+        logger.error({ issues: parsed.error.issues }, 'malformed tag.withdrawal.screened dropped');
+        return;
+      }
+      if (!walletSvc) {
+        throw new Error('wallet service not constructed');
+      }
+      await walletSvc.autoApproveScreenedWithdrawal(parsed.data);
     });
     ctx.events.on('wallet.withdrawal.failed', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.withdrawal.failed'].safeParse(payload);
@@ -224,6 +276,29 @@ export default {
         envelope.eventId,
       );
     });
+    // The stake gate's projection: identity writes it in its own transaction; this replays the
+    // committed state, keeping the newest version, for a split process and as the repair path.
+    ctx.events.on('identity.play_eligibility.changed', async (payload) => {
+      if (!playEligibility) {
+        throw new Error('wallet: play eligibility projection not constructed yet');
+      }
+      const snapshot = domainEventSchemas['identity.play_eligibility.changed'].parse(payload);
+      await playEligibility.reconcile([snapshot]);
+    });
+    // The limits gate's projection: compliance writes it in its own transaction; this replays the
+    // committed limits for a split process, writing only a strictly newer version. A malformed
+    // payload is logged and dropped, never retried: no retry can make it valid.
+    ctx.events.on('compliance.rg_limits.changed', async (payload) => {
+      if (!rgLimitsRef) {
+        throw new Error('wallet: limits projection not constructed yet');
+      }
+      const parsed = domainEventSchemas['compliance.rg_limits.changed'].safeParse(payload);
+      if (!parsed.success) {
+        logger.error({ issues: parsed.error.issues }, 'wallet: invalid rg limits snapshot dropped');
+        return;
+      }
+      await rgLimitsRef.reconcile([parsed.data]);
+    });
     ctx.events.on('wallet.balance.changed', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.balance.changed'].safeParse(payload);
       if (!parsed.success || !envelope) {
@@ -261,15 +336,12 @@ export default {
         directory: c.get(ADMIN_USER_DIRECTORY),
         platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
         limiter: c.get(RATE_LIMITER),
-        riskTags: c.has(PLAYER_TAGS) ? c.get(PLAYER_TAGS) : undefined,
-        tagEvaluationCommands: c.has(TAG_EVALUATION_COMMANDS)
-          ? c.get(TAG_EVALUATION_COMMANDS)
-          : undefined,
+        riskTags: c.get(PLAYER_TAGS),
         audit: c.get(AUDIT_WRITER),
-        rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
+        rgLimits: c.get(RG_LIMITS),
         rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
-        kycPolicy: c.has(KYC_WITHDRAWAL_POLICY) ? c.get(KYC_WITHDRAWAL_POLICY) : undefined,
-        withdrawalSecurity: c.has(WITHDRAWAL_SECURITY) ? c.get(WITHDRAWAL_SECURITY) : undefined,
+        kycPolicy: c.get(KYC_WITHDRAWAL_POLICY),
+        withdrawalSecurity: c.get(WITHDRAWAL_SECURITY),
         mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : undefined,
         depositHold: c.has(DEPOSIT_HOLD_POLICY) ? c.get(DEPOSIT_HOLD_POLICY) : undefined,
         depositAdmission: c.has(DEPOSIT_ADMISSION_POLICY)
@@ -390,6 +462,19 @@ export default {
       },
     });
 
+    ctx.jobs.worker({
+      queue: LEDGER_INVARIANT_QUEUE,
+      schema: LedgerInvariantJobSchema,
+      handler: async ({ payload }) => {
+        if (!reconciliationRef) {
+          throw new Error('wallet ledger invariant: service not constructed yet');
+        }
+        await reconciliationRef.runLedgerInvariant(payload.runId, {
+          backfillBaselines: payload.backfillBaselines,
+        });
+      },
+    });
+
     ctx.provide(PAYMENT_ADAPTER, () => new MockPaymentAdapter());
     ctx.provide(PAYMENT_WEBHOOK_VERIFIER, () => {
       const webhookSecret = z
@@ -412,16 +497,38 @@ export default {
           : null,
       names: () => [DEFAULT_PAYMENT_PROVIDER],
     }));
+    // What a stake is checked against: the ledger's own projection, not the identity tables.
+    ctx.provideSealed(LEDGER_PLAY_ELIGIBILITY, sharedPlayEligibility);
+    // Its writer, for identity only: not part of the Ledger API a provider bridge sees.
+    ctx.provideSealed(PLAY_ELIGIBILITY_PROJECTION, sharedPlayEligibility);
+    // The deposit and wager limit gate, over the ledger's own limits projection, and that
+    // projection's writer, for compliance only.
+    ctx.provideSealed(RG_LIMITS, sharedRgLimits);
+    ctx.provideSealed(RG_LIMIT_LEDGER, sharedRgLimits);
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
     ctx.provide(
       WALLET_COMMANDS,
       (c) =>
-        new WalletCommandsService(c.get(PLAY_ELIGIBILITY), c.get(AUDIT_WRITER), {
+        new WalletCommandsService(c.get(LEDGER_PLAY_ELIGIBILITY), c.get(AUDIT_WRITER), {
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
-          rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
+          rgLimits: c.get(RG_LIMITS),
           bonusWagering: c.has(BONUS_WAGERING) ? c.get(BONUS_WAGERING) : undefined,
           bonusGrants: c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
           identityReader: c.get(IDENTITY_READER),
+        }),
+    );
+    // The versioned surface provider bridges and the sportsbook move money through. Gaming and
+    // sportsbook load after wallet and are optional, so their ports resolve on each call.
+    ctx.provide(
+      LEDGER_API_V1,
+      (c) =>
+        new LedgerApiService({
+          drizzle: c.get(DRIZZLE),
+          events: c.get(EVENT_BUS),
+          walletCommands: c.get(WALLET_COMMANDS),
+          identityReader: c.get(IDENTITY_READER),
+          gamingCommands: () => c.get(GAMING_COMMANDS),
+          sportsbookLedger: () => c.get(SPORTSBOOK_LEDGER),
         }),
     );
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
@@ -445,16 +552,9 @@ export default {
     ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
     ctx.routers.add('wallet', (c) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
+      sharedPlayEligibility(c);
+      const rgLimits = sharedRgLimits(c);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
-      // A licence-facing gate that is simply absent is the kind of thing an audit asks
-      // about, so say it once at bind time rather than letting every deposit pass
-      // unchecked in silence.
-      const rgLimits = c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined;
-      if (!rgLimits) {
-        logger.warn(
-          'wallet loaded without RG_LIMITS - deposit limits are not enforced on any route',
-        );
-      }
       if (Object.keys(platformConfig?.wallet?.significantAmountThresholds ?? {}).length === 0) {
         logger.warn(
           'wallet.significantAmountThresholds is not configured - large bets and wins are not audited',
@@ -470,6 +570,21 @@ export default {
         audit: c.get(AUDIT_WRITER),
         platformConfig,
         rgLimits,
+        projectionChecks: [
+          ...(c.has(PLAY_ELIGIBILITY_SOURCE)
+            ? [
+                projectionDriftCheck(
+                  'play_eligibility_drift',
+                  c.get(PLAY_ELIGIBILITY_SOURCE),
+                  sharedPlayEligibility(c),
+                ),
+              ]
+            : []),
+          ...(c.has(RG_LIMITS_SOURCE)
+            ? [projectionDriftCheck('rg_limits_drift', c.get(RG_LIMITS_SOURCE), rgLimits)]
+            : []),
+        ],
+        broker: c.has(MESSAGE_BROKER) ? c.get(MESSAGE_BROKER) : undefined,
       });
       reconciliationRef = reconciliation;
 
@@ -495,6 +610,17 @@ export default {
           )
           .catch((err) => logger.error({ err }, 'wallet-reconciliation schedule failed'));
       }
+      const ledgerInvariantCron =
+        platformConfig?.wallet?.reconciliation?.ledgerInvariantCron ??
+        DEFAULT_LEDGER_INVARIANT_CRON;
+      void jobQueue
+        .schedule(
+          LEDGER_INVARIANT_QUEUE,
+          'wallet-ledger-invariant.cron',
+          {},
+          { cron: ledgerInvariantCron },
+        )
+        .catch((err) => logger.error({ err }, 'wallet-ledger-invariant schedule failed'));
 
       // No SWAP_ADAPTER bound is the resting state (core binds none) - the swap routes
       // then refuse rather than the module failing to load.
@@ -521,19 +647,17 @@ export default {
           : undefined;
 
       // Same resting state as swap: core binds no on-ramp vendor, and the routes then refuse.
-      // A vendor bound without the geo or deposit-limit gate stays off rather than ungated.
+      // A vendor bound without the geo gate stays off rather than ungated.
       const onRampAdapter = c.has(ON_RAMP_ADAPTER) ? c.get(ON_RAMP_ADAPTER) : undefined;
       const onRampVerifier = c.has(ON_RAMP_WEBHOOK_VERIFIER)
         ? c.get(ON_RAMP_WEBHOOK_VERIFIER)
         : undefined;
       const geoCheck = c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined;
-      if (onRampAdapter && (!geoCheck || !rgLimits)) {
-        logger.warn(
-          'on-ramp vendor bound without GEO_CHECK_COMMANDS or RG_LIMITS - on-ramp is off',
-        );
+      if (onRampAdapter && !geoCheck) {
+        logger.warn('on-ramp vendor bound without GEO_CHECK_COMMANDS - on-ramp is off');
       }
       const onRamp =
-        onRampAdapter && geoCheck && rgLimits
+        onRampAdapter && geoCheck
           ? new OnRampService({
               drizzle: c.get(DRIZZLE),
               wallet,

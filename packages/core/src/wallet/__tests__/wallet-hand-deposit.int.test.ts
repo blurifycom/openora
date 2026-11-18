@@ -12,6 +12,7 @@ import {
   makeAuditWriter,
   makeExchangeRateReader,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -46,6 +47,7 @@ function makeService({
   vi.mocked(identityReader.getPlayerIdByUserId).mockResolvedValue(playerId);
   vi.mocked(identityReader.getPlayerIdByUserIdSafe).mockResolvedValue(playerId);
   const svc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events,
     payment: mock<PaymentAdapter>({}),

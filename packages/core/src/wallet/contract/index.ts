@@ -686,7 +686,10 @@ export type ListReconciliationFindingsInput = z.infer<typeof ListReconciliationF
 // Every way to close a finding carries its evidence: a credit (credited), the held deposit
 // itself credited after a fresh policy check (released), the on-chain transaction that sent
 // the money back and how much it sent (refunded), or a mandatory note explaining why it is
-// a non-issue (dismissed). Never a bare status flip with no evidence.
+// a non-issue (dismissed). Never a bare status flip with no evidence. A ledger finding closes
+// only by re-baselining its wallet at the balance it holds now (rebaselined), with a note on why
+// that balance is the right one, or by a dismissal once its pair checks clean again; both take a
+// super admin.
 //
 // `credited` means two things by finding kind. A deposit finding names no transaction: the
 // resolution credits the deposit itself, after the deposit hold policy, and `userId` is the
@@ -707,6 +710,7 @@ export const ReconciliationResolutionSchema = z.discriminatedUnion('outcome', [
     note: z.string().trim().min(1).optional(),
   }),
   z.object({ outcome: z.literal('dismissed'), note: z.string().trim().min(1) }),
+  z.object({ outcome: z.literal('rebaselined'), note: z.string().trim().min(1) }),
 ]);
 export type ReconciliationResolution = z.infer<typeof ReconciliationResolutionSchema>;
 
@@ -1015,7 +1019,10 @@ export const walletContract = {
       .route({
         method: 'POST',
         path: '/wallet/reconciliation/{id}/resolve',
-        summary: 'Resolve a reconciliation finding as credited or dismissed',
+        summary:
+          'Resolve a reconciliation finding as credited, released, refunded, dismissed or rebaselined',
+        description:
+          'The outcomes a finding allows depend on its kind; a ledger invariant finding allows only rebaselined or dismissed.',
       })
       .input(ResolveReconciliationFindingInputSchema)
       .output(WalletReconciliationFindingSchema),
@@ -1026,6 +1033,15 @@ export const walletContract = {
         path: '/wallet/reconciliation/run',
         summary: 'Enqueue a reconciliation run',
       })
+      .output(JobRunResultSchema),
+
+    ledgerInvariant: oc
+      .route({
+        method: 'POST',
+        path: '/wallet/reconciliation/ledger-invariant',
+        summary: 'Enqueue a ledger invariant scan, optionally baselining legacy wallets first',
+      })
+      .input(z.object({ backfillBaselines: z.boolean().default(false) }))
       .output(JobRunResultSchema),
   },
 };

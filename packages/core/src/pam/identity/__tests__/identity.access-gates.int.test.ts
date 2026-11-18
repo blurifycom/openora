@@ -7,6 +7,7 @@ import { makeAuditWriter, makeIdentityReader, mock, makeEventBus } from '../../.
 import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
 import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
+import type { PlayEligibilityPublisher } from '../service/play-eligibility.service.js';
 import { assertCountryAllowed } from '../service/rg-guard.service.js';
 
 const authApi = vi.hoisted(() => ({
@@ -53,6 +54,7 @@ function makeService(overrides: Partial<IdentityServiceDeps> = {}) {
       drizzle,
       sms: mock<SmsAdapter>({ sendOtp: vi.fn() }),
     }),
+    playEligibility: mock<PlayEligibilityPublisher>({ sync: vi.fn(async () => undefined) }),
     ...overrides,
   });
 }

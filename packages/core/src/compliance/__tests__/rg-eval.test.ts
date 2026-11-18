@@ -1,11 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { RG_FLAG_THRESHOLD_PCT } from '@openora/core/contracts';
-import {
-  periodWindow,
-  thresholdPct,
-  isAtThreshold,
-  pendingChangeStatus,
-} from '../service/rg-eval.js';
+import { RG_FLAG_THRESHOLD_PCT, periodWindow } from '@openora/core/contracts';
+import { thresholdPct, isAtThreshold, pendingChangeStatus } from '../service/rg-eval.js';
 
 const NOW = new Date('2026-07-06T12:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;

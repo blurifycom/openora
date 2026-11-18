@@ -15,6 +15,11 @@ import {
   IDENTITY_READER,
   PLAY_ELIGIBILITY,
   RATE_LIMITER,
+  KYC_WITHDRAWAL_POLICY,
+  PLAYER_TAGS,
+  WITHDRAWAL_SECURITY,
+  type KycWithdrawalPolicy,
+  type PlayerTags,
   type AdminUserDirectory,
   type PlayEligibilityPort,
   type IdentityReader,
@@ -23,7 +28,13 @@ import {
 } from '@openora/core/contracts';
 import { createMcpKernel, createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { makeAuditWriter, makeEventBus, makeIdentityReader, mock } from '../../testing/mock.js';
+import {
+  makeAuditWriter,
+  makeEventBus,
+  makeIdentityReader,
+  makeWithdrawalSecurity,
+  mock,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import { OPEN_WITHDRAWALS_LIMIT } from '../contract/index.js';
@@ -45,6 +56,9 @@ function bootKernel(identity: IdentityReader = playerDirectory()) {
   container.register(PLAY_ELIGIBILITY, () => mock<PlayEligibilityPort>({}));
   container.register(ADMIN_USER_DIRECTORY, () => mock<AdminUserDirectory>({}));
   container.register(RATE_LIMITER, () => mock<RateLimiterAdapter<string>>({}));
+  container.register(PLAYER_TAGS, () => mock<PlayerTags>({}));
+  container.register(KYC_WITHDRAWAL_POLICY, () => mock<KycWithdrawalPolicy>({}));
+  container.register(WITHDRAWAL_SECURITY, () => makeWithdrawalSecurity());
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   registry.setOwner('wallet');
   walletPlugin.register(registry);

@@ -1,15 +1,15 @@
 import { DrizzleService, likeContains, likePrefix } from '@openora/core/server';
-import type {
-  Account,
-  AccountReader,
-  Player,
-  PlayerMatch,
-  PlayerSearch,
+import {
+  playRefusalOf,
+  type Account,
+  type AccountReader,
+  type Player,
+  type PlayerMatch,
+  type PlayerSearch,
 } from '@openora/core/contracts';
 import { and, asc, eq, ilike, inArray, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '../schema/index.js';
-import { playRefusalOf } from '../service/play-eligibility.service.js';
 
 const toMatch = ({ userId, username, avatarUrl }: Account): PlayerMatch => ({
   userId,
@@ -109,7 +109,8 @@ export class DrizzleAccountReader implements AccountReader {
       avatarUrl: row.avatarUrl,
       role: row.role,
       isActive: row.isActive,
-      excluded: playRefusalOf(row, row.status ?? undefined) !== null,
+      excluded:
+        playRefusalOf({ ...row, banned: row.banned === true, status: row.status ?? null }) !== null,
       player:
         row.playerId === null || row.status === null
           ? null

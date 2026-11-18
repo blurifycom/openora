@@ -535,6 +535,11 @@
       "import": "./dist/casino/lobby/migrate.js",
       "default": "./dist/casino/lobby/migrate.js"
     },
+    "./casino/seed/gaming": {
+      "types": "./dist/casino/gaming/seed/index.d.ts",
+      "import": "./dist/casino/gaming/seed/index.js",
+      "default": "./dist/casino/gaming/seed/index.js"
+    },
     "./engagement/migrate/chat": {
       "types": "./dist/engagement/chat/migrate.d.ts",
       "import": "./dist/engagement/chat/migrate.js",
@@ -584,6 +589,16 @@
       "types": "./dist/analytics/server.d.ts",
       "import": "./dist/analytics/server.js",
       "default": "./dist/analytics/server.js"
+    },
+    "./compliance/seed": {
+      "types": "./dist/compliance/seed/index.d.ts",
+      "import": "./dist/compliance/seed/index.js",
+      "default": "./dist/compliance/seed/index.js"
+    },
+    "./pam/identity/seed": {
+      "types": "./dist/pam/identity/seed/index.d.ts",
+      "import": "./dist/pam/identity/seed/index.js",
+      "default": "./dist/pam/identity/seed/index.js"
     },
     "./pam/tag/seed": {
       "types": "./dist/pam/tag/seed/index.d.ts",

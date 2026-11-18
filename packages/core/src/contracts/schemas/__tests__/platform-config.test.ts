@@ -123,3 +123,13 @@ describe('registration.minPlayerAge', () => {
     expect(resolveMinPlayerAge(config)).toBe(18);
   });
 });
+
+describe('wallet.reconciliation.batchSize', () => {
+  // The ledger run caps its own pages; a config written before that cap must still boot.
+  it('accepts a page size above the ledger page cap', () => {
+    expect(
+      definePlatformConfig({ wallet: { reconciliation: { batchSize: 5000 } } }).wallet
+        ?.reconciliation?.batchSize,
+    ).toBe(5000);
+  });
+});

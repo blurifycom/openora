@@ -148,6 +148,20 @@
       "when": 1794574229225,
       "tag": "0020_provider_custom_logo_url",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795035029087,
+      "tag": "0021_ledger_game",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795041750631,
+      "tag": "0022_wager_snapshot",
+      "breakpoints": true
     }
   ]
 }

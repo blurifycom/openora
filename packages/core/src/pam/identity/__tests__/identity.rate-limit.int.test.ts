@@ -13,9 +13,13 @@ import { makeAuditWriter, makeIdentityReader, mock, makeEventBus } from '../../.
 import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
 import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
+import type { PlayEligibilityPublisher } from '../service/play-eligibility.service.js';
 
 function withTemplateRenderer(
-  deps: Omit<IdentityServiceDeps, 'audit' | 'identityReader' | 'twoFactorDelivery'> & {
+  deps: Omit<
+    IdentityServiceDeps,
+    'audit' | 'identityReader' | 'twoFactorDelivery' | 'playEligibility'
+  > & {
     audit?: IdentityServiceDeps['audit'];
     identityReader?: IdentityReader;
     twoFactorDelivery?: IdentityServiceDeps['twoFactorDelivery'];
@@ -24,6 +28,7 @@ function withTemplateRenderer(
   return new IdentityService({
     playerProvisioning: mock<PlayerProvisioning>({ createForRegistration: vi.fn() }),
     audit: makeAuditWriter(),
+    playEligibility: mock<PlayEligibilityPublisher>({ sync: vi.fn(async () => undefined) }),
     ...deps,
     identityReader: deps.identityReader ?? makeIdentityReader(),
     twoFactorDelivery:

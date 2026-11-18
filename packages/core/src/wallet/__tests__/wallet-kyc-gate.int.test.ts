@@ -19,6 +19,7 @@ import {
   NO_CLIENT_META,
   makeAuditWriter,
   makePaymentProviderRegistry,
+  makeWithdrawalPorts,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
@@ -39,6 +40,7 @@ function makeService(
     ),
   });
   const svc = new WalletService({
+    ...makeWithdrawalPorts(),
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({ processWithdrawal: vi.fn() }),
@@ -47,7 +49,7 @@ function makeService(
     identityReader: makeIdentityReader(),
     directory,
     platformConfig: mock<PlatformConfig>({ kyc: { gateWithdrawals } }),
-    kycPolicy,
+    ...(kycPolicy ? { kycPolicy } : {}),
   });
   return { svc, directory };
 }
@@ -209,5 +211,85 @@ describe('WalletService.withdraw KYC policy (real PG)', () => {
       pivotAmount: null,
       pivotCurrency: 'USD',
     });
+  });
+});
+
+describe('WalletService.approveWithdrawal KYC re-check (real PG)', () => {
+  // The player's KYC status as the directory reports it now; a test revokes it mid-saga.
+  let kycStatus: KycStatus;
+  function revocableService() {
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: vi.fn(async (ids: string[]) =>
+        ids.map((userId) => mock<AdminPlayerSummary>({ userId, username: 'p', kycStatus })),
+      ),
+    });
+    const processWithdrawal = vi.fn();
+    const svc = new WalletService({
+      ...makeWithdrawalPorts(),
+      drizzle: db.drizzle,
+      events: makeEventBus(),
+      payment: mock<PaymentAdapter>({ processWithdrawal }),
+      paymentProviders: makePaymentProviderRegistry(),
+      audit: makeAuditWriter(),
+      identityReader: makeIdentityReader(),
+      directory,
+      platformConfig: mock<PlatformConfig>({ kyc: { gateWithdrawals: true } }),
+    });
+    return { svc, directory, processWithdrawal };
+  }
+
+  async function statusOf(id: string) {
+    const [row] = await db.drizzle.db
+      .select({ status: walletTransaction.status })
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, id));
+    return row?.status;
+  }
+
+  beforeEach(() => {
+    kycStatus = 'verified';
+  });
+
+  it('refuses to approve a withdrawal whose KYC was revoked after the request', async () => {
+    const { svc, processWithdrawal } = revocableService();
+    const w = await seedWallet();
+    const { transactionId } = await svc.withdraw({
+      userId: w.userId,
+      amount: '50',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    kycStatus = 'rejected';
+
+    await expect(svc.approveWithdrawal(randomUUID(), transactionId)).rejects.toBeInstanceOf(
+      KycRequiredError,
+    );
+    expect(await statusOf(transactionId)).toBe('pending');
+    expect(processWithdrawal).not.toHaveBeenCalled();
+  });
+
+  it('puts the withdrawal back in the queue when KYC is revoked between the check and the payout', async () => {
+    const { svc, directory, processWithdrawal } = revocableService();
+    const w = await seedWallet();
+    const { transactionId } = await svc.withdraw({
+      userId: w.userId,
+      amount: '50',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    // Passes the pre-check, revoked by the time the approval flip has committed.
+    vi.mocked(directory.lookupPlayers)
+      .mockResolvedValueOnce([
+        mock<AdminPlayerSummary>({ userId: w.userId, username: 'p', kycStatus: 'verified' }),
+      ])
+      .mockResolvedValue([
+        mock<AdminPlayerSummary>({ userId: w.userId, username: 'p', kycStatus: 'rejected' }),
+      ]);
+
+    await expect(svc.approveWithdrawal(randomUUID(), transactionId)).rejects.toBeInstanceOf(
+      KycRequiredError,
+    );
+    expect(await statusOf(transactionId)).toBe('pending');
+    expect(processWithdrawal).not.toHaveBeenCalled();
   });
 });

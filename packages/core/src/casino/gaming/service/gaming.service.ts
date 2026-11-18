@@ -11,6 +11,7 @@ import {
   findOneOrThrow,
   isPositiveMoney,
   likeContains,
+  moneyCompare,
   pageToOffset,
   serializeRow,
   uniqueConstraintName,
@@ -41,6 +42,11 @@ import {
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
+  type GamingAccumulateExternalRoundArgs,
+  type GamingAccumulateExternalRoundOutcome,
+  GamingInvalidRtpError,
+  GamingRoundOwnerMismatchError,
+  GamingUnknownGameError,
   type GamingNotifyGamesChangedArgs,
   type GamingSetGameAvailabilityArgs,
   type GamingSetGameAvailabilityOutcome,
@@ -50,6 +56,8 @@ import {
   type IdentityReader,
   type User,
   isPlayRefused,
+  isWagerRtp,
+  SignedMoneyAmountSchema,
 } from '@openora/core/contracts';
 import {
   game,
@@ -92,8 +100,15 @@ import {
   type ListGamesInput,
   type UpdateGameInput,
 } from '../contract/index.js';
+import { assertLedgerGame, emitLedgerGames, readLedgerGame } from './ledger-game.service.js';
 
 const logger = createLogger('gaming');
+
+// A vendor's exponent form ('1e-7', '-1e1') as the plain decimal it means; anything else non-canonical throws.
+const canonicalDelta = (value: string): string =>
+  SignedMoneyAmountSchema.parse(
+    value.startsWith('-') ? `-${expandMoneyExponent(value.slice(1))}` : expandMoneyExponent(value),
+  );
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
@@ -162,12 +177,6 @@ export const WinAmountInvalidError = createDomainError<[roundId: string, winAmou
   'WinAmountInvalidError',
   (roundId, winAmount) =>
     `round ${roundId} won ${JSON.stringify(winAmount)}, which is not a decimal with at most 18 places`,
-);
-
-export const ExternalRoundOwnerMismatchError = createDomainError<[externalRoundId: string]>(
-  'ExternalRoundOwnerMismatchError',
-  (externalRoundId) =>
-    `externalRoundId ${externalRoundId} is already tagged to a different game/user`,
 );
 
 // Reads the links through the caller's transaction so the snapshot matches the
@@ -644,6 +653,7 @@ export class GamingService {
     // Every event below commits with the debit through the outbox - see the module-level
     // comment on WalletCommandsService for why the port itself never emits them.
     const round = await this.drizzle.db.transaction(async (tx) => {
+      const { rtp } = await assertLedgerGame(tx, gameId);
       // The same currency the RG pre-check above weighed. Left off, the debit falls on the
       // player's active currency, and the two would then judge different moves.
       const outcome = await this.walletCommands.debit(tx, {
@@ -651,7 +661,12 @@ export class GamingService {
         amount: betAmount,
         currency,
         type: 'bet',
-        context: { provider: INTERNAL_ROUND_PROVIDER, product: INTERNAL_ROUND_PRODUCT, gameId },
+        context: {
+          provider: INTERNAL_ROUND_PROVIDER,
+          product: INTERNAL_ROUND_PRODUCT,
+          gameId,
+          ...(rtp === null ? {} : { rtp }),
+        },
         providerRef: {
           providerName: INTERNAL_ROUND_PROVIDER,
           providerRefId: `bet:${roundId}`,
@@ -671,6 +686,8 @@ export class GamingService {
             currency,
             betAmount,
             status: 'active',
+            wagerProduct: INTERNAL_ROUND_PRODUCT,
+            rtp,
           })
           .returning(),
         new GameRoundNotFoundError(gameId),
@@ -822,22 +839,106 @@ export class GamingService {
    */
   async accumulateExternalRound(
     tx: unknown,
-    args: {
-      gameId: Game['id'];
-      userId: User['id'];
-      currency: string;
-      externalRoundId: NonNullable<GameRound['externalRoundId']>;
-      betDelta?: string;
-      winDelta?: string;
-      isFinal?: boolean;
-    },
-  ): Promise<{ roundId: GameRound['id']; betAmount: string; winAmount: string }> {
+    args: GamingAccumulateExternalRoundArgs,
+  ): Promise<GamingAccumulateExternalRoundOutcome> {
     const txn = tx as DrizzleDb;
-    const betDelta = args.betDelta ?? '0';
-    const winDelta = args.winDelta ?? '0';
+    // Canonical form first: `::numeric` reads ' 10' as a stake the guard below would miss.
+    const betDelta = canonicalDelta(args.betDelta ?? '0');
+    // The range the dropped `game_round` CHECK held, for every in-process caller, not only the API.
+    const sentRtp = args.wager?.rtp;
+    if (typeof sentRtp === 'string' && !isWagerRtp(sentRtp)) {
+      throw new GamingInvalidRtpError(sentRtp);
+    }
+    const winDelta = canonicalDelta(args.winDelta ?? '0');
     const reversedStake = sql`greatest(-(${betDelta}::numeric), 0)`;
-    const status = args.isFinal ? 'completed' : 'active';
-    const endedAt = args.isFinal ? new Date() : undefined;
+    const status = args.isFinal ? ('completed' as const) : ('active' as const);
+    // A round ends once: a repeated final keeps the first end time, so the call that set it is
+    // the one that ended the round.
+    const endedNow = sql`statement_timestamp()`;
+    const movesMoney = moneyCompare(betDelta, '0') !== 0 || moneyCompare(winDelta, '0') !== 0;
+    const deltas = {
+      betAmount: sql`${gameRound.betAmount} + ${betDelta}::numeric`,
+      winAmount: sql`${gameRound.winAmount} + ${winDelta}::numeric`,
+      reversedAmount: sql`${gameRound.reversedAmount} + ${reversedStake}`,
+      ...(args.isFinal
+        ? { status, endedAt: sql`coalesce(${gameRound.endedAt}, ${endedNow})` }
+        : {}),
+    };
+    const ownedByCaller = and(
+      eq(gameRound.userId, args.userId),
+      eq(gameRound.gameId, args.gameId),
+      sql`upper(${gameRound.currency}) = ${args.currency.toUpperCase()}`,
+    );
+    const returning = {
+      id: gameRound.id,
+      betAmount: gameRound.betAmount,
+      winAmount: gameRound.winAmount,
+      wagerProduct: gameRound.wagerProduct,
+      rtp: gameRound.rtp,
+      // The call that ended the round, or a later one that moved money on it: either way readers
+      // must re-read its totals (a late bet is a loss the RG check has not seen yet).
+      announce: sql<boolean>`coalesce(${gameRound.endedAt} = ${endedNow} or (${gameRound.endedAt} is not null and ${movesMoney}), false)`,
+    };
+    type ReturnedRound = Pick<
+      typeof gameRound.$inferSelect,
+      'id' | 'betAmount' | 'winAmount' | 'wagerProduct' | 'rtp'
+    > & { announce: boolean };
+    const toOutcome = (row: ReturnedRound): GamingAccumulateExternalRoundOutcome => ({
+      roundId: row.id,
+      betAmount: row.betAmount,
+      winAmount: row.winAmount,
+      wager: { product: row.wagerProduct, rtp: row.rtp },
+      announce: row.announce,
+    });
+    if (args.existingRoundOnly) {
+      const [existing] = await txn
+        .update(gameRound)
+        .set(deltas)
+        .where(
+          and(
+            eq(gameRound.externalRoundId, args.externalRoundId),
+            ownedByCaller,
+            sql`${gameRound.betAmount} >= ${reversedStake}`,
+          ),
+        )
+        .returning(returning);
+      if (!existing) {
+        throw new GamingRoundOwnerMismatchError(args.externalRoundId);
+      }
+      return toOutcome(existing);
+    }
+    const projected = await readLedgerGame(txn, args.gameId);
+    // Only a stake that opens a round needs a game the ledger knows. A win, refund, rollback or
+    // final always lands, also as a round's first call (a free-round result, a settle that beats
+    // its bet): refusing it would lose money the provider already moved.
+    if (isPositiveMoney(betDelta) && !projected) {
+      const [existing] = await txn
+        .select({ id: gameRound.id })
+        .from(gameRound)
+        .where(eq(gameRound.externalRoundId, args.externalRoundId))
+        .limit(1);
+      if (!existing) {
+        throw new GamingUnknownGameError(args.gameId);
+      }
+    }
+    // The catalogue is the operator's record of the game, so it wins; the caller's value only
+    // fills what it lacks.
+    const sent = args.wager;
+    if (
+      (sent?.product && projected?.product && sent.product !== projected.product) ||
+      (sent?.rtp && projected?.rtp && moneyCompare(sent.rtp, projected.rtp) !== 0)
+    ) {
+      logger.warn(
+        {
+          gameId: args.gameId,
+          sent,
+          catalogue: { product: projected.product, rtp: projected.rtp },
+        },
+        'gaming: a round stake disagrees with the catalogue on product or rtp',
+      );
+    }
+    const wagerProduct = projected?.product ?? sent?.product ?? null;
+    const rtp = projected?.rtp ?? sent?.rtp ?? null;
     const [row] = await txn
       .insert(gameRound)
       .values({
@@ -849,30 +950,28 @@ export class GamingService {
         winAmount: winDelta,
         reversedAmount: reversedStake,
         status,
-        endedAt,
+        endedAt: args.isFinal ? endedNow : undefined,
+        wagerProduct,
+        rtp,
       })
       .onConflictDoUpdate({
         target: gameRound.externalRoundId,
         targetWhere: sql`${gameRound.externalRoundId} IS NOT NULL`,
         set: {
-          betAmount: sql`${gameRound.betAmount} + ${betDelta}::numeric`,
-          winAmount: sql`${gameRound.winAmount} + ${winDelta}::numeric`,
-          reversedAmount: sql`${gameRound.reversedAmount} + ${reversedStake}`,
-          ...(args.isFinal ? { status, endedAt } : {}),
+          ...deltas,
+          // First seen wins: a round keeps the snapshot it has, and only fills one it lacks.
+          wagerProduct: sql`coalesce(${gameRound.wagerProduct}, excluded.wager_product)`,
+          rtp: sql`coalesce(${gameRound.rtp}, excluded.rtp)`,
         },
-        // A conflicting row owned by a different game/user is left untouched (0 rows
+        // A conflicting row of another user, game or currency is left untouched (0 rows
         // returned) instead of merging deltas onto someone else's round.
-        setWhere: and(eq(gameRound.userId, args.userId), eq(gameRound.gameId, args.gameId)),
+        setWhere: ownedByCaller,
       })
-      .returning({
-        id: gameRound.id,
-        betAmount: gameRound.betAmount,
-        winAmount: gameRound.winAmount,
-      });
+      .returning(returning);
     if (!row) {
-      throw new ExternalRoundOwnerMismatchError(args.externalRoundId);
+      throw new GamingRoundOwnerMismatchError(args.externalRoundId);
     }
-    return { roundId: row.id, betAmount: row.betAmount, winAmount: row.winAmount };
+    return toOutcome(row);
   }
 
   async getUserRounds(userId: User['id']) {
@@ -936,7 +1035,10 @@ export class GamingService {
       this.existingIds(gameProvider, gameProvider.id, providerIds),
     ]);
     // The durable marker the rank sweep reads, should the event's fast-path enqueue be lost.
-    await this.drizzle.db.transaction((tx) => markCategoriesRankDirtyForGames(tx, changedGameIds));
+    await this.drizzle.db.transaction(async (tx) => {
+      await markCategoriesRankDirtyForGames(tx, changedGameIds);
+      await emitLedgerGames(tx, this.events, changedGameIds);
+    });
     const longest = Math.max(
       changedGameIds.length,
       previousTagIds.length,
@@ -950,6 +1052,11 @@ export class GamingService {
         providerIds: previousProviderIds.slice(start, end),
       });
     }
+  }
+
+  /** Reports imported games to the round ledger; `notifyGamesChanged` does the same for its ids. */
+  async projectLedgerGames(gameIds: readonly Game['id'][]): Promise<void> {
+    await this.drizzle.db.transaction((tx) => emitLedgerGames(tx, this.events, gameIds));
   }
 
   private async existingIds(table: PgTable, column: PgColumn, ids: readonly string[]) {
@@ -1151,6 +1258,9 @@ export class GamingService {
           new GameNotFoundError(id),
         );
         const after = await gameAuditSnapshot(tx, afterRow);
+        if (afterRow.ledgerVersion !== beforeRow.ledgerVersion) {
+          await emitLedgerGames(tx, this.events, [id]);
+        }
         return { before, after, approvedFrom };
       })
       .catch((error: unknown) => {

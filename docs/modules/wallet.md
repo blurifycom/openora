@@ -45,6 +45,111 @@ does not repeat it.
   when it reached the balance, so a held one counts from its release, and a withdrawal request
   counts exactly when the auto-approval velocity check would count it.
 
+## Ledger API v1
+
+`LEDGER_API_V1` (contracts) is the surface a casino provider bridge and the sportsbook move money
+through, so neither imports wallet or round tables. Arguments and answers are the plain schemas in
+`contracts/schemas/ledger.ts`; a later HTTP transport carries the same ones. It orders the
+`WALLET_COMMANDS` and `GAMING_COMMANDS` calls and holds no money logic of its own; `sportsbook.*`
+is `SPORTSBOOK_LEDGER` unchanged.
+
+- **One transaction per keyed op.** `bet`, `win` and `reverse` each lock their key, move the money,
+  add it to the round, write the outbox events and store their answer in `ledger_api_request`, all
+  in one transaction. A refusal undoes its moves but is stored as the key's answer, so a retry
+  gets the same refusal even after a deposit; only `fingerprint_mismatch` and `invalid_amount`
+  store nothing.
+- **The key is (`providerName`, `providerRefId`) plus a fingerprint.** The fingerprint is a hash of
+  the whole request with amounts canonicalised, so `10` and `10.00` are one request. The same key
+  and fingerprint answers `replayed` with the stored answer, balance included, even after the
+  balance moved on. The same key with any other field changed is refused `fingerprint_mismatch`.
+  `providerName` may not be `internal` and may not hold a `:`.
+- **A rollback that arrives before its bet** is refused `bet_not_found` and leaves a tombstone: its
+  stored refusal names the bet as its target, so that bet, when it lands, is refused
+  `already_reversed` and moves nothing, with or without `reverseRef`. A reverse naming a key some
+  wallet already holds (another player's bet) leaves no tombstone, so it cannot block the real one.
+  `reverseRef` still takes and returns a stake for a rollback the ledger never refused.
+- **A reverse returns the whole stake once.** A second key naming the same bet is refused
+  `already_reversed`. The wallet enforces it too, so a bet a bridge reversed straight through
+  `WALLET_COMMANDS` is not reversed again here, and the reverse here is not repeated there:
+  - A `bet_reversal` credit that names its bet (`reversesTransactionId`, stored set-once in
+    `wallet_transaction.reversed_transaction_id` under a unique index) is refused
+    `WALLET_BET_ALREADY_REVERSED` when another reversal named that bet. It is refused
+    `WALLET_REVERSAL_UNMATCHED` when the row is not a completed bet of this wallet, is on another
+    provider, round or currency, or is smaller than the reversal. A `reversesTransactionId` that is
+    not a uuid names no row and is refused the same.
+  - A `bet_reversal` that names no bet is refused `WALLET_REVERSAL_UNMATCHED` when it carries no
+    round id or its round has no stake in its currency. With bonus wagering on, a named one with no
+    round id is refused the same, so a bonus-funded stake is never returned as cash.
+  - Every `bet_reversal` on a round, named or not, is refused `WALLET_BET_ALREADY_REVERSED` when
+    the round's reversals would exceed its stakes.
+  - A reversal always runs in a transaction, opened for a caller that passes a bare db, so all of
+    this is read under the wallet row lock and concurrent reversals of one round see each other.
+  - In-core reversals name their bet: this API's `reverse` and `bet` with `reverseRef`, and a
+    sportsbook cancel or void, which names the reserve's stake or the stake its last reopen
+    re-collected. The one exception is a void that also returns what offsets and collects took of
+    that reopen's debt: it credits more than the stake row, so it names none and the round cap
+    bounds it. A rollback that carries another round id than its bet goes through `reverse` here,
+    which finds the bet by `targetRefId`.
+  - `WALLET_REVERSAL_UNMATCHED` is final, and this API answers it `bet_not_found`. A bridge that
+    credits reversals straight through `WALLET_COMMANDS` maps it to a code its provider does not
+    retry; an unmapped one usually answers a server error, which the provider retries forever.
+  - A partial unnamed reversal followed by a `reverse` of its bet here returns only the partial
+    amount: the round cap counts it, so the `reverse` of the whole stake is refused
+    `already_reversed`.
+- **A reverse takes the stake off the bet's own round.** A bet placed here keyed its round and its
+  ledger row with one `externalRoundId`, so its reverse always lands on that round. A bet a bridge
+  wrote before it keyed rounds as it does now may hold the provider's raw round id while its round
+  is keyed another way (per player, since one live table round id is shared by its players): the
+  bridge passes that round's key as the reverse's `externalRoundId`. It must name this player's
+  existing round of the reverse's `gameId` and the bet's currency that still holds the stake, or
+  the reverse is refused `round_mismatch` with nothing moved; a named round is never opened. A
+  bet placed here ignores a named round and logs a warning. Without one, a bet not placed here
+  falls back to its raw id and opens a second round, or is refused `round_mismatch` when another
+  player's round holds that id. The reversal's ledger row always carries the bet's own round id.
+  A bet row records no game, so `gameId` is pinned only through the round: a bet placed here, or
+  one with a named round, is refused `round_mismatch` on another game; the raw-id fallback is not.
+- **A stored answer carries the balance from the first apply.** A bridge that needs live funds
+  calls `balance()`.
+- **The `reversed_transaction_id` unique index is built without `CONCURRENTLY`**, as the
+  `wallet_transaction` indexes of migrations 0029 and 0035 were: the column is new and empty, but
+  the build still holds a write lock on `wallet_transaction` for one scan of the table.
+- **`ledger_api_request` is the reverse-once guard for this API's own keys.** A TRUNCATE of it
+  removes that guard (the wallet's own guard above stays). The table grows with every key and has
+  no retention yet.
+- **`closeRound` on an `externalRoundId` the ledger has not seen** opens that round empty and
+  closes it, as a provider's end-of-round for a round of zero legs would. A later bet, win or
+  reverse on that round still lands and updates its totals, though the round stays closed. A round
+  of another player, game or currency is refused `round_mismatch`.
+- **A round is one currency.** A bet or win in another currency on it is refused
+  `round_mismatch`, so a win can open a new currency balance only on a round with no stake, a
+  free-round result.
+- **A key the wallet already holds from a direct `WALLET_COMMANDS` call** answers `replayed` with
+  what the wallet reports and stores nothing.
+- **Refusals are typed.** A malformed amount, zero or negative stake is `invalid_amount`; RG,
+  bonus max bet, balance, unknown game or product and round ownership each have their own reason.
+  Any other malformed field throws: it is the caller's bug. UUIDs are compared in lower case.
+- **Only `wager` is strict.** A misspelt wager key fails rather than vanishing; the other argument
+  objects ignore unknown keys, so a newer bridge can send a field an older ledger does not read.
+- **A stake reads `ledger_play_eligibility`, never the identity tables.** Identity writes every
+  change, restriction or lift, through `PLAY_ELIGIBILITY_PROJECTION` in the transaction that makes
+  it, so the two commit or roll back together, and emits `identity.play_eligibility.changed` in the
+  same transaction for a process without the wallet. Identity's version is the truth: a row held
+  ahead of it is overwritten and logged as an error. A replayed event or a backfill writes only a
+  missing, older, or same-version-but-different row. A user without a row is refused, and a time
+  bounded block is judged at read time. A script that writes the RG, `isActive`, ban or player
+  status columns directly must run `backfillPlayEligibility` (`@openora/core/pam/identity/seed`)
+  after it; identity also runs it at every boot. Deposits, payouts and other non-stake paths
+  still read `PLAY_ELIGIBILITY`. See ADR-0056.
+- **Deposit and wager limits are read from `ledger_user_limit`, never `user_limit`.** Compliance
+  writes them through `RG_LIMIT_LEDGER` in the transaction that changes a limit. The event replay
+  writes only a strictly newer version; the backfill repairs drift by re-publishing under a new
+  one. A limit with no rate into its currency, or no currency, refuses. A script that writes `user_limit` directly must run `backfillRgLimits`
+  (`@openora/core/compliance/seed`) after it; compliance also runs it at boot and re-projects
+  recently changed limits on every `rg-monitor` tick. See ADR-0057.
+- **Other modules read wallet money through `WALLET_READER`, never the tables.** Only analytics
+  and test seeding import `@openora/core/wallet/schema`. A new read is a reader method that takes
+  the caller's `tx`, with a parity case in `wallet-reader-parity.int.test.ts`. See ADR-0058.
+
 ## Rules that are easy to get wrong here
 
 - **A bet reversal always leaves an audit row, written in the credit's transaction.** A bet or win
@@ -103,12 +208,61 @@ does not repeat it.
   the full amount, the row records the fee, and the provider pays out the amount minus the fee. An
   amount that does not exceed the fee is refused. A refund returns the full debited amount.
 - **Whether a withdrawal needs KYC is compliance's decision, asked through `KYC_WITHDRAWAL_POLICY`.**
-  `kyc.gateWithdrawals` switches the request-time check on; auto-approval always asks. Without a
-  bound policy, every gated withdrawal needs an approved KYC status.
+  `kyc.gateWithdrawals` switches the request-time check on; auto-approval always asks. An admin
+  approval asks again, so KYC revoked while the withdrawal waited refuses it.
 - **A player carrying the `withdrawal_lock` tag cannot take money out.** The request is refused
   before any debit, and neither an admin nor auto-approval can approve a withdrawal that was
   already waiting when the lock landed; it stays queued and can still be rejected. The tag is
-  read through `PLAYER_TAGS`; with no tag module bound, no player can be locked.
+  read through `PLAYER_TAGS`.
+- **The withdrawal controls are required ports (ADR-0059).** The wallet refuses to boot without
+  `WITHDRAWAL_SECURITY`, `KYC_WITHDRAWAL_POLICY` and `PLAYER_TAGS`. The lock, the PIN lockout
+  and KYC are read at request, at approval (admin or auto) and once more after the approval
+  flip, before the payout. One that lands after the flip sends the withdrawal back to the queue
+  with reason `withdrawal_lock`, `withdrawal_pin_locked` or `kyc_required`, or
+  `control_check_failed` when a port throws.
+- **Only the tag module's screening verdict can auto-approve a withdrawal (ADR-0059).** A
+  request always answers `pending`. The tag module consumes `wallet.withdrawal.requested`,
+  assigns `withdrawal_review` when it is due, and emits `tag.withdrawal.screened` in the same
+  transaction. The verdict carries `reviewRequired` for this withdrawal's own amount. A
+  withdrawal whose verdict never arrives stays in the manual queue, and so does one whose verdict
+  asks for a review or lacks the field while `withdrawal_review` is in the effective
+  `excludeRiskFlags` (the default). A redelivered verdict changes nothing.
+- **A withdrawal stuck in one state is reported, never refunded (ADR-0059).** Reconciliation
+  files `stuck_withdrawal_requested` for one still `pending` or `on_hold` after 24 hours,
+  `stuck_withdrawal_approved` for one approved past `reconciliation.stuckAfterMinutes` with no
+  provider recorded, and `stuck_withdrawal_processing` for one handed to a vendor past that
+  cutoff whose status check failed. Each is filed once per withdrawal, can only be dismissed,
+  and closes by itself, with its audit row, once the withdrawal leaves that state. An approved
+  withdrawal with no provider also goes back to the queue as `pending` with reason
+  `never_dispatched`, so a person approves it again; a dispatch still running for it never
+  reaches the vendor.
+- **Reconciliation holds the ledger against what other services said it should hold.** Each cycle
+  runs these checks one by one, so one that fails is logged and named in `failedChecks`, and the
+  rest, the vendor diff and the completed run still go ahead; the run's own alert names it, so a
+  check that fails every cycle alerts every cycle. None moves money.
+  `ledger_request_mismatch` is a Ledger API request in the window whose answered transaction is
+  missing or differs in type, currency, key, amount or player (the last two only on requests that
+  recorded them); `ledger_unrequested_transaction` is a bet, win or reversal keyed by a provider
+  with no request under its key, counted only from that provider's first request on. Each is filed
+  once per key, nothing closes it, and its dismissal takes a super admin.
+  `play_eligibility_drift` and `rg_limits_drift` are a player whose projection is behind what
+  identity and compliance hold now, differs from it at the same version, or is still ahead of it
+  with another state once the owner is read again (`PLAY_ELIGIBILITY_SOURCE`, `RG_LIMITS_SOURCE`,
+  optional). A player behind is caught up from the owner's snapshot, as the owner's event would
+  have; one off the owner at its own version, or still ahead, is re-published through the owner's
+  own writer, at most `batchSize` successes in at most twice that many attempts a cycle
+  (`projectionRepairsDeferred` counts the rest, and the run alerts when it is above 0). The
+  finding closes the next cycle that finds the player in step; a drift that comes back after one
+  was dismissed or closed is filed again. `outbox_relay_lag` is the oldest unrelayed event older
+  than `reconciliation.outboxLagAlertMinutes` (default 5), and `event_dead_letters` the broker's
+  dead-letter streams holding more than `reconciliation.deadLetterAlertThreshold` entries
+  (default 0): one finding per incident, not one per event, closed once the backlog clears. A lag
+  finding dismissed while the outbox is still stuck is filed again the next cycle. These
+  four close themselves when the condition clears, audited as the system; a person can still
+  dismiss one. Each check that files anything raises one `wallet.reconciliation.alert` per cycle
+  through the outbox, in the transaction that files its first finding. A pipeline incident alerts
+  twice on purpose: through the outbox, and straight on the broker, best effort, in case the outbox
+  is what stalled.
 - **A module's withdrawal hold blocks every withdrawal the same way, under its own reason.** A
   module places and releases its hold through `WALLET_COMMANDS` in its own transaction, keyed by
   (player, source), and releases only its own. The wallet audits each change in that transaction.

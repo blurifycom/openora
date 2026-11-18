@@ -76,7 +76,8 @@ describe('configured rank margin through wallet settlement', () => {
           .where(eq(promoRankPeriodWager.userId, userId))
       ).map((row) => row.margin);
     expect(await margins()).toEqual(Array(3).fill('11.000000000000000000'));
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // A second reversal of the same round is refused, and leaves the margin where the first put it.
+    for (const expected of [{ ok: true }, { ok: false, reason: 'bet already reversed' }]) {
       expect(
         await db.transaction((tx) =>
           wallet.credit(tx, {
@@ -92,7 +93,7 @@ describe('configured rank margin through wallet settlement', () => {
             },
           }),
         ),
-      ).toMatchObject({ ok: true });
+      ).toMatchObject(expected);
       expect(await margins()).toEqual(Array(3).fill('0.000000000000000000'));
     }
   });
