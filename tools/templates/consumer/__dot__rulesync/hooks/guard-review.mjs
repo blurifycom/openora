@@ -46,7 +46,7 @@ const isHandMerge = (segment) => {
     .slice(command + 1)
     .find((word, i, rest) => !word.startsWith('-') && !/^(?:-R|--repo)$/.test(rest[i - 1]));
   return (
-    (command >= 0 && subcommand === 'merge') ||
+    (command >= 0 && /^(?:merge|accept)$/.test(subcommand ?? '')) ||
     (words.includes('api') && MERGE_API.test(cli[2]) && API_WRITES.test(` ${cli[2]}`))
   );
 };

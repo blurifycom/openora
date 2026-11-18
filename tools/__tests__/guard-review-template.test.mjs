@@ -112,6 +112,7 @@ test('a hand merge is denied, quoted prose about one is not', () => {
     'gh -R o/r pr merge 1',
     'GH_REPO=o/r gh pr merge 1',
     'glab mr merge 5',
+    'glab mr accept 5',
     'git status && glab mr merge 5',
     'gh pr -R o/r merge 1',
     'command gh pr merge 1',
