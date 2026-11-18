@@ -69,7 +69,7 @@ Every run starts here, so a run that died midway resumes where it stopped. Read 
 
 | State                                       | Next step                                   |
 | ------------------------------------------- | ------------------------------------------- |
-| The ticket has sub-tasks                    | 1b. The next sub-task                       |
+| The ticket has `ship-slice` sub-tasks       | 1b. The next sub-task                       |
 | No Plan comment on the ticket               | 1. Plan                                     |
 | Plan, no branch                             | 2. Build                                    |
 | Branch, no MR                               | 3. Test, 4. Review, 4b. Evidence, 5. Open the MR |
@@ -78,7 +78,7 @@ Every run starts here, so a run that died midway resumes where it stopped. Read 
 | MR open, CI running, or green and answered  | 7. Ready for review                         |
 | MR merged or closed                         | Report it, do nothing                       |
 
-A comment added to the ticket after the Plan comment that changes scope sends you back to 1. On a ticket with sub-tasks it is a blocker comment instead: changing the split is a person's call.
+A comment added to the ticket after the Plan comment that changes scope sends you back to 1. On a ticket with `ship-slice` sub-tasks it is a blocker comment instead: changing the split is a person's call.
 
 ### 1. Plan
 
@@ -93,10 +93,10 @@ Start `planner` with the ticket key. It returns `Asked:` with questions, `Split:
 
 A split ticket is delivered through its sub-tasks, so progress lives in Jira and a fresh session resumes from it.
 
-- No sub-tasks yet: create one per slice under the ticket, in delivery order, in the **create-task** skill's format (the slice's title, what changes, why it is safe alone, what it depends on and how, its test cases). Sub-tasks already under the ticket are reused, never created again.
+- No sub-tasks yet: create one per slice under the ticket, in delivery order, each labeled `ship-slice`, in the **create-task** skill's format (the slice's title, what changes, why it is safe alone, what it depends on and how, its test cases). `ship-slice` sub-tasks already under the ticket are reused, never created again; any other sub-task (manual QA, say) is not a slice and is left alone. Only a `ship-slice` sub-task counts as a sub-task in this skill, and the ticket's parent (an epic) does not make it one.
 - No Plan comment yet: post one titled "Plan" that lists the sub-task keys in delivery order, and move the ticket to In Progress.
 - Each sub-task then runs this skill from 1 as its own ticket: its own plan, branch `<type>/<sub-task key>/<slug>`, MR and transitions.
-- The next one is the first sub-task in order that is not yet in Code Review or later. One that needs another's code starts once that one has an MR, and is stacked on it: its worktree branches off that branch, and 2, 4 and 7 use that branch in place of `{{mrTarget}}`; when that MR merges, rebase onto `{{mrTarget}}` and retarget. One that needs another deployed starts only once that one is merged; until then report what it waits on and stop.
+- The next one is the first sub-task in order that is not yet in Code Review or later. One that needs another's code starts once that one has an MR, and is stacked on it: its worktree branches off that branch, and 2, 4 and 7 use that branch in place of `{{mrTarget}}`; when that MR merges, rebase onto `{{mrTarget}}` and retarget. One that needs another released starts only once that one is released (merged into `{{mrTarget}}` is not released); until then report what it waits on and stop.
 - One sub-task per run, in this order. First, each earlier sub-task MR that is red or has unanswered threads gets 6, ending once its fix is pushed (no 7 for it). Then, if no sub-task is left to deliver, the "None left" bullet below. Then, with three sub-task MRs open and unmerged, report that the next waits for a merge and stop. Otherwise deliver the next one, which stops at `green` in 7. The next `/ship` on the ticket, in a fresh session, starts the one after.
 - None left: move the ticket to Code Review, report every sub-task MR, stop.
 
@@ -153,12 +153,12 @@ Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` as a back
 
 - `failed` or `conflicts` -> 6, then watch again. Still red after three fixes -> blocker comment, report, stop. Ten fix rounds in total after the push (pipeline and threads together) and the MR still is not ready -> blocker comment, report, stop: a person takes it from there.
 - `threads <ids>` (unanswered for two checks in a row, from a person or a bot) -> 6 for those, then watch again. A thread the forge's AI review opens is a blocker it found on this head: it counts like a person's.
-- `green` -> check the MR is ready (below). Ready: mark the draft ready for review (`docs/agents/forge.md`), report "Ready for review:" and the MR URL, then watch again without `--until-green`. A sub-task (a ticket with a parent) stops here instead. Not ready: it stays a draft. Fix what is yours (the description, an unanswered thread) and watch again with `--until-green`; what only a person can supply (an UNCHECKED row) -> report "Draft, missing:" and the list, stop.
+- `green` -> check the MR is ready (below). Ready: mark the draft ready for review (`docs/agents/forge.md`), report "Ready for review:" and the MR URL, then watch again without `--until-green`. A `ship-slice` sub-task stops here instead. Not ready: it stays a draft. Fix what is yours (the description, an unanswered thread) and watch again with `--until-green`; what only a person can supply (an UNCHECKED row) -> report "Draft, missing:" and the list, stop.
 - `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `error ...` -> report it, stop.
 
 Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table, the screenshots and the UNCHECKED rows.
 
-Keep watching until the MR merges or closes, for as long as the session lives (a sub-task stops at `green`). You never merge it: who approves and who merges is in `docs/agents/forge.md`. A caller that says it watches the MR itself (a headless run) gets the report at `green`, and you stop there; it brings the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
+Keep watching until the MR merges or closes, for as long as the session lives (a `ship-slice` sub-task stops at `green`). You never merge it: who approves and who merges is in `docs/agents/forge.md`. A caller that says it watches the MR itself (a headless run) gets the report at `green`, and you stop there; it brings the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
 
 ## Rules
 
