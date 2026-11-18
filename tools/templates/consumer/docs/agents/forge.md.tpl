@@ -14,6 +14,7 @@ Swapping forge: keep the headings below and replace the commands. For GitLab tha
 - Topic branch (`feat/*`, `fix/*`, `{{trackerKey}}-*`) -> `{{mrTarget}}`.
 - A repo that promotes through environment branches adds them here (for example `{{mrTarget}}` -> `stage` -> `prod`) and never opens a PR straight from a topic branch to the last one.
 - If the current branch is not listed, target `{{mrTarget}}`.
+- Released: a change counts as released only when this repo's deploy marker shows its merge commit (name the marker here: the tag, deploy job or environment version that ships `{{mrTarget}}`). Merged is not released.
 
 ## Open a pull request
 
