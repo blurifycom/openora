@@ -6,7 +6,7 @@ Report only unless `--fix` or `--post` is passed.
 ## Arguments
 
 - `--base <ref>` changes the base; default `dev`.
-- A PR number reviews that PR with `gh pr diff` and `gh pr view`.
+- A PR number reviews that PR with `gh pr diff` and `gh pr view`. Only your own: a pull request whose author is not the forge user you are logged in as is refused (say so and stop); a person reviews it, with the `pr-manual-review` skill when the repo has one. `--ci` (the forge bot) is exempt. So `--post` only ever posts on your own pull request.
 - Paths limit the review scope.
 - `--agents N` selects two to four reviewers; default two (step 6). N = 3 adds a second `quality-reviewer` split by file group, and the report states the split. N = 4 also gives contracts and boundaries back to `contract-reviewer`, so `security-reviewer` drops focus `risk`. N < 2 is refused: run the two and say so in the report. `operator` joins on top of N only when the ticket has acceptance criteria.
 - `--fix` applies BLOCK and WARN fixes in the working tree after the report.
@@ -125,6 +125,8 @@ VERDICT: <GO|NO-GO> - <counts by severity> - <most critical finding>
 
 - Order findings BLOCK, WARN, INFO; exactly one `VERDICT:` line, last.
 - In both forms, money, authz, data-loss, contract-break, unmet-acceptance, or trace BLOCK findings force NO-GO.
+
+After every review, `--ci` included, write `.claude/reviews/<pr or branch>.json` in the main checkout: `{ "sha": "<full git rev-parse HEAD>", "base", "verdict": "GO" | "NO-GO", "findings": [...] }`, the verdict as that bare word. The `guard-review` hook lets a push or a new PR through only when one of these files records the current HEAD as GO.
 
 ## Posting to the PR
 
