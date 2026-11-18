@@ -31,7 +31,7 @@ The orchestrator: one ticket key in, a green MR in Code Review out. You own the 
 - Git: commits on the ticket branch `<type>/{{trackerKey}}-XXX/<slug>` and pushing it. Never a push to `{{mrTarget}}`, `stage`, `prod` or any shared branch.
 - Force-push: only `git push --force-with-lease` on the ticket branch, and only while every commit on the remote branch past `{{mrTarget}}` is your own (`git log --format=%ae origin/{{mrTarget}}..origin/<branch>` shows only your `git config user.email`). Someone else's commit there: merge, never push over it. Never a plain `--force`.
 - Merging: into a feature branch only (`{{mrTarget}}` merged into the ticket branch to clear conflicts, a stacked MR into its parent ticket branch). Never into `{{mrTarget}}`, `dev`, `develop`, `stage`, `staging`, `prod`, `production`, `main` or `master`.
-- The forge: opening the MR for that branch and replying on its review threads. Every comment you leave starts with `Agent:`, so `watch-pr.mjs` and other tools never take it for one to answer.
+- The forge: opening the MR for that branch and reacting on its review threads (`eyes` picked up, `thumbsup` fixed, `question` needs an answer). Never a reply, review or comment on the MR: the developer writes MR text by hand. Your `thumbsup` or `question` on a thread's last comment is what tells `watch-pr.mjs` it is handled; `eyes` alone stays pending.
 - Slack: nothing. Announcing the MR is the forge integration's job, so ship never drafts a notice.
 
 ## Do what the work needs, inside the worktree
@@ -73,7 +73,7 @@ Every run starts here, so a run that died midway resumes where it stopped. Read 
 | Plan, no branch                             | 2. Build                                    |
 | Branch, no MR                               | 3. Test, 4. Review, 4b. Evidence, 5. Open the MR |
 | MR open, CI red or conflicts                | 6. `fix-pipeline` skill                     |
-| MR open, review threads with no reply       | 6. `fix-review-comments` skill              |
+| MR open, review threads with no reaction    | 6. `fix-review-comments` skill              |
 | MR open, CI running, or green and answered  | 7. Ready for review                         |
 | MR merged or closed                         | Report it, do nothing                       |
 
@@ -130,7 +130,7 @@ Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-
 - Each thread is checked against the code on this branch first: correct | already handled | wrong on this branch | out of scope. Only a correct one changes code; the rest get an answer.
 - A red job is reproduced locally first; `builder` fixes its cause. Never skip or loosen a test.
 - Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched, and their clips replace the old ones in the MR description. Nothing is pushed untested.
-- Push the ticket branch without asking (a force-push only as above). Reply per thread, in the thread itself, with what changed and the test that proves it, or why nothing changed. Resolve only a thread the fix addressed; a question or a disagreement stays open for the reviewer.
+- Push the ticket branch without asking (a force-push only as above). React per thread instead of replying: `thumbsup` and resolve when the fix addressed it, `question` when it needs an answer or you disagree; that thread stays open and its question goes in the ticket's questions comment, the single place for open questions.
 
 Then 7.
 

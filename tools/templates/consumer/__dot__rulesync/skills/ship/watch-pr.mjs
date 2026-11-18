@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Watches the MR or PR of a branch and prints one line, then exits, when ship has work on it:
 //   failed | conflicts | threads <ids> | green (only with --until-green) | merged | closed | error <message>
-// A thread waits for an answer until its last comment is an "Agent:" reply from the account this runs as
-// (anyone can type the prefix); it is reported once it stayed the same for two checks, so a review with
+// A thread waits for an answer until the account this runs as left a final reaction on its last comment (thumbsup
+// or question; eyes only means picked up and stays pending: the agent never writes on the MR) or that comment is its legacy "Agent:" reply; it is reported once it stayed the same for two checks, so a review with
 // ten comments is one line. Run it in the background:
 //   node watch-pr.mjs <branch> [--until-green]        WATCH_DEBUG=1 prints every check to stderr
 // --once checks one time, for a caller that polls on its own (a scheduler): threads are reported at
@@ -39,7 +39,9 @@ const json = (cmd, args) => JSON.parse(run(cmd, args));
 const unansweredIds = (lastComments, me) =>
   lastComments
     .filter(
-      (comment) => !(comment.author === me && comment.body.trimStart().startsWith(AGENT_REPLY)),
+      (comment) =>
+        !(comment.author === me && comment.body.trimStart().startsWith(AGENT_REPLY)) &&
+        !comment.reactors.includes(me),
     )
     .map((comment) => String(comment.id))
     .sort();
@@ -48,10 +50,10 @@ const THREADS = `query($owner: String!, $name: String!, $number: Int!, $endCurso
   viewer { login }
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
     reviewThreads(first: 100, after: $endCursor) {
-      nodes { isResolved comments(last: 1) { nodes { id body author { login } } } }
+      nodes { isResolved comments(last: 1) { nodes { id body author { login } reactions(first: 50) { nodes { content user { login } } } } } }
       pageInfo { hasNextPage endCursor }
     }
-    comments(last: 1) { nodes { id body author { login } } }
+    comments(last: 1) { nodes { id body author { login } reactions(first: 50) { nodes { content user { login } } } } }
   } }
 }`;
 
@@ -84,7 +86,13 @@ function github() {
     .filter((thread) => !thread.isResolved)
     .flatMap((thread) => thread.comments.nodes)
     .concat(pages[0].repository.pullRequest.comments.nodes)
-    .map((comment) => ({ ...comment, author: comment.author?.login }));
+    .map((comment) => ({
+      ...comment,
+      author: comment.author?.login,
+      reactors: comment.reactions.nodes
+        .filter((reaction) => reaction.content !== 'EYES')
+        .map((reaction) => reaction.user?.login),
+    }));
   const checks = pr.statusCheckRollup ?? [];
   const ci = !checks.length
     ? null
@@ -128,7 +136,16 @@ function gitlab() {
         ),
     )
     .map((notes) => notes.at(-1))
-    .map((note) => ({ ...note, author: note.author?.username }));
+    .map((note) => ({
+      ...note,
+      author: note.author?.username,
+      reactors: json('glab', [
+        'api',
+        `projects/${mr.project_id}/merge_requests/${mr.iid}/notes/${note.id}/award_emoji`,
+      ])
+        .filter((award) => award.name !== 'eyes')
+        .map((award) => award.user?.username),
+    }));
   const pipeline = mr.head_pipeline?.sha === mr.sha ? mr.head_pipeline.status : null;
   const ci = !pipeline
     ? null
