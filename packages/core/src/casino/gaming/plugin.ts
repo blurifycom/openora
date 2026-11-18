@@ -71,7 +71,6 @@ export default {
   requiresPorts: [PLAY_ELIGIBILITY, IDENTITY_READER],
   dependsOn: ['wallet'],
   controlPorts: [
-    { port: RG_LIMITS, without: 'a round starts over a wager limit', boundBy: 'compliance' },
     {
       port: GAME_GEO_CHECK,
       without: 'a game starts in a country it is restricted in',
@@ -99,7 +98,7 @@ export default {
         c.get(PLAY_ELIGIBILITY),
         c.get(WALLET_COMMANDS),
         c.get(IDENTITY_READER),
-        c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
+        c.get(RG_LIMITS),
         c.has(GAME_GEO_CHECK) ? c.get(GAME_GEO_CHECK) : undefined,
         c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).gaming.allowedThumbnailHosts : [],
       ));

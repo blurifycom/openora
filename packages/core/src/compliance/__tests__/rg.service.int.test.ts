@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { eq, sql } from 'drizzle-orm';
 import type {
   AuditWritePort,
@@ -9,10 +10,12 @@ import type {
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { player } from '@openora/core/pam/schema/profile';
 import { makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
+import { ledgerRgLimits } from '@openora/core/wallet/seed';
 import { migrate } from '../migrate.js';
-import { userLimit, rgExclusion } from '../schema/index.js';
+import { userLimit, rgExclusion, rgLimitVersion } from '../schema/index.js';
 import {
   RgService,
   ActiveExclusionError,
@@ -22,8 +25,9 @@ import {
   LimitRaiseNotAllowedError,
   LimitOrderingViolationError,
   isWeakening,
-  resolveLimitCurrency,
+  requireLimitCurrency,
   RgLimitCurrencyUnresolvedError,
+  LimitTwinCurrencyError,
   type LimitRow,
   type ResolvedLimitRow,
 } from '../service/rg.service.js';
@@ -69,6 +73,7 @@ function makeService(notifier?: Notifier, rates: ExchangeRateReader = identityRa
     audit,
     identityReader: makeIdentityReader(),
     rates,
+    limitsLedger: ledgerRgLimits(db.drizzle.db, rates),
   });
   return { svc, events, enforcement, audit };
 }
@@ -98,7 +103,7 @@ const future = () => new Date(Date.now() + 200 * 24 * HOURS);
 const past = () => new Date(Date.now() - 1000);
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile]);
+  db = await createTestDb([migrate, migrateProfile, migrateWallet]);
 });
 
 afterAll(async () => {
@@ -186,7 +191,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     expect(rows).toHaveLength(1);
     expect(Number(rows[0]?.amount)).toBe(50);
-    expect(events.emitInTransaction).toHaveBeenLastCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       'rg.limit.set',
       expect.objectContaining({
@@ -793,10 +798,11 @@ describe('isWeakening across currencies', () => {
   });
 });
 
-describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
-  async function insertPlayer(userId: string, currency: string) {
-    await db.drizzle.db.insert(player).values({ userId, currency });
-  }
+describe('legacy null-currency limits (real PG)', () => {
+  const pinMigration = readFileSync(
+    new URL('../drizzle/migrations/0017_pin_legacy_limit_currency.sql', import.meta.url),
+    'utf8',
+  );
 
   async function insertNullCurrencyLimit(userId: string, overrides: Partial<LimitRow> = {}) {
     const [row] = await db.drizzle.db
@@ -808,97 +814,184 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
         amount: '100',
         minutes: null,
         currency: null,
+        updatedAt: new Date('2020-01-01T00:00:00Z'),
         ...overrides,
       })
       .returning();
     return row!;
   }
 
+  const reread = async (id: string) =>
+    (await db.drizzle.db.select().from(userLimit).where(eq(userLimit.id, id)))[0];
+
   afterEach(async () => {
     await db.drizzle.db.execute(sql`TRUNCATE ${player} RESTART IDENTITY CASCADE`);
   });
 
-  it('resolves a null-currency row to the player currency on first touch, and persists it', async () => {
+  it("pins a money row to the player's currency and keeps its updated_at", async () => {
     const userId = randomUUID();
-    await insertPlayer(userId, 'JPY');
+    await db.drizzle.db.insert(player).values({ userId, currency: 'JPY' });
     const row = await insertNullCurrencyLimit(userId);
 
-    const resolved = await resolveLimitCurrency(db.drizzle, row);
-    expect(resolved.currency).toBe('JPY');
+    await db.drizzle.db.execute(sql.raw(pinMigration));
 
-    const [persisted] = await db.drizzle.db
-      .select()
-      .from(userLimit)
-      .where(eq(userLimit.id, row.id));
-    expect(persisted?.currency).toBe('JPY');
+    expect(await reread(row.id)).toMatchObject({ currency: 'JPY', updatedAt: row.updatedAt });
   });
 
-  it('resolves exactly once - a second touch does not re-resolve from the player', async () => {
+  it('leaves a row without a player, or whose slot already holds that currency, unpinned', async () => {
+    const orphan = await insertNullCurrencyLimit(randomUUID());
     const userId = randomUUID();
-    await insertPlayer(userId, 'JPY');
-    const row = await insertNullCurrencyLimit(userId);
+    await db.drizzle.db.insert(player).values({ userId, currency: 'EUR' });
+    await insertNullCurrencyLimit(userId, { currency: 'EUR' });
+    const twin = await insertNullCurrencyLimit(userId);
 
-    const first = await resolveLimitCurrency(db.drizzle, row);
-    expect(first.currency).toBe('JPY');
+    await db.drizzle.db.execute(sql.raw(pinMigration));
 
-    await db.drizzle.db.update(player).set({ currency: 'EUR' }).where(eq(player.userId, userId));
-    const [reread] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.id, row.id));
-    const second = await resolveLimitCurrency(db.drizzle, reread!);
-    expect(second.currency).toBe('JPY');
+    expect((await reread(orphan.id))?.currency).toBeNull();
+    expect((await reread(twin.id))?.currency).toBeNull();
+    expect(() => requireLimitCurrency(orphan)).toThrow(RgLimitCurrencyUnresolvedError);
   });
 
-  it('fails closed when the player currency cannot be determined, and leaves the row null', async () => {
-    const userId = randomUUID();
-    const row = await insertNullCurrencyLimit(userId);
+  // 1 USD = 150 JPY; any other pair has no rate.
+  const yenRates = mock<ExchangeRateReader>({
+    getRate: vi.fn(async () => null),
+    convert: vi.fn(async (amount: string, from: string, to: string) => {
+      if (from === to) {
+        return amount;
+      }
+      return from === 'USD' && to === 'JPY' ? (Number(amount) * 150).toFixed(8) : null;
+    }),
+  });
 
-    await expect(resolveLimitCurrency(db.drizzle, row)).rejects.toThrow(
-      RgLimitCurrencyUnresolvedError,
+  const override = (
+    userId: string,
+    {
+      amount,
+      currency,
+      period = 'daily',
+    }: { amount: string; currency: string; period?: 'daily' | 'weekly' },
+    rates: ExchangeRateReader = identityRates(),
+  ) =>
+    makeService(undefined, rates).svc.setPlayerLimit(
+      userId,
+      {
+        userId,
+        type: 'deposit',
+        amount,
+        minutes: null,
+        currency,
+        period,
+        reason: 'legacy limit with no currency',
+        confirm: true,
+      },
+      randomUUID(),
+      'admin',
     );
 
-    const [persisted] = await db.drizzle.db
-      .select()
-      .from(userLimit)
-      .where(eq(userLimit.id, row.id));
-    expect(persisted?.currency).toBeNull();
-  });
+  const seedPlayer = (userId: string, currency: string) =>
+    db.drizzle.db.insert(player).values({ userId, currency });
 
-  it('resolves two concurrent touches of the same row consistently, never a split brain', async () => {
+  it("refuses an admin repair above the unpinned amount, read in the player's currency", async () => {
     const userId = randomUUID();
-    await insertPlayer(userId, 'GBP');
+    await seedPlayer(userId, 'USD');
     const row = await insertNullCurrencyLimit(userId);
 
-    const [a, b] = await Promise.all([
-      resolveLimitCurrency(db.drizzle, row),
-      resolveLimitCurrency(db.drizzle, row),
-    ]);
-    expect(a.currency).toBe('GBP');
-    expect(b.currency).toBe('GBP');
+    await expect(override(userId, { amount: '500', currency: 'USD' })).rejects.toBeInstanceOf(
+      LimitRaiseNotAllowedError,
+    );
 
-    const [persisted] = await db.drizzle.db
-      .select()
-      .from(userLimit)
-      .where(eq(userLimit.id, row.id));
-    expect(persisted?.currency).toBe('GBP');
+    expect((await reread(row.id))?.currency).toBeNull();
   });
 
-  it('leaves a session-type row (already carrying the sentinel) unaffected', async () => {
+  it('repairs an unpinned row at or below its amount, beside another unpinned one', async () => {
     const userId = randomUUID();
-    const row = await insertNullCurrencyLimit(userId, {
-      type: 'session',
-      period: 'session',
-      amount: null,
-      minutes: 60,
-      currency: 'SESSION',
+    await seedPlayer(userId, 'USD');
+    const daily = await insertNullCurrencyLimit(userId);
+    const weekly = await insertNullCurrencyLimit(userId, { period: 'weekly', amount: '500' });
+
+    await override(userId, { amount: '100', currency: 'USD' });
+    await override(userId, { amount: '400', currency: 'USD', period: 'weekly' });
+
+    expect(await reread(daily.id)).toMatchObject({
+      currency: 'USD',
+      amount: '100.000000000000000000',
     });
+    expect(await reread(weekly.id)).toMatchObject({
+      currency: 'USD',
+      amount: '400.000000000000000000',
+    });
+  });
 
-    const resolved = await resolveLimitCurrency(db.drizzle, row);
-    expect(resolved.currency).toBe('SESSION');
+  it("checks a cross-currency repair through the rate into the player's currency", async () => {
+    const userId = randomUUID();
+    await seedPlayer(userId, 'JPY');
+    const row = await insertNullCurrencyLimit(userId, { amount: '15000' });
 
-    const [persisted] = await db.drizzle.db
+    // 200 USD is 30,000 JPY, a raise; 50 USD is 7,500 JPY.
+    await expect(
+      override(userId, { amount: '200', currency: 'USD' }, yenRates),
+    ).rejects.toBeInstanceOf(LimitRaiseNotAllowedError);
+    await override(userId, { amount: '50', currency: 'USD' }, yenRates);
+
+    expect(await reread(row.id)).toMatchObject({
+      currency: 'USD',
+      amount: '50.000000000000000000',
+    });
+  });
+
+  it('refuses a cross-currency repair with no rate', async () => {
+    const userId = randomUUID();
+    await seedPlayer(userId, 'JPY');
+    const row = await insertNullCurrencyLimit(userId, { amount: '15000' });
+
+    await expect(
+      override(userId, { amount: '1', currency: 'EUR' }, yenRates),
+    ).rejects.toBeInstanceOf(LimitRaiseNotAllowedError);
+
+    expect((await reread(row.id))?.currency).toBeNull();
+  });
+
+  it('lets an admin set only a zero limit on an unpinned row whose player is gone', async () => {
+    const userId = randomUUID();
+    const row = await insertNullCurrencyLimit(userId);
+
+    await expect(override(userId, { amount: '1', currency: 'USD' })).rejects.toBeInstanceOf(
+      LimitRaiseNotAllowedError,
+    );
+    await override(userId, { amount: '0', currency: 'USD' });
+
+    expect(await reread(row.id)).toMatchObject({ currency: 'USD', amount: '0.000000000000000000' });
+  });
+
+  it('repairs the NULL twin of a slot, never its pinned row, and refuses its currency', async () => {
+    const userId = randomUUID();
+    await seedPlayer(userId, 'USD');
+    const pinned = await insertNullCurrencyLimit(userId, { currency: 'EUR', amount: '40' });
+    const twin = await insertNullCurrencyLimit(userId);
+
+    await expect(override(userId, { amount: '50', currency: 'EUR' })).rejects.toBeInstanceOf(
+      LimitTwinCurrencyError,
+    );
+    await override(userId, { amount: '50', currency: 'USD' });
+
+    expect((await reread(twin.id))?.currency).toBe('USD');
+    expect(await reread(pinned.id)).toMatchObject({
+      currency: 'EUR',
+      amount: '40.000000000000000000',
+    });
+  });
+
+  it('gives every user with a limit a version row, so the full backfill reaches them', async () => {
+    const userId = randomUUID();
+    await insertNullCurrencyLimit(userId, { currency: 'EUR' });
+
+    await db.drizzle.db.execute(sql.raw(pinMigration));
+
+    const [version] = await db.drizzle.db
       .select()
-      .from(userLimit)
-      .where(eq(userLimit.id, row.id));
-    expect(persisted?.currency).toBe('SESSION');
+      .from(rgLimitVersion)
+      .where(eq(rgLimitVersion.userId, userId));
+    expect(version?.version).toBe(0);
   });
 });
 

@@ -1,7 +1,7 @@
 # ADR-0036: Responsible-gambling money limits are enforced, and weakening one takes two steps
 
 **Date**: 2026-08-27
-**Status**: Accepted
+**Status**: Accepted; superseded in part by [ADR-0055](./0055-ledger-owned-limits-projection.md) (the wallet binds `RG_LIMITS` over its own limits projection)
 **Amended by ADR-0037 (2026-08-30)**: the admin override (`RgService.setPlayerLimit`) is
 now reduce-only - it may create a first limit or lower an existing one, but a raise is
 refused server-side with a typed error. The paragraph below asserting the admin path

@@ -124,6 +124,12 @@ is `SPORTSBOOK_LEDGER` unchanged.
   status columns directly must run `backfillPlayEligibility` (`@openora/core/pam/identity/seed`)
   after it; identity also runs it at every boot. Deposits, payouts and other non-stake paths
   still read `PLAY_ELIGIBILITY`. See ADR-0054.
+- **Deposit and wager limits are read from `ledger_user_limit`, never `user_limit`.** Compliance
+  writes them through `RG_LIMIT_LEDGER` in the transaction that changes a limit. The event replay
+  writes only a strictly newer version; the backfill repairs drift by re-publishing under a new
+  one. A limit with no rate into its currency, or no currency, refuses. A script that writes `user_limit` directly must run `backfillRgLimits`
+  (`@openora/core/compliance/seed`) after it; compliance also runs it at boot and re-projects
+  recently changed limits on every `rg-monitor` tick. See ADR-0055.
 
 ## Rules that are easy to get wrong here
 

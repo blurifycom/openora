@@ -26,6 +26,8 @@ import {
   WAGER_PRODUCTS,
   LEDGER_V1_KEYED_OPERATIONS,
   PLAYER_STATUSES,
+  GATED_LIMIT_TYPES,
+  GATED_LIMIT_PERIODS,
   type OnRampStatus,
   type WalletRail,
   type WalletTransactionStatus,
@@ -265,6 +267,26 @@ export const walletTransaction = pgTable(
 );
 
 // Per-player threshold override (unique userId); overrides the global autoWithdrawal.fiatThreshold.
+type LedgerRow = typeof walletTransaction.$inferSelect;
+
+/** A ledger leg as responsible gambling counts play: its type and direction. */
+export type PlayLeg = {
+  type: Extract<LedgerRow['type'], 'bet' | 'bet_reversal' | 'win' | 'win_reversal'>;
+  direction: NonNullable<LedgerRow['direction']>;
+};
+
+export const WAGER_LEGS = [
+  { type: 'bet', direction: 'debit' },
+  { type: 'bet_reversal', direction: 'credit' },
+] as const satisfies readonly PlayLeg[];
+
+// Every ledger leg RG reads as play; RG spend and RG standing both count from this list.
+export const LOSS_LEGS = [
+  ...WAGER_LEGS,
+  { type: 'win', direction: 'credit' },
+  { type: 'win_reversal', direction: 'debit' },
+] as const satisfies readonly PlayLeg[];
+
 export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
   id: uuid().primaryKey().defaultRandom(),
   userId: uuid().notNull().unique('auto_withdrawal_rule_user_id_unique'),
@@ -769,6 +791,33 @@ export const ledgerPlayEligibility = pgTable('ledger_play_eligibility', {
   banned: boolean().notNull(),
   banExpires: timestamp({ withTimezone: true }),
   status: ledgerPlayerStatusEnum(),
+  version: integer().notNull(),
+  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// The ledger's own copy of each user's effective deposit and wager limits: compliance writes it
+// through RG_LIMIT_LEDGER in the transaction that changes a limit, replays it with the
+// `compliance.rg_limits.changed` event and heals it with its boot backfill (ADR-0055). The gate
+// reads these rows, never `user_limit`. One row per limit, keyed by the compliance limit id.
+// `currency` is null when the limit has none (or fails the snapshot contract): the gate refuses.
+export const ledgerUserLimit = pgTable(
+  'ledger_user_limit',
+  {
+    limitId: uuid().primaryKey(),
+    userId: uuid().notNull(),
+    type: text({ enum: GATED_LIMIT_TYPES }).notNull(),
+    period: text({ enum: GATED_LIMIT_PERIODS }).notNull(),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    currency: text(),
+    changedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [index('ledger_user_limit_user_id_idx').on(t.userId)],
+);
+
+// The version of each user's `ledger_user_limit` rows, kept even when they have none left, so a
+// late event can never resurrect a removed limit. Every write keeps the highest version.
+export const ledgerUserLimitVersion = pgTable('ledger_user_limit_version', {
+  userId: uuid().primaryKey(),
   version: integer().notNull(),
   updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
