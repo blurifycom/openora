@@ -29,6 +29,10 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-stack.mjs\""
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-comments.mjs\""
           }
         ]
       },

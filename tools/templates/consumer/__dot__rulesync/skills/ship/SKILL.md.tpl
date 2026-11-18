@@ -31,7 +31,7 @@ The orchestrator: one ticket key in, a green MR in Code Review out. You own the 
 - Git: commits on the ticket branch `<type>/{{trackerKey}}-XXX/<slug>` and pushing it. Never a push to `{{mrTarget}}`, `stage`, `prod` or any shared branch.
 - Force-push: only `git push --force-with-lease` on the ticket branch, and only while every commit on the remote branch past `{{mrTarget}}` is your own (`git log --format=%ae origin/{{mrTarget}}..origin/<branch>` shows only your `git config user.email`). Someone else's commit there: merge, never push over it. Never a plain `--force`.
 - Merging: into a feature branch only (`{{mrTarget}}` merged into the ticket branch to clear conflicts, a stacked MR into its parent ticket branch). Never into `{{mrTarget}}`, `dev`, `develop`, `stage`, `staging`, `prod`, `production`, `main` or `master`.
-- The forge: opening the MR for that branch and reacting on its review threads (`eyes` picked up, `thumbsup` fixed, `question` needs an answer). Never a reply, review or comment on the MR: the developer writes MR text by hand. Your `thumbsup` or `question` on a thread's last comment is what tells `watch-pr.mjs` it is handled; `eyes` alone stays pending.
+- The forge: opening the MR for that branch, reacting on its review threads (`eyes` picked up, `thumbsup` fixed, `question` needs an answer) and resolving a thread the fix addressed. Never a comment, reply, review or verdict note on the MR (a hook blocks them): the developer writes MR text by hand, so replies are drafts the user posts. Your `thumbsup` or `question` on a thread's last comment is what tells `babysit.mjs` it is handled; `eyes` alone stays pending.
 - Slack: nothing. Announcing the MR is the forge integration's job, so ship never drafts a notice.
 
 ## Do what the work needs, inside the worktree
@@ -119,7 +119,7 @@ Start `tester` in the worktree with the plan's test cases, for its verify pass: 
 
 ### 4. Review
 
-Run the **review** skill on the branch against `{{mrTarget}}`, without `--post`: its precheck, risk tier, request trace and evidence gate run before any reviewer reads the diff. Hand its reviewers the tester's AC table, mutation rows included, so they dig where testing could not reach. This is the self-review the MR is opened on: people reviewing the MR later read it by hand and do not run an AI review again, so nothing goes out that this step has not passed.
+Run the **review** skill on the branch against `{{mrTarget}}`: its precheck, risk tier, request trace and evidence gate run before any reviewer reads the diff. Hand its reviewers the tester's AC table, mutation rows included, so they dig where testing could not reach. This is the self-review the MR is opened on: people reviewing the MR later read it by hand and do not run an AI review again, so nothing goes out that this step has not passed.
 
 Every finding with a fix gets fixed, whatever its severity, but only once it holds. Dedupe across reviewers, then check each yourself before anything changes: open its `file:line` and confirm the evidence on this branch. One that doesn't hold (wrong line, the code already handles it, a claim the code doesn't show) is dropped and goes to the MR description with why. A product call the ticket doesn't settle goes to `expert`, then is fixed or rides along as an open question. Send the rest to `builder` in one go, then 3 for the cases they touch and 4 again. A later round of 4 reviews only the commits since the last one and whether each sent finding is fixed. Clean means the review skill says **APPROVED** and no finding is left that holds; only then 4b.
 
@@ -143,20 +143,20 @@ Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-
 - Each thread is checked against the code on this branch first: correct | already handled | wrong on this branch | out of scope. Only a correct one changes code; the rest get an answer.
 - A red job is reproduced locally first; `builder` fixes its cause. Never skip or loosen a test.
 - Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched and the shots of the screens it changed, joins the walkthrough again, and it replaces the old one in the MR description. Nothing is pushed untested.
-- Push the ticket branch without asking (a force-push only as above). React per thread instead of replying: `thumbsup` and resolve when the fix addressed it, `question` when it needs an answer or you disagree; that thread stays open and its question goes in the ticket's questions comment, the single place for open questions.
+- Push the ticket branch without asking (a force-push only as above). Then draft one reply per thread in the user's voice, with what changed and the test that proves it, or why nothing changed, and print them for the user to post; never post them. React per thread too: `thumbsup` and resolve when the fix addressed it, `question` when it needs an answer or you disagree (that thread stays open and its question goes in the ticket's questions comment, the single place for open questions). Record every thread you handled (a drafted reply, or a bot note that needs none) as the babysit skill does, in `.claude/reviews/<branch with / as +>.replies.md` and `.drafted.json`, so the watcher and a resumed run skip it.
 
 Then 7.
 
 ### 7. Ready for review
 
-Start `node <this skill's folder>/watch-pr.mjs <branch> --until-green` as a background command, never a sleep loop in the session. It prints one line and exits when there is work:
+Run the **babysit** skill's loop on the MR, with step 6 above as its fix rules: start `node <babysit skill's folder>/babysit.mjs <branch> --until-green` as a background command, never a sleep loop in the session. It prints one line and exits when there is work:
 
 - `failed` or `conflicts` -> 6, then watch again. Still red after three fixes -> blocker comment, report, stop. Ten fix rounds in total after the push (pipeline and threads together) and the MR still is not ready -> blocker comment, report, stop: a person takes it from there.
 - `threads <ids>` (unanswered for two checks in a row, from a person or a bot) -> 6 for those, then watch again. A thread the forge's AI review opens is a blocker it found on this head: it counts like a person's.
 - `green` -> check the MR is ready (below). Ready: mark the draft ready for review (`docs/agents/forge.md`), report "Ready for review:" and the MR URL, then watch again without `--until-green`. A `ship-slice` sub-task stops here instead. Not ready: it stays a draft. Fix what is yours (the description, an unanswered thread) and watch again with `--until-green`; what only a person can supply (an UNCHECKED row) -> report "Draft, missing:" and the list, stop.
-- `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `error ...` -> report it, stop.
+- `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `watched` (another session has it) or `error ...` -> report it, stop.
 
-Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table, the screenshots and the UNCHECKED rows.
+Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer or a drafted reply listed in the report as waiting for the user to post, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table, the screenshots and the UNCHECKED rows.
 
 Keep watching until the MR merges or closes, for as long as the session lives (a `ship-slice` sub-task stops at `green`). You never merge it: who approves and who merges is in `docs/agents/forge.md`. A caller that says it watches the MR itself (a headless run) gets the report at `green`, and you stop there; it brings the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
 

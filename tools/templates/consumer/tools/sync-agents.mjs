@@ -238,7 +238,7 @@ if (owned.length > 0) {
   );
 }
 
-// Both files are tracked by every consumer, so a template bump cannot wire these gates in.
+// Both files are tracked by every consumer, so a template bump cannot wire these hooks in.
 const missingWiring = [
   [
     '.claude/settings.json',
@@ -257,6 +257,12 @@ const missingWiring = [
     'guard-stack.mjs',
     'the stacked-PR gate',
     'a PreToolUse "Bash" hook running guard-stack.mjs',
+  ],
+  [
+    '.claude/settings.json',
+    'guard-comments.mjs',
+    'the comment gate',
+    'a PreToolUse "Bash" hook running guard-comments.mjs',
   ],
   [
     'package.json',

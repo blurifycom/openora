@@ -1,0 +1,168 @@
+// babysit.mjs --once against a fake `gh`: a green draft asks to be marked ready, a thread with a
+// drafted reply stays quiet until a new comment lands, a final reaction from the account answers a
+// thread (eyes only means picked up), and a live session holding the PR wins.
+import assert from 'node:assert/strict';
+import { execFileSync, spawn } from 'node:child_process';
+import { once as onceEvent } from 'node:events';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const SCRIPT = fileURLToPath(
+  new URL('../templates/consumer/__dot__rulesync/skills/babysit/babysit.mjs', import.meta.url),
+);
+const repo = mkdtempSync(join(tmpdir(), 'babysit-'));
+const bin = join(repo, 'bin');
+const sleepers = [];
+after(() => {
+  for (const sleeper of sleepers) {
+    sleeper.kill();
+  }
+  rmSync(repo, { recursive: true, force: true });
+});
+
+execFileSync('git', ['init', '-q', repo]);
+execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/o/r.git']);
+mkdirSync(bin);
+// The fake answers `gh pr view` from pr.json and `gh api graphql` from threads.json
+writeFileSync(
+  join(bin, 'gh'),
+  `#!/bin/sh\ncase "$1" in pr) cat "${repo}/pr.json" ;; api) cat "${repo}/threads.json" ;; esac\n`,
+);
+chmodSync(join(bin, 'gh'), 0o755);
+
+const pr = (fields) =>
+  writeFileSync(
+    join(repo, 'pr.json'),
+    JSON.stringify({
+      number: 7,
+      url: 'https://github.com/o/r/pull/7',
+      state: 'OPEN',
+      isDraft: false,
+      headRefName: 'feat/x',
+      mergeable: 'MERGEABLE',
+      statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+      ...fields,
+    }),
+  );
+const threads = (lastCommentIds, reactions = [], reviews = []) =>
+  writeFileSync(
+    join(repo, 'threads.json'),
+    JSON.stringify([
+      {
+        data: {
+          viewer: { login: 'me' },
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: lastCommentIds.map((id) => ({
+                  isResolved: false,
+                  comments: {
+                    nodes: [
+                      {
+                        id,
+                        body: 'fix this',
+                        author: { login: 'reviewer' },
+                        reactions: { nodes: reactions },
+                      },
+                    ],
+                  },
+                })),
+              },
+              comments: { nodes: [] },
+              latestReviews: { nodes: reviews },
+            },
+          },
+        },
+      },
+    ]),
+  );
+const babysit = (...flags) =>
+  execFileSync(process.execPath, [SCRIPT, '7', ...flags], {
+    cwd: repo,
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+  }).trim();
+const once = () => babysit('--once');
+const watch = () => babysit('--until-green');
+
+test('a green PR has nothing to do, a green draft asks to be marked ready, red wins', () => {
+  threads([]);
+  pr({});
+  assert.equal(once(), 'none');
+  pr({ isDraft: true });
+  assert.equal(once(), 'green');
+  pr({ statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'FAILURE' }] });
+  assert.equal(once(), 'failed');
+  pr({ mergeable: 'CONFLICTING' });
+  assert.equal(once(), 'conflicts');
+});
+
+test('a thread with a drafted reply stays quiet until a new comment changes its last id', () => {
+  pr({});
+  threads(['c1', 'c2']);
+  assert.equal(once(), 'threads c1 c2');
+  mkdirSync(join(repo, '.claude/reviews'), { recursive: true });
+  writeFileSync(join(repo, '.claude/reviews/feat+x.drafted.json'), JSON.stringify(['c1', 'c2']));
+  assert.equal(once(), 'none');
+  threads(['c1', 'c3']);
+  assert.equal(once(), 'threads c3');
+});
+
+const mine = (content) => ({ content, user: { login: 'me' } });
+
+test('a thread is answered by a final reaction from the account, not by eyes or someone else', () => {
+  pr({});
+  threads(['C1']);
+  assert.equal(once(), 'threads C1');
+  threads(['C1'], [mine('EYES')]);
+  assert.equal(once(), 'threads C1');
+  threads(['C1'], [{ content: 'THUMBS_UP', user: { login: 'other' } }]);
+  assert.equal(once(), 'threads C1');
+  threads(['C1'], [mine('EYES'), mine('THUMBS_UP')]);
+  assert.equal(once(), 'none');
+  threads(['C1'], [mine('CONFUSED')]);
+  assert.equal(once(), 'none');
+});
+
+test('a summary-only review is unanswered until the account reacts; an empty approval is not', () => {
+  pr({});
+  const review = (fields) => ({
+    id: 'R1',
+    state: 'COMMENTED',
+    body: '',
+    author: { login: 'reviewer' },
+    reactions: { nodes: [] },
+    ...fields,
+  });
+  threads([], [], [review({ body: 'please rework' })]);
+  assert.equal(once(), 'threads R1');
+  threads([], [], [review({ state: 'CHANGES_REQUESTED' })]);
+  assert.equal(once(), 'threads R1');
+  threads([], [], [review({ state: 'APPROVED' })]);
+  assert.equal(once(), 'none');
+  threads([], [], [review({ body: 'x', reactions: { nodes: [mine('THUMBS_UP')] } })]);
+  assert.equal(once(), 'none');
+  threads([], [], [review({ body: 'mine', author: { login: 'me' } })]);
+  assert.equal(once(), 'none');
+});
+
+test('a PR held by a live session reads watched, watching or not; a dead holder does not count', async () => {
+  pr({ statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'FAILURE' }] });
+  threads([]);
+  const lock = join(repo, '.git/babysit/7.pid');
+  const sleeper = spawn('sleep', ['30']);
+  sleepers.push(sleeper);
+  mkdirSync(join(repo, '.git/babysit'), { recursive: true });
+  writeFileSync(lock, String(sleeper.pid));
+  assert.equal(once(), 'watched');
+  assert.equal(watch(), 'watched');
+  sleeper.kill();
+  await onceEvent(sleeper, 'exit');
+  assert.equal(once(), 'failed');
+  pr({ state: 'MERGED' });
+  assert.equal(once(), 'merged');
+  assert.equal(existsSync(lock), false);
+});
