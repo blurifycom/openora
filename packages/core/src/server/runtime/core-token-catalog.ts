@@ -1,5 +1,6 @@
 import type { TokenCatalog } from '@openora/core/contracts';
 import {
+  ACCOUNT_READER,
   ADMIN_GAME_REPORTING,
   ADMIN_PERMISSION_RESOLVER,
   ADMIN_PLAYER_ACTIVITY,
@@ -98,11 +99,17 @@ import {
   WALLET_COMMANDS,
   WALLET_READER,
 } from '@openora/core/contracts';
-import { ADMIN_GUARD, AUTH_SESSION } from '../auth/index.js';
+import {
+  ADMIN_GUARD,
+  AUTH_SESSION,
+  LOCAL_SESSION_RESOLVER,
+  REMOTE_SESSION_RESOLVER,
+} from '../auth/index.js';
 import { DRIZZLE } from '../db/index.js';
 import { EVENT_BUS } from '../kernel/index.js';
 
 const coreTokenCatalog = {
+  ACCOUNT_READER,
   ADMIN_GAME_REPORTING,
   ADMIN_GUARD,
   ADMIN_PERMISSION_RESOLVER,
@@ -113,6 +120,8 @@ const coreTokenCatalog = {
   ADMIN_WALLET_REPORTING,
   AUDIT_WRITER,
   AUTH_SESSION,
+  LOCAL_SESSION_RESOLVER,
+  REMOTE_SESSION_RESOLVER,
   BONUS_GRANTS,
   BONUS_GRANT_LEDGER,
   BONUS_LIFECYCLE,

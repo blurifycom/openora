@@ -12,18 +12,14 @@ import type { DrizzleTx } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import type {
-  AdminUserDirectory,
-  AuditWritePort,
-  RealtimeTransport,
-} from '@openora/core/contracts';
+import { playerIdsOf, type AuditWritePort, type RealtimeTransport } from '@openora/core/contracts';
 import {
   NO_CLIENT_META,
   makeChatContextSendPolicy,
   makeEventBus,
-  makeIdentityReader,
   mock,
 } from '../../../testing/mock.js';
+import { DrizzleAccountReader } from '@openora/core/pam/server';
 import { migrate } from '../migrate.js';
 import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
@@ -72,40 +68,21 @@ function makeServices(transport: RealtimeTransport = makeTransport()) {
     record: vi.fn().mockResolvedValue(undefined),
     recordInTransaction: vi.fn().mockResolvedValue(undefined),
   });
-  const directory = mock<AdminUserDirectory>({
-    lookupPlayers: async () => [],
-    lookupUsers: async (ids: readonly string[]) =>
-      ids.map((id) => ({
-        id,
-        email: `${id}@example.com`,
-        name: id,
-        createdAt: new Date(),
-        isActive: true,
-        role: 'player',
-      })),
-  });
-  const identityReader = makeIdentityReader();
+  const accounts = new DrizzleAccountReader(db.drizzle);
   const moderation = new ChatModerationService(db.drizzle, transport, audit, events);
   const chat = new ChatService({
     drizzle: db.drizzle,
     events,
     transport,
-    directory,
     audit,
     moderation,
-    identityReader,
+    accounts,
     allowedAttachmentHosts: [],
     contextSendPolicy: makeChatContextSendPolicy(),
   });
-  const membership = new ChatRoomMembershipService(
-    db.drizzle,
-    events,
-    audit,
-    transport,
-    identityReader,
-  );
+  const membership = new ChatRoomMembershipService(db.drizzle, events, audit, transport, accounts);
   const purge = new ChatRoomPurgeService(db.drizzle, events, transport, audit);
-  const ban = new ChatRoomBanService(db.drizzle, events, audit, transport, identityReader);
+  const ban = new ChatRoomBanService(db.drizzle, events, audit, transport, playerIdsOf(accounts));
   return { chat, membership, purge, ban, events, transport, audit };
 }
 
@@ -359,7 +336,6 @@ describe('ChatRoomMembershipService.handleAccountClosed - countdown (real PG)', 
 
     await services.chat.sendRoomMessage({
       userId: memberId,
-      username: 'bob',
       roomId: room.id,
       content: 'still here',
     });
@@ -379,7 +355,6 @@ describe('ChatRoomMembershipService.handleAccountClosed - countdown (real PG)', 
 
     await services.chat.sendRoomMessage({
       userId: memberId,
-      username: 'bob',
       roomId: room.id,
       content: 'hello',
     });
@@ -828,7 +803,6 @@ describe('ChatRoomPurgeService (real PG)', () => {
     const room = await seedPrivateRoom(services, ownerId, [memberId]);
     await services.chat.sendRoomMessage({
       userId: memberId,
-      username: 'bob',
       roomId: room.id,
       content: 'goodbye',
     });
@@ -892,7 +866,6 @@ describe('ChatRoomPurgeService (real PG)', () => {
     for (const content of ['one', 'two']) {
       await services.chat.sendRoomMessage({
         userId: memberId,
-        username: 'bob',
         roomId: room.id,
         content,
       });

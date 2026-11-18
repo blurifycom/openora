@@ -1,4 +1,5 @@
 import {
+  ACCOUNT_READER,
   ADMIN_SECURITY_POLICY,
   AUDIT_WRITER,
   ADMIN_USER_DIRECTORY,
@@ -28,7 +29,14 @@ import {
   domainEventSchemas,
   type RealtimeTransport,
 } from '@openora/core/contracts';
-import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, AUTH_SESSION, createLogger } from '@openora/core/server';
+import {
+  ADMIN_GUARD,
+  EVENT_BUS,
+  DRIZZLE,
+  AUTH_SESSION,
+  LOCAL_SESSION_RESOLVER,
+  createLogger,
+} from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import { DrizzleUserCommands } from './service/user-commands.service.js';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
@@ -43,6 +51,15 @@ import {
   DrizzleMailRecipientDirectory,
 } from './admin-user-directory.js';
 import { IdentityReaderService } from './adapters/identity-reader.service.js';
+import { DrizzleAccountReader } from './adapters/account-reader.service.js';
+import {
+  accountReaderCallers,
+  createInternalAccountsRouter,
+} from './router/internal-accounts.router.js';
+import {
+  createInternalSessionRouter,
+  sessionResolverCallers,
+} from './router/internal-sessions.router.js';
 import {
   createIdentityRouter,
   sessionEventsChannel,
@@ -241,6 +258,26 @@ export default {
     ctx.provide(MAIL_RECIPIENT_DIRECTORY, (c) => new DrizzleMailRecipientDirectory(c.get(DRIZZLE)));
     // Read-only session queries for cross-module consumers (eg tag inactive evaluation).
     ctx.provide(IDENTITY_READER, (c) => new IdentityReaderService(c.get(DRIZZLE)));
+    // Accounts as chat, social and the admin guard see them. The internal routes serve the
+    // identity database itself, never the bound reader, which a split service rebinds to a
+    // client of these very routes. Unset ACCOUNT_READER_CALLERS refuses every caller.
+    ctx.provide(ACCOUNT_READER, (c) => new DrizzleAccountReader(c.get(DRIZZLE)));
+    const accountReaderCallerNames = accountReaderCallers(process.env['ACCOUNT_READER_CALLERS']);
+    const sessionResolverCallerNames = sessionResolverCallers(
+      process.env['SESSION_RESOLVER_CALLERS'],
+    );
+    ctx.routers.addInternal('identity', (c) => ({
+      ...createInternalAccountsRouter(
+        new DrizzleAccountReader(c.get(DRIZZLE)),
+        accountReaderCallerNames,
+      ),
+      // The local chain, never a remote resolver. Unset SESSION_RESOLVER_CALLERS refuses every caller.
+      ...createInternalSessionRouter(
+        c.get(LOCAL_SESSION_RESOLVER),
+        resolveAdminSecurity(c),
+        sessionResolverCallerNames,
+      ),
+    }));
     // RG login-block writer. compliance drives it through the port, never the schema.
     ctx.provide(
       LOGIN_ENFORCEMENT,

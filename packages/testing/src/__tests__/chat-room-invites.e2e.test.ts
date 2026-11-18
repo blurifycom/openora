@@ -347,6 +347,32 @@ describe('chat room invites: rejections', () => {
     await expectRejected(await invite(owner, room, member.userId), 409, 'member');
   });
 
+  it('refuses an uppercase id of a member or a pending invitee', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('member');
+    const invitee = await registerChatter('guest');
+    const room = await createRoom(owner);
+    await joinByCode(member, room);
+    await sendInvite(owner, room, invitee);
+
+    await expectRejected(await invite(owner, room, member.userId.toUpperCase()), 409, 'member');
+    await expectRejected(await invite(owner, room, invitee.userId.toUpperCase()), 409, 'invited');
+  });
+
+  it('refuses an uppercase id of a room-banned invitee', async () => {
+    const owner = await registerChatter('host');
+    const banned = await registerChatter('banned');
+    const room = await createRoom(owner);
+    await joinByCode(banned, room);
+    const ban = await owner.client.post(`/chat/rooms/${room.id}/ban`, {
+      userId: banned.userId,
+      reason: 'spam',
+    });
+    expect(ban.status).toBe(200);
+
+    await expectRejected(await invite(owner, room, banned.userId.toUpperCase()), 403, 'banned');
+  });
+
   it('refuses a second pending invite for the same player', async () => {
     const owner = await registerChatter('host');
     const invitee = await registerChatter('guest');

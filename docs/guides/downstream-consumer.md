@@ -122,6 +122,59 @@ and each job reaches one of them.
   replicas `JOB_WORKERS=!<queues>`. Every queue needs a consumer somewhere. See
   [ADR-0049](../adr/0049-per-process-job-worker-selection.md).
 
+- **Calls between services.** Set `INTERNAL_API_SECRETS` to the same comma list on every
+  process, with each secret at least 32 characters. A plugin serves a call with
+  `ctx.routers.addInternal(namespace, factory)`, which mounts under `/internal/v1`, and
+  another process calls it with
+  `createInternalClient({ baseUrl, serviceName, audience, secrets, timeoutMs })`, where
+  `audience` is the called service's `SERVICE_NAME` and `secrets` is the
+  `INTERNAL_API_SECRETS` value. Inputs go in the signed JSON body; a handler that moves money
+  takes an idempotency key there. A handler that serves only some callers checks
+  `context.internalCaller` against an allow-list. A signed call never carries a session. While
+  the variable is unset every internal route answers 401. Your internet-facing edge (load
+  balancer or reverse proxy) MUST deny `/internal/`; services call each other directly over the
+  private network. For rotation and limits, see
+  [ADR-0054](../adr/0054-signed-internal-api-for-service-calls.md).
+
+- **Chat on a database of its own.** On the chat service set `IDENTITY_SERVICE_URL` to the
+  identity service's private origin and `IDENTITY_SERVICE_NAME` to its `SERVICE_NAME`, and name
+  `identity:no-routes` in its `SERVICE_MANIFEST`; on the identity service set
+  `ACCOUNT_READER_CALLERS` and `SESSION_RESOLVER_CALLERS` to the chat service's `SERVICE_NAME`
+  (unset refuses every caller). Those lists guard against misconfiguration only: one install-wide secret signs as any caller.
+  In production the URL must be https, or the boot fails; set `IDENTITY_SERVICE_ALLOW_HTTP=true`
+  only where a service mesh encrypts the hop inside the private network.
+- Only the chat plugin binds the remote reader. Run social in the same process as chat, or
+  keep social on the identity database.
+- Chat keeps each account it reads for 30 seconds in a cache of 10,000 accounts. Admin
+  checks, room invites, a roster viewer's staff check and social's privacy gates always read
+  fresh. Past 10,000 accounts online, rosters and online counts read cold on every call.
+- While identity is down, chat answers 503, history shows no avatars and a new message is
+  stored under the name `Unknown player`, never a name the client sent. A 4xx from identity (a caller missing from
+  `ACCOUNT_READER_CALLERS`, or clock skew past the signature window) shows as 500 on every
+  chat route: check both first.
+- Setting `IDENTITY_SERVICE_URL` on a process that serves identity itself fails the boot.
+- Chat resolves every request's session through the identity service, which runs the same
+  chain as a local request: the session, the idle window, the second-factor enrolment flag and
+  the player's last-seen stamp. Only the session cookie and `Authorization` header travel to identity
+  in the signed body (the rest of a cookie jar stays in chat), so the https rule above also protects
+  them; a request with neither is unauthenticated without a call. Chat keeps a session identity
+  confirmed for 5 seconds, in a cache of 10,000 sessions keyed by a hash of the credential; a
+  refusal (unknown, expired or idle session) is never cached.
+- A revocation reaches chat as an event (`identity.session.revoked`, `identity.sessions.revoked_all`,
+  `identity.user.deactivated`: an admin's revoke, a password change or reset, a deactivation,
+  an idle timeout), and every chat replica then drops that user's cached sessions. The player's
+  own sign-out emits no event, so a signed-out session still works on chat for up to the 5
+  seconds. So does a change to the second-factor enrolment requirement, and the idle clock chat
+  reads is as old as the cache.
+- Admin security (second-factor enrolment, device binding, IP policy) on chat's admin routes is
+  decided by identity on every call and never cached, so it follows identity's configuration, not
+  chat's. While identity is down those routes answer 503.
+- While identity is down (a timeout, a network failure or a 5xx), protected chat routes answer
+  503, public routes still serve, and a signed-in player is not kept on a stale answer. Chat logs
+  the first failure, then one summary line per 30 seconds with the count. A 4xx from identity
+  answers 401, so a caller missing from `SESSION_RESOLVER_CALLERS` shows as 401 on every
+  protected chat route: check that list first.
+
 ## Seeding reference data (production)
 
 Migrations carry **structure only** (DDL: tables, indexes, constraints) - never data.

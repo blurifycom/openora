@@ -93,6 +93,62 @@ beforeEach(async () => {
   );
 });
 
+describe('AdminSecurityService.assertSessionIntact (real PG)', () => {
+  const context = (userId: string, sessionId: string | null, userAgent = CHROME_UA) => ({
+    userId,
+    sessionId,
+    ip: null,
+    userAgent,
+  });
+
+  it('passes a live session on the device it was issued to', async () => {
+    const admin = await seedUser(db, { name: 'Admin', email: 'admin@b.dev', role: 'admin' });
+    const sessionId = await seedSession(admin.id, CHROME_UA);
+
+    await expect(
+      buildService().service.assertSessionIntact(context(admin.id, sessionId)),
+    ).resolves.toBeUndefined();
+  });
+
+  it('ends the session and refuses it when the device changed', async () => {
+    const admin = await seedUser(db, { name: 'Admin', email: 'admin@b.dev', role: 'admin' });
+    const sessionId = await seedSession(admin.id, CHROME_UA);
+
+    await expect(
+      buildService().service.assertSessionIntact(context(admin.id, sessionId, SAFARI_UA)),
+    ).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      data: { reason: 'session_fingerprint_mismatch' },
+    });
+    expect(await isActive(sessionId)).toBe(false);
+  });
+
+  it('refuses a session that ended after the caller resolved it, even from its own device', async () => {
+    const admin = await seedUser(db, { name: 'Admin', email: 'admin@b.dev', role: 'admin' });
+    const revoked = await seedSession(admin.id, CHROME_UA);
+    await db.drizzle.db.execute(
+      sql`UPDATE ${session} SET expires_at = now() WHERE id = ${revoked}`,
+    );
+    const { service } = buildService();
+
+    await expect(service.assertSessionIntact(context(admin.id, revoked))).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      data: { reason: 'authentication_required' },
+    });
+    await expect(
+      service.assertSessionIntact(context(admin.id, crypto.randomUUID())),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  it('has no session to check for a caller without one', async () => {
+    const admin = await seedUser(db, { name: 'Admin', email: 'admin@b.dev', role: 'admin' });
+
+    await expect(
+      buildService().service.assertSessionIntact(context(admin.id, null)),
+    ).resolves.toBeUndefined();
+  });
+});
+
 describe('AdminSecurityService.revokeTrustedDevice (real PG)', () => {
   it('ends the sessions the revoked device was holding', async () => {
     const admin = await seedUser(db, { name: 'Admin', email: 'admin@b.dev', role: 'admin' });

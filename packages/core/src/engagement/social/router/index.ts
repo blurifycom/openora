@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { getUserId, mapErrors, type OssContext } from '@openora/core/server';
+import { getUserId, mapErrors, upstreamDownAs503, type OssContext } from '@openora/core/server';
 import { socialContract } from '../contract/index.js';
 import {
   SocialService,
@@ -19,7 +19,15 @@ import {
 // container and passes it here; each procedure delegates to the service. Keep this
 // thin: resolve the caller, call the service, map domain errors - no business rules.
 export function createSocialRouter(social: SocialService) {
-  const os = implement(socialContract).$context<OssContext>();
+  const os = implement(socialContract)
+    .$context<OssContext>()
+    .use(async ({ next }) => {
+      try {
+        return await next();
+      } catch (err) {
+        throw upstreamDownAs503(err);
+      }
+    });
 
   return os.router({
     sendFriendRequest: os.sendFriendRequest.handler(({ input, context }) => {

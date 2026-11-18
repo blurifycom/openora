@@ -20,7 +20,7 @@ import {
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import {
   IDENTITY_READER,
-  type AdminUserDirectory,
+  type AccountReader,
   type AuditWritePort,
   type ChatModeration,
   type BrokerHandler,
@@ -39,6 +39,8 @@ import auditPlugin from '@openora/core/audit/server';
 import {
   NO_CLIENT_META,
   makeChatContextSendPolicy,
+  makeAccount,
+  makeAccountReader,
   makeIdentityReader,
   mock,
 } from '../../../testing/mock.js';
@@ -117,14 +119,22 @@ function setup({
     ...makeIdentityReader(),
     getPlayerIdByUserIdSafe: async (userId) => playerIds.get(userId) ?? null,
   };
+  const accounts: AccountReader = {
+    ...makeAccountReader(),
+    getAccounts: (userIds) =>
+      makeAccountReader(
+        [...playerIds].map(([userId, playerId]) =>
+          makeAccount(userId, { player: { ...makeAccount(userId).player!, playerId } }),
+        ),
+      ).getAccounts(userIds),
+  };
   const svc = new ChatService({
     drizzle: db.drizzle,
     events: bus,
     transport: mock<RealtimeTransport>(),
-    directory: mock<AdminUserDirectory>(),
     audit: mock<AuditWritePort>(),
     moderation: mock<ChatModeration>(),
-    identityReader,
+    accounts,
     allowedAttachmentHosts: [],
     socialCommands,
     contextSendPolicy: makeChatContextSendPolicy(),

@@ -1,6 +1,22 @@
 import * as z from 'zod';
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger, mapErrors } from '@openora/core/server';
-import type { CoreTokenCatalog, DrizzleService, DrizzleTx, Plugin } from '@openora/core/server';
+import {
+  EVENT_BUS,
+  DRIZZLE,
+  ADMIN_GUARD,
+  createInternalClient,
+  createLogger,
+  REMOTE_SESSION_RESOLVER,
+  AuthContextSchema,
+  mapErrors,
+  parseServiceManifest,
+} from '@openora/core/server';
+import type {
+  CoreTokenCatalog,
+  DrizzleService,
+  DrizzleTx,
+  InternalClient,
+  Plugin,
+} from '@openora/core/server';
 import type { ChatContextRooms, JobQueueAdapter } from '@openora/core/contracts';
 import {
   JOB_QUEUE,
@@ -9,6 +25,7 @@ import {
   CHAT_REALTIME_TRANSPORT,
   CHAT_REALTIME_CLIENT_AUTHORIZER,
   RATE_LIMITER,
+  ADMIN_SECURITY_POLICY,
   CHAT_SYSTEM_WRITER,
   CHAT_BLOCK_READER,
   CHAT_BLOCK_WRITER,
@@ -17,14 +34,14 @@ import {
   CHAT_CONTEXT_SEND_POLICY,
   CHAT_MODERATION,
   CHAT_ROOM_ACCESS,
-  ADMIN_USER_DIRECTORY,
+  ACCOUNT_READER,
   SOCIAL_COMMANDS,
   REALTIME_TRANSPORT,
   REALTIME_CLIENT_AUTHORIZER,
   AUDIT_WRITER,
-  IDENTITY_READER,
   PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
+  playerIdsOf,
   CHAT_MODERATION_EXPIRY_DEFAULT_CRON,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -44,6 +61,9 @@ import { ChatModerationExpiryService } from './service/chat-moderation-expiry.se
 import { ChatRoomPurgeService } from './service/chat-room-purge.service.js';
 import { ChatSystemCardService } from './service/chat-system-card.service.js';
 import { applyContextRoomCommand } from './service/chat-context-room-command.service.js';
+import { RemoteAccountReader } from './service/remote-account-reader.service.js';
+import { RemoteAdminSecurityPolicy } from './service/remote-admin-security.service.js';
+import { RemoteSessionResolver } from './service/remote-session-resolver.service.js';
 import { createChatRouter } from './router/index.js';
 
 const CHAT_MODERATION_EXPIRY_QUEUE = queue('chat-moderation-expiry');
@@ -73,10 +93,104 @@ const AccountReopenedJobSchema = z.object({ userId: UuidSchema });
 
 const logger = createLogger('chat');
 
+// An identity call slower than this fails, and the read it serves refuses.
+const IDENTITY_CALL_TIMEOUT_MS = 500;
+
+/**
+ * Chat on a database of its own reads accounts and resolves sessions through the identity
+ * service: set `IDENTITY_SERVICE_URL`. A process that serves identity itself (no
+ * SERVICE_MANIFEST, or one naming identity without `:no-routes`) has both locally, so the
+ * variable there is a misconfiguration and the boot fails.
+ */
+function identityClient(): InternalClient | null {
+  const url = process.env['IDENTITY_SERVICE_URL'];
+  if (!url) {
+    return null;
+  }
+  const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
+  if (!manifest || manifest.some((entry) => entry.id === 'identity' && !entry.noRoutes)) {
+    throw new Error(
+      'IDENTITY_SERVICE_URL is set, but this process serves the identity module itself. ' +
+        'Unset it, or run chat with a SERVICE_MANIFEST that names identity:no-routes.',
+    );
+  }
+  if (
+    process.env['NODE_ENV'] === 'production' &&
+    new URL(url).protocol !== 'https:' &&
+    process.env['IDENTITY_SERVICE_ALLOW_HTTP'] !== 'true'
+  ) {
+    throw new Error(
+      'IDENTITY_SERVICE_URL is not https in production, so account reads and the session ' +
+        'cookies chat forwards would cross the network in clear text. Use https, or set ' +
+        'IDENTITY_SERVICE_ALLOW_HTTP=true where a service mesh inside the private network ' +
+        'encrypts the hop.',
+    );
+  }
+  return createInternalClient({
+    baseUrl: url,
+    serviceName: process.env['SERVICE_NAME'] || 'monolith',
+    audience: process.env['IDENTITY_SERVICE_NAME'] || 'monolith',
+    secrets: process.env['INTERNAL_API_SECRETS'],
+    timeoutMs: IDENTITY_CALL_TIMEOUT_MS,
+  });
+}
+
+// A session the identity service ended: every chat replica drops what it cached for the user.
+// Fanned out on the realtime transport because a domain event reaches one replica only.
+const SESSION_PURGE_CHANNEL = 'chat:session-purge';
+const SessionPurgeSchema = AuthContextSchema.pick({ userId: true });
+type SessionPurge = z.infer<typeof SessionPurgeSchema>;
+const SESSION_ENDING_EVENTS = [
+  'identity.session.revoked',
+  'identity.sessions.revoked_all',
+  'identity.user.deactivated',
+] as const;
+
 export default {
   id: 'chat',
   dependsOn: ['identity', 'audit'],
   register(ctx) {
+    const identity = identityClient();
+    if (identity) {
+      const remoteAccounts = new RemoteAccountReader(identity);
+      ctx.provide(ACCOUNT_READER, () => remoteAccounts);
+      // Identity decides the admin checks (mandatory second factor, device binding): the rows
+      // they read are not in this database, and a missing row would silently skip the binding.
+      ctx.provide(ADMIN_SECURITY_POLICY, () => new RemoteAdminSecurityPolicy(identity));
+      const remoteSessions = new RemoteSessionResolver(identity);
+      let announcePurge: ((userId: string) => void | Promise<void>) | undefined;
+      ctx.provide(REMOTE_SESSION_RESOLVER, (c) => {
+        const transport = c.get(REALTIME_TRANSPORT);
+        // The channel is shared with whatever else publishes on the transport, so the payload is
+        // checked, not trusted.
+        c.onDispose(
+          transport.subscribe<unknown>(SESSION_PURGE_CHANNEL, (payload) => {
+            const purge = SessionPurgeSchema.safeParse(payload);
+            if (purge.success) {
+              remoteSessions.purgeUser(purge.data.userId);
+            } else {
+              logger.warn({ issues: purge.error.issues }, 'ignored a malformed session purge');
+            }
+          }),
+        );
+        announcePurge = (userId) =>
+          transport.publish<SessionPurge>(SESSION_PURGE_CHANNEL, { userId });
+        return remoteSessions;
+      });
+      for (const topic of SESSION_ENDING_EVENTS) {
+        // Thrown, not skipped, while the resolver is not built: the event is redelivered.
+        ctx.events.on(topic, async (payload) => {
+          const parsed = domainEventSchemas[topic].safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
+          if (!announcePurge) {
+            throw new Error('chat session purge: resolver not constructed yet');
+          }
+          await announcePurge(parsed.data.userId);
+        });
+      }
+    }
     let expiryRef: ChatModerationExpiryService | undefined;
     let inviteRef: ChatRoomInviteService | undefined;
     ctx.provide(CHAT_REALTIME_TRANSPORT, (c) => c.get(REALTIME_TRANSPORT));
@@ -99,10 +213,9 @@ export default {
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
         transport: c.get(CHAT_REALTIME_TRANSPORT),
-        directory: c.get(ADMIN_USER_DIRECTORY),
         audit: c.get(AUDIT_WRITER),
         moderation: c.get(CHAT_MODERATION),
-        identityReader: c.get(IDENTITY_READER),
+        accounts: c.get(ACCOUNT_READER),
         allowedAttachmentHosts: c.has(PLATFORM_CONFIG)
           ? c.get(PLATFORM_CONFIG).chat.allowedAttachmentHosts
           : [],
@@ -117,7 +230,7 @@ export default {
         c.get(EVENT_BUS),
         c.get(AUDIT_WRITER),
         c.get(CHAT_REALTIME_TRANSPORT),
-        c.get(IDENTITY_READER),
+        c.get(ACCOUNT_READER),
       );
     ctx.provide(CHAT_SYSTEM_WRITER, createChatService);
     ctx.provide(CHAT_BLOCK_WRITER, createChatService);
@@ -129,7 +242,7 @@ export default {
           drizzle: c.get(DRIZZLE),
           audit: c.get(AUDIT_WRITER),
           events: c.get(EVENT_BUS),
-          identityReader: c.get(IDENTITY_READER),
+          accounts: c.get(ACCOUNT_READER),
           transport: c.get(CHAT_REALTIME_TRANSPORT),
           systemWriter: c.get(CHAT_SYSTEM_WRITER),
         }),
@@ -408,7 +521,7 @@ export default {
       inviteRef = new ChatRoomInviteService(
         c.get(DRIZZLE),
         c.get(EVENT_BUS),
-        c.get(IDENTITY_READER),
+        c.get(ACCOUNT_READER),
         membershipService,
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
       );
@@ -429,13 +542,10 @@ export default {
           c.get(EVENT_BUS),
           c.get(AUDIT_WRITER),
           c.get(CHAT_REALTIME_TRANSPORT),
-          c.get(IDENTITY_READER),
+          playerIdsOf(c.get(ACCOUNT_READER)),
         ),
         roomMuteService: new ChatRoomMuteService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
-        restrictionService: new ChatRoomRestrictionService(
-          c.get(DRIZZLE),
-          c.get(ADMIN_USER_DIRECTORY),
-        ),
+        restrictionService: new ChatRoomRestrictionService(c.get(DRIZZLE), c.get(ACCOUNT_READER)),
         moderationService: c.get(CHAT_MODERATION),
         authorizer: c.get(CHAT_REALTIME_CLIENT_AUTHORIZER),
         adminGuard: c.get(ADMIN_GUARD),

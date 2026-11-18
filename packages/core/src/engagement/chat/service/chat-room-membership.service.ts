@@ -10,11 +10,13 @@ import {
   chatChannel,
   type AuditWritePort,
   type ClientMeta,
+  playerIdsOf,
+  type Account,
+  type AccountReader,
   type IdentityReader,
   type RealtimeTransport,
   type Uuid,
 } from '@openora/core/contracts';
-import { user } from '@openora/core/pam/schema/identity';
 import {
   chatRoom,
   chatRoomBan,
@@ -35,7 +37,7 @@ import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
   CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL,
   OWNERLESS_ROOM_RETENTION_DAYS,
-  STAFF_USER_ROLES,
+  isStaffRole,
 } from '../contract/constants.js';
 import {
   ChatRoomBannedError,
@@ -81,13 +83,17 @@ function toRoom(record: typeof chatRoom.$inferSelect) {
 }
 
 export class ChatRoomMembershipService {
+  private readonly identityReader: Pick<IdentityReader, 'getPlayerIdByUserIdSafe'>;
+
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly audit: AuditWritePort,
     private readonly transport: RealtimeTransport,
-    private readonly identityReader: IdentityReader,
-  ) {}
+    private readonly accounts: AccountReader,
+  ) {
+    this.identityReader = playerIdsOf(accounts);
+  }
 
   private async join({
     roomId,
@@ -102,7 +108,7 @@ export class ChatRoomMembershipService {
     predicate: ReturnType<typeof and>;
     inTransaction?: (t: DrizzleTx) => Promise<void>;
   }) {
-    const { room, inserted, joinerRole } = await this.drizzle.db.transaction((t) =>
+    const { room, inserted } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const [room] = await t.select().from(chatRoom).where(predicate).limit(1);
         if (!room) {
@@ -155,24 +161,30 @@ export class ChatRoomMembershipService {
           .values({ roomId, userId })
           .onConflictDoNothing()
           .returning();
-        const [joiner] =
-          inserted.length > 0
-            ? await t.select({ role: user.role }).from(user).where(eq(user.id, userId)).limit(1)
-            : [];
-        return { room, inserted, joinerRole: joiner?.role ?? null };
+        return { room, inserted };
       }),
     );
     if (inserted.length > 0) {
+      // After commit and best effort: the join stands even when the account cannot be read.
+      // Null when the read failed: the join is then not signalled, since staff cannot be told.
+      const accounts = await this.accounts
+        .getAccounts([userId])
+        .catch((err: unknown): Map<string, Account> | null => {
+          logger.warn({ err, roomId, userId }, 'chat room joiner account read failed');
+          return null;
+        });
+      const joiner = accounts?.get(userId);
       this.events.emit('chat.room.member.joined', {
         roomId,
         userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        playerId: joiner?.player?.playerId ?? null,
         ...(meta.adminId ? { adminId: meta.adminId } : {}),
         ip: meta.ip ?? null,
         userAgent: meta.userAgent ?? null,
       });
       // The member list hides staff from ordinary viewers, so their joins are not signalled.
-      if (!room.isPublic && !STAFF_USER_ROLES.some((role) => role === joinerRole)) {
+      const staff = isStaffRole(joiner?.role);
+      if (!room.isPublic && accounts && !staff) {
         await this.signalMemberJoined(roomId, userId);
       }
     }

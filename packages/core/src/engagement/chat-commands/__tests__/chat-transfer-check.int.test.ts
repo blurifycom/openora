@@ -11,16 +11,14 @@ import {
   type DrizzleTx,
 } from '@openora/core/server';
 import {
-  ADMIN_USER_DIRECTORY,
+  ACCOUNT_READER,
   AUDIT_WRITER,
   CHAT_BLOCK_WRITER,
   CHAT_CONTEXT_SEND_POLICY,
   CHAT_TRANSFER_CHECK,
   CHAT_TRANSFER_MAX_COUNTERPARTS,
   GLOBAL_CHAT_ROOM_ID,
-  IDENTITY_READER,
   REALTIME_TRANSPORT,
-  type AdminUserDirectory,
   type ChatTransferCheckInput,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
@@ -36,12 +34,11 @@ import {
 } from '@openora/core/engagement/schema/chat';
 import chatPlugin from '@openora/core/engagement/plugins/chat';
 import {
+  makeAccountReader,
   makeAuditWriter,
   makeChatContextSendPolicy,
   makeEventBus,
-  makeIdentityReader,
   makeRealtimeTransport,
-  mock,
 } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { chatCommandConfig } from '../schema/index.js';
@@ -74,10 +71,7 @@ function boot(contextSendPolicy = makeChatContextSendPolicy()) {
   container.register(EVENT_BUS, () => makeEventBus());
   container.register(AUDIT_WRITER, () => makeAuditWriter());
   container.register(REALTIME_TRANSPORT, () => makeRealtimeTransport());
-  container.register(IDENTITY_READER, () => makeIdentityReader());
-  container.register(ADMIN_USER_DIRECTORY, () =>
-    mock<AdminUserDirectory>({ lookupPlayers: async () => [] }),
-  );
+  container.register(ACCOUNT_READER, () => makeAccountReader());
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   chatPlugin.register(registry);
   chatCommandsPlugin.register(registry);

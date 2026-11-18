@@ -6,16 +6,21 @@ import {
   type AdminPermissionResolver,
   type AdminGrant,
   type AdminSecurityPolicy,
+  type AccountReader,
   type IdentityReader,
   type ClientMeta,
 } from '@openora/core/contracts';
 import { DrizzleService, mapConcurrent } from '../db/index.js';
 import { sql } from 'drizzle-orm';
-import { SessionResolver } from './session-resolver.js';
+import type { SessionResolver } from './session-resolver.js';
 import { holdsGrant, isRoleName, type ResourceName, type ActionOf } from './permissions.js';
 import type { OssContext, EventBus } from '../kernel/index.js';
 import { createLogger } from '../kernel/logger.js';
-import { extractClientMeta } from '../kernel/router-utils.js';
+import {
+  extractClientMeta,
+  throwIfSessionUnavailable,
+  type AuthContext,
+} from '../kernel/router-utils.js';
 import { getCurrentClientMeta, noteGrantedPermission } from '../kernel/request-context.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
@@ -31,6 +36,19 @@ const GRANT_RESOLVE_CONCURRENCY = 10;
 // Postgres matches a uuid in any letter case but prints it lowercase, and grants are keyed by
 // the printed form, so an id is looked up the way the database answers it.
 const canonicalUserId = (userId: string) => userId.toLowerCase();
+
+const toHeaders = (raw: OssContext['request']['headers']) => {
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(raw)) {
+    if (v !== undefined) {
+      headers.set(k, Array.isArray(v) ? v.join(', ') : v);
+    }
+  }
+  return headers;
+};
+
+const sessionOf = (auth: AuthContext | undefined) =>
+  auth && { userId: auth.userId, sessionId: auth.sessionId };
 
 const heldRequirements = <T extends GrantRequirement>(
   role: string,
@@ -53,7 +71,9 @@ export class AdminGuard {
   // Uses the shared SessionResolver (one better-auth init for the whole app) rather than a second createAuth over the same DB.
   constructor(
     private readonly drizzle: DrizzleService,
-    private readonly sessions: SessionResolver,
+    // Undefined in a service with no session tables: the request middleware has already
+    // resolved the session through the identity service, so the guard reads `context.auth`.
+    private readonly sessions: Pick<SessionResolver, 'resolveSession'> | undefined,
     // When bound (iam module loaded), grants come from DB only; otherwise static roles decide.
     private readonly permissionResolver?: AdminPermissionResolver,
     private readonly events?: EventBus,
@@ -64,6 +84,10 @@ export class AdminGuard {
     // When bound (identity module loaded), enforces mandatory 2FA enrolment and the
     // session's device fingerprint. Same layering reason as identityReader.
     private readonly securityPolicy?: AdminSecurityPolicy,
+    // When bound (identity module loaded, or the identity service read remotely), roles and the
+    // active flag come from it, always `fresh` so a demotion bites on the next call; the raw
+    // read below is the fallback for an identity-less boot.
+    private readonly accounts?: AccountReader,
   ) {}
 
   async assert(context: unknown): Promise<AdminCaller>;
@@ -87,16 +111,12 @@ export class AdminGuard {
 
     const { ip, userAgent } = extractClientMeta(request.headers);
 
-    const headers = new Headers();
-    for (const [k, v] of Object.entries(request.headers)) {
-      if (v === undefined) {
-        continue;
-      }
-      headers.set(k, Array.isArray(v) ? v.join(', ') : v);
-    }
-    const resolvedSession = await this.sessions.resolveSession(headers);
+    const resolvedSession = this.sessions
+      ? await this.sessions.resolveSession(toHeaders(request.headers))
+      : sessionOf((context as { auth?: AuthContext }).auth);
     const userId = resolvedSession?.userId;
     if (!userId) {
+      throwIfSessionUnavailable(context);
       // The idle policy ended this session on the way in, so say so: the back office shows
       // the reason on its sign-in page instead of a bare "not signed in".
       const idleEnded = (context as { sessionEndedReason?: string }).sessionEndedReason;
@@ -170,10 +190,8 @@ export class AdminGuard {
     if (userIds.length === 0 || requirements.length === 0) {
       return new Map();
     }
-    const result = await this.drizzle.db.execute<{ id: string; role: string }>(
-      sql`SELECT id, role FROM "user" WHERE is_active AND id = ANY(${sql.param([...userIds])}::uuid[])`,
-    );
-    const admins = result.rows.filter(({ role }) => isRoleName(role));
+    const active = await this.activeRoles(userIds);
+    const admins = active.filter(({ role }) => isRoleName(role));
     // ponytail: one grants read per admin on a cold cache, since the resolver port resolves a
     // single user; a batched `getGrantsMany` on AdminPermissionResolver lifts that ceiling.
     const entries = await mapConcurrent(
@@ -288,12 +306,28 @@ export class AdminGuard {
     return { account, granted: heldRequirements(account.role, grants, requirements) };
   }
 
-  private async findAccount(userId: string) {
-    const result = await this.drizzle.db.execute<{ role: string; is_active: boolean }>(
-      sql`SELECT role, is_active FROM "user" WHERE id = ${userId} LIMIT 1`,
+  private async activeRoles(userIds: readonly string[]): Promise<{ id: string; role: string }[]> {
+    if (this.accounts) {
+      const accounts = await this.accounts.getAccounts(userIds, { fresh: true });
+      return [...accounts.values()]
+        .filter((account) => account.isActive)
+        .map((account) => ({ id: canonicalUserId(account.userId), role: account.role }));
+    }
+    const result = await this.drizzle.db.execute<{ id: string; role: string }>(
+      sql`SELECT id, role FROM "user" WHERE is_active AND id = ANY(${sql.param([...userIds])}::uuid[])`,
     );
-    const row = result.rows[0];
-    return row && { role: row.role, isActive: row.is_active, isAdmin: isRoleName(row.role) };
+    return result.rows;
+  }
+
+  private async findAccount(userId: string) {
+    const row = this.accounts
+      ? (await this.accounts.getAccounts([userId], { fresh: true })).get(userId)
+      : await this.drizzle.db
+          .execute<{ role: string; isActive: boolean }>(
+            sql`SELECT role, is_active AS "isActive" FROM "user" WHERE id = ${userId} LIMIT 1`,
+          )
+          .then((result) => result.rows[0]);
+    return row && { role: row.role, isActive: row.isActive, isAdmin: isRoleName(row.role) };
   }
 
   // null only when no resolver is bound - an unassigned admin under a bound resolver gets [].

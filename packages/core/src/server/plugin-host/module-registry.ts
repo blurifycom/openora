@@ -30,6 +30,7 @@ const UNKNOWN_OWNER = 'unknown';
 
 export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistry<C> {
   private _routers = new Map<string, RouterFactory<C>>();
+  private _internalRouters = new Map<string, RouterFactory<C>>();
   private _events = new Map<string, RegisteredEventHandler[]>();
   private _consumerOrdinals = new Map<string, number>();
   private _triggerListeners: RegisteredTriggerListener[] = [];
@@ -96,21 +97,33 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
 
   routers = {
     add: (namespace: string, factory: RouterFactory<C>) => {
-      if (this._routers.has(namespace)) {
-        throw new Error(`Router namespace "${namespace}" is already registered`);
-      }
-      this._routers.set(
-        namespace,
-        this._routerless.has(this._owner)
-          ? (c) => {
-              factory(c, { mounted: false });
-              return {};
-            }
-          : factory,
-      );
+      this.addRouter(this._routers, namespace, factory);
+    },
+    addInternal: (namespace: string, factory: RouterFactory<C>) => {
+      this.addRouter(this._internalRouters, namespace, factory);
     },
     getAll: () => this._routers,
+    getInternal: () => this._internalRouters,
   };
+
+  private addRouter(
+    routers: Map<string, RouterFactory<C>>,
+    namespace: string,
+    factory: RouterFactory<C>,
+  ): void {
+    if (routers.has(namespace)) {
+      throw new Error(`Router namespace "${namespace}" is already registered`);
+    }
+    routers.set(
+      namespace,
+      this._routerless.has(this._owner)
+        ? (c) => {
+            factory(c, { mounted: false });
+            return {};
+          }
+        : factory,
+    );
+  }
 
   events = {
     on: (event: string, handler: EventHandler, options?: EventSubscriptionOptions) => {

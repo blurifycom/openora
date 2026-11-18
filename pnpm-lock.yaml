@@ -483,6 +483,9 @@ importers:
       '@orpc/shared':
         specifier: 1.15.7
         version: 1.15.7(@opentelemetry/api@1.9.1)
+      '@orpc/server':
+        specifier: 1.15.7
+        version: 1.15.7(@opentelemetry/api@1.9.1)(ws@8.21.1)
       '@types/node':
         specifier: 26.6.5
         version: 26.6.5

@@ -7,6 +7,8 @@ import {
   getUserId,
   AdminGuard,
   assertRateLimit,
+  upstreamDownAs503,
+  throwIfSessionUnavailable,
   type OssContext,
 } from '@openora/core/server';
 import {
@@ -101,17 +103,12 @@ const SEND_MESSAGE_RATE_LIMIT = {
   onUnavailable: 'allow',
 } as const;
 
-function resolveUsername(context: OssContext, fallback = 'anonymous') {
-  const val = context.request.headers['x-username'];
-  if (Array.isArray(val)) {
-    return val[0] ?? fallback;
-  }
-  return typeof val === 'string' ? val : fallback;
-}
-
 // Reads work for anonymous viewers; when authenticated, the id drives per-viewer
 // block filtering (ABC-45 AC11). Sourced from server-verified `auth`, never a header.
+// A viewer whose session could not be looked up gets a 503, never an anonymous read
+// that drops their block filter or refuses them a private room they belong to.
 function resolveViewerId(context: OssContext) {
+  throwIfSessionUnavailable(context);
   return context.auth?.userId;
 }
 
@@ -152,7 +149,15 @@ export function createChatRouter({
   adminGuard: AdminGuard;
   limiter: RateLimiterAdapter;
 }) {
-  const os = implement(chat).$context<OssContext>();
+  const os = implement(chat)
+    .$context<OssContext>()
+    .use(async ({ next }) => {
+      try {
+        return await next();
+      } catch (err) {
+        throw upstreamDownAs503(err);
+      }
+    });
 
   // Private-room streams require membership; public-room and global streams are readable anonymously.
   const authorizeChannel = (input: { roomId?: ChatRoom['id'] | null }, context: OssContext) =>
@@ -220,7 +225,6 @@ export function createChatRouter({
 
     sendRoomMessage: os.sendRoomMessage.handler(async ({ input, context }) => {
       const userId = getUserId(context);
-      const username = resolveUsername(context);
       await assertRateLimit(
         limiter,
         makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_SEND, userId),
@@ -240,7 +244,6 @@ export function createChatRouter({
         () =>
           chatService.sendRoomMessage({
             userId,
-            username,
             roomId: input.roomId,
             content: input.content,
             attachment: input.attachment ?? null,
@@ -295,7 +298,6 @@ export function createChatRouter({
 
     sendGlobalMessage: os.sendGlobalMessage.handler(async ({ input, context }) => {
       const userId = getUserId(context);
-      const username = resolveUsername(context);
       await assertRateLimit(
         limiter,
         makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_SEND, userId),
@@ -309,7 +311,6 @@ export function createChatRouter({
         () =>
           chatService.sendGlobalMessage({
             userId,
-            username,
             content: input.content,
             attachment: input.attachment ?? null,
           }),

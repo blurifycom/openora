@@ -14,7 +14,8 @@ import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { makeEventBus, makeIdentityReader, testContext } from '../../../testing/mock.js';
+import { makeEventBus, testContext } from '../../../testing/mock.js';
+import { DrizzleAccountReader } from '@openora/core/pam/server';
 import { migrate } from '../migrate.js';
 import { friendship } from '../schema/index.js';
 import { createSocialRouter } from '../router/index.js';
@@ -25,7 +26,9 @@ let db: TestDb;
 function build() {
   const events = makeEventBus();
   return {
-    router: createSocialRouter(new SocialService(db.drizzle, events, makeIdentityReader())),
+    router: createSocialRouter(
+      new SocialService(db.drizzle, events, new DrizzleAccountReader(db.drizzle)),
+    ),
     events,
   };
 }

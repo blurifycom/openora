@@ -149,6 +149,23 @@ export type { UserCommands } from './identity.js';
 export type { IdentityReader } from './identity-reader.js';
 export { userIdOfPlayer, userIdsOfPlayers } from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';
+export type {
+  Account,
+  AccountReader,
+  AccountReadOptions,
+  PlayerMatch,
+  PlayerSearch,
+} from './account-reader.js';
+export {
+  ACCOUNT_READER,
+  ACCOUNT_READER_ROUTES,
+  ACCOUNTS_BATCH_MAX,
+  AccountReaderWire,
+  AccountSchema,
+  PLAYER_SEARCH_MAX_LIMIT,
+  PlayerMatchSchema,
+  playerIdsOf,
+} from './account-reader.js';
 
 export type {
   JobQueueAdapter,
@@ -413,7 +430,11 @@ export type { AdminGrant, AdminPermissionResolver } from './admin-permission.js'
 export { ADMIN_PERMISSION_RESOLVER } from './admin-permission.js';
 
 export type { AdminSecurityPolicy, AdminSessionContext } from './admin-security.js';
-export { ADMIN_SECURITY_POLICY } from './admin-security.js';
+export {
+  ADMIN_SECURITY_POLICY,
+  ADMIN_SECURITY_ROUTE,
+  AdminSecurityWire,
+} from './admin-security.js';
 export type { AuditWritePort, AuditAction, DirectAuditAction } from './audit.js';
 export { AUDIT_WRITER } from './audit.js';
 
