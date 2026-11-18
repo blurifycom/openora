@@ -23,7 +23,7 @@ invoke this skill, which forks one of its own: it reads this file and follows it
 
 - Player app :3000, backoffice :3002, API :3001, unless the repo's rules name other ports (a
   worktree slot, say). Ports held by another checkout: never kill it, ask.
-- Accounts: the seed's (`admin@oss.dev` / `password1234` after `pnpm db:seed`). Save a login once
+- Accounts: the seed's (`admin@oss.dev` / `password1234` after `pnpm bootstrap`). Save a login once
   with `state-save /tmp/ui-verify/<app>.json`, `state-load` it after.
 - Theme: switch with the app's own toggle in a video; for a still, set what the toggle sets
   (a cookie or `localStorage`) with `eval`, then reload.

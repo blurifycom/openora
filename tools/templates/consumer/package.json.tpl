@@ -17,6 +17,7 @@
     "prepare": "node tools/sync-agents.mjs && rulesync generate",
     "db:migrate": "pnpm -F @{{name}}/api exec openora-migrate",
     "db:seed": "pnpm -F @{{name}}/api db:seed",
+    "bootstrap": "node tools/bootstrap.mjs",
     "gen": "turbo gen"
   },
   "devDependencies": {

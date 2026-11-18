@@ -16,6 +16,7 @@ import {
   RedisRateLimiter,
   RedisStreamsBroker,
   RedisPubSubRealtimeTransport,
+  SseClientAuthorizer,
   createEventBus,
   createLogger,
   createRedisClient,
@@ -39,6 +40,7 @@ import {
   RATE_LIMITER,
   CACHE,
   REALTIME_TRANSPORT,
+  REALTIME_CLIENT_AUTHORIZER,
   ERROR_TRACKING,
   healthContract,
   IGAMING_CONFIG,
@@ -503,6 +505,8 @@ async function bootApp(
       container.onDispose(() => transport.close());
       return transport;
     });
+    // The transport's sidekick: chat resolves it at boot, so an app without it never starts.
+    container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
   }
   // One shared better-auth instance for both the per-request middleware and AdminGuard -
   // no second createAuth() over the same DB. authSchema is injected (not imported) because

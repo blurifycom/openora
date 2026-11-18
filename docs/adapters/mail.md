@@ -21,7 +21,8 @@ The `mail` module binds both at boot (`packages/core/src/mail/plugin.ts`):
 - `EMAIL_TEMPLATE_RENDERER` -> `DefaultEmailTemplateRenderer` (English-only plain text
   for every key, with a minimal generated HTML body).
 
-So the platform runs with no operator overlay - it just does not send real mail.
+So the platform runs with no operator overlay - it just does not send real mail. With
+`NODE_ENV=production` it refuses to boot until a real `EMAIL_SENDER` is bound.
 
 ## Operator overlay
 

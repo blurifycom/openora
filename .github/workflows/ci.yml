@@ -168,6 +168,25 @@ jobs:
       - name: Core integration (shard ${{ matrix.shard }}/3)
         run: pnpm exec turbo run test:integration --filter=@openora/core -- --shard=${{ matrix.shard }}/3
 
+  # A new user's first run against this commit's packages: scaffold, install, `pnpm bootstrap`
+  # (Docker), start the API, log in as the seeded admin. Catches boot crashes no in-repo test
+  # sees, because `@openora/testing` binds seams a real app has to get from `createApp`.
+  consumer:
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The scaffold resolves its other deps from npm without a lockfile: keep the token away.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache: 'false'
+      - run: pnpm test:consumer
+
   # Advisory: unused code is fixable debt, not a merge gate. Not in `verify.needs`, and
   # continue-on-error keeps a red result from failing the run.
   unused:
@@ -184,7 +203,7 @@ jobs:
   # Stable required-check name; aggregates the jobs above.
   verify:
     if: always() && github.event.action != 'edited'
-    needs: [checks, integration]
+    needs: [checks, integration, consumer]
     runs-on: ubuntu-latest
     steps:
       - name: Require all verify jobs green

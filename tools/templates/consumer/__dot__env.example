@@ -9,8 +9,23 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/oss_igaming
 # use them; everything else stays on DATABASE_URL. Each replica gets its own pool.
 # DATABASE_REPLICA_URLS=
 
-# Auth secret (min 32 chars). Generate one: openssl rand -base64 32
-AUTH_SECRET=change-me-in-production-min-32-chars
+# Auth secret (min 32 chars). Left empty so the API refuses to boot without a real one.
+# `pnpm bootstrap` generates it when it creates .env; otherwise: openssl rand -base64 32
+AUTH_SECRET=
+
+# Withdrawal PIN hashing key (min 32 chars). Left empty for the same reason; `pnpm bootstrap`
+# generates it, otherwise: openssl rand -base64 32
+WITHDRAWAL_PIN_HMAC_SECRET=
+
+# Backoffice super-admin that `pnpm db:seed` creates (local only). Re-seeding resets the password.
+ADMIN_EMAIL=admin@oss.dev
+ADMIN_PASSWORD=password1234
+# Demo players `pnpm db:seed` creates.
+# SEED_PLAYERS=36
+
+# Host ports docker compose publishes. Change both these and the URLs if 5432 / 6379 are taken.
+# POSTGRES_PORT=5432
+# REDIS_PORT=6379
 
 # Backoffice super-admin that `pnpm db:seed` creates (local only). Re-seeding resets the password.
 ADMIN_EMAIL=admin@oss.dev

@@ -4,7 +4,7 @@ targets:
 description: First-run onboarding for this consumer igaming repo. Interview the user for requirements, then delegate the build to the scoped agents. Invokes the `start` MCP tool.
 ---
 
-Call the `start` MCP tool (server `oss`) with no arguments, then follow the script it returns exactly. If the user already described what they want to build, pass it as the `ask` argument.
+If the stack is not set up yet (no `.env`, or `pnpm db:seed` never ran), run `pnpm install` and `pnpm bootstrap` first; it needs Docker running. Then call the `start` MCP tool (server `oss`) with no arguments, then follow the script it returns exactly. If the user already described what they want to build, pass it as the `ask` argument.
 
 The returned script will have you: confirm the MCP server is connected, run a thorough requirements interview, call `enhance-intent`, then delegate the implementation to the `expert`, `builder`, and `tester` agents (via the Task tool). You gather requirements and orchestrate; you do not write feature code yourself, and you never modify `@openora/*` core.
 

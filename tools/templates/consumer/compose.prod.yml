@@ -1,0 +1,63 @@
+# The whole app on one server: `docker compose -f compose.prod.yml up -d --build`.
+# Migrations run first, then the API starts on API_PORT (default 3001). Secrets come from
+# .env: set AUTH_SECRET, WITHDRAWAL_PIN_HMAC_SECRET and POSTGRES_PASSWORD (letters and
+# digits only, it goes into a URL). No demo data is seeded here.
+x-runtime: &runtime
+  build: .
+  env_file: .env
+  environment:
+    NODE_ENV: production
+    PORT: 3001
+    DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/oss_igaming
+    REDIS_URL: redis://redis:6379
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: oss_igaming
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--maxmemory-policy', 'noeviction', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    <<: *runtime
+    command: ['pnpm', 'db:migrate']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *runtime
+    ports:
+      # Local only: put a TLS reverse proxy (Caddy, nginx) in front for the public domain.
+      - '127.0.0.1:${API_PORT:-3001}:3001'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
