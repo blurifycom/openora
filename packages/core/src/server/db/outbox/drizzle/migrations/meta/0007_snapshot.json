@@ -41,9 +41,7 @@
         "audit_outbox_event_id_unique": {
           "name": "audit_outbox_event_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "event_id"
-          ]
+          "columns": ["event_id"]
         }
       },
       "policies": {},
@@ -105,9 +103,7 @@
         "audit_outbox_rejected_event_id_unique": {
           "name": "audit_outbox_rejected_event_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "event_id"
-          ]
+          "columns": ["event_id"]
         }
       },
       "policies": {},
@@ -315,10 +311,7 @@
       "compositePrimaryKeys": {
         "processed_events_event_id_consumer_pk": {
           "name": "processed_events_event_id_consumer_pk",
-          "columns": [
-            "event_id",
-            "consumer"
-          ]
+          "columns": ["event_id", "consumer"]
         }
       },
       "uniqueConstraints": {},
