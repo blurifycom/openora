@@ -1,4 +1,4 @@
-# ADR-0054: Audit outbox and shipper
+# ADR-0055: Audit outbox and shipper
 
 **Date**: 2026-11-12
 **Status**: Accepted

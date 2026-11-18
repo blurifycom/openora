@@ -314,7 +314,7 @@ export function enqueueAuditInTransaction(txn: DrizzleTx, input: RecordInput): P
 /**
  * Queues the audit record of an event, keyed by its event id and dated by its `occurredAt`, so the
  * tap, the consumer and a redelivery queue one equal entry. Only the audit plugin's event paths
- * call it, and `audit/server` does not export it: no other caller may backdate a record (ADR-0054).
+ * call it, and `audit/server` does not export it: no other caller may backdate a record (ADR-0055).
  */
 export function enqueueEventAuditInTransaction(
   txn: DrizzleTx,

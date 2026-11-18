@@ -66,7 +66,7 @@ export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'igaming'> & {
  * `REALTIME_TRANSPORT` binds the same `RedisPubSubRealtimeTransport` production uses
  * (ADR-0031) - core ships no in-process fallback, so there is nothing else to bind.
  *
- * Audit records ship from `audit_outbox` after their write commits (ADR-0054), on the app's
+ * Audit records ship from `audit_outbox` after their write commits (ADR-0055), on the app's
  * background shipper. A test flushes with `flushAudit(app)` before it asserts on
  * `audit_log`, directly or through a route that reads it, rather than racing the shipper.
  */

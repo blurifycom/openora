@@ -10,7 +10,7 @@ import { CHAIN_SPLIT_MARK, CHAIN_SPLIT_SQL } from './schema/index.js';
 // Every UPDATE, DELETE and TRUNCATE on audit_log raises, whatever the role. ENABLE ALWAYS keeps the
 // triggers firing under `session_replication_role = replica`, which skips ordinary triggers, so
 // only DDL gets past them: the owner can still disable or drop one, which is why the app must not
-// run as the owner (ADR-0054). The function keeps its
+// run as the owner (ADR-0055). The function keeps its
 // audit_log name from before it guarded the outbox tables too.
 const DENY_MUTATION_FN_SQL = `CREATE OR REPLACE FUNCTION audit_log_deny_mutation() RETURNS trigger
    LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
