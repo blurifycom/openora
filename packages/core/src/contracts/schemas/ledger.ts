@@ -11,8 +11,10 @@ import {
   MONEY_PRECISION,
   MONEY_SCALE,
   MoneyAmountSchema,
+  TimestampSchema,
   UuidSchema,
 } from './common.js';
+import { PlayerStatusSchema } from './player.js';
 import {
   SportsbookCancelArgsSchema,
   SportsbookConfirmArgsSchema,
@@ -197,6 +199,52 @@ export const LedgerV1BalanceOutcomeSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('refused'), reason: z.literal('wallet_not_found') }),
 ]);
 export type LedgerV1BalanceOutcome = z.infer<typeof LedgerV1BalanceOutcomeSchema>;
+
+/**
+ * A user's play eligibility inputs as identity committed them, for the ledger's projection.
+ * `version` is the user's own counter, bumped under the user row lock by every writer, so the
+ * ledger keeps the highest it has seen and ignores an older one that arrives late.
+ */
+export const PlayEligibilitySnapshotSchema = z.object({
+  userId: UuidSchema,
+  rgBlocked: z.boolean(),
+  rgBlockedUntil: TimestampSchema.nullable(),
+  isActive: z.boolean(),
+  banned: z.boolean(),
+  banExpires: TimestampSchema.nullable(),
+  /** Null for a user without a player profile yet. */
+  status: PlayerStatusSchema.nullable(),
+  version: z.number().int().nonnegative(),
+});
+export type PlayEligibilitySnapshot = z.infer<typeof PlayEligibilitySnapshotSchema>;
+
+/** The limit types a stake or a deposit is gated on; loss and session limits are not. */
+export const GATED_LIMIT_TYPES = ['deposit', 'wager'] as const;
+export const GATED_LIMIT_PERIODS = ['daily', 'weekly', 'monthly'] as const;
+
+/**
+ * Every effective deposit and wager limit of one user as compliance committed them, for the
+ * ledger's `ledger_user_limit` projection. A limit increase waiting out its cool-down is not in
+ * it: only the amount in force is. `currency` is the limit's own, else the player's at the time
+ * of the write; null when neither exists, which the gate refuses. `version` is the user's own
+ * counter in compliance, bumped by every writer under its row lock.
+ */
+export const RgLimitsSnapshotSchema = z.object({
+  userId: UuidSchema,
+  version: z.number().int().nonnegative(),
+  limits: z.array(
+    z.object({
+      limitId: UuidSchema,
+      type: z.enum(GATED_LIMIT_TYPES),
+      period: z.enum(GATED_LIMIT_PERIODS),
+      amount: MoneyAmountSchema,
+      currency: z.string().min(1).nullable(),
+      /** When the limit last changed, for the reference currency's "most recent" rule. */
+      changedAt: TimestampSchema,
+    }),
+  ),
+});
+export type RgLimitsSnapshot = z.infer<typeof RgLimitsSnapshotSchema>;
 
 /** The sportsbook ops keep the sportsbook ledger's own shapes, under the v1 names. */
 export const LedgerV1SportsbookReserveArgsSchema = SportsbookReserveArgsSchema;

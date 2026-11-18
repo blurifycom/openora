@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "play_eligibility_version" integer DEFAULT 0 NOT NULL;

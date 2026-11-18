@@ -499,10 +499,34 @@ export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js
 
 export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
-export type { PlayEligibilityPort, PlayRefusal } from './play-eligibility.js';
-export { PLAY_ELIGIBILITY, PLAY_REFUSALS, isPlayRefused } from './play-eligibility.js';
-export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
-export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
+export type {
+  PlayEligibilityPort,
+  PlayEligibilityProjectionPort,
+  PlayEligibilityState,
+  PlayRefusal,
+} from './play-eligibility.js';
+export {
+  LEDGER_PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY_PROJECTION,
+  PLAY_REFUSALS,
+  isPlayRefused,
+  playRefusalOf,
+} from './play-eligibility.js';
+export type {
+  RgLimitsPort,
+  RgLimitDecision,
+  RgLimitExceededData,
+  RgLimitLedgerPort,
+} from './rg-limits.js';
+export {
+  RG_LIMITS,
+  RG_LIMIT_LEDGER,
+  RgLimitExceededError,
+  RgRateUnavailableError,
+  limitSlotKey,
+  periodWindow,
+} from './rg-limits.js';
 export type {
   RgStanding,
   RgStandingExclusion,

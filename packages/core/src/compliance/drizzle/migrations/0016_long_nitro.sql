@@ -1,0 +1,1 @@
+CREATE INDEX "user_limit_updated_at_idx" ON "user_limit" USING btree ("updated_at");

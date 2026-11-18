@@ -25,7 +25,7 @@ import type {
   ResponsibleGamingConfig,
   User,
 } from '@openora/core/contracts';
-import { MONEY_SCALE } from '@openora/core/contracts';
+import { MONEY_SCALE, RgRateUnavailableError, periodWindow } from '@openora/core/contracts';
 import { userLimit } from '../schema/index.js';
 import { LimitNotFoundError, LimitOwnershipError } from './compliance.service.js';
 import {
@@ -35,15 +35,15 @@ import {
   isWeakening,
   toDbCurrency,
   toWireCurrency,
-  resolveLimitCurrency,
-  resolveLimitCurrencyInTx,
+  readLimitSlot,
+  requireLimitCurrency,
   writeLimitRow,
   assertLimitOrdering,
   RgLimitCurrencyUnresolvedError,
   type LimitRow,
 } from './rg.service.js';
-import { RgMonitoringService, RgRateUnavailableError } from './rg-monitoring.service.js';
-import { periodWindow, pendingChangeStatus, thresholdPct } from './rg-eval.js';
+import { RgMonitoringService } from './rg-monitoring.service.js';
+import { pendingChangeStatus, thresholdPct } from './rg-eval.js';
 import type {
   LimitView,
   RgExclusion,
@@ -147,19 +147,9 @@ export class RgSelfServiceService {
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const outcome = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
-        const [existing] = await tx
-          .select()
-          .from(userLimit)
-          .where(
-            and(
-              eq(userLimit.userId, userId),
-              eq(userLimit.type, input.type),
-              eq(userLimit.period, input.period),
-            ),
-          )
-          .limit(1);
+        const existing = await readLimitSlot(tx, userId, input.type, input.period);
 
-        const resolvedExisting = existing && (await resolveLimitCurrencyInTx(tx, existing));
+        const resolvedExisting = existing && requireLimitCurrency(existing);
         if (
           existing &&
           resolvedExisting &&
@@ -170,6 +160,7 @@ export class RgSelfServiceService {
           await this.assertOrdering(tx, userId, input);
           const parked = await this.park(tx, existing, 'increase', input);
           await this.emitRequested(tx, userId, playerId, existing, parked, meta);
+          await this.publish(tx, userId);
           return { applied: false as const, row: parked };
         }
         await this.assertOrdering(tx, userId, input);
@@ -199,6 +190,7 @@ export class RgSelfServiceService {
           ip: meta?.ip ?? null,
           userAgent: meta?.userAgent ?? null,
         });
+        await this.publish(tx, userId);
         return { applied: true as const, row };
       }),
     );
@@ -227,6 +219,7 @@ export class RgSelfServiceService {
           currency: null,
         });
         await this.emitRequested(tx, userId, playerId, current, parked, meta);
+        await this.publish(tx, userId);
         return parked;
       }),
     );
@@ -248,7 +241,7 @@ export class RgSelfServiceService {
     const outcome = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
         const reread = await this.reread(tx, limitId, userId);
-        const current = await resolveLimitCurrencyInTx(tx, reread);
+        const current = requireLimitCurrency(reread);
         const now = new Date();
         const status = pendingChangeStatus(current, now);
 
@@ -269,6 +262,7 @@ export class RgSelfServiceService {
             'rg.limit.change_expired',
             this.lapsedPayload(userId, playerId, current),
           );
+          await this.publish(tx, userId);
           return { kind: 'expired' as const, existing: current };
         }
 
@@ -286,6 +280,7 @@ export class RgSelfServiceService {
           if (deleted.length === 0) {
             throw new NoPendingLimitChangeError(limitId);
           }
+          await this.publish(tx, userId);
           return { kind: 'removed' as const, existing: current };
         }
 
@@ -320,6 +315,7 @@ export class RgSelfServiceService {
           ip: meta?.ip ?? null,
           userAgent: meta?.userAgent ?? null,
         });
+        await this.publish(tx, userId);
         return { kind: 'raised' as const, existing: current, row };
       }),
     );
@@ -364,6 +360,7 @@ export class RgSelfServiceService {
           'rg.limit.change_cancelled',
           this.actedPayload(userId, playerId, current, meta),
         );
+        await this.publish(tx, userId);
         return cleared;
       }),
     );
@@ -456,7 +453,19 @@ export class RgSelfServiceService {
           expiresAt: (row.pendingExpiresAt ?? now).toISOString(),
         });
       }
+      // In user id order, so two sweeps lock the version rows in the same order.
+      const users = [
+        ...new Set(candidates.filter((row) => clearedIds.has(row.id)).map((row) => row.userId)),
+      ].sort();
+      for (const userId of users) {
+        await this.publish(tx, userId);
+      }
     });
+  }
+
+  /** Re-projects the user's limits into the ledger, in the transaction that changed one. */
+  private publish(tx: DrizzleTx, userId: User['id']): Promise<void> {
+    return this.rg.limitsPublisher.publish(tx, userId);
   }
 
   private async assertOrdering(
@@ -607,23 +616,6 @@ export class RgSelfServiceService {
     return existing;
   }
 
-  private async viewOne(
-    userId: User['id'],
-    type: UpsertLimitInput['type'],
-    period: UpsertLimitInput['period'],
-  ): Promise<LimitView> {
-    const row = findOneOrThrow(
-      await this.drizzle.db
-        .select()
-        .from(userLimit)
-        .where(
-          and(eq(userLimit.userId, userId), eq(userLimit.type, type), eq(userLimit.period, period)),
-        ),
-      new LimitNotFoundError(userId),
-    );
-    return this.toView(userId, row);
-  }
-
   private async toViews(userId: User['id'], rows: LimitRow[]): Promise<LimitView[]> {
     const views: LimitView[] = [];
     for (const row of rows) {
@@ -643,7 +635,7 @@ export class RgSelfServiceService {
     let used: string | null = null;
     if (isMoneyLimit) {
       try {
-        const resolved = await resolveLimitCurrency(this.drizzle, row);
+        const resolved = requireLimitCurrency(row);
         resolvedCurrency = resolved.currency;
         used = await this.monitoring.spendFor(
           this.drizzle.db,

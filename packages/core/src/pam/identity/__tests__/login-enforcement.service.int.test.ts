@@ -8,6 +8,7 @@ import { makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js
 import { migrate } from '../migrate.js';
 import { user, session } from '../schema/index.js';
 import { LoginEnforcementService } from '../service/login-enforcement.service.js';
+import { PlayEligibilityPublisher } from '../service/play-eligibility.service.js';
 import { SessionService } from '../service/session.service.js';
 
 const HOUR = 3600_000;
@@ -23,7 +24,19 @@ function makeService() {
     identityReader: makeIdentityReader(),
     mcpTokens: mock<McpTokenRevocation>({ revokeAllForUser }),
   });
-  return { svc: new LoginEnforcementService(db.drizzle, sessions), events, revokeAllForUser };
+  const publisher = new PlayEligibilityPublisher(db.drizzle, events, () => undefined);
+  const svc = new LoginEnforcementService(sessions, publisher);
+  return {
+    // The port runs on the caller's transaction, as compliance's RG write does.
+    svc: {
+      block: (userId: string, opts: { until: Date | null }) =>
+        db.drizzle.db.transaction((tx) => svc.block(userId, opts, tx)),
+      unblock: (userId: string) => db.drizzle.db.transaction((tx) => svc.unblock(userId, tx)),
+    },
+    port: svc,
+    events,
+    revokeAllForUser,
+  };
 }
 
 async function seedActiveSession(userId: string) {
@@ -75,7 +88,8 @@ describe('LoginEnforcementService (real PG)', () => {
 
     expect(await readUser(account.id)).toMatchObject({ rgBlocked: true, rgBlockedUntil: until });
     expect(await activeSessionCount(account.id)).toBe(0);
-    expect(events.emit).toHaveBeenCalledWith(
+    expect(events.emitInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       'identity.sessions.revoked_all',
       expect.objectContaining({ userId: account.id }),
     );
@@ -123,7 +137,8 @@ describe('LoginEnforcementService (real PG)', () => {
 
     expect(await readUser(account.id)).toMatchObject({ rgBlocked: false, rgBlockedUntil: null });
     expect(await activeSessionCount(account.id)).toBe(1);
-    expect(events.emit).not.toHaveBeenCalledWith(
+    expect(events.emitInTransaction).not.toHaveBeenCalledWith(
+      expect.anything(),
       'identity.sessions.revoked_all',
       expect.anything(),
     );
@@ -138,5 +153,21 @@ describe('LoginEnforcementService (real PG)', () => {
     await svc.block(account.id, { until: later });
 
     expect(await readUser(account.id)).toMatchObject({ rgBlockedUntil: later });
+  });
+
+  it("rolls back with the caller's transaction: no block, sessions still live", async () => {
+    const { port } = makeService();
+    const account = await seedUser(db);
+    await seedActiveSession(account.id);
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await port.block(account.id, { until: null }, tx);
+        throw new Error('the RG write failed');
+      }),
+    ).rejects.toThrow('the RG write failed');
+
+    expect(await readUser(account.id)).toMatchObject({ rgBlocked: false });
+    expect(await activeSessionCount(account.id)).toBe(1);
   });
 });

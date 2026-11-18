@@ -114,6 +114,22 @@ is `SPORTSBOOK_LEDGER` unchanged.
   Any other malformed field throws: it is the caller's bug. UUIDs are compared in lower case.
 - **Only `wager` is strict.** A misspelt wager key fails rather than vanishing; the other argument
   objects ignore unknown keys, so a newer bridge can send a field an older ledger does not read.
+- **A stake reads `ledger_play_eligibility`, never the identity tables.** Identity writes every
+  change, restriction or lift, through `PLAY_ELIGIBILITY_PROJECTION` in the transaction that makes
+  it, so the two commit or roll back together, and emits `identity.play_eligibility.changed` in the
+  same transaction for a process without the wallet. Identity's version is the truth: a row held
+  ahead of it is overwritten and logged as an error. A replayed event or a backfill writes only a
+  missing, older, or same-version-but-different row. A user without a row is refused, and a time
+  bounded block is judged at read time. A script that writes the RG, `isActive`, ban or player
+  status columns directly must run `backfillPlayEligibility` (`@openora/core/pam/identity/seed`)
+  after it; identity also runs it at every boot. Deposits, payouts and other non-stake paths
+  still read `PLAY_ELIGIBILITY`. See ADR-0054.
+- **Deposit and wager limits are read from `ledger_user_limit`, never `user_limit`.** Compliance
+  writes them through `RG_LIMIT_LEDGER` in the transaction that changes a limit. The event replay
+  writes only a strictly newer version; the backfill repairs drift by re-publishing under a new
+  one. A limit with no rate into its currency, or no currency, refuses. A script that writes `user_limit` directly must run `backfillRgLimits`
+  (`@openora/core/compliance/seed`) after it; compliance also runs it at boot and re-projects
+  recently changed limits on every `rg-monitor` tick. See ADR-0055.
 
 ## Rules that are easy to get wrong here
 

@@ -20,9 +20,15 @@
  */
 import { createAuth, createDrizzleDb } from '@openora/core/server';
 import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
+import {
+  ledgerPlayEligibilityProjection,
+  ledgerRgLimits,
+  seedAutoWithdrawalConfig,
+} from '@openora/core/wallet/seed';
+import { backfillPlayEligibility } from '@openora/core/pam/identity/seed';
+import { backfillRgLimits } from '@openora/core/compliance/seed';
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
-import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
 import { seedRankLadder } from '@openora/core/promo/seed/gamification';
 import { seedChatCommands } from '@openora/core/engagement/seed/chat-commands';
@@ -73,6 +79,11 @@ async function main() {
   // After the demo games exist: the round ledger only plays games it has projected.
   await backfillLedgerGames(db);
   console.log('  Round ledger games projected.');
+  // After the demo users exist: the ledger refuses a stake from a user it has not projected.
+  await backfillPlayEligibility(db, ledgerPlayEligibilityProjection(db));
+  console.log('  Ledger play eligibility projected.');
+  await backfillRgLimits(db, ledgerRgLimits(db));
+  console.log('  Ledger limits projected.');
 
   console.log('\n=== Seed complete ===');
   console.log(`  Users:        ${result.users} (1 admin + ${result.players} players)`);

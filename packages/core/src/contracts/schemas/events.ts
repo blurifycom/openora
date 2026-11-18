@@ -36,6 +36,7 @@ import {
   NonEmptyReasonSchema,
 } from './compliance.js';
 import { LobbyLayoutSnapshotSchema } from './lobby.js';
+import { PlayEligibilitySnapshotSchema, RgLimitsSnapshotSchema } from './ledger.js';
 import { CountryCodeSchema } from './igaming-config.js';
 import { TagKeySchema } from './tag.js';
 import { PermissionLevelSchema } from './iam.js';
@@ -457,6 +458,14 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
+  // A user's play eligibility as committed, for the ledger's `ledger_play_eligibility`
+  // projection. Written to the outbox by every writer of an input, in its own transaction; the
+  // consumer keeps the highest `version`, since delivery order is not guaranteed.
+  'identity.play_eligibility.changed': PlayEligibilitySnapshotSchema,
+  // A user's effective deposit and wager limits as committed, for the ledger's
+  // `ledger_user_limit` projection. Written to the outbox by every limit writer in its own
+  // transaction; the consumer keeps the highest `version` (ADR-0055).
+  'compliance.rg_limits.changed': RgLimitsSnapshotSchema,
   // An admin toggled a user's active status (the only user-lifecycle flow today;
   // users are deactivated, never hard-deleted). userId = subject, actorId = the
   // admin who acted (for a complete audit trail).
