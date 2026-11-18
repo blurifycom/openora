@@ -3,7 +3,8 @@ import { Client, Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { DrizzleDb } from '@openora/core/server';
 import { CHAIN_MOVED_TRIGGER, CHAIN_SPLIT_SQL } from '../schema/index.js';
-import { AUDIT_MIGRATION_LOCK, databaseOf, UNMARK_SPLIT_SQL, withDatabase } from '../migrate.js';
+import { databaseOf, withDatabase } from '../migrate.js';
+import { AUDIT_MIGRATION_LOCK, INSTANCE_SQL, UNMARK_SPLIT_SQL } from './audit-split.service.js';
 import { verifyAuditChain, type AuditChainAnchor } from './audit.service.js';
 import { drainAuditOutbox } from './audit-shipper.service.js';
 
@@ -442,8 +443,32 @@ async function rejectedCount(main: Client): Promise<number> {
   return Number(rows[0]?.rejected ?? 0);
 }
 
+// The drain ships the outbox it reads through `outboxUrl` into the chain it reaches as the admin,
+// and the shipper takes that for a drain only when both are one database. Checked before anything
+// changes, so a mismatch never strands a lifted fence.
+async function assertSameInstance(admin: Client, outboxUrl: string): Promise<void> {
+  const outbox = newClient(outboxUrl);
+  try {
+    await outbox.connect();
+    const [mine, theirs] = await Promise.all(
+      [admin, outbox].map(async (client) => {
+        const { rows } = await client.query<{ instance: string }>(INSTANCE_SQL);
+        return rows[0]?.instance;
+      }),
+    );
+    if (mine !== theirs) {
+      throw new CopyError(
+        'AUDIT_SHIPPER_DATABASE_URL and DATABASE_ADMIN_URL reach different servers or databases: point both at the main database',
+      );
+    }
+  } finally {
+    await outbox.end().catch(() => undefined);
+  }
+}
+
 /**
- * Rolls a fenced chain back. Every refusal (a split main without a shipper url, a shipper holding
+ * Rolls a fenced chain back. Every refusal (a split main without a shipper url, a shipper url on
+ * another database than the admin url, a shipper holding
  * its lock, a row the main database lacks) comes before anything changes. Then the audit
  * database is closed to inserts by a trigger committed in a short transaction of its own, so a
  * shipper that starts later fails on its insert and keeps its batch in the outbox. Only then is the
@@ -465,6 +490,7 @@ async function drainOutboxToLegacy(
     if (!outboxUrl) {
       throw new CopyError('the main database is split: set AUDIT_SHIPPER_DATABASE_URL');
     }
+    await assertSameInstance(legacy, outboxUrl);
     const { rows } = await legacy.query<{ queued: string }>(
       'SELECT count(*)::text AS queued FROM audit_outbox',
     );

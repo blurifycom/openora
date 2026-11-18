@@ -715,12 +715,12 @@ describe('audit-copy', () => {
     expect(await count(f.targetUrl)).toBe('4');
   });
 
-  it('TC-33 a chain on another server with the main database name is no drain', async () => {
+  it('TC-33 a chain on another cluster with the main database name and oid is no drain', async () => {
     const f = await fixture();
     await seed(f.main.drizzle.db, 3);
     await queueOutbox(f, ['elsewhere']);
     expect((await run(envOf(f), ['--apply'])).code).toBe(0);
-    // The main database itself, as if it sat on another server under the same name.
+    // The main database itself, as if another cluster that started at another time held it.
     const sameName = serviceFor(f.main.url);
     const elsewhere = {
       transaction: (fn: (tx: DrizzleTx) => Promise<unknown>) =>
@@ -747,6 +747,24 @@ describe('audit-copy', () => {
       /not fenced/,
     );
     expect(await count(f.main.url)).toBe('3');
+  });
+
+  it('TC-34 a drain refuses a shipper url on another database before anything changes', async () => {
+    const f = await fixture();
+    await seed(f.main.drizzle.db, 3);
+    await run(envOf(f), ['--fence', '--apply']);
+    const other = newDatabase();
+    await asAdmin(`CREATE DATABASE "${other}"`);
+    const shipperElsewhere = new URL(f.shipperUrl);
+    shipperElsewhere.pathname = `/${other}`;
+    const result = await run(
+      { ...envOf(f), AUDIT_SHIPPER_DATABASE_URL: shipperElsewhere.toString() },
+      ['--drain-outbox', '--apply'],
+    );
+    expect(result.code).toBe(1);
+    expect(result.err).toContain('reach different servers or databases');
+    expect(await fenceState(f.main.url)).toBe('A');
+    expect(await closedState(f.targetUrl)).toBe('0');
   });
 
   it('TC-30 a drain that sets a row aside as rejected exits 1', async () => {

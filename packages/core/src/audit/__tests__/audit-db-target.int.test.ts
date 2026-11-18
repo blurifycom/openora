@@ -466,9 +466,10 @@ describe('audit chain in a database of its own', () => {
     // A pending migration file for the single-database run: it must not commit before refusing.
     const pendingCreatedAt = 1792137000604; // 0001_conscious_tigra
     await fresh.drizzle.db.execute(sql`DROP INDEX audit_log_after_user_id_idx`);
-    await fresh.drizzle.db.execute(
+    const unrecorded = await fresh.drizzle.db.execute(
       sql`DELETE FROM drizzle.__drizzle_migrations_audit WHERE created_at = ${pendingCreatedAt}`,
     );
+    expect(unrecorded.rowCount).toBe(1);
     const holder = new Pool({ connectionString: fresh.url, max: 1 });
     try {
       const client = await holder.connect();

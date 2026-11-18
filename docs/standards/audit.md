@@ -107,7 +107,10 @@ which then holds the chain again. Next run `migrate` without `auditUrl`: it puts
 that checks a deleted row against the chain. Then grant the app role `DELETE` on `audit_outbox` and
 `INSERT` on `audit_outbox_rejected` again (split migrate revoked both from every role but the shipper)
 and start the processes on the main database alone. Until then new records wait in `audit_outbox` and
-nothing is lost. A drain that exits 1 leaves the mark, so the rerun is what clears it. The audit database stays closed
+nothing is lost. A drain that exits 1 leaves the mark, so the rerun is what clears it. Before any rerun
+of a failed drain, check `audit_outbox_rejected`: a rerun counts only the rows it sets aside itself, so
+a row the failed run set aside never fails it. The drain also refuses, before it changes anything, an
+`AUDIT_SHIPPER_DATABASE_URL` that reaches another database than `DATABASE_ADMIN_URL`. The audit database stays closed
 until its owner runs `DROP TRIGGER audit_log_closed ON audit_log` under a change ticket, which is the
 step before any new copy into it. After the switch (rows exist only in the
 audit database) there is no way back: roll forward only. Nothing is ever dropped; the old rows stay in

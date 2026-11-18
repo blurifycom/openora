@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { Pool, type PoolClient } from 'pg';
 import { runMigrations, withMigrationAdvisoryLock } from '@openora/core/server/migrate';
 import { CHAIN_SPLIT_MARK, CHAIN_SPLIT_SQL } from './schema/index.js';
+import { AUDIT_MIGRATION_LOCK } from './service/audit-split.service.js';
 
 // Every UPDATE, DELETE and TRUNCATE on audit_log raises, whatever the role. ENABLE ALWAYS keeps the
 // triggers firing under `session_replication_role = replica`, which skips ordinary triggers, so
@@ -263,10 +264,6 @@ const mainConnectByRoleSql = (writer: LoginRole, shipper: LoginRole) => `DO $$
    END $$`;
 
 const MARK_SPLIT_SQL = `COMMENT ON FUNCTION audit_outbox_deny_unshipped_delete() IS '${CHAIN_SPLIT_MARK}'`;
-/** What `openora-audit-copy --drain-outbox` runs last, under `AUDIT_MIGRATION_LOCK`. */
-export const UNMARK_SPLIT_SQL = `COMMENT ON FUNCTION audit_outbox_deny_unshipped_delete() IS NULL`;
-/** The advisory lock every audit migrate of a main database runs under. */
-export const AUDIT_MIGRATION_LOCK = `${MIGRATIONS.migrationsSchema}.${MIGRATIONS.migrationsTable}`;
 
 const SPLIT_MAIN_MESSAGE =
   'the audit chain of this database lives in a database of its own: migrate with auditUrl (AUDIT_DATABASE_URL) and shipperUrl (AUDIT_SHIPPER_DATABASE_URL)';
