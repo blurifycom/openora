@@ -41,7 +41,7 @@ Every slice:
 
 ## Plan one slice
 
-Input that is one slice of a split (a sub-task labeled `ship-slice`, or a slice ship says it hands over): plan that slice as written; a later comment on the slice itself still wins. Check it against the current code first, since other work may have landed since the split, and fit the plan to what is there; never add scope and never reply `Split:`. A slice that no longer holds (its work already landed, or it is now too big for one PR) gets `Asked:` saying so: changing the split is a person's call.
+Input that is one slice of a split (a sub-task labeled `ship-slice`, or a slice the delivery workflow hands over): plan that slice as written; a later comment on the slice itself still wins. Check it against the current code first, since other work may have landed since the split, and fit the plan to what is there; never add scope and never reply `Split:`. A slice that no longer holds (its work already landed, or it is now too big for one PR) gets `Asked:` saying so: changing the split is a person's call.
 
 ## Reply
 

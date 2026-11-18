@@ -69,7 +69,7 @@ Every run starts here, so a run that died midway resumes where it stopped. Read 
 
 | State                                       | Next step                                   |
 | ------------------------------------------- | ------------------------------------------- |
-| The ticket has `ship-slice` sub-tasks       | 1b. The next sub-task                       |
+| `ship-slice` sub-tasks, or a Plan listing slices | 1b. The next sub-task                       |
 | No Plan comment on the ticket               | 1. Plan                                     |
 | Plan, no branch                             | 2. Build                                    |
 | Branch, no MR                               | 3. Test, 4. Review, 4b. Evidence, 5. Open the MR |
@@ -93,11 +93,11 @@ Start `planner` with the ticket key. It returns `Asked:` with questions, `Split:
 
 A split ticket is delivered through its sub-tasks, so progress lives in Jira and a fresh session resumes from it.
 
-- No sub-tasks yet: create one per slice under the ticket, in delivery order, each labeled `ship-slice`, in the **create-task** skill's format (the slice's title, what changes, why it is safe alone, what it depends on and how, its test cases). `ship-slice` sub-tasks already under the ticket are reused, never created again; any other sub-task (manual QA, say) is not a slice and is left alone. Only a `ship-slice` sub-task counts as a sub-task in this skill, and the ticket's parent (an epic) does not make it one.
-- No Plan comment yet: post one titled "Plan" that lists the sub-task keys in delivery order, and move the ticket to In Progress.
+- Post the Plan comment first (next bullet), so the slice list exists before any sub-task. Then create one per slice under the ticket, in delivery order, each labeled `ship-slice`, in the **create-task** skill's format (the slice's title, what changes, why it is safe alone, what it depends on and how, its test cases). `ship-slice` sub-tasks already under the ticket are reused, never created again; any other sub-task (manual QA, say) is not a slice and is left alone. A resumed run creates any slice the Plan lists that has no sub-task yet. Only a `ship-slice` sub-task counts as a sub-task in this skill, and the ticket's parent (an epic) does not make it one.
+- No Plan comment yet: post one titled "Plan" that lists the slices in delivery order (the `Split:` list, then the sub-task keys once created), and move the ticket to In Progress.
 - Each sub-task then runs this skill from 1 as its own ticket: its own plan, branch `<type>/<sub-task key>/<slug>`, MR and transitions.
-- The next one is the first sub-task in order that is not yet in Code Review or later. One that needs another's code starts once that one has an MR, and is stacked on it: its worktree branches off that branch, and 2, 4 and 7 use that branch in place of `{{mrTarget}}`; when that MR merges, rebase onto `{{mrTarget}}` and retarget. One that needs another released starts only once that one is released (merged into `{{mrTarget}}` is not released); until then report what it waits on and stop.
-- One sub-task per run, in this order. First, each earlier sub-task MR that is red or has unanswered threads gets 6, ending once its fix is pushed (no 7 for it). Then, if no sub-task is left to deliver, the "None left" bullet below. Then, with three sub-task MRs open and unmerged, report that the next waits for a merge and stop. Otherwise deliver the next one, which stops at `green` in 7. The next `/ship` on the ticket, in a fresh session, starts the one after.
+- The next one is the first sub-task in order that is not yet in Code Review or later. One that needs another's code starts once that one has an MR, and is stacked on it: its worktree branches off that branch, and 2, 4, 5, 6 and 7 use that branch in place of `{{mrTarget}}` (in 5, on GitHub open the MR with `gh stack`, on GitLab pass the parent branch as `--target-branch`); when that MR merges, rebase onto `{{mrTarget}}` and retarget. One that needs another released starts only once that one is released (merged into `{{mrTarget}}` is not released: released is the deploy marker `docs/agents/forge.md` names showing the merge commit; no evidence -> blocker comment and stop); until then report what it waits on and stop.
+- One sub-task per run, in this order. First, each earlier sub-task MR that is red or has unanswered threads gets 6, ending once its fix is pushed (no 7 for it); an earlier draft sub-task MR that is green or still running goes to 7 with `--until-green`. Then, if no sub-task is left to deliver, the "None left" bullet below. Then, with three sub-task MRs open and unmerged, report that the next waits for a merge and stop. Otherwise deliver the next one, which stops at `green` in 7. The next `/ship` on the ticket, in a fresh session, starts the one after.
 - None left: move the ticket to Code Review, report every sub-task MR, stop.
 
 ### 2. Build

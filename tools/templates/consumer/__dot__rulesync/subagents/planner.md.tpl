@@ -38,7 +38,7 @@ Every slice:
 - ships alone: merged and deployed by itself, every path it does not switch works as before, and reverting it alone is safe;
 - expands before it contracts: add the column, table, event or port first, move the readers in a later slice, drop the old shape last; a new path stays off behind config until the slice that switches it on;
 - carries its own test cases, with one per existing path it must not break;
-- names the slices it depends on, and for each whether it needs that slice's code (stacked on it) or needs it released first (waits for its release: merged into `dev` is not released).
+- names the slices it depends on, and for each whether it needs that slice's code (stacked on it) or needs it released first (waits for its release: merged into `{{mrTarget}}` is not released).
 
 ## Plan one slice
 
