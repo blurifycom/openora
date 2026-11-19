@@ -76,7 +76,7 @@ export const walletBonusCreditStatusEnum = pgEnum(
 
 // Same credit/debit vocabulary as a manual adjustment (contract/index.ts) - a wallet
 // move only ever has these two directions, so one enum covers both. Nullable: rows
-// written before this column existed (all gift/rain/tip legs pre-dating it, plus any
+// written before this column existed (all gift/rain legs pre-dating it, plus any
 // other historical row) have no recoverable direction and stay NULL rather than guess.
 export const walletTransactionDirectionEnum = pgEnum(
   'wallet_transaction_direction',
@@ -176,7 +176,7 @@ export const walletTransaction = pgTable(
     // Which way this leg moved money. Derived from what the operation IS (never a
     // caller input) and set at every insert site going forward; NULL only for rows
     // written before this column existed. See the enum comment above for why gift/
-    // rain/tip needed this at all - they wrote the same `type` for both legs.
+    // rain needed this at all - they wrote the same `type` for both legs.
     direction: walletTransactionDirectionEnum().$type<ManualAdjustmentDirection>(),
     // Admin user id (cross-module). Bare uuid, no .references - the user table is
     // owned by another domain.

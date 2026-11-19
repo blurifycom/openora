@@ -29,11 +29,38 @@ const BALANCE_BASELINE_SQL = appendOnlyTableSql('wallet_balance_baseline', { mut
 // A stored answer that changed would answer a retry with something the first call never got.
 const LEDGER_API_REQUEST_SQL = appendOnlyTableSql('ledger_api_request', { mutableColumns: [] });
 
+// 0051's enum cast fails on any row still typed `tip`; refuse readably first. Keys on the enum
+// still having the `tip` label, not on 0051's journal entry.
+const REFUSE_TIP_ROWS_SQL = `
+DO $$
+DECLARE
+  tip_rows bigint;
+BEGIN
+  IF to_regclass('wallet_transaction') IS NULL OR NOT EXISTS (
+    SELECT 1
+    FROM pg_enum e
+    JOIN pg_type t ON t.oid = e.enumtypid
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE n.nspname = 'public' AND t.typname = 'wallet_transaction_type' AND e.enumlabel = 'tip'
+  ) THEN
+    RETURN;
+  END IF;
+  SELECT count(*) INTO tip_rows FROM wallet_transaction WHERE type::text = 'tip';
+  IF tip_rows > 0 THEN
+    RAISE EXCEPTION 'wallet migration refused: % wallet_transaction row(s) have type ''tip''. This release removes the tip transaction type and ledger rows are immutable. On a development or test database, reset it before upgrading; on a database holding real money, stay on the previous release.', tip_rows;
+  END IF;
+END $$;
+`;
+
 export function migrate(databaseUrl?: string) {
   return runMigrations({
     migrationsFolder: fileURLToPath(new URL('./drizzle/migrations', import.meta.url)),
     migrationsTable: '__drizzle_migrations_wallet',
     migrationsSchema: 'drizzle',
+    preSql: [REFUSE_TIP_ROWS_SQL],
+    // 0051 rewrites wallet_transaction twice under ACCESS EXCLUSIVE; wait on live traffic for
+    // at most this long, then fail the deploy rather than stall every bet behind the lock.
+    lockTimeout: '5s',
     postSql: [LEDGER_RECORD_SQL, BALANCE_BASELINE_SQL, LEDGER_API_REQUEST_SQL],
     ...(databaseUrl ? { databaseUrl } : {}),
   });

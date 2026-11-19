@@ -167,13 +167,13 @@ is `SPORTSBOOK_LEDGER` unchanged.
 - **A donation, a gift and a rain credit their recipient a bonus grant, never cash.** The sender's
   leg is an ordinary cash debit of the transfer's own kind. The recipient's leg is a wagered bonus
   grant: it writes no ledger row and moves no settled balance, and when the recipient's bonus slot is
-  taken it is created pending until they activate it. A credit of any other kind is paid
-  as that kind says, so a tip is paid as cash, and an integration that wants a wagered transfer
-  sends a donation. The grant is deduplicated on the recipient, the transfer's kind and the
-  caller's reference, without the provider name, so that reference must be unique per transfer
-  across provider names. A credit the wallet refuses for a missing wallet or a currency
-  mismatch is reported as a refused outcome, not thrown, so a caller that has already debited the
-  sender in the same transaction must fail on it to roll the debit back.
+  taken it is created pending until they activate it. A credit of any other kind is paid as that
+  kind says, and an integration that wants a wagered transfer sends a donation. The grant is
+  deduplicated on the recipient, the transfer's kind and the caller's reference, without the
+  provider name, so that reference must be unique per transfer across provider names. A credit the
+  wallet refuses for a missing wallet or a currency mismatch is reported as a refused outcome, not
+  thrown, so a caller that has already debited the sender in the same transaction must fail on it to
+  roll the debit back.
 - **A deposit, withdrawal or manual adjustment records its reference value once, when written.**
   The reference currency is the player's deposit-limit currency, else their wager-limit currency,
   else `wallet.defaultReferenceCurrency`. The rate and its timestamp are stored with it and never
@@ -331,3 +331,17 @@ is `SPORTSBOOK_LEDGER` unchanged.
   audit entry naming the actor and the reason.
 - **The webhook path resolves the verifier and the adapter from the same provider entry,** and
   fails closed when either is missing.
+
+## Upgrading past the removed `tip` type
+
+This release removes the `tip` transaction type. The wallet migrate refuses a database that still
+holds `tip` rows, since ledger rows are immutable: reset a development or test database before
+upgrading, and keep a database holding real money on the previous release. Run the migration with
+the previous app version stopped, because the enum rebuild rewrites `wallet_transaction` under an
+exclusive lock.
+
+Migration 0051 rewrites the whole `wallet_transaction` table and its indexes twice (enum to text
+and back), so it takes time and disk in proportion to the ledger's size, and every read and write
+of the table waits for it. Plan a maintenance window on a large ledger. The wallet migrate sets
+`lock_timeout = '5s'` per migration, so a migration that cannot get its lock within 5 seconds fails
+the deploy and rolls back instead of queueing traffic behind it; rerun it once the table is quiet.

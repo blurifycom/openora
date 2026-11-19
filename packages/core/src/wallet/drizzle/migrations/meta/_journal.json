@@ -358,6 +358,13 @@
       "when": 1795048738217,
       "tag": "0050_violet_roulette",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1795048888328,
+      "tag": "0051_wallet_transaction_type_drop_tip",
+      "breakpoints": true
     }
   ]
 }

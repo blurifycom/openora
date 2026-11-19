@@ -10,7 +10,6 @@ describe('NotificationTypeSchema', () => {
   it('accepts the player-to-player transfer types', () => {
     for (const type of [
       'chat.rain.received',
-      'chat.tip.received',
       'chat.donation.received',
       'chat.gift.claimed',
       'chat.gift.expired',
@@ -19,28 +18,19 @@ describe('NotificationTypeSchema', () => {
     }
   });
 
-  it('rejects an unknown type', () => {
-    expect(NotificationTypeSchema.safeParse('chat.gift.nonsense').success).toBe(false);
+  it('rejects an unknown type, the removed chat.tip.received included', () => {
+    for (const type of ['chat.gift.nonsense', 'chat.tip.received']) {
+      expect(NotificationTypeSchema.safeParse(type).success).toBe(false);
+    }
   });
 });
 
 describe('CreateNotificationInputSchema params', () => {
-  const base = { userId: randomUUID(), type: 'chat.tip.received' } as const;
+  const base = { userId: randomUUID(), type: 'chat.donation.received' } as const;
 
   it('accepts params carrying every required key of the type', () => {
     const params = { senderUsername: 'alice', amount: '5', currency: 'USDT' };
     expect(CreateNotificationInputSchema.safeParse({ ...base, params }).success).toBe(true);
-  });
-
-  it('rejects a wagering multiplier on a tip', () => {
-    const result = CreateNotificationInputSchema.safeParse({
-      ...base,
-      params: { senderUsername: 'alice', amount: '5', currency: 'USDT', wageringMultiplier: '3' },
-    });
-
-    expect(result.error?.issues.map((issue) => issue.path)).toEqual([
-      ['params', 'wageringMultiplier'],
-    ]);
   });
 
   it('rejects absent params for a type with required keys', () => {
@@ -79,14 +69,13 @@ describe('CreateNotificationInputSchema params', () => {
   });
 
   describe('chat.donation.received', () => {
-    const donation = { userId: base.userId, type: 'chat.donation.received' } as const;
     const params = { senderUsername: 'alice', amount: '5', currency: 'USDT' };
 
     it('accepts its required keys, with or without the wagering multiplier', () => {
-      expect(CreateNotificationInputSchema.safeParse({ ...donation, params }).success).toBe(true);
+      expect(CreateNotificationInputSchema.safeParse({ ...base, params }).success).toBe(true);
       expect(
         CreateNotificationInputSchema.safeParse({
-          ...donation,
+          ...base,
           params: { ...params, wageringMultiplier: '3' },
         }).success,
       ).toBe(true);

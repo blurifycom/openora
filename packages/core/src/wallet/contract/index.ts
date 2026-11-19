@@ -171,7 +171,7 @@ export const WalletBalanceChangeReasonSchema = z.enum([
   'withdrawal',
   'adjustment',
   'swap',
-  // Any WALLET_COMMANDS move (bet/win, gift/rain/tip, bonus credit, ...) - see wallet.balance.changed.
+  // Any WALLET_COMMANDS move (bet/win, gift/rain/donation, bonus credit, ...) - see wallet.balance.changed.
   'gameplay',
 ]);
 export type WalletBalanceChangeReason = z.infer<typeof WalletBalanceChangeReasonSchema>;
@@ -203,7 +203,7 @@ export const WalletTransactionSchema = z.object({
   // Which way this leg moved money - derived server-side from what the operation IS,
   // never a caller input. Nullable: rows written before this column existed (and any
   // row whose `type` never carried a recoverable direction, eg a pre-migration gift/
-  // rain/tip leg) have no direction on record.
+  // rain leg) have no direction on record.
   direction: ManualAdjustmentDirectionSchema.nullable(),
   // Withdrawal rows: the network fee kept from `amount`; the payout was `amount - fee`.
   // Null on every other row and on a withdrawal without a fee.

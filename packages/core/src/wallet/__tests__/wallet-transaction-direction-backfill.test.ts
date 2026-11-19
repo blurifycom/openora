@@ -27,7 +27,7 @@ const BACKFILL_DEBIT_TYPES: WalletTransactionType[] = [
 
 // The only types where the same value is written for both legs of a transfer, so a historical
 // row has no recoverable direction and the migration deliberately leaves it NULL.
-const KNOWN_AMBIGUOUS_TYPES: WalletTransactionType[] = ['gift', 'rain', 'tip'];
+const KNOWN_AMBIGUOUS_TYPES: WalletTransactionType[] = ['gift', 'rain'];
 
 describe('wallet_transaction direction backfill vocabulary', () => {
   it('accounts for every WALLET_TRANSACTION_TYPES value exactly once', () => {

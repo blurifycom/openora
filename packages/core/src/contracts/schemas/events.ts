@@ -574,7 +574,7 @@ export const domainEventSchemas = {
     })
     .extend(authContextBase.shape),
   // Any WALLET_COMMANDS debit/credit that actually moved a balance - gaming bet/win, chat
-  // gift/rain/tip, and any future cross-module mover through the same port. WalletService's
+  // gift/rain/donation, and any future cross-module mover through the same port. WalletService's
   // own operations keep their existing dedicated topics above; this is the one topic for
   // everything that moves money through WALLET_COMMANDS instead.
   'wallet.balance.changed': walletTxnBase.extend({
@@ -1632,6 +1632,8 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // or provider-webhook rejection), which the audit writer records as actorType 'system'.
   'wallet.withdrawal.failed': 3,
   'wallet.manual_adjustment.created': 2,
+  // v2: type no longer includes 'tip'.
+  'wallet.balance.changed': 2,
   // v2: amount/previousAmount (decimal string) + minutes/previousMinutes polymorphic
   // pair (money limit vs session-time limit), never a JS number.
   // v5: currency of a money limit, null for a session limit.

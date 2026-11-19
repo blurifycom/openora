@@ -50,7 +50,7 @@ describe('NotificationsService.create (real PG)', () => {
     await expect(
       svc.create({
         userId: randomUUID(),
-        type: 'chat.tip.received',
+        type: 'chat.donation.received',
         params: { amount: '5', currency: 'USDT' },
       }),
     ).rejects.toThrow('senderUsername');
@@ -61,9 +61,9 @@ describe('NotificationsService.create (real PG)', () => {
   it('refuses a direct create without params for a type with required keys, writing nothing', async () => {
     const { svc } = makeService();
 
-    await expect(svc.create({ userId: randomUUID(), type: 'chat.tip.received' })).rejects.toThrow(
-      'required for chat.tip.received',
-    );
+    await expect(
+      svc.create({ userId: randomUUID(), type: 'chat.donation.received' }),
+    ).rejects.toThrow('required for chat.donation.received');
     expect(await db.drizzle.db.select().from(notification)).toHaveLength(0);
   });
 
