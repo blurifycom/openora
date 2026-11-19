@@ -47,10 +47,13 @@ later one and wins.
 **The transfer check holds no lock.** It needs a transaction, and the caller's is in another
 process, so the route runs it on a transaction of its own that ends with the answer. The block locks
 the local binding holds until the caller commits do not exist across the gap: a block committed
-after the answer and before the caller's money commits is not seen. A remote caller narrows the
-window by calling `checkChatTransfer` a second time after its debit and ledger rows, just before
-commit, and rolling back on any refusal, or when a counterpart is now blocked. The window never closes fully without a
-lock shared across the two services. A caller that cannot accept it keeps chat in its own process.
+after the answer and before the caller's money commits is not seen. Tip and transfer commands must
+move money through `guardChatTransfer(port, tx, input, commit)` from `@openora/core/contracts`: it
+checks, runs the caller's debit and ledger rows in `commit` on the caller's transaction, and checks
+again before returning, throwing `ChatTransferRefusedError` on a refusal or a counterpart blocked
+since the first check, so the caller's transaction rolls back. That narrows the window to the time
+between the second answer and the commit; it never closes fully without a lock shared across the
+two services. A caller that cannot accept it keeps chat in its own process.
 
 ## Consequences
 
