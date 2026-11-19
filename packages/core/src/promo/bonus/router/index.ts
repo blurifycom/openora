@@ -22,8 +22,11 @@ import { bonusContract, type BonusBalanceUpdate } from '../contract/index.js';
 export function bonusBalanceChannel(userId: Uuid): string {
   return `promo:balance:${userId}`;
 }
+import { BonusSlotTakenError } from '../shared/grant-slot.js';
 import {
   GrantLifecycleService,
+  GrantActivationRestrictedError,
+  GrantNotActivatableError,
   GrantNotForfeitableError,
   GrantNotFoundError as GrantNotForfeitableNotFoundError,
 } from '../service/grant-lifecycle.service.js';
@@ -105,8 +108,9 @@ export function createBonusRouter({
       }),
 
       optIn: os.offers.optIn.handler(({ input, context }) =>
-        mapErrors({ NOT_FOUND: OfferNotFoundError, CONFLICT: OfferNotEligibleError }, () =>
-          offers.optIn(getUserId(context), input.id),
+        mapErrors(
+          { NOT_FOUND: OfferNotFoundError, CONFLICT: [OfferNotEligibleError, BonusSlotTakenError] },
+          () => offers.optIn(getUserId(context), input.id),
         ),
       ),
     },
@@ -215,6 +219,24 @@ export function createBonusRouter({
       get: os.grants.get.handler(({ input, context }) =>
         mapErrors({ NOT_FOUND: GrantNotFoundError }, () =>
           grants.get(getUserId(context), input.id),
+        ),
+      ),
+
+      activate: os.grants.activate.handler(({ input, context }) =>
+        mapErrors(
+          {
+            NOT_FOUND: [GrantNotForfeitableNotFoundError, GrantNotFoundError],
+            CONFLICT: [
+              GrantNotActivatableError,
+              GrantActivationRestrictedError,
+              BonusSlotTakenError,
+            ],
+          },
+          async () => {
+            const userId = getUserId(context);
+            await lifecycle.activate({ userId, grantId: input.id, meta: context.clientMeta });
+            return grants.get(userId, input.id);
+          },
         ),
       ),
 

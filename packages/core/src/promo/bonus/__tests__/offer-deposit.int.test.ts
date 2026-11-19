@@ -17,9 +17,11 @@ import {
 import { seedDefaultWeightProfile } from '../seed/index.js';
 import { GrantService } from '../service/grant.service.js';
 import { InvalidOfferTermsError, OfferService } from '../service/offer.service.js';
+import { BonusSlotTakenError } from '../shared/grant-slot.js';
 
 let db: TestDb;
 let offers: OfferService;
+let singleSlotOffers: OfferService;
 let lifetimeDeposit = '0';
 let firstDepositOverride: boolean | undefined;
 let restricted = false;
@@ -78,6 +80,15 @@ beforeAll(async () => {
     wallet,
     playEligibility,
     { error: (context) => logged.push(context) },
+  );
+  singleSlotOffers = new OfferService(
+    db.drizzle,
+    makeAuditWriter(),
+    new GrantService(makeAuditWriter(), 'single'),
+    wallet,
+    playEligibility,
+    { error: (context) => logged.push(context) },
+    'single',
   );
 });
 
@@ -449,5 +460,82 @@ describe('the offer lists', () => {
         wageringMultiplier: '5',
       },
     ]);
+  });
+});
+
+describe('a deposit bonus under a single-grant slot', () => {
+  const holdSlot = async (userId: Uuid, currency = 'USD') => {
+    const outcome = await db.drizzle.db.transaction((tx) =>
+      new GrantService(makeAuditWriter()).grant(tx, {
+        userId,
+        currency,
+        amount: '10',
+        source: 'streak',
+        sourceRef: randomUUID(),
+        actor: { type: 'system' },
+      }),
+    );
+    if (!outcome.ok) {
+      throw new Error('holdSlot: grant refused');
+    }
+    return outcome.grantId;
+  };
+
+  const applySingle = (userId: Uuid, amount: string) =>
+    db.drizzle.db.transaction((tx) =>
+      singleSlotOffers.applyDeposit(tx, {
+        userId,
+        amount,
+        currency: 'USD',
+        transactionId: randomUUID(),
+      }),
+    );
+
+  it('refuses the opt-in up front while another bonus holds the slot', async () => {
+    const userId = randomUUID();
+    const offer = await seedOffer({ minDeposit: '0' });
+    await holdSlot(userId);
+
+    await expect(singleSlotOffers.optIn(userId, offer.id)).rejects.toBeInstanceOf(
+      BonusSlotTakenError,
+    );
+    expect(await optInsOf(userId)).toHaveLength(0);
+  });
+
+  it('accepts the opt-in when the held bonus is in another currency', async () => {
+    const userId = randomUUID();
+    const offer = await seedOffer({ minDeposit: '0' });
+    await holdSlot(userId, 'EUR');
+
+    await singleSlotOffers.optIn(userId, offer.id);
+
+    expect(await optInsOf(userId)).toHaveLength(1);
+  });
+
+  it('pays no bonus on a deposit landing after another bonus took the slot, and keeps the claim open', async () => {
+    const userId = randomUUID();
+    const offer = await seedOffer({ minDeposit: '20', matchPercent: '50' });
+    await claim(userId, offer.id);
+    const holder = await holdSlot(userId);
+    lifetimeDeposit = '100';
+
+    const granted = await applySingle(userId, '100');
+
+    expect(granted).toEqual([]);
+    expect((await grantsOf(userId)).map((g) => g.id)).toEqual([holder]);
+    const [optIn] = await optInsOf(userId);
+    expect(optIn).toMatchObject({ grantId: null, accumulatedDeposit: '0.000000000000000000' });
+    expect(logged).toEqual([]);
+
+    // The slot frees up; the next deposit is matched on its own amount.
+    await db.drizzle.db
+      .update(promoGrant)
+      .set({ status: 'expired' })
+      .where(eq(promoGrant.id, holder));
+    lifetimeDeposit = '140';
+    const next = await applySingle(userId, '40');
+
+    expect(next).toHaveLength(1);
+    expect(next[0]?.grantedAmount).toBe('20.000000000000000000');
   });
 });

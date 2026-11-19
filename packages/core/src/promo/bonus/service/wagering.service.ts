@@ -6,6 +6,7 @@ import {
   type BonusWagerOutcome,
   type BonusWageringCommands,
   type Uuid,
+  type WagerProduct,
   type WagerTrackingCommands,
 } from '@openora/core/contracts';
 import {
@@ -24,6 +25,7 @@ import {
   type PromoGrantEntry,
 } from '../schema/index.js';
 import { isRealMoneyOnlyProduct } from '../contract/index.js';
+import { attributeStake, type GrantAttribution } from '../shared/stake-attribution.js';
 import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
 
 const ZERO = '0';
@@ -43,6 +45,49 @@ function capConversion(
   }
   const ceiling = moneyScaleBy(grantedAmount, maxWinMultiplier);
   return moneyCompare(balance, ceiling) < 0 ? balance : ceiling;
+}
+
+type LockedGrant = Pick<
+  PromoGrant,
+  'id' | 'grantedAmount' | 'bonusBalance' | 'wageringRequired' | 'wageringProgress' | 'terms'
+>;
+
+const excludes = (grant: LockedGrant, product: WagerProduct) =>
+  grant.terms.excludedProducts?.includes(product) === true;
+
+/** The lowest `maxBet` among the grants whose terms do not exempt the product. Null when none limits it. */
+function strictestMaxBet(grants: readonly LockedGrant[], product: WagerProduct): string | null {
+  return grants.reduce<string | null>((strictest, { terms: { maxBet, maxBetExemptProducts } }) => {
+    if (
+      maxBet === null ||
+      maxBet === undefined ||
+      maxBetExemptProducts?.includes(product) === true
+    ) {
+      return strictest;
+    }
+    return strictest === null || moneyCompare(maxBet, strictest) < 0 ? maxBet : strictest;
+  }, null);
+}
+
+/**
+ * The bonus part of a stake, drawn from the grants in rollover order. A grant whose terms exclude
+ * the product pays none of it. Null when the grants that may pay cannot cover it.
+ */
+function allocateBonusStake(
+  grants: readonly LockedGrant[],
+  fromBonus: string,
+  product: WagerProduct,
+): string[] | null {
+  let remaining = fromBonus;
+  const funding = grants.map((grant) => {
+    if (moneyCompare(remaining, ZERO) <= 0 || excludes(grant, product)) {
+      return ZERO;
+    }
+    const take = moneyCompare(grant.bonusBalance, remaining) < 0 ? grant.bonusBalance : remaining;
+    remaining = moneySubtract(remaining, take);
+    return take;
+  });
+  return moneyCompare(remaining, ZERO) > 0 ? null : funding;
 }
 
 type RoundStake = {
@@ -70,11 +115,14 @@ export class WageringService implements BonusWageringCommands {
   constructor(private readonly wagerTracking?: WagerTrackingCommands) {}
 
   async wager(tx: DrizzleTx, args: BonusWagerArgs): Promise<BonusWagerOutcome> {
-    const grant = isRealMoneyOnlyProduct(args.context.product)
-      ? undefined
-      : await this.lockAttributedGrant(tx, args.userId, args.currency);
+    const grants = isRealMoneyOnlyProduct(args.context.product)
+      ? []
+      : await this.lockActiveGrants(tx, args.userId, args.currency);
+    const realStake = moneySubtract(args.stake, args.fromBonus);
+    const round = { providerName: args.providerName, externalRoundId: args.externalRoundId };
+    const [primary] = grants;
 
-    if (!grant) {
+    if (!primary) {
       if (moneyCompare(args.fromBonus, ZERO) > 0) {
         return { ok: false, reason: 'insufficient_bonus', bonusAvailable: ZERO };
       }
@@ -89,7 +137,7 @@ export class WageringService implements BonusWageringCommands {
           weightedAmount: args.stake,
           realAmount: args.stake,
           context: args.context,
-          round: { providerName: args.providerName, externalRoundId: args.externalRoundId },
+          round,
         })) ?? [];
       return {
         ok: true,
@@ -97,49 +145,117 @@ export class WageringService implements BonusWageringCommands {
         bonusSpent: ZERO,
         weightedAmount: ZERO,
         bonusBalanceAfter: ZERO,
-        completed: null,
+        completed: [],
         walletCredits,
       };
     }
 
-    if (
-      moneyCompare(args.fromBonus, ZERO) > 0 &&
-      grant.terms.excludedProducts?.includes(args.context.product) === true
-    ) {
-      return { ok: false, reason: 'insufficient_bonus', bonusAvailable: ZERO };
-    }
-
-    // Against the terms snapshot, inside the transaction that moves the money. It is an
+    // Against the terms snapshots, inside the transaction that moves the money. It is an
     // anti-abuse control - a player who can stake the whole bonus on one spin turns a wagering
     // requirement into a coin flip - so a preflight read the client could skip is not enough.
     // It bounds the whole stake, not the bonus part, and the round's total rather than one debit:
-    // the limit applies while a bonus is active, and splitting a stake across debits of one round
-    // must not get around it.
-    const { maxBet, maxBetExemptProducts } = grant.terms;
-    if (
-      maxBet !== null &&
-      maxBet !== undefined &&
-      moneyCompare(args.stake, ZERO) > 0 &&
-      maxBetExemptProducts?.includes(args.context.product) !== true
-    ) {
+    // the limit applies while any bonus is active, so the strictest one held applies, and
+    // splitting a stake across debits of one round must not get around it.
+    const maxBet = strictestMaxBet(grants, args.context.product);
+    if (maxBet !== null && moneyCompare(args.stake, ZERO) > 0) {
       const roundStake = moneyAdd(await this.outstandingRoundStake(tx, args), args.stake);
       if (moneyCompare(roundStake, maxBet) > 0) {
         return { ok: false, reason: 'max_bet_exceeded', maxBet, roundStake };
       }
     }
 
-    const spent = await this.spendBonus(tx, grant.id, args.fromBonus);
-    if (spent === null) {
-      return { ok: false, reason: 'insufficient_bonus', bonusAvailable: grant.bonusBalance };
+    const funding = allocateBonusStake(grants, args.fromBonus, args.context.product);
+    if (funding === null) {
+      const bonusAvailable = grants
+        .filter((g) => !excludes(g, args.context.product))
+        .reduce((sum, g) => moneyAdd(sum, g.bonusBalance), ZERO);
+      return { ok: false, reason: 'insufficient_bonus', bonusAvailable };
     }
 
-    const percent = resolveContributionPercent(grant.terms.weights, args.context);
-    const weighted = weightedStake(args.stake, percent);
-    // The row is locked, so the progress read above is what the update starts from; the delta is
-    // whatever the requirement still had room for.
-    const headroom = moneySubtract(grant.wageringRequired, grant.wageringProgress);
-    const applied = moneyCompare(weighted, headroom) < 0 ? weighted : headroom;
-    const advanced = await this.advanceProgress(tx, grant.id, weighted);
+    const percents = grants.map((g) => resolveContributionPercent(g.terms.weights, args.context));
+    const attribution = attributeStake(
+      grants.map((g, index) => ({
+        id: g.id,
+        headroom: moneySubtract(g.wageringRequired, g.wageringProgress),
+        percent: percents[index] ?? ZERO,
+        bonusStake: funding[index] ?? ZERO,
+      })),
+      realStake,
+    );
+
+    const completed: { grantId: string; convertedAmount: string }[] = [];
+    let bonusBalanceAfter = ZERO;
+    let weightedAmount = ZERO;
+    for (const [index, share] of attribution.entries()) {
+      const grant = grants[index];
+      if (!grant) {
+        continue;
+      }
+      weightedAmount = moneyAdd(
+        weightedAmount,
+        weightedStake(moneyAdd(share.bonusStake, share.realStake), percents[index] ?? ZERO),
+      );
+      const touched =
+        index === 0 ||
+        moneyCompare(share.bonusStake, ZERO) > 0 ||
+        moneyCompare(share.realStake, ZERO) > 0 ||
+        moneyCompare(share.progress, ZERO) > 0;
+      if (!touched) {
+        bonusBalanceAfter = moneyAdd(bonusBalanceAfter, grant.bonusBalance);
+        continue;
+      }
+      const conversion = await this.applyShare(tx, args, grant, share);
+      if (conversion) {
+        completed.push({ grantId: grant.id, convertedAmount: conversion });
+      } else {
+        bonusBalanceAfter = moneyAdd(
+          bonusBalanceAfter,
+          moneySubtract(grant.bonusBalance, share.bonusStake),
+        );
+      }
+    }
+
+    const walletCredits =
+      (await this.wagerTracking?.recordWager(tx, {
+        userId: args.userId,
+        currency: args.currency,
+        amount: args.stake,
+        weightedAmount,
+        realAmount: realStake,
+        context: args.context,
+        round,
+      })) ?? [];
+
+    return {
+      ok: true,
+      grantId: primary.id,
+      bonusSpent: args.fromBonus,
+      weightedAmount,
+      bonusBalanceAfter,
+      completed,
+      walletCredits,
+    };
+  }
+
+  /**
+   * One grant's part of a bet: its bonus spend, its progress, its stake entry, and its conversion
+   * when the bet completes it. Returns the converted amount on completion, null otherwise.
+   */
+  private async applyShare(
+    tx: DrizzleTx,
+    args: BonusWagerArgs,
+    grant: LockedGrant,
+    share: GrantAttribution<PromoGrant['id']>,
+  ): Promise<string | null> {
+    const spent = await this.spendBonus(tx, grant.id, share.bonusStake);
+    if (spent === null) {
+      // The row is locked and its balance was checked against this spend under that lock.
+      throw new Error(`bonus spend on locked grant ${grant.id} was refused`);
+    }
+    const advanced =
+      moneyCompare(share.progress, ZERO) > 0
+        ? await this.advanceProgress(tx, grant.id, share.progress)
+        : null;
     const completed = advanced?.status === 'completed';
     // The cap bites here, at the single point where bonus funds become real money, rather than
     // on every win along the way: what the terms limit is the payout, and winnings that are
@@ -147,7 +263,6 @@ export class WageringService implements BonusWageringCommands {
     const convertedAmount = completed
       ? capConversion(spent.balanceAfter, grant.grantedAmount, grant.terms.maxWinMultiplier)
       : ZERO;
-    const balanceAfter = completed ? ZERO : spent.balanceAfter;
 
     if (completed) {
       await this.closeCompleted(tx, grant.id);
@@ -158,58 +273,39 @@ export class WageringService implements BonusWageringCommands {
       userId: args.userId,
       currency: args.currency,
       type: 'stake',
-      bonusAmount: `-${args.fromBonus}`,
-      realAmount: moneySubtract(args.stake, args.fromBonus),
-      wageringDelta: advanced ? applied : ZERO,
+      bonusAmount: `-${share.bonusStake}`,
+      realAmount: share.realStake,
+      wageringDelta: advanced ? share.progress : ZERO,
       balanceAfter: spent.balanceAfter,
       providerName: args.providerName,
       externalRoundId: args.externalRoundId,
     });
 
-    if (completed) {
-      const capped = moneySubtract(spent.balanceAfter, convertedAmount);
+    if (!completed) {
+      return null;
+    }
+    const capped = moneySubtract(spent.balanceAfter, convertedAmount);
+    await tx.insert(promoGrantEntry).values({
+      grantId: grant.id,
+      userId: args.userId,
+      currency: args.currency,
+      type: 'convert',
+      bonusAmount: `-${convertedAmount}`,
+      balanceAfter: capped,
+    });
+    // What the cap took has to leave the ledger too, or a grant's entries stop summing to the
+    // balance they explain and the surplus looks like money still owed to the player.
+    if (moneyCompare(capped, ZERO) > 0) {
       await tx.insert(promoGrantEntry).values({
         grantId: grant.id,
         userId: args.userId,
         currency: args.currency,
-        type: 'convert',
-        bonusAmount: `-${convertedAmount}`,
-        balanceAfter: capped,
+        type: 'forfeit',
+        bonusAmount: `-${capped}`,
+        balanceAfter: ZERO,
       });
-      // What the cap took has to leave the ledger too, or a grant's entries stop summing to the
-      // balance they explain and the surplus looks like money still owed to the player.
-      if (moneyCompare(capped, ZERO) > 0) {
-        await tx.insert(promoGrantEntry).values({
-          grantId: grant.id,
-          userId: args.userId,
-          currency: args.currency,
-          type: 'forfeit',
-          bonusAmount: `-${capped}`,
-          balanceAfter: ZERO,
-        });
-      }
     }
-
-    const walletCredits =
-      (await this.wagerTracking?.recordWager(tx, {
-        userId: args.userId,
-        currency: args.currency,
-        amount: args.stake,
-        weightedAmount: weighted,
-        realAmount: moneySubtract(args.stake, args.fromBonus),
-        context: args.context,
-        round: { providerName: args.providerName, externalRoundId: args.externalRoundId },
-      })) ?? [];
-
-    return {
-      ok: true,
-      grantId: grant.id,
-      bonusSpent: args.fromBonus,
-      weightedAmount: weighted,
-      bonusBalanceAfter: balanceAfter,
-      completed: completed ? { grantId: grant.id, convertedAmount } : null,
-      walletCredits,
-    };
+    return convertedAmount;
   }
 
   async settle(tx: DrizzleTx, args: BonusSettleArgs): Promise<BonusSettleOutcome> {
@@ -402,12 +498,15 @@ export class WageringService implements BonusWageringCommands {
   }
 
   /**
-   * One bet feeds exactly one grant, and only a grant held in the bet's own currency: the active
-   * grant in that currency, earliest expiry first. A stable tiebreak keeps two concurrent bets
-   * taking the same lock in the same order.
+   * Every active grant held in the bet's own currency, in rollover order: earliest expiry first,
+   * with a stable tiebreak so two concurrent bets take the same locks in the same order.
    */
-  private async lockAttributedGrant(tx: DrizzleTx, userId: Uuid, currency: string) {
-    const [row] = await tx
+  private async lockActiveGrants(
+    tx: DrizzleTx,
+    userId: Uuid,
+    currency: string,
+  ): Promise<LockedGrant[]> {
+    return tx
       .select({
         id: promoGrant.id,
         grantedAmount: promoGrant.grantedAmount,
@@ -426,9 +525,7 @@ export class WageringService implements BonusWageringCommands {
         ),
       )
       .orderBy(asc(promoGrant.expiresAt), asc(promoGrant.createdAt), asc(promoGrant.id))
-      .limit(1)
       .for('update');
-    return row;
   }
 
   /** Conditional in SQL, so two concurrent bets cannot both pass a balance they then overdraw. */

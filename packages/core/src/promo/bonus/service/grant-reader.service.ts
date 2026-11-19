@@ -24,7 +24,7 @@ const MONEY_FIELDS = [
   'wageringRequired',
   'wageringProgress',
 ] as const;
-const DATE_FIELDS = ['expiresAt', 'closedAt', 'createdAt'] as const;
+const DATE_FIELDS = ['expiresAt', 'activatedAt', 'closedAt', 'createdAt'] as const;
 const SERIALIZE = { dateFields: [...DATE_FIELDS], decimalFields: [...MONEY_FIELDS] };
 
 const GRANT_COLUMNS = {
@@ -41,6 +41,7 @@ const GRANT_COLUMNS = {
   forfeitReason: promoGrant.forfeitReason,
   maxBet: sql<string | null>`${promoGrant.terms} ->> 'maxBet'`,
   expiresAt: promoGrant.expiresAt,
+  activatedAt: promoGrant.activatedAt,
   closedAt: promoGrant.closedAt,
   createdAt: promoGrant.createdAt,
 };
@@ -85,8 +86,9 @@ const withForfeitActor = eq(user.id, promoGrant.forfeitedBy);
 /**
  * A grant is a credit the player received, so every grant that was ever funded reads as a
  * completed credit of its granted amount - what happened to the bonus afterwards (wagered,
- * expired, forfeited) is the grant's own story, told on the bonus screen. A pending grant was
- * never funded and a cancelled one never will be, so those two keep their own status.
+ * expired, forfeited) is the grant's own story, told on the bonus screen. A pending grant waits
+ * for a free slot before it is funded; one that closed without ever being activated never was, and
+ * reads as cancelled beside a cancelled one.
  */
 export const bonusGrantLedger: BonusGrantLedgerReader = {
   ledgerRowsQuery: (userId) => sql`
@@ -99,8 +101,10 @@ export const bonusGrantLedger: BonusGrantLedgerReader = {
       end as type,
       ${promoGrant.grantedAmount} as amount,
       ${promoGrant.currency} as currency,
-      case ${promoGrant.status}
-        when 'pending' then 'pending' when 'cancelled' then 'cancelled' else 'completed'
+      case
+        when ${promoGrant.status} = 'pending' then 'pending'
+        when ${promoGrant.status} = 'cancelled' or ${promoGrant.activatedAt} is null then 'cancelled'
+        else 'completed'
       end as status,
       ${promoGrant.createdAt} as created_at
     from ${promoGrant}

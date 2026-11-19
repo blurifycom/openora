@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import type { PlayEligibilityPort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeAuditWriter, makeEventBus } from '../../../testing/mock.js';
 import { findOneOrThrow } from '@openora/core/server';
@@ -121,7 +122,9 @@ describe('GrantReaderService', () => {
   it('shows the admin what a closed grant held, and nothing for a live one', async () => {
     const audit = makeAuditWriter();
     const service = new GrantService(audit);
-    const lifecycle = new GrantLifecycleService(db.drizzle, audit, makeEventBus());
+    const lifecycle = new GrantLifecycleService(db.drizzle, audit, makeEventBus(), {
+      isRestricted: async () => false,
+    } satisfies PlayEligibilityPort);
     const reader = new GrantReaderService(db.drizzle);
     const userId = randomUUID();
     const issue = async (amount: string) => {

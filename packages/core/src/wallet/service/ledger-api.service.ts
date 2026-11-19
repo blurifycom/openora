@@ -766,7 +766,7 @@ export class LedgerApiService implements LedgerApiV1 {
     return readWalletBalance(tx, row.id, currency);
   }
 
-  /** The bet's own move, whatever wager tracking credited with it, and a bonus it completed. */
+  /** The bet's own move, whatever wager tracking credited with it, and the bonuses it completed. */
   private async emitDebit(
     tx: DrizzleTx,
     userId: Uuid,
@@ -790,12 +790,12 @@ export class LedgerApiService implements LedgerApiV1 {
         direction: 'credit',
       });
     }
-    if (debit.completed) {
+    for (const { grantId, convertedAmount } of debit.completed ?? []) {
       await this.emit(tx, 'promo.bonus.completed', {
         userId,
-        grantId: debit.completed.grantId,
+        grantId,
         currency: debit.currency,
-        convertedAmount: debit.completed.convertedAmount,
+        convertedAmount,
       });
     }
   }

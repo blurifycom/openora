@@ -11,7 +11,9 @@ import {
   GEO_CHECK_COMMANDS,
   JOB_QUEUE,
   MoneyAmountSchema,
+  PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
+  PromoConfigSchema,
   RATE_LIMITER,
   REALTIME_TRANSPORT,
   UuidSchema,
@@ -32,6 +34,7 @@ import {
   type DrizzleService,
   type EventBus,
   type Plugin,
+  type TypedContainer,
 } from '@openora/core/server';
 import { GrantLifecycleService } from './service/grant-lifecycle.service.js';
 import { createBonusLifecyclePort } from './service/bonus-lifecycle-port.service.js';
@@ -72,6 +75,10 @@ function initiatedByOf(data: unknown): 'player' | 'admin' | 'system' | undefined
 
 const EmptyJobPayloadSchema = z.object({});
 
+const grantConcurrency = (c: TypedContainer<CoreTokenCatalog>) =>
+  PromoConfigSchema.parse(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).promo : {}).bonus
+    .grantConcurrency;
+
 /**
  * Taking a player's bonuses away is a money movement, so it runs as a durable job rather than
  * inside a best-effort event handler: a process that dies between two of a player's grants has
@@ -109,7 +116,7 @@ export default {
     },
   ],
   register(ctx) {
-    ctx.provide(BONUS_GRANTS, (c) => new GrantService(c.get(AUDIT_WRITER)));
+    ctx.provide(BONUS_GRANTS, (c) => new GrantService(c.get(AUDIT_WRITER), grantConcurrency(c)));
     ctx.provide(BONUS_GRANT_LEDGER, () => bonusGrantLedger);
     ctx.mcp.tool(grantsSummaryTool, (c) => {
       const summary = new GrantsSummaryService(c.get(DRIZZLE));
@@ -132,7 +139,13 @@ export default {
       BONUS_LIFECYCLE,
       (c): BonusLifecycleCommands =>
         createBonusLifecyclePort(
-          new GrantLifecycleService(c.get(DRIZZLE), c.get(AUDIT_WRITER), c.get(EVENT_BUS)),
+          new GrantLifecycleService(
+            c.get(DRIZZLE),
+            c.get(AUDIT_WRITER),
+            c.get(EVENT_BUS),
+            c.get(PLAY_ELIGIBILITY),
+            grantConcurrency(c),
+          ),
         ),
     );
 
@@ -161,6 +174,7 @@ export default {
     // having to remember it.
     for (const [topic, reason] of [
       ['promo.bonus.granted', 'granted'],
+      ['promo.bonus.activated', 'activated'],
       ['promo.bonus.completed', 'completed'],
       ['promo.bonus.expired', 'expired'],
       ['promo.bonus.forfeited', 'forfeited'],
@@ -318,7 +332,13 @@ export default {
     });
 
     ctx.routers.add('promo-bonus', (c) => {
-      lifecycle = new GrantLifecycleService(c.get(DRIZZLE), c.get(AUDIT_WRITER), c.get(EVENT_BUS));
+      lifecycle = new GrantLifecycleService(
+        c.get(DRIZZLE),
+        c.get(AUDIT_WRITER),
+        c.get(EVENT_BUS),
+        c.get(PLAY_ELIGIBILITY),
+        grantConcurrency(c),
+      );
       drizzle = c.get(DRIZZLE);
       offers = new OfferService(
         c.get(DRIZZLE),
@@ -327,6 +347,7 @@ export default {
         c.get(WALLET_READER),
         c.get(PLAY_ELIGIBILITY),
         logger,
+        grantConcurrency(c),
       );
       events = c.get(EVENT_BUS);
       jobs = c.get(JOB_QUEUE);

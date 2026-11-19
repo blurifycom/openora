@@ -220,6 +220,7 @@ export const promoGrant = pgTable(
     wageringProgress: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
       .notNull()
       .default('0'),
+    // Set to 'active' only under withGrantSlotLock, so the concurrency cap cannot be raced.
     status: promoGrantStatusEnum().$type<BonusGrantStatus>().notNull().default('active'),
     forfeitReason: promoForfeitReasonEnum().$type<BonusForfeitReason>(),
     // Who forfeited it and why, kept on the row so the admin read does not reconstruct it from

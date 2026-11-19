@@ -48,10 +48,10 @@ export type WalletDebitOutcome =
       currency: string;
       /** Part of the stake paid out of bonus funds, as a decimal string. Absent when none was. */
       bonusSpent?: string;
-      /** Bonus funds left on the grant the bet was attributed to; `'0'` when it was attributed to none, even while a grant is held. */
+      /** Bonus funds left across the player's active grants in this currency; `'0'` when the bet was attributed to none. */
       bonusBalance?: string;
-      /** The grant this debit pushed over its requirement, and what it released into the real balance. */
-      completed?: { grantId: string; convertedAmount: string };
+      /** Each grant this debit pushed over its requirement, and what it released into the real balance. Absent when none. */
+      completed?: { grantId: string; convertedAmount: string }[];
       /**
        * Whatever `WAGER_TRACKING` credited to the real balance alongside this bet (rank rakeback),
        * inside the same transaction. Empty when nothing was. The caller emits `wallet.balance.

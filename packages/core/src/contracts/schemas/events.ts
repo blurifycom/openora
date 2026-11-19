@@ -893,6 +893,14 @@ export const domainEventSchemas = {
     offerId: UuidSchema.nullable(),
     rankBonusKind: z.enum(['daily', 'weekly', 'monthly']).optional(),
   }),
+  // A pending grant took its free slot and is now playable; its expiry restarted from now.
+  'promo.bonus.activated': z.object({
+    userId: UuidSchema,
+    grantId: UuidSchema,
+    currency: CurrencyTickerSchema,
+    source: BonusGrantSourceSchema,
+    expiresAt: TimestampSchema,
+  }),
   // Wagering requirement met. The lock is released; what happens to the balance is the
   // conversion step, which emits nothing of its own.
   'promo.bonus.completed': z.object({

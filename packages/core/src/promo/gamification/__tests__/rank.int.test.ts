@@ -567,3 +567,78 @@ describe('public rank lookup', () => {
     expect(await ranks.lookup([])).toEqual([]);
   });
 });
+
+describe('rank progress basis', () => {
+  const wagerSplit = (service: RankService, userId: string, amount: string, realAmount: string) =>
+    db.drizzle.db.transaction((tx) =>
+      service.recordWager(tx, {
+        userId,
+        currency: 'USDT',
+        amount,
+        weightedAmount: amount,
+        realAmount,
+        context: CASINO,
+      }),
+    );
+
+  const periodWageredOf = async (userId: string) =>
+    (
+      await db.drizzle.db
+        .select({ wagered: promoRankPeriodWager.wagered })
+        .from(promoRankPeriodWager)
+        .where(eq(promoRankPeriodWager.userId, userId))
+    ).map((row) => Number(row.wagered));
+
+  it('total: counts the whole stake, bonus-funded part included', async () => {
+    const userId = randomUUID();
+
+    await wagerSplit(ranks, userId, '12000', '2000');
+
+    expect(Number((await rankOf(userId))?.lifetimeWagered)).toBe(12000);
+    expect(await rankOf(userId)).toMatchObject({ tier: 'silver' });
+  });
+
+  it('real: counts only the own-money part toward lifetime and period wagered', async () => {
+    const real = new RankService(
+      db.drizzle,
+      mock<ExchangeRateReader>({ convert }),
+      audit,
+      logger,
+      'flat',
+      'real',
+    );
+    const userId = randomUUID();
+
+    await wagerSplit(real, userId, '12000', '2000');
+
+    expect(Number((await rankOf(userId))?.lifetimeWagered)).toBe(2000);
+    expect(await rankOf(userId)).toMatchObject({ tier: 'bronze' });
+    expect(await periodWageredOf(userId)).toEqual([2000, 2000, 2000]);
+  });
+
+  it('real: converts the own-money part at the same rate as the stake', async () => {
+    const real = new RankService(
+      db.drizzle,
+      mock<ExchangeRateReader>({ convert }),
+      audit,
+      logger,
+      'flat',
+      'real',
+    );
+    convert.mockResolvedValueOnce('200');
+    const userId = randomUUID();
+
+    await db.drizzle.db.transaction((tx) =>
+      real.recordWager(tx, {
+        userId,
+        currency: 'EUR',
+        amount: '100',
+        weightedAmount: '100',
+        realAmount: '25',
+        context: CASINO,
+      }),
+    );
+
+    expect(Number((await rankOf(userId))?.lifetimeWagered)).toBe(50);
+  });
+});

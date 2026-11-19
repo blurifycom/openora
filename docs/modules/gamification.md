@@ -19,6 +19,8 @@ does not repeat it.
 
 It does not own the money. Every reward is credited by the bonus module through its grant port,
 so a rank bonus is the same object as a deposit bonus and lives by the same rules once it exists.
+When the player's bonus slot in that currency is taken (`promo.bonus.grantConcurrency`), a reward
+is created pending and wagers nothing until the player activates it.
 
 ## Rank is a function of wagering, in one currency, forever
 
@@ -39,8 +41,11 @@ because a rate provider is slow would be a worse failure than undercounting thei
 
 What counts toward a rank is the raw stake, not what a bonus engine weighted it at. Weighting
 belongs to a bonus a player happens to hold; a player's standing must not depend on which bonus
-they are carrying. Which products count - casino, live casino, sportsbook - is the operator's
-setting, and an empty setting counts every bet.
+they are carrying. `promo.ranks.progressBasis` in platform config sets how much of that stake
+counts: `total`, the default, counts all of it, bonus-funded part included, and `real` counts only
+the own-money part, toward lifetime and period wagered alike. The periodic margin is the same under
+both. Which products count - casino, live casino, sportsbook - is the operator's setting, and an
+empty setting counts every bet.
 
 Rakeback and the rank challenge each have a product list of their own, and a new ladder's lists
 leave sportsbook out until the operator adds it. A ladder configured before these lists existed

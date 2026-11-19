@@ -715,12 +715,12 @@ export class GamingService {
             direction: 'credit',
           });
         }
-        if (outcome.completed) {
+        for (const { grantId, convertedAmount } of outcome.completed ?? []) {
           await this.events.emitInTransaction(tx, 'promo.bonus.completed', {
             userId,
-            grantId: outcome.completed.grantId,
+            grantId,
             currency: outcome.currency,
-            convertedAmount: outcome.completed.convertedAmount,
+            convertedAmount,
           });
         }
       }

@@ -76,6 +76,19 @@ export type PromoOfferStatus = z.infer<typeof PromoOfferStatusSchema>;
 export const RANK_PERIODIC_BASES = ['flat', 'margin'] as const;
 export type RankPeriodicBasis = (typeof RANK_PERIODIC_BASES)[number];
 
+/** Which stake advances rank progress; see `promo.ranks.progressBasis`. */
+export const RANK_PROGRESS_BASES = ['total', 'real'] as const;
+export type RankProgressBasis = (typeof RANK_PROGRESS_BASES)[number];
+
+/** How many bonus grants a player may have active at once; see `promo.bonus.grantConcurrency`. */
+export const GRANT_CONCURRENCY_MODES = ['single', 'per_source', 'multiple'] as const;
+export type GrantConcurrencyMode = (typeof GRANT_CONCURRENCY_MODES)[number];
+
+/** What a grant does when its concurrency slot is taken: wait as pending, or not be made at all. */
+export const GRANT_SLOT_TAKEN_POLICIES = ['pending', 'refuse'] as const;
+export const GrantSlotTakenPolicySchema = z.enum(GRANT_SLOT_TAKEN_POLICIES);
+export type GrantSlotTakenPolicy = z.infer<typeof GrantSlotTakenPolicySchema>;
+
 // A weight as a percentage of the stake, `numeric(5,2)` in the database. Zero excludes a product
 // or game from wagering; above 100 would count a bet for more than it was worth.
 export const CONTRIBUTION_PERCENT_PRECISION = 5;
