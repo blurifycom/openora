@@ -96,6 +96,7 @@ export type {
   FundOutflow,
   LockedFunds,
   LockedFundsArgs,
+  ReadLockedFundsArgs,
 } from './bonus-fund-locks.js';
 export { BONUS_FUND_LOCKS, BonusFundsLockedError } from './bonus-fund-locks.js';
 

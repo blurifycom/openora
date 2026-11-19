@@ -7,6 +7,7 @@ export default {
     ctx.provideSealed(BONUS_FUND_LOCKS, () => ({
       lockedFunds: async () => ({ locked: '0', free: '0' }),
       onOutflow: async () => {},
+      readLockedFunds: async () => [],
     }));
   },
 } satisfies Plugin<CoreTokenCatalog>;

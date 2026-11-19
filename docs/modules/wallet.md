@@ -284,7 +284,9 @@ is `SPORTSBOOK_LEDGER` unchanged.
   when `promo.bonus.withdrawalWhileActive` is `block`; under the default `forfeit` it forfeits
   every live grant instead, through `BONUS_LIFECYCLE.forfeitHeld` when no module binds the lock.
   The optional `WALLET_COMMANDS.movableFunds` reports the same figure under the same locks, for a
-  transfer's own transaction (ADR-0064). An operator clawback goes through an admin or correction debit,
+  transfer's own transaction (ADR-0064). For display, `GET /wallet/balance`, `GET /wallet/balances`
+  and the `wallet.activity` agent tool add optional `locked` and `free` to each balance when a
+  bonus module is loaded, from the same computation but without row locks. An operator clawback goes through an admin or correction debit,
   which the lock never checks. A process that loads the wallet without the bonus module, a split
   manifest included, fails its boot in `block` mode and locks nothing in `forfeit` mode.
 - **A correction debit is never refused for a short balance.** It collects what the balance holds

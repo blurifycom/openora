@@ -1,4 +1,4 @@
-import { asc } from 'drizzle-orm';
+import { and, asc, inArray } from 'drizzle-orm';
 import {
   BonusFundsLockedError,
   type BonusFundLockCommands,
@@ -6,11 +6,20 @@ import {
   type LockedFunds,
   type LockedFundsArgs,
   type PromoConfig,
+  type ReadLockedFundsArgs,
 } from '@openora/core/contracts';
-import { moneyAdd, moneyCompare, type DrizzleTx } from '@openora/core/server';
+import { moneyAdd, moneyCompare, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
 import { promoGrant } from '../schema/index.js';
-import { grantLocks, splitLocked } from '../shared/fund-buckets.js';
-import { isLiveGrantIn } from '../shared/live-grant.js';
+import { lockedFundsOf } from '../shared/fund-buckets.js';
+import { isLiveGrantIn, isLiveGrantOf } from '../shared/live-grant.js';
+
+const LOCK_COLUMNS = {
+  currency: promoGrant.currency,
+  source: promoGrant.source,
+  terms: promoGrant.terms,
+  unlinked: promoGrant.unlinkedCash,
+  linked: promoGrant.linkedCash,
+};
 import type { GrantLifecycleService } from './grant-lifecycle.service.js';
 
 export class FundLockService implements BonusFundLockCommands {
@@ -24,19 +33,38 @@ export class FundLockService implements BonusFundLockCommands {
     { userId, currency, realBalance }: LockedFundsArgs,
   ): Promise<LockedFunds> {
     const live = await tx
-      .select({
-        source: promoGrant.source,
-        terms: promoGrant.terms,
-        unlinked: promoGrant.unlinkedCash,
-        linked: promoGrant.linkedCash,
-      })
+      .select(LOCK_COLUMNS)
       .from(promoGrant)
       .where(isLiveGrantIn(userId, currency))
       .orderBy(asc(promoGrant.id))
       .for('share');
-    return splitLocked(
-      realBalance,
-      live.filter((grant) => grantLocks(grant.source, grant.terms)),
+    return lockedFundsOf(realBalance, live);
+  }
+
+  async readLockedFunds(
+    db: DrizzleDb | DrizzleTx,
+    { userId, balances }: ReadLockedFundsArgs,
+  ): Promise<LockedFunds[]> {
+    if (balances.length === 0) {
+      return [];
+    }
+    const live = await db
+      .select(LOCK_COLUMNS)
+      .from(promoGrant)
+      .where(
+        and(
+          isLiveGrantOf(userId),
+          inArray(
+            promoGrant.currency,
+            balances.map((balance) => balance.currency),
+          ),
+        ),
+      );
+    return balances.map(({ currency, realBalance }) =>
+      lockedFundsOf(
+        realBalance,
+        live.filter((grant) => grant.currency === currency),
+      ),
     );
   }
 

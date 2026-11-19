@@ -50,11 +50,11 @@ under the same locks a debit takes, for a transfer to check first. The wallet st
 
 ## Consequences
 
-- No migration: ADR-0062's columns suffice.
+- No migration needed.
 - A replayed withdrawal or swap returns its original result before any check runs, even when a
   locking grant appeared after it.
 - Approving a queued withdrawal does not re-check the lock.
-- Balance routes do not show a withdrawable figure yet. A client reads the refusal's `data`.
+- `getBalance(s)` and `wallet.activity` add optional `locked` and `free`, read lock-free from the same computation.
 - The mode is platform-wide, not per offer.
 - Without `BONUS_FUND_LOCKS`, `forfeit` mode falls back to `BONUS_LIFECYCLE.forfeitHeld`, so a custom bonus engine keeps forfeiting.
 - Even in the default mode, a swap or gift over locked money now answers 409.

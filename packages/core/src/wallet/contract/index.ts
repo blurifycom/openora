@@ -154,6 +154,10 @@ export function isWalletAddressValidForNetwork(address: string, network: string)
 export const WalletBalanceSchema = z.object({
   balance: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,
+  // Present when a bonus module is loaded: the real money live bonuses hold back from a
+  // withdrawal, swap or transfer, and `balance` minus it, never below 0 (ADR-0064).
+  locked: MoneyAmountSchema.optional(),
+  free: MoneyAmountSchema.optional(),
 });
 
 export const WalletBalancesSchema = z.object({

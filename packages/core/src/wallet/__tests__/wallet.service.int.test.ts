@@ -475,6 +475,35 @@ describe('WalletService.getBalances / setActiveCurrency (real PG)', () => {
     expect(await svc.getBalance(userId)).toEqual({ balance: '0', currency: 'USD' });
   });
 
+  it('adds what the bound fund locks report for each balance to both reads', async () => {
+    const readLockedFunds = vi.fn(
+      async (_db: unknown, { balances }: { balances: readonly { currency: string }[] }) =>
+        balances.map(({ currency }) =>
+          currency === 'USD' ? { locked: '70', free: '30' } : { locked: '0', free: '10' },
+        ),
+    );
+    const { svc } = makeService({
+      bonusFundLocks: { onOutflow: vi.fn(), lockedFunds: vi.fn(), readLockedFunds },
+    });
+    const w = await seedWallet({ balance: '100', currency: 'USD' });
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
+
+    expect((await svc.getBalances(w.userId)).balances).toEqual([
+      { currency: 'EUR', balance: '10.000000000000000000', locked: '0', free: '10' },
+      { currency: 'USD', balance: '100.000000000000000000', locked: '70', free: '30' },
+    ]);
+    expect(await svc.getBalance(w.userId)).toEqual({
+      currency: 'USD',
+      balance: '100.000000000000000000',
+      locked: '70',
+      free: '30',
+    });
+    expect(readLockedFunds).toHaveBeenCalledWith(expect.anything(), {
+      userId: w.userId,
+      balances: [{ currency: 'USD', realBalance: '100.000000000000000000' }],
+    });
+  });
+
   it('switches the active currency so getBalance reads the new one', async () => {
     const { svc } = makeService();
     const w = await seedWallet({ balance: '100', currency: 'USD' });
@@ -787,7 +816,7 @@ describe('WalletService.withdraw (real PG)', () => {
     const onOutflow = vi.fn(async () => undefined);
     const { svc } = makeService({
       bonusLifecycle: { forfeitHeld, forfeit: vi.fn() },
-      bonusFundLocks: { onOutflow, lockedFunds: vi.fn() },
+      bonusFundLocks: { onOutflow, lockedFunds: vi.fn(), readLockedFunds: vi.fn() },
     });
     const w = await seedWallet({ balance: '100' });
 
