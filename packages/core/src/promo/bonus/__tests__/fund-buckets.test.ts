@@ -233,7 +233,7 @@ describe('lockedFundsOf', () => {
     expect(eq(r.free, '170')).toBe(true);
   });
 
-  it('floors free at 0 when the locked money exceeds the balance', () => {
+  it('caps the sum over several grants at the balance', () => {
     const r = lockedFundsOf('60', [held('deposit', '40', '40'), held('deposit', '0', '30')]);
     expect(eq(r.locked, '60')).toBe(true);
     expect(eq(r.free, '0')).toBe(true);

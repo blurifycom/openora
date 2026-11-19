@@ -271,5 +271,6 @@ export function useBonusLockHarness(mode: 'block' | 'forfeit') {
     lose: (userId: string, round: string) => roundDebit(userId, 'loss', '0', round),
     btcHolder,
     swap,
+    anonymousGet: (path: string) => app.app.request(path, { method: 'GET' }),
   };
 }

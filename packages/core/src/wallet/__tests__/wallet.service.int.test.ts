@@ -6,11 +6,13 @@ import {
   DEFAULT_PAYMENT_PROVIDER,
   PaymentRejectedError,
   type AdminUserDirectory,
+  type BonusFundLockCommands,
   type ExchangeRateReader,
   type PaymentAdapter,
   type AdminPlayerSummary,
   type PlayEligibilityPort,
   type PlayerTags,
+  type ReadLockedFundsArgs,
   type TagKey,
 } from '@openora/core/contracts';
 import { createTestDb, waitForRowLockWaiter, type TestDb } from '@openora/core/testing';
@@ -476,15 +478,14 @@ describe('WalletService.getBalances / setActiveCurrency (real PG)', () => {
   });
 
   it('adds what the bound fund locks report for each balance to both reads', async () => {
-    const readLockedFunds = vi.fn(
-      async (_db: unknown, { balances }: { balances: readonly { currency: string }[] }) =>
+    const locks = mock<BonusFundLockCommands>({
+      readLockedFunds: vi.fn(async (_db: unknown, { balances }: ReadLockedFundsArgs) =>
         balances.map(({ currency }) =>
           currency === 'USD' ? { locked: '70', free: '30' } : { locked: '0', free: '10' },
         ),
-    );
-    const { svc } = makeService({
-      bonusFundLocks: { onOutflow: vi.fn(), lockedFunds: vi.fn(), readLockedFunds },
+      ),
     });
+    const { svc } = makeService({ bonusFundLocks: locks });
     const w = await seedWallet({ balance: '100', currency: 'USD' });
     await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
 
@@ -498,7 +499,7 @@ describe('WalletService.getBalances / setActiveCurrency (real PG)', () => {
       locked: '70',
       free: '30',
     });
-    expect(readLockedFunds).toHaveBeenCalledWith(expect.anything(), {
+    expect(locks.readLockedFunds).toHaveBeenCalledWith(expect.anything(), {
       userId: w.userId,
       balances: [{ currency: 'USD', realBalance: '100.000000000000000000' }],
     });
