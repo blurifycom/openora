@@ -57,6 +57,8 @@ before this change carries its progress on its stake entry, taken back the same 
   crediting its pending progress.
 - Progress now lags play until the round settles. A provider that never settles a round never
   credits its progress, as it already never let the grant complete.
+- The player and staff grant reads add an optional `pendingWagered`: the progress open rounds
+  hold, so a client can show it before it is credited.
 - Core ships no edge or class rules. An operator sets the reference edge, the category percents
   and the class buckets for its own market.
 - Existing grants score flat and have no class rules; their progress also waits for settlement.
