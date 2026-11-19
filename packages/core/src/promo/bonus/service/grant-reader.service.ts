@@ -1,5 +1,7 @@
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import {
+  MONEY_PRECISION,
+  MONEY_SCALE,
   type BonusGrantLedgerReader,
   type PageQuery,
   type Paginated,
@@ -47,12 +49,16 @@ const GRANT_COLUMNS = {
   bonusBalance: promoGrant.bonusBalance,
   wageringRequired: promoGrant.wageringRequired,
   wageringProgress: promoGrant.wageringProgress,
-  pendingWagered: sql<string>`(
-    select coalesce(sum(${promoGrantRound.progressPending}), 0)::text
-    from ${promoGrantRound}
-    where ${promoGrantRound.grantId} = ${promoGrant.id}
-      and ${promoGrantRound.settledAt} is null
-  )`,
+  // Settlement credits only an active grant, and no more than its requirement has left.
+  pendingWagered: sql<string>`case when ${promoGrant.status} = 'active' then least(
+    (
+      select coalesce(sum(${promoGrantRound.progressPending}), 0)
+      from ${promoGrantRound}
+      where ${promoGrantRound.grantId} = ${promoGrant.id}
+        and ${promoGrantRound.settledAt} is null
+    ),
+    greatest(${promoGrant.wageringRequired} - ${promoGrant.wageringProgress}, 0)
+  ) else 0 end::numeric(${sql.raw(String(MONEY_PRECISION))}, ${sql.raw(String(MONEY_SCALE))})::text`,
   linkedCash: promoGrant.linkedCash,
   unlinkedCash: promoGrant.unlinkedCash,
   forfeitReason: promoGrant.forfeitReason,

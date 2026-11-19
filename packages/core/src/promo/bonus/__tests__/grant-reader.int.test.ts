@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import type { PlayEligibilityPort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeAuditWriter, makeEventBus } from '../../../testing/mock.js';
 import { findOneOrThrow } from '@openora/core/server';
 import { migrate as identityMigrate } from '@openora/core/pam/migrate/identity';
 import { migrate } from '../migrate.js';
-import { promoOffer, promoWeight, promoWeightProfile } from '../schema/index.js';
+import { promoGrant, promoOffer, promoWeight, promoWeightProfile } from '../schema/index.js';
 import { GrantLifecycleService } from '../service/grant-lifecycle.service.js';
 import { GrantReaderService } from '../service/grant-reader.service.js';
 import { GrantService } from '../service/grant.service.js';
@@ -240,11 +241,11 @@ describe('GrantReaderService', () => {
     const read = async () => {
       const own = await reader.get(userId, issued.grantId);
       const staff = await reader.getForAdmin(issued.grantId);
-      return [own, staff].map((g) => [Number(g.pendingWagered), Number(g.wageringProgress)]);
+      return [own, staff].map((g) => [g.pendingWagered, g.wageringProgress]);
     };
     expect(await read()).toEqual([
-      [0, 0],
-      [0, 0],
+      ['0.000000000000000000', '0.000000000000000000'],
+      ['0.000000000000000000', '0.000000000000000000'],
     ]);
 
     await db.drizzle.db.transaction((tx) =>
@@ -258,16 +259,34 @@ describe('GrantReaderService', () => {
       }),
     );
     expect(await read()).toEqual([
-      [30, 0],
-      [30, 0],
+      ['30.000000000000000000', '0.000000000000000000'],
+      ['30.000000000000000000', '0.000000000000000000'],
     ]);
 
     await db.drizzle.db.transaction((tx) =>
       wagering.closeRound(tx, { userId, currency: 'USD', realBalance: '0', ...round }),
     );
     expect(await read()).toEqual([
-      [0, 30],
-      [0, 30],
+      ['0.000000000000000000', '30.000000000000000000'],
+      ['0.000000000000000000', '30.000000000000000000'],
     ]);
+
+    await db.drizzle.db.transaction((tx) =>
+      wagering.wager(tx, {
+        userId,
+        currency: 'USD',
+        stake: '20',
+        realAvailable: '0',
+        context: { provider: 'aggregator', product: 'casino' },
+        providerName: 'aggregator',
+        externalRoundId: randomUUID(),
+      }),
+    );
+    expect((await reader.get(userId, issued.grantId)).pendingWagered).toBe('20.000000000000000000');
+    await db.drizzle.db
+      .update(promoGrant)
+      .set({ status: 'expired', closedAt: new Date() })
+      .where(eq(promoGrant.id, issued.grantId));
+    expect((await reader.get(userId, issued.grantId)).pendingWagered).toBe('0.000000000000000000');
   });
 });
