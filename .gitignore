@@ -45,7 +45,6 @@ CLAUDE.md
 !.github/actions/
 !.github/ISSUE_TEMPLATE/
 !.github/pull_request_template.md
-!.github/dependabot.yml
 .opencode
 opencode.jsonc
 
