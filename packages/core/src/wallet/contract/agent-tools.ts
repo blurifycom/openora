@@ -53,7 +53,7 @@ export const WalletActivityOutputSchema = z.object({
     z.object({
       currency: CurrencyTickerSchema,
       balance: MoneyAmountSchema,
-      // Bonus-locked real money and the rest, as on the player's balance read (ADR-0064).
+      // As on the player's balance read: what live bonuses hold back, and the rest (ADR-0064).
       locked: MoneyAmountSchema.optional(),
       free: MoneyAmountSchema.optional(),
     }),

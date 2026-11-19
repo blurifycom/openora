@@ -27,6 +27,21 @@ describe('the default withdrawal mode forfeits, and swaps and gifts are still pr
     }
   });
 
+  it('shows the locked money on the balance read, and a withdrawal over it forfeits instead of being refused', async () => {
+    const { client, userId } = await player('150');
+    const id = await grant(userId);
+
+    const before = await readJson(await client.get('/wallet/balance'));
+    expectMoney(before.locked, '100', 'locked');
+    expectMoney(before.free, '50', 'free');
+
+    expect((await withdraw(client, '60')).status).toBe(200);
+    expect((await grantRow(id)).status).toBe('forfeited');
+    const after = await readJson(await client.get('/wallet/balance'));
+    expectMoney(after.locked, '0', 'locked after');
+    expectMoney(after.free, '90', 'free after');
+  });
+
   it('pays a withdrawal over the free money and forfeits, as before the lock existed', async () => {
     const { client, userId } = await player('150');
     const id = await grant(userId);

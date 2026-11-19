@@ -23,6 +23,7 @@ const {
   lose,
   btcHolder,
   swap,
+  anonymousGet,
 } = useBonusLockHarness('block');
 
 async function expectLocked(
@@ -70,6 +71,14 @@ async function matchedDepositor(terms: Record<string, unknown> = {}) {
     throw new Error('the deposit was not matched');
   }
   return { ...depositor, grantId: granted.id };
+}
+
+async function balanceRead(client: TestClient): Promise<{ locked: string; free: string }> {
+  const res = await client.get('/wallet/balance');
+  expect(res.status).toBe(200);
+  const body = await readJson(res);
+  expect(body.currency).toBe('USD');
+  return { locked: body.locked, free: body.free };
 }
 
 const movableFunds = (userId: string, currency = 'USD') =>
@@ -162,6 +171,40 @@ describe('a withdrawal while a deposit bonus runs, in block mode', () => {
     expect(
       moneyCompare(await realBalance(userId), moneyAdd(row.unlinkedCash, row.linkedCash)),
     ).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('the balance read', () => {
+  it('shows the locked and free money the withdrawal refusal reports, and pays out exactly the free part', async () => {
+    const { client, userId } = await matchedDepositor();
+
+    const read = await balanceRead(client);
+    expectMoney(read.locked, '100', 'locked');
+    expectMoney(read.free, '50', 'free');
+    const listed = await readJson(await client.get('/wallet/balances'));
+    expect(listed.balances).toEqual([expect.objectContaining(read)]);
+
+    await expectLocked(await withdraw(client, moneyAdd(read.free, '0.01')), read);
+    expect((await withdraw(client, read.free)).status).toBe(200);
+    expectMoney(await realBalance(userId), '100', 'balance');
+    const after = await balanceRead(client);
+    expectMoney(after.locked, '100', 'locked after');
+    expectMoney(after.free, '0', 'free after');
+  });
+
+  it("reads nothing locked behind another player's bonus", async () => {
+    const { client } = await player('150');
+    const other = await player('150');
+    await grant(other.userId);
+
+    const read = await balanceRead(client);
+
+    expectMoney(read.locked, '0', 'locked');
+    expectMoney(read.free, '150', 'free');
+  });
+
+  it('refuses the balance read without a session', async () => {
+    expect((await anonymousGet('/wallet/balance')).status).toBe(401);
   });
 });
 

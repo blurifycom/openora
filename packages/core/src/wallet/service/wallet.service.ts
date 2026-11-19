@@ -811,6 +811,10 @@ export async function resolveWalletBalance(
   };
 }
 
+// The balance and the grants from one snapshot, so a bet or withdrawal committing between the two
+// reads cannot pair the old balance with the new grants. Takes no row lock.
+const SNAPSHOT_READ = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const;
+
 const DEPOSIT_IDEMPOTENCY_NAMESPACE = 'deposit';
 const WITHDRAW_IDEMPOTENCY_NAMESPACE = 'withdraw';
 const MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE = 'manual-adjustment';
@@ -1717,33 +1721,38 @@ export class WalletService {
     return row;
   }
 
-  async getBalance(userId: User['id']) {
-    const reading = await resolveWalletBalance(
-      this.drizzle.db,
-      userId,
-      this.platformConfig?.wallet?.defaultCurrency,
-    );
-    const [withLocks] = await this.withLockedFunds(userId, [reading]);
-    return withLocks ?? reading;
+  getBalance(userId: User['id']) {
+    return this.drizzle.db.transaction(async (txn) => {
+      const reading = await resolveWalletBalance(
+        txn,
+        userId,
+        this.platformConfig?.wallet?.defaultCurrency,
+      );
+      const [withLocks] = await this.withLockedFunds(txn, userId, [reading]);
+      return withLocks ?? reading;
+    }, SNAPSHOT_READ);
   }
 
-  async getBalances(userId: User['id']) {
-    const reading = await readWalletBalances(
-      this.drizzle.db,
-      userId,
-      this.platformConfig?.wallet?.defaultCurrency,
-    );
-    return { ...reading, balances: await this.withLockedFunds(userId, reading.balances) };
+  getBalances(userId: User['id']) {
+    return this.drizzle.db.transaction(async (txn) => {
+      const reading = await readWalletBalances(
+        txn,
+        userId,
+        this.platformConfig?.wallet?.defaultCurrency,
+      );
+      return { ...reading, balances: await this.withLockedFunds(txn, userId, reading.balances) };
+    }, SNAPSHOT_READ);
   }
 
   private async withLockedFunds<T extends { currency: string; balance: string }>(
+    txn: DrizzleDb,
     userId: User['id'],
     balances: T[],
   ): Promise<(T & Partial<LockedFunds>)[]> {
     if (!this.bonusFundLocks || balances.length === 0) {
       return balances;
     }
-    const locks = await this.bonusFundLocks.readLockedFunds(this.drizzle.db, {
+    const locks = await this.bonusFundLocks.readLockedFunds(txn, {
       userId,
       balances: balances.map(({ currency, balance }) => ({
         currency: balanceKey(currency),

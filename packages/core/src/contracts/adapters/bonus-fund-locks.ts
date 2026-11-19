@@ -61,8 +61,9 @@ export type BonusFundLockCommands = {
    */
   lockedFunds(tx: unknown, args: LockedFundsArgs): Promise<LockedFunds>;
   /**
-   * `lockedFunds` for each balance, in the same order, for display. Takes no lock, so it may trail
-   * a bet in flight; the refusal is still decided by `onOutflow`.
+   * `lockedFunds` for each balance, in the same order, for display. Takes no lock, so it may be
+   * stale by the time an outflow runs; the refusal is still decided by `onOutflow`. In `forfeit`
+   * mode a withdrawal is never refused: any withdrawal forfeits every live grant instead.
    */
   readLockedFunds(db: unknown, args: ReadLockedFundsArgs): Promise<LockedFunds[]>;
   /**
