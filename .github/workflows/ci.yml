@@ -56,7 +56,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: echo "commitlint runs on pull requests only"
 
-  # Everything in `pnpm verify` except the core integration tier (sharded below).
+  # Everything in `pnpm verify` except the integration tiers (sharded below).
   checks:
     if: github.event.action != 'edited'
     runs-on: ubuntu-latest
@@ -90,14 +90,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/bootstrap
       - uses: ./.github/actions/test-infra
-      # Same task list as the root `verify` script, but the core integration tier is
-      # excluded (it runs in `integration`) - the other integration tiers stay here.
-      # `build` is what typechecks (every package builds with tsc).
+      # Same task list as the root `verify` script, minus `test:integration` (it runs in
+      # `integration`). `build` is what typechecks (every package builds with tsc).
       - name: Verify
         run: >-
           pnpm exec turbo run build check:lint check:format check:boundaries check:shape
           check:hygiene check:refs check:deprecations test:unit test:tools &&
-          pnpm exec turbo run test:integration --filter='!@openora/core' &&
           pnpm check:drift
       # The E2E tier records a span per request, oRPC step and pg query. The latest
       # merge-queue run's spans are the baseline a PR run's job summary is compared against.
@@ -127,15 +125,16 @@ jobs:
           retention-days: ${{ github.event_name == 'merge_group' && 30 || 7 }}
           if-no-files-found: ignore
 
-  # The slowest tier (packages/core `vitest.integration.config.ts`), 3 shards. Each job has
-  # its own postgres + redis, so per-suite databases and redis partitions are isolated.
+  # Both integration tiers (packages/core `vitest.integration.config.ts` and packages/testing),
+  # 4 shards. Each job has its own postgres + redis, so per-suite databases and redis
+  # partitions are isolated; within a job the two tiers share them as in `pnpm verify`.
   integration:
     if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: postgres:16-alpine
@@ -165,8 +164,8 @@ jobs:
         with:
           turbo-cache: 'false'
       - uses: ./.github/actions/test-infra
-      - name: Core integration (shard ${{ matrix.shard }}/3)
-        run: pnpm exec turbo run test:integration --filter=@openora/core -- --shard=${{ matrix.shard }}/3
+      - name: Integration (shard ${{ matrix.shard }}/4)
+        run: pnpm exec turbo run test:integration -- --shard=${{ matrix.shard }}/4
 
   # A new user's first run against this commit's packages: scaffold, install, `pnpm bootstrap`
   # (Docker), start the API, log in as the seeded admin. Catches boot crashes no in-repo test
