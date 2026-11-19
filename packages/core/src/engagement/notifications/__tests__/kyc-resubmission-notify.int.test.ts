@@ -11,7 +11,8 @@ import {
 import { setErrorReporter } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
-import { AuditService } from '@openora/core/audit/server';
+import { migrate as migrateOutbox } from '@openora/core/server/migrate';
+import { AuditService, drainAuditOutbox } from '@openora/core/audit/server';
 import { makeAuditWriter, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { notification } from '../schema/index.js';
@@ -34,7 +35,7 @@ const advancedRequest = (userId: string, reason: string) => ({
 });
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateAudit]);
+  db = await createTestDb([migrateOutbox, migrate, migrateAudit]);
 });
 
 afterAll(async () => {
@@ -131,8 +132,10 @@ describe('KYC resubmission notify job - dead-letter audit on the real audit writ
         svc.recordManyInTransaction(tx, entries).then(() => undefined),
     };
   };
-  const auditRowsFor = (resourceId: string) =>
-    db.drizzle.db.select().from(auditLog).where(eq(auditLog.resourceId, resourceId));
+  const auditRowsFor = async (resourceId: string) => {
+    await drainAuditOutbox(db.drizzle.db);
+    return db.drizzle.db.select().from(auditLog).where(eq(auditLog.resourceId, resourceId));
+  };
 
   it('writes exactly one mail.regulatory_delivery.failed row once retries are exhausted', async () => {
     const enqueueFailure = new Error('mail queue unavailable');

@@ -88,13 +88,11 @@ describe('an approved request_enhanced_kyc agent action', () => {
     await vi.waitFor(async () => {
       const found = await resubmissionNotifications(client);
       expect(found).toHaveLength(1);
-      expect(found[0]?.params).toEqual({ reason, tier: 'advanced' });
+      expect(found[0]?.params).toEqual({ tier: 'advanced' });
       const mails = resubmissionEmails(email);
       expect(mails).toHaveLength(1);
       expect(mails[0]?.subject).toBe(ADVANCED_SUBJECT);
-      expect(mails[0]?.text).toBe(
-        `An admin has requested you complete enhanced verification. Reason: ${reason}.`,
-      );
+      expect(mails[0]?.text).toBe('An admin has requested you complete enhanced verification.');
     }, PIPELINE_WAIT);
 
     expect(await executeRequestEnhancedKyc(appDefault, { playerId, reason }, proposalId)).toEqual({
@@ -194,7 +192,7 @@ describe('override to resubmission_requested', () => {
     await vi.waitFor(async () => {
       const found = await resubmissionNotifications(client);
       expect(found).toHaveLength(1);
-      expect(found[0]?.params).toEqual({ reason: 'enhanced due diligence', tier: 'advanced' });
+      expect(found[0]?.params).toEqual({ tier: 'advanced' });
       expect(resubmissionEmails(email)).toHaveLength(1);
       expect(resubmissionEmails(email)[0]?.subject).toBe(ADVANCED_SUBJECT);
     }, PIPELINE_WAIT);
