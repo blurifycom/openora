@@ -5,18 +5,23 @@ import { DRIZZLE } from '@openora/core/server';
 import { BONUS_GRANTS, WALLET_COMMANDS, WalletReplayMismatchError } from '@openora/core/contracts';
 import { waitForRowLockWaiter } from '@openora/core/testing';
 import type {
+  BonusFundSettings,
   WalletCreditArgs,
   WalletDebitArgs,
   WalletDebitOutcome,
 } from '@openora/core/contracts';
 import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
+import { user } from '@openora/core/pam/schema/identity';
+import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import {
   promoGrant,
   promoGrantEntry,
+  promoGrantRound,
   promoWeight,
   promoWeightProfile,
 } from '@openora/core/promo/schema/bonus';
 import {
+  readJson,
   registerAndMaterializePlayer,
   type TestDb,
   type TestApp,
@@ -89,19 +94,72 @@ async function grantBonus(
   return outcome.grantId;
 }
 
+async function staffViewer() {
+  const { client, userId } = await registerAndMaterializePlayer(app, {
+    email: `wagering-staff-${randomUUID()}@example.test`,
+  });
+  await drizzle().update(user).set({ role: 'admin' }).where(eq(user.id, userId));
+  const [role] = await drizzle().select().from(adminRole).where(eq(adminRole.key, 'super-admin'));
+  if (!role) {
+    throw new Error('staffViewer: no seeded super-admin role');
+  }
+  await drizzle().insert(adminRoleAssignment).values({ userId, roleId: role.id });
+  return client;
+}
+
+async function grantWithBuckets(
+  userId: string,
+  buckets: { unlinked: string; linked: string },
+  betClassBuckets: NonNullable<BonusFundSettings['betClassBuckets']>,
+) {
+  const outcome = await drizzle().transaction((tx) =>
+    app.container.get(BONUS_GRANTS).grant(tx, {
+      userId,
+      currency: 'USD',
+      amount: '50',
+      source: 'deposit',
+      sourceRef: randomUUID(),
+      actor: { type: 'system' },
+      buckets,
+      terms: {
+        wageringMultiplier: '10',
+        expiryDays: 30,
+        weightProfileId,
+        funds: {
+          rolloverBase: 'bonus',
+          existingBalance: 'locked',
+          freeFundsOrder: 'first',
+          dustThresholdUsd: '0',
+          decimals: 2,
+          betClassBuckets,
+        },
+      },
+    }),
+  );
+  if (!outcome.ok) {
+    throw new Error('grantWithBuckets: grant was refused');
+  }
+  return outcome.grantId;
+}
+
 const debit = (args: WalletDebitArgs): Promise<WalletDebitOutcome> =>
   drizzle().transaction((tx) => app.container.get(WALLET_COMMANDS).debit(tx, args));
 
 const credit = (args: WalletCreditArgs) =>
   drizzle().transaction((tx) => app.container.get(WALLET_COMMANDS).credit(tx, args));
 
-const bet = (userId: string, amount: string, round: string) =>
+const bet = (
+  userId: string,
+  amount: string,
+  round: string,
+  context: WalletDebitArgs['context'] = CASINO,
+) =>
   debit({
     userId,
     amount,
     type: 'bet',
     currency: 'USD',
-    context: CASINO,
+    context,
     providerRef: {
       providerName: 'aggregator',
       providerRefId: `bet-${round}`,
@@ -160,6 +218,9 @@ const stakeEntries = (grantId: string) =>
     .select()
     .from(promoGrantEntry)
     .where(and(eq(promoGrantEntry.grantId, grantId), eq(promoGrantEntry.type, 'stake')));
+
+const roundsOf = (grantId: string) =>
+  drizzle().select().from(promoGrantRound).where(eq(promoGrantRound.grantId, grantId));
 
 async function ledgerSum(grantId: string) {
   const [row] = await drizzle()
@@ -220,9 +281,68 @@ describe('a bet against a bonus', () => {
     const { userId } = await player('100');
     const grantId = await grantBonus(userId, '100', '10');
 
-    await bet(userId, '40', randomUUID());
+    const round = randomUUID();
+
+    await bet(userId, '40', round);
+    expect((await grantRow(grantId)).wageringProgress).toBe('0.000000000000000000');
+    await lose(userId, round);
 
     expect((await grantRow(grantId)).wageringProgress).toBe('40.000000000000000000');
+  });
+
+  it('shows an open round as pending on the player and staff reads, then as progress once it settles', async () => {
+    const { client, userId } = await player('100');
+    const grantId = await grantBonus(userId, '100', '10');
+    const staff = await staffViewer();
+    const reads = async () => {
+      const own = await readJson(await client.get(`/promo/grants/${grantId}`));
+      const listed: { id: string; pendingWagered: string; wageringProgress: string }[] =
+        await readJson(await staff.get(`/backoffice/promo/players/${userId}/grants`));
+      const seen = listed.find((grant) => grant.id === grantId);
+      return [
+        own.pendingWagered,
+        own.wageringProgress,
+        seen?.pendingWagered,
+        seen?.wageringProgress,
+      ];
+    };
+    const zero = '0.000000000000000000';
+    const forty = '40.000000000000000000';
+    const round = randomUUID();
+
+    expect(await reads()).toEqual([zero, zero, zero, zero]);
+    await bet(userId, '40', round);
+    expect(await reads()).toEqual([forty, zero, forty, zero]);
+    await lose(userId, round);
+    expect(await reads()).toEqual([zero, forty, zero, forty]);
+
+    const other = await player('0');
+    expect((await other.client.get(`/promo/grants/${grantId}`)).status).toBe(404);
+  });
+
+  it('keeps a round open after a partial reversal, crediting its progress only when the rest settles', async () => {
+    const { client, userId } = await player('100');
+    const grantId = await grantBonus(userId, '100', '10');
+    const round = randomUUID();
+    const own = async () => {
+      const grant = await readJson(await client.get(`/promo/grants/${grantId}`));
+      return [grant.pendingWagered, grant.wageringProgress, grant.status];
+    };
+
+    await bet(userId, '100', round);
+    await reverse(userId, '20', round, 'partial');
+
+    expect(await own()).toEqual(['80.000000000000000000', '0.000000000000000000', 'active']);
+    const [open] = await drizzle()
+      .select({ settledAt: promoGrantRound.settledAt })
+      .from(promoGrantRound)
+      .where(eq(promoGrantRound.grantId, grantId));
+    expect(open?.settledAt).toBeNull();
+    expect(await realBalanceOf(userId)).toBe('20.000000000000000000');
+
+    await lose(userId, round);
+
+    expect(await own()).toEqual(['0.000000000000000000', '80.000000000000000000', 'active']);
   });
 
   it('refuses a stake neither balance can cover and moves nothing', async () => {
@@ -298,6 +418,7 @@ describe('a replayed wager', () => {
 
     await bet(userId, '40', round);
     await bet(userId, '40', round);
+    await lose(userId, round);
 
     const row = await grantRow(grantId);
     expect(row.bonusBalance).toBe('60.000000000000000000');
@@ -314,6 +435,7 @@ describe('a replayed wager', () => {
     // only when the second call is known to start after the first has committed - the unique
     // index is the guard here, not the read that precedes it.
     await Promise.all([bet(userId, '40', round), bet(userId, '40', round)]);
+    await lose(userId, round);
 
     const row = await grantRow(grantId);
     expect(row.bonusBalance).toBe('60.000000000000000000');
@@ -444,7 +566,9 @@ describe('meeting the requirement', () => {
     const { userId } = await player('500');
     const grantId = await grantBonus(userId, '100', '1');
 
-    await bet(userId, '400', randomUUID());
+    const round = randomUUID();
+    await bet(userId, '400', round);
+    await lose(userId, round);
 
     expect((await grantRow(grantId)).wageringProgress).toBe('100.000000000000000000');
   });
@@ -452,9 +576,14 @@ describe('meeting the requirement', () => {
   it('takes no further progress once the grant has completed', async () => {
     const { userId } = await player('500');
     const grantId = await grantBonus(userId, '100', '1');
-    await bet(userId, '100', randomUUID());
+    const first = randomUUID();
+    await bet(userId, '100', first);
+    await lose(userId, first);
+    expect((await grantRow(grantId)).status).toBe('completed');
 
-    await bet(userId, '50', randomUUID());
+    const second = randomUUID();
+    await bet(userId, '50', second);
+    await lose(userId, second);
 
     expect((await grantRow(grantId)).wageringProgress).toBe('100.000000000000000000');
   });
@@ -792,7 +921,9 @@ describe('a voided round', () => {
 
     const row = await grantRow(grantId);
     expect(row.bonusBalance).toBe('70.000000000000000000');
-    expect(row.wageringProgress).toBe('30.000000000000000000');
+    expect(row.wageringProgress).toBe('0.000000000000000000');
+    await lose(userId, round);
+    expect((await grantRow(grantId)).wageringProgress).toBe('30.000000000000000000');
   });
 
   it('takes back the progress a cash-funded bet bought under an active grant when it is voided', async () => {
@@ -804,6 +935,7 @@ describe('a voided round', () => {
     // counts the full stake toward its requirement.
     await bet(userId, '40', round);
     expect(await realBalanceOf(userId)).toBe('0.000000000000000000');
+    await lose(userId, round);
     expect((await grantRow(grantId)).wageringProgress).toBe('40.000000000000000000');
 
     await reverse(userId, '40', round, 'void-cash');
@@ -905,5 +1037,66 @@ describe('a voided round', () => {
     expect(row.bonusBalance).toBe('100.000000000000000000');
     expect(row.wageringProgress).toBe('0.000000000000000000');
     expect(await realBalanceOf(userId)).toBe('0.000000000000000000');
+  });
+});
+
+describe('the buckets a bet class may draw on', () => {
+  const ZERO_WEIGHT = { provider: 'aggregator', product: 'live-casino' } as const;
+  const PVP = { provider: 'aggregator', product: 'pvp' } as const;
+
+  it('refuses a zero-weight bet over A and B before touching anything', async () => {
+    const { userId } = await player('20');
+    const grantId = await grantWithBuckets(
+      userId,
+      { unlinked: '10', linked: '10' },
+      { zero: ['unlinked', 'linked'] },
+    );
+
+    const refused = await bet(userId, '25', randomUUID(), ZERO_WEIGHT);
+
+    expect(refused.ok).toBe(false);
+    expect(Number(refused.ok ? NaN : refused.available)).toBe(20);
+    const row = await grantRow(grantId);
+    expect(row.bonusBalance).toBe('50.000000000000000000');
+    expect([row.unlinkedCash, row.linkedCash].map(Number)).toEqual([10, 10]);
+    expect(await realBalanceOf(userId)).toBe('20.000000000000000000');
+    expect(await stakeEntries(grantId)).toEqual([]);
+    expect(await roundsOf(grantId)).toEqual([]);
+  });
+
+  it('keeps a pvp bet to A when that is all its class may use', async () => {
+    const { userId } = await player('15');
+    const grantId = await grantWithBuckets(
+      userId,
+      { unlinked: '5', linked: '10' },
+      { pvp: ['unlinked'] },
+    );
+
+    expect(await bet(userId, '5', randomUUID(), PVP)).toMatchObject({ ok: true });
+    const refused = await bet(userId, '6', randomUUID(), PVP);
+
+    expect(refused.ok).toBe(false);
+    const row = await grantRow(grantId);
+    expect([row.unlinkedCash, row.linkedCash, row.bonusBalance].map(Number)).toEqual([0, 10, 50]);
+    expect(await realBalanceOf(userId)).toBe('10.000000000000000000');
+  });
+});
+
+describe('the progress a settled round credits', () => {
+  it('shows the player a progress movement once the round settles', async () => {
+    const { client, userId } = await player('0');
+    const grantId = await grantBonus(userId, '100', '10');
+    const round = randomUUID();
+    await bet(userId, '40', round);
+    await lose(userId, round);
+
+    const body = await readJson(await client.get(`/promo/grants/${grantId}/entries`));
+
+    const progress = body.items.filter((e: { type: string }) => e.type === 'progress');
+    expect(progress).toHaveLength(1);
+    expect(progress[0]).toMatchObject({
+      bonusAmount: '0.000000000000000000',
+      wageringDelta: '40.000000000000000000',
+    });
   });
 });

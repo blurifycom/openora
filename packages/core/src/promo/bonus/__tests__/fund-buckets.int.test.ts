@@ -98,7 +98,7 @@ describe('completion', () => {
 
     expect(await bet(userId, '10', '10', round)).toMatchObject({ ok: true, grantId });
     expect(await rowOf(grantId)).toMatchObject({ status: 'active' });
-    expect(n((await rowOf(grantId)).wageringProgress)).toBe(10);
+    expect(n((await rowOf(grantId)).wageringProgress)).toBe(0);
 
     const { completed } = await lose(userId, round, '0');
 
