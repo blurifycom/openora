@@ -490,7 +490,7 @@ export class ChatService {
     this.accounts = accounts;
     this.audit = audit;
     this.moderation = moderation;
-    this.identityReader = playerIdsOf(accounts);
+    this.identityReader = playerIdsOf(accounts, logger);
     this.allowedAttachmentHosts = allowedAttachmentHosts;
     this.socialCommands = socialCommands;
     this.contextSendPolicy = contextSendPolicy;

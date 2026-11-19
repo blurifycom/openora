@@ -63,6 +63,30 @@ export const internalProcedure = os.$context<InternalContext>().use(({ context, 
   return next();
 });
 
+/** The `SERVICE_NAME`s an environment variable allows to call a route: a comma list. Unset allows none. */
+export function parseInternalCallers(raw: string | undefined): ReadonlySet<string> {
+  return new Set(
+    (raw ?? '')
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean),
+  );
+}
+
+/**
+ * {@link internalProcedure} that answers 403 to any signed caller outside `callers`. This
+ * guards against misconfiguration only, not a compromised service: one install-wide secret
+ * signs as any caller name.
+ */
+export function internalProcedureFor(callers: ReadonlySet<string>, refusal: string) {
+  return internalProcedure.use(({ context, next }) => {
+    if (!callers.has(context.internalCaller)) {
+      throw new ORPCError('FORBIDDEN', { message: refusal });
+    }
+    return next();
+  });
+}
+
 export type ResolveAuthOptions = {
   // For the few routes an account must still reach while it owes a second-factor
   // enrolment: the session streams, its own sessions, the phone verification an SMS factor

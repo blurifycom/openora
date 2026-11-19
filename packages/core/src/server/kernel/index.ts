@@ -45,6 +45,8 @@ export {
   throwIfSessionUnavailable,
   extractClientMeta,
   internalProcedure,
+  internalProcedureFor,
+  parseInternalCallers,
   AuthContextSchema,
   SessionEndedReasonSchema,
 } from './router-utils.js';

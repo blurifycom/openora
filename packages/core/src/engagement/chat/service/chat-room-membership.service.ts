@@ -92,7 +92,7 @@ export class ChatRoomMembershipService {
     private readonly transport: RealtimeTransport,
     private readonly accounts: AccountReader,
   ) {
-    this.identityReader = playerIdsOf(accounts);
+    this.identityReader = playerIdsOf(accounts, logger);
   }
 
   private async join({
@@ -518,29 +518,59 @@ export class ChatRoomMembershipService {
     }
   }
 
+  /**
+   * The account close and reopen jobs run on separate queues and retry, so they can arrive out of
+   * order. Each takes the user's lock, then reads the account's state now, fresh, and writes in
+   * that one transaction, so a late job acts on what the account is when it holds the lock, never
+   * on what it was when it queued; a failed read throws so the job retries. Closed here is what
+   * `player.account.closed` fires for: an account that no longer exists, is inactive, or has the
+   * status closed. A suspended account is not closed: it lost play, not its rooms.
+   */
+  private async isAccountClosed(userId: Uuid) {
+    const account = (await this.accounts.getAccounts([userId], { fresh: true })).get(userId);
+    const player = account?.player;
+    return !account || !account.isActive || (player?.accountClosed ?? player?.closed) === true;
+  }
+
   async handleAccountClosed({ userId, closedAt }: { userId: Uuid; closedAt: Date }) {
-    const rooms = await this.drizzle.db
-      .select({ id: chatRoom.id })
-      .from(chatRoomMember)
-      .innerJoin(chatRoom, eq(chatRoom.id, chatRoomMember.roomId))
-      .where(
-        and(
-          eq(chatRoomMember.userId, userId),
-          eq(chatRoom.isPublic, false),
-          isNull(chatRoom.deletedAt),
-        ),
-      );
-    const received = await expirePendingInvites(
-      this.drizzle.db,
-      eq(chatRoomInvite.inviteeId, userId),
+    const closed = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-account:${userId}`, async () => {
+        if (!(await this.isAccountClosed(userId))) {
+          return null;
+        }
+        const rooms = await t
+          .select({ id: chatRoom.id })
+          .from(chatRoomMember)
+          .innerJoin(chatRoom, eq(chatRoom.id, chatRoomMember.roomId))
+          .where(
+            and(
+              eq(chatRoomMember.userId, userId),
+              eq(chatRoom.isPublic, false),
+              isNull(chatRoom.deletedAt),
+            ),
+          )
+          // One lock order for every close job, so two of them cannot deadlock on room locks.
+          .orderBy(asc(chatRoom.id));
+        const received = await expirePendingInvites(t, eq(chatRoomInvite.inviteeId, userId));
+        const results = [];
+        for (const { id: roomId } of rooms) {
+          results.push({
+            roomId,
+            result: await this.closeAccountInRoom(t, roomId, userId, closedAt),
+          });
+        }
+        return { received, results };
+      }),
     );
+    if (!closed) {
+      return { success: true } as const;
+    }
     const playerId =
-      rooms.length > 0 || received.length > 0
+      closed.results.length > 0 || closed.received.length > 0
         ? await this.identityReader.getPlayerIdByUserIdSafe(userId)
         : null;
-    emitExpiredInvites(this.events, received, { actorId: userId, actorPlayerId: playerId });
-    for (const { id: roomId } of rooms) {
-      const result = await this.closeAccountInRoom(roomId, userId, closedAt);
+    emitExpiredInvites(this.events, closed.received, { actorId: userId, actorPlayerId: playerId });
+    for (const { roomId, result } of closed.results) {
       if (result) {
         emitExpiredInvites(this.events, result.expired, {
           actorId: userId,
@@ -552,120 +582,118 @@ export class ChatRoomMembershipService {
     return { success: true } as const;
   }
 
-  private closeAccountInRoom(roomId: Uuid, userId: Uuid, closedAt: Date) {
-    return this.drizzle.db.transaction((t) =>
-      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
-        const [stamped] = await t
+  private closeAccountInRoom(t: DrizzleTx, roomId: Uuid, userId: Uuid, closedAt: Date) {
+    return withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+      const [stamped] = await t
+        .update(chatRoomMember)
+        .set({ accountClosedAt: closedAt })
+        .where(
+          and(
+            eq(chatRoomMember.roomId, roomId),
+            eq(chatRoomMember.userId, userId),
+            isNull(chatRoomMember.accountClosedAt),
+          ),
+        )
+        .returning({ role: chatRoomMember.role });
+      if (!stamped) {
+        const rederived = await this.rederiveHandover(t, roomId, userId, closedAt);
+        return rederived && { ...rederived, expired: [] };
+      }
+      const expired = await expireInvitesSentBy(t, roomId, userId);
+      if (stamped.role !== 'owner') {
+        return { handover: null, expired };
+      }
+      const [room] = await t
+        .select({ name: chatRoom.name })
+        .from(chatRoom)
+        .where(
+          and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)),
+        )
+        .limit(1);
+      if (!room) {
+        return { handover: null, expired };
+      }
+      const candidates = await t
+        .select({ userId: chatRoomMember.userId })
+        .from(chatRoomMember)
+        .where(
+          and(
+            eq(chatRoomMember.roomId, roomId),
+            eq(chatRoomMember.role, 'moderator'),
+            isNull(chatRoomMember.accountClosedAt),
+          ),
+        )
+        .orderBy(
+          sql`${chatRoomMember.roleAssignedAt} asc nulls last`,
+          asc(chatRoomMember.joinedAt),
+        );
+      const demoteClosedOwner = () =>
+        t
           .update(chatRoomMember)
-          .set({ accountClosedAt: closedAt })
+          .set({ role: 'member', roleAssignedAt: null })
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+
+      let newOwnerId: Uuid | null = null;
+      for (const candidate of candidates) {
+        const promoted = await t
+          .update(chatRoomMember)
+          .set({ role: 'owner', roleAssignedAt: closedAt })
           .where(
             and(
               eq(chatRoomMember.roomId, roomId),
-              eq(chatRoomMember.userId, userId),
+              eq(chatRoomMember.userId, candidate.userId),
               isNull(chatRoomMember.accountClosedAt),
             ),
           )
-          .returning({ role: chatRoomMember.role });
-        if (!stamped) {
-          const rederived = await this.rederiveHandover(t, roomId, userId, closedAt);
-          return rederived && { ...rederived, expired: [] };
+          .returning({ id: chatRoomMember.id });
+        if (promoted.length === 1) {
+          newOwnerId = candidate.userId;
+          break;
         }
-        const expired = await expireInvitesSentBy(t, roomId, userId);
-        if (stamped.role !== 'owner') {
-          return { handover: null, expired };
-        }
-        const [room] = await t
-          .select({ name: chatRoom.name })
-          .from(chatRoom)
-          .where(
-            and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)),
-          )
-          .limit(1);
-        if (!room) {
-          return { handover: null, expired };
-        }
-        const candidates = await t
-          .select({ userId: chatRoomMember.userId })
-          .from(chatRoomMember)
-          .where(
-            and(
-              eq(chatRoomMember.roomId, roomId),
-              eq(chatRoomMember.role, 'moderator'),
-              isNull(chatRoomMember.accountClosedAt),
-            ),
-          )
-          .orderBy(
-            sql`${chatRoomMember.roleAssignedAt} asc nulls last`,
-            asc(chatRoomMember.joinedAt),
-          );
-        const demoteClosedOwner = () =>
-          t
-            .update(chatRoomMember)
-            .set({ role: 'member', roleAssignedAt: null })
-            .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+      }
 
-        let newOwnerId: Uuid | null = null;
-        for (const candidate of candidates) {
-          const promoted = await t
-            .update(chatRoomMember)
-            .set({ role: 'owner', roleAssignedAt: closedAt })
-            .where(
-              and(
-                eq(chatRoomMember.roomId, roomId),
-                eq(chatRoomMember.userId, candidate.userId),
-                isNull(chatRoomMember.accountClosedAt),
-              ),
-            )
-            .returning({ id: chatRoomMember.id });
-          if (promoted.length === 1) {
-            newOwnerId = candidate.userId;
-            break;
-          }
-        }
-
-        if (newOwnerId) {
-          await t.update(chatRoom).set({ creatorId: newOwnerId }).where(eq(chatRoom.id, roomId));
-          await demoteClosedOwner();
-          return {
-            handover: {
-              kind: 'transferred',
-              roomName: room.name,
-              newOwnerId,
-            },
-            expired,
-          } as const;
-        }
-
-        const [scheduled] = await t
-          .update(chatRoom)
-          .set({
-            creatorId: null,
-            scheduledDeletionAt: new Date(
-              closedAt.getTime() + OWNERLESS_ROOM_RETENTION_DAYS * DAY_MS,
-            ),
-          })
-          .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.scheduledDeletionAt)))
-          .returning({ scheduledDeletionAt: chatRoom.scheduledDeletionAt });
+      if (newOwnerId) {
+        await t.update(chatRoom).set({ creatorId: newOwnerId }).where(eq(chatRoom.id, roomId));
         await demoteClosedOwner();
-        if (!scheduled?.scheduledDeletionAt) {
-          return { handover: null, expired };
-        }
-        expired.push(...(await expirePendingInvites(t, eq(chatRoomInvite.roomId, roomId))));
-        const recipients = await t
-          .select({ userId: chatRoomMember.userId })
-          .from(chatRoomMember)
-          .where(and(eq(chatRoomMember.roomId, roomId), isNull(chatRoomMember.accountClosedAt)));
         return {
           handover: {
-            kind: 'scheduled',
+            kind: 'transferred',
             roomName: room.name,
-            scheduledDeletionAt: scheduled.scheduledDeletionAt,
-            memberIds: recipients.map((m) => m.userId),
+            newOwnerId,
           },
           expired,
         } as const;
-      }),
-    );
+      }
+
+      const [scheduled] = await t
+        .update(chatRoom)
+        .set({
+          creatorId: null,
+          scheduledDeletionAt: new Date(
+            closedAt.getTime() + OWNERLESS_ROOM_RETENTION_DAYS * DAY_MS,
+          ),
+        })
+        .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.scheduledDeletionAt)))
+        .returning({ scheduledDeletionAt: chatRoom.scheduledDeletionAt });
+      await demoteClosedOwner();
+      if (!scheduled?.scheduledDeletionAt) {
+        return { handover: null, expired };
+      }
+      expired.push(...(await expirePendingInvites(t, eq(chatRoomInvite.roomId, roomId))));
+      const recipients = await t
+        .select({ userId: chatRoomMember.userId })
+        .from(chatRoomMember)
+        .where(and(eq(chatRoomMember.roomId, roomId), isNull(chatRoomMember.accountClosedAt)));
+      return {
+        handover: {
+          kind: 'scheduled',
+          roomName: room.name,
+          scheduledDeletionAt: scheduled.scheduledDeletionAt,
+          memberIds: recipients.map((m) => m.userId),
+        },
+        expired,
+      } as const;
+    });
   }
 
   private async rederiveHandover(t: DrizzleTx, roomId: Uuid, userId: Uuid, closedAt: Date) {
@@ -731,87 +759,97 @@ export class ChatRoomMembershipService {
   }
 
   async handleAccountReopened({ userId }: { userId: Uuid }) {
-    const rooms = await this.drizzle.db
-      .select({ id: chatRoom.id })
-      .from(chatRoomMember)
-      .innerJoin(chatRoom, eq(chatRoom.id, chatRoomMember.roomId))
-      .where(
-        and(
-          eq(chatRoomMember.userId, userId),
-          isNotNull(chatRoomMember.accountClosedAt),
-          eq(chatRoom.isPublic, false),
-          isNull(chatRoom.deletedAt),
-        ),
-      );
-    for (const { id: roomId } of rooms) {
-      const restored = await this.reopenAccountInRoom(roomId, userId);
-      if (restored) {
-        await this.announceDeletionCancelled(roomId, userId, restored);
+    const restored = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-account:${userId}`, async () => {
+        if (await this.isAccountClosed(userId)) {
+          return [];
+        }
+        const rooms = await t
+          .select({ id: chatRoom.id })
+          .from(chatRoomMember)
+          .innerJoin(chatRoom, eq(chatRoom.id, chatRoomMember.roomId))
+          .where(
+            and(
+              eq(chatRoomMember.userId, userId),
+              isNotNull(chatRoomMember.accountClosedAt),
+              eq(chatRoom.isPublic, false),
+              isNull(chatRoom.deletedAt),
+            ),
+          )
+          .orderBy(asc(chatRoom.id));
+        const results = [];
+        for (const { id: roomId } of rooms) {
+          results.push({ roomId, restored: await this.reopenAccountInRoom(t, roomId, userId) });
+        }
+        return results;
+      }),
+    );
+    for (const { roomId, restored: room } of restored) {
+      if (room) {
+        await this.announceDeletionCancelled(roomId, userId, room);
       }
     }
     return { success: true } as const;
   }
 
-  private reopenAccountInRoom(roomId: Uuid, userId: Uuid) {
-    return this.drizzle.db.transaction((t) =>
-      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
-        const [member] = await t
-          .select({ accountClosedAt: chatRoomMember.accountClosedAt })
-          .from(chatRoomMember)
-          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
-          .limit(1);
-        const cleared = await t
-          .update(chatRoomMember)
-          .set({ accountClosedAt: null })
-          .where(
-            and(
-              eq(chatRoomMember.roomId, roomId),
-              eq(chatRoomMember.userId, userId),
-              isNotNull(chatRoomMember.accountClosedAt),
-            ),
-          )
-          .returning({ id: chatRoomMember.id });
-        const closedAt = member?.accountClosedAt;
-        if (cleared.length !== 1 || !closedAt) {
-          return null;
-        }
-        const [room] = await t
-          .select({
-            name: chatRoom.name,
-            creatorId: chatRoom.creatorId,
-            scheduledDeletionAt: chatRoom.scheduledDeletionAt,
-          })
-          .from(chatRoom)
-          .where(eq(chatRoom.id, roomId))
-          .limit(1);
-        if (!room || room.creatorId || !room.scheduledDeletionAt) {
-          return null;
-        }
-        if (
-          room.scheduledDeletionAt.getTime() !==
-          closedAt.getTime() + OWNERLESS_ROOM_RETENTION_DAYS * DAY_MS
-        ) {
-          return null;
-        }
-        const [uncancelled] = await t
-          .update(chatRoom)
-          .set({ creatorId: userId, scheduledDeletionAt: null })
-          .where(and(eq(chatRoom.id, roomId), isNotNull(chatRoom.scheduledDeletionAt)))
-          .returning({ id: chatRoom.id });
-        if (!uncancelled) {
-          return null;
-        }
-        await t
-          .update(chatRoomMember)
-          .set({ role: 'owner', roleAssignedAt: new Date() })
-          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
-        const recipients = await t
-          .select({ userId: chatRoomMember.userId })
-          .from(chatRoomMember)
-          .where(and(eq(chatRoomMember.roomId, roomId), isNull(chatRoomMember.accountClosedAt)));
-        return { roomName: room.name, memberIds: recipients.map((m) => m.userId) };
-      }),
-    );
+  private reopenAccountInRoom(t: DrizzleTx, roomId: Uuid, userId: Uuid) {
+    return withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+      const [member] = await t
+        .select({ accountClosedAt: chatRoomMember.accountClosedAt })
+        .from(chatRoomMember)
+        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+        .limit(1);
+      const cleared = await t
+        .update(chatRoomMember)
+        .set({ accountClosedAt: null })
+        .where(
+          and(
+            eq(chatRoomMember.roomId, roomId),
+            eq(chatRoomMember.userId, userId),
+            isNotNull(chatRoomMember.accountClosedAt),
+          ),
+        )
+        .returning({ id: chatRoomMember.id });
+      const closedAt = member?.accountClosedAt;
+      if (cleared.length !== 1 || !closedAt) {
+        return null;
+      }
+      const [room] = await t
+        .select({
+          name: chatRoom.name,
+          creatorId: chatRoom.creatorId,
+          scheduledDeletionAt: chatRoom.scheduledDeletionAt,
+        })
+        .from(chatRoom)
+        .where(eq(chatRoom.id, roomId))
+        .limit(1);
+      if (!room || room.creatorId || !room.scheduledDeletionAt) {
+        return null;
+      }
+      if (
+        room.scheduledDeletionAt.getTime() !==
+        closedAt.getTime() + OWNERLESS_ROOM_RETENTION_DAYS * DAY_MS
+      ) {
+        return null;
+      }
+      const [uncancelled] = await t
+        .update(chatRoom)
+        .set({ creatorId: userId, scheduledDeletionAt: null })
+        .where(and(eq(chatRoom.id, roomId), isNotNull(chatRoom.scheduledDeletionAt)))
+        .returning({ id: chatRoom.id });
+      if (!uncancelled) {
+        return null;
+      }
+      await t
+        .update(chatRoomMember)
+        .set({ role: 'owner', roleAssignedAt: new Date() })
+        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+      const recipients = await t
+        .select({ userId: chatRoomMember.userId })
+        .from(chatRoomMember)
+        .where(and(eq(chatRoomMember.roomId, roomId), isNull(chatRoomMember.accountClosedAt)));
+      return { roomName: room.name, memberIds: recipients.map((m) => m.userId) };
+    });
   }
 
   private async announceDeletionCancelled(

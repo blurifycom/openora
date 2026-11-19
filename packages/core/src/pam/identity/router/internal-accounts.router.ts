@@ -1,20 +1,9 @@
-import { ORPCError } from '@orpc/server';
-import { internalProcedure } from '@openora/core/server';
+import { internalProcedureFor } from '@openora/core/server';
 import {
   ACCOUNT_READER_ROUTES,
   AccountReaderWire,
   type AccountReader,
 } from '@openora/core/contracts';
-
-/** The services allowed to read accounts: `ACCOUNT_READER_CALLERS`, a comma list of names. */
-export function accountReaderCallers(raw: string | undefined): ReadonlySet<string> {
-  return new Set(
-    (raw ?? '')
-      .split(',')
-      .map((name) => name.trim())
-      .filter(Boolean),
-  );
-}
 
 /**
  * The internal API behind `ACCOUNT_READER`, for a service that runs on a database of its own.
@@ -23,19 +12,18 @@ export function accountReaderCallers(raw: string | undefined): ReadonlySet<strin
  * signs as any caller name.
  */
 export function createInternalAccountsRouter(reader: AccountReader, callers: ReadonlySet<string>) {
-  const procedure = internalProcedure.use(({ context, next }) => {
-    if (!callers.has(context.internalCaller)) {
-      throw new ORPCError('FORBIDDEN', { message: 'This service may not read accounts' });
-    }
-    return next();
-  });
+  const procedure = internalProcedureFor(callers, 'This service may not read accounts');
   return {
     accounts: procedure
       .route({ method: 'POST', path: ACCOUNT_READER_ROUTES.accounts })
       .input(AccountReaderWire.accounts.input)
       .output(AccountReaderWire.accounts.output)
       .handler(async ({ input }) => ({
-        accounts: [...(await reader.getAccounts(input.userIds)).values()],
+        accounts: [
+          ...(
+            await reader.getAccounts(input.userIds, { playEligibility: input.playEligibility })
+          ).values(),
+        ],
       })),
     byUsername: procedure
       .route({ method: 'POST', path: ACCOUNT_READER_ROUTES.byUsername })

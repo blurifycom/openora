@@ -216,6 +216,21 @@ describe('CHAT_TRANSFER_CHECK local binding', () => {
     });
   });
 
+  it('refuses room access before the command gate, so a disabled command does not vouch for a non-member', async () => {
+    const { check } = boot();
+    const memberId = randomUUID();
+    const roomId = await room({ isPublic: false }, [memberId]);
+
+    await expect(check(gift({ command: 'rain', roomId }))).resolves.toEqual({
+      allowed: false,
+      refusal: 'room_access_denied',
+    });
+    await expect(check(gift({ command: 'rain', roomId, actorId: memberId }))).resolves.toEqual({
+      allowed: false,
+      refusal: 'command_disabled',
+    });
+  });
+
   it('refuses a command whose stored limits no longer parse, and allows one with none stored', async () => {
     const { check } = boot();
     await db.drizzle.db.execute(

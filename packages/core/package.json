@@ -320,6 +320,11 @@
       "import": "./dist/engagement/chat/plugin.js",
       "default": "./dist/engagement/chat/plugin.js"
     },
+    "./engagement/plugins/chat-remote": {
+      "types": "./dist/engagement/chat-remote/plugin.d.ts",
+      "import": "./dist/engagement/chat-remote/plugin.js",
+      "default": "./dist/engagement/chat-remote/plugin.js"
+    },
     "./engagement/plugins/notifications": {
       "types": "./dist/engagement/notifications/plugin.d.ts",
       "import": "./dist/engagement/notifications/plugin.js",

@@ -1,7 +1,9 @@
 import { createToken, type Token } from './token.js';
-import type {
-  ChatTransferCheckInput,
-  ChatTransferVerdict,
+import {
+  ChatTransferCheckInputSchema,
+  ChatTransferVerdictSchema,
+  type ChatTransferCheckInput,
+  type ChatTransferVerdict,
 } from '../schemas/chat-transfer-check.js';
 
 /**
@@ -19,7 +21,9 @@ import type {
  * block either commits before the check and refuses, or waits for the money to commit. Bans and
  * membership take no lock: one that commits after the read and before the money commits is not
  * seen, for as long as the caller's transaction runs. A remote binding holds no lock at all, so
- * blocks get that same window, plus whatever its cache adds. A binding that cannot answer throws
+ * blocks get that same window. A remote caller narrows it by calling `checkChatTransfer` a second
+ * time after its debit and ledger rows, just before it commits, and rolling back on any
+ * refusal, or when a counterpart is now blocked; without a lock shared across services it never closes completely. A binding that cannot answer throws
  * `ChatTransferCheckUnavailableError`; callers go through `checkChatTransfer`, which turns it
  * into a `chat_unavailable` refusal, so a transfer never moves money on an unanswered check.
  */
@@ -51,3 +55,15 @@ export async function checkChatTransfer(
 }
 
 export const CHAT_TRANSFER_CHECK: Token<ChatTransferCheck> = createToken('CHAT_TRANSFER_CHECK');
+
+/**
+ * The chat service's internal route behind {@link ChatTransferCheck}, under `/internal/v1`. The
+ * service answers on a transaction of its own, so a caller on another service gets the verdict
+ * without the block locks the local binding holds (ADR-0060).
+ */
+export const CHAT_TRANSFER_CHECK_ROUTES = { check: '/chat-commands/transfer-check' } as const;
+
+/** Request and reply of the route in {@link CHAT_TRANSFER_CHECK_ROUTES}, for the server and the client. */
+export const ChatTransferCheckWire = {
+  check: { input: ChatTransferCheckInputSchema, output: ChatTransferVerdictSchema },
+} as const;

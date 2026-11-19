@@ -40,24 +40,6 @@ export class ChatTransferCheckService {
     }
     const tx = transaction as DrizzleTx;
     const input = ChatTransferCheckInputSchema.parse(rawInput);
-    const [command] = await tx
-      .select({
-        enabled: chatCommandConfig.enabled,
-        config: chatCommandConfig.config,
-        hasStoredConfig: sql<boolean>`${chatCommandConfig.config} is not null`,
-      })
-      .from(chatCommandConfig)
-      .where(eq(chatCommandConfig.key, input.command))
-      .limit(1);
-    if (!command?.enabled) {
-      return refuse('command_disabled');
-    }
-    // A stored config that no longer parses reads as null; treating it as "no limits" would let
-    // any amount through, so the command is refused until an operator fixes the row.
-    if (command.hasStoredConfig && command.config === null) {
-      return refuse('command_disabled');
-    }
-
     const [room] = await tx
       .select({
         id: chatRoom.id,
@@ -82,6 +64,25 @@ export class ChatTransferCheckService {
     if (accessRefusal) {
       return refuse(accessRefusal);
     }
+
+    const [command] = await tx
+      .select({
+        enabled: chatCommandConfig.enabled,
+        config: chatCommandConfig.config,
+        hasStoredConfig: sql<boolean>`${chatCommandConfig.config} is not null`,
+      })
+      .from(chatCommandConfig)
+      .where(eq(chatCommandConfig.key, input.command))
+      .limit(1);
+    if (!command?.enabled) {
+      return refuse('command_disabled');
+    }
+    // A stored config that no longer parses reads as null; treating it as "no limits" would let
+    // any amount through, so the command is refused until an operator fixes the row.
+    if (command.hasStoredConfig && command.config === null) {
+      return refuse('command_disabled');
+    }
+
     const contextRef = room.kind === 'context' ? room.contextRef : null;
     if (contextRef !== null) {
       const decision = ChatContextSendDecisionSchema.parse(

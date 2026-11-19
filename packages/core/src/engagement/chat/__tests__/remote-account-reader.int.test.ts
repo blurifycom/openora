@@ -43,8 +43,12 @@ type Traffic = { paths: string[]; inFlight: number; maxInFlight: number };
 const traffic = (): Traffic => ({ paths: [], inFlight: 0, maxInFlight: 0 });
 
 /** The identity service's internal routes served in process, replies sent through JSON. */
-function identityService(seen: Traffic = traffic(), caller = 'chat'): InternalClient {
-  const router = createInternalAccountsRouter(local, new Set(['chat']));
+function identityService(
+  seen: Traffic = traffic(),
+  caller = 'chat',
+  reader: DrizzleAccountReader = local,
+): InternalClient {
+  const router = createInternalAccountsRouter(reader, new Set(['chat']));
   const context = contextFor(caller);
   const byPath = new Map<string, (body: unknown) => Promise<unknown>>([
     [
@@ -196,6 +200,22 @@ describe('RemoteAccountReader', () => {
     expect(cached.get(seeded.account.id)?.player?.closed).toBe(false);
     expect(reread.get(seeded.account.id)?.player?.closed).toBe(true);
     expect(reread.get(seeded.account.id)?.excluded).toBe(true);
+  });
+
+  it("asks identity's play eligibility only when the read says so, and never from cache", async () => {
+    const seeded = await seedPlayerWithUser(db);
+    const seen = traffic();
+    const overlay = new DrizzleAccountReader(db.drizzle, () => ({
+      isRestricted: async (userId) => userId === seeded.account.id,
+    }));
+    const remote = new RemoteAccountReader(identityService(seen, 'chat', overlay));
+
+    const plain = await remote.getAccounts([seeded.account.id]);
+    const asked = await remote.getAccounts([seeded.account.id], { playEligibility: true });
+
+    expect(seen.paths).toHaveLength(2);
+    expect(plain.get(seeded.account.id)?.excluded).toBe(false);
+    expect(asked.get(seeded.account.id)?.excluded).toBe(true);
   });
 
   it('skips the cache on a fresh read', async () => {

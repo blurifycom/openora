@@ -35,6 +35,7 @@ import {
   ADMIN_PERMISSION_RESOLVER,
   ADMIN_SECURITY_POLICY,
   ACCOUNT_READER,
+  playerIdsOf,
   AUDIT_WRITER,
   IDENTITY_READER,
   MCP_KERNEL,
@@ -653,8 +654,14 @@ async function bootApp(
         // has() avoids throwing on an unbound token so boot works without the iam module.
         c.has(ADMIN_PERMISSION_RESOLVER) ? c.get(ADMIN_PERMISSION_RESOLVER) : undefined,
         c.get(EVENT_BUS),
-        // has() avoids throwing on an unbound token so boot works without the identity module.
-        c.has(IDENTITY_READER) ? c.get(IDENTITY_READER) : undefined,
+        // The player id on a denial is read through accounts when they are bound, so a service
+        // whose database has no player table (accounts read remotely) enriches it too. has()
+        // avoids throwing on an unbound token so boot works without the identity module.
+        c.has(ACCOUNT_READER)
+          ? playerIdsOf(c.get(ACCOUNT_READER), createLogger('create-app'))
+          : c.has(IDENTITY_READER)
+            ? c.get(IDENTITY_READER)
+            : undefined,
         c.has(ADMIN_SECURITY_POLICY) ? c.get(ADMIN_SECURITY_POLICY) : undefined,
         c.has(ACCOUNT_READER) ? c.get(ACCOUNT_READER) : undefined,
       ),

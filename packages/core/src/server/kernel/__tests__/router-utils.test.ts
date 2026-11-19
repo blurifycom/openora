@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { ORPCError } from '@orpc/server';
-import { getUserId, extractClientMeta, type NodeHeaders } from '../router-utils.js';
+import {
+  getUserId,
+  extractClientMeta,
+  parseInternalCallers,
+  type NodeHeaders,
+} from '../router-utils.js';
 
 const withRequest = (extra: Record<string, unknown> = {}) => ({
   request: { headers: {} },
@@ -104,5 +109,15 @@ describe('extractClientMeta', () => {
       ip: null,
       userAgent: null,
     });
+  });
+});
+
+describe('parseInternalCallers', () => {
+  it('reads a comma list, trimmed, ignoring empty entries', () => {
+    expect([...parseInternalCallers(' money, chat ,,')]).toEqual(['money', 'chat']);
+  });
+
+  it.each([undefined, '', ' , '])('allows no caller for %j', (raw) => {
+    expect(parseInternalCallers(raw).size).toBe(0);
   });
 });

@@ -1,6 +1,6 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import {
   createInternalClient,
@@ -9,7 +9,7 @@ import {
   InternalApiError,
   loadExtensions,
 } from '@openora/core/server';
-import { ADMIN_SECURITY_ROUTE } from '@openora/core/contracts';
+import { ADMIN_PERMISSION_ROUTES, ADMIN_SECURITY_ROUTE } from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
 import { bootE2e, bootTestApp, closeE2e, type TestApp, type TestDb } from '../index.js';
 
@@ -22,6 +22,7 @@ const SHARED_ENV = {
   INTERNAL_API_SECRETS: randomBytes(32).toString('hex'),
   ACCOUNT_READER_CALLERS: CHAT_SERVICE_NAME,
   SESSION_RESOLVER_CALLERS: CHAT_SERVICE_NAME,
+  ADMIN_PERMISSION_CALLERS: CHAT_SERVICE_NAME,
 };
 const CHAT_ENV = {
   SERVICE_MANIFEST: [
@@ -31,7 +32,7 @@ const CHAT_ENV = {
     'audit',
     'mail',
     'compliance',
-    'iam',
+    'iam:no-routes',
     'player-management',
     'wallet',
     'tag',
@@ -152,6 +153,10 @@ afterAll(async () => {
 });
 
 describe('chat on its own service, with the Backoffice policy decided by identity', () => {
+  afterEach(async () => {
+    await setTwoFactor(false);
+  });
+
   it('refuses a staff member who has not enrolled a second factor, though chat enforces none itself', async () => {
     await setTwoFactor(false);
     const cookie = await signInAdmin(CHROME_UA);
@@ -174,7 +179,6 @@ describe('chat on its own service, with the Backoffice policy decided by identit
     expect([first.status, second.status]).toEqual([200, 200]);
     // Enrolment and device, each time: a verdict is never kept.
     expect(adminSecurityCalls()).toBe(4);
-    await setTwoFactor(false);
   });
 
   it('ends a staff session used from another device, and does not serve it again from chat cache', async () => {
@@ -188,7 +192,6 @@ describe('chat on its own service, with the Backoffice policy decided by identit
 
     expect(stolen).toMatchObject({ status: 401, reason: 'session_fingerprint_mismatch' });
     expect(owner.status).toBe(401);
-    await setTwoFactor(false);
   });
 
   it('refuses, rather than skips the checks, while identity cannot be reached', async () => {
@@ -203,7 +206,6 @@ describe('chat on its own service, with the Backoffice policy decided by identit
 
     expect(down.status).toBe(503);
     expect((await adminCall(cookie, CHROME_UA)).status).toBe(200);
-    await setTwoFactor(false);
   });
 
   it('refuses a service that is not an allowed session caller', async () => {
@@ -223,6 +225,34 @@ describe('chat on its own service, with the Backoffice policy decided by identit
         ip: null,
         userAgent: null,
       })
+      .catch((caught: unknown) => caught);
+
+    expect(err).toBeInstanceOf(InternalApiError);
+    expect(err).toMatchObject({ status: 403 });
+  });
+
+  it('reads the staff grants from the iam owner, since chat holds no role assignments', async () => {
+    const cookie = await signInAdmin(CHROME_UA);
+    await setTwoFactor(true);
+    identityCalls.length = 0;
+
+    const served = await adminCall(cookie, CHROME_UA);
+
+    expect(served.status).toBe(200);
+    expect(identityCalls).toContain(`/internal/v1${ADMIN_PERMISSION_ROUTES.grants}`);
+  });
+
+  it('refuses a service that is not on ADMIN_PERMISSION_CALLERS from reading grants', async () => {
+    const rogue = createInternalClient({
+      baseUrl: IDENTITY_SERVICE_URL,
+      serviceName: 'rogue-service',
+      audience: 'monolith',
+      secrets: process.env['INTERNAL_API_SECRETS'],
+      timeoutMs: 5_000,
+    });
+
+    const err = await rogue
+      .request('POST', ADMIN_PERMISSION_ROUTES.grants, { userId: randomUUID() })
       .catch((caught: unknown) => caught);
 
     expect(err).toBeInstanceOf(InternalApiError);
