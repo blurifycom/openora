@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { WagerContext } from '@openora/core/contracts';
 import {
+  effectiveContribution,
   resolveContributionPercent,
   weightedStake,
   type WagerWeightRow,
@@ -115,5 +116,94 @@ describe('weightedStake', () => {
 
   it('a zero stake contributes nothing at any weight', () => {
     expect(weightedStake('0', '100')).toBe('0.000000000000000000');
+  });
+});
+
+describe('effectiveContribution', () => {
+  const rows = [row('category', 'table', '70'), row('default', null, '100')];
+  const table = (rtp?: string) => casino({ categorySlug: 'table', ...(rtp ? { rtp } : {}) });
+  const houseEdge = (rtp?: string) =>
+    effectiveContribution({ rows, context: table(rtp), mode: 'house_edge', referenceEdge: '0.04' });
+  const full = (rtp: string, referenceEdge: string) =>
+    effectiveContribution({
+      rows: [row('default', null, '100')],
+      context: casino({ rtp }),
+      mode: 'house_edge',
+      referenceEdge,
+    });
+  const n = (v: string) => Number(v);
+
+  it('takes the profile percent as is in flat mode, rtp or not', () => {
+    const c = effectiveContribution({ rows, context: table('0.5'), mode: 'flat' });
+    expect(c).toEqual({ categoryPercent: '70', effectivePercent: '70', referenceEdge: null });
+    expect(n(weightedStake('100', c.effectivePercent))).toBe(70);
+  });
+
+  it('scales the category percent by the edge against the reference edge', () => {
+    const c = houseEdge('0.97');
+    expect(n(c.effectivePercent)).toBe(52.5);
+    expect(c.referenceEdge).toBe('0.04');
+    expect(weightedStake('100', c.effectivePercent)).toBe('52.500000000000000000');
+  });
+
+  it('caps the scale at one when the game edge is above the reference', () => {
+    expect(n(houseEdge('0.90').effectivePercent)).toBe(70);
+    expect(n(full('0.5', '0.000000000000000001').effectivePercent)).toBe(100);
+    expect(
+      weightedStake(
+        '1000000000000000000000000',
+        full('0.5', '0.000000000000000001').effectivePercent,
+      ),
+    ).toBe('1000000000000000000000000.000000000000000000');
+  });
+
+  it('counts a game whose edge equals the reference edge in full, and one unit less below it', () => {
+    expect(n(full('0.96', '0.04').effectivePercent)).toBe(100);
+    expect(full('0.960000000000000001', '0.04').effectivePercent).toBe('99.999999999999997500');
+  });
+
+  it('prices a reference edge of one as the game edge itself', () => {
+    expect(n(full('0.5', '1').effectivePercent)).toBe(50);
+    expect(full('0.000000000000000001', '1').effectivePercent).toBe('99.999999999999999900');
+  });
+
+  it.each(['0', '0.000000000000000000', undefined, null, ''])(
+    'counts nothing for a terms reference edge of %s',
+    (referenceEdge) => {
+      const c = effectiveContribution({
+        rows,
+        context: table('0.96'),
+        mode: 'house_edge',
+        referenceEdge,
+      });
+      expect(c.effectivePercent).toBe('0');
+    },
+  );
+
+  it('gives a game with rtp 1 nothing', () => {
+    expect(n(houseEdge('1').effectivePercent)).toBe(0);
+  });
+
+  it.each([undefined, '0', '96', '1.2', 'abc'])('counts nothing for unusable rtp %s', (rtp) => {
+    const c = houseEdge(rtp);
+    expect(c.effectivePercent).toBe('0');
+    expect(n(weightedStake('100', c.effectivePercent))).toBe(0);
+  });
+
+  it('truncates rather than rounding up', () => {
+    // (1 - 0.99) / 0.03 = 0.333...; never rounded to ...334.
+    expect(weightedStake('1', full('0.99', '0.03').effectivePercent)).toBe('0.333333333333333333');
+  });
+
+  it('never lets a contributed stake exceed the stake at full percent', () => {
+    const units = (v: string) => BigInt(v.padEnd(v.indexOf('.') + 19, '0').replace('.', ''));
+    for (const rtp of ['0.1', '0.5', '0.9', '0.95', '0.999999999999999999']) {
+      for (const edge of ['0.000000000000000001', '0.01', '0.5', '1']) {
+        for (const stake of ['0.000000000000000001', '0.01', '123.456789', '99999999999999.99']) {
+          const got = weightedStake(stake, full(rtp, edge).effectivePercent);
+          expect(units(got) <= units(stake)).toBe(true);
+        }
+      }
+    }
   });
 });

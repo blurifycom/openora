@@ -72,6 +72,16 @@ Shared vocabulary for this repo: the **roles** (who's who), the **platform/archi
 | **Reconciliation**                 | The scheduled comparison of the ledger against the vendor's transactions, which catches a lost webhook. Findings are surfaced for an admin, never auto-credited.                                                                          | `wallet_reconciliation_finding` |
 | **Asset catalog**                  | The operator-editable `(currency, network)` pairs the platform accepts, with each pair's provider asset id, minimums, fee, and independent deposit/withdrawal toggles.                                                                    | `wallet_asset`                  |
 
+### Bonus
+
+| Term                     | Meaning                                                                                                                                                                                                                                                 | Maps to |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| **Bonus grant**          | A wagered bonus held apart from the player's real balance, with its own buckets and wagering progress. Its money becomes real only once its requirement is met (ADR-0040).                                                                              | `bonus` |
+| **Wagering requirement** | The weighted amount a grant needs before it converts. A stake's weighted part counts toward it when its round settles, not when the stake is taken (ADR-0063).                                                                                          | `bonus` |
+| **Weight profile**       | An operator-set table of how much each game, category or product counts toward a requirement. It is flat, or in house-edge mode it scales each bet by the game's edge against a reference edge. A grant keeps the version it was made under (ADR-0063). | `bonus` |
+| **Bet class**            | Whether a bet is contributing, zero-weight or PvP. Offer terms can limit which buckets each class may draw on (ADR-0063).                                                                                                                               | `bonus` |
+| **Buckets A, B, C**      | The three parts of a grant's funds: A is unlinked real money, B is the real money a deposit bonus was matched against, C is the bonus balance (ADR-0062).                                                                                               | `bonus` |
+
 ### Games & fairness
 
 | Term                         | Meaning                                                                                                                                                                                                            | Maps to                               |

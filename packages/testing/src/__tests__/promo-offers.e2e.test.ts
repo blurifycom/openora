@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
+import { auditLog } from '@openora/core/audit/schema';
 import { promoGrant, promoOptIn } from '@openora/core/promo/schema/bonus';
 import {
   registerAndMaterializePlayer,
@@ -244,6 +245,147 @@ describe('an admin configuring wagering weights', () => {
     const res = await client.get('/backoffice/promo/weight-profiles');
 
     expect(res.status).toBe(403);
+  });
+});
+
+describe('an admin setting how bets contribute', () => {
+  const create = async (body: Record<string, unknown> = {}) =>
+    readJson(
+      await admin.post('/backoffice/promo/weight-profiles', {
+        name: `contribution-${randomUUID()}`,
+        ...body,
+      }),
+    );
+  const weights = [{ scope: 'default', scopeRef: null, contributionPercent: '100' }];
+  const setWeights = (id: string, body: Record<string, unknown>) =>
+    admin.put(`/backoffice/promo/weight-profiles/${id}/weights`, { weights, ...body });
+
+  it('creates a flat profile at version 1 when no mode is named', async () => {
+    const created = await create();
+
+    expect(created).toMatchObject({ contributionMode: 'flat', referenceEdge: null, version: 1 });
+  });
+
+  it('refuses a flat profile that carries a reference edge', async () => {
+    const res = await admin.post('/backoffice/promo/weight-profiles', {
+      name: `contribution-${randomUUID()}`,
+      contributionMode: 'flat',
+      referenceEdge: '0.04',
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('switches a profile to house edge, bumps its version and audits both sides', async () => {
+    const created = await create();
+
+    const res = await setWeights(created.id, {
+      contributionMode: 'house_edge',
+      referenceEdge: '0.04',
+    });
+
+    expect(res.status).toBe(200);
+    const saved = await readJson(res);
+    expect(saved).toMatchObject({ contributionMode: 'house_edge', version: 2 });
+    expect(Number(saved.referenceEdge)).toBe(0.04);
+    const row = await vi.waitFor(async () => {
+      const [found] = await drizzle()
+        .select()
+        .from(auditLog)
+        .where(
+          and(eq(auditLog.action, 'promo.weight_profile.set'), eq(auditLog.resourceId, created.id)),
+        )
+        .orderBy(desc(auditLog.seq))
+        .limit(1);
+      expect(found).toBeDefined();
+      return found;
+    });
+    expect(row?.before).toMatchObject({
+      contributionMode: 'flat',
+      referenceEdge: null,
+      version: 1,
+    });
+    expect(row?.after).toMatchObject({ contributionMode: 'house_edge', version: 2 });
+  });
+
+  it('refuses house edge without a reference edge', async () => {
+    const created = await create();
+
+    const res = await setWeights(created.id, { contributionMode: 'house_edge' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses a reference edge sent without a mode', async () => {
+    const created = await create();
+
+    const res = await setWeights(created.id, { referenceEdge: '0.04' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('keeps the mode when a save names no contribution', async () => {
+    const created = await create({ contributionMode: 'house_edge', referenceEdge: '0.04' });
+
+    const saved = await readJson(await setWeights(created.id, {}));
+
+    expect(saved).toMatchObject({ contributionMode: 'house_edge', version: 2 });
+    expect(Number(saved.referenceEdge)).toBe(0.04);
+  });
+
+  it('refuses a player setting it', async () => {
+    const created = await create();
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `contribution-player-${randomUUID()}@example.test`,
+    });
+
+    const res = await client.put(`/backoffice/promo/weight-profiles/${created.id}/weights`, {
+      weights,
+      contributionMode: 'house_edge',
+      referenceEdge: '0.04',
+    });
+
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('an admin limiting the buckets a bet class may use', () => {
+  const funds = (betClassBuckets?: Record<string, unknown>) => ({
+    terms: {
+      wageringMultiplier: '5',
+      expiryDays: 30,
+      funds: {
+        rolloverBase: 'bonus',
+        existingBalance: 'free',
+        freeFundsOrder: 'first',
+        dustThresholdUsd: '0.01',
+        decimals: 2,
+        ...(betClassBuckets ? { betClassBuckets } : {}),
+      },
+    },
+  });
+
+  it('stores the class rules on create and on patch', async () => {
+    const offer = await createOffer(funds({ zero: ['unlinked', 'linked'] }));
+    expect(offer.terms.funds.betClassBuckets).toEqual({ zero: ['unlinked', 'linked'] });
+
+    const patched = await readJson(
+      await admin.patch(`/backoffice/promo/offers/${offer.id}`, funds({ pvp: ['unlinked'] })),
+    );
+
+    expect(patched.terms.funds.betClassBuckets).toEqual({ pvp: ['unlinked'] });
+  });
+
+  it('refuses a bucket it does not know', async () => {
+    const res = await admin.post('/backoffice/promo/offers', offerBody(funds({ zero: ['real'] })));
+
+    expect(res.status).toBe(400);
+  });
+
+  it('stores no class rules when none are given', async () => {
+    const offer = await createOffer(funds());
+
+    expect(offer.terms.funds).not.toHaveProperty('betClassBuckets');
   });
 });
 

@@ -64,6 +64,12 @@ export type BonusWagerOutcome =
   /** Real and bonus funds together could not cover the stake. The wallet turns this into its own insufficient-funds outcome. */
   | { ok: false; reason: 'insufficient_bonus'; bonusAvailable: string }
   /**
+   * The grant's terms keep this kind of bet off some of its buckets, and the funds it may use
+   * fall short. `permitted` is everything it may draw on, free real money included; the wallet
+   * reports it as the available balance. A disallowed bucket never tops the stake up.
+   */
+  | { ok: false; reason: 'restricted_funds'; permitted: string }
+  /**
    * The round's total stake, this bet included, is larger than the strictest `maxBet` among the
    * active grants. A refusal, not a silent pass: the limit exists so a player cannot turn a
    * wagering requirement into one high-variance spin, and a bet that quietly ignored it would do

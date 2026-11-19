@@ -138,6 +138,8 @@ describe('GrantService.grant', () => {
       wageringMultiplier: '35',
       expiryDays: 7,
       weightProfileId,
+      weightProfileVersion: 1,
+      contributionMode: 'flat',
       dustThreshold: '0.01',
       weights: expect.arrayContaining([
         { scope: 'product', scopeRef: 'casino', contributionPercent: '100.00' },
