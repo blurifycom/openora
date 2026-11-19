@@ -59,7 +59,7 @@ describe('KYC resubmission notify job - mail enqueue failure (real PG)', () => {
     expect(enqueued).toHaveLength(1);
     const [job] = enqueued;
     expect(job?.queue).toBe(QUEUE);
-    expect(job?.payload).toEqual({ userId, reason, tier: 'advanced', eventId });
+    expect(job?.payload).toEqual({ userId, reason: null, tier: 'advanced', eventId });
     expect(job?.opts).toMatchObject({
       idempotencyKey: `kyc-resubmission-notify:${eventId}`,
       attempts: 5,
@@ -71,7 +71,7 @@ describe('KYC resubmission notify job - mail enqueue failure (real PG)', () => {
 
     const expectedMail = {
       userId,
-      template: { key: 'kycResubmissionRequested', data: { reason, tier: 'advanced' } },
+      template: { key: 'kycResubmissionRequested', data: { reason: null, tier: 'advanced' } },
       idempotencyKey: `notifications-mail:${eventId}`,
     };
     expect(toUser).toHaveBeenCalledTimes(2);
@@ -86,7 +86,7 @@ describe('KYC resubmission notify job - mail enqueue failure (real PG)', () => {
     expect(rows[0]).toMatchObject({
       type: 'kyc.resubmission_requested',
       eventId,
-      params: { reason, tier: 'advanced' },
+      params: { tier: 'advanced' },
     });
   });
 

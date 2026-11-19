@@ -732,13 +732,11 @@ describe('KYC staff resubmission request per tier', () => {
     await vi.waitFor(async () => {
       const found = await resubmissionNotifications(client);
       expect(found).toHaveLength(1);
-      expect(found[0]?.params).toEqual({ reason: 'source of funds unclear', tier: 'advanced' });
+      expect(found[0]?.params).toEqual({ tier: 'advanced' });
       const mails = resubmissionEmails(email);
       expect(mails).toHaveLength(1);
       expect(mails[0]?.subject).toBe(ADVANCED_SUBJECT);
-      expect(mails[0]?.text).toBe(
-        'An admin has requested you complete enhanced verification. Reason: source of funds unclear.',
-      );
+      expect(mails[0]?.text).toBe('An admin has requested you complete enhanced verification.');
     }, PIPELINE_WAIT);
 
     const view = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));

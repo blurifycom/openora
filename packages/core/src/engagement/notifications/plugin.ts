@@ -860,7 +860,13 @@ export default {
       }
       await requireJobQueue().enqueue(
         KYC_RESUBMISSION_NOTIFY_QUEUE,
-        { userId: p.userId, reason: p.reason, tier: p.tier, eventId: envelope.eventId },
+        {
+          userId: p.userId,
+          // An advanced request's reason is internal (source of funds, agent text): never shown to the player.
+          reason: p.tier === 'advanced' ? null : p.reason,
+          tier: p.tier,
+          eventId: envelope.eventId,
+        },
         {
           idempotencyKey: `kyc-resubmission-notify:${envelope.eventId}`,
           ...RETRY,
