@@ -155,15 +155,24 @@ export const promoRankConfig = pgTable('promo_rank_config', {
   id: uuid().primaryKey().defaultRandom(),
   // Unique, so the table can only ever hold the one row.
   singletonKey: text().notNull().unique().default('global'),
-  /** Products whose stakes count toward a rank. Empty counts every product. */
+  /**
+   * Products whose stakes count toward a rank.
+   * Legacy empty lists still count every product; saves require at least one product.
+   */
   eligibleProducts: text().array().notNull(),
-  /** Products whose stakes earn rakeback. A stake must count toward the rank as well. Empty counts every product. */
+  /**
+   * Products whose stakes earn rakeback. A stake must count toward the rank as well.
+   * Legacy empty lists still count every product; saves require at least one product.
+   */
   rakebackEligibleProducts: text()
     .array()
     .$type<WagerProduct[]>()
     .notNull()
     .default([...DEFAULT_RANK_PERK_PRODUCTS]),
-  /** Products whose stakes count toward the rank challenge. Empty counts every product. */
+  /**
+   * Products whose stakes count toward the rank challenge.
+   * Legacy empty lists still count every product; saves require at least one product.
+   */
   rankChallengeEligibleProducts: text()
     .array()
     .$type<WagerProduct[]>()
@@ -317,7 +326,10 @@ export const promoStreakConfig = pgTable('promo_streak_config', {
   enabled: boolean().notNull().default(false),
   currency: text().notNull().default(STREAK_CURRENCY),
   dailyMinWager: money().notNull(),
-  /** Products whose stakes count toward the streak. Empty counts every product. */
+  /**
+   * Products whose stakes count toward the streak.
+   * Legacy empty lists still count every product; saves require at least one product.
+   */
   eligibleProducts: text().array().notNull(),
   rakebackMilestones: jsonb().$type<StreakRakebackMilestone[]>().notNull().default([]),
   fixedRewards: jsonb().$type<StreakFixedReward[]>().notNull().default([]),
