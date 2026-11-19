@@ -47,4 +47,12 @@ describe('rg.flags_queue and kyc.queue input', () => {
     expect(z.safeParse(KycQueueInputSchema, { tier: 'advanced' }).success).toBe(true);
     expect(z.safeParse(KycQueueInputSchema, { tier: 'premium' }).success).toBe(false);
   });
+
+  it('narrows kyc.queue only to a status the queue holds', () => {
+    expect(z.safeParse(KycQueueInputSchema, { status: 'resubmission_requested' }).success).toBe(
+      true,
+    );
+    expect(z.safeParse(KycQueueInputSchema, { status: 'pending' }).success).toBe(true);
+    expect(z.safeParse(KycQueueInputSchema, { status: 'approved' }).success).toBe(false);
+  });
 });

@@ -49,6 +49,8 @@ import { GameBulkService } from './service/game-bulk.service.js';
 import { GameFavoriteService } from './service/game-favorite.service.js';
 import { topGames } from './service/top-games.service.js';
 import { applyLedgerGames, reconcileLedgerGames } from './service/ledger-game.service.js';
+import { topProviders } from './service/top-providers.service.js';
+import { GamesFindService } from './service/games-find.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
@@ -66,7 +68,10 @@ import {
   LedgerGameReconcileJobSchema,
   GameCategoryRankJobSchema,
   GameCategoryRankSweepJobSchema,
+  gameCategoriesTool,
+  gamesFindTool,
   topGamesTool,
+  topProvidersTool,
 } from './contract/index.js';
 
 const logger = createLogger('gaming');
@@ -91,6 +96,18 @@ export default {
     ctx.mcp.tool(topGamesTool, (c) => {
       const reporting = c.get(ADMIN_GAME_REPORTING);
       return (input) => topGames(reporting, input);
+    });
+    ctx.mcp.tool(topProvidersTool, (c) => {
+      const reporting = c.get(ADMIN_GAME_REPORTING);
+      return (input) => topProviders(reporting, input);
+    });
+    ctx.mcp.tool(gamesFindTool, (c) => {
+      const catalog = new GamesFindService(c.get(DRIZZLE));
+      return (input) => catalog.find(input);
+    });
+    ctx.mcp.tool(gameCategoriesTool, (c) => {
+      const catalog = new GamesFindService(c.get(DRIZZLE));
+      return (input) => catalog.categories(input);
     });
     // Replaceable (not sealed): an overlay can rebind this to add or remove sort
     // definitions - eg an attribute or stats sort - without touching this module.

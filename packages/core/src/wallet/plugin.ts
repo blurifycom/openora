@@ -58,6 +58,7 @@ import {
 import {
   holdWithdrawalAction,
   playersDepositCompareTool,
+  transactionsFindTool,
   walletActivityTool,
   withdrawalsQueueTool,
   type WalletBalanceChangeReason,
@@ -72,6 +73,7 @@ import { LedgerApiService } from './service/ledger-api.service.js';
 import { LedgerRgLimitsService } from './service/ledger-rg-limits.service.js';
 import { LedgerPlayEligibilityService } from './service/ledger-play-eligibility.service.js';
 import { DepositCompareService, SegmentTooLargeError } from './service/deposit-compare.service.js';
+import { TransactionsFindService } from './service/transactions-find.service.js';
 import {
   CustodySweepService,
   CUSTODY_SWEEP_QUEUE,
@@ -372,6 +374,12 @@ export default {
     ctx.mcp.tool(withdrawalsQueueTool, (c) => {
       const wallet = walletService(c);
       return (input) => wallet.withdrawalQueueOverview(input);
+    });
+
+    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
+    ctx.mcp.tool(transactionsFindTool, (c) => {
+      const transactions = new TransactionsFindService(c.get(DRIZZLE));
+      return (input) => transactions.find(input);
     });
 
     ctx.mcp.tool(playersDepositCompareTool, (c) => {

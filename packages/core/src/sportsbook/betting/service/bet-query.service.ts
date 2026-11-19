@@ -140,6 +140,43 @@ export function betTotals(range: DateRange) {
   };
 }
 
+/**
+ * What promotions paid and reopens took back in the range, by type label, funder and currency. It
+ * reads the append-only transaction rows, so a later reopen never changes a closed period: the
+ * admin promotion report and the agent's both count it so.
+ */
+export function promotionReportOf(
+  db: DrizzleService['db'],
+  range: DateRange,
+): Promise<SportsbookPromotionReportRow[]> {
+  const tx = sportsbookBetTransaction;
+  const partOf = (kind: 'settle' | 'reopen') => sumMoney(tx.promotionAmount, eq(tx.kind, kind));
+  return db
+    .select({
+      type: sql<SportsbookPromotionReportRow['type']>`${sportsbookBet.promotionType}`,
+      funder: sql<SportsbookPromotionReportRow['funder']>`${sportsbookBet.promotionFunder}`,
+      currency: sportsbookBet.currency,
+      bets: sql<number>`count(*) filter (where ${tx.kind} = 'settle')`.mapWith(Number),
+      promotionPaid: partOf('settle'),
+      promotionReversed: partOf('reopen'),
+    })
+    .from(tx)
+    .innerJoin(sportsbookBet, eq(sportsbookBet.id, tx.betId))
+    .where(
+      and(
+        gt(tx.promotionAmount, '0'),
+        isNotNull(sportsbookBet.promotionType),
+        ...within(tx.createdAt, range),
+      ),
+    )
+    .groupBy(sportsbookBet.promotionType, sportsbookBet.promotionFunder, sportsbookBet.currency)
+    .orderBy(
+      asc(sportsbookBet.promotionType),
+      asc(sportsbookBet.promotionFunder),
+      asc(sportsbookBet.currency),
+    );
+}
+
 export class SportsbookBetQueryService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -218,38 +255,13 @@ export class SportsbookBetQueryService {
   }
 
   /**
-   * What promotions paid and reopens took back in the range, by type label and currency. It reads
-   * the append-only transaction rows, so a later reopen never changes a closed period.
+   * What promotions paid and reopens took back in the range, by type label and currency
+   * (`promotionReportOf`).
    */
   async promotionReport(
     range: SportsbookPromotionReportInput,
   ): Promise<SportsbookPromotionReportRow[]> {
-    const tx = sportsbookBetTransaction;
-    const partOf = (kind: 'settle' | 'reopen') => sumMoney(tx.promotionAmount, eq(tx.kind, kind));
-    return this.drizzle.db
-      .select({
-        type: sql<SportsbookPromotionReportRow['type']>`${sportsbookBet.promotionType}`,
-        funder: sql<SportsbookPromotionReportRow['funder']>`${sportsbookBet.promotionFunder}`,
-        currency: sportsbookBet.currency,
-        bets: sql<number>`count(*) filter (where ${tx.kind} = 'settle')`.mapWith(Number),
-        promotionPaid: partOf('settle'),
-        promotionReversed: partOf('reopen'),
-      })
-      .from(tx)
-      .innerJoin(sportsbookBet, eq(sportsbookBet.id, tx.betId))
-      .where(
-        and(
-          gt(tx.promotionAmount, '0'),
-          isNotNull(sportsbookBet.promotionType),
-          ...within(tx.createdAt, range),
-        ),
-      )
-      .groupBy(sportsbookBet.promotionType, sportsbookBet.promotionFunder, sportsbookBet.currency)
-      .orderBy(
-        asc(sportsbookBet.promotionType),
-        asc(sportsbookBet.promotionFunder),
-        asc(sportsbookBet.currency),
-      );
+    return promotionReportOf(this.drizzle.db, range);
   }
 
   async playerSummary({ userId, ...range }: SportsbookPlayerSummaryInput) {

@@ -25,6 +25,7 @@ import {
 } from '@openora/core/contracts';
 import z from 'zod';
 import { PlayerSegmentReaderService } from './adapters/player-segment-reader.service.js';
+import { SegmentCountsService } from './service/segment-counts.service.js';
 import {
   TagService,
   TagNotFoundError,
@@ -35,7 +36,11 @@ import {
 import { TagRuleService } from './service/tag-rule.service.js';
 import { TagEvaluationService } from './service/tag-evaluation.service.js';
 import { createTagRouter } from './router/index.js';
-import { addTagAction, sendToManualReviewAction } from './contract/agent-tools.js';
+import {
+  addTagAction,
+  segmentCountsTool,
+  sendToManualReviewAction,
+} from './contract/agent-tools.js';
 
 type ProposedAssignment = {
   playerId: Player['id'];
@@ -114,6 +119,11 @@ export default {
 
     ctx.provide(PLAYER_TAGS, tagService);
     ctx.provide(PLAYER_SEGMENT_READER, (c) => new PlayerSegmentReaderService(c.get(DRIZZLE)));
+    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
+    ctx.mcp.tool(segmentCountsTool, (c) => {
+      const segments = new SegmentCountsService(c.get(DRIZZLE));
+      return (input) => segments.counts(input);
+    });
 
     // Throws rather than no-ops before construction, so the event is redelivered instead of
     // being recorded as handled (ADR-0045).
