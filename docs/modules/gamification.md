@@ -233,7 +233,10 @@ rather than the sportsbook ledger's settle, earns no rakeback.
 Upgrading: under `instant`, a sportsbook bet reserved before the upgrade was paid at reserve, and
 that credit carries no key to the bet, so its settle after the upgrade pays it again. An operator
 that counts `sportsbook` toward rakeback, or whose list is empty, settles or voids its open bets
-before upgrading. Under `claim` the reserve-time accrual already blocks a second one.
+before upgrading. During a rolling deploy a bet reserved on the old release and settled on the
+new one is paid twice the same way, so keep `sportsbook` out of the rakeback products, or have no
+sportsbook bets open, until every instance runs the new release. Under `claim` the reserve-time
+accrual already blocks a second one.
 
 A claim pays every unclaimed row in one transaction, one `cashback` credit per currency. The
 `(userId, idempotencyKey)` claim row makes a retry replay the first result, and a second claim
