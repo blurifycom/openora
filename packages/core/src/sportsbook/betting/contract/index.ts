@@ -1,6 +1,7 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
+  BoundedReasonSchema,
   CountryCodeSchema,
   CurrencyTickerInputSchema,
   CurrencyTickerSchema,
@@ -276,14 +277,12 @@ export type RevokeSportsbookSessionOutput = z.infer<typeof RevokeSportsbookSessi
 export const SportsbookBetByTransactionInputSchema = z.object({ transactionId: UuidSchema });
 export type SportsbookBetByTransactionInput = z.infer<typeof SportsbookBetByTransactionInputSchema>;
 
-const ReasonSchema = NonEmptyReasonSchema.max(500);
-
 export const SetSportsbookRestrictionInputSchema = UserIdInputSchema.extend({
-  reason: ReasonSchema,
+  reason: BoundedReasonSchema,
 });
 export type SetSportsbookRestrictionInput = z.infer<typeof SetSportsbookRestrictionInputSchema>;
 
-export const ReasonInputSchema = z.object({ reason: ReasonSchema });
+export const ReasonInputSchema = z.object({ reason: BoundedReasonSchema });
 export type ReasonInput = z.infer<typeof ReasonInputSchema>;
 
 export const SportsbookRestrictionSchema = z.object({
@@ -357,7 +356,7 @@ export const CollectSportsbookDebtInputSchema = IdInputSchema.extend({
 export type CollectSportsbookDebtInput = z.infer<typeof CollectSportsbookDebtInputSchema>;
 
 export const WriteOffSportsbookDebtInputSchema = IdInputSchema.extend({
-  reason: ReasonSchema,
+  reason: BoundedReasonSchema,
   idempotencyKey: UuidSchema,
 });
 export type WriteOffSportsbookDebtInput = z.infer<typeof WriteOffSportsbookDebtInputSchema>;

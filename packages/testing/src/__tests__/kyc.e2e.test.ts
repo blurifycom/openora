@@ -8,8 +8,10 @@ import {
   type Container,
   type CoreTokenCatalog,
 } from '@openora/core/server';
+import { JOB_QUEUE, queue } from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
 import { kycVerification } from '@openora/core/compliance/schema';
+import { notification } from '@openora/core/engagement/schema/notifications';
 import {
   registerAndMaterializePlayer,
   asAdmin,
@@ -17,8 +19,18 @@ import {
   bootE2e,
   closeE2e,
   flushAudit,
+  newStaff,
   readJson,
 } from '../index.js';
+import {
+  ADVANCED_SUBJECT,
+  BASIC_SUBJECT,
+  PIPELINE_WAIT,
+  resubmissionEmails,
+  resubmissionNotifications,
+  resubmissionRequestEvents,
+  settle,
+} from '../kyc-resubmission-helpers.js';
 
 /**
  * End-to-end coverage for the KYC verification backend (submit, admin read, webhook
@@ -81,6 +93,7 @@ async function withKycWithdrawalThreshold(
   }
 }
 
+const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 async function seedLegacyVerifiedStatus(container: Container<CoreTokenCatalog>, userId: string) {
   await container
     .get(DRIZZLE)
@@ -461,6 +474,9 @@ describe('KYC threshold re-KYC on deposit (gated stack)', () => {
       },
       { timeout: 3000, interval: 100 },
     );
+    await settle();
+    expect(await resubmissionNotifications(client)).toHaveLength(0);
+    expect(resubmissionEmails(email)).toHaveLength(0);
   });
 });
 
@@ -484,6 +500,9 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
       reason: 'not an admin',
     });
     expect(asSelfRes.status).toBe(403);
+
+    const before = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
+    expect(before.basic).toEqual({ current: null, history: [] });
 
     const res = await admin.post(`/compliance/players/${userId}/kyc/resubmit`, {
       tier: 'basic',
@@ -512,17 +531,19 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
         reason: 'document photo is blurry',
         source: 'manual',
       });
-    });
+    }, PIPELINE_WAIT);
 
     await vi.waitFor(async () => {
-      const notifyRes = await client.get('/notifications');
-      const { items } = await readJson(notifyRes);
-      const found = (items as Array<{ type: string; params: Record<string, string> | null }>).find(
-        (n) => n.type === 'kyc.resubmission_requested',
+      const found = await resubmissionNotifications(client);
+      expect(found).toHaveLength(1);
+      expect(found[0]?.params).toEqual({ reason: 'document photo is blurry', tier: 'basic' });
+      const mails = resubmissionEmails(email);
+      expect(mails).toHaveLength(1);
+      expect(mails[0]?.subject).toBe(BASIC_SUBJECT);
+      expect(mails[0]?.text).toBe(
+        'An admin has requested you resubmit your verification documents. Reason: document photo is blurry.',
       );
-      expect(found).toBeTruthy();
-      expect(found?.params).toEqual({ reason: 'document photo is blurry' });
-    });
+    }, PIPELINE_WAIT);
 
     const historyBefore = kycView.basic.history.length;
     const repeatRes = await admin.post(`/compliance/players/${userId}/kyc/resubmit`, {
@@ -532,6 +553,9 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
     expect(repeatRes.status).toBe(200);
     const kycViewAfterRepeat = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
     expect(kycViewAfterRepeat.basic.history.length).toBe(historyBefore);
+    await settle();
+    expect(await resubmissionNotifications(client)).toHaveLength(1);
+    expect(resubmissionEmails(email)).toHaveLength(1);
   });
 
   it('overrideKycStatus writes a rejected choice verbatim (no manually_overridden remap) with reason + actor in the audit log', async () => {
@@ -688,5 +712,257 @@ describe('KYC status writer concurrency (real Postgres FOR UPDATE)', () => {
       const auditBody = await readJson(auditRes);
       expect(auditBody.items).toHaveLength(1);
     });
+  });
+});
+
+describe('KYC staff resubmission request per tier', () => {
+  it('an advanced request notifies the player once in-app and once by email, both naming the tier', async () => {
+    const email = `kyc-resubmit-adv-${randomUUID()}@e2e.test`;
+    const { client, userId } = await registerAndMaterializePlayer(appDefault, { email });
+    const admin = await asAdmin(appDefault.app);
+
+    const res = await admin.post(`/compliance/players/${userId}/kyc/resubmit`, {
+      tier: 'advanced',
+      reason: 'source of funds unclear',
+    });
+    expect(res.status).toBe(200);
+    const dto = await readJson(res);
+    expect(dto).toMatchObject({ tier: 'advanced', status: 'resubmission_requested' });
+
+    await vi.waitFor(async () => {
+      const found = await resubmissionNotifications(client);
+      expect(found).toHaveLength(1);
+      expect(found[0]?.params).toEqual({ tier: 'advanced' });
+      const mails = resubmissionEmails(email);
+      expect(mails).toHaveLength(1);
+      expect(mails[0]?.subject).toBe(ADVANCED_SUBJECT);
+      expect(mails[0]?.text).toBe('An admin has requested you complete enhanced verification.');
+    }, PIPELINE_WAIT);
+
+    const view = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
+    const repeat = await admin.post(`/compliance/players/${userId}/kyc/resubmit`, {
+      tier: 'advanced',
+      reason: 'source of funds unclear, again',
+    });
+    expect(repeat.status).toBe(200);
+    const viewAfter = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
+    expect(viewAfter.advanced.history.length).toBe(view.advanced.history.length);
+    await settle();
+    expect(await resubmissionNotifications(client)).toHaveLength(1);
+    expect(resubmissionEmails(email)).toHaveLength(1);
+  });
+
+  it('refuses an advanced request without a session, from a player, and from staff lacking compliance:override-limit', async () => {
+    const { client, userId } = await registerAndMaterializePlayer(appDefault, {
+      email: `kyc-resubmit-adv-authz-${randomUUID()}@e2e.test`,
+    });
+    const body = { tier: 'advanced', reason: 'enhanced checks' };
+
+    const anon = await appDefault.app.request(`/compliance/players/${userId}/kyc/resubmit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(anon.status).toBe(401);
+
+    expect((await client.post(`/compliance/players/${userId}/kyc/resubmit`, body)).status).toBe(
+      403,
+    );
+
+    const support = await newStaff(appDefault, 'kyc-resubmit-support', 'customer-support-agent');
+    expect(
+      (await support.client.post(`/compliance/players/${userId}/kyc/resubmit`, body)).status,
+    ).toBe(403);
+
+    const admin = await asAdmin(appDefault.app);
+    const view = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
+    expect(view.advanced.history).toHaveLength(0);
+  });
+
+  it('caps the reason at 500 characters after trimming and rejects an all-space reason', async () => {
+    const { userId } = await registerAndMaterializePlayer(appDefault, {
+      email: `kyc-resubmit-reason-${randomUUID()}@e2e.test`,
+    });
+    const admin = await asAdmin(appDefault.app);
+    const url = `/compliance/players/${userId}/kyc/resubmit`;
+
+    expect((await admin.post(url, { tier: 'advanced', reason: 'a'.repeat(501) })).status).toBe(400);
+    expect((await admin.post(url, { tier: 'advanced', reason: '    ' })).status).toBe(400);
+
+    const ok = await admin.post(url, { tier: 'advanced', reason: `  ${'a'.repeat(500)}  ` });
+    expect(ok.status).toBe(200);
+    expect((await readJson(ok)).decisionReason).toBe('a'.repeat(500));
+  });
+
+  it('refuses an advanced request while the player has a pending advanced verification, writing and sending nothing', async () => {
+    const email = `kyc-resubmit-pending-${randomUUID()}@e2e.test`;
+    const { client, userId } = await registerAndMaterializePlayer(appGated, { email });
+    const admin = await asAdmin(appGated.app);
+
+    const submit = await client.post('/compliance/kyc', {
+      tier: 'advanced',
+      documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
+    });
+    expect(submit.status).toBe(200);
+    expect((await readJson(submit)).status).toBe('pending');
+
+    const res = await admin.post(`/compliance/players/${userId}/kyc/resubmit`, {
+      tier: 'advanced',
+      reason: 'needs enhanced checks',
+    });
+    expect(res.status).toBe(409);
+    expect((await readJson(res)).message).toContain('override the tier KYC status');
+
+    const view = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
+    expect(view.advanced.history).toHaveLength(1);
+    expect(view.advanced.current.status).toBe('pending');
+    expect(
+      await resubmissionRequestEvents(appGated.container.get(DRIZZLE).db, userId),
+    ).toHaveLength(0);
+    expect(await resubmissionNotifications(client)).toHaveLength(0);
+    expect(resubmissionEmails(email)).toHaveLength(0);
+  });
+
+  it('refuses an advanced request while the latest advanced verification is not_started', async () => {
+    const { client, userId } = await registerAndMaterializePlayer(appDefault, {
+      email: `kyc-resubmit-not-started-${randomUUID()}@e2e.test`,
+    });
+    const admin = await asAdmin(appDefault.app);
+    await appDefault.container
+      .get(DRIZZLE)
+      .db.insert(kycVerification)
+      .values({
+        userId,
+        provider: 'e2e-vendor',
+        referenceId: `e2e-${randomUUID()}`,
+        tier: 'advanced',
+        status: 'not_started',
+        documentTypes: [],
+        triggeredBy: 'submission',
+      });
+
+    const res = await admin.post(`/compliance/players/${userId}/kyc/resubmit`, {
+      tier: 'advanced',
+      reason: 'needs enhanced checks',
+    });
+    expect(res.status).toBe(409);
+    expect((await readJson(res)).message).toContain('override the tier KYC status');
+    const view = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
+    expect(view.advanced.history).toHaveLength(1);
+    expect(
+      await resubmissionRequestEvents(appDefault.container.get(DRIZZLE).db, userId),
+    ).toHaveLength(0);
+    expect(await resubmissionNotifications(client)).toHaveLength(0);
+  });
+
+  it('a notify job delivered twice for one event writes one notification and sends one email', async () => {
+    const email = `kyc-resubmit-redeliver-${randomUUID()}@e2e.test`;
+    const { client, userId } = await registerAndMaterializePlayer(appDefault, { email });
+    const jobs = appDefault.container.get(JOB_QUEUE);
+    const job = { userId, reason: 'redelivered', tier: 'advanced', eventId: randomUUID() };
+
+    await jobs.enqueue(KYC_RESUBMISSION_NOTIFY_QUEUE, job, { idempotencyKey: randomUUID() });
+    await vi.waitFor(async () => {
+      expect(await resubmissionNotifications(client)).toHaveLength(1);
+      expect(resubmissionEmails(email)).toHaveLength(1);
+    }, PIPELINE_WAIT);
+    await jobs.enqueue(KYC_RESUBMISSION_NOTIFY_QUEUE, job, { idempotencyKey: randomUUID() });
+    await settle();
+    expect(await resubmissionNotifications(client)).toHaveLength(1);
+    expect(resubmissionEmails(email)).toHaveLength(1);
+  });
+
+  it('a notify job retried after its in-app notification was stored still sends the email once', async () => {
+    const email = `kyc-resubmit-retry-${randomUUID()}@e2e.test`;
+    const { client, userId } = await registerAndMaterializePlayer(appDefault, { email });
+    const eventId = randomUUID();
+    await appDefault.container
+      .get(DRIZZLE)
+      .db.insert(notification)
+      .values({
+        userId,
+        type: 'kyc.resubmission_requested',
+        params: { reason: 'stalled', tier: 'advanced' },
+        eventId,
+      });
+
+    await appDefault.container
+      .get(JOB_QUEUE)
+      .enqueue(
+        KYC_RESUBMISSION_NOTIFY_QUEUE,
+        { userId, reason: 'stalled', tier: 'advanced', eventId },
+        { idempotencyKey: randomUUID() },
+      );
+
+    await vi.waitFor(() => {
+      const mails = resubmissionEmails(email);
+      expect(mails).toHaveLength(1);
+      expect(mails[0]?.subject).toBe(ADVANCED_SUBJECT);
+    }, PIPELINE_WAIT);
+    await settle();
+    expect(resubmissionEmails(email)).toHaveLength(1);
+    expect(await resubmissionNotifications(client)).toHaveLength(1);
+  });
+});
+
+describe('KYC submit with a verification already in progress (gated stack)', () => {
+  const documents = [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }];
+
+  it('collapses a second advanced submit onto the pending session without a new row', async () => {
+    const { client, userId } = await registerAndMaterializePlayer(appGated, {
+      email: `kyc-submit-pending-${randomUUID()}@e2e.test`,
+    });
+    const admin = await asAdmin(appGated.app);
+    const first = await client.post('/compliance/kyc', { tier: 'advanced', documents });
+    const second = await client.post('/compliance/kyc', { tier: 'advanced', documents });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect((await readJson(second)).status).toBe('pending');
+    const view = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
+    expect(view.advanced.history).toHaveLength(1);
+  });
+
+  it('collapses an advanced submit onto a not_started session without a new row', async () => {
+    const { client, userId } = await registerAndMaterializePlayer(appGated, {
+      email: `kyc-submit-not-started-${randomUUID()}@e2e.test`,
+    });
+    const admin = await asAdmin(appGated.app);
+    await appGated.container
+      .get(DRIZZLE)
+      .db.insert(kycVerification)
+      .values({
+        userId,
+        provider: 'e2e-vendor',
+        referenceId: `e2e-${randomUUID()}`,
+        tier: 'advanced',
+        status: 'not_started',
+        documentTypes: [],
+        triggeredBy: 'submission',
+      });
+    const res = await client.post('/compliance/kyc', { tier: 'advanced', documents });
+    expect(res.status).toBe(200);
+    const view = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
+    expect(view.advanced.history).toHaveLength(1);
+  });
+
+  it('still opens a new session after a resubmission request (the status that invites one)', async () => {
+    const { client, userId } = await registerAndMaterializePlayer(appGated, {
+      email: `kyc-submit-after-request-${randomUUID()}@e2e.test`,
+    });
+    const admin = await asAdmin(appGated.app);
+    expect(
+      (
+        await admin.post(`/compliance/players/${userId}/kyc/resubmit`, {
+          tier: 'advanced',
+          reason: 'again',
+        })
+      ).status,
+    ).toBe(200);
+    expect((await client.post('/compliance/kyc', { tier: 'advanced', documents })).status).toBe(
+      200,
+    );
+    const view = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
+    expect(view.advanced.history).toHaveLength(2);
+    expect(view.advanced.current.status).toBe('pending');
   });
 });

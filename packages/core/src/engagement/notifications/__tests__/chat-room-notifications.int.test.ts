@@ -3,113 +3,15 @@ import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
 import { asc, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { DRIZZLE, EVENT_BUS } from '@openora/core/server';
-import type { EventHandler, PluginContext, CoreTokenCatalog } from '@openora/core/server';
-import {
-  ADMIN_USER_DIRECTORY,
-  JOB_QUEUE,
-  PLATFORM_CONFIG,
-  REALTIME_TRANSPORT,
-  type AdminUserDirectory,
-  type EnqueueOptions,
-  type JobQueueAdapter,
-  type QueueName,
-  type WorkerRegistration,
-} from '@openora/core/contracts';
-import { makeEventBus, makeRealtimeTransport, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { notification } from '../schema/index.js';
 import { CreateNotificationInputSchema } from '../contract/index.js';
+import { bootPluginHarness } from '../../../testing/plugin-harness.js';
 import notificationsPlugin from '../plugin.js';
 
 let db: TestDb;
 
-function bootPlugin() {
-  const handlers = new Map<string, EventHandler[]>();
-  const workers = new Map<string, WorkerRegistration<unknown>>();
-  const enqueued: { queue: string; key: string | undefined; payload: unknown }[] = [];
-  const seenKeys = new Set<string>();
-  let routerFactory: ((c: unknown) => unknown) | null = null;
-
-  const pending: Promise<unknown>[] = [];
-  const jobQueue = mock<JobQueueAdapter>({
-    enqueue: (name: QueueName, payload: unknown, opts?: EnqueueOptions) => {
-      enqueued.push({ queue: name, key: opts?.idempotencyKey, payload });
-      const duplicate = Boolean(opts?.idempotencyKey && seenKeys.has(opts.idempotencyKey));
-      if (opts?.idempotencyKey) {
-        seenKeys.add(opts.idempotencyKey);
-      }
-      const run = (async () => {
-        const worker = workers.get(name);
-        if (!duplicate && worker) {
-          await worker.handler({
-            id: randomUUID(),
-            name,
-            payload: worker.schema.parse(payload),
-            attempt: 1,
-            enqueuedAt: new Date(),
-            meta: {},
-          });
-        }
-        return { id: randomUUID() };
-      })();
-      pending.push(run);
-      return run;
-    },
-    schedule: async () => undefined,
-  });
-
-  const ctx = mock<PluginContext<CoreTokenCatalog>>({
-    provide: () => undefined,
-    events: {
-      on: (event: string, handler: EventHandler) => {
-        handlers.set(event, [...(handlers.get(event) ?? []), handler]);
-      },
-    },
-    jobs: {
-      worker: (registration: WorkerRegistration<unknown>) => {
-        workers.set(registration.queue, registration);
-      },
-    },
-    routers: {
-      add: (_namespace: string, factory: (c: unknown) => unknown) => {
-        routerFactory = factory;
-      },
-    },
-  });
-  notificationsPlugin.register(ctx);
-
-  const directory = mock<AdminUserDirectory>({ get: async () => null });
-  const realtime = makeRealtimeTransport();
-  const container = {
-    get: (token: unknown) =>
-      token === DRIZZLE
-        ? db.drizzle
-        : token === EVENT_BUS
-          ? makeEventBus()
-          : token === ADMIN_USER_DIRECTORY
-            ? directory
-            : token === JOB_QUEUE
-              ? jobQueue
-              : token === REALTIME_TRANSPORT
-                ? realtime
-                : undefined, // includes MAIL_DISPATCH - neither event in this file sends mail
-    has: (token: unknown) => token !== PLATFORM_CONFIG,
-    onDispose: () => undefined,
-  };
-  routerFactory!(container);
-
-  const fire = async (event: string, payload: unknown, eventId = randomUUID()) => {
-    for (const handler of handlers.get(event) ?? []) {
-      await handler(payload, { eventId } as never);
-    }
-    while (pending.length > 0) {
-      await Promise.all(pending.splice(0));
-    }
-    return eventId;
-  };
-  return { fire, enqueued };
-}
+const bootPlugin = () => bootPluginHarness(notificationsPlugin, db, { runEnqueuedJobs: true });
 
 function readNotifications() {
   return db.drizzle.db.select().from(notification).orderBy(asc(notification.createdAt));
@@ -205,9 +107,11 @@ describe('notifications plugin - chat room ownership (real PG)', () => {
     };
 
     const eventId = await fire('chat.room.scheduled_for_deletion', payload);
-    expect(new Set(enqueued.map((e) => e.key)).size).toBe(memberIds.length);
+    expect(new Set(enqueued.map((e) => e.opts?.idempotencyKey)).size).toBe(memberIds.length);
     for (const userId of memberIds) {
-      expect(enqueued.map((e) => e.key)).toContain(`notifications-dispatch:${eventId}:${userId}`);
+      expect(enqueued.map((e) => e.opts?.idempotencyKey)).toContain(
+        `notifications-dispatch:${eventId}:${userId}`,
+      );
     }
 
     await fire('chat.room.scheduled_for_deletion', payload, eventId);

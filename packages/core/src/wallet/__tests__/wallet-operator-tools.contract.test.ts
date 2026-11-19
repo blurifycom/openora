@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as z from 'zod';
 import {
   DepositCompareInputSchema,
+  HoldWithdrawalPayloadSchema,
   TransactionsFindInputSchema,
   WithdrawalsQueueInputSchema,
   resolveTransactionsFindRange,
@@ -87,5 +88,24 @@ describe('transactions.find input', () => {
     expect(parse({ sortBy: 'fee' }).success).toBe(false);
     expect(parse({ minAmount: '1,000' }).success).toBe(false);
     expect(parse({ limit: 51 }).success).toBe(false);
+  });
+});
+
+describe('the hold-withdrawal action payload reason', () => {
+  const parse = (reason: string) =>
+    z.safeParse(HoldWithdrawalPayloadSchema, {
+      playerId: '7f9c3b8e-2d4a-4c1e-9b6f-0a5d8e3c2b1a',
+      withdrawalId: '1c2b3a4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+      reason,
+    });
+
+  it('caps the reason at 500 characters after trimming and refuses an all-space one', () => {
+    expect(parse(`  ${'r'.repeat(500)}  `)).toMatchObject({
+      success: true,
+      data: { reason: 'r'.repeat(500) },
+    });
+    expect(parse('r'.repeat(501)).success).toBe(false);
+    expect(parse('   ').success).toBe(false);
+    expect(parse('').success).toBe(false);
   });
 });

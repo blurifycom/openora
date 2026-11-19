@@ -83,11 +83,11 @@ export const KycResubmissionAlreadyRequestedError = makeConflictError(
 // A vendor session the player opened (not_started) is as live as one awaiting a decision
 // (pending): submit() treats both as the session to continue, and a newer manual row would
 // shadow it.
-const ENHANCED_KYC_IN_PROGRESS: ReadonlySet<KycStatus> = new Set(['pending', 'not_started']);
+const KYC_IN_PROGRESS_STATUSES: ReadonlySet<KycStatus> = new Set(['pending', 'not_started']);
 
 export const KycVerificationInProgressError = makeConflictError(
   'KycVerificationInProgressError',
-  'A verification of this tier is in progress',
+  'A verification of this tier is in progress: wait for its decision, or override the tier KYC status to close it first',
 );
 
 // Fail-closed: a referenceId is supposed to belong to one player. If rows sharing one
@@ -344,7 +344,7 @@ export class KycVerificationService {
         // An active, undecided session already exists - collapse onto it instead of
         // minting a second one. NOT resubmission_requested: that status explicitly invites
         // a fresh submission, so it must fall through to a real new vendor call below.
-        if (previous && (previous.status === 'pending' || previous.status === 'not_started')) {
+        if (previous && KYC_IN_PROGRESS_STATUSES.has(previous.status)) {
           logger.info(
             { userId, tier: input.tier, existingId: previous.id },
             'kyc submit collapsed onto an in-flight session',
@@ -959,9 +959,10 @@ export class KycVerificationService {
   }
 
   /**
-   * Admin-initiated: requests the player resubmit documents. Idempotent on a repeat
-   * call while the player is already at `resubmission_requested` - no duplicate history
-   * row or `compliance.kyc.updated` emit.
+   * Admin-initiated: asks the player to resubmit documents (basic tier) or to complete enhanced
+   * verification (advanced tier). Idempotent on a repeat call while the player is already at
+   * `resubmission_requested` - no duplicate history row or `compliance.kyc.updated` emit.
+   * Refuses while the tier's latest verification is still open (pending/not_started).
    */
   async requestResubmission(
     userId: User['id'],
@@ -969,15 +970,7 @@ export class KycVerificationService {
     reason: string,
     actorId: User['id'],
   ) {
-    const outcome = await this.drizzle.db.transaction((trx) =>
-      this.applyResubmissionRequest(trx, {
-        userId,
-        tier,
-        reason,
-        actorId,
-        refuseInProgress: false,
-      }),
-    );
+    const outcome = await this.lockedResubmissionRequest({ userId, tier, reason, actorId });
     if (!outcome.row) {
       throw new KycVerificationNotFoundError(userId);
     }
@@ -989,17 +982,16 @@ export class KycVerificationService {
     if (latest?.status === 'resubmission_requested') {
       throw new KycResubmissionAlreadyRequestedError();
     }
-    if (latest && ENHANCED_KYC_IN_PROGRESS.has(latest.status)) {
+    if (latest && KYC_IN_PROGRESS_STATUSES.has(latest.status)) {
       throw new KycVerificationInProgressError();
     }
   }
 
   /**
-   * Agent-proposed: asks the player for advanced-tier (enhanced) verification the way an admin's
-   * resubmission request does, and reports whether anything changed - a repeat is a no-op. Unlike
-   * the admin request it refuses while an advanced verification is pending, re-checked under the
-   * player's submit lock: the proposal was approved after its precondition ran, and the player
-   * may have started a verification since.
+   * Agent-proposed: asks the player for advanced-tier (enhanced) verification through the same
+   * locked request as the admin route, and reports whether anything changed - a repeat is a
+   * no-op. The in-progress refusal re-runs under the lock because the proposal was approved
+   * after its precondition ran, and the player may have started a verification since.
    */
   async requestEnhancedKyc({
     userId,
@@ -1010,18 +1002,28 @@ export class KycVerificationService {
     reason: string;
     actorId: User['id'];
   }) {
-    const { changed } = await this.drizzle.db.transaction((trx) =>
-      withAdvisoryXactLock(trx, `kyc-submit:${userId}:advanced`, () =>
-        this.applyResubmissionRequest(trx, {
-          userId,
-          tier: 'advanced',
-          reason,
-          actorId,
-          refuseInProgress: true,
-        }),
+    const { changed } = await this.lockedResubmissionRequest({
+      userId,
+      tier: 'advanced',
+      reason,
+      actorId,
+    });
+    return { changed };
+  }
+
+  // Under the player's submit lock for the tier, so a concurrent submit cannot slip a live
+  // session in under the manual row.
+  private lockedResubmissionRequest(params: {
+    userId: User['id'];
+    tier: KycTier;
+    reason: string;
+    actorId: User['id'];
+  }) {
+    return this.drizzle.db.transaction((trx) =>
+      withAdvisoryXactLock(trx, `kyc-submit:${params.userId}:${params.tier}`, () =>
+        this.applyResubmissionRequest(trx, params),
       ),
     );
-    return { changed };
   }
 
   private async applyResubmissionRequest(
@@ -1031,13 +1033,11 @@ export class KycVerificationService {
       tier,
       reason,
       actorId,
-      refuseInProgress,
     }: {
       userId: User['id'];
       tier: KycTier;
       reason: string;
       actorId: User['id'];
-      refuseInProgress: boolean;
     },
   ) {
     const current = await this.requirePlayerRowForUpdate(userId, trx);
@@ -1046,7 +1046,9 @@ export class KycVerificationService {
     if (currentStatus === 'resubmission_requested') {
       return { row: latest ? toDto(latest) : null, changed: false };
     }
-    if (refuseInProgress && currentStatus && ENHANCED_KYC_IN_PROGRESS.has(currentStatus)) {
+    // The tier's latest verification row, not player.kycStatus: a player with no basic
+    // verification yet sits at kycStatus not_started but has no session to collide with.
+    if (latest && KYC_IN_PROGRESS_STATUSES.has(latest.status)) {
       throw new KycVerificationInProgressError();
     }
     const applied = await this.applyManualDecision(trx, {

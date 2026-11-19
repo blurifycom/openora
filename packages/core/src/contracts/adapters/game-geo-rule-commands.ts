@@ -3,7 +3,7 @@ import {
   CountryCodeSchema,
   GEO_RULE_ADMIN_SOURCE,
   GeoRuleSourceSchema,
-  NonEmptyReasonSchema,
+  BoundedReasonSchema,
   UuidSchema,
 } from '../schemas/index.js';
 import { createToken, type Token } from './token.js';
@@ -12,7 +12,7 @@ export const ReplaceGameGeoRulesInputSchema = z.object({
   source: GeoRuleSourceSchema.refine((source) => source !== GEO_RULE_ADMIN_SOURCE, {
     message: `"${GEO_RULE_ADMIN_SOURCE}" is reserved for backoffice rules`,
   }),
-  reason: NonEmptyReasonSchema.max(500),
+  reason: BoundedReasonSchema,
   rules: z
     .array(
       z.object({

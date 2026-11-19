@@ -1,12 +1,12 @@
 import * as z from 'zod';
 import {
+  BoundedReasonSchema,
   CurrencyTickerSchema,
   FIND_TOOL_MAX_LIMIT,
   FindToolLimitSchema,
   KycStatusSchema,
   MoneyAmountSchema,
   MoneyThresholdSchema,
-  NonEmptyReasonSchema,
   SignedMoneyAmountSchema,
   TagKeySchema,
   TimestampSchema,
@@ -339,7 +339,7 @@ export const transactionsFindTool = defineMcpTool({
 export const HoldWithdrawalPayloadSchema = z.object({
   playerId: UuidSchema,
   withdrawalId: UuidSchema,
-  reason: NonEmptyReasonSchema.max(500),
+  reason: BoundedReasonSchema,
 });
 export type HoldWithdrawalPayload = z.infer<typeof HoldWithdrawalPayloadSchema>;
 

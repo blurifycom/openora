@@ -67,6 +67,14 @@ Compliance and security: `kycResubmissionRequested`, `securityLoginAlert`,
 
 `MAIL_TEMPLATE_KEYS` in `packages/core/src/contracts/schemas/mail.ts` is the canonical list.
 
+`kycResubmissionRequested` data carries `tier` (`'basic'` or `'advanced'`, defaulting to
+`'basic'`) next to `reason`, so a renderer can word a document resubmission differently from
+a request for enhanced verification. The template is sent for both tiers, so an overlay renderer
+of its own for this key must read `tier`; one that ignores it words an advanced request as a
+document resubmission. The advanced tier's `reason` is internal and never reaches the player:
+the notification worker nulls it, and the default renderer does not print it. A basic-tier
+reason is shown.
+
 An overlay renderer receives every built-in template key and owns the rendered result for each key;
 there is no automatic fallback to the platform's English renderer.
 
@@ -87,4 +95,7 @@ responsible-gambling or `kycResubmissionRequested`
 template the worker writes an `AUDIT_WRITER` entry on both outcomes -
 `mail.regulatory_delivery.sent` and `mail.regulatory_delivery.failed`, each carrying the
 template key, recipient locale and attempt - because the regulator asks about the
-notification at those events.
+notification at those events. The worker never sees a `kycResubmissionRequested` notice
+whose notify job exhausts its five retries before reaching `MAIL_DISPATCH`; the notifications
+module records that one itself as `mail.regulatory_delivery.failed` with reason
+`enqueue_exhausted`, carrying the template key and attempt but no recipient locale.

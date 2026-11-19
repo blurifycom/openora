@@ -136,12 +136,20 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       `Your withdrawal of ${formatMoney(data.amount, data.currency)} failed and the funds were returned to your balance.\n\n` +
       `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}`,
   }),
-  kycResubmissionRequested: (data) => ({
-    subject: 'Document resubmission required',
-    text:
-      `An admin has requested you resubmit your verification documents.` +
-      (data.reason ? ` Reason: ${data.reason}.` : ''),
-  }),
+  kycResubmissionRequested: (data) => {
+    // An advanced request's reason is internal and never rendered.
+    return data.tier === 'advanced'
+      ? {
+          subject: 'Additional verification required',
+          text: 'An admin has requested you complete enhanced verification.',
+        }
+      : {
+          subject: 'Document resubmission required',
+          text: `An admin has requested you resubmit your verification documents.${
+            data.reason ? ` Reason: ${data.reason}.` : ''
+          }`,
+        };
+  },
   adminInvitation: (data, locale) => ({
     subject: 'You have been invited as an administrator',
     text: `Your admin invitation token: ${data.token}. It expires at ${formatEmailDate(

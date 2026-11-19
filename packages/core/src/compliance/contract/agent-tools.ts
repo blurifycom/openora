@@ -9,7 +9,7 @@ import {
   MAX_RG_STANDING_WINDOW_DAYS,
   MAX_RG_STANDING_WINDOWS,
   MoneyAmountSchema,
-  NonEmptyReasonSchema,
+  BoundedReasonSchema,
   RG_FLAG_TYPES,
   RgFlagTypeSchema,
   TimestampSchema,
@@ -72,7 +72,7 @@ export const kycStatusTool = defineMcpTool({
 
 export const RequestEnhancedKycPayloadSchema = z.object({
   playerId: UuidSchema,
-  reason: NonEmptyReasonSchema.max(500),
+  reason: BoundedReasonSchema,
 });
 export type RequestEnhancedKycPayload = z.infer<typeof RequestEnhancedKycPayloadSchema>;
 

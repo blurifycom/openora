@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { CurrencyTickerSchema, MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 import { RgInitiatorSchema } from './compliance.js';
+import { KycTierSchema } from './player.js';
 
 export const MAIL_TEMPLATE_KEYS = [
   'verifyEmail',
@@ -80,7 +81,11 @@ export const EmailTemplateDataSchemas = {
   }),
   withdrawalCompleted: z.object({ ...WithdrawalDetailsShape }),
   withdrawalFailed: z.object({ ...WithdrawalDetailsShape }),
-  kycResubmissionRequested: z.object({ reason: z.string().nullable() }),
+  // A missing tier (mail queued before the field existed) means basic.
+  kycResubmissionRequested: z.object({
+    reason: z.string().nullable(),
+    tier: KycTierSchema.default('basic'),
+  }),
   adminInvitation: z.object({ token: z.string(), expiresAt: TimestampSchema }),
   securityLoginAlert: z.object({ occurredAt: TimestampSchema }),
   securityWithdrawalRequested: z.object({ ...WithdrawalDetailsShape }),

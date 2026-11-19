@@ -38,6 +38,7 @@ import {
   LimitOwnershipError,
 } from '../service/compliance.service.js';
 import {
+  KycVerificationInProgressError,
   KycVerificationService,
   PlayerNotFoundError,
   toPlayerSummaryView,
@@ -366,8 +367,9 @@ export function createComplianceRouter({
 
     requestKycResubmission: os.requestKycResubmission.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
-      return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
-        kyc.requestResubmission(input.userId, input.tier, input.reason, caller.userId),
+      return mapErrors(
+        { NOT_FOUND: PlayerNotFoundError, CONFLICT: KycVerificationInProgressError },
+        () => kyc.requestResubmission(input.userId, input.tier, input.reason, caller.userId),
       );
     }),
 
