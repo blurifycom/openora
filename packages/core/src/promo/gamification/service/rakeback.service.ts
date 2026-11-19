@@ -105,9 +105,10 @@ type RakebackRate =
  * is today or yesterday; the rate is read from the current config when the bet settles.
  *
  * Under the `instant` payout it is credited to the real balance with the bet, and the `cashback`
- * wallet transaction is the whole record. Under `claim` it is written to `promo_rakeback_accrual`
- * and nothing moves until `RakebackClaimService` pays it out; a rollback of the round then takes
- * it back while it is still unclaimed.
+ * wallet transaction is the whole record, apart from a sportsbook bet, which also writes a
+ * `claimed` accrual with no claim so it is paid once. Under `claim` it is written to
+ * `promo_rakeback_accrual` and nothing moves until `RakebackClaimService` pays it out; a rollback
+ * of the round then takes it back while it is still unclaimed.
  *
  * Runs after `RankService` and before `StreakService` in the composite, so a bet that also crosses
  * a rank threshold pays rakeback at the tier just reached, and the bet that unlocks a streak
@@ -208,23 +209,23 @@ export class RakebackService implements WagerTrackingCommands {
     if (moneyCompare(rakeback, ZERO) <= 0) {
       return [];
     }
+    const accrual = {
+      userId: args.userId,
+      currency: args.currency,
+      amount: rakeback,
+      stake: args.realAmount,
+      basis: rate.mode === 'unranked' ? 'margin' : this.settings.basis,
+      rtp: rate.mode === 'unranked' || this.settings.basis === 'margin' ? (rtp ?? null) : null,
+      ratePercent: rate.mode === 'unranked' ? ZERO : rate.ratePercent,
+      boostPercent: ZERO,
+      ...streakRecord(rate),
+      gameId: args.context.gameId ?? null,
+      providerGameKey: args.context.providerGameKey ?? null,
+      providerName: args.round?.providerName ?? args.context.provider,
+      externalRoundId: args.round?.externalRoundId ?? null,
+    } satisfies typeof promoRakebackAccrual.$inferInsert;
     if (this.settings.payout === 'claim') {
-      const streak = streakRecord(rate);
-      await tx.insert(promoRakebackAccrual).values({
-        userId: args.userId,
-        currency: args.currency,
-        amount: rakeback,
-        stake: args.realAmount,
-        basis: rate.mode === 'unranked' ? 'margin' : this.settings.basis,
-        rtp: rate.mode === 'unranked' || this.settings.basis === 'margin' ? (rtp ?? null) : null,
-        ratePercent: rate.mode === 'unranked' ? ZERO : rate.ratePercent,
-        boostPercent: ZERO,
-        ...streak,
-        gameId: args.context.gameId ?? null,
-        providerGameKey: args.context.providerGameKey ?? null,
-        providerName: args.round?.providerName ?? args.context.provider,
-        externalRoundId: args.round?.externalRoundId ?? null,
-      });
+      await tx.insert(promoRakebackAccrual).values(accrual);
       return [];
     }
     if (!wallet) {
@@ -245,8 +246,15 @@ export class RakebackService implements WagerTrackingCommands {
       this.logger.warn({ userId: args.userId, reason: outcome.reason }, 'rakeback credit failed');
       return [];
     }
-    // `moved: false` is a replayed credit (a duplicate bet-tracking call, or a re-settle of a bet
-    // already paid) - the balance already changed and was already announced the first time.
+    if (providerRef) {
+      // The paid bet's record: a re-settle after a reopen finds it and pays nothing, rather than
+      // repricing the credit at today's rate under the same provider ref, which the wallet refuses.
+      await tx
+        .insert(promoRakebackAccrual)
+        .values({ ...accrual, status: 'claimed', settledAt: new Date() });
+    }
+    // `moved: false` is a replayed credit (a duplicate bet-tracking call) - the balance already
+    // changed and was already announced the first time.
     return outcome.moved
       ? [{ transactionId: outcome.transactionId, amount: rakeback, currency: args.currency }]
       : [];

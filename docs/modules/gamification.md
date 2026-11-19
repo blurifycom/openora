@@ -221,13 +221,13 @@ rakeback when it settles other than void, not when its stake is reserved. A bet 
 rejects or cancels earns nothing, and neither does a free bet's promotion-paid stake. The
 sportsbook ledger reports the settle through `recordSettledWager`, so this works without the bonus
 plugin, at the tier the player holds when the bet settles. A bet pays once. Its instant credit
-is keyed to the bet, so a re-settle after a reopen replays it, and no accrual is written while
-the bet already has an accrued, claimed or voided one. A reopen reverses an unclaimed accrual, so
-the re-settle accrues afresh. A claimed accrual or an instant credit stays, as all paid
-rakeback does. A sportsbook bet carries no `rtp`, so it pays nothing under `margin`, nor at a
-streak's unranked rate for a player with no rank. Switching `payout` from `instant` to `claim` between a settle and a re-settle can pay that bet once under
-each mode. A `sportsbook` wager reported through `recordWager`, rather than the sportsbook ledger's
-settle, earns no rakeback.
+is keyed to the bet and writes a `claimed` accrual with no claim, and no accrual or credit is
+written while the bet already has an accrued, claimed or voided one, so a re-settle after a
+reopen pays nothing even when the rate has changed. A reopen reverses an unclaimed accrual, so
+the re-settle accrues afresh. A claimed accrual or an instant credit stays, as all paid rakeback
+does. A sportsbook bet carries no `rtp`, so it pays nothing under `margin`, nor at a streak's
+unranked rate for a player with no rank. A `sportsbook` wager reported through `recordWager`,
+rather than the sportsbook ledger's settle, earns no rakeback.
 
 Upgrading: under `instant`, a sportsbook bet reserved before the upgrade was paid at reserve, and
 that credit carries no key to the bet, so its settle after the upgrade pays it again. An operator

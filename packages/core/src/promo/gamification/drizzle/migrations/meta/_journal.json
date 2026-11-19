@@ -183,6 +183,13 @@
       "when": 1794949508924,
       "tag": "0025_rakeback_claimed_index",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1795049633667,
+      "tag": "0026_rakeback_instant_settled_row",
+      "breakpoints": true
     }
   ]
 }

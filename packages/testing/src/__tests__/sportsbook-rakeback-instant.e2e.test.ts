@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { sportsbookBetTransaction } from '@openora/core/sportsbook/schema/betting';
 import { WAGER_TRACKING } from '@openora/core/contracts';
+import { promoRakebackAccrual, promoRankTier } from '@openora/core/promo/schema/gamification';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { closeE2e, type TestApp, type TestClient, type TestDb } from '../index.js';
 import { EXAMPLE_RANK_LADDER } from '../seed.js';
@@ -180,6 +181,37 @@ describe('sportsbook rakeback paid instantly', () => {
 
     expect(await rakebackOf(args.providerBetId)).toEqual(PAID);
     expect(await balanceOf(app, player.userId)).toBe('115.100000000000000000');
+  });
+
+  it('pays once at the first rate when a reopened bet settles again after the rate changes', async () => {
+    const player = await fundedPlayer(app);
+    const { args } = await acceptedBet(app, player, { stake: '10', potentialPayout: '25' });
+    await settle(args.providerBetId, 'won', '25');
+    await reopen(args.providerBetId);
+    const tiers = await drizzle()
+      .select({ id: promoRankTier.id, rakebackPercent: promoRankTier.rakebackPercent })
+      .from(promoRankTier);
+    await drizzle().update(promoRankTier).set({ rakebackPercent: '7' });
+
+    try {
+      await settle(args.providerBetId, 'won', '25');
+    } finally {
+      for (const tier of tiers) {
+        await drizzle()
+          .update(promoRankTier)
+          .set({ rakebackPercent: tier.rakebackPercent })
+          .where(eq(promoRankTier.id, tier.id));
+      }
+    }
+
+    expect(await rakebackOf(args.providerBetId)).toEqual(PAID);
+    expect(await balanceOf(app, player.userId)).toBe('115.100000000000000000');
+    expect(
+      await drizzle()
+        .select({ status: promoRakebackAccrual.status, amount: promoRakebackAccrual.amount })
+        .from(promoRakebackAccrual)
+        .where(eq(promoRakebackAccrual.userId, player.userId)),
+    ).toEqual([{ status: 'claimed', amount: PAID[0]?.amount }]);
   });
 
   it('leaves paid rakeback to a manual adjustment when a reopened bet is voided', async () => {

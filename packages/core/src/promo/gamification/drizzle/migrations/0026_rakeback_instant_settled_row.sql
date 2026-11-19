@@ -1,0 +1,3 @@
+ALTER TABLE "promo_rakeback_accrual" DROP CONSTRAINT "promo_rakeback_accrual_settlement";--> statement-breakpoint
+ALTER TABLE "promo_rakeback_accrual" ADD CONSTRAINT "promo_rakeback_accrual_settlement" CHECK (("promo_rakeback_accrual"."claim_id" is null OR "promo_rakeback_accrual"."status" = 'claimed')
+        AND ("promo_rakeback_accrual"."status" = 'voided') = ("promo_rakeback_accrual"."void_reason" is not null));

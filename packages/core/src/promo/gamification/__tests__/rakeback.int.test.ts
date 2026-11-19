@@ -999,6 +999,28 @@ describe('a sportsbook bet, paid when it settles', () => {
     });
   });
 
+  it('records an instant credit as a claimed accrual, so a re-settle at a new rate pays nothing', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    await settledBet(rakeback, userId, 'bet-1');
+
+    await reopenedBet(rakeback, userId, 'bet-1');
+    await givePlayerTier(userId, 'gold');
+    await settledBet(rakeback, userId, 'bet-1');
+    await settledBet(claimable(), userId, 'bet-1');
+
+    expect(credit).toHaveBeenCalledTimes(1);
+    expect(await accrualsOf(userId)).toEqual([
+      expect.objectContaining({
+        status: 'claimed',
+        claimId: null,
+        amount: '1.000000000000000000',
+        rolledBackStake: '100.000000000000000000',
+        externalRoundId: 'bet-1',
+      }),
+    ]);
+  });
+
   it('pays nothing for a stake a free bet paid for', async () => {
     const userId = randomUUID();
     await givePlayerTier(userId, 'bronze');

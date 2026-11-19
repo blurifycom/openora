@@ -740,7 +740,8 @@ export const promoRakebackClaimOutcomeEnum = pgEnum(
 
 /**
  * One bet's rakeback under the claim payout, in the bet's own currency. Nothing reaches the
- * balance until a claim flips the row to `claimed`. The rate, streak rate and rtp it was priced
+ * balance until a claim flips the row to `claimed`. An instant sportsbook credit is written as a
+ * `claimed` row with no claim, so a re-settle after a reopen finds the bet already paid. The rate, streak rate and rtp it was priced
  * at are kept so the amount can be reproduced after the ladder or the streak config changes.
  * `boostPercent` is retired and written as zero; it stays for rows priced before.
  */
@@ -797,7 +798,7 @@ export const promoRakebackAccrual = pgTable(
     ),
     check(
       'promo_rakeback_accrual_settlement',
-      sql`(${t.status} = 'claimed') = (${t.claimId} is not null)
+      sql`(${t.claimId} is null OR ${t.status} = 'claimed')
         AND (${t.status} = 'voided') = (${t.voidReason} is not null)`,
     ),
   ],
