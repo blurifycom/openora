@@ -28,8 +28,6 @@ export type GrantAttribution<Id> = {
   realStake: string;
   /** Weighted stake applied to the requirement, never more than its headroom. */
   progress: string;
-  /** The bet met the requirement. */
-  completes: boolean;
 };
 
 /**
@@ -86,8 +84,6 @@ export function attributeStake<Id>(
     bonusStake: grant.bonusStake,
     realStake: real,
     progress,
-    completes:
-      moneyCompare(grant.headroom, ZERO) > 0 && moneyCompare(progress, grant.headroom) >= 0,
   }));
 }
 

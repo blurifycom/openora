@@ -27,17 +27,17 @@ describe('attributeStake', () => {
   it('puts the whole real stake on the first grant when it has room', () => {
     const [first, second] = attributeStake([grant('a', '100'), grant('b', '100')], '40');
 
-    expect(first).toMatchObject({ id: 'a', realStake: '40', progress: '40', completes: false });
-    expect(second).toMatchObject({ id: 'b', realStake: '0', progress: '0', completes: false });
+    expect(first).toMatchObject({ id: 'a', realStake: '40', progress: '40' });
+    expect(second).toMatchObject({ id: 'b', realStake: '0', progress: '0' });
   });
 
   it('fills grants in order and carries what one has no room for to the next', () => {
     const shares = attributeStake([grant('a', '30'), grant('b', '50'), grant('c', '100')], '120');
 
-    expect(shares.map((s) => [s.realStake, s.progress, s.completes])).toEqual([
-      ['30', '30', true],
-      ['50', '50', true],
-      ['40', '40', false],
+    expect(shares.map((s) => [s.realStake, s.progress])).toEqual([
+      ['30', '30'],
+      ['50', '50'],
+      ['40', '40'],
     ]);
   });
 
@@ -47,16 +47,16 @@ describe('attributeStake', () => {
       '60',
     );
 
-    expect(first).toMatchObject({ realStake: '20', progress: '20', completes: true });
+    expect(first).toMatchObject({ realStake: '20', progress: '20' });
     // 40 left over, counted at 50% on the second grant.
-    expect(second).toMatchObject({ realStake: '40', progress: '20', completes: false });
+    expect(second).toMatchObject({ realStake: '40', progress: '20' });
   });
 
   it('spends only the stake a low-weight grant needs before carrying the rest', () => {
     const [first, second] = attributeStake([grant('a', '10', '25'), grant('b', '100')], '100');
 
     // 40 at 25% fills the 10 of room; the other 60 carries at full weight.
-    expect(first).toMatchObject({ realStake: '40', progress: '10', completes: true });
+    expect(first).toMatchObject({ realStake: '40', progress: '10' });
     expect(second).toMatchObject({ realStake: '60', progress: '60' });
   });
 
@@ -90,14 +90,14 @@ describe('attributeStake', () => {
     );
 
     // Own bonus stake took 20 of 25; real stake fills the last 5 and carries 10.
-    expect(first).toMatchObject({ progress: '25', realStake: '5', completes: true });
+    expect(first).toMatchObject({ progress: '25', realStake: '5' });
     expect(second).toMatchObject({ progress: '10', realStake: '10' });
   });
 
   it('caps a grant own bonus progress at its headroom without spilling it elsewhere', () => {
     const [first, second] = attributeStake([grant('a', '10', '100', '50'), grant('b', '100')], '0');
 
-    expect(first).toMatchObject({ progress: '10', completes: true });
+    expect(first).toMatchObject({ progress: '10' });
     expect(second).toMatchObject({ progress: '0', realStake: '0' });
   });
 
@@ -111,13 +111,13 @@ describe('attributeStake', () => {
   it('leaves real stake no requirement absorbs on the first grant without progress', () => {
     const [first, second] = attributeStake([grant('a', '10'), grant('b', '5')], '40');
 
-    expect(first).toMatchObject({ realStake: '35', progress: '10', completes: true });
-    expect(second).toMatchObject({ realStake: '5', progress: '5', completes: true });
+    expect(first).toMatchObject({ realStake: '35', progress: '10' });
+    expect(second).toMatchObject({ realStake: '5', progress: '5' });
   });
 
-  it('does not complete a grant that has no requirement to meet', () => {
+  it('gives no progress to a grant that has no requirement to meet', () => {
     const [only] = attributeStake([grant('a', '0')], '10');
 
-    expect(only).toMatchObject({ realStake: '10', progress: '0', completes: false });
+    expect(only).toMatchObject({ realStake: '10', progress: '0' });
   });
 });
