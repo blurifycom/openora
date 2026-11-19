@@ -99,6 +99,12 @@ const WalletBonusSourceRefRequiredError = createDomainError<[type: string]>(
     `a ${type} credit needs a stable providerRef.providerRefId so a retry cannot grant twice`,
 );
 
+const WalletReferralRewardRefRequiredError = createDomainError(
+  'WalletReferralRewardRefRequiredError',
+  () =>
+    'a referral_reward credit needs a stable providerRef.providerRefId so a retry cannot pay twice',
+);
+
 const WalletCreditFailedError = createDomainError<[walletId: string, currency: string]>(
   'WalletCreditFailedError',
   (walletId, currency) => `wallet ${walletId} has no ${currency} balance row to credit`,
@@ -584,6 +590,10 @@ export class WalletCommandsService implements WalletCommands {
     }
     if (!isPositiveMoney(amount)) {
       throw new WalletCommandAmountError('credit', amount);
+    }
+    // A referral payout job retries, and only its ledger row's providerRef makes the retry a replay.
+    if (type === 'referral_reward' && !providerRef?.providerRefId) {
+      throw new WalletReferralRewardRefRequiredError();
     }
 
     // A gift, rain or donation only writes a bonus grant, so it leaves the wallet row unlocked: a

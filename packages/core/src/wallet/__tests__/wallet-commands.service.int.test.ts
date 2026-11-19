@@ -410,6 +410,7 @@ describe('WalletCommandsService.credit (real PG)', () => {
       type: 'referral_reward',
       allowNewCurrency: true,
       allowNewWallet: true,
+      providerRef: { providerName: 'referrals', providerRefId: randomUUID() },
     });
 
     expect(res).toMatchObject({ ok: true, moved: true });
@@ -422,6 +423,37 @@ describe('WalletCommandsService.credit (real PG)', () => {
       status: 'completed',
     });
     expect(Number(row?.amount)).toBe(12.5);
+  });
+
+  it('books a retried referral reward with the same ref once', async () => {
+    const w = await seedWallet({ balance: '0' });
+    const reward = {
+      userId: w.userId,
+      amount: '5',
+      currency: 'USD',
+      type: 'referral_reward',
+      providerRef: { providerName: 'referrals', providerRefId: randomUUID() },
+    } as const;
+
+    expect(await svc.credit(db.drizzle.db, reward)).toMatchObject({ ok: true, moved: true });
+    expect(await svc.credit(db.drizzle.db, reward)).toMatchObject({ ok: true, moved: false });
+
+    expect(await balanceOf(w.userId)).toBe(5);
+    expect(await txRows(w.id)).toHaveLength(1);
+  });
+
+  it('refuses a referral reward with no providerRef', async () => {
+    const w = await seedWallet({ balance: '0' });
+
+    await expect(
+      svc.credit(db.drizzle.db, {
+        userId: w.userId,
+        amount: '5',
+        currency: 'USD',
+        type: 'referral_reward',
+      }),
+    ).rejects.toMatchObject({ name: 'WalletReferralRewardRefRequiredError' });
+    expect(await txRows(w.id)).toHaveLength(0);
   });
 
   it('rejects a non-positive credit', async () => {
