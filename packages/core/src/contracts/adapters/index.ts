@@ -505,6 +505,9 @@ export type {
   GameCurrencyRankingFilter,
   GameRankingFigures,
   GameCurrencyRanking,
+  ProviderRankingSortBy,
+  ProviderCurrencyRankingFilter,
+  ProviderCurrencyRanking,
   PlayerGameStats,
 } from './admin-game-reporting.js';
 export {

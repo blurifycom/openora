@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import * as z from 'zod';
-import { DepositCompareInputSchema, WithdrawalsQueueInputSchema } from '../contract/index.js';
+import {
+  DepositCompareInputSchema,
+  TransactionsFindInputSchema,
+  WithdrawalsQueueInputSchema,
+  resolveTransactionsFindRange,
+} from '../contract/index.js';
 
 const WINDOW_A = { from: '2026-01-01', to: '2026-03-31' };
 const WINDOW_B = { from: '2026-04-01', to: '2026-07-01' };
@@ -48,5 +53,39 @@ describe('players.deposit_compare input', () => {
     expect(parse({ tag: 'vip', windowA: WINDOW_A, windowB: WINDOW_B, limit: 51 }).success).toBe(
       false,
     );
+  });
+});
+
+describe('transactions.find input', () => {
+  const parse = (input: unknown) => z.safeParse(TransactionsFindInputSchema, input);
+
+  it('defaults to the 20 newest over the 30 days ending today', () => {
+    expect(parse({})).toEqual({
+      success: true,
+      data: { sortBy: 'createdAt', sortDir: 'desc', limit: 20 },
+    });
+    expect(resolveTransactionsFindRange({ to: '2026-03-10' })).toEqual({
+      dateFrom: '2026-02-09',
+      dateTo: '2026-03-10',
+    });
+  });
+
+  it('takes at most 92 days, named by the fields the caller sent', () => {
+    expect(parse({ from: '2026-01-01', to: '2026-04-02' }).success).toBe(true);
+    expect(parse({ from: '2026-01-01', to: '2026-04-03' }).error?.issues).toEqual([
+      expect.objectContaining({ path: ['from'] }),
+    ]);
+    expect(parse({ from: '2026-01-02', to: '2026-01-01' }).success).toBe(false);
+  });
+
+  it('takes only the types, statuses and sorts it knows, and a decimal amount', () => {
+    expect(
+      parse({ type: ['deposit', 'withdrawal'], status: ['on_hold'], minAmount: '1000' }).success,
+    ).toBe(true);
+    expect(parse({ type: ['refund'] }).success).toBe(false);
+    expect(parse({ status: ['done'] }).success).toBe(false);
+    expect(parse({ sortBy: 'fee' }).success).toBe(false);
+    expect(parse({ minAmount: '1,000' }).success).toBe(false);
+    expect(parse({ limit: 51 }).success).toBe(false);
   });
 });

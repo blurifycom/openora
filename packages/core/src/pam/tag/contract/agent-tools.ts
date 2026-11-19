@@ -1,5 +1,12 @@
 import z from 'zod';
-import { UuidSchema, defineActionType, type TagKey } from '@openora/core/contracts';
+import {
+  tagKeys as TAG_KEYS,
+  TagKeySchema,
+  UuidSchema,
+  defineActionType,
+  defineMcpTool,
+  type TagKey,
+} from '@openora/core/contracts';
 
 // Every other key is either computed by tag rules and compliance (kyc_*, self_excluded, level,
 // inactive, high_roller, ...) or has its own action type (withdrawal_review).
@@ -49,4 +56,54 @@ export const sendToManualReviewAction = defineActionType({
   reversible: true,
   payloadSchema: z.object({ playerId: UuidSchema, reason: AgentTagReasonSchema }),
   errors: ['player_not_found', 'already_in_manual_review'],
+});
+
+const SEGMENT_DEFAULT_WINDOW_DAYS = 30;
+export const SEGMENT_MAX_WINDOW_DAYS = 92;
+/** Account levels one answer lists, lowest first. */
+export const SEGMENT_MAX_LEVELS = 50;
+
+export const SegmentCountsInputSchema = z.object({
+  /** The tags to count, every tag when left out. */
+  tagKeys: z.array(TagKeySchema).min(1).max(TAG_KEYS.length).optional(),
+  /** The days, up to now, a player counts as seen in. */
+  windowDays: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(SEGMENT_MAX_WINDOW_DAYS)
+    .default(SEGMENT_DEFAULT_WINDOW_DAYS),
+});
+export type SegmentCountsInput = z.infer<typeof SegmentCountsInputSchema>;
+
+const SegmentCountSchema = z.object({
+  players: z.number().int().nonnegative(),
+  seenInWindow: z.number().int().nonnegative(),
+});
+
+export const SegmentCountsOutputSchema = z.object({
+  windowDays: z.number().int(),
+  population: SegmentCountSchema,
+  tags: z.array(SegmentCountSchema.extend({ tag: TagKeySchema })).max(TAG_KEYS.length),
+  levels: z.array(SegmentCountSchema.extend({ level: z.number().int() })).max(SEGMENT_MAX_LEVELS),
+  truncated: z.boolean(),
+});
+export type SegmentCounts = z.infer<typeof SegmentCountsOutputSchema>;
+
+export const segmentCountsTool = defineMcpTool({
+  id: 'players.segment_counts',
+  title: 'Player segment counts',
+  description:
+    'How many players each segment holds now, and how many of them were seen - signed in or used ' +
+    'the platform - over the last windowDays days (1 to 92, default 30): the whole population ' +
+    '(players with an active, open account), each tag asked for in tagKeys (every tag when left ' +
+    'out; a VIP is a player tagged vip), and each account level, lowest first, at most 50 ' +
+    '(truncated is true when more had players). Counts only: names no player.',
+  class: 'read',
+  schemaVersion: 1,
+  iam: { resource: 'player', action: 'view' },
+  inputSchema: SegmentCountsInputSchema,
+  outputSchema: SegmentCountsOutputSchema,
+  redact: { allow: ['windowDays', 'population', 'tags', 'levels', 'truncated'] },
+  errors: [],
 });

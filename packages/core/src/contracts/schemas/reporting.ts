@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TimestampSchema } from './common.js';
+import { MoneyAmountSchema, TimestampSchema } from './common.js';
 
 const DateRangeShapeSchema = z.object({
   dateFrom: TimestampSchema.optional(),
@@ -44,32 +44,85 @@ export function resolveDayRange(
   };
 }
 
+/** The input keys a day range is read from, so a refusal names the field the caller sent. */
+export type DayRangeKeys = { from: string; to: string };
+
+const DATE_RANGE_KEYS: DayRangeKeys = { from: 'dateFrom', to: 'dateTo' };
+
+function refuseUnordered(keys: DayRangeKeys, ctx: z.core.$RefinementCtx) {
+  ctx.addIssue({
+    code: 'custom',
+    path: [keys.from],
+    message: `${keys.from} must be on or before ${keys.to}`,
+  });
+}
+
 /** A schema refinement: refuses a range that ends before it starts or spans over `maxDays` days. */
-export function checkDayRange(range: DayRange, maxDays: number, ctx: z.core.$RefinementCtx) {
+export function checkDayRange(
+  range: DayRange,
+  maxDays: number,
+  ctx: z.core.$RefinementCtx,
+  keys: DayRangeKeys = DATE_RANGE_KEYS,
+) {
   if (range.dateFrom > range.dateTo) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['dateFrom'],
-      message: 'dateFrom must be on or before dateTo',
-    });
+    refuseUnordered(keys, ctx);
     return;
   }
   if ((Date.parse(range.dateTo) - Date.parse(range.dateFrom)) / DAY_MS + 1 > maxDays) {
     ctx.addIssue({
       code: 'custom',
-      path: ['dateFrom'],
+      path: [keys.from],
       message: `the range spans at most ${maxDays} days`,
     });
   }
 }
 
+/**
+ * A schema refinement for a filter over whole UTC days whose ends are each optional: refuses one
+ * whose last day comes before its first.
+ */
+export function checkDayBounds(
+  from: string | undefined,
+  to: string | undefined,
+  keys: DayRangeKeys,
+  ctx: z.core.$RefinementCtx,
+) {
+  if (from !== undefined && to !== undefined && from > to) {
+    refuseUnordered(keys, ctx);
+  }
+}
+
+/** The first instant of a whole UTC day given as `YYYY-MM-DD`. */
+export function dayStart(day: string): Date {
+  return new Date(`${day}T00:00:00.000Z`);
+}
+
+/** The last instant of a whole UTC day given as `YYYY-MM-DD`. */
+export function dayEnd(day: string): Date {
+  return new Date(`${day}T23:59:59.999Z`);
+}
+
 /** The instants a day range covers: from the start of `dateFrom` through the end of `dateTo`. */
 export function dayRangeInstants({ dateFrom, dateTo }: DayRange): { from: Date; to: Date } {
-  return {
-    from: new Date(`${dateFrom}T00:00:00.000Z`),
-    to: new Date(`${dateTo}T23:59:59.999Z`),
-  };
+  return { from: dayStart(dateFrom), to: dayEnd(dateTo) };
 }
+
+/** The most rows an agent find tool lists in one call. */
+export const FIND_TOOL_MAX_LIMIT = 50;
+
+/** How many rows an agent find tool lists: 1 to 50, 20 when the caller does not say. */
+export const FindToolLimitSchema = z.coerce
+  .number()
+  .int()
+  .min(1)
+  .max(FIND_TOOL_MAX_LIMIT)
+  .default(20);
+
+/**
+ * A money threshold an agent find tool filters by, as a decimal string. Bounded in length, as
+ * every string a model sends must be: 20 integer digits, a point and 18 decimals fit.
+ */
+export const MoneyThresholdSchema = MoneyAmountSchema.max(40);
 
 /**
  * Buckets `date_trunc(granularity, ...)` yields for from..to in UTC, both ends included.

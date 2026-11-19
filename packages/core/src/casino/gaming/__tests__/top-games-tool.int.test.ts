@@ -53,14 +53,18 @@ const runContext = (): RunContext => ({
   correlationId: 'top-games-tool',
 });
 
-async function seedGame(name: string, gameType: GameType = 'casino') {
-  const provider = findOneOrThrow(
+async function seedProvider(name: string) {
+  return findOneOrThrow(
     await db.drizzle.db
       .insert(gameProvider)
-      .values({ slug: `studio-${randomUUID()}`, name: `${name} Studio` })
+      .values({ slug: `studio-${randomUUID()}`, name })
       .returning(),
-    new Error('seedGame: no provider'),
+    new Error('seedProvider: no provider'),
   );
+}
+
+async function seedGame(name: string, gameType: GameType = 'casino', provider?: { id: string }) {
+  provider ??= await seedProvider(`${name} Studio`);
   return findOneOrThrow(
     await db.drizzle.db
       .insert(game)
@@ -273,6 +277,70 @@ describe('gaming.top_games through the MCP kernel (real PG)', () => {
     ]);
     expect(
       await bootKernel(operatorReport).invokeTool('gaming.top_games', RANGE, runContext()),
+    ).toMatchObject({ ok: false, error: 'report_unavailable' });
+  });
+
+  it("ranks the providers per currency by their games' rounds, and is unavailable on a report that cannot", async () => {
+    const kernel = bootKernel();
+    const [north, south] = [await seedProvider('North'), await seedProvider('South')];
+    const [aces, blaze, comet] = [
+      await seedGame('Aces', 'casino', north),
+      await seedGame('Blaze', 'casino', north),
+      await seedGame('Comet', 'casino', south),
+    ];
+    await seedRound(aces.id, { betAmount: '100', winAmount: '30' });
+    await seedRound(blaze.id, { betAmount: '50', winAmount: '60' });
+    await seedRound(comet.id, { betAmount: '400', winAmount: '100' });
+    await seedRound(comet.id, { betAmount: '999', status: 'active' });
+
+    const result = await kernel.invokeTool(
+      'gaming.top_providers',
+      { ...RANGE, sortBy: 'gamesPlayed' },
+      runContext(),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      output: {
+        ...RANGE,
+        sortBy: 'gamesPlayed',
+        sortDir: 'desc',
+        currencies: [
+          {
+            currency: 'USD',
+            totals: {
+              volume: expect.stringMatching(/^550(\.0+)?$/),
+              revenue: expect.stringMatching(/^360(\.0+)?$/),
+              roundsPlayed: 3,
+              uniquePlayers: 3,
+              gamesPlayed: 3,
+              providersPlayed: 2,
+            },
+            providers: [
+              {
+                providerId: north.id,
+                name: 'North',
+                slug: north.slug,
+                volume: expect.stringMatching(/^150(\.0+)?$/),
+                revenue: expect.stringMatching(/^60(\.0+)?$/),
+                roundsPlayed: 2,
+                uniquePlayers: 2,
+                gamesPlayed: 2,
+              },
+              expect.objectContaining({ providerId: south.id, gamesPlayed: 1 }),
+            ],
+          },
+        ],
+        truncated: false,
+      },
+    });
+    const unread = () => Promise.reject(new Error('gaming.top_providers reads only the ranking'));
+    expect(
+      await bootKernel({
+        listGamePerformance: unread,
+        getGamePerformanceTrend: unread,
+        getPlayerStats: unread,
+      }).invokeTool('gaming.top_providers', RANGE, runContext()),
     ).toMatchObject({ ok: false, error: 'report_unavailable' });
   });
 

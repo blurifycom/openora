@@ -20,7 +20,7 @@ describe('bonus.grants_summary input', () => {
 });
 
 describe('bonus agent surface registration', () => {
-  it('registers bonus.grants_summary within the kernel contract rules', async () => {
+  it('registers its read tools within the kernel contract rules', async () => {
     const registry = new ModuleRegistryImpl<CoreTokenCatalog>(new Container());
     registry.setOwner('bonus');
 
@@ -28,6 +28,7 @@ describe('bonus agent surface registration', () => {
 
     expect(registry.mcp.getTools().map((tool) => tool.contract.id)).toEqual([
       'bonus.grants_summary',
+      'bonus.grants_find',
     ]);
   });
 });

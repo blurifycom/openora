@@ -16,6 +16,11 @@ does not repeat it.
 - **Banner image URLs, not banner image bytes.** A `bannerImage` row carries a desktop URL, a
   mobile URL, and an optional link - never a file. This module has no upload endpoint and no
   storage adapter; see "Expected consumer integration" below.
+- **Its agent surface.** `cms.banners`, a read tool under `content:update` (the grant the banner
+  admin reads assert; `content` has no view action), lists the banner configurations by
+  `bannerId` with their layout, image count and locales, whether each is what its placement shows
+  now and when its schedule starts. No image URL, link or author. It is served only through the
+  MCP kernel (ADR-0042).
 
 ## The placement -> configuration -> default model
 

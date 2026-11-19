@@ -176,6 +176,13 @@
       "when": 1794482273447,
       "tag": "0024_rank_periodic_margin",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794949508924,
+      "tag": "0025_rakeback_claimed_index",
+      "breakpoints": true
     }
   ]
 }
