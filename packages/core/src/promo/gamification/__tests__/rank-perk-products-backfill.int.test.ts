@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { makeAuditWriter, mock } from '../../../testing/mock.js';
 import type { WagerProduct, WalletCommands } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import { promoPlayerRank, promoRankConfig, promoRankTier } from '../schema/index.js';
@@ -47,11 +47,12 @@ const LADDER = {
 
 let db: TestDb;
 const credit = vi.fn<WalletCommands['credit']>();
+const audit = makeAuditWriter();
 let rakeback: RakebackService;
 
 beforeAll(async () => {
   db = await createTestDb([migrate]);
-  rakeback = new RakebackService(() => mock<WalletCommands>({ credit }), { warn: vi.fn() });
+  rakeback = new RakebackService(() => mock<WalletCommands>({ credit }), { warn: vi.fn() }, audit);
 });
 
 afterAll(() => db.drop());

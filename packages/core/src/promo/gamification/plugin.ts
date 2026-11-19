@@ -179,6 +179,7 @@ const rakebackService = (c: TypedContainer<CoreTokenCatalog>) =>
   new RakebackService(
     () => (c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined),
     logger,
+    c.get(AUDIT_WRITER),
     promoConfig(c).rakeback,
     promoConfig(c).rankPeriodic.basis,
   );

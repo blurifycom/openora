@@ -225,7 +225,8 @@ is keyed to the bet and writes a `claimed` accrual with no claim, and no accrual
 written while the bet already has an accrued, claimed or voided one, so a re-settle after a
 reopen pays nothing even when the rate has changed. A reopen reverses an unclaimed accrual, so
 the re-settle accrues afresh. A claimed accrual or an instant credit stays, as all paid rakeback
-does. A sportsbook bet carries no `rtp`, so it pays nothing under `margin`, nor at a streak's
+does; when the bet is then voided, each paid row is audited as `promo.rakeback.kept_on_void`
+(system actor, with the player, bet and amount) so staff can adjust it by hand. A sportsbook bet carries no `rtp`, so it pays nothing under `margin`, nor at a streak's
 unranked rate for a player with no rank. A `sportsbook` wager reported through `recordWager`,
 rather than the sportsbook ledger's settle, earns no rakeback.
 

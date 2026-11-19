@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { makeAuditWriter, mock } from '../../../testing/mock.js';
 import type {
   RankPeriodicBasis,
   WagerContext,
@@ -29,6 +29,7 @@ import { RakebackService, type RakebackSettings } from '../service/rakeback.serv
 let db: TestDb;
 const logger = { warn: vi.fn() };
 const credit = vi.fn<WalletCommands['credit']>();
+const audit = makeAuditWriter();
 let rakeback: RakebackService;
 
 const CASINO: WagerContext = { provider: 'aggregator', product: 'casino' };
@@ -69,7 +70,13 @@ const wagerOn = (userId: string, product: WagerProduct) =>
   wager(userId, '100', '100', { provider: 'aggregator', product });
 
 const serviceWith = (settings: RakebackSettings, periodicBasis?: RankPeriodicBasis) =>
-  new RakebackService(() => mock<WalletCommands>({ credit }), logger, settings, periodicBasis);
+  new RakebackService(
+    () => mock<WalletCommands>({ credit }),
+    logger,
+    audit,
+    settings,
+    periodicBasis,
+  );
 
 const betOn = (
   service: RakebackService,
@@ -146,7 +153,7 @@ const givePlayerTier = async (userId: string, tierKey: string) => {
 
 beforeAll(async () => {
   db = await createTestDb([migrate]);
-  rakeback = new RakebackService(() => mock<WalletCommands>({ credit }), logger);
+  rakeback = new RakebackService(() => mock<WalletCommands>({ credit }), logger, audit);
 });
 
 afterAll(() => db.drop());
@@ -1018,6 +1025,46 @@ describe('a sportsbook bet, paid when it settles', () => {
         rolledBackStake: '100.000000000000000000',
         externalRoundId: 'bet-1',
       }),
+    ]);
+  });
+
+  it('audits paid rakeback a voided bet keeps, and nothing for an unpaid one', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    await settledBet(claimable(), userId, 'bet-1');
+    await settledBet(rakeback, userId, 'bet-2');
+    const voided = (betId: string) =>
+      db.drizzle.db.transaction((tx) =>
+        rakeback.reverseSettledWager(tx, {
+          userId,
+          currency: 'USDT',
+          round: sportsbookRound(betId),
+          realAmount: '100',
+        }),
+      );
+
+    await voided('bet-1');
+    expect(audit.recordManyInTransaction).toHaveBeenLastCalledWith(expect.anything(), []);
+
+    await voided('bet-2');
+    const [paid] = await accrualsOf(userId).then((rows) =>
+      rows.filter((row) => row.status === 'claimed'),
+    );
+    expect(audit.recordManyInTransaction).toHaveBeenLastCalledWith(expect.anything(), [
+      {
+        actorType: 'system',
+        action: 'promo.rakeback.kept_on_void',
+        resourceType: 'promo_rakeback_accrual',
+        resourceId: paid?.id,
+        after: {
+          userId,
+          providerName: BOOK_ROUND,
+          externalRoundId: 'bet-2',
+          currency: 'USDT',
+          amount: '1.000000000000000000',
+          claimId: null,
+        },
+      },
     ]);
   });
 

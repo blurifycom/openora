@@ -1,6 +1,7 @@
 import { and, desc, eq, gt, inArray } from 'drizzle-orm';
 import {
   CONTRIBUTION_PERCENT_SCALE,
+  type AuditWritePort,
   isUsableRtp,
   type RakebackBasis,
   type RakebackPayout,
@@ -127,6 +128,7 @@ export class RakebackService implements WagerTrackingCommands {
   constructor(
     private readonly getWallet: () => WalletCommands | undefined,
     private readonly logger: { warn: (context: object, message: string) => void },
+    private readonly audit: Pick<AuditWritePort, 'recordManyInTransaction'>,
     private readonly settings: RakebackSettings = DEFAULT_SETTINGS,
     private readonly periodicBasis: RankPeriodicBasis = 'flat',
   ) {}
@@ -165,6 +167,43 @@ export class RakebackService implements WagerTrackingCommands {
   /** Takes back a reopened bet's unclaimed rakeback; a paid credit is left to a manual adjustment. */
   async reopenSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
     await this.reverseWager(tx, args);
+  }
+
+  /**
+   * A voided bet keeps the rakeback already paid on it, since paid rakeback is only ever corrected by
+   * a manual adjustment. Each paid row is audited with the void, as the cue for that adjustment.
+   */
+  async reverseSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
+    const paid = await tx
+      .select({
+        id: promoRakebackAccrual.id,
+        amount: promoRakebackAccrual.amount,
+        claimId: promoRakebackAccrual.claimId,
+      })
+      .from(promoRakebackAccrual)
+      .where(
+        and(
+          ...roundMatch(args.userId, args.currency, args.round),
+          eq(promoRakebackAccrual.status, 'claimed'),
+        ),
+      );
+    await this.audit.recordManyInTransaction(
+      tx,
+      paid.map((row) => ({
+        actorType: 'system' as const,
+        action: 'promo.rakeback.kept_on_void',
+        resourceType: 'promo_rakeback_accrual',
+        resourceId: row.id,
+        after: {
+          userId: args.userId,
+          providerName: args.round.providerName,
+          externalRoundId: args.round.externalRoundId,
+          currency: args.currency,
+          amount: row.amount,
+          claimId: row.claimId,
+        },
+      })),
+    );
   }
 
   private async pay(

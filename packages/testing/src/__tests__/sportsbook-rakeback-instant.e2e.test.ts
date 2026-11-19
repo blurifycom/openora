@@ -4,9 +4,10 @@ import { and, eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { sportsbookBetTransaction } from '@openora/core/sportsbook/schema/betting';
 import { WAGER_TRACKING } from '@openora/core/contracts';
+import { auditLog } from '@openora/core/audit/schema';
 import { promoRakebackAccrual, promoRankTier } from '@openora/core/promo/schema/gamification';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
-import { closeE2e, type TestApp, type TestClient, type TestDb } from '../index.js';
+import { closeE2e, flushAudit, type TestApp, type TestClient, type TestDb } from '../index.js';
 import { EXAMPLE_RANK_LADDER } from '../seed.js';
 import { mockSportsbookProviderState } from '../test-sportsbook-provider-plugin.js';
 import {
@@ -224,6 +225,21 @@ describe('sportsbook rakeback paid instantly', () => {
 
     expect(await rakebackOf(args.providerBetId)).toEqual(PAID);
     expect(await balanceOf(app, player.userId)).toBe('100.100000000000000000');
+    await flushAudit(app);
+    const audited = await drizzle()
+      .select({ actorType: auditLog.actorType, after: auditLog.after })
+      .from(auditLog)
+      .where(eq(auditLog.action, 'promo.rakeback.kept_on_void'));
+    expect(audited.filter((row) => row.after?.['userId'] === player.userId)).toEqual([
+      {
+        actorType: 'system',
+        after: expect.objectContaining({
+          externalRoundId: args.providerBetId,
+          currency: 'USD',
+          amount: PAID[0]?.amount,
+        }),
+      },
+    ]);
   });
 
   it('pays nothing for a free bet that wins', async () => {
