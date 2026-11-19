@@ -45,7 +45,7 @@ Per currency, over the range:
   whole promotion part even when the player's balance could not cover it, while GGR takes back only
   what the wallet collected, so the figure can be lower than GGR's promotion share by uncollected or
   written-off sportsbook debt. It is empty when the sportsbook module is not loaded.
-- **NGR:** GGR less bonus cost. It does not deduct cashback credits.
+- **NGR:** GGR less bonus cost. It does not deduct cashback or referral reward credits.
 
 ## Other figures that are not the official GGR
 

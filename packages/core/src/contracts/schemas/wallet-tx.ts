@@ -29,6 +29,8 @@ export const WALLET_TRANSACTION_TYPES = [
   'win_reversal',
   /** The sender's cash leg of a player-to-player donation; the recipient's credit is a wagered bonus grant. */
   'donation',
+  /** An operator-funded real-money credit with no wagering requirement, such as a referral commission payout. */
+  'referral_reward',
 ] as const;
 
 export const WALLET_TRANSACTION_STATUSES = [

@@ -91,7 +91,8 @@ export type WalletCreditArgs = {
    * bonus grant, matched per recipient and type without `providerName`, so it must be unique per
    * transfer across provider names. Such a credit returns `{ ok: false }` rather than throwing for
    * "wallet not found" and "currency mismatch", so a caller that has already debited the sender
-   * in the same transaction must throw on `ok: false` to roll that debit back.
+   * in the same transaction must throw on `ok: false` to roll that debit back. Also required for a
+   * `referral_reward` credit, whose replay it is: a retried payout with the same ref books nothing.
    */
   providerRef?: WalletProviderRef;
   /**

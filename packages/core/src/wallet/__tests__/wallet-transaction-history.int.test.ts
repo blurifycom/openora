@@ -140,6 +140,22 @@ describe('WalletService.getTransactions (real PG)', () => {
     expect(ids(all.items)).toEqual([target.id]);
   });
 
+  it('lists a referral reward and filters by its type', async () => {
+    const w = await seedWallet();
+    const reward = await seedTx(w.id, { type: 'referral_reward', direction: 'credit' });
+    await seedTx(w.id, { type: 'cashback', direction: 'credit' });
+    const svc = makeService();
+
+    const only = await svc.getTransactions({
+      userId: w.userId,
+      ...page,
+      types: ['referral_reward'],
+    });
+
+    expect(ids(only.items)).toEqual([reward.id]);
+    expect(only.items[0]?.type).toBe('referral_reward');
+  });
+
   it('treats an empty filter list as no filter', async () => {
     const w = await seedWallet();
     await seedTx(w.id, { type: 'withdrawal' });
