@@ -20,6 +20,7 @@ import type {
   RealtimeTransport,
   SocialCommands,
 } from '@openora/core/contracts';
+import { createLogger } from '@openora/core/server';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
   NO_CLIENT_META,
@@ -151,7 +152,7 @@ function makeService(
     events,
     audit,
     transport,
-    playerIdsOf(accounts),
+    playerIdsOf(accounts, createLogger('test')),
   );
   const roomMute = new ChatRoomMuteService(db.drizzle, audit);
   return {

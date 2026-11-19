@@ -92,10 +92,11 @@ and each job reaches one of them.
   With the shipped modules a split ends up close to the monolith. Every manifest boot checks
   AdminGuard's ports, so every split loads iam and identity, and with them audit and mail.
   Identity's controls pull in compliance, and compliance depends on wallet, gaming,
-  player-management and exchange-rate; player-management depends on chat. A split is those ten
-  modules plus the ones you meant to move, and until
+  player-management and exchange-rate; player-management requires the `CHAT_BLOCK_READER` port, which
+  the `chat` module binds, or `chat-remote` when chat runs in another service. A split is those nine
+  modules, `chat` or `chat-remote`, and the ones you meant to move, and until
   [ADR-0050](../adr/0050-dependency-only-modules-provide-but-do-not-consume.md) lands each of the
-  ten handles every event once in the split and once in the rest of the install.
+  nine handles every event once in the split and once in the rest of the install.
 
 - **Chat writes from a process that does not run chat.** A module that writes chat state inside
   its own transaction binds the outbox writers from `@openora/core/engagement/server` over the
@@ -139,8 +140,10 @@ and each job reaches one of them.
 - **Chat on a database of its own.** On the chat service set `IDENTITY_SERVICE_URL` to the
   identity service's private origin and `IDENTITY_SERVICE_NAME` to its `SERVICE_NAME`, and name
   `identity:no-routes` in its `SERVICE_MANIFEST`; on the identity service set
-  `ACCOUNT_READER_CALLERS` and `SESSION_RESOLVER_CALLERS` to the chat service's `SERVICE_NAME`
-  (unset refuses every caller). Those lists guard against misconfiguration only: one install-wide secret signs as any caller.
+  `ACCOUNT_READER_CALLERS`, `SESSION_RESOLVER_CALLERS` and `ADMIN_PERMISSION_CALLERS` to the
+  chat service's `SERVICE_NAME` (unset refuses every caller; without the last, every admin
+  check on chat is refused). Chat reads admin grants from the iam owner through the same
+  `IDENTITY_SERVICE_URL`, so the service that serves identity must serve iam too. Those lists guard against misconfiguration only: one install-wide secret signs as any caller.
   In production the URL must be https, or the boot fails; set `IDENTITY_SERVICE_ALLOW_HTTP=true`
   only where a service mesh encrypts the hop inside the private network.
 - Only the chat plugin binds the remote reader. Run social in the same process as chat, or
@@ -174,6 +177,17 @@ and each job reaches one of them.
   the first failure, then one summary line per 30 seconds with the count. A 4xx from identity
   answers 401, so a caller missing from `SESSION_RESOLVER_CALLERS` shows as 401 on every
   protected chat route: check that list first.
+- **Chat's block reads and transfer check from a process that does not run chat.** Load the
+  `chat-remote` plugin there, in place of `chat`, and set `CHAT_SERVICE_URL` to the chat service's
+  private origin (and `CHAT_SERVICE_NAME` if its `SERVICE_NAME` is not `chat`). It binds
+  `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API, so the process
+  needs no chat tables. On the chat service set `CHAT_BLOCK_READER_CALLERS` and
+  `CHAT_TRANSFER_CHECK_CALLERS` to the caller's `SERVICE_NAME`; unset, every caller is refused. The
+  chat plugin refuses to boot while `CHAT_SERVICE_URL` is set. Nothing is cached, and a read or
+  check chat cannot answer fails closed: a block read answers 503, a transfer check refuses with
+  `chat_unavailable`. The remote check holds no block lock, so a block committed between its answer
+  and the caller's commit is not seen. In production the URL must be https unless
+  `CHAT_SERVICE_ALLOW_HTTP=true`. See the [split deployment guide](./split-deployment.md).
 
 ## Seeding reference data (production)
 

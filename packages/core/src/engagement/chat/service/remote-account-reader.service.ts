@@ -44,12 +44,13 @@ export class RemoteAccountReader implements AccountReader {
     userIds: readonly string[],
     options: AccountReadOptions = {},
   ): Promise<Map<string, Account>> {
+    const uncached = options.fresh || options.playEligibility;
     const found = new Map<string, Account>();
     const joined = new Map<string, Promise<Map<string, Account>>>();
     const missing: string[] = [];
     for (const id of new Set(userIds.map((userId) => userId.toLowerCase()))) {
-      const cached = options.fresh ? undefined : this.cache.get(id);
-      const inFlight = options.fresh ? undefined : this.cache.pending(id);
+      const cached = uncached ? undefined : this.cache.get(id);
+      const inFlight = uncached ? undefined : this.cache.pending(id);
       if (cached) {
         found.set(id, cached);
       } else if (inFlight) {
@@ -58,8 +59,8 @@ export class RemoteAccountReader implements AccountReader {
         missing.push(id);
       }
     }
-    const fetched = this.fetch(missing);
-    if (!options.fresh) {
+    const fetched = this.fetch(missing, options.playEligibility);
+    if (!uncached) {
       this.cache.track(missing, fetched);
     }
     for (const [id, account] of await fetched) {
@@ -101,7 +102,10 @@ export class RemoteAccountReader implements AccountReader {
   }
 
   /** Reads `ids` (lower case) in batches; caches and answers only the ids asked for. */
-  private async fetch(ids: readonly string[]): Promise<Map<string, Account>> {
+  private async fetch(
+    ids: readonly string[],
+    playEligibility?: boolean,
+  ): Promise<Map<string, Account>> {
     if (ids.length === 0) {
       return new Map();
     }
@@ -110,7 +114,10 @@ export class RemoteAccountReader implements AccountReader {
     );
     const replies = await mapConcurrent(batches, BATCH_CONCURRENCY, async (batch) =>
       AccountReaderWire.accounts.output.parse(
-        await this.client.request('POST', ACCOUNT_READER_ROUTES.accounts, { userIds: batch }),
+        await this.client.request('POST', ACCOUNT_READER_ROUTES.accounts, {
+          userIds: batch,
+          playEligibility,
+        }),
       ),
     );
     const requested = new Set(ids);

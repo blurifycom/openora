@@ -160,6 +160,7 @@ export type {
   Account,
   AccountReader,
   AccountReadOptions,
+  PlayerIdsLogger,
   PlayerMatch,
   PlayerSearch,
 } from './account-reader.js';
@@ -434,7 +435,11 @@ export type { ErrorTrackingAdapter, ErrorContext } from './error-tracking.js';
 export { ERROR_TRACKING } from './error-tracking.js';
 
 export type { AdminGrant, AdminPermissionResolver } from './admin-permission.js';
-export { ADMIN_PERMISSION_RESOLVER } from './admin-permission.js';
+export {
+  ADMIN_PERMISSION_RESOLVER,
+  ADMIN_PERMISSION_ROUTES,
+  AdminPermissionWire,
+} from './admin-permission.js';
 
 export type { AdminSecurityPolicy, AdminSessionContext } from './admin-security.js';
 export {
@@ -594,12 +599,22 @@ export type {
 export { CHAT_SYSTEM_WRITER } from './chat-system-writer.js';
 
 export type { ChatBlockReader, ChatBlockWriter } from './chat-block-writer.js';
-export { CHAT_BLOCK_READER, CHAT_BLOCK_WRITER, chatBlockLockKey } from './chat-block-writer.js';
-export type { ChatTransferCheck } from './chat-transfer-check.js';
+export {
+  CHAT_BLOCK_READER,
+  CHAT_BLOCK_READER_ROUTES,
+  CHAT_BLOCK_WRITER,
+  ChatBlockReaderWire,
+  chatBlockLockKey,
+} from './chat-block-writer.js';
+export type { AllowedChatTransfer, ChatTransferCheck } from './chat-transfer-check.js';
 export {
   CHAT_TRANSFER_CHECK,
+  CHAT_TRANSFER_CHECK_ROUTES,
   ChatTransferCheckUnavailableError,
+  ChatTransferCheckWire,
+  ChatTransferRefusedError,
   checkChatTransfer,
+  guardChatTransfer,
 } from './chat-transfer-check.js';
 export type { ChatRoomAccess } from './chat-room-access.js';
 export { CHAT_ROOM_ACCESS } from './chat-room-access.js';

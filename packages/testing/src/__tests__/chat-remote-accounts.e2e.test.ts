@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { REALTIME_TRANSPORT } from '@openora/core/contracts';
+import { PLAY_ELIGIBILITY, REALTIME_TRANSPORT } from '@openora/core/contracts';
 import {
   createInternalClient,
   DRIZZLE,
@@ -39,6 +39,7 @@ const SHARED_ENV = {
   INTERNAL_API_SECRETS: randomBytes(32).toString('hex'),
   ACCOUNT_READER_CALLERS: CHAT_SERVICE_NAME,
   SESSION_RESOLVER_CALLERS: CHAT_SERVICE_NAME,
+  ADMIN_PERMISSION_CALLERS: CHAT_SERVICE_NAME,
 };
 // The events that end a session, which chat purges its cache on.
 const SESSION_ENDING_EVENTS = [
@@ -55,7 +56,7 @@ const CHAT_ENV = {
     'audit',
     'mail',
     'compliance',
-    'iam',
+    'iam:no-routes',
     'player-management',
     'wallet',
     'tag',
@@ -194,6 +195,10 @@ beforeAll(async () => {
   );
 }, 90_000);
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 afterAll(async () => {
   for (const stop of stopBridge) {
     stop();
@@ -264,6 +269,23 @@ describe('chat on its own service, reading accounts from the identity service', 
     expect((await invite(owner, room, target.userId)).status).toBe(200);
 
     expect(await invitesTo(target.userId)).toEqual([expect.objectContaining({ withheld: true })]);
+  });
+
+  it('withholds an invite to a self-excluded player from the account read, never from a local eligibility read', async () => {
+    const owner = await chatter('host');
+    const room = await createRoom(owner);
+    const target = await chatter('blocked');
+    const eligibility = chatApp.container.get(PLAY_ELIGIBILITY);
+    const localReads = [
+      vi.spyOn(eligibility, 'isRestricted'),
+      ...(eligibility.checkPlay ? [vi.spyOn(eligibility, 'checkPlay')] : []),
+    ];
+    await sql().update(user).set({ rgBlocked: true }).where(eq(user.id, target.userId));
+
+    expect((await invite(owner, room, target.userId)).status).toBe(200);
+
+    expect(await invitesTo(target.userId)).toEqual([expect.objectContaining({ withheld: true })]);
+    expect(localReads.flatMap((spy) => spy.mock.calls)).toEqual([]);
   });
 
   it('answers 503 SERVICE_UNAVAILABLE, and writes no invite, while identity is down', async () => {

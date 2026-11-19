@@ -1,4 +1,4 @@
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, parseInternalCallers } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import {
   ADMIN_PERMISSION_RESOLVER,
@@ -20,6 +20,7 @@ import {
 import { IamService, DbAdminPermissionResolver } from './service/iam.service.js';
 import { McpTokenService } from './service/mcp-token.service.js';
 import { createIamRouter } from './router/index.js';
+import { createInternalAdminPermissionsRouter } from './router/internal-admin-permissions.router.js';
 import { DrizzleAdminPlayerActivity } from './adapters/admin-player-activity.js';
 import { DrizzleAdminRoleAssignmentDirectory } from './adapters/admin-role-assignment-directory.js';
 import { DrizzleMcpTokenAuthenticator } from './adapters/mcp-token-authenticator.js';
@@ -54,6 +55,16 @@ export default {
       );
       return resolverRef;
     });
+
+    // A service with no role assignments of its own (chat on a database of its own) reads grants
+    // here. Unset ADMIN_PERMISSION_CALLERS refuses every caller.
+    const adminPermissionCallers = parseInternalCallers(process.env['ADMIN_PERMISSION_CALLERS']);
+    ctx.routers.addInternal('iam', (c) =>
+      createInternalAdminPermissionsRouter(
+        c.get(ADMIN_PERMISSION_RESOLVER),
+        adminPermissionCallers,
+      ),
+    );
 
     // Purge the grant cache the instant a grant changes so a revoked admin loses access
     // immediately instead of waiting out the TTL. assign/revoke are user-keyed (one key);

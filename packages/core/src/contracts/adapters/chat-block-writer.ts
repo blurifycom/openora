@@ -1,6 +1,7 @@
+import * as z from 'zod';
 import type { User } from '../schemas/identity.js';
 import { createToken, type Token } from './token.js';
-import type { Uuid } from '../schemas/common.js';
+import { UuidSchema, type Uuid } from '../schemas/common.js';
 
 export type ChatBlockWriter = {
   blockUser(blockerId: Uuid, blockedId: Uuid): Promise<unknown>;
@@ -32,3 +33,25 @@ export type ChatBlockReader = Pick<
 >;
 
 export const CHAT_BLOCK_READER: Token<ChatBlockReader> = createToken('CHAT_BLOCK_READER');
+
+/**
+ * The chat service's internal routes behind {@link ChatBlockReader}, under `/internal/v1`. A
+ * service that does not load chat binds a reader that calls them (ADR-0060).
+ */
+export const CHAT_BLOCK_READER_ROUTES = {
+  excluded: '/chat/blocks/excluded',
+  blocked: '/chat/blocks/blocked',
+  blockers: '/chat/blocks/blockers',
+} as const;
+
+const blockReadWire = {
+  input: z.object({ userId: UuidSchema }),
+  output: z.object({ userIds: z.array(UuidSchema) }),
+} as const;
+
+/** Request and reply of each route in {@link CHAT_BLOCK_READER_ROUTES}, for the server and the client. */
+export const ChatBlockReaderWire = {
+  excluded: blockReadWire,
+  blocked: blockReadWire,
+  blockers: blockReadWire,
+} as const;

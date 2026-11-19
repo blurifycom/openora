@@ -1,7 +1,9 @@
 import { createToken, type Token } from './token.js';
-import type {
-  ChatTransferCheckInput,
-  ChatTransferVerdict,
+import {
+  ChatTransferCheckInputSchema,
+  ChatTransferVerdictSchema,
+  type ChatTransferCheckInput,
+  type ChatTransferVerdict,
 } from '../schemas/chat-transfer-check.js';
 
 /**
@@ -19,9 +21,12 @@ import type {
  * block either commits before the check and refuses, or waits for the money to commit. Bans and
  * membership take no lock: one that commits after the read and before the money commits is not
  * seen, for as long as the caller's transaction runs. A remote binding holds no lock at all, so
- * blocks get that same window, plus whatever its cache adds. A binding that cannot answer throws
- * `ChatTransferCheckUnavailableError`; callers go through `checkChatTransfer`, which turns it
- * into a `chat_unavailable` refusal, so a transfer never moves money on an unanswered check.
+ * blocks get that same window. Tip and transfer commands move money through `guardChatTransfer`,
+ * which checks again after the caller's debit and ledger rows and throws inside its transaction
+ * on a refusal or a counterpart blocked since; without a lock shared across services the window
+ * never closes completely. A binding that cannot answer throws `ChatTransferCheckUnavailableError`,
+ * which `checkChatTransfer` turns into a `chat_unavailable` refusal, so a transfer never moves
+ * money on an unanswered check.
  */
 export type ChatTransferCheck = {
   check(tx: unknown, input: ChatTransferCheckInput): Promise<ChatTransferVerdict>;
@@ -50,4 +55,56 @@ export async function checkChatTransfer(
   }
 }
 
+export type AllowedChatTransfer = Extract<ChatTransferVerdict, { allowed: true }>;
+
+/** The transfer check refused, before the money moved or after; `verdict` is the refusing answer. */
+export class ChatTransferRefusedError extends Error {
+  constructor(readonly verdict: ChatTransferVerdict) {
+    super(
+      verdict.allowed
+        ? 'A transfer counterpart was blocked while the transfer ran'
+        : `Chat refused the transfer: ${verdict.refusal}`,
+    );
+    this.name = 'ChatTransferRefusedError';
+  }
+}
+
+/**
+ * The way a tip or transfer command moves money against {@link ChatTransferCheck}: checks, runs
+ * `commit` (the caller's debit and ledger rows, on `tx`) with the allowed verdict, then checks
+ * again before returning. A refusal either time, or a counterpart blocked since the first check,
+ * throws {@link ChatTransferRefusedError}; the second one throws inside the caller's transaction,
+ * so it rolls the money back. Locally the second check is a no-op the block locks already
+ * guarantee; remotely it narrows the lock-free window to the time between it and the commit.
+ */
+export async function guardChatTransfer<T>(
+  port: ChatTransferCheck,
+  tx: unknown,
+  input: ChatTransferCheckInput,
+  commit: (verdict: AllowedChatTransfer) => Promise<T>,
+): Promise<T> {
+  const first = await checkChatTransfer(port, tx, input);
+  if (!first.allowed) {
+    throw new ChatTransferRefusedError(first);
+  }
+  const result = await commit(first);
+  const second = await checkChatTransfer(port, tx, input);
+  if (!second.allowed || second.blockedIds.some((id) => !first.blockedIds.includes(id))) {
+    throw new ChatTransferRefusedError(second);
+  }
+  return result;
+}
+
 export const CHAT_TRANSFER_CHECK: Token<ChatTransferCheck> = createToken('CHAT_TRANSFER_CHECK');
+
+/**
+ * The chat service's internal route behind {@link ChatTransferCheck}, under `/internal/v1`. The
+ * service answers on a transaction of its own, so a caller on another service gets the verdict
+ * without the block locks the local binding holds (ADR-0060).
+ */
+export const CHAT_TRANSFER_CHECK_ROUTES = { check: '/chat-commands/transfer-check' } as const;
+
+/** Request and reply of the route in {@link CHAT_TRANSFER_CHECK_ROUTES}, for the server and the client. */
+export const ChatTransferCheckWire = {
+  check: { input: ChatTransferCheckInputSchema, output: ChatTransferVerdictSchema },
+} as const;

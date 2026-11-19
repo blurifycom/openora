@@ -20,8 +20,9 @@ export const AccountSchema = z.object({
   role: z.string(),
   isActive: z.boolean(),
   /**
-   * True while `PLAY_ELIGIBILITY.checkPlay` would refuse the account (RG block, closed,
-   * suspended, inactive or banned). The reason stays with identity: it is RG data.
+   * True while core's own `checkPlay` would refuse the account (RG block, closed, suspended,
+   * inactive or banned). A read with `playEligibility` also folds in whatever an operator's
+   * stricter `PLAY_ELIGIBILITY` binding adds. The reason stays with identity: it is RG data.
    */
   excluded: z.boolean(),
   /** Null for an account with no player profile (staff, or a player not provisioned yet). */
@@ -30,6 +31,12 @@ export const AccountSchema = z.object({
       playerId: z.string(),
       /** Suspended or closed: out of the social graph. Self-exclusion shows only as `excluded`. */
       closed: z.boolean(),
+      /**
+       * The status is exactly closed, the one `player.account.closed` fires for: a suspended
+       * account is `closed` but not `accountClosed`. Absent in a reply from an identity service
+       * that predates the field; read it as `closed` then.
+       */
+      accountClosed: z.boolean().optional(),
       lastSeenAt: z.coerce.date().nullable(),
       allowFriendRequests: z.boolean(),
       showOnlineStatusToFriends: z.boolean(),
@@ -61,6 +68,12 @@ export type AccountReadOptions = {
    * exclusion on the very next call: the admin guard, and creating or accepting an invite.
    */
   fresh?: boolean;
+  /**
+   * Fold an operator's stricter `PLAY_ELIGIBILITY` binding into `excluded`, for the staff-free
+   * player rows core's own check admits. Costs one bound-port call per account and fails the read
+   * when the port throws, so only a caller that consumes `excluded` sets it. Implies `fresh`.
+   */
+  playEligibility?: boolean;
 };
 
 export type AccountReader = {
@@ -95,7 +108,10 @@ export const ACCOUNTS_BATCH_MAX = 500;
 /** Request and reply of each route in {@link ACCOUNT_READER_ROUTES}, for the server and the client. */
 export const AccountReaderWire = {
   accounts: {
-    input: z.object({ userIds: z.array(UuidSchema).max(ACCOUNTS_BATCH_MAX) }),
+    input: z.object({
+      userIds: z.array(UuidSchema).max(ACCOUNTS_BATCH_MAX),
+      playEligibility: z.boolean().optional(),
+    }),
     output: z.object({ accounts: z.array(AccountSchema) }),
   },
   byUsername: {
@@ -116,15 +132,24 @@ export const AccountReaderWire = {
   },
 } as const;
 
+/** The part of a pino logger `playerIdsOf` needs; the contracts zone cannot import the engine's. */
+export type PlayerIdsLogger = {
+  warn(context: { err: unknown; count: number }, message: string): void;
+};
+
 /**
  * The player-id lookups chat and social enrich events with, read through accounts. Best effort
  * like `getPlayerIdByUserIdSafe`: a failed read resolves to null instead of failing the action.
  */
 export function playerIdsOf(
   reader: AccountReader,
+  logger: PlayerIdsLogger,
 ): Pick<IdentityReader, 'getPlayerIdByUserIdSafe' | 'getPlayerIdsByUserIdsSafe'> {
   const lookup = async (userIds: readonly string[]) => {
-    const accounts = await reader.getAccounts(userIds).catch(() => new Map<string, Account>());
+    const accounts = await reader.getAccounts(userIds).catch((err: unknown) => {
+      logger.warn({ err, count: userIds.length }, 'player id lookup through accounts failed');
+      return new Map<string, Account>();
+    });
     return new Map(userIds.map((id) => [id, accounts.get(id)?.player?.playerId ?? null]));
   };
   return {

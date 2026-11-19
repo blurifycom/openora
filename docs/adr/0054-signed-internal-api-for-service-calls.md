@@ -5,6 +5,8 @@
 **Relates to**: ADR-0017 (extraction readiness), ADR-0030 (distributed-only production seams),
 ADR-0049 (per-process job worker selection).
 
+> **Update (2026-11-14)**: chat serves its block reads and the transfer check on this surface, and iam its admin grants, so a service that does not load them can call them. See [ADR-0060](./0060-chat-ports-over-the-internal-api.md).
+
 ## Context
 
 A split install runs modules in separate processes. Events cover most traffic between them, but

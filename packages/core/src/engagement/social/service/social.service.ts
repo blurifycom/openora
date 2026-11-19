@@ -134,7 +134,7 @@ export class SocialService {
     private readonly events: EventBus,
     private readonly accounts: AccountReader,
   ) {
-    this.identityReader = playerIdsOf(accounts);
+    this.identityReader = playerIdsOf(accounts, logger);
   }
 
   private async pagedFriendships(where: SQL | undefined, page: number, limit: number) {

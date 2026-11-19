@@ -80,7 +80,7 @@ export class AdminGuard {
     // When bound (identity module loaded), resolves the PAM player.id for a
     // player-role denial's audit attribution. This engine-zone file must not import
     // the player schema directly (ADR-0019/0025), so it goes through this port instead.
-    private readonly identityReader?: IdentityReader,
+    private readonly identityReader?: Pick<IdentityReader, 'getPlayerIdByUserIdSafe'>,
     // When bound (identity module loaded), enforces mandatory 2FA enrolment and the
     // session's device fingerprint. Same layering reason as identityReader.
     private readonly securityPolicy?: AdminSecurityPolicy,

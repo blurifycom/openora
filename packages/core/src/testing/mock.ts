@@ -322,6 +322,7 @@ export const makeAccount = (userId: string, overrides: Partial<Account> = {}): A
   player: {
     playerId: randomUUID(),
     closed: false,
+    accountClosed: false,
     lastSeenAt: null,
     allowFriendRequests: true,
     showOnlineStatusToFriends: true,

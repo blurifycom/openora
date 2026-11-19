@@ -39,6 +39,7 @@ import {
   LOCAL_SESSION_RESOLVER,
   createLogger,
   retryUntilDone,
+  parseInternalCallers,
 } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import { DrizzleUserCommands } from './service/user-commands.service.js';
@@ -55,14 +56,8 @@ import {
 } from './admin-user-directory.js';
 import { IdentityReaderService } from './adapters/identity-reader.service.js';
 import { DrizzleAccountReader } from './adapters/account-reader.service.js';
-import {
-  accountReaderCallers,
-  createInternalAccountsRouter,
-} from './router/internal-accounts.router.js';
-import {
-  createInternalSessionRouter,
-  sessionResolverCallers,
-} from './router/internal-sessions.router.js';
+import { createInternalAccountsRouter } from './router/internal-accounts.router.js';
+import { createInternalSessionRouter } from './router/internal-sessions.router.js';
 import {
   createIdentityRouter,
   sessionEventsChannel,
@@ -311,14 +306,17 @@ export default {
     // Accounts as chat, social and the admin guard see them. The internal routes serve the
     // identity database itself, never the bound reader, which a split service rebinds to a
     // client of these very routes. Unset ACCOUNT_READER_CALLERS refuses every caller.
-    ctx.provide(ACCOUNT_READER, (c) => new DrizzleAccountReader(c.get(DRIZZLE)));
-    const accountReaderCallerNames = accountReaderCallers(process.env['ACCOUNT_READER_CALLERS']);
-    const sessionResolverCallerNames = sessionResolverCallers(
+    ctx.provide(
+      ACCOUNT_READER,
+      (c) => new DrizzleAccountReader(c.get(DRIZZLE), () => c.get(PLAY_ELIGIBILITY)),
+    );
+    const accountReaderCallerNames = parseInternalCallers(process.env['ACCOUNT_READER_CALLERS']);
+    const sessionResolverCallerNames = parseInternalCallers(
       process.env['SESSION_RESOLVER_CALLERS'],
     );
     ctx.routers.addInternal('identity', (c) => ({
       ...createInternalAccountsRouter(
-        new DrizzleAccountReader(c.get(DRIZZLE)),
+        new DrizzleAccountReader(c.get(DRIZZLE), () => c.get(PLAY_ELIGIBILITY)),
         accountReaderCallerNames,
       ),
       // The local chain, never a remote resolver. Unset SESSION_RESOLVER_CALLERS refuses every caller.

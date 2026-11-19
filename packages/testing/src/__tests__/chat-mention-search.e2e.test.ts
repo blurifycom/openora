@@ -98,6 +98,22 @@ describe('mentionSearch: an empty query stays scoped to the room', () => {
   });
 });
 
+describe('mentionSearch: rate limit', () => {
+  it('answers 429 once a viewer passes 30 searches in 10 seconds, and spares other viewers', async () => {
+    const searcher = await registerPlayer('floodsearch');
+    const bystander = await registerPlayer('bystander');
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 31; i += 1) {
+      statuses.push((await searcher.client.get(mentionUrl('flood'))).status);
+    }
+
+    expect(statuses.slice(0, 30)).toEqual(Array.from({ length: 30 }, () => 200));
+    expect(statuses[30]).toBe(429);
+    expect((await bystander.client.get(mentionUrl('flood'))).status).toBe(200);
+  });
+});
+
 describe('mentionSearch: authorization', () => {
   it('401s without a session', async () => {
     const res = await app.app.request(mentionUrl('anyone'), { method: 'GET' });

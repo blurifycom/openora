@@ -5,11 +5,14 @@ import {
   createTestDb,
   createTestRedis,
   RedisPubSubRealtimeTransport,
+  seedPlayerWithUser,
+  uniqueUsername,
   type TestDb,
   type TestRedis,
 } from '@openora/core/testing';
-import type { DrizzleTx } from '@openora/core/server';
+import { createLogger, type DrizzleTx } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
+import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { playerIdsOf, type AuditWritePort, type RealtimeTransport } from '@openora/core/contracts';
@@ -82,7 +85,13 @@ function makeServices(transport: RealtimeTransport = makeTransport()) {
   });
   const membership = new ChatRoomMembershipService(db.drizzle, events, audit, transport, accounts);
   const purge = new ChatRoomPurgeService(db.drizzle, events, transport, audit);
-  const ban = new ChatRoomBanService(db.drizzle, events, audit, transport, playerIdsOf(accounts));
+  const ban = new ChatRoomBanService(
+    db.drizzle,
+    events,
+    audit,
+    transport,
+    playerIdsOf(accounts, createLogger('test')),
+  );
   return { chat, membership, purge, ban, events, transport, audit };
 }
 
@@ -122,6 +131,21 @@ async function promote(
       .set({ roleAssignedAt })
       .where(and(eq(chatRoomMember.roomId, room.id), eq(chatRoomMember.userId, userId)));
   }
+}
+
+/** An account row, active unless told otherwise: an account with no row reads as closed. */
+async function seedAccount(userId: string, { isActive = true }: { isActive?: boolean } = {}) {
+  await db.drizzle.db
+    .insert(user)
+    .values({
+      id: userId,
+      name: 'Player',
+      username: uniqueUsername(),
+      email: `${userId}@test.dev`,
+      emailVerified: true,
+      isActive,
+    })
+    .onConflictDoNothing();
 }
 
 function readMember(roomId: string, userId: string) {
@@ -674,6 +698,7 @@ describe('ChatRoomMembershipService.handleAccountReopened (real PG)', () => {
     await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
     expect((await readRoom(room.id))?.scheduledDeletionAt).not.toBeNull();
 
+    await seedAccount(ownerId);
     await services.membership.handleAccountReopened({ userId: ownerId });
 
     const restored = await readRoom(room.id);
@@ -708,6 +733,7 @@ describe('ChatRoomMembershipService.handleAccountReopened (real PG)', () => {
     await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
     expect((await readRoom(room.id))?.creatorId).toBe(modId);
 
+    await seedAccount(ownerId);
     await services.membership.handleAccountReopened({ userId: ownerId });
 
     expect((await readRoom(room.id))?.creatorId).toBe(modId);
@@ -732,6 +758,7 @@ describe('ChatRoomMembershipService.handleAccountReopened (real PG)', () => {
     });
     await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
 
+    await seedAccount(memberId);
     await services.membership.handleAccountReopened({ userId: memberId });
 
     const room2 = await readRoom(room.id);
@@ -746,9 +773,11 @@ describe('ChatRoomMembershipService.handleAccountReopened (real PG)', () => {
     const ownerId = randomUUID();
     const room = await seedPrivateRoom(services, ownerId);
     await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
+    await seedAccount(ownerId);
     await services.membership.handleAccountReopened({ userId: ownerId });
     services.events.emit.mockClear();
 
+    await seedAccount(ownerId);
     await services.membership.handleAccountReopened({ userId: ownerId });
 
     expect(services.events.emit).not.toHaveBeenCalled();
@@ -760,6 +789,7 @@ describe('ChatRoomMembershipService.handleAccountReopened (real PG)', () => {
     const ownerId = randomUUID();
     const room = await seedPrivateRoom(services, ownerId);
     await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
+    await seedAccount(ownerId);
     await services.membership.handleAccountReopened({ userId: ownerId });
 
     expect(await services.purge.listDueRooms(100)).toEqual([]);
@@ -931,5 +961,137 @@ describe('ChatRoomPurgeService (real PG)', () => {
     await expect(services.purge.purgeRoom(room.id)).resolves.toBe(true);
     await expect(services.purge.purgeRoom(room.id)).resolves.toBe(false);
     expect(services.audit.recordInTransaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('account close and reopen handlers run out of order (real PG)', () => {
+  it('leaves the room alone when a close is delivered for an account that is open now', async () => {
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId, [randomUUID()]);
+    await seedAccount(ownerId);
+
+    await services.membership.handleAccountClosed({ userId: ownerId, closedAt: new Date() });
+
+    expect((await readMember(room.id, ownerId)).accountClosedAt).toBeNull();
+    expect((await readRoom(room.id))?.scheduledDeletionAt).toBeNull();
+  });
+
+  it('keeps the account locked when a reopen is delivered for an account that is closed now', async () => {
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId, [randomUUID()]);
+    await services.membership.handleAccountClosed({ userId: ownerId, closedAt: new Date() });
+    await seedAccount(ownerId, { isActive: false });
+
+    await services.membership.handleAccountReopened({ userId: ownerId });
+
+    expect((await readMember(room.id, ownerId)).accountClosedAt).not.toBeNull();
+    expect((await readRoom(room.id))?.scheduledDeletionAt).not.toBeNull();
+  });
+});
+
+describe('account close and reopen handlers follow the account status (real PG)', () => {
+  const CLOSED_AT = new Date('2026-08-31T10:00:00.000Z');
+  const setStatus = (userId: string, status: 'active' | 'suspended' | 'closed') =>
+    db.drizzle.db.update(player).set({ status }).where(eq(player.userId, userId));
+
+  it('gives the room back after the account moves from closed to suspended', async () => {
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId, [randomUUID()]);
+    await seedPlayerWithUser(db, { userId: ownerId, status: 'closed' });
+    await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
+    expect((await readRoom(room.id))?.scheduledDeletionAt).not.toBeNull();
+
+    await setStatus(ownerId, 'suspended');
+    await services.membership.handleAccountReopened({ userId: ownerId });
+
+    expect((await readMember(room.id, ownerId)).accountClosedAt).toBeNull();
+    expect(await readRoom(room.id)).toMatchObject({
+      creatorId: ownerId,
+      scheduledDeletionAt: null,
+    });
+  });
+
+  it('does not lock the rooms of an account that is only suspended', async () => {
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId, [randomUUID()]);
+    await seedPlayerWithUser(db, { userId: ownerId, status: 'suspended' });
+
+    await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
+
+    expect((await readMember(room.id, ownerId)).accountClosedAt).toBeNull();
+    expect((await readRoom(room.id))?.scheduledDeletionAt).toBeNull();
+  });
+
+  describe('serialised on the user', () => {
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+
+    /** Holds the user's lock until `release` is called, the way a handler mid-write does. */
+    function holdAccountLock(userId: string) {
+      let held!: () => void;
+      const acquired = new Promise<void>((resolve) => {
+        held = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const done = db.drizzle.db.transaction(async (t) => {
+        await t.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-account:${userId}`}))`);
+        held();
+        await gate;
+      });
+      return { acquired, release, done };
+    }
+
+    const isWaiting = async (job: Promise<unknown>) =>
+      (await Promise.race([job.then(() => 'settled'), settle().then(() => 'waiting')])) ===
+      'waiting';
+
+    it('ends a close job on the account reopened while it waited for the lock', async () => {
+      const services = makeServices();
+      const ownerId = randomUUID();
+      const room = await seedPrivateRoom(services, ownerId, [randomUUID()]);
+      await seedPlayerWithUser(db, { userId: ownerId, status: 'closed' });
+      const lock = holdAccountLock(ownerId);
+      await lock.acquired;
+
+      const closing = services.membership.handleAccountClosed({
+        userId: ownerId,
+        closedAt: CLOSED_AT,
+      });
+      expect(await isWaiting(closing)).toBe(true);
+      await setStatus(ownerId, 'active');
+      lock.release();
+      await lock.done;
+      await closing;
+
+      expect((await readMember(room.id, ownerId)).accountClosedAt).toBeNull();
+      expect((await readRoom(room.id))?.scheduledDeletionAt).toBeNull();
+    });
+
+    it('ends a reopen job on the account closed while it waited for the lock', async () => {
+      const services = makeServices();
+      const ownerId = randomUUID();
+      const room = await seedPrivateRoom(services, ownerId, [randomUUID()]);
+      await seedPlayerWithUser(db, { userId: ownerId, status: 'closed' });
+      await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
+      await setStatus(ownerId, 'active');
+      const lock = holdAccountLock(ownerId);
+      await lock.acquired;
+
+      const reopening = services.membership.handleAccountReopened({ userId: ownerId });
+      expect(await isWaiting(reopening)).toBe(true);
+      await setStatus(ownerId, 'closed');
+      lock.release();
+      await lock.done;
+      await reopening;
+
+      expect((await readMember(room.id, ownerId)).accountClosedAt).not.toBeNull();
+      expect((await readRoom(room.id))?.scheduledDeletionAt).not.toBeNull();
+    });
   });
 });

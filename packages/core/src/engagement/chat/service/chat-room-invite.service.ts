@@ -12,6 +12,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import {
+  createLogger,
   DrizzleService,
   serializeRow,
   withAdvisoryXactLock,
@@ -68,6 +69,8 @@ import {
   expirePendingInvites,
   type ExpiredInvite,
 } from './chat-room-invite-expiry.service.js';
+
+const logger = createLogger('chat');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -248,7 +251,7 @@ export class ChatRoomInviteService {
     // When bound, an operator's own play rule (an overlay rebinding) also withholds invites.
     private readonly playEligibility?: PlayEligibilityPort,
   ) {
-    this.identityReader = playerIdsOf(accounts);
+    this.identityReader = playerIdsOf(accounts, logger);
   }
 
   private async isPlayRefused(userId: Uuid) {
@@ -325,7 +328,7 @@ export class ChatRoomInviteService {
     }
     // Read uncached and before the transaction: an exclusion bites at once, and an unreachable
     // identity service refuses before any write.
-    const accounts = await this.accounts.getAccounts([actorId, userId], { fresh: true });
+    const accounts = await this.accounts.getAccounts([actorId, userId], { playEligibility: true });
     const target = accounts.get(userId);
     const playRefused = await this.isPlayRefused(userId);
     const banLocks = [chatPlatformBanLockKey(actorId), chatPlatformBanLockKey(userId)];
@@ -464,7 +467,7 @@ export class ChatRoomInviteService {
   }
 
   async listMyRoomInvites(userId: Uuid) {
-    if (await this.isExcluded(userId, { fresh: true })) {
+    if (await this.isExcluded(userId, { playEligibility: true })) {
       return [];
     }
     const db = this.drizzle.db;
@@ -538,7 +541,7 @@ export class ChatRoomInviteService {
       }
       return room;
     }
-    if (await this.isExcluded(userId, { fresh: true })) {
+    if (await this.isExcluded(userId, { playEligibility: true })) {
       throw new ChatRoomInviteNotFoundError(inviteId);
     }
     const room = await this.joinByInvite(userId, inviteId, invite, addressedToCaller, {

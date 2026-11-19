@@ -70,45 +70,114 @@ Decide this per module, later. Splitting the process does not force it.
 
 Chat's HTTP routes sit under `/chat/*` (player) and `/backoffice/chat/*` (staff), and its handlers and jobs (room purge, moderation expiry) run wherever the module loads.
 
-The main API cannot drop chat: `player-management`, `social` and `chat-commands` `dependsOn` it, and `compliance` depends on `player-management`, so the boot fails and asks for chat back. It loads chat for its ports only and stops serving its routes:
+The main API can drop chat. Of the modules it keeps, only `player-management` needs a chat port (`CHAT_BLOCK_READER`, for player search), and it requires the port, not the `chat` module. `social` and `chat-commands` `dependsOn` chat, so they stay with the chat service. Load the `chat-remote` plugin in the main API and it binds `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API (ADR-0054, ADR-0060):
 
 ```
 SERVICE_NAME=monolith
 REALTIME_NAMESPACE=monolith
-SERVICE_MANIFEST=<every module>,chat:no-routes
+SERVICE_MANIFEST=<every module>,chat-remote
+CHAT_SERVICE_URL=https://chat.internal   # the chat service's private origin
+CHAT_SERVICE_NAME=chat                   # its SERVICE_NAME, the default
+INTERNAL_API_SECRETS=<shared secret>
 ```
 
-Chat service:
+The main API then has no chat tables to migrate and serves no chat route. The boot fails when `chat-remote` is in the manifest and a module that needs a chat port finds none, which is what an unset `CHAT_SERVICE_URL` looks like. It also fails in the other direction: the chat plugin refuses to boot while `CHAT_SERVICE_URL` is set, so one process never binds the ports twice. In production the URL must be https unless `CHAT_SERVICE_ALLOW_HTTP=true` (a mesh that encrypts the hop).
+
+The chat service serves the two routes only to the callers it names, and refuses every caller while the lists are unset:
+
+```
+CHAT_BLOCK_READER_CALLERS=monolith       # POST /internal/v1/chat/blocks/{excluded,blocked,blockers}
+CHAT_TRANSFER_CHECK_CALLERS=monolith     # POST /internal/v1/chat-commands/transfer-check
+```
+
+Both lists are comma-separated `SERVICE_NAME`s. They guard against misconfiguration only, because one install-wide secret signs as any caller name. A module that moves money in chat needs `chat-commands` on the chat service, which serves the transfer check.
+
+Failures close. Neither read is cached, and each call times out at 500ms. A block read that cannot be answered (timeout, network, 5xx) throws a 503 `SERVICE_UNAVAILABLE`, never an empty list. A transfer check that cannot be answered refuses the transfer as `chat_unavailable` through `checkChatTransfer`. The remote check also holds no block lock: the chat service answers on a transaction of its own, so a block committed after the answer and before the caller's money commits is not seen. The local binding closes that window with a shared lock held until the caller's transaction ends. Tip and transfer commands move money through `guardChatTransfer`, which checks again after the caller's debit and ledger rows and throws `ChatTransferRefusedError` inside the caller's transaction on a refusal or a counterpart blocked since the first check, so the money rolls back. It never closes fully without a lock shared across the two services.
+
+Chat service, on a database of its own and reaching identity over its internal API:
 
 ```
 SERVICE_NAME=chat
 REALTIME_NAMESPACE=monolith
-SERVICE_MANIFEST=chat,identity:no-routes,audit:no-routes   # then add what the boot asks for
+SERVICE_MANIFEST=chat,chat-commands,social,identity:no-routes,iam:no-routes,audit:no-routes   # then add what the boot asks for
+INTERNAL_API_SECRETS=<shared secret>
+IDENTITY_SERVICE_URL=https://api.internal   # the service that serves identity and iam
+CHAT_BLOCK_READER_CALLERS=monolith
+CHAT_TRANSFER_CHECK_CALLERS=monolith
 ```
 
-Both get the same `DATABASE_URL`, `REDIS_URL` and `AUTH_SECRET`. Route at the load balancer by path prefix:
+On the service that serves identity and iam, name the chat service so it may read accounts, sessions (admin security included) and admin grants: `ACCOUNT_READER_CALLERS`, `SESSION_RESOLVER_CALLERS` and `ADMIN_PERMISSION_CALLERS` (`POST /internal/v1/iam/admin-permissions/{grants,super-admin}`) each list `chat`. Unset refuses every caller, and without `chat` in `ADMIN_PERMISSION_CALLERS` every admin check on the chat service is refused. Chat reads grants through `IDENTITY_SERVICE_URL`, the same origin as accounts and sessions, so one service must serve both identity and iam. Chat caches no grant of its own, so a revoked admin loses access as soon as the iam owner's cache purges, and an unreachable owner refuses the request with a 503 rather than reading as "no grants". The chat service's own database holds no role assignments, so `iam:no-routes` there binds only controls and the remote resolver wins.
+
+`CHAT_CONTEXT_SEND_POLICY` and `CHAT_ROOM_ACCESS` overrides must load on the chat service: that is where the send and room checks run.
+
+A play-refusal rule bound to `PLAY_ELIGIBILITY` reaches chat's invites through the account read. The database-backed port reads tables the chat database does not hold, so with `IDENTITY_SERVICE_URL` set chat does not consult it; the identity service does, when an account read sets `playEligibility`, which only the invite checks do (`excluded` is core's own `checkPlay`, plus the bound port when an overlay replaced it, resolved at call time, for player accounts core admits). Every other read, a search or a mention lookup included, never calls the overlay port, so a port that throws cannot fail them. An invite to a player the identity service reports as excluded is withheld, read fresh on every invite, and an unreachable identity service refuses the invite with a 503 before anything is written. Load the overlay that rebinds `PLAY_ELIGIBILITY` on the identity service, not on chat.
+
+The chat service runs the audit module against its own database and ships its audit rows to the chain through the audit outbox (ADR-0055). Its database needs the audit migration (`audit_outbox` and `audit_outbox_rejected`, plus `audit_log` when no `AUDIT_DATABASE_URL` is set), and with a separate chain database every process loading audit, chat included, sets `AUDIT_DATABASE_URL` and `AUDIT_SHIPPER_DATABASE_URL`.
+
+Both get the same `REDIS_URL` and `AUTH_SECRET`; the chat service's `DATABASE_URL` names its own database. Route at the load balancer by path prefix:
 
 ```
-/chat/*             -> chat service
-/backoffice/chat/*  -> chat service
-/*                  -> main API
+/chat/*                     -> chat service
+/backoffice/chat/*          -> chat service
+/social/*                   -> chat service
+/chat-command/*             -> chat service
+/backoffice/chat-command/*  -> chat service
+/*                          -> main API
 ```
 
-Route both prefixes. Without the second, the staff chat routes go to `/*` and 404 once the main API stops serving chat.
+Route every prefix. Without the staff ones, the staff routes go to `/*` and 404 once the main API stops serving chat.
 
 Any realtime endpoint your frontend uses for chat must be routed to the chat service too; check which module serves it.
 
-Chat's handlers and jobs still run in the main API because it loads the module, so exclude chat queues there with `JOB_WORKERS` if they should run only in the chat service. A job queue is consumed by every process that loads its module. `JOB_WORKERS` narrows what a process consumes (names, `prefix*`, `!` to exclude), and every queue needs a consumer somewhere.
+A main API that does not load chat runs none of chat's handlers or jobs. The chat service runs them all.
+
+## A module on a database of its own
+
+Every step above works on one shared database. Giving the chat service a database of its own adds three jobs: migrate each database, ship audit from each, and make sure every queue still has a consumer.
+
+### Migrate once per database
+
+Migrations never run at service boot. Run them per database with admin credentials, before the service that uses it starts.
+
+- Each module keeps its own migration set and tracking table, so a new database migrates from zero and no history is copied.
+- A database gets the sets of the modules it hosts, plus the engine set (the event outbox and processed events), because every service's event bus writes there.
+- A module loaded only for its ports keeps its tables where it is hosted. Chat loads identity, iam and audit this way, so the chat database gets none of their tables.
+- Audit is the one exception. Every database that hosts a service writing audit rows also gets the audit migration, which adds the guards and grants on the audit outbox (the table itself is in the engine set) and the chain table only when no `AUDIT_DATABASE_URL` is set.
+
+### Audit: one outbox per database, one chain
+
+- Each service writes its own audit outbox in the transaction of the change. A shipper in the same process moves the rows into the one chain database named by `AUDIT_DATABASE_URL`, so the chain stays single however many databases write to it.
+- `AUDIT_SHIPPER_DATABASE_URL` names the shipper login on the process's own database. Each database has its own shipper login, never the admin or app role and never another database's shipper. A process that sets `AUDIT_DATABASE_URL` without it refuses to boot.
+- The shipper alone may delete shipped rows from its outbox. The audit migration, called once per database with `adminUrl`, `auditUrl` and `shipperUrl`, creates the chain database and the roles.
+- It refuses a shipper URL that names another database than the one being migrated, a chain URL that names that same database, and a writer and shipper that are one role or that are the admin or app login of the database.
+- It also refuses an existing role with a superuser, createdb, createrole, replication or bypass-RLS attribute, a role that belongs to another role, and a role with a member that inherits it or may switch to it.
+- Roles get a connection limit of 20 each. Keep replicas times `AUDIT_DATABASE_POOL_MAX` (default 3) under it.
+- On the first migrate of a database with a separate chain, `CONNECT` is revoked from `PUBLIC` there. Roles that own a table or hold a grant on one keep it by name. Any other login (monitoring, backup, an app role whose grants come later) needs its own `GRANT CONNECT`.
+
+### Every queue needs a consumer
+
+Job queues live in the shared Redis, but a job's handler writes the database of the service that loaded its module. A worker that takes a chat job on a process without chat tables fails it, and a queue nobody consumes backs up in silence.
+
+`JOB_WORKERS` picks the queues a process consumes. Unset or blank means every queue.
+
+- Entries are separated by commas or spaces: a queue name, or a `prefix*` pattern with `*` only at the end.
+- `!` before an entry excludes it. `*` or `all` means every queue, and combines with exclusions only. `none` consumes nothing and stands alone.
+- An included name or pattern that no registered queue matches fails the boot, so a typo cannot leave a worker idle. An exclusion that matches nothing is allowed.
+- The boot logs which queues the process consumes and which it skips.
+
+For chat: the chat service sets `JOB_WORKERS=chat-*`, and every other process that could load a chat queue sets `JOB_WORKERS=!chat-*` or leaves the chat modules out. There are six chat queues: moderation expiry, room purge scan, room purge, account closed, account reopened and invite expiry. Do not set `none` on the chat service, or all six are stranded. The account closed queue is the one that matters for compliance: it removes a closed or self-excluded player from chat.
+
+The account closed and account reopened jobs read the account fresh from the identity service on every attempt. With the identity service unreachable they retry five times with exponential backoff, then log `chat account-closed handling exhausted retries` (or the `account-reopened` twin) at error level and give up. Alert on those two log lines, and on the depth of both queues.
 
 ## Rollout
 
-1. Deploy the chat service with the new `SERVICE_NAME`, taking no traffic. Chat is now loaded in two services, each with its own group, so chat event handlers run twice during the overlap. They are idempotent by contract, but watch for it.
-2. Move `/chat/*` and `/backoffice/chat/*` to the chat service at the load balancer.
-3. Deploy the main API with the manifest that loads chat as `chat:no-routes`.
+1. Deploy the chat service with the new `SERVICE_NAME`, taking no traffic, and set `CHAT_BLOCK_READER_CALLERS` and `CHAT_TRANSFER_CHECK_CALLERS` to the main API's `SERVICE_NAME`.
+2. Move the chat prefixes above to the chat service at the load balancer.
+3. Deploy the main API with `chat-remote` in the manifest and `CHAT_SERVICE_URL` set, without `chat`.
 
-The main API keeps loading chat under its existing `SERVICE_NAME`, so its consumer group does not move and step 3 loses nothing. The chat service's group is new: it starts at the stream tail, so deploy it (step 1) before you depend on it. Because both services load chat, chat event handlers keep running in each, idempotently, for as long as the split lasts.
+Until step 3 the main API still loads chat, so chat handlers run in both services, idempotently. Its consumer group does not move, so step 3 loses nothing. The chat service's group is new: it starts at the stream tail, so deploy it (step 1) before you depend on it.
 
-Rollback is routing. Redeploy the main API with plain `chat` in the manifest so it serves chat routes again, then point both prefixes back at it.
+Rollback is routing and the manifest. Redeploy the main API with plain `chat` in the manifest, unset `CHAT_SERVICE_URL`, and point the prefixes back at it.
 
 ## Checklist
 
@@ -117,6 +186,11 @@ Rollback is routing. Redeploy the main API with plain `chat` in the manifest so 
 - Every process with a manifest sets all three variables.
 - Each queue has a consumer; each route prefix has exactly one owner at the load balancer.
 - Once-per-deployment work uses `{ consumerGroup }`.
+
+- Each database is migrated, with the sets of the modules it hosts plus the engine set, before its service starts.
+- Every chat queue has a consumer: the chat service on `chat-*`, every other process on `!chat-*` or without the chat modules.
+- Each database has one audit shipper login of its own, never the app role, and `AUDIT_DATABASE_URL` is the same on every service.
+- Alerts on the account closed and account reopened dead-letter logs.
 
 ## Operational log signals
 

@@ -32,6 +32,7 @@ export const RATE_LIMIT_KEYS = {
   CHAT_ROOM_INVITE: 'chat-room-invite',
   CHAT_ROOM_INVITE_LOOKUP: 'chat-room-invite-lookup',
   CHAT_SEND: 'chat-send',
+  CHAT_MENTION_SEARCH: 'chat-mention-search',
   SUPPORT_CHAT_SESSION: 'support-chat-session',
   SUPPORT_CHAT_HISTORY: 'support-chat-history',
   SUPPORT_TICKET_CREATE: 'support-ticket-create',

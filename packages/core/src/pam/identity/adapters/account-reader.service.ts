@@ -1,15 +1,19 @@
-import { DrizzleService, likeContains, likePrefix } from '@openora/core/server';
+import { DrizzleService, likeContains, likePrefix, mapConcurrent } from '@openora/core/server';
 import {
   playRefusalOf,
   type Account,
   type AccountReader,
   type Player,
+  type PlayEligibilityPort,
   type PlayerMatch,
+  AccountReadOptions,
   type PlayerSearch,
+  isPlayRefused,
 } from '@openora/core/contracts';
 import { and, asc, eq, ilike, inArray, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '../schema/index.js';
+import { PlayEligibilityService } from '../service/play-eligibility.service.js';
 
 const toMatch = ({ userId, username, avatarUrl }: Account): PlayerMatch => ({
   userId,
@@ -17,17 +21,34 @@ const toMatch = ({ userId, username, avatarUrl }: Account): PlayerMatch => ({
   avatarUrl,
 });
 
-/** {@link AccountReader} on the identity database, read live on every call. */
-export class DrizzleAccountReader implements AccountReader {
-  constructor(private readonly drizzle: DrizzleService) {}
+const BOUND_PORT_CONCURRENCY = 8;
 
-  async getAccounts(userIds: readonly string[]): Promise<Map<string, Account>> {
+/**
+ * {@link AccountReader} on the identity database, read live on every call. `excluded` is core's
+ * own play check. A `getAccounts` read that sets `playEligibility` also asks the bound port, for
+ * every player account core admits, at a bounded concurrency: `playEligibility` resolves it at
+ * call time, so a rebinding by a later plugin applies, and core's own port is not asked twice.
+ * Searches and username lookups never ask it, so a throwing overlay port cannot fail them.
+ */
+export class DrizzleAccountReader implements AccountReader {
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly playEligibility?: () => PlayEligibilityPort,
+  ) {}
+
+  async getAccounts(
+    userIds: readonly string[],
+    options: AccountReadOptions = {},
+  ): Promise<Map<string, Account>> {
     const ids = [...new Set(userIds.map((id) => id.toLowerCase()))];
     if (ids.length === 0) {
       return new Map();
     }
+    const accounts = await this.select(inArray(user.id, ids));
     const found = new Map(
-      (await this.select(inArray(user.id, ids))).map((account) => [account.userId, account]),
+      (options.playEligibility ? await this.withOverlayExclusion(accounts) : accounts).map(
+        (account) => [account.userId, account],
+      ),
     );
     return new Map(
       userIds.flatMap((id) => {
@@ -71,6 +92,18 @@ export class DrizzleAccountReader implements AccountReader {
       .where(eq(player.id, playerId))
       .limit(1);
     return row?.userId ?? null;
+  }
+
+  private async withOverlayExclusion(accounts: Account[]): Promise<Account[]> {
+    const port = this.playEligibility?.();
+    if (!port || port instanceof PlayEligibilityService) {
+      return accounts;
+    }
+    return mapConcurrent(accounts, BOUND_PORT_CONCURRENCY, async (account) =>
+      account.excluded || account.player === null
+        ? account
+        : { ...account, excluded: await isPlayRefused(port, account.userId) },
+    );
   }
 
   private async select(
@@ -117,6 +150,7 @@ export class DrizzleAccountReader implements AccountReader {
           : {
               playerId: row.playerId,
               closed: row.status === 'suspended' || row.status === 'closed',
+              accountClosed: row.status === 'closed',
               lastSeenAt: row.lastSeenAt,
               allowFriendRequests: row.allowFriendRequests ?? true,
               showOnlineStatusToFriends: row.showOnlineStatusToFriends ?? true,

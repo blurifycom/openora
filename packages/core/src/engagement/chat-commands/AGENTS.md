@@ -49,6 +49,13 @@ lock: a change committed while the money transaction runs is not seen. Mutes are
 counterpart's own bans are not read. `counterpartIds` is capped at `CHAT_TRANSFER_MAX_COUNTERPARTS`.
 It moves no money; the overlay refuses on the verdict.
 
+A service that does not load chat reaches the check over the internal API: the module serves it at
+`POST /internal/v1/chat-commands/transfer-check` to the `SERVICE_NAME`s in
+`CHAT_TRANSFER_CHECK_CALLERS` (unset refuses every caller), on a transaction of its own that ends
+with the answer, and the `chat-remote` plugin binds the port there. That binding holds no block
+lock, and an unanswered check refuses as `chat_unavailable`. The route always runs the local check:
+never bind it to a remote one.
+
 ## Ports consumed
 
 - `ADMIN_USER_DIRECTORY` - `findPlayerIds`/`lookupPlayers` for `@mention` autocomplete.

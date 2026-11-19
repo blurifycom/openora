@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
 import {
   EVENT_BUS,
@@ -8,6 +9,7 @@ import {
   REMOTE_SESSION_RESOLVER,
   AuthContextSchema,
   mapErrors,
+  parseInternalCallers,
   parseServiceManifest,
 } from '@openora/core/server';
 import type {
@@ -17,7 +19,7 @@ import type {
   InternalClient,
   Plugin,
 } from '@openora/core/server';
-import type { ChatContextRooms, JobQueueAdapter } from '@openora/core/contracts';
+import type { ChatContextRooms, EventEnvelope, JobQueueAdapter } from '@openora/core/contracts';
 import {
   JOB_QUEUE,
   domainEventSchemas,
@@ -26,6 +28,7 @@ import {
   CHAT_REALTIME_CLIENT_AUTHORIZER,
   RATE_LIMITER,
   ADMIN_SECURITY_POLICY,
+  ADMIN_PERMISSION_RESOLVER,
   CHAT_SYSTEM_WRITER,
   CHAT_BLOCK_READER,
   CHAT_BLOCK_WRITER,
@@ -62,9 +65,11 @@ import { ChatRoomPurgeService } from './service/chat-room-purge.service.js';
 import { ChatSystemCardService } from './service/chat-system-card.service.js';
 import { applyContextRoomCommand } from './service/chat-context-room-command.service.js';
 import { RemoteAccountReader } from './service/remote-account-reader.service.js';
+import { RemoteAdminPermissionResolver } from './service/remote-admin-permission-resolver.service.js';
 import { RemoteAdminSecurityPolicy } from './service/remote-admin-security.service.js';
 import { RemoteSessionResolver } from './service/remote-session-resolver.service.js';
 import { createChatRouter } from './router/index.js';
+import { createInternalBlocksRouter } from './router/internal-blocks.router.js';
 
 const CHAT_MODERATION_EXPIRY_QUEUE = queue('chat-moderation-expiry');
 const CHAT_ROOM_PURGE_SCAN_QUEUE = queue('chat-room-purge-scan');
@@ -82,8 +87,10 @@ const CHAT_ROOM_INVITE_EXPIRY_CRON = '0 * * * *';
 
 const RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
 
-const accountJobKey = (prefix: string, userId: string, at: Date) =>
-  `${prefix}:${userId}:${at.toISOString().slice(0, 10)}`;
+// One job per event: a redelivery of the same event dedupes, while a close, reopen, close within
+// a day is three jobs. A handler with no envelope (never the real bus) gets a fresh id.
+const accountJobKey = (prefix: string, userId: string, envelope?: EventEnvelope) =>
+  `${prefix}:${userId}:${envelope?.eventId ?? randomUUID()}`;
 
 // The cron tick carries no state - the job's whole input is "what has lapsed by now".
 const EmptyJobPayloadSchema = z.object({});
@@ -98,7 +105,8 @@ const IDENTITY_CALL_TIMEOUT_MS = 500;
 
 /**
  * Chat on a database of its own reads accounts and resolves sessions through the identity
- * service: set `IDENTITY_SERVICE_URL`. A process that serves identity itself (no
+ * service, and admin grants through the service that owns iam: set `IDENTITY_SERVICE_URL`, and
+ * serve iam and identity from the same service. A process that serves identity itself (no
  * SERVICE_MANIFEST, or one naming identity without `:no-routes`) has both locally, so the
  * variable there is a misconfiguration and the boot fails.
  */
@@ -148,8 +156,20 @@ const SESSION_ENDING_EVENTS = [
 
 export default {
   id: 'chat',
-  dependsOn: ['identity', 'audit'],
+  // iam binds the database-backed ADMIN_PERMISSION_RESOLVER; loading after it lets the remote one
+  // below win in a service that holds no role assignments.
+  dependsOn: ['identity', 'audit', 'iam'],
   register(ctx) {
+    // chat-remote binds the same ports to this service's own client, and the later binding wins
+    // without a word. Refuse here, where the plugin is certainly loaded, rather than guess from
+    // SERVICE_MANIFEST which plugins a process has.
+    if (process.env['CHAT_SERVICE_URL']) {
+      throw new Error(
+        'CHAT_SERVICE_URL is set, but this process loads the chat module itself, so the chat ' +
+          'ports would be bound twice. Unset it here, or leave chat out of this process and load ' +
+          'chat-remote instead.',
+      );
+    }
     const identity = identityClient();
     if (identity) {
       const remoteAccounts = new RemoteAccountReader(identity);
@@ -157,6 +177,10 @@ export default {
       // Identity decides the admin checks (mandatory second factor, device binding): the rows
       // they read are not in this database, and a missing row would silently skip the binding.
       ctx.provide(ADMIN_SECURITY_POLICY, () => new RemoteAdminSecurityPolicy(identity));
+      // Grants come from the service that owns iam: this database holds no role assignments. The
+      // manifest still names iam (as `iam:no-routes`) for the identity controls it binds, and
+      // its own resolver binds first: chat dependsOn iam, so this one wins.
+      ctx.provide(ADMIN_PERMISSION_RESOLVER, () => new RemoteAdminPermissionResolver(identity));
       const remoteSessions = new RemoteSessionResolver(identity);
       let announcePurge: ((userId: string) => void | Promise<void>) | undefined;
       ctx.provide(REMOTE_SESSION_RESOLVER, (c) => {
@@ -248,6 +272,13 @@ export default {
         }),
     );
     ctx.provide(CHAT_CONTEXT_ROOM_COMMANDS, (c) => c.get(CHAT_CONTEXT_ROOMS));
+    // Block reads for a service that does not load chat. They serve this database itself, never
+    // the bound reader, which such a service rebinds to a client of these very routes. Unset
+    // CHAT_BLOCK_READER_CALLERS refuses every caller.
+    const blockReaderCallerNames = parseInternalCallers(process.env['CHAT_BLOCK_READER_CALLERS']);
+    ctx.routers.addInternal('chat', (c) =>
+      createInternalBlocksRouter(createChatService(c), blockReaderCallerNames),
+    );
     ctx.provide(CHAT_ROOM_ACCESS, (c) => ({
       verifyRoomAccess: async (roomId, viewerId, tx) => {
         await mapErrors(
@@ -305,23 +336,20 @@ export default {
       return jobQueueRef;
     };
 
-    const onAccountClosed = async (userId: string) => {
+    const onAccountClosed = async (userId: string, envelope?: EventEnvelope) => {
       const closedAt = new Date();
       await requireJobQueue().enqueue(
         CHAT_ACCOUNT_CLOSED_QUEUE,
         { userId, closedAt: closedAt.toISOString() },
-        { idempotencyKey: accountJobKey('chat-account-closed', userId, closedAt), ...RETRY },
+        { idempotencyKey: accountJobKey('chat-account-closed', userId, envelope), ...RETRY },
       );
     };
 
-    const onAccountReopened = async (userId: string) => {
+    const onAccountReopened = async (userId: string, envelope?: EventEnvelope) => {
       await requireJobQueue().enqueue(
         CHAT_ACCOUNT_REOPENED_QUEUE,
         { userId },
-        {
-          idempotencyKey: accountJobKey('chat-account-reopened', userId, new Date()),
-          ...RETRY,
-        },
+        { idempotencyKey: accountJobKey('chat-account-reopened', userId, envelope), ...RETRY },
       );
     };
 
@@ -370,31 +398,31 @@ export default {
       );
     });
 
-    ctx.events.on('player.account.closed', async (payload) => {
+    ctx.events.on('player.account.closed', async (payload, envelope) => {
       const parsed = domainEventSchemas['player.account.closed'].safeParse(payload);
       if (parsed.success) {
-        await onAccountClosed(parsed.data.userId);
+        await onAccountClosed(parsed.data.userId, envelope);
       }
     });
 
-    ctx.events.on('identity.user.deactivated', async (payload) => {
+    ctx.events.on('identity.user.deactivated', async (payload, envelope) => {
       const parsed = domainEventSchemas['identity.user.deactivated'].safeParse(payload);
       if (parsed.success) {
-        await onAccountClosed(parsed.data.userId);
+        await onAccountClosed(parsed.data.userId, envelope);
       }
     });
 
-    ctx.events.on('player.account.reopened', async (payload) => {
+    ctx.events.on('player.account.reopened', async (payload, envelope) => {
       const parsed = domainEventSchemas['player.account.reopened'].safeParse(payload);
       if (parsed.success) {
-        await onAccountReopened(parsed.data.userId);
+        await onAccountReopened(parsed.data.userId, envelope);
       }
     });
 
-    ctx.events.on('identity.user.reactivated', async (payload) => {
+    ctx.events.on('identity.user.reactivated', async (payload, envelope) => {
       const parsed = domainEventSchemas['identity.user.reactivated'].safeParse(payload);
       if (parsed.success) {
-        await onAccountReopened(parsed.data.userId);
+        await onAccountReopened(parsed.data.userId, envelope);
       }
     });
 
@@ -523,7 +551,10 @@ export default {
         c.get(EVENT_BUS),
         c.get(ACCOUNT_READER),
         membershipService,
-        c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        // The database-backed port reads tables this database does not hold. On a remote reader
+        // the fresh `excluded` flag, which mirrors `checkPlay`, is the whole play check, and a
+        // failed read refuses before an invite is written.
+        identity || !c.has(PLAY_ELIGIBILITY) ? undefined : c.get(PLAY_ELIGIBILITY),
       );
       void jobQueueRef
         .schedule(
@@ -542,7 +573,7 @@ export default {
           c.get(EVENT_BUS),
           c.get(AUDIT_WRITER),
           c.get(CHAT_REALTIME_TRANSPORT),
-          playerIdsOf(c.get(ACCOUNT_READER)),
+          playerIdsOf(c.get(ACCOUNT_READER), logger),
         ),
         roomMuteService: new ChatRoomMuteService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         restrictionService: new ChatRoomRestrictionService(c.get(DRIZZLE), c.get(ACCOUNT_READER)),
